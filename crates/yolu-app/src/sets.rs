@@ -681,18 +681,31 @@ impl AppState {
     /// .ylp や PSD の読み直し）でも、キャンバスの表示は前の文書の合成をここで捨てる。
     pub(crate) fn document_replaced(&mut self) {
         self.doc_epoch = self.doc_epoch.wrapping_add(1);
+        // スポイトの印の見本は前の文書を読んだもの（文書の版は別の文書と同じ値になりうる）
+        self.eyedrop.sample_cache = None;
         self.canvas.previous_end = None;
         self.canvas.current_end = None;
         self.canvas.shift_hold = None;
         self.canvas.ruler_constraint = None;
+        self.canvas.clone_press = None;
+        self.canvas.clone_offset = None;
+        self.forget_clone_sources();
+        self.view3d.input.previous_end = None;
         self.drafting_cancel();
         self.drafting.pen_down = None;
+        // 選んでいた定規と、編集のモードで選んだ物・隠した物は前の文書のもの（レイヤーの ID は文書をまたいで同じ値になりうるので、別の文書の同じ番号の
+        // レイヤーの物を指さない）
+        self.rulers.selected = None;
+        self.rulers.icon_drag = None;
+        self.objects.selected = None;
+        self.objects.hidden.clear();
     }
 
     /// 何も触っていないセット（`index`）の文書を、同じセット（uid・名前・鍵はそのまま）のまま別の文書に替える。履歴は持ち越さない。
     /// 表示（拡大・位置）と選んでいるレイヤーは、新しい文書の大きさに合わせて既定に戻す。Live Link が、何も触っていない最初のセットを元の絵の
     /// 大きさで作り直すときに使う（触っていないことは呼ぶ側が確かめる）。
     pub(crate) fn swap_untouched_set_document(&mut self, index: usize, doc: Document) {
+        self.eyedrop.sample_cache = None;
         if let Some(set) = self.sets.get_mut(index) {
             // 新しく作るセットと同じく、セットの ID は文書の ID と同じ値
             set.id = guid_string(doc.id());
@@ -718,7 +731,6 @@ impl AppState {
     /// 選んだマテリアルだけをセットにする）。
     pub fn replace_sets_with(&mut self, sets: TextureSets, doc: Document, create_missing: bool) {
         self.sets = sets;
-        self.drafting.rulers.clear();
         // 効果の状態はプロジェクトのもの（復号した画像・入力の覚えも捨てる）。画像の復号の上限は持ち越す
         let image_limit = self.fx.inputs.image_limit;
         self.fx = Default::default();

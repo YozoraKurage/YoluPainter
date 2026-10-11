@@ -39,11 +39,24 @@ rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] } 
 
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }   # Apache-2.0（eframe が使う版と同じ。起動のウィンドウを X11 に決めるため。新しい crate ではない）
-libc = "0.2"           # MIT OR Apache-2.0（落ちたときのシグナルの記録。新しい crate ではなく、yolu-protocol も使う）
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+libc = "0.2"           # MIT OR Apache-2.0（落ちたときの記録: Linux はシグナルとバックトレース、macOS はバックトレース。Linux は空き容量・時刻も。新しい crate ではなく、yolu-protocol も使う）
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# タブレット（Wacom・XP-Pen などのドライバー）の筆圧・傾き・消しゴムの端を、アプリの NSEvent の監視から読む（`pen::mac_tablet`）。どれも Cargo.lock に既にある版
+# （arboard・eframe・rfd・wgpu が使う 0.6 / 0.3 の組。winit 0.30 の 0.5 / 0.2 の組は、winit が 0.31 に上がると消える）で、新しい crate・版は増えない。
+# objc2 系は MIT（objc2-app-kit・objc2-foundation は Zlib OR Apache-2.0 OR MIT）。macOS の配布物にだけ入る（`tools/third-party.py --target universal-apple-darwin` が数え、`tools/licenses-reviewed.json` に登録している。Windows の配布物には入らない）
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "objc2-core-foundation", "NSApplication", "NSEvent", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSGeometry", "NSString"] }
+block2 = "0.6"
+
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
+raw-window-handle = "0.6"   # ウィンドウのハンドル（Windows は HWND、macOS は NSView）からペンの入力を繋ぐ
 
 [target.'cfg(windows)'.dependencies]
-raw-window-handle = "0.6"
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Shutdown", "Win32_System_Threading", "Win32_Globalization"] }
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_Pointer", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_Graphics_Dxgi", "Win32_UI_HiDpi", "Win32_System_SystemInformation", "Win32_Networking_WinHttp", "Win32_System_Diagnostics_Debug", "Win32_System_Com", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_ProcessStatus", "Win32_System_Shutdown", "Win32_System_Threading", "Win32_Globalization"] }
 
 [dev-dependencies]
 pollster = "1"   # 既存の許諾確認済み依存。試験用の描画器選択で非同期の wgpu 初期化を待つ

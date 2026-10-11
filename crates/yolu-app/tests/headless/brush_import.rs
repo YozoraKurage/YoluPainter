@@ -1131,12 +1131,25 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
             .count(),
         4
     );
+    // 持たないブラシ（今の既定の「標準」。縁のアンチエイリアスが 中）は版 5 で、入り抜き・手ぶれ補正の項目は書かない
     assert_eq!(
         versions
             .iter()
-            .filter(|v| *v == "yolupainter-brush 1")
+            .filter(|v| *v == "yolupainter-brush 5")
             .count(),
         1
+    );
+    let fifth: Vec<String> = std::fs::read_dir(dir.join("brushes"))
+        .unwrap()
+        .flatten()
+        .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+        .filter(|t| t.starts_with("yolupainter-brush 5\n"))
+        .collect();
+    assert_eq!(fifth.len(), 1);
+    assert!(
+        fifth[0].contains("\nanti_alias=medium\n") && !fifth[0].contains("assist."),
+        "{}",
+        fifth[0]
     );
     std::fs::remove_dir_all(dir).unwrap();
 }

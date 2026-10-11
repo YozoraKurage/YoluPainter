@@ -107,7 +107,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let lang = app.lang;
-    app.bake.ensure_gpu_probe();
+    app.bake.ensure_gpu_probe(app.prefs.settings.bake_ray_query);
     // 表示データ（モデルの入力は別のスレッドで作る。できるまで状態は「確認中」）
     let input = app.bake_input_nowait();
     let checking = input.is_none();

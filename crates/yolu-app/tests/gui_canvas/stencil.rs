@@ -14,6 +14,7 @@ use egui_kittest::Harness;
 use yolu_app::engine::{composite_pixel, Channel};
 use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
+use yolu_app::mode::{EditorMode, ModeAction};
 use yolu_app::pen::PenSample;
 use yolu_app::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
 use yolu_app::stencil::{StencilOp, DEFAULT_SIZE, MAX_SIZE, MIN_SIZE};
@@ -976,7 +977,7 @@ fn n_held_hides_the_overlay_and_paints_without_the_stencil() {
 #[test]
 fn a_canvas_stroke_through_the_stencil_follows_the_screen_not_the_canvas_view() {
     let dir = temp_dir("screen-ui");
-    let mut h = app(1280.0, 800.0, 256);
+    let mut h = app(1600.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     small_brush(&mut h);
     {
@@ -1629,7 +1630,7 @@ fn a_pen_with_y_held_moves_the_stencil_and_does_not_paint() {
 #[test]
 fn a_pen_stroke_goes_through_the_stencil_on_the_canvas_and_undoes_in_one_step() {
     let dir = temp_dir("pen-canvas");
-    let mut h = app(1280.0, 800.0, 256);
+    let mut h = app(1600.0, 800.0, 256);
     load(&mut h, &half_png(&dir, "half.png"));
     small_brush(&mut h);
     let r = canvas_rect(&h);
@@ -1775,7 +1776,7 @@ fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
         state: PopupState::new(&ctx, Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0))),
     };
     let try_start = |s: &mut AppState, over: bool| {
-        let taken = yolu_app::stencil::handle_event(s, &press, rect, over, false);
+        let taken = yolu_app::stencil::handle_event(s, &press, rect, over, &Modifiers::NONE);
         (taken, s.stencil.drag.take().is_some())
     };
     // 何も邪魔が無ければ始まる（対照）
@@ -1805,35 +1806,86 @@ fn headless_each_blocker_alone_stops_a_stencil_drag_from_starting() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
-/// ポーズのモードの 3D ビューでは、Y を押しながらドラッグしても置き場は動かず、重ね表示も出ない（ギズモと骨を選ぶ操作が優先）。
+/// 編集のモードの 3D ビューでは、Y を押しながらドラッグしても置き場は動かず、重ね表示も出ない（ギズモと物を選ぶ操作が優先）。
+/// 試しの立方体はボーンが無いので、編集のモードで確かめる（ポーズのモードも同じ `EditorMode::paints` を見る。2D は次の試験）。
 #[test]
-fn the_stencil_is_not_moved_or_shown_in_pose_mode() {
+fn the_stencil_is_not_moved_or_shown_in_edit_mode_in_3d() {
     let dir = temp_dir("pose");
     let (mut h, rect) = cube_view(256);
-    h.state_mut().state.view3d.pose.mode = true;
+    h.state_mut()
+        .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
     h.run();
     load(&mut h, &ring_png(&dir, "ring.png"));
     assert!(
         !st(&h).has_overlay_texture(),
-        "ポーズのモードでは重ね表示を描かない"
+        "編集のモードでは重ね表示を描かない"
     );
     let placement = (st(&h).center, st(&h).size, st(&h).angle);
     let c = rect.center();
     key_down(&mut h, Key::Y);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
-    assert!(st(&h).drag.is_none(), "ポーズのモードでドラッグが始まった");
+    assert!(st(&h).drag.is_none(), "編集のモードでドラッグが始まった");
     move_to(&h, pos2(c.x + 60.0, c.y + 30.0));
     h.step();
     release_at(&mut h, c, PointerButton::Primary);
     assert_eq!((st(&h).center, st(&h).size, st(&h).angle), placement);
     assert!(!st(&h).has_overlay_texture());
-    // ポーズのモードを出ると、同じ操作でドラッグが始まり、重ね表示が出る
-    h.state_mut().state.view3d.pose.mode = false;
+    // ペイントのモードへ戻ると、同じ操作でドラッグが始まり、重ね表示が出る
+    h.state_mut()
+        .apply(Action::Mode(ModeAction::Set(EditorMode::Paint)));
     h.run();
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
     assert!(st(&h).drag.is_some());
     assert!(st(&h).has_overlay_texture());
     release_at(&mut h, c, PointerButton::Primary);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 編集・ポーズのモードの 2D のキャンバスでも、Y を押しながらドラッグしても置き場は動かず、重ね表示も出ない（3D と同じ）。
+#[test]
+fn the_stencil_is_not_moved_or_shown_on_the_canvas_in_edit_and_pose_modes() {
+    let dir = temp_dir("modes-2d");
+    let mut h = app(1280.0, 800.0, 256);
+    h.state_mut()
+        .apply(Action::Pose(yolu_app::view3d::pose::PoseAction::LoadFigure));
+    h.run();
+    click_tab(&mut h, Tab::Canvas);
+    h.run();
+    let c = canvas_rect(&h).center();
+    for mode in [EditorMode::Edit, EditorMode::Pose] {
+        h.state_mut().apply(Action::Mode(ModeAction::Set(mode)));
+        h.run();
+        assert_eq!(h.state().state.mode, mode, "{}", h.state().state.message);
+        if st(&h).image.is_none() {
+            load(&mut h, &ring_png(&dir, "ring.png"));
+        }
+        assert!(
+            !st(&h).has_overlay_texture(),
+            "{mode:?}: 重ね表示を描かない"
+        );
+        let placement = (st(&h).center, st(&h).size, st(&h).angle);
+        key_down(&mut h, Key::Y);
+        assert!(!st(&h).key_held, "{mode:?}: Y が効かない");
+        press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
+        assert!(st(&h).drag.is_none(), "{mode:?}: ドラッグが始まった");
+        move_to(&h, pos2(c.x + 60.0, c.y + 30.0));
+        h.step();
+        release_at(&mut h, pos2(c.x + 60.0, c.y + 30.0), PointerButton::Primary);
+        key_up(&mut h, Key::Y);
+        assert_eq!((st(&h).center, st(&h).size, st(&h).angle), placement);
+        assert!(!st(&h).has_overlay_texture());
+        assert!(!h.state().state.doc.can_undo(), "{mode:?}: 描かない");
+    }
+    // ペイントのモードへ戻ると、同じ操作でドラッグが始まり、重ね表示が出る
+    h.state_mut()
+        .apply(Action::Mode(ModeAction::Set(EditorMode::Paint)));
+    h.run();
+    assert!(st(&h).has_overlay_texture());
+    key_down(&mut h, Key::Y);
+    press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
+    assert!(st(&h).drag.is_some());
+    release_at(&mut h, c, PointerButton::Primary);
+    key_up(&mut h, Key::Y);
     let _ = std::fs::remove_dir_all(dir);
 }
 

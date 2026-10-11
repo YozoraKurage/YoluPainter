@@ -1,6 +1,6 @@
 //! タイルの合成が、画素ごとの参照（`composite_pixel`）と同じバイトになること。全合成モード・マスク・クリッピング・
 //! グループ（通過・独立）・調整レイヤー（全種類）・Normal チャンネル（Normal・Overlay）を 1 つの文書に重ねて、全チャンネル・領域の端をまたぐ矩形で比べる。
-//! 道の選びは環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`）で変えて同じ試験を回せる。
+//! 道の選びは環境変数 `YOLU_SIMD`（`scalar`・`sse41`・`avx2`・`neon`。その CPU にある道）で変えて同じ試験を回せる。
 //!
 //! 合成の本体（`composite.rs`）は行の核（`blend_row`・`clip_row`・`fade_row`・`composite_row`・Normal チャンネルの `normal::*_row`）で重ねるので、
 //! この試験は SIMD の道を通る合成の回帰の網になる（参照の `composite_pixel` は画素ごとの式）。`YOLU_SIMD` で道ごとに回す。
@@ -230,7 +230,7 @@ fn a_coarse_composite_matches_the_pixel_reference_at_the_sample_points() {
         let doc = complex_document_with_tile_size(tile_size);
         let coords: Vec<TileCoord> = doc.canvas_tiles().collect();
         for ch in [Channel::Color, Channel::Normal] {
-            for stride in [1u32, 2, 4, 16, 64] {
+            for stride in [1u32, 2, 4, 8, 16, 64] {
                 for t in doc.composite_coarse_tiles(ch, &coords, stride).unwrap() {
                     let (w, h) = t.size();
                     for j in 0..h {

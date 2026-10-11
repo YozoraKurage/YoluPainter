@@ -5,11 +5,11 @@
 YoluPainter は、設定「外からの操作を受ける」を入れている間、MCP のサーバーとして `http://127.0.0.1:17347/mcp` で待ちます。AI のアシスタント（Claude Code・Codex・
 Claude Desktop など）はここへつなぎ、アプリでいま開いている文書のレイヤー・マスク・効果を読み、値を直し、見本の画像を見て、書き出し・保存ができます。
 ツールはアプリが持つので、アプリを更新すれば新しいツールが使えます。この PC の中だけの通信で、ネットワークには出ません。
-使えるツールは、[コマンドライン](CLI.md)の命令と同じ 25 個（名前の `.` は `_` になります）です。描く操作（ストローク・塗りつぶし・選択）・ベイク・別の文書を開くことはできません。
+使えるツールは、[コマンドライン](CLI.md)の命令と同じ 26 個（名前の `.` は `_` になります）です。描く操作（ストローク・塗りつぶし・選択）・ベイク・別の文書を開くことはできません。
 
 ## YoluPainter の設定
 
-1. アプリの「編集 → 設定…」で「外からの操作を受ける」を入れます（既定は切）。入れている間だけ待ち、状態の帯の右端に小さな丸が出ます。丸のツールチップに、つなぐ先の URL が出ます。
+1. アプリの「編集 → 設定…」の「Live Link と外からの操作」で「外からの操作を受ける」を入れます（既定は切）。入れている間だけ待ち、状態の帯の右端に小さな丸が出ます。丸のツールチップに、つなぐ先の URL が出ます。
 2. 番号は、入れている間その下に出る「ポート番号」で変えられます（既定は 17347。1024〜65535）。変えたときは、つなぐ側の設定の番号も同じにします。
 3. 待てないとき（番号をほかのプログラムが使っている など）は、丸が「受けられない」の色になり、ツールチップに理由が出ます。番号を変えるか、そのプログラムを閉じてから、設定を切って入れ直します。
 
@@ -64,7 +64,7 @@ Claude Desktop のチャットは、標準入出力の拡張（`.mcpb`）でつ�
 ### そのほかのクライアント
 
 Streamable HTTP の MCP を話すクライアントなら、`http://127.0.0.1:17347/mcp` を指せばつなげます。標準入出力しか使えないクライアントは、
-`yolupainter-cli mcp`（インストーラーで入れたときは `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`。番号を変えたなら `--port 番号`）を起動するように設定します。
+`yolupainter-cli mcp`（インストーラーで入れたときは `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`、Mac の試作の zip では `YoluPainter.app/Contents/MacOS/yolupainter-cli`。番号を変えたなら `--port 番号`）を起動するように設定します。
 
 ## ツールと資料
 
@@ -73,7 +73,7 @@ Streamable HTTP の MCP を話すクライアントなら、`http://127.0.0.1:17
 失敗は、`isError` の返事で、`code`・日本語と英語の `message`・`data` を持つ JSON です。
 
 - 見本（`preview`）は、PNG を image として返し、同じ PNG への resource_link（`yolupainter://preview/<番号>.png`。直近の 8 枚まで覚えています）も付けます。
-- 資料（resources）: `yolupainter://docs/<名前>` は、入れてある版の文書です（`guide`・`cli`・`mcp`・`install`・`psd`・`brush`・.ylp の形式の仕様 `ylp-format` など。英語があるものは英語が既定で、`<名前>.ja`・`<名前>.en` で言語を選べます）。
+- 資料（resources）: `yolupainter://docs/<名前>` は、入れてある版の文書です（使い方の入り口 `guide` と、その頁 `guide-start`・`guide-paint`・`guide-select`・`guide-layers`・`guide-fill`・`guide-paths`・`guide-3d`・`guide-files`・`guide-settings`・`guide-keys`、`cli`・`mcp`・`install`・`psd`・`brush`・.ylp の形式の仕様 `ylp-format` など。英語があるものは英語が既定で、`<名前>.ja`・`<名前>.en` で言語を選べます）。
   `yolupainter://ops/commands` は命令の一覧と JSON Schema、`yolupainter://ops/effect-kinds` は効果の種類と値の範囲（`effect_list_kinds` と同じ）です。
 - `doc_open` は、アプリが開いているファイルを指したときだけ、その文書を返します。別のファイルは `unsupported` で断ります（アプリは文書を開き替えません）。
 - レイヤーの欄（`layer`・`above`・`parent`）に `$selected` と書くと、アプリの今のテクスチャセットで選んでいるレイヤーを指します。`$created:<n>` は、まとめて当てる実行

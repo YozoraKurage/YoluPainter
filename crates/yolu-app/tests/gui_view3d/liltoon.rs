@@ -80,6 +80,7 @@ fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32) {
         pitch: 0.0,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     };
     h.run();
 }
@@ -875,6 +876,9 @@ fn masked_shadow(doc: &mut yolu_core::Document, extra: usize) -> MaterialLook {
     look
 }
 
+/// 標準のチャンネルが Color だけの絵の 1 テクセルのバイト数: Color の 4 B と、塗り広げるときに持つ重みの絵の 1 B。
+const COLOR_AND_WEIGHT: u64 = 5;
+
 /// ミップ込みのバイト数（`view3d::paint::mip_bytes` と同じ数え方）。
 fn mip_bytes(side: u32, per_texel: u64) -> u64 {
     let mut total = 0u64;
@@ -902,7 +906,7 @@ fn the_user_channel_array_is_in_the_view_budget_and_shrinks_to_fit() {
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(
         s.paint_bytes,
-        mip_bytes(256, 4),
+        mip_bytes(256, COLOR_AND_WEIGHT),
         "標準のチャンネルは Color だけ"
     );
     assert_eq!(
@@ -916,7 +920,7 @@ fn the_user_channel_array_is_in_the_view_budget_and_shrinks_to_fit() {
     );
     let full = h.render().expect("描ける");
     // 全体の予算を、標準のチャンネルの絵と 128² の配列が入る分にする: 配列だけが縮む（標準のチャンネルが先）
-    let budget = mip_bytes(256, 4) + mip_bytes(128, 8);
+    let budget = mip_bytes(256, COLOR_AND_WEIGHT) + mip_bytes(128, 8);
     h.state_mut().view3d_set_paint_budget(budget);
     h.run();
     h.run();
@@ -942,7 +946,8 @@ fn the_user_channel_array_is_in_the_view_budget_and_shrinks_to_fit() {
     }
     assert!(px(&image, egui::pos2(c.x - q, c.y))[0] > px(&image, egui::pos2(c.x + q, c.y))[0] + 10);
     // 標準のチャンネルの絵で予算が尽きても、配列は 1 × 1 まで縮めて持つ（標準のチャンネルの絵と同じ決まり）
-    h.state_mut().view3d_set_paint_budget(mip_bytes(256, 4));
+    h.state_mut()
+        .view3d_set_paint_budget(mip_bytes(256, COLOR_AND_WEIGHT));
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(
@@ -958,7 +963,8 @@ fn two_sets(size: u32) -> Harness<'static, YoluApp> {
         channel, ChannelRoute, MaterialInfo, MaterialKey, MeshData, Model, Submesh as Sub,
         TextureProperty,
     };
-    let mut h = view(1000.0, 640.0, size);
+    // （3D の表示域の幅が前の既定の並びと同じになるよう、右の列を広げた分だけウィンドウも広げる）
+    let mut h = view(1340.0, 640.0, size);
     let materials = (0..2)
         .map(|i| MaterialInfo {
             key: MaterialKey::Material {
@@ -1090,7 +1096,7 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
     let side = side_of(&h, 1);
     assert_eq!(
         s.other_bytes,
-        mip_bytes(side, 4) + mip_bytes(side, 8),
+        mip_bytes(side, COLOR_AND_WEIGHT) + mip_bytes(side, 8),
         "ほかのセットの配列も数える: {s:?}"
     );
     assert_eq!(s.user_bytes, 0, "今のセット（標準）は配列を持たない");
@@ -1118,7 +1124,7 @@ fn another_sets_liltoon_look_is_drawn_and_follows_its_changes() {
         .unwrap();
     h.run();
     let s = h.state().view3d_stats().unwrap();
-    assert_eq!(s.other_bytes, mip_bytes(side, 4), "{s:?}");
+    assert_eq!(s.other_bytes, mip_bytes(side, COLOR_AND_WEIGHT), "{s:?}");
 }
 
 #[test]
@@ -1137,7 +1143,9 @@ fn another_set_is_held_only_when_its_picture_and_user_channels_both_fit() {
     h.run();
     // 今のセット 0（Color だけ）、ほかのセット 1 は Color と 2 レイヤーの配列
     let (side0, side1) = (side_of(&h, 0), side_of(&h, 1));
-    let need = mip_bytes(side0, 4) + mip_bytes(side1, 4) + mip_bytes(side1, 8);
+    let need = mip_bytes(side0, COLOR_AND_WEIGHT)
+        + mip_bytes(side1, COLOR_AND_WEIGHT)
+        + mip_bytes(side1, 8);
     h.state_mut().view3d_set_paint_budget(need - 1);
     h.run();
     let s = h.state().view3d_stats().unwrap();
@@ -1155,7 +1163,10 @@ fn another_set_is_held_only_when_its_picture_and_user_channels_both_fit() {
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
-    assert_eq!(s.other_bytes, mip_bytes(side1, 4) + mip_bytes(side1, 8));
+    assert_eq!(
+        s.other_bytes,
+        mip_bytes(side1, COLOR_AND_WEIGHT) + mip_bytes(side1, 8)
+    );
     assert!(s.peak_bytes <= need, "{s:?}");
 }
 
@@ -1456,11 +1467,14 @@ fn received_textures_are_in_the_view_budget_for_the_current_and_the_other_sets()
     );
     assert_eq!(
         s.other_bytes,
-        mip_bytes(side1, 4) + received,
+        mip_bytes(side1, COLOR_AND_WEIGHT) + received,
         "ほかのセットの受けた絵も数える: {s:?}"
     );
     // ほかのセットは、標準のチャンネルの絵と受けた絵の配列の両方が入るときだけ持つ
-    let need = mip_bytes(side0, 4) + received + mip_bytes(side1, 4) + received;
+    let need = mip_bytes(side0, COLOR_AND_WEIGHT)
+        + received
+        + mip_bytes(side1, COLOR_AND_WEIGHT)
+        + received;
     h.state_mut().view3d_set_paint_budget(need - 1);
     h.run();
     let s = h.state().view3d_stats().unwrap();
@@ -1475,7 +1489,7 @@ fn received_textures_are_in_the_view_budget_for_the_current_and_the_other_sets()
     assert_eq!((s.other_sets, s.other_skipped), (1, 0), "{s:?}");
     assert!(s.peak_bytes <= need, "{s:?}");
     // 今のセットの受けた絵の配列は、標準のチャンネルの絵の残りに収まるまで縮める（ほかのセットは持たない）
-    let budget = mip_bytes(side0, 4) + mip_bytes(16, 8);
+    let budget = mip_bytes(side0, COLOR_AND_WEIGHT) + mip_bytes(16, 8);
     h.state_mut().view3d_set_paint_budget(budget);
     h.run();
     h.step();
@@ -1636,6 +1650,7 @@ fn measure_frames_standard_and_liltoon() {
             pitch: 10.0,
             distance: 1.6,
             model_radius: 1.0,
+            ..Default::default()
         };
         let mut sums = vec![(Vec::new(), Vec::new(), Vec::new()); looks.len()];
         // 見た目を切り替えたあと落ち着くまで（1 回目はソフトの描画ならパイプラインを作る。2 回目からは作ったものを使う）

@@ -426,6 +426,32 @@ mod tests {
     }
 
     #[test]
+    fn the_bucket_snap_to_symmetry_ruler_is_kept_in_a_saved_preset_and_is_on_for_files_without_it()
+    {
+        let at = fields(Tool::Fill)
+            .iter()
+            .position(|f| f.key == "snap_symmetry")
+            .unwrap();
+        // 古いファイル（欄が無い）は入
+        let old = "yolupainter-subtools 1\ntool=fill\npreset.1.name=x\n";
+        assert_eq!(
+            decode(Tool::Fill, old).unwrap()[0].values[at],
+            Value::Bool(true)
+        );
+        // 切にして書き出し、読み直しても切
+        let mut values = defaults(Tool::Fill);
+        values[at] = Value::Bool(false);
+        let presets = vec![UserPreset {
+            id: 1,
+            name: "対称なし".into(),
+            values,
+        }];
+        let text = encode(Tool::Fill, &presets);
+        assert!(text.contains("preset.1.snap_symmetry=false"), "{text}");
+        assert_eq!(decode(Tool::Fill, &text).unwrap(), presets);
+    }
+
+    #[test]
     fn missing_fields_read_as_defaults() {
         let text = "yolupainter-subtools 1\ntool=fill\npreset.3.name=x\npreset.3.tolerance=9\n";
         let got = decode(Tool::Fill, text).unwrap();

@@ -1,7 +1,7 @@
-//! グラデーションのツール（Shift+G）: 2D のキャンバスをドラッグして、始点から終点へ、線形か放射で塗る。始点の色は描画色、終点は透明かサブの色
-//! （補間は乗算済みアルファ。core の `GradientSettings`）。選んだレイヤーの描くチャンネル 1 つ、マテリアルで塗るときはその組の全部（終点を
-//! 現在のマテリアルにして 2 つのマテリアルの間も）、マスクを描くときはマスクに（白で見せる・黒で隠す）。どれも 1 回の Undo。ロックは core が断る。
-//! 3D ビューには使わない（形のグラデーションは塗りつぶしレイヤーの `fillfx`）。
+//! グラデーションのツール（Shift+G）: 2D のキャンバスか 3D ビューの画面をドラッグして、始点から終点へ、線形か放射で塗る。始点の色は描画色、
+//! 終点は透明かサブの色（補間は乗算済みアルファ。core の `GradientSettings`）。選んだレイヤーの描くチャンネル 1 つ、マテリアルで塗るときはその組の
+//! 全部（終点を現在のマテリアルにして 2 つのマテリアルの間も）、マスクを描くときはマスクに（白で見せる・黒で隠す）。どれも 1 回の Undo。ロックは
+//! core が断る。2D は画素の中心の点で、3D ビュー（`view3d::draft`）は見えているテクセルが写る画面の点で色を決める（式は同じ）。
 
 pub mod canvas;
 pub mod props;
@@ -141,20 +141,37 @@ impl AppState {
 
     /// 始点から終点へ塗る（C# の `FinishToolDrag` のグラデーション）。
     fn gradient_paint(&mut self, a: (f64, f64), b: (f64, f64)) {
-        let lang = self.lang;
         if self.is_stroking() {
-            self.refuse(Source::Gradient, crate::lang::refusals::during_stroke(lang));
+            self.refuse(
+                Source::Gradient,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
             return;
         }
         if (a.0 - b.0).hypot(a.1 - b.1) < Self::GRADIENT_CLICK {
             return;
         }
+        let Some((id, masked)) = self.gradient_target() else {
+            return;
+        };
+        self.gradient_fill(
+            id,
+            masked,
+            (DVec2::new(a.0, a.1), DVec2::new(b.0, b.1)),
+            None,
+            &|x, y| Some(DVec2::new(x as f64 + 0.5, y as f64 + 0.5)),
+        );
+    }
+
+    /// グラデーションを塗るレイヤーとマスクを描くか（塗れなければ理由を知らせて None）。
+    pub(crate) fn gradient_target(&mut self) -> Option<(yolu_core::LayerId, bool)> {
+        let lang = self.lang;
         let Some(id) = self.selected_layer else {
             self.refuse(
                 Source::Gradient,
                 lang.pick("描くレイヤーがありません。", "No layer to paint on."),
             );
-            return;
+            return None;
         };
         let masked = self.m2.edit_mask;
         let kind = self.doc.layer(id).map(|l| l.kind());
@@ -166,13 +183,27 @@ impl AppState {
                     "Only a paint layer or a mask takes a gradient",
                 ),
             );
-            return;
+            return None;
         }
+        Some((id, masked))
+    }
+
+    /// 始点から終点（`ends`。`place` の点の空間）へ塗る。region は塗る量（無ければ選択範囲だけ）、place は画素の色を決める点（None の
+    /// 画素は変えない。2D は画素の中心、3D はテクセルが写る画面の点）。
+    pub(crate) fn gradient_fill(
+        &mut self,
+        id: yolu_core::LayerId,
+        masked: bool,
+        (start, end): (DVec2, DVec2),
+        region: Option<&yolu_core::SelectionMask>,
+        place: &(dyn Fn(u32, u32) -> Option<DVec2> + Sync),
+    ) {
+        let lang = self.lang;
         let (from, to) = self.gradient_ends();
         let mut settings = GradientSettings {
             shape: self.gradient.shape,
-            start: DVec2::new(a.0, a.1),
-            end: DVec2::new(b.0, b.1),
+            start,
+            end,
             from,
             to,
             opacity: f64::from(self.brush.opacity),
@@ -184,7 +215,8 @@ impl AppState {
             // マスクは、始点の黒（隠す量 1）から透明へ。消す（reveal）なら見せる向き
             settings.from = Rgba8::new(0, 0, 0, 255);
             settings.to = Rgba8::TRANSPARENT;
-            self.doc.gradient_mask(id, &settings, None, erase)
+            self.doc
+                .gradient_mask_at(id, &settings, region, erase, place)
         } else if self.paints_material() {
             let channels = self.paint_channels();
             let end_paints: Option<Vec<ChannelPaint>> = if self.gradient.between {
@@ -197,18 +229,26 @@ impl AppState {
             } else {
                 None
             };
-            self.doc
-                .gradient_material(id, &channels, end_paints.as_deref(), &settings, None, erase)
+            self.doc.gradient_material_at(
+                id,
+                &channels,
+                end_paints.as_deref(),
+                &settings,
+                region,
+                erase,
+                place,
+            )
         } else {
             // 描くチャンネル 1 つ。無効のチャンネルは有効にして、1 回の Undo で塗る
             let channel = self.m2.paint_channel;
-            self.doc.gradient_material(
+            self.doc.gradient_material_at(
                 id,
                 &[ChannelPaint::new(channel, from)],
                 Some(&[ChannelPaint::new(channel, to)]),
                 &settings,
-                None,
+                region,
                 erase,
+                place,
             )
         };
         match result {
@@ -231,9 +271,15 @@ impl AppState {
         }
     }
 
-    /// ドラッグの途中の形を捨てる（Esc・ツールの切り替え・フォーカスを失ったとき）。何かあったか。
+    /// ドラッグの途中の形を捨てる（Esc・ツールの切り替え・フォーカスを失ったとき。2D のキャンバスと 3D ビューの両方）。何かあったか。
     pub fn gradient_cancel_drag(&mut self) -> bool {
         self.gradient.pen_down = None;
-        self.gradient.drag.take().is_some()
+        let surface = self
+            .view3d
+            .input
+            .draft
+            .take_if(|d| d.kind == crate::view3d::draft::DraftKind::Gradient)
+            .is_some();
+        self.gradient.drag.take().is_some() || surface
     }
 }

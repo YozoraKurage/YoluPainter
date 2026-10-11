@@ -1,5 +1,5 @@
-//! 行の核（[`super`]）が、道（スカラー・SSE4.1・AVX2）によらず、画素ごとの式（`apply_at`）と同じバイトを出すこと。ブラシ・レイヤーの中身・
-//! タイルの大きさ・点の列を乱数で振って、同じ入力を画素ごとの式（行の核を使わない）と 3 つの道の行の核で描き、レイヤーの全バイトと
+//! 行の核（[`super`]）が、道（スカラー・SSE4.1・AVX2・NEON）によらず、画素ごとの式（`apply_at`）と同じバイトを出すこと。ブラシ・レイヤーの中身・
+//! タイルの大きさ・点の列を乱数で振って、同じ入力を画素ごとの式（行の核を使わない）と この CPU が持つ全部の道の行の核で描き、レイヤーの全バイトと
 //! ダブの数・変わったかが一致することを確かめる。
 
 use super::*;
@@ -94,6 +94,7 @@ fn random_case(seed: u64) -> Case {
         pressure_opacity: r.chance(0.5),
         pressure_flow: r.chance(0.5),
         erase: r.chance(0.2),
+        anti_alias: AntiAlias::None,
     });
     b.seed = r.next() as i32;
     if r.chance(0.4) {
@@ -203,7 +204,7 @@ fn random_case(seed: u64) -> Case {
             r.unit(),
         ));
     }
-    Case {
+    let mut case = Case {
         brush: b,
         size,
         tile,
@@ -219,7 +220,10 @@ fn random_case(seed: u64) -> Case {
         parallel: r.chance(0.25),
         tight_budget: r.chance(0.1),
         seed,
-    }
+    };
+    // アンチエイリアスの段は最後に引く（前の項目の乱数の列を変えない）
+    case.brush.base.anti_alias = r.pick(&AntiAlias::ALL);
+    case
 }
 
 /// レイヤーの全バイト、ダブの数、画素が変わったか、取り消して元に戻ったか。
@@ -416,6 +420,88 @@ fn every_level_paints_the_same_bytes_as_the_per_pixel_formula() {
     assert!(refusals > 0, "予算で断られる事例も通る");
 }
 
+/// 縁のアンチエイリアスの段ごとに、硬い丸・細い線・1 画素より小さいダブ・回して潰した丸・小さな画像の筆先・デュアルの丸を、どの道でも
+/// 画素ごとの式と同じバイトで描く（乱数の事例とは別に、段のある形を必ず通す）。
+#[test]
+fn anti_aliased_shapes_paint_the_same_bytes_on_every_level() {
+    let levels = forced::supported();
+    let shapes: Vec<Brush> = {
+        let base = |radius: f64, hardness: f64| {
+            Brush::from(BrushSettings {
+                radius,
+                hardness,
+                spacing: 0.2,
+                color: Rgba8::new(200, 30, 60, 255),
+                ..BrushSettings::default()
+            })
+        };
+        let mut ellipse = base(9.0, 1.0);
+        ellipse.tip.roundness = 0.2;
+        ellipse.tip.angle = 37.0;
+        let mut thin = base(4.0, 1.0);
+        thin.tip.roundness = 0.05;
+        thin.tip.angle = 120.0;
+        let mut tip = base(0.4, 1.0);
+        tip.tip.image = builtin_tip("rounded-square");
+        let mut dual = base(7.0, 0.9);
+        dual.dual = Some(DualBrush {
+            radius: 1.2,
+            hardness: 1.0,
+            roundness: 0.5,
+            angle: 20.0,
+            ..DualBrush::default()
+        });
+        let needle = |radius: f64, roundness: f64, angle: f64| {
+            let mut b = base(radius, 1.0);
+            b.tip.roundness = roundness;
+            b.tip.angle = angle;
+            b
+        };
+        vec![
+            base(6.0, 1.0),
+            base(1.3, 0.95),
+            base(0.3, 1.0),
+            ellipse,
+            thin,
+            tip,
+            dual,
+            needle(6.0, 0.05, 15.0),
+            needle(3.0, 0.1, 45.0),
+            needle(12.0, 0.04, 70.0),
+        ]
+    };
+    for (i, shape) in shapes.into_iter().enumerate() {
+        for level in AntiAlias::ALL {
+            let mut brush = shape.clone();
+            brush.base.anti_alias = level;
+            let case = Case {
+                brush,
+                size: (77, 64),
+                tile: 16,
+                ground: Ground::Noise,
+                points: vec![
+                    (5.3, 7.1, 0.3),
+                    (40.7, 33.2, 1.0),
+                    (70.25, 12.5, 0.6),
+                    (30.0, 58.0, 0.1),
+                ],
+                selection: false,
+                locked: false,
+                parallel: i % 2 == 0,
+                tight_budget: false,
+                seed: i as u64,
+            };
+            let reference =
+                forced::with_level(Level::Scalar, || per_pixel(|| run(&case))).expect("始められる");
+            assert!(reference.changed, "{i} {level:?}");
+            for &l in &levels {
+                let got = forced::with_level(l, || run(&case)).expect("始められる");
+                assert_eq!(got.pixels, reference.pixels, "形 {i} {level:?} 道 {l:?}");
+            }
+        }
+    }
+}
+
 /// 道を固定する別のスレッドが、ストロークの途中で道を切り替えても落ちない（判断と実行で道を別々に読むと、その間にスカラーの道へ
 /// 変わって、行の核の入口が使えない道に当たる）。固定を切り替えるのは試験だけだが、ほかの試験のストロークと並んで走るので起こりうる。
 #[test]
@@ -442,4 +528,54 @@ fn a_level_switched_by_another_thread_does_not_break_a_stroke() {
             let _ = run(&random_case(seed));
         }
     });
+}
+
+/// 整数の値のレーンを添字にする変換（`Slice32::to_i32`）は、どの道でも `truncate_i32`（x86_64 の `cvttps2dq` と同じ）と同じ値になる。
+/// 範囲の外・NaN・無限大は `i32::MIN`、範囲の中は 0 へ切り捨て（NEON の `vcvtq_s32_f32` は範囲の外を飽和、NaN を 0 にするので、
+/// 揃え直してあることの確かめ）。
+#[test]
+fn to_i32_follows_the_truncating_conversion_on_every_level() {
+    use crate::math::simd::on_each_level32;
+    unsafe fn check<V: Slice32>() {
+        let values = [
+            0.0f32,
+            -0.0,
+            0.5,
+            -0.5,
+            1.9999,
+            -1.9999,
+            255.5,
+            -255.5,
+            8_388_607.5,
+            -8_388_607.5,
+            2_147_483_520.0,
+            2_147_483_648.0,
+            -2_147_483_648.0,
+            -2_147_483_904.0,
+            1e30,
+            -1e30,
+            f32::MAX,
+            f32::MIN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            f32::from_bits(0xFFC0_0000),
+            f32::from_bits(0x7F80_0001),
+            f32::MIN_POSITIVE,
+        ];
+        for start in 0..values.len() {
+            let v = V::from_fn(|k| values[(start + k) % values.len()]);
+            let mut out = [0x5A5A_5A5Ai32; 8];
+            V::to_i32(v, &mut out);
+            for k in 0..V::N {
+                let x = values[(start + k) % values.len()];
+                assert_eq!(out[k], truncate_i32(x), "{x}");
+            }
+            assert!(
+                out[V::N..].iter().all(|&o| o == 0x5A5A_5A5A),
+                "先頭の N 個より後ろは書かない"
+            );
+        }
+    }
+    on_each_level32!(check);
 }

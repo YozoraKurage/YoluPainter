@@ -1011,6 +1011,7 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::MaterialsUnreadable(3),
         SutNote::BrushesCapped(7),
         SutNote::MaterialsCapped,
+        SutNote::AntiAliasing(5.0),
     ];
     for n in all {
         let note = Unrepresented::ClipStudio(n.clone());
@@ -1021,6 +1022,47 @@ fn every_note_has_a_sentence_in_both_languages() {
         for text in [&ja, &en] {
             assert!(!text.chars().any(|c| c.is_control()), "{n:?}");
         }
+    }
+}
+
+#[test]
+fn the_anti_alias_column_maps_to_the_four_levels() {
+    use yolu_core::AntiAlias;
+    // `AntiAlias` の 0〜3 は、画面の選びの順（なし・弱・中・強）
+    for (value, level) in [
+        (0, AntiAlias::None),
+        (1, AntiAlias::Weak),
+        (2, AntiAlias::Medium),
+        (3, AntiAlias::Strong),
+    ] {
+        let file = SutBuilder::new()
+            .brush(
+                "Pen",
+                1,
+                &[("BrushHardness", int(100)), ("AntiAlias", int(value))],
+            )
+            .build();
+        let b = &ok(&file).brushes[0];
+        assert_eq!(b.brush.base.anti_alias, level, "{value}");
+        assert!(mapped(b, SutMapped::AntiAliasing), "{value}");
+        assert_eq!(b.unrepresented, vec![], "{value}");
+    }
+    // 列が無いブラシは今の見た目のまま（なし）で、写した項目にも載らない
+    let file = SutBuilder::new()
+        .brush("Pen", 1, &[("BrushHardness", int(100))])
+        .build();
+    let b = &ok(&file).brushes[0];
+    assert_eq!(b.brush.base.anti_alias, AntiAlias::None);
+    assert!(!mapped(b, SutMapped::AntiAliasing));
+    // 知らない値は写さず（なし）、値を添えて知らせる
+    for (cell, value) in [(int(4), 4.0), (int(-1), -1.0), (real(1.5), 1.5)] {
+        let file = SutBuilder::new()
+            .brush("Pen", 1, &[("AntiAlias", cell)])
+            .build();
+        let b = &ok(&file).brushes[0];
+        assert_eq!(b.brush.base.anti_alias, AntiAlias::None, "{value}");
+        assert!(!mapped(b, SutMapped::AntiAliasing), "{value}");
+        assert!(has(b, SutNote::AntiAliasing(value)), "{value}");
     }
 }
 

@@ -64,6 +64,7 @@ pub mod normal;
 pub mod padding;
 pub mod paths;
 mod ranges;
+pub mod rulers;
 pub mod selection;
 pub mod skin;
 pub mod smart;
@@ -80,11 +81,11 @@ pub use adjust::{
     ColorBalance, GradientMap, Posterize, Threshold, ToneChannel, ToneCurves,
 };
 pub use brush::{
-    builtin_presets, builtin_tip, Brush, BrushEffect, BrushMappedPixel, BrushPixel, BrushPreset,
-    BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics, ColorMix,
-    Controls, DualBrush, DualBrushMode, ImageColorSpace, Jitter, MixGround, MixMode, PaperTexture,
-    PressureResponse, PressureResponses, StencilImage, StencilMapping, StencilMode, StencilPoint,
-    StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
+    builtin_presets, builtin_tip, AntiAlias, Brush, BrushEffect, BrushMappedPixel, BrushPixel,
+    BrushPreset, BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics,
+    ColorMix, Controls, DualBrush, DualBrushMode, ImageColorSpace, Jitter, MixGround, MixMode,
+    PaperTexture, PressureResponse, PressureResponses, StencilImage, StencilMapping, StencilMode,
+    StencilPoint, StencilTiling, StrokeAssist, TextureMode, TipSelection, TipShape,
 };
 pub use document::{
     clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,
@@ -104,6 +105,10 @@ pub use glam;
 pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};
 pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
 pub use paths::LayerPathEntry;
+pub use rulers::{
+    Ruler, RulerId, RulerKind, RulerPlace, RulerRef, RulerScope, RulerSpace, SpecialRulers,
+    MAX_RULERS_PER_LAYER,
+};
 pub use selection::{SelectionCombine, SelectionMask};
 pub use surface::Surface;
 pub use symmetry::{CanvasSymmetry, SymmetryMode, SymmetryTransform};

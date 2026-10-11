@@ -38,6 +38,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "tune",
     "view_in_ar",
     "flip",
+    "snap_ruler",
+    "snap_special",
     "rotate_90_degrees_cw",
     "rotate_90_degrees_ccw",
     "warning",
@@ -105,6 +107,7 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "shape_intersect",
     "edit",
     "quick_mask",
+    "more_horizontal",
     "tools/move",
     "tools/move_selected",
     "tools/liquify",
@@ -115,6 +118,8 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "flip_vertical",
     "tools/path",
     "tools/path_selected",
+    "tools/ruler",
+    "tools/ruler_selected",
     "conversion_path",
     "window_minimize",
     "window_maximize",
@@ -175,8 +180,6 @@ impl Icons {
         for (alias, source) in [
             ("tools/shape", "shapes"),
             ("tools/shape_selected", "shapes"),
-            ("tools/ruler", "grid_dots"),
-            ("tools/ruler_selected", "grid_dots"),
         ] {
             if let Some(set) = map.get(source).cloned() {
                 map.insert(alias, set);

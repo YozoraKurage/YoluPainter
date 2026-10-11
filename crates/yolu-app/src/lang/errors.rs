@@ -37,7 +37,7 @@ fn lock_list(lang: Lang, lock: yolu_core::LayerLocks) -> String {
 /// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
 pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
     if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
-        Some("A document exceeds the Layer memory budget")
+        Some("A project exceeds the Layer memory budget")
     } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
         Some("The whole exceeds the Layer memory budget")
     } else if text.contains("グループの入れ子の上限") {
@@ -507,7 +507,7 @@ impl Lang {
                 if more > 0 {
                     text += &format!(" and {more} more");
                 }
-                format!("Unsupported document features ({text})")
+                format!("Unsupported project features ({text})")
             }
         }
     }
@@ -563,6 +563,7 @@ fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
         EmptyGroup => "The group is empty",
         NothingVisible => "No visible layers",
         DifferentGroups => "Layers have different parent groups",
+        TooManyRulers => "The merged layer would have too many rulers",
     }
 }
 
@@ -702,8 +703,8 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
             "Stencil point count must match pixel count"
         }
         "ステンシルの画像の画素 / 点" => "Stencil image pixels / points",
-        "大きさの変更の準備のあとに文書が変わった" => {
-            "The document changed after the resize was prepared"
+        "大きさの変更の準備のあとにプロジェクトが変わった" => {
+            "The project changed after the resize was prepared"
         }
         "ステンシルの点（±1e9）" => "Stencil point (±1e9)",
         "ステンシルの画像のバイト数が幅 × 高さ × 4 でない" => {
@@ -731,14 +732,14 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "写した画素のバイト数が幅 × 高さ × 4 でない" => {
             "Copied pixels must be width × height × 4 bytes"
         }
-        "写した文書の大きさ" => "Size of the source document",
-        "写した矩形が文書の外" => "Copied rectangle lies outside the document",
+        "写したキャンバスの大きさ" => "Size of the source canvas",
+        "写した矩形がキャンバスの外" => "Copied rectangle lies outside the canvas",
         "写した矩形が空" => "Copied rectangle is empty",
         "画素が矩形の外" => "Pixel outside the rectangle",
         "画素を置き換えられるのはラスターレイヤーだけ" => {
             "Only paint layers have pixels to replace"
         }
-        "画像の大きさが文書と違う" => "Image size differs from the document",
+        "画像の大きさがキャンバスと違う" => "Image size differs from the canvas",
         "無効のチャンネルは切り取れない" => "Cannot cut a disabled channel",
         "無効のチャンネルは置き換えられない" => {
             "Cannot replace a disabled channel"
@@ -793,7 +794,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "筆先の覆いの長さが幅 × 高さでない" => {
             "Brush tip coverage size must be width × height"
         }
-        "範囲の大きさが文書と違う" => "Region size does not match document",
+        "範囲の大きさがキャンバスと違う" => "Region size does not match canvas",
         "色のゆらぎ（0〜1）" => "Color dynamics (0–1)",
         "色相/彩度のレイヤーが有効" => "Hue/Saturation layer enabled",
         "色相/彩度は色のチャンネルだけ" => "Hue/Saturation requires a color channel",
@@ -826,14 +827,14 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "調整レイヤーには描けない" => "Cannot paint an adjustment layer",
         "速さの上限（0 より大きい）" => "Maximum speed (greater than zero)",
-        "選択範囲のタイルが文書の外" => "Selection tile outside document",
+        "選択範囲のタイルがキャンバスの外" => "Selection tile outside canvas",
         "選択範囲のタイルが空" => "Empty selection tile",
         "選択範囲のタイルが重なっている" => "Overlapping selection tiles",
         "選択範囲のタイルの余白が 0 でない" => "Selection tile padding must be zero",
         "選択範囲のタイルの大きさ" => "Selection tile size",
         "選択範囲のタイルの長さ" => "Selection tile length",
         "選択範囲の大きさ" => "Selection size",
-        "選択範囲の大きさが文書と違う" => "Selection size does not match document",
+        "選択範囲の大きさがキャンバスと違う" => "Selection size does not match canvas",
         "選択範囲の名前が空" => "The selection name is empty",
         "選択範囲の名前が長すぎる" => "The selection name is too long",
         "選択範囲の名前に制御文字がある" => {
@@ -851,7 +852,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "選択範囲の大きさが違う" => "Selection size mismatch",
         "選択範囲を戻せるのは読み込みの直後だけ" => {
-            "Selection restore requires a freshly loaded document"
+            "Selection restore requires a freshly loaded project"
         }
         "面が無い" => "Surface not found",
         "UV 比較の解像度" => "UV comparison resolution",
@@ -1006,8 +1007,8 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "描いた面のチャンネルが重なっている" => {
             "Painted surface channels are duplicated"
         }
-        "描いた面は、パスのチャンネルごとに、文書と同じ大きさで 1 つ" => {
-            "One painted surface per path channel, at the document size"
+        "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ" => {
+            "One painted surface per path channel, at the canvas size"
         }
         "画像の ID が空" => "Image ID is empty",
         "画像の大きさ" => "Image size",
@@ -1058,6 +1059,36 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         }
         "テキストレイヤーの Color が無い" => "The text layer has no Color",
         "まとめるテキストの段が無い" => "No text step to merge into",
+        "線対称の線の本数（偶数）" => "Line symmetry needs an even number of lines",
+        "対称の角度（±360 度）" => "The symmetry angle must be within ±360 degrees",
+        "レイヤーに付けられる定規は 64 個まで" => "A layer can have at most 64 rulers",
+        "定規の ID が重なっている" => "Ruler IDs overlap",
+        "定規の ID がほかのレイヤーの定規と重なっている" => {
+            "A ruler ID overlaps a ruler on another layer"
+        }
+        "移し先が同じレイヤー" => "The target layer is the same layer",
+        "移す定規がそのレイヤーに無い" => "The ruler to move is not on that layer",
+        "その定規がそのレイヤーに無い" => "That ruler is not on that layer",
+        "直線定規はスナップする特殊定規にならない" => {
+            "A straight ruler cannot be the snapping special ruler"
+        }
+        "定規の ID（0 は使わない）" => "A ruler ID cannot be 0",
+        "定規の点（有限・±1e7）" => "Ruler points must be finite and within ±1e7",
+        "定規の 2 点が近すぎる（0.01 画素以上）" => {
+            "The two ruler points are too close (at least 0.01 px apart)"
+        }
+        "見えない面にも写すのは 3D の対称だけ" => {
+            "Mirroring onto hidden faces is for 3D symmetry only"
+        }
+        "定規の点（有限・±1e6）" => "Ruler points must be finite and within ±1e6",
+        "定規の 2 点が近すぎる（1e-6）" => "The two ruler points are too close (at least 1e-6 apart)",
+        "定規の向きが 0" => "The ruler direction is zero",
+        "対称定規の最初の線が回転の軸と平行" => {
+            "The first line of a symmetry ruler is parallel to its rotation axis"
+        }
+        "2 点はパースだけ" => "Two points are for a perspective ruler only",
+        "対称定規の線の本数（2〜16）" => "A symmetry ruler has 2 to 16 lines",
+        "線の本数と線対称は対称定規だけ" => "Line count and line symmetry are for symmetry rulers only",
         _ => return None,
     })
 }
@@ -1141,6 +1172,10 @@ impl Lang {
                 "見えない対称の写しは飛ばしました",
                 "Symmetry copies that cannot be seen were skipped",
             ),
+            UvMismatch => self.pick(
+                "UV が潰れているか大きさが合わない対称の写しは飛ばしました",
+                "Symmetry copies with flat or mismatched UVs were skipped",
+            ),
             Painted | OnPlane => "",
         }
     }
@@ -1196,44 +1231,45 @@ impl Lang {
             ),
         }
     }
-    /// 3D のブラシのストロークで、打ち（ブラシの 1 回分）や対称の写しを塗れなかった理由。どれもその打ち・写しだけを飛ばして
-    /// ストロークは続く（終わったあとに知らせる）。上限の 4 つは、見えない面にも塗る写し（球の中の面）と、写しの点を探す所でだけ
-    /// 起きる。パスの評価はどの断りでも評価ごと失敗するので、その文は `path_dab_refusal`。内部の言葉（BVH・予算・レイ・
-    /// スナップショット）は使わず、原因を使う人の言葉で短く言う。
+    /// 3D のブラシのストロークで、打ち（ブラシの 1 回分。対称の写し・デュアルブラシの 2 つ目の打ちも）を塗れなかった理由。2D の
+    /// ストロークと同じく、どれもストロークごと取り消す（塗り残しを作らない）ので、「取り消し」を言う。1 回の操作のメモリが足りない
+    /// ときは、2D の予算を超えたときと同じ文。パスの評価の文は `path_dab_refusal`。内部の言葉（BVH・予算・レイ・スナップショット）は
+    /// 使わず、原因を使う人の言葉で短く言う。
     fn dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
             SnapshotChanged => self.pick(
-                "モデルが変わったため、塗れなかった所があります",
-                "Some parts were not painted because the model changed",
+                "モデルが変わったため、取り消しました",
+                "Cancelled: the model changed",
             ),
             InvalidArguments => self.pick(
-                "ブラシの大きさかカメラが範囲外で、塗れなかった所があります",
-                "Some parts were not painted: brush size or camera out of range",
+                "ブラシの大きさかカメラが範囲外のため、取り消しました",
+                "Cancelled: brush size or camera out of range",
             ),
             BindingMismatch => self.pick(
-                "面がモデルと合わず、塗れなかった所があります",
-                "Some parts were not painted: the surface does not match the model",
+                "面がモデルと合わないため、取り消しました",
+                "Cancelled: the surface does not match the model",
             ),
             TriangleBudget => self.pick(
-                "写しがまたがる面が多すぎて、塗れなかった所があります",
-                "Some parts were not painted: a copy covers too many faces",
+                "ブラシがまたがる面が多すぎるため、取り消しました",
+                "Cancelled: the brush covers too many faces",
             ),
             PixelBudget => self.pick(
-                "写しの範囲が広すぎて、塗れなかった所があります",
-                "Some parts were not painted: a copy covers too large an area",
+                "ブラシの範囲が広すぎるため、取り消しました",
+                "Cancelled: the brush area is too large",
             ),
             VisibilityBudget => self.pick(
-                "見える面の判定が多すぎて、塗れなかった所があります",
-                "Some parts were not painted: too many points to check",
+                "見える面の判定が多すぎるため、取り消しました",
+                "Cancelled: too many points to check for visibility",
             ),
             BvhBudget => self.pick(
-                "重なった面が多すぎて、写しを塗れなかった所があります",
-                "Some parts were not painted: too many overlapping faces",
+                "重なった面が多すぎるため、取り消しました",
+                "Cancelled: too many overlapping faces under the brush",
             ),
+            // 2D の `CoreError::StrokeBudgetExceeded` と同じ文
             MemoryBudget => self.pick(
-                "1 回の操作のメモリが足りず、塗れなかった所があります",
-                "Some parts were not painted: not enough memory for one operation",
+                "1 回の操作のメモリの予算を超えます（取り消しました）",
+                "Over the memory budget of one operation (cancelled)",
             ),
         }
     }
@@ -1564,8 +1600,8 @@ pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
             "Not a readable PSD (damaged or unsupported)".into(),
         ),
         CopyRefusal::LargeDocument => lang.pick(
-            "PSB（大きな文書）は取り込めません".into(),
-            "PSB (large document) files cannot be imported".into(),
+            "PSB 形式は取り込めません".into(),
+            "PSB files cannot be imported".into(),
         ),
         CopyRefusal::ColorFormat { depth, mode } => {
             let name = crate::psd_import::color_mode_name(lang, *mode);
@@ -1765,6 +1801,7 @@ mod tests {
             EmptyGroup,
             NothingVisible,
             DifferentGroups,
+            TooManyRulers,
         ]
         .into_iter()
         .map(CoreError::MergeRefused)
@@ -2271,22 +2308,32 @@ mod tests {
         }
     }
 
-    /// 3D のブラシのストロークで塗れなかった理由の 8 つの文は、内部の言葉（BVH・予算・レイ・スナップショット）を使わず、短く、日英で別々の文になる。
-    /// どれもその打ち・写しだけを飛ばしてストロークは残るので、「取り消し」を言わず、塗れなかった所があると言う。
+    /// 3D のブラシのストロークで塗れなかった理由の 8 つの文。2D のストロークと同じく、どれもストロークごと取り消すので「取り消し」を言う。
+    /// 1 回の操作のメモリが足りないときは、2D の予算を超えたとき（`CoreError::StrokeBudgetExceeded`。設定のウィンドウの名前で言う）と
+    /// 同じ文。ほかの 7 つは内部の言葉（BVH・予算・レイ・スナップショット）を使わず、短く、日英で別々の文になる。
     #[test]
-    fn dab_refusals_are_told_in_the_users_words() {
+    fn dab_refusals_cancel_the_stroke_and_the_memory_one_is_the_2d_sentence() {
+        use yolu_core::geometry::{DabRefusal, SurfaceStrokeError};
         let mut seen = std::collections::BTreeSet::new();
         for refusal in DAB_REFUSALS {
             let (ja, en) = (Lang::Ja.dab_refusal(refusal), Lang::En.dab_refusal(refusal));
+            assert!(
+                ja.contains("取り消") && en.to_ascii_lowercase().contains("cancelled"),
+                "{refusal:?}: {ja} / {en}"
+            );
+            for lang in [Lang::Ja, Lang::En] {
+                assert_eq!(
+                    lang.surface_error(&SurfaceStrokeError::Dab(refusal)),
+                    lang.dab_refusal(refusal),
+                    "{refusal:?}"
+                );
+            }
+            if refusal == DabRefusal::MemoryBudget {
+                assert_eq!(ja, Lang::Ja.core_error(&CoreError::StrokeBudgetExceeded));
+                assert_eq!(en, Lang::En.core_error(&CoreError::StrokeBudgetExceeded));
+                continue;
+            }
             assert_users_words(&mut seen, &format!("{refusal:?}"), ja, en);
-            assert!(
-                !ja.contains("取り消") && ja.ends_with("所があります"),
-                "{refusal:?}: {ja}"
-            );
-            assert!(
-                en.starts_with("Some parts were not painted"),
-                "{refusal:?}: {en}"
-            );
         }
     }
 
@@ -2564,6 +2611,6 @@ mod tests {
         let ja = Lang::Ja.unsupported_features(&issues);
         assert!(ja.contains("ロック") && ja.contains("ほか 2 件"), "{ja}");
         let en = Lang::En.unsupported_features(&issues);
-        assert_eq!(en, "Unsupported document features (layers[0].locks, manual_id_colors, layers[1].filters and 2 more)");
+        assert_eq!(en, "Unsupported project features (layers[0].locks, manual_id_colors, layers[1].filters and 2 more)");
     }
 }

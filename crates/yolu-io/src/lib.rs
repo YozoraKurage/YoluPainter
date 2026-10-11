@@ -31,10 +31,10 @@ pub use generation::{
     StoreError, INFO_LIMIT, INFO_NAME,
 };
 pub use native::{
-    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, BAKE_PRIORITY_VERSION,
-    EFFECTS_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
-    PROCEDURAL_VERSION, SEAMS_VERSION, SPLIT_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
-    USER_CHANNELS_VERSION,
+    NativeDocument, NativeField, NativeValue, ADJUST_VERSION, ANTI_ALIAS_VERSION,
+    BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION,
+    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, SPLIT_VERSION,
+    TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 pub use package::{
     Blob, Keep, Limits, Package, Thresholds, MAX_ENTRIES, MAX_ONE_ENTRY, MAX_PART_BYTES,
@@ -48,8 +48,8 @@ pub use project::{
 pub use selection::{Selection, SelectionTile};
 use std::fmt;
 pub use store::{
-    backup_folder, backups, BackupKeep, FileStamp, PruneFailure, SaveReport, SaveStage, SaveTarget,
-    MAX_BACKUPS_TO_KEEP,
+    backup_folder, backup_origin, backups, BackupKeep, FileStamp, PruneFailure, SaveReport,
+    SaveStage, SaveTarget, MAX_BACKUPS_TO_KEEP,
 };
 
 /// 画面は種類から短い理由を作る。Display は内部の詳細診断を保つ。

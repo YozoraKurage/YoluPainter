@@ -1,18 +1,17 @@
-//! 選択範囲と 2D の対称のツール（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
+//! 選択範囲のツール（画面の側）。形（矩形・楕円・投げ縄・多角形・自動選択）を core の `SelectionMask` にして、今の選択範囲と
 //! 作成方法（新規・追加・削除・共通）で組み合わせ、1 回の Undo で文書に置く。メニュー（すべて・解除・反転・拡張・縮小・境界・ぼかし・くっきり）も、
 //! core の `SelectionMask` の操作を呼ぶだけ。選択範囲は文書（`Document`）が持つので、セットごとに別で、Undo・.ylp の保存と読み込みも文書に付く。
 //!
 //! - `canvas`: キャンバスの入力（ドラッグ・クリック・Esc）と、選択の縁（点線が流れる表示）・ドラッグ中の形・対称の軸の表示
 //! - `outline`: 選択範囲の縁の線分（点線の元）
-//! - `symmetry`: 2D の対称の設定（縦・横・両方・放射状）と軸、3D の面の対称（ミラー・放射状）
 //! - `menu`・`props`・`dialog`: 選択メニュー・オプションバーとプロパティの欄・量を聞く小さなウィンドウ
 //! - `io`: .ylp の `selection.bin` との受け渡し
 //! - `pen`: 選択ペン・選択消し（ブラシで塗るように選択範囲を足す・消す）。`quick`: クイックマスク（選択範囲を赤い重ねで見せ、ブラシ・
 //!   消しゴムで直す）。`overlay`: マスクの量を色つきの重ねで見せる。`saved`: 名前を付けて残した選択範囲（文書の持ち物。.ylp に保存）
 //!
 //! 文書を変える操作は `Action::Sel(SelAction::Edit(..))`（1 つが 1 回の Undo。描いている間と読むだけのセットでは断る）、画面だけの
-//! 操作は `SelAction::Ui`・`SelAction::Symmetry`（Undo に入らない）。対称は文書に入れない画面の設定（2D と 3D は別々）で、ストロークを始めるときに
-//! ブラシへ写して固める（途中で変えても、そのストロークには効かない）。
+//! 操作は `SelAction::Ui`（Undo に入らない）。対称は定規（`rulers`）が持つ文書の値で、ストロークを始めるときにブラシへ写して固める
+//! （途中で変えても、そのストロークには効かない）。
 
 pub mod bar;
 pub mod canvas;
@@ -27,17 +26,14 @@ pub mod props;
 pub mod quick;
 pub mod saved;
 pub mod shape;
-pub mod symmetry;
 
 use crate::engine::{
-    CanvasSymmetry, CoreError, DVec2, LayerKind, SelectionCombine, SelectionMask, SymmetryMode,
+    CanvasSymmetry, CoreError, DVec2, LayerKind, SelectionCombine, SelectionMask,
     DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
 };
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
-
-pub use self::symmetry::SymmetryState;
 
 /// 選択範囲を変える操作（半径を取るものと、取らないもの）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -161,10 +157,10 @@ pub enum SelEdit {
         index: usize,
         mode: SelectionCombine,
     },
-    /// 自動選択（許し幅・隣接・全レイヤーは `SelState` の今の値）。
+    /// 自動選択（許し幅・隣接・全レイヤーは `SelState` の今の値）。種は画素の座標（左下が原点）。2 つ以上（対称定規の写し）なら、それぞれから
+    /// 求めた範囲の和を、今の選択範囲と 1 回で組み合わせる。
     Wand {
-        x: u32,
-        y: u32,
+        seeds: Vec<(u32, u32)>,
         mode: SelectionCombine,
     },
     /// 選択範囲を描画色で塗りつぶす（選んでいるレイヤー。マスクを描いているならマスク）。
@@ -193,37 +189,8 @@ pub enum SelUiOp {
     QuickMask(Option<bool>),
     /// 選択ペンのツールの基本（false が選択ペン、true が選択消し。Shift・Ctrl は押している間だけ替える）。
     PenErase(bool),
-}
-
-/// 2D の対称の設定の操作（画面だけ）。
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SymOp {
-    Mode(SymmetryMode),
-    /// 入っているなら切り、切っているなら最後のモードを入れ直す。
-    Toggle,
-    /// 放射状の写しの数（2〜16 に丸める）。
-    Count(u32),
-    /// 中心（文書の大きさに対する 0〜1）。
-    Center(f64, f64),
-    /// 中心をキャンバスの中央に戻す。
-    CenterCanvas,
-    ShowAxes(bool),
-    /// 3D の面のミラー（軸に直交する面で左右に写す）。
-    Mirror3d(bool),
-    Axis3d(yolu_core::geometry::SymmetryAxis),
-    /// 面のずれ（モデルの原点から、軸の向きに。モデルの単位）。
-    Offset3d(f32),
-    /// 面をモデルの原点・境界の中央に置く。
-    OffsetOrigin3d,
-    OffsetBounds3d,
-    /// 3D の面の放射状（軸のまわりに回して写す）。
-    Radial3d(bool),
-    RadialAxis3d(yolu_core::geometry::SymmetryAxis),
-    RadialCount3d(u32),
-    /// 写しの側は見えない面にも塗る。
-    IgnoreVisibility3d(bool),
-    /// 3D ビューに対称の面を出す。
-    ShowPlane3d(bool),
+    /// ツールプロパティの作成方法を、4 つ出す（true）か、共通を畳んで 3 つ出す（false）か（設定に覚える）。
+    AllModes(bool),
 }
 
 /// `Action::Sel` の中身。
@@ -231,7 +198,6 @@ pub enum SymOp {
 pub enum SelAction {
     Edit(SelEdit),
     Ui(SelUiOp),
-    Symmetry(SymOp),
     /// 名前を付けて残した選択範囲（残す・名前を変える・消す・ウィンドウ。文書の持ち物で、1 回の Undo。.ylp に保存）。
     Saved(saved::SavedOp),
 }
@@ -268,6 +234,8 @@ pub struct SelState {
     pub tolerance: u8,
     pub contiguous: bool,
     pub all_layers: bool,
+    /// 自動選択: 効いている 2D の対称定規の写しの全部の点から選ぶ（3D ビューでは効かない）。
+    pub snap_symmetry: bool,
     /// 拡張・縮小・境界・ぼかしの半径（画素）と、キャンバスの縁を固定するか。
     pub radius: u32,
     pub edge_lock: bool,
@@ -275,6 +243,8 @@ pub struct SelState {
     /// ウィンドウを見出しで動かした量。
     pub dialog_offset: egui::Vec2,
     pub drag: Option<ShapeDrag>,
+    /// 3D ビューで画面の上に引いている形と、打っている多角形の点（表示域の画面の点。`view3d::select`）。
+    pub view3d: crate::view3d::select::Draft,
     /// 多角形の途中の点（キャンバスの座標）と、ポインタの今の位置（ゴムの線）。
     pub polygon: Vec<(f64, f64)>,
     pub polygon_hover: Option<(f64, f64)>,
@@ -282,10 +252,11 @@ pub struct SelState {
     pub last_press: Option<(f64, egui::Pos2)>,
     /// 形のドラッグを押し始めたときの修飾（離したときと見比べて、追加か縦横比の固定かを分ける）。
     pub press_modifiers: egui::Modifiers,
+    /// 選択のツールを押したボタン（組み合わせ方を、組み合わせの表のそのボタンの行で引く）。
+    pub press_button: egui::PointerButton,
     /// ペンが触れている間の ID（ペンの触れる・離すを押す・離すにする）。
     pub pen_down: Option<u32>,
-    pub symmetry: SymmetryState,
-    /// 描いているストロークに固めた対称（軸の表示はこれ）。
+    /// 描いているストロークに固めた対称（写しのカーソルはこれ）。
     pub stroke_symmetry: Option<CanvasSymmetry>,
     /// 縁の滑らかさ（楕円・なげなわ・多角形・角丸の長方形）。切ると縁は 0 か 255 だけ。
     pub antialias: bool,
@@ -341,17 +312,19 @@ impl Default for SelState {
             tolerance: 32,
             contiguous: true,
             all_layers: false,
+            snap_symmetry: true,
             radius: 5,
             edge_lock: false,
             dialog: None,
             dialog_offset: egui::Vec2::ZERO,
             drag: None,
+            view3d: Default::default(),
             polygon: Vec::new(),
             polygon_hover: None,
             last_press: None,
             press_modifiers: egui::Modifiers::NONE,
+            press_button: egui::PointerButton::Primary,
             pen_down: None,
-            symmetry: SymmetryState::default(),
             stroke_symmetry: None,
             antialias: true,
             fixed_ratio: false,
@@ -394,7 +367,8 @@ impl SelState {
         if pen {
             self.pen = None;
         }
-        let any = self.drag.is_some() || !self.polygon.is_empty() || pen;
+        let surface = self.view3d.cancel();
+        let any = self.drag.is_some() || !self.polygon.is_empty() || pen || surface;
         self.drag = None;
         self.polygon.clear();
         self.polygon_hover = None;
@@ -471,36 +445,94 @@ pub fn combine_name(lang: Lang, mode: SelectionCombine) -> &'static str {
     }
 }
 
-/// 組み合わせ方のツールチップ（キー付き）。
-pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> &'static str {
-    match mode {
-        SelectionCombine::Replace => lang.pick(
-            "新規選択: 新しい形で置き換える",
-            "New: replace the selection",
-        ),
-        SelectionCombine::Add => lang.pick(
-            "追加選択: 選択範囲に追加（Shift）",
-            "Add to the selection (Shift)",
-        ),
-        SelectionCombine::Subtract => lang.pick(
-            "一部削除: 選択範囲から引く（Ctrl）",
-            "Subtract from the selection (Ctrl)",
-        ),
-        SelectionCombine::Intersect => lang.pick(
-            "選択中を選択: 重なる所だけ残す（Shift + Ctrl）",
-            "Intersect: keep only the overlap (Shift + Ctrl)",
-        ),
+/// 組み合わせ方のツールチップ（名前と、割り当ての表の修飾。割り当てが無ければ名前だけ）。
+pub fn combine_tooltip(lang: Lang, mode: SelectionCombine) -> String {
+    use crate::keymap::Operation;
+    let operation = match mode {
+        SelectionCombine::Replace => None,
+        SelectionCombine::Add => Some(Operation::SelectionAdd),
+        SelectionCombine::Subtract => Some(Operation::SelectionSubtract),
+        SelectionCombine::Intersect => Some(Operation::SelectionIntersect),
+    };
+    name_with_modifier(lang, combine_name(lang, mode), operation)
+}
+
+/// 名前に、選択の修飾の割り当て（`keymap` の "selection" の行）の入力を添える（「追加（Shift）」・英語は「Add (Shift)」）。
+/// 行が無ければ名前だけ。
+pub fn name_with_modifier(
+    lang: Lang,
+    name: &str,
+    operation: Option<crate::keymap::Operation>,
+) -> String {
+    match operation.and_then(|op| modifier_text(lang, op)) {
+        Some(key) => lang.pick(format!("{name}（{key}）"), format!("{name} ({key})")),
+        None => name.to_owned(),
     }
 }
 
-/// キーの修飾から組み合わせ方（Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値。組み合わせは `keymap::GESTURES` の表）。
-pub fn combine_of(base: SelectionCombine, modifiers: egui::Modifiers) -> SelectionCombine {
+/// 選択の修飾の行（`op`）の入力の文字。修飾だけ（「Shift」「Ctrl」「Shift+Ctrl」。Mac は Cmd）。
+/// 左ボタン以外・修飾の無い行は、ボタンも含めた文（「Shift+右ボタン」）。外した行は None。
+fn modifier_text(lang: Lang, op: crate::keymap::Operation) -> Option<String> {
+    use crate::shortcuts::gestures::{key_label, Binding};
+    let keymap = crate::keymap::current();
+    let g = keymap
+        .gestures()
+        .iter()
+        .find(|g| g.scope == "selection" && g.operation == op && g.starts)?;
+    let mac = cfg!(target_os = "macos");
+    let mut parts = Vec::new();
+    if g.shift {
+        parts.push("Shift");
+    }
+    if g.ctrl {
+        parts.push(if mac { "Cmd" } else { "Ctrl" });
+    }
+    if g.alt {
+        parts.push("Alt");
+    }
+    if g.button == egui::PointerButton::Primary && !g.click && !parts.is_empty() {
+        return Some(parts.join("+"));
+    }
+    Some(key_label(
+        &Binding {
+            scope: g.scope,
+            held: None,
+            modifiers: egui::Modifiers {
+                alt: g.alt,
+                shift: g.shift,
+                ctrl: g.ctrl,
+                command: g.ctrl,
+                ..egui::Modifiers::NONE
+            },
+            button: g.button,
+            operation: g.operation,
+            click: g.click,
+        },
+        lang,
+    ))
+}
+
+/// 押したボタンとキーの修飾から組み合わせ方（既定は左ボタンの Shift で足す・Ctrl で引く・両方で重ねる。無ければオプションバーの値。
+/// 組み合わせは `keymap::GESTURES` の表の selection の行）。
+pub fn combine_of(
+    base: SelectionCombine,
+    button: egui::PointerButton,
+    modifiers: egui::Modifiers,
+) -> SelectionCombine {
+    combine_for(button, &modifiers).unwrap_or(base)
+}
+
+/// 押したボタンと修飾が、選択の行（足す・引く・重ねる）に当たるなら、その組み合わせ方。
+pub fn combine_for(
+    button: egui::PointerButton,
+    modifiers: &egui::Modifiers,
+) -> Option<SelectionCombine> {
     use crate::keymap::Operation;
-    match crate::keymap::gesture("selection", egui::PointerButton::Primary, &modifiers, false) {
-        Some(Operation::SelectionAdd) => SelectionCombine::Add,
-        Some(Operation::SelectionSubtract) => SelectionCombine::Subtract,
-        Some(Operation::SelectionIntersect) => SelectionCombine::Intersect,
-        _ => base,
+    match crate::keymap::gesture("selection", button, modifiers, false) {
+        Some(Operation::SelectionAdd) => Some(SelectionCombine::Add),
+        Some(Operation::SelectionSubtract) => Some(SelectionCombine::Subtract),
+        Some(Operation::SelectionIntersect) => Some(SelectionCombine::Intersect),
+        _ => None,
     }
 }
 
@@ -514,7 +546,6 @@ impl AppState {
         match action {
             SelAction::Edit(edit) => self.sel_edit(edit),
             SelAction::Ui(op) => self.sel_ui(op),
-            SelAction::Symmetry(op) => self.sel_symmetry(op),
             SelAction::Saved(op) => self.sel_saved(op),
         }
     }
@@ -582,7 +613,7 @@ impl AppState {
     }
 
     /// 縁の滑らかさの設定を形に当てる（切っていれば、半分以上の量を全部に・ほかを 0 にする）。
-    fn edge_of(&self, shape: SelectionMask) -> SelectionMask {
+    pub(crate) fn edge_of(&self, shape: SelectionMask) -> SelectionMask {
         if self.sel.antialias {
             shape
         } else {
@@ -726,18 +757,31 @@ impl AppState {
             SelEdit::Erase => self.sel_fill(true),
             SelEdit::ToNewLayer => self.sel_to_new_layer(),
             SelEdit::ToMask => self.sel_to_mask(),
-            SelEdit::Wand { x, y, mode } => {
-                let shape = SelectionMask::magic_wand(
-                    &self.doc,
-                    self.wand_layer(),
-                    self.m2.paint_channel,
-                    x,
-                    y,
-                    self.sel.tolerance,
-                    self.sel.contiguous,
-                    DEFAULT_WORKING_BUDGET_BYTES,
-                )
-                .map_err(|e| lang.core_error(&e))?;
+            SelEdit::Wand { seeds, mode } => {
+                let layer = self.wand_layer();
+                let mut shape: Option<SelectionMask> = None;
+                for (x, y) in seeds {
+                    let part = SelectionMask::magic_wand(
+                        &self.doc,
+                        layer,
+                        self.m2.paint_channel,
+                        x,
+                        y,
+                        self.sel.tolerance,
+                        self.sel.contiguous,
+                        DEFAULT_WORKING_BUDGET_BYTES,
+                    )
+                    .map_err(|e| lang.core_error(&e))?;
+                    shape = Some(match shape {
+                        Some(sum) => sum
+                            .combine(&part, SelectionCombine::Add)
+                            .map_err(|e| lang.core_error(&e))?,
+                        None => part,
+                    });
+                }
+                let Some(shape) = shape else {
+                    return Err(lang.pick("種がありません。", "No seed.").into());
+                };
                 self.combine_shape(shape, mode)
             }
         }
@@ -787,53 +831,14 @@ impl AppState {
             SelUiOp::Bar(on) => self.prefs.settings.selection_bar = on,
             SelUiOp::QuickMask(on) => self.quick_mask(on),
             SelUiOp::PenErase(erase) => self.sel.pen_erase = erase,
-        }
-    }
-
-    /// 2D の対称の設定の操作（画面だけ。描いている間は軸の表示のほかは断る: ストロークに固めた設定と食い違わせない）。
-    pub fn sel_symmetry(&mut self, op: SymOp) {
-        if self.is_stroking() && !matches!(op, SymOp::ShowAxes(_) | SymOp::ShowPlane3d(_)) {
-            self.refuse(
-                Source::Selection,
-                crate::lang::refusals::during_stroke(self.lang),
-            );
-            return;
-        }
-        // 境界の中央は、モデルの今の形から（モデルが無ければ何もしない）
-        let bounds_center = self
-            .view3d
-            .model
-            .as_ref()
-            .map(|m| m.geometry.bounds().center);
-        let s = &mut self.sel.symmetry;
-        match op {
-            SymOp::Mode(mode) => s.set_mode(mode),
-            SymOp::Toggle => s.toggle(),
-            SymOp::Count(n) => s.set_count(n),
-            SymOp::Center(x, y) => s.set_center(x, y),
-            SymOp::CenterCanvas => s.center = (0.5, 0.5),
-            SymOp::ShowAxes(on) => s.show_axes = on,
-            SymOp::Mirror3d(on) => s.surface.mirror = on,
-            SymOp::Axis3d(axis) => s.surface.axis = axis,
-            SymOp::Offset3d(v) => s.surface.set_offset(v),
-            SymOp::OffsetOrigin3d => s.surface.offset = 0.0,
-            SymOp::OffsetBounds3d => {
-                if let Some(center) = bounds_center {
-                    let offset = s.surface.bounds_center_offset(center);
-                    s.surface.set_offset(offset);
-                }
-            }
-            SymOp::Radial3d(on) => s.surface.radial = on,
-            SymOp::RadialAxis3d(axis) => s.surface.radial_axis = axis,
-            SymOp::RadialCount3d(n) => s.surface.set_radial_count(n),
-            SymOp::IgnoreVisibility3d(on) => s.surface.ignore_visibility = on,
-            SymOp::ShowPlane3d(on) => s.surface.show_plane = on,
+            SelUiOp::AllModes(on) => self.prefs.settings.selection_all_modes = on,
         }
     }
 
     /// 多角形の点を打っている途中か（取り消しが最後の点に当たる間。メニューの「取り消し」もこのあいだは押せる）。
     pub fn sel_has_polygon_point(&self) -> bool {
-        self.tool == Tool::Polygon && !self.sel.polygon.is_empty()
+        self.tool == Tool::Polygon
+            && (!self.sel.polygon.is_empty() || !self.sel.view3d.polygon.is_empty())
     }
 
     /// 多角形の途中の点があれば最後の 1 つを取り消す（取り消しのキーを文書でなく途中の形に当てる）。取り消したか。
@@ -841,7 +846,10 @@ impl AppState {
         if !self.sel_has_polygon_point() {
             return false;
         }
-        canvas::remove_last_point(self);
+        // 3D ビューで打っている点を先に（2D の点と同時には無い）
+        if !self.sel.view3d.remove_last_point() {
+            canvas::remove_last_point(self);
+        }
         true
     }
 
@@ -861,11 +869,36 @@ impl AppState {
         self.sel.cancel_drafts();
     }
 
-    /// 2D のキャンバスのストロークに渡す対称（文書の大きさに写した中心）。3D の面のストロークには渡さない（core は見ない）。
+    /// 選んでいるレイヤーで描くときの 2D の対称（効いている 2D の対称定規の写し。無ければ切）。2D のキャンバスのストロークにも、3D ビューの
+    /// 面のストローク（UV の平面で、3D の写しの後に）にも渡す。
     pub fn canvas_symmetry(&self) -> CanvasSymmetry {
-        self.sel
-            .symmetry
-            .canvas(self.doc.width(), self.doc.height())
+        self.canvas_symmetry_for(self.selected_layer)
+    }
+
+    /// `drawing` で描くときの 2D の対称。
+    pub fn canvas_symmetry_for(&self, drawing: Option<crate::engine::LayerId>) -> CanvasSymmetry {
+        self.rulers_active_for(crate::rulers::Place::Canvas, drawing)
+            .canvas_symmetry
+            .unwrap_or_default()
+    }
+
+    /// 2D のキャンバスのストロークに当てる 3D の対称（効いている 3D の対称定規があって、今のテクスチャセットの面のモデルがあるとき）。ダブの中心の UV の
+    /// 下の面の点を 3D で写し、写しの面の UV へダブを置く（core の `ModelSymmetry`。UV の格子は範囲のツールと共有する）。
+    pub fn canvas_model_symmetry(
+        &mut self,
+    ) -> Option<std::sync::Arc<yolu_core::geometry::ModelSymmetry>> {
+        self.canvas_model_symmetry_for(self.selected_layer)
+    }
+
+    fn canvas_model_symmetry_for(
+        &mut self,
+        drawing: Option<crate::engine::LayerId>,
+    ) -> Option<std::sync::Arc<yolu_core::geometry::ModelSymmetry>> {
+        let setup = self
+            .rulers_active_for(crate::rulers::Place::Canvas, drawing)
+            .surface_symmetry?;
+        let grid = self.region_grid()?;
+        yolu_core::geometry::ModelSymmetry::new(grid, &setup).map(std::sync::Arc::new)
     }
 
     /// 幾何形状に沿って描く。補間と手ぶれ補正だけを切り、入り抜きと筆先の設定は保つ。
@@ -877,7 +910,8 @@ impl AppState {
     ) -> Result<crate::engine::Stroke, CoreError> {
         let mut brush = self.stroke_brush(eraser);
         brush.stencil = stencil;
-        brush.symmetry = self.canvas_symmetry();
+        brush.symmetry = self.canvas_symmetry_for(Some(id));
+        brush.model_symmetry = self.canvas_model_symmetry_for(Some(id));
         brush.assist.stabilizer = 0.0;
         brush.assist.curve = false;
         let result = self.begin_stroke_with(id, &brush);
@@ -888,7 +922,8 @@ impl AppState {
         result
     }
 
-    /// 2D のキャンバスで描き始める（対称を渡す。指先・クローンは対称と組めないので core が断る）。3D の面のストロークは `begin_paint_stroke`。
+    /// 2D のキャンバスで描き始める（2D の対称と 3D の対称を渡す。指先・クローンは対称と組めないので core が断る）。3D の面のストロークは
+    /// `begin_paint_stroke`。
     pub fn begin_canvas_stroke(
         &mut self,
         id: crate::engine::LayerId,
@@ -897,7 +932,8 @@ impl AppState {
     ) -> Result<crate::engine::Stroke, CoreError> {
         let mut brush = self.stroke_brush(eraser);
         brush.stencil = stencil;
-        brush.symmetry = self.canvas_symmetry();
+        brush.symmetry = self.canvas_symmetry_for(Some(id));
+        brush.model_symmetry = self.canvas_model_symmetry_for(Some(id));
         let result = self.begin_stroke_with(id, &brush);
         self.sel.stroke_symmetry = result
             .is_ok()

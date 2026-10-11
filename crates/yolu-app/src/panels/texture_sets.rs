@@ -210,7 +210,7 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
             app.sets.current().uid,
         ]));
     }
-    // 足す・消す・ベイク・設定の 4 つが重ならない幅があるときだけ（狭いときのベイクはメニューから）
+    // 足す・消す・ベイク・設定の 4 つが重ならない幅があるときだけ（狭いときのベイクは、セットの右クリックのメニューと、操作 `bake.open` のキー・パイから）
     if bar.width() >= BAKE_BUTTON_MIN_BAR_WIDTH {
         let bake = bake_entrance(app);
         let bake_button = button(bar.right() - 60.0);

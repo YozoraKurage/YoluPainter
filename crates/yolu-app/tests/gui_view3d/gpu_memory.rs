@@ -14,7 +14,7 @@ use egui_kittest::Harness;
 use yolu_app::gpu_memory::{self, Adapter, Budgets, GpuMemory, MIB};
 use yolu_app::lang::Lang;
 use yolu_app::pen::PenInput;
-use yolu_app::prefs::{self, Pref, PrefsAction};
+use yolu_app::prefs::{self, Category, Pref, PrefsAction};
 use yolu_app::shelf::{ShelfState, PREVIEW_BUDGET, SHELF_BUDGET};
 use yolu_app::state::Action;
 use yolu_app::YoluApp;
@@ -419,6 +419,8 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
         });
     h.state_mut().state.prefs.ram_mib = 16384;
     h.state_mut().state.prefs.cores = 8;
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(size.x);
     h.run();
     h
 }
@@ -427,8 +429,11 @@ fn window_rect(h: &Harness<'_, YoluApp>) -> Rect {
     prefs::last_rect(&h.ctx).expect("設定のウィンドウが開いている")
 }
 
+/// 設定のウィンドウを「表示」の区分（GPU のメモリがある所）で開く。
 fn open_settings(h: &mut Harness<'static, YoluApp>) {
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Display)));
     h.run();
 }
 
@@ -460,23 +465,10 @@ fn pick(h: &mut Harness<'static, YoluApp>, label: &str, item: &str) {
 fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total() {
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
-    // 詳しくを開いたウィンドウが全部見える高さ（800 では、メモリの節のディスクキャッシュの分だけ中身を送る）
-    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     h.state_mut().state.prefs.gpu = Adapter::default();
     open_settings(&mut h);
-    // 棚の場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
-    let shelf = PathBuf::from(if cfg!(windows) {
-        "C:\\Library"
-    } else {
-        "/Library"
-    });
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
-            shelf,
-        )))));
     h.run();
-    let closed = window_rect(&h);
     let _ = h.get_by_label("GPU のメモリ: 自動");
     let _ = gpu_details(&h, "詳しく");
     // 段を選ぶ（ウィンドウの行に数は出ない）
@@ -485,14 +477,16 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     let _ = h.get_by_label("GPU のメモリ: 高");
     assert_eq!(h.state().state.prefs.settings.gpu_memory, GpuMemory::High);
     assert_eq!(h.state().gpu_budgets_applied(), expect(GpuMemory::High));
-    // 詳しく: 合計のスライダーが出て、ウィンドウが伸びる（最後の行もウィンドウの中）
+    // 詳しく: 合計のスライダーが出る（ウィンドウの中）
     gpu_details(&h, "詳しく").click();
     h.run();
     assert!(h.state().state.prefs.gpu_details);
     let open = window_rect(&h);
-    assert!(open.height() > closed.height(), "{closed:?} {open:?}");
     assert!(
-        open.contains_rect(h.get_by_label("すべて残す").rect()),
+        open.contains_rect(
+            h.get_by_role_and_label(egui::accesskit::Role::Slider, "合計")
+                .rect()
+        ),
         "{open:?}"
     );
     shot(&mut h, "prefs_gpu_details");
@@ -511,17 +505,30 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
         h.state().state.prefs.settings.gpu_memory,
         GpuMemory::Standard
     );
-    // 英語
+    // 英語（言語は「一般」の区分）
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Choose(Category::General)));
+    h.run();
     pick(&mut h, "言語: 日本語", "English");
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Choose(Category::Display)));
+    h.run();
     let _ = h.get_by_label("GPU memory: Standard");
     let _ = gpu_details(&h, "Details");
-    assert!(window_rect(&h).contains_rect(h.get_by_label("Keep all").rect()));
+    assert!(window_rect(&h).contains_rect(
+        h.get_by_role_and_label(egui::accesskit::Role::Slider, "Total")
+            .rect()
+    ));
     shot(&mut h, "prefs_gpu_details_english");
     // 閉じると、次に開いたときは閉じた形
     gpu_details(&h, "Details").click();
     h.run();
     assert!(!h.state().state.prefs.gpu_details);
-    assert!((window_rect(&h).height() - closed.height()).abs() < 0.5);
+    assert!(h
+        .query_by_role_and_label(egui::accesskit::Role::Slider, "Total")
+        .is_none());
     // どの段・指定の名前にも数が無い
     for lang in Lang::ALL {
         for choice in GpuMemory::LEVELS.into_iter().chain([GpuMemory::Mib(1234)]) {

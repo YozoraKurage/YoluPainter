@@ -3,7 +3,8 @@
 //! 形式は 1 行目が `yolupainter-brush 1`（筆圧の応えを使うブラシだけ `yolupainter-brush 2`。最小値・曲線に加え、硬さを筆圧で変える切り替えだけでも 2 になる。
 //! 色の混ぜ（厚塗り）を使うブラシだけ `yolupainter-brush 3`（筆圧の応えも使えば、その項目も同じファイルに書く）。
 //! 入り抜き・手ぶれ補正を持つブラシ（取り込んだブラシが持つ分）だけ `yolupainter-brush 4`（`assist.*`。ほかの版の項目も同じファイルに書く）。
-//! 版 2〜4 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
+//! 縁のアンチエイリアスが なし でないブラシだけ `yolupainter-brush 5`（`anti_alias`。ほかの版の項目も同じファイルに書く）。
+//! 版 2〜5 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
 //! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
@@ -21,8 +22,8 @@ use super::gaps::Gap;
 use super::images;
 use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
-    Brush, BrushEffect, ColorMix, CoreError, DVec2, DualBrush, DualBrushMode, MixGround, MixMode,
-    PaperTexture, PressureResponse, StrokeAssist, TextureMode,
+    AntiAlias, Brush, BrushEffect, ColorMix, CoreError, DVec2, DualBrush, DualBrushMode, MixGround,
+    MixMode, PaperTexture, PressureResponse, StrokeAssist, TextureMode,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, TipSelection, MAX_CURVE_POINTS};
@@ -40,6 +41,9 @@ pub const HEADER_V3: &str = "yolupainter-brush 3";
 /// 入り抜き・手ぶれ補正を持つブラシの版（`assist.stabilizer`・`assist.taper_in`・`assist.taper_out`）。使わないブラシは版 1〜3 のままで、
 /// 今までと同じバイト。版 3 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V4: &str = "yolupainter-brush 4";
+/// 縁のアンチエイリアス（`anti_alias`）が なし でないブラシの版。なし のブラシは版 1〜4 のままで、今までと同じバイト（読むときも、
+/// 版 4 までのファイルは なし）。版 4 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
+pub const HEADER_V5: &str = "yolupainter-brush 5";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
 /// 1 ファイルの大きさの上限。
@@ -305,7 +309,9 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
-    let header = if assist.is_some() {
+    let header = if b.base.anti_alias != AntiAlias::None {
+        HEADER_V5
+    } else if assist.is_some() {
         HEADER_V4
     } else if uses_mix(&b) {
         HEADER_V3
@@ -326,6 +332,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.bool("pressure_size", b.base.pressure_size);
     w.bool("pressure_opacity", b.base.pressure_opacity);
     w.bool("pressure_flow", b.base.pressure_flow);
+    // 縁のアンチエイリアス（版 5。なし のブラシは書かない）
+    if b.base.anti_alias != AntiAlias::None {
+        w.line("anti_alias", b.base.anti_alias.id());
+    }
     let t = &b.tip;
     match &t.image {
         Some(image) => w.line("tip.image", pending.token(image)),
@@ -651,6 +661,7 @@ pub fn decode_user(
         Some(HEADER_V2) => 2,
         Some(HEADER_V3) => 3,
         Some(HEADER_V4) => 4,
+        Some(HEADER_V5) => 5,
         Some(first) if first.starts_with("yolupainter-brush ") => {
             return Err(StoreError::NewerVersion(first.to_owned()))
         }
@@ -682,6 +693,13 @@ pub fn decode_user(
     b.base.pressure_size = r.bool("pressure_size", b.base.pressure_size)?;
     b.base.pressure_opacity = r.bool("pressure_opacity", b.base.pressure_opacity)?;
     b.base.pressure_flow = r.bool("pressure_flow", b.base.pressure_flow)?;
+    // 縁のアンチエイリアスは版 5 の項目（版 4 までのファイルにあれば、知らない項目として断る。無ければ なし）
+    if version >= 5 {
+        if let Some(id) = r.take("anti_alias") {
+            b.base.anti_alias =
+                AntiAlias::from_id(&id).ok_or(StoreError::BadValue("anti_alias".into()))?;
+        }
+    }
     b.tip.image = r.tip("tip.image", load)?;
     if let Some(list) = r.take("tip.images") {
         if list != "none" {
@@ -1615,8 +1633,16 @@ mod tests {
             };
             let t = encode(&u).unwrap().text;
             assert_eq!(
-                t.starts_with("yolupainter-brush 3\n"),
+                t.contains("\nmix.mode="),
                 b.brush.mix.is_active(),
+                "{}",
+                b.id
+            );
+            // 版 3 になるのは、縁のアンチエイリアスの無い（版 5 にならない）厚塗りのブラシだけ
+            assert_eq!(
+                t.starts_with("yolupainter-brush 3\n"),
+                b.brush.mix.is_active()
+                    && b.brush.base.anti_alias == crate::engine::AntiAlias::None,
                 "{}",
                 b.id
             );
@@ -1705,7 +1731,7 @@ mod tests {
             StoreError::NotABrush
         ));
         assert!(matches!(
-            decode("yolupainter-brush 5\nname=a\n").unwrap_err(),
+            decode("yolupainter-brush 6\nname=a\n").unwrap_err(),
             StoreError::NewerVersion(_)
         ));
         assert!(matches!(
@@ -1846,8 +1872,8 @@ mod tests {
                 "{old}"
             );
         }
-        // 版 5 は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 5", 1);
+        // 版 6 は新しい形式として断る
+        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 6", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
             StoreError::NewerVersion(_)
@@ -1880,6 +1906,90 @@ mod tests {
             decode_user(none, &mut |_| unreachable!()).unwrap().assist,
             None
         );
+    }
+
+    fn anti_aliased(level: AntiAlias) -> Brush {
+        let mut b = Brush::default();
+        b.base.anti_alias = level;
+        b.base.hardness = 1.0;
+        b
+    }
+
+    #[test]
+    fn an_anti_aliased_brush_is_version_five_and_round_trips() {
+        for level in [AntiAlias::Weak, AntiAlias::Medium, AntiAlias::Strong] {
+            let u = user(1, anti_aliased(level));
+            let t = text(&u);
+            assert!(t.starts_with("yolupainter-brush 5\n"), "{t}");
+            assert!(t.contains(&format!("\nanti_alias={}\n", level.id())), "{t}");
+            let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+            assert_eq!(d.brush, u.brush);
+            assert_eq!(d.brush.base.anti_alias, level);
+        }
+        // なし のブラシは今までと同じ版・同じ文（項目を書かない）
+        let plain = text(&user(1, anti_aliased(AntiAlias::None)));
+        assert!(
+            plain.starts_with("yolupainter-brush 1\n") && !plain.contains("anti_alias"),
+            "{plain}"
+        );
+        // 版 5 は、ほかの版の項目（色の混ぜ・入り抜き）も同じファイルに書く
+        let mut mixing = mixing_brush();
+        mixing.base.anti_alias = AntiAlias::Medium;
+        let assist = StrokeAssist {
+            stabilizer: 0.0,
+            taper_in: 12.0,
+            taper_out: 0.0,
+            curve: false,
+        };
+        let both = UserBrush {
+            assist: Some(assist),
+            ..user(1, mixing)
+        };
+        let t = text(&both);
+        assert!(
+            t.starts_with("yolupainter-brush 5\n")
+                && t.contains("mix.mode=")
+                && t.contains("assist."),
+            "{t}"
+        );
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!((d.assist, d.brush), (Some(assist), both.brush.clone()));
+    }
+
+    #[test]
+    fn the_anti_alias_item_belongs_to_version_five_and_is_checked() {
+        let t = text(&user(1, anti_aliased(AntiAlias::Strong)));
+        // 版 1〜4 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
+        for old in 1..=4 {
+            let as_old = t.replacen(
+                "yolupainter-brush 5",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k == "anti_alias"),
+                "{old}"
+            );
+        }
+        // 知らない名前はそのファイルを断る
+        for bad in ["soft", "3", "", "Medium"] {
+            let broken = t.replace("anti_alias=strong", &format!("anti_alias={bad}"));
+            assert!(
+                matches!(decode(&broken).unwrap_err(), StoreError::BadValue(k) if k == "anti_alias"),
+                "{bad}"
+            );
+        }
+        // 版 5 でも項目が無ければ なし。前の版のファイルも なし として読む
+        let none = "yolupainter-brush 5\nname=a\ngroup=pen\n";
+        assert_eq!(decode(none).unwrap().2.base.anti_alias, AntiAlias::None);
+        let old = "yolupainter-brush 1\nname=a\ngroup=pen\nhardness=1\n";
+        assert_eq!(decode(old).unwrap().2.base.anti_alias, AntiAlias::None);
+        // 版 6 は新しい形式として断る
+        let newer = t.replacen("yolupainter-brush 5", "yolupainter-brush 6", 1);
+        assert!(matches!(
+            decode(&newer).unwrap_err(),
+            StoreError::NewerVersion(_)
+        ));
     }
 
     #[test]
@@ -2278,7 +2388,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("brush-00000005.ylbrush");
-        std::fs::write(&path, "yolupainter-brush 5\nname=future\n").unwrap();
+        std::fs::write(&path, "yolupainter-brush 6\nname=future\n").unwrap();
         let report = load_all(&dir);
         assert!(report.brushes.is_empty());
         assert!(matches!(
@@ -2287,7 +2397,7 @@ mod tests {
         ));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "yolupainter-brush 5\nname=future\n"
+            "yolupainter-brush 6\nname=future\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

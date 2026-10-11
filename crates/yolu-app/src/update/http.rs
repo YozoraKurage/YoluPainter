@@ -636,6 +636,53 @@ mod tests {
         assert_eq!(pair(&local, "--proto-redir"), "=http,https");
     }
 
+    /// curl に渡す引数の全体を固定する。オプションを足す（`--data`・`-H`・`-b`・`-T`・`-K`・`--url`・`--referer`・`--cookie` など）と落ちる:
+    /// アプリの名前と版（User-Agent）のほかに、利用者を識別する情報は付けない約束（INSTALL）と、tools/network-watch.py の許す形が、この全体に基づく。
+    #[cfg(not(windows))]
+    #[test]
+    fn curl_arguments_are_exactly_these() {
+        let url =
+            "https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json";
+        let expect = |limit: &str| -> Vec<String> {
+            [
+                "-q",
+                "--silent",
+                "--show-error",
+                "--fail",
+                "--location",
+                "--max-redirs",
+                "5",
+                "--connect-timeout",
+                "10",
+                "--max-time",
+                limit,
+                "--user-agent",
+                &format!("YoluPainter/{}", env!("CARGO_PKG_VERSION")),
+                "--proto",
+                "=https",
+                "--proto-redir",
+                "=https",
+                "--tlsv1.2",
+                "--output",
+                "-",
+                "--",
+                url,
+            ]
+            .map(String::from)
+            .to_vec()
+        };
+        let parsed = Url::parse(url, false).unwrap();
+        assert_eq!(platform::curl_args(&parsed, 30), expect("30"));
+        assert_eq!(
+            platform::curl_args(&parsed, 900),
+            expect("900"),
+            "大きい取得は待つ時間だけが違う"
+        );
+        // URL は引数の最後の 1 つだけで、問い合わせ（?）や識別子を足す口は無い
+        assert_eq!(platform::curl_args(&parsed, 30).last().unwrap(), url);
+        assert!(!url.contains('?'));
+    }
+
     #[test]
     fn error_statuses_are_failures() {
         for status in ["404 Not Found", "500 Internal Server Error"] {

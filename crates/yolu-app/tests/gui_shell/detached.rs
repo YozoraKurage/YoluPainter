@@ -7,6 +7,7 @@
 use crate::common;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use common::viewports::Driver;
 use common::*;
@@ -18,7 +19,7 @@ use egui_kittest::Harness;
 use yolu_app::app::default_dock;
 use yolu_app::detach::{self, place, DockOp, Place};
 use yolu_app::layout::{self, DetachedRecord, FloatRecord};
-use yolu_app::pen::PenInput;
+use yolu_app::pen::{PenInput, PenSample};
 use yolu_app::shell;
 use yolu_app::state::{Action, AppState};
 use yolu_app::windowpos::{Monitor, PxRect};
@@ -87,10 +88,10 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
     ));
     assert!(outside.detach(
         &mut main,
-        Tab::Navigator,
+        Tab::Channels,
         Place::Record(record(-1500.0, 80.0, 300.0, 260.0))
     ));
-    // ナビゲーターのウィンドウへログも入れる（前はログ）
+    // チャンネルのウィンドウへログも入れる（前はログ）
     let serial = outside.windows[1].serial;
     assert!(outside.move_into(&mut main, Tab::Log, serial, None));
     assert_every_tab_once(&main, &[&outside.windows[0].dock, &outside.windows[1].dock]);
@@ -115,11 +116,14 @@ fn headless_outside_windows_survive_the_file_with_their_tabs_front_tab_place_and
     }
     assert_eq!(
         shape(&loaded.detached[1].dock),
-        vec!["0/0 leaf [\"navigator\", \"log\"] active=1"]
+        vec!["0/0 leaf [\"channels\", \"log\"] active=1"]
     );
-    // 戻る先は、出したときに同じ組にいたタブ（履歴はプロパティの組、ナビゲーターはテクスチャセットの組）
-    assert_eq!(loaded.detached[0].home, vec![Tab::Properties]);
-    assert_eq!(loaded.detached[1].home, vec![Tab::TextureSets]);
+    // 戻る先は、出したときに同じ組にいたタブ（履歴はプロパティの組、チャンネルはテクスチャセットの組）
+    assert_eq!(
+        loaded.detached[0].home,
+        vec![Tab::Properties, Tab::Material]
+    );
+    assert_eq!(loaded.detached[1].home, vec![Tab::TextureSets, Tab::Assets]);
     // 別ウィンドウの無いファイルは、前の版と同じ中身（`detached` を書かない）
     let plain = default_dock();
     assert_eq!(
@@ -318,7 +322,13 @@ fn headless_taking_out_and_returning_tabs_keeps_every_tab_once_and_goes_back_to_
     assert!(outside.windows.is_empty());
     assert_eq!(
         mates(&main, Tab::History),
-        vec![Tab::Properties, Tab::History, Tab::Color, Tab::ColorSets]
+        vec![
+            Tab::Properties,
+            Tab::Material,
+            Tab::History,
+            Tab::Color,
+            Tab::ColorSets
+        ]
     );
     let (node, index) = main.find_main_surface_tab(&Tab::Color).unwrap();
     let leaf = main
@@ -382,6 +392,8 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
         labels,
         vec![
             "サブツール",
+            "ツールプロパティ",
+            "ブラシサイズ",
             "アセット",
             "チャンネル",
             "カラー",
@@ -392,6 +404,7 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
             "ログ",
             "アクション",
             "プロパティ",
+            "マテリアル",
             "ヒストリー",
             "キャンバス",
             "3D ビュー",
@@ -427,7 +440,8 @@ fn headless_the_window_menu_lists_the_panels_and_holds_the_layout_reset() {
         .filter_map(|e| e.label().map(str::to_owned))
         .collect();
     assert!(!view.iter().any(|l| l.contains("パネルの並び")), "{view:?}");
-    assert!(view.iter().any(|l| l.contains("筆圧の調整")));
+    // 筆圧の調整は設定のウィンドウの「ペン」へ移した
+    assert!(!view.iter().any(|l| l.contains("筆圧の調整")), "{view:?}");
     // タブの右クリック: メインウィンドウのタブは「別ウィンドウで開く」、別ウィンドウのただ 1 つのタブは「ドックに戻す」、ほかのタブもあるウィンドウなら両方
     let names = |app: &AppState, tab: Tab| -> Vec<String> {
         shell::popup_entries(app, yolu_app::state::PopupKind::DockTab(tab))
@@ -567,7 +581,7 @@ fn the_tab_menu_opens_a_panel_in_a_new_window_and_returns_it_to_the_dock() {
     assert!(app.detached.windows.is_empty());
     assert_eq!(
         mates(&app.dock, Tab::History),
-        vec![Tab::Properties, Tab::History]
+        vec![Tab::Properties, Tab::Material, Tab::History]
     );
 }
 
@@ -575,12 +589,12 @@ fn the_tab_menu_opens_a_panel_in_a_new_window_and_returns_it_to_the_dock() {
 fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_it_on_the_dock_returns_it(
 ) {
     let mut h = app(1280.0, 800.0, 64);
-    let tab = h.state().tab_rects[&Tab::Navigator];
+    let tab = h.state().tab_rects[&Tab::Channels];
     // メインウィンドウの外（右）で離す
     drag_tab(&mut h, tab.center(), pos2(1500.0, 300.0));
     let app = h.state();
     assert_eq!(app.detached.windows.len(), 1, "別ウィンドウができる");
-    assert_eq!(app.detached.windows[0].tabs(), vec![Tab::Navigator]);
+    assert_eq!(app.detached.windows[0].tabs(), vec![Tab::Channels]);
     // 離した点がタブの帯の下に来る置き場所（外枠の左上は、離した点から少し左上）
     let at = app.detached.windows[0].record.unwrap().position;
     assert_eq!(
@@ -590,10 +604,10 @@ fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_
             300.0 - detach::GRAB_OFFSET[1]
         ]
     );
-    assert!(app.dock.find_tab(&Tab::Navigator).is_none());
+    assert!(app.dock.find_tab(&Tab::Channels).is_none());
     // 別ウィンドウのタブを、メインウィンドウのキャンバスの組の上で離すと、その組へ戻る
     let canvas_leaf = detach::leaf_rect(&h.state().dock, Tab::Canvas).unwrap();
-    let from = outside_tab(&h, Tab::Navigator).center();
+    let from = outside_tab(&h, Tab::Channels).center();
     let to = canvas_leaf.center() + vec2(0.0, 80.0);
     drag_tab(&mut h, from, to);
     let app = h.state();
@@ -603,8 +617,8 @@ fn dropping_a_tab_outside_the_main_window_opens_it_in_a_new_window_and_dropping_
         app.detached.windows.len()
     );
     assert_eq!(
-        mates(&app.dock, Tab::Navigator),
-        vec![Tab::Canvas, Tab::View3d, Tab::Navigator]
+        mates(&app.dock, Tab::Channels),
+        vec![Tab::Canvas, Tab::View3d, Tab::Channels]
     );
     assert_every_tab_once(&app.dock, &[]);
 }
@@ -658,10 +672,10 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
     click(&mut h, item.center());
     h.run();
     h.state_mut()
-        .apply(Action::Dock(DockOp::Show(Tab::Navigator)));
+        .apply(Action::Dock(DockOp::Show(Tab::Channels)));
     h.run();
     let dock = &h.state().dock;
-    let (node, index) = dock.find_main_surface_tab(&Tab::Navigator).unwrap();
+    let (node, index) = dock.find_main_surface_tab(&Tab::Channels).unwrap();
     assert_eq!(
         dock.leaf(egui_dock::NodePath {
             surface: SurfaceIndex::main(),
@@ -679,7 +693,12 @@ fn the_window_menu_brings_a_panel_forward_and_reset_closes_the_outside_windows()
     h.run();
     let app = h.state();
     assert!(app.detached.windows.is_empty());
-    assert_eq!(shape(&app.dock), shape(&default_dock()));
+    assert_eq!(
+        shape(&app.dock),
+        shape(&yolu_app::app::default_dock_for(
+            h.ctx.content_rect().width()
+        ))
+    );
 }
 
 /// 「ウィンドウ」を開いた所と、タブの右クリック（撮る）。
@@ -750,7 +769,10 @@ fn outside_windows_are_remembered_and_come_back_at_the_next_start() {
     let app = h.state();
     assert_eq!(app.detached.windows.len(), 1);
     assert_eq!(app.detached.windows[0].tabs(), vec![Tab::History]);
-    assert_eq!(app.detached.windows[0].home, vec![Tab::Properties]);
+    assert_eq!(
+        app.detached.windows[0].home,
+        vec![Tab::Properties, Tab::Material]
+    );
     assert_eq!(
         app.detached.windows[0].record,
         Some(record(1650.0, 140.0, 420.0, 360.0))
@@ -920,6 +942,42 @@ fn an_outside_window_runs_its_own_pass_and_takes_the_same_shortcuts() {
         .contains_key(&Tab::Layers));
 }
 
+/// 別ウィンドウの egui の事象は、主のフレームの初めには見えない（フレームの間隔の下限で、入力のあるフレームの 1/240 秒にしたい）。別ウィンドウのパスが
+/// 入力を見たら、次の主のフレームの初めが入力のあるフレームとして数える印を残す。入力の無いパスは印を付けない。印は一度取り出したら消える。
+#[test]
+fn an_outside_window_that_saw_input_marks_the_next_main_frame_as_an_input_frame() {
+    let (mut h, driver) = app_with_viewports();
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::Layers,
+        Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0)),
+    );
+    let empty = egui::RawInput::default();
+    // 取り出して印を消す。入力の無い子のパスだけでは印は付かない
+    h.state_mut().frame_has_input(&empty);
+    driver.take_ran();
+    h.run();
+    assert!(driver.take_ran().contains(&id), "子ウィンドウのパスが回る");
+    assert!(
+        !h.state_mut().frame_has_input(&empty),
+        "入力の無いパスは印を付けない"
+    );
+    // 別ウィンドウの上でポインタが動く
+    driver.child(id, |c| {
+        c.events.push(Event::PointerMoved(pos2(40.0, 40.0)));
+    });
+    h.run();
+    assert!(
+        h.state_mut().frame_has_input(&empty),
+        "別ウィンドウが入力を見たら、次の主のフレームの初めは入力のあるフレーム"
+    );
+    assert!(
+        !h.state_mut().frame_has_input(&empty),
+        "一度取り出したら消える"
+    );
+}
+
 #[test]
 fn closing_an_outside_window_returns_its_tabs_to_the_dock() {
     let (mut h, driver) = app_with_viewports();
@@ -935,7 +993,7 @@ fn closing_an_outside_window_returns_its_tabs_to_the_dock() {
     assert!(app.detached.windows.is_empty());
     assert_eq!(
         mates(&app.dock, Tab::History),
-        vec![Tab::Properties, Tab::History]
+        vec![Tab::Properties, Tab::Material, Tab::History]
     );
     assert_every_tab_once(&app.dock, &[]);
 }
@@ -1057,8 +1115,8 @@ fn the_focused_outside_window_keeps_its_own_shift_for_the_merged_copy() {
 fn a_tab_dropped_from_an_outside_window_onto_the_main_window_joins_the_group_under_the_pointer() {
     let (mut h, driver) = app_with_viewports();
     let inner = Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0));
-    let id = detach_to(&mut h, &driver, Tab::Navigator, inner);
-    let from = h.state().detached.windows[0].tab_rects[&Tab::Navigator].center();
+    let id = detach_to(&mut h, &driver, Tab::Channels, inner);
+    let from = h.state().detached.windows[0].tab_rects[&Tab::Channels].center();
     // メインウィンドウのキャンバスの組（メインウィンドウの点）を、子ウィンドウの点で言う
     let target = detach::leaf_rect(&h.state().dock, Tab::Canvas)
         .unwrap()
@@ -1091,8 +1149,8 @@ fn a_tab_dropped_from_an_outside_window_onto_the_main_window_joins_the_group_und
     let app = h.state();
     assert!(app.detached.windows.is_empty());
     assert_eq!(
-        mates(&app.dock, Tab::Navigator),
-        vec![Tab::Canvas, Tab::View3d, Tab::Navigator]
+        mates(&app.dock, Tab::Channels),
+        vec![Tab::Canvas, Tab::Channels]
     );
 }
 
@@ -1174,10 +1232,20 @@ fn play_child(
     id: ViewportId,
     events: Vec<Event>,
 ) -> (Vec<ViewportCommand>, Vec<ViewportCommand>) {
+    play_child_groups(h, driver, id, events.into_iter().map(|e| vec![e]).collect())
+}
+
+/// 子ウィンドウに入力を、グループごとに 1 フレームで渡す（winit は、ペン・指の接触の始まりの Touch と、その押しの代わりの入力を、同じ入力のまとまりに入れる）。
+fn play_child_groups(
+    h: &mut Harness<'static, YoluApp>,
+    driver: &Driver,
+    id: ViewportId,
+    groups: Vec<Vec<Event>>,
+) -> (Vec<ViewportCommand>, Vec<ViewportCommand>) {
     let mut child = Vec::new();
     let mut root = Vec::new();
-    for event in events {
-        driver.child(id, |c| c.events.push(event));
+    for group in groups {
+        driver.child(id, |c| c.events.extend(group));
         h.step();
         let out = h.output();
         let take = |v: ViewportId| {
@@ -1271,8 +1339,8 @@ fn with_the_custom_frame_the_empty_tab_row_moves_and_maximizes_the_outside_windo
 
 #[test]
 fn with_the_custom_frame_dragging_a_tab_still_moves_the_tab_not_the_window() {
-    let (mut h, driver, id) = framed_with_viewports(true, Tab::Navigator);
-    let from = h.state().detached.windows[0].tab_rects[&Tab::Navigator].center();
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::Channels);
+    let from = h.state().detached.windows[0].tab_rects[&Tab::Channels].center();
     // メインウィンドウのキャンバスの組（メインウィンドウの点）を、子ウィンドウの点で言う
     let target = detach::leaf_rect(&h.state().dock, Tab::Canvas)
         .unwrap()
@@ -1287,8 +1355,8 @@ fn with_the_custom_frame_dragging_a_tab_still_moves_the_tab_not_the_window() {
         "タブはメインウィンドウへ戻る"
     );
     assert_eq!(
-        mates(&app.dock, Tab::Navigator),
-        vec![Tab::Canvas, Tab::View3d, Tab::Navigator]
+        mates(&app.dock, Tab::Channels),
+        vec![Tab::Canvas, Tab::Channels]
     );
 }
 
@@ -1312,7 +1380,7 @@ fn with_the_custom_frame_the_close_button_returns_the_tabs_to_their_group() {
     assert!(app.detached.windows.is_empty());
     assert_eq!(
         mates(&app.dock, Tab::History),
-        vec![Tab::Properties, Tab::History]
+        vec![Tab::Properties, Tab::Material, Tab::History]
     );
     assert_every_tab_once(&app.dock, &[]);
 }
@@ -1418,6 +1486,226 @@ fn without_the_custom_frame_the_tab_row_and_the_right_end_do_nothing_to_the_wind
         "{child:?}"
     );
     assert_eq!(h.state().detached.windows.len(), 1, "閉じるは無い");
+}
+
+// ───────── 帯をペン・指で引く（Windows。Linux でも手の差し替えで確かめる） ─────────
+
+/// 別ウィンドウ 1 つ目のペンの受け口に、試験の手を付ける。
+fn give_mover(h: &mut Harness<'static, YoluApp>, mover: &Arc<TestMover>) {
+    let mover: Arc<dyn yolu_app::pen::WindowMover> = mover.clone();
+    h.state_mut().detached.windows[0].set_pen_mover(Some(mover));
+}
+
+/// ペンや指の引き: 触れた入力（Touch の始まり）と押しを同じフレームで渡し、離さずに引く。
+fn child_pen_hold(from: Pos2, by: egui::Vec2) -> Vec<Vec<Event>> {
+    let mut groups = vec![vec![
+        touch_start(from),
+        Event::PointerMoved(from),
+        child_button(from, true),
+    ]];
+    for i in 1..=6 {
+        groups.push(vec![Event::PointerMoved(from + by * (i as f32 / 6.0))]);
+    }
+    groups
+}
+
+/// ペンや指の引き（離すまで）。
+fn child_pen_drag(from: Pos2, by: egui::Vec2) -> Vec<Vec<Event>> {
+    let mut groups = child_pen_hold(from, by);
+    groups.push(vec![child_button(from + by, false)]);
+    groups
+}
+
+fn starts(commands: &[ViewportCommand]) -> usize {
+    commands.iter().filter(|c| starts_drag(c)).count()
+}
+
+#[test]
+fn with_the_custom_frame_a_pen_drag_on_the_empty_tab_row_is_moved_by_the_app_not_by_the_os_loop() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let (child, root) =
+        play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(mover.calls(), 1, "引き始めでアプリの手を 1 度呼ぶ");
+    assert_eq!(
+        starts(&child),
+        0,
+        "ペンの引きは OS の移動の輪に渡さない: {child:?}"
+    );
+    assert_eq!(starts(&root), 0, "{root:?}");
+    assert_eq!(mover.handed(), 0, "輪に渡していない");
+    assert_eq!(h.state().detached.windows.len(), 1, "ウィンドウはそのまま");
+}
+
+/// 触れているポインタが分からなくて動かせなくても（点が途絶えた・指など）、ペン・指の押しは OS の移動の輪に渡さない: 元の不具合の道に戻らない。
+#[test]
+fn a_pen_or_finger_press_never_goes_to_the_os_loop_even_when_the_app_cannot_move_the_window() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(false);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(mover.calls(), 1);
+    assert_eq!(starts(&child), 0, "{child:?}");
+    assert_eq!(mover.handed(), 0);
+    // 止めたペン: 押してしばらく動かさず（点が途絶える）から動かしても、アプリの側で動かす（OS の移動の輪に戻らない）
+    let before = mover.calls();
+    let (mut seen, _) = play_child_groups(
+        &mut h,
+        &driver,
+        id,
+        vec![vec![
+            touch_start(at),
+            Event::PointerMoved(at),
+            child_button(at, true),
+        ]],
+    );
+    for _ in 0..30 {
+        h.step();
+        seen.extend(
+            h.output()
+                .viewport_output
+                .get(&id)
+                .map(|o| o.commands.clone())
+                .unwrap_or_default(),
+        );
+    }
+    let (moved, _) = play_child(
+        &mut h,
+        &driver,
+        id,
+        vec![
+            Event::PointerMoved(at + vec2(20.0, 0.0)),
+            Event::PointerMoved(at + vec2(40.0, 10.0)),
+            child_button(at + vec2(40.0, 10.0), false),
+        ],
+    );
+    seen.extend(moved);
+    assert_eq!(starts(&seen), 0, "{seen:?}");
+    assert_eq!(
+        mover.calls(),
+        before + 1,
+        "止めたあとに動かしたとき、手を呼ぶ"
+    );
+}
+
+#[test]
+fn a_mouse_drag_still_starts_the_os_move_and_tells_the_watch() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+    assert_eq!(mover.calls(), 0, "マウスの引きでは、アプリの手を呼ばない");
+    assert_eq!(mover.handed(), 1, "輪に渡したと見張りに伝える");
+    assert!(
+        mover.polls() >= 6,
+        "見張りは毎フレーム呼ばれる: {}",
+        mover.polls()
+    );
+    // 手の無い受け口（Windows 以外・繋ぐ前）の引きは、ペンの接触でも今までどおり StartDrag
+    h.state_mut().detached.windows[0].set_pen_mover(None);
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+}
+
+/// 補った離し（`WM_LBUTTONUP` → winit のマウスの離し → egui のポインタの離し）が届いたあとは、次のマウスの引きでまた StartDrag が出る。
+#[test]
+fn after_a_pen_press_was_taken_and_released_for_it_the_next_mouse_drag_starts_the_os_move_again() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    // ペンで引いている途中（離しは来ない）
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_hold(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // 補われた離し
+    let (child, _) = play_child(
+        &mut h,
+        &driver,
+        id,
+        vec![child_button(at + vec2(60.0, 30.0), false)],
+    );
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // 次はマウス
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+}
+
+/// ペンの押しの離しが egui に一度も届かなくても、次のマウスの押しは、押し出しの出どころ（Touch の無い押し）を見て、マウスの引きとして StartDrag を出す。
+/// ただし egui は、離しが来るまで前の引きを続けているので、マウスの 1 度目の引きは StartDrag にならず、押しと離しを 1 度挟んだ 2 度目で出る
+/// （これが、ペンの受け口の側で離しを補う理由）。
+#[test]
+fn without_the_release_the_first_mouse_drag_after_a_pen_press_does_not_start_the_os_move() {
+    let (mut h, driver, id) = framed_with_viewports(true, Tab::History);
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::History);
+    let _ = play_child_groups(&mut h, &driver, id, child_pen_hold(at, vec2(60.0, 30.0)));
+    let (first, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    let (second, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&first), 0, "{first:?}");
+    assert_eq!(starts(&second), 1, "{second:?}");
+    assert_eq!(
+        mover.calls(),
+        1,
+        "手を呼んだのはペンの引きの 1 度だけ（マウスの押しは、ペンの押しとして数えない）"
+    );
+}
+
+/// ペンでタブを引いて別ウィンドウにし、その帯をペンで引いて動かしたあとも、マウスでもペンでもまた引ける（ペンの引きは OS の移動の輪に渡さないので、輪の印が残らない）。
+#[test]
+fn after_a_tab_is_torn_off_by_the_pen_its_bar_can_be_dragged_by_the_pen_and_then_by_the_mouse() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_custom_frame(true);
+    h.run();
+    // ペンでタブの見出しを押して外へ引いて離す
+    let tab = h.state().tab_rects[&Tab::Channels];
+    let sample = |at: Pos2, contact: bool| PenSample {
+        pos: [at.x, at.y],
+        pressure: if contact { 0.5 } else { 0.0 },
+        tilt: yolu_app::engine::Tilt::default(),
+        rotation: None,
+        contact,
+        eraser: false,
+        barrel: false,
+        pointer_id: 5,
+        time_ms: 0,
+    };
+    let (from, to) = (tab.center(), pos2(1500.0, 300.0));
+    h.state().pen().push(sample(from, true));
+    drag_tab(&mut h, from, to);
+    h.state().pen().push(sample(to, false));
+    h.run();
+    assert_eq!(h.state().detached.windows.len(), 1, "別ウィンドウができる");
+    let id = h.state().detached.windows[0].viewport_id();
+    driver.child(id, |c| {
+        c.inner = Some(OUTSIDE);
+        c.focused = true;
+    });
+    sync(&mut h, &driver);
+    h.run();
+    // その帯をペンで引く → OS の移動の輪ではなく、アプリの側で動かす
+    let mover = TestMover::new(true);
+    give_mover(&mut h, &mover);
+    let at = empty_row_point(&h, Tab::Channels);
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(mover.calls(), 1);
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // もう一度ペンで引ける
+    let (child, _) = play_child_groups(&mut h, &driver, id, child_pen_drag(at, vec2(-40.0, 20.0)));
+    assert_eq!(mover.calls(), 2);
+    assert_eq!(starts(&child), 0, "{child:?}");
+    // マウスで引くと OS の移動になる
+    let (child, _) = play_child(&mut h, &driver, id, child_drag(at, vec2(60.0, 30.0)));
+    assert_eq!(starts(&child), 1, "{child:?}");
+    assert_eq!(mover.calls(), 2, "マウスの引きでは手を呼ばない");
+    assert_eq!(h.state().detached.windows.len(), 1, "ウィンドウはそのまま");
 }
 
 /// 絵: 自前の枠の別ウィンドウ（試験のウィンドウではメインウィンドウの中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。

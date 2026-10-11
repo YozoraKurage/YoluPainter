@@ -1,14 +1,20 @@
 //! 形式の仕様（`docs/YLP_FORMAT.md`）が、書き手と読み手に追いついているか。エントリ・版・正本の欄・JSON のキーを足して仕様を直し忘れると落ちる。
+//! 仕様の中の節への道（`#…`）が、見出しに当たっているかも見る（見出しを変えると黙って切れるため）。
 use yolu_core::{look::MaterialLook, Document, SelectionMask};
 use yolu_io::{
     entry_form, mesh_map, pose, saved_selections, MaterialRef, NativeDocument, Project, Selection,
-    SetSpec, WriterInfo, ADJUST_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MAX_FORMAT,
-    MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION,
-    RESOURCE_ENTRIES, ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES,
-    SPLIT_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    SetSpec, WriterInfo, ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION,
+    EFFECTS_VERSION, MAX_FORMAT, MAX_NATIVE_VERSION, MIXING_VERSION, PATHS_VERSION,
+    POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES, ROOT_ENTRIES, RULERS_VERSION,
+    SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES, SPLIT_VERSION, TEXT_VERSION,
+    UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 
 const SPEC: &str = include_str!("../../../../docs/YLP_FORMAT.md");
+const DECISIONS: &str = include_str!("../../../../docs/YLP_DECISIONS.md");
+
+/// 節を絞らず、仕様の全体と照らす印。
+const WHOLE: &str = "";
 
 /// 見出し `heading` の節（次の同じ深さか浅い見出しまで）。
 fn section(heading: &str) -> &'static str {
@@ -22,6 +28,81 @@ fn section(heading: &str) -> &'static str {
         .find(|(i, _)| body[i + 1..].bytes().take_while(|b| *b == b'#').count() <= level)
         .map_or(body.len(), |(i, _)| i);
     &body[..end]
+}
+
+/// 表の行のうち、最初の欄が `name` で始まるもの。
+fn row<'a>(text: &'a str, name: &str) -> &'a str {
+    let key = format!("| {name}");
+    text.lines()
+        .find(|l| l.starts_with(&key))
+        .unwrap_or_else(|| panic!("表に行「{name}」がありません"))
+}
+
+/// 表の行の欄（前後の空白を除く）。
+fn cells(row: &str) -> Vec<&str> {
+    row.trim()
+        .trim_matches('|')
+        .split('|')
+        .map(str::trim)
+        .collect()
+}
+
+/// 文書の見出しの道（GitHub と同じ規則: 英数字・日本語の字・`-`・`_` だけを残し、空白は `-` にする。
+/// 同じ見出しは後ろに `-1`…が付く）。コードの囲みの中は見ない。
+fn heading_anchors(doc: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut fenced = false;
+    for line in doc.lines() {
+        if line.starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        let Some(rest) = line.strip_prefix('#').filter(|_| !fenced) else {
+            continue;
+        };
+        let Some(text) = rest.trim_start_matches('#').strip_prefix(' ') else {
+            continue;
+        };
+        let base: String = text
+            .trim()
+            .chars()
+            .filter(|c| *c != '`')
+            .flat_map(char::to_lowercase)
+            .filter_map(|c| match c {
+                ' ' => Some('-'),
+                c if c.is_alphanumeric() || c == '-' || c == '_' => Some(c),
+                _ => None,
+            })
+            .collect();
+        let mut anchor = base.clone();
+        let mut n = 0;
+        while out.contains(&anchor) {
+            n += 1;
+            anchor = format!("{base}-{n}");
+        }
+        out.push(anchor);
+    }
+    out
+}
+
+/// 文書の中のリンク `](…)` の行き先（コードの囲みの中は見ない）。
+fn link_targets(doc: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut fenced = false;
+    for line in doc.lines() {
+        if line.starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        let mut rest = line;
+        while let Some(i) = rest.find("](").filter(|_| !fenced) {
+            let after = &rest[i + 2..];
+            let Some(end) = after.find(')') else { break };
+            out.push(&after[..end]);
+            rest = &after[end + 1..];
+        }
+    }
+    out
 }
 
 /// `name` が英数字に挟まれずに現れるか（`_`・`.`・`` ` `` は区切りとみなす）。
@@ -55,29 +136,39 @@ fn identifiers(source: &str, camel: bool) -> Vec<String> {
 
 #[test]
 fn every_entry_the_reader_knows_is_in_the_spec() {
-    let table = section("## エントリ");
+    // 表の行の最初の欄（エントリの名前）で照らす。ほかの欄の文に名前が出ていても、行があるとは言えない
+    let table = section("## エントリの一覧");
+    let names: Vec<&str> = table
+        .lines()
+        .filter(|l| l.starts_with("| "))
+        .filter_map(|l| cells(l).first().copied())
+        .collect();
     let missing: Vec<_> = ROOT_ENTRIES
         .iter()
         .chain(&SET_ENTRIES)
-        .filter(|f| !table.contains(&format!("`{f}`")))
+        .filter(|f| !names.iter().any(|n| n.contains(&format!("`{f}`"))))
         .collect();
     assert!(
         missing.is_empty(),
-        "docs/YLP_FORMAT.md の「エントリ」に無い: {missing:?}"
+        "docs/YLP_FORMAT.md の「エントリの一覧」に無い: {missing:?}"
     );
+    let assets = names
+        .iter()
+        .find(|n| n.contains("`resources/<content>.png`"))
+        .expect("アセットの中身の行");
     for f in RESOURCE_ENTRIES {
         let ext = f.rsplit_once('.').unwrap().1;
         assert!(
-            table.contains(&format!(".{ext}`")),
-            "棚の中身 {f} が「エントリ」に無い"
+            assets.contains(&format!(".{ext}`")),
+            "アセットの中身 {f} が「エントリの一覧」に無い"
         );
     }
 }
 
 #[test]
 fn every_version_is_in_the_spec() {
-    // 早見と、コードの定数の値
-    let summary = section("## 版の早見");
+    // コードの定数の表（形式を変えるときの節）
+    let constants = section("### コードの定数");
     for (name, value) in [
         ("MAX_FORMAT", MAX_FORMAT),
         ("SAVED_SELECTIONS_FORMAT", SAVED_SELECTIONS_FORMAT),
@@ -92,60 +183,104 @@ fn every_version_is_in_the_spec() {
         ("SEAMS_VERSION", SEAMS_VERSION),
         ("TEXT_VERSION", TEXT_VERSION),
         ("BAKE_PRIORITY_VERSION", BAKE_PRIORITY_VERSION),
+        ("ANTI_ALIAS_VERSION", ANTI_ALIAS_VERSION),
+        ("RULERS_VERSION", RULERS_VERSION),
         ("MAX_NATIVE_VERSION", MAX_NATIVE_VERSION),
         ("SPLIT_VERSION", SPLIT_VERSION),
         ("FORMAT_VERSION", mesh_map::FORMAT_VERSION),
     ] {
         assert!(
-            summary.contains(&format!("{name}`（{value}）")),
-            "版の早見の {name} が {value} でない"
+            constants.contains(&format!("::{name}` | {value} |")),
+            "コードの定数の表の {name} が {value} でない"
         );
     }
     for (name, value) in [
         ("look::FORMAT", yolu_io::look::FORMAT),
         ("pose::FORMAT", pose::FORMAT),
         ("saved_selections::FORMAT", saved_selections::FORMAT),
+        ("livelink::FORMAT", yolu_io::livelink::FORMAT),
     ] {
         assert!(
-            summary.contains(&format!("`{name}`")) && value == 1,
-            "版の早見の {name} が {value} でない"
+            constants.contains(&format!("`{name}` | {value} |")),
+            "コードの定数の表の {name} が {value} でない"
         );
     }
-    assert!(
-        summary.contains(&format!("1〜{MAX_FORMAT}")),
+    // 「版の数」の表。行の名前ごとに、範囲の欄と、このアプリが書く値の欄を照らす
+    let summary = section("### 版の数");
+    let range = |name: &str| cells(row(summary, name))[3];
+    let written = |name: &str| cells(row(summary, name))[4];
+    assert_eq!(range("外側の版"), "1〜4", "外側の版の範囲");
+    assert!(written("外側の版").starts_with("3。"), "外側の版の書く値");
+    assert_eq!(
+        range("中身の形式"),
+        format!("1〜{MAX_FORMAT}"),
         "中身の形式の範囲"
     );
     assert!(
-        summary.contains(&format!("1〜{TEXT_VERSION}")),
-        "正本の版の範囲"
+        written("中身の形式").starts_with("7。"),
+        "中身の形式の書く値"
     );
-    // 読める版の一番新しいもの（機能の版の末尾）は、範囲の末尾に載る
-    assert!(
-        summary.contains(&format!("・{MAX_NATIVE_VERSION} |")),
-        "正本の版の範囲の末尾が MAX_NATIVE_VERSION でない"
+    assert_eq!(
+        range("正本の版"),
+        format!(
+            "1〜{TEXT_VERSION}・{SEAMS_VERSION}〜{MAX_NATIVE_VERSION}（{} は欠番）",
+            TEXT_VERSION + 1
+        ),
+        "正本の版の範囲（末尾が MAX_NATIVE_VERSION）"
     );
-    assert!(
-        summary.contains(&format!("版 1〜{}", mesh_map::FORMAT_VERSION)),
-        "メッシュマップの版"
-    );
-    assert!(summary.contains("YOLUPAINTER-YLP-1`〜`4"), "外側の版");
-    let ranges = format!(
-        "| `YLP-1`〜`4` | 1〜{MAX_FORMAT} | 1〜{TEXT_VERSION}・{SEAMS_VERSION}・{BAKE_PRIORITY_VERSION} |"
+    let native_written = format!(
+        "{UNITY_NATIVE_VERSION}〜{MIXING_VERSION}・{PATHS_VERSION}〜{TEXT_VERSION}・{SEAMS_VERSION}〜{MAX_NATIVE_VERSION}"
     );
     assert!(
-        summary.contains(&ranges),
-        "読み手ごとの範囲のこのアプリの行: {ranges}"
+        written("正本の版").contains(&native_written),
+        "正本の版の書く値: {native_written}"
+    );
+    assert!(
+        range("メッシュマップの版").starts_with(&format!("1〜{}。", mesh_map::FORMAT_VERSION)),
+        "メッシュマップの版の範囲"
+    );
+    assert_eq!(
+        written("メッシュマップの版"),
+        mesh_map::FORMAT_VERSION.to_string(),
+        "メッシュマップの版の書く値"
+    );
+    for (name, value) in [
+        ("選択範囲の版", "1"),
+        ("JSON の `format`", "1"),
+        ("`.ylsmart` の版", "1"),
+    ] {
+        assert_eq!(range(name), value, "{name}の範囲");
+        assert_eq!(written(name), value, "{name}の書く値");
+    }
+    // 読み手ごとの範囲のこのアプリの行
+    let readers = section("### 読み手ごとの範囲");
+    let app = cells(row(readers, "このアプリ"));
+    assert_eq!(app[1], "`YLP-1`〜`4`", "読み手ごとの範囲: 外側の版");
+    assert_eq!(
+        app[2],
+        format!("1〜{MAX_FORMAT}"),
+        "読み手ごとの範囲: 中身の形式"
+    );
+    assert_eq!(
+        app[3],
+        format!("1〜{TEXT_VERSION}・{SEAMS_VERSION}〜{MAX_NATIVE_VERSION}"),
+        "読み手ごとの範囲: 正本の版"
     );
     // 表の行が版ごとにある
-    let formats = section("## 中身の形式の版");
+    let formats = section("### 中身の形式の版");
     for v in 1..=MAX_FORMAT {
         assert!(
             formats.contains(&format!("\n| {v} |")),
             "中身の形式 {v} の行が無い"
         );
     }
-    let natives = section("### 正本の版");
-    for v in (1..=TEXT_VERSION).chain([SEAMS_VERSION, BAKE_PRIORITY_VERSION]) {
+    let natives = section("### 正本の版ごとの追加");
+    for v in (1..=TEXT_VERSION).chain([
+        SEAMS_VERSION,
+        BAKE_PRIORITY_VERSION,
+        ANTI_ALIAS_VERSION,
+        RULERS_VERSION,
+    ]) {
         assert!(
             natives.contains(&format!("\n| {v} |")),
             "正本の版 {v} の行が無い"
@@ -160,37 +295,61 @@ fn every_version_is_in_the_spec() {
     }
 }
 
+/// 仕様の中の `#…` の道が、全部見出しに当たる（YLP_FORMAT.md と YLP_DECISIONS.md の相互の道を含む）。
+#[test]
+fn every_link_to_a_section_reaches_a_heading() {
+    let docs = [
+        ("YLP_FORMAT.md", SPEC, heading_anchors(SPEC)),
+        ("YLP_DECISIONS.md", DECISIONS, heading_anchors(DECISIONS)),
+    ];
+    let mut broken = Vec::new();
+    for (name, doc, _) in &docs {
+        for target in link_targets(doc) {
+            let (file, fragment) = match target.split_once('#') {
+                Some(("", fragment)) => (*name, fragment),
+                Some((file, fragment)) if docs.iter().any(|d| d.0 == file) => (file, fragment),
+                _ => continue,
+            };
+            let anchors = &docs.iter().find(|d| d.0 == file).unwrap().2;
+            if !anchors.iter().any(|a| a == fragment) {
+                broken.push(format!("{name} -> {target}"));
+            }
+        }
+    }
+    assert!(broken.is_empty(), "見出しに当たらない道: {broken:?}");
+    // 見出しの道の作り方が崩れていないこと（道が 1 つも無い文書では、上の確かめが何も見ない）
+    assert!(docs.iter().all(|d| d.2.len() > 10));
+    assert!(link_targets(SPEC).iter().any(|t| t.starts_with('#')));
+    assert!(link_targets(SPEC)
+        .iter()
+        .any(|t| t.starts_with("YLP_DECISIONS.md#")));
+}
+
 #[test]
 fn every_field_of_the_document_is_in_the_spec() {
-    let spec = section("## 正本（document.utpaint）");
+    let spec = section("## document.utpaint");
     let names = identifiers(include_str!("../../src/native.rs"), false);
     assert!(names.len() > 150, "欄の名前を拾えていない: {}", names.len());
     let missing: Vec<_> = names.iter().filter(|n| !mentions(spec, n)).collect();
     assert!(
         missing.is_empty(),
-        "docs/YLP_FORMAT.md の「正本」に無い欄: {missing:?}"
+        "docs/YLP_FORMAT.md の「document.utpaint」に無い欄: {missing:?}"
     );
 }
 
 #[test]
 fn every_json_key_is_in_the_spec() {
     for (source, heading) in [
-        (include_str!("../../src/project.rs"), "## エントリ"),
-        (
-            include_str!("../../src/look.rs"),
-            "## look.json（状態。セットの下）",
-        ),
-        (
-            include_str!("../../src/pose.rs"),
-            "## pose.json（状態。根）",
-        ),
+        (include_str!("../../src/project.rs"), WHOLE),
+        (include_str!("../../src/look.rs"), "### look.json"),
+        (include_str!("../../src/pose.rs"), "### pose.json"),
         (
             include_str!("../../src/saved_selections.rs"),
-            "### selections.json と selection-<印>.bin（形式 8）",
+            "### selections.json と残した選択範囲",
         ),
     ] {
-        // project.rs の読み手は、ylp.json・project.json・棚・view.json・.ylsmart・.ylbrush を読むので、仕様の全体と照らす
-        let text = if heading == "## エントリ" {
+        // project.rs の読み手は、ylp.json・project.json・resources.json・view.json・.ylsmart・.ylbrush を読むので、仕様の全体と照らす
+        let text = if heading == WHOLE {
             SPEC
         } else {
             section(heading)
@@ -201,12 +360,13 @@ fn every_json_key_is_in_the_spec() {
             .collect();
         assert!(
             missing.is_empty(),
-            "docs/YLP_FORMAT.md の「{heading}」に無いキー・値: {missing:?}"
+            "docs/YLP_FORMAT.md の「{}」に無いキー・値: {missing:?}",
+            if heading == WHOLE { "全体" } else { heading }
         );
     }
 }
 
-/// 書き手が出せるエントリ（セット・選択範囲・残した選択範囲・見た目・ポーズ・モデルの参照・メッシュマップ・合成・棚の画像）が、
+/// 書き手が出せるエントリ（セット・選択範囲・残した選択範囲・見た目・ポーズ・モデルの参照・メッシュマップ・合成・アセットの画像）が、
 /// どれも仕様の一覧の形に入り、開き直して知らないエントリにならない。
 #[test]
 fn every_entry_the_writer_makes_has_a_form_in_the_spec() {

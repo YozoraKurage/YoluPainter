@@ -15,8 +15,11 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'target/third-party'
 CONFIG = ROOT / 'tools/licenses-reviewed.json'
 TARGET = 'x86_64-pc-windows-gnu'
-# Ubuntu は egui 標準書体について承認された例外。
-# BSL-1.0 と Hack 書体の Bitstream Vera は 2026-10-04 にユーザーが追加承認。
+# 1 つの配布物を、複数の Rust のターゲットで作った実行ファイルをまとめて作る対象。universal-apple-darwin は Apple Silicon と Intel の
+# 実行ファイルを 1 つにした macOS の .app なので、依存は 2 つのターゲットの木の和を数える。
+COMPONENTS = {'universal-apple-darwin': ('aarch64-apple-darwin', 'x86_64-apple-darwin')}
+# Ubuntu は egui 標準フォントについて承認された例外。
+# BSL-1.0 と Hack フォントの Bitstream Vera は 2026-10-04 にユーザーが追加承認。
 ALLOWED = {'MIT', 'Apache-2.0', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Zlib',
            'ISC', 'Unicode-DFS-2016', 'Unicode-3.0', 'OFL-1.1', 'Ubuntu-font-1.0',
            'BSL-1.0', 'Bitstream-Vera'}
@@ -31,13 +34,26 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def triples(target):
+    """配布の対象を作る Rust のターゲット（1 つの対象は自分自身、まとめて作る対象は構成するターゲット）。"""
+    return COMPONENTS.get(target, (target,))
+
+
 def dependency_keys(package, edges, offline, built_with=None):
-    """`package` が入れる依存の集合。`built_with` を指すと、その製品と同じ cargo のビルド（機能が合わさる）で作った物の、`package` の部分木。"""
+    """`package` が入れる依存の集合。`built_with` を指すと、その製品と同じ cargo のビルド（機能が合わさる）で作った物の、`package` の部分木。
+    複数のターゲットで作る対象（`COMPONENTS`）は、ターゲットごとの木の和。"""
+    keys = set()
+    for triple in triples(TARGET):
+        keys |= target_keys(package, edges, offline, built_with, triple)
+    return keys
+
+
+def target_keys(package, edges, offline, built_with, triple):
     if built_with:
-        text = cargo('tree', '--locked', *(['--offline'] if offline else []), '--target', TARGET,
+        text = cargo('tree', '--locked', *(['--offline'] if offline else []), '--target', triple,
                      '-p', built_with, '-p', package, '-e', edges, '--prefix', 'depth', '--no-dedupe', '--format', '{p}')
         return subtree_keys(text, package)
-    text = cargo('tree', '--locked', *(['--offline'] if offline else []), '--target', TARGET,
+    text = cargo('tree', '--locked', *(['--offline'] if offline else []), '--target', triple,
                  '-p', package, '-e', edges, '--prefix', 'none', '--format', '{p}')
     keys = set()
     for line in text.splitlines():
@@ -70,8 +86,20 @@ def subtree_keys(text, package):
     return keys
 
 
+# 上流が許諾の本文を持たないクレートのために、上流の記載（Cargo.toml の license と authors）から組み立てた文を置くフォルダ（リポジトリの中）。
+# 文の頭に、上流の原文ではないことを書く。`licenses-reviewed.json` の `repo` の指定は、このフォルダの下のファイルだけ。
+LICENSE_TEXTS = 'tools/license-texts'
+
+
 def read_source(package, spec, offline):
-    if 'path' in spec:
+    if 'repo' in spec:
+        folder = (ROOT / LICENSE_TEXTS).resolve()
+        path = (ROOT / spec['repo']).resolve()
+        if not path.is_relative_to(folder):
+            raise ValueError(f'リポジトリの文は {LICENSE_TEXTS}/ の下だけです')
+        data = path.read_bytes()
+        origin = 'repo:' + spec['repo']
+    elif 'path' in spec:
         base = Path(package['manifest_path']).parent.resolve()
         path = (base / spec['path']).resolve()
         if not path.is_relative_to(base):
@@ -257,6 +285,20 @@ def audit_lock(metadata, config, offline):
     return 1 if errors else 0
 
 
+def merged_metadata(offline):
+    """対象を作る Rust のターゲットごとの `cargo metadata`（そのターゲットの依存だけに絞った物）を 1 つにまとめる。"""
+    merged = None
+    for triple in triples(TARGET):
+        metadata = json.loads(cargo('metadata', '--locked', '--format-version', '1',
+                                    '--filter-platform', triple, *(['--offline'] if offline else [])))
+        if merged is None:
+            merged = metadata
+            continue
+        known = {item['id'] for item in merged['packages']}
+        merged['packages'] += [item for item in metadata['packages'] if item['id'] not in known]
+    return merged
+
+
 def markdown(package, records, errors, lock_hash, built_with=None):
     counts = Counter(' AND '.join(r['selected']) or '未確認' for r in records)
     lines = [f'## {package} の依存一覧', '', f'対象: `{TARGET}`、通常の機能。Cargo.lock SHA-256: `{lock_hash}`。', '',
@@ -285,10 +327,11 @@ def main():
     use_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--package', choices=['yolu-app', 'yolu-update', 'yolu-cli', 'xtask', 'all'], default='all')
-    parser.add_argument('--audit-lock', action='store_true', help='3 対象の試験依存も照合し、lock 全件の分類を lock-inventory.json に記録する（配布用全文束は作らない）')
+    parser.add_argument('--audit-lock', action='store_true', help='登録した全ターゲット（Windows・Linux・macOS）の試験依存も照合し、lock 全件の分類を lock-inventory.json に記録する（配布用全文束は作らない）')
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
-    parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu'])
+    parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu',
+                                             'aarch64-apple-darwin', 'x86_64-apple-darwin', 'universal-apple-darwin'])
     parser.add_argument('--include-update', action='store_true', help='将来組み込む更新クレートも全文束に含める')
     parser.add_argument('--include-cli', action='store_true', help='同じ配布物に入るコマンドライン（yolu-cli）の依存も全文束に含める')
     parser.add_argument('--built-with', choices=['yolu-app', 'yolu-update', 'yolu-cli'],
@@ -314,10 +357,10 @@ def main():
     for package in selected:
         (output / package / 'THIRD_PARTY_LICENSES.txt').unlink(missing_ok=True)
     config = json.loads(CONFIG.read_text(encoding='utf-8'))
-    if config['schema'] != 1 or TARGET not in config.get('targets', [config.get('target')]):
+    registered = config.get('targets', [config.get('target')])
+    if config['schema'] != 1 or any(triple not in registered for triple in triples(TARGET)):
         raise ValueError('設定の版または対象が違います')
-    metadata = json.loads(cargo('metadata', '--locked', '--format-version', '1',
-                               '--filter-platform', TARGET, *(['--offline'] if args.offline else [])))
+    metadata = merged_metadata(args.offline)
     lock_hash = digest((ROOT / 'Cargo.lock').read_bytes())
     failures = 0
     for package in selected:

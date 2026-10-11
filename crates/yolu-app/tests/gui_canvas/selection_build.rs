@@ -8,8 +8,7 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::engine::{
-    Channel, Document, SelectionCombine, SelectionMask, SymmetryMode, TileCoord,
-    DEFAULT_WORKING_BUDGET_BYTES,
+    Channel, Document, SelectionCombine, SelectionMask, TileCoord, DEFAULT_WORKING_BUDGET_BYTES,
 };
 use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
@@ -17,7 +16,7 @@ use yolu_app::pen::PenSample;
 use yolu_app::selection::canvas::active_symmetry;
 use yolu_app::selection::pen::{dab_coverage, PenError, PenParams, PenStroke, PEN_BUDGET_BYTES};
 use yolu_app::selection::saved::{SavedOp, MAX_SAVED, SAVED_BUDGET_BYTES};
-use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp, SymOp};
+use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp};
 use yolu_app::sets::TextureSets;
 use yolu_app::state::{Action, AppState, StrokeSource, Tool};
 use yolu_app::YoluApp;
@@ -137,10 +136,45 @@ fn click_bar(h: &mut H, label: &str) {
     click(h, at);
 }
 
-const NEW: &str = "新規選択: 新しい形で置き換える";
-const ADD: &str = "追加選択: 選択範囲に追加（Shift）";
-const SUB: &str = "一部削除: 選択範囲から引く（Ctrl）";
-const ISECT: &str = "選択中を選択: 重なる所だけ残す（Shift + Ctrl）";
+/// オプションバーのアイコンの名前（ツールチップ）。ツールプロパティの帯の名前は `DOCK_*`（新規は両方とも「新規」）。
+const NEW: &str = "新規";
+const ADD: &str = "追加（Shift）";
+const SUB: &str = "削除（Ctrl）";
+const ISECT: &str = "共通（Shift+Ctrl）";
+const DOCK_MODES: [&str; 4] = ["新規", "追加", "削除", "共通"];
+const MORE: &str = "すべての作成方法";
+
+/// 左のドックのツールプロパティ（ドック側）の部品の「点いている」印。
+fn dock_lit(h: &H, label: &str) -> bool {
+    let target = dock_rect(h, label);
+    h.get_all_by_label(label)
+        .find(|n| n.rect() == target)
+        .map(|n| n.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True))
+        .unwrap_or_else(|| panic!("{label}"))
+}
+
+/// ドック側の部品が押せない（無効）か。
+fn dock_disabled(h: &H, label: &str) -> bool {
+    let target = dock_rect(h, label);
+    h.get_all_by_label(label)
+        .find(|n| n.rect() == target)
+        .unwrap_or_else(|| panic!("{label}"))
+        .accesskit_node()
+        .is_disabled()
+}
+
+/// ドックの帯に出ている作成方法の名前（左から）。
+fn dock_modes(h: &H) -> Vec<&'static str> {
+    DOCK_MODES
+        .into_iter()
+        .filter(|label| {
+            h.query_all_by_label(label).any(|n| {
+                let r = n.rect();
+                r.left() < 390.0 && r.top() > 62.0 && r.bottom() < 700.0
+            })
+        })
+        .collect()
+}
 
 fn run(s: &mut AppState, e: SelEdit) {
     s.apply(Action::Sel(SelAction::Edit(e)));
@@ -198,45 +232,72 @@ fn set_brush(h: &mut H, diameter: f32, hardness: f32, opacity: f32) {
 fn the_creation_mode_buttons_pick_the_mode_and_light_up_with_the_modifier_keys() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
-    let all = [NEW, ADD, SUB, ISECT];
-    // 初めは「新規」だけが点く
-    for (i, label) in all.iter().enumerate() {
-        assert_eq!(lit(&h, label), i == 0, "{label}");
-    }
-    // ボタンで選ぶ（オプションバーの値が変わる）
-    for (mode, label) in [
-        (SelectionCombine::Add, ADD),
-        (SelectionCombine::Subtract, SUB),
-        (SelectionCombine::Intersect, ISECT),
-        (SelectionCombine::Replace, NEW),
+    let bar = [NEW, ADD, SUB, ISECT];
+    // 初めは「新規」だけが点く（バーは 4 つ、ツールプロパティは 3 つ）
+    let check = |h: &H, shown: usize, why: &str| {
+        for (i, label) in bar.iter().enumerate() {
+            assert_eq!(lit(h, label), i == shown, "{why}: バーの {label}");
+        }
+        for (i, label) in dock_modes(h).iter().enumerate() {
+            assert_eq!(dock_lit(h, label), i == shown, "{why}: 帯の {label}");
+        }
+    };
+    check(&h, 0, "初め");
+    assert_eq!(dock_modes(&h), vec!["新規", "追加", "削除"]);
+    // ボタンで選ぶ（オプションバーの値が変わる。帯も同じ値）
+    for (mode, label, shown) in [
+        (SelectionCombine::Add, ADD, 1),
+        (SelectionCombine::Subtract, SUB, 2),
+        (SelectionCombine::Intersect, ISECT, 3),
+        (SelectionCombine::Replace, NEW, 0),
     ] {
         click_bar(&mut h, label);
         assert_eq!(st(&h).sel.combine, mode);
-        for l in all {
-            assert_eq!(lit(&h, l), l == label, "{label} を選んだとき {l}");
-        }
+        check(&h, shown, label);
+    }
+    // 帯のボタンでも選べる
+    for (mode, name) in [
+        (SelectionCombine::Add, "追加"),
+        (SelectionCombine::Subtract, "削除"),
+        (SelectionCombine::Replace, "新規"),
+    ] {
+        let at = dock_rect(&h, name).center();
+        click(&mut h, at);
+        assert_eq!(st(&h).sel.combine, mode, "帯の {name}");
     }
     // 修飾キーを押しているあいだ、効く作成方法が一時的に点く（選んでいる値は変わらない）
     for (mods, shown) in [
-        (Modifiers::SHIFT, ADD),
-        (Modifiers::COMMAND, SUB),
-        (Modifiers::COMMAND | Modifiers::SHIFT, ISECT),
+        (Modifiers::SHIFT, 1),
+        (Modifiers::COMMAND, 2),
+        (Modifiers::COMMAND | Modifiers::SHIFT, 3),
     ] {
         h.event(Event::ModifiersChanged(mods));
         h.step();
         h.run();
-        for l in all {
-            assert_eq!(lit(&h, l), l == shown, "{mods:?} を押しているとき {l}");
+        for (i, label) in bar.iter().enumerate() {
+            assert_eq!(
+                lit(&h, label),
+                i == shown,
+                "{mods:?} を押しているとき {label}"
+            );
         }
+        // 帯は畳んでいるので、共通は「⋯」が代わりに点く
+        for (i, label) in dock_modes(&h).iter().enumerate() {
+            assert_eq!(dock_lit(&h, label), i == shown, "{mods:?} の帯の {label}");
+        }
+        assert_eq!(
+            dock_lit(&h, MORE),
+            shown == 3,
+            "{mods:?}: 畳んでいる帯は共通のあいだ「⋯」が点く"
+        );
         assert_eq!(st(&h).sel.combine, SelectionCombine::Replace);
     }
     // 離すと選んでいる作成方法に戻る
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.step();
     h.run();
-    for (i, label) in all.iter().enumerate() {
-        assert_eq!(lit(&h, label), i == 0, "{label}");
-    }
+    check(&h, 0, "離した後");
+    assert!(!dock_lit(&h, MORE));
 }
 
 #[test]
@@ -253,16 +314,23 @@ fn the_creation_mode_buttons_follow_the_language_and_all_selection_tools_show_th
         Tool::Wand,
     ] {
         pick_tool(&mut h, tool);
+        // オプションバー: 名前とキーだけのツールチップ
         for label in [
-            "New: replace the selection",
-            "Add to the selection (Shift)",
-            "Subtract from the selection (Ctrl)",
-            "Intersect: keep only the overlap (Shift + Ctrl)",
+            "New",
+            "Add (Shift)",
+            "Subtract (Ctrl)",
+            "Intersect (Shift+Ctrl)",
         ] {
-            // オプションバーとツールプロパティの両方に出る
             bar_rect(&h, label);
+        }
+        // ツールプロパティ: 新規・追加・削除に「⋯」
+        for label in ["New", "Add", "Subtract", "All modes"] {
             dock_rect(&h, label);
         }
+        assert!(
+            h.query_all_by_label("Intersect").next().is_none(),
+            "畳んでいるあいだは共通の帯のボタンは無い"
+        );
     }
     assert_eq!(
         yolu_app::selection::combine_name(Lang::Ja, SelectionCombine::Subtract),
@@ -272,24 +340,275 @@ fn the_creation_mode_buttons_follow_the_language_and_all_selection_tools_show_th
         yolu_app::selection::combine_name(Lang::En, SelectionCombine::Replace),
         "New"
     );
+    for (mode, ja, en) in [
+        (SelectionCombine::Replace, "新規", "New"),
+        (SelectionCombine::Add, "追加（Shift）", "Add (Shift)"),
+        (
+            SelectionCombine::Subtract,
+            "削除（Ctrl）",
+            "Subtract (Ctrl)",
+        ),
+        (
+            SelectionCombine::Intersect,
+            "共通（Shift+Ctrl）",
+            "Intersect (Shift+Ctrl)",
+        ),
+    ] {
+        assert_eq!(yolu_app::selection::combine_tooltip(Lang::Ja, mode), ja);
+        assert_eq!(yolu_app::selection::combine_tooltip(Lang::En, mode), en);
+    }
+}
+
+#[test]
+fn the_more_button_shows_all_four_modes_and_the_choice_survives_a_restart() {
+    let mut h = app(1000.0, 640.0, 256);
+    pick_tool(&mut h, Tool::SelectRect);
+    assert!(!st(&h).settings().selection_all_modes, "既定は畳む");
+    assert_eq!(dock_modes(&h), vec!["新規", "追加", "削除"]);
+    let more = dock_rect(&h, MORE);
+    click(&mut h, more.center());
+    assert_eq!(dock_modes(&h), DOCK_MODES.to_vec(), "「⋯」で 4 つになる");
+    assert!(dock_lit(&h, MORE), "開いているあいだ「⋯」が点く");
+    assert!(st(&h).settings().selection_all_modes);
+    // 設定のファイルに書いて読み直すと、開いたまま始まる
+    let dir = std::env::temp_dir().join(format!("yolu-selmodes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("settings.conf");
+    yolu_app::settings::save(&path, &st(&h).settings()).unwrap();
+    let (loaded, problems) = yolu_app::settings::load(&path);
+    assert!(problems.is_empty() && loaded.selection_all_modes);
+    let mut h2 = app(1000.0, 640.0, 256);
+    h2.state_mut().state.load_settings(loaded);
+    pick_tool(&mut h2, Tool::SelectRect);
+    assert_eq!(dock_modes(&h2), DOCK_MODES.to_vec());
+    // 4 つの帯の「共通」で選べる。もう一度押すと畳む
+    let isect = dock_rect(&h2, "共通");
+    click(&mut h2, isect.center());
+    assert_eq!(st(&h2).sel.combine, SelectionCombine::Intersect);
+    assert!(dock_lit(&h2, "共通"));
+    // 共通を選んでいるあいだは「⋯」は押せない（畳めない）。別の作成方法に替えてから畳む
+    let more = dock_rect(&h2, MORE);
+    click(&mut h2, more.center());
+    assert!(st(&h2).settings().selection_all_modes);
+    let new = dock_rect(&h2, "新規");
+    click(&mut h2, new.center());
+    let more = dock_rect(&h2, MORE);
+    click(&mut h2, more.center());
+    assert!(!st(&h2).settings().selection_all_modes);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn choosing_intersect_keeps_all_four_modes_shown_even_when_the_setting_is_folded() {
+    let mut h = app(1000.0, 640.0, 256);
+    pick_tool(&mut h, Tool::SelectRect);
+    click_bar(&mut h, ISECT);
+    assert_eq!(st(&h).sel.combine, SelectionCombine::Intersect);
+    assert!(!st(&h).settings().selection_all_modes, "設定は畳むのまま");
+    assert_eq!(
+        dock_modes(&h),
+        DOCK_MODES.to_vec(),
+        "選んでいる共通は隠さない"
+    );
+    assert!(dock_lit(&h, "共通") && dock_lit(&h, MORE));
+    // 点いたまま押せない: 押しても設定は変わらず、ツールチップに理由が出る
+    let target = dock_rect(&h, MORE);
+    assert!(dock_disabled(&h, MORE));
+    click(&mut h, target.center());
+    assert!(!st(&h).settings().selection_all_modes, "押しても変わらない");
+    assert_eq!(dock_modes(&h), DOCK_MODES.to_vec());
+    // 押した直後はツールチップが隠れるので、いったん離れてから乗せ直す
+    move_to(&h, egui::pos2(2.0, 2.0));
+    h.run();
+    hover_and_wait(&mut h, target.center());
+    assert!(
+        h.query_by_label("すべての作成方法（共通を選んでいる間）")
+            .is_some(),
+        "押せない理由"
+    );
+    move_to(&h, egui::pos2(2.0, 2.0));
+    h.run();
+    // 別の作成方法へ替えれば、畳む設定の 3 つに戻る
+    click_bar(&mut h, NEW);
+    assert_eq!(dock_modes(&h), vec!["新規", "追加", "削除"]);
+    assert!(!dock_lit(&h, MORE));
+    assert!(!dock_disabled(&h, MORE), "共通以外なら押せる");
+}
+
+/// 左のドックを狭くしたウィンドウ（ツールプロパティの幅が 170 点ほど）。
+fn narrow_props_app(lang: Lang) -> H {
+    use egui_dock::{DockState, NodeIndex};
+    let mut h = app(1000.0, 640.0, 256);
+    h.state_mut().state.lang = lang;
+    let mut dock = DockState::new(vec![yolu_app::Tab::Canvas]);
+    let surface = dock.main_surface_mut();
+    let [_, left] = surface.split_left(NodeIndex::root(), 0.17, vec![yolu_app::Tab::SubTools]);
+    surface.split_below(left, 0.3, vec![yolu_app::Tab::ToolProperties]);
+    h.state_mut().dock = dock;
+    h.state_mut().state.sel.animate = false;
+    pick_tool(&mut h, Tool::SelectRect);
+    h
+}
+
+/// 今の画面に描かれている文字（ボタンの名前など）と、その矩形。
+fn drawn_texts(h: &H) -> Vec<(String, egui::Rect)> {
+    fn walk(shape: &egui::epaint::Shape, out: &mut Vec<(String, egui::Rect)>) {
+        match shape {
+            egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            egui::epaint::Shape::Text(text) => out.push((
+                text.galley.job.text.clone(),
+                egui::Rect::from_min_size(text.pos, text.galley.size()),
+            )),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for shape in &h.output().shapes {
+        walk(&shape.shape, &mut out);
+    }
+    out
+}
+
+/// 帯のボタン（名前 `label`）の中に、その名前の文字が描かれているか（名前を外してアイコンだけにしていれば偽）。
+fn name_drawn(h: &H, label: &str) -> bool {
+    let button = dock_rect(h, label);
+    drawn_texts(h)
+        .iter()
+        .any(|(text, bounds)| text == label && button.contains_rect(*bounds))
+}
+
+#[test]
+fn the_names_in_the_bands_are_drawn_only_when_every_button_has_room_for_them() {
+    // 既定の幅（約 250 点）
+    for (lang, names, shown) in [
+        (Lang::Ja, ["新規", "追加", "削除"], true),
+        // 英語の "Subtract" は 3 つの帯に入らない: 全部アイコンだけ
+        (Lang::En, ["New", "Add", "Subtract"], false),
+    ] {
+        let mut h = app(1280.0, 800.0, 256);
+        h.state_mut().state.lang = lang;
+        pick_tool(&mut h, Tool::SelectRect);
+        for name in names {
+            assert_eq!(name_drawn(&h, name), shown, "{lang:?} {name}");
+        }
+    }
+    // 日本語は 4 つ開いても入る
+    let mut h = app(1280.0, 800.0, 256);
+    pick_tool(&mut h, Tool::SelectRect);
+    let more = dock_rect(&h, MORE);
+    click(&mut h, more.center());
+    for name in DOCK_MODES {
+        assert!(name_drawn(&h, name), "4 つ開いた {name}");
+    }
+    // 選択ペンの帯は、英語も短い名前（Pen・Eraser）が入る。ツールチップは名前のまま
+    for (lang, names) in [
+        (Lang::Ja, ["選択ペン", "選択消し"]),
+        (Lang::En, ["Pen", "Eraser"]),
+    ] {
+        let mut h = app(1280.0, 800.0, 256);
+        h.state_mut().state.lang = lang;
+        pick_tool(&mut h, Tool::SelectPen);
+        for name in names {
+            assert!(name_drawn(&h, name), "{lang:?} {name}");
+        }
+    }
+    // 狭い幅（約 150 点）: 作成方法は日本語も英語もアイコンだけ、選択ペンの英語は名前が入る
+    for lang in Lang::ALL {
+        let mut h = narrow_props_app(lang);
+        let names = lang.pick(["新規", "追加", "削除"], ["New", "Add", "Subtract"]);
+        for name in names {
+            assert!(!name_drawn(&h, name), "{lang:?} 狭い {name}");
+        }
+        pick_tool(&mut h, Tool::SelectPen);
+        let pen = lang.pick(["選択ペン", "選択消し"], ["Pen", "Eraser"]);
+        let drawn: Vec<bool> = pen.iter().map(|n| name_drawn(&h, n)).collect();
+        assert_eq!(drawn[0], drawn[1], "{lang:?}: 名前は全部出すか全部外す");
+        if lang == Lang::En {
+            assert!(drawn[0], "英語の Pen・Eraser は狭くても入る");
+        }
+    }
+}
+
+#[test]
+fn the_creation_row_stays_one_full_width_row_and_drops_the_names_when_narrow() {
+    for lang in Lang::ALL {
+        let mut h = narrow_props_app(lang);
+        let names = lang.pick(["新規", "追加", "削除"], ["New", "Add", "Subtract"]);
+        let more = lang.pick("すべての作成方法", "All modes");
+        let rects: Vec<egui::Rect> = names
+            .into_iter()
+            .chain([more])
+            .map(|l| dock_rect(&h, l))
+            .collect();
+        let check = |rects: &[egui::Rect], why: &str| {
+            // 1 行（同じ高さ 24・同じ上端）で、左から並び、重ならない
+            for r in rects {
+                assert_eq!(r.height(), 24.0, "{lang:?} {why}");
+                assert_eq!(r.top(), rects[0].top(), "{lang:?} {why}: 折り返さない");
+            }
+            for pair in rects.windows(2) {
+                assert!(pair[0].right() <= pair[1].left(), "{lang:?} {why}");
+            }
+            // 名前のボタンは同じ幅、「⋯」は細い 28
+            let widths: Vec<f32> = rects[..rects.len() - 1].iter().map(|r| r.width()).collect();
+            assert!(
+                widths.iter().all(|w| (w - widths[0]).abs() < 0.5),
+                "{lang:?} {why}: {widths:?}"
+            );
+            assert_eq!(rects.last().unwrap().width(), 28.0, "{lang:?} {why}");
+        };
+        check(&rects, "狭い");
+        // 幅いっぱい: 右端が「⋯」の右端で、左端は帯の左端（パネルの余白）
+        let props_right = rects.last().unwrap().right();
+        assert!(props_right > rects[0].left() + 100.0);
+        // 4 つ開いても 1 行
+        let open = dock_rect(&h, more);
+        click(&mut h, open.center());
+        let rects: Vec<egui::Rect> = lang
+            .pick(
+                ["新規", "追加", "削除", "共通"],
+                ["New", "Add", "Subtract", "Intersect"],
+            )
+            .into_iter()
+            .chain([more])
+            .map(|l| dock_rect(&h, l))
+            .collect();
+        check(&rects, "4 つ");
+        assert_eq!(rects.last().unwrap().right(), props_right, "右端は同じ");
+    }
 }
 
 #[test]
 fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectPen);
-    let pen = "選択ペン: 選択範囲に追加（Shift）";
-    let eraser = "選択消し: 選択範囲から消す（Ctrl）";
+    // オプションバーはアイコン（名前とキーのツールチップ）、ツールプロパティは幅いっぱいの 2 つのボタン（「⋯」は無い）
+    let (pen, eraser) = ("選択ペン（Shift）", "選択消し（Ctrl）");
+    let (dock_pen, dock_eraser) = ("選択ペン", "選択消し");
     assert!(h.query_all_by_label(NEW).next().is_none());
+    assert!(h.query_all_by_label(MORE).next().is_none());
     assert!(lit(&h, pen) && !lit(&h, eraser));
+    assert!(dock_lit(&h, dock_pen) && !dock_lit(&h, dock_eraser));
+    let (a, b) = (dock_rect(&h, dock_pen), dock_rect(&h, dock_eraser));
+    assert_eq!((a.height(), a.top()), (24.0, b.top()), "1 行");
+    assert!(a.right() <= b.left() && (a.width() - b.width()).abs() < 0.5);
     click_bar(&mut h, eraser);
     assert!(st(&h).sel.pen_erase);
     assert!(lit(&h, eraser) && !lit(&h, pen));
+    assert!(dock_lit(&h, dock_eraser) && !dock_lit(&h, dock_pen));
+    // 帯のボタンでも替えられる
+    let at = dock_rect(&h, dock_pen).center();
+    click(&mut h, at);
+    assert!(!st(&h).sel.pen_erase);
+    let at = dock_rect(&h, dock_eraser).center();
+    click(&mut h, at);
+    assert!(st(&h).sel.pen_erase);
     // 押しているあいだ替わる: Shift は選択ペン（選んでいる選択消しは枠だけ）
     h.event(Event::ModifiersChanged(Modifiers::SHIFT));
     h.step();
     h.run();
     assert!(lit(&h, pen) && !lit(&h, eraser));
+    assert!(dock_lit(&h, dock_pen) && !dock_lit(&h, dock_eraser));
     assert!(st(&h).sel.pen_erase, "選んでいる値は変わらない");
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.step();
@@ -437,10 +756,10 @@ fn from_the_center_grows_around_the_press_with_the_setting_or_with_alt() {
         "{cx},{cy} / {sx},{sy}"
     );
     undo(&mut h);
-    // 設定なしでも Alt を押しているあいだは中心から
+    // 設定なしでも、押したあとに Alt を押していれば中心から（押しの始めの Alt は表示を回す組み合わせなので、始めには持たない）
     h.state_mut().state.sel.from_center = false;
     let (p, q) = (at(&h, 0.0, 0.0), at(&h, 80.0, 50.0));
-    drag_with(&mut h, &[p, q], Modifiers::ALT, Modifiers::ALT);
+    drag_with(&mut h, &[p, q], Modifiers::NONE, Modifiers::ALT);
     let (cx, cy) = centered(&h);
     assert!(
         (cx - sx).abs() <= 1.0 && (cy - sy).abs() <= 1.0,
@@ -1614,20 +1933,36 @@ fn quick_mask_is_off_when_the_document_changes_and_refused_while_drawing() {
 }
 
 #[test]
-fn the_quick_mask_button_in_the_tool_properties_lights_up_and_toggles() {
+fn the_quick_mask_menu_item_is_checked_while_on_and_toggles() {
+    use yolu_app::ui::menu::{Check, Entry};
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
-    let label = "クイックマスク（Shift+Q）";
-    assert!(
-        h.query_all_by_label(label).count() == 1,
-        "ボタンはツールプロパティだけ（オプションバーには作成方法だけ）"
-    );
-    assert!(!lit(&h, label));
-    let at = dock_rect(&h, label).center();
-    click(&mut h, at);
-    assert!(st(&h).sel.quick && lit(&h, label));
-    click(&mut h, at);
-    assert!(!st(&h).sel.quick && !lit(&h, label));
+    let label = "クイックマスク";
+    // ツールプロパティにもオプションバーにも置かない（「選択範囲」メニューとキー）
+    assert_eq!(h.query_all_by_label("クイックマスク（Shift+Q）").count(), 0);
+    // メニューの項目の印（入っているあいだ Checked）
+    let mark = |h: &H| {
+        yolu_app::selection::menu::select_menu(&h.state().state)
+            .into_iter()
+            .find_map(|e| match e {
+                Entry::Item {
+                    label: name, check, ..
+                } if name == label => Some(matches!(check, Check::Checked)),
+                _ => None,
+            })
+            .expect("クイックマスクの項目")
+    };
+    let toggle = |h: &mut H| {
+        let title = menu_title(h, "選択範囲").center();
+        click(h, title);
+        let item = popup_item(h, label).center();
+        click(h, item);
+    };
+    assert!(!st(&h).sel.quick && !mark(&h));
+    toggle(&mut h);
+    assert!(st(&h).sel.quick && mark(&h), "入っているあいだ印が付く");
+    toggle(&mut h);
+    assert!(!st(&h).sel.quick && !mark(&h));
 }
 
 // ───────── ツールの帯とキー・スナップショット ─────────
@@ -1923,17 +2258,13 @@ fn during_a_quick_mask_stroke_the_set_stays_and_the_brush_stays_and_a_select_too
 }
 
 #[test]
-fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror() {
+fn the_quick_mask_stroke_shows_no_mirrored_cursors_and_does_not_mirror() {
     let mut h = app(1000.0, 640.0, 512);
     h.state_mut().state.sel.animate = false;
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-            SymmetryMode::Vertical,
-        ))));
+    common::rulers::vertical(&mut h.state_mut().state, 256.0);
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 20.0, 1.0, 1.0);
-    // ふつうのブラシのストロークは軸と写しを出し、対称を覚えて残す
+    // ふつうのブラシのストロークは写しを出し、対称を覚えて残す
     assert!(active_symmetry(st(&h)).is_some());
     drag_by(&mut h, &[(-100.0, -80.0), (-60.0, -80.0)]);
     assert!(
@@ -1945,7 +2276,7 @@ fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror()
     quick_on(&mut h);
     assert!(
         active_symmetry(st(&h)).is_none(),
-        "クイックマスクは軸も写しも出さない"
+        "クイックマスクは写しを出さない"
     );
     let line = [at(&h, -100.0, 0.0), at(&h, -60.0, 0.0)];
     hold(&mut h, &line);
@@ -1958,7 +2289,7 @@ fn the_quick_mask_stroke_shows_no_mirrored_cursors_or_axes_and_does_not_mirror()
     // 選択範囲は描いた側だけで、映した側には付かない
     assert_eq!(amount_at(&h, at(&h, -80.0, 0.0)), 255);
     assert_eq!(amount_at(&h, at(&h, 80.0, 0.0)), 0, "映さない");
-    // 選択ペンのツールも対称を使わない。ブラシに戻れば軸が戻る
+    // 選択ペンのツールも対称を使わない。ブラシに戻れば写しが戻る
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));

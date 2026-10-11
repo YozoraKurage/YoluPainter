@@ -11,7 +11,7 @@
 //! - タイルの経路は、そのタイルに何も無いレイヤー（グループは中身に画素も調整も無いもの）を飛ばす（C# と同じ）。
 //! - Normal の種類のチャンネルは [`crate::normal`] のベクトルの式で、ほかは色の式で重ねる。調整はどちらも色の式。
 //! - 画素の値は自分の入力だけで決まるので、どのスレッドがどの行を受け持っても同じバイトになる。
-//! - タイルの経路は行ごとの核（[`crate::blend::blend_row`] など。実行時に AVX2・SSE4.1・スカラーを選ぶ）で重ねる。画素ごとの参照
+//! - タイルの経路は行ごとの核（[`crate::blend::blend_row`] など。実行時に AVX2・SSE4.1・スカラー（aarch64 は NEON・スカラー）を選ぶ）で重ねる。画素ごとの参照
 //!   （`evaluate_pixel`）と同じバイトで、歩幅つきの読み（粗い合成）は 64 画素ずつ詰めて核へ渡す。
 
 use std::sync::{Arc, OnceLock};
@@ -1405,6 +1405,7 @@ fn composite_band<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::Document;
     use crate::math::to_byte;
     use crate::math::UNIT;
 
@@ -1432,6 +1433,137 @@ mod tests {
             opacity,
             mask: None,
         }
+    }
+
+    /// 粗い合成の確かめ用の文書: 3 × 1 枚のタイル（右端は部分。3 枚以下のタイルは呼んだスレッドだけで合成する）に、合成モード・不透明度・
+    /// マスク・クリッピング・通過のグループ・調整・塗りつぶし・Normal のチャンネルを重ねる。
+    fn coarse_document() -> Document {
+        use crate::adjust::AdjustmentSettings;
+        let mut doc = Document::with_tile_size(300, 100, 128).unwrap();
+        let mut rng = Rng(11);
+        let ts = doc.tile_size() as usize;
+        let coords: Vec<TileCoord> = doc.canvas_tiles().collect();
+        let mut random_tiles = |doc: &mut Document, id: LayerId, channel: Channel, mask: bool| {
+            let mut bytes = vec![0u8; ts * ts * 4];
+            for c in &coords {
+                for (i, p) in bytes.chunks_exact_mut(4).enumerate() {
+                    // キャンバスの外の余白は 0（読み込みの決まり）
+                    let x = c.x * ts as u32 + (i % ts) as u32;
+                    let y = c.y * ts as u32 + (i / ts) as u32;
+                    if x >= doc.width() || y >= doc.height() {
+                        p.copy_from_slice(&[0; 4]);
+                        continue;
+                    }
+                    let a = rng.byte();
+                    let rgb = if mask {
+                        [0, 0, 0]
+                    } else {
+                        [rng.byte(), rng.byte(), rng.byte()]
+                    };
+                    p.copy_from_slice(&[rgb[0], rgb[1], rgb[2], a]);
+                }
+                if mask {
+                    doc.import_mask_tile(id, *c, &bytes).unwrap();
+                } else {
+                    doc.import_tile(id, channel, *c, &bytes).unwrap();
+                }
+            }
+        };
+        let modes = [
+            BlendMode::Normal,
+            BlendMode::Multiply,
+            BlendMode::Overlay,
+            BlendMode::SoftLight,
+            BlendMode::ColorDodge,
+            BlendMode::Hue,
+            BlendMode::Luminosity,
+            BlendMode::Screen,
+        ];
+        let mut ids = Vec::new();
+        for (i, mode) in modes.into_iter().enumerate() {
+            let id = doc.add_layer(&format!("l{i}")).unwrap();
+            random_tiles(&mut doc, id, Channel::Color, false);
+            doc.set_layer_blend_mode(id, mode).unwrap();
+            doc.set_layer_opacity(id, [1.0, 0.7, 0.35][i % 3], false)
+                .unwrap();
+            if i % 3 == 1 {
+                doc.add_layer_mask(id).unwrap();
+                random_tiles(&mut doc, id, Channel::Color, true);
+            }
+            if i % 4 == 2 {
+                doc.set_layer_clipping(id, true).unwrap();
+            }
+            if i % 2 == 0 {
+                doc.set_channel_enabled(id, Channel::Normal, true).unwrap();
+                random_tiles(&mut doc, id, Channel::Normal, false);
+            }
+            ids.push(id);
+        }
+        doc.add_adjustment_layer(
+            "levels",
+            AdjustmentSettings::levels(0.1, 0.9, 1.4, 0.05, 0.95).unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+        let group = doc.group_layers(&ids[5..8], "group").unwrap();
+        doc.set_layer_opacity(group, 0.6, false).unwrap();
+        let fill = doc
+            .add_fill_layer(
+                "fill",
+                &[(Channel::Color, Rgba8::new(30, 90, 200, 255))],
+                None,
+            )
+            .unwrap();
+        doc.set_layer_blend_mode(fill, BlendMode::Multiply).unwrap();
+        doc.set_layer_opacity(fill, 0.25, false).unwrap();
+        doc
+    }
+
+    /// 粗い合成（読み元の刻みが 4 より大きい）は、歩幅つきの読み元を詰めてから行の核へ渡す。歩幅つきのまま渡すとスカラーの道に落ちて遅くなるので、
+    /// 核が SIMD に入れない刻みで呼ばれないことと、画素が全体の合成のその位置の画素と同じバイトであることを、歩幅・チャンネル・タイルの端で確かめる。
+    #[test]
+    fn a_coarse_composite_hands_the_row_kernels_only_packed_sources() {
+        // 対照: 歩幅つきの読み元を核へ直に渡すと数える（数える仕組みが働いていることの確かめ）
+        let (mut dst, src) = (vec![0u8; 16 * 4], vec![255u8; 16 * 8]);
+        let before = crate::blend::scalar_steps::count();
+        blend_row(&mut dst, &src, 8, whole(1.0), BlendMode::Normal);
+        assert_eq!(crate::blend::scalar_steps::count(), before + 1);
+
+        let doc = coarse_document();
+        let coords: Vec<TileCoord> = doc.canvas_tiles().collect();
+        assert!(
+            coords.len() < PARALLEL_MINIMUM_TILES,
+            "呼んだスレッドだけで合成する"
+        );
+        let before = crate::blend::scalar_steps::count();
+        for channel in [Channel::Color, Channel::Normal] {
+            for stride in [2, 4, 8, 16] {
+                for tile in doc
+                    .composite_coarse_tiles(channel, &coords, stride)
+                    .unwrap()
+                {
+                    let (w, h) = tile.size();
+                    for j in 0..h {
+                        for i in 0..w {
+                            let (x, y) = (tile.rect.x + i * stride, tile.rect.y + j * stride);
+                            let want = doc.composite_pixel(channel, x, y).unwrap().to_array();
+                            let at = ((j * w + i) * 4) as usize;
+                            assert_eq!(
+                                &tile.pixels[at..at + 4],
+                                &want,
+                                "{channel:?} 歩幅 {stride} ({x},{y})"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        assert_eq!(
+            crate::blend::scalar_steps::count(),
+            before,
+            "粗い合成が、歩幅つきの読み元を行の核へ直に渡した"
+        );
     }
 
     /// 行の核が画素ごとの式（blend・clip_onto）と同じバイトを出すか、近道の境（透明・不透明・量 1・極小の量）とマスクを含めて。

@@ -7,7 +7,7 @@
 use std::path::{Path, PathBuf};
 
 /// 開発の言葉。（言葉, 使ってはいけない理由）
-const BANNED: [(&str, &str); 20] = [
+const BANNED: [(&str, &str); 22] = [
     ("M2 の試作", "試作の名残"),
     ("M2 prototype", "試作の名残"),
     ("Rust 版", "実装の言語は利用者に関係ない"),
@@ -20,7 +20,11 @@ const BANNED: [(&str, &str); 20] = [
     ("BVH", "内部の仕組みの名前"),
     ("ダブが", "ブラシの内部の単位"),
     ("書き直した正本", "保存の内部の数"),
-    ("正本", "保存の内部の言葉（利用者には「文書」）"),
+    ("正本", "保存の内部の言葉（利用者には「プロジェクト」）"),
+    (
+        "文書",
+        "作品は「プロジェクト」、大きさのことは「キャンバス」と書く",
+    ),
     ("updated documents", "保存の内部の数"),
     ("（形式 ", "形式の番号は利用者に関係ない"),
     ("(format ", "形式の番号は利用者に関係ない"),
@@ -28,6 +32,7 @@ const BANNED: [(&str, &str); 20] = [
     ("遮蔽のレイ", "内部の仕組みの名前"),
     ("ray budget", "内部の仕組みの名前"),
     ("予算を超えました（取り消した）", "どの予算かが分からない文"),
+    ("Not supported on this device", "GPU のことは「GPU」と書く"),
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -91,12 +96,21 @@ fn scan(root: &Path) -> Vec<String> {
 }
 
 fn scan_words(root: &Path, banned: &[(&str, &str)], with_keys: bool) -> Vec<String> {
-    scan_literals(root, with_keys, |literal| {
-        banned
-            .iter()
-            .find(|(word, _)| literal.contains(word))
-            .map(|(word, why)| (word.to_string(), why.to_string()))
-    })
+    scan_literals(root, with_keys, |literal| banned_in(literal, banned))
+}
+
+/// 断る言葉を含む語（断る言葉の一部だが、別の意味で普通に使う語）。この語は見ずに、残りで調べる。
+const ALLOWED: [&str; 1] = ["機械的"];
+
+/// `literal` の中の、断る言葉（と理由）。`ALLOWED` の語は数えない。
+fn banned_in(literal: &str, banned: &[(&str, &str)]) -> Option<(String, String)> {
+    let text = ALLOWED.iter().fold(literal.to_owned(), |text, allowed| {
+        text.replace(allowed, "")
+    });
+    banned
+        .iter()
+        .find(|(word, _)| text.contains(word))
+        .map(|(word, why)| (word.to_string(), why.to_string()))
 }
 
 /// `hit` が文字列リテラルごとに（言葉, 理由）を返したものを「ファイル:行」つきで集める。
@@ -169,13 +183,19 @@ fn the_dab_refusal_texts_of_the_core_are_plain_words_too() {
 
 /// どの crate の文でも使わない書き方（core の文はそのまま画面に出るものがあり、`lang/errors.rs` の表のキーにもなる）。
 /// 英語の直訳の言い回し（layer・island・window・tool・canvas・font）は、使う人の言葉で書く。
-const EVERYWHERE: [(&str, &str); 6] = [
+const EVERYWHERE: [(&str, &str); 9] = [
     ("画布", "「キャンバス」と書く"),
     ("層", "「レイヤー」と書く"),
     ("島", "「アイランド」と書く"),
     ("窓", "「ウィンドウ」と書く"),
     ("道具", "「ツール」と書く"),
     ("字体", "「フォント」と書く"),
+    ("装置", "GPU は「GPU」、PC は「PC」と書く"),
+    (
+        "機械",
+        "PC は「PC」と書く（「機械的」は普通の語なので断らない）",
+    ),
+    ("機材", "GPU は「GPU」、PC は「PC」と書く"),
 ];
 
 #[test]
@@ -201,9 +221,37 @@ fn no_message_in_any_crate_uses_a_literal_translation_word() {
     }
     assert!(
         found.is_empty(),
-        "文に英語の直訳の言い回し（画布・層・島・窓・道具・字体）:\n{}",
+        "文に英語の直訳の言い回し（画布・層・島・窓・道具・字体）と分かりにくい言葉（装置・機械・機材）:\n{}",
         found.join("\n")
     );
+}
+
+#[test]
+fn no_message_in_any_crate_calls_the_project_or_the_canvas_a_document() {
+    // core・io・gpu・ops の文（画面にそのまま出る）と、`lang/errors.rs` の表のキーも見る。作品は「プロジェクト」、大きさは「キャンバス」
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let banned = [(
+        "文書",
+        "作品は「プロジェクト」、大きさのことは「キャンバス」と書く",
+    )];
+    let mut found = Vec::new();
+    for name in [
+        "yolu-core",
+        "yolu-io",
+        "yolu-gpu",
+        "yolu-app",
+        "yolu-ops",
+        "yolu-mcp",
+        "yolu-cli",
+    ] {
+        let root = crates.join(name).join("src");
+        found.extend(
+            scan_words(&root, &banned, true)
+                .into_iter()
+                .map(|f| format!("{name}/{f}")),
+        );
+    }
+    assert!(found.is_empty(), "文に「文書」:\n{}", found.join("\n"));
 }
 
 /// 画面の言葉に「棚」（英語は shelf）を使わない。プロジェクトの品（.ylp に保存される画像・スマート素材・ブラシ）は「アセット」
@@ -331,6 +379,25 @@ fn the_shelf_word_check_skips_identifiers_but_not_sentences() {
     assert!(shelf_word("yolu-shelf-cache-a-1").is_none());
     assert!(shelf_word("アセットに入れました").is_none());
     assert!(shelf_word("Added to the project's assets").is_none());
+}
+
+#[test]
+fn the_hardware_words_are_refused_but_a_mechanical_manner_is_not() {
+    for refused in [
+        "GPU の装置がありません",
+        "ドライバーが無い機械",
+        "この機材は対応していません",
+    ] {
+        assert!(banned_in(refused, &EVERYWHERE).is_some(), "{refused}");
+    }
+    // 「機械的」は別の意味の普通の語
+    assert!(banned_in("機械的に並べる", &EVERYWHERE).is_none());
+    // 「機械的」のあとに断る言葉が続けば、そちらは断る
+    assert_eq!(
+        banned_in("機械的な機械", &EVERYWHERE).map(|(word, _)| word),
+        Some("機械".to_owned())
+    );
+    assert!(banned_in("この GPU は対応していません", &EVERYWHERE).is_none());
 }
 
 #[test]

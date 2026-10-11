@@ -905,8 +905,8 @@ impl AppState {
             self.model = None;
             self.view3d.load_demo();
             self.view3d.pose.session = None;
-            self.view3d.pose.mode = false;
             self.view3d.pose.drag = None;
+            crate::mode::leave_pose_without_rig(self);
         }
     }
 }

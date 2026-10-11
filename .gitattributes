@@ -11,5 +11,8 @@ crates/yolu-brush-sets/data/** -text
 
 # 許諾表記は SHA-256 で照合するため、Windows のチェックアウトも LF に固定する
 **/THIRD-PARTY-NOTICES.md text eol=lf
-# .ylp の形式の仕様は yolu-io の試験（tests/ylp/format_doc.rs）が見出しの行で節を探すため、Windows のチェックアウトも LF に固定する
+# .ylp の形式の仕様と決めた理由は yolu-io の試験（tests/ylp/format_doc.rs）が見出しの行で節と道を探すため、Windows のチェックアウトも LF に固定する
 docs/YLP_FORMAT.md text eol=lf
+docs/YLP_DECISIONS.md text eol=lf
+# 上流の記載から組み立てた許諾の文は SHA-256 で照合するため、Windows のチェックアウトも LF に固定する
+tools/license-texts/** text eol=lf

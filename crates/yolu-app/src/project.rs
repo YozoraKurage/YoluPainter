@@ -139,8 +139,8 @@ pub(crate) fn caught_as_text<T>(
 
 fn reading_stopped(lang: Lang) -> String {
     lang.pick(
-        "文書を読む途中で止まりました",
-        "Reading the document stopped",
+        "プロジェクトを読む途中で止まりました",
+        "Reading the project stopped",
     )
     .into()
 }
@@ -184,12 +184,12 @@ pub(crate) fn preview_document(
             blank(),
             Some(lang.pick(
                 format!(
-                    "保存した合成の絵の大きさ {}×{} が文書の {width}×{height} と違う",
+                    "保存した合成の絵の大きさ {}×{} がキャンバスの {width}×{height} と違う",
                     image.width(),
                     image.height()
                 ),
                 format!(
-                    "Saved composite size {}×{} differs from document {width}×{height}",
+                    "Saved composite size {}×{} differs from canvas {width}×{height}",
                     image.width(),
                     image.height()
                 ),
@@ -257,7 +257,24 @@ pub(crate) fn open_within(state: &mut AppState, path: &Path, budget: u64) {
             return;
         }
     };
-    open_project(state, project, Some((path.to_path_buf(), target)), budget);
+    // 退避（前の版。`<名前>.ylp-backups~` の中）は、保存先を持たない文書として開く（開いた退避を書き換えない。保存の頼みは名前を付けて保存になる）
+    let opened = if yolu_io::backup_origin(path).is_some() {
+        drop(target);
+        Opened::Backup(path.to_path_buf())
+    } else {
+        Opened::File(path.to_path_buf(), target)
+    };
+    open_project(state, project, opened, budget);
+}
+
+/// 開いた中身の出どころ。
+enum Opened {
+    /// .ylp のファイル（保存先と、開いた時の印つき）。
+    File(PathBuf, SaveTarget),
+    /// 退避のフォルダーの中の .ylp（前の版）。保存先を持たず、モデルのファイルの参照は元の .ylp のフォルダーから解く。
+    Backup(PathBuf),
+    /// 復旧の世代（まだファイルが無い）。
+    Recovered,
 }
 
 /// 「「ファイル」を開けません」（理由は `Lang::with_reason` で添える）。
@@ -282,16 +299,11 @@ pub fn open_recovered(state: &mut AppState, project: Project) {
         return;
     }
     let budget = state.load_source_bytes();
-    open_project(state, project, None, budget);
+    open_project(state, project, Opened::Recovered, budget);
 }
 
 /// 開いた中身（ファイルなら保存先と印つき）で今の状態を置き換える。
-fn open_project(
-    state: &mut AppState,
-    project: Project,
-    file: Option<(PathBuf, SaveTarget)>,
-    budget: u64,
-) {
+fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u64) {
     let entries = project.migrated_entries();
     let mut parts = Vec::with_capacity(project.sets().len());
     let mut read_only = Vec::new();
@@ -426,8 +438,10 @@ fn open_project(
     }
     state.replace_sets(sets, doc);
     state.shelf = ShelfState::from_project(&project).inherit_running_from(&state.shelf);
+    // 次に名前を付けて保存を開くフォルダー（退避は元の .ylp のフォルダー。ほかは前の保存・OS の既定）
+    state.save_folder = None;
     let mut text = match &file {
-        Some((path, _)) => {
+        Opened::File(path, _) => {
             state.project_name = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
@@ -441,7 +455,31 @@ fn open_project(
                 .lang
                 .pick(format!("開きました: {name}。"), format!("Opened: {name}."))
         }
-        None => {
+        Opened::Backup(path) => {
+            // 題名と保存の名前の候補は元の .ylp の名前（退避の名前の時刻の部分ではない）。始まりの場所も元の .ylp のフォルダー
+            let origin = yolu_io::backup_origin(path);
+            let stem = |p: &Path| p.file_stem().map(|s| s.to_string_lossy().into_owned());
+            state.project_name = origin
+                .as_deref()
+                .and_then(stem)
+                .or_else(|| stem(path))
+                .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
+            state.save_folder = origin
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf);
+            // ファイルのとおりに開いたので、変更は無い
+            state.modified = false;
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            state.lang.pick(
+                format!("開きました: {name}（退避）。"),
+                format!("Opened: {name} (backup)."),
+            )
+        }
+        Opened::Recovered => {
             state.project_name = crate::recovery::recovered_name(state.lang).into();
             // 書き置きの正本から開いた文書は、保存した .ylp とは別物（保存していない）。合成の PNG も無いので、全セットを書き直す
             state.modified = true;
@@ -513,11 +551,12 @@ fn open_project(
     } else {
         NoticeKind::Warning
     };
-    let (path, target) = match file {
-        Some((path, target)) => (path, Some(target)),
-        None => (PathBuf::new(), None),
+    // モデルのファイルの参照を解く .ylp の場所（退避はそのファイル。復旧は無い）と、保存先（ファイルだけが持つ）
+    let (file_path, path, target) = match file {
+        Opened::File(path, target) => (path.clone(), path, Some(target)),
+        Opened::Backup(path) => (path, PathBuf::new(), None),
+        Opened::Recovered => (PathBuf::new(), PathBuf::new(), None),
     };
-    let file_path = path.clone();
     state.project = Some(ProjectFile {
         path,
         target,
@@ -615,6 +654,7 @@ pub fn new_into(state: &mut AppState) {
     state.shelf = ShelfState::default().inherit_running_from(&state.shelf);
     state.project = None;
     state.project_name = state.lang.pick("名称未設定", "Untitled").into();
+    state.save_folder = None;
     state.modified = false;
     state.info(
         Source::Project,

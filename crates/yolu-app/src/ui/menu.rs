@@ -20,6 +20,11 @@ pub enum Check {
     None,
     Checked,
     Radio,
+    /// 印の場所にアイコン（モードのドロップダウン）。`on` は今選んでいる行（行を青くする）。
+    Icon {
+        name: &'static str,
+        on: bool,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -64,9 +69,10 @@ impl<A> Entry<A> {
             tooltip: None,
         }
     }
-    pub fn shortcut(mut self, keys: &str) -> Self {
+    /// 操作（`commands` の ID）のキーの文字を添える（キーの表の主の行から作る。割り当てが無ければ何も添えない）。
+    pub fn command_key(mut self, command: &str) -> Self {
         if let Entry::Item { shortcut, .. } = &mut self {
-            *shortcut = Some(keys.to_owned());
+            *shortcut = crate::shortcuts::menu_key(command);
         }
         self
     }
@@ -96,6 +102,13 @@ impl<A> Entry<A> {
     pub fn radio(mut self, on: bool) -> Self {
         if let Entry::Item { check, .. } = &mut self {
             *check = if on { Check::Radio } else { Check::None };
+        }
+        self
+    }
+    /// 印の場所にアイコンを出す（`on` なら今選んでいる行として青くする）。
+    pub fn icon(mut self, name: &'static str, on: bool) -> Self {
+        if let Entry::Item { check, .. } = &mut self {
+            *check = Check::Icon { name, on };
         }
         self
     }
@@ -513,7 +526,9 @@ fn draw_level<A: Clone>(
                             out.chosen = Some(action.clone());
                         }
                         let color = if *enabled { t::TEXT } else { t::TEXT_DISABLED };
-                        if level.selected == Some(i) && *enabled {
+                        if matches!(check, Check::Icon { on: true, .. }) {
+                            w::rounded(&p, row, t::ACCENT_DIM, 4.0);
+                        } else if level.selected == Some(i) && *enabled {
                             w::rounded(&p, row, t::CONTROL_HOVER, 4.0);
                         }
                         let mark = Rect::from_min_size(
@@ -525,6 +540,7 @@ fn draw_level<A: Clone>(
                             Check::Radio => {
                                 p.circle_filled(mark.center(), 3.5, color);
                             }
+                            Check::Icon { name, .. } => w::icon(&p, mark, name, color, 16.0),
                             Check::None => {}
                         }
                         let key_width = shortcut
@@ -569,7 +585,10 @@ fn draw_level<A: Clone>(
                                 Align::Left,
                             );
                         }
-                        let selected = matches!(check, Check::Checked | Check::Radio);
+                        let selected = matches!(
+                            check,
+                            Check::Checked | Check::Radio | Check::Icon { on: true, .. }
+                        );
                         response.widget_info(|| {
                             WidgetInfo::selected(WidgetType::Button, *enabled, selected, label)
                         });

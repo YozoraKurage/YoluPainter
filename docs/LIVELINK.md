@@ -2,8 +2,8 @@
 
 [English](en/LIVELINK.md)
 
-Unity エディターの YoluPainter（VPM パッケージ `net.yozolab.yolupainter`）とスタンドアロンの YoluPainter が、同じ PC のフォルダに JSON のファイルを置いて受け渡す仕組みの仕様です。
-Unity は、選んだ相手（シーンのオブジェクト）の **FBX の道・骨の値・マテリアルの値と絵の道**を「頼み」に書いて置き、スタンドアロンがそれを拾って開きます。
+Unity エディターの Unity ブリッジ（VPM パッケージ `net.yozolab.yolupainter`）とスタンドアロンの YoluPainter が、同じ PC のフォルダに JSON のファイルを置いて受け渡す仕組みの仕様です。
+Unity は、選んだ相手（シーンのオブジェクト）の **FBX の道・ボーンの値・マテリアルの値と絵の道**を「頼み」に書いて置き、スタンドアロンがそれを拾って開きます。
 スタンドアロンで書き出したら、書いた PNG を「返事」に書いて置き、Unity が拾って取り込みます。メッシュや絵の画素は送らず、両方がファイルを自分で読みます。
 
 使い方は [UNITY.md](UNITY.md#live-link) にあります。この文書は、両方の側を作る人と、受け渡しの中身を調べる人のためのものです。
@@ -29,7 +29,7 @@ Unity は、選んだ相手（シーンのオブジェクト）の **FBX の道�
 スタンドアロンが頼みを受けている間、2 秒ごとに書き直します。受けるのをやめる・終わるときに消します。
 
 ```json
-{ "format": 1, "app": "YoluPainter", "version": "0.5.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
+{ "format": 1, "app": "YoluPainter", "version": "0.6.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
 ```
 
 Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロンが起きていると見ます。古い・無いときは、スタンドアロンを `--livelink` を付けて起動してから頼みを置きます
@@ -42,7 +42,7 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
   "format": 1,
   "kind": "open",
   "id": "8f0c2a4e-0000-4000-8000-000000000001",
-  "bridge": { "version": "0.5.0", "unity": "2022.3.22f1" },
+  "bridge": { "version": "0.6.0", "unity": "2022.3.22f1" },
   "project": { "root": "C:/Work/MyProject", "name": "MyProject" },
   "target": {
     "key": "GlobalObjectId_V1-2-…",
@@ -82,11 +82,11 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
 - `target.key`: 相手のシーンのオブジェクトの身元（`GlobalObjectId`）。同じ相手の送り直しを見分けます。`name` は表示用、`export_dir` は書き出しの既定の置き場。
 - `root.world`（任意）: Unity のワールドから相手の根への 4×4（列優先。相手の根の `worldToLocalMatrix`）。
 - `models[]`: 相手が使う FBX。`id` は `renderers[].model`・`bones[].model` が指す番号。同じ FBX を 2 つの組で使うときは 2 つの項目にします（スタンドアロンは 1 回読んで、
-  骨とメッシュを 2 つ置きます）。`import` は Unity の ModelImporter の設定（無い欄は Unity の既定）。
+  ボーンとメッシュを 2 つ置きます）。`import` は Unity の ModelImporter の設定（無い欄は Unity の既定）。
 - `renderers[]`: レンダラー。`path` は相手の根からの道（表示と理由用）、`node` は FBX の中のメッシュのノードの道（下の「道」）、`enabled` は表示の入切、
   `blend_shapes` は BlendShape の名前 → 重み（Unity と同じ 0〜100）、`materials` はサブメッシュの順の `materials[]` の番号。
-- `bones[]`: 骨の値。`node` は FBX の中の骨のノードの道（空はその FBX の根に当たるノード）、`local` は FBX の親の骨に対するローカル（`t`・`r`（x, y, z, w）・`s`）。
-  頼みに無い骨は FBX のままの値。FBX の根に当たる Transform が相手そのもの（か相手の先祖）のとき、Unity はその根のノード（`node` が空）を送りません。
+- `bones[]`: ボーンの値。`node` は FBX の中のボーンのノードの道（空はその FBX の根に当たるノード）、`local` は FBX の親のボーンに対するローカル（`t`・`r`（x, y, z, w）・`s`）。
+  頼みに無いボーンは FBX のままの値。FBX の根に当たる Transform が相手そのもの（か相手の先祖）のとき、Unity はその根のノード（`node` が空）を送りません。
 - `materials[]`: Unity のマテリアル。`key` はマテリアルの身元（テクスチャセットを結ぶ鍵。下の表）、`shader` はシェーダーの名前・アセットの GUID・
   `package`（シェーダーのアセットが入っている UPM パッケージの名前。`Assets` の中・組み込みのシェーダーは空か無し）・版・キーワード・描画の順。
   `values` はプロパティの値（`floats`・`colors`・`vectors`・`ints`）、`textures` はテクスチャのプロパティごとの絵のファイル
@@ -101,7 +101,7 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
 | `none` | マテリアルの無いサブメッシュ（スタンドアロンはマテリアルなしの組にします） |
 
 スタンドアロンは、送り直しや `.ylp` を開き直したときに、アセットの鍵は識別子で、ほかの鍵はマテリアルの名前でセットに結び直します。
-- 上限（超えると `too_large` で断ります）: ファイル 16 MiB、レンダラー・モデル・送れなかったレンダラー 1,024、骨 16,384、マテリアル 1,024、1 つのマテリアルのテクスチャ 256、
+- 上限（超えると `too_large` で断ります）: ファイル 16 MiB、レンダラー・モデル・送れなかったレンダラー 1,024、ボーン 16,384、マテリアル 1,024、1 つのマテリアルのテクスチャ 256、
   1 つのレンダラーの BlendShape・1 つのマテリアルの値の種類ごとの数 4,096、文字列 8 KiB。
 
 ### 道（FBX の中のノード）
@@ -113,13 +113,13 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
 - Unity は取り込みで同じ名前の兄弟を `Twin`・`Twin 1` のように付け直します。FBX に無い `<名前> <数>` の節で、FBX にその名前の兄弟が 2 つ以上あるときも
   `ambiguous_bone` です（どの兄弟に付け直したかは FBX からは決まりません）。
 
-### 骨の値の決め方（Unity の側）
+### ボーンの値の決め方（Unity の側）
 
 - メッシュのアセットの道（`AssetDatabase.GetAssetPath(mesh)`）が `.fbx` のレンダラーだけを送り、ほかは `refused` に `mesh_not_from_fbx`。
-- 骨の FBX の中の道は、`PrefabUtility.GetCorrespondingObjectFromOriginalSource(transform)` で FBX のモデルのアセットの中の Transform を取り、その根からの名前の道にします。
+- ボーンの FBX の中の道は、`PrefabUtility.GetCorrespondingObjectFromOriginalSource(transform)` で FBX のモデルのアセットの中の Transform を取り、その根からの名前の道にします。
   取れない（プレハブを展開してある など）ときは、FBX の根に当たる Transform からの名前の道で探し、1 つに決まらなければそのレンダラーを `refused`（`bone_not_found`、
   名前が重なる兄弟がいるときは `ambiguous_bone`）。
-- `local` は、FBX の中の親のノードに当たる Unity の Transform に対する、その骨の Transform の相対（`parent.worldToLocalMatrix * bone.localToWorldMatrix` を T・R・S に）。
+- `local` は、FBX の中の親のノードに当たる Unity の Transform に対する、そのボーンの Transform の相対（`parent.worldToLocalMatrix * bone.localToWorldMatrix` を T・R・S に）。
   Unity の階層で親を付け替えてあっても、FBX の親に対する値です。FBX の根に当たるノードは、相手の根に対する値。
 - 座標は Unity のまま（左手系・Y が上・メートル）。
 
@@ -145,11 +145,11 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
 - 違う相手で、保存していない変更があれば「開く」と同じ確かめをします。開くのをやめれば `refused`（`declined`）を返し、捨てれば新しいプロジェクトに開きます。
 - 読み込みの途中に利用者が文書を替えた（新規・開く）ときは、結果を新しい文書に入れず `refused`（`declined`）を返します。受け付けをやめたときも、まだ当てていない頼みと
   読み込みの途中の頼みは取り消して `declined` を返します（`.ylp` の開き直しは続けます）。
-- 複数の FBX は 1 つのモデルにまとめます（FBX が 2 つ以上なら、骨の根の名前の頭に FBX の番号を付けて分けます）。ポーズの欄で骨を動かせます。
+- 複数の FBX は 1 つのモデルにまとめます（FBX が 2 つ以上なら、ボーンの根の名前の頭に FBX の番号を付けて分けます）。ポーズのパネルでボーンを動かせます。
 - テクスチャセットはマテリアルの `key` ごとに 1 つ（同じ Unity のマテリアルを使うレンダラーは同じセット）。
 - 元の絵: Color の流し込み先（`_MainTex`）の絵のファイルを読み（PNG・TGA・JPG・PSD）、新しく作ったセットと何も触っていない最初のセットの
   一番下のレイヤー「元の絵」に入れます。絵の無いマテリアル・Unity の中にしかない絵は白、読めない絵は白で始めて理由を知らせます。
-- 元の絵が PSD（sRGB）のときは、平らな「元の絵」ではなく、PSD のレイヤーのままセットに入れます。読み方は「ファイル → 読み込み」の PSD の取り込みと同じ写しで
+- 元の絵が PSD（sRGB）のときは、平らな「元の絵」ではなく、PSD のレイヤーのままセットに入れます。読み方は「ファイル → インポート」の PSD の取り込みと同じ写しで
   （[PSD.md](PSD.md)）、PSD のレイヤーが下に並び、セットの空のレイヤーはその上に残ります。セットの大きさは PSD のキャンバスのまま
   です（レイヤーを拡大縮小しません）。取り込みで落とす物・変わる物は、確認のウィンドウと同じ名前で知らせに出します（ウィンドウは出さずに入れます）。元の PSD は読むだけで、
   同じファイルへ PSD を書き出すときは置き換える前に確かめます。予算などでレイヤーのまま取り込めない PSD は、理由を知らせて平らな「元の絵」にします。
@@ -164,13 +164,15 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
   ファイルから読みます（長い辺 2048 まで、合計 256 MiB まで）。送り直しでは、道・更新時刻・大きさが同じファイルは読み直しません）。lilToon でないマテリアルは受けた見た目を外します。
 - lilToon かどうかは、シェーダーの名前では決めません。`values` に `_lilToonVersion`（lilToon のシェーダーが持つ版の値）があるか、`shader.package` が
   `jp.lilxyzw.liltoon` のときだけ lilToon として描きます。
-- `.ylp` には、当てた頼みに今のポーズを入れ、マテリアルの値（`_lilToonVersion` のほか）を除いた形を根の `livelink.json` に残し、Unity なしで開き直せます（[YLP_FORMAT.md](YLP_FORMAT.md#livelinkjson状態根)）。
+- `.ylp` には、当てた頼みに今のポーズを入れ、マテリアルの値（`_lilToonVersion` のほか）を除いた形を根の `livelink.json` に残し、Unity なしで開き直せます（[YLP_FORMAT.md](YLP_FORMAT.md#livelinkjson)）。
+  受けたマテリアルの値は、設定「Unity から受けたマテリアルの値を保存する」（既定は入）の間、セットの `look.json` に残ります（テクスチャの画素は入れず、開き直すとファイルから読みます）。
+  「配布用に保存」で「モデルの参照」を除いた写しには、`livelink.json` も入りません（[SAVE_FOR_DISTRIBUTION.md](SAVE_FOR_DISTRIBUTION.md)）。
 
 ## 返事 `outbox/<id>-<n>.json`（スタンドアロン → Unity）
 
 ```json
 { "format": 1, "request": "8f0c2a4e-0000-4000-8000-000000000001", "kind": "exported",
-  "app": { "version": "0.5.0" },
+  "app": { "version": "0.6.0" },
   "problems": [ { "path": "Accessory", "reason": "bone_not_found" } ],
   "files": [ { "material": "guid:0123456789abcdef0123456789abcdef/fileid:2100000", "property": "_MainTex",
                "path": "C:/Work/MyProject/Assets/YoluPainter/Avatar/Avatar_Body_Main.png", "srgb": true, "normal_map": false } ] }
@@ -178,7 +180,7 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
 
 - `kind`: `opened`（受けて開いた・送り直しを当てた。合わなかった物は `problems`）、`refused`（受けなかった。理由は `problems`）、`exported`（利用者が書き出した）。
 - `<n>` は頼みごとの 0 からの通し番号。読めない頼みへの返事は、`inbox/` のファイルの名前（拡張子の前）を `request` にします。
-- `exported`: Live Link の相手の文書を書き出すと、書き出しのウィンドウの置き場の既定は `target.export_dir`（利用者が選び直したらそちら）です。書いた PNG のうち、lilToon の
+- `exported`: Live Link の相手の文書を書き出すと、「テクスチャを書き出す」ウィンドウの出力先の既定は `target.export_dir`（利用者が選び直したらそちら）です。書いた PNG のうち、lilToon の
   テンプレートの画像（`Main` → `_MainTex`・`Normal` → `_BumpMap`・`Smoothness` → `_SmoothnessTex`・`Metallic` → `_MetallicGlossMap`・`Emission` → `_EmissionMap`）と
   lilToon の詰め方のスロットの画像を `files` に入れます。対応の無い画像と、鍵が `none` の組の画像は入れません。
 
@@ -193,7 +195,7 @@ Unity は `updated`（UTC）が 6 秒より新しければ、スタンドアロ�
 | 言葉 | 意味 |
 |---|---|
 | `mesh_not_from_fbx` | メッシュが FBX から来ていない（.asset など） |
-| `bone_not_found` | 骨・メッシュのノードが FBX の中に見つからない |
+| `bone_not_found` | ボーン・メッシュのノードが FBX の中に見つからない |
 | `ambiguous_bone` | 同じ名前の兄弟があり、1 つに決まらない |
 | `unsupported_import` | 取り込みの設定（`bake_axis_conversion`）に合わせられない |
 | `fbx_unreadable` | FBX を読めない |

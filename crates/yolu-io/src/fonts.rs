@@ -5,8 +5,9 @@
 //! （`/usr/share/fonts`・`/usr/local/share/fonts`・`~/.fonts`・`~/.local/share/fonts`）だけを見る。
 //!
 //! テキストレイヤーのフォントを探す順（[`find`]）: 覚えた道のファイルの中身が SHA-256 と同じなら、それが同じフォント。違う・無いときは
-//! OS のフォントを PostScript 名 → ファミリー名と太さ（と斜体か）で探し、最後に覚えた道のファイル。見つけた中身の SHA-256 が違えば
-//! [`Lookup::Different`]（画面は「フォントが違います」と知らせ、描き直すときは見つけたフォントで描く）。
+//! OS のフォントを PostScript 名 → ファミリー名と太さ（と斜体か）で探し、最後に覚えた道のファイル。覚えた道が絶対の道のときだけ使う
+//! （配布用の写しはフォントの場所をファイル名だけにするので、ファイル名だけ・相対の道は、今の作業フォルダーの別のファイルを拾わないよう使わない）。
+//! 見つけた中身の SHA-256 が違えば [`Lookup::Different`]（画面は「フォントが違います」と知らせ、描き直すときは見つけたフォントで描く）。
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
@@ -273,11 +274,20 @@ impl std::fmt::Debug for Lookup {
     }
 }
 
+/// 覚えた道が、場所として使える絶対の道か。ファイル名だけ・相対の道（配布用の写しは、フォントの場所をファイル名だけにする）は、今の作業フォルダー
+/// によって別のファイルを指すので、場所としては使わず、名前（PostScript 名・ファミリー名）で探す。
+fn usable_path(path: &str) -> bool {
+    Path::new(path).is_absolute()
+}
+
 /// 覚えた道のファイルが、文書の値と同じ中身か（OS の一覧を使わない速い道）。同じなら [`Lookup::Same`]。
 pub fn find_at_path(font: &TextFont) -> Option<Lookup> {
     let TextFont::File { path, index, .. } = font else {
         return None;
     };
+    if !usable_path(path) {
+        return None;
+    }
     let bytes = read_font_file(Path::new(path)).ok()?;
     (text::font_matches(font, &bytes) && text::check_font(&bytes, *index).is_ok()).then(|| {
         Lookup::Same {
@@ -304,7 +314,10 @@ pub fn find(font: &TextFont, system: &SystemFonts) -> Lookup {
             return judged(font, found);
         }
     }
-    if let Ok(bytes) = read_font_file(Path::new(path)) {
+    if let Some(bytes) = usable_path(path)
+        .then(|| read_font_file(Path::new(path)).ok())
+        .flatten()
+    {
         let index = font.index();
         if text::check_font(&bytes, index).is_ok() {
             let found = text::file_font(path, index, &bytes);
@@ -376,6 +389,57 @@ mod tests {
             Some(400)
         );
         assert!(list.by_family("BIZ UDPGothic", 900, false).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 配布用の写しはフォントの場所をファイル名だけにする: 場所としては使わず、名前（PostScript 名・ファミリー名）で OS のフォントから探して見つける。
+    /// 今の作業フォルダーから相対に辿れる同じ名前のファイルは拾わない（作業フォルダーによって別のファイルを指す）。
+    #[test]
+    fn a_font_with_only_a_file_name_is_found_by_name_and_never_from_the_working_folder() {
+        let dir = fixture_dir("name-only");
+        let list = SystemFonts::from_dirs(&[&dir]);
+        let regular = dir.join("Regular.ttf");
+        let bytes = std::fs::read(&regular).unwrap();
+        let absolute = text::file_font(&regular.to_string_lossy(), 0, &bytes);
+        let TextFont::File {
+            index,
+            sha256,
+            names,
+            ..
+        } = &absolute
+        else {
+            unreachable!()
+        };
+        let with_path = |path: &str| TextFont::File {
+            path: path.into(),
+            index: *index,
+            sha256: *sha256,
+            names: names.clone(),
+        };
+        // ファイル名だけ: 場所は使えないが、OS のフォントを名前で探して同じ中身を見つける（見つけた場所の絶対の道の値になる）
+        let Lookup::Same { font, .. } = find(&with_path("Regular.ttf"), &list) else {
+            panic!("名前で見つからない")
+        };
+        assert_eq!(font, absolute);
+        assert!(find_at_path(&with_path("Regular.ttf")).is_none());
+        // 作業フォルダーから相対に辿れるフォントのファイルがあっても、名前の無い（OS に無い）ときは拾わない
+        let relative = "../yolu-app/assets/fonts/BIZUDPGothic-Regular.ttf";
+        assert!(
+            Path::new(relative).is_file(),
+            "試験は yolu-io のフォルダーで動く"
+        );
+        let nothing = SystemFonts::from_dirs(&[]);
+        assert!(matches!(
+            find(&with_path(relative), &nothing),
+            Lookup::Missing
+        ));
+        assert!(find_at_path(&with_path(relative)).is_none());
+        // 絶対の道なら、今までどおり場所から読める
+        let absolute_path = Path::new(relative).canonicalize().unwrap();
+        assert!(matches!(
+            find(&with_path(&absolute_path.to_string_lossy()), &nothing),
+            Lookup::Different { .. } | Lookup::Same { .. }
+        ));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 
 use eframe::egui_wgpu::{self, wgpu};
 use wgpu::util::DeviceExt;
-use yolu_core::geometry::OrbitCamera;
+use yolu_core::geometry::{OrbitCamera, Projection};
 use yolu_core::glam::{Mat4, Vec3, Vec4};
 use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_core::Document;
@@ -35,6 +35,7 @@ use super::model::ViewModel;
 use super::other_sets::OtherSet;
 use super::paint::{ImageTexture, Paint, PaintStats, Slot, UvSource};
 use super::received_layers::BUDGET_BYTES as RECEIVED_BUDGET_BYTES;
+use super::selection_overlay::{OverlayGpu, OverlayInput};
 use super::tangents::Tangent;
 use super::user_layers::USER_BUDGET_BYTES;
 
@@ -44,9 +45,12 @@ const LDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// 同じ描き先の sRGB の見え方（lilToon の半透明をリニアで重ねる）。
 const LDR_SRGB: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 const HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(super) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// 面の描き先の形式（選択範囲の重ねも同じ形式で描く）。
+pub(super) const LDR_FORMAT: wgpu::TextureFormat = LDR;
+pub(super) const HDR_FORMAT: wgpu::TextureFormat = HDR;
 /// 頂点 1 つ: 位置 3・法線 3・UV 2・接線 4（f32）。絵を貼るか・どの絵かは、マテリアルごとの描きで束ね（group 1）が決める。
-const VERTEX_FLOATS: usize = 12;
+pub(super) const VERTEX_FLOATS: usize = 12;
 /// 今のセットでないセットの絵の一辺の上限（縮めて持つ。今のセットは文書の大きさのまま）。
 pub const OTHER_SET_MAX_SIZE: u32 = 1024;
 /// 1 フレームの同期（今のセットとほかのセットの合成・上げ）にかけてよい時間。ほかのセットの絵を新しく作り始める（文書を合成して縮める。
@@ -105,6 +109,9 @@ pub struct View3dStats {
     pub last_sync_us: u64,
     /// 粗く合成した絵を見せているタイルの数（ドラッグの間。終われば正確に上げ直して 0）。
     pub paint_coarse_tiles: usize,
+    /// 塗った絵のミップマップを UV の上の画素だけで作った回数（チャンネルごとに 1 回。これまでの合計）と、粗い絵を見せている間に全部のテクセルの箱の平均で作った回数。
+    pub paint_weighted_mip_builds: u64,
+    pub paint_coarse_mip_builds: u64,
     /// 今のセットでないセットの絵を持っている数（GPU に作ってあるもの）。
     pub other_sets: usize,
     /// 持ちたいが、メモリの予算が足りずに持っていないセットの数（その面は絵の無い描き方）。
@@ -141,6 +148,13 @@ pub struct View3dStats {
     pub target_bytes: u64,
     /// これまでにブルームを足して描いた回数。
     pub bloom_renders: usize,
+    /// 選択範囲の重ねが今持っている GPU のバイト数（ミップ込み。出していなければ 0）と、これまでに上げたタイルの数、持ちたいが 3D の絵の予算に入らずに
+    /// 出していないか。
+    pub overlay_bytes: u64,
+    pub overlay_tiles: u64,
+    pub overlay_skipped: bool,
+    /// 出していない理由が、文書の大きさが GPU のテクスチャの辺の上限を超えること（`overlay_skipped` のときだけ。そうでなければ予算）。
+    pub overlay_too_large: bool,
 }
 
 impl From<PaintStats> for View3dStats {
@@ -155,6 +169,8 @@ impl From<PaintStats> for View3dStats {
             paint_by_budget: p.by_budget,
             paint_bytes: p.gpu_bytes,
             paint_coarse_tiles: p.coarse_tiles,
+            paint_weighted_mip_builds: p.weighted_mip_builds,
+            paint_coarse_mip_builds: p.coarse_mip_builds,
             ..View3dStats::default()
         }
     }
@@ -261,7 +277,8 @@ enum Pick {
 
 #[derive(Clone, Copy, PartialEq)]
 struct SceneKey {
-    camera: [u32; 6],
+    /// 注視点・yaw・pitch・距離と、投影（0 透視・1 正投影）・正投影の見える高さ。
+    camera: [u32; 8],
     size: [u32; 2],
     /// モデルの世代（`GpuMesh::model` と同じ）。
     model: u32,
@@ -276,6 +293,8 @@ struct SceneKey {
     samples: u32,
     /// 全部のセットの見た目の鍵。
     looks: u64,
+    /// 選択範囲の重ねの鍵（`OverlayGpu::key`）。
+    overlay: u64,
 }
 
 struct Pipelines {
@@ -387,6 +406,11 @@ pub struct View3dRenderer {
     show_others: bool,
     scene_layout: wgpu::BindGroupLayout,
     set_layout: wgpu::BindGroupLayout,
+    /// 選択範囲の重ね（今のセットの面の上に、縁・赤い重ね・選択ペンの被覆を描く）と、3D の絵の予算に入るか（`sync_sets` が決める）。
+    overlay: OverlayGpu,
+    overlay_allowed: bool,
+    /// 重ねを出せない理由が、辺の上限か（`sync_sets` が決める）。
+    overlay_too_large: bool,
     ldr: Pipelines,
     hdr: Pipelines,
     /// 面と背景のパイプラインをサンプル数ごとに作り直すための持ち物。
@@ -422,6 +446,8 @@ pub struct View3dRenderer {
     bounds: Option<(u32, Vec3, f32)>,
     uniforms: wgpu::Buffer,
     paint_sampler: wgpu::Sampler,
+    /// 塗った絵のサンプラーの異方性の上限（GPU が異方性フィルタリングを持たなければ 1）。
+    paint_anisotropy: u16,
     env_sampler: wgpu::Sampler,
     dummy_cube: wgpu::TextureView,
     _dummy_texture: wgpu::Texture,
@@ -645,15 +671,32 @@ pub fn plan_samples(
     samples
 }
 
+/// ウィンドウの面の設定: 先に溜めるフレームは 1 枚（`SurfaceConfig::LOW_LATENCY`。eframe の既定の `HIGH_THROUGHPUT` は 2 枚）で、
+/// 同期は `vsync` なら垂直同期を待つ（`AutoVsync` = 使えるなら FifoRelaxed → Fifo の順）、そうでなければ待たない（`AutoNoVsync` = 使えるなら Immediate → Mailbox → Fifo の順）。
+/// 待たないと、フレームの出る間隔が垂直同期の枠に揃わない代わりに、ペンの入力から線が画面に出るまでの遅れが縮む
+/// （描き直しが速すぎて回りすぎないよう、アプリが自分でフレームの間隔に下限をかける。`pacing`）。
+/// wgpu が面の出し方に Fifo しか出さない道（wgpu-hal 30.0.1 の OpenGL は、Windows 以外では Fifo だけ）では、どちらの設定でも出し方は Fifo で、
+/// 下限だけがかかる。Vulkan（lavapipe）では `AutoVsync` が FifoRelaxed、`AutoNoVsync` が Immediate になる（wgpu-core の振り替えのログで確かめた）。
+pub fn surface_config(vsync: bool) -> egui_wgpu::SurfaceConfig {
+    egui_wgpu::SurfaceConfig {
+        present_mode: if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        },
+        ..egui_wgpu::SurfaceConfig::LOW_LATENCY
+    }
+}
+
 /// 製品のウィンドウの wgpu の設定: eframe の既定に、アダプター固有の形式の機能（2× と 8× の多サンプルが使えるかを調べるのに要る）を、
 /// 機材が持つときだけ装置へ足す。機能を足しても、使える形式・上限は増えるだけで減らない。
 ///
-/// 面は `SurfaceConfig::LOW_LATENCY`（先に溜めるフレームを 1 枚に絞る。eframe の既定の `HIGH_THROUGHPUT` は 2 枚）にする。2D に描く操作は、
-/// 入力から画面までの遅れをなめらかさより先にする。同期は垂直同期のまま。eframe の 1 つの描画器が、別ウィンドウに出したビューポートを含む
-/// 全ての面へこの設定を使う。
-pub fn wgpu_configuration() -> egui_wgpu::WgpuConfiguration {
-    let mut config = egui_wgpu::WgpuConfiguration::default()
-        .with_surface_config(egui_wgpu::SurfaceConfig::LOW_LATENCY);
+/// 面の設定は `surface_config(vsync)`（設定「垂直同期」。既定は待たない）。2D に描く操作は、入力から画面までの遅れをなめらかさより先にする。
+/// eframe の 1 つの描画器が、別ウィンドウに出したビューポートを含む全ての面へこの設定を使い、起動のあとに切り替える口は無い
+/// （変えた設定は次の起動から効く）。
+pub fn wgpu_configuration(vsync: bool) -> egui_wgpu::WgpuConfiguration {
+    let mut config =
+        egui_wgpu::WgpuConfiguration::default().with_surface_config(surface_config(vsync));
     if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = Arc::new(move |adapter| {
@@ -762,14 +805,61 @@ fn multisample(count: u32) -> wgpu::MultisampleState {
     }
 }
 
+/// 塗った絵のサンプラーの異方性の上限。斜めに見た面は、画面で縦と横の縮み方が違うので、等方のミップだと強く縮む側に合わせて全体が
+/// ぼやける。異方性フィルタリングは、縮みの小さい側の細かさを残す。wgpu の上限（16）まで。
+const PAINT_ANISOTROPY: u16 = 16;
+
+/// GPU が異方性フィルタリングを持つとき `wanted`（1〜16 に収める）、持たないとき 1。
+/// wgpu も持たない GPU では 1 に直すが、使っている値を確かめられるよう、ここで決める。
+fn supported_anisotropy(flags: wgpu::DownlevelFlags, wanted: u16) -> u16 {
+    if flags.contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING) {
+        wanted.clamp(1, 16)
+    } else {
+        1
+    }
+}
+
+/// サンプラーの既定の異方性。CPU で描くアダプター（`software`。lavapipe・WARP など）では 1 のままにする。lavapipe で測ると、異方性 16 は球の 1 フレームが
+/// 約 28 ms から約 36 ms に増え、拡大して見る絵（粗さの段・法線）の境が実 GPU（d3d12 の OpenGL）より大きくぼける（絵の比べの正解や Unity との
+/// 差の上限が、等方の絵で決まっているのも同じ）。ソフトで描く場面は斜めの鮮明さを求める用途でもない。試験が `set_paint_anisotropy` で上げて確かめる。
+///
+/// 判定は wgpu のアダプターの種類（`device_type == Cpu`。lavapipe・WARP はこれで報告される）。Mesa の d3d12 の OpenGL が WARP の上で動くときのように、
+/// 種類が CPU と報告されないものは見分けられず、16 になりうる。
+fn default_anisotropy(flags: wgpu::DownlevelFlags, software: bool) -> u16 {
+    if software {
+        1
+    } else {
+        supported_anisotropy(flags, PAINT_ANISOTROPY)
+    }
+}
+
+/// 塗った絵（標準のチャンネル・ユーザーチャンネル・lilToon が読む画像）を読むサンプラー。異方性が 1 を超えるときは、wgpu の決まりで
+/// 拡大・縮小・ミップの 3 つの補間がすべて Linear でなければならない。
+///
+/// 絵を読むサンプラーはこれだけ。環境のキューブ（`env_sampler`）は段を明示して読む（粗さからの `textureSampleLevel`）ので、異方性は効かない。
+/// ブルーム・影のサンプラーは絵ではなく、画面の効果と深さの比較。
+fn paint_sampler_descriptor(anisotropy: u16) -> wgpu::SamplerDescriptor<'static> {
+    wgpu::SamplerDescriptor {
+        label: Some("yolu-3d-paint"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: anisotropy,
+        ..Default::default()
+    }
+}
+
 impl View3dRenderer {
     pub fn new(rs: &egui_wgpu::RenderState) -> View3dRenderer {
         let device = &rs.device;
-        let srgb_views = rs
-            .adapter
-            .get_downlevel_capabilities()
-            .flags
-            .contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let downlevel = rs.adapter.get_downlevel_capabilities().flags;
+        let srgb_views = downlevel.contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let paint_anisotropy = default_anisotropy(
+            downlevel,
+            rs.adapter.get_info().device_type == wgpu::DeviceType::Cpu,
+        );
         // 面のシェーダー: 標準（scene.wgsl）と lilToon の再現（`shaders/liltoon/` の部品をつないだもの。scene.wgsl の一様バッファ・束ね・
         // 関数を使う）を 1 つのモジュールに
         let scene_source = format!(
@@ -796,7 +886,7 @@ impl View3dRenderer {
             },
             count: None,
         }];
-        // 塗った絵の標本器は、lilToon の輪郭線の頂点（太さのマスク）も読む
+        // 塗った絵のサンプラーは、lilToon の輪郭線の頂点（太さのマスク）も読む
         let mut paint_sampler_entry = sampler_entry(7);
         paint_sampler_entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
         entries.push(paint_sampler_entry);
@@ -1057,15 +1147,7 @@ impl View3dRenderer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let paint_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("yolu-3d-paint"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            ..Default::default()
-        });
+        let paint_sampler = device.create_sampler(&paint_sampler_descriptor(paint_anisotropy));
         let env_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("yolu-3d-env"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -1129,6 +1211,7 @@ impl View3dRenderer {
             &blank_look,
             &white_view,
         );
+        let overlay = OverlayGpu::new(device, &rs.queue, &scene_layout);
         View3dRenderer {
             rs: rs.clone(),
             paint,
@@ -1147,6 +1230,9 @@ impl View3dRenderer {
             show_others: true,
             scene_layout,
             set_layout,
+            overlay,
+            overlay_allowed: true,
+            overlay_too_large: false,
             ldr,
             hdr,
             background_pipeline_layout,
@@ -1176,6 +1262,7 @@ impl View3dRenderer {
             bounds: None,
             uniforms,
             paint_sampler,
+            paint_anisotropy,
             env_sampler,
             dummy_cube,
             _dummy_texture: dummy,
@@ -1210,6 +1297,16 @@ impl View3dRenderer {
         }
     }
 
+    /// GPU のテクスチャの辺の上限（GPU が決める。文書の幅か高さがこれを超えると、選択範囲の重ねは出せない）。
+    pub fn max_texture_dimension(&self) -> u32 {
+        self.overlay.limit()
+    }
+
+    /// 次に描くときの、選択範囲の重ね（None なら何も重ねない）。
+    pub fn set_overlay(&mut self, input: Option<OverlayInput>) {
+        self.overlay.set_input(input);
+    }
+
     /// 塗った絵のバイトの予算を決める（設定の GPU のメモリ・試験が小さくして、縮めの道を通す）。今のセットの絵を引いた残りに、
     /// ほかのセットの絵が入る。上げたときは、予算で縮めていた今のセットの絵を元の大きさへ戻す（ほかのセットは、替わるたびに
     /// 上限だけで決め直すので、ここでは触らない）。
@@ -1233,6 +1330,28 @@ impl View3dRenderer {
     /// 描き先のメモリの上限を決める（試験・計測用。None で既定へ）。
     pub fn set_target_budget(&mut self, bytes: Option<u64>) {
         self.target_budget = bytes;
+    }
+
+    /// 塗った絵のサンプラーが今使っている異方性の上限（GPU が持たなければ 1）。
+    pub fn paint_anisotropy(&self) -> u16 {
+        self.paint_anisotropy
+    }
+
+    /// 塗った絵のサンプラーの異方性の上限を変える（試験・計測用。1 で等方。GPU が持たなければ 1 のまま）。
+    pub fn set_paint_anisotropy(&mut self, wanted: u16) {
+        let flags = self.rs.adapter.get_downlevel_capabilities().flags;
+        let clamp = supported_anisotropy(flags, wanted);
+        if clamp == self.paint_anisotropy {
+            return;
+        }
+        self.paint_anisotropy = clamp;
+        self.paint_sampler = self
+            .rs
+            .device
+            .create_sampler(&paint_sampler_descriptor(clamp));
+        // サンプラーは group 0 の束ねに入っている。絵は同じでも描き直す
+        self.bind = None;
+        self.last_key = None;
     }
 
     /// 機材が面の描き先に使えるサンプル数（昇順。1 を含む）。アンチエイリアスの選びに出す。
@@ -1315,6 +1434,24 @@ impl View3dRenderer {
     /// 試験用: 塗った絵のチャンネルの 1 段の中身（`Paint::read_level`）。
     pub fn read_paint_level(&self, slot: Slot, level: u32) -> Option<(Vec<u8>, [u32; 2])> {
         self.paint.read_level(slot, level)
+    }
+
+    /// 試験用: 塗った絵の重みの絵の 1 段の中身（`Paint::read_weight_level`。1 テクセル 1 バイト）。
+    pub fn read_paint_weight_level(&self, level: u32) -> Option<(Vec<u8>, [u32; 2])> {
+        self.paint.read_weight_level(level)
+    }
+
+    /// 試験用: ほかのセットの絵の重みの絵の 1 段の中身。そのマテリアルのセットの絵が無ければ None。
+    pub fn read_other_weight_level(
+        &self,
+        material: i32,
+        level: u32,
+    ) -> Option<(Vec<u8>, [u32; 2])> {
+        self.held
+            .iter()
+            .find(|h| h.material == material && h.paint.is_built())?
+            .paint
+            .read_weight_level(level)
     }
 
     /// 試験用: 接線を作るスレッドが仕事の前に呼ぶ口（`TangentHook`）。
@@ -1409,6 +1546,13 @@ impl View3dRenderer {
         self.ensure_shadow(display);
         self.ensure_bind();
         self.ensure_set_binds();
+        self.overlay.sync(
+            &mut encoder,
+            self.overlay_allowed,
+            hdr,
+            samples,
+            VERTEX_FLOATS,
+        );
         let key = SceneKey {
             camera: [
                 camera.target.x.to_bits(),
@@ -1417,6 +1561,11 @@ impl View3dRenderer {
                 camera.yaw.to_bits(),
                 camera.pitch.to_bits(),
                 camera.distance.to_bits(),
+                u32::from(camera.is_orthographic()),
+                match camera.projection {
+                    Projection::Orthographic { height } => height.to_bits(),
+                    Projection::Perspective => 0,
+                },
             ],
             size,
             model: model.revision(),
@@ -1428,6 +1577,7 @@ impl View3dRenderer {
             display: display.key_bits(),
             samples,
             looks: self.looks_key(),
+            overlay: self.overlay.key(),
         };
         // 絵が変わればミップも鍵の版も変わるので、描かないフレームは何も積んでいない（出さずに捨てる）
         if resized || self.last_key != Some(key) {
@@ -1487,6 +1637,10 @@ impl View3dRenderer {
             linear_transparent: self.srgb_views,
             lil_pipelines: self.lil_pipelines.len(),
             lil_pipeline_builds: self.lil_pipeline_builds,
+            overlay_bytes: self.overlay.bytes(),
+            overlay_tiles: self.overlay.uploaded_tiles,
+            overlay_skipped: self.overlay.skipped(),
+            overlay_too_large: self.overlay.skipped() && self.overlay_too_large,
             other_scratch_bytes: self
                 .held
                 .iter()
@@ -1584,6 +1738,13 @@ impl View3dRenderer {
             limit,
             self.received_budget,
         ));
+        // 選択範囲の重ね（文書と同じ大きさの R8。ミップ込み）も、ほかのセットより先に入れる。入らなければ重ねを出さない
+        let overlay = self.overlay.wanted_bytes();
+        self.overlay_too_large = self.overlay.too_large();
+        self.overlay_allowed = !self.overlay_too_large && overlay <= remaining;
+        if self.overlay_allowed {
+            remaining -= overlay;
+        }
         let mut keep: Vec<&OtherSet<'_>> = Vec::with_capacity(want.len());
         self.unpainted.clear();
         for o in want {
@@ -1677,6 +1838,7 @@ impl View3dRenderer {
     /// 今 GPU に持っている絵（今のセットとほかのセット。lilToon のユーザーチャンネルの配列と受けた絵の配列を含む）のバイト数。
     fn picture_bytes(&self) -> u64 {
         self.paint.bytes()
+            + self.overlay.bytes()
             + self.current_look.bytes()
             + self
                 .held
@@ -2562,8 +2724,9 @@ impl View3dRenderer {
         let mut f: Vec<f32> = Vec::with_capacity(UNIFORM_BYTES as usize / 4);
         f.extend_from_slice(&view_proj.to_cols_array());
         f.extend_from_slice(&view_proj.inverse().to_cols_array());
+        // w: 正投影なら 1（lilToon の `lilIsPerspective()` が偽になる所と背景の向き）
         let p = view.position;
-        f.extend_from_slice(&[p.x, p.y, p.z, 0.0]);
+        f.extend_from_slice(&[p.x, p.y, p.z, f32::from(view.is_orthographic())]);
         let l = display.light_direction();
         f.extend_from_slice(&[l.x, l.y, l.z, 0.0]);
         // マテリアル表示の光（Unity のディレクショナルライトの `_LightColor0` と同じ値。`Display::direct_light`）と、環境が無いときの
@@ -2967,6 +3130,14 @@ impl View3dRenderer {
                         }
                     }
                 }
+                // 3. 選択範囲の重ね（今のセットの面だけ。面と同じ深さで読む。半透明を別のパスで重ねるときは、その半透明の下になる）
+                let current: Vec<(u32, u32)> = draws
+                    .iter()
+                    .filter(|(_, _, pick, _)| *pick == Pick::Current)
+                    .map(|(start, end, _, _)| (*start, *end))
+                    .collect();
+                self.overlay
+                    .draw(&mut pass, bind, &mesh.buffer, &current, hdr_path, samples);
             }
         }
         if second_pass {
@@ -3256,14 +3427,51 @@ fn shadow_matrix(center: Vec3, radius: f32, to_light: Vec3) -> Mat4 {
 mod tests {
     use super::*;
 
-    /// ウィンドウの面は、入力から画面までの遅れを短くする設定（`LOW_LATENCY`）で作る。
+    /// ウィンドウの面は、先に溜めるフレームを 1 枚に絞る設定（`LOW_LATENCY` の溜め）で作る。同期は、既定（設定「垂直同期」が切）は待たず、入のときだけ待つ。
     #[test]
-    fn the_window_surface_is_configured_for_low_latency() {
-        let config = wgpu_configuration();
-        assert_eq!(config.surface, egui_wgpu::SurfaceConfig::LOW_LATENCY);
-        assert_ne!(config.surface, egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT);
-        // 同期は垂直同期のまま（Immediate・Mailbox はテアリングと電力の理由で使わない）
-        assert_eq!(config.surface.present_mode, wgpu::PresentMode::AutoVsync);
+    fn the_window_surface_is_configured_for_low_latency_and_waits_for_vsync_only_when_asked() {
+        let latency = egui_wgpu::SurfaceConfig::LOW_LATENCY.desired_maximum_frame_latency;
+        assert_eq!(latency, Some(1));
+        for (vsync, mode) in [
+            (false, wgpu::PresentMode::AutoNoVsync),
+            (true, wgpu::PresentMode::AutoVsync),
+        ] {
+            let config = wgpu_configuration(vsync);
+            assert_eq!(config.surface.present_mode, mode, "vsync={vsync}");
+            assert_eq!(config.surface.desired_maximum_frame_latency, latency);
+            assert_eq!(config.surface, surface_config(vsync));
+            assert_ne!(config.surface, egui_wgpu::SurfaceConfig::HIGH_THROUGHPUT);
+        }
+        // 待たないほうが既定の形（設定の既定と同じ向き）
+        let default = surface_config(crate::settings::Settings::default().vsync);
+        assert_eq!(default.present_mode, wgpu::PresentMode::AutoNoVsync);
+    }
+
+    /// 塗った絵のサンプラー: 異方性は 16 まで、GPU が持たなければ 1。異方性を使うときは、wgpu が求める 3 つの補間がすべて Linear。
+    #[test]
+    fn the_paint_sampler_uses_anisotropy_only_when_the_adapter_has_it() {
+        let with = wgpu::DownlevelFlags::ANISOTROPIC_FILTERING;
+        let without = wgpu::DownlevelFlags::empty();
+        assert_eq!(supported_anisotropy(with, PAINT_ANISOTROPY), 16);
+        assert_eq!(supported_anisotropy(without, PAINT_ANISOTROPY), 1);
+        // 既定: 実 GPU は 16、持たない機材と CPU で描くアダプターは 1
+        assert_eq!(default_anisotropy(with, false), 16);
+        assert_eq!(default_anisotropy(without, false), 1);
+        assert_eq!(default_anisotropy(with, true), 1);
+        assert_eq!(default_anisotropy(without, true), 1);
+        // 範囲の外は 1〜16 に収める（0 は wgpu が断る値）
+        assert_eq!(supported_anisotropy(with, 0), 1);
+        assert_eq!(supported_anisotropy(with, 1), 1);
+        assert_eq!(supported_anisotropy(with, 64), 16);
+        for anisotropy in [1u16, 16] {
+            let d = paint_sampler_descriptor(anisotropy);
+            assert_eq!(d.anisotropy_clamp, anisotropy);
+            assert_eq!(d.mag_filter, wgpu::FilterMode::Linear);
+            assert_eq!(d.min_filter, wgpu::FilterMode::Linear);
+            assert_eq!(d.mipmap_filter, wgpu::MipmapFilterMode::Linear);
+            assert_eq!(d.address_mode_u, wgpu::AddressMode::Repeat);
+            assert_eq!(d.address_mode_v, wgpu::AddressMode::Repeat);
+        }
     }
 
     #[test]

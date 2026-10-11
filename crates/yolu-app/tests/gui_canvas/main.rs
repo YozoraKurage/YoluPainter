@@ -7,15 +7,19 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod anti_alias_ui;
 mod brush_import_ui;
+mod brush_menu;
 mod brush_mix;
 mod brushes;
 mod canvas_gpu;
 mod clipboard;
 mod clipping_button;
+mod clone_parity;
 mod color_adjust;
 mod color_adjust_app;
 mod curve_editor;
+mod default_layout;
 mod distribute;
 mod drafting;
 mod effects_ui;
@@ -39,5 +43,7 @@ mod selection_build;
 mod stencil;
 mod stroke_look;
 mod text_tool;
+mod tool_keys;
 mod tool_layout_ui;
+mod view_controls;
 mod warp;

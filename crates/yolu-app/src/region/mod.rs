@@ -30,12 +30,14 @@ pub use self::tools::{Cycle, CycleKind, Hover, PolygonDrag};
 pub struct RegionState {
     /// クリックした三角形から辿る範囲（バケツとポリゴン塗りつぶしで共有。Unity 版の「3D Pick」の既定は UV アイランド）。
     pub kind: SurfaceRegionKind,
-    /// バケツ: 範囲をモデルの三角形からでなく、押した画素に近い色で決める（2D だけ）。
+    /// バケツ: 範囲をモデルの三角形からでなく、押した画素に近い色で決める（3D は押した面の UV が指す画素から）。
     pub by_color: bool,
     /// 近い色の許し幅（各成分の差。0〜255）。
     pub tolerance: u8,
     /// 近い色: 押した画素から 4 近傍でつながる所だけ。
     pub contiguous: bool,
+    /// 2D のキャンバスで、効いている対称定規の写しの全部の点から塗る（3D ビューでは効かない）。
+    pub snap_symmetry: bool,
     /// 近い色: レイヤーでなくチャンネルの合成を見る。
     pub sample_all: bool,
     pub color: color::Options,
@@ -67,6 +69,7 @@ impl Default for RegionState {
             by_color: false,
             tolerance: 32,
             contiguous: true,
+            snap_symmetry: true,
             sample_all: false,
             color: Default::default(),
             references: Default::default(),
@@ -95,6 +98,8 @@ pub enum RegionAction {
     Tolerance(u8),
     Contiguous(bool),
     SampleAll(bool),
+    /// バケツの「対称定規にスナップ」。
+    SnapSymmetry(bool),
     Reference(color::Reference),
     ReferenceLayer(yolu_core::LayerId),
     Distance(color::Distance),
@@ -147,6 +152,7 @@ impl AppState {
             }
             RegionAction::Tolerance(v) => r.tolerance = v,
             RegionAction::Contiguous(v) => r.contiguous = v,
+            RegionAction::SnapSymmetry(v) => r.snap_symmetry = v,
             RegionAction::SampleAll(v) => {
                 r.sample_all = v;
                 r.color.reference = if v {
@@ -208,6 +214,15 @@ impl AppState {
             r.hover = None;
         }
         r.index.clone()
+    }
+
+    /// 今のモデルとセットの UV の格子（作ってあるときだけ。作らない。3D ビューのカーソルが読む）。
+    pub fn cached_region_grid(&self) -> Option<Arc<UvGrid>> {
+        let (model, material) = self.region_model()?;
+        self.region
+            .grid
+            .clone()
+            .filter(|g| g.is_for(&model.geometry, material))
     }
 
     /// 今のセットの UV の格子（モデルかセットが替わるまで作り直さない）。

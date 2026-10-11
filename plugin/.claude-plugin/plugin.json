@@ -1,7 +1,7 @@
 {
   "name": "yolupainter",
   "displayName": "YoluPainter",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Work on the project open in YoluPainter: read and edit layers, masks and effects, preview channels, export and save. Connects to the running app on this PC (Settings: Accept external commands).",
   "author": {
     "name": "Yozolab",

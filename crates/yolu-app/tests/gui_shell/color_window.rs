@@ -51,7 +51,7 @@ fn target(id: LayerId, channel: Channel) -> egui::Id {
 
 #[test]
 fn a_fill_value_opens_the_window_and_one_drag_in_it_is_one_undo_and_escape_goes_back() {
-    let mut h = app(1280.0, 1200.0, 64);
+    let mut h = app(1280.0, 1700.0, 64);
     let id = fill_layer(&mut h);
     let first = value(&h, id, Channel::Color);
     assert_eq!(first, Some(Rgba8::new(255, 0, 0, 255)));
@@ -95,7 +95,7 @@ fn a_fill_value_opens_the_window_and_one_drag_in_it_is_one_undo_and_escape_goes_
 /// egui は Esc を受けたフレームの初めに欄のフォーカスを外すので、ウィンドウは前のフレームの入力中かどうかで見分ける。次の Esc で、開いたときの色へ戻して閉じる。
 #[test]
 fn escape_while_typing_in_the_hex_field_only_stops_typing_and_the_next_one_goes_back() {
-    let mut h = app(1280.0, 1200.0, 64);
+    let mut h = app(1280.0, 1700.0, 64);
     let id = fill_layer(&mut h);
     let first = value(&h, id, Channel::Color);
     let swatch = h.get_by_label("カラー の値").rect();
@@ -142,7 +142,7 @@ fn an_escape_another_part_already_used_neither_closes_the_window_nor_reverts_its
     use yolu_app::matpaint::MatAction;
     // 65536 画素を超える文書の塗りつぶしは別のスレッドの仕事になる
     let mut h = app(1500.0, 1600.0, 512);
-    h.state_mut().state.ui.property_tab = 1;
+    open_paint_channels(&mut h);
     apply(&mut h, Action::Mat(MatAction::Enabled(true)));
     apply(
         &mut h,
@@ -183,7 +183,7 @@ fn an_escape_another_part_already_used_neither_closes_the_window_nor_reverts_its
 #[test]
 fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_takes_over_the_window()
 {
-    let mut h = app(1280.0, 1200.0, 64);
+    let mut h = app(1280.0, 1700.0, 64);
     let id = fill_layer(&mut h);
     // エミッションの値も持たせる（色の欄が 2 つ）
     apply(
@@ -244,7 +244,7 @@ fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_take
 
 #[test]
 fn the_window_moves_by_its_title_keeps_its_place_and_does_not_close_on_an_outside_click() {
-    let mut h = app(1280.0, 1200.0, 64);
+    let mut h = app(1280.0, 1700.0, 64);
     let id = fill_layer(&mut h);
     let swatch = h.get_by_label("カラー の値").rect();
     click(&mut h, swatch.center());
@@ -278,7 +278,7 @@ fn snapshot_the_colour_window_on_a_fill_value() {
         (Lang::Ja, "ja", "カラー の値"),
         (Lang::En, "en", "Value of Color"),
     ] {
-        let mut h = app(1280.0, 800.0, 64);
+        let mut h = app(1280.0, 1500.0, 64);
         h.state_mut().state.lang = lang;
         h.run();
         fill_layer(&mut h);
@@ -290,14 +290,15 @@ fn snapshot_the_colour_window_on_a_fill_value() {
     }
 }
 
-/// マテリアルのタブ: lilToon の色（文書の見た目。1 回のドラッグが 1 回の取り消し）と、ブラシのエミッション（ブラシの設定。取り消しに積まない）。
+/// マテリアルのパネル: lilToon の色（文書の見た目。1 回のドラッグが 1 回の取り消し）と、ツールプロパティの塗るチャンネルのエミッション（ブラシの設定。取り消しに積まない）。
 /// lilToon の色から押し替えると、ウィンドウはそのままで相手が替わる。
 #[test]
 fn a_liltoon_colour_and_the_brush_emission_share_the_window() {
     use yolu_app::matpaint::MatAction;
     let mut h = app(1500.0, 1600.0, 64);
-    // 描く文脈のマテリアルのタブ。ブラシのマテリアルでエミッションも塗る
-    h.state_mut().state.ui.property_tab = 1;
+    // 右の「マテリアル」のパネルと、ツールプロパティの「塗るチャンネル」。塗るチャンネルでエミッションも塗る
+    open_material(&mut h);
+    open_paint_channels(&mut h);
     apply(&mut h, Action::Mat(MatAction::Enabled(true)));
     apply(
         &mut h,

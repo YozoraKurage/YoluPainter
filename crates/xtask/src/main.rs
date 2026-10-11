@@ -1,3 +1,5 @@
+mod macos;
+mod netguard;
 mod preflight;
 
 use ed25519_dalek::{Signer, SigningKey};
@@ -12,15 +14,15 @@ use std::{
 };
 use yolu_update::{
     asset_name, asset_url, check_public_key, is_archive_target, is_beta_version, sha256, Asset,
-    Envelope, Manifest, Transport, UpdateClient, MAX_ASSET, MAX_METADATA, RELEASE_BASE, TARGETS,
-    UPDATER_FILE, UPDATER_SCHEMA, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
+    Envelope, Manifest, Transport, UpdateClient, MACOS_ARCHIVE, MAX_ASSET, MAX_METADATA,
+    RELEASE_BASE, TARGETS, UPDATER_FILE, UPDATER_SCHEMA, WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / build --target T --release [--require-update-key] / bundle --target T / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / netguard / build --target T --release [--require-update-key] / bundle --target T（build・bundle の T は x86_64-pc-windows-msvc・x86_64-unknown-linux-gnu・universal-apple-darwin。universal-apple-darwin は macOS の上で） / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -62,6 +64,9 @@ fn execute(mut args: impl Iterator<Item = String>) -> Result<()> {
     let command = value(&mut args)?;
     if command == "preflight" {
         return preflight::run(args);
+    }
+    if command == "netguard" {
+        return netguard::run(args);
     }
     let mut target = None;
     let mut version = None;
@@ -210,8 +215,8 @@ fn update_public_key(environment: Option<String>, require: bool) -> Result<Optio
     check_public_key(public_key_bytes(&text)?)?;
     Ok(Some(text))
 }
-fn build(target: &str, require_update_key: bool) -> Result<()> {
-    let key = update_public_key(env::var(PUBLIC_KEY_ENV).ok(), require_update_key)?;
+/// 1 つの Rust のターゲットのリリースビルド（アプリとコマンドラインを同じ命令で）。更新用の公開鍵は `key` があるときだけ環境に置く。
+fn release_build(target: &str, key: &Option<String>) -> Command {
     let mut command = cargo();
     command.current_dir(root()).args([
         "build",
@@ -230,12 +235,26 @@ fn build(target: &str, require_update_key: bool) -> Result<()> {
         // 空の値を渡さない（アプリは「組み込み済み」と見て、使えない鍵を持つ）。
         None => command.env_remove(PUBLIC_KEY_ENV),
     };
-    run(&mut command)
+    command
+}
+fn build(target: &str, require_update_key: bool) -> Result<()> {
+    let key = update_public_key(env::var(PUBLIC_KEY_ENV).ok(), require_update_key)?;
+    if target == MACOS_ARCHIVE {
+        // macOS は 2 つのターゲット（Apple Silicon と Intel）でビルドして 1 つにまとめる
+        return macos::build(|triple| release_build(triple, &key));
+    }
+    run(&mut release_build(target, &key))
 }
 /// 配布物に入れる使う人向けの文書（リポジトリの根からの相対。配布物の中でも同じ場所に入るので、README からの相対のリンクがそのまま効く）。
 /// インストーラーの `installer/yolupainter.nsi` の `DocFiles` も同じ一覧で、試験が突き合わせる。
 const BUNDLED_DOCS: &[&str] = &[
     "docs/GUIDE.md",
+    "docs/GUIDE_START.md",
+    "docs/GUIDE_PAINT.md",
+    "docs/GUIDE_SELECT.md",
+    "docs/GUIDE_LAYERS.md",
+    "docs/GUIDE_SETTINGS.md",
+    "docs/GUIDE_KEYS.md",
     "docs/CLI.md",
     "docs/MCP.md",
     "docs/UNITY.md",
@@ -248,10 +267,16 @@ const BUNDLED_DOCS: &[&str] = &[
     "docs/GRADIENT_MAP.md",
     "docs/PREVIEW.md",
     "docs/RECOVERY.md",
-    "docs/WINDOW.md",
     "docs/SAVE_FOR_DISTRIBUTION.md",
     "docs/YLP_FORMAT.md",
+    "docs/YLP_DECISIONS.md",
     "docs/en/GUIDE.md",
+    "docs/en/GUIDE_START.md",
+    "docs/en/GUIDE_PAINT.md",
+    "docs/en/GUIDE_SELECT.md",
+    "docs/en/GUIDE_LAYERS.md",
+    "docs/en/GUIDE_SETTINGS.md",
+    "docs/en/GUIDE_KEYS.md",
     "docs/en/CLI.md",
     "docs/en/MCP.md",
     "docs/en/UNITY.md",
@@ -259,6 +284,14 @@ const BUNDLED_DOCS: &[&str] = &[
     "docs/en/BUILDING.md",
     "docs/LIVELINK.md",
     "docs/en/LIVELINK.md",
+    "docs/GUIDE_FILL.md",
+    "docs/GUIDE_PATHS.md",
+    "docs/GUIDE_3D.md",
+    "docs/GUIDE_FILES.md",
+    "docs/en/GUIDE_FILL.md",
+    "docs/en/GUIDE_PATHS.md",
+    "docs/en/GUIDE_3D.md",
+    "docs/en/GUIDE_FILES.md",
 ];
 /// docs/ にあって配布物へは入れないファイル（開発・リリースの手順）。docs/ に足したファイルは、入れるか外すかのどちらかに必ず載せる（試験が確かめる）。
 const LEFT_OUT_DOCS: &[&str] = &["docs/DEVELOPMENT.md", "docs/RELEASING.md"];
@@ -414,6 +447,9 @@ fn payload(root: &Path, target: &str) -> Result<Vec<(String, PathBuf)>> {
     Ok(entries)
 }
 fn bundle(target: &str) -> Result<()> {
+    if target == MACOS_ARCHIVE {
+        return macos::bundle();
+    }
     let root = root();
     let version = workspace_version()?;
     let name = asset_name(&version, target)?;
@@ -968,10 +1004,10 @@ impl Transport for DirectoryTransport {
         Ok(bytes)
     }
 }
-/// アーカイブ（zip・tar.gz）の中のファイルの名前（フォルダの項目は数えない）。
+/// アーカイブ（zip・tar.gz）の中のファイルの名前（フォルダの項目は数えない）。zip なのは Windows と macOS、Linux は tar.gz。
 fn archive_names(target: &str, bytes: &[u8]) -> Result<Vec<String>> {
     let mut names = Vec::new();
-    if target == WINDOWS_ARCHIVE {
+    if target == WINDOWS_ARCHIVE || target == MACOS_ARCHIVE {
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
         for index in 0..zip.len() {
             let file = zip.by_index(index)?;
@@ -990,11 +1026,16 @@ fn archive_names(target: &str, bytes: &[u8]) -> Result<Vec<String>> {
     }
     Ok(names)
 }
-/// アーカイブの中身が `payload_names` と同じか照らす。欠けも、一覧に無いファイルも、同じ名前の重複も断る（名前を並べて知らせる）。
-fn check_archive_contents(target: &str, bytes: &[u8]) -> Result<()> {
+/// アーカイブの中身が `payload_names`（macOS は最上位のフォルダつきの `macos::archive_names`）と同じか照らす。
+/// 欠けも、一覧に無いファイルも、同じ名前の重複も断る（名前を並べて知らせる）。
+fn check_archive_contents(target: &str, version: &Version, bytes: &[u8]) -> Result<()> {
     let mut found = archive_names(target, bytes)?;
     found.sort();
-    let expected = payload_names(target);
+    let expected = if target == MACOS_ARCHIVE {
+        macos::archive_names(version)
+    } else {
+        payload_names(target)
+    };
     let missing: Vec<_> = expected.iter().filter(|n| !found.contains(n)).collect();
     let mut extra: Vec<_> = found.iter().filter(|n| !expected.contains(n)).collect();
     extra.extend(
@@ -1090,7 +1131,7 @@ fn verify(version: &Version, directory: &Path, public_key: [u8; 32]) -> Result<(
         let download = client.download(update.approve_download())?;
         // インストーラーの中は見られない（その段は同じ一覧から作り、試験が NSIS の一覧と突き合わせる）。
         if is_archive_target(target) {
-            check_archive_contents(target, download.bytes())
+            check_archive_contents(target, version, download.bytes())
                 .map_err(|error| format!("{name}: {error}"))?;
             archives += 1;
         }
@@ -1217,7 +1258,10 @@ mod tests {
     }
     /// 配布物の名前ごとに、名前そのものを中身にした試験用の元ファイル（`dir/src` の下。`docs/en/…` のフォルダも作る）。
     fn fake_payload(dir: &Path, target: &str) -> Vec<(String, PathBuf)> {
-        payload_names(target)
+        fake_files(dir, payload_names(target))
+    }
+    fn fake_files(dir: &Path, names: Vec<String>) -> Vec<(String, PathBuf)> {
+        names
             .into_iter()
             .map(|name| {
                 let source = dir.join("src").join(&name);
@@ -1281,18 +1325,38 @@ mod tests {
         assert!(!dir.join(UPDATER_FILE).exists());
         assert!(!dir.join(format!("{UPDATER_FILE}.tmp")).exists());
     }
-    /// 一覧どおりの中身の（`drop` を除き、`add` を足した）本物のアーカイブのバイト列。
-    fn fake_archive(target: &str, drop: &[&str], add: &[&str]) -> Vec<u8> {
+    /// 一覧どおりの中身の（`drop` を除き、`add` を足した）本物のアーカイブのバイト列。macOS の zip は、最上位のフォルダつきの名前で作る。
+    fn fake_archive(version: &Version, target: &str, drop: &[&str], add: &[&str]) -> Vec<u8> {
         let d = Scratch::new();
-        let mut entries = fake_payload(&d.0, target);
-        entries.retain(|(name, _)| !drop.contains(&name.as_str()));
+        let names = if target == MACOS_ARCHIVE {
+            macos::archive_names(version)
+        } else {
+            payload_names(target)
+        };
+        let mut entries = fake_files(&d.0, names);
+        let prefix = if target == MACOS_ARCHIVE {
+            format!("{}/", macos::folder_name(version))
+        } else {
+            String::new()
+        };
+        entries.retain(|(name, _)| {
+            !drop
+                .iter()
+                .any(|dropped| format!("{prefix}{dropped}") == *name)
+        });
         for name in add {
             let source = d.0.join("extra");
             fs::write(&source, name).unwrap();
-            entries.push((name.to_string(), source));
+            // ditto の `__MACOSX/…` は、束のフォルダの外（zip の最上位）に入る
+            let entry = if name.starts_with("__MACOSX/") {
+                (*name).to_owned()
+            } else {
+                format!("{prefix}{name}")
+            };
+            entries.push((entry, source));
         }
         let path = d.0.join("fake-archive");
-        archive(&path, &entries, target == WINDOWS_ARCHIVE).unwrap();
+        archive(&path, &entries, target != LINUX_ARCHIVE).unwrap();
         fs::read(path).unwrap()
     }
     /// 使い捨ての鍵で署名した配布物の置き場。公開鍵の hex も返す。
@@ -1309,7 +1373,7 @@ mod tests {
         for &t in targets {
             fs::write(
                 asset_path(&d.0, version, t),
-                alter(t, fake_archive(TARGETS[t], &[], &[])),
+                alter(t, fake_archive(version, TARGETS[t], &[], &[])),
             )
             .unwrap();
             if t == 0 {
@@ -1656,7 +1720,7 @@ mod tests {
         // zip でない・別のファイルが入っている・PDB の名前でない付属物は断る
         fs::write(d.0.join(symbols_name(&v)), b"not a zip").unwrap();
         assert!(verify_with(&d.0, &public).is_err());
-        let wrong = fake_archive(WINDOWS_ARCHIVE, &[], &[]);
+        let wrong = fake_archive(&Version::new(1, 0, 0), WINDOWS_ARCHIVE, &[], &[]);
         fs::write(d.0.join(symbols_name(&v)), wrong).unwrap();
         assert!(verify_with(&d.0, &public).is_err());
         let mut zip = zip::ZipWriter::new(File::create(d.0.join(symbols_name(&v))).unwrap());
@@ -2559,13 +2623,15 @@ mod tests {
     }
     #[test]
     fn archive_contents_must_match_the_payload_list() {
-        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE] {
-            check_archive_contents(target, &fake_archive(target, &[], &[])).unwrap();
+        let v = Version::new(1, 2, 3);
+        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE, MACOS_ARCHIVE] {
+            check_archive_contents(target, &v, &fake_archive(&v, target, &[], &[])).unwrap();
             // 文書が 1 つ欠けても、README が欠けても断る（名前つきで）。
             for missing in ["docs/en/GUIDE.md", "docs/PSD.md", "README.en.md"] {
-                let error = check_archive_contents(target, &fake_archive(target, &[missing], &[]))
-                    .unwrap_err()
-                    .to_string();
+                let error =
+                    check_archive_contents(target, &v, &fake_archive(&v, target, &[missing], &[]))
+                        .unwrap_err()
+                        .to_string();
                 assert!(
                     error.contains("足りない") && error.contains(missing),
                     "{target}: {error}"
@@ -2578,16 +2644,17 @@ mod tests {
                 "docs/NEW.md",
                 "stray.txt",
             ] {
-                let error = check_archive_contents(target, &fake_archive(target, &[], &[extra]))
-                    .unwrap_err()
-                    .to_string();
+                let error =
+                    check_archive_contents(target, &v, &fake_archive(&v, target, &[], &[extra]))
+                        .unwrap_err()
+                        .to_string();
                 assert!(
                     error.contains("余計") && error.contains(extra),
                     "{target}: {error}"
                 );
             }
             // アーカイブでないものは中身を読めずに断る。
-            assert!(check_archive_contents(target, b"archive").is_err());
+            assert!(check_archive_contents(target, &v, b"archive").is_err());
         }
         // 同じ名前が 2 回入っている tar.gz（zip は作る時点で断られる）。
         let d = Scratch::new();
@@ -2595,11 +2662,40 @@ mod tests {
         entries.push(entries[3].clone());
         let path = d.0.join("dup.tar.gz");
         archive(&path, &entries, false).unwrap();
-        let error = check_archive_contents(LINUX_ARCHIVE, &fs::read(path).unwrap())
+        let error = check_archive_contents(LINUX_ARCHIVE, &v, &fs::read(path).unwrap())
             .unwrap_err()
             .to_string();
         assert!(
             error.contains("重複") && error.contains(&entries[3].0),
+            "{error}"
+        );
+    }
+    /// macOS の zip は最上位のフォルダの名前が版を含む: 別の版のフォルダ名・フォルダの無い平らな zip・`__MACOSX` の項目は断る。
+    #[test]
+    fn the_macos_archive_must_sit_in_the_folder_of_its_own_version() {
+        let v = Version::new(1, 2, 3);
+        let other = Version::new(1, 2, 4);
+        let bytes = fake_archive(&v, MACOS_ARCHIVE, &[], &[]);
+        check_archive_contents(MACOS_ARCHIVE, &v, &bytes).unwrap();
+        let error = check_archive_contents(MACOS_ARCHIVE, &other, &bytes)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("足りない") && error.contains("1.2.4"),
+            "{error}"
+        );
+        // フォルダの無い（Windows と同じ平らな）zip
+        let flat = fake_archive(&v, WINDOWS_ARCHIVE, &[], &[]);
+        assert!(check_archive_contents(MACOS_ARCHIVE, &v, &flat).is_err());
+        // ditto が足し得る、リソースフォークの AppleDouble の項目（実際の形: 最上位の `__MACOSX/<束のフォルダ>/._…`）
+        let folder = macos::folder_name(&v);
+        let stray_name = format!("__MACOSX/{folder}/._yolupainter");
+        let stray = fake_archive(&v, MACOS_ARCHIVE, &[], &[stray_name.as_str()]);
+        let error = check_archive_contents(MACOS_ARCHIVE, &v, &stray)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("余計") && error.contains(&stray_name),
             "{error}"
         );
     }
@@ -2624,7 +2720,7 @@ mod tests {
             let d = Scratch::new();
             fs::write(
                 asset_path(&d.0, &v, target),
-                fake_archive(TARGETS[target], &[name], &[]),
+                fake_archive(&v, TARGETS[target], &[name], &[]),
             )
             .unwrap();
             if target == 0 {
@@ -2646,7 +2742,7 @@ mod tests {
             let d = Scratch::new();
             fs::write(
                 asset_path(&d.0, &v, target),
-                fake_archive(TARGETS[target], &[], &["docs/DEVELOPMENT.md"]),
+                fake_archive(&v, TARGETS[target], &[], &["docs/DEVELOPMENT.md"]),
             )
             .unwrap();
             if target == 0 {

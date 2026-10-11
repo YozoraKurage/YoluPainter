@@ -416,10 +416,9 @@ fn a_png_dropped_where_the_list_was_is_not_taken_while_another_tab_is_open() {
         .expect("一覧を描いている")
         .center();
     let png = write(&dir, "tip.png", b"not even a png");
-    // 棚やチャンネルのタブを開いている間は、一覧を描かないので、前の位置へ落としても取り込まない
-    for tab in [Tab::Assets, Tab::Channels] {
-        click_tab(&mut h, tab);
-        h.run();
+    // ツールプロパティやブラシサイズのタブを一覧の組へ入れて前に出している間は、一覧を描かないので、前の位置へ落としても取り込まない
+    for tab in [Tab::ToolProperties, Tab::BrushSize] {
+        put_in_group_of(&mut h, tab, Tab::SubTools);
         assert!(st(&h).brushes.ui.list_rect.is_none(), "{tab:?}");
         drop_files(&mut h, inside, &[&png]);
         assert!(!st(&h).is_brush_importing(), "{tab:?}");

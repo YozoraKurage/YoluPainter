@@ -1,5 +1,7 @@
-//! スポイト（I）: 2D のキャンバスか 3D のビューで押した所の値を、描画色かマテリアルの値に取る。押した瞬間に終わるツール（ドラッグは
-//! 持たない。Unity 版と同じ）で、2D ではブラシ・消しゴム・バケツ・ポリゴン塗りつぶしの Alt 押しでも一時的に働く（3D の Alt は回転）。
+//! スポイト: 2D のキャンバスか 3D のビューで押した所の値を、描画色かマテリアルの値に取る。スポイトのツール（I）は押した瞬間に終わる
+//! （ドラッグは持たない。Unity 版と同じ）。どのツールからでも、2D は右ボタンを押す（押したまま動かすと見本が付いてくる。離して決める。Esc で取りやめ）、
+//! 3D は右ボタンを動かさずに離す（動かせば視点を回す）で働く（ポリゴン塗りつぶしのツールの右ボタンは、アイランドのメニュー）。
+//! スポイトで取っている間は、ポインタに印（スポイトの絵と、今の色｜ポインタの下の色の輪。`eyedrop_mark`）を出す。
 //!
 //! - **取るチャンネルは描くチャンネル**: 描画色は描くチャンネルへそのまま描かれるので、そのチャンネルの値を取れば、押した所と同じ値で
 //!   塗れる。値は 1 画素の合成（表示と同じ式）。選んでいるレイヤーだけ（既定）か、全レイヤーの合成かはオプションバーで選ぶ（レイヤーだけは、
@@ -13,18 +15,18 @@
 //!   出し、何も変えない（マテリアルの値は 6 つのうち 1 つでも読めなければ 1 つも変えない）。
 //! - 文書は変えない（Undo の履歴に入らない）。
 
-use egui::{pos2, vec2, Pos2, Rect, Ui};
+use egui::{pos2, vec2, Color32, Pos2, Rect, Ui};
 use yolu_core::geometry::pick;
 use yolu_core::glam::Vec2;
 
 use crate::canvas::view::CanvasView;
-use crate::engine::{Channel, CoreError, Document, LayerId, LayerKind, Rgba8};
+use crate::engine::{Channel, ChannelKind, CoreError, Document, LayerId, LayerKind, Rgba8};
 use crate::lang::Lang;
 use crate::m2::channel_name;
 use crate::matpaint::CHANNELS;
 use crate::notice::Source;
 use crate::panels::properties::toggle_row;
-use crate::state::{AppState, Tool};
+use crate::state::{AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Rows};
 
@@ -38,16 +40,96 @@ pub struct EyedropState {
     pub ramp_stop_pending: bool,
     /// 画面から取れた、ランプの色の分岐点へ当てる色（ランプの欄が 1 回だけ取り出す）。
     pub ramp_stop_pick: Option<[u8; 3]>,
+    /// スポイトの印に出す「ポインタの下の色」の、最後に読んだ結果（同じ画素・同じ文書・同じ設定なら読み直さない）。
+    pub sample_cache: Option<(SampleKey, Option<Color32>)>,
 }
 
-/// 押したときにスポイトとして働くか（スポイトのツール、または 2D でスポイトの修飾（`keymap::picks`。Alt）を押した描くツール）。
-pub fn picks(app: &AppState, pick: bool) -> bool {
+/// 印の見本を読んだ画素と、読み方（文書の版・選んでいるレイヤー・チャンネルが変わったら読み直す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SampleKey {
+    set: usize,
+    x: u32,
+    y: u32,
+    revision: u64,
+    layer: Option<LayerId>,
+    channel: Channel,
+}
+
+/// 右ボタン（ペンのサイドボタン）でスポイトを始めている途中。2D は押した所から動かすと `at` が付いてくる（`sample` は使わず、毎フレーム読む）。
+/// 3D は押した所のまま（`at`）で、`sample` は押したときに読んだ見本（動かしたらスポイトをやめて視点を回す）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RightPress {
+    pub source: StrokeSource,
+    pub at: Pos2,
+    pub sample: Option<Color32>,
+    /// 押したボタン（そのボタンを離して決める。組み合わせの表で、スポイトを別のボタンにもできる）。
+    pub button: egui::PointerButton,
+}
+
+/// 押したときにスポイトとして働くか（スポイトのツール。描くツールの右ボタンは `RightPress`）。
+pub fn picks(app: &AppState) -> bool {
     app.tool == Tool::Eyedropper
-        || (pick
-            && matches!(
-                app.tool,
-                Tool::Brush | Tool::Eraser | Tool::Fill | Tool::PolygonFill
-            ))
+}
+
+/// 2D の右ボタン（ペンのサイドボタン）でスポイトを始める。描いている最中・ほかのスポイトの途中は始めない。
+pub fn right_begin(
+    app: &mut AppState,
+    source: StrokeSource,
+    at: Pos2,
+    button: egui::PointerButton,
+) -> bool {
+    if app.is_stroking() || app.canvas.eyedrop.is_some() || left_drag_in_progress(app) {
+        return false;
+    }
+    app.canvas.eyedrop = Some(RightPress {
+        source,
+        at,
+        sample: None,
+        button,
+    });
+    true
+}
+
+/// 左ボタンのドラッグの途中か（選択・移動と変形・図形・グラデーション・パスなど、`is_stroking` に入らないドラッグと、表示の回す・動かす・拡縮も）。
+fn left_drag_in_progress(app: &AppState) -> bool {
+    app.canvas.rotating.is_some()
+        || app.canvas.panning
+        || app.canvas.zooming.is_some()
+        || app.region.drag.is_some()
+        || crate::tools::input::CanvasKind::ALL
+            .iter()
+            .any(|kind| kind.handler().dragging(app, None))
+}
+
+/// 2D の右ボタンを押したまま動かした（印の見本が付いてくる）。
+pub fn right_move(app: &mut AppState, source: StrokeSource, at: Pos2) {
+    if let Some(press) = app.canvas.eyedrop.as_mut() {
+        if press.source == source {
+            press.at = at;
+        }
+    }
+}
+
+/// 2D の右ボタンを離した: 離した所の値を取る（`apply`。キャンバスの表示域の外・上に別の物がある所で離した、取りこぼした、Esc などの取りやめなら
+/// 何もしない）。この入力が始めたスポイトでなければ何もしない。
+pub fn right_end(
+    app: &mut AppState,
+    view: &CanvasView,
+    source: StrokeSource,
+    at: Pos2,
+    apply: bool,
+) {
+    if app
+        .canvas
+        .eyedrop
+        .is_none_or(|press| press.source != source)
+    {
+        return;
+    }
+    app.canvas.eyedrop = None;
+    if apply {
+        pick_canvas(app, view, at);
+    }
 }
 
 /// 2D キャンバスの `at`（画面の点）の値を取る。取れたら true（理由はステータスバー）。キャンバスの外は何もしない。
@@ -110,6 +192,105 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
     pick_texel(app, set, x, y)
 }
 
+/// 取る元のレイヤー（選んでいるレイヤーだけ。全レイヤーを対象にしているとき・選んでいるのがグループ・レイヤーが無いとき・今のセットでないセットは合成から = None）。
+fn source_layer(app: &AppState, set: usize) -> Option<LayerId> {
+    let current = set == app.sets.current_index();
+    if current && !app.eyedrop.all_layers {
+        app.selected_layer
+            .and_then(|id| app.doc.layer(id))
+            .filter(|l| l.kind() != LayerKind::Group)
+            .map(|l| l.id())
+    } else {
+        None
+    }
+}
+
+/// 印に出す色（スカラーのチャンネルは灰色の濃さ。ほかは RGB。透明度は見せない）。
+fn swatch(doc: &Document, channel: Channel, px: Rgba8) -> Color32 {
+    match doc.channel_info(channel).map(|c| c.kind) {
+        Some(ChannelKind::Scalar) => Color32::from_gray(px.r),
+        _ => Color32::from_rgb(px.r, px.g, px.b),
+    }
+}
+
+/// スポイトの印の「今の色」（描画色。スカラーのチャンネルを描いているときは灰色の濃さ）。
+pub fn current_swatch(app: &AppState) -> Color32 {
+    let [r, g, b, _] = app
+        .color
+        .main
+        .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
+    let scalar = !app.paints_material()
+        && app
+            .doc
+            .channel_info(app.m2.paint_channel)
+            .is_some_and(|c| c.kind == ChannelKind::Scalar);
+    if scalar {
+        Color32::from_gray(r)
+    } else {
+        Color32::from_rgb(r, g, b)
+    }
+}
+
+/// セット `set` の画素 (x, y) の、印に出す色（取るのと同じ元・同じチャンネル。マテリアルで塗るときは Color）。透明・読めない・範囲の外は None。
+/// 同じ画素・同じ文書の版・同じ設定なら読み直さない（毎フレーム呼んでよい）。文書は変えず、知らせも出さない。
+pub fn sample_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> Option<Color32> {
+    let layer = source_layer(app, set);
+    let channel = if app.paints_material() {
+        Channel::Color
+    } else {
+        app.m2.paint_channel
+    };
+    let key = SampleKey {
+        set,
+        x,
+        y,
+        revision: app.set_doc(set).revision(),
+        layer,
+        channel,
+    };
+    if let Some((cached, color)) = app.eyedrop.sample_cache {
+        if cached == key {
+            return color;
+        }
+    }
+    let doc = app.set_doc(set);
+    let color = match read_pixel(doc, layer, channel, x, y) {
+        Ok(Some(px)) => Some(swatch(doc, channel, px)),
+        _ => None,
+    };
+    app.eyedrop.sample_cache = Some((key, color));
+    color
+}
+
+/// 2D キャンバスの `at`（画面の点）の、印に出す色。キャンバスの外は None。
+pub fn sample_canvas(app: &mut AppState, view: &CanvasView, at: Pos2) -> Option<Color32> {
+    let (x, y) = view.to_canvas(at);
+    let (w, h) = (app.doc.width() as f64, app.doc.height() as f64);
+    if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
+        return None;
+    }
+    let set = app.sets.current_index();
+    sample_texel(app, set, x.floor() as u32, y.floor() as u32)
+}
+
+/// 3D ビューの `at`（画面の点）の面の、印に出す色。モデルが無い・面に当たらない・テクスチャセットが無い・UV が外は None。
+pub fn sample_surface(app: &mut AppState, rect: Rect, at: Pos2) -> Option<Color32> {
+    let model = app.view3d.model.clone()?;
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let hit = pick(
+        &model.geometry,
+        &view,
+        Vec2::new(at.x - rect.left(), at.y - rect.top()),
+    )?;
+    let set = (0..app.sets.len()).find(|&i| app.set_material(i) == Some(hit.material))?;
+    let (w, h) = {
+        let doc = app.set_doc(set);
+        (doc.width(), doc.height())
+    };
+    let (x, y) = texel_of(hit.uv, w, h)?;
+    sample_texel(app, set, x, y)
+}
+
 /// 面の UV が指すテクセル（幅 `w`・高さ `h` の文書。⌊u·幅⌋・⌊v·高さ⌋で、u = 1・v = 1 は最後の列・行）。UV が 0〜1 の外なら None
 /// （繰り返し・はみ出しの面は読まない）。
 pub(crate) fn texel_of(uv: Vec2, w: u32, h: u32) -> Option<(u32, u32)> {
@@ -132,15 +313,7 @@ pub fn pick_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> bool {
 
 fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reader<'_>) -> bool {
     let lang = app.lang;
-    let current = set == app.sets.current_index();
-    let layer = if current && !app.eyedrop.all_layers {
-        app.selected_layer
-            .and_then(|id| app.doc.layer(id))
-            .filter(|l| l.kind() != LayerKind::Group)
-            .map(|l| l.id())
-    } else {
-        None
-    };
+    let layer = source_layer(app, set);
     let material = app.paints_material();
     let wanted: Vec<Channel> = if material {
         CHANNELS.to_vec()

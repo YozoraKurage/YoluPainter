@@ -9,99 +9,133 @@ use yolu_app::{
     prefs::PrefsAction,
     shortcuts::gestures::{bindings, Operation},
     state::{Action, AppState},
-    windows::Row,
     YoluApp,
 };
 
-/// 見出しの下から次の見出しの前までの（名前, キー）。見出しはキーの列が空の行。
-fn section(rows: &[Row], title: &str) -> Vec<(String, String)> {
-    let start = rows
-        .iter()
-        .position(|r| r.left == title && r.right.is_empty())
-        .unwrap_or_else(|| panic!("見出しがありません: {title}"));
-    rows[start + 1..]
-        .iter()
-        .take_while(|r| !r.right.is_empty())
-        .map(|r| (r.left.clone(), r.right.clone()))
+/// 文書の「既定の割り当て」の表（アプリの表から作る物）のマウスの節の（操作, 組み合わせ）。
+fn mouse_rows(lang: Lang) -> Vec<(String, String)> {
+    let tables = yolu_app::shortcuts::guide::tables(lang);
+    let head = format!("### {}", lang.pick("マウス", "Mouse"));
+    let start = tables.find(&head).expect("マウスの節");
+    tables[start..]
+        .lines()
+        .filter(|l| l.starts_with("| ") && !l.starts_with("|---"))
+        .skip(1)
+        .map(|l| {
+            let cells: Vec<&str> = l.trim_matches('|').split(" | ").map(str::trim).collect();
+            (cells[0].to_owned(), cells[1].to_owned())
+        })
         .collect()
 }
 
 #[test]
-fn modified_mouse_gestures_are_listed_in_every_view_without_a_filler_column() {
-    let command = if cfg!(target_os = "macos") {
-        "Cmd"
-    } else {
-        "Ctrl"
-    };
+fn modified_mouse_gestures_are_listed_in_every_view() {
     for lang in Lang::ALL {
-        let mut app = AppState::new(32, 32);
-        app.lang = lang;
-        let rows = yolu_app::shortcuts::rows(&app);
-        // 中の列は使わない（操作名の「移動」と取り違える固定の語を置かない）
-        assert!(rows.iter().all(|r| r.middle.is_empty()));
+        let rows = mouse_rows(lang);
         let left = lang.pick("左ボタン", "Left Button");
         let middle = lang.pick("中ボタン", "Middle Button");
         let right = lang.pick("右ボタン", "Right Button");
+        let released = |b: &str| {
+            lang.pick(
+                format!("{b}を動かさずに離す"),
+                format!("{b} Released without Moving"),
+            )
+        };
+        let named = |name: &str, place: &str| {
+            let (open, close) = lang.pick(("（", "）"), (" (", ")"));
+            format!("{name}{open}{place}{close}")
+        };
+        let (d2, d3, sel, st) = (
+            "2D",
+            "3D",
+            lang.pick("選択範囲", "Selection"),
+            lang.pick("ステンシル", "Stencil"),
+        );
         let expected = [
+            (named(lang.pick("パン", "Pan"), d2), middle.to_string()),
             (
-                lang.pick("2D ビュー", "2D View"),
-                vec![
-                    (lang.pick("パン", "Pan"), middle.to_string()),
-                    (lang.pick("回転", "Rotate"), format!("Shift+{middle}")),
-                    (lang.pick("スポイト", "Eyedropper"), format!("Alt+{left}")),
-                    (
-                        lang.pick("選択範囲に追加", "Add to Selection"),
-                        format!("Shift+{left}"),
-                    ),
-                    (
-                        lang.pick("選択範囲から引く", "Subtract from Selection"),
-                        format!("{command}+{left}"),
-                    ),
-                    (
-                        lang.pick("選択範囲と重ねる", "Intersect with Selection"),
-                        format!("{command}+Shift+{left}"),
-                    ),
-                ],
+                named(lang.pick("回転", "Rotate"), d2),
+                format!("Alt+{left}"),
             ),
             (
-                lang.pick("3D ビュー", "3D View"),
-                vec![
-                    (lang.pick("回転", "Orbit"), format!("Alt+{left}")),
-                    (lang.pick("パン", "Pan"), format!("Shift+{right}")),
-                ],
+                named(lang.pick("スポイト", "Eyedropper"), d2),
+                right.to_string(),
             ),
             (
-                lang.pick("ステンシル", "Stencil"),
-                vec![
-                    (
-                        lang.pick("ステンシルの移動", "Move Stencil"),
-                        format!("Y+{command}+{left}"),
+                named(lang.pick("選択範囲に追加", "Add to Selection"), sel),
+                format!("Shift+{left}"),
+            ),
+            (
+                named(
+                    lang.pick("選択範囲から引く", "Subtract from Selection"),
+                    sel,
+                ),
+                format!("Ctrl+{left}"),
+            ),
+            (
+                named(
+                    lang.pick("選択範囲と重ねる", "Intersect with Selection"),
+                    sel,
+                ),
+                format!("Ctrl+Shift+{left}"),
+            ),
+            (named(lang.pick("回転", "Orbit"), d3), right.to_string()),
+            (
+                named(lang.pick("スポイト", "Eyedropper"), d3),
+                released(right),
+            ),
+            (named(lang.pick("パン", "Pan"), d3), middle.to_string()),
+            (
+                named(lang.pick("スナップ回転", "Snap Orbit"), d3),
+                format!("Alt+{left}"),
+            ),
+            (
+                named(lang.pick("クローンの元を決める", "Set Clone Source"), d3),
+                format!("Alt+{}", released(left)),
+            ),
+            (
+                named(lang.pick("ステンシルの移動", "Move Stencil"), st),
+                format!("Y+Ctrl+{left}"),
+            ),
+            (
+                named(lang.pick("ステンシルの拡縮", "Scale Stencil"), st),
+                format!("Y+Alt+{left}"),
+            ),
+            (
+                named(
+                    lang.pick(
+                        "ステンシルの回転を 15° 刻みに",
+                        "Snap Stencil Rotation to 15°",
                     ),
-                    (
-                        lang.pick("ステンシルの拡縮", "Scale Stencil"),
-                        format!("Y+Alt+{left}"),
-                    ),
-                    (
-                        lang.pick(
-                            "ステンシルの回転を 15° 刻みに",
-                            "Snap Stencil Rotation to 15°",
-                        ),
-                        format!("Y+Shift+{left}"),
-                    ),
-                ],
+                    st,
+                ),
+                format!("Y+Shift+{left}"),
             ),
         ];
-        for (title, wanted) in expected {
-            let listed = section(&rows, title);
-            let missing: Vec<_> = wanted
-                .iter()
-                .filter(|(action, keys)| !listed.iter().any(|(a, k)| a == action && k == keys))
-                .collect();
-            assert!(
-                missing.is_empty(),
-                "{title} にない組み合わせ: {missing:?}\n{listed:?}"
-            );
-        }
+        let missing: Vec<_> = expected.iter().filter(|e| !rows.contains(e)).collect();
+        assert!(missing.is_empty(), "無い組み合わせ: {missing:?}\n{rows:?}");
+        // 既定から外した組み合わせは、表に出ない（2D の Shift+中ボタンの回転・Alt+左のスポイト、3D の Shift+右・Alt+Shift+左のパンと Alt+左の自由な回転）
+        let gone = [
+            (
+                named(lang.pick("回転", "Rotate"), d2),
+                format!("Shift+{middle}"),
+            ),
+            (
+                named(lang.pick("スポイト", "Eyedropper"), d2),
+                format!("Alt+{left}"),
+            ),
+            (
+                named(lang.pick("パン", "Pan"), d3),
+                format!("Shift+{right}"),
+            ),
+            (
+                named(lang.pick("パン", "Pan"), d3),
+                format!("Alt+Shift+{left}"),
+            ),
+            (named(lang.pick("回転", "Orbit"), d3), format!("Alt+{left}")),
+        ];
+        let still: Vec<_> = gone.iter().filter(|g| rows.contains(g)).collect();
+        assert!(still.is_empty(), "まだある組み合わせ: {still:?}");
     }
 }
 
@@ -109,6 +143,7 @@ fn settings(lang: Lang) -> Harness<'static, AppState> {
     let mut app = AppState::new(32, 32);
     app.lang = lang;
     app.prefs.open = true;
+    app.prefs.category = yolu_app::prefs::Category::View3d;
     let mut ready = false;
     let mut h = common::gpu_thread::builder()
         .with_size(vec2(900.0, 950.0))
@@ -276,25 +311,54 @@ fn the_uv_color_window_changes_the_color_and_the_opacity_separately_in_the_right
     }
 }
 
-use yolu_app::shortcuts::gestures::Binding;
+use yolu_app::keyconfig::{Combo, KeyConfig};
+use yolu_app::keymap::{Gesture, GESTURES};
 
-/// 3D ビューとステンシルの組み合わせを、実際の入力処理へ流す。
-fn view_or_stencil_gesture(binding: &Binding) {
-    use egui::Rect;
-    use yolu_app::{stencil::DragKind, view3d::Nav};
-    let ctx = egui::Context::default();
-    let mut app = AppState::new(32, 32);
-    let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0));
-    let at = rect.center();
-    if binding.scope == "view3d" {
-        app.apply(Action::LoadDemoModel);
-    } else {
-        app.stencil
-            .set_image_rgba("Sample", 1, 1, &[255; 4])
-            .unwrap();
+/// 押し方（押しながらのキー・ボタン・修飾）。
+#[derive(Clone, Copy, Debug)]
+struct Press {
+    held: Option<Key>,
+    button: PointerButton,
+    modifiers: Modifiers,
+}
+
+impl Press {
+    /// 組み合わせの行の範囲の、この組み合わせの押し（押しながらのキーは行のまま）。
+    fn of(g: &Gesture, c: Combo) -> Press {
+        Press {
+            held: g.held.and_then(yolu_app::keymap::hold_key),
+            button: c.button,
+            modifiers: Modifiers {
+                alt: c.alt,
+                shift: c.shift,
+                ctrl: c.ctrl,
+                command: c.ctrl,
+                ..Modifiers::NONE
+            },
+        }
     }
-    // T は先に保持し、その後に Ctrl / Alt を足す（既存入力の契約）。
-    let held = binding.held.map(|key| Event::Key {
+
+    fn event(&self, at: egui::Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos: at,
+            button: self.button,
+            pressed,
+            modifiers: self.modifiers,
+        }
+    }
+}
+
+/// 変えた組み合わせ（既定の表の番号と組み合わせ）を、アプリの割り当てに入れる。
+fn configure(keys: &mut KeyConfig, config: &[(u8, Option<Combo>)]) {
+    keys.reset_all();
+    for &(index, combo) in config {
+        keys.set_combo(index, combo);
+    }
+}
+
+/// 押しながらのキーを押すフレーム（`AppState` だけで回す 3D ビューとステンシル）。
+fn hold(ctx: &egui::Context, app: &mut AppState, rect: egui::Rect, key: Option<Key>) {
+    let held = key.map(|key| Event::Key {
         key,
         physical_key: None,
         pressed: true,
@@ -307,165 +371,325 @@ fn view_or_stencil_gesture(binding: &Binding) {
             events: held.into_iter().collect(),
             ..Default::default()
         },
-        |ui| {
-            if binding.scope == "stencil" {
-                yolu_app::stencil::update_keys(ui.ctx(), &mut app);
-            }
-        },
+        |ui| yolu_app::stencil::update_keys(ui.ctx(), app),
     );
     output.textures_delta.clear();
-    let press = Event::PointerButton {
-        pos: at,
-        button: binding.button,
-        pressed: true,
-        modifiers: binding.modifiers,
+}
+
+/// 3D ビューで、押して動かさずに離す（実際の入力処理 `view3d::input::handle`）。押したときに始まった操作（ドラッグの操作と、離しの操作の印）を返す。
+fn observe_view3d(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation> {
+    use yolu_app::view3d::Nav;
+    let ctx = egui::Context::default();
+    let mut app = AppState::new(32, 32);
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0));
+    let at = rect.center();
+    app.apply(Action::LoadDemoModel);
+    // クローンの元は、クローンのブラシのときだけ決まる
+    app.tool = yolu_app::state::Tool::Brush;
+    app.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+        offset: Default::default(),
     };
+    configure(&mut app.keys, config);
+    hold(&ctx, &mut app, rect, press.held);
     let mut output = ctx.run_ui(
         egui::RawInput {
             screen_rect: Some(rect),
             events: vec![
-                Event::ModifiersChanged(binding.modifiers),
+                Event::ModifiersChanged(press.modifiers),
                 Event::PointerMoved(at),
-                press.clone(),
+                press.event(at, true),
+            ],
+            ..Default::default()
+        },
+        |ui| yolu_app::view3d::input::handle(ui, &mut app, rect, &[], false),
+    );
+    output.textures_delta.clear();
+    let mut found = Vec::new();
+    if let Some((nav, button)) = app.view3d.input.nav {
+        assert_eq!(button, press.button, "{press:?}");
+        found.push(match nav {
+            Nav::Orbit => Operation::Orbit,
+            Nav::SnapOrbit => Operation::SnapOrbit,
+            Nav::Pan => Operation::Pan,
+            Nav::Zoom => Operation::Zoom,
+        });
+    }
+    if let Some(e) = app.view3d.input.eyedrop {
+        assert_eq!(e.button, press.button, "{press:?}");
+        found.push(Operation::Pick);
+    }
+    if let Some((_, button)) = app.view3d.input.clone_press {
+        assert_eq!(button, press.button, "{press:?}");
+        found.push(Operation::CloneSource);
+    }
+    if !found.is_empty() {
+        // ビューの押しは描かない
+        assert!(!app.is_stroking(), "{press:?}");
+    }
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(rect),
+            events: vec![press.event(at, false)],
+            ..Default::default()
+        },
+        |ui| yolu_app::view3d::input::handle(ui, &mut app, rect, &[], false),
+    );
+    output.textures_delta.clear();
+    // 押したボタンを離すと、始めた物は全部終わる（離しの操作は、同じ所で離したので行われる）
+    assert!(
+        app.view3d.input.nav.is_none()
+            && app.view3d.input.eyedrop.is_none()
+            && app.view3d.input.clone_press.is_none(),
+        "{press:?}"
+    );
+    if found.contains(&Operation::CloneSource) {
+        assert!(app.clone.source.is_some(), "クローンの元が決まる {press:?}");
+    }
+    found
+}
+
+/// ステンシル（押しながらのキーを押して）を押す（実際の入力処理 `stencil::handle_event`）。始まったドラッグの操作を返す。
+fn observe_stencil(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation> {
+    use yolu_app::stencil::DragKind;
+    let ctx = egui::Context::default();
+    let mut app = AppState::new(32, 32);
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0));
+    let at = rect.center() + vec2(60.0, 0.0);
+    app.stencil
+        .set_image_rgba("Sample", 1, 1, &[255; 4])
+        .unwrap();
+    configure(&mut app.keys, config);
+    hold(&ctx, &mut app, rect, press.held);
+    let event = press.event(at, true);
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(rect),
+            events: vec![
+                Event::ModifiersChanged(press.modifiers),
+                Event::PointerMoved(at),
+                event.clone(),
             ],
             ..Default::default()
         },
         |ui| {
-            if binding.scope == "view3d" {
-                yolu_app::view3d::input::handle(ui, &mut app, rect, &[], false);
-            } else {
-                yolu_app::stencil::update_keys(ui.ctx(), &mut app);
-                assert!(yolu_app::stencil::handle_event(
-                    &mut app,
-                    &press,
-                    rect,
-                    true,
-                    binding.modifiers.shift
-                ));
-            }
+            yolu_app::stencil::update_keys(ui.ctx(), &mut app);
+            yolu_app::stencil::handle_event(&mut app, &event, rect, true, &press.modifiers);
         },
     );
     output.textures_delta.clear();
-    let found = if binding.scope == "view3d" {
-        let (nav, button) = app.view3d.input.nav.expect("3D 操作が始まる");
-        assert_eq!(button, binding.button);
-        match nav {
-            Nav::Orbit => Operation::Orbit,
-            Nav::Pan => Operation::Pan,
-            Nav::Zoom => Operation::Zoom,
-        }
-    } else {
-        let drag = app.stencil.drag.expect("ステンシルの操作が始まる");
-        assert_eq!(drag.button, binding.button);
-        match drag.kind {
-            DragKind::Move => Operation::MoveStencil,
-            DragKind::Scale => Operation::ScaleStencil,
-            // Shift を足した回転は、同じ回転の操作（刻みは動かしたときに効く。別の試験）
-            DragKind::Rotate if binding.operation == Operation::SnapStencilRotation => {
-                Operation::SnapStencilRotation
-            }
-            DragKind::Rotate => Operation::RotateStencil,
-        }
+    let Some(drag) = app.stencil.drag else {
+        return Vec::new();
     };
-    assert_eq!(found, binding.operation, "{binding:?}");
-    assert!(!app.can_undo());
-    assert!(!app.is_stroking());
+    assert_eq!(drag.button, press.button, "{press:?}");
+    vec![match drag.kind {
+        DragKind::Move => Operation::MoveStencil,
+        DragKind::Scale => Operation::ScaleStencil,
+        DragKind::Rotate => Operation::RotateStencil,
+    }]
 }
 
-/// 2D キャンバスの押し（中ボタンのパン・回転、Alt のスポイト）を、実際のウィンドウの入力へ流す。
-fn canvas_gesture(binding: &Binding) {
-    let mut h = app(1280.0, 800.0, 256);
-    let at = canvas_rect(&h).center();
-    h.event(Event::ModifiersChanged(binding.modifiers));
-    h.step();
-    h.event(Event::PointerMoved(at));
-    h.event(Event::PointerButton {
-        pos: at,
-        button: binding.button,
-        pressed: true,
-        modifiers: binding.modifiers,
-    });
-    h.step();
+/// ステンシルを回している間に `modifiers` を押していると、回す角度が 15° 刻みになるか（回すのは、今の割り当ての回す行の組み合わせで始める）。
+fn stencil_snaps(config: &[(u8, Option<Combo>)], modifiers: Modifiers) -> bool {
+    let ctx = egui::Context::default();
+    let mut app = AppState::new(32, 32);
+    let rect = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0));
+    let start = rect.center() + vec2(60.0, 0.0);
+    app.stencil
+        .set_image_rgba("Sample", 1, 1, &[255; 4])
+        .unwrap();
+    configure(&mut app.keys, config);
+    let rotate = GESTURES
+        .iter()
+        .find(|g| g.operation == Operation::RotateStencil)
+        .unwrap();
+    let press = Press::of(rotate, app.keys.combo(rotate.index).unwrap());
+    hold(&ctx, &mut app, rect, press.held);
+    let event = press.event(start, true);
+    let mut output = ctx.run_ui(
+        egui::RawInput {
+            screen_rect: Some(rect),
+            events: vec![
+                Event::ModifiersChanged(press.modifiers),
+                Event::PointerMoved(start),
+                event.clone(),
+            ],
+            ..Default::default()
+        },
+        |ui| {
+            yolu_app::stencil::update_keys(ui.ctx(), &mut app);
+            assert!(yolu_app::stencil::handle_event(
+                &mut app,
+                &event,
+                rect,
+                true,
+                &press.modifiers
+            ));
+        },
+    );
+    output.textures_delta.clear();
+    // 中心の回りに 37° 回す（回している間の修飾は、動いたときの修飾）
+    let a = 37.0_f32.to_radians();
+    let to = rect.center() + vec2(60.0 * a.cos(), 60.0 * a.sin());
+    assert!(yolu_app::stencil::handle_event(
+        &mut app,
+        &Event::PointerMoved(to),
+        rect,
+        true,
+        &modifiers
+    ));
+    let angle = app.stencil.angle;
+    let snapped = (angle / 15.0 - (angle / 15.0).round()).abs() < 1e-3;
+    assert!(snapped || (angle - 37.0).abs() < 1.0, "{angle}");
+    snapped
+}
+
+/// 2D のキャンバスで押す（実際のウィンドウの入力）。選択のツールなら、先に左半分を選び、中ほどの帯をなぞって、選択の組み合わせ方を返す。
+/// ほかは、クローンのブラシで押して動かさずに離し、押したときに始まった操作（ドラッグの操作と、離しの操作の印）を返す。
+fn observe_canvas(
+    h: &mut Harness<'static, YoluApp>,
+    config: &[(u8, Option<Combo>)],
+    press: Press,
+    select: bool,
+) -> Vec<Operation> {
+    use yolu_app::selection::{SelAction, SelEdit};
+    use yolu_app::state::Tool;
+    use yolu_core::selection::SelectionCombine;
     {
-        let s = &h.state().state;
-        match binding.operation {
-            Operation::Pan => assert!(s.canvas.panning && !s.canvas.middle_rotating, "{binding:?}"),
-            Operation::Rotate => {
-                assert!(s.canvas.middle_rotating && !s.canvas.panning, "{binding:?}")
-            }
-            // 描くツールの Alt は、ストロークを始めずにスポイトとして働く
-            Operation::Pick => {
-                assert!(yolu_app::eyedrop::picks(s, true), "{binding:?}");
-                assert!(!yolu_app::eyedrop::picks(s, false));
-                assert!(!s.is_stroking() && s.canvas.stroke.is_none(), "{binding:?}");
-            }
-            other => panic!("2D の組み合わせではない: {other:?}"),
+        let s = &mut h.state_mut().state;
+        configure(&mut s.keys, config);
+        s.view.angle = 0.0;
+        s.clone = Default::default();
+        if select {
+            s.tool = Tool::SelectRect;
+            let (w, hh) = (s.doc.width() as i64, s.doc.height() as i64);
+            s.apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
+                x0: 0,
+                y0: 0,
+                x1: w / 2,
+                y1: hh,
+                mode: SelectionCombine::Replace,
+            })));
+        } else {
+            s.tool = Tool::Brush;
+            s.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+                offset: Default::default(),
+            };
         }
-        assert!(!s.can_undo());
     }
-    h.event(Event::PointerButton {
-        pos: at,
-        button: binding.button,
-        pressed: false,
-        modifiers: binding.modifiers,
-    });
+    h.run();
+    let rect = canvas_rect(h);
+    let (w, hh) = {
+        let s = &h.state().state;
+        (s.doc.width() as f64, s.doc.height() as f64)
+    };
+    let view = h.state().state.view.view(rect, w as u32, hh as u32);
+    let (from, to) = if select {
+        (
+            view.to_screen(w * 0.25, hh * 0.125),
+            view.to_screen(w * 0.75, hh * 0.875),
+        )
+    } else {
+        (rect.center(), rect.center())
+    };
+    h.event(Event::ModifiersChanged(press.modifiers));
+    h.step();
+    h.event(Event::PointerMoved(from));
+    h.event(press.event(from, true));
+    h.step();
+    let mut found = Vec::new();
+    if !select {
+        let s = &h.state().state;
+        if s.canvas.panning {
+            found.push(Operation::Pan);
+        }
+        if s.canvas.rotating.is_some() {
+            found.push(Operation::Rotate);
+        }
+        if let Some(e) = s.canvas.eyedrop {
+            assert_eq!(e.button, press.button, "{press:?}");
+            found.push(Operation::Pick);
+        }
+        if let Some((_, button)) = s.canvas.clone_press {
+            assert_eq!(button, press.button, "{press:?}");
+            found.push(Operation::CloneSource);
+        }
+        if s.canvas.panning || s.canvas.rotating.is_some() {
+            assert_eq!(s.canvas.nav_button, Some(press.button), "{press:?}");
+        }
+        if !found.is_empty() {
+            // ビューの押し・スポイト・クローンの元は描かない
+            assert!(!s.is_stroking() && s.canvas.stroke.is_none(), "{press:?}");
+        }
+    } else {
+        for i in 1..=4 {
+            h.event(Event::PointerMoved(from + (to - from) * (i as f32 / 4.0)));
+            h.step();
+        }
+    }
+    h.event(press.event(to, false));
     h.step();
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.run();
     let s = &h.state().state;
-    assert!(!s.canvas.panning && !s.canvas.middle_rotating);
+    // 押したボタンを離すと、始めた物は全部終わる
+    assert!(
+        !s.canvas.panning
+            && s.canvas.rotating.is_none()
+            && s.canvas.eyedrop.is_none()
+            && s.canvas.clone_press.is_none()
+            && s.canvas.nav_button.is_none()
+            && !s.is_stroking(),
+        "{press:?}"
+    );
+    if found.contains(&Operation::CloneSource) {
+        // 同じ所で離したので、クローンの元が決まる（表示は回っていない）
+        assert!(s.clone.canvas_source_for(s.doc.id()).is_some(), "{press:?}");
+        assert_eq!(s.view.angle, 0.0, "{press:?}");
+    }
+    if select {
+        let amount = |x: f64| {
+            s.doc
+                .selection()
+                .map_or(0, |sel| sel.amount((w * x) as u32, (hh * 0.5) as u32))
+        };
+        // 左半分だけ・重なり・帯だけの 3 か所
+        match (amount(1.0 / 16.0), amount(3.0 / 8.0), amount(5.0 / 8.0)) {
+            (255, 255, 255) => found.push(Operation::SelectionAdd),
+            (255, 0, 0) => found.push(Operation::SelectionSubtract),
+            (0, 255, 0) => found.push(Operation::SelectionIntersect),
+            (0, 255, 255) => {} // 置き換え（組み合わせ方の行に当たらない、選択のツールの押し）
+            other => panic!("{press:?}: 選択範囲が思わない形 {other:?}"),
+        }
+    }
+    found
 }
 
-/// 選択範囲のツールの Shift・Ctrl を、実際の選択の入力で確かめる（先に左半分を選び、中ほどの帯をなぞる）。
-fn selection_gesture(binding: &Binding) {
-    use egui::{Pos2, Rect};
-    use yolu_app::{
-        selection::{
-            canvas::{press, release},
-            SelAction, SelEdit,
-        },
-        state::{StrokeSource, Tool},
-    };
-    use yolu_core::selection::SelectionCombine;
-    let mut app = AppState::new(64, 64);
-    app.tool = Tool::SelectRect;
-    let view = app
-        .view
-        .view(Rect::from_min_size(Pos2::ZERO, vec2(256.0, 256.0)), 64, 64);
-    app.apply(Action::Sel(SelAction::Edit(SelEdit::Rect {
-        x0: 0,
-        y0: 0,
-        x1: 32,
-        y1: 64,
-        mode: SelectionCombine::Replace,
-    })));
-    press(
-        &mut app,
-        &view,
-        view.to_screen(16.0, 8.0),
-        StrokeSource::Mouse,
-        binding.modifiers,
-        0.0,
-    );
-    release(
-        &mut app,
-        &view,
-        view.to_screen(48.0, 56.0),
-        StrokeSource::Mouse,
-        binding.modifiers,
-    );
-    let amount = |x: u32| app.doc.selection().map_or(0, |s| s.amount(x, 30));
-    // 左半分だけ・重なり・帯だけの 3 か所
-    let found = (amount(4), amount(24), amount(40));
-    let wanted = match binding.operation {
-        Operation::SelectionAdd => (255, 255, 255),
-        Operation::SelectionSubtract => (255, 0, 0),
-        Operation::SelectionIntersect => (0, 255, 0),
-        other => panic!("選択範囲の組み合わせではない: {other:?}"),
-    };
-    assert_eq!(found, wanted, "{binding:?}");
+/// この組み合わせの押しで、実際の入力処理が始めた操作（`config` は変えた組み合わせ）。
+fn observe(
+    h: &mut Harness<'static, YoluApp>,
+    g: &Gesture,
+    config: &[(u8, Option<Combo>)],
+    combo: Combo,
+) -> Vec<Operation> {
+    let press = Press::of(g, combo);
+    match g.scope {
+        "canvas" => observe_canvas(h, config, press, false),
+        "selection" => observe_canvas(h, config, press, true),
+        "view3d" => observe_view3d(config, press),
+        // 回す間の修飾の行は、回している間に効くか
+        "stencil" if !g.starts => {
+            if stencil_snaps(config, press.modifiers) {
+                vec![Operation::SnapStencilRotation]
+            } else {
+                Vec::new()
+            }
+        }
+        "stencil" => observe_stencil(config, press),
+        other => panic!("一覧にない範囲: {other}"),
+    }
 }
 
+/// 既定の表の全部の行が、その組み合わせの押しで、実際の入力処理で効く。
 #[test]
 fn every_listed_mouse_gesture_matches_the_real_input_handler() {
     let all = bindings();
@@ -475,36 +699,101 @@ fn every_listed_mouse_gesture_matches_the_real_input_handler() {
             "{scope} の組み合わせがありません"
         );
     }
-    for binding in all {
-        assert!(matches!(
-            binding.button,
-            PointerButton::Primary | PointerButton::Middle | PointerButton::Secondary
-        ));
-        match binding.scope {
-            "view3d" | "stencil" => view_or_stencil_gesture(binding),
-            "canvas" => canvas_gesture(binding),
-            "selection" => selection_gesture(binding),
-            other => panic!("一覧にない範囲: {other}"),
+    let mut h = app(1280.0, 800.0, 256);
+    for g in GESTURES.iter() {
+        let found = observe(&mut h, g, &[], Combo::of(g));
+        assert!(found.contains(&g.operation), "{g:?}: {found:?}");
+    }
+}
+
+/// 表のどの行も、ボタンか修飾を替えると（設定の画面がぶつかりとして断らない組み合わせなら全部）、実際の入力の道で新しい組み合わせが効き、
+/// 古い組み合わせは効かない。古い組み合わせが新しい組み合わせに修飾を足しただけで、書いていない修飾を足した押しも当たる行（視点・選択・
+/// ステンシルの行）なら、古い押しは新しい組み合わせの押しに当たるため、効かないことは見ない。回す間の修飾の行は修飾だけを替える。
+#[test]
+fn changing_the_button_or_the_modifiers_of_any_mouse_row_moves_its_operation_to_the_new_combination(
+) {
+    use egui::PointerButton::{Extra1, Extra2, Middle, Primary, Secondary};
+    let mut h = app(1280.0, 800.0, 256);
+    for g in GESTURES.iter() {
+        let old = Combo::of(g);
+        let mut candidates: Vec<(bool, Combo)> = [Primary, Secondary, Middle, Extra1, Extra2]
+            .into_iter()
+            .filter(|b| *b != old.button)
+            .map(|button| (true, Combo { button, ..old }))
+            .collect();
+        candidates.extend((0..8u8).map(|bits| {
+            (
+                false,
+                Combo {
+                    alt: bits & 1 != 0,
+                    shift: bits & 2 != 0,
+                    ctrl: bits & 4 != 0,
+                    ..old
+                },
+            )
+        }));
+        let mut accepted = [0usize; 2];
+        for (by_button, combo) in candidates {
+            // 回す間の修飾の行は修飾だけ（ボタンは回す行のボタン。修飾の無い物は入れられない）
+            let Some(combo) = combo.fit(g) else {
+                continue;
+            };
+            if combo == old {
+                continue;
+            }
+            let mut keys = KeyConfig::default();
+            keys.set_combo(g.index, Some(combo));
+            if keys.combo_conflict(g.index).is_some() || keys.has_conflicts() {
+                continue;
+            }
+            accepted[usize::from(!by_button)] += 1;
+            let config = [(g.index, Some(combo))];
+            let now = observe(&mut h, g, &config, combo);
+            assert!(
+                now.contains(&g.operation),
+                "{g:?} を {combo:?} にした: 新しい組み合わせで {now:?}"
+            );
+            let exact = g.click || (g.scope == "canvas" && g.operation == Operation::Pick);
+            let looser = !exact
+                && combo.button == old.button
+                && (!combo.alt || old.alt)
+                && (!combo.shift || old.shift)
+                && (!combo.ctrl || old.ctrl);
+            if !looser {
+                let before = observe(&mut h, g, &config, old);
+                assert!(
+                    !before.contains(&g.operation),
+                    "{g:?} を {combo:?} にした: 古い組み合わせで {before:?}"
+                );
+            }
         }
+        if g.starts || g.click {
+            assert!(accepted[0] > 0, "{g:?}: ボタンを替えられる組み合わせが無い");
+        }
+        assert!(accepted[1] > 0, "{g:?}: 修飾を替えられる組み合わせが無い");
     }
 }
 
 #[test]
-fn the_eyedropper_row_covers_exactly_the_tools_where_alt_picks() {
+fn only_the_eyedropper_tool_picks_on_a_left_press_and_every_other_tool_picks_with_the_right_button()
+{
     use yolu_app::state::Tool;
     let mut app = AppState::new(16, 16);
-    let mut picking = Vec::new();
-    for tool in Tool::ALL {
-        app.tool = tool;
-        if yolu_app::eyedrop::picks(&app, true) && !yolu_app::eyedrop::picks(&app, false) {
-            picking.push(tool);
-        }
-    }
-    // 一覧の「Alt+左ボタン」の行は、描くツール（ここに挙げたツール）のスポイト。ツールの組が替わったら行の書き方を見直す
-    assert_eq!(
-        picking,
-        [Tool::Brush, Tool::Eraser, Tool::Fill, Tool::PolygonFill]
-    );
+    let picking: Vec<Tool> = Tool::ALL
+        .into_iter()
+        .filter(|tool| {
+            app.tool = *tool;
+            yolu_app::eyedrop::picks(&app)
+        })
+        .collect();
+    // 一覧の「スポイト」の左ボタンの行は無い（描くツールの Alt + 左は、表示を回す組み合わせになった）。右ボタンの行は、どのツールからでも
+    assert_eq!(picking, [Tool::Eyedropper]);
+    assert!(bindings()
+        .iter()
+        .all(|b| !(b.operation == Operation::Pick && b.button == PointerButton::Primary)));
+    assert!(bindings().iter().any(|b| b.operation == Operation::Pick
+        && b.button == PointerButton::Secondary
+        && b.scope == "canvas"));
 }
 
 #[test]
@@ -542,7 +831,11 @@ fn shift_snaps_the_stencil_rotation_to_the_listed_step() {
             |ui| {
                 yolu_app::stencil::update_keys(ui.ctx(), &mut app);
                 assert!(yolu_app::stencil::handle_event(
-                    &mut app, &press, rect, true, false
+                    &mut app,
+                    &press,
+                    rect,
+                    true,
+                    &Modifiers::NONE
                 ));
             },
         );
@@ -579,6 +872,8 @@ fn app_with_settings(path: &std::path::Path) -> Harness<'static, YoluApp> {
                 cc.wgpu_render_state.as_ref(),
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(1280.0);
     h.run();
     h
 }
@@ -594,7 +889,9 @@ fn dragging_in_the_uv_color_window_writes_the_settings_once_on_release() {
     let path = dir.join("settings.conf");
     std::fs::write(&path, "language=en\n").unwrap();
     let mut h = app_with_settings(&path);
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.state_mut().state.apply(Action::Prefs(PrefsAction::OpenAt(
+        yolu_app::prefs::Category::View3d,
+    )));
     h.run();
     h.get_by_role_and_label(Role::ColorWell, "UV wireframe color and opacity")
         .click();

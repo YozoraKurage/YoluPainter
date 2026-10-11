@@ -10,6 +10,18 @@ mod source;
 use plan::Plan;
 pub use plan::{supports, Unsupported};
 
+/// 装置が、タイルの合成（`GpuPainter`・`ResidentCompositor` の compute のシェーダー）に要る上限を持つか。storage の入れ物を 1 段に 7 つ
+/// （合成・ダブの束ね）、storage のテクスチャを 1 つ（表示）、1 つの組に 64 の呼び（`@workgroup_size(64)`）。WebGL2 の上限で作った装置
+/// （egui-wgpu が OpenGL のときに作る）は storage も compute も持たない。
+pub fn device_can_composite(limits: &wgpu::Limits) -> bool {
+    limits.max_storage_buffers_per_shader_stage >= 7
+        && limits.max_storage_textures_per_shader_stage >= 1
+        && limits.max_storage_buffer_binding_size > 0
+        && limits.max_compute_workgroups_per_dimension > 0
+        && limits.max_compute_invocations_per_workgroup >= 64
+        && limits.max_compute_workgroup_size_x >= 64
+}
+
 #[derive(Debug)]
 pub struct GpuError(pub String);
 impl fmt::Display for GpuError {
@@ -113,7 +125,7 @@ fn shader_pipeline(
     entry: &str,
 ) -> wgpu::ComputePipeline {
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("core の合成・ダブ"),
+        label: Some("yolu-core-composite-dab"),
         source: wgpu::ShaderSource::Wgsl(plan::shader_source(variant).into()),
     });
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -413,6 +425,12 @@ impl GpuPainter {
         dabs: &[Dab],
     ) -> Result<Vec<u8>, GpuError> {
         settings.validate()?;
+        // 縁のアンチエイリアス（帯・小さなダブの濃さ）は core のストロークだけが持つ。黙って今の式で描かない
+        if settings.anti_alias != yolu_core::AntiAlias::None {
+            return Err(error(
+                "ブラシのアンチエイリアスは GPU のプレビューでは描けない（core のストロークで描く）",
+            ));
+        }
         let count = u64::from(width) * u64::from(height);
         if width == 0 || height == 0 || count > u32::MAX as u64 || count * 4 != start.len() as u64 {
             return Err(error("ブラシの矩形と入力が不正"));
@@ -706,8 +724,9 @@ impl Compositor {
 
 mod bake;
 pub use bake::{
-    bake_mesh_maps, BakeAdapter, BakeBackend, BakeGpu, BakeRun, FallbackKind, GpuBakeError,
-    GpuBakeMethod, GpuBakeOptions, GpuBakeSlot, GpuBakeStats, GpuBaked,
+    bake_mesh_maps, is_off_value, ray_query_env_allows, BakeAdapter, BakeBackend, BakeGpu, BakeRun,
+    FallbackKind, GpuBakeError, GpuBakeMethod, GpuBakeOptions, GpuBakeSlot, GpuBakeStats, GpuBaked,
+    MidFailure, RayQueryWhy,
 };
 mod resident;
 pub use resident::{
@@ -719,6 +738,14 @@ pub use resident::{
 mod tests {
     use super::*;
     use yolu_core::{AdjustmentSettings, BlendMode, Rgba8};
+
+    #[test]
+    fn webgl2_limits_cannot_composite_but_the_default_limits_can() {
+        assert!(device_can_composite(&wgpu::Limits::default()));
+        assert!(!device_can_composite(
+            &wgpu::Limits::downlevel_webgl2_defaults()
+        ));
+    }
 
     /// 面・命令・調整の表が多い文書（クリッピング・マスク・独立のグループ・表を引く調整）。
     fn busy_doc() -> Document {

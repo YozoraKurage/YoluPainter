@@ -95,7 +95,7 @@ fn add_image_stage(h: &mut Harness<'_, YoluApp>, target: FilterTarget) {
 
 /// 右の列（プロパティ）の中の部品。
 fn right(r: Rect) -> bool {
-    r.left() > 1000.0
+    r.left() > rx()
 }
 
 /// 右の列の画像の箱（名前の付いた、高さの低い横長の部品。段の見出しも「画像」なので、いちばん下のもの）。
@@ -107,9 +107,10 @@ fn image_box(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
         .unwrap_or_else(|| panic!("画像の箱: {label}"))
 }
 
-/// 左の列の格子の中の素材。
+/// 右上の組（アセット）の格子の中の素材。
 fn card(h: &Harness<'_, YoluApp>, name: &str) -> Rect {
-    rect_of(h, name, |r| r.left() < 300.0 && r.top() > 150.0)
+    let body = top_right_body(h);
+    rect_of(h, name, |r| body.contains(r.center()))
 }
 
 #[test]

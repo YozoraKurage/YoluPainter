@@ -309,7 +309,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::TiltCurve(_) => Gap::TiltCurve,
             SutNote::StartEndDetail => Gap::StartEndDetail,
             SutNote::StabilizerStrength => Gap::StabilizerStrength,
-            SutNote::SettingsMissing => Gap::PresetSettings,
+            SutNote::SettingsMissing | SutNote::AntiAliasing(_) => Gap::PresetSettings,
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
             // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
@@ -322,7 +322,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 9] = [
+pub const MAPPED_ALL: [SutMapped; 10] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -332,6 +332,7 @@ pub const MAPPED_ALL: [SutMapped; 9] = [
     SutMapped::TipAngle,
     SutMapped::AngleRandom,
     SutMapped::ColorMixing,
+    SutMapped::AntiAliasing,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -346,6 +347,7 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::TipAngle => "tip-angle",
         SutMapped::AngleRandom => "angle-random",
         SutMapped::ColorMixing => "color-mixing",
+        SutMapped::AntiAliasing => "anti-aliasing",
     }
 }
 

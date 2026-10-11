@@ -5,11 +5,11 @@
 While "Accept external commands" is on in its settings, YoluPainter is an MCP server at `http://127.0.0.1:17347/mcp`. AI assistants (Claude Code, Codex,
 Claude Desktop and others) connect there to read the layers, masks and effects of the document open in the app, change values, look at preview images, export and save.
 The tools live in the app, so updating the app brings the new tools. The connection stays inside this PC and never goes onto the network.
-The tools are the same 25 as the [command line](CLI.md) commands (the `.` in names becomes `_`). Painting (strokes, fills, selections), baking and opening another document are not available.
+The tools are the same 26 as the [command line](CLI.md) commands (the `.` in names becomes `_`). Painting (strokes, fills, selections), baking and opening another document are not available.
 
 ## YoluPainter settings
 
-1. In the app, open Edit → Settings… and turn on "Accept external commands" (off by default). It listens only while on, and a small dot appears at the right end of the status bar. The dot's tooltip shows the URL to connect to.
+1. In the app, open Edit → Settings…, choose Live Link & Commands and turn on "Accept external commands" (off by default). It listens only while on, and a small dot appears at the right end of the status bar. The dot's tooltip shows the URL to connect to.
 2. The port can be changed in "Port", shown below it while it is on (17347 by default; 1024 to 65535). When you change it, use the same port in the programs that connect.
 3. When it cannot listen (another program uses the port, for example), the dot turns to the "cannot accept" color and its tooltip says why. Change the port or close that program, then turn the setting off and on again.
 
@@ -64,7 +64,7 @@ The extension asks the app when Claude Desktop starts it. If the app is not acce
 ### Other clients
 
 Clients that speak Streamable HTTP MCP can connect to `http://127.0.0.1:17347/mcp`. Clients that only use standard input and output can start
-`yolupainter-cli mcp` (with the installer: `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`; add `--port number` if you changed the port).
+`yolupainter-cli mcp` (with the installer: `%LOCALAPPDATA%\Programs\YoluPainter\yolupainter-cli.exe`; in the experimental Mac zip: `YoluPainter.app/Contents/MacOS/yolupainter-cli`; add `--port number` if you changed the port).
 
 ## Tools and resources
 
@@ -73,7 +73,7 @@ and annotations saying whether it only reads, whether it is destructive and whet
 A failure is an `isError` reply holding JSON with `code`, a Japanese and an English `message`, and `data`.
 
 - A preview (`preview`) returns the PNG as an image and also a resource_link (`yolupainter://preview/<number>.png`; the last 8 are kept) to the same PNG.
-- Resources: `yolupainter://docs/<name>` is the documentation of the installed version (`guide`, `cli`, `mcp`, `install`, `psd`, `brush`, the .ylp format specification `ylp-format` and so on; where an English version exists it is the default, and `<name>.ja` and `<name>.en` choose a language).
+- Resources: `yolupainter://docs/<name>` is the documentation of the installed version (`guide`, the entry page of the user guide, and its pages `guide-start`, `guide-paint`, `guide-select`, `guide-layers`, `guide-fill`, `guide-paths`, `guide-3d`, `guide-files`, `guide-settings` and `guide-keys`; also `cli`, `mcp`, `install`, `psd`, `brush`, the .ylp format specification `ylp-format` and so on; where an English version exists it is the default, and `<name>.ja` and `<name>.en` choose a language).
   `yolupainter://ops/commands` is the command list with JSON Schemas, and `yolupainter://ops/effect-kinds` is the effect kinds and their value ranges (the same as `effect_list_kinds`).
 - `doc_open` returns the document only for the file the app has open. Another file is refused with `unsupported` (the app does not switch documents).
 - `$selected` in a layer field (`layer`, `above`, `parent`) refers to the layer selected in the app's current texture set. `$created:<n>` works only inside a run of several commands

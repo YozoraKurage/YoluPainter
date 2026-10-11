@@ -106,8 +106,11 @@ fn app_with(state: AppState) -> Harness<'static, YoluApp> {
         .with_max_steps(120)
         .renderer(common::shared_gpu::renderer())
         .build_eframe(move |cc| {
-            YoluApp::for_context(&cc.egui_ctx, state, PenInput::detached())
-                .with_render_state(cc.wgpu_render_state.as_ref())
+            let mut app = YoluApp::for_context(&cc.egui_ctx, state, PenInput::detached())
+                .with_render_state(cc.wgpu_render_state.as_ref());
+            // 中央は 1 つの組（3D ビューの空の状態の文字が、ウィンドウの下に見えないように）
+            app.dock = common::tabbed_center_dock(1280.0);
+            app
         });
     h.run();
     h
@@ -144,7 +147,7 @@ fn is_disabled(h: &Harness<'_, YoluApp>, label: &str) -> bool {
     h.get_by_label(label).accesskit_node().is_disabled()
 }
 
-/// ウィンドウの中に描いた文字（アイコンも含む）。
+/// ウィンドウの中に描いた文字（アイコンも含む）。ウィンドウの地を描いたあとに描いた文字のうち、ウィンドウの中にあるものだけ（後ろのパネルの文字は入れない）。
 fn window_texts(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
     fn collect(shape: &Shape, area: Rect, out: &mut Vec<String>) {
         match shape {
@@ -153,8 +156,13 @@ fn window_texts(h: &Harness<'_, YoluApp>, area: Rect) -> Vec<String> {
             _ => {}
         }
     }
+    let shapes = &h.output().shapes;
+    let start = shapes
+        .iter()
+        .rposition(|s| matches!(&s.shape, Shape::Rect(r) if r.rect == area))
+        .expect("ウィンドウの地を描いた");
     let mut out = Vec::new();
-    for shape in &h.output().shapes {
+    for shape in &shapes[start..] {
         collect(&shape.shape, area, &mut out);
     }
     out

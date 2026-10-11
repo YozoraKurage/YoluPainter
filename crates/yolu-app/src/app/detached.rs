@@ -10,7 +10,7 @@
 //! タブの出し入れは、パスの中では起きたことを控えるだけ（`DockEvent`）で、全部のウィンドウを描いた後に当てる（ウィンドウをまたいで動かすので）。
 //!
 //! 自前の枠（Windows。メインウィンドウと同じ `custom_frame`）では OS の枠を外し、タブの並ぶ行の何も無い所を帯の代わりにする（引くと
-//! `StartDrag`、ダブルクリックで最大化と元に戻す）。行の右端に閉じる（OS の閉じると同じく、出す前の組へ戻す）、縁で大きさを変える
+//! `StartDrag`（ペンが触れた引きは、そのウィンドウのペンの受け口がウィンドウを動かす）、ダブルクリックで最大化と元に戻す）。行の右端に閉じる（OS の閉じると同じく、出す前の組へ戻す）、縁で大きさを変える
 //! （`titlebar`）。行の右端の閉じるの分は、どの組のタブの行も右を空ける（egui_dock の見た目はドック全体で 1 つ）。
 
 use std::collections::HashMap;
@@ -20,6 +20,7 @@ use egui::{
     ViewportInfo,
 };
 
+use super::gpu_lost::FramePoint;
 use super::{dock_area, dock_style, Tab, Tabs, YoluApp};
 use crate::detach::{self, place, DockOp, Float, OsWindow, Place, Resolved};
 use crate::layout::FloatRecord;
@@ -80,6 +81,9 @@ impl YoluApp {
         if self.detached.windows.is_empty() {
             return false;
         }
+        // 別ウィンドウはここでその場で描かれる（`show_viewport_immediate`）。ここまでのメインウィンドウの描画（3D の提出など）で
+        // 失ったときは、別ウィンドウを失ったデバイスで描く前に終える
+        self.watch_point(ctx, FramePoint::BeforeDetached);
         let root = ctx.input(|i| i.viewport().clone());
         let root_ppp = ctx.pixels_per_point();
         let monitors = crate::windowpos::monitors();
@@ -106,6 +110,7 @@ impl YoluApp {
                 builder = builder.with_position(position);
             }
             let id = win.viewport_id();
+            let serial = win.serial;
             if ctx.embed_viewports() {
                 // egui がウィンドウを OS のウィンドウに出せない（試験のウィンドウ）: メインウィンドウの中の egui のウィンドウに、記録の位置と大きさで描く（egui_dock の浮いたウィンドウと
                 // 同じ枠。動かすのは記録を変えたときだけ）
@@ -127,11 +132,13 @@ impl YoluApp {
                         grabbed |=
                             self.detached_pass(ui, ViewportClass::EmbeddedWindow, win, events);
                     });
-                continue;
+            } else {
+                grabbed |= ctx.show_viewport_immediate(id, builder, |ui, class| {
+                    self.detached_pass(ui, class, win, events)
+                });
             }
-            grabbed |= ctx.show_viewport_immediate(id, builder, |ui, class| {
-                self.detached_pass(ui, class, win, events)
-            });
+            // このウィンドウの描画の中で失ったときも、次のウィンドウを描く前に終える
+            self.watch_point(ctx, FramePoint::AfterDetached(serial));
         }
         // （パスの中ではウィンドウを足さない。足したのは当てる側だけ）
         windows.append(&mut self.detached.windows);
@@ -166,7 +173,17 @@ impl YoluApp {
             settle_and_record(&ctx, win, &info);
             #[cfg(windows)]
             self.attach_native(&ctx, win, &info);
-            pen = win.pen.drain();
+            #[cfg(target_os = "macos")]
+            self.attach_native_mac(&ctx, win, &info);
+            // WinTab の入切（設定「ペンの入力」）は、メインウィンドウと同じ札を、このウィンドウの文脈にも合わせる
+            win.pen.sync_wintab();
+            let (drained, lost) = win.pen.drain_with_lost();
+            pen = drained;
+            self.state.pen_lost = lost;
+            // 次のフレームの初めで、入力のあるフレームとして数える（別ウィンドウの egui の事象は、主のフレームの初めには見えない。`pacing`）
+            if !pen.is_empty() || ctx.input(|i| !i.events.is_empty()) {
+                self.pacing.note_detached_input();
+            }
             self.state.pressure_observe(ctx.pixels_per_point(), &pen);
             for sample in &mut pen {
                 sample.pressure = self.state.adjust_pressure(sample.pressure);
@@ -253,9 +270,11 @@ impl YoluApp {
         }
         if let (Some(drag), true) = (drag, own) {
             let maximized = ctx.input(|i| i.viewport().maximized.unwrap_or(false));
-            for command in titlebar::drag_commands(&drag, &[], maximized) {
-                ctx.send_viewport_cmd(command);
-            }
+            titlebar::send_drag_commands(
+                &ctx,
+                titlebar::drag_commands(&drag, &[], maximized),
+                &win.pen,
+            );
         }
         let pass = DockPass {
             grabbed: tabs.grabbed,
@@ -292,6 +311,8 @@ impl YoluApp {
         if let Some(direction) = edge {
             titlebar::edge_cursor(&ctx, direction);
         }
+        // eframe はこのあと、このウィンドウを描く。このウィンドウの中（3D の提出など）で失ったときは、失ったデバイスで描く前に終える
+        self.watch_point(&ctx, FramePoint::DetachedPassEnd(win.serial));
         pass.grabbed
     }
 
@@ -399,6 +420,18 @@ impl YoluApp {
         };
         if open.state.viewport != id {
             self.state.popup = Some(open);
+            return;
+        }
+        if open.kind == PopupKind::Pie {
+            if crate::pie::show(ctx, &mut self.state, &mut open.state) {
+                self.state.popup.get_or_insert(open);
+            }
+            return;
+        }
+        if open.kind == PopupKind::Transform {
+            if crate::objects::transform::show(ctx, &mut self.state, &mut open.state) {
+                self.state.popup.get_or_insert(open);
+            }
             return;
         }
         let entries = crate::shell::popup_entries(&self.state, open.kind);
@@ -516,6 +549,9 @@ impl YoluApp {
                 DockOp::Return(tab) => {
                     self.detached.return_tab(&mut self.dock, tab, None);
                 }
+                DockOp::Hide(tab) => {
+                    self.detached.hide(&mut self.dock, tab);
+                }
                 DockOp::Show(tab) => {
                     if let Some(id) = self.detached.show(&mut self.dock, tab) {
                         ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Focus);
@@ -579,8 +615,32 @@ impl YoluApp {
                 detach::native::set_owner(hwnd, owner);
             }
             crate::windowpos::install_hwnd(hwnd);
-            win.pen = crate::pen::PenInput::attach_hwnd(hwnd, ctx);
+            win.pen = crate::pen::PenInput::attach_hwnd(hwnd, ctx, &self.pen);
             win.hwnd = Some(hwnd);
+        }
+    }
+
+    /// macOS: 別ウィンドウの NSWindow を、そのビューポートに今付いている題名（`info.title`）で見つけたら、タブレットの入力を繋ぐ。フォーカスがあるときはキーウィンドウを
+    /// 使う。見つかるまで、数十フレーム探す（諦めたあとも、題名が変わったら 0 から探し直す）。題名が重なって決まらないときは繋がない
+    /// （取り違えると、ほかのウィンドウのペンの点を受けてしまう）。
+    #[cfg(target_os = "macos")]
+    fn attach_native_mac(&mut self, ctx: &egui::Context, win: &mut OsWindow, info: &ViewportInfo) {
+        const TRIES: u32 = 120;
+        if win.pen.is_window_hooked() {
+            return;
+        }
+        let title = info.title.clone().unwrap_or_default();
+        if win.attach_title != title {
+            win.attach_title = title.clone();
+            win.attach_tries = 0;
+        }
+        if title.is_empty() || win.attach_tries >= TRIES {
+            return;
+        }
+        win.attach_tries += 1;
+        let focused = info.focused == Some(true);
+        if let Some(pen) = crate::pen::PenInput::attach_titled(&title, focused, ctx, &self.pen) {
+            win.pen = pen;
         }
     }
 
@@ -590,6 +650,16 @@ impl YoluApp {
             .windows
             .iter()
             .any(|w| info_of(ctx, w.viewport_id()).is_some_and(|i| i.visible().unwrap_or(true)))
+    }
+
+    /// メインウィンドウか別ウィンドウのどれかで、ポインタのボタン（マウス・ペン）が押されているか。
+    pub(super) fn any_pointer_down(&self, ctx: &egui::Context) -> bool {
+        ctx.input(|i| i.pointer.any_down())
+            || self
+                .detached
+                .windows
+                .iter()
+                .any(|w| ctx.input_for(w.viewport_id(), |i| i.pointer.any_down()))
     }
 
     /// 別ウィンドウのどれかにフォーカスがあるか。

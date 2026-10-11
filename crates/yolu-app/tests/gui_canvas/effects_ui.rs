@@ -72,7 +72,7 @@ fn selected(h: &Harness<'_, YoluApp>) -> Option<Selected> {
 fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
     let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
-        let mut h = app(1280.0, 1000.0, 128);
+        let mut h = app(1280.0, 1400.0, 128);
         h.state_mut().state.set_language(lang);
         effect_document(&mut h);
         h.snapshot(format!("fx_rows_generator_{}", lang.pick("ja", "en")));
@@ -82,7 +82,7 @@ fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
 
 #[test]
 fn snapshot_a_selected_filter_and_a_selected_anchor() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     effect_document(&mut h);
     let layer = h.state().state.selected_layer.unwrap();
     let blur = h
@@ -109,7 +109,7 @@ fn snapshot_a_selected_filter_and_a_selected_anchor() {
 
 #[test]
 fn snapshot_the_add_menu() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     effect_document(&mut h);
     fx(&mut h, FxOp::Deselect);
     h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
@@ -149,7 +149,7 @@ fn pixels_thumb(h: &Harness<'_, YoluApp>) -> Rect {
 /// レイヤーの行の名前の所（行の真ん中）。
 fn name_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> egui::Pos2 {
     let name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
-    rect_of(h, &name, |r| r.width() > 100.0 && r.left() > 1000.0).center()
+    rect_of(h, &name, |r| r.width() > 100.0 && r.left() > rx()).center()
 }
 
 fn editing_mask(h: &Harness<'_, YoluApp>) -> bool {
@@ -167,7 +167,7 @@ fn framed_pixels_thumbs(h: &Harness<'_, YoluApp>) -> Vec<Rect> {
 
 #[test]
 fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     let base = h.state().state.selected_layer.unwrap();
     effect_document(&mut h);
     let layer = h.state().state.selected_layer.unwrap();
@@ -225,7 +225,7 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
 
 #[test]
 fn the_mask_thumbnail_menu_adds_to_the_mask_and_switches_the_mask() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     effect_document(&mut h);
     let layer = h.state().state.selected_layer.unwrap();
     let at = pixels_thumb(&h).center();
@@ -348,7 +348,7 @@ fn row_rect_if_shown(h: &Harness<'_, YoluApp>, id: yolu_core::FilterId) -> Optio
     let rects: Vec<Rect> = h.query_all_by_label(&label).map(|n| n.rect()).collect();
     rects.into_iter().find(|r| {
         (r.height() - yolu_app::panels::effect_rows::EFFECT_ROW_HEIGHT).abs() < 0.5
-            && r.left() > 1000.0
+            && r.left() > rx()
     })
 }
 
@@ -417,7 +417,7 @@ fn both_stacks(
 
 #[test]
 fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     let (base, layer) = both_stacks(&mut h);
     let (base_content, base_mask) = (
         ids_of(&h, base, FilterTarget::Content),
@@ -543,7 +543,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
 
 #[test]
 fn adding_to_the_mask_keeps_the_mask_as_the_target_and_the_new_row_in_view() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     let (_, layer) = both_stacks(&mut h);
     let at = pixels_thumb_of(&h, layer).center();
     click(&mut h, at);
@@ -581,7 +581,7 @@ fn adding_to_the_mask_keeps_the_mask_as_the_target_and_the_new_row_in_view() {
 
 #[test]
 fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     let (base, layer) = both_stacks(&mut h);
     // マスクはあるが効果の無いレイヤー（印は出ない）
     apply(&mut h, Action::NewLayer);
@@ -684,7 +684,7 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
         } else {
             "レイヤーの画素が対象"
         };
-        let mut h = app(1280.0, 1000.0, 128);
+        let mut h = app(1280.0, 1400.0, 128);
         let (base, layer) = both_stacks(&mut h);
         // 下のレイヤーと上のレイヤーの間に、レイヤーの効果を持つレイヤーを 1 つ挟む（選んでいないレイヤーの下はレイヤーの効果）
         let at = name_of(&h, base);
@@ -758,7 +758,7 @@ fn right_click(h: &mut Harness<'_, YoluApp>, at: egui::Pos2) {
 
 #[test]
 fn a_right_click_on_the_layer_thumbnail_opens_the_layer_menu_like_the_row() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     let base = h.state().state.selected_layer.unwrap();
     effect_document(&mut h);
     let layer = h.state().state.selected_layer.unwrap();
@@ -802,7 +802,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
     let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
         let suffix = lang.pick("ja", "en");
-        let mut h = app(1280.0, 1000.0, 128);
+        let mut h = app(1280.0, 1400.0, 128);
         h.state_mut().state.set_language(lang);
         effect_document(&mut h);
         // マスクの効果を 2 つにする（マスクが対象のときの行が 2 行になる）
@@ -859,7 +859,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
 
 #[test]
 fn rows_select_toggle_move_and_remove_from_the_panel() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     apply(&mut h, Action::M2(Edit::NewFill));
     let layer = h.state().state.selected_layer.unwrap();
     fx(
@@ -949,7 +949,7 @@ fn rows_select_toggle_move_and_remove_from_the_panel() {
 
 #[test]
 fn the_context_menu_of_a_row_acts_on_that_row() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     apply(&mut h, Action::M2(Edit::NewFill));
     let layer = h.state().state.selected_layer.unwrap();
     fx(
@@ -995,7 +995,7 @@ fn the_context_menu_of_a_row_acts_on_that_row() {
 
 #[test]
 fn a_filter_is_added_from_the_properties_button_and_the_filter_menu() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     let layer = h.state().state.selected_layer.unwrap();
     h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
     h.run();
@@ -1034,7 +1034,7 @@ fn a_filter_is_added_from_the_properties_button_and_the_filter_menu() {
 
 #[test]
 fn dragging_a_slider_in_the_effect_panel_is_one_undo_step() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     let layer = h.state().state.selected_layer.unwrap();
     fx(
         &mut h,
@@ -1051,7 +1051,7 @@ fn dragging_a_slider_in_the_effect_panel_is_one_undo_step() {
         .unwrap()[0]
         .id();
     let steps = h.state().state.doc.undo_count();
-    let slider = rect_of(&h, "半径", |r| r.left() > 1000.0);
+    let slider = rect_of(&h, "半径", |r| r.left() > rx());
     let y = slider.center().y + 8.0;
     drag(
         &mut h,
@@ -1094,7 +1094,7 @@ const NEW_FILTERS: [FilterKind; 10] = [
 
 /// `kind` を描くチャンネル（スカラーだけの種類は Roughness）の画素に足して選んだウィンドウ。
 fn with_new_filter(lang: Lang, kind: FilterKind) -> Harness<'static, YoluApp> {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1400.0, 128);
     h.state_mut().state.set_language(lang);
     let scalar = matches!(
         kind,
@@ -1137,14 +1137,14 @@ fn the_new_filters_show_every_value_by_name_in_both_languages() {
                 let label = yolu_app::fx::names::param_label(lang, id, name);
                 assert!(
                     h.query_all_by_label_contains(label)
-                        .any(|n| n.rect().left() > 1000.0)
-                        || texts.iter().any(|(t, r)| t == label && r.left() > 1000.0),
+                        .any(|n| n.rect().left() > rx())
+                        || texts.iter().any(|(t, r)| t == label && r.left() > rx()),
                     "{lang:?} {kind:?}: 欄「{label}」が無い"
                 );
             }
             for (text, _) in texts
                 .iter()
-                .filter(|(_, r)| r.left() > 1050.0 && r.top() > 280.0 && r.bottom() < 2376.0)
+                .filter(|(_, r)| r.left() > rx() + 20.0 && r.top() > 280.0 && r.bottom() < 2376.0)
             {
                 assert!(!text.contains('。'), "{lang:?} {kind:?}: 文の形 {text:?}");
                 if lang == Lang::En {
@@ -1160,7 +1160,7 @@ fn a_choice_button_and_a_slider_of_a_new_filter_are_one_undo_step_each() {
     let mut h = with_new_filter(Lang::Ja, FilterKind::SlopeBlur);
     let steps = h.state().state.doc.undo_count();
     // 合わせ方のボタン（最大）
-    let max = rect_of(&h, "最大", |r| r.left() > 1000.0);
+    let max = rect_of(&h, "最大", |r| r.left() > rx());
     click(&mut h, max.center());
     assert!(matches!(
         selected_settings(&h),
@@ -1171,7 +1171,7 @@ fn a_choice_button_and_a_slider_of_a_new_filter_are_one_undo_step_each() {
     ));
     assert_eq!(h.state().state.doc.undo_count(), steps + 1);
     // 長さのスライダーのドラッグは 1 回の取り消し
-    let slider = rect_of(&h, "長さ", |r| r.left() > 1000.0);
+    let slider = rect_of(&h, "長さ", |r| r.left() > rx());
     let y = slider.center().y + 8.0;
     drag(
         &mut h,
@@ -1247,8 +1247,8 @@ fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_language
             let texts = shown_texts(&h);
             let shown = |label: &str| {
                 h.query_all_by_label_contains(label)
-                    .any(|n| n.rect().left() > 1000.0)
-                    || texts.iter().any(|(t, r)| t == label && r.left() > 1000.0)
+                    .any(|n| n.rect().left() > rx())
+                    || texts.iter().any(|(t, r)| t == label && r.left() > rx())
             };
             for (name, _) in settings.catalog_values() {
                 if ["low", "high", "invert", "blend"].contains(&name)
@@ -1269,7 +1269,7 @@ fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_language
             }
             for (text, _) in texts
                 .iter()
-                .filter(|(_, r)| r.left() > 1050.0 && r.top() > 280.0 && r.bottom() < 2376.0)
+                .filter(|(_, r)| r.left() > rx() + 20.0 && r.top() > 280.0 && r.bottom() < 2376.0)
             {
                 assert!(!text.contains('。'), "{lang:?} {kind:?}: 文の形 {text:?}");
                 if lang == Lang::En {
@@ -1284,7 +1284,7 @@ fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_language
 fn a_pattern_shape_button_changes_the_generator_in_one_undo_step() {
     let mut h = with_new_generator(Lang::Ja, Kind::Pattern, 1000.0);
     let steps = h.state().state.doc.undo_count();
-    let dots = rect_of(&h, "水玉", |r| r.left() > 1000.0);
+    let dots = rect_of(&h, "水玉", |r| r.left() > rx());
     click(&mut h, dots.center());
     let shape = selected_settings(&h)
         .generator_settings()
@@ -1361,7 +1361,7 @@ fn four_plates() -> yolu_app::view3d::model::ViewModel {
 fn snapshot_the_uv_island_variation_panel_and_canvas_in_both_languages() {
     let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
-        let mut h = app(1280.0, 1000.0, 128);
+        let mut h = app(1280.0, 1400.0, 128);
         h.state_mut().state.set_language(lang);
         {
             let s = &mut h.state_mut().state;
@@ -1438,7 +1438,7 @@ fn shown_texts(h: &Harness<'_, YoluApp>) -> Vec<(String, Rect)> {
 fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese() {
     for lang in Lang::ALL {
         for select in 0..3 {
-            let mut h = app(1280.0, 1000.0, 128);
+            let mut h = app(1280.0, 1400.0, 128);
             h.state_mut().state.set_language(lang);
             effect_document(&mut h);
             let layer = h.state().state.selected_layer.unwrap();
@@ -1468,10 +1468,9 @@ fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese()
             // 開いたメニューも
             let texts = shown_texts(&h);
             // レイヤーの一覧とプロパティの欄（右の列。状態の帯の知らせは状態なので除く）
-            for (text, rect) in texts
-                .iter()
-                .filter(|(_, r)| r.left() > 1050.0 && r.top() > 280.0 && r.bottom() < 976.0)
-            {
+            for (text, rect) in texts.iter().filter(|(_, r)| {
+                r.left() > rx() + 20.0 && r.top() > 280.0 && r.bottom() < 1400.0 - 24.0
+            }) {
                 assert!(
                     !text.contains('。') && !text.ends_with('.'),
                     "{lang:?}/{select}: 文の形の文字 {text:?}"
@@ -1493,7 +1492,7 @@ fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese()
 #[test]
 fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localised() {
     for lang in Lang::ALL {
-        let mut h = app(1280.0, 1000.0, 128);
+        let mut h = app(1280.0, 1400.0, 128);
         h.state_mut().state.set_language(lang);
         h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
         h.run();
@@ -1527,7 +1526,7 @@ fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localis
 #[test]
 fn a_generator_row_without_maps_has_a_mark_whose_tooltip_gives_the_reason() {
     for lang in Lang::ALL {
-        let mut h = app(1280.0, 1000.0, 128);
+        let mut h = app(1280.0, 1400.0, 128);
         h.state_mut().state.set_language(lang);
         effect_document(&mut h);
         let label = format!(
@@ -1550,6 +1549,49 @@ fn a_generator_row_without_maps_has_a_mark_whose_tooltip_gives_the_reason() {
                 && r.top() > row.top()
                 && r.top() < row.top() + 90.0),
             "{lang:?}: {texts:?}"
+        );
+    }
+}
+
+/// 行の下（ポインタのすぐ下）に出ている文字のうち、理由を含む物。
+fn reason_tooltips(h: &Harness<'_, YoluApp>, row: Rect, reason: &str) -> Vec<String> {
+    shown_texts(h)
+        .into_iter()
+        .filter(|(t, r)| t.contains(reason) && r.top() > row.top() && r.top() < row.top() + 90.0)
+        .map(|(t, _)| t)
+        .collect()
+}
+
+#[test]
+fn over_the_warning_mark_only_the_mark_tooltip_shows_and_elsewhere_on_the_row_the_row_tooltip() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 1000.0, 128);
+        h.state_mut().state.set_language(lang);
+        effect_document(&mut h);
+        let label = format!(
+            "{}  {}",
+            lang.pick("エッジの摩耗", "Edge Wear"),
+            lang.pick("乗算", "Multiply")
+        );
+        let row = h.get_by_label(&label).rect();
+        let reason = lang.pick("Curvature のマップがありません", "No Curvature map");
+        // 印の上: 理由だけの 1 つ（行のツールチップ「名前＋理由」は出さない）
+        move_to(&h, pos2(row.right() - 4.0 - 60.0 - 10.0, row.center().y));
+        for _ in 0..90 {
+            h.step();
+        }
+        let on_mark = reason_tooltips(&h, row, reason);
+        assert_eq!(on_mark, vec![reason.to_owned()], "{lang:?}: 印の上");
+        // 印でも名前でもない所（行の左の端）: 行のツールチップ 1 つ（名前＋理由）
+        move_to(&h, pos2(row.left() + 40.0, row.center().y));
+        for _ in 0..90 {
+            h.step();
+        }
+        let on_row = reason_tooltips(&h, row, reason);
+        assert_eq!(
+            on_row,
+            vec![format!("{label}\n{reason}")],
+            "{lang:?}: 行の上"
         );
     }
 }
@@ -1583,7 +1625,7 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
         apply(&mut h, Action::Undo);
         assert_eq!(procedural(&h).procedural.seed, 0);
         let slider = rect_of(&h, lang.pick("模様の大きさ", "Pattern Size"), |r| {
-            r.left() > 1000.0
+            r.left() > rx()
         });
         let y = slider.center().y + 8.0;
         drag(
@@ -1599,7 +1641,7 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
         apply(&mut h, Action::Undo);
         assert_eq!(procedural(&h).procedural.scale, 0.1);
         let basis = rect_of(&h, lang.pick("基底: Perlin", "Basis: Perlin"), |r| {
-            r.left() > 1000.0
+            r.left() > rx()
         });
         click(&mut h, basis.center());
         let choice = popup_item(&h, "Worley");
@@ -1608,14 +1650,14 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
         let cell = rect_of(
             &h,
             lang.pick("セルの出力: F1", "Cell Output: F1"),
-            |r| r.left() > 1000.0,
+            |r| r.left() > rx(),
         );
         click(&mut h, cell.center());
         let choice = popup_item(&h, "F2−F1");
         click(&mut h, choice.center());
         assert_eq!(procedural(&h).procedural.cell_output, CellOutput::F2MinusF1);
         let basis = rect_of(&h, lang.pick("基底: Worley", "Basis: Worley"), |r| {
-            r.left() > 1000.0
+            r.left() > rx()
         });
         click(&mut h, basis.center());
         let choice = popup_item(&h, "Perlin");
@@ -1645,7 +1687,7 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
 fn touch_every_procedural_control(h: &mut Harness<'_, YoluApp>, lang: Lang, kind: Kind) {
     use egui::{Event, Modifiers};
     use yolu_core::generator::{CellOutput, FractalMode, NoiseBasis, ProceduralSpace};
-    let column = |r: Rect| r.left() > 1000.0;
+    let column = |r: Rect| r.left() > rx();
     // 1 つの操作の後に、断られていない・設定が変わった・1 回の Undo、を確かめる
     fn accepted(
         h: &Harness<'_, YoluApp>,
@@ -1827,7 +1869,7 @@ fn procedural_panels_have_no_breakup_rows_and_every_visible_control_is_accepted(
             let texts = shown_texts(&h);
             let column: Vec<&String> = texts
                 .iter()
-                .filter(|(_, r)| r.left() > 1000.0)
+                .filter(|(_, r)| r.left() > rx())
                 .map(|(t, _)| t)
                 .collect();
             for gone in [

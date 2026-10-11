@@ -33,3 +33,29 @@ pub fn renderer_with(options: RendererOptions) -> WgpuTestRenderer {
     )));
     WgpuTestRenderer::from_render_state(state)
 }
+
+/// 計測用: 装置を、アダプターが持つ上限で作る（`renderer` は egui の既定の上限で作る。egui-wgpu は OpenGL のとき WebGL2 の上限（storage の
+/// 入れ物も compute も無い）で装置を作るので、OpenGL ではキャンバスの GPU の表示などの compute を使う道が動かない。製品の装置の作り方は
+/// 変えず、OpenGL の道で GPU の仕事を測るときだけ使う）。プロセスに 1 つ。
+pub fn renderer_with_adapter_limits() -> WgpuTestRenderer {
+    static CONNECTION: OnceLock<RenderState> = OnceLock::new();
+    let connection = CONNECTION.get_or_init(|| {
+        let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+        if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut setup {
+            let base = create.device_descriptor.clone();
+            create.device_descriptor = Arc::new(move |adapter| {
+                let mut descriptor = base(adapter);
+                descriptor.required_limits = adapter.limits();
+                descriptor
+            });
+        }
+        egui_kittest::wgpu::create_render_state(setup, crate::common::render_options())
+    });
+    let mut state = connection.clone();
+    state.renderer = Arc::new(egui::mutex::RwLock::new(Renderer::new(
+        &state.device,
+        state.target_format,
+        crate::common::render_options(),
+    )));
+    WgpuTestRenderer::from_render_state(state)
+}

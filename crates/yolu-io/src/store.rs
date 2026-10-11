@@ -72,13 +72,37 @@ pub struct PruneFailure {
     pub path: PathBuf,
     pub error: io::Error,
 }
+/// 退避のフォルダーの名前の終わり（元のファイルの名前に続く）。
+const BACKUP_FOLDER_SUFFIX: &str = "-backups~";
 /// 退避のフォルダー（保存先と同じフォルダーの `<ファイル名>-backups~`）。
 pub fn backup_folder(path: &Path) -> PathBuf {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy())
         .unwrap_or_default();
-    path.with_file_name(format!("{name}-backups~"))
+    path.with_file_name(format!("{name}{BACKUP_FOLDER_SUFFIX}"))
+}
+/// 退避のフォルダーの中の退避（`backups` が挙げる形の名前のファイル）なら、退避した元のファイル（退避のフォルダーと同じ場所の
+/// `<ファイル名>`。元のファイルが今あるかは見ない）。退避でなければ None: 利用者が名前を変えて置いたファイル・フォルダーの名前が
+/// 合わないもの・別のファイルの退避の名前のもの。退避は元のファイルの前の版なので、元のファイルからの相対の参照（view.json のモデルの
+/// 場所など）は元のファイルの場所から解く。
+pub fn backup_origin(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_str()?;
+    let folder = path.parent()?;
+    let owner = folder
+        .file_name()?
+        .to_str()?
+        .strip_suffix(BACKUP_FOLDER_SUFFIX)?;
+    // 元のファイルの名前は保存先の決まり（.ylp で終わる。大文字小文字は問わない）に合う
+    if owner.len() <= EXTENSION.len()
+        || !owner.as_bytes()[owner.len() - EXTENSION.len()..]
+            .eq_ignore_ascii_case(EXTENSION.as_bytes())
+    {
+        return None;
+    }
+    let stem = Path::new(owner).file_stem()?.to_str()?;
+    let legacy = name.strip_suffix(EXTENSION).is_some_and(is_hash);
+    (parse_stamped(stem, name).is_some() || legacy).then(|| folder.with_file_name(owner))
 }
 /// 保存が退避した版（新しい順）。名前が `<名前>-<UTC の時刻>.ylp` の形のものと、以前の版が SHA-256 名で残したもの
 /// （時刻の名前の後ろに、互いは更新時刻の順）だけで、利用者が名前を変えて残したファイルは含めない（整理の対象にもしない）。
@@ -276,7 +300,7 @@ impl SaveTarget {
         let mut to_back_up = None;
         if let Some(expected) = &self.expected {
             if keep != BackupKeep::Count(0) {
-                let folder = parent.join(format!("{name}-backups~"));
+                let folder = parent.join(format!("{name}{BACKUP_FOLDER_SUFFIX}"));
                 check_backup_folder(&folder)?;
                 // 退避の置き場に残った、強制終了された保存の一時ファイル。置き場に触れるのは、退避を作る保存だけ
                 if lock.exclusive {
@@ -816,8 +840,9 @@ fn move_without_replacing(from: &Path, to: &Path) -> io::Result<Moved> {
     }
     link_then_unlink(from, to)
 }
-/// `hard_link` は移動先が先にあれば断る（作る操作そのものが断る）。リンクを作れない場所は `Unsupported`（本当の失敗は、
-/// 呼ぶ側の置き換える移動が同じ形で返す）。リンクを作れたら元の名前を消す。消せなくても、確定した保存は戻さず `Done` を返す
+/// `hard_link` は移動先が先にあれば断る（作る操作そのものが断る）。元（か移動先のフォルダー）が無いのは本当の失敗なので `Err`（`Unsupported` にすると、
+/// 置き換えない移動の失敗として見えず、呼ぶ側が確かめ直してから置き換える移動へ進んで、同じ失敗がそちらで返る）。そのほかの、リンクを作れない場所は
+/// `Unsupported`（本当の失敗は、呼ぶ側の置き換える移動が同じ形で返す）。リンクを作れたら元の名前を消す。消せなくても、確定した保存は戻さず `Done` を返す
 /// （元の名前は保存先と同じ実体を指す。呼ぶ側の `Pending` が最後に消し直す）。
 #[cfg(unix)]
 fn link_then_unlink(from: &Path, to: &Path) -> io::Result<Moved> {
@@ -835,6 +860,7 @@ fn link_then_unlink_with(
             Ok(Moved::Done)
         }
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(Moved::Occupied),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(e),
         Err(_) => Ok(Moved::Unsupported),
     }
 }
@@ -1109,7 +1135,7 @@ fn names_the_same_file(_: &File, _: &Path) -> bool {
 mod tests {
     use super::*;
     use crate::{hash, Thresholds};
-    #[cfg(unix)]
+    #[cfg(all(unix, target_os = "linux", target_env = "gnu"))]
     use std::os::unix::ffi::OsStrExt;
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     /// 試験の作業フォルダの通し番号。
@@ -2345,6 +2371,48 @@ mod tests {
         assert_eq!(s.kept_names(), ["sample-29990101T000000000Z__.ylp"]);
     }
     #[test]
+    fn a_backup_tells_which_file_it_is_a_backup_of_and_nothing_else_does() {
+        let s = Scratch::new();
+        // 実際の保存が作った退避は、元のファイルを指す（大文字の拡張子も）
+        for file in [s.file(), s.0.join("Doc.YLP")] {
+            let mut t = SaveTarget::create(&file).unwrap();
+            let p = project();
+            t.save(&p).unwrap();
+            t.save(&changed(&p, "二つ目")).unwrap();
+            let listed = backups(&file).unwrap();
+            assert_eq!(listed.len(), 1, "{file:?}");
+            assert_eq!(backup_origin(&listed[0]), Some(file.clone()));
+        }
+        let at = |folder: &str, name: &str| backup_origin(&s.0.join(folder).join(name));
+        let stamped = "sample-20260101T000000000Z.ylp";
+        let legacy = format!("{}.ylp", "ab".repeat(32));
+        // 時刻の名前・重なったときの下線つきの名前・以前の版の SHA-256 の名前
+        assert_eq!(at("sample.ylp-backups~", stamped), Some(s.file()));
+        assert_eq!(
+            at("sample.ylp-backups~", "sample-20260101T000000000Z__.ylp"),
+            Some(s.file())
+        );
+        assert_eq!(at("sample.ylp-backups~", &legacy), Some(s.file()));
+        // 利用者が名前を変えて置いたもの・別のファイルの退避の名前・退避のフォルダーでない所・拡張子の無い元の名前は退避ではない
+        assert_eq!(at("sample.ylp-backups~", "sample-keep.ylp"), None);
+        assert_eq!(
+            at("sample.ylp-backups~", "other-20260101T000000000Z.ylp"),
+            None
+        );
+        assert_eq!(
+            at("sample.ylp-backups~", "sample-20260101T000000000Z.png"),
+            None
+        );
+        assert_eq!(at("sample.ylp-backups", stamped), None);
+        assert_eq!(
+            at("sample-backups~", "sample-20260101T000000000Z.ylp"),
+            None
+        );
+        assert_eq!(at("elsewhere", stamped), None);
+        assert_eq!(backup_origin(&s.0.join(stamped)), None);
+        assert_eq!(backup_origin(Path::new("x.ylp")), None);
+    }
+    #[test]
     fn an_uppercase_extension_is_accepted_and_its_backups_are_listed() {
         let s = Scratch::new();
         let upper = s.0.join("Doc.YLP");
@@ -2517,11 +2585,42 @@ mod tests {
             link_then_unlink(&from, &s.0.join("dangling")).unwrap(),
             Moved::Occupied
         );
-        // リンクを作れない（ここでは元が無い）なら、未対応として呼び出し側に任せる
+        // 元が無いのは本当の失敗（未対応として呼び出し側に任せない）
         assert_eq!(
-            link_then_unlink(&s.0.join("missing"), &s.0.join("free")).unwrap(),
+            link_then_unlink(&s.0.join("missing"), &s.0.join("free"))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn the_hard_link_way_returns_a_missing_source_as_a_failure_and_other_refusals_as_unsupported() {
+        let s = Scratch::new();
+        let mut removed = 0;
+        let mut remove = |_: &Path| {
+            removed += 1;
+            Ok(())
+        };
+        // 元が無い: 失敗。何も作らず、元の名前を消しにも行かない
+        let error = link_then_unlink_with(&s.0.join("missing"), &s.0.join("free"), &mut remove)
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert!(!s.0.join("free").exists());
+        // 移動先のフォルダーが無いのも、本当の失敗
+        let (from, to) = (s.0.join("from.bin"), s.0.join("none").join("to.bin"));
+        fs::write(&from, b"new").unwrap();
+        let error = link_then_unlink_with(&from, &to, &mut remove).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(fs::read(&from).unwrap(), b"new", "元は変えない");
+        // ほかの断り（フォルダーへのリンクは作れない）は、今までどおり未対応
+        let dir = s.0.join("dir");
+        fs::create_dir(&dir).unwrap();
+        assert_eq!(
+            link_then_unlink_with(&dir, &s.0.join("linked"), &mut remove).unwrap(),
             Moved::Unsupported
         );
+        assert_eq!(removed, 0);
     }
     #[cfg(unix)]
     #[test]

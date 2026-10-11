@@ -38,7 +38,7 @@ fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
             unreachable!("kittest の既定は新しく作る形")
         };
         let WgpuSetup::CreateNew(product) =
-            yolu_app::view3d::render::wgpu_configuration().wgpu_setup
+            yolu_app::view3d::render::wgpu_configuration(false).wgpu_setup
         else {
             unreachable!("製品の設定は新しく作る形")
         };
@@ -66,7 +66,10 @@ fn build(
         .with_max_steps(120)
         .renderer(renderer())
         .build_eframe(move |cc| {
-            with_render_state_cpu_canvas(make(&cc.egui_ctx), cc.wgpu_render_state.as_ref())
+            let mut app = make(&cc.egui_ctx);
+            // 中央は 1 つの組（3D ビューだけが広く出る）
+            app.dock = tabbed_center_dock(width);
+            with_render_state_cpu_canvas(app, cc.wgpu_render_state.as_ref())
         });
     h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
     h.run();
@@ -137,6 +140,7 @@ fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32, yaw: f32, pitch: f32) {
         pitch,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     };
     h.run();
 }
@@ -196,11 +200,20 @@ fn background_point(h: &Harness<'_, YoluApp>) -> egui::Pos2 {
     pos2(rect.left() + 30.0, rect.bottom() - 30.0)
 }
 
-/// 範囲の中の、どの色にも tol 以内で当たらない画素の数（縁の中間の値）。
-fn count_other(image: &image::RgbaImage, area: Rect, colors: &[[u8; 3]], tol: u8) -> usize {
+/// 範囲の中の、どの色にも tol 以内で当たらない画素の数（縁の中間の値）。軸の印 skip の中は数えない。
+fn count_other(
+    image: &image::RgbaImage,
+    area: Rect,
+    skip: Option<Rect>,
+    colors: &[[u8; 3]],
+    tol: u8,
+) -> usize {
     let mut count = 0;
     for y in area.top().ceil() as u32..area.bottom().floor() as u32 {
         for x in area.left().ceil() as u32..area.right().floor() as u32 {
+            if skip.is_some_and(|r| r.contains(pos2(x as f32, y as f32))) {
+                continue;
+            }
             let c = image.get_pixel(x, y).0;
             let c = [c[0], c[1], c[2]];
             if !colors.iter().any(|k| close(c, *k, tol)) {
@@ -299,7 +312,7 @@ fn every_sample_count_makes_intermediate_values_on_slanted_edges_and_leaves_the_
             assert_eq!(samples, want, "{name}・{n}×を選ぶ");
             let (face, background) = (px(&image, center(&h)), px(&image, corner));
             assert_ne!(face, background, "{name}: 板が見える");
-            let others = count_other(&image, area, &[face, background], 2);
+            let others = count_other(&image, area, view3d_axes_rect(&h), &[face, background], 2);
             if samples == 1 {
                 assert_eq!(others, 0, "{name}・1×: 縁の画素は面か背景のどちらか");
             } else {
@@ -353,7 +366,7 @@ fn a_lil_toon_transparent_face_blends_edges_at_every_sample_count_too() {
         assert_eq!(samples, clamp_samples(n, &supported));
         let (face, background) = (px(&image, center(&h)), px(&image, corner));
         assert_ne!(face, background, "半透明の板が背景と違う");
-        let others = count_other(&image, area, &[face, background], 3);
+        let others = count_other(&image, area, view3d_axes_rect(&h), &[face, background], 3);
         if samples == 1 {
             assert_eq!(others, 0, "1×");
         } else {
@@ -398,7 +411,16 @@ fn the_chosen_count_is_kept_but_lowered_for_the_device_and_for_the_memory_ceilin
     );
     let image = h.render().unwrap();
     let (face, background) = (px(&image, center(&h)), px(&image, background_point(&h)));
-    assert_eq!(count_other(&image, region(&h), &[face, background], 2), 0);
+    assert_eq!(
+        count_other(
+            &image,
+            region(&h),
+            view3d_axes_rect(&h),
+            &[face, background],
+            2
+        ),
+        0
+    );
     // 1 つ下の数の見積もりがぎりぎり入る上限では、1 つ下の数になる
     if let Some(&lower) = supported.iter().rev().find(|n| **n > 1 && **n < want) {
         let rect = view_rect(&h);
@@ -675,7 +697,8 @@ fn halo_points(h: &Harness<'_, YoluApp>, gap: f32) -> (egui::Pos2, egui::Pos2) {
 
 #[test]
 fn bloom_brightens_around_bright_areas_and_leaves_the_far_background_alone() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     bright_scene(&mut h, [255, 255, 255]);
     let before = h.render().unwrap();
     let (near, far) = halo_points(&h, 6.0);
@@ -726,7 +749,8 @@ fn bloom_brightens_around_bright_areas_and_leaves_the_far_background_alone() {
 
 #[test]
 fn bloom_leaves_what_is_below_the_threshold_alone() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     // 灰色の板（リニアで約 0.1）: しきい値 0.8 より暗い
     bright_scene(&mut h, [90, 90, 90]);
     let off = h.render().unwrap();
@@ -813,7 +837,8 @@ fn bloom_off_draws_the_same_picture_byte_for_byte() {
 
 #[test]
 fn bloom_and_exposure_work_together_and_light_free_views_get_no_bloom() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     // 灰色の板: 露出 0 ではしきい値の下、+2 EV では上（リニア 0.26 × 4 > 0.8）
     bright_scene(&mut h, [140, 140, 140]);
     op(&mut h, Op::Bloom(true));
@@ -850,7 +875,8 @@ fn bloom_and_exposure_work_together_and_light_free_views_get_no_bloom() {
 
 #[test]
 fn the_emission_channel_glows_in_the_material_view() {
-    let mut h = view(900.0, 640.0, 32);
+    // （3D の表示域の幅が前の既定の並び（900 点のウィンドウ）と同じになるよう、右の列の幅と左のツールの帯の分だけウィンドウを広げる）
+    let mut h = view(1024.0, 640.0, 32);
     set_model(&mut h, vec![quad(0.7, Vec3::NEG_Z)]);
     look_at(&mut h, 2.6, 0.0, 0.0);
     head_on(&mut h);
@@ -1060,6 +1086,54 @@ fn a_3d_stroke_lands_on_the_same_texels_at_every_sample_count() {
 }
 
 // ───────── 設定のパネル（画質の面） ─────────
+
+/// ブルームが切のあいだ、強さ・しきい値は押せず、理由（ブルームが切です）が出る。入れると理由は消える。値の欄のツールチップは、押せるときは出ない。
+#[test]
+fn the_bloom_values_say_the_bloom_is_off() {
+    use egui_kittest::kittest::{NodeT, Queryable};
+    let mut h = view(1100.0, 760.0, 32);
+    h.state_mut().state.view3d.load_demo();
+    h.run();
+    h.get_by_label("光・環境・トーンマッピング").click();
+    h.run();
+    h.get_by_label("画質").click();
+    h.run();
+    let reason = "ブルームが切です";
+    for label in ["強さ", "しきい値"] {
+        let node = h.get_by_label(label);
+        assert!(node.accesskit_node().is_disabled(), "{label}");
+        let at = node.rect().center();
+        hover_and_wait(&mut h, at);
+        assert!(h.query_by_label(reason).is_some(), "{label}: 理由");
+        move_to(&h, pos2(1.0, 1.0));
+        h.run();
+    }
+    h.get_by_label("ブルーム").click();
+    h.run();
+    for label in ["強さ", "しきい値"] {
+        let node = h.get_by_label(label);
+        assert!(!node.accesskit_node().is_disabled(), "{label}");
+        let at = node.rect().center();
+        hover_and_wait(&mut h, at);
+        assert!(h.query_by_label(reason).is_none(), "{label}: 理由は消える");
+        move_to(&h, pos2(1.0, 1.0));
+        h.run();
+    }
+    h.state_mut().state.lang = yolu_app::lang::Lang::En;
+    h.run();
+    let reason = "Bloom is off";
+    h.get_by_label("Bloom").click();
+    h.run();
+    for label in ["Strength", "Threshold"] {
+        let node = h.get_by_label(label);
+        assert!(node.accesskit_node().is_disabled(), "{label}");
+        let at = node.rect().center();
+        hover_and_wait(&mut h, at);
+        assert!(h.query_by_label(reason).is_some(), "{label}: reason");
+        move_to(&h, pos2(1.0, 1.0));
+        h.run();
+    }
+}
 
 #[test]
 fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {

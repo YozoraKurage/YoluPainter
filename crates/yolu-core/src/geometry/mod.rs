@@ -13,6 +13,7 @@
 
 mod build;
 mod camera;
+mod cover;
 mod dab;
 mod model;
 mod paint;
@@ -22,29 +23,38 @@ mod refit;
 mod regions;
 mod restrict;
 mod sampling;
+mod screen;
 pub(crate) mod seam_band;
 mod stencil;
 mod stroke;
 mod symmetry;
 pub(crate) mod unity;
+mod uv_grid;
+mod uv_symmetry;
 mod uv_topology;
 
 use std::sync::atomic::AtomicBool;
 
 use glam::{Vec2, Vec3};
 
-pub use camera::{CameraView, OrbitCamera, DEFAULT_PITCH, DEFAULT_YAW};
+pub use camera::{
+    aligned_axis_view, nearest_axis_view, orbited, snap_orientation, visible_height, AxisView,
+    CameraView, OrbitCamera, Projection, Sight, Viewer, DEFAULT_PITCH, DEFAULT_YAW,
+    ORBIT_DEGREES_PER_POINT, SNAP_ANGLE,
+};
+pub use cover::{CoverParams, CoverPixel, SurfaceCoverStroke};
 pub use dab::{
     DabRefusal, SurfaceBrushBudget, SurfaceDabResult, SurfacePixel, SurfaceVisibilityCache,
 };
 pub use model::{cube_sphere, demo_cube, model_triangles, ModelMesh, Submesh};
 pub use paint::{
-    pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceStroke, SurfaceStrokeError,
-    SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup, MAX_QUEUED_DABS,
+    pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceInput, SurfaceStroke,
+    SurfaceStrokeError, SurfaceStrokeOptions, SurfaceStrokeStats, SurfaceSymmetrySetup,
+    MAX_QUEUED_DABS,
 };
 pub use project::{
-    CopyTransform, ProjectionSettings, ProjectionStats, SurfaceProjector, MAX_BUCKET,
-    MAX_SEAM_BLEED, MIN_BUCKET,
+    set_parallel_projection_candidates, CopyTransform, ProjectionSettings, ProjectionStats,
+    SurfaceProjector, MAX_BUCKET, MAX_SEAM_BLEED, MIN_BUCKET,
 };
 pub use query::{
     barycentric, closest_point, intersect_triangle, uv_barycentric, NodeBudgetExceeded,
@@ -54,10 +64,12 @@ pub use regions::{region, SurfaceRegionKind};
 pub use sampling::{
     SamplingChart, SamplingError, SAMPLING_CHART_MAX_TRIANGLES, SAMPLING_CHART_TRIANGLE_BYTES,
 };
+pub use screen::{cover_screen, ScreenCoverSettings, ScreenCoverage, ScreenShape};
 pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLES};
 pub use stencil::SurfaceStencil;
 pub use stroke::{
-    ScreenStrokeSampler, StrokeCurve, TooManyDabs, SURFACE_DABS_PER_EVENT, SURFACE_DABS_PER_SEGMENT,
+    ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, StrokeCurve, TooManyDabs,
+    SURFACE_DABS_PER_SEGMENT,
 };
 pub use symmetry::{
     build_expanded, build_mirrored, copy_count, copy_hits, find_copy, search_distance, union_dabs,
@@ -66,6 +78,8 @@ pub use symmetry::{
     ON_PLANE_FRACTION,
 };
 pub use unity::{Bounds, Ray};
+pub use uv_grid::UvGrid;
+pub use uv_symmetry::{ModelCopies, ModelSymmetry, UvCopy, MAX_CANVAS_COPY_PIXELS};
 pub use uv_topology::{
     IslandMap, IslandRun, UvTopology, UvTopologyError, DEFAULT_BUDGET, MAX_SEAM_BAND,
     MAX_TOPOLOGY_EDGE,
@@ -129,6 +143,21 @@ impl SurfaceTriangle {
             Vec3::new(c.x / length, c.y / length, c.z / length)
         } else {
             Vec3::ZERO
+        }
+    }
+
+    /// テクセル 1 つ（文書の大きさ width × height）の、モデルの単位の大きさ（面積の比の平方根。潰れていれば 0）。
+    pub fn texel_size(&self, width: i32, height: i32) -> f32 {
+        let area = unity::magnitude(unity::cross(self.b - self.a, self.c - self.a)) as f64 * 0.5;
+        let (e1, e2) = (self.uv_b - self.uv_a, self.uv_c - self.uv_a);
+        let uv = (e1.x as f64 * e2.y as f64 - e1.y as f64 * e2.x as f64).abs()
+            * 0.5
+            * width as f64
+            * height as f64;
+        if area > 0.0 && uv > 0.0 && area.is_finite() && uv.is_finite() {
+            (area / uv).sqrt() as f32
+        } else {
+            0.0
         }
     }
 

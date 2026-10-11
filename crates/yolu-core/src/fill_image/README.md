@@ -31,7 +31,7 @@
 
 `cargo test -p yolu-core --test reference fill_image::` で既知解・拒否・予算・取消・C# 正解との全バイト照合を実行します。デカールの画素ごとの値（`ApplyDecalToValue`）は、同じ8設定のデカールに座標だけで決まる値を渡した8事例を同じ並列度・タイル分割・1画素の経路で照合します。geometry から焼いたマップは、平面・トライプラナー・デカールへそのまま渡して既知の画素を確かめます（z の幅が0の板と斜めの板。位置の符号化と bounds の受け渡しが1つずれると落ちます）。取消は `cargo test -p yolu-core --lib cancellation_tests` で、ミップ構築・geometry・通常出力・デカールの値出力を確かめます。試験専用の単一ワーカーで、行・段・256画素ごとの取消確認を数えて途中で旗を立て、後続の確認へ進まず取消を返すことを検証します。経過時間や実機での応答時間は合否に使いません。48事例（6投影×8設定）は37×29画素、奇数辺/1画素辺、透明RGB、色/輝度変換、3種類の外側、縮小/拡大、回転するモデルと配置、デカールの別画像/値を含みます。Rust並列度1/2/4とタイル分割、C#並列度1/4も照合します。
 
-正解は `tools/csharp-golden/fill.sh golden` で Unity に依存しない C# Core の原文を組んで再生成します。`YOLUPAINTER_UNITY_SOURCE` と `YOLUPAINTER_CORE_UNITY_DATA` で原本とUnity同梱ツールの場所を指定できます。`source.txt` に版と評価式の指紋を残します。`contracts.txt` は不正設定12件と5×3画像のミップ予算11/12バイト境界です。
+正解は `tools/csharp-golden/fill.sh golden` で Unity に依存しない C# Core の原文（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`）をビルドして再生成します。`YOLUPAINTER_UNITY_SOURCE` と `YOLUPAINTER_CORE_UNITY_DATA` で原本とUnity同梱ツールの場所を指定できます。`source.txt` に版と評価式の指紋を残します。`contracts.txt` は不正設定12件と5×3画像のミップ予算11/12バイト境界です。
 
 4096²の比較は次のコマンドで実行します（Linux、CPU 0〜3を使用）。
 

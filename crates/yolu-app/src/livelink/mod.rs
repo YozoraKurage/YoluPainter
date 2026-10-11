@@ -213,13 +213,6 @@ impl AppState {
         self.link_target.as_ref()?.export_folder()
     }
 
-    /// 書き出しのウィンドウが最初に開く場所（`link_export_dir` のうち、今ある一番近いフォルダ。作らない: ウィンドウを取り消しても、Unity のプロジェクトに
-    /// 空のフォルダを残さない）。
-    pub fn link_export_start(&self) -> Option<PathBuf> {
-        let dir = self.link_export_dir()?;
-        dir.ancestors().find(|d| d.is_dir()).map(PathBuf::from)
-    }
-
     /// 書き出しのウィンドウで置き場を選んだ（Live Link の相手の文書なら、次からの既定にする）。
     pub fn note_export_dir(&mut self, dir: &std::path::Path) {
         if let Some(t) = self.link_target.as_mut() {
@@ -342,10 +335,7 @@ impl Default for LiveLink {
 
 impl Drop for LiveLink {
     fn drop(&mut self) {
-        self.watcher = None;
-        if let Some(f) = &self.folder {
-            let _ = f.remove_presence();
-        }
+        self.shutdown();
     }
 }
 
@@ -391,6 +381,14 @@ impl Drop for Watcher {
 }
 
 impl LiveLink {
+    /// 見張りを止め、起きている印を消す（落とすときと同じ。デストラクターを走らせずにプロセスを終えるとき、先にこれを呼ぶ）。
+    pub fn shutdown(&mut self) {
+        self.watcher = None;
+        if let Some(f) = &self.folder {
+            let _ = f.remove_presence();
+        }
+    }
+
     pub fn new() -> LiveLink {
         LiveLink {
             armed: false,
@@ -625,8 +623,8 @@ impl LiveLink {
     /// 文書が替わったので当てなかった頼みに、`declined` を返す。
     fn decline_replaced(&mut self, taken: &Taken, state: &mut AppState) {
         let text = state.lang.pick(
-            "Live Link: 文書が替わったので、開きませんでした。",
-            "Live Link: Not opened (the document was replaced).",
+            "Live Link: プロジェクトが替わったので、開きませんでした。",
+            "Live Link: Not opened (the project was replaced).",
         );
         self.decline(taken, text, state);
     }
@@ -1201,6 +1199,10 @@ impl LiveLink {
         });
         if first_install && !reopening {
             state.view3d.pose.focus = true;
+        }
+        if reopening {
+            // .ylp を開き直したモデル（ポーズも当てた後）で、焼いたマップを照合し直す
+            state.expect_reopen_check();
         }
         self.reply(&taken, ReplyKind::Opened, problems.clone());
         self.finish(&taken);

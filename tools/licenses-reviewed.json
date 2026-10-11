@@ -4876,6 +4876,466 @@
           "sha256": "fd80a26fbb3f644af1fa994134446702932968519797227e07a1368dea80f0bc"
         }
       ]
+    },
+    "accesskit_consumer@0.38.0": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "accesskit_macos@0.26.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
+    "bitflags@1.3.2": {
+      "declared": "MIT/Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+        }
+      ]
+    },
+    "block2@0.5.1": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/4fc083f1c6d6784577e38b0ee8dbd344481e2fd2/LICENSE.txt",
+          "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+        }
+      ]
+    },
+    "block2@0.6.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2.txt",
+          "sha256": "e733f9030438b4be5d6de470b06ac61dd12da99e0d43960a9bf2b6609f73203e"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/b4167b582b2f75f9a1be75495c41b765344fd03c/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "core-foundation-sys@0.8.7": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3"
+        }
+      ]
+    },
+    "core-foundation@0.9.4": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3"
+        }
+      ]
+    },
+    "core-graphics-types@0.1.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3"
+        }
+      ]
+    },
+    "core-graphics@0.23.2": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "62065228e42caebca7e7d7db1204cbb867033de5982ca4009928915e4095f3a3"
+        }
+      ]
+    },
+    "dispatch2@0.3.1": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-dispatch2.txt",
+          "sha256": "37e91e76b0629dddbd3014057bf51258dc9b3dc222aa7530e4b61e7c7820a4c0"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "dispatch@0.2.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-dispatch.txt",
+          "sha256": "19ad47d71affcc142c0d603fc55546727276ac7a86e1dace6e092a06f10c95b4"
+        },
+        {
+          "path": "Cargo.toml",
+          "sha256": "bd6cecbea33be54304d73d48e29182b4baff69695a25e68d7ac67ff3e69263a9"
+        }
+      ]
+    },
+    "fax@0.2.7": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "7101390b4c8edd752f4c0de47f35d61b44d9cf0ee8dd032115e25644e277cfff"
+        }
+      ]
+    },
+    "foreign-types-macros@0.2.4": {
+      "declared": "MIT/Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "333ea3aaa3cadb819f4acd9f9153f9feee060a995ca8710f32bc5bd9a4b91734"
+        }
+      ]
+    },
+    "foreign-types-shared@0.3.1": {
+      "declared": "MIT/Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "333ea3aaa3cadb819f4acd9f9153f9feee060a995ca8710f32bc5bd9a4b91734"
+        }
+      ]
+    },
+    "foreign-types@0.5.0": {
+      "declared": "MIT/Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "333ea3aaa3cadb819f4acd9f9153f9feee060a995ca8710f32bc5bd9a4b91734"
+        }
+      ]
+    },
+    "objc-sys@0.3.5": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/4fc083f1c6d6784577e38b0ee8dbd344481e2fd2/LICENSE.txt",
+          "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+        }
+      ]
+    },
+    "objc2-app-kit@0.2.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/e282618be4c3a3b9542957e0c8540e9588472ce8/LICENSE.txt",
+          "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+        }
+      ]
+    },
+    "objc2-app-kit@0.3.2": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2-frameworks.txt",
+          "sha256": "bb54888883a24585d7fd75a5dae90970936573d12cda5da0685aac588836026c"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "objc2-core-foundation@0.3.2": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2-frameworks.txt",
+          "sha256": "bb54888883a24585d7fd75a5dae90970936573d12cda5da0685aac588836026c"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "objc2-core-graphics@0.3.2": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2-frameworks.txt",
+          "sha256": "bb54888883a24585d7fd75a5dae90970936573d12cda5da0685aac588836026c"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "objc2-encode@4.1.0": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2.txt",
+          "sha256": "e733f9030438b4be5d6de470b06ac61dd12da99e0d43960a9bf2b6609f73203e"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "objc2-foundation@0.2.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/e282618be4c3a3b9542957e0c8540e9588472ce8/LICENSE.txt",
+          "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+        }
+      ]
+    },
+    "objc2-foundation@0.3.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2-frameworks.txt",
+          "sha256": "bb54888883a24585d7fd75a5dae90970936573d12cda5da0685aac588836026c"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "objc2-metal@0.3.2": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2-frameworks.txt",
+          "sha256": "bb54888883a24585d7fd75a5dae90970936573d12cda5da0685aac588836026c"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "objc2-quartz-core@0.3.2": {
+      "declared": "Zlib OR Apache-2.0 OR MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2-frameworks.txt",
+          "sha256": "bb54888883a24585d7fd75a5dae90970936573d12cda5da0685aac588836026c"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "objc2@0.5.2": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/4fc083f1c6d6784577e38b0ee8dbd344481e2fd2/LICENSE.txt",
+          "sha256": "e353f37b12aefbb9f9b29490e837cfee05d9bda70804b3562839a3285c1df1e5"
+        }
+      ]
+    },
+    "objc2@0.6.4": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "repo": "tools/license-texts/mit-objc2.txt",
+          "sha256": "e733f9030438b4be5d6de470b06ac61dd12da99e0d43960a9bf2b6609f73203e"
+        },
+        {
+          "url": "https://raw.githubusercontent.com/madsmtm/objc2/8852b424193ca41602281b3d7540d7c8ed51e49a/LICENSE.md",
+          "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54"
+        }
+      ]
+    },
+    "quick-error@2.0.1": {
+      "declared": "MIT/Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "058f01fe181608d027fcde7e528fc03ea3cf90f30903c407644b0a9bbc54f500"
+        }
+      ]
+    },
+    "raw-window-metal@1.1.0": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "f9c4c77baa3828004ee54b8a4f2db2e88ed44a6237a493965bf551fac0fcb62d"
+        }
+      ]
+    },
+    "tiff@0.11.3": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "20c097d0de27e2adc179140a3d542091951a030699c7e1c78655f2a2d08d4e3e"
+        }
+      ]
+    },
+    "weezl@0.1.12": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "573f5227db835cd30bbdd3aed3f82615f80119a4d5c82b4daf642dbfe2b6afde"
+        }
+      ]
+    },
+    "wgpu-core-deps-apple@30.0.1": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE.MIT",
+          "sha256": "dc0d97139e8205818c703741c7be7cb3b96888bd5917b8d6fc6133731e403c21"
+        }
+      ]
     }
   },
   "bundled": {
@@ -4899,13 +5359,21 @@
             "sha256": "3a1adc5c062064d4e6fe20df1368ffd52d6bf969d5e0ac90f4083da8cd5597b8"
           },
           {
+            "path": "crates/yolu-app/assets/fonts/BIZUDPGothic-Regular-Lines.ttf",
+            "sha256": "75f2740ab18211e3e79c3373c11e3e3b187389a9942d78f0fecb8cc08eb509a8"
+          },
+          {
+            "path": "crates/yolu-app/assets/fonts/BIZUDPGothic-Bold-Lines.ttf",
+            "sha256": "8287377180647c950182bb0d078e71753bf5a80fb06bdce9fa767d17499c1170"
+          },
+          {
             "path": "crates/yolu-app/assets/fonts/OFL.txt",
             "sha256": "e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc"
           }
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/fonts/THIRD-PARTY-NOTICES.md",
-          "sha256": "705e49df60df9b129b8bf5058e5040c0810be752c248fd60eeb97d935c544be7"
+          "sha256": "831d23e389627b8c47c2d1e9740ad98cfb1d42288bb5a69a9baa95d976edd00c"
         },
         "file_globs": [
           "crates/yolu-app/assets/fonts/*.ttf"
@@ -5101,6 +5569,10 @@
             "sha256": "6e049d4c63ad5a0a84bc62ae676454dcbc0418ffd30d381e4d8700e534b43ce2"
           },
           {
+            "path": "crates/yolu-app/assets/icons/more_horizontal.png",
+            "sha256": "4d66fd40e8eb5ada6ed4f7f13aac49198e3db0220dcca428ff9519de0c5e641b"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/opacity.png",
             "sha256": "4cb2d1fdd995afdd42bcfb0bc330d5ea9b1905819e29220be1947126dc7cb7c4"
           },
@@ -5163,6 +5635,14 @@
           {
             "path": "crates/yolu-app/assets/icons/shapes.png",
             "sha256": "889195d85b1f32cd9bc45e3d4eb4121302c325db395cf1e0eaf3baeb06778697"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/snap_ruler.png",
+            "sha256": "f68ffdebfb6f40b00e2ff2e256944933173289630e970b8adbdf93ec3e33671c"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/snap_special.png",
+            "sha256": "a62431520cef292fad9ade1d1265106983b29108731e1dc07f6fe379aff6f4f4"
           },
           {
             "path": "crates/yolu-app/assets/icons/square.png",
@@ -5289,6 +5769,14 @@
             "sha256": "c7a9e7c1c1a6dc8545c41e42c9a6822768a048c78cbd66eec415f0bf5cf96951"
           },
           {
+            "path": "crates/yolu-app/assets/icons/tools/ruler.png",
+            "sha256": "cee3a6e832312226ad235b3c4cbd6fce6dff5fe6055b75bffffe33c03078440f"
+          },
+          {
+            "path": "crates/yolu-app/assets/icons/tools/ruler_selected.png",
+            "sha256": "5e2312dbb45276b3a34581b17476a71e09de66d9268060327cfc75cbff3eb0e6"
+          },
+          {
             "path": "crates/yolu-app/assets/icons/tools/select-ellipse.png",
             "sha256": "6d1613754c8dc6b6292b2c961eb1e39025f18723cea11e91135958c45a015cf1"
           },
@@ -5378,7 +5866,7 @@
         ],
         "license_file": {
           "path": "crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md",
-          "sha256": "0ed43d6b46b4248f4d7be65c344dbfe1d4ff9a432b88cb2783908dd2a5ca9f83"
+          "sha256": "67ac446a0824fe992fc06695d6dd7c2f7c553184cf9ff1dd8bad74a78ceddf61"
         }
       },
       {
@@ -5739,6 +6227,8 @@
   "targets": [
     "x86_64-pc-windows-gnu",
     "x86_64-pc-windows-msvc",
-    "x86_64-unknown-linux-gnu"
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin"
   ]
 }

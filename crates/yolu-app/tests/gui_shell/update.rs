@@ -18,8 +18,8 @@ use yolu_app::update::{Mode, Preference, UpdateAction};
 use yolu_app::YoluApp;
 use yolu_update::{
     asset_name, asset_url, release_page, sha256, Asset, Envelope, Error, Manifest, Transport,
-    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, UPDATER_SCHEMA, UPDATER_URL, WINDOWS_ARCHIVE,
-    WINDOWS_INSTALLER,
+    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, MACOS_ARCHIVE, UPDATER_SCHEMA, UPDATER_URL,
+    WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
 const SEED: [u8; 32] = [42; 32];
@@ -125,7 +125,7 @@ fn public_key() -> [u8; 32] {
     disposable_key().verifying_key().to_bytes()
 }
 
-/// その版の、署名つきの更新情報（zip・インストーラー・tar.gz を載せる）。
+/// その版の、署名つきの更新情報（zip・インストーラー・tar.gz・macOS の zip を載せる）。
 fn signed_metadata(version: &str, installer: &[u8]) -> Vec<u8> {
     signed_metadata_without(version, installer, None)
 }
@@ -150,6 +150,7 @@ fn signed_metadata_without(version: &str, installer: &[u8], skip: Option<&str>) 
             (WINDOWS_ARCHIVE, &b"zip"[..]),
             (LINUX_ARCHIVE, &b"tar"[..]),
             (WINDOWS_INSTALLER, installer),
+            (MACOS_ARCHIVE, &b"mac"[..]),
         ]
         .into_iter()
         .filter(|(target, _)| Some(*target) != skip)
@@ -163,7 +164,7 @@ fn signed_metadata_without(version: &str, installer: &[u8], skip: Option<&str>) 
     serde_json::to_vec(&Envelope { payload, signature }).unwrap()
 }
 
-struct Rig {
+pub(crate) struct Rig {
     server: Arc<Server>,
     staging: TempDir,
     launched: Arc<Mutex<Vec<PathBuf>>>,
@@ -171,7 +172,7 @@ struct Rig {
 }
 
 /// 状態を「公開鍵つきのビルド・今は 0.1.0・サーバーは `served`」にする。
-fn rig(state: &mut AppState, served: &str, mode: Mode) -> Rig {
+pub(crate) fn rig(state: &mut AppState, served: &str, mode: Mode) -> Rig {
     let server = Arc::new(Server {
         metadata: Mutex::new(signed_metadata(served, INSTALLER)),
         beta_metadata: Mutex::new(None),
@@ -281,13 +282,31 @@ fn help_item(state: &AppState, label: &str) -> (bool, yolu_app::ui::menu::Check)
         .unwrap_or_else(|| panic!("{label} が無い: {:?}", help_labels(state)))
 }
 
+/// 設定のウィンドウの「更新」の区分の、起動時の確かめの印（値は更新の部品が持つ）。
+fn startup_check(state: &AppState) -> yolu_app::ui::menu::Check {
+    if state.update.preference() == Preference::On {
+        yolu_app::ui::menu::Check::Checked
+    } else {
+        yolu_app::ui::menu::Check::None
+    }
+}
+
+/// 同じく、試験版を使うの印。
+fn beta_check(state: &AppState) -> yolu_app::ui::menu::Check {
+    if state.update.beta() {
+        yolu_app::ui::menu::Check::Checked
+    } else {
+        yolu_app::ui::menu::Check::None
+    }
+}
+
 // ───────── 公開鍵が無いビルド ─────────
 
 #[test]
 fn headless_a_build_without_a_public_key_shows_nothing_and_sends_nothing() {
     let mut state = AppState::new(64, 64);
     assert!(!state.update.enabled());
-    // 更新の項目（更新・確認・自動確認）は出ない。ショートカット・ログのフォルダ・「について」は公開鍵の有無によらず出る
+    // 更新の項目（更新・確認）は出ない。ログのフォルダ・「について」は公開鍵の有無によらず出る
     let updates = shell::menu_entries(&state, shell::HELP_MENU)
         .iter()
         .filter(|e| {
@@ -303,11 +322,7 @@ fn headless_a_build_without_a_public_key_shows_nothing_and_sends_nothing() {
     assert_eq!(updates, 0, "{:?}", help_labels(&state));
     assert_eq!(
         help_labels(&state),
-        [
-            "ショートカット",
-            "ログのフォルダを開く",
-            "YoluPainter について"
-        ]
+        ["ログのフォルダを開く", "YoluPainter について"]
     );
     state.update_startup();
     assert!(!state.update.is_asking() && !state.update.window_open());
@@ -397,31 +412,22 @@ fn headless_yes_saves_the_choice_and_checks_at_every_later_startup() {
 }
 
 #[test]
-fn headless_the_startup_setting_can_be_switched_from_the_help_menu_later() {
+fn headless_the_startup_setting_can_be_switched_later() {
     let dir = TempDir::new("config");
     let mut state = AppState::new(64, 64);
     let rig = rig(&mut state, "0.2.0", Mode::Installer);
     state.update.attach_config(dir.0.join("update.conf"));
-    assert_eq!(
-        help_item(&state, "起動時に更新を確かめる").1,
-        yolu_app::ui::menu::Check::None
-    );
+    assert_eq!(startup_check(&state), yolu_app::ui::menu::Check::None);
     apply(&mut state, UpdateAction::SetCheckOnStartup(true));
     // 切り替えただけでは通信しない
     assert_eq!(rig.calls(), 0);
-    assert_eq!(
-        help_item(&state, "起動時に更新を確かめる").1,
-        yolu_app::ui::menu::Check::Checked
-    );
+    assert_eq!(startup_check(&state), yolu_app::ui::menu::Check::Checked);
     assert_eq!(
         std::fs::read_to_string(dir.0.join("update.conf")).unwrap(),
         "check_on_startup=on\n"
     );
     apply(&mut state, UpdateAction::SetCheckOnStartup(false));
-    assert_eq!(
-        help_item(&state, "起動時に更新を確かめる").1,
-        yolu_app::ui::menu::Check::None
-    );
+    assert_eq!(startup_check(&state), yolu_app::ui::menu::Check::None);
     assert_eq!(
         std::fs::read_to_string(dir.0.join("update.conf")).unwrap(),
         "check_on_startup=off\n"
@@ -552,8 +558,6 @@ fn offered(state: &AppState) -> Option<String> {
     state.update.offer().map(|o| o.version.to_string())
 }
 
-const BETA_ITEM: &str = "試験版を使う";
-
 #[test]
 fn headless_the_beta_setting_is_off_by_default_and_an_old_settings_file_reads_as_before() {
     let dir = TempDir::new("beta-default");
@@ -565,10 +569,7 @@ fn headless_the_beta_setting_is_off_by_default_and_an_old_settings_file_reads_as
     state.update.attach_config(dir.0.join("update.conf"));
     assert_eq!(state.update.preference(), Preference::On);
     assert!(!state.update.beta());
-    assert_eq!(
-        help_item(&state, BETA_ITEM).1,
-        yolu_app::ui::menu::Check::None
-    );
+    assert_eq!(beta_check(&state), yolu_app::ui::menu::Check::None);
     // 試験版が置いてあっても、切のうちは stable の置き場だけを見る
     state.update_startup();
     settle(&mut state);
@@ -599,10 +600,7 @@ fn headless_the_beta_setting_offers_the_newer_of_beta_and_stable_and_off_goes_ba
     apply(&mut state, UpdateAction::SetBeta(true));
     assert_eq!(rig.calls(), 1);
     assert_eq!(offered(&state).as_deref(), Some("0.2.0"));
-    assert_eq!(
-        help_item(&state, BETA_ITEM).1,
-        yolu_app::ui::menu::Check::Checked
-    );
+    assert_eq!(beta_check(&state), yolu_app::ui::menu::Check::Checked);
     // 入: stable と試験版の新しい方（試験版 0.3.0-rc.1）。両方の置き場を見る
     check_now(&mut state);
     assert_eq!(asked(&rig)[1..], [UPDATER_URL, BETA_UPDATER_URL]);
@@ -621,10 +619,7 @@ fn headless_the_beta_setting_offers_the_newer_of_beta_and_stable_and_off_goes_ba
     let before = rig.calls();
     apply(&mut state, UpdateAction::SetBeta(false));
     assert!(state.update.offer().is_none());
-    assert_eq!(
-        help_item(&state, BETA_ITEM).1,
-        yolu_app::ui::menu::Check::None
-    );
+    assert_eq!(beta_check(&state), yolu_app::ui::menu::Check::None);
     assert!(help_labels(&state)[0].starts_with("更新を確かめる"));
     assert_eq!(rig.calls(), before);
     check_now(&mut state);
@@ -686,10 +681,7 @@ fn headless_the_beta_setting_is_saved_beside_the_startup_choice_and_read_back() 
     next.update.attach_config(file.clone());
     assert!(next.update.beta());
     assert_eq!(next.update.preference(), Preference::On);
-    assert_eq!(
-        help_item(&next, BETA_ITEM).1,
-        yolu_app::ui::menu::Check::Checked
-    );
+    assert_eq!(beta_check(&next), yolu_app::ui::menu::Check::Checked);
     // 切にすると、旧い版と同じ 1 行になる
     apply(&mut state, UpdateAction::SetBeta(false));
     assert_eq!(
@@ -929,45 +921,85 @@ fn headless_the_failure_reason_comes_from_stable_not_from_the_beta_place() {
     assert!(state.update.offer().is_none());
 }
 
+/// 設定のウィンドウの「更新」の区分（公開鍵を組み込んだビルドだけ）に、起動時の確かめと試験版を使うの行があり、押すと更新の部品の値が変わって
+/// 設定が書かれる（日英。試験版の行にはツールチップ）。ヘルプのメニューからは外してある。公開鍵の無いビルドには区分そのものが出ない。
 #[test]
-fn headless_the_help_menu_has_the_beta_item_with_a_tooltip_in_both_languages() {
-    let mut state = AppState::new(64, 64);
-    let _rig = rig(&mut state, "0.2.0", Mode::Installer);
-    for (lang, label, startup) in [
-        (Lang::Ja, BETA_ITEM, "起動時に更新を確かめる"),
-        (
-            Lang::En,
-            "Use Beta Versions",
-            "Check for Updates at Startup",
-        ),
-    ] {
-        state.lang = lang;
-        let labels = help_labels(&state);
-        let at = |name: &str| {
-            labels
-                .iter()
-                .position(|l| l == name)
-                .unwrap_or_else(|| panic!("{name}: {labels:?}"))
-        };
-        assert_eq!(
-            at(label),
-            at(startup) + 1,
-            "起動時の確かめのすぐ下: {labels:?}"
+fn the_updates_category_has_the_startup_and_beta_rows_and_the_help_menu_does_not() {
+    use egui_kittest::kittest::Queryable;
+    use yolu_app::prefs::{Category, PrefsAction};
+    for lang in Lang::ALL {
+        let dir = TempDir::new("updates-category");
+        let mut h = app(1280.0, 800.0, 64);
+        let _rig = rig(&mut h.state_mut().state, "0.2.0", Mode::Installer);
+        h.state_mut()
+            .state
+            .update
+            .attach_config(dir.0.join("update.conf"));
+        h.state_mut().state.lang = lang;
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::OpenAt(Category::Updates)));
+        h.run();
+        let (startup, beta) = (
+            lang.pick("起動時に更新を確かめる", "Check for Updates at Startup"),
+            lang.pick("試験版を使う", "Use Beta Versions"),
         );
-        let tip = shell::menu_entries(&state, shell::HELP_MENU)
-            .into_iter()
-            .find_map(|e| match e {
-                yolu_app::ui::menu::Entry::Item {
-                    label: l, tooltip, ..
-                } if l == label => tooltip,
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("{label} に説明が無い"));
-        assert!(!tip.is_empty());
-        // 試験版の項目を、公開鍵の無いビルドへ出さない
+        let role = egui::accesskit::Role::CheckBox;
+        let toggled = |h: &egui_kittest::Harness<'static, yolu_app::YoluApp>, label: &str| {
+            use egui_kittest::kittest::NodeT;
+            format!(
+                "{:?}",
+                h.get_by_role_and_label(role, label)
+                    .accesskit_node()
+                    .toggled()
+            ) == "Some(True)"
+        };
+        // 行の順: 起動時の確かめの下に試験版
+        let (a, b) = (
+            h.get_by_role_and_label(role, startup).rect(),
+            h.get_by_role_and_label(role, beta).rect(),
+        );
+        assert!(
+            b.top() > a.bottom() - 1.0 && b.top() < a.bottom() + 30.0,
+            "{lang:?}: {a:?} {b:?}"
+        );
+        assert!(
+            !toggled(&h, startup) && !toggled(&h, beta),
+            "{lang:?}: 既定は切"
+        );
+        h.get_by_role_and_label(role, startup).click();
+        h.run();
+        assert_eq!(h.state().state.update.preference(), Preference::On);
+        assert!(toggled(&h, startup));
+        h.get_by_role_and_label(role, beta).click();
+        h.run();
+        assert!(h.state().state.update.beta());
+        assert!(toggled(&h, beta));
+        let written = std::fs::read_to_string(dir.0.join("update.conf")).unwrap();
+        assert!(written.contains("check_on_startup=on"), "{written}");
+        assert!(written.contains("use_beta=on"), "{written}");
+        // 試験版の行にはツールチップ（日英どちらでも、もう一方の言語の文字を含まない）
+        let beta_rect = h.get_by_role_and_label(role, beta).rect();
+        move_to(&h, beta_rect.center() + egui::vec2(0.0, 200.0));
+        h.run();
+        hover_and_wait(&mut h, beta_rect.center());
+        let tip = lang.pick("正式版より前の試験版", "Also offers beta versions");
+        assert!(
+            h.query_by_label_contains(tip).is_some(),
+            "{lang:?}: ツールチップが無い"
+        );
+        // ヘルプのメニューには、もう 2 つとも無い
+        let help: Vec<String> = help_labels(&h.state().state);
+        assert!(
+            !help.iter().any(|l| l == startup || l == beta),
+            "{lang:?}: {help:?}"
+        );
+        // 公開鍵の無いビルドには、区分そのものが出ない
         let mut plain = AppState::new(64, 64);
         plain.lang = lang;
-        assert!(!help_labels(&plain).iter().any(|l| l == label));
+        assert!(!Category::Updates.available(&plain));
+        assert!(Category::Updates.items(&plain).is_empty());
+        assert!(Category::Updates.available(&h.state().state));
     }
 }
 
@@ -1621,6 +1653,44 @@ fn headless_where_it_cannot_replace_itself_it_only_opens_the_release_page() {
         state.message.contains("リリースのページを開きました"),
         "{}",
         state.message
+    );
+}
+
+#[test]
+fn headless_macos_announces_the_new_version_and_opens_the_page_without_downloading() {
+    let mut state = AppState::new(64, 64);
+    let rig = rig(&mut state, "0.2.0", Mode::Page);
+    // mac のアプリが探す鍵（universal の配布物）で確かめる
+    state
+        .update
+        .configure_for_test(Some(public_key()), "0.1.0", Some(MACOS_ARCHIVE), Mode::Page);
+    find_update(&mut state);
+    assert_eq!(state.update.mode(), Mode::Page);
+    assert_eq!(help_labels(&state)[0], "YoluPainter 0.2.0 のリリースを開く");
+    state.lang = Lang::En;
+    assert_eq!(help_labels(&state)[0], "Open the YoluPainter 0.2.0 release");
+    apply(&mut state, UpdateAction::Install);
+    // 落とさず・走らせず・置き場も使わず、その版のページを開く（更新情報の 1 回の取得だけ）
+    assert_eq!(
+        *rig.opened.lock().unwrap(),
+        [release_page(&Version::new(0, 2, 0))]
+    );
+    assert_eq!(rig.calls(), 1);
+    assert!(rig.launched().is_empty() && rig.staging.files().is_empty());
+    assert!(state.update.ready().is_none() && !state.update.is_ready_open() && !state.quit);
+    assert_eq!(
+        state.update.offer().map(|offer| offer.version.clone()),
+        Some(Version::new(0, 2, 0))
+    );
+    // その版が mac の配布物を載せていなければ、検証の失敗ではなく「この環境向けの配布物がありません」
+    *rig.server.metadata.lock().unwrap() =
+        signed_metadata_without("0.3.0", INSTALLER, Some(MACOS_ARCHIVE));
+    state.lang = Lang::Ja;
+    apply(&mut state, UpdateAction::Check);
+    settle(&mut state);
+    assert_eq!(
+        state.message,
+        "更新を確かめられません（この環境向けの配布物がありません）。"
     );
 }
 

@@ -8,6 +8,7 @@
 mod comp2d_support;
 
 mod adjust_kinds;
+mod anti_alias;
 mod batch;
 mod bundle_layout;
 mod channels;
@@ -21,6 +22,7 @@ mod layers;
 mod merge_compare;
 mod nesting;
 mod ramp_mixing;
+mod rulers;
 mod selection;
 mod simd_document;
 mod text_layer;

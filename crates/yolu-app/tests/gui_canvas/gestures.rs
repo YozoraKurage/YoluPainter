@@ -346,7 +346,8 @@ fn a_press_on_the_dock_separator_that_reaches_into_the_canvas_does_not_paint() {
     for emulate in [None, Some(Emulate::Yes)] {
         let mut h = app(1280.0, 800.0, 256);
         let r = canvas_rect(&h);
-        let edge = pos2(r.right() - 1.0, r.center().y);
+        // 分け目の掴める幅（食い込み）は、端から 1 点に満たない（分け目の位置の端数で、1 点では外れることがある）
+        let edge = pos2(r.right() - 0.5, r.center().y);
         match emulate {
             None => {
                 press(&h, edge, PointerButton::Primary);
@@ -516,7 +517,7 @@ fn a_modifier_pressed_after_the_stroke_began_does_not_stop_it_and_one_released_d
 }
 
 #[test]
-fn the_pen_pans_with_space_and_rotates_with_r_like_the_mouse() {
+fn the_pen_pans_with_space_and_rotates_with_alt_in_steps_like_the_mouse() {
     for emulate in [Emulate::No, Emulate::Yes] {
         let mut h = app(1280.0, 800.0, 256);
         let c = canvas_rect(&h).center();
@@ -535,29 +536,45 @@ fn the_pen_pans_with_space_and_rotates_with_r_like_the_mouse() {
             emulate == Emulate::Yes
         );
         nothing_started(&h);
-        // R を押しながらは表示の回転
+        // 押しの始めに Alt を持っていれば表示の回転（描かない）。15° 刻みが既定
+        h.state_mut().state.view.fit();
+        let before = view_of(&h).angle;
+        hold(&mut h, Modifiers::ALT);
+        let center = canvas_rect(&h).center();
+        let start = offset(center, 100.0, 0.0);
+        let path = [
+            start,
+            offset(center, 90.0, 40.0),
+            offset(center, 70.0, 70.0),
+            offset(center, 20.0, 100.0),
+        ];
+        pen.drag(&mut h, &path);
+        let stepped = view_of(&h).angle;
+        assert_ne!(stepped, before, "回った {}", emulate == Emulate::Yes);
+        assert!(
+            (stepped / 15.0 - (stepped / 15.0).round()).abs() < 1e-3,
+            "15° の倍数: {stepped}"
+        );
+        nothing_started(&h);
+        // Shift も押していれば自由
+        h.state_mut().state.view.fit();
+        hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
+        pen.drag(&mut h, &path);
+        let free = view_of(&h).angle;
+        assert!(
+            (free / 15.0 - (free / 15.0).round()).abs() > 1e-2,
+            "自由な角度: {free}"
+        );
+        release_mods(&mut h);
+        nothing_started(&h);
+        // R を押しながらは、もう回さない（描く）
         h.state_mut().state.view.fit();
         let before = view_of(&h).angle;
         hold_key(&mut h, Key::R);
-        let center = canvas_rect(&h).center();
-        let start = offset(center, 100.0, 0.0);
-        pen.drag(
-            &mut h,
-            &[
-                start,
-                offset(center, 90.0, 40.0),
-                offset(center, 70.0, 70.0),
-                offset(center, 0.0, 100.0),
-            ],
-        );
+        pen.drag(&mut h, &path);
         release_key(&mut h, Key::R);
-        assert_ne!(
-            view_of(&h).angle,
-            before,
-            "回った {}",
-            emulate == Emulate::Yes
-        );
-        nothing_started(&h);
+        assert_eq!(view_of(&h).angle, before, "R では回らない");
+        assert_eq!(strokes(&h), 1, "R を押していても描く");
     }
 }
 
@@ -626,6 +643,43 @@ fn the_pen_with_ctrl_and_space_zooms_by_dragging_and_by_clicking() {
             h.state().state.canvas.zooming.is_none() && h.state().state.canvas.pen_press.is_none()
         );
     }
+}
+
+/// Ctrl+Space のペンの拡縮のクリック（動かさずに離す）は、離しの操作。OS に押しを奪われて補った離しでは出さない（マウスの取りこぼしと同じ）。本物の離しは拡大する。
+#[test]
+fn a_taken_pen_press_does_not_zoom_like_a_click_but_a_real_release_does() {
+    let mut h = app(1280.0, 800.0, 256);
+    let c = canvas_rect(&h).center();
+    let pen = Pen::tip().emulated();
+    hold(&mut h, Modifiers::CTRL);
+    hold_key(&mut h, Key::Space);
+    let anchor = offset(c, 100.0, 40.0);
+    let near = offset(anchor, 1.0, 0.0);
+    pen.down(&mut h, anchor);
+    pen.to(&mut h, near);
+    h.state().pen().push_lost(sample(near, false, false, false));
+    let modifiers = current_modifiers(&h);
+    h.input_mut().events.push(Event::PointerButton {
+        pos: near,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers,
+    });
+    h.step();
+    assert_eq!(
+        view_of(&h).zoom,
+        1.0,
+        "補った離しではクリックの拡縮をしない"
+    );
+    assert!(
+        h.state().state.canvas.zooming.is_none() && h.state().state.canvas.pen_press.is_none(),
+        "押しの途中は残らない"
+    );
+    // 本物の離しは、同じ操作で 2 倍にする
+    pen.drag(&mut h, &[anchor, near]);
+    assert_eq!(view_of(&h).zoom, 2.0, "クリックで 2 倍");
+    release_key(&mut h, Key::Space);
+    release_mods(&mut h);
 }
 
 #[test]
@@ -868,7 +922,7 @@ fn the_pen_tip_paints_the_surface_and_the_side_button_orbits_it() {
 }
 
 #[test]
-fn the_pen_with_the_side_button_and_shift_pans() {
+fn the_pen_with_the_side_button_and_shift_orbits_and_no_longer_pans() {
     let (mut h, rect) = cube_view();
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     let before = camera(&h);
@@ -876,13 +930,13 @@ fn the_pen_with_the_side_button_and_shift_pans() {
     Pen::barrel().drag(&mut h, &[at, offset(at, 30.0, 0.0), offset(at, 60.0, 10.0)]);
     release_mods(&mut h);
     let after = camera(&h);
-    assert_ne!(after.target, before.target, "Shift でパン");
-    assert_eq!(after.yaw, before.yaw, "回さない");
+    assert_eq!(after.target, before.target, "Shift でもパンしない");
+    assert_ne!(after.yaw, before.yaw, "回す");
     assert_eq!(strokes(&h), 0);
 }
 
 #[test]
-fn the_pen_with_alt_orbits_and_with_alt_shift_pans_like_the_mouse() {
+fn the_pen_with_alt_snap_orbits_and_alt_shift_no_longer_pans_like_the_mouse() {
     for emulate in [Emulate::No, Emulate::Yes] {
         let (mut h, rect) = cube_view();
         let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
@@ -897,12 +951,12 @@ fn the_pen_with_alt_orbits_and_with_alt_shift_pans_like_the_mouse() {
         let after = camera(&h);
         assert!(
             (after.yaw - (before.yaw + 50.0 * 0.35)).abs() < 1e-3,
-            "Alt + ペンで回す（二重に回らない）{} {}",
+            "Alt + ペンで回す（二重に回らない。軸から離れていれば吸い付かない）{} {}",
             before.yaw,
             after.yaw
         );
         assert_eq!(strokes(&h), 0, "描かない");
-        // Alt + Shift: パン
+        // Alt + Shift: パンしない（回す）
         let before = camera(&h);
         hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
         Pen {
@@ -911,7 +965,8 @@ fn the_pen_with_alt_orbits_and_with_alt_shift_pans_like_the_mouse() {
         }
         .drag(&mut h, &[at, offset(at, 30.0, 0.0)]);
         release_mods(&mut h);
-        assert_ne!(camera(&h).target, before.target);
+        assert_eq!(camera(&h).target, before.target);
+        assert_ne!(camera(&h).yaw, before.yaw);
         assert_eq!(strokes(&h), 0);
         // マウスの Alt + 左ドラッグも同じ量（ペンとマウスは同じ決まり）
         let before = camera(&h);
@@ -1001,13 +1056,12 @@ fn ctrl_and_space_dolly_the_3d_view_for_the_pen_and_the_mouse() {
 }
 
 #[test]
-fn the_pen_never_paints_the_surface_with_shift_or_ctrl_or_the_side_button_or_an_eraser_modifier() {
+fn the_pen_never_paints_the_surface_with_ctrl_or_the_side_button() {
     let (mut h, rect) = cube_view();
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     for (m, pen) in [
-        (Modifiers::SHIFT, Pen::tip()),
         (Modifiers::CTRL, Pen::tip()),
-        (Modifiers::SHIFT, Pen::eraser()),
+        (Modifiers::CTRL, Pen::eraser()),
         (Modifiers::NONE, Pen::barrel()),
     ] {
         hold(&mut h, m);
@@ -1282,10 +1336,7 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
         h.run();
         assert!(h.state().state.view3d.visible);
         h.state_mut().state.m2.brush.effect = normal;
-        assert!(
-            h.state().state.view3d.clone.source.is_none(),
-            "元は決まっていない"
-        );
+        assert!(h.state().state.clone.source.is_none(), "元は決まっていない");
         assert!(h.state().state.view3d.input.clone_press.is_none());
         // 次に触れた押しは、新しい押しとして描ける
         pen.drag(&mut h, &[at, offset(at, 6.0, 0.0)]);

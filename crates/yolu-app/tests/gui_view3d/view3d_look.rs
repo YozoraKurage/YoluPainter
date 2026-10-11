@@ -85,6 +85,7 @@ fn look_at(h: &mut Harness<'_, YoluApp>, target: Vec3, distance: f32, yaw: f32, 
         pitch,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     };
     h.run();
 }
@@ -1363,8 +1364,12 @@ fn the_studio_environment_reflects_off_metal_and_rotates() {
     op(&mut h, Op::LightIntensity(0.0));
     let area = h.state().view3d_rect().unwrap();
     let c = area.center();
-    // 右上の隅のアイコンの列（白いアイコン）は、映り込みの測定に入れない
-    let scene = egui::Rect::from_min_max(egui::pos2(area.left(), area.top() + 44.0), area.max);
+    // 右上の隅のアイコンの列（白いアイコン）と、その下の軸の印は、映り込みの測定に入れない
+    let axes = view3d_axes_rect(&h).expect("軸の印");
+    let scene = egui::Rect::from_min_max(
+        egui::pos2(area.left(), area.top() + 44.0),
+        egui::pos2(axes.left(), area.bottom()),
+    );
     let (before, peak) = highlight(&h.render().unwrap(), scene);
     assert!(peak > 120.0, "つるつるの金属は面光源を映す: {peak}");
     // 正面の右上の面光源（方位 150°・高さ 40°）は、球の右上に映る

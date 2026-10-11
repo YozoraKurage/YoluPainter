@@ -104,6 +104,19 @@ pub fn lock_name(lang: Lang, flag: LayerLocks) -> &'static str {
     }
 }
 
+/// メニューの項目名（見出しが無いので、何をするかを言い切る「〜をロック」。プロパティの「ロック」の行などは、種類の名前だけの `lock_name`）。
+pub fn menu_lock_name(lang: Lang, flag: LayerLocks) -> &'static str {
+    if flag == LayerLocks::TRANSPARENCY {
+        lang.pick("透明部分をロック", "Lock Transparent Pixels")
+    } else if flag == LayerLocks::PIXELS {
+        lang.pick("画素をロック", "Lock Image Pixels")
+    } else if flag == LayerLocks::POSITION {
+        lang.pick("位置をロック", "Lock Position")
+    } else {
+        lang.pick("すべてをロック", "Lock All")
+    }
+}
+
 /// 効いているロックの個別の種類の名前（すべてを除く。すべては個別の 3 種を含んで効く）。
 pub fn lock_names(lang: Lang, locks: LayerLocks) -> Vec<&'static str> {
     LOCK_FLAGS[..3]

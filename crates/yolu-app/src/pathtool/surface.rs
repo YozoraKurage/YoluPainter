@@ -6,7 +6,7 @@
 //! パスが別のモデルで描かれている（指紋が違う）あいだは出さず、編集もしない。
 
 use egui::{CursorIcon, Painter, Pos2, Rect};
-use yolu_core::geometry::{pick, CameraView, Ray, SurfaceGeometry};
+use yolu_core::geometry::{pick, CameraView, SurfaceGeometry};
 use yolu_core::glam::{DMat3, DVec3, Mat4, Vec2, Vec3, Vec4};
 use yolu_core::paths::{point_position, SurfacePath};
 use yolu_core::LayerPath;
@@ -36,6 +36,8 @@ struct Projector {
     rect: Rect,
     width: f32,
     height: f32,
+    /// 正投影（近い面より手前の点は写さない。`CameraView::to_screen` と同じ）。
+    orthographic: bool,
 }
 
 impl Projector {
@@ -45,12 +47,14 @@ impl Projector {
             rect,
             width: view.width,
             height: view.height,
+            orthographic: view.is_orthographic(),
         }
     }
 
     fn project(&self, world: Vec3) -> Option<Pos2> {
         let clip = self.vp * Vec4::new(world.x, world.y, world.z, 1.0);
-        if clip.w <= 1e-12 {
+        // 正投影の切り取りの深度は、近い面で 0（その手前は負）
+        if clip.w <= 1e-12 || (self.orthographic && clip.z < 0.0) {
             return None;
         }
         let (x, y) = (clip.x / clip.w, clip.y / clip.w);
@@ -113,18 +117,14 @@ fn occluded(app: &AppState, view: &CameraView, positions: &[Option<Vec3>]) -> Ve
         .iter()
         .map(|p| {
             let Some(p) = p else { return false };
-            let to = *p - view.position;
-            let dist = to.length();
+            let sight = view.sight(*p);
+            let dist = sight.distance;
             if dist < 1e-6 {
                 return false;
             }
             shown
                 .geometry
-                .raycast(
-                    Ray::new(view.position, to),
-                    true,
-                    dist - dist * 0.003 - scale * 1e-4,
-                )
+                .raycast(sight.ray(), true, dist - dist * 0.003 - scale * 1e-4)
                 .is_some()
         })
         .collect()

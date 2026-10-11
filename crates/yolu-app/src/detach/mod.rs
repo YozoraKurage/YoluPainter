@@ -6,7 +6,7 @@
 //!
 //! 出し方: タブの右クリックの「別ウィンドウで開く」、タブをウィンドウの外で離す、egui_dock のウィンドウの落とし先（組の中ほど）で離す。戻し方: 別ウィンドウのタブを
 //! アプリのウィンドウの中で離す（その点の下の組へ）、右クリックの「ドックに戻す」、OS のウィンドウを閉じる（中のタブを全部、戻る先の組へ）。
-//! 戻る先は、出したときに同じ組にいたタブの組（`OsWindow::home`）、それが無ければ既定の並びでいた組、それも無ければメインウィンドウの右の組。
+//! 戻る先は、出したときに同じ組にいたタブの組（`OsWindow::home`）、それが無ければ既定の並びでいた組、1 枚だけの組だったタブは既定の並びの隣のタブの組を分けた新しい組、それも無ければメインウィンドウの右の組。
 //!
 //! ここは並びの操作（どのウィンドウのどの組にどのタブがあるか）と置き場所の計算だけで、描くのは `app` の `detached`。
 
@@ -18,7 +18,7 @@ pub mod place;
 use std::collections::HashMap;
 
 use egui::{Pos2, Rect, ViewportId};
-use egui_dock::{DockState, Node, NodeIndex, SurfaceIndex, TabIndex, Tree};
+use egui_dock::{DockState, Node, NodeIndex, Split, SurfaceIndex, TabIndex, Tree};
 
 use crate::layout::FloatRecord;
 use crate::pen::PenInput;
@@ -42,6 +42,8 @@ pub enum DockOp {
     Return(Tab),
     /// パネルを前に出す（タブを選び、別ウィンドウにあればそのウィンドウを前へ。どこにも無ければ、既定の並びでいた組へ開く）。
     Show(Tab),
+    /// パネルを閉じる（メインウィンドウからも別ウィンドウからも外す。`layout::HIDEABLE` のタブだけ。空になった別ウィンドウは消える）。
+    Hide(Tab),
 }
 
 /// 画面のメニューが読む、タブのありか（毎フレーム `YoluApp` が入れる）。
@@ -97,19 +99,28 @@ pub struct OsWindow {
     pub(crate) resolved: Option<Resolved>,
     /// 最後のフレームのタブの見出しの矩形（試験用。このウィンドウの点）。
     pub tab_rects: HashMap<Tab, Rect>,
-    /// このウィンドウのペンの点（Windows Ink をウィンドウに繋いだら入る。位置はこのウィンドウの内側の画素）。
+    /// このウィンドウのペンの点（Windows Ink、または macOS のタブレットをウィンドウに繋いだら入る。位置はこのウィンドウの内側の画素）。
     pub(crate) pen: PenInput,
     /// 見つけた OS のウィンドウ（Windows の HWND の値。持ち主とペンを繋いだウィンドウ）。
     #[cfg(windows)]
     pub(crate) hwnd: Option<isize>,
-    /// OS のウィンドウを探した回数（Windows。上限で諦める）。
-    #[cfg(windows)]
+    /// OS のウィンドウを探した回数（Windows と macOS。上限で諦める。macOS は題名が変わったら 0 に戻す）。
+    #[cfg(any(windows, target_os = "macos"))]
     pub(crate) attach_tries: u32,
+    /// OS のウィンドウを探したときの、ビューポートの題名（macOS。題名が変わったら探し直す）。
+    #[cfg(target_os = "macos")]
+    pub(crate) attach_title: String,
     /// このウィンドウで描いた、落としたファイルの行き先。
     pub(crate) drops: DropRects,
 }
 
 impl OsWindow {
+    /// 試験用: このウィンドウのペンの受け口の、ウィンドウをアプリの側で動かす手を差し替える（None は手が無い受け口。Windows 以外と同じ）。
+    #[doc(hidden)]
+    pub fn set_pen_mover(&mut self, mover: Option<std::sync::Arc<dyn crate::pen::WindowMover>>) {
+        self.pen = self.pen.clone().with_mover(mover);
+    }
+
     /// このウィンドウの viewport。
     pub fn viewport_id(&self) -> ViewportId {
         viewport_of(self.serial)
@@ -197,8 +208,10 @@ impl Detached {
             pen: PenInput::detached(),
             #[cfg(windows)]
             hwnd: None,
-            #[cfg(windows)]
+            #[cfg(any(windows, target_os = "macos"))]
             attach_tries: 0,
+            #[cfg(target_os = "macos")]
+            attach_title: String::new(),
             drops: DropRects::default(),
         });
         serial
@@ -364,6 +377,12 @@ impl Detached {
         None
     }
 
+    /// パネルを閉じる: メインウィンドウからも別ウィンドウからも外す（空になった別ウィンドウは消す）。閉じられるのは `layout::HIDEABLE` のタブだけ（違えば false）。
+    /// どこにも無いタブも false。
+    pub fn hide(&mut self, main: &mut DockState<Tab>, tab: Tab) -> bool {
+        crate::layout::HIDEABLE.contains(&tab) && self.take(main, tab).is_some()
+    }
+
     /// 別ウィンドウを全部閉じる（並びを既定へ戻すとき。タブは呼ぶ側が既定の並びで持つ）。
     pub fn clear(&mut self) {
         self.windows.clear();
@@ -383,30 +402,86 @@ pub fn leaf_at(dock: &DockState<Tab>, at: Pos2) -> Option<NodeIndex> {
         })
 }
 
-/// 既定の並びで、タブと同じ組にいたタブ（自分を除く、並びの順）。
+/// 既定の並びで、タブと同じ組にいたタブ（自分を除く、並びの順）。1 つだけの組にいたタブは、上の組のタブ（ツールプロパティとブラシサイズは、縦に並んだ
+/// サブツールの組）。
 pub fn default_mates(tab: Tab) -> Vec<Tab> {
+    // 既定では閉じているナビゲーターは、開くとテクスチャセットの組へ（前の既定の並びの組）
+    if tab == Tab::Navigator {
+        return vec![Tab::TextureSets];
+    }
     let dock = crate::app::default_dock();
     let Some(path) = dock.find_tab(&tab) else {
         // 既定の並びに無いタブ（ポーズ）は、レイヤーの組へ（`panels::pose::ensure_tab` と同じ）
         return vec![Tab::Layers];
     };
-    dock.leaf(path.node_path())
+    let mates: Vec<Tab> = dock
+        .leaf(path.node_path())
         .map(|leaf| leaf.tabs.iter().copied().filter(|t| *t != tab).collect())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if !mates.is_empty() {
+        return mates;
+    }
+    match tab {
+        Tab::ToolProperties | Tab::BrushSize => vec![Tab::SubTools],
+        _ => mates,
+    }
 }
 
-/// タブを `dock` の主の面へ入れて前にする: `at` の下の組 → 戻る先 `home` のタブの組 → 既定の並びで同じ組だったタブの組 → 右の組（最後に描いた
-/// 組の矩形で右端。まだ描いていなければ最初の組）。主の面が空なら、新しい組を作る。
+/// 既定の並びで 1 枚だけの組だったタブ（3D ビュー・キャンバス・サブツール）を、組を作り直して戻すときの分け方: 既定の並びで隣にいたタブ（`dock` の
+/// 主の面にあるもののうち、先に挙げたもの）と、そのタブの組を分ける向き、新しい組（左・上の子）の取り分。向きと取り分は `app::default_dock_for` と同じ定数。
+/// - 3D ビュー: キャンバスの組の左へ。
+/// - キャンバス: 3D ビューの組の右へ（取り分は左の子の 3D ビューのもの）。
+/// - サブツール: ツールプロパティの組の上へ（無ければブラシサイズ、それも無ければカラーの上へ）。
+pub fn default_split(dock: &DockState<Tab>, tab: Tab) -> Option<(Tab, Split, f32)> {
+    use crate::app::{
+        CENTER_VIEW3D, LEFT_BRUSH_SIZE, LEFT_COLOR, LEFT_SUB_TOOLS, LEFT_TOOL_PROPERTIES,
+    };
+    let candidates: Vec<(Tab, Split, f32)> = match tab {
+        Tab::View3d => vec![(Tab::Canvas, Split::Left, CENTER_VIEW3D)],
+        Tab::Canvas => vec![(Tab::View3d, Split::Right, CENTER_VIEW3D)],
+        Tab::SubTools => [
+            (Tab::ToolProperties, LEFT_TOOL_PROPERTIES),
+            (Tab::BrushSize, LEFT_BRUSH_SIZE),
+            (Tab::Color, LEFT_COLOR),
+        ]
+        .into_iter()
+        .map(|(neighbor, share)| {
+            (
+                neighbor,
+                Split::Above,
+                LEFT_SUB_TOOLS / (LEFT_SUB_TOOLS + share),
+            )
+        })
+        .collect(),
+        _ => Vec::new(),
+    };
+    candidates
+        .into_iter()
+        .find(|(neighbor, _, _)| dock.find_main_surface_tab(neighbor).is_some())
+}
+
+/// タブを `dock` の主の面へ入れて前にする: `at` の下の組 → 戻る先 `home` のタブの組 → 既定の並びで同じ組だったタブの組 → 既定の並びで隣にいたタブの組を
+/// 分けて自分の組を作り直す（`default_split`）→ 右の組（最後に描いた組の矩形で右端。まだ描いていなければ最初の組）。主の面が空なら、新しい組を作る。
 pub fn dock_into(dock: &mut DockState<Tab>, tab: Tab, home: &[Tab], at: Option<Pos2>) {
     let surface = SurfaceIndex::main();
-    let target = at
-        .and_then(|p| leaf_at(dock, p))
-        .or_else(|| {
-            home.iter()
-                .chain(default_mates(tab).iter())
-                .find_map(|t| dock.find_main_surface_tab(t).map(|(node, _)| node))
-        })
-        .or_else(|| rightmost_leaf(dock.main_surface()));
+    let target = at.and_then(|p| leaf_at(dock, p)).or_else(|| {
+        home.iter()
+            .chain(default_mates(tab).iter())
+            .find_map(|t| dock.find_main_surface_tab(t).map(|(node, _)| node))
+    });
+    let target = match target {
+        Some(node) => Some(node),
+        None => {
+            if let Some((neighbor, split, share)) = default_split(dock, tab) {
+                if let Some((node, _)) = dock.find_main_surface_tab(&neighbor) {
+                    dock.main_surface_mut()
+                        .split_tabs(node, split, share, vec![tab]);
+                    return;
+                }
+            }
+            rightmost_leaf(dock.main_surface())
+        }
+    };
     match target {
         Some(node) => {
             if let Ok(leaf) = dock.leaf_mut(egui_dock::NodePath { surface, node }) {

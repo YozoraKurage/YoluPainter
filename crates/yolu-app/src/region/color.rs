@@ -80,6 +80,7 @@ pub struct Request {
     pub contiguous: bool,
     pub options: Options,
     pub marked: HashSet<LayerId>,
+    /// 塗り残しなら通った点の列、でなければ種の点（対称定規の写しで 2 つ以上。和を 1 つの範囲にする）。
     pub points: Vec<(f64, f64)>,
     pub radius: f64,
     pub budget: u64,
@@ -290,7 +291,14 @@ fn mask(doc: &Document, data: &[u8]) -> Result<SelectionMask, CoreError> {
 fn touched(x: usize, y: usize, r: &Request) -> bool {
     let p = (x as f64 + 0.5, y as f64 + 0.5);
     r.points.iter().enumerate().any(|(i, &b)| {
-        let a = if i == 0 { b } else { r.points[i - 1] };
+        // `NaN` の点は線の区切り（3D の、面の外・継ぎ目をまたぐ所）。区切りの前後は線でつながない
+        if !b.0.is_finite() {
+            return false;
+        }
+        let a = match i.checked_sub(1).map(|j| r.points[j]) {
+            Some(before) if before.0.is_finite() => before,
+            _ => b,
+        };
         let d = (b.0 - a.0, b.1 - a.1);
         let len = d.0 * d.0 + d.1 * d.1;
         let t = if len == 0.0 {
@@ -340,16 +348,34 @@ pub fn compute(
     let mut examined = vec![0u32; n];
     let mut generation = 0u32;
     let mut queue = Vec::with_capacity(n);
+    // 塗り残しでなければ、点の列が種（対称定規の写し）。最初の点がキャンバスの外なら上で断る。ほかの点は、外のもの（呼び出し側が捨てるので
+    // 通常は無い）を読み飛ばし、同じ画素は 1 回にする。種ごとに自分の色で範囲を求める
     let seeds: Box<dyn Iterator<Item = usize>> = if r.options.leftovers {
         Box::new(0..n)
     } else {
-        Box::new(std::iter::once(sy as usize * w + sx as usize))
+        let mut list: Vec<usize> = Vec::new();
+        for &(x, y) in &r.points {
+            if x.is_finite()
+                && y.is_finite()
+                && x >= 0.0
+                && y >= 0.0
+                && x < w as f64
+                && y < h as f64
+            {
+                let seed = y as usize * w + x as usize;
+                if !list.contains(&seed) {
+                    list.push(seed);
+                }
+            }
+        }
+        Box::new(list.into_iter())
     };
     for seed in seeds {
         if seed % w == 0 {
             check(cancel)?;
         }
-        if visited[seed] {
+        // 塗り残しは、先の領域に入った画素を種にしない。そうでなければ、種ごとに自分の色で範囲を求める（先の種の領域の中の種も飛ばさない）
+        if r.options.leftovers && visited[seed] {
             continue;
         }
         if r.options.leftovers
@@ -385,10 +411,10 @@ pub fn compute(
             close_gaps(&mut open, w, h, lookup.gap, cancel)?;
             if open[seed] != 0 {
                 for i in 0..n {
-                    output[i] = open[i] * 255;
+                    output[i] |= open[i] * 255;
                 }
             }
-            break;
+            continue;
         }
         if !lookup.open(seed) {
             visited[seed] = true;

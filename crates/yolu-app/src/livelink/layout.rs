@@ -107,16 +107,21 @@ pub fn path_of(rig: &Rig, from: usize, bone: usize) -> Option<String> {
     Some(names.join("/"))
 }
 
+/// 骨の値の回転を長さ 1 に直す（0 の回転は回さない）。
+fn rotation_of(r: [f32; 4]) -> Quat {
+    let r = Quat::from_array(r);
+    if r.length_squared() > 1e-12 {
+        r.normalize()
+    } else {
+        Quat::IDENTITY
+    }
+}
+
 /// 骨の値を変換にする（回転は長さ 1 に直す。0 の回転は回さない）。
 pub fn transform_of(local: &Local) -> BoneTransform {
-    let r = Quat::from_array(local.r);
     BoneTransform {
         translation: Vec3::from_array(local.t),
-        rotation: if r.length_squared() > 1e-12 {
-            r.normalize()
-        } else {
-            Quat::IDENTITY
-        },
+        rotation: rotation_of(local.r),
         scale: Vec3::from_array(local.s),
     }
 }
@@ -127,6 +132,54 @@ fn local_of(t: &BoneTransform) -> Local {
         r: t.rotation.to_array(),
         s: t.scale.to_array(),
     }
+}
+
+/// `stored_rotation` が探す、各成分のずれの上限（ULP）。
+const MAX_SHIFT: i32 = 4;
+
+/// .ylp に残す回転: 開き直して長さ 1 に直したとき、`want` とビットまで同じになる値。
+///
+/// 長さ 1 に直した回転をもう一度直すと、1 ULP（最後の桁）変わることがある（`Quat::normalize` の長さを求める足す順が SSE2 と NEON で違い、
+/// aarch64 では x86-64 より変わる回転が多く、元に戻る 2 つの間を行き来するものもある）。変わったポーズで焼いたマップは、開き直した
+/// ポーズのモデルと形が 1 ULP 違うので、照合が古いと言う。順に試す: `want` そのもの（もう一度直しても変わらないとき。保存の中身はこれまでと
+/// 同じ）、前に当てた受けたままの値（Unity の値は同じ関数で同じ回転になる）、`want` の各成分を近い順にずらした値（[`MAX_SHIFT`] ULP まで）。どれも合わなければ `want`（開き直しで 1 ULP ずれる）。
+fn stored_rotation(held: Option<[f32; 4]>, want: Quat) -> [f32; 4] {
+    let back = |r: [f32; 4]| rotation_of(r) == want;
+    let own = want.to_array();
+    if back(own) {
+        return own;
+    }
+    if let Some(r) = held.filter(|r| back(*r)) {
+        return r;
+    }
+    // 近い順（各成分のずれの最大が 1 ULP、2 ULP、…）
+    let shifted = |v: f32, n: i32| {
+        (0..n.unsigned_abs()).fold(v, |v, _| if n < 0 { v.next_down() } else { v.next_up() })
+    };
+    let range = -MAX_SHIFT..=MAX_SHIFT;
+    for radius in 1..=MAX_SHIFT {
+        for dx in range.clone() {
+            for dy in range.clone() {
+                for dz in range.clone() {
+                    for dw in range.clone() {
+                        if [dx, dy, dz, dw].map(i32::abs).into_iter().max() != Some(radius) {
+                            continue;
+                        }
+                        let r = [
+                            shifted(own[0], dx),
+                            shifted(own[1], dy),
+                            shifted(own[2], dz),
+                            shifted(own[3], dw),
+                        ];
+                        if back(r) {
+                            return r;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    own
 }
 
 impl Layout {
@@ -173,7 +226,8 @@ impl Layout {
     pub fn write_pose(&self, rig: &Rig, pose: &Pose, request: &mut Request) -> Vec<String> {
         let rest = rig.rest_pose();
         let mut unsaved = Vec::new();
-        request.bones.clear();
+        // 前に当てた骨の値（回転は受けたままの値）。長さ 1 に直した回転は、もう一度直すと変わることがある（`stored_rotation`）
+        let held = std::mem::take(&mut request.bones);
         for part in &self.parts {
             for bone in part.bones.clone() {
                 if pose.locals[bone] == rest.locals[bone] {
@@ -185,10 +239,15 @@ impl Layout {
                     unsaved.push(rig.bones()[bone].name.clone());
                     continue;
                 };
+                let mut local = local_of(&pose.locals[bone]);
+                let before = held
+                    .iter()
+                    .find(|v| v.model == part.model && v.node == path);
+                local.r = stored_rotation(before.map(|v| v.local.r), pose.locals[bone].rotation);
                 request.bones.push(BoneValue {
                     model: part.model,
                     node: path,
-                    local: local_of(&pose.locals[bone]),
+                    local,
                 });
             }
         }
@@ -398,5 +457,85 @@ mod tests {
         );
         assert_eq!(back.bones.len(), 1, "Hips だけが道で指せる");
         assert_eq!(back.bones[0].node, "Hips");
+    }
+
+    /// 乱数（xorshift）で、単位に近い回転を作る（Unity が渡す回転と同じく、f64 で長さ 1 にして f32 に丸めた値）。
+    fn random_rotations(count: usize) -> Vec<[f32; 4]> {
+        let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0
+        };
+        (0..count)
+            .map(|_| {
+                let v: [f64; 4] = std::array::from_fn(|_| next());
+                let l = v.iter().map(|a| a * a).sum::<f64>().sqrt();
+                std::array::from_fn(|i| (v[i] / l) as f32)
+            })
+            .collect()
+    }
+
+    /// 保存して（JSON を通して）開き直したポーズ。
+    fn reopened(layout: &Layout, r: &Rig, pose: &Pose, held: &Request) -> Pose {
+        let mut saved = held.clone();
+        assert!(layout.write_pose(r, pose, &mut saved).is_empty());
+        let bytes = serde_json::to_vec_pretty(&saved).unwrap();
+        let back = yolu_protocol::files::read_request(&bytes).unwrap();
+        layout.pose(r, &back).0
+    }
+
+    fn hips_layout(r: &Rig) -> Layout {
+        Layout {
+            parts: vec![PartLayout {
+                model: 7,
+                bones: 0..r.bones().len(),
+                unity_root: 0,
+            }],
+            renderers: vec![Some(0)],
+        }
+    }
+
+    #[test]
+    fn a_pose_from_a_request_reopens_to_the_same_bits() {
+        // 長さ 1 に直した回転をもう一度直すと変わる回転（x86-64 でも 100 に 3 つ以上ある。aarch64 ではもっと多い）でも、開き直したポーズは
+        // 同じビットになる（ベイクの照合のキーに入るモデルの形が変わらない）
+        let r = rig(false);
+        let layout = hips_layout(&r);
+        let mut moving = 0;
+        for rotation in random_rotations(3000) {
+            let mut v = value("Armature/Hips", [0.5, 1.0, -2.0]);
+            v.local.r = rotation;
+            let req = request(vec![v]);
+            let (pose, problems) = layout.pose(&r, &req);
+            assert!(problems.is_empty());
+            let q = pose.locals[2].rotation;
+            moving += usize::from(q.normalize() != q);
+            let again = reopened(&layout, &r, &pose, &req);
+            assert_eq!(
+                again.locals[2].rotation.to_array().map(f32::to_bits),
+                q.to_array().map(f32::to_bits),
+                "{rotation:?}"
+            );
+            assert_eq!(again, pose);
+        }
+        assert!(moving > 0, "直すと変わる回転を試せていない");
+    }
+
+    #[test]
+    fn an_edited_rotation_reopens_to_the_same_bits() {
+        // ポーズを直した回転（受けた値のどれでもない）も、残して開き直すと同じ
+        let r = rig(false);
+        let layout = hips_layout(&r);
+        let held = request(vec![value("Armature/Hips", [0.0; 3])]);
+        let mut missed = 0;
+        for rotation in random_rotations(3000) {
+            let (mut pose, _) = layout.pose(&r, &held);
+            pose.locals[2].rotation = Quat::from_array(rotation).normalize();
+            let again = reopened(&layout, &r, &pose, &held);
+            missed += usize::from(again != pose);
+        }
+        assert_eq!(missed, 0, "開き直して変わった回転の数");
     }
 }

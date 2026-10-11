@@ -1,0 +1,36 @@
+name: cargo-deny（週 1 回）
+
+# 依存の既知の脆弱性（advisories）・禁止の取り決め（bans）・ライセンス（licenses）・出どころ（sources）を、週 1 回と手動で確かめる。毎回の CI には入れない
+# （脆弱性の情報は日々増えるので、変更の無い PR を落とすことになる）。決まりは deny.toml。通信の部品の見張りは cargo xtask netguard（毎回の CI）で、役を分けている
+# （docs/DEVELOPMENT.md の「通信の見張り」）。落ちたときは、Actions の実行のログで、どの依存のどの助言・ライセンスかを見る。
+#
+# cargo-deny は版を固定して cargo install する（週 1 回なので、ビルドの数分は気にしない。deny.toml の書式は版に結びつくので、上げるときは deny.toml と一緒に確かめる）。
+# schedule は既定の枝（main）でだけ動く。
+on:
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_DENY_VERSION: 0.20.2
+
+jobs:
+  deny:
+    name: advisories・bans・licenses・sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - name: cargo-deny を入れる
+        run: cargo install cargo-deny --version "$CARGO_DENY_VERSION" --locked
+      - name: 確かめる
+        run: cargo deny --locked check advisories bans licenses sources

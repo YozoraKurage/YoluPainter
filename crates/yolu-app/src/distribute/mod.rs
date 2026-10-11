@@ -23,6 +23,7 @@ use std::sync::Arc;
 use egui::Vec2;
 use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
+use crate::dialog::places::Place;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::newproject::relative_model_path;
@@ -220,24 +221,18 @@ pub fn default_name(state: &AppState) -> String {
 /// 保存先を選ぶウィンドウ（`DialogRequest::DistributeSave`）を出す。選ばなければ何もしない（ウィンドウは開いたまま）。
 pub fn run_dialog(state: &mut AppState) {
     let lang = state.lang;
-    let mut dialog = crate::dialog::file()
+    let dialog = crate::dialog::file(state, Place::Distribute)
         .set_title(lang.pick("配布用に保存", "Save for Distribution"))
         .add_filter(
             lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
             &["ylp"],
         )
         .set_file_name(default_name(state));
-    if let Some(dir) = state
-        .project
-        .as_ref()
-        .filter(|p| p.is_file())
-        .and_then(|p| p.path().parent())
-        .filter(|d| d.is_dir())
-    {
-        dialog = dialog.set_directory(dir);
-    }
     match dialog.save_file() {
-        Some(path) => state.apply(Action::Distribute(DistributeAction::Save(path))),
+        Some(path) => {
+            state.note_file_chosen(Place::Distribute, &path);
+            state.apply(Action::Distribute(DistributeAction::Save(path)))
+        }
         // ウィンドウなしの流れ（除く物が無かった）で選ばなかったら、準備した写しを閉じる（ウィンドウがあるときはウィンドウに戻る）
         None => state.settle_distribute_window(),
     }

@@ -187,7 +187,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         label,
         false,
         free && count > 0,
-        Some(delete_tip(lang)),
+        Some(&delete_tip(lang)),
         None,
     )
     .clicked()
@@ -249,8 +249,8 @@ fn corner_tip(lang: Lang) -> &'static str {
 
 fn handles_tip(lang: Lang) -> &'static str {
     lang.pick(
-        "選んでいる点の曲がりを取っ手で決めます。取っ手をドラッグ（Alt で片側だけ、Ctrl で両側を同じ割合で伸ばす）",
-        "Shape the curve at the selected point with handles. Drag a handle (Alt: one side only, Ctrl: scale both)",
+        "選んでいる点の曲がりを取っ手で決めます。取っ手をドラッグ（始めたあとに Alt を押すと片側だけ、Ctrl で両側を同じ割合で伸ばす）",
+        "Shape the curve at the selected point with handles. Drag a handle (Alt pressed after you start: one side only; Ctrl: scale both)",
     )
 }
 
@@ -279,10 +279,25 @@ fn delete_label(lang: Lang) -> &'static str {
     lang.pick("点を消す", "Delete Point")
 }
 
-fn delete_tip(lang: Lang) -> &'static str {
+fn delete_tip(lang: Lang) -> String {
+    crate::shortcuts::named_with_keys(
+        lang,
+        lang.pick(
+            "選んでいる点（無ければ最後の点）を消します",
+            "Delete the selected point (the last one if none is selected)",
+        ),
+        &[crate::shortcuts::key_in(
+            "path.delete_point",
+            crate::mode::EditorMode::Paint,
+        )],
+    )
+}
+
+/// 3D のパスの「描き直す」: 描くのは休みの形（`path_surface_ctx` の `render`）で、今のポーズは使わない。
+fn redraw_tip(lang: Lang) -> &'static str {
     lang.pick(
-        "選んでいる点（無ければ最後の点）を消します（Delete）",
-        "Delete the selected point (the last one if none is selected) (Delete)",
+        "ポーズを付けない形（休みの形）のモデルの面に描き直します",
+        "Redraw on the model's surface in its rest shape (the pose is not applied)",
     )
 }
 
@@ -296,10 +311,10 @@ fn rasterize_tip(lang: Lang) -> &'static str {
 // ───────── プロパティの欄 ─────────
 
 /// 並べるボタン 1 つ。
-struct Btn {
+struct Btn<'a> {
     id: &'static str,
     label: &'static str,
-    tip: &'static str,
+    tip: &'a str,
     enabled: bool,
     action: Action,
     /// 押されている（切り替えのボタンが入っている）か。
@@ -307,7 +322,7 @@ struct Btn {
 }
 
 /// ボタンを欄の幅に並べる。全部が 1 行に収まらないとき（狭い欄の日本語など）は、収まる最大の列数で折り返す（「…」で詰めない）。
-fn button_grid(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, buttons: Vec<Btn>) {
+fn button_grid(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, buttons: Vec<Btn<'_>>) {
     const GAP: f32 = 4.0;
     let needed = buttons
         .iter()
@@ -576,11 +591,12 @@ fn list_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     // 操作のアイコン: 新しいパス・複製・上へ・下へ・削除（選んだパスに）
     let r = rows.row(22.0, 4.0);
     let index = active.and_then(|id| entries.iter().position(|e| e.id() == id));
+    let new_tip = new_path_tip(lang);
     let buttons: [(&str, &str, &str, bool, Option<Action>); 5] = [
         (
             "path.list.new",
             "add",
-            lang.pick("新しいパス（Enter）", "New Path (Enter)"),
+            &new_tip,
             free && active.is_some(),
             Some(Action::Path(PathAction::SelectPath(None))),
         ),
@@ -680,6 +696,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
 
     // 点の操作: 閉じる/開く・点を消す
     let (close_label, close_tip) = close_label_and_tip(lang, closed);
+    let delete_tip = delete_tip(lang);
     button_grid(
         ui,
         app,
@@ -700,7 +717,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             Btn {
                 id: "path.panel.delete",
                 label: delete_label(lang),
-                tip: delete_tip(lang),
+                tip: &delete_tip,
                 enabled: editable && count > 0,
                 action: Action::Path(PathAction::DeleteSelected),
                 on: false,
@@ -755,17 +772,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             Btn {
                 id: "path.symmetry",
                 label: lang.pick("対称", "Symmetry"),
-                tip: if path.is_canvas() {
-                    lang.pick(
-                        "今の対称の設定で映したパスも描きます（キャンバスの対称を切っていれば、最後のモード）",
-                        "Also draw the path mirrored by the current symmetry (the last mode when symmetry is off)",
-                    )
-                } else {
-                    lang.pick(
-                        "3D の対称のミラーの面で映したパスも描きます",
-                        "Also draw the path mirrored by the 3D mirror plane",
-                    )
-                },
+                tip: lang.pick("対称", "Symmetry"),
                 enabled: editable,
                 action: Action::Path(PathAction::Symmetry(!symmetric)),
                 on: symmetric,
@@ -788,10 +795,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let mut buttons = vec![Btn {
         id: "path.use-brush",
         label: lang.pick("ブラシを使う", "Use Brush"),
-        tip: lang.pick(
-            "今のブラシと、マテリアルで塗るチャンネルの組で、パスを描き直します",
-            "Redraw the path with the current brush and the channels of Brush Material",
-        ),
+        tip: lang.pick("ブラシを使う", "Use Brush"),
         enabled: editable,
         action: Action::Path(PathAction::UseBrush),
         on: false,
@@ -800,10 +804,7 @@ fn path_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         buttons.push(Btn {
             id: "path.redraw",
             label: lang.pick("描き直す", "Redraw"),
-            tip: lang.pick(
-                "今のポーズのモデルの面に描き直します",
-                "Redraw on the model in its current pose",
-            ),
+            tip: redraw_tip(lang),
             enabled: editable,
             action: Action::Path(PathAction::Redraw),
             on: false,
@@ -1030,6 +1031,74 @@ pub fn ribbon_mode_entries(app: &AppState) -> Vec<Entry<Action>> {
                 Action::Path(PathAction::Kind(PathKind::Ribbon(Ribbon { mode, ..r }))),
             )
             .radio(mode == r.mode)
+        })
+        .collect()
+}
+
+/// パスのブラシの縁のアンチエイリアスの箱（押されたら箱の矩形）。名前と値が 1 行に収まらない狭い欄では、名前を上の行に置く
+/// （値を詰めない）。
+fn anti_alias_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    lang: Lang,
+    level: yolu_core::AntiAlias,
+    editable: bool,
+) -> Option<Rect> {
+    let label = lang.pick("アンチエイリアス", "Anti-aliasing");
+    let value = crate::m2::anti_alias_label(lang, level);
+    let tip = lang.pick(
+        "縁のギザギザをならす強さ",
+        "How much the jagged edge is smoothed",
+    );
+    let p = ui.painter();
+    let needed =
+        w::text_width(p, label, t::LABEL) + 10.0 + w::text_width(p, value, t::LABEL) + 30.0;
+    if rows.width() >= needed {
+        return choice_row(
+            ui,
+            rows,
+            "path.anti_alias",
+            label,
+            value,
+            Some(tip),
+            editable,
+        );
+    }
+    let head = rows.row(16.0, 1.0);
+    w::text(
+        ui.painter(),
+        head,
+        label,
+        t::LABEL.with_color(if editable { t::TEXT } else { t::TEXT_DISABLED }),
+        w::Align::Left,
+    );
+    let r = rows.row(t::ROW_HEIGHT, 4.0);
+    let (response, b) = w::dropdown(
+        ui,
+        r,
+        "path.anti_alias",
+        None,
+        value,
+        Some(tip),
+        editable,
+        0.0,
+    );
+    let name = format!("{label}: {value}");
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, editable, &name));
+    response.clicked().then_some(b)
+}
+
+/// パスのブラシの縁のアンチエイリアスの選び。
+pub fn anti_alias_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let current = brush_view(app).anti_alias;
+    yolu_core::AntiAlias::ALL
+        .into_iter()
+        .map(|level| {
+            Entry::item(
+                crate::m2::anti_alias_label(app.lang, level),
+                Action::Path(PathAction::Brush(BrushEdit::AntiAlias(level))),
+            )
+            .radio(level == current)
         })
         .collect()
 }
@@ -1317,6 +1386,7 @@ struct BrushView {
     /// パスのブラシか（スライダーは離したとき 1 回で描き直す）。
     deferred: bool,
     editable: bool,
+    anti_alias: yolu_core::AntiAlias,
 }
 
 fn brush_view(app: &AppState) -> BrushView {
@@ -1352,6 +1422,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 surface: !path.is_canvas(),
                 deferred: true,
                 editable: free && !other && diameter.is_some(),
+                anti_alias: b.anti_alias,
             }
         }
         None => {
@@ -1368,6 +1439,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 surface: false,
                 deferred: false,
                 editable: free,
+                anti_alias: b.anti_alias,
             }
         }
     }
@@ -1458,6 +1530,11 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ) {
             edit_brush(app, BrushEdit::Hardness(x));
         }
+        // 縁のアンチエイリアス（丸い筆先の縁）
+        let ctx = ui.ctx().clone();
+        if let Some(r) = anti_alias_row(ui, rows, lang, v.anti_alias, v.editable) {
+            open_popup(app, &ctx, Popup::PathAntiAlias, r, r.width());
+        }
     }
     if stroke_like {
         if let Some(x) = percent(
@@ -1546,4 +1623,36 @@ fn brush_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         }
     }
     rows.space(4.0);
+}
+
+/// 「新しいパス」のボタンのツールチップ（キーは、ペイントのモードの今の割り当ての、パスを終える操作）。
+pub fn new_path_tip(lang: Lang) -> String {
+    crate::shortcuts::named_with_keys(
+        lang,
+        lang.pick("新しいパス", "New Path"),
+        &[crate::shortcuts::key_in(
+            "path.finish",
+            crate::mode::EditorMode::Paint,
+        )],
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 3D のパスは休みの形で描くので、「描き直す」のツールチップは今のポーズに描くとは言わない。
+    #[test]
+    fn the_redraw_tip_says_the_pose_is_not_used() {
+        let ja = redraw_tip(Lang::Ja);
+        assert!(
+            ja.contains("休みの形") && !ja.contains("今のポーズ"),
+            "{ja}"
+        );
+        let en = redraw_tip(Lang::En);
+        assert!(
+            en.contains("rest shape") && !en.contains("current pose"),
+            "{en}"
+        );
+    }
 }

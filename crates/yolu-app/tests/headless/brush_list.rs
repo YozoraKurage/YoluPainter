@@ -612,11 +612,11 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
 
 #[test]
 fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_knows_version_one() {
-    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無い版 5 を同じ形で確かめる）
+    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無い版 6 を同じ形で確かめる）
     let dir = temp_dir("future-version");
     std::fs::write(
         dir.join("brush-00000001.ylbrush"),
-        "yolupainter-brush 5\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 6\nname=future\ngroup=pen\npressure.size.min=0.5\n",
     )
     .unwrap();
     let mut s = AppState::new(64, 64);
@@ -628,7 +628,7 @@ fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_k
     ));
     assert_eq!(
         std::fs::read_to_string(dir.join("brush-00000001.ylbrush")).unwrap(),
-        "yolupainter-brush 5\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 6\nname=future\ngroup=pen\npressure.size.min=0.5\n",
         "触らない"
     );
     std::fs::remove_dir_all(dir).unwrap();
@@ -982,4 +982,339 @@ fn headless_samples_are_redrawn_only_for_brushes_that_changed() {
     cache.begin_frame(1001);
     cache.request(&live, spec);
     assert_eq!(cache.stats.renders, renders + 2);
+}
+
+// ───────── ブラシの行の右クリックのメニュー ─────────
+
+mod row_menu {
+    use super::*;
+    use yolu_app::toolset::ui::{brush_menu, droppable_groups};
+    use yolu_app::toolset::{Lock, Refusal};
+    use yolu_app::ui::menu::Entry;
+
+    /// 項目の名前（区切り・見出しは除く）。
+    fn labels(entries: &[Entry<Action>]) -> Vec<String> {
+        entries
+            .iter()
+            .filter_map(|e| e.label().map(str::to_owned))
+            .collect()
+    }
+
+    fn item<'a>(entries: &'a [Entry<Action>], label: &str) -> &'a Entry<Action> {
+        entries
+            .iter()
+            .find(|e| e.label() == Some(label))
+            .unwrap_or_else(|| panic!("{label} の項目が無い: {:?}", labels(entries)))
+    }
+
+    /// (押せるか, ツールチップ)。
+    fn state(entry: &Entry<Action>) -> (bool, Option<String>) {
+        match entry {
+            Entry::Item {
+                enabled, tooltip, ..
+            }
+            | Entry::Submenu {
+                enabled, tooltip, ..
+            } => (*enabled, tooltip.clone()),
+            _ => panic!("項目ではない"),
+        }
+    }
+
+    fn group_items(entries: &[Entry<Action>]) -> Vec<Entry<Action>> {
+        match item(entries, "グループへ移す") {
+            Entry::Submenu { entries, .. } => entries.clone(),
+            _ => panic!("入れ子のメニューではない"),
+        }
+    }
+
+    fn menu_for(s: &mut AppState, key: BrushKey) -> Vec<Entry<Action>> {
+        s.brushes.ui.context = Some(key);
+        brush_menu(s)
+    }
+
+    #[test]
+    fn headless_the_menu_starts_with_the_settings_and_lists_every_action_in_both_languages() {
+        for lang in Lang::ALL {
+            let mut s = AppState::new(64, 64);
+            s.lang = lang;
+            let entries = menu_for(&mut s, b("pencil"));
+            assert_eq!(
+                labels(&entries),
+                lang.pick(
+                    [
+                        "ブラシの設定…",
+                        "名前を変更",
+                        "複製",
+                        "グループへ移す",
+                        "この設定で登録",
+                        "元に戻す",
+                        "削除"
+                    ],
+                    [
+                        "Brush Settings…",
+                        "Rename",
+                        "Duplicate",
+                        "Move to Group",
+                        "Register These Settings",
+                        "Revert",
+                        "Delete"
+                    ]
+                ),
+                "{lang:?}: 先頭がブラシの設定"
+            );
+            // 変更が無ければ、登録と元に戻すだけが押せない。理由はいらない（説明は置かない）
+            for entry in &entries {
+                let Some(name) = entry.label() else { continue };
+                let modified_only = name == lang.pick("この設定で登録", "Register These Settings")
+                    || name == lang.pick("元に戻す", "Revert");
+                assert_eq!(state(entry), (!modified_only, None), "{lang:?} {name}");
+            }
+        }
+    }
+
+    #[test]
+    fn headless_the_first_item_selects_that_brush_and_opens_its_detail_window() {
+        let mut s = AppState::new(64, 64);
+        assert_eq!(s.brushes.lib.current(), b(builtin::STANDARD));
+        assert!(!s.brushes.ui.detail.open);
+        let entries = menu_for(&mut s, b("pencil"));
+        let Entry::Item { action, .. } = item(&entries, "ブラシの設定…") else {
+            panic!()
+        };
+        assert_eq!(*action, Action::Brush(BrushAction::OpenDetail(b("pencil"))));
+        s.apply(action.clone());
+        assert_eq!(s.brushes.lib.current(), b("pencil"), "そのブラシに替わる");
+        assert!(s.brushes.ui.detail.open, "ウィンドウが開く");
+        // 開いたまま別のブラシのメニューから開けば、そのブラシの設定になる（ウィンドウは開いたまま）
+        s.apply(Action::Brush(BrushAction::OpenDetail(b("marker"))));
+        assert_eq!(s.brushes.lib.current(), b("marker"));
+        assert!(s.brushes.ui.detail.open);
+        // ブラシの設定は文書ではない
+        assert!(!s.doc.can_undo());
+    }
+
+    #[test]
+    fn headless_opening_the_detail_while_stroking_changes_nothing() {
+        let mut s = AppState::new(64, 64);
+        select(&mut s, b("pencil"));
+        let id = s.selected_layer.unwrap();
+        let stroke = s.begin_paint_stroke(id, false).unwrap();
+        s.apply(Action::Brush(BrushAction::OpenDetail(b("marker"))));
+        assert_eq!(s.brushes.lib.current(), b("pencil"), "替わらない");
+        assert!(!s.brushes.ui.detail.open, "開かない");
+        s.doc.cancel_stroke(stroke);
+        s.canvas.stroke = None;
+    }
+
+    #[test]
+    fn headless_the_move_list_names_the_groups_of_the_brush_tool_and_marks_its_own() {
+        let mut s = AppState::new(64, 64);
+        let entries = menu_for(&mut s, b("pencil"));
+        // 自分のツールのグループ（別のブラシのツールは、入れ子の下）
+        let groups: Vec<Entry<Action>> = group_items(&entries)
+            .into_iter()
+            .filter(|e| matches!(e, Entry::Item { .. }))
+            .collect();
+        let slot = s.toolset.set.slot_of(b("pencil")).unwrap();
+        let expected: Vec<String> = s
+            .toolset
+            .set
+            .slot(slot)
+            .unwrap()
+            .groups
+            .iter()
+            .map(|g| g.name_in(Lang::Ja))
+            .collect();
+        assert_eq!(
+            labels(&groups),
+            expected,
+            "ブラシのツールのグループが、タブの順に"
+        );
+        let own = s.toolset.set.group_of(b("pencil")).unwrap();
+        for (entry, group) in groups.iter().zip(&s.toolset.set.slot(slot).unwrap().groups) {
+            let Entry::Item {
+                action,
+                enabled,
+                check,
+                ..
+            } = entry
+            else {
+                panic!()
+            };
+            if group.id == own {
+                assert!(!enabled, "今のグループは押せない");
+                assert_eq!(*check, yolu_app::ui::menu::Check::Radio, "印だけ");
+            } else {
+                assert!(enabled);
+                assert_eq!(
+                    *action,
+                    Action::Brush(BrushAction::Place {
+                        key: b("pencil"),
+                        group: group.id,
+                        at: DropAt::End,
+                        copy: false
+                    })
+                );
+            }
+        }
+        // 選ぶと、そのグループの後ろへ動く（ドラッグで落としたのと同じ操作）
+        let target = s.toolset.set.slot(slot).unwrap().groups[1].id;
+        let Entry::Item { action, .. } = &groups[1] else {
+            panic!()
+        };
+        s.apply(action.clone());
+        assert_eq!(s.toolset.set.group_of(b("pencil")), Some(target));
+        assert_eq!(
+            s.toolset.set.group(target).unwrap().1.brushes.last(),
+            Some(&b("pencil"))
+        );
+        assert!(!s.doc.can_undo(), "文書は変えない");
+    }
+
+    #[test]
+    fn headless_other_brush_tools_appear_as_nested_lists() {
+        let mut s = AppState::new(64, 64);
+        let entries = menu_for(&mut s, b("pencil"));
+        let groups = group_items(&entries);
+        // 消しゴムのツールのグループは、消しゴムのツールの名前の入れ子の下に
+        let nested: Vec<&Entry<Action>> = groups
+            .iter()
+            .filter(|e| matches!(e, Entry::Submenu { .. }))
+            .collect();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].label(), Some("消しゴム"));
+        // 消しゴムのブラシからは、ブラシのツールが入れ子になる
+        let entries = menu_for(&mut s, b("soft-eraser"));
+        let groups = group_items(&entries);
+        assert!(groups
+            .iter()
+            .any(|e| matches!(e, Entry::Submenu { .. }) && e.label() == Some("ブラシ")));
+    }
+
+    #[test]
+    fn headless_each_blocked_item_says_why_in_the_refusal_sentences() {
+        // 描いている間: ブラシを替える・並びを変える項目は全部押せない
+        let mut s = AppState::new(64, 64);
+        select(&mut s, b("pencil"));
+        let id = s.selected_layer.unwrap();
+        let stroke = s.begin_paint_stroke(id, false).unwrap();
+        for lang in Lang::ALL {
+            s.lang = lang;
+            let entries = menu_for(&mut s, b("pencil"));
+            let why = yolu_app::lang::refusals::during_stroke(lang);
+            for name in lang.pick(
+                [
+                    "ブラシの設定…",
+                    "名前を変更",
+                    "複製",
+                    "グループへ移す",
+                    "削除",
+                ],
+                [
+                    "Brush Settings…",
+                    "Rename",
+                    "Duplicate",
+                    "Move to Group",
+                    "Delete",
+                ],
+            ) {
+                assert_eq!(
+                    state(item(&entries, name)),
+                    (false, Some(why.to_owned())),
+                    "{lang:?} 描いている間 {name}"
+                );
+            }
+        }
+        s.doc.cancel_stroke(stroke);
+        s.canvas.stroke = None;
+
+        // 並びのファイルが読めない間: 並び・数・名前を変える項目が押せない（利用者のブラシの名前の変更は、並びを変えないので押せる）
+        let mut s = AppState::new(64, 64);
+        s.toolset.set.locked = Some(Lock::Newer(9));
+        let why = Refusal::Newer(9).describe(Lang::Ja);
+        let entries = menu_for(&mut s, b("pencil"));
+        for name in ["名前を変更", "複製", "グループへ移す", "削除"] {
+            assert_eq!(
+                state(item(&entries, name)),
+                (false, Some(why.clone())),
+                "{name}（組み込みのブラシ）"
+            );
+        }
+        assert_eq!(
+            state(item(&entries, "ブラシの設定…")),
+            (true, None),
+            "ブラシの設定は並びを変えない"
+        );
+        s.toolset.set.locked = None;
+        s.apply(Action::Brush(BrushAction::Duplicate(b("pencil"))));
+        let copy = s.brushes.lib.current();
+        assert!(copy.is_user());
+        s.toolset.set.locked = Some(Lock::Unreadable);
+        let entries = menu_for(&mut s, copy);
+        assert_eq!(state(item(&entries, "名前を変更")), (true, None));
+        assert_eq!(
+            state(item(&entries, "削除")),
+            (false, Some(Refusal::Unreadable.describe(Lang::Ja)))
+        );
+    }
+
+    #[test]
+    fn headless_a_full_group_is_not_offered_and_says_so() {
+        let mut s = AppState::new(64, 64);
+        // 今のブラシのグループをいっぱいにする
+        let slot = s.toolset.set.active().unwrap();
+        let full = s.toolset.set.shown_group(slot).unwrap();
+        while s.toolset.set.group(full).unwrap().1.has_room() {
+            s.apply(Action::Brush(BrushAction::Add));
+        }
+        let other = s
+            .toolset
+            .set
+            .slot(slot)
+            .unwrap()
+            .groups
+            .iter()
+            .find(|g| g.id != full)
+            .map(|g| g.brushes[0])
+            .unwrap();
+        let entries = menu_for(&mut s, other);
+        let groups = group_items(&entries);
+        let full_name = s.toolset.set.group(full).unwrap().1.name_in(Lang::Ja);
+        assert_eq!(
+            state(item(&groups, &full_name)),
+            (false, Some(Refusal::TooManyBrushes.describe(Lang::Ja)))
+        );
+        // ほかのグループは押せる。満杯のグループは、引いているときも落とせるグループに数えない
+        assert!(!droppable_groups(&s, other).contains(&full));
+        assert!(!droppable_groups(&s, other).is_empty());
+    }
+
+    #[test]
+    fn headless_the_groups_a_dragged_brush_can_drop_on_exclude_its_own_and_a_locked_layout() {
+        let mut s = AppState::new(64, 64);
+        let slot = s.toolset.set.slot_of(b("pencil")).unwrap();
+        let own = s.toolset.set.group_of(b("pencil")).unwrap();
+        let drops = droppable_groups(&s, b("pencil"));
+        assert!(
+            !drops.contains(&own),
+            "今のグループには、ドラッグでは落とせない"
+        );
+        // ブラシのツールの別のグループと、消しゴムのツールのグループ（ツールの列の上へも落とせる）
+        for g in s
+            .toolset
+            .set
+            .slot(slot)
+            .unwrap()
+            .groups
+            .iter()
+            .filter(|g| g.id != own)
+        {
+            assert!(drops.contains(&g.id));
+        }
+        s.toolset.set.locked = Some(Lock::Newer(2));
+        assert!(
+            droppable_groups(&s, b("pencil")).is_empty(),
+            "並びが読めない間は無い"
+        );
+    }
 }

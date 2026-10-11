@@ -1,6 +1,9 @@
-//! ハードウェアの ray query の道（wgpu の実験機能 `EXPERIMENTAL_RAY_QUERY`。Vulkan のみ）。BVH の代わりに、三角形の並びから作る
-//! 加速構造（BLAS・TLAS）をシェーダーでたどる。使えないアダプターでは作らず、作れても自己照合（同じレイを compute の道と
-//! ray query の道で飛ばして答えを比べる）に通らなければ compute の道に戻る。
+//! ハードウェアの ray query（RT コア）の道（wgpu の実験機能 `EXPERIMENTAL_RAY_QUERY`）。BVH の代わりに、三角形の並びから作る
+//! 加速構造（BLAS・TLAS）をシェーダーでたどる。既定は入（`GpuBakeOptions::ray_query`。アプリの設定と環境変数 `YOLUPAINTER_BAKE_RAY_QUERY=0`
+//! で切れる）。使えないアダプターでは作らず、作れても自己照合（同じレイを compute の道と ray query の道で飛ばして答えを比べる）に
+//! 通らなければ compute の道に戻り、戻った場所と理由は `GpuBakeStats::ray_query_note` に残る。実行して確かめたのは Vulkan（RTX 3050
+//! Laptop）と Metal（Apple M4）。DX12 は DXC（新しいシェーダーコンパイラー）が無いと ray query が出ないので、Windows のアダプターは
+//! Vulkan を先に選ぶ。固まる・応答なし（TDR）になるドライバーは、自己照合が同じ道の中で行われるので compute に戻せない（設定で切る）。
 use super::pack::{Packed, NONE};
 use wgpu::util::DeviceExt;
 
@@ -87,12 +90,15 @@ fn table_entry(packed: &Packed, b: u32) -> Option<(u32, u32)> {
 /// 低ポリ・高ポリそれぞれの BLAS と TLAS を作って構築し、完了を待つ。片方しか無いときは同じものを両方の束縛に渡す。
 /// `flip` は三角形の頂点の並び（始点・辺 1・辺 2）のうち辺 1 と辺 2 の頂点を入れ替える（ハードウェアの裏表の規約が compute の
 /// 道と逆のとき。重心座標の u と v も入れ替わるので、シェーダーは `F_RQ_FLIP` で戻す）。
+///
+/// 構築の完了は短い間隔で待ち、そのたびに `stop`（取消・時間切れの確認）を呼ぶ。真が返ったら `BuildError::Stopped`。
 pub(super) fn build(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     packed: &Packed,
     flip: bool,
-) -> Result<Accel, String> {
+    stop: &mut dyn FnMut() -> bool,
+) -> Result<Accel, BuildError> {
     let make = |b: u32| -> Option<(wgpu::Buffer, u32)> {
         let (base, count) = table_entry(packed, b)?;
         if count == 0 {
@@ -119,7 +125,7 @@ pub(super) fn build(
     let low = make(packed.params.low_bvh);
     let high = make(packed.params.high_bvh);
     if low.is_none() && high.is_none() {
-        return Err("三角形が無い".into());
+        return Err(BuildError::Failed("三角形が無い".into()));
     }
     let identity = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0];
     let flags = wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE;
@@ -190,12 +196,27 @@ pub(super) fn build(
         let mut encoder = device.create_command_encoder(&Default::default());
         encoder.build_acceleration_structures(build_entries.iter(), tlas.iter());
         let submission = queue.submit([encoder.finish()]);
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(submission),
-                timeout: Some(std::time::Duration::from_secs(30)),
-            })
-            .map_err(|e| e.to_string())?;
+        let started = std::time::Instant::now();
+        loop {
+            match device.poll(wgpu::PollType::Wait {
+                submission_index: Some(submission.clone()),
+                timeout: Some(BUILD_POLL),
+            }) {
+                Ok(_) => break,
+                Err(wgpu::PollError::Timeout) => {
+                    if stop() {
+                        return Err(BuildError::Stopped);
+                    }
+                    if started.elapsed() >= BUILD_WAIT {
+                        return Err(BuildError::Failed(format!(
+                            "加速構造の構築が {} 秒たっても終わらない",
+                            BUILD_WAIT.as_secs()
+                        )));
+                    }
+                }
+                Err(e) => return Err(BuildError::Failed(e.to_string())),
+            }
+        }
     }
     let vertices: Vec<wgpu::Buffer> = [low, high].into_iter().flatten().map(|(b, _)| b).collect();
     let mut tlas = tlas.into_iter();
@@ -218,6 +239,17 @@ fn low_exists(packed: &Packed) -> bool {
     table_entry(packed, packed.params.low_bvh).is_some_and(|(_, n)| n > 0)
 }
 
+/// 加速構造の構築の完了を待つ 1 回の長さ（そのたびに取消・時間切れを確認する）と、待つ合計の上限。
+const BUILD_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+const BUILD_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 加速構造を作れなかった理由。
+pub(super) enum BuildError {
+    Failed(String),
+    /// 取消・時間切れ・進捗の中止（結果は呼び出し側が持つ）。
+    Stopped,
+}
+
 /// 自己照合の判定。
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum Verdict {
@@ -229,7 +261,7 @@ pub(super) enum Verdict {
     Fail(String),
 }
 
-/// レイの下 3 ビットが性質: 2 = 面の下から、4 = 裏面を飛ばす、8 = 最初の当たりで止める。
+/// レイの番号のビットが性質（値で 2・4・8）: 2 = 面の下から、4 = 裏面を飛ばす、8 = 最初の当たりで止める（`bake.wgsl` の `selfcheck`）。
 const CULL: usize = 4;
 const ANY_HIT: usize = 8;
 /// 重心座標の許容差（compute は f32 の演算、ハードウェアは固定小数点まじりで、1e-5 程度は揺れる）。

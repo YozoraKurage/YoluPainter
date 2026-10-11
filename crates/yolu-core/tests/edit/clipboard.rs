@@ -1052,7 +1052,7 @@ fn replace_pixels_refuses_wrong_sizes_and_layers_without_pixels() {
     let image = vec![0u8; 64 * 64 * 4];
     assert_eq!(
         d.replace_pixels(layer, Channel::Color, &[0; 16], true),
-        Err(CoreError::InvalidArgument("画像の大きさが文書と違う"))
+        Err(CoreError::InvalidArgument("画像の大きさがキャンバスと違う"))
     );
     assert!(matches!(
         d.replace_pixels(group, Channel::Color, &image, true),

@@ -1,10 +1,10 @@
-//! プロパティの欄（Substance Painter の並び）: 選んでいるレイヤーの中身だけを出す。ツールの設定は出さない（ツールの設定は左のドックのサブツールのパネルの
-//! ツールプロパティ。どのツールを選んでいても、この欄は同じレイヤーには同じ中身）。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
-//! 頭にタブ（ステンシル｜マテリアル（マスクに描くあいだはマスク）｜レイヤー）、塗りつぶし・調整・グループの文脈はレイヤーの欄だけ、レイヤーの下の
-//! 効果の行を選んでいるときはその行の設定だけ。中身は縦に積み、はみ出したらスクロールする（ステンシルとマテリアルの欄は `brush_props` 経由、
-//! レイヤーの欄は `layer_props`）。ブラシそのもの（一覧・ツールプロパティ・詳細）は左のドックのサブツールのパネル（`subtools`・`brushes`）と
-//! 詳細のウィンドウ（`brush_detail`）。値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には
-//! 名前と値だけを出し、説明はツールチップ。
+//! プロパティの欄（Substance Painter の並び）: 選んでいるレイヤーの中身だけを出す。ツールの設定は出さない（ツールの設定は左のドックの
+//! ツールプロパティのパネル `tool_props`。どのツールを選んでいても、この欄は同じレイヤーには同じ中身）。描く文脈（ペイントのレイヤーか、どのレイヤーでもマスク）は
+//! 頭にタブ（ステンシル｜レイヤー）、塗りつぶし・調整・グループの文脈はレイヤーの欄だけ、レイヤーの下の効果の行を選んでいるときは
+//! その行の設定だけ。中身は縦に積み、はみ出したらスクロールする（ステンシルの欄は `brush_props` 経由、レイヤーの欄は `layer_props`）。
+//! テクスチャセットの見た目は別のパネル「マテリアル」（`material`）、ブラシそのもの（一覧・ツールプロパティ・ブラシサイズ・詳細）は左のドックの
+//! サブツール・ツールプロパティ・ブラシサイズのパネル（`subtools`・`tool_props`・`brushes`）と詳細のウィンドウ（`brush_detail`）。
+//! 値の操作はブラシの設定なら画面の状態を直に、レイヤーの設定は `Action::M2` を通す（1 回の Undo）。画面には名前と値だけを出し、説明はツールチップ。
 
 use egui::{pos2, vec2, Rect, Ui};
 
@@ -16,7 +16,7 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
-pub const TAB_ICONS: [&str; 3] = ["square", "layers", "tune"];
+pub const TAB_ICONS: [&str; 2] = ["square", "tune"];
 
 /// 欄の文脈（選んでいるレイヤーで決まる。ツールでは決まらない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,18 +45,10 @@ pub fn context(app: &AppState) -> Context {
     }
 }
 
-/// タブの名前（2 つ目はマスクに描くあいだだけマスク）。
-pub fn tab_labels(app: &AppState) -> [&'static str; 3] {
+/// タブの名前。
+pub fn tab_labels(app: &AppState) -> [&'static str; 2] {
     let l = app.lang;
-    [
-        l.pick("ステンシル", "Stencil"),
-        if app.m2.edit_mask {
-            l.pick("マスク", "Mask")
-        } else {
-            l.pick("マテリアル", "Material")
-        },
-        l.pick("レイヤー", "Layer"),
-    ]
+    [l.pick("ステンシル", "Stencil"), l.pick("レイヤー", "Layer")]
 }
 
 pub fn open_popup(
@@ -72,7 +64,7 @@ pub fn open_popup(
     });
 }
 
-/// 大見出し（開閉を覚える）。返すのは (開いているか, 既定に戻す頼み)。
+/// 大見出し（開閉を覚える。初めは開いている）。返すのは (開いているか, 既定に戻す頼み)。
 pub fn section(
     ui: &mut Ui,
     app: &mut AppState,
@@ -82,10 +74,30 @@ pub fn section(
     icon: &str,
     reset: Option<&str>,
 ) -> (bool, bool) {
-    let open = app.section_open(key, true);
+    section_default(ui, app, rows, key, title, icon, reset, true, false)
+}
+
+/// 大見出し（開閉を覚える。初めに開いているかは `default_open`。`marked` なら、見出しの右端に点の印を付ける: 閉じていても、中の機能が入っていると分かる）。
+#[allow(clippy::too_many_arguments)]
+pub fn section_default(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    key: &'static str,
+    title: &str,
+    icon: &str,
+    reset: Option<&str>,
+    default_open: bool,
+    marked: bool,
+) -> (bool, bool) {
+    let open = app.section_open(key, default_open);
     rows.indent = 0.0;
     let header = rows.full_row(t::PANEL_HEADER_HEIGHT, 5.0);
     let out = w::section_header(ui, header, ("section", key), title, open, Some(icon), reset);
+    if marked {
+        let at = pos2(header.right() - 14.0, header.center().y);
+        ui.painter().circle_filled(at, 3.0, t::ACCENT);
+    }
     if out.open != open {
         app.ui.sections.insert(key, out.open);
     }
@@ -194,6 +206,26 @@ pub fn toggle_row(
     let r = rows.row(height, 2.0);
     let next = w::toggle(ui, r, id, label, value, tooltip, enabled);
     (next != value).then_some(next)
+}
+
+/// バケツ・自動選択の「対称定規にスナップ」の 1 行。`unavailable` が理由（短い文）なら押せず、ツールチップに理由を出す。
+pub fn snap_symmetry_row(
+    ui: &mut Ui,
+    rows: &mut Rows,
+    lang: crate::lang::Lang,
+    id: &str,
+    value: bool,
+    unavailable: Option<&str>,
+) -> Option<bool> {
+    toggle_row(
+        ui,
+        rows,
+        id,
+        lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler"),
+        value,
+        unavailable,
+        unavailable.is_none(),
+    )
 }
 
 /// 名前と値の箱（押すとポップアップ）の 1 行。押されたら箱の矩形を返す。
@@ -321,8 +353,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         Context::Layer => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
         Context::Paint => match tab {
             0 => super::brush_props::stencil_tab(ui, app, &mut rows),
-            1 if app.m2.edit_mask => super::layer_props::mask_tab(ui, app, &mut rows),
-            1 => super::brush_props::material_tab(ui, app, &mut rows),
             _ => super::layer_props::layer_body(ui, app, &mut rows, &ctx),
         },
     }
@@ -330,11 +360,16 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     rows.space(8.0);
     app.m2.props_content = rows.used();
     ui.set_clip_rect(outer_clip);
-    // スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする。形のギズモと点のグラデーションの点のドラッグ中は終えない
-    // （ペンの接触は egui のポインタの押下にならないので、ここで毎フレーム終えると、ドラッグの 1 フレームごとに別の Undo の段になる。
-    // ドラッグの側が離す・Esc・フォーカスの喪失で自分で終える）
+    end_drag_when_released(ui, app);
+    bar.end(ui, "properties.scroll", &mut app.m2.props_scroll);
+}
+
+/// スライダーのドラッグを離したら、まとめていた変更を 1 回の Undo にする。形のギズモと点のグラデーションの点のドラッグ中は終えない
+/// （ペンの接触は egui のポインタの押下にならないので、ここで毎フレーム終えると、ドラッグの 1 フレームごとに別の Undo の段になる。
+/// ドラッグの側が離す・Esc・フォーカスの喪失で自分で終える）。レイヤーの値を変える欄を持つパネル（プロパティ・マテリアル・ツールプロパティの
+/// マスクの区分）が、描いたあとに呼ぶ。
+pub fn end_drag_when_released(ui: &Ui, app: &mut AppState) {
     if !ui.input(|i| i.pointer.primary_down()) && !crate::fillfx::dragging(app) {
         app.m2_end_drag();
     }
-    bar.end(ui, "properties.scroll", &mut app.m2.props_scroll);
 }

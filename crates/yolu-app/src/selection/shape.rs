@@ -47,6 +47,10 @@ impl Constraint {
     }
 }
 
+/// 縦横比を固定する・中心から広げるときの修飾キー（`Constraint::of` が読むキー。割り当ての表には無い固定のキーなので、ツールチップの文字はここから引く）。
+pub const RATIO_KEY: &str = "Shift";
+pub const CENTER_KEY: &str = "Alt";
+
 /// Shift を押し始めたあとに押した（押し始めには押していなかった）か。
 pub fn shift_constrains(pressed_with: Modifiers, now: Modifiers) -> bool {
     !pressed_with.shift && now.shift
@@ -55,10 +59,14 @@ pub fn shift_constrains(pressed_with: Modifiers, now: Modifiers) -> bool {
 /// 角を丸めた長方形（画素の座標 x0..x1 × y0..y1。逆向きの角は入れ替える）の輪郭の点。角の半径は短い辺の半分までに丸める。
 /// 半径が 0 なら 4 隅だけ。反時計回り。
 pub fn rounded_rect_points(x0: i64, y0: i64, x1: i64, y1: i64, radius: u32) -> Vec<DVec2> {
+    rounded_rect_outline(x0 as f64, y0 as f64, x1 as f64, y1 as f64, radius as f64)
+}
+
+/// `rounded_rect_points` の、小数の座標の版（3D ビューの画面の点で引く長方形の輪郭）。
+pub fn rounded_rect_outline(x0: f64, y0: f64, x1: f64, y1: f64, radius: f64) -> Vec<DVec2> {
     let (x0, x1) = if x1 < x0 { (x1, x0) } else { (x0, x1) };
     let (y0, y1) = if y1 < y0 { (y1, y0) } else { (y0, y1) };
-    let (x0, y0, x1, y1) = (x0 as f64, y0 as f64, x1 as f64, y1 as f64);
-    let r = (radius as f64).min((x1 - x0) / 2.0).min((y1 - y0) / 2.0);
+    let r = radius.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0);
     if r <= 0.0 {
         return vec![
             DVec2::new(x0, y0),

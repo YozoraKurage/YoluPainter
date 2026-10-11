@@ -272,6 +272,18 @@ impl AppState {
                 (entries, Some(id))
             }
         };
+        self.path_commit_list(layer, next, select);
+    }
+
+    /// パスの一覧を書き、後始末をする: 点の選びを外し、`select` のパスを編集中にする（None なら、消えた編集中のパスだけ外す）。
+    /// 面から外れて描かなかった標本があれば知らせる。書いたら true（断られたら理由を知らせて何も変えない）。
+    pub(crate) fn path_commit_list(
+        &mut self,
+        layer: LayerId,
+        next: Vec<LayerPathEntry>,
+        select: Option<u128>,
+    ) -> bool {
+        let lang = self.lang;
         let deleted_active = self
             .path
             .active
@@ -289,8 +301,12 @@ impl AppState {
                 if gaps > 0 {
                     self.warn(Source::Path, super::gaps_message(lang, gaps));
                 }
+                true
             }
-            Err(m) => self.fail(Source::Path, m),
+            Err(m) => {
+                self.fail(Source::Path, m);
+                false
+            }
         }
     }
 

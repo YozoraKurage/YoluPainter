@@ -16,7 +16,10 @@ use bytemuck::Zeroable;
 use pack::{Packed, Params, NONE};
 use std::{
     fmt,
-    sync::{atomic::AtomicBool, mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use wgpu::util::DeviceExt;
@@ -97,34 +100,68 @@ pub struct GpuBakeOptions {
     /// ソフトウェアの描画（llvmpipe・WARP など `DeviceType::Cpu`）を使ってよいか。
     /// 既定は使わない（ソフトウェアの GPU は CPU のマルチスレッドより遅いため、自動のときは CPU で焼く）。
     pub allow_software: bool,
-    /// ハードウェアの ray query を使ってよいか（使えるアダプターで、自己照合に通ったときだけ使う）。既定は使わない: ray query の道は
-    /// ハードウェアのアダプターで実行して確かめていない（ray query の使えるアダプターで動かしておらず、naga の検証と SPIR-V への
-    /// 変換までしか確かめていない）。実験機能のドライバーが固まったり応答なし（TDR）になったときは自己照合が同じ道の中で
-    /// 行われるので compute に戻せないため、確かめるまで利用者が選ぶ。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY=1` で既定を入にできる。
+    /// ハードウェアの ray query（RT コア）を使ってよいか。使えるアダプターで、自己照合に通ったときだけ使い、そうでなければ compute に戻る。
+    /// 既定は入。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY` が `0`・`false`・`off`・`no` なら既定が切になる（アプリは設定で切り替える）。
+    /// 実験機能のドライバーが固まったり応答なし（TDR）になったときは、自己照合が同じ道の中で行われるので compute に戻せない:
+    /// そのような PC では切にする。Vulkan（RTX 3050 Laptop）と Metal（Apple M4）で動かして確かめた。DX12 は DXC（新しいシェーダー
+    /// コンパイラー）が無いと ray query が出ないので、Windows では Vulkan のアダプターを先に選ぶ。
     pub ray_query: bool,
     /// 1 回の dispatch の時間の目標（ミリ秒）。
     pub target_dispatch_ms: f64,
 }
-/// ray query を既定で入にする環境変数の名前。
+/// ray query の既定を切にする環境変数の名前（`0`・`false`・`off`・`no` で切。未設定・ほかの値は入）。
 pub const RAY_QUERY_ENV: &str = "YOLUPAINTER_BAKE_RAY_QUERY";
-/// 環境変数の値が入（1・true・on・yes）か。未設定・空・ほかの値は切。
+/// 値が切（`0`・`false`・`off`・`no`）を表すか。環境変数と設定のファイルが同じ読みをする。
+pub fn is_off_value(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "0" | "false" | "off" | "no"
+    )
+}
+/// 環境変数の値から ray query の既定を決める。未設定・空・知らない値は入、`0`・`false`・`off`・`no` は切。
 fn flag_enabled(value: Option<&str>) -> bool {
-    value.is_some_and(|v| {
-        matches!(
-            v.trim().to_ascii_lowercase().as_str(),
-            "1" | "true" | "on" | "yes"
-        )
-    })
+    !value.is_some_and(is_off_value)
+}
+/// 環境変数 `YOLUPAINTER_BAKE_RAY_QUERY` が ray query を許すか。最初に読んだ値をプロセスの間持つ（毎回読み直さない）。
+pub fn ray_query_env_allows() -> bool {
+    static ALLOWS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ALLOWS.get_or_init(|| flag_enabled(std::env::var(RAY_QUERY_ENV).ok().as_deref()))
 }
 impl Default for GpuBakeOptions {
     fn default() -> Self {
         Self {
             budget_bytes: 768 << 20,
             allow_software: false,
-            ray_query: flag_enabled(std::env::var(RAY_QUERY_ENV).ok().as_deref()),
+            ray_query: ray_query_env_allows(),
             target_dispatch_ms: 50.0,
         }
     }
+}
+
+/// ray query を使えない理由の種類と詳しい文（使えるなら None）。`supported`: アダプターが機能を持つ、`device_created`: ray query つきで
+/// デバイスを作れた、`device_error`: 作れなかったときの理由。
+fn ray_query_unavailable(
+    supported: bool,
+    device_created: bool,
+    device_error: Option<&str>,
+) -> Option<(RayQueryWhy, String)> {
+    if !supported {
+        return Some((
+            RayQueryWhy::NotSupported,
+            "compute（ray query を使わない理由: このアダプターは ray query に対応していない）"
+                .into(),
+        ));
+    }
+    if !device_created {
+        let why = device_error.unwrap_or("理由は不明");
+        return Some((
+            RayQueryWhy::Device,
+            format!(
+                "compute（ray query を使わない理由: ray query つきのデバイスを作れなかった: {why}）"
+            ),
+        ));
+    }
+    None
 }
 
 /// 使っているアダプターの情報。
@@ -153,6 +190,30 @@ pub enum GpuBakeMethod {
     RayQuery,
 }
 
+/// ray query を使わなかった理由の種類。画面は種類から言語ごとの短い文を作る（自己照合の数などの詳しい文は
+/// `GpuBakeStats::ray_query_note` とログだけに残す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RayQueryWhy {
+    /// `GpuBakeOptions::ray_query` が切（設定か環境変数。どちらかは呼び出し側が知る）。
+    Disabled,
+    /// アダプターが ray query に対応していない。
+    NotSupported,
+    /// この焼きは ray query の対象外（名前の対応・三角形が多すぎる・予算）。
+    NotApplicable,
+    /// ray query つきのデバイスを作れなかった（compute のデバイスで作り直した）。
+    Device,
+    /// ray query のシェーダー・パイプラインを作れない。
+    Shader,
+    /// 加速構造を作れない。
+    Accel,
+    /// 自己照合を回せない。
+    CheckRun,
+    /// 自己照合に通らない。
+    CheckFailed,
+    /// 前の焼きが ray query で途中で失敗したので、compute に切り替えた。
+    RunFailed,
+}
+
 #[derive(Clone, Debug)]
 pub struct GpuBakeStats {
     pub method: GpuBakeMethod,
@@ -166,8 +227,10 @@ pub struct GpuBakeStats {
     pub input_bytes: u64,
     /// 出力と読み戻しの 1 帯の大きさ（バイト）。
     pub band_bytes: u64,
-    /// ray query を使えるのに compute にした理由（使えたか、使わなかったか）。
+    /// ray query の道について、使った説明（自己照合の結果）か、使わなかった詳しい理由（数を含む。ログ・試験用で、画面には出さない）。
     pub ray_query_note: Option<String>,
+    /// ray query を使わなかった理由の種類（使ったとき・compute を選んでいて ray query に関わらないときは None）。
+    pub ray_query_why: Option<RayQueryWhy>,
 }
 
 pub struct GpuBaked {
@@ -192,8 +255,23 @@ pub struct BakeGpu {
     failed: Option<String>,
     /// ray query の機能つきでデバイスを作れたか。
     ray_query: bool,
+    /// ray query つきでデバイスを作ろうとして失敗した理由（compute のデバイスに戻った）。
+    ray_query_device_error: Option<String>,
+    /// アダプターが ray query の機能を持つか（デバイスを ray query つきで作れたかとは別。作れなかった理由は `ray_query_device_error`）。
+    adapter_supports_ray_query: bool,
+    /// 前の焼きが ray query で途中で失敗したので、ray query を止めている理由（`GpuBakeSlot` が作り直すときに渡す）。
+    ray_query_blocked: Option<String>,
+    /// デバイスが失われた（ドライバーの固まり・応答なし）。
+    lost: Arc<AtomicBool>,
+    /// GPU の完了を待つ・読み戻す所で失敗した（時間切れ・割り付けの失敗。固まりの疑い）。
+    hung: bool,
+    /// 今の `bake` が ray query の道で焼いている（失敗したとき、compute でやり直せるかの判断に使う）。
+    ray_query_running: bool,
     /// ray query のシェーダー（初めて使うときに作る。作れなければ理由）。
     rq: Option<Result<Compiled, String>>,
+    /// 試験用: 次の `bake` の、レイをたどる道を決めたあとの途中で、この理由の失敗にする（`MidFailure` はそのとき ray query の道で焼いていた
+    /// ことにするか、固まり・応答なしの失敗にするか）。
+    inject_mid: Option<(String, MidFailure)>,
     /// 試験用: 次の `bake` の途中で、この理由の失敗にする。
     inject: Option<String>,
     /// 試験用: `bake` のたびに compute の道で自己照合のレイを飛ばして、結果を `selfcheck_probe` に置く。
@@ -257,6 +335,60 @@ fn rank(info: &wgpu::AdapterInfo) -> (u8, u8) {
     )
 }
 
+/// 試験用の途中の失敗の種類（`BakeGpu::fail_midway_for_test`）。
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MidFailure {
+    /// compute の道で焼いている間の失敗。
+    Compute,
+    /// ray query の道で焼いている間の、固まりではない失敗（NaN・範囲外の値など）。
+    RayQuery,
+    /// ray query の道で焼いている間の、完了待ちの時間切れ（固まりの疑い）。
+    RayQueryHung,
+}
+
+/// 準備の間の取消・時間切れの確認で通知する進み具合（`MeshBakePlan` の準備が終わった所）。
+const PREPARE_FRACTION: f64 = 0.05;
+/// ray query の準備ができたときの (pipeline, 束縛, 説明, 追加の旗)。
+type RqReady = (wgpu::ComputePipeline, wgpu::BindGroup, String, u32);
+/// ray query の準備が compute に戻る・止まる理由。
+enum RqStop {
+    /// compute に戻る（理由の種類と詳しい文）。
+    Why(RayQueryWhy, String),
+    /// 取消・時間切れ・進捗の中止（空の結果。焼きはここで終わる）。
+    Stopped(Box<MeshBakeResult>),
+}
+/// 準備の区切りで取消・時間切れを見る。
+fn stop_check(
+    plan: &mut MeshBakePlan<'_>,
+    progress: &mut dyn FnMut(f64, &str) -> bool,
+) -> Result<(), RqStop> {
+    match plan.checkpoint(PREPARE_FRACTION, "Preparing", progress) {
+        Some(result) => Err(RqStop::Stopped(Box::new(result))),
+        None => Ok(()),
+    }
+}
+
+/// ray query つきのデバイスの作成・準備（`rq`。None は試さない）が失敗したら、その理由を持って ray query なしの作り方（`plain`）に
+/// 戻る。ray query の失敗で CPU に落とさない。
+async fn with_ray_query_fallback<T, F, G>(
+    rq: Option<F>,
+    plain: impl FnOnce(Option<String>) -> G,
+) -> Result<T, GpuBakeError>
+where
+    F: std::future::Future<Output = Result<T, String>>,
+    G: std::future::Future<Output = Result<T, GpuBakeError>>,
+{
+    let device_error = match rq {
+        Some(attempt) => match attempt.await {
+            Ok(done) => return Ok(done),
+            Err(e) => Some(e),
+        },
+        None => None,
+    };
+    plain(device_error).await
+}
+
 impl BakeGpu {
     /// 使えるアダプターを選んで準備する。使えなければ理由（先頭が "GPU 利用不可:"）。
     pub fn new(options: GpuBakeOptions) -> Result<Self, GpuBakeError> {
@@ -296,7 +428,7 @@ impl BakeGpu {
             }));
         };
         let info = adapter.get_info();
-        let ray_query = adapter
+        let adapter_supports_ray_query = adapter
             .features()
             .contains(wgpu::Features::EXPERIMENTAL_RAY_QUERY);
         let request = |ray_query: bool| wgpu::DeviceDescriptor {
@@ -316,22 +448,53 @@ impl BakeGpu {
             },
             ..Default::default()
         };
-        let want_rq = options.ray_query && ray_query;
-        let created = if want_rq {
-            adapter.request_device(&request(true)).await.ok()
-        } else {
-            None
+        let want_rq = options.ray_query && adapter_supports_ray_query;
+        let rq_attempt = async {
+            let (device, queue) = adapter
+                .request_device(&request(true))
+                .await
+                .map_err(|e| e.to_string())?;
+            // デバイスは作れても、その後の準備（compute のシェーダー・最初の確認）で失敗する GPU がある
+            Self::assemble(
+                device,
+                queue,
+                &info,
+                options.clone(),
+                true,
+                adapter_supports_ray_query,
+                None,
+            )
+            .await
+            .map_err(|e| e.to_string())
         };
-        let (device, queue, ray_query) = match created {
-            Some((device, queue)) => (device, queue, true),
-            None => {
-                let (device, queue) = adapter
-                    .request_device(&request(false))
-                    .await
-                    .map_err(unavailable)?;
-                (device, queue, false)
-            }
-        };
+        with_ray_query_fallback(want_rq.then_some(rq_attempt), |device_error| async {
+            let (device, queue) = adapter
+                .request_device(&request(false))
+                .await
+                .map_err(unavailable)?;
+            Self::assemble(
+                device,
+                queue,
+                &info,
+                options.clone(),
+                false,
+                adapter_supports_ray_query,
+                device_error,
+            )
+            .await
+        })
+        .await
+    }
+    /// 作ったデバイスに、エラーの受け口・compute のシェーダーを用意して、使える形にする。
+    async fn assemble(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        info: &wgpu::AdapterInfo,
+        options: GpuBakeOptions,
+        ray_query: bool,
+        adapter_supports_ray_query: bool,
+        ray_query_device_error: Option<String>,
+    ) -> Result<Self, GpuBakeError> {
         let errors = Arc::new(Mutex::new(Vec::new()));
         let sink = errors.clone();
         // 既定の処理はパニックなので、捕まえられなかった誤りは覚えておいて、次の確認で失敗として返す。
@@ -341,13 +504,16 @@ impl BakeGpu {
             }
         }));
         let sink = errors.clone();
+        let lost = Arc::new(AtomicBool::new(false));
+        let lost_flag = lost.clone();
         device.set_device_lost_callback(move |reason, message| {
+            lost_flag.store(true, Ordering::Relaxed);
             if let Ok(mut v) = sink.lock() {
                 v.push(format!("デバイスが失われました（{reason:?}）: {message}"));
             }
         });
         let mut this = Self {
-            adapter: adapter_info(&info, ray_query),
+            adapter: adapter_info(info, ray_query),
             compute: Self::compile(
                 &device,
                 &format!("{COMMON}\n{TRACE_COMPUTE}"),
@@ -360,8 +526,15 @@ impl BakeGpu {
             errors,
             failed: None,
             ray_query,
+            ray_query_device_error,
+            adapter_supports_ray_query,
+            ray_query_blocked: None,
+            lost,
+            hung: false,
+            ray_query_running: false,
             rq: None,
             inject: None,
+            inject_mid: None,
             probe_selfcheck: false,
             selfcheck_probe: None,
         };
@@ -384,8 +557,9 @@ impl BakeGpu {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
+        // DXC（DX12 の新しいシェーダーコンパイラー）はラベルをファイル名として渡されるので、日本語だと読めずに失敗する。ASCII にする
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("メッシュマップのベイク"),
+            label: Some("mesh_map_bake"),
             source: wgpu::ShaderSource::Wgsl(source.into()),
         });
         let pipeline_for = |entry: &'static str| {
@@ -418,6 +592,19 @@ impl BakeGpu {
     pub fn adapter(&self) -> &BakeAdapter {
         &self.adapter
     }
+    /// このインスタンスを作ったときの `GpuBakeOptions::ray_query`（デバイスの作り方が変わるので、後から切り替えられない）。
+    pub fn ray_query_option(&self) -> bool {
+        self.options.ray_query
+    }
+    /// ray query を止めて作ったときの理由を覚える（`GpuBakeSlot` が、前の焼きの失敗のあと compute だけで作り直すときに渡す）。
+    pub(crate) fn block_ray_query(&mut self, reason: &str) {
+        self.ray_query_blocked = Some(reason.to_owned());
+    }
+    /// 直前の `bake` の失敗が、ray query の道を使っていて、デバイスの消失でも待ち時間切れでもないか（compute でやり直せば焼けるかもしれない
+    /// 失敗。固まり・応答なしのドライバーは、同じ GPU を使わず CPU に戻す）。
+    pub(crate) fn failed_on_ray_query_only(&self) -> bool {
+        self.ray_query_running && !self.lost.load(Ordering::Relaxed) && !self.hung
+    }
     /// このデバイスで 1 回の dispatch に使えるワークグループ数（1 次元）の上限。
     pub fn max_workgroups_per_dimension(&self) -> u32 {
         self.device.limits().max_compute_workgroups_per_dimension
@@ -431,6 +618,11 @@ impl BakeGpu {
     #[doc(hidden)]
     pub fn fail_for_test(&mut self, reason: &str) {
         self.inject = Some(reason.to_owned());
+    }
+    /// 試験用: 次の `bake` を、レイをたどる道を決めたあとに `Failed` にする。
+    #[doc(hidden)]
+    pub fn fail_midway_for_test(&mut self, reason: &str, kind: MidFailure) {
+        self.inject_mid = Some((reason.to_owned(), kind));
     }
     /// 試験用: 以後の `bake` で、compute の道の自己照合のレイ（ray query の道が合わせるべき答え）も飛ばして覚える。
     /// ray query の使えない環境でも、この答えの形（並び・値の範囲）は確かめられる。
@@ -473,6 +665,7 @@ impl BakeGpu {
                 "GPU は作り直しが必要です: {reason}"
             )));
         }
+        self.ray_query_running = false;
         // f32 で計算する GPU は、座標が大きすぎると積が桁あふれする。NaN・無限大の検出は GPU が作った場合だけで（WGSL は作らない
         // 前提の最適化を許す）、コンテナの実 GPU では黙って誤った値になった。焼く前に座標の大きさで決め打ちに断り、CPU（f64）に任せる
         for m in std::iter::once(input).chain(reference) {
@@ -671,40 +864,71 @@ impl BakeGpu {
         }
         // レイをたどる道: ハードウェアの ray query が使えて自己照合に通れば ray query、そうでなければ compute。
         let mut method = GpuBakeMethod::Compute;
-        let mut ray_query_note = None;
+        let ray_query_note: Option<String>;
+        let ray_query_why: Option<RayQueryWhy>;
         let mut pipeline = self.compute.pipeline.clone();
         let mut group = group;
         let mut rq_flags = 0u32;
-        if self.options.ray_query && self.adapter.ray_query {
-            if !self.ray_query {
-                ray_query_note =
-                    Some("ray query つきのデバイスを作れなかったので compute".to_string());
-            } else {
-                let spare = self
-                    .options
-                    .budget_bytes
-                    .saturating_sub(input_bytes + band_bytes);
-                match self.try_ray_query(
-                    &packed,
-                    spare,
-                    &buffers,
-                    &group,
-                    &params_buffer,
-                    &out,
-                    &out_rb,
-                ) {
-                    Ok((rq_pipeline, rq_group, summary, flags)) => {
-                        method = GpuBakeMethod::RayQuery;
-                        pipeline = rq_pipeline;
-                        group = rq_group;
-                        rq_flags = flags;
-                        ray_query_note = Some(summary);
-                    }
-                    Err(why) => {
-                        ray_query_note = Some(format!("compute（ray query を使わない理由: {why}）"))
-                    }
+        if let Some(blocked) = &self.ray_query_blocked {
+            ray_query_why = Some(RayQueryWhy::RunFailed);
+            ray_query_note = Some(format!(
+                "compute（ray query を使わない理由: 前の焼きが ray query の途中で失敗したので止めた: {blocked}）"
+            ));
+        } else if !self.options.ray_query {
+            ray_query_why = Some(RayQueryWhy::Disabled);
+            ray_query_note = Some("compute（ray query は切）".to_string());
+        } else if let Some((why, note)) = ray_query_unavailable(
+            self.adapter_supports_ray_query,
+            self.ray_query,
+            self.ray_query_device_error.as_deref(),
+        ) {
+            ray_query_why = Some(why);
+            ray_query_note = Some(note);
+        } else {
+            let spare = self
+                .options
+                .budget_bytes
+                .saturating_sub(input_bytes + band_bytes);
+            match self.try_ray_query(
+                &packed,
+                spare,
+                &buffers,
+                &group,
+                &params_buffer,
+                &out,
+                &out_rb,
+                &mut plan,
+                progress,
+            ) {
+                Ok((rq_pipeline, rq_group, summary, flags)) => {
+                    method = GpuBakeMethod::RayQuery;
+                    pipeline = rq_pipeline;
+                    group = rq_group;
+                    rq_flags = flags;
+                    ray_query_note = Some(summary);
+                    ray_query_why = None;
+                    self.ray_query_running = true;
+                }
+                Err(RqStop::Why(why, detail)) => {
+                    ray_query_why = Some(why);
+                    ray_query_note = Some(format!("compute（ray query を使わない理由: {detail}）"));
+                }
+                Err(RqStop::Stopped(result)) => {
+                    return Ok(GpuBaked {
+                        result: *result,
+                        stats: GpuBakeStats {
+                            input_bytes,
+                            band_bytes,
+                            ..GpuBakeStats::none()
+                        },
+                    })
                 }
             }
+        }
+        if let Some((reason, kind)) = self.inject_mid.take() {
+            self.ray_query_running = kind != MidFailure::Compute;
+            self.hung = kind == MidFailure::RayQueryHung;
+            return Err(failed(reason));
         }
         let mut raw = MeshBakeRaw {
             outputs: settings
@@ -726,6 +950,7 @@ impl BakeGpu {
             input_bytes,
             band_bytes,
             ray_query_note,
+            ray_query_why,
         };
         let rays_per_texel = packed.rays_per_texel;
         let chunk_cap = max_chunk(
@@ -871,8 +1096,10 @@ impl BakeGpu {
     }
 
     /// ray query の道を用意する。加速構造を作り、同じレイを compute の道と ray query の道で飛ばして答え（当たったか・距離・三角形・
-    /// 重心座標）を比べ、合えば ray query の (pipeline, 束縛, 説明, 追加の旗) を返す。作れない・合わないなら理由（compute に戻る。
-    /// GPU は壊れた扱いにしない）。
+    /// 重心座標）を比べ、合えば ray query の (pipeline, 束縛, 説明, 追加の旗) を返す。作れない・合わないなら理由の種類と詳しい文
+    /// （compute に戻る）。準備の区切りごとに取消・時間切れを見て、止めるなら `RqStop::Stopped`。ray query に固有の失敗（シェーダー・
+    /// 加速構造の検証、メモリ）は、この中のエラーの受け口で受け止める。ただし完了待ち・読み戻しの失敗（時間切れ）はそこで `failed` が
+    /// 立つので、その GPU は次の焼きで作り直される。
     #[allow(clippy::too_many_arguments)]
     fn try_ray_query(
         &mut self,
@@ -883,15 +1110,25 @@ impl BakeGpu {
         params_buffer: &wgpu::Buffer,
         out: &wgpu::Buffer,
         out_rb: &wgpu::Buffer,
-    ) -> Result<(wgpu::ComputePipeline, wgpu::BindGroup, String, u32), String> {
+        plan: &mut MeshBakePlan<'_>,
+        progress: &mut dyn FnMut(f64, &str) -> bool,
+    ) -> Result<RqReady, RqStop> {
         let limits = self.device.limits();
-        rayquery::applicable(packed, &limits, spare)?;
-        // ray query に固有の失敗（シェーダー・加速構造の検証、メモリ）はこの中で受け止め、compute の道へ戻す。
+        rayquery::applicable(packed, &limits, spare)
+            .map_err(|e| RqStop::Why(RayQueryWhy::NotApplicable, e))?;
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
-        let result =
-            self.try_ray_query_inner(packed, buffers, compute_group, params_buffer, out, out_rb);
+        let result = self.try_ray_query_inner(
+            packed,
+            buffers,
+            compute_group,
+            params_buffer,
+            out,
+            out_rb,
+            plan,
+            progress,
+        );
         let mut scope_error = None;
         for scope in [internal, memory, validation] {
             if let Some(e) = pollster::block_on(scope.pop()) {
@@ -900,10 +1137,12 @@ impl BakeGpu {
         }
         match (result, scope_error) {
             (Ok(r), None) => Ok(r),
-            (Ok(_), Some(e)) | (Err(e), None) => Err(e),
-            (Err(e), Some(s)) => Err(format!("{e} / {s}")),
+            (Ok(_), Some(e)) => Err(RqStop::Why(RayQueryWhy::Accel, e)),
+            (Err(RqStop::Why(why, e)), Some(s)) => Err(RqStop::Why(why, format!("{e} / {s}"))),
+            (Err(e), _) => Err(e),
         }
     }
+    #[allow(clippy::too_many_arguments)]
     fn try_ray_query_inner(
         &mut self,
         packed: &Packed,
@@ -912,7 +1151,10 @@ impl BakeGpu {
         params_buffer: &wgpu::Buffer,
         out: &wgpu::Buffer,
         out_rb: &wgpu::Buffer,
-    ) -> Result<(wgpu::ComputePipeline, wgpu::BindGroup, String, u32), String> {
+        plan: &mut MeshBakePlan<'_>,
+        progress: &mut dyn FnMut(f64, &str) -> bool,
+    ) -> Result<RqReady, RqStop> {
+        stop_check(plan, progress)?;
         if self.rq.is_none() {
             self.rq = Some(
                 pollster::block_on(Self::compile(
@@ -925,7 +1167,12 @@ impl BakeGpu {
         }
         let (rq_layout, rq_pipeline, rq_selfcheck) = match self.rq.as_ref().expect("作った") {
             Ok(c) => (c.layout.clone(), c.pipeline.clone(), c.selfcheck.clone()),
-            Err(e) => return Err(e.clone()),
+            Err(e) => {
+                return Err(RqStop::Why(
+                    RayQueryWhy::Shader,
+                    format!("ray query のシェーダー・パイプラインを作れない: {e}"),
+                ))
+            }
         };
         let mut params = packed.params;
         params.local_start = 0;
@@ -935,6 +1182,7 @@ impl BakeGpu {
         self.queue
             .write_buffer(params_buffer, 0, bytemuck::bytes_of(&params));
         let compute_selfcheck = self.compute.selfcheck.clone();
+        let check_run = |e: GpuBakeError| RqStop::Why(RayQueryWhy::CheckRun, e.to_string());
         let c = self
             .run_selfcheck(
                 &compute_selfcheck,
@@ -943,11 +1191,26 @@ impl BakeGpu {
                 out_rb,
                 out,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(check_run)?;
         // 裏表の規約が compute の道と逆（裏面を飛ばすレイだけが合わない）なら、頂点の並びを入れ替えてもう一度だけ確かめる。
         let mut flip = false;
         loop {
-            let accel = rayquery::build(&self.device, &self.queue, packed, flip)?;
+            stop_check(plan, progress)?;
+            let mut stopped = None;
+            let accel = rayquery::build(&self.device, &self.queue, packed, flip, &mut || {
+                stopped = plan.checkpoint(PREPARE_FRACTION, "Preparing", progress);
+                stopped.is_some()
+            });
+            let accel = match accel {
+                Ok(a) => a,
+                Err(rayquery::BuildError::Stopped) => {
+                    return Err(RqStop::Stopped(Box::new(stopped.expect("止めた"))))
+                }
+                Err(rayquery::BuildError::Failed(e)) => {
+                    return Err(RqStop::Why(RayQueryWhy::Accel, e))
+                }
+            };
+            stop_check(plan, progress)?;
             let mut entries: Vec<_> = buffers
                 .iter()
                 .enumerate()
@@ -976,7 +1239,7 @@ impl BakeGpu {
                 .write_buffer(params_buffer, 0, bytemuck::bytes_of(&check_params));
             let r = self
                 .run_selfcheck(&rq_selfcheck, &rq_group, params_buffer, out_rb, out)
-                .map_err(|e| e.to_string())?;
+                .map_err(check_run)?;
             match rayquery::compare(&c, &r, limit, need_cull) {
                 rayquery::Verdict::Pass(summary) => {
                     // 加速構造は束縛（TLAS → BLAS）が持ち続ける。頂点のバッファは構築が済んだので手放してよい。
@@ -995,9 +1258,14 @@ impl BakeGpu {
                 }
                 rayquery::Verdict::CullReversed(_) if !flip => flip = true,
                 rayquery::Verdict::CullReversed(why) => {
-                    return Err(format!("頂点の並びを入れ替えても{why}"))
+                    return Err(RqStop::Why(
+                        RayQueryWhy::CheckFailed,
+                        format!("頂点の並びを入れ替えても{why}"),
+                    ))
                 }
-                rayquery::Verdict::Fail(why) => return Err(why),
+                rayquery::Verdict::Fail(why) => {
+                    return Err(RqStop::Why(RayQueryWhy::CheckFailed, why))
+                }
             }
         }
     }
@@ -1024,6 +1292,7 @@ impl BakeGpu {
             .and_then(|_| rx.recv_timeout(Duration::from_secs(1)).map_err(failed))
             .and_then(|r| r.map_err(failed));
         if let Err(e) = received {
+            self.hung = true;
             self.failed = Some(e.to_string());
             return Err(e);
         }
@@ -1049,6 +1318,7 @@ impl GpuBakeStats {
             input_bytes: 0,
             band_bytes: 0,
             ray_query_note: None,
+            ray_query_why: None,
         }
     }
 }

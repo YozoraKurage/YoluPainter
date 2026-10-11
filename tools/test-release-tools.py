@@ -42,6 +42,79 @@ class LicenseChecks(unittest.TestCase):
         self.assertFalse(errors)
         self.assertIn('試験用の原文', texts[0])
 
+    def repo_text(self, content='[上流の記載から組み立てた表示]\nCopyright (c) 作者\n'):
+        folder = self.root / 'tools/license-texts'
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / 'mit.txt'
+        path.write_text(content, encoding='utf-8')
+        return {'repo': 'tools/license-texts/mit.txt', 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+
+    def test_a_text_kept_in_the_repository_is_verified_and_named_as_such(self):
+        spec = self.repo_text()
+        with patch.object(licenses, 'ROOT', self.root):
+            origin, text = licenses.read_source(self.package, spec, True)
+            self.assertEqual(origin, 'repo:tools/license-texts/mit.txt')
+            self.assertIn('Copyright (c) 作者', text)
+            # 全文の束にも載る（取得元は repo: の形で書かれる）
+            self.review['files'] = [spec, self.review['files'][0]]
+            rows, texts, errors = self.inspect()
+        self.assertFalse(errors)
+        self.assertIn('repo:tools/license-texts/mit.txt', texts[0])
+        self.assertIn('試験用の原文', texts[1])
+
+    def test_a_changed_repository_text_or_one_outside_the_folder_is_rejected(self):
+        spec = self.repo_text()
+        with patch.object(licenses, 'ROOT', self.root):
+            (self.root / 'tools/license-texts/mit.txt').write_text('書き換えた文', encoding='utf-8')
+            with self.assertRaisesRegex(ValueError, 'SHA-256'):
+                licenses.read_source(self.package, spec, True)
+            # フォルダの外のファイル・.. を通る道・フォルダの外へのリンクは、SHA-256 が合っていても受けない
+            outside = {'repo': 'LICENSE', 'sha256': hashlib.sha256((self.root / 'LICENSE').read_bytes()).hexdigest()}
+            roundabout = {'repo': 'tools/license-texts/../../LICENSE', 'sha256': outside['sha256']}
+            link = self.root / 'tools/license-texts/link.txt'
+            try:
+                link.symlink_to(self.root / 'LICENSE')
+            except OSError:
+                link = None
+            for bad in [outside, roundabout, *([{'repo': 'tools/license-texts/link.txt', 'sha256': outside['sha256']}] if link else [])]:
+                with self.assertRaisesRegex(ValueError, 'license-texts'):
+                    licenses.read_source(self.package, bad, True)
+            # 無いファイルは OSError（照合の失敗として main が拾う）
+            with self.assertRaises(OSError):
+                licenses.read_source(self.package, {'repo': 'tools/license-texts/none.txt', 'sha256': '0' * 64}, True)
+
+    def test_the_eleven_crates_without_an_upstream_license_text_carry_a_copyright_line_and_the_mit_text(self):
+        config = json.loads((ROOT / 'tools/licenses-reviewed.json').read_text(encoding='utf-8'))
+        authors = {
+            'objc2@0.6.4': ['Mads Marquart'], 'block2@0.6.2': ['Mads Marquart'], 'objc2-encode@4.1.0': ['Mads Marquart'],
+            'objc2-foundation@0.3.2': ['Mads Marquart'], 'objc2-app-kit@0.3.2': ['Mads Marquart'],
+            'objc2-core-foundation@0.3.2': ['Mads Marquart'], 'objc2-core-graphics@0.3.2': ['Mads Marquart'],
+            'objc2-metal@0.3.2': ['Mads Marquart'], 'objc2-quartz-core@0.3.2': ['Mads Marquart'],
+            'dispatch2@0.3.1': ['Mads Marquart', 'Mary'], 'dispatch@0.2.0': ['Steven Sheldon'],
+        }
+        for key, names in authors.items():
+            with self.subTest(key):
+                repo = [spec for spec in config['crates'][key]['files'] if 'repo' in spec]
+                self.assertEqual(len(repo), 1)
+                path = ROOT / repo[0]['repo']
+                self.assertEqual(path.parent, ROOT / 'tools/license-texts')
+                self.assertEqual(licenses.digest(path.read_bytes()), repo[0]['sha256'])
+                text = path.read_text(encoding='utf-8')
+                # 上流の原文ではなく、上流の記載から組み立てた表示であることが、頭に書いてある
+                self.assertTrue(text.startswith('[上流の記載から組み立てた表示'), key)
+                self.assertIn('上流の原文ではありません', text)
+                self.assertIn('not an upstream original', text)
+                # 著作権の行は作者ごとに 1 行（年は上流の記載に無いので書かない）、本文は MIT の標準の文
+                lines = [line for line in text.splitlines() if line.startswith('Copyright')]
+                self.assertEqual(lines, [f'Copyright (c) {name}' for name in names])
+                self.assertIn('Permission is hereby granted, free of charge', text)
+                self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', text)
+                self.assertNotIn('\r', text)
+                self.assertEqual(config['crates'][key]['selected'], ['MIT'])
+        # ほかのクレートは、この形（repo）を使わない（上流・クレートに本文があるものは、その原文を固定する）
+        users = sorted(k for k, v in config['crates'].items() if any('repo' in spec for spec in v['files']))
+        self.assertEqual(users, sorted(authors))
+
     def test_changed_text_is_rejected(self):
         (self.root / 'LICENSE').write_text('変更された原文')
         self.assertIn('SHA-256', ' '.join(self.inspect()[2]))

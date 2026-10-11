@@ -7,7 +7,7 @@ use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::brushes::{BrushAction, BrushKey, Category, Group};
-use yolu_app::engine::{BrushEffect, SymmetryMode};
+use yolu_app::engine::BrushEffect;
 use yolu_app::lang::Lang;
 use yolu_app::m2::{BrushOp, UiOp};
 use yolu_app::state::{Action, AppState, Tool};
@@ -40,6 +40,12 @@ fn row_of(h: &H, name: &str) -> Rect {
     rect_of(h, name, |r| {
         r.left() < 340.0 && r.top() > 100.0 && r.top() < 900.0 && r.width() > 200.0
     })
+}
+
+/// 一覧を先頭へ戻す（新しいブラシを作ると、一覧はその行へ送られる。組の高さに入りきらない行は、先頭へ戻さないと見えない）。
+fn list_to_top(h: &mut H) {
+    h.state_mut().state.brushes.ui.list_scroll = 0.0;
+    h.run();
 }
 
 fn click_row(h: &mut H, name: &str) {
@@ -112,14 +118,27 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
         tab.left() < h.state().tab_rects[&Tab::Assets].left(),
         "アセットより前"
     );
-    // 右のプロパティのタブはステンシル・マテリアル・レイヤー（ブラシも、筆先の形のアルファも無い）
-    let side = |r: Rect| r.left() > 1300.0 && r.top() > 560.0 && r.top() < 600.0;
-    for label in ["ステンシル", "マテリアル", "レイヤー"] {
+    // ツールプロパティとブラシサイズは、サブツールの下に縦に並ぶ別のパネル
+    let props_tab = h.state().tab_rects[&Tab::ToolProperties];
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    assert!(tab.top() < props_tab.top() && props_tab.top() < size_tab.top());
+    // 右のプロパティのタブはステンシル・レイヤー（ブラシも、マテリアルも、筆先の形のアルファも無い）
+    let properties = h.state().tab_rects[&Tab::Properties];
+    let side = move |r: Rect| {
+        r.left() > properties.left() - 2.0
+            && r.top() > properties.bottom()
+            && r.top() < properties.bottom() + 28.0
+    };
+    for label in ["ステンシル", "レイヤー"] {
         rect_of(&h, label, side);
     }
     assert!(
         h.query_all_by_label("ブラシ").all(|n| !side(n.rect())),
         "プロパティにブラシのタブは無い"
+    );
+    assert!(
+        h.query_all_by_label("マテリアル").all(|n| !side(n.rect())),
+        "プロパティにマテリアルのタブは無い"
     );
     assert!(
         h.query_all_by_label("アルファ").next().is_none(),
@@ -128,12 +147,10 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
     assert_eq!(st(&h).ui.property_tab, 0);
     // 英語
     language(&mut h, Lang::En);
-    assert!(h.query_by_label("Tool Properties").is_some());
-    assert!(h.query_by_label("Brush Size").is_some());
     assert!(h.query_all_by_label("Alpha").next().is_none());
+    assert!(h.query_by_label("Hardness").is_some());
     click_tab(&mut h, Tab::Assets);
     click_tab(&mut h, Tab::SubTools);
-    assert!(h.query_by_label("Tool Properties").is_some());
 }
 
 // ───────── 一覧 ─────────
@@ -264,6 +281,7 @@ fn the_list_footer_adds_duplicates_reverts_and_deletes() {
     assert!(st(&h).brushes.lib.entry(copy).is_some());
     assert_eq!(st(&h).brushes.lib.current(), key, "前の行へ");
     // 組み込みも並びから外せる（「＋」のウィンドウから戻せる）
+    list_to_top(&mut h);
     click_row(&mut h, "ハード円");
     h.get_by_label("ブラシを削除").click();
     h.run();
@@ -307,7 +325,9 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
     h.run();
     assert_eq!(st(&h).brushes.lib.entry(key).unwrap().name, "太い線");
     assert_eq!(st(&h).brushes.ui.renaming, None);
-    // 組み込みもダブルクリックで名前を変えられる（変えると、同じ場所のファイルの写しになる）
+    // 組み込みもダブルクリックで名前を変えられる（変えると、同じ場所のファイルの写しになる）。一覧は新しいブラシの所へ送られているので、先頭へ戻す
+    h.state_mut().state.brushes.ui.list_scroll = 0.0;
+    h.run();
     let row = row_of(&h, "標準");
     let at = pos2(row.left() + 30.0, row.center().y);
     for _ in 0..2 {
@@ -393,7 +413,8 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
 
 #[test]
 fn dragging_a_row_reorders_the_list_inside_its_group() {
-    let mut h = app(1600.0, 1200.0, 128);
+    // （一覧の行が全部入る高さで）
+    let mut h = app(1600.0, 1400.0, 128);
     // 利用者のブラシを 2 つ足して、並び替える
     for _ in 0..2 {
         h.get_by_label("今の設定を新しいブラシに").click();
@@ -427,6 +448,7 @@ fn dragging_a_row_reorders_the_list_inside_its_group() {
     assert_eq!(st(&h).toolset.ui.drag, None);
     assert!(!st(&h).doc.can_undo());
     // 一番下の空白へ落とすと、グループの一番後ろ
+    list_to_top(&mut h);
     let top = row_of(&h, "標準");
     let list_bottom = panel_rect(&h).top() + 30.0 + 400.0;
     let _ = list_bottom;
@@ -522,11 +544,12 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
 
 #[test]
 fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
-    let mut h = app(1600.0, 900.0, 128);
+    // （丸が 2 段とも入る高さで）
+    let mut h = app(1600.0, 1100.0, 128);
     // 既定の直径 32 の丸が今の大きさ
     let cell = |h: &H, size: u32| {
         rect_of(h, &format!("{size} px"), |r| {
-            r.left() < 400.0 && r.top() > 300.0 && r.width() < 60.0
+            r.left() < 400.0 && r.top() > 100.0 && r.width() < 60.0
         })
     };
     for size in [1u32, 3, 8, 24, 64, 128, 256] {
@@ -544,14 +567,14 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
         yolu_app::panels::brushes::SIZES[yolu_app::panels::brushes::nearest_size(36.0)],
         32
     );
-    // ブラシサイズの帯は折りたためる（開き閉じは覚える）
-    h.get_by_label("ブラシサイズ").click();
+    // 大きさを持たないツールでは、パネルは空（丸は出ない）
+    h.state_mut().state.apply(Action::SelectTool(Tool::Fill));
     h.run();
-    assert!(!st(&h).section_open("brush-sizes", true));
-    assert!(h.query_by_label("32 px").is_none() || !in_panel(h.get_by_label("32 px").rect()));
-    // 英語
+    assert!(h.query_by_label("32 px").is_none());
+    // 英語（丸の名前は同じ）
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
     language(&mut h, Lang::En);
-    assert!(h.query_by_label("Brush Size").is_some());
+    assert!(h.query_by_label("32 px").is_some());
 }
 
 // ───────── ブラシの詳細のウィンドウ ─────────
@@ -566,7 +589,7 @@ fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
     let window = detail_rect(&h);
     // ウィンドウはキャンバスの真ん中を空けた所に出る
     assert!(window.left() > 340.0 && window.top() > 100.0, "{window:?}");
-    // 左のカテゴリは 9 つ（今のブラシの欄の全部）
+    // 左のカテゴリは今のブラシの欄の全部（対称は定規の欄にあり、ここには無い）
     for category in Category::ALL {
         let name = category.name(Lang::Ja);
         assert!(
@@ -963,85 +986,6 @@ fn the_effect_type_is_unavailable_for_the_eraser_with_a_reason() {
 }
 
 #[test]
-fn the_symmetry_category_sets_mode_center_and_count() {
-    let mut h = app(1600.0, 1000.0, 256);
-    open_detail(&mut h, Category::Symmetry);
-    for (label, mode) in [
-        ("縦", SymmetryMode::Vertical),
-        ("横", SymmetryMode::Horizontal),
-        ("両方", SymmetryMode::Both),
-        ("放射状", SymmetryMode::Radial),
-    ] {
-        let at = in_pane(&h, label).center();
-        click(&mut h, at);
-        assert_eq!(st(&h).sel.symmetry.mode, mode, "{label}");
-    }
-    // 中心のスライダー: キャンバスの幅・高さの 1/4・3/4 を押すと、中心がそこへ動く（キャンバスの座標では 64・192）
-    let x = in_pane(&h, "中心 X");
-    click(&mut h, pos2(x.left() + x.width() * 0.25, x.center().y));
-    let y = in_pane(&h, "中心 Y");
-    click(&mut h, pos2(y.left() + y.width() * 0.75, y.center().y));
-    let (cx, cy) = st(&h).sel.symmetry.center;
-    assert!(
-        (cx - 0.25).abs() < 0.05 && (cy - 0.75).abs() < 0.05,
-        "{cx} {cy}"
-    );
-    let c = st(&h).canvas_symmetry();
-    assert!(
-        (c.center.x - 64.0).abs() < 13.0 && (c.center.y - 192.0).abs() < 13.0,
-        "キャンバスの座標: {} {}",
-        c.center.x,
-        c.center.y
-    );
-    // 写しの数（放射状のときだけ）: 端まで動かすと 2 と 16、途中は整数
-    let count = in_pane(&h, "写しの数");
-    click(&mut h, pos2(count.right() - 1.0, count.center().y));
-    assert_eq!(st(&h).sel.symmetry.count, 16);
-    assert_eq!(st(&h).canvas_symmetry().count, 16);
-    click(&mut h, pos2(count.left() + 1.0, count.center().y));
-    assert_eq!(st(&h).sel.symmetry.count, 2);
-    click(
-        &mut h,
-        pos2(count.left() + count.width() * 0.5, count.center().y),
-    );
-    assert!(
-        (7..=11).contains(&st(&h).sel.symmetry.count),
-        "{}",
-        st(&h).sel.symmetry.count
-    );
-    assert_eq!(st(&h).canvas_symmetry().count, st(&h).sel.symmetry.count);
-    // 「キャンバスの中心」で 0.5 に戻る（戻ったあとは押せない）
-    assert!(!in_pane_node(&h, "キャンバスの中心")
-        .accesskit_node()
-        .is_disabled());
-    let at = in_pane(&h, "キャンバスの中心").center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.center, (0.5, 0.5));
-    assert!(in_pane_node(&h, "キャンバスの中心")
-        .accesskit_node()
-        .is_disabled());
-    // 指先は対称と組めない。モードは替えられる（ペイントに戻したときに効く設定を用意できる）が、効く欄（中心など）は無効にする
-    h.state_mut().state.m2.brush.effect = BrushEffect::SMUDGE;
-    h.run();
-    assert!(!h.get_by_label("縦").accesskit_node().is_disabled());
-    assert!(!h.get_by_label("なし").accesskit_node().is_disabled());
-    h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
-    h.run();
-    // 「なし」で対称が外れ、中心などの欄は消える
-    let at = in_pane(&h, "なし").center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-    assert!(h.query_by_label("中心 X").is_none());
-    // 既定に戻す（見出しの右）
-    let at = in_pane(&h, "縦").center();
-    click(&mut h, at);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::Vertical);
-    h.get_by_label("対称を既定に戻す").click();
-    h.run();
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-}
-
-#[test]
 fn the_detail_window_moves_with_its_header_and_the_canvas_still_paints_beside_it() {
     let mut h = app(1600.0, 900.0, 256);
     open_detail(&mut h, Category::Shape);
@@ -1077,52 +1021,35 @@ fn the_detail_window_moves_with_its_header_and_the_canvas_still_paints_beside_it
 }
 
 #[test]
-fn what_does_not_apply_in_3d_is_disabled_with_the_reason_instead_of_a_note() {
+fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     use yolu_app::engine::Channel;
     let mut h = app(1600.0, 1000.0, 256);
     click_tab(&mut h, Tab::View3d);
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();
     assert!(st(&h).view3d.paintable_on_screen());
-    // ツールプロパティ: 手ぶれ補正は効かない（直径・不透明度・硬さ・流量・間隔は効く）
-    assert!(h.get_by_label("手ぶれ補正").accesskit_node().is_disabled());
+    // ツールプロパティ: 手ぶれ補正も 3D の面のダブに効く（直径・不透明度・硬さ・流量・間隔も）
+    assert!(!h.get_by_label("手ぶれ補正").accesskit_node().is_disabled());
     for label in ["直径", "不透明度", "硬さ", "流量", "間隔"] {
         assert!(!rect_of_enabled(&h, label), "{label} は 3D でも効く");
     }
-    // 詳細のウィンドウ: 筆先・ゆらぎ・テクスチャ・デュアル・フェード・傾き・手ぶれ補正は無効。注記の行は出さない
-    for (category, disabled, enabled) in [
-        (Category::Shape, vec!["真円率", "角度"], vec![]),
-        (
-            Category::Stroke,
-            vec!["手ぶれ補正", "曲線"],
-            vec!["直径", "間隔"],
-        ),
-        (Category::Dynamics, vec!["入り", "抜き"], vec![]),
-        // 筆圧は 3D の面のダブにも効く（大きさ・不透明度・流量・硬さ。最小値は切り替えを入れたものだけ）
-        (Category::Pressure, vec![], vec!["筆圧を使う"]),
-        (Category::Jitter, vec!["サイズ", "散布"], vec![]),
+    // 詳細のウィンドウ: 筆先・ストローク（手ぶれ補正・曲線）・入り抜き・筆圧・ゆらぎも 3D で効く。注記の行は出さない
+    for (category, enabled) in [
+        (Category::Shape, vec!["真円率", "角度"]),
+        (Category::Stroke, vec!["手ぶれ補正", "曲線", "直径", "間隔"]),
+        (Category::Dynamics, vec!["入り", "抜き"]),
+        (Category::Pressure, vec!["筆圧を使う"]),
+        (Category::Jitter, vec!["サイズ", "散布"]),
     ] {
         open_detail(&mut h, category);
         let window = detail_rect(&h);
-        for label in disabled {
-            let node = h
-                .query_all_by_label(label)
-                .find(|n| {
-                    window.contains(n.rect().center()) && n.rect().left() > window.left() + 168.0
-                })
-                .unwrap_or_else(|| panic!("{category:?} {label}"));
-            assert!(
-                node.accesskit_node().is_disabled(),
-                "{category:?} {label} は 3D では効かない"
-            );
-        }
         for label in enabled {
             let node = h
                 .query_all_by_label(label)
                 .find(|n| {
                     window.contains(n.rect().center()) && n.rect().left() > window.left() + 168.0
                 })
-                .unwrap();
+                .unwrap_or_else(|| panic!("{category:?} {label}"));
             assert!(!node.accesskit_node().is_disabled(), "{category:?} {label}");
         }
         for note in [
@@ -1282,7 +1209,7 @@ fn snapshot_brush_panel() {
 #[test]
 fn snapshot_brush_panel_modified_and_user_brush() {
     // ブラシサイズの格子が 2 段になっても一覧の「鉛筆」まで見える高さ
-    let mut h = app(1600.0, 1000.0, 128);
+    let mut h = app(1600.0, 1300.0, 128);
     click_row(&mut h, "鉛筆");
     h.state_mut().state.brush.radius = 9.0;
     h.state_mut()
@@ -1332,7 +1259,6 @@ fn snapshot_brush_detail_window() {
         (Category::Pressure, "brushes_detail_pressure"),
         (Category::Dynamics, "brushes_detail_dynamics"),
         (Category::Texture, "brushes_detail_texture"),
-        (Category::Symmetry, "brushes_detail_symmetry"),
     ] {
         open_detail(&mut h, category);
         let rect = detail_rect(&h);
@@ -1353,17 +1279,24 @@ fn snapshot_brush_detail_window_english_effect() {
 }
 
 #[test]
-fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own() {
-    // 低いウィンドウ: 一覧・ツールプロパティ・ブラシサイズが入りきらないので、全体がスクロールする
+fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_scrolls_on_its_own()
+{
+    // 低いウィンドウ: ツールプロパティの組には、ブラシの設定が全部は入らないので、その中だけがスクロールする
     let mut h = app(1280.0, 640.0, 128);
-    let panel = panel_rect(&h);
-    let content = st(&h).brushes.ui.panel_content;
-    assert!(
-        content > panel.height(),
-        "中身 {content} はパネルの高さ {} を超える",
-        panel.height()
+    let props_tab = h.state().tab_rects[&Tab::ToolProperties];
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    let body = Rect::from_min_max(
+        pos2(props_tab.left() - 2.0, props_tab.bottom()),
+        pos2(props_tab.left() + 300.0, size_tab.top()),
     );
-    assert_eq!(st(&h).brushes.ui.panel_scroll, 0.0);
+    let brush = Tool::Brush as usize;
+    let content = st(&h).subtools.ui.props_content[brush];
+    assert!(
+        content > body.height(),
+        "中身 {content} はパネルの高さ {} を超える",
+        body.height()
+    );
+    assert_eq!(st(&h).subtools.ui.props_scroll[brush], 0.0);
     let wheel = |h: &mut H, at: egui::Pos2, dy: f32| {
         move_to(h, at);
         h.event(Event::MouseWheel {
@@ -1374,14 +1307,14 @@ fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own(
         });
         h.run();
     };
-    // ポインタを一覧の外（ツールプロパティの見出し）に置いたホイールは、全体を送る。一覧は動かない
-    let band = rect_of(&h, "ツールプロパティ", |r| {
-        r.left() < 340.0 && r.top() > 80.0
-    });
+    // ツールプロパティの上のホイールは、ツールプロパティだけを送る。一覧は動かない
     let list_before = st(&h).brushes.ui.list_scroll;
-    wheel(&mut h, band.center(), -400.0);
-    let scrolled = st(&h).brushes.ui.panel_scroll;
-    assert!(scrolled > 0.0, "全体がスクロールする: {scrolled}");
+    wheel(&mut h, body.center(), -400.0);
+    let scrolled = st(&h).subtools.ui.props_scroll[brush];
+    assert!(
+        scrolled > 0.0,
+        "ツールプロパティがスクロールする: {scrolled}"
+    );
     assert!(scrolled < content, "中身の高さまでは送らない: {scrolled}");
     assert_eq!(
         st(&h).brushes.ui.list_scroll,
@@ -1389,22 +1322,59 @@ fn the_panel_scrolls_when_the_dock_is_too_short_and_the_list_scrolls_on_its_own(
         "一覧は動かさない"
     );
     // 逆向きに戻せて、先頭より前には行かない
-    wheel(&mut h, band.center(), 100_000.0);
-    assert_eq!(st(&h).brushes.ui.panel_scroll, 0.0);
-    // 十分に高いウィンドウでは、全体は送れない
+    wheel(&mut h, body.center(), 100_000.0);
+    assert_eq!(st(&h).subtools.ui.props_scroll[brush], 0.0);
+    // 一覧の上のホイールは、一覧だけを送る（ブラシの行が多いとき）
+    for _ in 0..30 {
+        h.get_by_label("今の設定を新しいブラシに").click();
+        h.run();
+    }
+    let sub_tab = h.state().tab_rects[&Tab::SubTools];
+    let list_at = pos2(sub_tab.left() + 80.0, sub_tab.bottom() + 70.0);
+    wheel(&mut h, list_at, -200.0);
+    assert!(st(&h).brushes.ui.list_scroll > 0.0, "一覧がスクロールする");
+    assert_eq!(
+        st(&h).subtools.ui.props_scroll[brush],
+        0.0,
+        "ツールプロパティは動かさない"
+    );
+    // 十分に高いウィンドウでは、ツールプロパティは送れない
     let mut tall = app(1280.0, 1400.0, 128);
-    let band = rect_of(&tall, "ツールプロパティ", |r| {
-        r.left() < 340.0 && r.top() > 80.0
-    });
-    wheel(&mut tall, band.center(), -400.0);
-    assert_eq!(st(&tall).brushes.ui.panel_scroll, 0.0);
-    // ブラシサイズの丸はスクロールしても押せる
-    h.state_mut().state.brushes.ui.panel_scroll = 100_000.0;
+    let props_tab = tall.state().tab_rects[&Tab::ToolProperties];
+    wheel(
+        &mut tall,
+        pos2(props_tab.left() + 100.0, props_tab.bottom() + 60.0),
+        -400.0,
+    );
+    assert_eq!(st(&tall).subtools.ui.props_scroll[brush], 0.0);
+    // ブラシサイズの組も、入りきらなければ自分の中だけをスクロールし、スクロールしても丸は押せる（最後の段の丸が見える所まで送って、押す）
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    let color_tab = h.state().tab_rects[&Tab::Color];
+    let body = Rect::from_min_max(
+        size_tab.left_bottom(),
+        pos2(size_tab.left() + 300.0, color_tab.top()),
+    );
+    let last = *yolu_app::panels::brushes::SIZES.last().unwrap();
+    let cell = |h: &H| {
+        rect_of(h, &format!("{last} px"), |r| {
+            r.left() < 400.0 && r.width() < 60.0
+        })
+    };
+    assert!(!body.contains_rect(cell(&h)), "初めは最後の段が見えない");
+    h.state_mut().state.subtools.ui.sizes_scroll = 100_000.0;
     h.run();
-    assert!(st(&h).brushes.ui.panel_scroll > 0.0);
-    let cell = rect_of(&h, "64 px", |r| r.left() < 340.0 && r.width() < 60.0);
-    click(&mut h, cell.center());
-    assert_eq!(st(&h).brush.radius, 32.0);
+    let scrolled = st(&h).subtools.ui.sizes_scroll;
+    assert!(
+        scrolled > 0.0 && scrolled < 1_000.0,
+        "丸の高さまで: {scrolled}"
+    );
+    let at = cell(&h);
+    assert!(
+        body.contains_rect(at),
+        "送ると最後の段が見える {at:?} {body:?}"
+    );
+    click(&mut h, at.center());
+    assert_eq!(st(&h).brush.radius, last as f32 / 2.0);
 }
 
 #[test]
@@ -1479,17 +1449,16 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
         tool_off(&h) && shape_off(&h),
         "画像の先端は 2D では効かない"
     );
-    // 3D: 面のダブは画像を使わず丸いので、画像の先端でも両方が効く
+    // 3D: 面のダブも画像の筆先を使うので、2D と同じく画像の先端では両方が効かない
     click_tab(&mut h, Tab::View3d);
     h.state_mut().state.apply(Action::LoadDemoModel);
     h.run();
     assert!(st(&h).view3d.paintable_on_screen());
     assert!(st(&h).m2.brush.tip.image.is_some());
-    assert!(hardness_applies(st(&h)));
-    assert!(!tool_off(&h), "3D ではツールプロパティの硬さが効く");
+    assert!(!hardness_applies(st(&h)));
     assert!(
-        !shape_off(&h),
-        "3D では形状の硬さも効く（同じブラシで食い違わない）"
+        tool_off(&h) && shape_off(&h),
+        "画像の先端は 3D でも効かない（同じブラシで食い違わない）"
     );
     h.state_mut()
         .state

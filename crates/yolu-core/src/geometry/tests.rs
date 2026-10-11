@@ -395,7 +395,7 @@ fn surface_stroke_paints_across_the_seam_and_undoes_in_one_step() {
 }
 
 #[test]
-fn surface_stroke_skips_other_texture_sets_and_skips_dabs_that_do_not_fit_in_memory() {
+fn surface_stroke_skips_other_texture_sets_and_cancels_when_a_dab_does_not_fit_in_memory() {
     let mut doc = Document::new(128, 128).unwrap();
     let layer = doc.add_layer("1").unwrap();
     let g = Arc::new(cube());
@@ -423,7 +423,9 @@ fn surface_stroke_skips_other_texture_sets_and_skips_dabs_that_do_not_fit_in_mem
         "ほかのテクスチャセットの面は塗らない"
     );
     doc.cancel_stroke(stroke);
-    // 投影の画素がメモリに入らないダブは飛ばして理由を残す（ストロークは取り消さない）
+    // 投影の画素がメモリに入らないダブがあれば、2D と同じくストロークごと取り消す（塗り残しを作らない）
+    let before = doc.composite(doc.bounds()).unwrap();
+    let undo = doc.undo_count();
     let mut stroke = doc.begin_stroke(layer, &brush).unwrap();
     let mut s = SurfaceStroke::begin(
         &mut doc,
@@ -440,19 +442,31 @@ fn surface_stroke_skips_other_texture_sets_and_skips_dabs_that_do_not_fit_in_mem
     s.set_projection_memory(Some(
         s.projection_bytes() - s.projection_stats().cached_bytes,
     ));
+    let mut refused = None;
     for i in 1..20 {
-        s.add(
+        if let Err(e) = s.add(
             &mut doc,
             &mut stroke,
             center + Vec2::new(i as f32 * 3.0, 0.0),
             1.0,
-        )
-        .unwrap();
+        ) {
+            refused = Some(e);
+            break;
+        }
     }
-    s.finish(&mut doc, &mut stroke).unwrap();
-    assert!(s.stats.refused > 0, "{:?}", s.stats);
-    assert_eq!(s.note, Some(DabRefusal::MemoryBudget));
-    assert!(doc.end_stroke(stroke).unwrap().changed, "最初のダブは残る");
+    let refused = match refused {
+        Some(e) => e,
+        None => s.finish(&mut doc, &mut stroke).unwrap_err(),
+    };
+    assert_eq!(refused, SurfaceStrokeError::Dab(DabRefusal::MemoryBudget));
+    doc.cancel_stroke(stroke);
+    assert!(!doc.has_active_stroke());
+    assert_eq!(
+        doc.composite(doc.bounds()).unwrap(),
+        before,
+        "最初のダブも戻る"
+    );
+    assert_eq!(doc.undo_count(), undo, "履歴にも残らない");
 }
 
 /// ステンシルを通した 3D のストローク: 画面に貼り付いた画像の白い所だけが塗られる。
@@ -837,6 +851,7 @@ mod stencil {
             pitch: 0.0,
             distance,
             model_radius: 1.0,
+            ..Default::default()
         }
         .view(400.0, 400.0)
     }

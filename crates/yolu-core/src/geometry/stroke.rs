@@ -1,15 +1,14 @@
 //! 3D ビューのストロークの画面の点の並べ方（Unity 版の TexturePaintWindow の AddSurfacePoint・PaintSurfaceSegment・FinishSurfaceCurve）。
 //!
-//! 入力の点の間を centripetal Catmull-Rom（C# の StrokeCurve）で結び、区間の始まりの面でのブラシの直径から決めた画面の間隔で
-//! ダブの位置を出す。最新の点への区間は、その先の点（向きを決める）が来るか離すまで待たせる。区間のダブの数は
-//! 入力の速さで決まり、上限は [`SURFACE_DABS_PER_SEGMENT`] だけ（ありえない長さの区間を断る）。1 回の入力で塗る数の
-//! 区切り（[`SURFACE_DABS_PER_EVENT`]）は塗る側（`SurfaceStroke`）が持ち、超えた分は持ち越して後で塗る。
+//! 入力の点の間を、ブラシの「曲線」が入なら centripetal Catmull-Rom（C# の StrokeCurve）で、切なら直線で結び、2D のストロークと同じく
+//! 線の長さで間隔ごとにダブの位置を出す（前の区間の余りを持ち越すので、ダブの数と位置は入力の点の間隔によらない）。間隔は、区間の
+//! 始まりの面でのブラシの直径を画面へ直して決める。ダブには線の長さ・その所の線の向きと、ペンの傾き・回転・速さの補間も添える。
+//! 曲線なら、最新の点への区間は、その先の点（向きを決める）が来るか離すまで待たせる。デュアルブラシの 2 つ目のダブも、同じ折れ線に
+//! 自分の間隔と余りで置く。区間のダブの数の上限は [`SURFACE_DABS_PER_SEGMENT`] だけ（ありえない長さの区間を断る）。どれだけ塗るかの区切りは
+//! 塗る側（`SurfaceStroke`）が持ち（フレームの時間の枠）、塗らなかった分は持ち越して後で塗る。
 //! 画面の点の単位は呼ぶ側のもの（Unity 版は GUI の点）。
 
-use glam::Vec2;
-
-/// 1 回の入力・1 フレームに塗るダブの数（Unity 版の 1 回の入力の上限と同じ 128）。超えた分は捨てずに持ち越す（`SurfaceStroke`）。
-pub const SURFACE_DABS_PER_EVENT: usize = 128;
+use glam::{DVec2, Vec2};
 
 /// 1 つの区間のダブの数の上限。間隔は画面の 0.5 点より狭くならないので、画面の 32768 点を超える長さの区間（有限でない点など）
 /// だけが当たる。超えたら区間を描かずに断る（呼ぶ側はストロークを取り消す）。
@@ -87,22 +86,60 @@ impl std::fmt::Display for TooManyDabs {
 
 impl std::error::Error for TooManyDabs {}
 
-/// 3D のストロークの画面の点（押した点から始める。押した点のダブは呼ぶ側が置く）。
+/// 3D のストロークの道の点（手ぶれ補正の後の画面の点）と、そこでのペンの状態。傾きは画面の右・上へ倒れる向きのラジアン、回転は画面で
+/// 反時計回りのラジアン、速さは画面の点 / 秒（情報の無い入力は 0）。
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ScreenStrokeSampler {
-    previous: Vec2,
-    previous_pressure: f32,
-    before: Vec2,
-    has_before: bool,
-    held: Vec2,
-    held_pressure: f32,
-    has_held: bool,
+pub struct ScreenPoint {
+    pub at: Vec2,
+    pub pressure: f32,
+    pub tilt: DVec2,
+    pub rotation: f64,
+    pub speed: f64,
 }
 
-/// Unity の Vector2.Lerp（t は 0〜1 に収める）。
-fn lerp2(a: Vec2, b: Vec2, t: f32) -> Vec2 {
-    let t = super::unity::clamp01(t);
-    Vec2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+impl ScreenPoint {
+    /// 位置と筆圧だけの点（傾き・回転・速さは 0）。
+    pub fn new(at: Vec2, pressure: f32) -> ScreenPoint {
+        ScreenPoint {
+            at,
+            pressure,
+            tilt: DVec2::ZERO,
+            rotation: 0.0,
+            speed: 0.0,
+        }
+    }
+}
+
+/// 道の上のダブの位置: 画面の点・筆圧・押した点からの線の長さ（画面の点）・その所の線の向き（ラジアン、画面の右から反時計回り。
+/// y は上向きに測る）・傾き・回転・速さ（区間の両端の点の間で補間）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenDab {
+    pub at: Vec2,
+    pub pressure: f32,
+    pub arc: f64,
+    pub direction: f64,
+    pub tilt: DVec2,
+    pub rotation: f64,
+    pub speed: f64,
+}
+
+/// 3D のストロークの画面の点（押した点から始める。押した点のダブは呼ぶ側が置く）。曲線（`curve`）なら入力の点の間を centripetal
+/// Catmull-Rom で結び、最新の点への区間は、その先の点が来るか離すまで待たせる。曲線でなければ、点が来るたびに直線で結ぶ。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenStrokeSampler {
+    previous: ScreenPoint,
+    before: Vec2,
+    has_before: bool,
+    held: ScreenPoint,
+    has_held: bool,
+    curve: bool,
+    /// 描いた区間の長さの合計（画面の点）。
+    length: f64,
+    /// 最後に置いたダブ（とデュアルブラシの 2 つ目のダブ）からの線の長さ（次の区間へ持ち越す余り）。
+    since: f64,
+    dual_since: f64,
+    /// 最後に測った線の向き（長さ 0 の区間では変えない）。
+    direction: f64,
 }
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -113,79 +150,151 @@ fn distance(a: Vec2, b: Vec2) -> f32 {
     super::unity::v2_magnitude(a - b)
 }
 
+/// 区間の間隔: ダブの間隔と、デュアルブラシの 2 つ目のダブの間隔（無ければ None）。どちらも画面の単位。
+pub type SegmentGaps = (f32, Option<f32>);
+
 impl ScreenStrokeSampler {
+    /// 曲線で結ぶ道（今までの 3D のストローク）。
     pub fn new(at: Vec2, pressure: f32) -> ScreenStrokeSampler {
+        ScreenStrokeSampler::with_curve(ScreenPoint::new(at, pressure), true)
+    }
+
+    /// 押した点と、曲線で結ぶか（ブラシの「曲線」）。
+    pub fn with_curve(first: ScreenPoint, curve: bool) -> ScreenStrokeSampler {
         ScreenStrokeSampler {
-            previous: at,
-            previous_pressure: pressure,
-            before: at,
+            previous: first,
+            before: first.at,
             has_before: false,
-            held: at,
-            held_pressure: pressure,
+            held: first,
             has_held: false,
+            curve,
+            length: 0.0,
+            since: 0.0,
+            dual_since: 0.0,
+            direction: 0.0,
         }
     }
 
     /// 最後に描いた点。
     pub fn last_point(&self) -> Vec2 {
-        self.previous
+        self.previous.at
     }
 
-    /// 新しい入力の点: 待たせていた点までの区間を、この点で向きを決めた曲線にしてダブの位置（画面の点と筆圧）を out に足し、この点を待たせる。
-    /// spacing は区間の始まりの点を受け、そこでのダブの間隔（画面の単位）を返す（面が無ければ 1 など）。
+    /// 描いた区間の長さの合計（画面の点。待たせている区間は入らない）。
+    pub fn length(&self) -> f64 {
+        self.length
+    }
+
+    /// 新しい入力の点（[`ScreenStrokeSampler::add_point`] の、位置と筆圧だけで、ダブの位置と筆圧だけを返す形）。
     pub fn add(
         &mut self,
         at: Vec2,
         pressure: f32,
-        spacing: impl FnMut(Vec2) -> f32,
+        mut spacing: impl FnMut(Vec2) -> f32,
         out: &mut Vec<(Vec2, f32)>,
     ) -> Result<(), TooManyDabs> {
+        let mut dabs = Vec::new();
+        self.add_point(
+            ScreenPoint::new(at, pressure),
+            |a| (spacing(a), None),
+            &mut dabs,
+            &mut Vec::new(),
+        )?;
+        out.extend(dabs.iter().map(|d| (d.at, d.pressure)));
+        Ok(())
+    }
+
+    /// 離したとき（[`ScreenStrokeSampler::finish_points`] の、ダブの位置と筆圧だけを返す形）。
+    pub fn finish(
+        &mut self,
+        mut spacing: impl FnMut(Vec2) -> f32,
+        out: &mut Vec<(Vec2, f32)>,
+    ) -> Result<(), TooManyDabs> {
+        let mut dabs = Vec::new();
+        self.finish_points(|a| (spacing(a), None), &mut dabs, &mut Vec::new())?;
+        out.extend(dabs.iter().map(|d| (d.at, d.pressure)));
+        Ok(())
+    }
+
+    /// 新しい入力の点。曲線なら、待たせていた点までの区間を、この点で向きを決めた曲線にしてダブの位置を out に足し、この点を待たせる。
+    /// 曲線でなければ、前の点からこの点までの線分にダブを置く。gaps は区間の始まりの点を受け、そこでのダブの間隔と、デュアルブラシの
+    /// 2 つ目のダブの間隔（画面の単位）を返す。2 つ目のダブの位置と線の長さは dual に足す。
+    pub fn add_point(
+        &mut self,
+        point: ScreenPoint,
+        gaps: impl FnMut(Vec2) -> SegmentGaps,
+        out: &mut Vec<ScreenDab>,
+        dual: &mut Vec<(Vec2, f64)>,
+    ) -> Result<(), TooManyDabs> {
+        if !self.curve {
+            if StrokeCurve::coincident(
+                self.previous.at.x as f64,
+                self.previous.at.y as f64,
+                point.at.x as f64,
+                point.at.y as f64,
+            ) {
+                self.previous = ScreenPoint {
+                    at: self.previous.at,
+                    ..point
+                }; // 動かない入力は筆圧などだけ
+                return Ok(());
+            }
+            let (a, b) = (self.previous, point);
+            self.place(a, b, &[a.at, b.at], gaps, out, dual)?;
+            self.previous = b;
+            return Ok(());
+        }
         if !self.has_held {
             if StrokeCurve::coincident(
-                self.previous.x as f64,
-                self.previous.y as f64,
-                at.x as f64,
-                at.y as f64,
+                self.previous.at.x as f64,
+                self.previous.at.y as f64,
+                point.at.x as f64,
+                point.at.y as f64,
             ) {
-                self.previous_pressure = pressure; // 動かない入力は筆圧だけ
+                self.previous = ScreenPoint {
+                    at: self.previous.at,
+                    ..point
+                }; // 動かない入力は筆圧などだけ
             } else {
-                self.held = at;
-                self.held_pressure = pressure;
+                self.held = point;
                 self.has_held = true;
             }
             return Ok(());
         }
         if StrokeCurve::coincident(
-            self.held.x as f64,
-            self.held.y as f64,
-            at.x as f64,
-            at.y as f64,
+            self.held.at.x as f64,
+            self.held.at.y as f64,
+            point.at.x as f64,
+            point.at.y as f64,
         ) {
-            self.held_pressure = pressure;
+            self.held = ScreenPoint {
+                at: self.held.at,
+                ..point
+            };
             return Ok(());
         }
-        self.segment(at, spacing, out)?;
-        self.held = at;
-        self.held_pressure = pressure;
+        self.segment(point.at, gaps, out, dual)?;
+        self.held = point;
         Ok(())
     }
 
-    /// 離したとき: 待たせている最後の区間を、その先を折り返した向きで描く。
-    pub fn finish(
+    /// 離したとき: 曲線なら、待たせている最後の区間を、その先を折り返した向きで描く（曲線でなければ待たせている区間は無い）。
+    pub fn finish_points(
         &mut self,
-        spacing: impl FnMut(Vec2) -> f32,
-        out: &mut Vec<(Vec2, f32)>,
+        gaps: impl FnMut(Vec2) -> SegmentGaps,
+        out: &mut Vec<ScreenDab>,
+        dual: &mut Vec<(Vec2, f64)>,
     ) -> Result<(), TooManyDabs> {
         if !self.has_held {
             return Ok(());
         }
         let (x, y) = StrokeCurve::reflect(
-            self.previous.x as f64,
-            self.previous.y as f64,
-            self.held.x as f64,
-            self.held.y as f64,
+            self.previous.at.x as f64,
+            self.previous.at.y as f64,
+            self.held.at.x as f64,
+            self.held.at.y as f64,
         );
-        self.segment(Vec2::new(x as f32, y as f32), spacing, out)?;
+        self.segment(Vec2::new(x as f32, y as f32), gaps, out, dual)?;
         self.has_held = false;
         Ok(())
     }
@@ -194,82 +303,159 @@ impl ScreenStrokeSampler {
     fn segment(
         &mut self,
         next: Vec2,
-        mut spacing: impl FnMut(Vec2) -> f32,
-        out: &mut Vec<(Vec2, f32)>,
+        gaps: impl FnMut(Vec2) -> SegmentGaps,
+        out: &mut Vec<ScreenDab>,
+        dual: &mut Vec<(Vec2, f64)>,
     ) -> Result<(), TooManyDabs> {
         let (a, b) = (self.previous, self.held);
         let before = if self.has_before {
             self.before
         } else {
-            let (rx, ry) = StrokeCurve::reflect(b.x as f64, b.y as f64, a.x as f64, a.y as f64);
+            let (rx, ry) =
+                StrokeCurve::reflect(b.at.x as f64, b.at.y as f64, a.at.x as f64, a.at.y as f64);
             Vec2::new(rx as f32, ry as f32)
         };
-        let gap = spacing(a);
-        // 曲線を細かい折れ線にして長さを測り、長さで等分した位置にダブを置く
-        let pieces = ((distance(a, b) / 2.0).ceil() as i32).clamp(4, 256) as usize;
+        // 曲線を細かい折れ線にする（長さを測り、線の長さで間隔ごとにダブを置く）
+        let pieces = ((distance(a.at, b.at) / 2.0).ceil() as i32).clamp(4, 256) as usize;
         let mut points = vec![Vec2::ZERO; pieces + 1];
-        let mut lengths = vec![0f32; pieces + 1];
-        points[0] = a;
-        for i in 1..=pieces {
-            points[i] = if i == pieces {
-                b
+        points[0] = a.at;
+        for (i, p) in points.iter_mut().enumerate().skip(1) {
+            *p = if i == pieces {
+                b.at
             } else {
                 let (x, y) = StrokeCurve::point(
                     before.x as f64,
                     before.y as f64,
-                    a.x as f64,
-                    a.y as f64,
-                    b.x as f64,
-                    b.y as f64,
+                    a.at.x as f64,
+                    a.at.y as f64,
+                    b.at.x as f64,
+                    b.at.y as f64,
                     next.x as f64,
                     next.y as f64,
                     i as f64 / pieces as f64,
                 );
                 Vec2::new(x as f32, y as f32)
             };
-            lengths[i] = lengths[i - 1] + distance(points[i - 1], points[i]);
         }
-        let total = lengths[pieces];
-        let steps = ((total / gap).ceil() as i64).max(1);
-        if !total.is_finite() || steps > SURFACE_DABS_PER_SEGMENT as i64 {
-            return Err(TooManyDabs);
-        }
-        let steps = steps as usize;
-        let start_pressure = self.previous_pressure;
-        let mut j = 1usize;
-        for i in 1..=steps {
-            let s = if i == steps {
-                total
-            } else {
-                total * i as f32 / steps as f32
-            };
-            while j < pieces && lengths[j] < s {
-                j += 1;
-            }
-            let span = lengths[j] - lengths[j - 1];
-            let f = if span > 0.0 {
-                super::unity::clamp01((s - lengths[j - 1]) / span)
-            } else {
-                1.0
-            };
-            let at = if i == steps {
-                b
-            } else {
-                lerp2(points[j - 1], points[j], f)
-            };
-            let pressure = lerp(
-                start_pressure,
-                self.held_pressure,
-                ((j - 1) as f32 + f) / pieces as f32,
-            );
-            out.push((at, pressure));
-        }
-        self.before = a;
+        self.place(a, b, &points, gaps, out, dual)?;
+        self.before = a.at;
         self.has_before = true;
         self.previous = b;
-        self.previous_pressure = self.held_pressure;
         Ok(())
     }
+
+    /// 折れ線 points（a.at から b.at まで）に、線の長さで間隔ごとにダブを置く（2D の `add_path_point` と同じ: 前の区間の余りを持ち越し、
+    /// 区間の長さが間隔に届かなければ置かない）。間隔は区間の始まりの点で決める（面の奥行きで変わる）。デュアルブラシの 2 つ目のダブも、
+    /// 同じ折れ線に自分の間隔と余りで置く。筆圧・傾き・回転・速さは折れ線の上の割合で a から b へ補間する。
+    fn place(
+        &mut self,
+        a: ScreenPoint,
+        b: ScreenPoint,
+        points: &[Vec2],
+        mut gaps: impl FnMut(Vec2) -> SegmentGaps,
+        out: &mut Vec<ScreenDab>,
+        dual: &mut Vec<(Vec2, f64)>,
+    ) -> Result<(), TooManyDabs> {
+        let pieces = points.len() - 1;
+        let mut lengths = vec![0f64; pieces + 1];
+        for i in 1..=pieces {
+            let d = points[i] - points[i - 1];
+            lengths[i] = lengths[i - 1] + (d.x as f64).hypot(d.y as f64);
+        }
+        let total = lengths[pieces];
+        let (gap, dual_gap) = gaps(a.at);
+        // 有限でない長さ（NaN を含む）も断る
+        let too_many = |g: f32| {
+            let n = total / g as f64;
+            !n.is_finite() || n > SURFACE_DABS_PER_SEGMENT as f64
+        };
+        if too_many(gap) || dual_gap.is_some_and(too_many) {
+            return Err(TooManyDabs);
+        }
+        let base = self.length;
+        if total > 0.0 {
+            // 線の長さ s の所: 折れ線の何本目（j）と、その中の割合（f）と、点
+            let locate = |s: f64, j: &mut usize| -> (Vec2, f64) {
+                while *j < pieces && lengths[*j] < s {
+                    *j += 1;
+                }
+                let span = lengths[*j] - lengths[*j - 1];
+                let f = if span > 0.0 {
+                    ((s - lengths[*j - 1]) / span).clamp(0.0, 1.0)
+                } else {
+                    1.0
+                };
+                let at = if s >= total {
+                    b.at
+                } else {
+                    let (p, q) = (points[*j - 1], points[*j]);
+                    Vec2::new(
+                        (p.x as f64 + (q.x as f64 - p.x as f64) * f) as f32,
+                        (p.y as f64 + (q.y as f64 - p.y as f64) * f) as f32,
+                    )
+                };
+                (at, f)
+            };
+            if let Some(g) = dual_gap {
+                let mut j = 1usize;
+                walk(total, g as f64, &mut self.dual_since, |s| {
+                    let (at, _) = locate(s, &mut j);
+                    dual.push((at, base + s));
+                });
+            }
+            let mut j = 1usize;
+            let mut direction = self.direction;
+            walk(total, gap as f64, &mut self.since, |s| {
+                let (at, f) = locate(s, &mut j);
+                let t = ((j - 1) as f64 + f) / pieces as f64;
+                // 線の向きは、その所の折れ線の 1 本の向き（画面の y は下向きなので、上向きに直して測る）
+                let d = points[j] - points[j - 1];
+                if d.x != 0.0 || d.y != 0.0 {
+                    direction = (-(d.y as f64)).atan2(d.x as f64);
+                }
+                out.push(ScreenDab {
+                    at,
+                    pressure: lerp(a.pressure, b.pressure, t as f32),
+                    arc: base + s,
+                    direction,
+                    tilt: a.tilt + (b.tilt - a.tilt) * t,
+                    rotation: crate::brush::lerp_angle(a.rotation, b.rotation, t),
+                    speed: a.speed + (b.speed - a.speed) * t,
+                });
+            });
+            // ダブを置かなかった区間でも、線の向きは区間の終わりの向きにする（2D と同じく、長さのある区間で向きを更新する）
+            let d = points[pieces] - points[pieces - 1];
+            if d.x != 0.0 || d.y != 0.0 {
+                direction = (-(d.y as f64)).atan2(d.x as f64);
+            }
+            self.direction = direction;
+        }
+        self.length = base + total;
+        Ok(())
+    }
+}
+
+/// 区間の境での丸めを吸う許し（画面の点）。入力の点は f32 なので、2D（文書の画素を f64 で持ち、許しは 1e-9）より広く取る。
+/// 区間の終わりからこの長さの内のダブは、その区間に置く（次の区間の始まりに回さない）。
+const ROUNDING: f64 = 1e-4;
+
+/// 長さ total の区間に、前の区間の余り since を持ち越して、間隔 gap ごとに place(線の長さ) を呼び、余りを更新する（2D の
+/// `add_path_point` と同じ式: 余りは許しより小さければ 0、間隔以上なら間隔で割った余り）。間隔が前の区間より狭くなって余りが間隔を
+/// 越えていたら、区間の始まりに置く。
+fn walk(total: f64, gap: f64, since: &mut f64, mut place: impl FnMut(f64)) {
+    let mut position = (gap - *since).max(0.0);
+    while position <= total + ROUNDING {
+        place(position.min(total));
+        position += gap;
+    }
+    let mut rest = total - (position - gap);
+    if rest < ROUNDING {
+        rest = 0.0;
+    }
+    if rest >= gap {
+        rest %= gap;
+    }
+    *since = rest;
 }
 
 #[cfg(test)]
@@ -307,7 +493,6 @@ mod tests {
             .unwrap();
         s.finish(|_| 1.0, &mut out).unwrap();
         assert_eq!(out.len(), 1000);
-        assert!(out.len() > SURFACE_DABS_PER_EVENT);
         assert_eq!(out.last().unwrap().0, Vec2::new(1000.0, 0.0));
 
         let mut s = ScreenStrokeSampler::new(Vec2::ZERO, 1.0);
@@ -321,6 +506,55 @@ mod tests {
             .unwrap();
         assert_eq!(s.finish(|_| 1.0, &mut out), Err(TooManyDabs));
         assert!(out.is_empty());
+    }
+
+    /// 2D と同じく、前の区間の余りを持ち越して線の長さで間隔ごとに置く: 入力の点の間が間隔より短くても、区間ごとにダブは増えず、
+    /// 同じ線をどう区切って入力しても、同じ位置に同じ数のダブが並ぶ。
+    #[test]
+    fn dabs_follow_the_line_length_whatever_the_input_spacing() {
+        let positions = |cuts: &[f32], curve: bool| -> Vec<f32> {
+            let mut s = ScreenStrokeSampler::with_curve(ScreenPoint::new(Vec2::ZERO, 1.0), curve);
+            let (mut out, mut dual) = (Vec::new(), Vec::new());
+            for &x in cuts {
+                s.add_point(
+                    ScreenPoint::new(Vec2::new(x, 0.0), 1.0),
+                    |_| (2.5, Some(4.0)),
+                    &mut out,
+                    &mut dual,
+                )
+                .unwrap();
+            }
+            s.finish_points(|_| (2.5, Some(4.0)), &mut out, &mut dual)
+                .unwrap();
+            assert!((s.length() - 30.0).abs() < 1e-3, "{}", s.length());
+            assert_eq!(dual.len(), 7, "2 つ目のダブも長さで: 4・8・…・28");
+            out.iter()
+                .map(|d| {
+                    assert!((d.arc - d.at.x as f64).abs() < 1e-4, "{d:?}");
+                    d.at.x
+                })
+                .collect()
+        };
+        let even = positions(&[30.0], false);
+        assert_eq!(even.len(), 12, "2.5・5・…・30");
+        for (i, x) in even.iter().enumerate() {
+            assert!((x - 2.5 * (i + 1) as f32).abs() < 1e-4, "{even:?}");
+        }
+        // 間隔より短い区間に刻んでも・ばらばらの長さに刻んでも、同じ位置（等間隔の点なら曲線も一直線なので同じ）
+        let short: Vec<f32> = (1..=30).map(|i| i as f32).collect();
+        let ragged = [0.7, 1.1, 4.0, 4.3, 9.9, 13.0, 21.6, 22.0, 29.2, 30.0];
+        for (cuts, curves) in [
+            (&short[..], &[false, true][..]),
+            (&ragged[..], &[false][..]),
+        ] {
+            for &curve in curves {
+                let got = positions(cuts, curve);
+                assert_eq!(got.len(), even.len(), "{cuts:?} {curve}");
+                for (a, b) in got.iter().zip(&even) {
+                    assert!((a - b).abs() < 1e-3, "{cuts:?} {curve}: {got:?}");
+                }
+            }
+        }
     }
 
     #[test]

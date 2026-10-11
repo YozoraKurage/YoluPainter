@@ -763,7 +763,7 @@ fn saving_an_old_format_file_moves_it_to_format_7_and_keeps_the_untouched_sets()
     );
 }
 
-/// Rust 版だけの効果・調整を使ったセットを保存すると、Unity 版（0.2.0）が開けない版になる。そのことを知らせる（使っていなければ知らせない）。
+/// スタンドアロンだけの効果・調整を使ったセットを保存すると、0.4.x までの Unity 版が開けない版になる。そのことを知らせる（使っていなければ知らせない）。
 #[test]
 fn saving_tells_when_a_set_uses_something_only_this_editor_has() {
     let fx = Fixture::new("unity-note");
@@ -802,13 +802,13 @@ fn saving_tells_when_a_set_uses_something_only_this_editor_has() {
         let noted = saved
             .notes
             .iter()
-            .any(|t| t.en.contains("Unity package 0.2.0"));
+            .any(|t| t.en.contains("Unity version up to 0.4.x"));
         assert_eq!(noted, kind.rust_only, "{}: {:?}", kind.id, saved.notes);
         if noted {
             let note = saved
                 .notes
                 .iter()
-                .find(|t| t.en.contains("Unity package 0.2.0"))
+                .find(|t| t.en.contains("Unity version up to 0.4.x"))
                 .unwrap();
             assert!(
                 note.ja.contains("Unity 版") && note.en.contains("version"),

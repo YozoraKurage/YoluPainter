@@ -244,7 +244,7 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
         F::PixelAspect => plain("画素の縦横比", "Pixel aspect ratio"),
         F::ColorModeData => plain("色モードデータ", "Color mode data"),
         F::DocumentTags => lang.pick(
-            format!("文書のタグ {} 件", note.count),
+            format!("ドキュメントのタグ {} 件", note.count),
             format!("Document tags: {}", note.count),
         ),
         F::ExtraChannel => plain(
@@ -405,8 +405,8 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
             "The aspect ratio is not kept; pixels are imported as squares",
         ),
         F::CompositeDiffers { .. } => lang.pick(
-            "取り込んだ文書の合成を、PSD に保存された統合画像と照らした結果です",
-            "The imported document's composite compared with the merged image saved in the PSD",
+            "取り込んだプロジェクトの合成を、PSD に保存された統合画像と照らした結果です",
+            "The imported project's composite compared with the merged image saved in the PSD",
         ),
         F::CompositeUnchecked(_) => lang.pick(
             "統合画像と照らしていないので、合成が PSD と同じかは確かめていません",

@@ -17,7 +17,7 @@ cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc
 .\target\x86_64-pc-windows-msvc\release\yolupainter.exe
 ```
 
-ペンタブレットはドライバー側でも Windows Ink を有効にしてください。ブラシのツールプロパティのペンのボタンで、どの項目を筆圧で変えるか選べます。ペンの筆圧が強すぎる・弱すぎるときは「表示 → 筆圧の調整…」で直せます。
+ペンタブレットは、既定では Windows Ink で読むので、ドライバー側でも Windows Ink を有効にしてください（WinTab で読むときは、「編集 → 設定…」の「ペン」の「ペンの入力」で選びます）。ブラシのツールプロパティのペンのボタンで、どの項目を筆圧で変えるか選べます。ペンの筆圧が強すぎる・弱すぎるときは「編集 → 設定…」の「ペン」の「筆圧の調整」で直せます。
 
 ## Mac（試用）
 
@@ -28,13 +28,23 @@ cargo build --release -p yolu-app --locked
 ./target/release/yolupainter
 ```
 
-Windows Ink に相当する専用のペン入力処理はありません。マウス操作を基本とし、筆圧の取得は OS と入力機器に依存します。
+配る形（Apple Silicon 向けと Intel 向けの両方のコードを持つ universal の `YoluPainter.app` を入れた zip）は、Xcode Command Line Tools（`lipo`・`codesign`・`iconutil`・`sips`・`ditto`・`plutil`）、Python 3.10 以降、2 つの Rust のターゲットを用意して、リポジトリの根で作ります。
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo xtask build --target universal-apple-darwin --release
+cargo xtask bundle --target universal-apple-darwin
+```
+
+`target/dist/yolupainter-<版>-macos-universal-experimental.zip` ができます。2 つのターゲットでビルドして `lipo` で 1 つにし（最低の macOS は 11.0 に揃えます）、今あるロゴからアイコンを作り、ad-hoc の署名（`codesign -s -`）をして `ditto` で zip にします。Apple の開発者の署名と公証はしません。署名なしの `.app` の開き方は [ダウンロードと更新の「Mac（試作）」](INSTALL.md#mac試作) にあります。
+
+ペンタブレット（Wacom・XP-Pen など）は、ドライバーが macOS の標準のイベントで送る筆圧・傾き・消しゴムの端・サイドボタンを読みます（試し）。メーカーごとの SDK は使いません。おかしいときは「編集 → 設定…」の「ペン」の「タブレットの筆圧（試し）」を切ると、ペンはマウスと同じに描きます。ペンの筆圧が強すぎる・弱すぎるときは「編集 → 設定…」の「ペン」の「筆圧の調整」で直せます。
 
 ## Linux（試用）
 
-C/C++ コンパイラー、`pkg-config`、X11 または Wayland のデスクトップ環境、GPU ドライバーを用意します。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが必要です。確認のウィンドウ（はい・いいえ。保存していない変更を捨てるかなど）には `zenity` が要ります（無いと、その確かめが要る操作は取りやめになります）。画面の書体（BIZ UDPGothic）は実行ファイルに含まれるので、システムの日本語フォントは要りません。
+C/C++ コンパイラー、`pkg-config`、X11 のデスクトップ環境、GPU ドライバーを用意します。ウィンドウは X11 で開くので、Wayland のデスクトップでは XWayland の上で動きます（XWayland の無い Wayland だけの環境では起動できません）。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが必要です。確認のウィンドウ（はい・いいえ。保存していない変更を捨てるかなど）には `zenity` が要ります（無いと、その確かめが要る操作は取りやめになります）。画面のフォント（BIZ UDPGothic）は実行ファイルに含まれるので、システムの日本語フォントは要りません。
 
-Debian・Ubuntu 系でのパッケージ名の例は `build-essential`、`pkg-config`、`libxkbcommon-dev`、`libwayland-dev`、`libvulkan1`、`xdg-desktop-portal`、`xdg-desktop-portal-gtk`、`zenity` です。GPU ドライバーは機器に合うものを使用してください。
+Debian・Ubuntu 系でのパッケージ名の例は `build-essential`、`pkg-config`、`libxkbcommon-dev`、`libwayland-dev`（Wayland の部品もビルドに含まれるので、ビルドには要ります）、`libvulkan1`、`xdg-desktop-portal`、`xdg-desktop-portal-gtk`、`zenity` です。GPU ドライバーは機器に合うものを使用してください。
 
 ```sh
 cargo build --release -p yolu-app --locked

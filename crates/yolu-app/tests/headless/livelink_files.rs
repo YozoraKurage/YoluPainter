@@ -321,11 +321,14 @@ fn headless_exporting_the_target_writes_an_exported_reply() {
     let dir = h.state.link_export_dir().expect("Unity が知らせた置き場");
     assert_eq!(slash(&dir), slash(&h.ex.dir.join("export")));
     std::fs::create_dir_all(&dir).unwrap();
+    // 書き出しのウィンドウの書き出す先の既定は、Unity が知らせた置き場
+    use yolu_app::export::{ExportAction, ExportForm};
+    h.state.apply(Action::Export(ExportAction::OpenWindow));
     h.state
-        .apply(Action::Export(yolu_app::export::ExportAction::TemplateTo {
-            id: "liltoon".into(),
-            dir: dir.clone(),
-        }));
+        .apply(Action::Export(ExportAction::SetForm(ExportForm::LilToon)));
+    assert_eq!(h.state.export_destination(), Some(dir.clone()));
+    h.state.apply(Action::Export(ExportAction::Run));
+    assert!(h.state.export.is_exporting(), "{}", h.state.message);
     h.state.wait_export();
     h.frame();
     let reply = h.reply();
@@ -341,8 +344,11 @@ fn headless_exporting_the_target_writes_an_exported_reply() {
     }
     // 利用者が置き場を選び直したら、そちらが既定
     let chosen = h.ex.dir.join("elsewhere");
-    h.state.note_export_dir(&chosen);
-    assert_eq!(h.state.link_export_dir(), Some(chosen));
+    h.state.apply(Action::Export(ExportAction::OpenWindow));
+    h.state
+        .apply(Action::Export(ExportAction::Destination(chosen.clone())));
+    assert_eq!(h.state.link_export_dir(), Some(chosen.clone()));
+    assert_eq!(h.state.export_destination(), Some(chosen));
 }
 
 #[test]
@@ -376,6 +382,7 @@ fn headless_scene_materials_and_submeshes_without_a_material_get_their_own_sets(
         .apply(Action::Export(yolu_app::export::ExportAction::TemplateTo {
             id: "liltoon".into(),
             dir,
+            sets: None,
         }));
     h.state.wait_export();
     h.frame();
@@ -514,6 +521,175 @@ fn headless_saving_and_reopening_gives_the_same_model_and_pose_without_unity() {
         !h.ex.dir.join("unused").exists(),
         "受け付けていなければフォルダも作らない"
     );
+}
+
+/// 配布用に保存: Live Link で開いたモデルの記録（livelink.json。FBX と絵のファイルの絶対の場所・Unity のプロジェクトの場所・書き出しの置き場を持つ）は、
+/// 「モデルの参照」を除く選びなら写しに入らず、残す選びなら入る。ウィンドウの一覧にも記録の名前が出る。開いている文書とファイルは変わらない。
+#[test]
+fn headless_the_copy_for_distribution_drops_the_live_link_record_with_the_model_reference() {
+    use yolu_app::distribute::DistributeAction;
+    use yolu_io::Removal;
+    let mut h = Headless::new("dist");
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened);
+    let path = h.ex.dir.join("arm.ylp");
+    h.state.apply(Action::SaveProjectAs(path.clone()));
+    assert!(
+        h.state.message.starts_with("保存しました"),
+        "{}",
+        h.state.message
+    );
+    let saved = std::fs::read(&path).unwrap();
+    let project = yolu_io::Project::open(&path, &yolu_io::Limits::unbounded()).unwrap();
+    let record = project.livelink().unwrap().expect("livelink.json");
+    // 記録は、作った人の場所（FBX・書き出しの置き場）を持っている
+    let dir_text = h.ex.dir.to_string_lossy().replace('\\', "/");
+    assert!(
+        String::from_utf8(record.clone())
+            .unwrap()
+            .contains(&dir_text),
+        "記録に場所が入る"
+    );
+    let s = &mut h.state;
+    s.apply(Action::Distribute(DistributeAction::Start));
+    s.wait_distribute();
+    let window = s.distribute.window().expect("ウィンドウがある");
+    let found = window
+        .inventory()
+        .get(Removal::ModelReference)
+        .expect("モデルの参照の種類が当たる");
+    assert!(
+        found.names.iter().any(|n| n == "livelink.json"),
+        "{:?}",
+        found.names
+    );
+    // 既定は全部除く: 記録も、その中の場所も写しに無い
+    let dest = h.ex.dir.join("arm-dist.ylp");
+    s.dialog_request = None;
+    s.apply(Action::Distribute(DistributeAction::Save(dest.clone())));
+    s.wait_distribute();
+    assert!(
+        s.message.starts_with("配布用に保存しました"),
+        "{}",
+        s.message
+    );
+    let copy = yolu_io::Project::open(&dest, &yolu_io::Limits::unbounded()).unwrap();
+    assert_eq!(copy.livelink().unwrap(), None);
+    assert!(copy.unknown_entries().is_empty());
+    let all = std::fs::read(&dest).unwrap();
+    let archive = yolu_io::Archive::read(&all).unwrap();
+    for (name, blob) in archive.entries() {
+        assert!(
+            !String::from_utf8_lossy(blob).contains(&dir_text),
+            "{name} に場所が残る"
+        );
+    }
+    // 開いているファイルは変わらない
+    assert_eq!(std::fs::read(&path).unwrap(), saved);
+    // 残す選び: 記録はバイト列のまま写しに入る
+    s.apply(Action::Distribute(DistributeAction::Start));
+    s.wait_distribute();
+    s.apply(Action::Distribute(DistributeAction::Toggle(
+        Removal::ModelReference,
+    )));
+    let kept = h.ex.dir.join("arm-kept.ylp");
+    s.dialog_request = None;
+    s.apply(Action::Distribute(DistributeAction::Save(kept.clone())));
+    s.wait_distribute();
+    let copy = yolu_io::Project::open(&kept, &yolu_io::Limits::unbounded()).unwrap();
+    assert_eq!(copy.livelink().unwrap().as_deref(), Some(&record[..]));
+}
+
+/// Live Link で開いて焼いた .ylp を、Unity なしで開き直す。開いた瞬間のモデルは試しの立方体で、焼いたマップは立方体と照合して古い。Live Link の
+/// 頼みを当て直してモデルができたら、ベイクのウィンドウを開かなくても、画面の毎フレームの同期だけで照合し直して、位置のマップを読むノイズは位置で評価する。
+#[test]
+fn headless_a_reopened_live_link_project_checks_its_baked_maps_again_without_the_bake_window() {
+    use yolu_app::bake::{BakeAction, BakeBackend};
+    use yolu_app::fx::FxOp;
+    use yolu_app::m2::Edit;
+    use yolu_core::generator::{self, Kind};
+    use yolu_core::mesh_maps::MeshMapKind;
+    use yolu_core::FilterTarget;
+    let mut h = Headless::new("check");
+    h.state.bake.backend = BakeBackend::Cpu;
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened);
+    h.state.bake.settings.maps = vec![MeshMapKind::Position];
+    h.state.bake.settings.padding = 4;
+    // 位置のマップを読むノイズ（位置の空間が既定）をマスクに持つセットを焼く
+    h.state.apply(Action::M2(Edit::NewFill));
+    let layer = h.state.selected_layer.unwrap();
+    h.state.apply(Action::M2(Edit::AddMask(layer)));
+    h.state.apply(Action::Fx(FxOp::AddGenerator {
+        target: FilterTarget::Mask,
+        kind: Kind::Noise,
+    }));
+    let id = h.state.doc.filters_of(layer, FilterTarget::Mask).unwrap()[0].id();
+    h.state.apply(Action::Bake(BakeAction::Start));
+    h.state.wait_bake();
+    h.state.sync_effects();
+    assert_eq!(
+        h.state.doc.generator_fallback(layer, id).unwrap(),
+        None,
+        "{}",
+        h.state.message
+    );
+    let path = h.ex.dir.join("noise.ylp");
+    h.state.apply(Action::SaveProjectAs(path.clone()));
+    assert!(
+        h.state.message.starts_with("保存しました"),
+        "{}",
+        h.state.message
+    );
+    // Unity なしで開き直す（起動した直後のアプリ: 3D ビューは試しの立方体）
+    let mut open = AppState::new(64, 64);
+    open.bake.backend = BakeBackend::Cpu;
+    open.view3d.load_demo();
+    let mut link = LiveLink::new();
+    link.set_folder(h.ex.dir.join("unused")).unwrap();
+    open.prefs.settings.livelink_on_startup = false;
+    open.apply(Action::OpenProject(path));
+    assert!(open.project.is_some(), "{}", open.message);
+    let deadline = Instant::now() + WATCHDOG;
+    while open.view3d.pose.session.is_none() || link.is_working() {
+        link.poll(&mut open);
+        assert!(Instant::now() < deadline, "{}", open.message);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // 開いた瞬間に立方体と照合した入力のままなので、位置のマップは古い（ノイズは UV に落ちる）
+    assert!(
+        matches!(
+            open.doc.generator_fallback(layer, id).unwrap(),
+            Some(generator::Inactive::StaleMap(_))
+        ),
+        "{:?}",
+        open.doc.generator_fallback(layer, id)
+    );
+    // 毎フレームの同期だけで、モデルの入力ができて照合し直される（ウィンドウは開かない）
+    assert!(open.bake.window.is_none());
+    let deadline = Instant::now() + WATCHDOG;
+    loop {
+        open.sync_effects();
+        open.release_idle_bake_input();
+        if open
+            .doc
+            .generator_fallback(layer, id)
+            .ok()
+            .flatten()
+            .is_none()
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "モデルを読んだのに照合し直せない: {:?}",
+            open.doc.generator_fallback(layer, id)
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(open.doc.inactive_effect_list().is_empty());
 }
 
 #[test]
@@ -972,13 +1148,16 @@ fn headless_the_export_dialog_start_is_the_nearest_existing_folder_and_creates_n
     let wanted = h.state.link_export_dir().expect("Unity が知らせた置き場");
     assert!(!wanted.exists());
     assert_eq!(
-        h.state.link_export_start().as_deref(),
+        yolu_app::export::window::nearest_existing_folder(&wanted).as_deref(),
         Some(h.ex.dir.as_path()),
         "あるところまで遡る"
     );
     assert!(!wanted.exists(), "作らない");
     std::fs::create_dir_all(&wanted).unwrap();
-    assert_eq!(h.state.link_export_start(), Some(wanted));
+    assert_eq!(
+        yolu_app::export::window::nearest_existing_folder(&wanted),
+        Some(wanted)
+    );
 }
 
 // ───────── 元の絵の PSD をレイヤーのまま ─────────

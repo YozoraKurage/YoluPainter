@@ -56,6 +56,14 @@ pub fn begin(app: &mut AppState, source: StrokeSource, eraser: bool) -> Option<b
     if !app.sel.quick {
         return None;
     }
+    // ほかのビューで選択ペンのストロークが動いている間は始めない（被覆を上書きしない）
+    if app.sel.pen.is_some() {
+        app.refuse(
+            Source::Selection,
+            crate::lang::refusals::during_stroke(app.lang),
+        );
+        return Some(false);
+    }
     let erase = eraser || app.tool.erases();
     if !pen::begin(app, source, erase, true) {
         return Some(false);
@@ -94,7 +102,13 @@ pub fn paint(painter: &Painter, view: &CanvasView, app: &mut AppState) {
         .and_then(|a| a.stroke.preview().cloned())
         .or_else(|| app.doc.selection().cloned())
         .unwrap_or_else(|| SelectionMask::none(&app.doc));
-    let hint = live.map(|a| a.stroke.synced_tiles().to_vec());
+    // 変わったタイルは、ここで受け取って空にする（3D ビューも `sync` を呼ぶので、先に呼んだほうの分も溜まっている）
+    let hint = app
+        .sel
+        .pen
+        .as_mut()
+        .filter(|a| a.quick)
+        .and_then(|a| a.stroke.take_synced());
     app.sel
         .quick_overlay
         .paint(painter, view, &mask, TINT, hint.as_deref(), "quick-mask");

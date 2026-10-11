@@ -2,7 +2,7 @@
 //! ための線とハンドル（Unity 版の `ShapeGizmo` と同じ操作）。形はモデルのルートの空間（シーンの単位）にあり、ここは画面の幾何と
 //! 当たり判定とドラッグの計算だけ。値を文書へ入れるのは `crate::fillfx::gizmo`。
 //!
-//! - 1 つのギズモに、中心の四角・移動の矢印・回す輪・大きさのつまみを同時に出す（切り替えは無い）。輪は矢印の外側（矢印の長さ
+//! - 1 つのギズモに、中心の四角・移動の矢印・回す輪・大きさのつまみを同時に出す（切り替えは無い。大きさを持たない定規の物 `Kind::Anchor` は、大きさのつまみを出さない）。輪は矢印の外側（矢印の長さ
 //!   `ARROW_POINTS` < 輪の半径 `RING_POINTS`）。重なった所の当たりは、中心の四角 → 大きさのつまみ → 矢印 → 輪の順（小さな的を先に）。
 //! - 移動の矢印はルートの軸に沿い、掴むと中心がその軸に沿って動く（押したときのレイと今のレイが、軸の直線に最も近づく点の差）。
 //!   中心の四角は、カメラに向いた面の中で動かす。
@@ -60,6 +60,9 @@ pub enum Handle {
     SizeYNeg,
     SizeZPos,
     SizeZNeg,
+    /// 定規の端の点 a・b（`Kind::Anchor` の形のとき、`rulers::edit3d` が出して掴む。形の幾何の計算には出てこない）。
+    EndA,
+    EndB,
 }
 
 impl Handle {
@@ -99,6 +102,8 @@ pub enum Kind {
     Box,
     Sphere,
     Plane,
+    /// 大きさを持たない物（定規）。外形も大きさのつまみも出さず、中心の四角・移動の矢印・回す輪だけ。
+    Anchor,
 }
 
 /// ギズモが動かす形（モデルのルートの空間、シーンの単位。回転は度）。
@@ -275,7 +280,7 @@ pub fn world_per_point(view: &CameraView, at: Vec3) -> f32 {
     }
 }
 
-fn ray_of(view: &CameraView, gui: Vec2) -> (Vec3, Vec3) {
+pub(crate) fn ray_of(view: &CameraView, gui: Vec2) -> (Vec3, Vec3) {
     let r = view.ray(gui);
     (r.origin(), r.direction())
 }
@@ -295,6 +300,9 @@ pub fn knobs(s: &Shape, root: &Root) -> Vec<(Handle, Vec3)> {
     let q = world_rotation(s, root);
     let half = s.size.map(|v| v as f32 / 2.0);
     let mut list = Vec::new();
+    if s.kind == Kind::Anchor {
+        return list;
+    }
     for i in 0..3 {
         if s.kind == Kind::Plane && i != 1 {
             continue;
@@ -441,7 +449,7 @@ pub fn hit(s: &Shape, root: &Root, view: &CameraView, mouse: Vec2) -> Handle {
     best
 }
 
-fn clamp_size(size: f64) -> f64 {
+pub(crate) fn clamp_size(size: f64) -> f64 {
     size.clamp(MIN_SIZE, MAX_SIZE)
 }
 
@@ -453,7 +461,7 @@ fn with_world_center(mut s: Shape, world: Vec3, root: &Root) -> Shape {
 
 /// 直線（c を通り単位ベクトル a の向き）に沿って、ポインタが動いた量（押したときと今のレイが直線に最も近づく点の差）。
 /// 直線がカメラのほぼ真正面を向くときは `None`。
-fn axis_delta(view: &CameraView, c: Vec3, a: Vec3, from: Vec2, to: Vec2) -> Option<f32> {
+pub(crate) fn axis_delta(view: &CameraView, c: Vec3, a: Vec3, from: Vec2, to: Vec2) -> Option<f32> {
     let s0 = line_parameter(ray_of(view, from), c, a)?;
     let s1 = line_parameter(ray_of(view, to), c, a)?;
     Some(s1 - s0)
@@ -470,7 +478,7 @@ fn line_parameter((origin, direction): (Vec3, Vec3), c: Vec3, a: Vec3) -> Option
 }
 
 /// 平面（点 c・法線 n）とレイの交点までの距離（手前向きに進むときだけ）。
-fn ray_plane((origin, direction): (Vec3, Vec3), c: Vec3, n: Vec3) -> Option<f32> {
+pub(crate) fn ray_plane((origin, direction): (Vec3, Vec3), c: Vec3, n: Vec3) -> Option<f32> {
     let denominator = direction.dot(n);
     if denominator.abs() < 1e-9 {
         return None;
@@ -667,6 +675,21 @@ fn ring_world(c: Vec3, a: Vec3, radius: f32, segments: usize) -> Vec<Vec3> {
 /// 描く線: 形の外形（減衰があれば値が 1 になる内側の形も薄く）、平面の 2 つの境と 1 へ向かう矢印、回す輪（奥の半分は薄く）と移動の
 /// 矢印（輪の上に重ねる。掴める所の強調つき）。
 pub fn lines(s: &Shape, root: &Root, view: &CameraView, hover: Handle) -> Vec<Line> {
+    lines_with(s, root, view, hover, true)
+}
+
+/// 形の外形の線だけ（回す輪・移動の矢印は無い。編集のモードの選んだ物の枠、G/R/S の途中）。
+pub fn outline(s: &Shape, root: &Root, view: &CameraView) -> Vec<Line> {
+    lines_with(s, root, view, Handle::None, false)
+}
+
+fn lines_with(
+    s: &Shape,
+    root: &Root,
+    view: &CameraView,
+    hover: Handle,
+    handles: bool,
+) -> Vec<Line> {
     let mut out: Vec<Line> = Vec::new();
     let c = world_center(s, root);
     let q = world_rotation(s, root);
@@ -706,6 +729,8 @@ pub fn lines(s: &Shape, root: &Root, view: &CameraView, hover: Handle) -> Vec<Li
         };
     let half = s.size.map(|v| v as f32 / 2.0);
     match s.kind {
+        // 外形は無い（定規の線は `rulers` が描く）
+        Kind::Anchor => {}
         Kind::Box => {
             let mut draw_box = |h: Vec3, color: Color32, width: f32, out: &mut Vec<Line>| {
                 for i in 0..3 {
@@ -817,11 +842,11 @@ pub fn lines(s: &Shape, root: &Root, view: &CameraView, hover: Handle) -> Vec<Li
             }
         }
     }
-    if unit <= 0.0 {
+    if unit <= 0.0 || !handles {
         return out;
     }
     // 回す輪: 手前の半分と奥の半分（薄く細く）に分けて描く
-    let eye = (view.position - c).normalize_or_zero();
+    let eye = view.to_viewer(c).normalize_or_zero();
     for i in 0..3 {
         let hot = hover == Handle::rotate_axis(i);
         let color = if hot { HOVER } else { axis_color(i) };

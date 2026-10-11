@@ -4,6 +4,7 @@ pub mod fonts;
 pub mod icons;
 pub mod menu;
 pub mod numfield;
+pub mod pie;
 pub mod ramp;
 pub mod scroll;
 pub mod settle;

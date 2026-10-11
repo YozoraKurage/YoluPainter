@@ -9,7 +9,7 @@ use yolu_core::geometry::{
     pick, CameraView, DabRefusal, MirrorOutcome, MirrorPlane, OrbitCamera, RadialSymmetry,
     SamplingError, SurfaceCloneSource, SurfaceEffect, SurfaceGeometry, SurfaceHit, SurfaceStencil,
     SurfaceStroke, SurfaceStrokeError, SurfaceStrokeOptions, SurfaceSymmetrySetup, SurfaceTriangle,
-    SymmetryAxis, SURFACE_DABS_PER_EVENT,
+    SymmetryAxis,
 };
 use yolu_core::glam::{Quat, Vec2, Vec3};
 use yolu_core::{
@@ -497,7 +497,7 @@ fn smudge_and_clone_refuse_symmetry_before_painting() {
 }
 
 #[test]
-fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_or_skips_the_dab() {
+fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_the_stroke() {
     let g = plane();
     let view = front(&g);
     let (mut d, layer) = document();
@@ -561,7 +561,7 @@ fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_or_skips_the_dab()
     assert!(!d.has_active_stroke());
     assert_eq!(bytes(&d, layer), before);
     assert_eq!(d.undo_count(), 0);
-    // 投影の画素も入らない: ダブを飛ばして理由を残し、ストロークは取り消さない（何も塗らないので履歴に残らない）
+    // 投影の画素も入らない: 2D と同じくストロークごと取り消す（呼び手が取り消す。何も残らない）
     let (stroke, s) = begin(
         &mut d,
         layer,
@@ -573,10 +573,11 @@ fn a_stale_clone_source_is_refused_and_a_tight_budget_cancels_or_skips_the_dab()
         screen(&view, Vec3::new(1.25, 0.5, 0.0)),
         clone(source, None),
     );
-    let s = s.unwrap();
-    assert_eq!(s.note, Some(DabRefusal::MemoryBudget));
-    assert_eq!(s.stats.dabs, 0);
-    assert!(!d.end_stroke(stroke).unwrap().changed);
+    assert_eq!(
+        s.err(),
+        Some(SurfaceStrokeError::Dab(DabRefusal::MemoryBudget))
+    );
+    d.cancel_stroke(stroke);
     assert!(!d.has_active_stroke());
     assert_eq!(bytes(&d, layer), before);
     assert_eq!(d.undo_count(), 0);
@@ -1284,12 +1285,14 @@ fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() 
 }
 
 /// 速い入力の線: 左のアイランドの左端から右のアイランドの右端まで、1 回の入力で動かす（間隔を細かくして、区間のダブを 1 回の入力で塗る数より
-/// ずっと多くする）。押した点・遠い点・その先の点の 3 つで、2 つ目の入力が長い区間を描けるようにする。
+/// ずっと多くする）。押した点・遠い点・その先の点の 3 つで、2 つ目の入力が長い区間を描けるようにする（曲線で結ぶブラシ: 最新の区間は
+/// その先の点が来るまで待つので、長い区間のダブは 2 つ目の入力でまとめて並ぶ）。
 fn fast_line() -> (Arc<SurfaceGeometry>, CameraView, Brush, [Vec2; 3]) {
     let g = plane();
     let view = front(&g);
     let mut b = brush(BrushEffect::Paint);
     b.base.spacing = 0.01;
+    b.assist.curve = true;
     let points = [
         screen(&view, p(0.05, 0.5)),
         screen(&view, p(1.95, 0.5)),
@@ -1347,10 +1350,10 @@ fn fast_stroke(
     (bytes(&d, layer), held, dabs)
 }
 
-/// 3D ビューで速く動かして 1 回の入力の区間が長くなっても、ストロークは消えない: 区間のダブを全部並べ、1 回の入力で
-/// [`SURFACE_DABS_PER_EVENT`] まで塗って残りを持ち越す。持ち越した分は、後のフレームで少しずつ塗っても、離したときにまとめて
-/// 塗っても、すぐ全部塗ったときと同じ画素（並べるときに当たりと大きさを決めるので、塗る時によらない）。指先（直前のダブの面の点を
-/// 読む）も同じ。
+/// 3D ビューで速く動かして 1 回の入力の区間が長くなっても、ストロークは消えない: 区間のダブを全部並べ、入力では塗らずに持ち越す
+/// （塗るのは呼ぶ側がフレームごとに、時間の枠まで）。持ち越した分は、1 フレームに 1 ダブずつ・決まった数ずつ・本物の時間の枠で塗っても、
+/// 離したときにまとめて塗っても、全部すぐ塗ったときと同じ画素（並べるときに当たりと大きさを決めるので、塗る時・区切りによらない）。
+/// 指先（直前のダブの面の点を読む）も同じ。
 #[test]
 fn a_long_single_input_keeps_the_stroke_and_paints_the_same_pixels_whenever_the_rest_is_painted() {
     for effect in [SurfaceEffect::Paint, SurfaceEffect::Smudge] {
@@ -1358,31 +1361,51 @@ fn a_long_single_input_keeps_the_stroke_and_paints_the_same_pixels_whenever_the_
         let (at_once, held, dabs) = fast_stroke(effect, |d, s, stroke| {
             s.paint_queued(d, stroke, usize::MAX).unwrap();
         });
+        assert!(dabs > 256, "{effect:?}: 試験の前提: 長い区間 ({dabs})");
         assert!(
-            dabs > 2 * SURFACE_DABS_PER_EVENT,
-            "{effect:?}: 試験の前提: 長い区間 ({dabs})"
+            held > 256,
+            "{effect:?}: 入力は塗らずに、区間のダブを全部持ち越す ({held})"
         );
-        assert!(
-            held > 0,
-            "{effect:?}: 1 回の入力で塗る数を超えた分を持ち越す"
-        );
-        // フレームごとに少しずつ
-        let (over_frames, _, frames_dabs) = fast_stroke(effect, |d, s, stroke| {
+        // 1 フレームに 1 ダブずつ（時間の枠が最小）
+        let (one_by_one, _, one_dabs) = fast_stroke(effect, |d, s, stroke| {
             let mut frames = 0;
             while s.queued() > 0 {
-                let painted = s.paint_queued(d, stroke, SURFACE_DABS_PER_EVENT).unwrap();
-                assert!(painted <= SURFACE_DABS_PER_EVENT);
+                let painted = s.paint_queued_while(d, stroke, |_| false).unwrap();
+                assert_eq!(painted, 1, "時間の枠が空でも 1 つは塗る");
+                frames += 1;
+            }
+            assert!(frames > 256, "{effect:?}: 1 ダブずつ {frames} フレーム");
+        });
+        // 決まった数ずつ（ふつうの枠の見立て）
+        let (by_count, _, count_dabs) = fast_stroke(effect, |d, s, stroke| {
+            let mut frames = 0;
+            while s.queued() > 0 {
+                let painted = s.paint_queued_while(d, stroke, |n| n < 37).unwrap();
+                assert!(painted <= 37);
                 frames += 1;
             }
             assert!(frames > 1, "{effect:?}: 何フレームかに分けて塗った");
         });
+        // 本物の時計の枠（切れ目はそのときの速さで変わるが、結果は同じ）
+        let (by_clock, _, clock_dabs) = fast_stroke(effect, |d, s, stroke| {
+            while s.queued() > 0 {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_micros(300);
+                assert!(s.paint_queued_until(d, stroke, deadline).unwrap() >= 1);
+            }
+        });
         // 離したときにまとめて
         let (on_release, _, release_dabs) = fast_stroke(effect, |_, _, _| {});
-        assert_eq!((frames_dabs, release_dabs), (dabs, dabs), "{effect:?}");
-        assert!(
-            over_frames == at_once,
-            "{effect:?}: フレームに分けても同じ画素"
+        assert_eq!(
+            (one_dabs, count_dabs, clock_dabs, release_dabs),
+            (dabs, dabs, dabs, dabs),
+            "{effect:?}"
         );
+        assert!(one_by_one == at_once, "{effect:?}: 1 ダブずつでも同じ画素");
+        assert!(
+            by_count == at_once,
+            "{effect:?}: 決まった数ずつでも同じ画素"
+        );
+        assert!(by_clock == at_once, "{effect:?}: 時計の枠でも同じ画素");
         assert!(
             on_release == at_once,
             "{effect:?}: 離したときに塗っても同じ画素"
@@ -1400,6 +1423,87 @@ fn a_long_single_input_keeps_the_stroke_and_paints_the_same_pixels_whenever_the_
             );
         }
     }
+}
+
+/// 時間の枠: 締め切りがもう過ぎていても最初の 1 つは塗り（進まないことが無い）、遠い締め切りなら全部塗る。空の待ち行列には何もしない。
+#[test]
+fn a_deadline_always_lets_one_dab_through_and_a_far_one_lets_them_all() {
+    let (g, view, b, [from, far, next]) = fast_line();
+    let (mut d, layer) = document();
+    let (mut stroke, s) = begin(
+        &mut d,
+        layer,
+        &g,
+        view,
+        &b,
+        from,
+        SurfaceStrokeOptions::default(),
+    );
+    let mut s = s.unwrap();
+    s.add(&mut d, &mut stroke, far, 1.0).unwrap();
+    s.add(&mut d, &mut stroke, next, 1.0).unwrap();
+    let held = s.queued();
+    assert!(held > 256);
+    let past = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    assert_eq!(s.paint_queued_until(&mut d, &mut stroke, past).unwrap(), 1);
+    assert_eq!(s.queued(), held - 1);
+    let later = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    assert_eq!(
+        s.paint_queued_until(&mut d, &mut stroke, later).unwrap(),
+        held - 1,
+        "遠い締め切りなら、塗れるものを全部塗る"
+    );
+    assert_eq!(s.queued(), 0);
+    assert_eq!(s.paint_queued_until(&mut d, &mut stroke, past).unwrap(), 0);
+    s.finish(&mut d, &mut stroke).unwrap();
+    d.end_stroke(stroke).unwrap();
+}
+
+/// 離す（`end_input`）は残りを塗らずに並べるだけで、その後の時間の枠の塗りと、確定は、離したときに全部塗る `finish` と同じ画素・同じ
+/// 1 本の Undo。`end_input` は 2 回呼んでも何も足さない。
+#[test]
+fn ending_the_input_leaves_the_rest_to_be_painted_in_time_boxes_and_commits_once() {
+    let run = |boxed: bool| {
+        let (g, view, b, [from, far, next]) = fast_line();
+        let (mut d, layer) = document();
+        let undo = d.undo_count();
+        let (mut stroke, s) = begin(
+            &mut d,
+            layer,
+            &g,
+            view,
+            &b,
+            from,
+            SurfaceStrokeOptions::default(),
+        );
+        let mut s = s.unwrap();
+        s.add(&mut d, &mut stroke, far, 1.0).unwrap();
+        s.add(&mut d, &mut stroke, next, 1.0).unwrap();
+        assert!(!s.input_ended());
+        if boxed {
+            s.end_input().unwrap();
+            assert!(s.input_ended());
+            let queued = s.queued();
+            s.end_input().unwrap();
+            assert_eq!(s.queued(), queued, "2 回目は何も足さない");
+            assert!(queued > 256, "離しても塗らずに持ち越す ({queued})");
+            let mut frames = 0;
+            while s.queued() > 0 {
+                s.paint_queued_while(&mut d, &mut stroke, |n| n < 50)
+                    .unwrap();
+                frames += 1;
+                assert!(d.has_active_stroke(), "残りがある間は描いている最中のまま");
+            }
+            assert!(frames > 2);
+        } else {
+            s.finish(&mut d, &mut stroke).unwrap();
+        }
+        assert_eq!(s.queued(), 0);
+        assert!(d.end_stroke(stroke).unwrap().changed);
+        assert_eq!(d.undo_count(), undo + 1, "1 本のストローク");
+        bytes(&d, layer)
+    };
+    assert!(run(true) == run(false));
 }
 
 /// 持ち越しても、1 回の操作のメモリの上限は今のまま: 持ち越したダブで予算を超えたら、ストロークを取り消して断る（途中まで塗った

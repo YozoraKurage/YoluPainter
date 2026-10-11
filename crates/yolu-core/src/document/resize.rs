@@ -7,9 +7,14 @@ use super::{Document, Target};
 use crate::effects::LayerPath;
 use crate::math::to_byte;
 use crate::paths::{render_list, CanvasPath, CanvasPoint, Options, PathSymmetry};
+use crate::rulers::{Ruler, RulerPlace, MAX_CANVAS_COORD, MIN_CANVAS_SEPARATION};
 use crate::surface::{PixelReader, Tile};
 use crate::text::TextSettings;
-use crate::{Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, TileCoord};
+use crate::{
+    Channel, ChannelKind, CoreError, LayerId, NormalSettings, Rgba8, Surface, SymmetryMode,
+    TileCoord,
+};
+use glam::DVec2;
 use rayon::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -439,7 +444,7 @@ impl Document {
         } = prepared;
         if id != self.id || revision != self.revision {
             return Err(CoreError::InvalidArgument(
-                "大きさの変更の準備のあとに文書が変わった",
+                "大きさの変更の準備のあとにプロジェクトが変わった",
             ));
         }
         self.commit_resized(copy, &mut report)?;
@@ -660,6 +665,18 @@ impl Document {
             if let Some(text) = &self.layers[i].text {
                 copy.layers[i].text = Some(fit.text(text, &self.layers[i].name, &mut report.notes));
             }
+            // 定規: 2D の定規の点は画素と同じ空間なので同じだけ動かす（3D の定規はモデルの空間なので動かさない）
+            if self.layers[i]
+                .rulers
+                .iter()
+                .any(|r| matches!(r.place, RulerPlace::Canvas { .. }))
+            {
+                copy.layers[i].rulers = fit.rulers(
+                    &self.layers[i].rulers,
+                    &self.layers[i].name,
+                    &mut report.notes,
+                );
+            }
         }
         if let Fit::Scale { scale, .. } = fit {
             report
@@ -673,6 +690,45 @@ impl Document {
         }
         Ok((copy, report))
     }
+}
+
+/// 2D の定規の 2 点（動かしたあとの値）を、確かめ（[`Ruler::validate`]）に通る位置へ直す。通るものは変えない。範囲（±1e7）の外の点は中へ寄せ、
+/// それでも 2 点が 0.01 画素より近ければ、`a` を動かさず `b` を最小の間隔（少し余裕を見て）離す。離す向きは元の向き、その逆、範囲の中へ向かう
+/// 斜めの順に試し、範囲の中の最初のものを取る（斜めはどの角でも範囲の中に収まる）。返すのは 2 点と、直したか。
+fn fit_canvas_points(ma: DVec2, mb: DVec2) -> (DVec2, DVec2, bool) {
+    let limit = DVec2::splat(MAX_CANVAS_COORD);
+    let inside = |p: DVec2| p.is_finite() && p.abs().max_element() <= MAX_CANVAS_COORD;
+    let fits =
+        |a: DVec2, b: DVec2| inside(a) && inside(b) && a.distance(b) >= MIN_CANVAS_SEPARATION;
+    if fits(ma, mb) {
+        return (ma, mb, false);
+    }
+    // 有限でない値は来ない（倍率と座標は有限）が、来ても確かめに通る位置を返す
+    let pull = |p: DVec2| {
+        if p.is_finite() {
+            p.clamp(-limit, limit)
+        } else {
+            DVec2::ZERO
+        }
+    };
+    let (na, nb) = (pull(ma), pull(mb));
+    if fits(na, nb) {
+        return (na, nb, true);
+    }
+    let step = MIN_CANVAS_SEPARATION * 1.01;
+    let along = (mb - ma).try_normalize().unwrap_or(DVec2::X);
+    let toward_inside = DVec2::new(
+        if na.x >= 0.0 { -1.0 } else { 1.0 },
+        if na.y >= 0.0 { -1.0 } else { 1.0 },
+    ) * std::f64::consts::FRAC_1_SQRT_2;
+    for dir in [along, -along, toward_inside] {
+        let moved = na + dir * step;
+        if fits(na, moved) {
+            return (na, moved, true);
+        }
+    }
+    // ここへは来ない（範囲の中へ向かう斜めは、範囲の中の点からなら必ず収まる）。来ても確かめに通る位置を返す
+    (DVec2::ZERO, DVec2::X * step, true)
 }
 
 /// 大きさの変更が、画素の外の設定（効果の半径・2D のパス）をどう動かすか。
@@ -755,6 +811,16 @@ impl Fit {
             let (cx, cy) = (x.clamp(-LIMIT, LIMIT), y.clamp(-LIMIT, LIMIT));
             clamped |= cx != x || cy != y;
             symmetry.center = glam::DVec2::new(cx, cy);
+            // 線対称の最初の軸の向きは、縦横の倍率が違えば変わる（向きのベクトルを倍率で写す）
+            if let (SymmetryMode::Lines, Fit::Scale { sx, sy, .. }) = (symmetry.mode, self) {
+                if sx != sy {
+                    let t = symmetry.angle.to_radians();
+                    symmetry.angle = crate::rulers::direction_degrees(glam::DVec2::new(
+                        sx * t.cos(),
+                        sy * t.sin(),
+                    ));
+                }
+            }
         }
         if clamped {
             notes.push(format!(
@@ -762,6 +828,42 @@ impl Fit {
             ));
         }
         next
+    }
+
+    /// 大きさに合わせた定規（2D の定規だけ。3D の定規は変えない）。点を縦横の倍率かずらしで動かす。範囲（±1e7）の外へ出た点や、近づきすぎた
+    /// 2 点は、確かめに通る位置へ直し（[`fit_canvas_points`]）、直した定規の数をレイヤーごとに 1 つの知らせにまとめる。確かめに通らない値は残さない。
+    fn rulers(self, list: &[Ruler], owner: &str, notes: &mut Vec<String>) -> Vec<Ruler> {
+        let map = |p: DVec2| match self {
+            Fit::Scale { sx, sy, .. } => DVec2::new(p.x * sx, p.y * sy),
+            Fit::Shift((dx, dy)) => DVec2::new(p.x + dx as f64, p.y + dy as f64),
+        };
+        let mut adjusted = 0usize;
+        let out = list
+            .iter()
+            .map(|r| {
+                let RulerPlace::Canvas { a, b } = r.place else {
+                    return r.clone();
+                };
+                let (na, nb, changed) = fit_canvas_points(map(a), map(b));
+                let fitted = Ruler {
+                    place: RulerPlace::Canvas { a: na, b: nb },
+                    ..r.clone()
+                };
+                // 最後の守り: 確かめに通らなければ、動かす前の定規を残す（通らない値を文書に入れない）
+                if fitted.validate().is_err() {
+                    adjusted += 1;
+                    return r.clone();
+                }
+                adjusted += usize::from(changed);
+                fitted
+            })
+            .collect();
+        if adjusted > 0 {
+            notes.push(format!(
+                "「{owner}」の定規 {adjusted} 個: 範囲の外へ出た点を寄せた、または近づきすぎた 2 点の間隔を保った"
+            ));
+        }
+        out
     }
 
     /// 大きさに合わせたテキストの値。ずらしは基準の点だけを動かす（画素も同じだけずれるので、描き直しても同じ所）。拡大・縮小は
@@ -871,6 +973,219 @@ mod tests {
         )
         .unwrap()
         .to_canvas_bytes()
+    }
+
+    /// 動かした 2 点がどこにあっても（範囲の外・角・同じ点・近すぎる）、直した 2 点は定規の確かめに通る。通る入力は変えない。
+    #[test]
+    fn fitted_ruler_points_always_pass_the_ruler_check() {
+        use crate::rulers::{RulerId, RulerKind};
+        let check = |ma: DVec2, mb: DVec2| {
+            let (a, b, changed) = fit_canvas_points(ma, mb);
+            let r = Ruler::canvas(RulerId(1), RulerKind::Line, a, b);
+            assert!(r.validate().is_ok(), "{ma:?} {mb:?} -> {a:?} {b:?}");
+            let passes = Ruler::canvas(RulerId(1), RulerKind::Line, ma, mb)
+                .validate()
+                .is_ok();
+            assert_eq!(changed, !passes, "{ma:?} {mb:?}");
+            if passes {
+                assert_eq!((a, b), (ma, mb), "通る入力は変えない");
+            }
+        };
+        let values = [
+            0.0,
+            1.0,
+            -12.3456,
+            9.0e6,
+            9.5e6,
+            9_999_999.995,
+            1e7,
+            -1e7,
+            1.8e7,
+            -1.9e7,
+            3e7,
+        ];
+        for ax in values {
+            for ay in values {
+                for bx in values {
+                    for by in values {
+                        check(DVec2::new(ax, ay), DVec2::new(bx, by));
+                    }
+                }
+            }
+        }
+        // 角のまわりの細かい点（向きも距離も変えながら）
+        let mut state = 7u64;
+        for _ in 0..20_000 {
+            let mut coord = || {
+                let sign = if next(&mut state).is_multiple_of(2) {
+                    1.0
+                } else {
+                    -1.0
+                };
+                let near = (next(&mut state) % 1_000_000) as f64 / 1e4;
+                sign * (1e7 + near - 50.0)
+            };
+            let (ax, ay, bx, by) = (coord(), coord(), coord(), coord());
+            check(DVec2::new(ax, ay), DVec2::new(bx, by));
+        }
+    }
+
+    /// 斜めに外へ出る定規（拡大で角の外へ）を、サイズ変更で動かしたあとも、レイヤーの定規の一覧が確かめに通る。知らせはレイヤーごとに 1 つ。
+    #[test]
+    fn a_ruler_pushed_past_a_corner_by_a_resize_stays_valid_with_one_note_per_layer() {
+        use crate::rulers::{RulerId, RulerKind};
+        let rulers: Vec<Ruler> = [
+            ((9e6, 9e6), (9.5e6, 8e6)),
+            ((9e6, -9e6), (8e6, -9.5e6)),
+            ((-9e6, 9e6), (-9.5e6, 9.9e6)),
+            ((-9.9e6, -9.9e6), (-9.9e6, -9.9e6 + 0.5)),
+            ((1.0, 1.0), (50.0, 30.0)),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(k, (a, b))| {
+            Ruler::canvas(
+                RulerId(k as u128 + 1),
+                RulerKind::Line,
+                DVec2::new(a.0, a.1),
+                DVec2::new(b.0, b.1),
+            )
+        })
+        .collect();
+        for fit in [
+            Fit::Scale {
+                sx: 2.0,
+                sy: 2.0,
+                scale: 2.0,
+            },
+            Fit::Scale {
+                sx: 3.0,
+                sy: 0.5,
+                scale: 1.2,
+            },
+            Fit::Shift((2_000_000, -3_000_000)),
+        ] {
+            let mut notes = Vec::new();
+            let out = fit.rulers(&rulers, "レイヤー", &mut notes);
+            assert_eq!(out.len(), rulers.len());
+            for (r, before) in out.iter().zip(&rulers) {
+                assert!(r.validate().is_ok(), "{r:?}");
+                // 守りで動かす前の定規へ戻したのではなく、点を写して直してある
+                assert_ne!(r.place, before.place, "{r:?}");
+            }
+            assert_eq!(notes.len(), 1, "レイヤーごとに 1 つ: {notes:?}");
+            // 範囲の中に残る定規は、点だけが写る
+            assert_eq!(out[4].id, rulers[4].id);
+        }
+        // 直す物が無ければ、知らせは出ない
+        let mut notes = Vec::new();
+        let _ = Fit::Shift((1, 1)).rulers(&rulers[4..], "レイヤー", &mut notes);
+        assert!(notes.is_empty());
+    }
+
+    /// 範囲の外の点は、その側の端（±1e7）へ寄る（負の側は −1e7）。範囲の中の点と、もう一方の点は動かさない。
+    #[test]
+    fn a_point_past_the_range_is_pulled_to_the_nearest_edge_on_its_own_side() {
+        let edge = MAX_CANVAS_COORD;
+        let b = DVec2::new(5.0, -7.0);
+        for (outside, pulled) in [
+            (DVec2::new(-2.0 * edge, 3.0), DVec2::new(-edge, 3.0)),
+            (DVec2::new(4.0, -3.0 * edge), DVec2::new(4.0, -edge)),
+            (DVec2::new(2.0 * edge, 3.0), DVec2::new(edge, 3.0)),
+            (DVec2::new(-2.0 * edge, 3.0 * edge), DVec2::new(-edge, edge)),
+        ] {
+            assert_eq!(fit_canvas_points(outside, b), (pulled, b, true));
+            assert_eq!(fit_canvas_points(b, outside), (b, pulled, true));
+        }
+    }
+
+    /// 近づきすぎた 2 点は、`a` を動かさず、`b` を元の向き（`a`→`b`）に最小の間隔（少し余裕を見て）まで離す。
+    #[test]
+    fn two_points_too_close_are_separated_along_their_own_direction() {
+        let step = MIN_CANVAS_SEPARATION * 1.01;
+        let a = DVec2::new(5.0, 3.0);
+        for dir in [DVec2::Y, -DVec2::Y, DVec2::X, -DVec2::X] {
+            let (na, nb, changed) = fit_canvas_points(a, a + dir * 0.001);
+            assert_eq!(na, a);
+            assert!(changed);
+            assert!((nb - (a + dir * step)).length() < 1e-12, "{dir:?}: {nb:?}");
+        }
+    }
+
+    /// 元の向きへ離すと範囲の外へ出る（`a` が端にある）ときは、その逆の向きへ離す。
+    #[test]
+    fn two_points_too_close_at_the_edge_are_separated_the_other_way_back_into_the_range() {
+        let edge = MAX_CANVAS_COORD;
+        let step = MIN_CANVAS_SEPARATION * 1.01;
+        for (a, outward) in [
+            (DVec2::new(edge, 5.0), DVec2::X),
+            (DVec2::new(-edge, 5.0), -DVec2::X),
+            (DVec2::new(5.0, edge), DVec2::Y),
+            (DVec2::new(5.0, -edge), -DVec2::Y),
+        ] {
+            let (na, nb, changed) = fit_canvas_points(a, a + outward * 0.001);
+            assert!(changed);
+            assert_eq!(na, a);
+            assert!(
+                (nb - (a - outward * step)).length() < 1e-9,
+                "外へ向かう向きの逆へ離す（{outward:?}）: {nb:?}"
+            );
+        }
+    }
+
+    /// 2 点とも範囲の外で、同じ角へ寄ってしまい、元の向きもその逆も範囲の外へ出るときは、範囲の内へ向かう斜めに離す（`a` は角のまま）。
+    #[test]
+    fn two_points_pulled_onto_the_same_corner_are_separated_diagonally_into_the_range() {
+        let edge = MAX_CANVAS_COORD;
+        let step = MIN_CANVAS_SEPARATION * 1.01;
+        let inward = std::f64::consts::FRAC_1_SQRT_2 * step;
+        for (sx, sy) in [(1.0, 1.0), (1.0, -1.0), (-1.0, 1.0), (-1.0, -1.0)] {
+            let corner = DVec2::new(sx * edge, sy * edge);
+            // a から b への向きは、x では外へ、y では内へ（その逆は x で内、y で外）。どちらの向きでも角の外へ出る
+            let a = corner * 2.0;
+            let b = a + DVec2::new(sx * 0.5 * edge, -sy * edge);
+            let (na, nb, changed) = fit_canvas_points(a, b);
+            assert!(changed);
+            assert_eq!(na, corner, "a は角のまま（{sx} {sy}）");
+            assert!(
+                (nb - (corner - DVec2::new(sx, sy) * inward)).length() < 1e-9,
+                "範囲の内へ向かう斜めに離す（{sx} {sy}）: {nb:?}"
+            );
+        }
+    }
+
+    /// 確かめに通らない定規（ID が 0 など）は、動かす前のまま残り、直した数に数えられて知らせの文に入る。
+    #[test]
+    fn a_ruler_that_cannot_pass_the_check_stays_as_it_was_and_is_counted_in_the_note() {
+        use crate::rulers::{RulerId, RulerKind};
+        let broken = Ruler::canvas(RulerId(0), RulerKind::Line, DVec2::ZERO, DVec2::X * 10.0);
+        let fine = Ruler::canvas(RulerId(2), RulerKind::Line, DVec2::ZERO, DVec2::X * 10.0);
+        let mut notes = Vec::new();
+        let out = Fit::Shift((1, 1)).rulers(&[broken.clone(), fine], "レイヤー", &mut notes);
+        assert_eq!(out[0], broken, "動かす前のまま");
+        assert_eq!(
+            out[1].place,
+            RulerPlace::Canvas {
+                a: DVec2::ONE,
+                b: DVec2::new(11.0, 1.0)
+            }
+        );
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("定規 1 個"), "{notes:?}");
+
+        // 範囲の外へ出た定規 2 つ（寄せて直す）と通らない定規 1 つ: 3 個
+        let past = |id: u128| {
+            Ruler::canvas(
+                RulerId(id),
+                RulerKind::Line,
+                DVec2::new(9e6, 9e6),
+                DVec2::new(9.5e6, 8e6),
+            )
+        };
+        let mut notes = Vec::new();
+        let _ =
+            Fit::Shift((2_000_000, 0)).rulers(&[past(3), broken, past(4)], "レイヤー", &mut notes);
+        assert!(notes[0].contains("定規 3 個"), "{notes:?}");
     }
 
     #[test]

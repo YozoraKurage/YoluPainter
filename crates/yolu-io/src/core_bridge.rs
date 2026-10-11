@@ -4,9 +4,10 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）、レイヤーの後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, MANUAL_ID_COLORS_VERSION,
-    MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, SEAMS_VERSION,
-    TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION,
+    MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
+    PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
+    USER_CHANNELS_VERSION,
 };
 use crate::{
     check, check_budget, Error, NativeDocument, NativeValue as V, Result, Unwritable,
@@ -19,16 +20,17 @@ use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
 use yolu_core::generator::{
     self, anchor, ColorStop, LuminanceCorrection, MapKind, MixMode, OpacityStop, Ramp,
 };
+use yolu_core::glam::{DVec2, DVec3};
 use yolu_core::mesh_maps::{IdColorAssignments, MeshOverlapPriority, MeshOverlapRule};
 use yolu_core::paths;
 use yolu_core::text::{TextAlign, TextFont, TextSettings};
 use yolu_core::{
-    AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange, BlendMode,
-    BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
+    AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, AntiAlias, BalanceRange,
+    BlendMode, BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
     ColorAdjust, ColorBalance, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
     FilterSpec, FilterTarget, GradientMap, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerLocks,
-    LayerPath, NormalSettings, NormalYDirection, Posterize, Rgba8, Threshold, TileCoord,
-    ToneChannel, ToneCurves,
+    LayerPath, NormalSettings, NormalYDirection, Posterize, Rgba8, Ruler, RulerId, RulerKind,
+    RulerPlace, RulerScope, Threshold, TileCoord, ToneChannel, ToneCurves,
 };
 
 fn core_id(mut guid: [u8; 16]) -> u128 {
@@ -195,7 +197,9 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "paths"
         | "point_gradient_count"
         | "point_gradients"
-        | "text" => None,
+        | "text"
+        | "ruler_count"
+        | "rulers" => None,
         "mask" => match parts.next().unwrap_or_default().split('[').next() {
             Some(
                 "enabled" | "inverted" | "density" | "tile_count" | "tiles" | "filters" | "anchor",
@@ -468,7 +472,43 @@ fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
     .map_err(|e| Error::InvalidData(e.to_string()))
 }
 
-/// 文書の正本の版（使う機能で決まる）: 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
+/// 版 35 の機能（定規を持つレイヤー、または線対称の 2D のパス）を使うか。
+pub(crate) fn uses_rulers_version(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        !l.rulers().is_empty()
+            || l.path()
+                .into_iter()
+                .chain(l.paths().iter().map(|e| &e.path))
+                .any(|p| {
+                    matches!(
+                        p.style().symmetry,
+                        paths::PathSymmetry::Canvas(c) if c.mode == yolu_core::SymmetryMode::Lines
+                    )
+                })
+    })
+}
+
+/// パスのブラシにアンチエイリアスの段（なし でない）を持つパスがあるか（あれば版 34）。
+fn uses_anti_aliased_paths(doc: &Document) -> bool {
+    doc.layers().iter().any(|l| {
+        l.path()
+            .into_iter()
+            .chain(l.paths().iter().map(|e| &e.path))
+            .any(|p| path_brush(p).anti_alias != AntiAlias::None)
+    })
+}
+
+/// パスのブラシの設定。
+fn path_brush(path: &LayerPath) -> BrushSettings {
+    match path {
+        LayerPath::Surface(p) => p.brush.0,
+        LayerPath::Canvas(p) => p.brush.0,
+    }
+}
+
+/// 文書の正本の版（使う機能で決まる）: 定規を持つレイヤー（グループ）か、線対称の 2D のパスがあれば 35（版 27〜34 の中身も読み書きできる版）、
+/// パスのブラシのアンチエイリアス（なし 以外）があれば 34（版 27〜33 の中身も読み書きできる版）、
+/// 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
 /// レイヤーのフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜30 の中身も読み書きできる版）、
 /// テキストレイヤーがあれば 30（版 27〜29 の中身も読み書きできる）、
 /// 塗りつぶしの点のグラデーションか、異方性のフィルターを切った塗りつぶしの画像があれば 29（版 27・28 の中身も読み書きできる）、
@@ -478,7 +518,11 @@ fn read_bake_priority(f: &Fields<'_>) -> Result<MeshOverlapPriority> {
 /// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
-    if !doc.bake_priority().is_default() {
+    if uses_rulers_version(doc) {
+        RULERS_VERSION
+    } else if uses_anti_aliased_paths(doc) {
+        ANTI_ALIAS_VERSION
+    } else if !doc.bake_priority().is_default() {
         BAKE_PRIORITY_VERSION
     } else if !doc.filter_seams() {
         SEAMS_VERSION
@@ -565,12 +609,7 @@ pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
         version >= MANUAL_ID_COLORS_VERSION,
         "手動の ID の色は正本の版 19 から書けます",
     )?;
-    let mut w = Out {
-        sink,
-        mixing: version >= MIXING_VERSION,
-        points: version >= POINT_GRADIENT_VERSION,
-        text: version >= TEXT_VERSION,
-    };
+    let mut w = Out::for_version(sink, version);
     w.value(b"YLID")?;
     w.int(assigned.colors().len() as i32)?;
     w.text(assigned.binding())?;
@@ -582,12 +621,7 @@ pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
 }
 /// 識別子からレイヤーの数まで（レイヤーより前）。
 pub(crate) fn write_head(sink: &mut dyn Sink, doc: &Document, version: i32) -> Result<()> {
-    let mut w = Out {
-        sink,
-        mixing: version >= MIXING_VERSION,
-        points: version >= POINT_GRADIENT_VERSION,
-        text: version >= TEXT_VERSION,
-    };
+    let mut w = Out::for_version(sink, version);
     w.raw(b"DOTPAINT")?;
     w.int(version)?;
     write_head_after_version(&mut w, doc, version)
@@ -598,12 +632,7 @@ pub(crate) fn write_layer_to(
     layer: &yolu_core::Layer,
     version: i32,
 ) -> Result<()> {
-    let mut w = Out {
-        sink,
-        mixing: version >= MIXING_VERSION,
-        points: version >= POINT_GRADIENT_VERSION,
-        text: version >= TEXT_VERSION,
-    };
+    let mut w = Out::for_version(sink, version);
     write_layer(&mut w, layer)
 }
 /// 版の後ろからレイヤーの数まで（ID・寸法・Normal の設定・ユーザーチャンネル・レイヤーの数）。
@@ -1034,7 +1063,97 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
         doc.set_text_for_load(id, text)
             .map_err(|e| Error::from(e).in_context("テキストの値をcoreにできません"))?;
     }
+    if ext & 4 != 0 {
+        let mut rulers = Vec::new();
+        for k in 0..f.int(&format!("{p}.ruler_count"))? {
+            rulers.push(read_ruler(f, &format!("{p}.rulers[{k}]"))?);
+        }
+        doc.set_rulers_for_load(id, rulers)
+            .map_err(|e| Error::from(e).in_context("定規をcoreにできません"))?;
+    }
     Ok(locks)
+}
+
+/// 定規 1 つ（`{p}` の下の項目。版 35）。
+fn read_ruler(f: &Fields<'_>, p: &str) -> Result<Ruler> {
+    let kind = RulerKind::from_index(f.byte(&format!("{p}.kind"))?)
+        .ok_or_else(|| Error::InvalidData(format!("{p}.kind は範囲外です")))?;
+    let scope = RulerScope::from_index(f.byte(&format!("{p}.scope"))?)
+        .ok_or_else(|| Error::InvalidData(format!("{p}.scope は範囲外です")))?;
+    let flags = f.byte(&format!("{p}.flags"))?;
+    let point3 = |name: &str| -> Result<DVec3> {
+        Ok(DVec3::new(
+            f.float(&format!("{p}.{name}_x"))?,
+            f.float(&format!("{p}.{name}_y"))?,
+            f.float(&format!("{p}.{name}_z"))?,
+        ))
+    };
+    let point2 = |name: &str| -> Result<DVec2> {
+        Ok(DVec2::new(
+            f.float(&format!("{p}.{name}_x"))?,
+            f.float(&format!("{p}.{name}_y"))?,
+        ))
+    };
+    let place = match f.byte(&format!("{p}.space"))? {
+        0 => RulerPlace::Canvas {
+            a: point2("a")?,
+            b: point2("b")?,
+        },
+        _ => RulerPlace::Model {
+            a: point3("a")?,
+            b: point3("b")?,
+            up: point3("up")?,
+        },
+    };
+    Ok(Ruler {
+        id: RulerId(core_id(f.guid(&format!("{p}.id"))?)),
+        kind,
+        place,
+        two_points: flags & 4 != 0,
+        lines: f.byte(&format!("{p}.lines"))?,
+        line_symmetry: flags & 8 != 0,
+        see_through: flags & 16 != 0,
+        visible: flags & 1 != 0,
+        scope,
+        snap: flags & 2 != 0,
+    })
+}
+
+/// 定規 1 つを書く（読み手の `rulers[i]` の並び。版 35）。
+fn write_ruler(w: &mut Out<'_>, r: &Ruler) -> Result<()> {
+    w.raw(&native_id(r.id.0))?;
+    w.byte(r.kind.index())?;
+    w.byte(match r.place {
+        RulerPlace::Canvas { .. } => 0,
+        RulerPlace::Model { .. } => 1,
+    })?;
+    // 印のビットは重ならない（読み手の `flags & …` と同じ並び）ので、立っているビットの値を足し合わせる
+    let flags: u8 = [
+        (r.visible, 1u8),
+        (r.snap, 2),
+        (r.two_points, 4),
+        (r.line_symmetry, 8),
+        (r.see_through, 16),
+    ]
+    .into_iter()
+    .filter_map(|(on, bit)| on.then_some(bit))
+    .sum();
+    w.byte(flags)?;
+    w.byte(r.scope.index())?;
+    w.byte(r.lines)?;
+    match r.place {
+        RulerPlace::Canvas { a, b } => {
+            for v in [a.x, a.y, b.x, b.y] {
+                w.float(v)?;
+            }
+        }
+        RulerPlace::Model { a, b, up } => {
+            for v in [a.x, a.y, a.z, b.x, b.y, b.z, up.x, up.y, up.z] {
+                w.float(v)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 1 本の欄（版 8・10・18）のパスの消しゴムの印を、消しゴムの種類にする（書き手は消しゴムの種類をこの印で書く。往復で同じ値）。
@@ -1161,6 +1280,14 @@ fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<Lay
         pressure_size: flag("pressure_size")?,
         pressure_opacity: flag("pressure_opacity")?,
         pressure_flow: flag("pressure_flow")?,
+        // 版 34 から。前の版は なし（今の式）
+        anti_alias: if version >= ANTI_ALIAS_VERSION {
+            AntiAlias::from_index(f.byte(&format!("{p}.brush.anti_alias"))?).ok_or_else(|| {
+                Error::InvalidData("パスのブラシのアンチエイリアスの段が不正です".into())
+            })?
+        } else {
+            AntiAlias::None
+        },
     });
     let count = f.int(&format!("{p}.point_count"))?;
     let material = if version >= 18 {
@@ -1279,11 +1406,13 @@ fn read_path_extra(f: &Fields<'_>, p: &str, path: &mut LayerPath) -> Result<()> 
         symmetry: match f.byte(&format!("{p}.symmetry"))? {
             1 => {
                 let c = format!("{p}.canvas_symmetry");
+                let mode = f.int(&format!("{c}.mode"))?;
                 paths::PathSymmetry::Canvas(yolu_core::CanvasSymmetry {
-                    mode: match f.int(&format!("{c}.mode"))? {
+                    mode: match mode {
                         1 => yolu_core::SymmetryMode::Vertical,
                         2 => yolu_core::SymmetryMode::Horizontal,
                         3 => yolu_core::SymmetryMode::Both,
+                        5 => yolu_core::SymmetryMode::Lines,
                         _ => yolu_core::SymmetryMode::Radial,
                     },
                     center: yolu_core::glam::DVec2::new(
@@ -1291,6 +1420,12 @@ fn read_path_extra(f: &Fields<'_>, p: &str, path: &mut LayerPath) -> Result<()> 
                         f.float(&format!("{c}.center_y"))?,
                     ),
                     count: f.int(&format!("{c}.count"))? as u32,
+                    // 最初の線の角度（度）は種類 5（線対称）だけが持つ
+                    angle: if mode == 5 {
+                        f.float(&format!("{c}.angle"))?
+                    } else {
+                        0.0
+                    },
                 })
             }
             2 => {
@@ -1417,16 +1552,24 @@ fn write_path_extra(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
         paths::PathSymmetry::None => w.byte(0)?,
         paths::PathSymmetry::Canvas(c) => {
             w.byte(1)?;
+            check(
+                w.rulers || c.mode != yolu_core::SymmetryMode::Lines,
+                "パスの線対称は版 35 で書く",
+            )?;
             w.int(match c.mode {
                 yolu_core::SymmetryMode::Vertical => 1,
                 yolu_core::SymmetryMode::Horizontal => 2,
                 yolu_core::SymmetryMode::Both => 3,
+                yolu_core::SymmetryMode::Lines => 5,
                 // 対称なし（None）はパスの検査が断るので、ここへは来ない
                 yolu_core::SymmetryMode::Radial | yolu_core::SymmetryMode::None => 4,
             })?;
             w.float(c.center.x)?;
             w.float(c.center.y)?;
             w.int(c.count as i32)?;
+            if c.mode == yolu_core::SymmetryMode::Lines {
+                w.float(c.angle)?;
+            }
         }
         paths::PathSymmetry::Mirror { point, normal } => {
             w.byte(2)?;
@@ -1523,6 +1666,9 @@ fn write_path(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
         brush.pressure_flow,
     ] {
         w.boolean(v)?;
+    }
+    if w.anti_alias {
+        w.byte(brush.anti_alias.index())?;
     }
     match path {
         LayerPath::Surface(p) => {
@@ -2108,6 +2254,23 @@ struct Out<'s> {
     points: bool,
     /// 版 30 の文字の値を書けるか。
     text: bool,
+    /// 版 34 のパスのブラシのアンチエイリアスの段を書くか。
+    anti_alias: bool,
+    /// 版 35 の定規と、パスの線対称（種類 5）を書けるか。
+    rulers: bool,
+}
+impl<'s> Out<'s> {
+    /// 正本の版 `version` の並びで書く。
+    fn for_version(sink: &'s mut dyn Sink, version: i32) -> Out<'s> {
+        Out {
+            sink,
+            mixing: version >= MIXING_VERSION,
+            points: version >= POINT_GRADIENT_VERSION,
+            text: version >= TEXT_VERSION,
+            anti_alias: version >= ANTI_ALIAS_VERSION,
+            rulers: version >= RULERS_VERSION,
+        }
+    }
 }
 impl Out<'_> {
     fn raw(&mut self, b: &[u8]) -> Result<()> {
@@ -2172,14 +2335,19 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     )?;
     // 属性の印: ビット 0 クリッピング、ビット 1 ロックが続く、ビット 2 チャンネルごとの設定が続く、ビット 3 塗りつぶしの画像、ビット 4 Anchor、
     // ビット 5 塗りつぶしのグラデーション、ビット 6 パスの一覧（版 27）、ビット 7 続きの属性の印が続く（版 29）。ロックの印（int、0 は書かない）は
-    // 属性の直後、続きの属性の印（int、0 は書かない。ビット 0 塗りつぶしの点のグラデーション、ビット 1 文字の値（版 30））はロックの直後、
+    // 属性の直後、続きの属性の印（int、0 は書かない。ビット 0 塗りつぶしの点のグラデーション、ビット 1 文字の値（版 30）、ビット 2 定規（版 35））はロックの直後、
     // どちらもチャンネルごとの設定より前
     check(
         w.text || layer.text().is_none(),
         named("テキストレイヤーは版 30 で書く"),
     )?;
-    let ext: i32 =
-        if points.is_empty() { 0 } else { 1 } | if layer.text().is_some() { 2 } else { 0 };
+    check(
+        w.rulers || layer.rulers().is_empty(),
+        named("定規は版 35 で書く"),
+    )?;
+    let ext: i32 = if points.is_empty() { 0 } else { 1 }
+        | if layer.text().is_some() { 2 } else { 0 }
+        | if layer.rulers().is_empty() { 0 } else { 4 };
     w.byte(
         u8::from(layer.clipping())
             | if locks == LayerLocks::NONE { 0 } else { 2 }
@@ -2350,6 +2518,12 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     }
     if let Some(text) = layer.text() {
         write_text(w, text)?;
+    }
+    if !layer.rulers().is_empty() {
+        w.int(layer.rulers().len() as i32)?;
+        for r in layer.rulers() {
+            write_ruler(w, r)?;
+        }
     }
     Ok(())
 }

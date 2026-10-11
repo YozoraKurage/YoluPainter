@@ -407,24 +407,34 @@ fn effect_row(
         t::LABEL.with_color(if !enabled_stage { t::TEXT_DIM } else { color }),
         w::Align::Left,
     );
+    // 印・省略した名前の上では、その場所のツールチップだけを出す（行のツールチップは重なるので出さない）
+    let mut over_part = false;
     if let Some(mark) = mark {
         w::icon(&painter, mark, "warning", t::WARNING, 13.0);
         let tip = reason.clone().unwrap_or_default();
-        ui.interact(
-            mark,
-            ui.make_persistent_id(("fx.mark", id.0)),
-            Sense::hover(),
-        )
-        .on_hover_text(tip);
+        let on_mark = ui
+            .interact(
+                mark,
+                ui.make_persistent_id(("fx.mark", id.0)),
+                Sense::hover(),
+            )
+            .on_hover_text(tip);
+        over_part |= on_mark.hovered();
     }
     if shown != label {
         let tip_rect = text_rect.intersect(list);
-        ui.interact(
-            tip_rect,
-            ui.make_persistent_id(("fx.name", id.0)),
-            Sense::hover(),
-        )
-        .on_hover_text(label.clone());
+        let name_tip = match &reason {
+            Some(why) => format!("{label}\n{why}"),
+            None => label.clone(),
+        };
+        let on_name = ui
+            .interact(
+                tip_rect,
+                ui.make_persistent_id(("fx.name", id.0)),
+                Sense::hover(),
+            )
+            .on_hover_text(name_tip);
+        over_part |= on_name.hovered();
     }
     if buttons {
         let at = |dx: f32| {
@@ -486,10 +496,10 @@ fn effect_row(
     }
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &label));
-    // 効いていない理由は、行のどこに乗せても出す（印だけでは小さい）
+    // 効いていない理由は、行のどこに乗せても出す（印だけでは小さい）。印・省略した名前の上ではそれぞれの場所のものだけ
     let response = match &reason {
-        Some(why) => response.on_hover_text(format!("{label}\n{why}")),
-        None => response,
+        Some(why) if !over_part => response.on_hover_text(format!("{label}\n{why}")),
+        _ => response,
     };
     if response.clicked() {
         app.apply(Action::Fx(FxOp::SelectFilter { layer, id }));

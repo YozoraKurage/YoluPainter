@@ -4,15 +4,94 @@
 //! メインウィンドウの上に重ね、開いている間はメインウィンドウを操作できなくする。親にするのは起動のときにウィンドウの作成の文脈から預かったメインウィンドウ
 //! （`set_owner`。実際のウィンドウだけ）で、預かっていない・ウィンドウがもう無いときは親なしで出す。
 //! クラッシュの知らせ（`crash`）は、ウィンドウの無い起動でも出すので、ここを通さない。
+//!
+//! ファイルを選ぶウィンドウは、入り口の種類（`places::Place`）を渡して作り、始まりの場所は種類ごとに前に使った場所・今の文書の場所・OS の書類の
+//! フォルダから決める（`places`）。選んだら `AppState::note_file_chosen`・`note_folder_chosen` で場所を覚える。
 
-/// ファイルを選ぶウィンドウ（親つき）。
-pub fn file() -> rfd::FileDialog {
+pub mod places;
+
+use std::path::{Path, PathBuf};
+
+use self::places::{Place, Rule, Sources};
+use crate::state::AppState;
+
+/// 親つきの、始まりの場所の無いファイルを選ぶウィンドウ。
+fn parented() -> rfd::FileDialog {
     let dialog = rfd::FileDialog::new();
     #[cfg(windows)]
     if let Some(owner) = owner::get() {
         return dialog.set_parent(&owner);
     }
     dialog
+}
+
+/// ファイルを選ぶウィンドウ（親つき。開く・取り込み・書き出し）。始まりの場所は、前に `place` で使った場所 → 今の文書のフォルダ → OS の
+/// 書類のフォルダ（`places::Rule::Open`）。
+pub fn file(state: &AppState, place: Place) -> rfd::FileDialog {
+    started(state, place, Rule::Open)
+}
+
+/// ファイルを選ぶウィンドウ（親つき。保存・別名で保存）。始まりの場所は、退避を開いた文書の元のフォルダ → 今の文書のフォルダ → 前に `place` で
+/// 使った場所 → OS の書類のフォルダ（`places::Rule::Save`）。
+pub fn file_for_save(state: &AppState, place: Place) -> rfd::FileDialog {
+    started(state, place, Rule::Save)
+}
+
+fn started(state: &AppState, place: Place, rule: Rule) -> rfd::FileDialog {
+    let dialog = parented();
+    match start_folder_of(state, place, rule) {
+        Some(folder) => dialog.set_directory(folder),
+        None => dialog,
+    }
+}
+
+/// `place` のウィンドウを開く始まりの場所（決められなければ None）。
+pub fn start_folder_of(state: &AppState, place: Place, rule: Rule) -> Option<PathBuf> {
+    start_folder_with(state, place, rule, places::documents_folder().as_deref())
+}
+
+/// `start_folder_of` の、OS の書類のフォルダを渡せる形（試験は決まったフォルダを渡す）。
+pub fn start_folder_with(
+    state: &AppState,
+    place: Place,
+    rule: Rule,
+    documents: Option<&Path>,
+) -> Option<PathBuf> {
+    let document = state.document_folder();
+    places::start_folder(
+        rule,
+        &Sources {
+            preferred: state.save_folder.as_deref(),
+            document: document.as_deref(),
+            remembered: state.places.get(place),
+            documents,
+        },
+        &|p: &Path| p.is_dir(),
+    )
+}
+
+impl AppState {
+    /// 今の文書の .ylp のあるフォルダ（保存していない文書・ファイルの無いプロジェクトでは None）。
+    pub fn document_folder(&self) -> Option<PathBuf> {
+        let parent = self
+            .project
+            .as_ref()
+            .filter(|p| p.is_file())
+            .and_then(|p| p.path().parent())?;
+        std::path::absolute(parent).ok()
+    }
+
+    /// 選んだフォルダを、`place` の前に使った場所として覚える。
+    pub fn note_folder_chosen(&mut self, place: Place, folder: &Path) {
+        self.places.remember(place, folder);
+    }
+
+    /// 選んだファイルのあるフォルダを、`place` の前に使った場所として覚える。
+    pub fn note_file_chosen(&mut self, place: Place, file: &Path) {
+        if let Some(folder) = file.parent().filter(|p| !p.as_os_str().is_empty()) {
+            self.places.remember(place, folder);
+        }
+    }
 }
 
 /// 確認のウィンドウ（親つき）。

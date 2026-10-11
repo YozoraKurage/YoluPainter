@@ -1,5 +1,6 @@
-//! レイヤーを足すメニューの部品（メニューバーの「レイヤー」・レイヤーの右クリック・レイヤーの一覧の空白の右クリック・
-//! レイヤーのパネルの下の帯のボタンが同じものを使う）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」。
+//! レイヤーを足すメニューの部品（メニューバーの「レイヤー」・レイヤーの右クリック・レイヤーの一覧の空白の右クリックが同じものを使う。
+//! レイヤーのパネルの下の帯のボタンは、新規レイヤー・塗りつぶし・調整だけ）: 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」
+//! 「新規パスレイヤー」。
 //!
 //! 塗りつぶしの種類は単色・グラデーションデカール・画像・デカール。グラデーションは形（ボックス・球・平面）の一覧をもう 1 段の
 //! 入れ子に開き、選んだ形で新しい塗りつぶしレイヤーを作る（名前は塗りつぶしの欄の「形」と同じ）。画像とデカールは棚の画像の一覧（その下に
@@ -33,15 +34,17 @@ pub enum Op {
     FillImageFile { path: PathBuf, mode: ProjectionMode },
     /// グラデーションデカール（モデルの外形に合わせた、その形の置き場）の塗りつぶしレイヤーを作り、3D ビューで形を編集できるようにする。
     FillGradient(Shape),
+    /// 点の無い 1 本のパスを持つパスレイヤーを、選んでいるレイヤーのすぐ上に作り、パスのツールへ替える（最初の点は、パスのツールで置く）。
+    PathLayer,
 }
 
-/// 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」。
+/// 「新規レイヤー」「新規塗りつぶしレイヤー ▸」「新規調整レイヤー ▸」「新規パスレイヤー」。
 pub fn creation_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     vec![
         Entry::item(lang.pick("新規レイヤー", "New Layer"), Action::NewLayer)
-            .shortcut("Ctrl+Shift+N")
+            .command_key("layer.new")
             .enabled(free),
         Entry::submenu(
             lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
@@ -51,6 +54,11 @@ pub fn creation_entries(app: &AppState) -> Vec<Entry<Action>> {
             lang.pick("新規調整レイヤー", "New Adjustment Layer"),
             adjustment_entries(app),
         ),
+        Entry::item(
+            lang.pick("新規パスレイヤー", "New Path Layer"),
+            Action::LayerMenu(Op::PathLayer),
+        )
+        .enabled(free),
     ]
 }
 
@@ -178,6 +186,7 @@ impl AppState {
                 }
             }
             Op::FillGradient(shape) => self.new_gradient_fill(shape),
+            Op::PathLayer => self.new_path_layer(),
         }
     }
 

@@ -145,8 +145,8 @@ pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
     let blocked = app.popup.is_some() || app.ui.popup_was_open;
     let (t, n, modifiers, focus_lost) = ctx.input(|i| {
         (
-            i.key_down(crate::keymap::STENCIL_MOVE),
-            i.key_down(crate::keymap::STENCIL_BYPASS),
+            crate::keymap::hold_down(i, "stencil.transform_hold"),
+            crate::keymap::hold_down(i, "stencil.bypass_hold"),
             i.modifiers,
             i.events
                 .iter()
@@ -157,9 +157,12 @@ pub fn update_keys(ctx: &egui::Context, app: &mut AppState) {
         app.stencil.release_input();
         return;
     }
+    // 編集・ポーズのモードでは描かないので、Y・N を押しても効かない（ペイントのモードの行。`keymap::Scope::Paint`）
+    let paints = app.mode.paints();
     let st = &mut app.stencil;
-    st.key_held = t && (st.key_held || !typing && !blocked && !modifiers.command && !modifiers.alt);
-    st.ignore_held = n && (st.ignore_held || !typing && !blocked && !modifiers.any());
+    st.key_held =
+        paints && t && (st.key_held || !typing && !blocked && !modifiers.command && !modifiers.alt);
+    st.ignore_held = paints && n && (st.ignore_held || !typing && !blocked && !modifiers.any());
 }
 
 /// 1 つの入力イベントを見る（rect は押した表示域（2D のキャンバスか 3D の中身）、over はこの点がその表示域の一番上にあるか）。
@@ -169,12 +172,18 @@ pub fn handle_event(
     event: &Event,
     rect: Rect,
     over: bool,
-    shift: bool,
+    modifiers: &egui::Modifiers,
 ) -> bool {
     if let Some(drag) = app.stencil.drag {
         return match event {
             Event::PointerMoved(p) => {
-                app.stencil.update_drag(*p, shift);
+                // 回す間の刻み（組み合わせの表の、始めたあとに効く修飾。既定は Shift）
+                let snap = crate::keymap::modifier_held(
+                    "stencil",
+                    crate::keymap::Operation::SnapStencilRotation,
+                    modifiers,
+                );
+                app.stencil.update_drag(*p, snap);
                 true
             }
             // ドラッグの最中は、ほかのボタンを押しても何も始めない（ストロークも、キャンバスのパンも、3D の回しも）。離すほうは、ドラッグの

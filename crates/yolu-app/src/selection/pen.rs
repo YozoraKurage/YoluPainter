@@ -9,6 +9,9 @@
 //!
 //! 被覆は文書と同じ大きさのタイルの量で、触れたタイルだけを持つ。メモリの予算（`PEN_BUDGET_BYTES`）を超えるストロークは、
 //! 途中でも断って捨てる。
+//!
+//! 3D ビューのクイックマスク（`view3d::quick`）も同じ被覆を使う: 面のダブの覆い（文書の画素ごとの量）を [`PenStroke::raise`] で
+//! 積む（ダブの形と間隔は core の `SurfaceCoverStroke` が 2D と同じ値で決める）。
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,6 +42,17 @@ pub struct PenParams {
 }
 
 impl PenParams {
+    /// 3D ビューの面のダブの形（同じ値）。
+    pub fn cover(&self) -> yolu_core::geometry::CoverParams {
+        yolu_core::geometry::CoverParams {
+            radius: self.radius,
+            hardness: self.hardness,
+            opacity: self.opacity,
+            pressure_size: self.pressure_size,
+            pressure_opacity: self.pressure_opacity,
+        }
+    }
+
     /// 今のブラシの設定から。
     pub fn from_brush(b: &BrushState) -> PenParams {
         PenParams {
@@ -98,8 +112,9 @@ pub struct PenStroke {
     cover: HashMap<TileCoord, Vec<u8>>,
     /// まだ札に反映していないタイル。
     dirty: HashSet<TileCoord>,
-    /// 直近の `sync` で反映したタイル（重ね表示が作り直す範囲の手がかり）。
-    synced: Vec<TileCoord>,
+    /// `sync` で札に反映したタイルのうち、2D の重ね表示がまだ読んでいないもの（重ね表示が作り直す範囲の手がかり。読むと空になる）。
+    /// 2D のキャンバスと 3D ビューが同じフレームに `sync` を呼んでも、先に呼んだほうが反映したタイルを、重ね表示が受け取れる。
+    synced: HashSet<TileCoord>,
     cover_mask: SelectionMask,
     /// クイックマスク: ストロークの始めの選択範囲と、それに被覆を重ねた見た目。
     base: Option<SelectionMask>,
@@ -130,7 +145,7 @@ impl PenStroke {
             budget,
             cover: HashMap::new(),
             dirty: HashSet::new(),
-            synced: Vec::new(),
+            synced: HashSet::new(),
             cover_mask,
             base: overlay_base,
             preview,
@@ -157,6 +172,34 @@ impl PenStroke {
     /// 被覆のタイルの数。
     pub fn tile_count(&self) -> usize {
         self.cover.len()
+    }
+
+    /// 作業の予算に数える被覆のバイト（タイル 1 枚を、被覆・見た目の 2 つの札・合成の結果の 3 倍で見る。`tile_mut` と同じ数え方）。
+    pub fn bytes(&self) -> u64 {
+        self.cover.len() as u64 * (self.ts as u64 * self.ts as u64) * 3
+    }
+
+    /// 作業の予算（バイト）。
+    pub fn budget(&self) -> u64 {
+        self.budget
+    }
+
+    /// 外で求めたダブ 1 つの量（文書の画素と 0〜255。3D ビューの面のダブ）を被覆に積む（大きい方を残す）。文書の外の画素は飛ばす。
+    pub fn raise(&mut self, pixels: &[yolu_core::geometry::CoverPixel]) -> Result<(), PenError> {
+        self.dabs += 1;
+        let (w, h, ts) = (self.width as i32, self.height as i32, self.ts as i32);
+        for &(x, y, a) in pixels {
+            if a == 0 || x < 0 || y < 0 || x >= w || y >= h {
+                continue;
+            }
+            let coord = TileCoord::new((x / ts) as u32, (y / ts) as u32);
+            let i = ((y % ts) * ts + x % ts) as usize;
+            let tile = self.tile_mut(coord)?;
+            if a > tile[i] {
+                tile[i] = a;
+            }
+        }
+        Ok(())
     }
 
     /// ダブの半径と最大の量（筆圧を入れたもの）。
@@ -274,7 +317,6 @@ impl PenStroke {
 
     /// 触れたタイルを札に反映する（重ね表示の前に 1 フレームに 1 度）。
     pub fn sync(&mut self) -> Result<(), PenError> {
-        self.synced.clear();
         if self.dirty.is_empty() {
             return Ok(());
         }
@@ -298,7 +340,7 @@ impl PenStroke {
             }
             self.preview = Some(preview.with_tiles(out)?);
         }
-        self.synced = coords;
+        self.synced.extend(coords);
         Ok(())
     }
 
@@ -312,9 +354,9 @@ impl PenStroke {
         self.preview.as_ref()
     }
 
-    /// 直近の `sync` で変わったタイル。
-    pub fn synced_tiles(&self) -> &[TileCoord] {
-        &self.synced
+    /// 2D の重ね表示がまだ読んでいない、変わったタイルを取り出して空にする（何も無ければ None。重ね表示は、None なら中身を見比べる）。
+    pub fn take_synced(&mut self) -> Option<Vec<TileCoord>> {
+        (!self.synced.is_empty()).then(|| self.synced.drain().collect())
     }
 
     /// 終える: 被覆の札と組み合わせ方。
@@ -344,12 +386,12 @@ pub struct ActivePen {
     pub quick: bool,
 }
 
-/// 選択ペンのツールで消すか（基本の切り替えと、押したときの修飾: Shift は足す・Ctrl は消すに一時的に替える）。
+/// 選択ペンのツールで消すか（基本の切り替えと、押したときの修飾: 作成方法の割り当て（`combine_for`）で、足すに当たる修飾は選択ペン・
+/// 引くに当たる修飾は選択消しに、押しているあいだだけ替える）。
 pub fn erases(base_erase: bool, modifiers: Modifiers) -> bool {
-    let ctrl = modifiers.command || modifiers.ctrl;
-    match (modifiers.shift, ctrl) {
-        (true, false) => false,
-        (false, true) => true,
+    match super::combine_for(egui::PointerButton::Primary, &modifiers) {
+        Some(SelectionCombine::Add) => false,
+        Some(SelectionCombine::Subtract) => true,
         _ => base_erase,
     }
 }

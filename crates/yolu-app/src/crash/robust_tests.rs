@@ -59,7 +59,7 @@ fn child_robust() {
                 crate::project::caught_as_text(crate::lang::Lang::En, || {
                     panic!("conversion panic")
                 });
-            assert_eq!(failed.unwrap_err(), "Reading the document stopped");
+            assert_eq!(failed.unwrap_err(), "Reading the project stopped");
             assert_eq!(
                 crate::project::caught_as_text(crate::lang::Lang::En, || Ok(3u8)),
                 Ok(3)

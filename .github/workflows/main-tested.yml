@@ -18,6 +18,10 @@ jobs:
     name: PR で試した中身か
     runs-on: ubuntu-24.04
     steps:
+      # 試作の対象（macOS）のビルドだけが落ちた CI を成功とみなす判定（tools/dist.py の ci-ok）を使うので、main の中身を取る
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
       - name: main の木と、PR の CI を通った木を比べる
         env:
           GH_TOKEN: ${{ github.token }}
@@ -38,11 +42,12 @@ jobs:
             echo "::error::main の中身が PR #$pr で試した中身と違います（PR の枝が main より古かった）。ci.yml を手で回してください"
             exit 1
           fi
-          # PR の head の CI（ci.yml・pull_request）の最新の実行が成功しているか
-          conclusion=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$head&event=pull_request&per_page=1" --jq '.workflow_runs[0].conclusion // empty')
-          if [ "$conclusion" != "success" ]; then
-            echo "::error::PR #$pr の head（${head:0:7}）の CI が成功していません（${conclusion:-見つからない}）"
+          # PR の head の CI（ci.yml・pull_request）の最新の実行が成功しているか。試作の対象（macOS）のジョブだけが落ちた実行は成功とみなす
+          # （tools/dist.py の ci-ok。ほかのジョブが 1 つでも落ちていれば、今までどおり失敗）
+          if ! reason=$(python3 tools/dist.py ci-ok --repo "$REPO" --head "$head" 2>&1); then
+            echo "::error::PR #$pr の head（${head:0:7}）の CI が成功していません（$reason）"
             exit 1
           fi
+          echo "$reason"
           echo "main（${SHA:0:7}）は PR #$pr の head（${head:0:7}）と同じ中身で、その CI は成功しています"
           echo "main（${SHA:0:7}）= PR #$pr の head（${head:0:7}）の中身。CI は成功" >> "$GITHUB_STEP_SUMMARY"

@@ -335,7 +335,7 @@ pub struct KindInfo {
     pub generator: bool,
     /// Reads baked mesh maps or the model. A headless host has neither, so such a generator is saved but passes its input through (it is not in the composite, the preview or exports). Procedural noise and grunge do not need them: without a position map they are evaluated in UV space.
     pub needs_baked_maps: bool,
-    /// Only this editor has it. A document that uses it is saved in a newer document format, which the Unity package 0.2.0 cannot open (it refuses the file with a reason; nothing is lost).
+    /// Only the standalone application has it. A document that uses it is saved in a newer document version, which the Unity version up to 0.4.x cannot open (it refuses the file with a reason; nothing is lost).
     pub rust_only: bool,
     /// Can be created from values. Kinds that are not addable can still be read, and their strength, enabled flag and channels can be changed.
     pub addable: bool,

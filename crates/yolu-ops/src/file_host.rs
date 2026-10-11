@@ -249,7 +249,7 @@ impl Opened {
         .map_err(|_| {
             OpError::new(
                 ErrorCode::Internal,
-                "文書を読む途中で止まりました",
+                "プロジェクトを読む途中で止まりました",
                 "Reading the document stopped unexpectedly",
             )
         })?;
@@ -283,13 +283,13 @@ impl Opened {
     }
 }
 
-/// セットを書いた文書の版が、Unity 版（0.2.0）の開ける版より新しいときの知らせ（Rust 版だけの効果・調整を使うセットは新しい版で保存される。
-/// Unity 版は理由を言って開くのを断り、中身は消えない）。起動中のアプリのホストも、保存の返事に同じ文を使う。
+/// セットを書いた文書の版が、0.4.x までの Unity 版の開ける版より新しいときの知らせ（スタンドアロンだけの効果・調整を使うセットは新しい版で
+/// 保存される。その Unity 版は理由を言って開くのを断り、中身は消えない）。起動中のアプリのホストも、保存の返事に同じ文を使う。
 pub fn newer_version_note(set_name: &str, version: i32) -> Option<Text> {
     (version > yolu_io::UNITY_NATIVE_VERSION).then(|| {
         Text::new(
-            format!("テクスチャセット「{set_name}」は Rust 版だけの機能を使うため、Unity 版（0.2.0）が開けない版（{version}）で保存しました（Unity 版は理由を言って開くのを断ります。中身は消えません）"),
-            format!("Texture set \"{set_name}\" uses features only this editor has, so it was saved in document version {version}, which the Unity package 0.2.0 cannot open (it refuses the file with a reason; nothing is lost)"),
+            format!("テクスチャセット「{set_name}」はスタンドアロン版だけの機能を使うため、0.4.x までの Unity 版が開けない版（{version}）で保存しました（その Unity 版は理由を言って開くのを断ります。中身は消えません）"),
+            format!("Texture set \"{set_name}\" uses features only the standalone application has, so it was saved in document version {version}, which the Unity version up to 0.4.x cannot open (it refuses the file with a reason; nothing is lost)"),
         )
     })
 }
@@ -614,7 +614,7 @@ impl OpHost for FileHost {
                 *saved = (doc.id(), doc.revision());
             }
         }
-        // Unity 版（0.2.0）が開けない版で書いたセットを知らせる（Rust 版だけの効果・調整を使うと、新しい版で保存される）
+        // 0.4.x までの Unity 版が開けない版で書いたセットを知らせる（スタンドアロンだけの効果・調整を使うと、新しい版で保存される）
         for id in &written_ids {
             let version = o
                 .project
@@ -668,6 +668,22 @@ mod tests {
         let path = dir.join("x.ylp");
         let target = SaveTarget::create(&path).unwrap();
         Opened::from_project(&path, project, target)
+    }
+
+    /// 保存の返事の知らせは、.ylp を開く Unity のパッケージ（0.4.x まで。0.5.0 からは .ylp を開かない）が開けない版のセットだけに付き、
+    /// 日英とも読み手を「0.4.x までの Unity 版」と言う（古い 0.2.0 や「Rust 版」とは言わない）。
+    #[test]
+    fn the_newer_version_note_names_the_unity_versions_that_cannot_open_the_file() {
+        assert!(newer_version_note("Body", yolu_io::UNITY_NATIVE_VERSION).is_none());
+        let note = newer_version_note("Body", yolu_io::UNITY_NATIVE_VERSION + 1).unwrap();
+        for text in [&note.ja, &note.en] {
+            assert!(text.contains("Body") && text.contains("0.4.x"), "{text}");
+            assert!(
+                !text.contains("0.2.0") && !text.contains("Rust") && !text.contains("this editor"),
+                "{text}"
+            );
+        }
+        assert!(note.ja.contains("Unity 版") && note.en.contains("Unity version"));
     }
 
     /// yolu-io は名前の重なるセットのファイルを開かせないので、名前で引いて重なることは今は無い。それでも、重なったら候補を

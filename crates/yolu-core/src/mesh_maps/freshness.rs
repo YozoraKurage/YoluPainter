@@ -160,7 +160,7 @@ impl fmt::Display for MeshMapStaleReason {
             Self::ReferenceChanged => f.write_str("高ポリか投影の設定が変わった"),
             Self::Size { baked, now } => write!(
                 f,
-                "焼いた大きさ {}×{}、文書は {}×{}",
+                "焼いた大きさ {}×{}、キャンバスは {}×{}",
                 baked.0, baked.1, now.0, now.1
             ),
             Self::MaterialNotInModel => {
@@ -172,7 +172,7 @@ impl fmt::Display for MeshMapStaleReason {
                 slots_text(baked),
                 slots_text(now)
             ),
-            Self::UvChannel { baked, now } => write!(f, "UV{baked} で焼いた（文書は UV{now}）"),
+            Self::UvChannel { baked, now } => write!(f, "UV{baked} で焼いた（プロジェクトは UV{now}）"),
             Self::Padding { baked, now } => write!(f, "余白 {baked}（設定は {now}）"),
             Self::Antialiasing { baked, now } => {
                 write!(f, "アンチエイリアス {baked}×{baked}（設定は {now}×{now}）")

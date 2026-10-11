@@ -555,7 +555,7 @@ fn escape_closes_the_color_picker_before_the_selection() {
     select_rect(&mut h, 10, 10, 30, 30);
     // 色の見本を押して色の選びを開く（プロパティの欄を、見本が見えるところまで送る）
     let label = "分岐点の色";
-    let right = |r: Rect| r.left() > 1000.0;
+    let right = |r: Rect| r.left() > rx();
     let at = rect_of(&h, label, right).top();
     let scroll = st(&h).m2.props_scroll + (at - 900.0);
     h.state_mut().state.m2.props_scroll = scroll.max(0.0);

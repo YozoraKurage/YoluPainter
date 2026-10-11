@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """配る物のビルドと、試験の通った成果物の昇格をつなぐ。標準ライブラリだけで動く（Windows の runner でも）。
 
-  plan     対象の一覧（tools/dist-targets.json）から、ビルドの matrix と、いまの木（ファイルの木の SHA）を出す
+  plan     対象の一覧（tools/dist-targets.json）から、ビルドの matrix・試作の対象・成果物の絞り込み・いまの木（ファイルの木の SHA）を出す
   revision アプリに埋める診断用の ID を決め、あとの手順の環境（GITHUB_ENV）へ渡す
   catalog  ビルドした配る物の目録（catalog.json）を書き、成果物の名前（dist-<木>-<対象>）を出す
   find     配布の前に、同じ木で、全部のジョブが成功した PR の CI の成果物を探し、確かめる（受け取れるか・理由）
   install  受け取った成果物の目録を確かめ、配る物だけを 1 つのフォルダへ集める
+  ci-ok    PR の先頭の CI の実行が成功か（main-tested.yml が使う）。試作の対象の失敗だけなら成功とみなす
+
+試作の対象（dist-targets.json の `experimental: true`）は、落ちても配布を止めない: CI の結論を失敗にせず（dist-build.yml の
+continue-on-error）、その失敗は `judge_run`・`ci-ok` が数えず、成果物が無ければ `find`・`install` は載せずに先へ進む（理由を要約に出す）。
+試作でない対象（Windows）は、今までどおり 1 つでも欠けたら止まる。
 
 成果物の名前に入れる「木」は `git rev-parse HEAD^{tree}`（PR の CI は merge の commit の木）。コミットの SHA ではなく木で引くので、
 squash で main に入った commit も、PR の最後の CI と同じ木なら同じ成果物を指す。安全の筋と保証しないことは docs/RELEASING.md。
@@ -30,7 +35,7 @@ CATALOG = 'catalog.json'
 CATALOG_SCHEMA = 1
 # 成果物を受け取ってよい CI のワークフロー（実行の path と照らす）。
 CI_WORKFLOW = '.github/workflows/ci.yml'
-# 1 つの成果物（zip）の展開後の合計の上限。配る物（zip とインストーラー）は 100 MB 前後なので、大きく外れた物は受け取らない。
+# 1 つの成果物（zip）の展開後の合計の上限。配る物（Windows の zip とインストーラーは 100 MB 前後、macOS の zip は約 80 MB）なので、大きく外れた物は受け取らない。
 MAX_EXTRACTED = 1 << 30
 
 
@@ -52,7 +57,29 @@ def load_targets(path=TARGETS_FILE):
         if item['target'] in seen:
             raise DistError(f"dist-targets.json の対象が重複しています: {item['target']}")
         seen.add(item['target'])
+        if not isinstance(item.get('default', False), bool):
+            raise DistError(f"dist-targets.json の対象の default は真偽値です: {item['target']}")
+        if item.get('default') and not item['input']:
+            raise DistError(f"dist-targets.json の default は入力のある対象だけに付けます: {item['target']}")
+        if not isinstance(item.get('rust_targets', ''), str):
+            raise DistError(f"dist-targets.json の対象の rust_targets は空白で区切った文字列です: {item['target']}")
+        if not isinstance(item.get('experimental', False), bool):
+            raise DistError(f"dist-targets.json の対象の experimental は真偽値です: {item['target']}")
+        timeout = item.get('timeout_minutes', 1)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 1:
+            raise DistError(f"dist-targets.json の対象の timeout_minutes は 1 以上の整数です: {item['target']}")
     return config
+
+
+def experimental_targets(config, targets=None):
+    """試作の対象（落ちても配布を止めない）。`targets` を渡すと、その中の試作の対象だけ。"""
+    chosen = {item['target'] for item in config['targets'] if item.get('experimental')}
+    return chosen if targets is None else chosen & set(targets)
+
+
+def default_inputs(config):
+    """入力の既定が入の対象の入力の名前（PR の CI のように、入力が無いときに入として扱う）。"""
+    return {item['input'] for item in config['targets'] if item['input'] and item.get('default')}
 
 
 def select_targets(config, enabled_inputs):
@@ -62,6 +89,23 @@ def select_targets(config, enabled_inputs):
     if unknown:
         raise DistError('対象の一覧に無い入力です: ' + '、'.join(sorted(unknown)))
     return [item for item in config['targets'] if not item['input'] or item['input'] in enabled_inputs]
+
+
+def resolve_inputs(config, items):
+    """`NAME=true|false` の並びから、入になっている入力の集合。言わなかった入力は既定のまま（既定が入の対象の入力は入、それ以外は切）。"""
+    known = {item['input'] for item in config['targets'] if item['input']}
+    enabled = default_inputs(config)
+    for item in items:
+        name, _, value = item.partition('=')
+        if value not in ('true', 'false'):
+            raise DistError(f'--input は NAME=true|false の形です: {item}')
+        if name not in known:
+            raise DistError(f'対象の一覧に無い入力です: {name}')
+        if value == 'true':
+            enabled.add(name)
+        else:
+            enabled.discard(name)
+    return enabled
 
 
 def artifact_name(tree, target):
@@ -128,23 +172,39 @@ def workspace_version():
 
 def plan(config, enabled_inputs):
     chosen = select_targets(config, enabled_inputs)
-    return {'include': [{'os': t['os'], 'target': t['target'], 'installer': bool(t['installer'])} for t in chosen]}
+    include = []
+    for t in chosen:
+        entry = {'os': t['os'], 'target': t['target'], 'installer': bool(t['installer'])}
+        # 1 つの配る物を作るために runner へ入れる Rust のターゲット（macOS の universal は 2 つ）。無ければ target そのもの
+        if t.get('rust_targets'):
+            entry['rust_targets'] = t['rust_targets']
+        # 試作の対象: 落ちても CI の結論を失敗にしない（dist-build.yml の continue-on-error が読む）
+        if t.get('experimental'):
+            entry['experimental'] = True
+        # ジョブの時間の上限（分）。無ければ dist-build.yml の既定
+        if t.get('timeout_minutes'):
+            entry['timeout'] = t['timeout_minutes']
+        include.append(entry)
+    return {'include': include}
+
+
+def artifact_pattern(tree, targets):
+    """成果物の取り込みを、配る対象だけに絞る glob（download-artifact の pattern）。複数の対象は `{a,b}` の形。"""
+    if len(targets) == 1:
+        return artifact_name(tree, targets[0])
+    return f"dist-{tree}-{{{','.join(targets)}}}"
 
 
 def cmd_plan(args):
-    enabled = set()
-    for item in args.input:
-        name, _, value = item.partition('=')
-        if value not in ('true', 'false'):
-            raise DistError(f'--input は NAME=true|false の形です: {item}')
-        if value == 'true':
-            enabled.add(name)
-        elif name not in {t['input'] for t in load_targets()['targets']}:
-            raise DistError(f'対象の一覧に無い入力です: {name}')
-    matrix = plan(load_targets(), enabled)
+    config = load_targets()
+    matrix = plan(config, resolve_inputs(config, args.input))
     write_output('matrix', json.dumps(matrix, separators=(',', ':')))
-    write_output('targets', ','.join(item['target'] for item in matrix['include']))
-    write_output('tree', tree_of())
+    targets = [item['target'] for item in matrix['include']]
+    tree = tree_of()
+    write_output('targets', ','.join(targets))
+    write_output('experimental', ','.join(t for t in targets if t in experimental_targets(config)))
+    write_output('pattern', artifact_pattern(tree, targets))
+    write_output('tree', tree)
 
 
 # ───────── revision ─────────
@@ -328,31 +388,61 @@ class Gh:
 
 
 class Decision:
-    def __init__(self, promote, run_id=None, reasons=None):
+    def __init__(self, promote, run_id=None, reasons=None, notes=None):
         self.promote = promote
         self.run_id = run_id
         self.reasons = reasons or []
+        # 受け取れた（promote）とき、載らない試作の対象とその理由
+        self.notes = notes or []
 
 
-def judge_run(gh, repo, run_id, tree):
-    """この CI の実行の成果物を受け取ってよいか。(よい, 理由)。"""
+def failed_jobs(gh, repo, run_id, experimental=()):
+    """この実行の、成功していないジョブ。(試作でないジョブの名前の一覧, 試作のジョブの名前の一覧)。一覧を読み切れなければ DistError。
+    試作の対象のジョブは、配る物のビルドのジョブ名 `配る物のビルド（<対象>）`（dist-build.yml。呼び出し元の名前が前に付く）で見分ける。"""
+    jobs = gh.api(f'repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100')
+    listed = jobs.get('jobs', [])
+    if not listed or len(listed) != jobs.get('total_count'):
+        raise DistError(f'実行 {run_id} のジョブの一覧を読み切れません')
+    bad, soft = [], []
+    for job in listed:
+        if job.get('conclusion') == 'success':
+            continue
+        label = f'{job["name"]}（{job.get("conclusion")}）'
+        (soft if any(f'（{target}）' in job['name'] for target in experimental) else bad).append(label)
+    return bad, soft
+
+
+def run_conclusion_ok(gh, repo, run_id, run, experimental=()):
+    """実行の結論が成功か。試作の対象のジョブだけが落ちて結論が失敗になった実行も、成功とみなす。(よい, 理由, 載らない試作のジョブ)。"""
+    if run.get('status') != 'completed' or run.get('conclusion') not in ('success', 'failure'):
+        return False, f'実行 {run_id} は成功していません（{run.get("status")}・{run.get("conclusion")}）', []
+    bad, soft = failed_jobs(gh, repo, run_id, experimental)
+    if bad:
+        return False, f'実行 {run_id} に成功でないジョブがあります: ' + '、'.join(bad), soft
+    if run.get('conclusion') == 'failure' and not soft:
+        return False, f'実行 {run_id} は成功していません（{run.get("status")}・{run.get("conclusion")}。失敗したジョブを見つけられません）', soft
+    return True, '', soft
+
+
+def judge_run(gh, repo, run_id, tree, experimental=()):
+    """この CI の実行の成果物を受け取ってよいか。(よい, 理由)。
+
+    全部のジョブが成功していることを求める。ただし試作の対象（`experimental`）のジョブの失敗は数えない（その成果物が無いだけで、
+    ほかの対象の成果物は受け取れる。載らない理由は `find` の要約に出る）。試作でない対象は、1 つでも失敗していれば受け取らない。"""
     run = gh.api(f'repos/{repo}/actions/runs/{run_id}')
     if run.get('path', '').split('@')[0] != CI_WORKFLOW:
         return False, f'実行 {run_id} は CI のワークフロー（{CI_WORKFLOW}）の実行ではありません'
     if run.get('event') != 'pull_request':
         return False, f'実行 {run_id} は pull_request の実行ではありません（{run.get("event")}）'
-    if run.get('status') != 'completed' or run.get('conclusion') != 'success':
-        return False, f'実行 {run_id} は成功していません（{run.get("status")}・{run.get("conclusion")}）'
     head_repo = (run.get('head_repository') or {}).get('full_name')
     if (run.get('repository') or {}).get('full_name') != repo or head_repo != repo:
         return False, f'実行 {run_id} は同じリポジトリの枝からの実行ではありません'
-    jobs = gh.api(f'repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100')
-    listed = jobs.get('jobs', [])
-    if not listed or len(listed) != jobs.get('total_count'):
-        return False, f'実行 {run_id} のジョブの一覧を読み切れません'
-    bad = [f'{j["name"]}（{j.get("conclusion")}）' for j in listed if j.get('conclusion') != 'success']
-    if bad:
-        return False, f'実行 {run_id} に成功でないジョブがあります: ' + '、'.join(bad)
+    try:
+        ok, why, _ = run_conclusion_ok(gh, repo, run_id, run, experimental)
+    except DistError as exc:
+        return False, str(exc)
+    if not ok:
+        return False, why
     # PR の CI の head_sha は PR の先頭の commit（merge の commit ではない）。その木が、成果物の名前の木と同じなら、
     # 「木が同じならワークフローの台本も同じ」が成り立つ（名前を偽った PR の成果物をここで落とす）。
     commit = gh.api(f'repos/{repo}/git/commits/{run.get("head_sha")}')
@@ -383,63 +473,93 @@ def fetch_artifact(gh, repo, artifact, work, tree, target, update_public_key):
     return verify_catalog(directory, tree, target, None, update_public_key)
 
 
-def find(gh, repo, tree, targets, work, update_public_key, rebuild=False):
+def find(gh, repo, tree, targets, work, update_public_key, rebuild=False, optional=()):
+    """昇格できる CI の実行を探す。`optional` は試作の対象: その成果物が無くても（CI で落ちた・期限切れ・目録が合わない）、
+    残りの対象が全部そろっていれば受け取り、載らない理由を `Decision.notes` に出す。試作でない対象は、1 つでも欠ければ受け取らない。"""
     if rebuild:
         return Decision(False, None, ['入力 rebuild が入なので、必ずビルドする'])
+    required = [t for t in targets if t not in optional]
+    extra = [t for t in targets if t in optional]
     reasons = []
+    notes = {}  # 試作の対象 -> 載らない理由
     candidates = {}  # 対象 -> {実行 id: 成果物}
     verdicts = {}
+
+    def why_not(target, text):
+        if target in optional:
+            notes.setdefault(target, [])
+            if text not in notes[target]:
+                notes[target].append(text)
+        elif text not in reasons:
+            reasons.append(text)
+
     for target in targets:
         name = artifact_name(tree, target)
         listing = gh.api(f'repos/{repo}/actions/artifacts?name={urllib.parse.quote(name)}&per_page=100')
         found = [a for a in listing.get('artifacts', []) if a.get('name') == name]
         usable = {}
         if not found:
-            reasons.append(f'{target}: CI の成果物 {name} が見つからない（この木の PR の CI が無いか、保存の期限が切れた）')
+            why_not(target, f'{target}: CI の成果物 {name} が見つからない（この木の PR の CI が無いか、そのビルドが落ちたか、保存の期限が切れた）')
         for artifact in sorted(found, key=lambda a: a.get('created_at', ''), reverse=True):
             if artifact.get('expired'):
-                reasons.append(f'{target}: 成果物 {artifact["id"]} は期限切れ')
+                why_not(target, f'{target}: 成果物 {artifact["id"]} は期限切れ')
                 continue
             run_id = (artifact.get('workflow_run') or {}).get('id')
             if run_id is None:
                 continue
             if run_id not in verdicts:
-                verdicts[run_id] = judge_run(gh, repo, run_id, tree)
+                verdicts[run_id] = judge_run(gh, repo, run_id, tree, optional)
             ok, why = verdicts[run_id]
             if ok:
                 usable.setdefault(run_id, artifact)
-            elif why not in reasons:
-                reasons.append(why)
+            else:
+                why_not(target, why)
         candidates[target] = usable
-    if any(not usable for usable in candidates.values()):
+    if any(not candidates[t] for t in required):
         return Decision(False, None, reasons)
-    common = set.intersection(*(set(usable) for usable in candidates.values()))
+    common = set.intersection(*(set(candidates[t]) for t in required)) if required else set()
     if not common:
         return Decision(False, None, reasons + ['全部の対象がそろった CI の実行がありません'])
     for run_id in sorted(common, reverse=True):
         problems = []
-        for target in targets:
+        for target in required:
             problems += fetch_artifact(gh, repo, candidates[target][run_id], work, tree, target, update_public_key)
+        omitted = []
+        for target in extra:
+            artifact = candidates[target].get(run_id)
+            if artifact is None:
+                omitted.append(f'{target}（試作）: この実行に使える成果物が無い（ビルドが落ちた・期限切れ・形が合わない）')
+                continue
+            bad = fetch_artifact(gh, repo, artifact, work, tree, target, update_public_key)
+            omitted += [f'{target}（試作）: {item}' for item in bad]
         if not problems:
-            return Decision(True, run_id, [])
+            return Decision(True, run_id, [], omitted)
         reasons += problems
     return Decision(False, None, reasons)
 
 
+def split_list(text):
+    return [item for item in (text or '').split(',') if item]
+
+
 def cmd_find(args):
-    targets = [t for t in args.targets.split(',') if t]
+    targets = split_list(args.targets)
     if not targets:
         raise DistError('--targets が空です')
+    optional = set(split_list(args.optional))
     rebuild = {'true': True, 'false': False}[args.rebuild]
     try:
         decision = find(Gh(), args.repo, args.tree, targets, args.work,
-                        os.environ.get('YOLUPAINTER_UPDATE_PUBLIC_KEY', ''), rebuild)
+                        os.environ.get('YOLUPAINTER_UPDATE_PUBLIC_KEY', ''), rebuild, optional)
     except (DistError, OSError, ValueError, KeyError) as exc:
         # 探す段の失敗で配布を止めない（ビルドし直せば足りる）。理由は Summary に残る。
         decision = Decision(False, None, [f'探す段で失敗したのでビルドする: {exc}'])
     lines = ['## 配る物の出どころ', '', f'- 木: `{args.tree}`', f'- 対象: {", ".join(targets)}']
+    if optional:
+        lines += [f'- 試作の対象（載らなくても配布は止めない）: {", ".join(sorted(optional))}']
     if decision.promote:
         lines += [f'- 結果: 試験の通った CI の実行 {decision.run_id} の成果物を受け取る（ビルドを飛ばす）']
+        lines += [f'  - 載らない: {note}' for note in decision.notes]
     else:
         lines += ['- 結果: ビルドする', *[f'  - {reason}' for reason in decision.reasons]]
     write_summary(lines)
@@ -449,20 +569,32 @@ def cmd_find(args):
 
 # ───────── install ─────────
 
-def install(received, tree, targets, out, version, update_public_key):
+def install(received, tree, targets, out, version, update_public_key, optional=(), omitted=None):
+    """目録を確かめて、配る物を `out` へ集める。コピーしたファイル名を返す。
+
+    試作の対象（`optional`）は、成果物が無い・目録が合わないときに、載せずに先へ進む（理由を `omitted` の {対象: [理由]} に入れる）。
+    試作でない対象は、1 つでも問題があれば DistError（何も集めない）。"""
     problems = []
+    usable = []
     for target in targets:
         directory = Path(received) / artifact_name(tree, target)
         if not directory.is_dir():
-            problems.append(f'{directory.name}: 成果物がありません')
-            continue
-        problems += verify_catalog(directory, tree, target, version, update_public_key)
+            found = [f'{directory.name}: 成果物がありません']
+        else:
+            found = verify_catalog(directory, tree, target, version, update_public_key)
+        if not found:
+            usable.append(target)
+        elif target in optional:
+            if omitted is not None:
+                omitted[target] = found
+        else:
+            problems += found
     if problems:
         raise DistError('\n'.join(problems))
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
     copied = []
-    for target in targets:
+    for target in usable:
         directory = Path(received) / artifact_name(tree, target)
         for path in sorted(directory.iterdir()):
             if path.name == CATALOG:
@@ -476,10 +608,34 @@ def install(received, tree, targets, out, version, update_public_key):
 
 
 def cmd_install(args):
-    targets = [t for t in args.targets.split(',') if t]
+    targets = split_list(args.targets)
     key = args.update_public_key if args.update_public_key is not None else os.environ.get('YOLUPAINTER_UPDATE_PUBLIC_KEY', '')
-    copied = install(args.received, args.tree, targets, args.out, args.version, key)
-    write_summary(['### 受け取った配る物（目録の SHA-256 を確認済み）', '', *[f'- {name}' for name in copied]])
+    omitted = {}
+    copied = install(args.received, args.tree, targets, args.out, args.version, key, set(split_list(args.optional)), omitted)
+    lines = ['### 受け取った配る物（目録の SHA-256 を確認済み）', '', *[f'- {name}' for name in copied]]
+    for target, problems in omitted.items():
+        lines += ['', f'### {target}（試作）は載らなかった', '',
+                  '試作の対象なので、載せずに先へ進みます（Windows など、ほかの対象の配る物だけで下書きを作ります）。理由:', '',
+                  *[f'- {problem}' for problem in problems]]
+    write_summary(lines)
+
+
+def cmd_ci_ok(args):
+    """main-tested.yml: PR の先頭の commit の CI（ci.yml・pull_request）の最新の実行が成功か。試作の対象のジョブだけが落ちた実行も成功とみなす。"""
+    gh = Gh()
+    experimental = experimental_targets(load_targets())
+    runs = gh.api(f'repos/{args.repo}/actions/workflows/ci.yml/runs?head_sha={args.head}&event=pull_request&per_page=1').get('workflow_runs', [])
+    if not runs:
+        print('CI の実行が見つかりません', file=sys.stderr)
+        return 1
+    run = runs[0]
+    ok, why, soft = run_conclusion_ok(gh, args.repo, run['id'], run, experimental)
+    if not ok:
+        print(why, file=sys.stderr)
+        return 1
+    note = f'（試作の対象の失敗は数えていない: {"、".join(soft)}）' if soft else ''
+    print(f'CI の実行 {run["id"]} は成功しています{note}')
+    return 0
 
 
 def main(argv=None):
@@ -503,6 +659,7 @@ def main(argv=None):
     p.add_argument('--targets', required=True, help='カンマ区切り')
     p.add_argument('--work', required=True, help='確かめるために展開する場所')
     p.add_argument('--rebuild', choices=['true', 'false'], default='false')
+    p.add_argument('--optional', default='', help='試作の対象（カンマ区切り。成果物が無くても、残りがそろえば受け取る）')
     p.set_defaults(run=cmd_find)
     p = sub.add_parser('install', help='目録を確かめて配る物を集める')
     p.add_argument('--received', required=True)
@@ -511,14 +668,19 @@ def main(argv=None):
     p.add_argument('--out', required=True)
     p.add_argument('--version')
     p.add_argument('--update-public-key', default=None)
+    p.add_argument('--optional', default='', help='試作の対象（カンマ区切り。成果物が無い・目録が合わないときは載せずに進む）')
     p.set_defaults(run=cmd_install)
+    p = sub.add_parser('ci-ok', help='PR の先頭の CI の実行が成功か（試作の対象の失敗は数えない）')
+    p.add_argument('--repo', required=True)
+    p.add_argument('--head', required=True, help='PR の先頭の commit の SHA')
+    p.set_defaults(run=cmd_ci_ok)
     args = parser.parse_args(argv)
     try:
-        args.run(args)
+        code = args.run(args)
     except DistError as exc:
         print(f'配る物の処理を完了できません: {exc}', file=sys.stderr)
         return 1
-    return 0
+    return code or 0
 
 
 if __name__ == '__main__':

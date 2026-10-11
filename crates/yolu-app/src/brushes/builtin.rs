@@ -1,13 +1,14 @@
 //! 組み込みのブラシ（消せない元）。core の組み込み 13 個（`m2::presets()`）に、各ツールの「標準」と効果のブラシ 3 つと、
 //! 厚塗りの筆 3 つ（下の色を拾って混ぜる。`oil`・`gouache`・`mixer`）を足し、
 //! グループ（ペン・筆・エアブラシ・消しゴム・効果・特殊）に分けたもの。ここに無い id の組み込みは作らない（保存した並びの
-//! 読み戻しは、ここに載っている id だけを組み込みと見る）。
+//! 読み戻しは、ここに載っている id だけを組み込みと見る）。縁の硬い丸い筆先（ペン・筆・消しゴムのグループで硬さ 0.5 以上）は、
+//! 縁のアンチエイリアスを 中 にする（[`hard_edge`]。core の組み込みの値は なし のまま）。
 
 use std::sync::OnceLock;
 
 use super::{canonical, Group};
 use crate::engine::{
-    Brush, BrushEffect, BrushSettings, ColorMix, DVec2, MixMode, PressureResponse,
+    AntiAlias, Brush, BrushEffect, BrushSettings, ColorMix, DVec2, MixMode, PressureResponse,
 };
 use crate::lang::Lang;
 use crate::m2;
@@ -23,6 +24,16 @@ pub struct Builtin {
 pub const STANDARD: &str = "standard";
 /// 消しゴムの「標準」（設定は描くツールの標準と同じ。消しゴムのグループの先頭）。
 pub const STANDARD_ERASER: &str = "standard-eraser";
+
+/// 縁の硬い丸い筆先の描くブラシか（ペン・筆・消しゴムのグループで、画像の筆先でなく硬さ 0.5 以上）。縁が画素の段になりやすいので、
+/// 組み込みの既定のアンチエイリアスを 中 にする。柔らかい筆先は帯がぼかしの幅より細いので、どの段でも同じ画素になる（なし のまま）。
+pub(crate) fn hard_edge(group: Group, brush: &Brush) -> bool {
+    matches!(group, Group::Pen | Group::Brush | Group::Eraser)
+        && brush.tip.image.is_none()
+        && brush.tip.images.is_empty()
+        && brush.effect.is_paint()
+        && brush.base.hardness >= 0.5
+}
 
 /// core の組み込みの id が属するグループ。
 fn preset_group(id: &str) -> Group {
@@ -124,8 +135,12 @@ pub fn all() -> &'static [Builtin] {
             },
         );
         let mut v = Vec::new();
-        let mut add =
-            |id: &'static str, group: Group, brush: Brush| v.push(Builtin { id, group, brush });
+        let mut add = |id: &'static str, group: Group, mut brush: Brush| {
+            if hard_edge(group, &brush) {
+                brush.base.anti_alias = AntiAlias::Medium;
+            }
+            v.push(Builtin { id, group, brush })
+        };
         add(STANDARD, Group::Pen, standard.clone());
         for id in ["hard-round", "ink-pen", "pencil", "marker"] {
             add(id, preset_group(id), preset(id));

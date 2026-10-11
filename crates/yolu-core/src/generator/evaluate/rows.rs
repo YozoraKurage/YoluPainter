@@ -4,12 +4,16 @@
 //! ノイズの格子の値は同じ格子の中で使い回す。式の演算とその順は 1 画素ずつの式と同じで、結果のビットは変わらない（試験で全画素を比べる）。
 //! 値を持たない画素（`Option::None`）は、有限の 0..1 の値と取り違えない印（[`none`]）で表す。
 use super::*;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::generator::mixing::MixLanes;
 use crate::generator::shape::{self, BOX, PLANE, SPHERE};
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+use crate::math::simd::Lanes;
+#[cfg(target_arch = "aarch64")]
+use crate::math::simd::Neon;
 use crate::math::simd::{self, Level};
 #[cfg(target_arch = "x86_64")]
-use crate::math::simd::{Avx2, Lanes, Sse41};
+use crate::math::simd::{Avx2, Sse41};
 
 /// 「値なし」の印。画素の値は有限の 0..1 なので、この NaN とビットが一致することはない（式の途中で出る NaN は既定の NaN で、別のビット）。
 const NONE: u64 = 0x7ff8_0000_0000_5eed;
@@ -239,7 +243,10 @@ impl BoundGenerator<'_> {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
             Level::Sse41 => unsafe { procedural_row_sse41(self, x0, y, at, out, scratch) },
-            _ => self.procedural_scalar(x0, y, at, out, scratch),
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+            Level::Neon => unsafe { procedural_row_neon(self, x0, y, at, out, scratch) },
+            Level::Scalar => self.procedural_scalar(x0, y, at, out, scratch),
         }
     }
     fn procedural_scalar(
@@ -326,7 +333,10 @@ impl BoundGenerator<'_> {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
             Level::Sse41 => unsafe { level_row_sse41(self, out) },
-            _ => self.level_scalar(out),
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+            Level::Neon => unsafe { level_row_neon(self, out) },
+            Level::Scalar => self.level_scalar(out),
         }
     }
     fn level_scalar(&self, out: &mut [f64]) {
@@ -363,7 +373,10 @@ impl BoundGenerator<'_> {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
             Level::Sse41 => unsafe { noise_row_sse41(self, x0, y, at, out, cache) },
-            _ => self.noise_scalar(x0, y, at, out, cache),
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+            Level::Neon => unsafe { noise_row_neon(self, x0, y, at, out, cache) },
+            Level::Scalar => self.noise_scalar(x0, y, at, out, cache),
         }
     }
     fn noise_scalar(&self, x0: u32, y: u32, at: usize, out: &mut [f64], cache: &mut noise::Cache) {
@@ -469,7 +482,10 @@ impl BoundGenerator<'_> {
             #[cfg(target_arch = "x86_64")]
             // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
             Level::Sse41 => unsafe { apply_sse41::<B>(self, dst, values, target, strength) },
-            _ => self.apply_with::<B>(dst, values, target, strength),
+            #[cfg(target_arch = "aarch64")]
+            // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+            Level::Neon => unsafe { apply_neon::<B>(self, dst, values, target, strength) },
+            Level::Scalar => self.apply_with::<B>(dst, values, target, strength),
         }
     }
 
@@ -556,7 +572,10 @@ fn ramp_row(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { ramp_row_sse41(r, values, scalar, out) },
-        _ => ramp_scalar(r, values, scalar, out),
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { ramp_row_neon(r, values, scalar, out) },
+        Level::Scalar => ramp_scalar(r, values, scalar, out),
     }
 }
 fn ramp_scalar(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>]) {
@@ -579,6 +598,11 @@ unsafe fn level_row_avx2(g: &BoundGenerator<'_>, out: &mut [f64]) {
 #[target_feature(enable = "sse4.1")]
 unsafe fn level_row_sse41(g: &BoundGenerator<'_>, out: &mut [f64]) {
     level_row_lanes::<Sse41>(g, out)
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn level_row_neon(g: &BoundGenerator<'_>, out: &mut [f64]) {
+    level_row_lanes::<Neon>(g, out)
 }
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
@@ -603,6 +627,18 @@ unsafe fn noise_row_sse41(
     cache: &mut noise::Cache,
 ) {
     noise_row_lanes::<Sse41>(g, x0, y, at, out, cache)
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn noise_row_neon(
+    g: &BoundGenerator<'_>,
+    x0: u32,
+    y: u32,
+    at: usize,
+    out: &mut [f64],
+    cache: &mut noise::Cache,
+) {
+    noise_row_lanes::<Neon>(g, x0, y, at, out, cache)
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -629,6 +665,18 @@ unsafe fn procedural_row_sse41(
 ) {
     procedural_row_lanes::<Sse41>(g, x0, y, at, out, scratch)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn procedural_row_neon(
+    g: &BoundGenerator<'_>,
+    x0: u32,
+    y: u32,
+    at: usize,
+    out: &mut [f64],
+    scratch: &mut procedural::PlanScratch,
+) {
+    procedural_row_lanes::<Neon>(g, x0, y, at, out, scratch)
+}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
@@ -652,6 +700,17 @@ unsafe fn apply_sse41<B: Op>(
 ) {
     apply_lanes::<Sse41, B>(g, dst, values, target, strength)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn apply_neon<B: Op>(
+    g: &BoundGenerator<'_>,
+    dst: &mut [u8],
+    values: &[f64],
+    target: Target,
+    strength: f64,
+) {
+    apply_lanes::<Neon, B>(g, dst, values, target, strength)
+}
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,fma")]
@@ -663,16 +722,21 @@ unsafe fn ramp_row_avx2(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Optio
 unsafe fn ramp_row_sse41(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>]) {
     ramp_lanes::<Sse41>(r, values, scalar, out)
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn ramp_row_neon(r: &Ramp, values: &[f64], scalar: bool, out: &mut [Option<Generated>]) {
+    ramp_lanes::<Neon>(r, values, scalar, out)
+}
 
 /// 組の値が全部「値あり」か。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn present(group: &[f64]) -> bool {
     group.iter().all(|v| !is_none(*v))
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn level_row_lanes<V: Lanes>(g: &BoundGenerator<'_>, out: &mut [f64]) {
     let s = g.g;
     let (low, span) = (V::splat(s.low), V::splat(s.high - s.low));
@@ -701,7 +765,7 @@ unsafe fn level_row_lanes<V: Lanes>(g: &BoundGenerator<'_>, out: &mut [f64]) {
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn noise_row_lanes<V: Lanes>(
     g: &BoundGenerator<'_>,
     x0: u32,
@@ -762,7 +826,7 @@ unsafe fn noise_row_lanes<V: Lanes>(
 
 /// 3 チャンネルのマップの N 画素（添字 `i0` から）を、チャンネルごとのレーンの生の値に（マップが無ければ `none`）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn gather_lanes<V: Lanes>(m: Option<&Map<'_>>, i0: usize, none: [V::F; 3]) -> [V::F; 3] {
     match m {
         None => none,
@@ -778,7 +842,7 @@ unsafe fn gather_lanes<V: Lanes>(m: Option<&Map<'_>>, i0: usize, none: [V::F; 3]
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn procedural_row_lanes<V: procedural::GenLanes>(
     g: &BoundGenerator<'_>,
     x0: u32,
@@ -820,7 +884,7 @@ unsafe fn procedural_row_lanes<V: procedural::GenLanes>(
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn ramp_lanes<V: MixLanes>(
     r: &Ramp,
     values: &[f64],
@@ -850,7 +914,7 @@ unsafe fn ramp_lanes<V: MixLanes>(
 
 /// 元の値 `s` に `v` を式で重ねて、強さで元の値との間を取る（`mix` の N 画素ぶん）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn mix_lanes<V: Lanes, B: Op>(s: V::F, v: V::F, strength: f64) -> V::F {
     let c = B::op_lanes::<V>(s, v);
     if strength >= 1. {
@@ -862,7 +926,7 @@ unsafe fn mix_lanes<V: Lanes, B: Op>(s: V::F, v: V::F, strength: f64) -> V::F {
 
 /// 行の合成（`apply_with` の N 画素ぶん）。組の値が全部「値あり」なら N 画素を同時に、そうでない組は 1 画素ずつ。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn apply_lanes<V: MixLanes, B: Op>(
     g: &BoundGenerator<'_>,
     dst: &mut [u8],
@@ -942,7 +1006,7 @@ pub(super) trait Op {
     fn op(s: f64, v: f64) -> f64;
     /// # Safety
     /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     unsafe fn op_lanes<V: Lanes>(s: V::F, v: V::F) -> V::F;
 }
 macro_rules! ops {
@@ -952,7 +1016,7 @@ macro_rules! ops {
             #[inline(always)]
             fn op($s: f64, $v: f64) -> f64 { $e }
             #[inline(always)]
-            #[cfg(target_arch = "x86_64")]
+            #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
             unsafe fn op_lanes<V: Lanes>($s: V::F, $v: V::F) -> V::F { $lanes }
         }
     )*};
@@ -1137,7 +1201,7 @@ mod tests {
         all
     }
 
-    /// AVX2・SSE4.1・スカラーのどの道でも、全部のブレンド・対象・強さ・種類・ランプで `evaluate` のバイトが同じ。
+    /// AVX2・SSE4.1・NEON・スカラーのどの道でも、全部のブレンド・対象・強さ・種類・ランプで `evaluate` のバイトが同じ。
     #[test]
     fn every_simd_level_gives_the_same_bytes() {
         let scene = Scene::new();
@@ -1152,7 +1216,10 @@ mod tests {
             Blend::Add,
             Blend::Subtract,
         ];
-        let mut compared = 0;
+        // この CPU が持つ道（x86_64 は最大 3 つ、aarch64 は NEON とスカラー。ほかの CPU はスカラーだけで、スカラーどうしを比べるので違いは出ない）
+        let levels = simd::forced::supported();
+        assert!(levels.contains(&Level::Scalar), "{levels:?}");
+        let (mut cases, mut compared) = (0, 0);
         for (name, base) in settings() {
             for (i, blend) in blends.into_iter().enumerate() {
                 for target in [Target::Color, Target::Scalar, Target::Mask] {
@@ -1181,9 +1248,9 @@ mod tests {
                                 .pixels
                             })
                         };
-                        let levels = simd::forced::supported();
+                        cases += 1;
                         let reference = run(Level::Scalar);
-                        for level in levels {
+                        for &level in &levels {
                             assert!(
                                 run(level) == reference,
                                 "{name} {blend:?} {target:?} 強さ {strength} {level:?} がスカラーと違う（{i}）"
@@ -1194,6 +1261,8 @@ mod tests {
                 }
             }
         }
-        assert!(compared > 800, "{compared}");
+        // 組み合わせの数は道の数によらない。比べた回数は、組み合わせ × この CPU の道の数（決め打ちの数と比べない）
+        assert!(cases > 300, "{cases}");
+        assert_eq!(compared, cases * levels.len());
     }
 }

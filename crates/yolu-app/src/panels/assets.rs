@@ -13,6 +13,7 @@ use egui::{
 };
 
 use crate::brushes::{sample::SampleSpec, BrushAction, BrushKey};
+use crate::dialog::places::Place;
 use crate::engine::Document;
 use crate::lang::Lang;
 use crate::library::{self, Source};
@@ -26,7 +27,7 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 
-pub const CELL_W: f32 = 76.0;
+pub const CELL_W: f32 = 88.0;
 pub const CELL_H: f32 = 92.0;
 pub const GAP: f32 = 6.0;
 pub const THUMB_BOX: f32 = 64.0;
@@ -1568,7 +1569,7 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
     let lang = state.lang;
     match request {
         DialogRequest::ShelfImport => {
-            if let Some(paths) = crate::dialog::file()
+            if let Some(paths) = crate::dialog::file(state, Place::Assets)
                 .set_title(lang.pick(
                     "スマート素材をアセットへ読み込む",
                     "Import smart assets into the project",
@@ -1576,6 +1577,9 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                 .add_filter("YoluPainter Smart", &["ylsmart"])
                 .pick_files()
             {
+                if let Some(first) = paths.first() {
+                    state.note_file_chosen(Place::Assets, first);
+                }
                 state.apply(Action::Shelf(ShelfOp::ImportFiles(paths)));
             }
         }
@@ -1586,17 +1590,18 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
             let Some(name) = state.shelf.get(&id).map(|r| r.name.clone()) else {
                 return;
             };
-            if let Some(path) = crate::dialog::file()
+            if let Some(path) = crate::dialog::file(state, Place::Assets)
                 .set_title(lang.pick("スマート素材を書き出す", "Export the smart asset"))
                 .add_filter("YoluPainter Smart", &["ylsmart"])
                 .set_file_name(format!("{}.ylsmart", file_stem(&name)))
                 .save_file()
             {
+                state.note_file_chosen(Place::Assets, &path);
                 state.apply(Action::Shelf(ShelfOp::ExportFile { id, path }));
             }
         }
         DialogRequest::LibraryAdd => {
-            if let Some(paths) = crate::dialog::file()
+            if let Some(paths) = crate::dialog::file(state, Place::Assets)
                 .set_title(lang.pick(
                     "ライブラリへ追加するファイル",
                     "Files to add to the library",
@@ -1604,6 +1609,9 @@ pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
                 .add_filter("PNG / YoluPainter Smart", &["png", "ylsmart"])
                 .pick_files()
             {
+                if let Some(first) = paths.first() {
+                    state.note_file_chosen(Place::Assets, first);
+                }
                 state.apply(Action::Shelf(ShelfOp::LibraryAddFiles(paths)));
             }
         }

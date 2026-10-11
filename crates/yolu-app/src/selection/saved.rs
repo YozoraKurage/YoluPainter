@@ -102,8 +102,8 @@ impl AppState {
         {
             return Err(lang
                 .pick(
-                    "覚えたときと文書の大きさが違います。",
-                    "The document size differs from when it was saved.",
+                    "覚えたときとキャンバスの大きさが違います。",
+                    "The canvas size differs from when it was saved.",
                 )
                 .into());
         }

@@ -4,19 +4,55 @@
 //! 被覆率で 1 回だけ塗る。画素を塗る式は普通のダブと同じ（[`super::apply_at`]）。C# は画素を辞書に集めて番号の順に塗るが、
 //! ここでは同じ画素の組をタイルごとにまとめて塗る（各画素は自分の値だけで決まるので結果は同じ。予算で止まるかどうかも、
 //! 止まればストロークごと取り消すので同じ）。
+//!
+//! 3D の対称（[`Brush::model_symmetry`]）の写しは、ダブの中心の面の点から決めた 1 次の写像（`UvCopy`）で写し、同じく画素の中心を
+//! 元へ戻して測る。2D の対称と両方あれば、3D の写しの後に 2D の写しを当てた写像（写しの数は掛け算）。2D の対称だけのダブは、
+//! 今までと同じ変換と式（C# と同じ）。
 
 use super::*;
+use crate::geometry::{MirrorOutcome, UvCopy};
 use crate::symmetry::SymmetryTransform;
 
 /// 対称の 1 ダブで調べる候補の画素の上限（C# の MaxSymmetryCandidatePixels）。超えたらストロークごと取り消す。
 pub const MAX_SYMMETRY_CANDIDATE_PIXELS: i64 = 4 << 20;
 
-/// 写しの変換と、キャンバスの中の外接の箱（x0, x1, y0, y1。両端を含む）。
-type CopyBounds = (SymmetryTransform, i64, i64, i64, i64);
+/// 写し 1 つの写像: 2D の対称の変換（直交。C# と同じ式）か、3D の対称の写し（とその後の 2D の対称）の 1 次の写像。
+#[derive(Clone, Copy, Debug)]
+pub(super) enum CopyMap {
+    Canvas(SymmetryTransform),
+    Uv(UvCopy),
+}
+
+impl CopyMap {
+    #[inline]
+    fn map(&self, x: f64, y: f64) -> (f64, f64) {
+        match self {
+            CopyMap::Canvas(t) => t.map(x, y),
+            CopyMap::Uv(c) => c.map(x, y),
+        }
+    }
+    #[inline]
+    fn inverse(&self, x: f64, y: f64) -> (f64, f64) {
+        match self {
+            CopyMap::Canvas(t) => t.inverse(x, y),
+            CopyMap::Uv(c) => c.inverse(x, y),
+        }
+    }
+    /// 半径 extent の円の写しの、外接の箱の半分の幅と高さ（直交の変換は extent のまま）。
+    fn reach(&self, extent: f64) -> (f64, f64) {
+        match self {
+            CopyMap::Canvas(_) => (extent, extent),
+            CopyMap::Uv(c) => c.reach(extent),
+        }
+    }
+}
+
+/// 写しの写像と、キャンバスの中の外接の箱（x0, x1, y0, y1。両端を含む）。
+type CopyBounds = (CopyMap, i64, i64, i64, i64);
 
 /// 写しごとの、キャンバスの中の外接の箱（両端を含む）。候補の画素の数を先に数えて上限で断る（C# の VisitSymmetricPixels の前半）。
 fn symmetric_bounds(
-    transforms: &[SymmetryTransform],
+    transforms: &[CopyMap],
     x: f64,
     y: f64,
     extent: f64,
@@ -27,10 +63,11 @@ fn symmetric_bounds(
     let mut bounds = Vec::with_capacity(transforms.len());
     for t in transforms {
         let (cx, cy) = t.map(x, y);
-        let x0 = ((cx - extent - 0.5).ceil() as i64).max(0);
-        let x1 = ((cx + extent - 0.5).floor() as i64).min(width - 1);
-        let y0 = ((cy - extent - 0.5).ceil() as i64).max(0);
-        let y1 = ((cy + extent - 0.5).floor() as i64).min(height - 1);
+        let (ex, ey) = t.reach(extent);
+        let x0 = ((cx - ex - 0.5).ceil() as i64).max(0);
+        let x1 = ((cx + ex - 0.5).floor() as i64).min(width - 1);
+        let y0 = ((cy - ey - 0.5).ceil() as i64).max(0);
+        let y1 = ((cy + ey - 0.5).floor() as i64).min(height - 1);
         if x0 > x1 || y0 > y1 {
             continue;
         }
@@ -56,16 +93,48 @@ impl DabShape<'_> {
             if self.flip_y {
                 v = -v;
             }
-            return tip.sample(
+            let c = tip.sample(
                 (u / self.aspect_x + 1.0) * 0.5,
                 (v / self.aspect_y + 1.0) * 0.5,
             );
+            return if self.edge.density != 1.0 {
+                c * self.edge.density
+            } else {
+                c
+            };
         }
         let distance = if self.plain {
             (dx * dx + dy * dy).sqrt() / self.radius
         } else {
             (u * u + v * v).sqrt()
         };
+        if !self.edge.is_off() {
+            if self.plain {
+                return super::edge::cover64(
+                    distance,
+                    self.hardness,
+                    self.edge.band / self.radius,
+                    self.edge.density,
+                );
+            }
+            let minor = self.radius * self.roundness;
+            let g = super::edge::ellipse_gradient(u, v, distance, self.radius, minor);
+            let mid = 1.0 - (1.0 - self.hardness) * 0.5;
+            let floored = super::edge::box_floor(
+                distance,
+                g,
+                mid,
+                (u * self.radius, v * minor),
+                (self.radius * mid, minor * mid),
+            );
+            return super::edge::cover64_floored(
+                distance,
+                floored,
+                self.hardness,
+                self.edge.band * g,
+                self.edge.density,
+            );
+        }
         if distance > 1.0 {
             return 0.0;
         }
@@ -78,16 +147,64 @@ impl DabShape<'_> {
 }
 
 impl StrokeState {
+    /// 中心 (x, y)・半径 radius のダブの写しの写像（元の恒等を含む）。2D の対称も 3D の対称の写しも無いダブは None（普通のダブで
+    /// 塗る）。3D の写しを作れなかった理由は `copy_note` に残す。
+    pub(super) fn copy_maps(
+        &mut self,
+        x: f64,
+        y: f64,
+        radius: f64,
+    ) -> Result<Option<Vec<CopyMap>>, CoreError> {
+        let canvas = if self.brush.symmetry.enabled() {
+            self.brush.symmetry.transforms()?
+        } else {
+            Vec::new()
+        };
+        let model = match self.brush.model_symmetry.clone() {
+            Some(m) => {
+                let c = m.copies(x, y, radius, self.width as u32, self.height as u32)?;
+                if let Some(o) = c.outcome {
+                    self.copy_note = Some(o);
+                }
+                c.copies
+            }
+            None => Vec::new(),
+        };
+        if model.is_empty() {
+            return Ok(
+                (!canvas.is_empty()).then(|| canvas.into_iter().map(CopyMap::Canvas).collect())
+            );
+        }
+        // 3D の写しを先に、2D の写しを後に（元と 3D の写しのそれぞれを 2D の対称で写す）
+        let canvas = if canvas.is_empty() {
+            vec![SymmetryTransform::identity()]
+        } else {
+            canvas
+        };
+        let mut maps: Vec<CopyMap> = canvas.iter().map(|t| CopyMap::Canvas(*t)).collect();
+        for c in &model {
+            for t in &canvas {
+                maps.push(CopyMap::Uv(if t.is_identity() { *c } else { c.then(t) }));
+            }
+        }
+        Ok(Some(maps))
+    }
+
+    /// 3D の対称の写しを作れなかった最後の理由（面が無い・別のテクスチャセット）。
+    pub(crate) fn copy_note(&self) -> Option<MirrorOutcome> {
+        self.copy_note
+    }
+
     /// 写し全部の画素と被覆率（同じ画素は大きい方）を、キャンバスの画素の番号（y × 幅 + x）の順に。
     fn symmetric_pixels(
         &self,
+        transforms: &[CopyMap],
         x: f64,
         y: f64,
         extent: f64,
         coverage: impl Fn(f64, f64) -> f64,
     ) -> Result<Vec<(i64, f64)>, CoreError> {
-        let transforms = self.brush.symmetry.transforms()?;
-        let bounds = symmetric_bounds(&transforms, x, y, extent, self.width, self.height)?;
+        let bounds = symmetric_bounds(transforms, x, y, extent, self.width, self.height)?;
         let mut pixels = Vec::new();
         for (t, x0, x1, y0, y1) in bounds {
             for py in y0..=y1 {
@@ -120,9 +237,11 @@ impl StrokeState {
         brush: &Brush,
         s: &DabShape<'_>,
         extent: f64,
+        maps: &[CopyMap],
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        let pixels = self.symmetric_pixels(s.x, s.y, extent, |dx, dy| s.coverage_at(dx, dy))?;
+        let pixels =
+            self.symmetric_pixels(maps, s.x, s.y, extent, |dx, dy| s.coverage_at(dx, dy))?;
         // 画素の集まりの場所（C# の辞書の容量と並べ替えのキー。保守的に 1 画素 96 バイト）もストロークの予算に数える
         // （C# は画素を 1 つ足すたびに確かめるので、画素が無ければ確かめない）
         if pixels.is_empty() {
@@ -271,16 +390,9 @@ impl StrokeState {
         &mut self,
         shape: &DualShape<'_>,
         extent: f64,
+        maps: &[CopyMap],
     ) -> Result<(), CoreError> {
-        let transforms = self.brush.symmetry.transforms()?;
-        let bounds = symmetric_bounds(
-            &transforms,
-            shape.x,
-            shape.y,
-            extent,
-            self.width,
-            self.height,
-        )?;
+        let bounds = symmetric_bounds(maps, shape.x, shape.y, extent, self.width, self.height)?;
         let ts = self.tile_size;
         for (t, x0, x1, y0, y1) in bounds {
             for py in y0..=y1 {

@@ -1,9 +1,9 @@
-//! 左のドックのサブツールのパネルの、ブラシと消しゴムの部分（クリスタのサブツールの一覧・ツールプロパティ・ブラシサイズに当たる）。
-//! パネルの組み立ては `subtools`。ここは、ブラシの一覧（グループのタブ・名前と、そのブラシの実際の設定で core が描いた見本のストロークの行・
-//! 一覧の操作の帯。消しゴムのツールは消しゴムのグループだけを出す）、ブラシ・消しゴムのツールプロパティ（今の設定の見本と主な項目、右下の
-//! 調整のボタンで詳細のウィンドウ）、ブラシサイズ（決まった大きさの丸）、オプションバーの項目（直径・不透明度・対称）を持つ。
+//! 左のドックのサブツール・ツールプロパティ・ブラシサイズのパネルの、ブラシと消しゴムの部分（クリスタのサブツールの一覧・ツールプロパティ・ブラシサイズに当たる）。
+//! パネルの組み立ては `subtools`（一覧）と `tool_props`（ツールプロパティ・ブラシサイズ）。ここは、ブラシの一覧（グループのタブ・名前と、そのブラシの実際の設定で
+//! core が描いた見本のストロークの行・一覧の操作の帯。消しゴムのツールは消しゴムのグループだけを出す）、ブラシ・消しゴムのツールプロパティ
+//! （今の設定の見本と主な項目、右下の調整のボタンで詳細のウィンドウ）、ブラシサイズ（決まった大きさの丸）、オプションバーの項目（直径・不透明度・対称）を持つ。
 //! 一覧の操作は `Action::Brush`（行を押して替える・追加・複製・削除・名前・並べ替え・元に戻す）。ブラシの設定は文書ではないので Undo に
-//! 入れない。画面には名前と値だけを出し、説明はツールチップ。
+//! 入れない。画面には名前と値だけを出し、ツールチップは名前とキー（押せないときは短い理由）。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
@@ -26,14 +26,12 @@ pub const SIZES: [u32; 15] = [1, 2, 3, 5, 8, 12, 16, 24, 32, 48, 64, 96, 128, 19
 pub(super) const TAB_HEIGHT: f32 = 26.0;
 pub(super) const ROW_HEIGHT: f32 = 36.0;
 pub(super) const FOOTER_HEIGHT: f32 = 28.0;
-pub(super) const MIN_LIST: f32 = 96.0;
-pub(super) const SECTION_HEIGHT: f32 = t::PANEL_HEADER_HEIGHT;
 /// ツールプロパティの項目の行の高さと間。
 const FIELD_HEIGHT: f32 = 20.0;
 const FIELD_GAP: f32 = 3.0;
 const TOOL_SAMPLE_HEIGHT: f32 = 44.0;
 /// ブラシサイズの丸の 1 マスの最小の幅と、1 段の高さ。幅に入るだけ並べ、入りきらなければ段を足す。
-const SIZE_CELL_MIN: f32 = 32.0;
+const SIZE_CELL_MIN: f32 = 30.0;
 const SIZE_ROW: f32 = 42.0;
 const PEN_BUTTON: f32 = 24.0;
 /// 大きさの数字（細い丸の幅に収める）。
@@ -171,6 +169,11 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
     let editable = !app.is_stroking() && app.toolset.set.locked.is_none();
     let dragging = app.toolset.ui.dragging();
     let pointer = ui.input(|i| i.pointer.hover_pos());
+    // ブラシを引いている間、落とせるグループのタブを光らせる
+    let droppable = match dragging {
+        Some(Dragged::Brush(key)) => crate::toolset::ui::droppable_groups(app, key),
+        _ => Vec::new(),
+    };
     let order: Vec<GroupId> = tabs
         .iter()
         .filter_map(|(k, _)| match k {
@@ -264,6 +267,10 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
                 }
                 if dragging == Some(Dragged::Group(group)) {
                     w::rounded(p, tab, t::CONTROL_ACTIVE, 3.0);
+                }
+                if droppable.contains(&group) {
+                    w::rounded(p, tab, t::ACCENT_SOFT, 3.0);
+                    w::outline(p, tab, t::ACCENT_DIM, 1.0, 3.0);
                 }
                 let color = if on { Color32::WHITE } else { t::TEXT_DIM };
                 let shown_text = w::fit(p, &short, tab.width() - 8.0, t::HEADER);
@@ -770,8 +777,6 @@ fn field(
 pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let lang = app.lang;
     let editable = !app.is_stroking();
-    // 2D だけの設定は、描ける先が 3D の面だけのあいだ無効にする（キャンバスも出ていれば 2D に描けるので有効）
-    let only_in_3d = app.paints_only_in_3d();
     // 今の設定の見本
     let sample = Rect::from_min_size(
         pos2(area.left() + t::PADDING, area.top() + 4.0),
@@ -827,11 +832,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             0.0,
             100.0,
             NumberFormat::int("%"),
-        )
-        .tooltip(lang.pick(
-            "1 本のストロークが覆える上限",
-            "The most one stroke can cover",
-        )),
+        ),
         b.opacity * 100.0,
         Some((
             &mut b.pressure_opacity,
@@ -851,10 +852,10 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             100.0,
             NumberFormat::int("%"),
         )
-        .tooltip(lang.pick(
-            "丸い筆先の縁の硬さ（画像の筆先は画像の縁のまま）",
-            "Edge hardness of the round tip (an image keeps its own edge)",
-        )),
+        .tooltip_reason(
+            (!hardness_applies)
+                .then(|| lang.pick("画像の筆先では効きません", "No effect on an image tip")),
+        ),
         b.hardness * 100.0,
         Some((
             &mut app.m2.brush.controls.pressure_hardness,
@@ -873,8 +874,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             0.0,
             100.0,
             NumberFormat::int("%"),
-        )
-        .tooltip(lang.pick("ダブ 1 つが足す量", "How much each dab adds")),
+        ),
         b.flow * 100.0,
         Some((
             &mut b.pressure_flow,
@@ -893,18 +893,13 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             1.0,
             100.0,
             NumberFormat::int("%"),
-        )
-        .tooltip(lang.pick(
-            "ダブの間隔（直径に対する割合）",
-            "Distance between dabs (of the diameter)",
-        )),
+        ),
         b.spacing * 100.0,
         None,
         editable,
     ) {
         b.spacing = v / 100.0;
     }
-    let off = only_in_3d.then(|| lang.pick("3D では効きません", "No effect in 3D"));
     let stabilizer = app.m2.brush.assist.stabilizer as f32;
     // 手ぶれ補正の行の右端に、詳細のウィンドウのボタン
     let row = next();
@@ -921,14 +916,10 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             0.0,
             200.0,
             NumberFormat::int(" px"),
-        )
-        .tooltip(off.unwrap_or(lang.pick(
-            "筆が入力に引かれる糸の長さ。0 で切",
-            "Length of the string that pulls the brush. 0 = off",
-        ))),
+        ),
         stabilizer,
         None,
-        editable && off.is_none(),
+        editable,
     ) {
         app.m2.brush.assist.stabilizer = v as f64;
     }
@@ -949,13 +940,9 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     }
     // 効果のブラシの主な値
     let tool_is_eraser = app.tool.erases();
-    let effect_off = if tool_is_eraser {
-        Some(lang.pick("消しゴムでは使えません", "Not available with the eraser"))
-    } else if only_in_3d {
-        Some(lang.pick("3D では使えません", "Not available in 3D"))
-    } else {
-        None
-    };
+    // ぼかしの半径と指先の強さは、3D の面のダブも同じ値を使う
+    let effect_off = tool_is_eraser
+        .then(|| lang.pick("消しゴムでは使えません", "Not available with the eraser"));
     match app.m2.brush.effect {
         BrushEffect::Blur { radius } => {
             if let Some(v) = field(
@@ -968,7 +955,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
                     64.0,
                     NumberFormat::int(" px"),
                 )
-                .tooltip(effect_off.unwrap_or(lang.pick("ぼかす範囲の半径", "Radius of the blur"))),
+                .tooltip_reason(effect_off),
                 radius as f32,
                 None,
                 editable && effect_off.is_none(),
@@ -989,9 +976,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
                     100.0,
                     NumberFormat::int("%"),
                 )
-                .tooltip(
-                    effect_off.unwrap_or(lang.pick("流量に掛ける強さ", "Multiplies the flow")),
-                ),
+                .tooltip_reason(effect_off),
                 strength as f32 * 100.0,
                 None,
                 editable && effect_off.is_none(),
@@ -1011,7 +996,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
     tool_body(ui, app, area);
 }
 
-/// オプションバー（ブラシ・消しゴム）: 定規へのスナップ（入っているかが見える）、直径と不透明度（ツールプロパティと同じ値）、右端の対称。
+/// オプションバー（ブラシ・消しゴム）: 定規へのスナップ 2 つ（入っているかが見える）、直径と不透明度（ツールプロパティと同じ値）。
 /// 硬さ・流量・間隔・筆圧はツールプロパティ。
 pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
@@ -1023,7 +1008,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     };
     let l = app.lang;
     let editable = !app.is_stroking();
-    crate::drafting::props::snap_button(ui, app, next(28.0));
+    crate::rulers::tool::snap_buttons(ui, app, next(28.0), next(28.0));
     let b = &mut app.brush;
     let out = w::slider(
         ui,
@@ -1053,8 +1038,6 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     if out.changed {
         b.opacity = out.value / 100.0;
     }
-    // 対称（右端。左の部品に重なるほど狭ければ出さない）
-    crate::selection::props::symmetry_options(ui, app, r, x);
 }
 
 /// ブラシサイズの格子の列の数（欄の幅に入るだけ。1 列以上、全部の数まで）。
@@ -1144,33 +1127,6 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         }
         let _ = response.on_hover_text(label);
     }
-}
-
-/// 見出しの帯（折りたためる。開閉は `AppState::sections` が覚える）。
-pub(super) fn section_band(
-    ui: &mut Ui,
-    app: &mut AppState,
-    y: f32,
-    r: Rect,
-    key: &'static str,
-    title: &str,
-    icon: &str,
-) -> bool {
-    let open = app.section_open(key, true);
-    let header = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), SECTION_HEIGHT));
-    let out = w::section_header(
-        ui,
-        header,
-        ("brush.section", key),
-        title,
-        open,
-        Some(icon),
-        None,
-    );
-    if out.open != open {
-        app.ui.sections.insert(key, out.open);
-    }
-    out.open
 }
 
 #[cfg(test)]

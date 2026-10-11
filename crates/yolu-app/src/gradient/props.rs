@@ -214,10 +214,7 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Conte
             "gradient.between",
             lang.pick("2 つのマテリアルの間", "Between two materials"),
             on,
-            Some(lang.pick(
-                "チャンネルごとに、今のマテリアルから終点のマテリアルへ。切ると透明へ消える",
-                "Interpolate each channel from the brush material to the end material. Off: fade to transparent",
-            )),
+            None,
             app.gradient.end_material.is_some(),
         ) {
             op(app, GradientOp::Between(v));

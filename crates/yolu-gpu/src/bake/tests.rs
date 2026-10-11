@@ -158,15 +158,79 @@ fn a_dispatch_never_holds_more_workgroups_than_the_device_allows() {
 }
 
 #[test]
-fn ray_query_is_off_unless_the_environment_turns_it_on() {
+fn ray_query_is_on_unless_the_environment_turns_it_off() {
     use super::flag_enabled;
-    assert!(!flag_enabled(None));
-    for off in ["", "0", "false", "off", "no", "ray", " "] {
+    for on in [
+        None,
+        Some(""),
+        Some(" "),
+        Some("1"),
+        Some("true"),
+        Some("on"),
+        Some("yes"),
+        Some("ray"),
+    ] {
+        assert!(flag_enabled(on), "{on:?}");
+    }
+    for off in ["0", "false", "FALSE", "off", "Off", " no ", " 0 "] {
         assert!(!flag_enabled(Some(off)), "{off:?}");
     }
-    for on in ["1", "true", "TRUE", "On", " yes "] {
-        assert!(flag_enabled(Some(on)), "{on:?}");
-    }
+}
+
+#[test]
+fn the_reason_ray_query_is_not_used_is_kept_with_its_kind() {
+    use super::{ray_query_unavailable, RayQueryWhy};
+    assert_eq!(ray_query_unavailable(true, true, None), None);
+    let (why, note) = ray_query_unavailable(false, false, None).unwrap();
+    assert_eq!(why, RayQueryWhy::NotSupported);
+    assert!(note.contains("対応していない"), "{note}");
+    let (why, note) = ray_query_unavailable(
+        true,
+        false,
+        Some("Feature EXPERIMENTAL_RAY_QUERY is not supported"),
+    )
+    .unwrap();
+    assert_eq!(why, RayQueryWhy::Device);
+    assert!(
+        note.contains("デバイスを作れなかった") && note.contains("EXPERIMENTAL_RAY_QUERY"),
+        "{note}"
+    );
+    let (_, note) = ray_query_unavailable(true, false, None).unwrap();
+    assert!(note.contains("理由は不明"));
+}
+
+#[test]
+fn a_ray_query_device_that_fails_after_it_was_made_falls_back_to_the_plain_device_with_the_reason()
+{
+    use super::{with_ray_query_fallback, GpuBakeError};
+    type R = Result<(&'static str, Option<String>), GpuBakeError>;
+    let plain = |e: Option<String>| async move { R::Ok(("plain", e)) };
+    // 試さない（対応していない・切）: 理由なしで plain
+    let none = pollster::block_on(with_ray_query_fallback(
+        None::<std::future::Ready<Result<(&'static str, Option<String>), String>>>,
+        plain,
+    ))
+    .unwrap();
+    assert_eq!(none, ("plain", None));
+    // 作れたあと、準備（compute のシェーダー・最初の確認）で失敗した: 理由を持って plain で作り直す（Err にして CPU へ落とさない）
+    let failed = pollster::block_on(with_ray_query_fallback(
+        Some(std::future::ready(
+            Err::<(&'static str, Option<String>), _>(
+                "GPU 利用不可: ベイクのシェーダーを作れません: x".to_string(),
+            ),
+        )),
+        plain,
+    ))
+    .unwrap();
+    assert_eq!(failed.0, "plain");
+    assert!(failed.1.unwrap().contains("ベイクのシェーダーを作れません"));
+    // 成功したらそのまま（plain は呼ばない）
+    let ok = pollster::block_on(with_ray_query_fallback(
+        Some(std::future::ready(Ok(("rq", None)))),
+        |_| async { R::Err(GpuBakeError::Failed("呼ばれない".into())) },
+    ))
+    .unwrap();
+    assert_eq!(ok.0, "rq");
 }
 
 /// 自己照合の結果の並び（`CHECK_STRIDE` ワード）で、もっともらしい答えを n 本ぶん作る。

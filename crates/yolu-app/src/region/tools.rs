@@ -229,18 +229,81 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
         }
         Where::Canvas(view) => {
             let (x, y) = view.to_canvas(at);
-            let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
-            if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
-                return Under::Nothing;
-            }
-            let Some(grid) = app.region_grid() else {
-                return Under::Nothing;
-            };
-            match grid.find(Vec2::new((x / cw) as f32, (y / ch) as f32)) {
-                Some(t) => Under::Triangle(t),
-                None => Under::Nothing,
-            }
+            under_canvas(app, x, y)
         }
+    }
+}
+
+/// 2D のキャンバスの点（キャンバスの座標）の下の三角形。
+fn under_canvas(app: &mut AppState, x: f64, y: f64) -> Under {
+    let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+    if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
+        return Under::Nothing;
+    }
+    let Some(grid) = app.region_grid() else {
+        return Under::Nothing;
+    };
+    match grid.find(Vec2::new((x / cw) as f32, (y / ch) as f32)) {
+        Some(t) => Under::Triangle(t),
+        None => Under::Nothing,
+    }
+}
+
+/// 3D の押した点の下に、今のテクスチャセットの面が無かった理由。
+pub(crate) enum Miss {
+    /// 面が無い（モデルの外・今のテクスチャセットの三角形が無い）。
+    Nothing,
+    /// ほかのテクスチャセット（その名前）の面。
+    OtherSet(String),
+    /// 面の UV がテクスチャの外（繰り返し・はみ出し）。
+    OutsideUv,
+}
+
+/// 3D の `at` の下の面が指す、今の文書（今のテクスチャセット）の点（文書の座標。連続した値。バケツの近い色の種）。UV が指す画素は
+/// 色のスポイトと同じ（⌊u·幅⌋・⌊v·高さ⌋）。面が無い・別のテクスチャセット・UV が外なら理由。
+pub(crate) fn surface_point(app: &mut AppState, rect: Rect, at: Pos2) -> Result<(f64, f64), Miss> {
+    let Some((model, material)) = app.region_model() else {
+        return Err(Miss::Nothing);
+    };
+    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let Some(hit) = pick(&model.geometry, &view, local(rect, at)) else {
+        return Err(Miss::Nothing);
+    };
+    if hit.material != material {
+        return Err(Miss::OtherSet(
+            model.material_name(hit.material as usize, app.lang),
+        ));
+    }
+    let (w, h) = (app.doc.width(), app.doc.height());
+    crate::eyedrop::texel_of(hit.uv, w, h).ok_or(Miss::OutsideUv)?;
+    // 最後の列・行（u = 1・v = 1）は、画素の中へ収める
+    let inside = |v: f32, n: u32| (v as f64 * n as f64).min(n as f64 - 1e-6);
+    Ok((inside(hit.uv.x, w), inside(hit.uv.y, h)))
+}
+
+/// `surface_point` が取れなかった理由を断りとして出す。
+pub(crate) fn refuse_miss(app: &mut AppState, miss: Miss) {
+    refuse_miss_as(app, miss, Source::Fill);
+}
+
+/// `refuse_miss` の、断りの出どころを選べる版（自動選択は選択範囲の出どころ）。
+pub(crate) fn refuse_miss_as(app: &mut AppState, miss: Miss, source: Source) {
+    match miss {
+        Miss::Nothing => app.refuse(
+            source,
+            app.lang.pick(
+                "ポインタの下にこのテクスチャセットの三角形がありません",
+                "No triangle of this texture set under the pointer",
+            ),
+        ),
+        Miss::OtherSet(name) => app.refuse(source, other_set_face(app.lang, &name)),
+        Miss::OutsideUv => app.refuse(
+            source,
+            app.lang.pick(
+                "この面の UV はテクスチャの外です",
+                "This surface's UV is outside the texture",
+            ),
+        ),
     }
 }
 
@@ -319,46 +382,78 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             return;
         }
     };
-    let (mask, what) = if app.region.by_color {
-        let Where::Canvas(view) = w else {
-            app.refuse(
-                Source::Fill,
-                lang.pick(
-                    "近い色は 2D のキャンバスでだけ使えます。",
-                    "Similar colors work only on the 2D canvas.",
-                ),
-            );
-            return;
-        };
-        let (x, y) = view.to_canvas(at);
-        if x < 0.0 || y < 0.0 || x >= app.doc.width() as f64 || y >= app.doc.height() as f64 {
-            return;
+    // 2D のキャンバスでは、効いている対称定規の写しの全部の点が種になる（キャンバスの外の写しは捨て、同じ画素は 1 回）。押した点が
+    // キャンバスの外なら、写しだけを塗ることはしない（種は空）。3D ビューは押した点だけ
+    let canvas_seeds = match w {
+        Where::Canvas(view) => {
+            let p = view.to_canvas(at);
+            let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+            if (0.0..cw).contains(&p.0) && (0.0..ch).contains(&p.1) {
+                Some(app.symmetry_seeds(p, app.region.snap_symmetry))
+            } else {
+                Some(Vec::new())
+            }
         }
-        super::bucket::start(app, vec![(x, y)]);
+        Where::Surface(_) => None,
+    };
+    let (mask, what) = if app.region.by_color {
+        // 近い色: 押した所の文書の画素から求める（3D は、押した面の UV が指す画素。許し幅・つながり・全体の合成は 2D と同じ）
+        let seeds = match (canvas_seeds, w) {
+            (Some(seeds), _) if seeds.is_empty() => return,
+            (Some(seeds), _) => seeds,
+            (None, Where::Surface(rect)) => {
+                if app.region_model().is_none() {
+                    return needs_model(app);
+                }
+                match surface_point(app, rect, at) {
+                    Ok(point) => vec![point],
+                    Err(miss) => return refuse_miss(app, miss),
+                }
+            }
+            (None, Where::Canvas(_)) => return,
+        };
+        super::bucket::start(app, seeds);
         return;
     } else {
         if app.region_model().is_none() {
             return needs_model(app);
         }
-        let triangle = match under(app, w, at) {
-            Under::Triangle(t) => t,
-            Under::OtherSet(name) => return other_set(app, &name),
-            Under::Nothing => {
-                app.refuse(
-                    Source::Fill,
-                    lang.pick(
-                        "ポインタの下にこのテクスチャセットの三角形がありません",
-                        "No triangle of this texture set under the pointer",
-                    ),
-                );
-                return;
-            }
+        let hits: Vec<u32> = match canvas_seeds {
+            Some(seeds) => seeds
+                .iter()
+                .filter_map(|&(x, y)| match under_canvas(app, x, y) {
+                    Under::Triangle(t) => Some(t),
+                    _ => None,
+                })
+                .collect(),
+            None => match under(app, w, at) {
+                Under::Triangle(t) => vec![t],
+                Under::OtherSet(name) => return other_set(app, &name),
+                Under::Nothing => Vec::new(),
+            },
         };
+        if hits.is_empty() {
+            app.refuse(
+                Source::Fill,
+                lang.pick(
+                    "ポインタの下にこのテクスチャセットの三角形がありません",
+                    "No triangle of this texture set under the pointer",
+                ),
+            );
+            return;
+        }
         let kind = app.region.kind;
         let (Some(index), Some((model, _))) = (app.region_index(), app.region_model()) else {
             return needs_model(app);
         };
-        let triangles = pixel_triangles(&app.doc, &model.geometry, index.region(triangle, kind));
+        // 種ごとの範囲の和（同じ三角形は 1 回）を 1 つの範囲にする
+        let mut region: Vec<u32> = hits
+            .iter()
+            .flat_map(|&t| index.region(t, kind).iter().copied())
+            .collect();
+        region.sort_unstable();
+        region.dedup();
+        let triangles = pixel_triangles(&app.doc, &model.geometry, &region);
         (
             SelectionMask::from_triangles(&app.doc, &triangles),
             kind_name(lang, kind),
@@ -420,7 +515,7 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
 // ───────── ポリゴン塗りつぶし ─────────
 
 /// 前の位置から今の位置までの線の上（画面で 4 px おき、多くて 64 点）。速く動かしても間の三角形を飛ばしにくい。
-fn samples(from: Pos2, to: Pos2) -> Vec<Pos2> {
+pub(super) fn samples(from: Pos2, to: Pos2) -> Vec<Pos2> {
     let steps = ((from.distance(to) / 4.0).ceil() as usize).clamp(1, 64);
     (1..=steps)
         .map(|i| from + (to - from) * (i as f32 / steps as f32))
@@ -668,6 +763,9 @@ pub fn canvas_press(
 pub fn surface_press(app: &mut AppState, rect: Rect, at: Pos2, _source: StrokeSource) -> bool {
     let w = Where::Surface(rect);
     match app.tool {
+        Tool::Fill if app.region.by_color && app.region.color.leftovers => {
+            super::bucket::begin_surface(app, rect, at)
+        }
         Tool::Fill => {
             bucket(app, w, at);
             false

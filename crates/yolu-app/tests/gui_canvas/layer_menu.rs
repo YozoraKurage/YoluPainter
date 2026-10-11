@@ -361,9 +361,70 @@ fn the_layer_menu_is_one_list_for_the_menu_bar_and_the_right_click() {
                     lang.pick("新規調整レイヤー", "New Adjustment Layer")
                         .to_owned()
                 ),
+                Some(lang.pick("新規パスレイヤー", "New Path Layer").to_owned()),
                 None,
                 Some(lang.pick("新規グループ", "New Group").to_owned()),
             ]
+        );
+    }
+}
+
+#[test]
+fn the_new_path_layer_entry_is_in_the_menu_bar_and_the_right_click_but_not_in_the_layers_toolbar() {
+    for lang in Lang::ALL {
+        let label = lang.pick("新規パスレイヤー", "New Path Layer");
+        // 並びの項目: 押せる・描いている最中は押せない・キーは持たない
+        let mut s = AppState::new(64, 64);
+        s.lang = lang;
+        let id = s.selected_layer.unwrap();
+        for entries in [
+            shell::menu_entries(&s, 2),
+            shell::popup_entries(&s, PopupKind::LayerContext(id)),
+        ] {
+            let item = entries
+                .iter()
+                .find(|e| e.label() == Some(label))
+                .unwrap_or_else(|| panic!("{lang:?}: {:?}", names(&entries)));
+            assert!(
+                matches!(item, Entry::Item { enabled: true, shortcut: None, action, .. }
+                    if *action == Action::LayerMenu(Op::PathLayer)),
+                "{lang:?}"
+            );
+        }
+        let settings = s.stroke_settings(false);
+        let stroke = s.doc.begin_stroke(id, &settings).unwrap();
+        let bar = shell::menu_entries(&s, 2);
+        assert!(
+            bar.iter().any(
+                |e| e.label() == Some(label) && matches!(e, Entry::Item { enabled: false, .. })
+            ),
+            "{lang:?}: 描いている最中は押せない"
+        );
+        s.doc.cancel_stroke(stroke);
+        // 画面: レイヤーの一覧の下の帯のボタンには無く、メニューバーの「レイヤー」には出る。押すと作ってパスのツールへ替える
+        let mut h = app(1280.0, 800.0, 64);
+        h.state_mut().state.lang = lang;
+        h.run();
+        assert!(
+            h.query_by_label(label).is_none(),
+            "{lang:?}: 帯には置かない"
+        );
+        let base = h.state().state.selected_layer.unwrap();
+        let at = menu_title(&h, lang.pick("レイヤー", "Layer")).center();
+        click(&mut h, at);
+        let item = popup_item(&h, label);
+        click(&mut h, item.center());
+        assert!(h.state().state.popup.is_none(), "選んだら閉じる");
+        let made = h.state().state.selected_layer.unwrap();
+        assert_ne!(made, base);
+        assert!(h.state().state.doc.layer(made).unwrap().has_paths());
+        assert_eq!(h.state().state.tool, Tool::Path);
+        assert_eq!(h.state().state.doc.layers().len(), 2);
+        h.state_mut().state.apply(Action::Undo);
+        assert_eq!(
+            h.state().state.doc.layers().len(),
+            1,
+            "1 回の取り消しで戻る"
         );
     }
 }
@@ -380,6 +441,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
             ja_en("新規レイヤー", "New Layer"),
             ja_en("新規塗りつぶしレイヤー", "New Fill Layer"),
             ja_en("新規調整レイヤー", "New Adjustment Layer"),
+            ja_en("新規パスレイヤー", "New Path Layer"),
             None,
             ja_en("フィルターを追加", "Add Filter"),
             ja_en("ジェネレーターを追加", "Add Generator"),
@@ -406,7 +468,7 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
         assert!(reference < at(lang.pick("レイヤーマスクを追加", "Add Layer Mask")));
         assert!(
             at(lang.pick("レイヤーマスクを追加", "Add Layer Mask"))
-                < at(lang.pick("変形", "Transform"))
+                < at(lang.pick("透明部分をロック", "Lock Transparent Pixels"))
         );
         // 新規グループは、新規レイヤーの組ではなくグループ化の組
         assert_eq!(
@@ -1294,6 +1356,102 @@ fn the_menu_bar_opens_the_fill_submenu_on_hover_and_a_click_in_it_makes_the_laye
         1,
         "1 回の取り消しで戻る"
     );
+}
+
+/// 下から a・b・c の 3 つのレイヤーがある画面（選んでいるのは一番上の c）。
+fn three_layers() -> (Harness<'static, YoluApp>, [yolu_app::engine::LayerId; 3]) {
+    let mut h = app(1280.0, 800.0, 64);
+    let a = h.state().state.selected_layer.unwrap();
+    h.state_mut().state.apply(Action::NewLayer);
+    let b = h.state().state.selected_layer.unwrap();
+    h.state_mut().state.apply(Action::NewLayer);
+    let c = h.state().state.selected_layer.unwrap();
+    h.run();
+    (h, [a, b, c])
+}
+
+/// レイヤーの一覧の行の名前の所（行の真ん中）。
+fn row_name(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> egui::Pos2 {
+    let name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
+    common::rect_of(h, &name, |r| r.width() > 100.0 && r.left() > 1000.0).center()
+}
+
+fn order(h: &Harness<'_, YoluApp>) -> Vec<yolu_app::engine::LayerId> {
+    h.state()
+        .state
+        .doc
+        .layers()
+        .iter()
+        .map(|l| l.id())
+        .collect()
+}
+
+fn right_click(h: &mut Harness<'_, YoluApp>, at: egui::Pos2) {
+    h.event(Event::PointerMoved(at));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Secondary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run();
+}
+
+#[test]
+fn a_new_fill_layer_from_the_menu_bar_goes_right_above_the_row_chosen_in_the_list() {
+    let (mut h, [a, b, c]) = three_layers();
+    // 一番下の行を押して選んでから、メニューバーの「レイヤー」→ 新規塗りつぶしレイヤー → 単色
+    let at = row_name(&h, a);
+    click(&mut h, at);
+    assert_eq!(h.state().state.selected_layer, Some(a));
+    let at = menu_title(&h, "レイヤー").center();
+    click(&mut h, at);
+    hover(&mut h, pos2(640.0, 400.0));
+    let fill = popup_item(&h, "新規塗りつぶしレイヤー");
+    hover(&mut h, fill.center());
+    let solid = popup_item(&h, "単色");
+    hover(&mut h, pos2(fill.right() - 2.0, fill.center().y));
+    hover(&mut h, solid.center());
+    click(&mut h, solid.center());
+    let made = h.state().state.selected_layer.unwrap();
+    assert_eq!(
+        h.state().state.doc.layer(made).unwrap().kind(),
+        LayerKind::Fill
+    );
+    assert_eq!(order(&h), vec![a, made, b, c], "一番下の行のすぐ上");
+    h.state_mut().state.apply(Action::Undo);
+    assert_eq!(order(&h), vec![a, b, c]);
+}
+
+#[test]
+fn a_new_fill_layer_from_the_right_click_goes_right_above_the_right_clicked_row() {
+    let (mut h, [a, b, c]) = three_layers();
+    assert_eq!(h.state().state.selected_layer, Some(c));
+    // 選んでいない真ん中の行を右クリック: その行を選んでレイヤーのメニュー → 新規塗りつぶしレイヤー → 単色
+    let at = row_name(&h, b);
+    right_click(&mut h, at);
+    assert_eq!(
+        h.state().state.popup.as_ref().map(|p| p.kind),
+        Some(PopupKind::LayerContext(b))
+    );
+    // 一覧の下の帯にも同じ名前のボタンがあるので、メニューの行（幅のある物）を選ぶ
+    let fill = common::rect_of(&h, "新規塗りつぶしレイヤー", |r| {
+        r.width() > 100.0
+    });
+    hover(&mut h, fill.center());
+    assert_eq!(depth(&h), 1, "乗せると入れ子が開く");
+    let solid = popup_item(&h, "単色");
+    // 入れ子は、右に入らないので左に開く
+    let sub = h.state().state.popup.as_ref().unwrap().state.sub_rects()[0];
+    hover(&mut h, pos2(fill.left() + 2.0, fill.center().y));
+    hover(&mut h, solid.center());
+    assert!(sub.contains(solid.center()), "{sub:?} {solid:?}");
+    click(&mut h, solid.center());
+    let made = h.state().state.selected_layer.unwrap();
+    assert_eq!(order(&h), vec![a, b, made, c], "右クリックした行のすぐ上");
 }
 
 #[test]

@@ -1,13 +1,12 @@
-//! 左のドックの「サブツール」のパネル（クリスタのサブツール・ツールプロパティ・ブラシサイズを 1 か所にしたもの）。中身は今のツールに合わせて替わる:
-//! 上から、サブツールの一覧（ブラシは取り込みも含むブラシの一覧とグループのタブ、消しゴムは消しゴムの一覧、バケツ・グラデーションなどはそのツールの
-//! 設定の組のプリセット、選択のツールは選択のツールの一覧、パスは 1 つ）、ツールプロパティ（今のツールの設定の全部。値はオプションバーと同じ状態）、
-//! ブラシサイズ（大きさを持つツールだけ）。入りきらなければ全体がスクロールする。右の「プロパティ」にはツールの設定を出さない。
+//! 左のドックの「サブツール」のパネル（クリスタのサブツールに当たる）: 今のツールのサブツールの一覧がパネルの高さいっぱいに出る
+//! （ブラシは取り込みも含むブラシの一覧とグループのタブ、消しゴムは消しゴムの一覧、バケツ・グラデーションなどはそのツールの設定の組のプリセット、
+//! 選択のツールは選択のツールの一覧、パスは 1 つ）。ツールプロパティとブラシサイズは別のパネル（`tool_props`）。右の「プロパティ」にはツールの設定を出さない。
 //! 一覧の操作は、ブラシ・消しゴムが `Action::Brush`、そのほかのプリセットが `Action::SubTool`、選択のツールが `Action::SelectTool`。
 //! 画面には名前と値だけを出し、説明はツールチップ。ツールの欄はツールの表（`tools`）が持つ。
 
 use egui::{pos2, vec2, Color32, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
-use super::brushes::{self, FOOTER_HEIGHT, MIN_LIST, ROW_HEIGHT, SECTION_HEIGHT};
+use super::brushes::{self, FOOTER_HEIGHT};
 use crate::m2_menu::Popup;
 use crate::state::{Action, AppState, Tool};
 use crate::subtool::{Key, SubToolAction};
@@ -16,20 +15,15 @@ use crate::toolset::SlotId;
 use crate::ui::menu::context_anchor;
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
-use crate::ui::widgets::{self as w, Align, Rows};
+use crate::ui::widgets::{self as w, Align};
 
-/// プリセット・ツールの行の高さと、一覧が縮めずに出す行の数の上限。
+/// プリセット・ツールの行の高さ。
 const ROW: f32 = 28.0;
-const MAX_ROWS: f32 = 8.0;
 
-/// 一覧の縦の組み立て（上の帯・行・下の帯）。
+/// 一覧の縦の組み立て（上の帯・下の帯。間が行）。
 struct ListShape {
     strip: f32,
-    /// 行の全部の高さ（スクロールの中身）。
-    body: f32,
     footer: f32,
-    /// 余った高さを全部使う（ブラシの一覧。グループを替えても下の欄が動かない）。
-    fills: bool,
     /// グループのタブを並べる幅（スクロールの帯の分を先に引く。組み立てと描くのを同じ幅にする）。
     tabs_width: f32,
 }
@@ -47,41 +41,23 @@ fn list_shape(ui: &Ui, app: &AppState, tool: Tool, width: f32) -> ListShape {
     let tabs_width = (width - crate::ui::scroll::BAR_WIDTH).max(40.0);
     match tool.def().subtools {
         SubTools::Brushes | SubTools::Erasers => {
-            let slot = brush_slot(app, tool);
-            let strip = slot.map_or(0.0, |s| {
+            let strip = brush_slot(app, tool).map_or(0.0, |s| {
                 brushes::tab_layout(ui.painter(), app, s, tabs_width).1
             });
-            let rows = slot
-                .and_then(|s| app.toolset.set.shown_group(s))
-                .and_then(|g| app.toolset.set.group(g))
-                .map_or(0, |(_, g)| g.brushes.len());
             ListShape {
                 strip,
-                body: rows as f32 * ROW_HEIGHT,
                 footer: FOOTER_HEIGHT,
-                fills: true,
                 tabs_width,
             }
         }
         SubTools::Presets => ListShape {
             strip: 0.0,
-            body: app.subtool_list(tool).map_or(0, |l| l.entries().len()) as f32 * ROW,
             footer: FOOTER_HEIGHT,
-            fills: false,
             tabs_width,
         },
-        SubTools::Tools(tools) => ListShape {
+        SubTools::Tools(_) | SubTools::Single => ListShape {
             strip: 0.0,
-            body: tools.len() as f32 * ROW,
             footer: 0.0,
-            fills: false,
-            tabs_width,
-        },
-        SubTools::Single => ListShape {
-            strip: 0.0,
-            body: ROW,
-            footer: 0.0,
-            fills: false,
             tabs_width,
         },
     }
@@ -233,7 +209,8 @@ fn tool_row(
     );
     let name = tool.name_in(lang);
     // キーは、名前が入りきるときだけ右に出す（狭いパネルで名前を詰めない。キーはツールチップにも）
-    let key = Some(tool.key())
+    let key_text = crate::shortcuts::tool_key(tool);
+    let key = Some(key_text.as_str())
         .filter(|k| !k.is_empty())
         .filter(|k| {
             let needed = 36.0
@@ -278,7 +255,7 @@ fn tool_row(
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, clickable, selected, name)
     });
-    let tip = match tool.key() {
+    let tip = match key_text.as_str() {
         "" => name.to_owned(),
         k => format!("{name} ({k})"),
     };
@@ -429,13 +406,19 @@ fn preset_footer(ui: &mut Ui, app: &mut AppState, tool: Tool, bar: Rect) {
     }
 }
 
+/// 一覧の行の矩形（上の帯と下の帯の間。パネルが低すぎて入らなければ高さ 0）。
+fn list_body_rect(area: Rect, shape: &ListShape) -> Rect {
+    let top = area.top() + shape.strip;
+    Rect::from_min_max(
+        pos2(area.left(), top),
+        pos2(area.right(), (area.bottom() - shape.footer).max(top)),
+    )
+}
+
 /// サブツールの一覧の全体（上の帯・行・下の帯）。`area` は一覧の矩形。
 fn list_section(ui: &mut Ui, app: &mut AppState, tool: Tool, area: Rect, shape: &ListShape) {
     let strip = Rect::from_min_size(area.min, vec2(area.width(), shape.strip));
-    let body = Rect::from_min_max(
-        pos2(area.left(), area.top() + shape.strip),
-        pos2(area.right(), area.bottom() - shape.footer),
-    );
+    let body = list_body_rect(area, shape);
     let footer = Rect::from_min_max(pos2(area.left(), area.bottom() - shape.footer), area.max);
     match tool.def().subtools {
         SubTools::Brushes | SubTools::Erasers => {
@@ -512,137 +495,23 @@ fn list_section(ui: &mut Ui, app: &mut AppState, tool: Tool, area: Rect, shape: 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
-    let ctx = ui.ctx().clone();
-    app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
-    let lang = app.lang;
+    app.brushes
+        .samples
+        .begin_frame(ui.ctx().cumulative_pass_nr());
     let tool = app.tool;
-    let def = tool.def();
     app.subtools.ui.panel_right = r.right();
     app.subtool_follow(tool);
-
-    let props_open = app.section_open("tool-props", true);
-    let sized = def.sized;
-    let size_open = sized && app.section_open("brush-sizes", true);
-    let props_h = if props_open {
-        app.subtools.ui.props_content[tool as usize]
-    } else {
-        0.0
-    };
-    let size_h = if size_open {
-        brushes::sizes_height(r.width() - 8.0)
-    } else {
-        0.0
-    };
-    let fixed = SECTION_HEIGHT + props_h + if sized { SECTION_HEIGHT + size_h } else { 0.0 };
     let shape = list_shape(ui, app, tool, r.width());
-    let avail = (r.height() - fixed).max(0.0);
-    // ブラシの一覧は余った高さを全部使う。ほかの一覧は行の数の高さ（ツールプロパティが長くても縮めない。全体がスクロールする）で、
-    // 多くなったら一覧の中でスクロールする
-    let list_h = if shape.fills {
-        avail.max(shape.strip + MIN_LIST + shape.footer)
-    } else {
-        shape.strip + shape.body.min(MAX_ROWS * ROW) + shape.footer
-    };
-    let content = fixed + list_h;
-    app.brushes.ui.panel_content = content;
-
-    // 全体のスクロール（一覧の中でホイールを使い切れなければ、全体を送る）
-    let (list_content, list_view) = match def.subtools {
-        SubTools::Brushes | SubTools::Erasers => (
-            app.brushes.ui.list_content,
-            list_h - shape.strip - shape.footer,
-        ),
-        _ => (
-            app.subtools.ui.list_content,
-            list_h - shape.strip - shape.footer,
-        ),
-    };
-    let list_scrolls = list_content > list_view;
-    let list_top_guess = r.top() - app.brushes.ui.panel_scroll + shape.strip;
-    let list_rect_guess =
-        Rect::from_min_size(pos2(r.left(), list_top_guess), vec2(r.width(), list_view));
-    if ui.rect_contains_pointer(r) {
+    // ホイールは一覧の中で受ける（行の外へ送る全体のスクロールは無い。範囲は一覧が収める）
+    if ui.rect_contains_pointer(list_body_rect(r, &shape)) {
         let wheel = ui.input(|i| i.smooth_scroll_delta.y);
-        if ui.rect_contains_pointer(list_rect_guess) && list_scrolls {
-            match def.subtools {
-                SubTools::Brushes | SubTools::Erasers => app.brushes.ui.list_scroll -= wheel,
-                _ => app.subtools.ui.list_scroll -= wheel,
-            }
-        } else {
-            app.brushes.ui.panel_scroll -= wheel;
+        match tool.def().subtools {
+            SubTools::Brushes | SubTools::Erasers => app.brushes.ui.list_scroll -= wheel,
+            _ => app.subtools.ui.list_scroll -= wheel,
         }
     }
-    let bar = Scroll::new(r, content, &mut app.brushes.ui.panel_scroll);
-    let scroll = app.brushes.ui.panel_scroll;
-    let area = Rect::from_min_max(
-        pos2(r.left(), r.top() - scroll),
-        pos2(r.right() - bar.reserved(), r.bottom()),
-    );
     let outer = ui.clip_rect();
     ui.set_clip_rect(r.intersect(outer));
-
-    let mut y = area.top();
-    list_section(
-        ui,
-        app,
-        tool,
-        Rect::from_min_size(pos2(area.left(), y), vec2(area.width(), list_h)),
-        &shape,
-    );
-    y += list_h;
-    // ツールプロパティ
-    let open = brushes::section_band(
-        ui,
-        app,
-        y,
-        area,
-        "tool-props",
-        lang.pick("ツールプロパティ", "Tool Properties"),
-        "tune",
-    );
-    y += SECTION_HEIGHT;
-    if open {
-        let mut rows = Rows::compact(
-            Rect::from_min_max(
-                pos2(area.left(), y),
-                pos2(area.right(), area.bottom().max(y + 1.0)),
-            ),
-            0.0,
-        );
-        (def.properties)(ui, app, &mut rows, &ctx);
-        rows.indent = 0.0;
-        rows.space(6.0);
-        // 中身の高さは次のフレームの組み立てに使う（変わったら、すぐ組み立て直す）
-        if (rows.used() - app.subtools.ui.props_content[tool as usize]).abs() > 0.5 {
-            ctx.request_repaint();
-        }
-        app.subtools.ui.props_content[tool as usize] = rows.used();
-        y += rows.used();
-    }
-    // ブラシサイズ（大きさを持つツールだけ）
-    if sized {
-        let open = brushes::section_band(
-            ui,
-            app,
-            y,
-            area,
-            "brush-sizes",
-            lang.pick("ブラシサイズ", "Brush Size"),
-            "target",
-        );
-        y += SECTION_HEIGHT;
-        if open {
-            brushes::sizes_body(
-                ui,
-                app,
-                Rect::from_min_size(pos2(area.left(), y), vec2(area.width(), size_h)),
-            );
-        }
-    }
+    list_section(ui, app, tool, r, &shape);
     ui.set_clip_rect(outer);
-    bar.end(
-        ui,
-        "subtools.panel.scroll",
-        &mut app.brushes.ui.panel_scroll,
-    );
 }

@@ -571,6 +571,26 @@ pub fn button(
     tooltip: Option<&str>,
     icon_name: Option<&str>,
 ) -> Response {
+    button_shown(
+        ui, r, id_salt, label, primary, enabled, tooltip, icon_name, true, None,
+    )
+}
+
+/// 文字のボタン。`show_label` を false にすると、アイコン（`icon_name`）だけを中央に描く（名前は試験・読み上げ用に残る）。
+/// `toggled` を渡すと、読み上げ・試験にはその印（選んでいる・いない）のボタンとして出る。
+#[allow(clippy::too_many_arguments)]
+pub fn button_shown(
+    ui: &mut Ui,
+    r: Rect,
+    id_salt: impl egui::AsIdSalt,
+    label: &str,
+    primary: bool,
+    enabled: bool,
+    tooltip: Option<&str>,
+    icon_name: Option<&str>,
+    show_label: bool,
+    toggled: Option<bool>,
+) -> Response {
     let id = ui.make_persistent_id(id_salt);
     let shown = look(ui.ctx(), id, enabled);
     let response = interact(ui, r, id, enabled, Sense::click());
@@ -606,6 +626,7 @@ pub fn button(
         t::TEXT
     };
     match icon_name {
+        Some(name) if !show_label => icon(p, r, name, color, 16.0),
         Some(name) => {
             let w = text_width(p, label, t::LABEL) + 22.0;
             let start = Rect::from_min_size(
@@ -623,7 +644,10 @@ pub fn button(
         }
         None => text(p, r, label, t::LABEL.with_color(color), Align::Center),
     }
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    response.widget_info(|| match toggled {
+        Some(on) => WidgetInfo::selected(WidgetType::Button, enabled, on, label),
+        None => WidgetInfo::labeled(WidgetType::Button, enabled, label),
+    });
     with_tooltip(response, tooltip)
 }
 
@@ -763,6 +787,9 @@ pub fn subsection_header(
     }
 }
 
+/// タブの 1 つが、アイコンと名前の両方を見せるのに、名前の幅へ足す幅（アイコンと余白）。
+const TAB_WITH_ICON_EXTRA: f32 = 34.0;
+
 /// アイコンと名前のタブの帯（プロパティの欄の頭）。押されたタブの番号を返す（押されなければ active）。幅が足りなければ名前だけ、
 /// 名前が全部は入らなければアイコンだけ（どのタブも同じ見せ方。名前はツールチップ）。
 pub fn tab_strip(
@@ -789,7 +816,7 @@ pub fn tab_strip(
         .map(|l| text_width(ui.painter(), l, t::HEADER))
         .fold(0.0f32, f32::max);
     // 全部のタブが同じ見せ方になるよう、一番長い名前で決める
-    let with_icon = w.round() - 1.0 >= widest + 34.0;
+    let with_icon = w.round() - 1.0 >= widest + TAB_WITH_ICON_EXTRA;
     let text_only = w.round() - 1.0 >= widest + 8.0;
     let mut result = active;
     for i in 0..n {
@@ -941,6 +968,11 @@ impl<'a> SliderSpec<'a> {
     }
     pub fn tooltip(mut self, tip: &'a str) -> Self {
         self.tooltip = Some(tip);
+        self
+    }
+    /// 押せない理由があるときだけ、その短い理由をツールチップにする（押せるときは付けない）。
+    pub fn tooltip_reason(mut self, reason: Option<&'a str>) -> Self {
+        self.tooltip = reason;
         self
     }
     pub fn enabled(mut self, enabled: bool) -> Self {

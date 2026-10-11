@@ -1,4 +1,4 @@
-//! UV の表示専用の入口と、日英のショートカットのウィンドウ。
+//! UV の表示専用の入口と、日英の設定のウィンドウのショートカットの区分。
 use crate::common;
 use egui::{vec2, Color32, Rect};
 use egui_kittest::kittest::Queryable;
@@ -47,7 +47,7 @@ fn uv_corner_toggles_without_starting_a_stroke_in_both_languages() {
 }
 
 #[test]
-fn shortcut_window_is_localized_and_closes_without_document_changes() {
+fn shortcut_category_is_localized_and_closes_without_document_changes() {
     for lang in Lang::ALL {
         let mut app = AppState::new(32, 32);
         app.lang = lang;
@@ -63,15 +63,17 @@ fn shortcut_window_is_localized_and_closes_without_document_changes() {
                         ui.ctx().request_repaint();
                         return;
                     }
-                    yolu_app::shortcuts::show(ui.ctx(), app);
+                    yolu_app::prefs::show(ui.ctx(), app);
                 },
                 app,
             );
         h.run();
-        assert!(yolu_app::windows::window_rect(&h.ctx, "shortcuts").is_some());
+        assert!(yolu_app::prefs::last_rect(&h.ctx).is_some());
+        assert!(h.state().prefs.shows(yolu_app::prefs::Category::Shortcuts));
+        // 閉じるは見出しの印
         h.get_by_label(lang.pick("閉じる", "Close")).click();
         h.run();
-        assert!(!h.state().shortcuts.open);
+        assert!(!h.state().prefs.open);
         assert!(!h.state().can_undo());
     }
 }

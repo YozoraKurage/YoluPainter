@@ -483,8 +483,8 @@ pub fn draw(
         }
     }
     // 中ボタンか Space ＋ 左ドラッグで動かす
-    let space =
-        ui.input(|i| i.key_down(crate::keymap::VIEW_PAN)) && !ctx.egui_wants_keyboard_input();
+    let space = ui.input(|i| crate::keymap::hold_down(i, "view.pan_hold"))
+        && !ctx.egui_wants_keyboard_input();
     let panning = response.dragged_by(PointerButton::Middle)
         || (space && response.dragged_by(PointerButton::Primary));
     if panning {

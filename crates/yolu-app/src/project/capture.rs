@@ -97,7 +97,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
             let what = |e: &yolu_core::CoreError| {
                 lang.with_reason(
                     lang.pick(
-                        format!("セット「{}」の文書の写しを取れません", set.name),
+                        format!("セット「{}」の写しを取れません", set.name),
                         format!("Cannot copy texture set “{}”", set.name),
                     ),
                     lang.core_error(e),
@@ -440,8 +440,8 @@ fn compose_sets(
         let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
             BuildError::Message(lang.with_reason(
                 lang.pick(
-                    format!("セット「{}」の文書を作れません", set.name),
-                    format!("Cannot convert texture set “{}” to a document", set.name),
+                    format!("セット「{}」の中身を作れません", set.name),
+                    format!("Cannot build the contents of texture set “{}”", set.name),
                 ),
                 lang.io_error(&e),
             ))

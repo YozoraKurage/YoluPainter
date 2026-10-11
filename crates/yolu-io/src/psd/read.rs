@@ -1261,7 +1261,7 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
         if sig != *b"8BIM" || record.is_none() {
             if sig == *b"8BIM" && matches!(&key, b"Patt" | b"Pat2" | b"Pat3" | b"Txt2" | b"FMsk") {
                 s.omitted(
-                    format!("文書タグ {}", String::from_utf8_lossy(&key)),
+                    format!("ドキュメントタグ {}", String::from_utf8_lossy(&key)),
                     start,
                     length,
                 )

@@ -1,17 +1,18 @@
-//! マテリアルで塗る（Unity 版の「ブラシのマテリアル」）の欄: オン・オフ、塗るチャンネルの組（2 列のチップ）、組のチャンネルごとの値
-//! （Color は描画色の見本、Emission は色、Roughness・Metallic・Height は 0〜1、Normal は傾き）。プロパティの「マテリアル」のタブと、
-//! バケツ・ポリゴン塗りつぶしの欄の下に出る。値は画面の状態（`AppState::mat`）で、ブラシ・バケツ・ポリゴン塗りつぶしが使う。
-//! 画面には名前と値だけを出し、説明はツールチップ。
+//! 「マテリアル」のパネル（今のテクスチャセットの見た目。中身は `look::panel`）と、描くツールのツールプロパティの「塗るチャンネル」の区分
+//! （オン・オフ、塗るチャンネルの組の 2 列のチップ、組のチャンネルごとの値。Color は描画色の見本、Emission は色、Roughness・Metallic・Height は 0〜1、
+//! Normal は傾き）。「塗るチャンネル」の値は画面の状態（`AppState::mat`）で、ブラシ・消しゴム・バケツ・ポリゴン塗りつぶし・グラデーション・図形・パス・
+//! スポイトが使う。入れているあいだは見出しに点の印を付ける。画面には名前と値だけを出し、ツールチップは名前（と短い理由）だけ。
 
 use egui::{pos2, vec2, Rect, Sense, Ui, WidgetInfo, WidgetType};
 
 use super::color_window;
-use super::properties::{section, slider_row, status_row};
+use super::properties::{section_default, slider_row};
 use crate::engine::Channel;
 use crate::lang::Lang;
 use crate::m2::{channel_icon, channel_name};
 use crate::matpaint::{MatAction, CHANNELS};
-use crate::state::{Action, AppState};
+use crate::state::{Action, AppState, Tool};
+use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
 
@@ -26,23 +27,43 @@ fn two_decimals() -> NumberFormat<'static> {
     }
 }
 
-/// 「マテリアル」のタブ。
-pub fn material_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
-    material_section(ui, app, rows);
-    crate::look::panel::look_section(ui, app, rows);
+/// 「マテリアル」のパネル（テクスチャセットの見た目。はみ出したらスクロールする）。
+pub fn show(ui: &mut Ui, app: &mut AppState) {
+    let r = ui.max_rect();
+    ui.advance_cursor_after_rect(r);
+    let bar = Scroll::begin(ui, r, app.m2.material_content, &mut app.m2.material_scroll);
+    let scroll = app.m2.material_scroll;
+    let area = Rect::from_min_max(
+        pos2(r.left(), r.top() - scroll),
+        pos2(r.right() - bar.reserved(), r.bottom()),
+    );
+    let outer = ui.clip_rect();
+    ui.set_clip_rect(r.intersect(outer));
+    let mut rows = Rows::new(area, 0.0);
+    crate::look::panel::look_section(ui, app, &mut rows);
+    rows.indent = 0.0;
+    rows.space(8.0);
+    app.m2.material_content = rows.used();
+    ui.set_clip_rect(outer);
+    super::properties::end_drag_when_released(ui, app);
+    bar.end(ui, "material.scroll", &mut app.m2.material_scroll);
 }
 
-/// 「ブラシのマテリアル」の節（開閉は他の欄と同じく覚える）。
-pub fn material_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+/// ツールプロパティの「塗るチャンネル」の区分（開閉は他の欄と同じく覚える。初めは閉じている）。
+pub fn paint_channels_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let (open, _) = section(
+    // 入れているあいだは、閉じていても見えるように、見出しに点の印
+    let marked = app.mat.enabled;
+    let (open, _) = section_default(
         ui,
         app,
         rows,
-        "brush-material",
-        lang.pick("ブラシのマテリアル", "Brush Material"),
+        "paint-channels",
+        lang.pick("塗るチャンネル", "Paint Channels"),
         "layers",
         None,
+        false,
+        marked,
     );
     if !open {
         return;
@@ -54,12 +75,12 @@ pub fn material_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         row,
         "mat.toggle",
-        lang.pick("複数のチャンネルを一度に塗る", "Paint several channels at once"),
+        lang.pick(
+            "複数のチャンネルを一度に塗る",
+            "Paint several channels at once",
+        ),
         on,
-        Some(lang.pick(
-            "オンなら、下でチェックしたチャンネルを、それぞれの値で 1 回のストロークで塗ります（2D と 3D、バケツ、ポリゴン塗りつぶし）。1 回の取り消しで全部が戻ります。オフなら、選んでいるチャンネルを描画色で塗ります",
-            "On: one stroke (or fill) paints every channel checked below with its own value, in 2D and 3D. One undo takes all of them back. Off: paints the selected channel with the paint color",
-        )),
+        None,
         free,
     );
     if next != on {
@@ -70,18 +91,19 @@ pub fn material_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         return;
     }
     chips(ui, app, rows, lang, free);
-    if app.m2.edit_mask {
-        status_row(
-            ui,
-            rows,
-            lang.pick("マスクに塗っています", "Painting the layer mask"),
-        );
-    } else if app.m2.brush.effect.is_paint() {
+    // （マスクに描くあいだは、この区分でなくレイヤーマスクの欄が出る。`tool_props`）
+    if values_apply(app) {
         for channel in app.mat.included() {
             value_rows(ui, app, rows, channel, lang, free);
         }
     }
     rows.space(4.0);
+}
+
+/// 値の行を出すか: そのツールが塗るチャンネルの値を使うとき。ブラシの効果（指先・ぼかし・クローン）を見るのは、ブラシと消しゴムのときだけ
+/// （バケツ・グラデーション・図形・多角形・パス・スポイト・選択のツールの塗りは、ブラシの効果によらず値で塗る）。
+fn values_apply(app: &AppState) -> bool {
+    !matches!(app.tool, Tool::Brush | Tool::Eraser) || app.m2.brush.effect.is_paint()
 }
 
 /// 塗るチャンネルの組（2 列のチップ。押すと足す・外す）。
@@ -92,17 +114,7 @@ fn chips(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: boo
         for (cell, channel) in cells.iter().zip(line) {
             let included = app.mat.includes(*channel);
             let name = channel_name(lang, &app.doc, *channel);
-            let tip = if included {
-                lang.pick(
-                    format!("{name}: ストロークで塗る（クリックで外す）"),
-                    format!("{name}: painted by the stroke (click to leave it out)"),
-                )
-            } else {
-                lang.pick(
-                    format!("{name}: 塗らない（クリックで追加）"),
-                    format!("{name}: not painted (click to paint it too)"),
-                )
-            };
+            let tip = name.clone();
             let current = *channel == app.m2.paint_channel;
             if chip(ui, *cell, *channel, &name, included, current, free, &tip) {
                 app.apply(Action::Mat(MatAction::Channel(*channel, !included)));

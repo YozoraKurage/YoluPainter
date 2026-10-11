@@ -14,7 +14,9 @@
 //! - **モデルの同一性は `Arc` の弱い参照で見る**（`ModelId`）。アドレスだけを覚えると、旧モデルが解放されたあとに別のモデルが同じ
 //!   アドレスに置かれて同じと取り違える（ポーズを変えるたびにモデルは作り直される）。
 //! - **入力（モデルの写しと指紋）を作る場所**: 始める・書き出すときは必要ならその場で作る（`bake_input`）。ウィンドウの状態表示は毎フレーム
-//!   求めるので、モデルが替わったら別のスレッドで作り（`bake_input_nowait`）、できるまで状態は「確認中」にする。
+//!   求めるので、モデルが替わったら別のスレッドで作り（`bake_input_nowait`）、できるまで状態は「確認中」にする。作りかけの入力は、ウィンドウを
+//!   閉じていれば手放す（`release_idle_bake_input`）ので、ウィンドウを閉じているあいだは、モデルの差し替えもポーズの変更も追わない（前の入力のまま
+//!   照合する）。例外は、.ylp を開いてモデルを読み直した直後の照合し直し 1 回（`ReopenCheck`）。
 //!
 //! 高ポリからの投影（参照）は、ウィンドウで選べるようになるまで使わない（参照なしで焼く）。
 
@@ -27,10 +29,11 @@ pub mod uvmap;
 pub mod window;
 
 use std::collections::{HashSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, Weak};
 
-use yolu_gpu::{bake_mesh_maps, GpuBakeSlot};
+use yolu_gpu::{bake_mesh_maps, GpuBakeSlot, RayQueryWhy};
 pub use yolu_gpu::{BakeAdapter, BakeBackend, BakeRun, FallbackKind, GpuBakeMethod};
 
 pub use maps::MeshMapSet;
@@ -117,6 +120,17 @@ impl ModelId {
     }
 }
 
+/// .ylp を開いてモデルを読み直した直後の、焼いたマップの照合し直しを待つ印。開いた瞬間の 3D ビューは試しの立方体で、焼いたマップは立方体と
+/// 照合して「古い」になる。読み終えたモデルの入力（指紋）ができて効果の入力へ渡るまで、作りかけの入力を手放さない
+/// （ウィンドウが閉じていると、毎フレーム作り直しては手放し、いつまでもできない）。済んだら手放し、あとは追わない。
+struct ReopenCheck {
+    /// 印を付けたときのプロジェクトの世代（`np.generation`。別のプロジェクトにしたら無効）。
+    generation: u64,
+    /// 照合するモデル: 読み終えた時点のもの（ポーズを戻した後の形。描いている最中で入れ替わりを待っているなら、そのモデル）。その後ポーズの変更や
+    /// モデルの差し替えで替わったら、追わずに手放す。
+    model: ModelId,
+}
+
 /// 作った入力（モデルの形ごとに 1 回）。失敗も覚える（毎フレーム作り直さない）。
 struct CachedInput {
     model: ModelId,
@@ -149,12 +163,18 @@ pub struct BakeState {
     /// GPU のデバイスとシェーダー（焼くたびに作り直さない。別のスレッドから共有する）。
     gpu: Arc<GpuBakeSlot>,
     probe: Arc<Mutex<GpuProbe>>,
+    /// GPU の確認の世代（確認に影響する設定が変わるたびに進む。古い世代の結果は書き戻さない）。
+    probe_generation: Arc<AtomicU64>,
     job: Option<Job>,
     queue: VecDeque<u32>,
     total: usize,
     finished: usize,
     input: Option<CachedInput>,
     pending: Option<PendingInput>,
+    /// .ylp を開いた直後の照合し直しを待っている（`AppState::expect_reopen_check`）。
+    reopen_check: Option<ReopenCheck>,
+    /// 別のスレッドで入力を作り始めた回数（`bake_input_nowait`）。試験が、作りかけを毎フレーム立てていないことを数える。
+    input_builds: u64,
     /// 手でアイランドを選んでいる（次に 2D・3D で押したアイランドをこの一覧へ入れる）。
     pub pick: Option<overlap::Picking>,
     /// 手で選ぶアイランドの索引（モデルの入力ごと）。
@@ -201,8 +221,36 @@ impl BakeState {
         self.probe.lock().map(|p| p.clone()).unwrap_or_default()
     }
 
+    /// 設定の「ベイクで RT コアを使う」を、GPU のデバイスへ反映する（毎フレーム呼んでよい）。ray query はデバイスの作り方が変わるので、値が
+    /// 変わったら次の確認・ベイクでデバイスを作り直し、GPU の確認の結果を捨てる。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY` が切なら、設定は効かない。
+    pub fn follow_ray_query(&self, setting: bool) {
+        let on = setting && yolu_gpu::ray_query_env_allows();
+        if self.gpu.ray_query() != on {
+            self.gpu.set_ray_query(on);
+            if let Ok(mut p) = self.probe.lock() {
+                // 世代を進める: 確認の途中のスレッドが、古い設定での結果を書き戻さない
+                self.probe_generation.fetch_add(1, Ordering::Relaxed);
+                *p = GpuProbe::Unknown;
+            }
+        }
+    }
+
+    /// 試験用: GPU の確認の世代。
+    #[doc(hidden)]
+    pub fn probe_generation_for_test(&self) -> u64 {
+        self.probe_generation.load(Ordering::Relaxed)
+    }
+
+    /// 試験用: GPU のデバイスを ray query つきで作る設定になっているか。
+    #[doc(hidden)]
+    pub fn ray_query_enabled(&self) -> bool {
+        self.gpu.ray_query()
+    }
+
     /// 選んだ場所で GPU を使うはずなのに、確かめていなければ別のスレッドで確かめ始める（毎フレーム呼んでよい）。
-    pub fn ensure_gpu_probe(&self) {
+    /// `ray_query` は設定の「ベイクで RT コアを使う」。
+    pub fn ensure_gpu_probe(&self, ray_query: bool) {
+        self.follow_ray_query(ray_query);
         let allow_software = match self.backend {
             BakeBackend::Cpu => return,
             BakeBackend::Auto => false,
@@ -220,15 +268,22 @@ impl BakeState {
         }
         *state = GpuProbe::Probing { allow_software };
         let (slot, shared) = (self.gpu.clone(), self.probe.clone());
+        let (generations, generation) = (
+            self.probe_generation.clone(),
+            self.probe_generation.load(Ordering::Relaxed),
+        );
         let spawned = std::thread::Builder::new()
             .name("yolu-gpu-probe".into())
             .spawn(move || {
                 let result = slot.probe(allow_software);
                 if let Ok(mut p) = shared.lock() {
-                    *p = GpuProbe::Done {
-                        allow_software,
-                        result,
-                    };
+                    // 確かめている間に設定が変わっていたら、古い設定の結果は捨てる（次のフレームが確かめ直す）
+                    if generations.load(Ordering::Relaxed) == generation {
+                        *p = GpuProbe::Done {
+                            allow_software,
+                            result,
+                        };
+                    }
                 }
             });
         if let Err(e) = spawned {
@@ -259,6 +314,12 @@ impl BakeState {
     /// 描き直しを続けるために真）。
     pub fn is_checking(&self) -> bool {
         self.pending.is_some() || self.pending_islands.is_some() || self.menu_wait.is_some()
+    }
+
+    /// 試験用: 別のスレッドで入力を作り始めた回数（毎フレーム作りかけを立てては捨てていないことを数える）。
+    #[doc(hidden)]
+    pub fn input_builds_started(&self) -> u64 {
+        self.input_builds
     }
 
     pub fn progress(&self) -> Option<Progress> {
@@ -443,6 +504,63 @@ pub fn fallback_text(lang: Lang, kind: FallbackKind) -> &'static str {
     }
 }
 
+/// RT コアを使わなかった理由の短い文（焼く場所の行のツールチップ。理由の種類から言語ごとに作る。自己照合の数などの詳しい文は出さない）。
+/// `env_off` は環境変数で切っていること（`RayQueryWhy::Disabled` の言い分けに使う）。
+pub fn ray_query_why_text(lang: Lang, why: RayQueryWhy, env_off: bool) -> String {
+    let (head, reason) = match why {
+        RayQueryWhy::Disabled if env_off => (
+            lang.pick("RT コアは使いません", "RT cores are off"),
+            lang.pick(
+                "環境変数で切っています",
+                "turned off by an environment variable",
+            ),
+        ),
+        RayQueryWhy::Disabled => (
+            lang.pick("RT コアは使いません", "RT cores are off"),
+            lang.pick("設定で切っています", "turned off in the settings"),
+        ),
+        other => (
+            lang.pick("RT コアを使えませんでした", "RT cores were not used"),
+            match other {
+                RayQueryWhy::NotSupported => {
+                    lang.pick("この GPU は対応していません", "not supported by this GPU")
+                }
+                RayQueryWhy::NotApplicable => {
+                    lang.pick("このベイクは対象外です", "not available for this bake")
+                }
+                RayQueryWhy::Device => lang.pick(
+                    "デバイスを作れませんでした",
+                    "the GPU device could not be created",
+                ),
+                RayQueryWhy::Shader => lang.pick(
+                    "シェーダーを作れませんでした",
+                    "the shader could not be built",
+                ),
+                RayQueryWhy::Accel => lang.pick(
+                    "加速構造を作れませんでした",
+                    "the acceleration structure could not be built",
+                ),
+                RayQueryWhy::CheckRun => {
+                    lang.pick("照合を回せませんでした", "the check could not be run")
+                }
+                RayQueryWhy::CheckFailed => {
+                    lang.pick("照合に通りませんでした", "it did not pass the check")
+                }
+                RayQueryWhy::RunFailed => lang.pick(
+                    "焼いている途中で失敗したので止めました",
+                    "it failed while baking, so it was turned off",
+                ),
+                RayQueryWhy::Disabled => unreachable!("上で扱った"),
+            },
+        ),
+    };
+    paren_text(lang, head, reason)
+}
+/// 「頭（理由）」。日本語は全角のかっこで詰め、英語は半角で前に空白。
+fn paren_text(lang: Lang, head: &str, inner: &str) -> String {
+    format!("{head}{}", paren(lang, inner))
+}
+
 /// 焼く場所の一行（ウィンドウの状態・記録）。`warn` は CPU に戻った注意、`detail` はツールチップに出す詳しい理由。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlaceLine {
@@ -505,7 +623,10 @@ pub fn run_line(lang: Lang, run: &BakeRun) -> PlaceLine {
                     paren(lang, &format!("{software}{method}"))
                 ),
                 warn: false,
-                detail: None,
+                // RT コアを使わなかった理由の種類（使えたときは何も出さない。自己照合の数は `ray_query_note` とログだけ）
+                detail: stats
+                    .ray_query_why
+                    .map(|why| ray_query_why_text(lang, why, !yolu_gpu::ray_query_env_allows())),
             }
         }
         None => match run.fallback_kind {
@@ -584,6 +705,17 @@ pub fn stale_reasons(check: &MeshMapCheck) -> String {
         .map(|r| r.to_string())
         .collect::<Vec<_>>()
         .join(" / ")
+}
+
+/// 焼いた AO を書き出しに使えるか。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum OcclusionState {
+    /// 焼いていない。
+    None,
+    /// 焼いてあるが今の条件のものではない（使わない）。理由。
+    Stale(String),
+    /// 今の条件で焼いたもの。
+    Current,
 }
 
 /// 書き出しの AO の元。
@@ -692,6 +824,7 @@ impl AppState {
             });
         match spawned {
             Ok(_) => {
+                self.bake.input_builds += 1;
                 self.bake.pending = Some(PendingInput {
                     model: ModelId::of(&model),
                     rx,
@@ -700,6 +833,11 @@ impl AppState {
             }
             Err(e) => Some(self.cache_input(&model, Err(e.to_string()))),
         }
+    }
+
+    /// 手元の入力（作ってあるもの。今のモデルのものとは限らない。無ければ None）。効果の入力の同期が、モデルの差し替え・ポーズの変更を追わないときに使う。
+    pub(crate) fn bake_input_held(&self) -> Option<Result<Arc<MeshBakeInput>, String>> {
+        self.bake.input.as_ref().map(|c| c.input.clone())
     }
 
     /// 作り終えている今のモデルの入力（作っている最中・まだ作っていなければ None。作り始めも待ちもしない。ベイクのウィンドウが入力を作っている
@@ -885,74 +1023,141 @@ impl AppState {
         }
     }
 
-    /// 書き出しに使う AO（今の条件で焼いたものだけ）。
-    pub fn occlusion_for_export(&mut self, index: usize) -> Occlusion {
+    /// セットに AO のマップが焼いてあるか（今の条件のものかは [`AppState::occlusion_state`]）。
+    pub fn has_baked_occlusion(&self, index: usize) -> bool {
+        self.sets
+            .get(index)
+            .is_some_and(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion).is_some())
+    }
+
+    /// 焼いた AO を書き出しに使えるか（バイト列は作らない）。`input` は今のモデルの入力（無ければ照合できない）。
+    pub fn occlusion_state(&self, index: usize, input: Option<&MeshBakeInput>) -> OcclusionState {
         let lang = self.lang;
         let Some(map) = self
             .sets
             .get(index)
             .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
-            .cloned()
         else {
-            return Occlusion::None;
+            return OcclusionState::None;
         };
         let doc = self.set_doc(index);
         if (map.width(), map.height()) != (doc.width() as usize, doc.height() as usize) {
-            return Occlusion::Stale(
-                lang.pick("焼いた大きさが文書と違う", "baked size differs")
+            return OcclusionState::Stale(
+                lang.pick("焼いた大きさがキャンバスと違う", "baked size differs")
                     .into(),
             );
         }
-        let input = self.bake_input().ok();
-        let expected = self.mesh_map_expectation(index, input.as_deref());
+        let expected = self.mesh_map_expectation(index, input);
         let check = map.provenance().check(&expected);
         match check.state {
-            MeshMapState::Current => {}
-            MeshMapState::Unverified => {
-                return Occlusion::Stale(
-                    lang.pick("モデルが無く照合できない", "no model to check against")
-                        .into(),
-                )
-            }
-            MeshMapState::Stale => return Occlusion::Stale(stale_reasons(&check)),
+            MeshMapState::Current => OcclusionState::Current,
+            MeshMapState::Unverified => OcclusionState::Stale(
+                lang.pick("モデルが無く照合できない", "no model to check against")
+                    .into(),
+            ),
+            MeshMapState::Stale => OcclusionState::Stale(stale_reasons(&check)),
         }
-        let (w, h) = (map.width(), map.height());
-        let mut bytes = vec![255u8; w * h];
-        for y in 0..h {
-            for x in 0..w {
-                let i = y * w + x;
-                if map.coverage()[i] != 0 {
-                    let v = map.value(x as i32, y as i32, 0).unwrap_or(1.0);
-                    bytes[i] = occlusion_byte(v);
-                }
-            }
-        }
-        Occlusion::Bytes(bytes)
     }
 
-    /// ウィンドウを閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
-    /// 作り直す）。作っている最中のものも、ウィンドウを閉じていれば手放す（ID の色のツールを選んでいるとき・入力を待つ読むだけのセットが
-    /// あるときを除く）。毎フレーム呼ぶ。
-    pub fn release_idle_bake_input(&mut self) {
-        // ID の色のツール（強調・部品の欄）は、ウィンドウが無くても毎フレーム入力を求めて待つ。作っている最中のものを手放すと、毎フレーム作り直しが
-        // 始まって終わらない
-        // アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
-        // （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）
-        let island_menu = matches!(
+    /// 書き出しに使う AO（今の条件で焼いたものだけ）。
+    pub fn occlusion_for_export(&mut self, index: usize) -> Occlusion {
+        if !self.has_baked_occlusion(index) {
+            return Occlusion::None;
+        }
+        let input = self.bake_input().ok();
+        match self.occlusion_state(index, input.as_deref()) {
+            OcclusionState::None => Occlusion::None,
+            OcclusionState::Stale(why) => Occlusion::Stale(why),
+            OcclusionState::Current => {
+                let map = self
+                    .sets
+                    .get(index)
+                    .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
+                    .expect("今の条件と照合できたマップ");
+                let (w, h) = (map.width(), map.height());
+                let mut bytes = vec![255u8; w * h];
+                for y in 0..h {
+                    for x in 0..w {
+                        let i = y * w + x;
+                        if map.coverage()[i] != 0 {
+                            let v = map.value(x as i32, y as i32, 0).unwrap_or(1.0);
+                            bytes[i] = occlusion_byte(v);
+                        }
+                    }
+                }
+                Occlusion::Bytes(bytes)
+            }
+        }
+    }
+
+    /// .ylp を開いてモデルを読み直したとき（`newproject::reopen`・Live Link の開き直し）に呼ぶ: 焼いたマップを持つセットがあれば、読み終えた
+    /// モデルの入力（指紋）が効果の入力へ渡って照合し直しが 1 回済むまで、作りかけの入力を手放さない。開いた瞬間のマップは試しの立方体と
+    /// 照合して「古い」で、読み終えた後に入力を作る間もウィンドウが閉じていると、読むだけにならずに動き続けるセット（位置の空間のノイズなど）は
+    /// 「古い」のまま、いつまでも照合し直せなかった。済んだら今までどおり手放し、ポーズの変更・モデルの差し替えには追わない。
+    pub(crate) fn expect_reopen_check(&mut self) {
+        self.bake.reopen_check =
+            self.view3d
+                .latest_model()
+                .filter(|m| !m.demo)
+                .map(|model| ReopenCheck {
+                    generation: self.np.generation,
+                    model: ModelId::of(model),
+                });
+    }
+
+    /// 今のモデルの入力を、作って待つか（ウィンドウ・ID の色のツール・アイランドのメニュー・入力待ちの読むだけのセット・開いた直後の照合し直し・
+    /// 焼いた AO を照合する書き出しのウィンドウがあるとき。焼いたマップがあるのに手元の入力が 1 つも無いときも、作る）。待つあいだは、作りかけを手放さず（`release_idle_bake_input`）、
+    /// 効果の入力の同期も今のモデルの入力が届くまで待つ。待たないときは、手元の入力のまま照合して、新しく作り始めない（モデルの差し替え・
+    /// ポーズの変更は追わない）。手放す側と作る側が別の条件で動くと、作りかけを毎フレーム立てては捨てて、入力がいつまでも届かない。
+    pub(crate) fn bake_input_followed(&mut self) -> bool {
+        self.bake.window.is_some()
+            || self.tool == crate::state::Tool::IdSelect
+            || self.island_menu_open()
+            || self.sets.iter().any(|s| s.waiting_inputs)
+            || self.reopen_check_waiting()
+            || self.export_window_follows_input()
+            || (self.bake.input.is_none() && self.sets.iter().any(|s| !s.mesh_maps.is_empty()))
+    }
+
+    /// アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
+    /// （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）。
+    fn island_menu_open(&self) -> bool {
+        matches!(
             self.popup.as_ref().map(|p| p.kind),
             Some(crate::state::PopupKind::BakeIsland { .. })
         ) || self.bake.menu_wait.is_some()
-            || self.bake.menu_press.is_some();
-        // 入力がそろうのを待つ読むだけのセット（.ylp を開いた直後で、モデルを別のスレッドで読み直しているときなど）があるあいだは、効果の入力の
-        // 同期（`sync_effect_inputs`）が毎フレーム入力を求めて待つ。手放すと ID の色のツールと同じく作り直しが終わらず、モデルを読んでもセットが開かない
-        let waiting = self.sets.iter().any(|s| s.waiting_inputs);
-        if self.bake.window.is_none()
-            && self.tool != crate::state::Tool::IdSelect
-            && !island_menu
-            && !waiting
-        {
+            || self.bake.menu_press.is_some()
+    }
+
+    /// 開いた直後の照合し直しをまだ待っているか。待たなくなったら（済んだ・別のプロジェクト・焼いたマップが無い・照合するモデルから替わった）
+    /// 印も外す。
+    fn reopen_check_waiting(&mut self) -> bool {
+        let Some(check) = self.bake.reopen_check.as_ref() else {
+            return false;
+        };
+        let maps = self.sets.iter().any(|s| !s.mesh_maps.is_empty());
+        // 照合するモデル（描いている最中なら、入れ替わりを待っているモデル）のままで、その入力がまだできていない。できた入力は、焼いたマップが
+        // あるあいだ手放さず、毎フレームの同期が効果の入力へ渡す
+        let waiting = check.generation == self.np.generation
+            && maps
+            && self.view3d.latest_model().is_some_and(|m| {
+                check.model.is(m) && !self.bake.input.as_ref().is_some_and(|c| c.model.is(m))
+            });
+        if !waiting {
+            self.bake.reopen_check = None;
+        }
+        waiting
+    }
+
+    /// ウィンドウを閉じていて、焼いたマップも走っているベイクも無ければ、作った入力を手放す（大きなモデルの写しを持ち続けない。要るときに
+    /// 作り直す）。作っている最中のものも、今のモデルの入力を待つ理由（`bake_input_followed`）が無ければ手放す。毎フレーム呼ぶ。
+    pub fn release_idle_bake_input(&mut self) {
+        // 待つ理由（ID の色のツールは強調・部品の欄が毎フレーム入力を求める、入力がそろうのを待つ読むだけのセット、開いた直後の照合し直し、など）が
+        // あるあいだに作りかけを手放すと、毎フレーム作り直しが始まって終わらない。効果の入力の同期も同じ条件で入力を作る
+        if !self.bake_input_followed() {
             self.bake.pending = None;
         }
+        let island_menu = self.island_menu_open();
         if self.bake.input.is_some()
             && self.bake.window.is_none()
             && !island_menu
@@ -1004,11 +1209,13 @@ impl AppState {
                 if self.bake.window.is_none() {
                     self.bake.window = Some(window::BakeWindow::default());
                 }
-                self.bake.ensure_gpu_probe();
+                self.bake
+                    .ensure_gpu_probe(self.prefs.settings.bake_ray_query);
             }
             BakeAction::Backend(backend) => {
                 self.bake.backend = backend;
-                self.bake.ensure_gpu_probe();
+                self.bake
+                    .ensure_gpu_probe(self.prefs.settings.bake_ray_query);
             }
             BakeAction::CloseWindow => {
                 self.bake.window = None;
@@ -1147,6 +1354,8 @@ impl AppState {
         let park = std::mem::take(&mut self.bake.park_next);
         let park_mid = std::mem::take(&mut self.bake.park_mid_bake);
         let backend = self.bake.backend;
+        self.bake
+            .follow_ray_query(self.prefs.settings.bake_ray_query);
         let gpu = self.bake.gpu.clone();
         let worker = Worker::spawn("yolu-bake", move |tx, cancel| {
             let flag = cancel.flag();
@@ -1232,7 +1441,7 @@ impl AppState {
         };
         let doc = self.set_doc(index);
         if doc.id() != job.doc_id || (doc.width(), doc.height()) != job.size {
-            return Some(lang.pick("文書", "the document"));
+            return Some(lang.pick("キャンバス", "the canvas"));
         }
         if self.set_slots(index).as_deref() != Some(&job.slots[..]) {
             return Some(lang.pick("マテリアルのスロット", "the material slots"));

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
-use crate::engine::{BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
+use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
 use crate::lang::Lang;
 use crate::livelink::{LinkRequest, LinkView};
 use crate::m2::{Edit, LayerDrag, M2State, UiOp};
@@ -99,7 +99,7 @@ impl Tool {
     }
 }
 
-/// ブラシの設定（画面の値。Unity 版の BrushState と同じ既定値）。
+/// ブラシの設定（画面の値。アンチエイリアスのほかは Unity 版の BrushState と同じ既定値）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrushState {
     pub radius: f32,
@@ -110,6 +110,8 @@ pub struct BrushState {
     pub pressure_size: bool,
     pub pressure_opacity: bool,
     pub pressure_flow: bool,
+    /// 丸い筆先の縁のアンチエイリアス（core の既定は なし。アプリの既定は 中）。
+    pub anti_alias: AntiAlias,
 }
 
 impl Default for BrushState {
@@ -123,6 +125,7 @@ impl Default for BrushState {
             pressure_size: true,
             pressure_opacity: true,
             pressure_flow: false,
+            anti_alias: AntiAlias::Medium,
         }
     }
 }
@@ -148,6 +151,7 @@ impl BrushState {
             pressure_opacity: self.pressure_opacity,
             pressure_flow: self.pressure_flow,
             erase,
+            anti_alias: self.anti_alias,
         }
     }
 }
@@ -337,13 +341,17 @@ pub enum StrokeSource {
     Pen(u32),
 }
 
-/// 回すドラッグ（R ＋ 左ドラッグ）。
+/// 回すドラッグ（Alt ＋ 左ドラッグ。R を押しながらの左ドラッグを割り当てたときも）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RotateDrag {
     pub start_angle: f32,
     pub start_pan: Vec2,
     pub swept: f32,
     pub last_pointer_angle: f32,
+    /// 押した点（画面の点）。ここから `gesture::CLICK_MOVE` を超えて動くまで回さない（動かさずに離す操作 — クローンの元 — が、小さな揺れで表示を回さないように）。
+    pub press: Pos2,
+    /// 押した点から遊びを超えて動いたか。
+    pub moved: bool,
 }
 
 /// キャンバスの入力の途中の状態。
@@ -359,9 +367,13 @@ pub struct CanvasInput {
     /// egui の Touch の筆圧（winit が出したとき）。
     pub touch_pressure: Option<f32>,
     pub panning: bool,
-    /// Shift ＋ 中ボタンのドラッグで回している。
-    pub middle_rotating: bool,
     pub rotating: Option<RotateDrag>,
+    /// 表示の回す・パン・拡縮を始めたボタン（そのボタンを離したら終える）。
+    pub nav_button: Option<egui::PointerButton>,
+    /// 描く・選択などのツールの押しを始めたボタン（そのボタンを離したらツールが終える。無ければ左ボタン）。
+    pub tool_button: Option<egui::PointerButton>,
+    /// 右ボタン（ペンのサイドボタン）でスポイトを始めている（押したまま動かすと見本が付いてくる。離して決める）。
+    pub eyedrop: Option<crate::eyedrop::RightPress>,
     pub rotate_key_held: bool,
     pub space_held: bool,
     pub last_pointer: Option<Pos2>,
@@ -376,6 +388,11 @@ pub struct CanvasInput {
     /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定。
     pub shift_hold: Option<ShiftHold>,
     pub ruler_constraint: Option<crate::drafting::Constraint>,
+    /// クローンの元を決める組み合わせ（既定は Alt + 左）で押した点とボタン（画面の点。動かさずに離したらクローンの元にする。動かしたら
+    /// ドラッグの操作だけ）。
+    pub clone_press: Option<(Pos2, egui::PointerButton)>,
+    /// 描いているクローンのストロークが使う offset（文書の座標の、描く点から元までのずれ。元の印が今写している点へ動くのに使う）。
+    pub clone_offset: Option<yolu_core::glam::DVec2>,
 }
 
 /// Shift で押した点（文書座標）のまわりのぶれの抑え。画面の点で一定の距離（`SHIFT_HOLD_POINTS`）を超えて動くまで、点を押した所に留める。
@@ -388,12 +405,51 @@ pub struct ShiftHold {
     pub direction: Option<(f64, f64)>,
 }
 
+/// Shift で押した点から動いたとみなす画面の距離（点）。これより内側のぶれでは、向きを決めず点も動かさない。縮小して見ていても
+/// 画面の 1 画素のぶれが数画素の向きに見えないよう、文書の画素でなく画面の点で測る（2D のキャンバスも 3D ビューも同じ）。
+pub const SHIFT_HOLD_POINTS: f64 = 8.0;
+
+impl ShiftHold {
+    /// Shift で押した点 `origin` のぶれの抑え。前の終点から線を引いた押し（`from_previous`）は、ぶれを超えて動いたら普通に描き、
+    /// 前の終点が無い押しは、最初に動いた向きを 45° 刻みで固定する（2D のキャンバスも 3D ビューも同じ）。
+    pub fn new(origin: (f64, f64), from_previous: bool) -> ShiftHold {
+        ShiftHold {
+            origin,
+            locks: !from_previous,
+            direction: None,
+        }
+    }
+
+    /// 点 `at`（`origin` と同じ座標）に、ぶれの抑えと向きの固定を当てる。`near` は、`at` が押した点から画面で `SHIFT_HOLD_POINTS` より近いか。
+    /// 返すのは当てた点で、None は「続きは普通に描く」（前の終点から線を引いた押しが、ぶれを超えて動いた）。向きは、固定する押しで最初に
+    /// ぶれを超えて動いたときの向きを 45° 刻みに丸めて決め、そのあとは変えない。
+    pub fn constrain(&mut self, at: (f64, f64), near: bool) -> Option<(f64, f64)> {
+        let (ox, oy) = self.origin;
+        if self.direction.is_none() && near {
+            return Some((ox, oy));
+        }
+        if !self.locks {
+            return None;
+        }
+        let (dx, dy) = (at.0 - ox, at.1 - oy);
+        let (ux, uy) = *self.direction.get_or_insert_with(|| {
+            let angle =
+                (dy.atan2(dx) / std::f64::consts::FRAC_PI_4).round() * std::f64::consts::FRAC_PI_4;
+            (angle.cos(), angle.sin())
+        });
+        let length = dx * ux + dy * uy;
+        Some((ox + length * ux, oy + length * uy))
+    }
+}
+
 /// 開いているポップアップの種類。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PopupKind {
     MenuBar(usize),
     BlendMode(LayerId),
     LayerContext(LayerId),
+    /// レイヤーの一覧の定規のアイコンの右クリック（そのレイヤーの定規の表示・表示の範囲・削除）。
+    RulerLayer(LayerId),
     /// M2 のポップアップ（調整レイヤーの種類・ブラシの選択肢・チャンネルの種類など）。
     M2(crate::m2_menu::Popup),
     /// テクスチャセットの右クリック（セットの番号 uid）。
@@ -402,8 +458,6 @@ pub enum PopupKind {
     Shelf,
     /// 3D ビューの表示のドロップダウン（マテリアル・中立・チャンネルだけ）。
     View3dShading,
-    /// オプションバーの対称のモード（▾）。
-    Symmetry,
     /// メニューバーの右端の Live Link の入口（状態・Unity・モデルの名前と、待つ／切る）。
     LiveLink,
     /// 重なった UV のベイクのアイランドのメニュー（セット・アイランドの代表の三角形・ベイクのウィンドウの見取り図からか・3D ビューの右クリックからか）。
@@ -415,6 +469,17 @@ pub enum PopupKind {
     },
     /// ドックのタブの右クリック（別ウィンドウで開く・ドックに戻す）。
     DockTab(crate::Tab),
+    /// オプションバーの左端のモードのドロップダウン（ペイント・編集・ポーズ）。
+    Mode,
+    /// パイメニュー（中身と途中の状態は `AppState::pie`。開いている間は下の入力を止める）。
+    Pie,
+    /// 編集・ポーズのモードの G/R/S の途中（中身は `AppState::objects`。開いている間は下の入力を止める）。
+    Transform,
+    /// ショートカットの設定で、次に押すキー・マウスの組み合わせを待っている間（中身は `AppState::shortcuts`。キーの表・キャンバス・3D ビューの
+    /// キーと Esc を止める。描くのは設定のウィンドウの「ショートカット」の区分）。
+    KeyCapture,
+    /// ショートカットの設定の、ツールのキーの動き方を選ぶ一覧（ツールを選ぶ操作の ID）。
+    ToolKeyMode(&'static str),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -456,7 +521,8 @@ pub enum Action {
     LayerMenu(crate::layermenu::Op),
     /// グラデーションのツール（形・終点・塗る/消す・ドラッグで塗る）。
     Gradient(crate::gradient::GradientOp),
-    ToggleRulerSnap,
+    /// 定規（作る・動かす・消す・移す・表示・スナップ。文書を変えるものは 1 つが 1 回の Undo）。
+    Ruler(crate::rulers::RulerAction),
     /// レイヤーの画素のコピー・カット・結合してコピー・ペースト（カットとペーストは 1 回の Undo）。
     Clip(crate::clipboard::ClipAction),
     OpenLogFolder,
@@ -525,7 +591,7 @@ pub enum Action {
     Update(crate::update::UpdateAction),
     /// 設定のウィンドウと、設定の値の選び。
     Prefs(crate::prefs::PrefsAction),
-    /// 筆圧の調整のウィンドウ（全体の筆圧の下限・上限・曲線）。
+    /// 筆圧の調整（設定の「ペン」。全体の筆圧の下限・上限・曲線）。
     Pressure(crate::pen::window::PressureAction),
     /// 復旧（世代の一覧のウィンドウ・開く・捨てる・設定）。
     Recovery(crate::recovery::RecoveryAction),
@@ -541,6 +607,16 @@ pub enum Action {
     Dock(crate::detach::DockOp),
     /// テキストツールとテキストレイヤーの値（打ち始め・打ち終わり・値・フォントのファイル・ラスタライズ。文書を変えるものは 1 つが 1 回の Undo）。
     Text(crate::textlayer::TextAction),
+    /// モード（ペイント・編集・ポーズ）と、編集・ポーズのツールの帯のツール（画面だけ。文書は変えない）。
+    Mode(crate::mode::ModeAction),
+    /// パイメニューを開く（画面だけ）。
+    Pie(crate::pie::PieAction),
+    /// 3D の視点（軸の視点・選んだセットを収める。画面だけ）。
+    View3dNav(crate::view3d::navigation::NavOp),
+    /// 編集・ポーズのモードの物（選ぶ・G/R/S・戻す・隠す・消す）。
+    Object(crate::objects::ObjectAction),
+    /// ツールのキーの動き方を替える（ショートカットの設定。操作の ID と動き方。キーの設定を保存する）。
+    ToolKeyMode(&'static str, crate::toolkeys::ToolKeyMode),
 }
 
 impl Action {
@@ -563,7 +639,7 @@ impl Action {
             Self::Gradient(..) => "Gradient",
             Self::Clip(..) => "Clip",
             Self::OpenLogFolder => "OpenLogFolder",
-            Self::ToggleRulerSnap => "ToggleRulerSnap",
+            Self::Ruler(..) => "Ruler",
             Self::ScreenPick(..) => "ScreenPick",
             Self::ToggleUvWireframe => "ToggleUvWireframe",
             Self::ShowShortcuts => "ShowShortcuts",
@@ -622,6 +698,11 @@ impl Action {
             Self::Automation(..) => "Automation",
             Self::Dock(..) => "Dock",
             Self::Text(..) => "Text",
+            Self::Mode(..) => "Mode",
+            Self::Pie(..) => "Pie",
+            Self::View3dNav(..) => "View3dNav",
+            Self::Object(..) => "Object",
+            Self::ToolKeyMode(..) => "ToolKeyMode",
         }
     }
 
@@ -651,7 +732,8 @@ impl Action {
                 | Action::ToggleVisible(_)
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
-        ) || matches!(self, Action::Fill(op) if op.edits_document())
+        ) || matches!(self, Action::Ruler(op) if op.edits_document())
+            || matches!(self, Action::Fill(op) if op.edits_document())
             || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
             || matches!(self, Action::Look(op) if op.edits_document())
             || matches!(self, Action::Gradient(op) if op.edits_document())
@@ -693,7 +775,7 @@ pub struct UiTemp {
     pub popup_was_open: bool,
     /// 見出しの開閉（キー → 開いているか）。
     pub sections: HashMap<&'static str, bool>,
-    /// プロパティの欄のタブ（ステンシル・マテリアル（マスクに描くあいだはマスク）・レイヤー）の番号。
+    /// プロパティの欄のタブ（ステンシル・レイヤー）の番号。
     pub property_tab: usize,
     /// タブのありか（メインウィンドウ・別ウィンドウ。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
     pub panels: crate::detach::PanelIndex,
@@ -746,6 +828,10 @@ pub struct AppState {
     pub canvas: CanvasInput,
     pub popup: Option<OpenPopup>,
     pub project_name: String,
+    /// 次に名前を付けて保存のウィンドウを開く場所（退避を開いたときの、元の .ylp のフォルダー。保存したら外す。無ければ OS の既定）。
+    pub save_folder: Option<std::path::PathBuf>,
+    /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
+    pub places: crate::dialog::places::Places,
     /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
     pub modified: bool,
     /// 直前の保存で書き直したテクスチャセット（正本）の数。画面には出さない（試験が、変えていないセットを書き直さないことを確かめる）。
@@ -780,6 +866,8 @@ pub struct AppState {
     pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
+    /// クローンの元と設定（2D のキャンバスと 3D ビューで共有する。元は 2D が文書の点、3D が面の点を別々に持つ）。
+    pub clone: crate::clone_source::CloneState,
     /// アセットの棚（.ylp の resources）。
     pub shelf: ShelfState,
     /// 個人のライブラリ（フォルダ。アセットの欄が棚と切り替えて見せる）。
@@ -815,6 +903,8 @@ pub struct AppState {
     /// グラデーションのツールの設定と途中の状態。
     pub gradient: crate::gradient::GradientState,
     pub drafting: crate::drafting::Drafting,
+    /// 定規の画面の状態（これから作る定規の設定・スナップの入り切り・選んでいる定規・ドラッグの途中）。定規そのものはレイヤーが持つ。
+    pub rulers: crate::rulers::RulerState,
     /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
     pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定のウィンドウ。
@@ -823,8 +913,11 @@ pub struct AppState {
     /// 重なった UV の図（表示と塗りの知らせ）。
     pub uv_overlap: crate::uv_wireframe::overlap::OverlapState,
     pub shortcuts: crate::shortcuts::ShortcutWindow,
-    /// 筆圧の調整のウィンドウ（枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
+    /// 筆圧の調整（設定の「ペン」。枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
     pub pressure: crate::pen::window::PressureWindow,
+    /// 今描いているウィンドウのペンの点のうち、OS に押しを奪われて補った離し（本物の離しではない）のポインタの番号。ウィンドウごとのパスの始めに、そのウィンドウの
+    /// ペンの受け口（`PenInput::drain_with_lost`）から入れる。2D と 3D の入力は `pen_release_lost` で見る。アプリの状態で、.ylp には入れない。
+    pub pen_lost: Vec<u32>,
     /// クリップボード（アプリの中の写しと、OS のクリップボードとの口。アプリの状態で、.ylp には入れない）。
     pub clip: crate::clipboard::ClipState,
     /// ブラシの一覧（組み込みと利用者のブラシ・ツールごとの覚え・見本・詳細のウィンドウ）。アプリの状態で、.ylp には入れない。
@@ -838,6 +931,20 @@ pub struct AppState {
     pub automation: crate::automation::Automation,
     /// テキストツール（打っている文字・次の文字の既定・フォントの覚え）。
     pub text: crate::textlayer::TextState,
+    /// モード（ペイント・編集・ポーズ）。替えるのは `set_mode`。
+    pub mode: crate::mode::EditorMode,
+    /// 編集・ポーズのモードのツールの帯で選んでいるツール。
+    pub edit_tool: crate::mode::EditTool,
+    /// パイメニュー（パイの並びと、開いているもの）。
+    pub pie: crate::pie::PieState,
+    /// 編集・ポーズのモードの物（選んだ物・隠した物・G/R/S の途中・スナップ）。
+    pub objects: crate::objects::ObjectsState,
+    /// 利用者のキー・マウス・パイの設定（設定のウィンドウの「ショートカット」の区分が変える。keymap.json）。
+    pub keys: crate::keyconfig::KeyConfig,
+    /// ツールのキーを押している間だけの切り替え（離したら戻す前のツール。保存しない）。
+    pub temp_tool: crate::toolkeys::TempTool,
+    /// ツールを替えた回数（`switch_to` が替えるたびに増える。押している間の切り替えが、別の手段で選ばれたかを見る）。
+    pub(crate) tool_epoch: u64,
 }
 
 /// ファイルのウィンドウの頼み。
@@ -860,14 +967,10 @@ pub enum DialogRequest {
     LibraryRemove,
     /// ライブラリのフォルダを OS のファイルのウィンドウで開く。
     LibraryReveal,
-    /// テンプレート（ID）の画像を書き出すフォルダを選ぶ。
-    ExportFolder(String),
-    /// 描くチャンネルの PNG を書き出すファイルを選ぶ。
-    ExportChannel,
+    /// 書き出しのウィンドウの書き出す先（形が PNG ならファイル、ほかはフォルダ）を選ぶ。
+    ExportDestination,
     /// 棚の場所のフォルダを選ぶ。
     PrefsLibraryFolder,
-    /// 全チャンネルの画像を書き出すフォルダを選ぶ。
-    ExportChannelsFolder,
     /// 読み込む PSD を選ぶ。
     PsdImport(crate::psd::PsdTarget),
     /// PSD の書き出し先を選ぶ。
@@ -894,6 +997,10 @@ pub enum DialogRequest {
     BrushFileDelete,
     /// 文字のフォントのファイルを選ぶ。
     TextFont,
+    /// キーの設定（keymap.json の形）を書き出す先を選ぶ。
+    KeymapExport,
+    /// 読み込むキーの設定を選ぶ。
+    KeymapImport,
 }
 
 /// 新しい空の文書（「レイヤー 1」を 1 つ。足したことは取り消せない）。返すのは文書とそのレイヤー。
@@ -982,6 +1089,8 @@ impl AppState {
             canvas: CanvasInput::default(),
             popup: None,
             project_name: lang.pick("名称未設定", "Untitled").into(),
+            save_folder: None,
+            places: Default::default(),
             modified: false,
             rewritten_sets: 0,
             reset_layout: false,
@@ -999,6 +1108,7 @@ impl AppState {
             project: None,
             dialog_request: None,
             view3d: View3dState::default(),
+            clone: Default::default(),
             shelf: ShelfState::default(),
             library: Default::default(),
             sel: crate::selection::SelState::default(),
@@ -1017,12 +1127,14 @@ impl AppState {
             fillfx: Default::default(),
             gradient: Default::default(),
             drafting: Default::default(),
+            rulers: Default::default(),
             update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             uv_wireframe: crate::uv_wireframe::Wireframe::default(),
             uv_overlap: Default::default(),
             shortcuts: crate::shortcuts::ShortcutWindow::default(),
             pressure: crate::pen::window::PressureWindow::default(),
+            pen_lost: Vec::new(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
             crash: Default::default(),
@@ -1030,6 +1142,13 @@ impl AppState {
             toolset: Default::default(),
             automation: Default::default(),
             text: Default::default(),
+            mode: Default::default(),
+            edit_tool: Default::default(),
+            pie: Default::default(),
+            objects: Default::default(),
+            keys: Default::default(),
+            temp_tool: Default::default(),
+            tool_epoch: 0,
         }
     }
 
@@ -1048,12 +1167,19 @@ impl AppState {
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
     pub fn is_stroking(&self) -> bool {
         self.canvas.stroke.is_some()
+            || self.view3d.input.cover.is_some()
             || self.doc.has_active_stroke()
             || self.transform.drag.is_some()
             || self.region.job.is_some()
             || self.region.leftover_drag.is_some()
             || self.path.drag.is_some()
             || self.drafting.drag.is_some()
+            || self.rulers.drag.is_some()
+            || self
+                .view3d
+                .input
+                .draft
+                .is_some_and(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
     }
 
     /// パネルの部品の見た目を描き始める前のまま保つ間か（描いている間と、3D ビューでポーズのギズモをドラッグしている間）。
@@ -1075,13 +1201,16 @@ impl AppState {
     }
 
     /// ツールを、ツールの列の `slot`（列に無いツールをキーで使うときは None）へ替える。ブラシ・消しゴムのツールは、そのツールの最後のブラシへ
-    /// （ストロークの最中にブラシが替わるなら断って false）。
+    /// （ストロークの最中にブラシが替わるなら断って false）。編集・ポーズのモードからは、ペイントのモードへ戻る（戻せなければツールも替えない）。
     pub(crate) fn switch_to(
         &mut self,
         tool: Tool,
         slot: Option<crate::toolset::SlotId>,
         keep_effect: bool,
     ) -> bool {
+        if !self.set_mode(crate::mode::EditorMode::Paint) {
+            return false;
+        }
         let changes = tool != self.tool || slot != self.toolset.set.active();
         if changes && !self.brush_for_slot(tool, slot) {
             return false;
@@ -1104,6 +1233,7 @@ impl AppState {
             self.subtool_enter(tool);
         }
         self.tool = tool;
+        self.tool_epoch += 1;
         true
     }
 
@@ -1160,12 +1290,15 @@ impl AppState {
             .settings(self.color.main, self.tool.erases() || pen_eraser)
     }
 
-    /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る。
+    /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る（離した後の残りを塗っている間は、先に確定する）。
     pub fn apply(&mut self, action: Action) {
+        // 離した後の残りを塗っている 3D のストローク（確定待ち）は、先に残りを塗って確定してから、この操作を通す（断らない・捨てない）
+        crate::view3d::input::settle(self);
         let prior = self.message_begin();
         // 記録中なら、命令にできる操作を記録する（入れ子の操作は外の操作として 1 回）
         let pending = crate::automation::record::before(self, &action);
         self.apply_action(action);
+        self.drop_foreign_ruler_selection();
         crate::automation::record::after(self, pending);
         self.message_end(prior);
     }
@@ -1195,7 +1328,9 @@ impl AppState {
             Action::ToggleUvOverlap => {
                 self.prefs.settings.uv_overlap = !self.prefs.settings.uv_overlap
             }
-            Action::ShowShortcuts => self.shortcuts.open = true,
+            Action::ShowShortcuts => self.prefs_apply(crate::prefs::PrefsAction::OpenAt(
+                crate::prefs::Category::Shortcuts,
+            )),
             Action::M2(edit) => self.m2_edit(edit),
             Action::M2Ui(op) => self.m2_ui(op),
             Action::Mat(a) => self.mat_apply(a),
@@ -1214,7 +1349,10 @@ impl AppState {
             Action::Fill(op) => self.fill_apply(op),
             Action::LayerMenu(op) => self.layer_menu_apply(op),
             Action::Gradient(op) => self.gradient_apply(op),
-            Action::ToggleRulerSnap => self.toggle_snap(),
+            // 定規のつまみのドラッグ中などに、文書を変える定規の操作（Ctrl+4 の切り替えなど）が通ると、離したときに古い値で書き戻される。
+            // 取り消しと同じく断る
+            Action::Ruler(op) if stroking && op.edits_document() => refuse(self),
+            Action::Ruler(op) => self.ruler_action(op),
             Action::Clip(action) => self.clip_action(action),
             Action::Quit => self.quit = true,
             Action::Undo => {
@@ -1410,6 +1548,7 @@ impl AppState {
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
             Action::ResetLayout => self.reset_layout = true,
             Action::SelectTool(tool) => {
+                // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
                 self.switch_tool(tool, false);
             }
             Action::SwapColors => self.color.swap(),
@@ -1559,6 +1698,14 @@ impl AppState {
             Action::Pressure(a) => self.pressure_apply(a),
             Action::Recovery(a) => self.recovery_apply(a),
             Action::Automation(op) => self.automation_apply(op),
+            Action::Mode(op) => self.mode_apply(op),
+            Action::Pie(op) => self.pie_apply(op),
+            Action::View3dNav(op) => crate::view3d::navigation::apply(self, op),
+            Action::Object(op) => self.objects_apply(op),
+            Action::ToolKeyMode(command, mode) => {
+                self.keys.set_tool_mode(command, mode);
+                self.keys_changed();
+            }
         }
     }
 }
@@ -1599,6 +1746,55 @@ pub fn blend_name(mode: BlendMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_shift_hold_stays_on_the_pressed_point_then_locks_the_first_direction_to_45_degrees() {
+        let mut hold = ShiftHold {
+            origin: (100.0, 100.0),
+            locks: true,
+            direction: None,
+        };
+        // 押した点のぶれ（画面の点で数画素まで）は、向きも点も動かさない
+        assert_eq!(hold.constrain((103.0, 101.0), true), Some((100.0, 100.0)));
+        assert_eq!(hold.direction, None);
+        // 超えて動いた最初の向きを 45° 刻みに丸めて固定し、その線の上へ落とす
+        let (x, y) = hold.constrain((140.0, 112.0), false).unwrap();
+        assert!(
+            (x - 140.0).abs() < 1e-9 && y.abs() > 0.0 && (y - 100.0).abs() < 1e-9,
+            "{x} {y}"
+        );
+        let direction = hold.direction.expect("向きを決めた");
+        assert!((direction.0 - 1.0).abs() < 1e-9 && direction.1.abs() < 1e-9);
+        // 向きを決めたあとは、近くへ戻っても向きを変えない
+        let (x, y) = hold.constrain((130.0, 150.0), true).unwrap();
+        assert!(
+            (x - 130.0).abs() < 1e-9 && (y - 100.0).abs() < 1e-9,
+            "{x} {y}"
+        );
+        // 斜めは 45°
+        let mut diagonal = ShiftHold {
+            origin: (0.0, 0.0),
+            locks: true,
+            direction: None,
+        };
+        let (x, y) = diagonal.constrain((50.0, 40.0), false).unwrap();
+        assert!(
+            (x - 45.0).abs() < 1e-9 && (y - 45.0).abs() < 1e-9,
+            "{x} {y}"
+        );
+    }
+
+    #[test]
+    fn a_shift_hold_from_a_previous_end_lets_go_when_it_moves_past_the_jitter() {
+        let mut hold = ShiftHold {
+            origin: (100.0, 100.0),
+            locks: false,
+            direction: None,
+        };
+        assert_eq!(hold.constrain((102.0, 100.0), true), Some((100.0, 100.0)));
+        // 前の終点からの線は押した点で終わっている: 超えて動いたら、続きは普通に描く
+        assert_eq!(hold.constrain((140.0, 112.0), false), None);
+    }
 
     #[test]
     fn hsv_round_trip_and_hex() {

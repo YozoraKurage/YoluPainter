@@ -3,7 +3,7 @@
 //! 保存したままの RGB の空間で、W3C の source-over（部分的なアルファの項を含む）に、分離できるモードは Photoshop の式
 //! （ソフトライトも Photoshop のもの）、色相・彩度・カラー・輝度は W3C の非分離の式（輝度 0.3/0.59/0.11）を使う。
 //! 計算は f32 で、結果はレイヤーごとに RGBA8 へ丸める。式は 1 つ（[`lanes`] と行の核の `*_block`）で、画素ごとの関数（[`blend`] など）・
-//! 行の核（[`blend_row`] など）のスカラー・SSE4.1・AVX2 の道のどれも同じ関数を通るので、道とスレッド数によらず同じバイトになる
+//! 行の核（[`blend_row`] など）のスカラー・SSE4.1・AVX2・NEON の道のどれも同じ関数を通るので、道とスレッド数によらず同じバイトになる
 //! （演算は IEEE の四則・平方根・floor・比較・選択だけ。積和の命令は使わない）。
 //!
 //! この式がこの crate の合成の正本。PSD の取り込みの照らし（yolu-io）もこの関数を呼ぶ。ブラシが描く画素の重ね（Normal）と
@@ -14,17 +14,14 @@ use crate::types::{BlendMode, Rgba8};
 pub(crate) mod lanes;
 mod rows;
 
-pub(crate) use rows::{blend_block, fade_block, mix_row_at};
+#[cfg(test)]
+pub(crate) use rows::scalar_steps;
+pub(crate) use rows::{blend_block, fade_block, mix_row_at, simd_step};
 
-/// 画素の計算（合成・調整・フィルター・Normal チャンネル）が使っている SIMD の道の名前（`"avx2"`・`"sse41"`・`"scalar"`）。
-/// 診断と計測用。CPU が持つ一番広い道を選び、環境変数 `YOLU_SIMD` で下げられる。
+/// 画素の計算（合成・調整・フィルター・Normal チャンネル）が使っている SIMD の道の名前（x86_64 は `"avx2"`・`"sse41"`、aarch64 は `"neon"`、
+/// どの CPU でも `"scalar"`）。診断と計測用。CPU が持つ一番広い道を選び、環境変数 `YOLU_SIMD` で下げられる。
 pub fn simd_level_name() -> &'static str {
-    use crate::math::simd::Level;
-    match crate::math::simd::level() {
-        Level::Avx2 => "avx2",
-        Level::Sse41 => "sse41",
-        Level::Scalar => "scalar",
-    }
+    crate::math::simd::level().name()
 }
 pub use rows::{blend_row, clip_row, fade_row, RowAmount};
 

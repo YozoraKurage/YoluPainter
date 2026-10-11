@@ -2,7 +2,7 @@
 //! 格子点の値は hash だけで決まるので、同じ格子の中の画素どうしでは使い回せる（[`Cache`]）。値は使い回しの有無で変わらない。
 //! SIMD の道では N 画素を 1 組で引く（[`fractal_lanes`]）。N 画素が同じ格子に入ればその角の値を全部のレーンで共有し、またぐ組は
 //! 1 画素ずつ引く。レーンの演算は 1 画素の式と同じ順で同じ IEEE の演算だけなので、結果のビットは道によらず同じ。
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::Lanes;
 pub(super) fn hash(mut h: u32) -> u32 {
     h ^= h >> 16;
@@ -117,7 +117,7 @@ pub(super) fn fractal(mut p: [f64; 3], seeds: [u32; 4], cache: &mut Cache) -> f6
 }
 
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn fade_lanes<V: Lanes>(t: V::F) -> V::F {
     let t3 = V::mul(V::mul(t, t), t);
     let inner = V::add(
@@ -127,14 +127,14 @@ pub(super) unsafe fn fade_lanes<V: Lanes>(t: V::F) -> V::F {
     V::mul(t3, inner)
 }
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn lerp_lanes<V: Lanes>(a: V::F, b: V::F, t: V::F) -> V::F {
     V::add(a, V::mul(V::sub(b, a), t))
 }
 /// 全部のレーンの `floor` が同じなら、その格子の整数の座標（`floor` が違えば格子は違う。大きすぎて整数に収まらない座標で、違う `floor` が
 /// 同じ整数になる場合も「違う」と見て 1 画素ずつ引くだけで、値は変わらない）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn same_key<V: Lanes>(floors: &[[f64; 4]; 3]) -> Option<[i32; 3]> {
     for lane in 1..V::N {
         if floors[0][lane] != floors[0][0]
@@ -152,7 +152,7 @@ fn same_key<V: Lanes>(floors: &[[f64; 4]; 3]) -> Option<[i32; 3]> {
 }
 /// N 画素の値ノイズ。N 画素が同じ格子に入るなら角の値を共有してレーンで補間し、またぐなら 1 画素ずつ引く（どちらも 1 画素の式と同じ値）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn value_lanes<V: Lanes>(p: [V::F; 3], seed: u32, cell: &mut Cell) -> V::F {
     let (fx, fy, fz) = (V::floor(p[0]), V::floor(p[1]), V::floor(p[2]));
     let (u, v, w) = (
@@ -203,7 +203,7 @@ unsafe fn value_lanes<V: Lanes>(p: [V::F; 3], seed: u32, cell: &mut Cell) -> V::
 /// # Safety
 /// `V` の命令を持つ CPU で、その命令を有効にした `#[target_feature]` 付きの入口の中から呼ぶ。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn fractal_lanes<V: Lanes>(
     mut p: [V::F; 3],
     seeds: [u32; 4],
@@ -324,9 +324,9 @@ mod tests {
         }
     }
 
-    /// SIMD の道（AVX2・SSE4.1）の N 画素ぶんの値は、1 画素の式とビットまで同じ。同じ格子に入る組・またぐ組・z が整数の組・負の座標・
+    /// SIMD の道（AVX2・SSE4.1・NEON）の N 画素ぶんの値は、1 画素の式とビットまで同じ。同じ格子に入る組・またぐ組・z が整数の組・負の座標・
     /// 大きな座標を通る。
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn lane_noise_equals_the_plain_formula_on_every_simd_level() {
         #[allow(clippy::needless_range_loop)]

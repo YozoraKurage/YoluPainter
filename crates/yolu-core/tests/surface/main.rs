@@ -7,14 +7,20 @@
 #[path = "../rayon_support/mod.rs"]
 mod rayon_support;
 
+mod anti_alias;
 mod brush_sources;
+mod cross_symmetry;
+mod dab_digest;
 mod material;
 mod mesh_maps;
 mod overlap_priority;
 mod stencil;
+mod surface_ortho;
 mod surface_path_rebind;
 mod surface_projection;
 mod surface_sampling;
+mod surface_screen;
 mod surface_stroke;
 mod surface_symmetry;
+mod surface_tip;
 mod uv_topology;

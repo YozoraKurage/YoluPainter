@@ -1259,7 +1259,7 @@ fn a_3d_smear_with_symmetry_falls_back_to_the_pixel_neighbourhood_and_still_pain
 }
 
 /// 板の真ん中を 1 回押して離す（ストロークの予算つき。projection は投影の塗りに使ってよいバイトで、None なら文書の予算から）。終わりまで
-/// 通ったら Ok（飛ばしたダブの理由つき）、どこかで断られたら、そのエラーと、ストロークを取り消した後の文書。
+/// 通ったら Ok、どこかで断られたら、そのエラーと、ストロークを取り消した後の文書。
 fn surface_dot_within(
     brush: &Brush,
     mirror: bool,
@@ -1268,7 +1268,7 @@ fn surface_dot_within(
 ) -> (
     Document,
     LayerId,
-    Result<Option<yolu_core::geometry::DabRefusal>, yolu_core::geometry::SurfaceStrokeError>,
+    Result<(), yolu_core::geometry::SurfaceStrokeError>,
 ) {
     let g = plate();
     let view = front(&g);
@@ -1306,7 +1306,7 @@ fn surface_dot_within(
             ..SurfaceStrokeOptions::default()
         },
     )
-    .and_then(|mut s| s.finish(&mut d, &mut stroke).map(|()| s.note));
+    .and_then(|mut s| s.finish(&mut d, &mut stroke));
     match &result {
         // 通った: 確定する
         Ok(_) => {
@@ -1345,7 +1345,7 @@ fn a_3d_mix_or_smear_over_the_stroke_budget_cancels_the_whole_stroke() {
         ),
     ] {
         let (open, lo, ok) = surface_dot_within(&brush, mirror, None, None);
-        assert_eq!(ok, Ok(None), "{name}");
+        assert_eq!(ok, Ok(()), "{name}");
         assert_ne!(
             px(&open, lo, W / 2, H / 2),
             BLUE,
@@ -1363,9 +1363,8 @@ fn a_3d_mix_or_smear_over_the_stroke_budget_cancels_the_whole_stroke() {
 }
 
 #[test]
-fn a_3d_mix_whose_projected_texels_do_not_fit_skips_the_dab_and_keeps_the_stroke() {
-    // 投影の画素が 1 回の操作のメモリに入らないダブは、混ぜる見積もりの前に飛ばす（理由を残し、ストロークは取り消さない）。何も塗らない
-    // ストロークは、確定しても履歴に残らない
+fn a_3d_mix_whose_projected_texels_do_not_fit_cancels_the_stroke() {
+    // 投影の画素が 1 回の操作のメモリに入らないダブは、混ぜる見積もりの前に断り、2D と同じくストロークごと取り消す（画素も履歴も元のまま）
     for (name, brush, mirror) in [
         ("混ぜる", mixing(3.0, RED, MixMode::Mix, 0.5), false),
         ("伸ばす", mixing(3.0, RED, MixMode::Smear, 0.5), false),
@@ -1378,7 +1377,9 @@ fn a_3d_mix_whose_projected_texels_do_not_fit_skips_the_dab_and_keeps_the_stroke
         let (d, l, result) = surface_dot_within(&brush, mirror, Some(200), None);
         assert_eq!(
             result,
-            Ok(Some(yolu_core::geometry::DabRefusal::MemoryBudget)),
+            Err(yolu_core::geometry::SurfaceStrokeError::Dab(
+                yolu_core::geometry::DabRefusal::MemoryBudget
+            )),
             "{name}"
         );
         assert!(!d.has_active_stroke(), "{name}");

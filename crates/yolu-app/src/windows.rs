@@ -52,7 +52,7 @@ pub struct ListSpec {
     pub close_label: String,
 }
 
-/// 名前のウィンドウ（"bake"・"export-confirm"・"export-report"・"psd-confirm"・"psd-import"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験がウィンドウの中だけを撮る）。
+/// 名前のウィンドウ（"bake"・"export"・"export-confirm"・"export-report"・"psd-confirm"・"psd-import"・"psd-report"・"merge-confirm"）の最後に描いた矩形（試験がウィンドウの中だけを撮る）。
 pub fn window_rect(ctx: &egui::Context, name: &str) -> Option<Rect> {
     let id = if name == "bake" {
         Id::new("yolu.bake-window")
@@ -114,7 +114,9 @@ pub fn show_list_with(
     }
     let mut esc = false;
     let closed = window::show(ctx, id, &window_spec, offset, false, |ui, frame| {
+        // 先に描いた部品（G/R/S など）が使った Esc では閉じない
         esc = ui.input(|i| i.key_pressed(Key::Escape))
+            && !crate::ui::window::escape_taken(ui.ctx())
             && (spec.modal
                 || ui
                     .input(|i| i.pointer.hover_pos())
@@ -239,7 +241,6 @@ pub fn show_list_with(
 
 /// 毎フレーム: ウィンドウと仕事の札を描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    crate::shortcuts::show(ctx, app);
     // 別のスレッドの仕事が動いている間は描き直し続ける（進み具合・終わりを受ける）
     if crate::jobs::repaint_needed(app) {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -249,6 +250,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     crate::panels::brush_catalog::show(ctx, app);
     crate::panels::brush_clipstudio::show(ctx, app);
     crate::newproject::window::show(ctx, app);
+    export::window::show(ctx, app);
     export_confirm(ctx, app);
     export_report(ctx, app);
     psd_confirm(ctx, app);
@@ -453,8 +455,8 @@ fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
                 tooltip: Some(
                     if replace.imported {
                         lang.pick(
-                            "この文書を取り込んだ PSD です。書き出した PSD に置き換えます",
-                            "This document was imported from this PSD. It is replaced by the exported PSD",
+                            "このプロジェクトを取り込んだ PSD です。書き出した PSD に置き換えます",
+                            "This project was imported from this PSD. It is replaced by the exported PSD",
                         )
                     } else {
                         lang.pick(

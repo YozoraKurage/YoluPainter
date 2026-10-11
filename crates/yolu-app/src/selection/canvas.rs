@@ -12,22 +12,22 @@ use egui::{Color32, Modifiers, Painter, Pos2, Rect, Shape, Stroke};
 
 use super::outline::Run;
 use super::overlay::Tint;
-use super::symmetry::{axis_lines, mirrored_points};
 use super::{combine_of, pen, quick, shape, SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CanvasSymmetry, SelectionCombine};
 use crate::lang::Lang;
 use crate::notice::Source;
+use crate::rulers::draw::mirrored_points;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
 
 /// これ以内（画面の点）しか動かさなければ、ドラッグでなくクリック。
-const CLICK_RADIUS: f32 = 4.0;
+pub(crate) const CLICK_RADIUS: f32 = 4.0;
 /// 多角形の始めの点にこれ以内（画面の点）で押すと閉じる。
-const CLOSE_RADIUS: f32 = 9.0;
+pub(crate) const CLOSE_RADIUS: f32 = 9.0;
 /// 多角形をダブルクリックで閉じる間隔（秒）。
-const DOUBLE_CLICK: f64 = 0.4;
+pub(crate) const DOUBLE_CLICK: f64 = 0.4;
 /// 点線で流す縁の線分の上限（画面に見える数。これより多いときは点線にせず、動かさない実線で描く）。
 const MAX_DASHED_RUNS: usize = 6_000;
 /// 1 画面で描く縁の線分の上限（それより多いときは先頭から描く）。
@@ -58,7 +58,8 @@ pub fn press(
     modifiers: Modifiers,
     now: f64,
 ) {
-    if app.is_stroking() || !app.tool.is_select() {
+    // 3D ビューで形を引いている間は、2D のキャンバスでは始めない（選択範囲の途中の形は 1 つ）
+    if app.is_stroking() || !app.tool.is_select() || crate::view3d::select::dragging(app) {
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
@@ -75,8 +76,14 @@ pub fn press(
         Tool::Wand => {
             let x = canvas.0.floor().clamp(0.0, (app.doc.width() - 1) as f64) as u32;
             let y = canvas.1.floor().clamp(0.0, (app.doc.height() - 1) as f64) as u32;
-            let mode = combine_of(app.sel.combine, modifiers);
-            app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand { x, y, mode })));
+            // 押した画素（キャンバスの外は端の画素へ寄せる）の中心から、対称定規の写しの種を作る。左右の写しが画素で揃い、外の写しは捨てる
+            let seeds = app
+                .symmetry_seeds((x as f64 + 0.5, y as f64 + 0.5), app.sel.snap_symmetry)
+                .into_iter()
+                .map(|(sx, sy)| (sx as u32, sy as u32))
+                .collect();
+            let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
+            app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand { seeds, mode })));
         }
         Tool::Polygon => polygon_press(app, view, pos, canvas, modifiers, now),
         tool => {
@@ -106,6 +113,8 @@ fn polygon_press(
         .last_press
         .is_some_and(|(t, p)| now - t <= DOUBLE_CLICK && p.distance(pos) <= CLICK_RADIUS * 2.0);
     app.sel.last_press = Some((now, pos));
+    // 3D ビューで打っていた途中の点は捨てる（途中の多角形は 1 つ）
+    app.sel.view3d.drop_polygon();
     let n = app.sel.polygon.len();
     if n >= 3 {
         let first = app.sel.polygon[0];
@@ -130,21 +139,26 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
         return;
     }
     if points.len() < 3 {
-        app.refuse(
-            Source::Selection,
-            app.lang
-                .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
-        );
+        refuse_too_few_points(app);
         return;
     }
-    let mode = combine_of(app.sel.combine, modifiers);
+    let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
     app.apply(Action::Sel(SelAction::Edit(SelEdit::Polygon {
         points,
         mode,
     })));
 }
 
-/// 多角形の最後の点を消す（Backspace）。
+/// 多角形の点が 3 つに満たないときの断り（2D のキャンバスと 3D ビューで同じ文）。
+pub(crate) fn refuse_too_few_points(app: &mut AppState) {
+    app.refuse(
+        Source::Selection,
+        app.lang
+            .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
+    );
+}
+
+/// 多角形の最後の点を消す（Backspace。2D のキャンバスで打った点だけ。3D ビューの点は 3D の入力が消す）。
 pub fn remove_last_point(app: &mut AppState) {
     app.sel.polygon.pop();
     if app.sel.polygon.is_empty() {
@@ -208,7 +222,13 @@ pub fn release(
     }
     let click = drag.moved < CLICK_RADIUS;
     let pressed_with = app.sel.press_modifiers;
-    let mode = drag_mode(app.sel.combine, drag.tool, pressed_with, modifiers);
+    let mode = drag_mode(
+        app.sel.combine,
+        drag.tool,
+        app.sel.press_button,
+        pressed_with,
+        modifiers,
+    );
     let c = shape::Constraint::of(&app.sel, drag.tool, pressed_with, modifiers);
     let (a, b) = shape::drag_corners(drag.start, drag.current, c.square, c.center);
     let corner_radius = app.sel.corner_radius;
@@ -255,9 +275,10 @@ pub fn release(
 
 /// 形のドラッグの組み合わせ方。Shift は押し始めに押していれば「追加」、押し始めたあとに押したなら縦横比の固定（長方形・楕円）で、
 /// 追加には使わない。Ctrl は押し始めか離したときのどちらかに押していれば「削除」。修飾が無ければオプションバーの値。
-fn drag_mode(
+pub(crate) fn drag_mode(
     base: SelectionCombine,
     tool: Tool,
+    button: egui::PointerButton,
     pressed_with: Modifiers,
     now: Modifiers,
 ) -> SelectionCombine {
@@ -267,6 +288,7 @@ fn drag_mode(
     let ctrl = pressed_with.ctrl || pressed_with.command || now.ctrl || now.command;
     combine_of(
         base,
+        button,
         Modifiers {
             shift,
             ctrl,
@@ -525,6 +547,82 @@ fn paint_ants(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &m
     }
 }
 
+/// ドラッグ中の形（長方形・楕円・なげなわ）の輪郭を描く。2D のキャンバスと 3D ビューで同じ見た目。`a`・`b` は向かい合う角、`lasso` はなげなわの点、
+/// `corner_radius` は長方形の角の半径、`screen` は形の座標を画面の点へ写す。
+pub(crate) fn paint_shape_outline(
+    painter: &Painter,
+    tool: Tool,
+    (a, b): ((f64, f64), (f64, f64)),
+    lasso: &[(f64, f64)],
+    corner_radius: f64,
+    screen: &dyn Fn((f64, f64)) -> Pos2,
+) {
+    match tool {
+        Tool::SelectRect if corner_radius > 0.0 => {
+            let points: Vec<Pos2> = shape::rounded_rect_outline(
+                a.0.min(b.0),
+                a.1.min(b.1),
+                a.0.max(b.0),
+                a.1.max(b.1),
+                corner_radius,
+            )
+            .iter()
+            .map(|p| screen((p.x, p.y)))
+            .collect();
+            path(painter, &points, true);
+        }
+        Tool::SelectRect => {
+            let corners = [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)].map(screen);
+            path(painter, &corners, true);
+        }
+        Tool::SelectEllipse => {
+            let c = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+            let r = ((b.0 - a.0).abs() / 2.0, (b.1 - a.1).abs() / 2.0);
+            let points: Vec<Pos2> = (0..64)
+                .map(|i| {
+                    let t = i as f64 / 64.0 * std::f64::consts::TAU;
+                    screen((c.0 + t.cos() * r.0, c.1 + t.sin() * r.1))
+                })
+                .collect();
+            path(painter, &points, true);
+        }
+        Tool::Lasso => {
+            let points: Vec<Pos2> = lasso.iter().map(|p| screen(*p)).collect();
+            path(painter, &points, false);
+            if let (Some(first), Some(last)) = (points.first(), points.last()) {
+                painter.line_segment(
+                    [*last, *first],
+                    Stroke::new(1.0, Color32::from_white_alpha(120)),
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 多角形の途中を描く（打った点 `placed` を結び、ポインタ `hover` までのゴムの線と、点の印。3 点以上で始めの点にポインタが届けば、閉じる印を大きく）。
+/// 2D のキャンバスと 3D ビューで同じ見た目。
+pub(crate) fn paint_polygon_draft(painter: &Painter, placed: &[Pos2], hover: Option<Pos2>) {
+    let Some(&first) = placed.first() else {
+        return;
+    };
+    let mut points = placed.to_vec();
+    if let Some(h) = hover {
+        points.push(h);
+    }
+    path(painter, &points, false);
+    let closable = placed.len() >= 3
+        && points
+            .last()
+            .is_some_and(|p| p.distance(first) <= CLOSE_RADIUS);
+    for (i, p) in points.iter().take(placed.len()).enumerate() {
+        let size = if i == 0 && closable { 6.0 } else { 3.5 };
+        let r = Rect::from_center_size(*p, egui::vec2(size * 2.0, size * 2.0));
+        painter.rect_filled(r, 1.0, Color32::from_black_alpha(160));
+        painter.rect_filled(r.shrink(1.2), 1.0, Color32::WHITE);
+    }
+}
+
 /// ドラッグ中の形と多角形の途中。
 fn paint_drafts(painter: &Painter, view: &CanvasView, app: &AppState, modifiers: Modifiers) {
     let screen = |p: (f64, f64)| view.to_screen(p.0, p.1);
@@ -534,65 +632,24 @@ fn paint_drafts(painter: &Painter, view: &CanvasView, app: &AppState, modifiers:
         }
         let c = shape::Constraint::of(&app.sel, d.tool, app.sel.press_modifiers, modifiers);
         let (a, b) = shape::drag_corners(d.start, d.current, c.square, c.center);
-        match d.tool {
-            Tool::SelectRect if app.sel.corner_radius > 0 => {
-                let points: Vec<Pos2> = shape::rounded_rect_points(
-                    a.0.min(b.0).round() as i64,
-                    a.1.min(b.1).round() as i64,
-                    a.0.max(b.0).round() as i64,
-                    a.1.max(b.1).round() as i64,
-                    app.sel.corner_radius,
-                )
-                .iter()
-                .map(|p| screen((p.x, p.y)))
-                .collect();
-                path(painter, &points, true);
-            }
-            Tool::SelectRect => {
-                let corners = [(a.0, a.1), (b.0, a.1), (b.0, b.1), (a.0, b.1)].map(screen);
-                path(painter, &corners, true);
-            }
-            Tool::SelectEllipse => {
-                let c = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-                let r = ((b.0 - a.0).abs() / 2.0, (b.1 - a.1).abs() / 2.0);
-                let points: Vec<Pos2> = (0..64)
-                    .map(|i| {
-                        let t = i as f64 / 64.0 * std::f64::consts::TAU;
-                        screen((c.0 + t.cos() * r.0, c.1 + t.sin() * r.1))
-                    })
-                    .collect();
-                path(painter, &points, true);
-            }
-            Tool::Lasso => {
-                let points: Vec<Pos2> = d.lasso.iter().map(|p| screen(*p)).collect();
-                path(painter, &points, false);
-                if let (Some(first), Some(last)) = (points.first(), points.last()) {
-                    painter.line_segment(
-                        [*last, *first],
-                        Stroke::new(1.0, Color32::from_white_alpha(120)),
-                    );
-                }
-            }
-            _ => {}
-        }
+        // 角を丸めた長方形は、選択範囲と同じく画素の座標へ丸めた角から
+        let (a, b) = if d.tool == Tool::SelectRect && app.sel.corner_radius > 0 {
+            ((a.0.round(), a.1.round()), (b.0.round(), b.1.round()))
+        } else {
+            (a, b)
+        };
+        paint_shape_outline(
+            painter,
+            d.tool,
+            (a, b),
+            &d.lasso,
+            app.sel.corner_radius as f64,
+            &screen,
+        );
     }
     if app.tool == Tool::Polygon && !app.sel.polygon.is_empty() {
-        let mut points: Vec<Pos2> = app.sel.polygon.iter().map(|p| screen(*p)).collect();
-        let first = points[0];
-        if let Some(h) = app.sel.polygon_hover {
-            points.push(screen(h));
-        }
-        path(painter, &points, false);
-        let closable = app.sel.polygon.len() >= 3
-            && points
-                .last()
-                .is_some_and(|p| p.distance(first) <= CLOSE_RADIUS);
-        for (i, p) in points.iter().take(app.sel.polygon.len()).enumerate() {
-            let size = if i == 0 && closable { 6.0 } else { 3.5 };
-            let r = Rect::from_center_size(*p, egui::vec2(size * 2.0, size * 2.0));
-            painter.rect_filled(r, 1.0, Color32::from_black_alpha(160));
-            painter.rect_filled(r.shrink(1.2), 1.0, Color32::WHITE);
-        }
+        let placed: Vec<Pos2> = app.sel.polygon.iter().map(|p| screen(*p)).collect();
+        paint_polygon_draft(painter, &placed, app.sel.polygon_hover.map(screen));
     }
 }
 
@@ -615,22 +672,7 @@ fn axis_color() -> Color32 {
     Color32::from_rgba_unmultiplied(115, 209, 255, 204)
 }
 
-/// 対称の軸（Unity 版と同じ水色の線）。
-fn paint_axes(painter: &Painter, view: &CanvasView, app: &AppState) {
-    if !app.sel.symmetry.show_axes {
-        return;
-    }
-    let Some(s) = active_symmetry(app) else {
-        return;
-    };
-    for ((x0, y0), (x1, y1)) in axis_lines(&s, app.doc.width(), app.doc.height()) {
-        let (a, b) = (view.to_screen(x0, y0), view.to_screen(x1, y1));
-        painter.line_segment([a, b], Stroke::new(3.0, Color32::from_black_alpha(90)));
-        painter.line_segment([a, b], Stroke::new(1.5, axis_color()));
-    }
-}
-
-/// キャンバスの上に、選択の縁・ドラッグ中の形・対称の軸を描く（合成の絵の上、ブラシのカーソルの下）。
+/// キャンバスの上に、選択の縁・ドラッグ中の形を描く（合成の絵の上、ブラシのカーソルの下）。対称の線は定規の描画（`rulers::draw`）。
 pub fn paint_overlay(
     ctx: &egui::Context,
     painter: &Painter,
@@ -645,7 +687,6 @@ pub fn paint_overlay(
     paint_ants(ctx, painter, view, app);
     paint_pen(ctx, painter, view, app);
     paint_drafts(painter, view, app, ctx.input(|i| i.modifiers));
-    paint_axes(painter, view, app);
 }
 
 /// 選択ペンのツール: 動いているストロークの被覆（足す・消すで色を変える）と、ブラシの直径の輪のカーソル。
@@ -655,6 +696,12 @@ fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mu
         pen::sync(app);
     }
     let sel = &mut app.sel;
+    // 変わったタイルは、ここで受け取って空にする（3D ビューも `sync` を呼ぶので、先に呼んだほうの分も溜まっている）
+    let changed = sel
+        .pen
+        .as_mut()
+        .filter(|a| !a.quick)
+        .and_then(|a| a.stroke.take_synced());
     match sel.pen.as_ref().filter(|a| !a.quick) {
         Some(active) => {
             let tint = if active.stroke.erase {
@@ -667,7 +714,7 @@ fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mu
                 view,
                 active.stroke.cover(),
                 tint,
-                Some(active.stroke.synced_tiles()),
+                changed.as_deref(),
                 "select-pen",
             );
         }
@@ -687,22 +734,55 @@ fn paint_pen(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &mu
     painter.circle_stroke(at, radius, Stroke::new(1.2, Color32::from_white_alpha(230)));
 }
 
-/// ブラシのカーソルを、対称の写しの所にも描く（水色の円。radius は画面の点）。
+/// ブラシのカーソルを、対称の写しの所にも描く（水色の円。radius は画面の点）。2D の対称の写しと、3D の対称（`model`。今のモデルの
+/// 面を写した先の UV）の写し、両方なら 3D の写しのそれぞれの 2D の写し。3D の写しの円は、写した先のテクスチャの細かさに合わせた大きさ。
 pub fn paint_mirrored_cursors(
     painter: &Painter,
     view: &CanvasView,
     app: &AppState,
+    model: Option<&yolu_core::geometry::ModelSymmetry>,
     at: Pos2,
     radius: f32,
 ) {
-    let Some(s) = active_symmetry(app) else {
+    if app.sel.quick || app.tool == Tool::SelectPen {
         return;
-    };
+    }
     let (x, y) = view.to_canvas(at);
-    for (mx, my) in mirrored_points(&s, x, y) {
+    let symmetry = active_symmetry(app);
+    let canvas = symmetry
+        .and_then(|s| s.transforms().ok())
+        .unwrap_or_default();
+    let copies = model
+        .and_then(|m| {
+            m.copies(
+                x,
+                y,
+                app.brush.radius as f64,
+                app.doc.width(),
+                app.doc.height(),
+            )
+            .ok()
+        })
+        .map(|c| c.copies)
+        .unwrap_or_default();
+    let mut points: Vec<((f64, f64), f32)> = symmetry
+        .map(|s| mirrored_points(&s, x, y))
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| (p, radius))
+        .collect();
+    for c in &copies {
+        let p = c.map(x, y);
+        let scale = (c.m[0] * c.m[3] - c.m[1] * c.m[2]).abs().sqrt() as f32;
+        points.push((p, radius * scale));
+        for t in canvas.iter().skip(1) {
+            points.push((t.map(p.0, p.1), radius * scale));
+        }
+    }
+    for ((mx, my), r) in points {
         let p = view.to_screen(mx, my);
-        painter.circle_stroke(p, radius, Stroke::new(3.0, Color32::from_black_alpha(100)));
-        painter.circle_stroke(p, radius, Stroke::new(1.2, axis_color()));
+        painter.circle_stroke(p, r, Stroke::new(3.0, Color32::from_black_alpha(100)));
+        painter.circle_stroke(p, r, Stroke::new(1.2, axis_color()));
     }
 }
 

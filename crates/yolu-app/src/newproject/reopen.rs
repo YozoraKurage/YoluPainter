@@ -2,6 +2,9 @@
 //!
 //! - 残す形は .ylp からの相対のパス（'/' 区切り。同じ場所から辿れなければ絶対のパス）。プロジェクトとモデルを同じフォルダの
 //!   組で動かしても、参照は切れない。形式も正本の版も変えない（`yolu_io::Project::with_view_model`。view.json の任意の項目）。
+//! - 退避のフォルダー（`<名前>.ylp-backups~`）の中の退避は、退避した元の .ylp の前の版なので、パスは元の .ylp のあるフォルダーから解く
+//!   （`base_dir`。保存で書き直す相対のパスも同じ基準）。探すのはこの 1 か所だけで、見つからなければ「モデルが見つかりません」にする
+//!   （退避の場所から解いた道を 2 番目に探すと、同じ名前の別のモデルを黙って拾いうる）。
 //! - 開くとき: ファイルがあるかの確かめも、読むのも別のスレッドで行い（画面のスレッドはファイルに触らない。終わるまで描ける。
 //!   取消は仕事の札）、読み終えたら 3D ビューに入れ、セットを鍵で結び付ける（モデルのマテリアルにセットを増やさない）。
 //!   ファイルが無くても参照は残す（保存で失わず、構成の「読み直す」で見つかったときに読める）。
@@ -105,7 +108,7 @@ pub fn relative_model_path(model: &Path, ylp: &Path) -> String {
         return slash(model);
     }
     let model = absolute(model);
-    let base = absolute(ylp.parent().unwrap_or_else(|| Path::new(".")));
+    let base = absolute(&base_dir(ylp));
     let m: Vec<Component> = model.components().collect();
     let b: Vec<Component> = base.components().collect();
     let common = m.iter().zip(&b).take_while(|(x, y)| x == y).count();
@@ -140,13 +143,25 @@ pub fn is_network_path(stored: &str) -> bool {
     }
 }
 
-/// view.json の文字列を、.ylp のあるフォルダから見たモデルのファイルのパスにする。
+/// view.json の相対のパスの基準のフォルダー: .ylp のあるフォルダー。退避のフォルダーの中の退避（`yolu_io::backup_origin`）は、退避した元の
+/// .ylp のあるフォルダー（退避は元のファイルの前の版で、パスは元のファイルから相対に書いてある）。
+fn base_dir(ylp: &Path) -> PathBuf {
+    // 退避の退避（前の版のアプリが、退避を開いて上書き保存して作った）も、元のファイルまでたどる
+    let mut file = ylp.to_path_buf();
+    while let Some(origin) = yolu_io::backup_origin(&file) {
+        file = origin;
+    }
+    file.parent()
+        .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
+}
+
+/// view.json の文字列を、.ylp のあるフォルダ（退避なら元の .ylp のあるフォルダ）から見たモデルのファイルのパスにする。
 pub fn resolve_model_path(stored: &str, ylp: &Path) -> PathBuf {
     let stored = Path::new(stored);
     if stored.is_absolute() {
         return stored.to_path_buf();
     }
-    absolute(&ylp.parent().unwrap_or_else(|| Path::new(".")).join(stored))
+    absolute(&base_dir(ylp).join(stored))
 }
 
 /// .ylp を開いたとき（`open_into` の終わり）: 参照があれば、モデルを読み始める。見つからない・読めない理由は、読み終えたときの知らせに
@@ -262,6 +277,8 @@ pub(super) fn poll(app: &mut AppState) {
                 kind = Kind::Warning;
                 text += &format!(" {note}");
             }
+            // 焼いたマップは、読み終えた（ポーズを戻した）このモデルで照合し直す
+            app.expect_reopen_check();
             (kind, text)
         }
         Some(Err(e)) => (
@@ -275,16 +292,17 @@ pub(super) fn poll(app: &mut AppState) {
             ),
         ),
     };
-    let text = if reopen.base.is_empty() {
-        note
+    // 注意・失敗はログの行（1 行に切る）に残る。長い開いた知らせの後ろに続けると、モデルの理由が切れて読めないので単独の知らせにする
+    // （開いた知らせは、開いたときに出してある）。残らない知らせ同士は、1 つの文にまとめて状態の帯に出す
+    if note_kind.is_logged() || reopen.base_kind.is_logged() || reopen.base.is_empty() {
+        app.notify(note_kind, crate::notice::Source::Open, note);
     } else {
-        format!("{} {note}", reopen.base)
-    };
-    app.notify(
-        reopen.base_kind.worse(note_kind),
-        crate::notice::Source::Open,
-        text,
-    );
+        app.notify(
+            reopen.base_kind.worse(note_kind),
+            crate::notice::Source::Open,
+            format!("{} {note}", reopen.base),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -308,6 +326,66 @@ mod tests {
             );
             let back = resolve_model_path(stored, ylp);
             assert_eq!(back, absolute(Path::new(model)), "{stored}");
+        }
+    }
+
+    /// 退避のフォルダーの中の退避は、元の .ylp のあるフォルダーから解く（本体と同じ view.json の文字列が同じモデルを指す）。保存で書き直す
+    /// 相対のパスも同じ基準。名前が退避に合わないファイルは、置いてあるフォルダーが基準のまま。
+    #[test]
+    fn a_backup_resolves_and_writes_the_model_path_from_the_file_it_backs_up() {
+        let main = Path::new("/work/proj/art/p.ylp");
+        let backup = Path::new("/work/proj/art/p.ylp-backups~/p-20260101T000000000Z.ylp");
+        let model = Path::new("/work/proj/models/body.fbx");
+        for stored in ["../models/body.fbx", "x/../../models/body.fbx"] {
+            assert_eq!(
+                resolve_model_path(stored, backup),
+                resolve_model_path(stored, main),
+                "{stored}"
+            );
+            assert_eq!(resolve_model_path(stored, backup), absolute(model));
+        }
+        assert_eq!(relative_model_path(model, backup), "../models/body.fbx");
+        assert_eq!(
+            relative_model_path(model, backup),
+            relative_model_path(model, main)
+        );
+        // 名前が退避に合わない・退避のフォルダーでない所のファイルは、置いてあるフォルダーが基準
+        for other in [
+            "/work/proj/art/p.ylp-backups~/keep.ylp",
+            "/work/proj/art/backups/p-20260101T000000000Z.ylp",
+        ] {
+            let other = Path::new(other);
+            assert_eq!(
+                resolve_model_path("m.fbx", other),
+                absolute(&other.with_file_name("m.fbx")),
+                "{other:?}"
+            );
+        }
+    }
+
+    /// 退避を開いて上書き保存した前の版のアプリが作った、退避の中の退避（`p.ylp-backups~/p-<時刻>.ylp-backups~/p-<時刻>-<時刻>.ylp`）も、
+    /// 元のファイルまでたどって同じ基準にする（読むときも、保存で書き直す相対のパスも）。
+    #[test]
+    fn a_backup_of_a_backup_is_traced_back_to_the_original_file() {
+        let main = Path::new("/work/proj/art/p.ylp");
+        let first = "/work/proj/art/p.ylp-backups~/p-20260101T000000000Z.ylp";
+        let second = format!("{first}-backups~/p-20260101T000000000Z-20260102T000000000Z.ylp");
+        let third = format!(
+            "{second}-backups~/p-20260101T000000000Z-20260102T000000000Z-20260103T000000000Z.ylp"
+        );
+        let model = Path::new("/work/proj/models/body.fbx");
+        for nested in [first, second.as_str(), third.as_str()] {
+            let nested = Path::new(nested);
+            assert_eq!(
+                resolve_model_path("../models/body.fbx", nested),
+                resolve_model_path("../models/body.fbx", main),
+                "{nested:?}"
+            );
+            assert_eq!(
+                relative_model_path(model, nested),
+                relative_model_path(model, main),
+                "{nested:?}"
+            );
         }
     }
 

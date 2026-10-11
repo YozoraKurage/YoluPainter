@@ -49,11 +49,12 @@ jobs:
             xvfb xauth nsis python3-yaml
       - name: 描画しないクレートの試験（並列）
         run: cargo test --workspace --exclude yolu-app --exclude yolu-gpu --locked --no-fail-fast
-      - name: 配る物のツールの試験（tools/dist.py・tools/check-workflows.py）と画面の試験を並べるツールの試験
+      - name: 配る物のツールの試験（tools/dist.py・tools/check-workflows.py）、画面の試験を並べるツールの試験、通信の見張りのツールの試験
         if: ${{ !cancelled() }}
         run: |
           python3 tools/test-dist.py
           python3 tools/test-render-tests.py
+          python3 tools/test-network-watch.py
       - name: Clippy（警告をエラーにする）
         if: ${{ !cancelled() }}
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -78,6 +79,8 @@ jobs:
         with:
           # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回 10 分以上かけてビルドし直す）
           cache-on-failure: true
+          # 通信の見張りのジョブ（linux-network）がこのキャッシュを読む（保存はこのジョブだけ）
+          shared-key: linux-render
       - name: ビルドとソフトウェア描画の依存を導入
         run: |
           sudo apt-get update
@@ -125,6 +128,60 @@ jobs:
           path: ${{ runner.temp }}/snapshot-diffs
           if-no-files-found: ignore
 
+  # 実際の通信の見張り（tools/network-watch.py）。本物のアプリを strace の下で動かし、外への接続の試みが更新の確認の curl だけであることを見る。
+  # 画面の試験のジョブと別にしているのは、更新の確認を動かすために更新用の公開鍵を組み込んで作るため: 公開鍵の環境変数を変えると yolu-update と
+  # yolu-app を作り直すので、同じジョブで作ると、画面の試験の作った物のキャッシュが、次の回の画面の試験のビルドのやり直しになる。
+  # キャッシュは画面の試験のジョブ（linux-render）と共有キーで読み（試験を回した後の target を使うので、作り直すのは yolu-update と yolu-app だけ）、
+  # このジョブは保存しない（save-if: false。鍵つきの物で上書きしない）。
+  # 組み込む鍵は使い捨ての公開鍵（秘密鍵は捨てた。配る物の鍵ではない）で、このジョブのアプリはどこにも配らない。
+  linux-network:
+    name: Linux の通信の見張り（strace）
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: linux-render
+          # 読むだけ。鍵つきのビルドの結果で、画面の試験のキャッシュを上書きしない
+          save-if: false
+      - name: ビルドとソフトウェア描画と strace の依存を導入
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
+            libxcursor-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev zlib1g-dev \
+            libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
+            xvfb xauth strace xdotool
+      - name: 見張りのツールの試験
+        run: python3 tools/test-network-watch.py
+      - name: アプリのビルド（使い捨ての更新用の公開鍵つき）
+        env:
+          YOLUPAINTER_UPDATE_PUBLIC_KEY: 6acc8faaa5f8beb6897bc7936ab6b930853dc4e563e4dc5f49a76f156ab16201
+        run: cargo build -p yolu-app -p yolu-cli --locked
+      # 起動 4 回（既定・受け口あり・開き直し・更新の確認あり）。外への接続・送信・名前の引き・待ち受けの試みを読み、終わりに場面ごとの表を出す。
+      - name: 実際の通信の見張り
+        env:
+          WGPU_BACKEND: vulkan
+        run: |
+          export XDG_RUNTIME_DIR="$RUNNER_TEMP/yolu-runtime"
+          mkdir -p "$XDG_RUNTIME_DIR"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          xvfb-run -a -s "-screen 0 1920x1080x24" python3 tools/network-watch.py --log-dir "$RUNNER_TEMP/network-logs" --time-limit 900
+      - name: strace のログを残す
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: network-logs
+          path: ${{ runner.temp }}/network-logs
+          if-no-files-found: ignore
+
   windows:
     name: Windows のビルドと画面なし試験
     runs-on: windows-latest
@@ -164,8 +221,41 @@ jobs:
         if: ${{ !cancelled() }}
         run: cargo test -p yolu-app --test headless --locked -- livelink_files::headless_ saved_selections::headless_ pose_saved::headless_ --test-threads=1
 
+  macos:
+    name: macOS のビルドと画面なし試験
+    # Apple Silicon の runner。アプリが macOS でビルドできること（タブレットの入力の `pen::mac_tablet` を含む）と、画面を使わない試験が通ることを見る。
+    # GPU・画面の統合試験は対象外。配る物（.app と ad-hoc の署名）は、下の dist のジョブ（dist-build.yml）が別の macOS の runner で作る。キャッシュの無い回の長さはまだ測っていない（最初の回を見て決め直す）
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Rust の準備
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # 試験が落ちた回でもビルドした結果を残す（残さないと落ちている間は毎回ビルドし直す）
+          cache-on-failure: true
+      - name: アプリのビルド
+        run: cargo build -p yolu-app -p yolu-cli --locked
+      - name: 描画を使わないクレートの試験
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --no-fail-fast -p yolu-core -p yolu-io -p yolu-brush-sets -p yolu-protocol -p yolu-ops -p yolu-cli -- --test-threads=1
+      - name: アプリの単体試験（画面なし）
+        if: ${{ !cancelled() }}
+        run: cargo test -p yolu-app --lib --locked -- --test-threads=1
+      # Windows のジョブが回す、OS のロックとファイルの置換を使う画面なしの結合試験のうち、2 組（復旧のロックと、Live Link の受け渡しのフォルダ・ファイル）。
+      # ほかの組（更新・ブラシの一覧・選択範囲・ポーズの保存）は、このジョブでは回さない（Linux の画面の試験が、同じ試験を Unix で回している）
+      - name: 復旧と Live Link のファイルの受け渡しの試験（画面なし）
+        if: ${{ !cancelled() }}
+        run: cargo test -p yolu-app --test headless --locked -- recovery::headless_ livelink_files::headless_ --test-threads=1
+
   # 配る物のビルド。main 向けの、同じリポジトリの枝からの PR だけ（フォークの PR には更新用の公開鍵の変数も渡らず、配る物にもしない）。
-  # 上の試験のジョブと並べて走るので、待ち時間は延びない。配布（release.yml）が、木が同じでこの実行の全部のジョブが成功していれば、ビルドし直さず受け取る。
+  # 上の試験のジョブと並べて走る。Windows のビルドは待ち時間を延ばさない（macOS のビルドの時間は、GitHub の runner ではまだ測っていない。
+  # 試作の対象なので、落ちても CI の結論は失敗にならず、時間の上限は dist-targets.json の timeout_minutes）。配布（release.yml）が、木が同じでこの実行の全部のジョブ（試作の対象のジョブを除く）が成功していれば、ビルドし直さず受け取る。
   dist-plan:
     name: 配る物のビルドの計画
     if: ${{ github.event_name == 'pull_request' && github.base_ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository }}
@@ -177,7 +267,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      # 対象は tools/dist-targets.json の「入力が要らない対象」だけ（Linux は wayland-protocols の LGPL の判断が済むまで入れない）
+      # 対象は tools/dist-targets.json の「入力が要らない対象」（Windows）と「入力の既定が入の対象」（macOS の試作）だけ（Linux は wayland-protocols の LGPL の判断が済むまで入れない）
       - id: plan
         run: python3 tools/dist.py plan
 

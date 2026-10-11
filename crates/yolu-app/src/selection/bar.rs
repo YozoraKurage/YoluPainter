@@ -51,26 +51,36 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
         }
         None => name.to_owned(),
     };
+    // 消去のキーは、今のモードで効くときだけ添える（編集のモードの Delete は選んだ物を消す）
+    let erase_name = crate::shortcuts::named_with_keys(
+        lang,
+        lang.pick("選択範囲を消去", "Erase Selection"),
+        &[crate::shortcuts::key_in("selection.erase", app.mode)],
+    );
     [
         vec![
             Item {
                 id: "deselect",
                 icon: "deselect",
-                tooltip: lang
-                    .pick("選択を解除（Ctrl+D / Esc）", "Deselect (Ctrl+D / Esc)")
-                    .into(),
+                tooltip: crate::shortcuts::named_with_keys(
+                    lang,
+                    lang.pick("選択を解除", "Deselect"),
+                    &[
+                        crate::shortcuts::key_in("selection.deselect", app.mode),
+                        app.mode.paints().then(|| "Esc".to_owned()),
+                    ],
+                ),
                 enabled: free,
                 action: edit(SelEdit::Clear),
             },
             Item {
                 id: "invert",
                 icon: "invert_colors",
-                tooltip: lang
-                    .pick(
-                        "選択範囲を反転（Ctrl+Shift+I）",
-                        "Invert Selection (Ctrl+Shift+I)",
-                    )
-                    .into(),
+                tooltip: crate::shortcuts::named_with_keys(
+                    lang,
+                    lang.pick("選択範囲を反転", "Invert Selection"),
+                    &[crate::shortcuts::key_in("selection.invert", app.mode)],
+                ),
                 enabled: free,
                 action: edit(SelEdit::Invert),
             },
@@ -110,10 +120,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "erase",
                 icon: "tools/eraser",
-                tooltip: named(
-                    lang.pick("選択範囲を消去（Delete）", "Erase Selection (Delete)"),
-                    &paint_reason,
-                ),
+                tooltip: named(&erase_name, &paint_reason),
                 enabled: free && paint_reason.is_none(),
                 action: edit(SelEdit::Erase),
             },
@@ -123,9 +130,10 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
                 id: "copy",
                 icon: "copy_add",
                 tooltip: named(
-                    lang.pick(
-                        "コピーして新しいレイヤーに（Ctrl+J）",
-                        "Copy to a New Layer (Ctrl+J)",
+                    &crate::shortcuts::named_with_keys(
+                        lang,
+                        lang.pick("コピーして新しいレイヤーに", "Copy to a New Layer"),
+                        &[crate::shortcuts::key_in("selection.to_new_layer", app.mode)],
                     ),
                     &copy_reason,
                 ),
@@ -187,7 +195,6 @@ pub fn visible(app: &AppState) -> bool {
         && app.region.drag.is_none()
         && app.canvas.rotating.is_none()
         && !app.canvas.panning
-        && !app.canvas.middle_rotating
         && app.canvas.zooming.is_none()
         // ペンが帯のボタンを押しているとき（押しの行き先が「何もしない」）は、ボタンを押し終えるまで出しておく
         && !app

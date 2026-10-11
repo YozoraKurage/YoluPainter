@@ -14,9 +14,12 @@
 //! - 使っていない棚の物: どのセットのレイヤー（正本の ID の項目）からも、見た目の設定（`look.json`）からも指されない `resources.json` の項目と中身。
 //!   使っているかは [`Project::used_resource_ids`] の 1 か所で決める。
 //! - 出どころのパス: 棚の項目の `origin` のうち `file`（絶対のパス）・`unityAsset`（Assets の中のパス）・`library`（置き場の相対パス）を `none` に。
-//!   使っている棚の項目は残し、出どころだけを外す。内蔵（`builtIn`）はキーと版だけでパスではないので残す。
+//!   使っている棚の項目は残し、出どころだけを外す。内蔵（`builtIn`）はキーと版だけでパスではないので残す。テキストレイヤーのフォントのファイル
+//!   （`font_kind` 1）の `font_path`（絶対のパス。利用者が入れたフォントは、場所にユーザー名を含みうる）は、ディレクトリを外してファイル名だけにする
+//!   （`font_sha256`・`font_family`・`font_postscript`・`font_weight`・`font_italic` は残す。開くときは中身の SHA-256 と名前で探し、相対の道は使わない）。
 //! - モデルの参照: `view.json` の `standaloneModel` と、モデルの GUID（空にする）、モデルの中のレンダラーの目（空にする）、根の `pose.json`
-//!   （モデルのポーズ。どのモデルのものか分からなくなる）。
+//!   （モデルのポーズ。どのモデルのものか分からなくなる）、根の `livelink.json`（Live Link で開いたモデルの記録。FBX と絵のファイルの絶対の場所・
+//!   Unity のプロジェクトの場所・書き出しの置き場を持つ。ポーズも入っているので、モデルの参照と一緒に除く）。
 //! - メッシュマップ: `sets/<ID>/meshmap-*.bin`（モデルの形から焼いた派生物。焼き直せる）。
 //! - Unity の値: `look.json` の `received`（Live Link で Unity のマテリアルから受けた値）。利用者の設定は残る。
 //! - 名前を付けて残した選択範囲: `sets/<ID>/selections.json` と `selection-*.bin`。作業の補助で、絵ではない。形式 8 のエントリなので、残した写しは
@@ -29,11 +32,12 @@
 
 use crate::{
     archive::split_set,
+    bigdoc::native_entries,
     check, guid,
     package::{Blob, Files},
     project::{json, read_view, required, writer_json},
     shelf::write_index,
-    NativeValue, Project, Resource, Result, TextureSet, WriterInfo,
+    NativeDocument, NativeValue, Project, Resource, Result, TextureSet, WriterInfo,
 };
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
@@ -47,7 +51,7 @@ pub enum Removal {
     UnusedShelf,
     /// 棚の物の出どころのパス。
     SourcePaths,
-    /// モデルの参照（`view.json`）。
+    /// モデルの参照（`view.json`・`pose.json`・`livelink.json`）。
     ModelReference,
     /// 焼いたメッシュマップ。
     MeshMaps,
@@ -124,6 +128,22 @@ fn file_name_of(path: &str) -> String {
         .find(|s| !s.is_empty())
         .unwrap_or(path)
         .to_owned()
+}
+
+/// テキストレイヤーのフォントのファイルの場所の項目名の終わり（正本の項目の道は `layers[N].text.font_path`）。
+const FONT_PATH_FIELD: &str = ".text.font_path";
+
+/// 正本の骨組みにある、ディレクトリを持つフォントの道（項目の道と、今の値）。ファイル名だけのものは除く。
+fn font_paths_of(document: &NativeDocument) -> Vec<(String, String)> {
+    document
+        .fields()
+        .iter()
+        .filter(|f| f.path.starts_with("layers[") && f.path.ends_with(FONT_PATH_FIELD))
+        .filter_map(|f| match &f.value {
+            NativeValue::Text(p) if file_name_of(p) != *p => Some((f.path.clone(), p.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 // ───────── 参照の集め（使っている棚の物の判定は、ここ 1 か所） ─────────
@@ -266,12 +286,23 @@ impl Project {
         if !unused.is_empty() {
             add(Removal::UnusedShelf, unused);
         }
-        let paths: Vec<String> = self
+        let mut paths: Vec<String> = self
             .resources
             .iter()
             .filter(|r| r.metadata.get("origin").is_some_and(has_source_path))
             .map(|r| r.name.clone())
             .collect();
+        // テキストレイヤーのフォントのファイル（場所を、ファイル名だけにする）
+        for set in &self.sets {
+            if let Ok(skeleton) = set.document.skeleton() {
+                for (_, path) in font_paths_of(&skeleton) {
+                    let name = file_name_of(&path);
+                    if !paths.contains(&name) {
+                        paths.push(name);
+                    }
+                }
+            }
+        }
         if !paths.is_empty() {
             add(Removal::SourcePaths, paths);
         }
@@ -319,9 +350,24 @@ impl Project {
         Inventory { found }
     }
 
-    /// `view.json` にモデルの参照があれば、その名前（モデルのファイルの名前。名前が無ければ空）。読めない `view.json` は、中を確かめられないので
-    /// 名前 `view.json` で当たる。
+    /// モデルの参照（`view.json` のモデルの場所・Unity のモデルの GUID・レンダラーの目と、Live Link で開いたモデルの記録 `livelink.json`）が
+    /// あれば、その名前（モデルのファイルの名前、記録はエントリの名前 `livelink.json`。名前が無ければ空）。読めない `view.json` は、中を確かめ
+    /// られないので名前 `view.json` で当たる。
     fn model_reference(&self) -> Option<Vec<String>> {
+        let view = self.view_model_reference();
+        let link = self.files.contains_key(crate::livelink::ENTRY);
+        if view.is_none() && !link {
+            return None;
+        }
+        let mut names = view.unwrap_or_default();
+        if link {
+            names.push(crate::livelink::ENTRY.into());
+        }
+        Some(names)
+    }
+
+    /// `view.json` にモデルの参照があれば、その名前（モデルのファイルの名前。名前が無ければ空）。
+    fn view_model_reference(&self) -> Option<Vec<String>> {
         let bytes = self.files.get("view.json")?;
         let Ok(view) = bytes.bytes().and_then(|b| read_view(&b)) else {
             return Some(vec!["view.json".into()]);
@@ -382,6 +428,9 @@ impl Project {
             on(Removal::UnusedShelf),
             on(Removal::SourcePaths),
         )?;
+        if on(Removal::SourcePaths) {
+            self.strip_font_paths(&mut files)?;
+        }
         let mut info = json(&required(&files, "ylp.json")?, 65536)?;
         info["savedBy"] = writer_json(&writer);
         files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
@@ -437,8 +486,10 @@ impl Project {
             }
         }
         if on(Removal::ModelReference) {
-            // モデルのポーズ（pose.json）も、モデルの参照と一緒に除く（どのモデルのポーズか分からなくなる）
+            // モデルのポーズ（pose.json）も、モデルの参照と一緒に除く（どのモデルのポーズか分からなくなる）。Live Link で開いたモデルの記録
+            // （livelink.json）は、FBX と絵のファイルの絶対の場所・Unity のプロジェクトの場所・書き出しの置き場を持つ（ポーズも持つ）ので同じく除く
             files.remove(crate::pose::ENTRY);
+            files.remove(crate::livelink::ENTRY);
             if let Some(blob) = files.get("view.json").cloned() {
                 match blob.bytes().and_then(|b| read_view(&b)) {
                     Ok(mut view) => {
@@ -456,6 +507,34 @@ impl Project {
             }
         }
         Ok(files)
+    }
+
+    /// テキストレイヤーのフォントのファイルの道を、ファイル名だけにする（正本を書き直す。変わらないセットの正本は元のバイト列のまま）。
+    /// 正本が大きすぎてメモリに読めないセット（512 MiB を超える）は、書き直せないので断る（場所を黙って残さない）。
+    fn strip_font_paths(&self, files: &mut Files) -> Result<()> {
+        for set in &self.sets {
+            let changes: Vec<(String, NativeValue)> = font_paths_of(&*set.document.skeleton()?)
+                .into_iter()
+                .map(|(field, path)| (field, NativeValue::Text(file_name_of(&path))))
+                .collect();
+            if changes.is_empty() {
+                continue;
+            }
+            let rewritten = set
+                .document
+                .to_native()
+                .and_then(|native| native.with_values(&changes))
+                .map_err(|e| {
+                    e.in_context(format!(
+                        "セット「{}」のテキストのフォントの場所を写しから外せません",
+                        set.name
+                    ))
+                })?;
+            let entry = set_entry(&set.id, "document.utpaint");
+            files.retain(|n, _| n != &entry && !n.starts_with(&format!("{entry}.")));
+            files.extend(native_entries(&rewritten, &set_entry(&set.id, "")));
+        }
+        Ok(())
     }
 
     /// 棚の索引と中身を、使っていない物（`drop_unused`）と出どころのパス（`clear_paths`）を除いて書き直す（変わらなければ元のバイト列のまま）。

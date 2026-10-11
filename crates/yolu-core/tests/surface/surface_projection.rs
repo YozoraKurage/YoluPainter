@@ -63,6 +63,7 @@ fn front_view(target: Vec3, distance: f32, size: f32) -> CameraView {
         pitch: 0.0,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     }
     .view(size, size)
 }
@@ -222,6 +223,7 @@ fn a_sphere_paints_its_front_inside_the_circle_and_never_its_back() {
         pitch: 20.0,
         distance: 2.5,
         model_radius: 0.5,
+        ..Default::default()
     }
     .view(320.0, 320.0);
     let center = view.to_screen(Vec3::ZERO).unwrap();
@@ -240,6 +242,7 @@ fn a_cube_from_a_corner_never_paints_the_three_hidden_faces() {
         pitch: 25.0,
         distance: 3.0,
         model_radius: 0.9,
+        ..Default::default()
     }
     .view(300.0, 300.0);
     let center = view.to_screen(Vec3::ZERO).unwrap();
@@ -563,6 +566,7 @@ fn crowded_view() -> CameraView {
         pitch: 10.0,
         distance: 3.0,
         model_radius: 0.8,
+        ..Default::default()
     }
     .view(480.0, 360.0)
 }
@@ -620,8 +624,7 @@ fn the_painted_bytes_do_not_depend_on_threads_or_on_dropping_buckets() {
             .num_threads(threads)
             .build()
             .unwrap();
-        let (d, l, s) = pool.install(|| crowded_stroke(&g, view, None, 60.0));
-        assert_eq!(s.stats.refused, 0, "{:?}", s.stats);
+        let (d, l, _) = pool.install(|| crowded_stroke(&g, view, None, 60.0));
         results.push((format!("{threads} スレッド"), layer_bytes(&d, l)));
     }
     let (d, l, _) = crowded_stroke(&g, view, None, 60.0);
@@ -643,7 +646,6 @@ fn the_painted_bytes_do_not_depend_on_threads_or_on_dropping_buckets() {
     let (d2, l2, s2) = crowded_stroke(&g, view, Some(tight), 16.0);
     let stats = s2.projection_stats();
     assert!(stats.evictions > 0, "{stats:?}");
-    assert_eq!(s2.stats.refused, 0, "{:?}", s2.stats);
     assert!(
         s2.projection_bytes() <= tight,
         "{} > {tight}",
@@ -687,7 +689,6 @@ fn a_big_brush_over_overlapping_faces_paints_instead_of_cancelling() {
     );
     // 投影の塗りは取り消さずに塗る。覚えは 1 回の操作のメモリ（既定 64 MiB）の中
     let (d, l, s) = crowded_stroke(&g, view, None, 60.0);
-    assert_eq!((s.stats.refused, s.note), (0, None), "{:?}", s.stats);
     assert!(s.stats.dabs >= 6, "{:?}", s.stats);
     assert!(s.projection_bytes() <= d.stroke_budget_bytes());
     let count = layer_bytes(&d, l)
@@ -698,7 +699,7 @@ fn a_big_brush_over_overlapping_faces_paints_instead_of_cancelling() {
 }
 
 #[test]
-fn a_dab_whose_buckets_do_not_fit_is_skipped_and_the_stroke_goes_on() {
+fn a_dab_whose_buckets_do_not_fit_cancels_the_stroke_like_2d() {
     let g = crowded();
     let view = crowded_view();
     let (mut d, l) = document(512, 512);
@@ -719,24 +720,23 @@ fn a_dab_whose_buckets_do_not_fit_is_skipped_and_the_stroke_goes_on() {
     )
     .unwrap();
     assert_eq!(s.stats.dabs, 1);
-    // 区画の一覧の分しか無い: 次のダブは飛ばす（理由を残す）。メモリを戻せばまた塗る
+    // 区画の一覧の分しか無い: 次のダブは入らないので、ストロークごと断る（呼び手が取り消し、最初のダブも戻る。塗り残しを作らない）
     let fixed = s.projection_bytes() - s.projection_stats().cached_bytes;
     s.set_projection_memory(Some(fixed));
-    // 区間は次の点が来てから描く
-    s.add(&mut d, &mut stroke, Vec2::new(260.0, 180.0), 1.0)
-        .unwrap();
-    s.add(&mut d, &mut stroke, Vec2::new(270.0, 182.0), 1.0)
-        .unwrap();
-    assert_eq!(s.note, Some(DabRefusal::MemoryBudget));
-    let refused = s.stats.refused;
-    assert!(refused > 0);
-    s.set_projection_memory(None);
-    s.add(&mut d, &mut stroke, Vec2::new(280.0, 185.0), 1.0)
-        .unwrap();
-    s.finish(&mut d, &mut stroke).unwrap();
-    assert!(s.stats.dabs > 1);
-    assert!(d.end_stroke(stroke).unwrap().changed);
-    assert_eq!(d.undo_count(), 1);
+    let refused = [Vec2::new(260.0, 180.0), Vec2::new(270.0, 182.0)]
+        .into_iter()
+        .find_map(|at| s.add(&mut d, &mut stroke, at, 1.0).err())
+        .or_else(|| s.finish(&mut d, &mut stroke).err());
+    assert_eq!(
+        refused,
+        Some(yolu_core::geometry::SurfaceStrokeError::Dab(
+            DabRefusal::MemoryBudget
+        ))
+    );
+    d.cancel_stroke(stroke);
+    assert!(!d.has_active_stroke());
+    assert!(layer_bytes(&d, l).chunks_exact(4).all(|c| c[3] == 0));
+    assert_eq!(d.undo_count(), 0);
 }
 
 #[test]
@@ -754,8 +754,11 @@ fn one_undo_takes_a_stroke_back_and_a_new_camera_builds_new_buckets() {
         let at = view.to_screen(Vec3::ZERO).unwrap();
         let mut s = SurfaceStroke::begin(d, &mut stroke, g.clone(), view, &brush, Some(0), at, 1.0)
             .unwrap();
-        s.add(d, &mut stroke, at + Vec2::new(4.0, 0.0), 1.0)
-            .unwrap();
+        // ダブは線の長さで間隔ごとに置くので、間隔より長く動かす（重なるダブが前の区画を使い回す）
+        for i in 1..=6 {
+            s.add(d, &mut stroke, at + Vec2::new(4.0 * i as f32, 0.0), 1.0)
+                .unwrap();
+        }
         s.finish(d, &mut stroke).unwrap();
         d.end_stroke(stroke).unwrap();
         // 塗られた面（UV アイランド 3 × 2）
@@ -775,6 +778,7 @@ fn one_undo_takes_a_stroke_back_and_a_new_camera_builds_new_buckets() {
         pitch: 0.0,
         distance: 3.0,
         model_radius: 0.9,
+        ..Default::default()
     };
     let (first, s) = paint(&mut d, a.view(300.0, 300.0));
     assert_eq!(first, [0].into_iter().collect(), "−Z の面");
@@ -817,12 +821,13 @@ fn blur_along_the_seam(
     if let Some(b) = budget {
         d.set_stroke_budget_bytes(b).unwrap();
     }
+    // 間隔は、線の長さで置くダブが 9 個ほどになるように（入力の 8 区間のそれぞれに 1 つずつ置いていた前と同じくらいの、ぼかしの重なり）
     let brush = yolu_core::Brush {
         effect: yolu_core::BrushEffect::Blur { radius: 3 },
         ..yolu_core::Brush::from(BrushSettings {
             radius: 6.0,
             hardness: 1.0,
-            spacing: 0.15,
+            spacing: 0.08,
             ..BrushSettings::default()
         })
     };
@@ -849,7 +854,8 @@ fn blur_along_the_seam(
             s.add(&mut d, &mut stroke, a + (b - a) * (i as f32 / 8.0), 1.0)?;
         }
         s.finish(&mut d, &mut stroke)?;
-        assert_eq!((s.stats.dabs, s.note), (9, None), "{:?}", s.stats);
+        // ダブは線の長さで間隔ごと（入力の点の数ではない）。どれも塗れた（断れば Err）
+        assert!(s.stats.dabs >= 8, "{:?}", s.stats);
         Ok(())
     });
     match result {
@@ -1028,12 +1034,6 @@ fn a_mirror_copy_that_first_appears_late_in_a_tight_budget_is_still_painted() {
     };
     let (mut d, l) = document(512, 128);
     let open = stroke_through(&mut d, l, &g, view, &brush, &path, options, None);
-    assert_eq!(
-        (open.stats.refused, open.note),
-        (0, None),
-        "{:?}",
-        open.stats
-    );
     let largest = open.projection_stats().largest_dab_bytes;
     let fixed = open.projection_fixed_bytes();
     let wide = layer_bytes(&d, l);
@@ -1045,7 +1045,6 @@ fn a_mirror_copy_that_first_appears_late_in_a_tight_budget_is_still_painted() {
     let s = stroke_through(&mut d2, l2, &g, view, &brush, &path, options, Some(tight));
     let stats = s.projection_stats();
     assert!(stats.evictions > 0, "{stats:?}");
-    assert_eq!((s.stats.refused, s.note), (0, None), "{:?}", s.stats);
     assert!(
         s.projection_bytes() <= tight,
         "{} > {tight}",
@@ -1223,6 +1222,7 @@ fn a_mirror_copy_on_the_far_side_of_a_closed_shape_is_hidden_unless_hidden_areas
         pitch: 0.0,
         distance: 2.5,
         model_radius: 0.5,
+        ..Default::default()
     }
     .view(320.0, 320.0);
     // カメラに向いた側（x の符号）と、その中心の点

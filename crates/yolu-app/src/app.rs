@@ -5,9 +5,10 @@
 use std::collections::HashMap;
 
 use egui::{pos2, vec2, Color32, Frame, Id, Rect, RichText, Sense, Ui, WidgetText};
-use egui_dock::{DockArea, DockState, NodeIndex, TabViewer};
+use egui_dock::{DockArea, DockState, Node, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
+use crate::dialog::places::Place;
 use crate::livelink::LiveLink;
 use crate::mcp_server::McpServer;
 use crate::panels::{
@@ -28,8 +29,13 @@ use crate::view3d::render::{View3dRenderer, View3dStats};
 /// ドックのタブ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Tab {
-    /// サブツールの一覧・ツールプロパティ・ブラシサイズ（左のドックの先頭。中身は今のツールに合わせて替わる）。
+    /// サブツールの一覧（左のドックの先頭。中身は今のツールに合わせて替わる）。
     SubTools,
+    /// ツールプロパティ（今のツールの設定の全部。描くツールには「塗るチャンネル」の区分も）。既定の並びではサブツールの下。
+    /// 古い並びに無ければ、読んだときにサブツールの組の下へ足す。
+    ToolProperties,
+    /// ブラシサイズ（大きさを持つツールだけ。持たないツールでは空）。既定の並びではツールプロパティの下。古い並びに無ければ、読んだときにツールプロパティの下へ足す。
+    BrushSize,
     Assets,
     Color,
     /// ポーズ（ボーンのインスペクター・BlendShape・面を隠す）。スキンのあるモデルを読むと、プロパティと同じ組へ足される。
@@ -39,6 +45,9 @@ pub enum Tab {
     TextureSets,
     Layers,
     Properties,
+    /// マテリアル（今のテクスチャセットの見た目: 種類・ひな形・描画モード・lilToon の各設定）。既定の並びではプロパティ・ヒストリーと同じ組。
+    /// 古い並びに無ければ、読んだときにプロパティの組の後ろへ足す。
+    Material,
     Channels,
     History,
     ColorSets,
@@ -52,8 +61,10 @@ pub enum Tab {
 
 impl Tab {
     /// ドックに出るタブ全部（ポーズは、スキンのあるモデルを読むと足される）。
-    pub const ALL: [Tab; 15] = [
+    pub const ALL: [Tab; 18] = [
         Tab::SubTools,
+        Tab::ToolProperties,
+        Tab::BrushSize,
         Tab::Assets,
         Tab::Color,
         Tab::Pose,
@@ -62,6 +73,7 @@ impl Tab {
         Tab::TextureSets,
         Tab::Layers,
         Tab::Properties,
+        Tab::Material,
         Tab::Channels,
         Tab::History,
         Tab::ColorSets,
@@ -75,6 +87,8 @@ impl Tab {
     pub fn key(self) -> &'static str {
         match self {
             Tab::SubTools => "subtools",
+            Tab::ToolProperties => "tool_properties",
+            Tab::BrushSize => "brush_size",
             Tab::Assets => "assets",
             Tab::Color => "color",
             Tab::Pose => "pose",
@@ -83,6 +97,7 @@ impl Tab {
             Tab::TextureSets => "texture_sets",
             Tab::Layers => "layers",
             Tab::Properties => "properties",
+            Tab::Material => "material",
             Tab::Channels => "channels",
             Tab::History => "history",
             Tab::ColorSets => "color_sets",
@@ -105,6 +120,8 @@ impl Tab {
     pub fn title_in(self, lang: crate::lang::Lang) -> &'static str {
         match self {
             Tab::SubTools => lang.pick("サブツール", "Tools"),
+            Tab::ToolProperties => lang.pick("ツールプロパティ", "Tool Properties"),
+            Tab::BrushSize => lang.pick("ブラシサイズ", "Brush Size"),
             Tab::Assets => lang.pick("アセット", "Assets"),
             Tab::Color => lang.pick("カラー", "Color"),
             Tab::Pose => lang.pick("ポーズ", "Pose"),
@@ -113,6 +130,7 @@ impl Tab {
             Tab::TextureSets => lang.pick("テクスチャセット", "Texture Sets"),
             Tab::Layers => lang.pick("レイヤー", "Layers"),
             Tab::Properties => lang.pick("プロパティ", "Properties"),
+            Tab::Material => lang.pick("マテリアル", "Material"),
             Tab::Navigator => lang.pick("ナビゲーター", "Navigator"),
             Tab::Channels => lang.pick("チャンネル", "Channels"),
             Tab::History => lang.pick("ヒストリー", "History"),
@@ -137,24 +155,105 @@ impl<'de> serde::Deserialize<'de> for Tab {
     }
 }
 
-/// Substance Painter の並び（左: サブツールとアセットとチャンネルとカラー、中央: キャンバスと 3D ビュー、右: 上からテクスチャセット・レイヤー・
-/// プロパティ）。サブツールのパネルは一覧・ツールプロパティ・ブラシサイズが縦に入るので、左の列の上を高めに取る。
-/// 左の列は、いちばん小さいウィンドウ（960 点）でも 3 つのタブ（英語の Tools・Assets・Channels）の見出しが収まる割合（1600 点のウィンドウで約 330 点）。
-/// 右の列は 1600 点の幅のウィンドウで約 300 点（左の列を広げた分、中の割合を減らして右の幅を前と同じにした）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
+/// 左の列の割合（上から サブツール・ツールプロパティ・ブラシサイズ・カラー。列全体に対して）。`default_dock_for` が使う。
+pub(crate) const LEFT_SHARE: f32 = 0.21;
+pub(crate) const LEFT_COLOR: f32 = 0.32;
+pub(crate) const LEFT_TOOL_PROPERTIES: f32 = 0.35;
+pub(crate) const LEFT_BRUSH_SIZE: f32 = 0.13;
+/// 左の列の、サブツールの取り分（残り）。
+pub(crate) const LEFT_SUB_TOOLS: f32 = 1.0 - LEFT_COLOR - LEFT_TOOL_PROPERTIES - LEFT_BRUSH_SIZE;
+/// 右の列の幅: ウィンドウの幅の割合と、下限（点。右上の 3 つのタブ（テクスチャセット・チャンネル・アセット）の名前が日英とも切れない幅）。
+/// 下限は、最小のウィンドウ（960 点）の幅で効く。
+const RIGHT_WIDTH_SHARE: f32 = 0.19;
+const RIGHT_WIDTH_MIN: f32 = 232.0;
+/// 中央の 3D ビュー（左）の取り分。残りがキャンバス（右）。
+pub(crate) const CENTER_VIEW3D: f32 = 0.5;
+const RIGHT_TOP: f32 = 0.46;
+/// 右の列の、上の組を除いた残りのうち、レイヤーの組の取り分（残りがプロパティの組）。
+const RIGHT_LAYERS: f32 = 0.42;
+/// 既定の並びを、幅の決まらない所（`default_dock`）で作るときのウィンドウの幅（起動の初めのウィンドウの幅）。
+const REFERENCE_WIDTH: f32 = 1600.0;
+
+/// 既定の並び（ウィンドウの幅は起動の初めの幅）。
 pub fn default_dock() -> DockState<Tab> {
-    let mut dock = DockState::new(vec![Tab::Canvas, Tab::View3d]);
+    default_dock_for(REFERENCE_WIDTH)
+}
+
+/// 幅 `width` 点のウィンドウでの既定の並び。Substance Painter の並び（左: サブツール・ツールプロパティ・ブラシサイズ・カラー、中央: 3D ビュー（左）と
+/// キャンバス（右）、右: 上からテクスチャセットとチャンネルとアセット・レイヤーとログ・プロパティとマテリアルとヒストリー）。ナビゲーターは閉じている
+/// （「ウィンドウ」のメニューで開くとテクスチャセットの組に入る）。右の列の幅は、ウィンドウの幅の `RIGHT_WIDTH_SHARE`、ただし `RIGHT_WIDTH_MIN` 点より狭くしない
+/// （egui_dock の割合は幅に対する割合なので、幅から決める）。egui_dock の割合は左（上）の子の取り分（分けた向きによらない）。
+pub fn default_dock_for(width: f32) -> DockState<Tab> {
+    // ドックの幅は、ウィンドウの幅から左のツールの帯を除いた分
+    let dock_width = (width - t::TOOL_STRIP_WIDTH).max(1.0);
+    let left = LEFT_SHARE * dock_width;
+    let right = (RIGHT_WIDTH_SHARE * width).max(RIGHT_WIDTH_MIN);
+    // 左の列を除いた幅のうち、中央（3D ビューとキャンバス）の取り分
+    let center_share = (1.0 - right / (dock_width - left).max(1.0)).clamp(0.3, 0.9);
+    let mut dock = DockState::new(vec![Tab::Canvas]);
     let surface = dock.main_surface_mut();
-    let [center, left] = surface.split_left(
-        NodeIndex::root(),
-        0.21,
-        vec![Tab::SubTools, Tab::Assets, Tab::Channels],
+    let [center, left] = surface.split_left(NodeIndex::root(), LEFT_SHARE, vec![Tab::SubTools]);
+    let [center, right] = surface.split_right(
+        center,
+        center_share,
+        vec![Tab::TextureSets, Tab::Channels, Tab::Assets],
     );
-    // ナビゲーターはテクスチャセットと同じ組（左下は狭く、カラー・カラーセットと 3 つ並べると最小のウィンドウで名前が欠ける）
-    let [_, right] = surface.split_right(center, 0.764, vec![Tab::TextureSets, Tab::Navigator]);
-    surface.split_below(left, 0.66, vec![Tab::Color, Tab::ColorSets]);
-    let [_, layers] = surface.split_below(right, 0.24, vec![Tab::Layers, Tab::Log]);
-    surface.split_below(layers, 0.45, vec![Tab::Properties, Tab::History]);
+    surface.split_left(center, CENTER_VIEW3D, vec![Tab::View3d]);
+    // 左の列は上から サブツール・ツールプロパティ・ブラシサイズ・カラー（それぞれが自分のタブの帯を持つ）
+    let upper_share = 1.0 - LEFT_COLOR;
+    let [upper, _] = surface.split_below(left, upper_share, vec![Tab::Color, Tab::ColorSets]);
+    let sub_share = LEFT_SUB_TOOLS;
+    let [_, props_and_size] =
+        surface.split_below(upper, sub_share / upper_share, vec![Tab::ToolProperties]);
+    surface.split_below(
+        props_and_size,
+        LEFT_TOOL_PROPERTIES / (LEFT_TOOL_PROPERTIES + LEFT_BRUSH_SIZE),
+        vec![Tab::BrushSize],
+    );
+    let [_, layers] = surface.split_below(right, RIGHT_TOP, vec![Tab::Layers, Tab::Log]);
+    surface.split_below(
+        layers,
+        RIGHT_LAYERS,
+        vec![Tab::Properties, Tab::Material, Tab::History],
+    );
     dock
+}
+
+/// ウィンドウの幅がこれ（点）より変わらなければ、自動の割合を直さない。
+const DOCK_FIT_EPSILON_WIDTH: f32 = 0.5;
+/// 割合が同じとみなす差。
+const DOCK_FIT_EPSILON_FRACTION: f32 = 1e-4;
+
+/// `tree` が `reference`（既定の並び）と同じ形か: ノードの数と種類（分け目の向き）が同じで、組ごとのタブが同じ（`reference` に無いタブ — ナビゲーター・アクション・
+/// ポーズ — は数えない）。`check_fractions` なら、各分け目の割合も 1e-4 以内で同じ。
+fn same_split_shape(
+    tree: &egui_dock::Tree<Tab>,
+    reference: &egui_dock::Tree<Tab>,
+    check_fractions: bool,
+) -> bool {
+    if tree.len() != reference.len() {
+        return false;
+    }
+    let known: Vec<Tab> = reference
+        .iter()
+        .flat_map(|n| n.iter_tabs().copied())
+        .collect();
+    tree.iter().zip(reference.iter()).all(|pair| match pair {
+        (Node::Empty, Node::Empty) => true,
+        (Node::Leaf(a), Node::Leaf(b)) => {
+            let mine: Vec<Tab> = a
+                .tabs
+                .iter()
+                .copied()
+                .filter(|t| known.contains(t))
+                .collect();
+            mine == b.tabs
+        }
+        (Node::Horizontal(a), Node::Horizontal(b)) | (Node::Vertical(a), Node::Vertical(b)) => {
+            !check_fractions || (a.fraction - b.fraction).abs() <= DOCK_FIT_EPSILON_FRACTION
+        }
+        _ => false,
+    })
 }
 
 /// ドックの見た目（Unity 版のパネルの見出し: 地は PanelHeader、選んだタブは PanelBg、境目は Border）。
@@ -265,12 +364,35 @@ impl TabViewer for Tabs<'_> {
             Tab::TextureSets => texture_sets::show(ui, self.app),
             Tab::Channels => crate::panels::channels::show(ui, self.app),
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
+            Tab::Color if !self.app.mode.paints() => {
+                let rect = ui.max_rect();
+                w::enabled_scope(ui, "mode.dim.color", false, |ui| {
+                    crate::panels::color::show(ui, self.app, self.colors)
+                });
+                crate::mode::dimmed_reason(ui, self.app, rect, "color");
+            }
             Tab::Color => crate::panels::color::show(ui, self.app, self.colors),
             Tab::Pose => crate::panels::pose::show(ui, self.app),
             Tab::Properties => properties::show(ui, self.app),
             Tab::History => crate::panels::history::show(ui, self.app),
             Tab::Assets => assets::show(ui, self.app),
+            // 編集・ポーズのモードでは、ブラシと色の欄を暗くして押せない（理由はツールチップ）
+            Tab::SubTools | Tab::ToolProperties | Tab::BrushSize | Tab::ColorSets
+                if !self.app.mode.paints() =>
+            {
+                let rect = ui.max_rect();
+                w::enabled_scope(ui, ("mode.dim", tab.key()), false, |ui| match tab {
+                    Tab::SubTools => crate::panels::subtools::show(ui, self.app),
+                    Tab::ToolProperties => crate::panels::tool_props::show(ui, self.app),
+                    Tab::BrushSize => crate::panels::tool_props::show_sizes(ui, self.app),
+                    _ => crate::panels::colorsets::show(ui, self.app),
+                });
+                crate::mode::dimmed_reason(ui, self.app, rect, tab.key());
+            }
             Tab::SubTools => crate::panels::subtools::show(ui, self.app),
+            Tab::ToolProperties => crate::panels::tool_props::show(ui, self.app),
+            Tab::BrushSize => crate::panels::tool_props::show_sizes(ui, self.app),
+            Tab::Material => crate::panels::material::show(ui, self.app),
             Tab::ColorSets => crate::panels::colorsets::show(ui, self.app),
             Tab::Log => crate::panels::log::show(ui, self.app),
             Tab::Actions => crate::panels::actions::show(ui, self.app),
@@ -316,17 +438,25 @@ pub struct YoluApp {
     thumbs: Thumbnails,
     colors: ColorTextures,
     pen: PenInput,
+    /// フレームの間隔の下限（垂直同期を待たない表示のとき。待つ表示と試験では何もしない。`pacing`）。
+    pacing: crate::pacing::Pacing,
     /// サイドボタンを押したペンの接触を、egui の部品にも右ボタンとして届ける。
     pen_buttons: crate::pen::ButtonMap,
     view3d: View3dSlot,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
-    /// 主の wgpu の装置の見張り（実際のウィンドウだけ。`watch_gpu`）。装置を失ったときの流れは `gpu_lost`。
+    /// 主の wgpu のデバイスの見張り（実際のウィンドウだけ。`watch_gpu`）。GPU を失ったときの流れは `gpu_lost`。
     gpu_watch: Option<crate::gpu_watch::GpuWatch>,
-    /// 主の wgpu の装置を失った（このあと終わる）。
+    /// 主の GPU を失った（このあと、戻らずにプロセスを終える。戻るのは終え方を替えた試験だけ）。
     gpu_lost: Option<crate::gpu_watch::Lost>,
-    /// 装置を失ったとき、書き置きの書き込みを待つ長さの上限（取るときも、終わるときも。試験が短くする）。
+    /// GPU を失ったとき、書き置きの書き込み・保存の途中の分を待つ長さの上限（取るときも、終わるときも。試験が短くする）。
     gpu_lost_wait: std::time::Duration,
+    /// GPU を失ったとき、保存の途中の分を待つ長さの上限（試験が短くする）。
+    gpu_lost_save_wait: std::time::Duration,
+    /// GPU を失って終わるときのプロセスの終え方（None は `std::process::exit`。試験が替える）。
+    gpu_lost_exit: Option<gpu_lost::Exit>,
+    /// 試験用: フレームの中の見張りを読む場所に着いたときに呼ばれる物（`set_frame_probe`）。
+    frame_probe: Option<Box<dyn FnMut(FramePoint)>>,
     /// 最後のフレームのドックのタブのボタンの矩形（試験用。ドックのタブは読み上げの名前を持たない）。
     pub tab_rects: HashMap<Tab, Rect>,
     link: LiveLink,
@@ -361,6 +491,11 @@ pub struct YoluApp {
     /// ドックの並びとウィンドウの大きさ・位置を書く場所（設定のフォルダの `layout.json`。設定のフォルダが無い試験は None）。
     layout_path: Option<std::path::PathBuf>,
     /// 最後に書いた（または読んだ）ファイルの中身。変わったときだけ書く。
+    /// 利用者が並びを動かしていない（仕切りもタブも別ウィンドウも）間の「自動」: Some なら、右の列の割合を最後に合わせたウィンドウの幅（`default_dock_for` の幅）。
+    /// ウィンドウの幅が変わると、並びの形と割合がその幅の既定と同じなら、割合だけを今の幅の既定の値に入れ替える（`fit_default_dock`）。違えば（利用者が動かした）None。
+    dock_auto: Option<f32>,
+    /// 保存した並びが自動のまま閉じられていた（ファイルの `auto_fit`）。最初のフレームで、割合を比べずに今の幅へ合わせ直す。
+    dock_refit: bool,
     layout_saved: String,
     /// 最後に「書くか」を見た時刻（egui の時刻。1 秒おきに見る）。
     layout_checked_at: f64,
@@ -383,6 +518,10 @@ pub struct YoluApp {
 
 mod detached;
 mod gpu_lost;
+#[doc(hidden)]
+pub use gpu_lost::FramePoint;
+/// GPU でエラーが起きて終わるときのプロセスの終了コード（`gpu_lost`）。
+pub use gpu_lost::EXIT_CODE as GPU_LOST_EXIT_CODE;
 
 impl YoluApp {
     /// 文脈に配色・書体・アイコンを入れる（ウィンドウを作るときに 1 度）。
@@ -408,11 +547,14 @@ impl YoluApp {
         let mut app =
             YoluApp::with_settings(crate::settings::path(), pen, crate::lang::system_lang())
                 .with_render_state(cc.wgpu_render_state.as_ref());
-        // 主の装置を失ったとき・受け手の無い誤りを受ける（wgpu の既定は、失っても黙り、誤りは panic で落とす）
+        // 主の GPU を失ったとき・受け手の無い誤りを受ける（wgpu の既定は、失っても黙り、誤りは panic で落とす）
         if let Some(rs) = &cc.wgpu_render_state {
             app.watch_gpu(rs, &cc.egui_ctx);
         }
         app.dialogs = true;
+        // ファイルを選ぶウィンドウの始まりの場所: 前に使った場所を、設定のフォルダの `places.conf` から読む（実際のウィンドウだけ）
+        app.state.places =
+            crate::dialog::places::Places::load(crate::dialog::places::Places::default_path());
         #[cfg(windows)]
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -497,7 +639,7 @@ impl YoluApp {
         }
     }
 
-    /// 設定のファイル（無ければ保存しない）から言語・書き出しの余白・メモリの予算・退避を残す数などを決めて作る（`setup` は呼ぶ側で）。
+    /// 設定のファイル（無ければ保存しない）から言語・書き出しのパディング・メモリの予算・退避を残す数などを決めて作る（`setup` は呼ぶ側で）。
     /// 最初のレイヤー・テクスチャセット・プロジェクトの名前がその言語になる。読めない設定・正しくない値は既定（自動の予算・
     /// すべて残す、など）に戻し、理由を知らせる
     /// （ファイルは、設定を選び直すまで触らない）。言語は、設定に書いてあればそれ、無い・読めないときだけ `system`（OS の言語）。
@@ -522,6 +664,14 @@ impl YoluApp {
             pen,
         );
         app.state.load_settings(loaded.clone());
+        // 垂直同期を待たない表示（設定の既定）では、フレームの間隔に下限をかける。ウィンドウの面の同期は起動のときに決まる
+        // （`wgpu_configuration`）ので、起動のとき読んだ設定の値で決める（変えた値は次の起動から）
+        app.pacing = crate::pacing::Pacing::new(loaded.vsync);
+        // macOS のタブレットの筆圧を読むか（試し。ほかの OS では何も起きない）
+        app.pen.set_tablet(loaded.tablet_pressure);
+        // Windows のペンを WinTab で読むか（既定は Windows Ink。ほかの OS では何も起きない）
+        app.pen
+            .set_wintab(loaded.pen_input == crate::settings::PenApi::WinTab);
         // 前のプロセスが残したディスクキャッシュのファイル（電源が落ちたときなど）を、起動の邪魔をしないよう裏で消す
         let cache_folder = loaded.disk_cache_folder();
         let _ = std::thread::Builder::new()
@@ -551,6 +701,16 @@ impl YoluApp {
             .attach_cache(settings.as_deref().and_then(crate::library::cache::dir_for));
         let mut notices: Vec<String> = Vec::new();
         notices.extend(startup_message(lang, &problems));
+        // キー・マウス・パイの設定（keymap.json。読めなければ既定のキーで始め、ファイルは残す）
+        if let Some(dir) = settings.as_deref().and_then(|p| p.parent()) {
+            let state = &mut app.state;
+            notices.extend(state.keys.attach(
+                dir.join(crate::keyconfig::FILE_NAME),
+                &mut state.pie.menus,
+                lang,
+            ));
+            crate::keymap::install(state.keys.map());
+        }
         notices.extend(app.state.brush_problem_message());
         notices.extend(app.state.toolset_problem_message());
         notices.extend(app.state.subtool_problem_message());
@@ -620,6 +780,9 @@ impl YoluApp {
                     );
                 }
                 app.dock = dock;
+                // 自動のまま閉じた並びは、最初のフレームの幅に合わせ直す。そうでなければ合わせない（はっきり外す）
+                app.dock_auto = layout.auto_fit.then_some(REFERENCE_WIDTH);
+                app.dock_refit = layout.auto_fit;
             }
             for record in layout.detached {
                 let place = match record.window {
@@ -687,7 +850,7 @@ impl YoluApp {
         YoluApp::with_settings(settings, pen, system)
     }
 
-    /// 設定（言語・書き出しの余白・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。
+    /// 設定（言語・書き出しのパディング・メモリの予算・スレッド・合成・棚の場所・退避を残す数・選択範囲の帯）の選択が変わっていれば、設定のファイルに書く。
     /// 書けなくても動作は変えず、知らせるだけ。失敗しても同じ選択では再試行しない（毎フレームの I/O と、知らせの上書きを避ける）。
     /// 退避の数・UV ワイヤーフレームの色・筆圧の調整・3D の仕上げ・3D の塗りの切り替えは、スライダーをドラッグしている間は書かない（離したとき、または Esc で戻した値が書いてある値と同じなら書かない）。
     fn persist_settings(&mut self) {
@@ -785,7 +948,8 @@ impl YoluApp {
                 home: w.home.clone(),
             })
             .collect();
-        crate::layout::render_all(&self.dock, window.as_ref(), &[], &detached)
+        let auto_fit = self.dock_is_auto(self.dock_refit);
+        crate::layout::render_full(&self.dock, window.as_ref(), &[], &detached, auto_fit)
     }
 
     /// 並びを書く。`force` でなければ、前に書いた中身と同じなら書かない。
@@ -822,12 +986,16 @@ impl YoluApp {
             thumbs: Thumbnails::default(),
             colors: ColorTextures::default(),
             pen,
+            pacing: crate::pacing::Pacing::default(),
             pen_buttons: crate::pen::ButtonMap::default(),
             view3d: View3dSlot::default(),
             renderer3d: None,
             gpu_watch: None,
             gpu_lost: None,
             gpu_lost_wait: gpu_lost::RECOVERY_WAIT,
+            gpu_lost_save_wait: gpu_lost::SAVE_WAIT,
+            gpu_lost_exit: None,
+            frame_probe: None,
             tab_rects: HashMap::new(),
             link: LiveLink::new(),
             ops: McpServer::new(),
@@ -843,6 +1011,8 @@ impl YoluApp {
             gpu_budgets_applied: crate::gpu_memory::Budgets::default(),
             gpu_device: None,
             layout_path: None,
+            dock_auto: Some(REFERENCE_WIDTH),
+            dock_refit: false,
             layout_saved: String::new(),
             layout_checked_at: f64::NEG_INFINITY,
             window_record: None,
@@ -935,11 +1105,12 @@ impl YoluApp {
             }
             Some(DialogRequest::ProjectModel) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Model)
                     .set_title(lang.pick("モデルを選ぶ", "Choose a model"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::Model, &path);
                     self.state
                         .apply(Action::Project(crate::newproject::NpAction::ChooseModel(
                             path,
@@ -949,7 +1120,7 @@ impl YoluApp {
             Some(DialogRequest::Open) => {
                 let lang = self.state.lang;
                 if self.confirm_discard() {
-                    if let Some(path) = crate::dialog::file()
+                    if let Some(path) = crate::dialog::file(&self.state, Place::Project)
                         .set_title(lang.pick("プロジェクトを開く", "Open Project"))
                         .add_filter(
                             lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
@@ -957,6 +1128,7 @@ impl YoluApp {
                         )
                         .pick_file()
                     {
+                        self.state.note_file_chosen(Place::Project, &path);
                         self.state.apply(Action::OpenProject(path));
                     }
                 }
@@ -964,25 +1136,26 @@ impl YoluApp {
             Some(DialogRequest::SaveAs) => {
                 let lang = self.state.lang;
                 let name = format!("{}.ylp", self.state.project_name);
-                if let Some(path) = crate::dialog::file()
+                let dialog = crate::dialog::file_for_save(&self.state, Place::Project)
                     .set_title(lang.pick("別名で保存", "Save As"))
                     .add_filter(
                         lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
                         &["ylp"],
                     )
-                    .set_file_name(name)
-                    .save_file()
-                {
+                    .set_file_name(name);
+                if let Some(path) = dialog.save_file() {
+                    self.state.note_file_chosen(Place::Project, &path);
                     self.state.apply(Action::SaveProjectAs(path));
                 }
             }
             Some(DialogRequest::OpenModel) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Model)
                     .set_title(lang.pick("3D ビューに FBX を開く", "Open FBX in the 3D View"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::Model, &path);
                     crate::view3d::pose::open_file(&mut self.state, &path);
                 }
             }
@@ -994,51 +1167,12 @@ impl YoluApp {
                 | DialogRequest::LibraryRemove
                 | DialogRequest::LibraryReveal),
             ) => assets::run_dialog(&mut self.state, request),
-            Some(DialogRequest::ExportFolder(id)) => {
-                let lang = self.state.lang;
-                let mut dialog = crate::dialog::file().set_title(
-                    lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
-                );
-                // Live Link の相手の文書は、Unity が知らせた置き場（利用者が選び直したらそちら）から。無ければ、ある一番近い親から
-                // （ウィンドウを取り消しても、Unity のプロジェクトにフォルダを残さないよう、ここでは作らない）
-                if let Some(start) = self.state.link_export_start() {
-                    dialog = dialog.set_directory(start);
-                }
-                if let Some(dir) = dialog.pick_folder() {
-                    self.state.note_export_dir(&dir);
-                    self.state
-                        .apply(Action::Export(crate::export::ExportAction::TemplateTo {
-                            id,
-                            dir,
-                        }));
-                }
-            }
-            Some(DialogRequest::ExportChannel) => {
-                let lang = self.state.lang;
-                let mut dialog = crate::dialog::file()
-                    .set_title(
-                        lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"),
-                    )
-                    .add_filter("PNG", &["png"])
-                    .set_file_name(crate::export::default_channel_file_name(&self.state));
-                if let Some(dir) = self
-                    .state
-                    .project
-                    .as_ref()
-                    .and_then(|p| p.path().parent())
-                    .filter(|d| d.is_dir())
-                {
-                    dialog = dialog.set_directory(dir);
-                }
-                if let Some(path) = dialog.save_file() {
-                    // 拡張子が無ければ .png を足す（ウィンドウの種類で付かない環境がある）。足した名前はウィンドウが確かめていない
-                    self.state
-                        .apply(Action::Export(crate::export::channel_action(path)));
-                }
+            Some(DialogRequest::ExportDestination) => {
+                crate::export::window::run_dialog(&mut self.state)
             }
             Some(DialogRequest::PrefsLibraryFolder) => {
                 let lang = self.state.lang;
-                let mut dialog = crate::dialog::file()
+                let mut dialog = crate::dialog::file(&self.state, Place::Settings)
                     .set_title(lang.pick("ライブラリの場所", "Library folder"));
                 if let Some(current) = self
                     .state
@@ -1050,6 +1184,7 @@ impl YoluApp {
                     dialog = dialog.set_directory(current);
                 }
                 if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_folder_chosen(Place::Settings, &dir);
                     self.state
                         .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
                             crate::prefs::Pref::LibraryFolder(Some(dir)),
@@ -1102,40 +1237,30 @@ impl YoluApp {
             }
             Some(DialogRequest::PrefsCacheFolder) => {
                 let lang = self.state.lang;
-                let mut dialog =
-                    crate::dialog::file().set_title(lang.pick("キャッシュの場所", "Cache folder"));
+                let mut dialog = crate::dialog::file(&self.state, Place::Settings)
+                    .set_title(lang.pick("キャッシュの場所", "Cache folder"));
                 let current = self.state.prefs.settings.disk_cache_folder();
                 if current.is_dir() {
                     dialog = dialog.set_directory(current);
                 }
                 if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_folder_chosen(Place::Settings, &dir);
                     self.state
                         .apply(Action::Prefs(crate::prefs::PrefsAction::Set(
                             crate::prefs::Pref::DiskCacheFolder(Some(dir)),
                         )));
                 }
             }
-            Some(DialogRequest::ExportChannelsFolder) => {
-                let lang = self.state.lang;
-                if let Some(dir) = crate::dialog::file()
-                    .set_title(
-                        lang.pick("画像を書き出すフォルダ", "Folder for the exported images"),
-                    )
-                    .pick_folder()
-                {
-                    self.state
-                        .apply(Action::Export(crate::export::ExportAction::ChannelsTo(dir)));
-                }
-            }
             Some(DialogRequest::PsdImport(target)) => {
                 let lang = self.state.lang;
                 // 今の文書を替えるときは、保存していない変更を捨ててよいか聞く
                 if target == crate::psd::PsdTarget::NewSet || self.confirm_discard() {
-                    if let Some(path) = crate::dialog::file()
+                    if let Some(path) = crate::dialog::file(&self.state, Place::PsdImport)
                         .set_title(lang.pick("PSD を読み込む", "Import PSD"))
                         .add_filter("PSD", &["psd", "PSD"])
                         .pick_file()
                     {
+                        self.state.note_file_chosen(Place::PsdImport, &path);
                         self.state
                             .apply(Action::Psd(crate::psd::PsdAction::Import { path, target }));
                     }
@@ -1144,14 +1269,12 @@ impl YoluApp {
             Some(DialogRequest::PsdExport) => {
                 let lang = self.state.lang;
                 let name = crate::psd::default_export_name(&self.state);
-                let mut dialog = crate::dialog::file()
+                let dialog = crate::dialog::file(&self.state, Place::PsdExport)
                     .set_title(lang.pick("PSD に書き出す", "Export PSD"))
                     .add_filter("PSD", &["psd"])
                     .set_file_name(name);
-                if let Some(dir) = self.state.project.as_ref().and_then(|p| p.path().parent()) {
-                    dialog = dialog.set_directory(dir);
-                }
                 if let Some(path) = dialog.save_file() {
+                    self.state.note_file_chosen(Place::PsdExport, &path);
                     self.state
                         .apply(Action::Psd(crate::psd::PsdAction::Export(path)));
                 }
@@ -1159,7 +1282,7 @@ impl YoluApp {
             Some(DialogRequest::DistributeSave) => crate::distribute::run_dialog(&mut self.state),
             Some(DialogRequest::TextFont) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::Font)
                     .set_title(lang.pick("フォントのファイルを開く", "Open a Font File"))
                     .add_filter(
                         lang.pick("フォント", "Fonts"),
@@ -1167,24 +1290,49 @@ impl YoluApp {
                     )
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::Font, &path);
                     self.state
                         .apply(Action::Text(crate::textlayer::TextAction::FontFile(path)));
                 }
             }
+            Some(DialogRequest::KeymapExport) => {
+                let lang = self.state.lang;
+                if let Some(path) = crate::dialog::file(&self.state, Place::Keys)
+                    .set_title(lang.pick("キーの設定を書き出す", "Export Key Settings"))
+                    .set_file_name(crate::keyconfig::FILE_NAME)
+                    .add_filter("JSON", &["json", "JSON"])
+                    .save_file()
+                {
+                    self.state.note_file_chosen(Place::Keys, &path);
+                    self.state.keys_export(&path);
+                }
+            }
+            Some(DialogRequest::KeymapImport) => {
+                let lang = self.state.lang;
+                if let Some(path) = crate::dialog::file(&self.state, Place::Keys)
+                    .set_title(lang.pick("キーの設定を読み込む", "Import Key Settings"))
+                    .add_filter("JSON", &["json", "JSON"])
+                    .pick_file()
+                {
+                    self.state.note_file_chosen(Place::Keys, &path);
+                    self.state.keys_import(&path);
+                }
+            }
             Some(DialogRequest::OpenStencil) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.pick("ステンシルの画像を開く", "Open a stencil image"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::ImageImport, &path);
                     self.state
                         .apply(Action::Stencil(crate::stencil::StencilOp::Load(path)));
                 }
             }
             Some(DialogRequest::FillImage) => {
                 let lang = self.state.lang;
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.pick(
                         "画像をアセットへ取り込む",
                         "Add an image to the project's assets",
@@ -1192,6 +1340,7 @@ impl YoluApp {
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::ImageImport, &path);
                     self.state
                         .apply(Action::Fill(crate::fillfx::FillOp::ImportImage(path)));
                 }
@@ -1199,11 +1348,12 @@ impl YoluApp {
             Some(DialogRequest::NewFillImage(mode)) => {
                 let lang = self.state.lang;
                 // 選ばずに閉じたら何も作らない（Undo の段も増やさない）
-                if let Some(path) = crate::dialog::file()
+                if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
                     .set_title(lang.pick("画像で塗りつぶしを作る", "Create a fill from an image"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
+                    self.state.note_file_chosen(Place::ImageImport, &path);
                     self.state
                         .apply(Action::LayerMenu(crate::layermenu::Op::FillImageFile {
                             path,
@@ -1213,7 +1363,7 @@ impl YoluApp {
             }
             Some(DialogRequest::ImportBrushes) => {
                 let lang = self.state.lang;
-                if let Some(paths) = crate::dialog::file()
+                if let Some(paths) = crate::dialog::file(&self.state, Place::Brush)
                     .set_title(lang.pick("ブラシを取り込む", "Import Brushes"))
                     .add_filter(
                         lang.pick("ブラシのファイル", "Brush files"),
@@ -1221,16 +1371,20 @@ impl YoluApp {
                     )
                     .pick_files()
                 {
+                    if let Some(first) = paths.first() {
+                        self.state.note_file_chosen(Place::Brush, first);
+                    }
                     self.state
                         .apply(Action::Brush(crate::brushes::BrushAction::Import(paths)));
                 }
             }
             Some(DialogRequest::ClipStudioFolder) => {
                 let lang = self.state.lang;
-                let mut dialog = crate::dialog::file().set_title(lang.pick(
-                    "CLIP STUDIO のサブツールのフォルダ",
-                    "CLIP STUDIO sub tool folder",
-                ));
+                let mut dialog =
+                    crate::dialog::file(&self.state, Place::Settings).set_title(lang.pick(
+                        "CLIP STUDIO のサブツールのフォルダ",
+                        "CLIP STUDIO sub tool folder",
+                    ));
                 // 今探している場所（手で選んだフォルダか、既定の場所のうち開けたもの）から選び始める
                 let csp = &self.state.brushes.csp;
                 let start = csp.folder.clone().or_else(|| {
@@ -1242,6 +1396,7 @@ impl YoluApp {
                     dialog = dialog.set_directory(dir);
                 }
                 if let Some(dir) = dialog.pick_folder() {
+                    self.state.note_folder_chosen(Place::Settings, &dir);
                     self.state.apply(Action::Brush(
                         crate::brushes::BrushAction::ClipStudioFolder(dir),
                     ));
@@ -1254,7 +1409,7 @@ impl YoluApp {
     /// 保存していない変更があっても終わってよいか（ウィンドウを開かない試験では聞かない）。保存の途中には聞かない（保存が終わってから、その後の
     /// 状態で聞く）。
     fn confirm_close(&mut self) -> bool {
-        // 更新のために終わるときは、保存するか捨てるかを更新のウィンドウで選び済み。GPU の装置を失って終わるときは、復旧の書き置きに任せる
+        // 更新のために終わるときは、保存するか捨てるかを更新のウィンドウで選び済み。GPU を失って終わるときは、復旧の書き置きに任せる
         if self.state.update.is_quitting() || self.gpu_lost.is_some() {
             return true;
         }
@@ -1344,7 +1499,7 @@ impl YoluApp {
         }
     }
 
-    /// 落とした .psd を、「ファイル → 読み込み → PSD を新しいテクスチャセットへ」と同じ取り込み（読み込み → 取り込みの確認のウィンドウ）へ回す。
+    /// 落とした .psd を、「ファイル → インポート → PSD を新しいテクスチャセットに」と同じ取り込み（読み込み → 取り込みの確認のウィンドウ）へ回す。
     /// 取り込むのは最初の 1 つだけ（取り込みの確認のウィンドウは 1 つずつ。ほかは取り込まず、数を知らせる）。描いている最中は、取り込み側が断る。
     /// 行き先は新しいセット: 今のセットの文書を替えると取り消せないので、落としただけでは今の絵に触れない
     /// （文書を替えるときの、保存していない変更の確認はいらない）。
@@ -1452,6 +1607,11 @@ impl YoluApp {
         self.renderer3d.as_ref().map(|r| r.paint_budget())
     }
 
+    /// GPU のテクスチャの辺の上限（試験用。wgpu が無ければ None）。
+    pub fn view3d_texture_limit(&self) -> Option<u32> {
+        self.renderer3d.as_ref().map(|r| r.max_texture_dimension())
+    }
+
     /// 最後に描いた 3D ビューの中身の表示域（画面の点。隠れていれば None）。
     pub fn view3d_rect(&self) -> Option<Rect> {
         self.view3d.content_rect()
@@ -1482,6 +1642,18 @@ impl YoluApp {
     pub fn view3d_set_paint_budget(&mut self, bytes: u64) {
         if let Some(r) = &mut self.renderer3d {
             r.set_paint_budget(bytes);
+        }
+    }
+
+    /// 塗った絵のサンプラーが今使っている異方性の上限（試験・計測用。wgpu が無ければ None）。
+    pub fn view3d_paint_anisotropy(&self) -> Option<u16> {
+        self.renderer3d.as_ref().map(|r| r.paint_anisotropy())
+    }
+
+    /// 試験用: 塗った絵のサンプラーの異方性の上限を変える（1 で等方。GPU が持たなければ 1 のまま）。
+    pub fn view3d_set_paint_anisotropy(&mut self, wanted: u16) {
+        if let Some(r) = &mut self.renderer3d {
+            r.set_paint_anisotropy(wanted);
         }
     }
 
@@ -1518,6 +1690,22 @@ impl YoluApp {
         level: u32,
     ) -> Option<(Vec<u8>, [u32; 2])> {
         self.renderer3d.as_ref()?.read_paint_level(slot, level)
+    }
+
+    /// 試験用: 塗った絵の重みの絵の 1 段の中身（1 テクセル 1 バイト、行は下から。大きさつき。塗り広げていなければ None）。
+    pub fn view3d_read_paint_weight_level(&self, level: u32) -> Option<(Vec<u8>, [u32; 2])> {
+        self.renderer3d.as_ref()?.read_paint_weight_level(level)
+    }
+
+    /// 試験用: ほかのテクスチャセット（マテリアルの番号）の絵の重みの絵の 1 段の中身（絵を持っていなければ None）。
+    pub fn view3d_read_other_weight_level(
+        &self,
+        material: i32,
+        level: u32,
+    ) -> Option<(Vec<u8>, [u32; 2])> {
+        self.renderer3d
+            .as_ref()?
+            .read_other_weight_level(material, level)
     }
 
     /// 試験用: ほかのテクスチャセット（マテリアルの番号）の絵のチャンネルの 1 段の中身と、その縮めた段（絵を持っていなければ None）。
@@ -1594,10 +1782,98 @@ impl YoluApp {
         &self.pen
     }
 
+    /// 試験用: メインウィンドウのペンの受け口の、ウィンドウをアプリの側で動かす手を差し替える（None は手が無い受け口。Windows 以外と同じ）。
+    #[doc(hidden)]
+    pub fn set_pen_mover(&mut self, mover: Option<std::sync::Arc<dyn crate::pen::WindowMover>>) {
+        self.pen = self.pen.clone().with_mover(mover);
+    }
+
     /// egui が受けるポインタの入力のうち、サイドボタンを押したペンの接触を右ボタンに直す（`eframe::App::raw_input_hook` が毎フレーム
     /// 呼ぶ。winit はペンを左ボタンの押しにしか変えないので、これが無いと、ペンではどの部品の右クリックのメニューも開かない）。
     pub fn remap_pen_buttons(&mut self, events: &mut [egui::Event]) {
         self.pen_buttons.remap(&self.pen.peek(), events);
+    }
+
+    /// フレームの初め（egui のパスの前。`raw_input_hook` が呼ぶ）に、垂直同期を待たない表示のときだけ、前のフレームの始まりからの間が下限より短ければ
+    /// 残りを眠る（`pacing`）。入力のあるフレームは 1/240 秒、無いフレーム（描き直しの頼みだけ）はウィンドウのあるモニターのリフレッシュレートの逆数
+    /// （60〜240 Hz。読めなければ 1/120 秒。入力の見方は `frame_has_input`、リフレッシュレートの読み方は `read_refresh_rate`）。
+    /// 眠った分だけ、このフレームの時刻（`raw_input.time`）を進める。
+    pub fn pace_frame(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if self.pacing.waits_for_vsync() {
+            return;
+        }
+        // 最小化・非表示の間は、eframe が自分で間隔を空ける（`logic` だけを回す。見えている別ウィンドウがあるときは、主が隠れていてもパスは回る）。
+        // 覆われているだけのとき（`visible()` は偽）は `logic` だけが回るが、画面に出さないので、垂直同期を待たない設定で増える回りは無い
+        let hidden = raw_input
+            .viewports
+            .get(&raw_input.viewport_id)
+            .is_some_and(|info| info.visible() == Some(false));
+        if hidden && !self.any_detached_visible(ctx) {
+            return;
+        }
+        if self.pacing.refresh_due(std::time::Instant::now()) {
+            self.read_refresh_rate();
+        }
+        let input = self.frame_has_input(raw_input);
+        let slept = self.pacing.wait(input);
+        if let Some(time) = raw_input.time.as_mut() {
+            *time += slept.as_secs_f64();
+        }
+    }
+
+    /// ウィンドウのあるモニターのリフレッシュレートを読んで、入力の無いフレームの下限に入れる（1 秒に 1 度まで。`pace_frame` が呼ぶ）。
+    /// Windows だけ読む（主のウィンドウと別ウィンドウのあるモニターのうち、いちばん速いもの。`pacing::refresh`）。eframe・winit はウィンドウの
+    /// モニターのリフレッシュレートを渡さず、macOS・Linux は安く読める道が無いので、読まずに 1/120 秒のまま（`set_monitor_refresh_hz` で入れた値は消さない）。
+    fn read_refresh_rate(&mut self) {
+        #[cfg(windows)]
+        {
+            let hwnds: Vec<isize> = self
+                .main_hwnd
+                .into_iter()
+                .chain(self.detached.windows.iter().filter_map(|w| w.hwnd))
+                .collect();
+            if !hwnds.is_empty() {
+                self.pacing
+                    .set_refresh_rate(crate::pacing::refresh::fastest_refresh_hz(&hwnds));
+            }
+        }
+    }
+
+    /// 入力の無いフレームの下限に使うモニターのリフレッシュレートを入れる（Hz。読めない = `None` は 1/120 秒。試験用。Windows の実際のウィンドウは
+    /// `read_refresh_rate` が 1 秒ごとに読んで入れ直す）。
+    pub fn set_monitor_refresh_hz(&mut self, refresh_hz: Option<f64>) {
+        self.pacing.set_refresh_rate(refresh_hz);
+    }
+
+    /// 最後にフレームの間隔として選んだ下限（待つ形・まだフレームが無いときは `None`）。試験が、入力のあるフレームに 1/240 秒、
+    /// 無いフレームにモニターのリフレッシュレートの逆数を選んだことを見る。
+    pub fn frame_interval(&self) -> Option<std::time::Duration> {
+        self.pacing.last_interval()
+    }
+
+    /// このフレームの初めに見える入力があるか（フレームの間隔の下限を、入力のあるフレームの 1/240 秒にするか）。見るのは、主のウィンドウの egui の事象
+    /// （`raw_input.events`）、主と別ウィンドウのペンの待ち行列、前のフレームに別ウィンドウのパスが見た入力の印（別ウィンドウの egui の事象は、主のフレームの
+    /// 初めには見えない。印は取り出して消す）。
+    pub fn frame_has_input(&mut self, raw_input: &egui::RawInput) -> bool {
+        let detached_marked = self.pacing.take_detached_input();
+        detached_marked
+            || !raw_input.events.is_empty()
+            || !self.pen.peek().is_empty()
+            || self
+                .detached
+                .windows
+                .iter()
+                .any(|w| !w.pen.peek().is_empty())
+    }
+
+    /// フレームの間隔に下限をかけているか（垂直同期を待たない表示。起動のとき読んだ設定の「垂直同期」が切のとき）。
+    pub fn paces_frames(&self) -> bool {
+        !self.pacing.waits_for_vsync()
+    }
+
+    /// フレームの間隔の下限を、待つ形（何もしない）か待たない形（下限をかける）に替える（試験が `raw_input_hook` の眠りを確かめるのに使う）。
+    pub fn set_frame_pacing(&mut self, waits_for_vsync: bool) {
+        self.pacing = crate::pacing::Pacing::new(waits_for_vsync);
     }
 
     pub fn display(&self) -> &CanvasDisplay {
@@ -1621,10 +1897,64 @@ impl YoluApp {
     /// 1 フレーム（eframe と試験の両方がここを呼ぶ）。フレームの中で `message` に書かれた文（非同期の終わりなど、`apply` の外の書き込みも）は、
     /// 前と同じ文でも新しい知らせとして出る。
     pub fn frame(&mut self, ui: &mut Ui) {
+        self.fit_default_dock(ui.ctx());
         let prior = self.state.message_begin();
+        // レイヤーの行のクリックなどで選んでいるレイヤーが替わっていたら、別のレイヤーの定規の選びを外す
+        self.state.drop_foreign_ruler_selection();
         self.frame_body(ui);
         self.state.message_end(prior);
         self.finish_message(ui.ctx());
+    }
+
+    /// 並びが自動の間（`dock_auto`）、毎フレーム、並びが最後に合わせた幅の既定のままか確かめ（違えば利用者が動かしたので自動をやめる）、ウィンドウの幅が
+    /// 変わっていれば、右の列の割合を今の幅の既定の値に入れ替える。並びの形は分け目の種類と、組ごとのタブ（既定の並びに無いナビゲーター・アクション・ポーズは
+    /// 数えない）、割合は 1e-4 以内。木は作り直さない（選んでいるタブ・開いたナビゲーターを保つ）。別ウィンドウが 1 つでもあれば自動をやめる。
+    /// 保存した並びが自動のまま閉じられていたとき（`dock_refit`）は、形だけを見て、最初のフレームの幅へ割合を合わせ直す。
+    fn fit_default_dock(&mut self, ctx: &egui::Context) {
+        let refit = std::mem::take(&mut self.dock_refit);
+        if !self.dock_is_auto(refit) {
+            self.dock_auto = None;
+            return;
+        }
+        let Some(last) = self.dock_auto else {
+            return;
+        };
+        let width = ctx.content_rect().width();
+        if !refit && (width - last).abs() <= DOCK_FIT_EPSILON_WIDTH {
+            return;
+        }
+        let now = default_dock_for(width);
+        for (node, new) in self
+            .dock
+            .main_surface_mut()
+            .iter_mut()
+            .zip(now.main_surface().iter())
+        {
+            if let (
+                Node::Horizontal(split) | Node::Vertical(split),
+                Node::Horizontal(want) | Node::Vertical(want),
+            ) = (node, new)
+            {
+                split.fraction = want.fraction;
+            }
+        }
+        self.dock_auto = Some(width);
+    }
+
+    /// 並びが自動のままか: 自動の印があり、別ウィンドウが無く、並びが最後に合わせた幅の既定と同じ形（`shape_only` なら割合は見ない）。
+    fn dock_is_auto(&self, shape_only: bool) -> bool {
+        let Some(last) = self.dock_auto else {
+            return false;
+        };
+        if !self.detached.windows.is_empty() || self.dock.iter_surfaces().count() != 1 {
+            return false;
+        }
+        let reference = default_dock_for(last);
+        same_split_shape(
+            self.dock.main_surface(),
+            reference.main_surface(),
+            !shape_only,
+        )
     }
 
     /// フレームの終わりの `message`: 失敗・断り・警告を記録へ（同じ文なら何もしない）。新しい知らせがあれば、すぐ出すための描き直しを頼む。
@@ -1635,12 +1965,58 @@ impl YoluApp {
         }
     }
 
+    /// 離した後の残りを塗っている 3D のストローク（確定待ち）は、次の操作が来たら、その操作を通す前に、残りを塗って確定する。利用者は離した
+    /// 時点で描き終えたと思っているので、断らず・捨てずに、操作をそのまま通すため。操作は、ポインタを押す・キーを押す・ホイール・文字の入力・
+    /// 貼り付けなど・ファイルの落とし・ペンが触れる（動くだけ・離すだけでは確定しない）。ここは全部の部品より先に呼ぶ。パネルの部品・メニュー・
+    /// ショートカットの全部が、描いている最中の判定（`is_stroking`）を見る前に済む。
+    fn settle_before_input(&mut self, ctx: &egui::Context, pen: &[PenSample]) {
+        if !self.state.view3d.input.released {
+            return;
+        }
+        let acts = ctx.input(|i| {
+            !i.raw.dropped_files.is_empty()
+                || i.events.iter().any(|e| {
+                    matches!(
+                        e,
+                        egui::Event::PointerButton { pressed: true, .. }
+                            | egui::Event::Key { pressed: true, .. }
+                            | egui::Event::MouseWheel { .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::Paste(_)
+                            | egui::Event::Copy
+                            | egui::Event::Cut
+                            | egui::Event::Touch {
+                                phase: egui::TouchPhase::Start,
+                                ..
+                            }
+                    )
+                })
+        });
+        if acts || pen.iter().any(|s| s.contact) {
+            crate::view3d::input::settle(&mut self.state);
+        }
+    }
+
     fn frame_body(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        // このアプリのキーの割り当て（ショートカットの設定）を、このスレッドで効かせる
+        crate::keymap::install(self.state.keys.map());
         self.poll_gpu_watch(&ctx);
         self.state.ui.popup_was_open = self.state.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
-        let mut pen = self.pen.drain();
+        // 設定の「タブレットの筆圧（試し）」（設定のウィンドウで切り替えた値を、ペンの受け口へ。別ウィンドウの受け口は同じ札を共有する）
+        self.pen
+            .set_tablet(self.state.prefs.settings.tablet_pressure);
+        // 設定の「ペンの入力」（Windows の WinTab。別ウィンドウは、それぞれのフレームで合わせる）。開けなかったときは Windows Ink のままで、理由を 1 度だけ知らせる
+        self.pen
+            .set_wintab(self.state.prefs.settings.pen_input == crate::settings::PenApi::WinTab);
+        if let Some(why) = self.pen.take_wintab_notice() {
+            self.state.wintab_unavailable(why);
+        }
+        // 補った離し（OS に押しを奪われて、離しの点を補った）の印も一緒に取る。2D と 3D の入力が、本物の離しと分けて扱う
+        let (mut pen, lost) = self.pen.drain_with_lost();
+        self.state.pen_lost = lost;
+        self.settle_before_input(&ctx, &pen);
         // ウィンドウの縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
         // ペンの押しとして扱うのと同じ `contact`。筆圧は触れていなくても 1 のペンも、触れた直後は 0 のペンもある）は受けない
         let edge = self.custom_frame.then(|| {
@@ -1650,10 +2026,10 @@ impl YoluApp {
                 &self.bar_press_rects,
             )
         });
-        // 筆圧の調整のウィンドウ: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
+        // 筆圧の調整（設定の「ペン」）: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
         self.state.pressure_observe(ctx.pixels_per_point(), &pen);
-        // ウィンドウが開いているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
-        if self.state.pressure.open && !self.pen.is_hooked() {
+        // 描く枠が出ているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
+        if self.state.pressure.open() && !self.pen.is_hooked() {
             ctx.input(|i| self.state.pressure_observe_touch(&i.events));
         }
         for sample in &mut pen {
@@ -1702,6 +2078,9 @@ impl YoluApp {
         self.state.poll_clipboard();
         // OS のフォントの一覧ができたら受け、開いた文書のテキストレイヤーのフォントを確かめる
         self.state.text_poll();
+        // 文字の色の元が描画色なら、描画色が変わったとき、選んでいるテキストレイヤーの色も変える（円のドラッグは 1 回の取り消し）
+        let pointer_down = self.any_pointer_down(&ctx);
+        self.state.text_follow_paint_color(pointer_down);
         // 復旧: 書き置きの結果を受け、書く頃なら頼む。フォーカスを失ったら、時間を待たずに書く
         // （メインウィンドウから別ウィンドウへフォーカスが移っても、アプリはフォーカスを失っていない）
         let focused = if self.detached_focused(&ctx) {
@@ -1726,7 +2105,9 @@ impl YoluApp {
         }
         self.ensure_pose_tab();
         if self.state.reset_layout {
-            self.dock = default_dock();
+            self.dock = default_dock_for(ctx.content_rect().width());
+            self.dock_auto = Some(ctx.content_rect().width());
+            self.dock_refit = false;
             self.detached.clear();
             self.state.reset_layout = false;
         }
@@ -1839,9 +2220,7 @@ impl YoluApp {
                     caption = titlebar::buttons(ui, r, maximized, self.state.lang);
                 }
             });
-        for command in frame_commands {
-            ctx.send_viewport_cmd(command);
-        }
+        titlebar::send_drag_commands(&ctx, frame_commands, &self.pen);
         match caption {
             // 閉じるは、メニューの「終了」と同じ道（保存していない変更の確かめ。下の終了の処理が受ける）
             Some(titlebar::Button::Close) => self.state.apply(Action::Quit),
@@ -1939,16 +2318,31 @@ impl YoluApp {
         // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.content_rect().is_some();
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);
+        // 隠れたビューにポインタが乗っている印は残さない
+        if !self.state.view3d.visible {
+            self.state
+                .rulers
+                .note_pointer(crate::rulers::Place::View3d, false);
+        }
+        if !self.state.ui.canvas_visible {
+            self.state
+                .rulers
+                .note_pointer(crate::rulers::Place::Canvas, false);
+        }
         // 隠れたビューは、ペンが離れたのを受け取れない（タブの見出しをつかんで動かしているあいだなど）。ペンの押しの印と、ペンが回し・
         // パン・拡縮していた途中を、見えるようになるまで持ち越さない（印が残ると、ペンの押しとみなしてマウスの押しを使わなくなる）
         if !self.state.ui.canvas_visible {
-            self.state.drafting_cancel();
+            self.state.drafting_cancel_canvas();
             self.state.drafting.pen_down = None;
             self.state.canvas.pen_press = None;
             crate::canvas::nav::cancel(&mut self.state);
         }
         if !self.state.view3d.visible {
             self.state.view3d.input.drop_presses();
+            // 3D ビューで引いていた選択の形と、打っていた多角形の点も、離したのを受け取れないので何も選ばずに捨てる
+            self.state.sel.view3d.cancel();
+            // 離した後の残りを塗っているストロークは、ビューが隠れると塗り進められないので、その場で塗り終えて確定する（取り残さない）
+            crate::view3d::input::settle(&mut self.state);
         }
 
         let bar = bar.unwrap_or(menu::BarOutcome {
@@ -1972,7 +2366,6 @@ impl YoluApp {
         crate::selection::dialog::show(&ctx, &mut self.state);
         crate::windows::show(&ctx, &mut self.state);
         crate::prefs::show(&ctx, &mut self.state);
-        crate::pen::window::show(&ctx, &mut self.state);
         crate::recovery::window::show(&ctx, &mut self.state);
         // 色のウィンドウ（相手の欄はこのフレームに描いた。変更は次のフレームに相手が受け取る）
         crate::panels::color_window::show_in_app(&ctx, &mut self.state);
@@ -2032,6 +2425,8 @@ impl YoluApp {
         if (!self.state.quit && !close_requested) || self.closing {
             return;
         }
+        // 離した後の残りを塗っているストロークは、塗り終えて確定してから、保存していない変更を聞く・閉じる
+        crate::view3d::input::settle(&mut self.state);
         if self.state.is_saving() {
             // ウィンドウを閉じる頼みは止めて、終わるまで待つ（`quit` に覚える）。画面のスレッドは回し続ける（「応答なし」にならない）
             if close_requested {
@@ -2105,6 +2500,24 @@ impl YoluApp {
         };
         // 別ウィンドウで開いたポップアップは、そのウィンドウのパスが描く
         if open.state.viewport != egui::ViewportId::ROOT {
+            self.state.popup = Some(open);
+            return;
+        }
+        // パイは自分で描いて入力を受ける（選んだ項目は閉じてから実行し、別のパイなら開き直す）
+        if open.kind == PopupKind::Pie {
+            if crate::pie::show(ctx, &mut self.state, &mut open.state) {
+                self.state.popup.get_or_insert(open);
+            }
+            return;
+        }
+        if open.kind == PopupKind::Transform {
+            if crate::objects::transform::show(ctx, &mut self.state, &mut open.state) {
+                self.state.popup.get_or_insert(open);
+            }
+            return;
+        }
+        // キーを待っている間の受け皿は、設定のウィンドウの「ショートカット」の区分が受けて閉じる
+        if open.kind == PopupKind::KeyCapture {
             self.state.popup = Some(open);
             return;
         }
@@ -2193,6 +2606,8 @@ impl YoluApp {
         // 新しい知らせの扱いは `ui` と同じ（隠れている間に出た文は、見えるようになった最初のフレームで知らせとして出る。ここで描き直しは頼まない:
         // 見えないウィンドウを知らせのために回し続けない）
         let prior = self.state.message_begin();
+        // 離した後の残りを塗っているストロークは、隠れていると塗り進められないので、その場で塗り終えて確定する
+        crate::view3d::input::settle(&mut self.state);
         self.poll_gpu_watch(ctx);
         self.tick_link();
         // 見えないウィンドウでも、Live Link の頼みを拾う間隔で回す（受け付けている間だけ）
@@ -2246,23 +2661,32 @@ impl eframe::App for YoluApp {
         self.persist_layout(ui.ctx());
         self.state.message_end(prior);
         self.finish_message(ui.ctx());
+        // eframe はこのあと、このフレームを描く。このフレームの中（キャンバスの GPU の合成・3D ビューの提出）で失ったと分かったときも、
+        // 失ったデバイスで描く前に、ここで拾って終える
+        self.watch_point(ui.ctx(), FramePoint::UiEnd);
     }
 
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         self.remap_pen_buttons(&mut raw_input.events);
+        self.pace_frame(ctx, raw_input);
     }
 
     /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。
     fn on_exit(&mut self) {
-        if self.gpu_lost.is_some() && self.state.modified {
-            // 装置を失って終わる: 書き置きの「保存していない作業」の印を消さず（落ちたときと同じ）、書き込み中の分だけ、期限まで待つ。
+        if self.gpu_lost.is_some() && (self.state.modified || self.state.is_saving()) {
+            // GPU を失って終わる: 書き置きの「保存していない作業」の印を消さず（落ちたときと同じ。保存が終わらないまま終えるときも）、
+            // 書き込み中の分だけ、期限まで待つ。
             // 遅いディスクで間に合わなくても固まらない（置換は最後の 1 回なので、前の世代が残る）。次の起動の復旧のウィンドウから開ける
             self.state.recovery_wait_within(self.gpu_lost_wait);
         } else {
             self.state.recovery_shutdown();
         }
-        // 並びとウィンドウの大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）
-        self.save_layout(false);
+        // 並びとウィンドウの大きさ・位置を、終わるときに書く（途中で書けていなくても、最後の形を残す）。GPU を失って終わるときは書き直さない:
+        // 別ウィンドウを描いている途中（`detached.windows` を取り出している間）に終えることがあり、いまの状態から書くと別ウィンドウが抜ける。
+        // 並びは前のフレームまでの `persist_layout` が書いてある（失う物は、最後の数フレームのウィンドウの大きさ・位置の変化だけ）
+        if self.gpu_lost.is_none() {
+            self.save_layout(false);
+        }
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {

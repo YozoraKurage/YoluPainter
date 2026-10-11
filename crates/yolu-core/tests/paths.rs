@@ -27,6 +27,7 @@ fn brush(i: usize, surface: bool) -> PathBrush {
         pressure_opacity: i % 3 == 1,
         pressure_flow: i % 3 == 2,
         erase: i == 7,
+        anti_alias: yolu_core::AntiAlias::None,
     })
 }
 fn canvas(i: usize) -> CanvasPath {

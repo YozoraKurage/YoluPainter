@@ -4,8 +4,8 @@
 //! 合成（4096²・レイヤー 10。Normal と Overlay（RNM）を交互に、不透明度 0.45〜1）。スレッドは環境変数 SIMD_THREADS（既定 1。
 //! 1 は 1 コアあたりの時間）。下のレイヤーの違い（不透明 / アルファ入り）も分ける。時間は最小の回の CPU 時間（ほかの負荷で待たされた分を除く。
 //! スレッドが 1 本のときだけ意味がある）。
-//! 道の切り替え: 環境変数 YOLU_SIMD=scalar|sse41|avx2（SIMD の道を持つ版だけ。無ければ無視）。`kernel` は行の核だけの時間
-//! （ns / 画素）。
+//! 道の切り替え: 環境変数 YOLU_SIMD=scalar|sse41|avx2（x86_64）・scalar|neon（aarch64。Apple Silicon の Mac など）。その CPU にない道の名前は
+//! 無視する。使った道は出力の先頭の行に出る。`kernel` は行の核だけの時間（ns / 画素）。
 #[path = "../tests/filter_support/mod.rs"]
 mod filter_support;
 

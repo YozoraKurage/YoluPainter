@@ -17,7 +17,8 @@ use yolu_core::{Channel, Document, LayerId, Rect, TileCoord};
 
 #[derive(Clone, Copy, Debug)]
 pub struct ResidentOptions {
-    /// 表示テクスチャ、レイヤータイルと同量の CPU コピー、作業域と転送の余裕を含む。
+    /// 表示テクスチャ、レイヤータイルと同量の CPU コピー、作業域と 1 束ぶんの転送を含む。1 回の更新の上げの一時の入れ物は、1 束ぶんを
+    /// この固定の量に数え、それを超える分は、この予算の空き（固定の量と常駐のタイルを引いた残り）の中で決める（`transfer_limit_bytes`）。
     pub resident_budget_bytes: u64,
     /// 未完了・取得前の読み戻しバッファを合計した別予算。
     pub readback_budget_bytes: u64,
@@ -26,6 +27,10 @@ pub struct ResidentOptions {
     /// 式は `Color32::from_rgba_unmultiplied` と同じ整数で、同じ合成結果から CPU で変換した値とバイトまで一致する。
     /// 読み戻しも乗算済みの値になる。false なら straight RGBA8。
     pub premultiplied_display: bool,
+    /// 1 回に流す上げの上限（バイト）。None は予算から決める: 予算の空きの 1/3（GPU の一時の入れ物・`write_buffer` が中で作る入れ物・CPU の
+    /// 詰める並びの 3 つが同じ量を持つ）を `TRANSFER_CEILING` まで。Some は固い上限（試験用）。どちらも 1 束ぶん（固定の量に数えてある転送）
+    /// より小さくしない。
+    pub transfer_limit_bytes: Option<u64>,
 }
 impl Default for ResidentOptions {
     fn default() -> Self {
@@ -34,6 +39,7 @@ impl Default for ResidentOptions {
             readback_budget_bytes: 64 << 20,
             batch_tiles: 16,
             premultiplied_display: false,
+            transfer_limit_bytes: None,
         }
     }
 }
@@ -46,6 +52,9 @@ pub struct UpdateStats {
     pub evicted_tiles: usize,
     pub resident_bytes: u64,
     pub cached_tiles: usize,
+    /// CPU から GPU への書き込み（`write_buffer`）の回数。上げるタイルと束の定数を 1 回にまとめるので、普通は 1（何も変わらなければ 0）。
+    /// 上げの上限（`ResidentOptions::transfer_limit_bytes`）を超える前・予算が狭くて流していない束のタイルを追い出す前に流すときだけ増える。
+    pub transfers: usize,
 }
 /// 借用した表示テクスチャ。次の更新で中身は変わるため、スナップショットとして保存しない。
 pub struct Display<'a> {
@@ -97,6 +106,10 @@ struct Work {
     /// 調整の表の語数。
     table_words: usize,
     fixed_bytes: u64,
+    /// 固定の量に数えてある 1 束ぶんの転送（入力・命令の並び・調整の表・有無の印・命令の列・定数・座標）。上げの上限の下限。
+    batch_transfer_bytes: u64,
+    /// 1 タイルのバイト数。
+    tile_bytes: u64,
 }
 struct Lease {
     used: Arc<AtomicU64>,
@@ -106,6 +119,48 @@ impl Drop for Lease {
     fn drop(&mut self) {
         self.used.fetch_sub(self.bytes, Ordering::AcqRel);
     }
+}
+/// 予算から決める 1 回の上げの上限の天井（予算に空きが多くても、一時の入れ物はこれより大きくしない）。
+const TRANSFER_CEILING: u64 = 64 << 20;
+
+/// まだ流していない上げと束。上げるタイル・命令の並び・束の定数を 1 本の並びに詰め、流すときに 1 つの一時の入れ物へ `write_buffer`
+/// 1 回で書いて、GPU の中で行き先へ写す（タイルごと・束ごとに `write_buffer` すると、呼びの回数の分だけ重い装置がある）。
+#[derive(Default)]
+struct Transfer {
+    bytes: Vec<u8>,
+    /// 一時の入れ物から写す先（ずらし・行き先・バイト数）。
+    copies: Vec<(u64, wgpu::Buffer, u64)>,
+    batches: Vec<Batch>,
+    /// 流していない束が読むタイル（流す前に追い出さない）。
+    keys: HashSet<Key>,
+}
+impl Transfer {
+    /// 並びに詰めて、その（ずらし, バイト数）を返す。行き先へ写すバイト数は 4 の倍数。
+    fn stage(&mut self, data: &[u8]) -> (u64, u64) {
+        debug_assert!(data.len().is_multiple_of(4));
+        let at = self.bytes.len() as u64;
+        self.bytes.extend_from_slice(data);
+        (at, data.len() as u64)
+    }
+    /// 並びに詰めて、流すときに `target` の頭へ写す。
+    fn copy_to(&mut self, target: &wgpu::Buffer, data: &[u8]) {
+        let (at, size) = self.stage(data);
+        self.copies.push((at, target.clone(), size));
+    }
+}
+/// 流していない 1 つの束。
+struct Batch {
+    tiles: usize,
+    /// 合成する画素の数（シェーダーの `count`）。
+    pixels: u32,
+    /// 一時の入れ物の中の（ずらし, バイト数）: 座標・定数・有無の印・命令の列。
+    coords: (u64, u64),
+    params: (u64, u64),
+    presence: (u64, u64),
+    programs: (u64, u64),
+    /// 作業域へ写すタイルの入れ物と、作業域の中のずらし。
+    inputs: Vec<(wgpu::Buffer, u64)>,
+    tile: u64,
 }
 /// 読み戻し先を所有する要求。破棄しても GPU の転送が終わるまで予算の予約を保持する。
 pub struct Readback {
@@ -149,8 +204,10 @@ struct Layout {
     tables: u64,
     /// 1 束のタイル数。
     capacity: usize,
-    /// 表示・作業域・転送の余裕（常駐のタイルを除く固定の量）。
+    /// 表示・作業域・1 束ぶんの転送（常駐のタイルを除く固定の量）。
     fixed: u64,
+    /// `fixed` のうち 1 束ぶんの転送。
+    batch_transfer: u64,
 }
 
 /// デバイスの上限に収まらなければ Err、予算が表示と 1 束を保持できなければ None。
@@ -173,7 +230,8 @@ fn layout(
     let meta = entries.max(1) as u64 * std::mem::size_of::<LayerData>() as u64;
     // 調整の表と値（調整レイヤーが無ければ 0。空の束縛は作れないので、作業域の確保では 16 バイトを下限にする）
     let tables = table_words as u64 * 4;
-    // 作業入力と転送ステージング、座標・定数を先に予約。束の全入力を常駐できる最小量も確保。
+    // 作業入力と 1 束ぶんの転送、座標・定数を先に予約。束の全入力を常駐できる最小量も確保（1 束を超える転送は、`update` が予算の空きの
+    // 中で決める）。
     // 1 タイルあたりの量: 入力（GPU と転送用で 2 つ）と、束の全入力の常駐（GPU と CPU のコピーで 2 つ）で `per_batch * 4`、座標 16、
     // 面ごとのタイルの有無の印と命令の番号の列（先頭の（始まり, 長さ）と最大で命令の数。どちらも GPU と転送用で 2 つ）で
     // `8 * (面 + 2 + 命令)`。割る数が `fixed` に足した量と食い違うと、予算の境で 1 束が常駐に収まらなくなる。
@@ -196,14 +254,9 @@ fn layout(
     // 束の面ごとのタイルの有無（1 語ずつ）と、タイルごとの命令の番号の列（先頭に（始まり, 長さ）、続けて最大で命令の数だけ）も作業域に数える
     let flags = slots.max(1) as u64 * capacity as u64 * 4;
     let programs = capacity as u64 * (2 + entries.max(1) as u64) * 4;
-    let fixed = frame
-        + 2 * (per_batch * capacity as u64
-            + meta
-            + tables
-            + flags
-            + programs
-            + 16
-            + capacity as u64 * 8);
+    let batch_transfer =
+        per_batch * capacity as u64 + meta + tables + flags + programs + 16 + capacity as u64 * 8;
+    let fixed = frame + 2 * batch_transfer;
     Ok(Some(Layout {
         tile,
         per_batch,
@@ -211,6 +264,7 @@ fn layout(
         tables,
         capacity,
         fixed,
+        batch_transfer,
     }))
 }
 
@@ -285,7 +339,7 @@ fn display_pipeline(
     options: &ResidentOptions,
 ) -> wgpu::ComputePipeline {
     let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("常駐表示"),
+        label: Some("yolu-resident-display"),
         source: wgpu::ShaderSource::Wgsl(plan::shader_source(variant).into()),
     });
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
@@ -470,6 +524,7 @@ impl ResidentCompositor {
             tables,
             capacity,
             fixed,
+            batch_transfer,
         } = layout(
             &self.options,
             &self.gpu.device.limits(),
@@ -545,6 +600,8 @@ impl ResidentCompositor {
                 entry_count: entries,
                 table_words,
                 fixed_bytes: fixed,
+                batch_transfer_bytes: batch_transfer,
+                tile_bytes: tile,
             });
         }
         Ok(())
@@ -643,7 +700,7 @@ impl ResidentCompositor {
                 .collect()
         } else {
             doc.changed_tiles(channel, self.binding.as_ref().expect("確認済み").serial)
-                .ok_or_else(|| error("文書の世代が巻き戻った。reset が必要"))?
+                .ok_or_else(|| error("プロジェクトの世代が巻き戻った。reset が必要"))?
         };
         if self
             .binding
@@ -686,21 +743,19 @@ impl ResidentCompositor {
             .map(|slot| (doc.layers()[slot.layer].id(), slot.mask))
             .collect();
         let mut fetcher = Fetcher::new(doc, channel, plan.slots.len());
+        // 上げは 1 つの一時の入れ物に詰め、流すときに GPU の中で写す（タイルごとに `write_buffer` しない）
+        let mut transfer = Transfer::default();
         {
             let w = self.work.as_ref().expect("準備済み");
             if !metadata.is_empty() {
-                self.gpu
-                    .queue
-                    .write_buffer(&w.metadata, 0, bytemuck::cast_slice(&metadata));
+                transfer.copy_to(&w.metadata, bytemuck::cast_slice(&metadata));
             }
             if !plan.tables.is_empty() {
-                self.gpu
-                    .queue
-                    .write_buffer(&w.tables, 0, bytemuck::cast_slice(&plan.tables));
+                transfer.copy_to(&w.tables, bytemuck::cast_slice(&plan.tables));
             }
         }
         for chunk in coords.chunks(capacity) {
-            // この束の全タイルを触ってからコピーを記録。予算はこの束を保持できる量以上。
+            let mut touched = Vec::with_capacity(chunk.len() * sources.len());
             for (k, slot) in plan.slots.iter().enumerate() {
                 let (layer, mask) = sources[k];
                 // 評価の出力を持つ面は、束のタイルを含む矩形をまとめて評価する（保存した面では何もしない）
@@ -716,15 +771,26 @@ impl ResidentCompositor {
                         continue;
                     }
                     self.clock += 1;
-                    if let Some(v) = self.cache.get_mut(&key) {
-                        self.lru.remove(&(v.touched, key));
-                        if v.bytes != bytes {
-                            self.gpu.queue.write_buffer(&v.gpu, 0, &bytes);
-                            v.bytes.copy_from_slice(&bytes);
+                    let cached = self
+                        .cache
+                        .get(&key)
+                        .map(|v| (v.touched, v.bytes != bytes, v.gpu.clone()));
+                    if let Some((touched_at, changed, target)) = cached {
+                        self.lru.remove(&(touched_at, key));
+                        if changed {
+                            // 足すと上げの上限を超えるなら、先にそこまでを流す
+                            if self.over_transfer_limit(&transfer, tile as u64, 0) {
+                                self.flush(&mut transfer, plan)?;
+                            }
+                            transfer.copy_to(&target, &bytes);
                             self.stats.uploaded_tiles += 1;
                             self.stats.uploaded_bytes += tile as u64;
                         } else {
                             self.stats.cache_hits += 1;
+                        }
+                        let v = self.cache.get_mut(&key).expect("ある");
+                        if changed {
+                            v.bytes.copy_from_slice(&bytes);
                         }
                         debug_assert!(v.generation <= doc.change_serial());
                         v.generation = doc.change_serial();
@@ -734,6 +800,15 @@ impl ResidentCompositor {
                             + (self.cache.len() as u64 + 1) * tile as u64 * 2
                             > self.options.resident_budget_bytes
                         {
+                            // 一番古いタイルが、まだ流していない束の読むタイルなら、先に流す（流した束のタイルは追い出してよい）
+                            if self
+                                .lru
+                                .first()
+                                .is_some_and(|(_, oldest)| transfer.keys.contains(oldest))
+                            {
+                                self.flush(&mut transfer, plan)?;
+                                continue;
+                            }
                             // この束のタイルは直前に触って一番新しい。古いタイルが尽きても足りないなら、束を保持できていない
                             if !self.evict() {
                                 return Err(error("常駐予算では束のタイルを保持できない"));
@@ -743,7 +818,10 @@ impl ResidentCompositor {
                             tile as u64,
                             wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
                         );
-                        self.gpu.queue.write_buffer(&buffer, 0, &bytes);
+                        if self.over_transfer_limit(&transfer, tile as u64, tile + tile) {
+                            self.flush(&mut transfer, plan)?;
+                        }
+                        transfer.copy_to(&buffer, &bytes);
                         self.cache.insert(
                             key,
                             Cached {
@@ -757,26 +835,105 @@ impl ResidentCompositor {
                         self.stats.uploaded_bytes += tile as u64;
                     }
                     self.lru.insert((self.clock, key));
+                    touched.push(key);
                 }
                 fetcher.release(k);
             }
-            let w = self.work.as_ref().expect("準備済み");
+            // 画素のあるタイルだけを作業域へ写す。無いタイルは、シェーダーが有無の印で読まない（0 で埋めない）。
+            let mut flags = vec![0u32; sources.len().max(1) * chunk.len()];
+            let mut inputs = Vec::new();
+            for (k, &(layer, mask)) in sources.iter().enumerate() {
+                for (j, &coord) in chunk.iter().enumerate() {
+                    if let Some(v) = self.cache.get(&Key { layer, mask, coord }) {
+                        inputs.push((v.gpu.clone(), ((k * chunk.len() + j) * tile) as u64));
+                        flags[k * chunk.len() + j] = 1;
+                    }
+                }
+            }
+            let programs = tile_programs(plan, &flags, chunk.len());
             let raw_coords: Vec<[u32; 2]> = chunk.iter().map(|c| [c.x, c.y]).collect();
-            self.gpu
-                .queue
-                .write_buffer(&w.coords, 0, bytemuck::cast_slice(&raw_coords));
-            self.gpu.queue.write_buffer(
-                &w.params,
+            let params = [
+                (chunk.len() * tile / 4) as u32,
+                metadata.len() as u32,
+                doc.tile_size(),
                 0,
-                bytemuck::cast_slice(&[
-                    (chunk.len() * tile / 4) as u32,
-                    metadata.len() as u32,
-                    doc.tile_size(),
-                    0,
-                ]),
-            );
-            let group = self
-                .gpu
+            ];
+            let parts = (raw_coords.len() * 8 + 16 + flags.len() * 4 + programs.len() * 4) as u64;
+            if self.over_transfer_limit(&transfer, parts, tile) {
+                self.flush(&mut transfer, plan)?;
+            }
+            let batch = Batch {
+                tiles: chunk.len(),
+                pixels: (chunk.len() * tile / 4) as u32,
+                coords: transfer.stage(bytemuck::cast_slice(&raw_coords)),
+                params: transfer.stage(bytemuck::cast_slice(&params)),
+                presence: transfer.stage(bytemuck::cast_slice(&flags)),
+                programs: transfer.stage(bytemuck::cast_slice(&programs)),
+                inputs,
+                tile: tile as u64,
+            };
+            transfer.batches.push(batch);
+            transfer.keys.extend(touched);
+        }
+        self.flush(&mut transfer, plan)?;
+        self.binding = Some(Binding {
+            id: doc.id(),
+            channel,
+            width: doc.width(),
+            height: doc.height(),
+            ts: doc.tile_size(),
+            serial: doc.change_serial(),
+            revision: doc.revision(),
+        });
+        Ok(self.account())
+    }
+    /// `add` バイトを足すと、今の上げの上限を超えるか（まだ何も溜めていなければ超えない: 1 つの塊は上限より大きくても流す）。上限は
+    /// `ResidentOptions::transfer_limit_bytes`、無ければ予算の空き（固定の量と常駐のタイル。`incoming` はこれから常駐に入るタイルの GPU と
+    /// CPU のコピー）の 1/3 を `TRANSFER_CEILING` まで。どちらも 1 束ぶんより小さくしない。
+    fn over_transfer_limit(&self, t: &Transfer, add: u64, incoming: usize) -> bool {
+        if t.bytes.is_empty() {
+            return false;
+        }
+        let w = self.work.as_ref().expect("準備済み");
+        // 常駐のタイル（GPU と CPU のコピー。タイルはどれも同じ大きさ）。追い出しの判定と同じ数え方
+        let resident = self.cache.len() as u64 * w.tile_bytes * 2 + incoming as u64;
+        let free = self
+            .options
+            .resident_budget_bytes
+            .saturating_sub(w.fixed_bytes + resident);
+        let limit = self
+            .options
+            .transfer_limit_bytes
+            .unwrap_or((free / 3).min(TRANSFER_CEILING))
+            .max(w.batch_transfer_bytes);
+        t.bytes.len() as u64 + add > limit
+    }
+    /// 溜めた上げと束を流す: 一時の入れ物を 1 つ作って `write_buffer` 1 回で詰め、GPU の中で常駐のタイル・作業域の命令の並びと調整の表・束ごとの
+    /// 定数・座標・有無・命令の列へ写してから、束ごとに作業域へタイルを写して合成する。作業域と定数の入れ物は束で使い回すので、束ごとに
+    /// GPU の完了を待つ（次の束の写しが前の束の合成の後になるように）。
+    fn flush(&mut self, t: &mut Transfer, plan: &Plan) -> Result<(), GpuError> {
+        if t.copies.is_empty() && t.batches.is_empty() {
+            return Ok(());
+        }
+        // 一時の入れ物は GPU の側に作り、`write_buffer` 1 回で詰める（キューの写しの帯を使う）。呼び手が対応付けの入れ物（MAP_WRITE）を
+        // 毎回作ると、作りと最初の書き込みが重い装置がある（dzn で 16 MiB に約 2 秒）
+        let staging = self.buffer(
+            t.bytes.len() as u64,
+            wgpu::BufferUsages::COPY_SRC | wgpu::BufferUsages::COPY_DST,
+        );
+        self.gpu.queue.write_buffer(&staging, 0, &t.bytes);
+        self.stats.transfers += 1;
+        let w = self.work.as_ref().expect("準備済み");
+        let mut encoder = Some(self.gpu.device.create_command_encoder(&Default::default()));
+        for (at, target, size) in t.copies.drain(..) {
+            encoder
+                .as_mut()
+                .expect("作った")
+                .copy_buffer_to_buffer(&staging, at, &target, 0, size);
+        }
+        let batches = std::mem::take(&mut t.batches);
+        let group = (!batches.is_empty()).then(|| {
+            self.gpu
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
                     label: None,
@@ -817,45 +974,41 @@ impl ResidentCompositor {
                             resource: w.programs.as_entire_binding(),
                         },
                     ],
-                });
-            let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
-            // 画素のあるタイルだけを作業域へ写す。無いタイルは、シェーダーが有無の印で読まない（0 で埋めない）。
-            let mut flags = vec![0u32; sources.len().max(1) * chunk.len()];
-            for (k, &(layer, mask)) in sources.iter().enumerate() {
-                for (j, &coord) in chunk.iter().enumerate() {
-                    let offset = ((k * chunk.len() + j) * tile) as u64;
-                    if let Some(v) = self.cache.get(&Key { layer, mask, coord }) {
-                        encoder.copy_buffer_to_buffer(&v.gpu, 0, &w.input, offset, tile as u64);
-                        flags[k * chunk.len() + j] = 1;
-                    }
+                })
+        });
+        for b in &batches {
+            let mut encoder = encoder
+                .take()
+                .unwrap_or_else(|| self.gpu.device.create_command_encoder(&Default::default()));
+            for (part, target) in [
+                (b.coords, &w.coords),
+                (b.params, &w.params),
+                (b.presence, &w.presence),
+                (b.programs, &w.programs),
+            ] {
+                if part.1 > 0 {
+                    encoder.copy_buffer_to_buffer(&staging, part.0, target, 0, part.1);
                 }
             }
-            self.gpu
-                .queue
-                .write_buffer(&w.presence, 0, bytemuck::cast_slice(&flags));
-            let programs = tile_programs(plan, &flags, chunk.len());
-            self.gpu
-                .queue
-                .write_buffer(&w.programs, 0, bytemuck::cast_slice(&programs));
+            for (source, offset) in &b.inputs {
+                encoder.copy_buffer_to_buffer(source, 0, &w.input, *offset, b.tile);
+            }
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 pass.set_pipeline(&self.pipelines[&plan.variant]);
-                pass.set_bind_group(0, &group, &[]);
-                pass.dispatch_workgroups(((chunk.len() * tile / 4) as u32).div_ceil(64), 1, 1);
+                pass.set_bind_group(0, group.as_ref().expect("束がある"), &[]);
+                pass.dispatch_workgroups(b.pixels.div_ceil(64), 1, 1);
             }
             self.wait(self.gpu.queue.submit([encoder.finish()]))?;
-            self.stats.updated_tiles += chunk.len();
+            self.stats.updated_tiles += b.tiles;
         }
-        self.binding = Some(Binding {
-            id: doc.id(),
-            channel,
-            width: doc.width(),
-            height: doc.height(),
-            ts: doc.tile_size(),
-            serial: doc.change_serial(),
-            revision: doc.revision(),
-        });
-        Ok(self.account())
+        // 束が無い（上げだけ）ときも出す。次の更新の束は、同じキューの後ろで読む
+        if let Some(encoder) = encoder {
+            self.gpu.queue.submit([encoder.finish()]);
+        }
+        t.bytes.clear();
+        t.keys.clear();
+        Ok(())
     }
     fn account(&mut self) -> UpdateStats {
         self.stats.cached_tiles = self.cache.len();

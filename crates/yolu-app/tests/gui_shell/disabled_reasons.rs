@@ -1,6 +1,6 @@
-//! 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。その 4 か所（対称の欄・ブラシの 2D だけの設定・選択範囲を変更・調整レイヤー）が、
-//! 無効のとき理由を出し、条件が外れたら有効に戻ることを確かめる。無効にしてよい条件を狭く保つ試験も含む:
-//! - 対称は、描ける先が 3D だけのあいだと、指先・クローンのあいだだけ（ドックを分けてキャンバスも出ているあいだは 2D に描けるので有効）
+//! 効かない欄は注記の行を置かず、無効（灰色）にして理由をツールチップに出す。その 3 か所（対称定規の欄・ブラシの 2D だけの設定・調整レイヤー）が、
+//! 無効のとき理由を出し、条件が外れたら有効に戻ることを確かめる。選択範囲を変更する操作は「選択範囲」メニューの項目で、選択範囲が無いあいだ無効になり戻ることを確かめる。無効にしてよい条件を狭く保つ試験も含む:
+//! - 対称定規の欄は、読むだけのセットのあいだだけ無効（文書の値なので、ブラシの効果にも描ける先にも左右されない）
 //! - ブラシの 2D だけの設定（手ぶれ補正・入り抜き・ゆらぎ・筆先の形・効果のブラシの値）も、描ける先が 3D だけのあいだだけ無効
 //! - 調整レイヤーの欄は、描くチャンネルに効かなくても有効のまま（レイヤーの値は効くチャンネルの出力に効くので、直すためにチャンネルを替えさせない）
 use crate::common;
@@ -10,10 +10,10 @@ use egui::Rect;
 use egui_dock::{DockState, NodeIndex};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
-use yolu_app::engine::{BrushEffect, Channel, DVec2, SymmetryMode};
+use yolu_app::engine::{BrushEffect, Channel};
 use yolu_app::lang::Lang;
 use yolu_app::m2::{AdjustmentKind, Edit, UiOp};
-use yolu_app::selection::{SelAction, SelEdit, SymOp};
+use yolu_app::selection::{SelAction, SelEdit};
 use yolu_app::state::{Action, Tool};
 use yolu_app::{Tab, YoluApp};
 
@@ -54,117 +54,88 @@ fn tooltip_shows(h: &mut H, label: &str, tooltip: &str) -> bool {
     shown
 }
 
-// ───────── 対称 ─────────
+/// その部品の上にポインタを置くと、この文が（読むだけのセットの理由が部品の名前になっているほかのボタンのほかに）新しく出るか。
+fn tooltip_adds(h: &mut H, label: &str, text: &str) -> bool {
+    let at = rect_of_field(h, label).center();
+    move_to(h, egui::pos2(2.0, 2.0));
+    h.run();
+    let before = h.query_all_by_label(text).count();
+    hover_and_wait(h, at);
+    let after = h.query_all_by_label(text).count();
+    move_to(h, egui::pos2(2.0, 2.0));
+    h.run();
+    after > before
+}
 
-fn symmetry_app(lang: Lang) -> H {
+// ───────── 対称定規の欄 ─────────
+
+/// プロパティのレイヤーの欄に、選んでいるレイヤーの 2D の対称定規（線対称 6 本）の欄が出ている画面。
+fn ruler_app(lang: Lang) -> H {
     // プロパティの欄が縦に収まる高さ
     let mut h = app(1280.0, 2400.0, 256);
     h.state_mut().state.lang = lang;
-    h.run();
-    apply(
-        &mut h,
-        Action::Sel(SelAction::Symmetry(SymOp::Mode(SymmetryMode::Radial))),
-    );
-    // 中心を動かしておく（「キャンバスの中心」は中心がずれているときだけ押せる）
-    apply(
-        &mut h,
-        Action::Sel(SelAction::Symmetry(SymOp::Center(0.25, 0.75))),
-    );
-    // 対称の欄は、ブラシの詳細のウィンドウの「対称」のカテゴリ
-    let ui = &mut h.state_mut().state.brushes.ui;
-    ui.detail.open = true;
-    ui.detail.category = yolu_app::brushes::Category::Symmetry;
-    ui.detail.scroll = 0.0;
+    {
+        let s = &mut h.state_mut().state;
+        // 中心をキャンバスの中心からずらしておく（「キャンバスの中心」は中心がずれているときだけ押せる）
+        common::rulers::symmetry_2d(s, (64.0, 192.0), (1.0, 0.0), 6, true);
+        s.ui.property_tab = 1;
+    }
     h.run();
     h
 }
 
-fn symmetry_labels(lang: Lang) -> [&'static str; 4] {
+fn ruler_labels(lang: Lang) -> [&'static str; 4] {
     lang.pick(
-        ["中心 X", "写しの数", "キャンバスの中心", "軸を表示"],
-        ["Center X", "Copies", "Canvas center", "Show axes"],
+        ["線の本数", "中心 X", "角度", "キャンバスの中心"],
+        ["Lines", "Center X", "Angle", "Canvas Center"],
     )
 }
 
-fn assert_symmetry_fields(h: &H, lang: Lang, disabled: bool, what: &str) {
-    for label in symmetry_labels(lang) {
+fn assert_ruler_fields(h: &H, lang: Lang, disabled: bool, what: &str) {
+    for label in ruler_labels(lang) {
         assert_eq!(is_disabled(h, label), disabled, "{lang:?} {what}: {label}");
     }
 }
 
+/// 対称定規は文書の値なので、欄はブラシの効果（指先・クローン）にも、描ける先（2D・3D）にも左右されず、読むだけのセットのあいだだけ無効になる。
 #[test]
-fn the_symmetry_fields_are_disabled_with_a_reason_for_smudge_and_clone_and_come_back() {
+fn the_ruler_fields_are_disabled_only_while_the_set_is_read_only() {
     for lang in Lang::ALL {
-        let mut h = symmetry_app(lang);
-        assert_symmetry_fields(&h, lang, false, "ペイント");
-        let reason = lang.pick("指先・クローンでは使えません", "Not with smudge or clone");
-        for effect in [
-            BrushEffect::Smudge { strength: 0.5 },
-            BrushEffect::Clone {
-                offset: DVec2::new(10.0, 0.0),
-            },
-        ] {
-            h.state_mut().state.m2.brush.effect = effect;
-            h.run();
-            assert_symmetry_fields(&h, lang, true, "指先・クローン");
-            // 理由は、無効にした部品のツールチップ（画面に注記の行は無い）
-            for label in symmetry_labels(lang) {
-                assert!(
-                    tooltip_shows(&mut h, label, reason),
-                    "{lang:?}: {label} のツールチップに理由"
-                );
-            }
-            assert!(
-                h.query_by_label(reason).is_none(),
-                "{lang:?}: 注記の行は出さない"
-            );
-            // モードのボタンは押せる（対称を切る・替えるのは、指先・クローンのあいだもできる）
-            assert!(!is_disabled(&h, lang.pick("放射状", "Radial")));
-            // 効果をペイントに戻せば有効に戻り、理由は出なくなる
-            h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
-            h.run();
-            assert_symmetry_fields(&h, lang, false, "ペイントに戻した");
-            assert!(
-                !tooltip_shows(&mut h, symmetry_labels(lang)[0], reason),
-                "{lang:?}: 理由は消える"
-            );
-        }
-    }
-}
-
-/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだは無効。キャンバスのタブへ戻せば有効に戻る。
-#[test]
-fn the_symmetry_fields_are_disabled_while_only_the_3d_view_can_be_painted() {
-    for lang in Lang::ALL {
-        let mut h = symmetry_app(lang);
-        h.state_mut().state.view3d.load_demo();
-        click_tab(&mut h, Tab::View3d);
+        let mut h = ruler_app(lang);
+        assert_ruler_fields(&h, lang, false, "ふつう");
+        // 指先・クローンでも欄は有効（効かないのはストロークを始めるとき）
+        h.state_mut().state.m2.brush.effect = BrushEffect::Smudge { strength: 0.5 };
         h.run();
-        assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, true, "3D だけ");
-        let reason = lang.pick("3D では効きません", "No effect in 3D");
-        for label in symmetry_labels(lang) {
+        assert_ruler_fields(&h, lang, false, "指先");
+        h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
+        h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
+        h.run();
+        assert_ruler_fields(&h, lang, true, "読むだけのセット");
+        // 無効の欄には、ほかの欄と同じく理由のツールチップ（スライダー・トグル・ボタン）
+        let reason = yolu_app::lang::refusals::read_only_set(lang, "テスト");
+        for label in ruler_labels(lang) {
             assert!(
-                tooltip_shows(&mut h, label, reason),
+                tooltip_adds(&mut h, label, &reason),
                 "{lang:?}: {label} のツールチップに理由"
             );
         }
-        assert!(
-            h.query_by_label(reason).is_none(),
-            "{lang:?}: 注記の行は出さない"
-        );
-        click_tab(&mut h, Tab::Canvas);
+        h.state_mut().state.sets.get_mut(0).unwrap().read_only = None;
         h.run();
-        assert!(!h.state().state.paints_only_in_3d());
-        assert_symmetry_fields(&h, lang, false, "キャンバスへ戻した");
+        assert_ruler_fields(&h, lang, false, "戻した");
+        for label in ruler_labels(lang) {
+            assert!(
+                !tooltip_adds(&mut h, label, &reason),
+                "{lang:?}: {label} は戻したら理由を出さない"
+            );
+        }
     }
 }
 
-/// ドックを分けてキャンバスと 3D ビューが同時に出ているあいだは、2D にも描けるので、対称の欄は有効のまま（前は注記だけで操作できた）。
+/// ドックを分けてキャンバスと 3D ビューを並べても、重ねて 3D だけにしても、対称定規の欄は有効のまま（どちらのビューにも効く文書の値）。
 #[test]
-fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
+fn the_ruler_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side_or_stacked() {
     for lang in Lang::ALL {
-        let mut h = symmetry_app(lang);
+        let mut h = ruler_app(lang);
         h.state_mut().state.view3d.load_demo();
         let mut dock = DockState::new(vec![Tab::Canvas]);
         let surface = dock.main_surface_mut();
@@ -173,20 +144,9 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
         h.state_mut().dock = dock;
         h.run();
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
-        assert!(
-            h.state().state.ui.canvas_visible && h.state().state.view3d.paintable_on_screen(),
-            "{lang:?}"
-        );
         assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, false, "並べた");
-        // 2D の対称の設定を変えられる
-        let before = h.state().state.sel.symmetry.count;
-        apply(
-            &mut h,
-            Action::Sel(SelAction::Symmetry(SymOp::Count(before + 1))),
-        );
-        assert_eq!(h.state().state.sel.symmetry.count, before + 1);
-        // キャンバスを 3D の裏へ回すと、3D だけになって無効
+        assert_ruler_fields(&h, lang, false, "並べた");
+        // キャンバスを 3D の裏へ回して 3D だけになっても、有効のまま
         let mut stacked = DockState::new(vec![Tab::Canvas, Tab::View3d]);
         stacked
             .main_surface_mut()
@@ -196,13 +156,13 @@ fn the_symmetry_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
         click_tab(&mut h, Tab::View3d);
         h.run();
         assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_symmetry_fields(&h, lang, true, "重ねた");
+        assert_ruler_fields(&h, lang, false, "重ねた");
     }
 }
 
 // ───────── ブラシの 2D だけの設定 ─────────
 
-/// 左にツールプロパティ（サブツールのタブ）。`side_by_side` ならキャンバスと 3D ビューを並べ、そうでなければ同じ組に重ねて 3D ビューを前に出す。
+/// 左にサブツールとその下のツールプロパティ。`side_by_side` ならキャンバスと 3D ビューを並べ、そうでなければ同じ組に重ねて 3D ビューを前に出す。
 fn brush_app(lang: Lang, side_by_side: bool) -> H {
     let mut h = app(1600.0, 1000.0, 128);
     h.state_mut().state.lang = lang;
@@ -213,7 +173,8 @@ fn brush_app(lang: Lang, side_by_side: bool) -> H {
         DockState::new(vec![Tab::Canvas, Tab::View3d])
     };
     let surface = dock.main_surface_mut();
-    let [center, _] = surface.split_left(NodeIndex::root(), 0.25, vec![Tab::SubTools]);
+    let [center, left] = surface.split_left(NodeIndex::root(), 0.25, vec![Tab::SubTools]);
+    surface.split_below(left, 0.3, vec![Tab::ToolProperties]);
     if side_by_side {
         surface.split_right(center, 0.5, vec![Tab::View3d]);
     }
@@ -269,8 +230,9 @@ fn assert_brush_field(
     assert_eq!(shown, disabled, "{lang:?}: {label} のツールチップの理由");
 }
 
-/// ツールプロパティ（手ぶれ補正・効果のブラシの値）とブラシの詳細（形状・ストローク・入り抜き・ゆらぎ）の、2D のキャンバスだけで効く欄が `disabled` どおりか。
-fn assert_two_d_brush_fields(h: &mut H, lang: Lang, disabled: bool) {
+/// ツールプロパティ（手ぶれ補正・効果のブラシの値）とブラシの詳細（形状・ストローク・入り抜き・ゆらぎ）の欄が有効で、前の「3D では
+/// 効きません」の理由はツールチップにも出ない（3D のビューの面のダブも同じ式で使う）。
+fn assert_brush_fields_enabled(h: &mut H, lang: Lang) {
     use yolu_app::brushes::Category;
     let effect_reason = lang.pick("3D では使えません", "Not available in 3D");
     let reason = lang.pick("3D では効きません", "No effect in 3D");
@@ -278,14 +240,14 @@ fn assert_two_d_brush_fields(h: &mut H, lang: Lang, disabled: bool) {
     let stabilizer = lang.pick("手ぶれ補正", "Stabilizer");
     let node = h.get_by_label(stabilizer);
     let found = (node.rect(), node.accesskit_node().is_disabled());
-    assert_brush_field(h, lang, found, stabilizer, reason, disabled);
+    assert_brush_field(h, lang, found, stabilizer, reason, false);
     // 効果のブラシ（ぼかし）の値
     h.state_mut().state.m2.brush.effect = BrushEffect::BLUR;
     h.run();
     let blur = lang.pick("ぼかしの半径", "Blur radius");
     let node = h.get_by_label(blur);
     let found = (node.rect(), node.accesskit_node().is_disabled());
-    assert_brush_field(h, lang, found, blur, effect_reason, disabled);
+    assert_brush_field(h, lang, found, blur, effect_reason, false);
     h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
     h.run();
     for (category, labels) in [
@@ -309,14 +271,14 @@ fn assert_two_d_brush_fields(h: &mut H, lang: Lang, disabled: bool) {
         open_brush_detail(h, category);
         for label in labels {
             let found = pane_field(h, label);
-            assert_brush_field(h, lang, found, label, reason, disabled);
+            assert_brush_field(h, lang, found, label, reason, false);
         }
     }
 }
 
-/// ドックを分けてキャンバスと 3D ビューが同時に出ているあいだは、2D にも描けるので、手ぶれ補正などの欄は有効のまま（理由のツールチップも出ない）。
+/// ドックを分けてキャンバスと 3D ビューが同時に出ているあいだも、手ぶれ補正などの欄は有効（理由のツールチップも出ない）。
 #[test]
-fn the_2d_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
+fn the_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_side() {
     for lang in Lang::ALL {
         let mut h = brush_app(lang, true);
         assert!(h.state().view3d_rect().is_some(), "{lang:?}: 3D も出ている");
@@ -325,99 +287,158 @@ fn the_2d_brush_fields_stay_enabled_when_the_canvas_and_the_3d_view_are_side_by_
             "{lang:?}"
         );
         assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_two_d_brush_fields(&mut h, lang, false);
+        assert_brush_fields_enabled(&mut h, lang);
     }
 }
 
-/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだは無効で、理由はツールチップ。
+/// 3D のタブだけが出ていて、描ける先が 3D の面だけのあいだも、筆先・ストローク・入り抜き・ゆらぎ・効果の値の欄は有効（3D の面のダブも
+/// 2D と同じ式で使う）。
 #[test]
-fn the_2d_brush_fields_are_disabled_with_the_reason_while_only_the_3d_view_can_be_painted() {
+fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     for lang in Lang::ALL {
         let mut h = brush_app(lang, false);
         assert!(h.state().state.paints_only_in_3d(), "{lang:?}");
-        assert_two_d_brush_fields(&mut h, lang, true);
-        // キャンバスのタブへ戻せば有効に戻る
-        click_tab(&mut h, Tab::Canvas);
-        h.run();
-        assert!(!h.state().state.paints_only_in_3d(), "{lang:?}");
-        close_brush_detail(&mut h);
-        let stabilizer = lang.pick("手ぶれ補正", "Stabilizer");
-        assert!(
-            !h.get_by_label(stabilizer).accesskit_node().is_disabled(),
-            "{lang:?}: キャンバスへ戻した"
-        );
+        assert_brush_fields_enabled(&mut h, lang);
     }
 }
 
-// ───────── 選択範囲を変更 ─────────
+// ───────── 対称定規にスナップ（バケツ・自動選択） ─────────
 
-fn modify_labels(lang: Lang) -> [&'static str; 7] {
+/// バケツと自動選択の切り替えは、対称定規の写しが 2D のキャンバスだけに効くので、描ける先が 3D だけのあいだは押せず、短い理由を出す。
+/// キャンバスが出ているあいだ（並べていても）は有効で、押すと入り切りできる。
+#[test]
+fn the_snap_to_symmetry_ruler_toggle_is_unavailable_only_while_just_the_3d_view_can_be_painted() {
+    for lang in Lang::ALL {
+        let label = lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler");
+        let reason = lang.pick("2D だけ", "2D only");
+        for tool in [Tool::Fill, Tool::Wand] {
+            let on = |h: &H| match tool {
+                Tool::Fill => h.state().state.region.snap_symmetry,
+                _ => h.state().state.sel.snap_symmetry,
+            };
+            // 並べて出している: 有効。押すと切り替わる
+            let mut h = brush_app(lang, true);
+            apply(&mut h, Action::SelectTool(tool));
+            assert!(!h.state().state.paints_only_in_3d(), "{lang:?} {tool:?}");
+            assert!(on(&h), "{lang:?} {tool:?}: 既定は入");
+            assert!(!is_disabled(&h, label), "{lang:?} {tool:?}");
+            assert!(!tooltip_shows(&mut h, label, reason), "{lang:?} {tool:?}");
+            let at = rect_of_field(&h, label).center();
+            click(&mut h, at);
+            assert!(!on(&h), "{lang:?} {tool:?}: 押すと切");
+            click(&mut h, at);
+            assert!(on(&h), "{lang:?} {tool:?}: もう一度押すと入");
+            // 3D だけ: 押せず、押しても変わらない。ポインタを置くと理由
+            let mut h = brush_app(lang, false);
+            apply(&mut h, Action::SelectTool(tool));
+            assert!(h.state().state.paints_only_in_3d(), "{lang:?} {tool:?}");
+            assert!(is_disabled(&h, label), "{lang:?} {tool:?}");
+            assert!(tooltip_shows(&mut h, label, reason), "{lang:?} {tool:?}");
+            let at = rect_of_field(&h, label).center();
+            click(&mut h, at);
+            assert!(on(&h), "{lang:?} {tool:?}: 3D だけでは押しても変わらない");
+        }
+    }
+}
+
+/// バケツの切り替えは、塗り残し（なぞり塗り）が入のときは効かないので押せず、短い理由を出す。切ると押せる。
+#[test]
+fn the_bucket_snap_to_symmetry_ruler_is_unavailable_while_paint_unfilled_areas_is_on() {
+    for lang in Lang::ALL {
+        let label = lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler");
+        let reason = lang.pick("塗り残しでは効きません", "Not used with leftover fill");
+        let mut h = brush_app(lang, true);
+        apply(&mut h, Action::SelectTool(Tool::Fill));
+        h.state_mut().state.region.by_color = true;
+        h.run();
+        assert!(
+            !is_disabled(&h, label),
+            "{lang:?}: 塗り残しが切のあいだは有効"
+        );
+        assert!(!tooltip_shows(&mut h, label, reason), "{lang:?}");
+        h.state_mut().state.region.color.leftovers = true;
+        h.run();
+        assert!(
+            is_disabled(&h, label),
+            "{lang:?}: 塗り残しが入のあいだは押せない"
+        );
+        assert!(tooltip_shows(&mut h, label, reason), "{lang:?}");
+        h.state_mut().state.region.color.leftovers = false;
+        h.run();
+        assert!(!is_disabled(&h, label), "{lang:?}: 切ると戻る");
+    }
+}
+
+// ───────── 選択範囲を変更（「選択範囲」メニューの項目） ─────────
+// ツールプロパティには置かない。同じ操作は「選択範囲」メニューにあり、選択範囲が無いあいだは項目が灰色になる。
+
+fn modify_labels(lang: Lang) -> [&'static str; 5] {
     lang.pick(
         [
-            "半径",
-            "端を固定",
-            "拡張",
-            "縮小",
-            "境界線",
-            "境界をぼかす",
+            "拡張…",
+            "縮小…",
+            "境界線…",
+            "境界をぼかす…",
             "境界をくっきり",
         ],
-        [
-            "Radius",
-            "Edge lock",
-            "Grow",
-            "Shrink",
-            "Border",
-            "Feather",
-            "Sharpen Edge",
-        ],
+        ["Grow…", "Shrink…", "Border…", "Feather…", "Sharpen Edge"],
     )
 }
 
+/// 「選択範囲」メニューを開き、項目が無効かを順に返して閉じる。
+fn menu_items_disabled(h: &mut H, lang: Lang) -> Vec<bool> {
+    let title = menu_title(h, lang.pick("選択範囲", "Select")).center();
+    click(h, title);
+    let flags = modify_labels(lang)
+        .into_iter()
+        .map(|label| {
+            let target = popup_item(h, label);
+            h.get_all_by_label(label)
+                .find(|n| n.rect() == target)
+                .unwrap()
+                .accesskit_node()
+                .is_disabled()
+        })
+        .collect();
+    key(h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    flags
+}
+
 #[test]
-fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_and_come_back() {
+fn the_selection_modify_menu_items_are_disabled_without_a_selection_and_come_back() {
     for lang in Lang::ALL {
-        // 選択のツールの設定の欄が上に付いたので、変更のボタンが全部見える高さにする
-        let mut h = app(1280.0, 1000.0, 256);
+        let mut h = app(1280.0, 800.0, 256);
         h.state_mut().state.lang = lang;
         apply(&mut h, Action::SelectTool(Tool::SelectRect));
         assert!(h.state().state.doc.selection().is_none());
-        let reason = lang.pick("選択範囲なし", "No selection");
-        for label in modify_labels(lang) {
+        assert_eq!(
+            menu_items_disabled(&mut h, lang),
+            vec![true; 5],
+            "{lang:?}: 選択範囲が無いので無効"
+        );
+        // ツールプロパティには置かない
+        for label in lang.pick(["半径", "端を固定"], ["Radius", "Edge lock"]) {
             assert!(
-                is_disabled(&h, label),
-                "{lang:?}: 選択範囲が無いので {label} は無効"
-            );
-            assert!(
-                tooltip_shows(&mut h, label, reason),
-                "{lang:?}: {label} のツールチップに理由"
+                h.query_by_label(label).is_none(),
+                "{lang:?}: ツールプロパティに {label} は無い"
             );
         }
-        assert!(
-            h.query_by_label(reason).is_none(),
-            "{lang:?}: 注記の行は出さない"
-        );
-        // 選択範囲を作れば有効に戻り、理由は消える
+        // 選択範囲を作れば有効に戻る
         apply(&mut h, Action::Sel(SelAction::Edit(SelEdit::All)));
         assert!(h.state().state.doc.selection().is_some());
-        for label in modify_labels(lang) {
-            assert!(
-                !is_disabled(&h, label),
-                "{lang:?}: 選択範囲があるので {label} は有効"
-            );
-            assert!(
-                !tooltip_shows(&mut h, label, reason),
-                "{lang:?}: {label} の理由は消える"
-            );
-        }
+        assert_eq!(
+            menu_items_disabled(&mut h, lang),
+            vec![false; 5],
+            "{lang:?}: 選択範囲があるので有効"
+        );
         // 解除すればまた無効
         apply(&mut h, Action::Sel(SelAction::Edit(SelEdit::Clear)));
-        for label in modify_labels(lang) {
-            assert!(
-                is_disabled(&h, label),
-                "{lang:?}: 解除したので {label} は無効"
-            );
-        }
+        assert_eq!(
+            menu_items_disabled(&mut h, lang),
+            vec![true; 5],
+            "{lang:?}: 解除したので無効"
+        );
     }
 }
 
@@ -425,7 +446,8 @@ fn the_selection_modify_fields_are_disabled_without_a_selection_with_the_reason_
 
 /// 色相・彩度の調整レイヤーを選んだ文書。描くチャンネルは `paint`。
 fn adjustment_app(lang: Lang, paint: Channel) -> H {
-    let mut h = app(1280.0, 1000.0, 256);
+    // （調整レイヤーの値が全部入る高さで）
+    let mut h = app(1280.0, 1600.0, 256);
     h.state_mut().state.lang = lang;
     apply(
         &mut h,
@@ -498,6 +520,130 @@ fn the_hue_saturation_fields_say_why_they_do_not_reach_the_paint_channel_but_sta
                 !tooltip_shows(&mut h, label, &reason),
                 "{lang:?}: {label} の理由は消える"
             );
+        }
+    }
+}
+
+// ───────── 画像の筆先・消しゴム・ツールチップは名前とキー ─────────
+
+fn image_tip() -> std::sync::Arc<yolu_core::BrushTip> {
+    std::sync::Arc::new(yolu_core::BrushTip::new("試し", 2, 2, vec![0, 255, 255, 0]).unwrap())
+}
+
+/// 画像の筆先のとき、硬さは効かないので押せず、理由が出る（ツールプロパティ・ブラシの詳細の形状と筆圧の最小）。丸い筆先なら有効で、理由は出ない。
+#[test]
+fn hardness_says_it_has_no_effect_with_an_image_tip() {
+    use yolu_app::brushes::Category;
+    for lang in Lang::ALL {
+        let reason = lang.pick("画像の筆先では効きません", "No effect on an image tip");
+        let hardness = lang.pick("硬さ", "Hardness");
+        let minimum = lang.pick("最小", "Minimum");
+        // 丸い筆先: 有効・理由なし
+        let mut h = brush_app(lang, true);
+        assert!(!is_disabled(&h, hardness), "{lang:?}");
+        assert!(!tooltip_shows(&mut h, hardness, reason), "{lang:?}");
+        // 画像の筆先: ツールプロパティ
+        h.state_mut().state.m2.brush.tip.image = Some(image_tip());
+        h.run();
+        assert!(is_disabled(&h, hardness), "{lang:?}");
+        assert!(tooltip_shows(&mut h, hardness, reason), "{lang:?}");
+        // ブラシの詳細の形状
+        open_brush_detail(&mut h, Category::Shape);
+        let found = pane_field(&h, hardness);
+        assert_brush_field(&mut h, lang, found, hardness, reason, true);
+        // 筆圧: 硬さの項目（最後）の最小は、画像の筆先が理由
+        open_brush_detail(&mut h, Category::Pressure);
+        // 硬さの項目は一番下なので、見えるところまで送る
+        h.state_mut().state.brushes.ui.detail.scroll = 1000.0;
+        h.run();
+        let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
+            .expect("ブラシの詳細のウィンドウ");
+        let last = h
+            .query_all_by_label(minimum)
+            .filter(|n| window.contains(n.rect().center()))
+            .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
+            .expect("最小の欄");
+        let found = (last.rect(), last.accesskit_node().is_disabled());
+        assert_brush_field(&mut h, lang, found, minimum, reason, true);
+    }
+}
+
+/// 消しゴムのときのクローンの「全レイヤーから」「揃える」は、ずれの欄と同じく消しゴムが理由。
+#[test]
+fn the_clone_toggles_say_the_eraser_is_the_reason() {
+    use yolu_app::brushes::Category;
+    for lang in Lang::ALL {
+        let reason = lang.pick("消しゴムでは使えません", "Not available with the eraser");
+        let mut h = brush_app(lang, true);
+        apply(&mut h, Action::SelectTool(Tool::Eraser));
+        h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+            offset: yolu_app::engine::DVec2::new(8.0, 0.0),
+        };
+        open_brush_detail(&mut h, Category::Effect);
+        for label in [
+            lang.pick("全レイヤーから", "All layers"),
+            lang.pick("揃える", "Aligned"),
+        ] {
+            let found = pane_field(&h, label);
+            assert_brush_field(&mut h, lang, found, label, reason, true);
+        }
+    }
+}
+
+/// 元が無いときの「揃える」の理由には、元を決める入力（組み合わせの表から）が付く。
+#[test]
+fn the_aligned_reason_names_the_key_that_sets_the_clone_source() {
+    use yolu_app::brushes::Category;
+    for lang in Lang::ALL {
+        let reason = lang.pick(
+            "元を決めると使える（Alt+クリック）",
+            "Available once a source is set (Alt+Click)",
+        );
+        let mut h = brush_app(lang, true);
+        h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+            offset: yolu_app::engine::DVec2::new(8.0, 0.0),
+        };
+        open_brush_detail(&mut h, Category::Effect);
+        let label = lang.pick("揃える", "Aligned");
+        let found = pane_field(&h, label);
+        assert_brush_field(&mut h, lang, found, label, reason, true);
+    }
+}
+
+/// 値の欄のツールチップは名前とキーだけ（動きの説明は出ない）。選択の形のツールの縦横比・中心からには、修飾キーが付く。
+#[test]
+fn value_tooltips_are_the_name_and_the_key_only() {
+    for lang in Lang::ALL {
+        let mut h = brush_app(lang, true);
+        // ブラシ: 流量・不透明度に説明は出ない
+        for (label, old) in [
+            (
+                lang.pick("流量", "Flow"),
+                lang.pick("ダブ 1 つが足す量", "How much each dab adds"),
+            ),
+            (
+                lang.pick("不透明度", "Opacity"),
+                lang.pick(
+                    "1 本のストロークが覆える上限",
+                    "The most one stroke can cover",
+                ),
+            ),
+        ] {
+            assert!(!tooltip_shows(&mut h, label, old), "{lang:?}: {label}");
+        }
+        // 選択の形のツール
+        apply(&mut h, Action::SelectTool(Tool::SelectRect));
+        for (label, tip) in [
+            (
+                lang.pick("縦横比を固定", "Fixed ratio"),
+                lang.pick("縦横比を固定（Shift）", "Fixed ratio (Shift)"),
+            ),
+            (
+                lang.pick("中心から", "From center"),
+                lang.pick("中心から（Alt）", "From center (Alt)"),
+            ),
+        ] {
+            assert!(tooltip_shows(&mut h, label, tip), "{lang:?}: {tip}");
         }
     }
 }

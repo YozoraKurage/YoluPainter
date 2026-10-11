@@ -4,6 +4,8 @@
 //!
 //! - 動かす: 帯の何も無い所を押して引くと `StartDrag`（OS の移動なので、画面の端へのスナップ・別のモニターへの移動が効く）。
 //!   ダブルクリックで最大化と元に戻すを切り替える。メニューの見出し・Live Link の印・クラッシュの印を押したときは動かさない。
+//!   ペン・指の押しの引きは `StartDrag` に渡さず、アプリの側でウィンドウを動かす（`send_drag_commands`。スナップは効かない）。マウスの引きで渡した `StartDrag` は、輪が
+//!   始まらないままなら見張りが戻す。
 //! - 大きさ: ウィンドウの縁（`EDGE`）を押すと `BeginResize`。最大化中・全画面中は無い。縁を押す前に、押した所の部品に譲る
 //!   （メニューの見出し・スクロールのつまみなど、縁と同じ所にある細い部品。egui の押しを持たない Live Link の印は矩形で渡す）、
 //!   浮かせたウィンドウ・メニューが上にあれば何もしない、ペン・タッチの押しは受けない（ペンは `contact`）。縁の押しはビューの押しとして
@@ -21,10 +23,11 @@
 
 use egui::{
     Color32, Context, CursorIcon, Event, Id, Order, PointerButton, Pos2, Rect, ResizeDirection,
-    Response, Sense, Ui, ViewportCommand, WidgetInfo, WidgetType,
+    Response, Sense, TouchPhase, Ui, ViewportCommand, WidgetInfo, WidgetType,
 };
 
 use crate::lang::Lang;
+use crate::pen::PenInput;
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
 
@@ -223,6 +226,57 @@ pub fn drag_commands(
         vec![ViewportCommand::StartDrag]
     } else {
         Vec::new()
+    }
+}
+
+/// 帯の押しが Touch（winit が `WM_POINTER` のペン・指から作る）から来たか。egui の左ボタンの押しの前に、同じ入力の中で Touch の始まりがあれば、ペン・指の押し。
+/// マウスの押しには Touch が付かない。押しの無いフレームは、前の値のまま。
+pub fn press_from_touch(previous: bool, events: &[Event]) -> bool {
+    let mut touch_start = false;
+    let mut origin = previous;
+    for event in events {
+        match event {
+            Event::Touch {
+                phase: TouchPhase::Start,
+                ..
+            } => touch_start = true,
+            Event::PointerButton {
+                button: PointerButton::Primary,
+                pressed: true,
+                ..
+            } => {
+                origin = touch_start;
+                touch_start = false;
+            }
+            _ => {}
+        }
+    }
+    origin
+}
+
+/// 押しの出どころ（ペン・指か）を覚える部品の名前。ウィンドウ（viewport）ごと。
+const TOUCH_PRESS: &str = "yolu.titlebar.touch_press";
+
+/// 帯のあるウィンドウが毎フレーム呼ぶ: `drag_commands` が返した頼みを送る。
+/// - ペン・指の押しの引き始め（`StartDrag`）は OS の移動の輪に渡さず、アプリの側でウィンドウを動かす（`pen`。触れているポインタが分からず動かせなくても、輪には渡さない）。
+///   OS の移動の輪はマウスのボタンの押しで始めるもので、ペン・指の押しで始めると離しが届かず、winit の「動かしている最中」の印が残ってマウスでも動かせなくなりうる。
+///   画面の端へのスナップは効かない。ウィンドウをアプリで動かす手が無いとき（Windows 以外・繋ぐ前）は、今までどおり `StartDrag`。
+/// - マウスの引き始めは `StartDrag` を送り、`pen` の見張りに渡したと伝える（輪が始まらないまま 1 秒たったら、見張りが印を戻す）。
+pub fn send_drag_commands(ctx: &Context, commands: Vec<ViewportCommand>, pen: &PenInput) {
+    let id = Id::new((TOUCH_PRESS, ctx.viewport_id()));
+    let previous = ctx.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    let touch = ctx.input(|i| press_from_touch(previous, &i.events));
+    ctx.data_mut(|d| d.insert_temp(id, touch));
+    pen.poll_window();
+    for command in commands {
+        if matches!(command, ViewportCommand::StartDrag) {
+            if touch && pen.moves_window() {
+                pen.begin_window_move();
+                continue;
+            }
+            pen.start_drag_handed();
+        }
+        ctx.send_viewport_cmd(command);
     }
 }
 

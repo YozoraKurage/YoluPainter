@@ -1,9 +1,10 @@
 //! 3D ビュー: モデル（`model`）、wgpu の描画（`render`）、入力（`input`: 面に描く・回す・パン・寄る）、ブラシのカーソル。
 //! 計算（当たり・ダブ・カメラの式）は core の `geometry`。ここは状態を持ち、入力を渡し、描くだけ。
 
+pub mod axis_gizmo;
 pub mod brdf;
-pub mod clone_source;
 pub mod display;
+pub mod draft;
 pub mod environment;
 pub mod gizmo;
 pub mod input;
@@ -12,10 +13,14 @@ pub mod look_gpu;
 pub mod model;
 pub mod navigation;
 pub mod other_sets;
+pub mod pacing;
 pub mod paint;
 pub mod pose;
+mod quick;
 pub mod received_layers;
 pub mod render;
+pub mod select;
+pub mod selection_overlay;
 pub mod shape_gizmo;
 pub mod tangents;
 pub mod user_layers;
@@ -32,6 +37,8 @@ use crate::state::StrokeSource;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
     Orbit,
+    /// 軸の向きへ吸い付く回転（Alt + 左）。
+    SnapOrbit,
     Pan,
     /// Ctrl+Space（寄る・引く）。
     Zoom,
@@ -41,11 +48,22 @@ pub enum Nav {
 #[derive(Default)]
 pub struct SurfaceInput {
     pub stroke: Option<StrokeSource>,
+    /// 面のストロークを離した（マウス・ペンを離した・ウィンドウのフォーカスを失った）。持ち越したダブが残っていれば、フレームごとに時間の枠で
+    /// 塗り続け、塗り終えたら文書のストロークを確定する（それまでは描いている最中のまま。新しい点は受けない）。
+    pub released: bool,
+    /// 1 フレームに面のダブを塗ってよい時間の上書き（試験用。None なら溜まった仕事の見込みで決める。`pacing::frame_budget`）。
+    pub paint_budget: Option<std::time::Duration>,
+    /// 今のストロークの 1 ダブの平均の時間（溜まった仕事の見込みの元。ストロークが終わると忘れる）。
+    pub dab_clock: pacing::DabClock,
+    /// 直前の `paint_queued` が今のフレームに塗ったダブの数（同じフレームの表示の同期の時間を、ダブあたりに直すため。`note_sync` が取る）。
+    pub frame_dabs: usize,
     /// ペンの今の押し（2D の `CanvasInput::pen_press` と同じ。押した瞬間に終わるバケツ・ID の色で選択を押し直さない印も兼ねる）。
     pub pen_press: Option<crate::pen::PenPress>,
     /// Ctrl+Space の拡縮のドラッグ（`nav` が `Nav::Zoom` のあいだ）。
     pub zoom: Option<crate::gesture::ZoomDrag>,
     pub surface: Option<yolu_core::geometry::SurfaceStroke>,
+    /// クイックマスクのブラシ・消しゴムの 3D のストローク（選択範囲の被覆を集める。被覆は `AppState::sel` の選択ペンが持つ）。
+    pub cover: Option<yolu_core::geometry::SurfaceCoverStroke>,
     /// ドラッグで回している・パンしている（押したボタンと一緒に）。
     pub nav: Option<(Nav, egui::PointerButton)>,
     pub navigation: Option<navigation::Drag>,
@@ -54,11 +72,34 @@ pub struct SurfaceInput {
     pub stroke_points: usize,
     /// 描いているストロークに固めた 3D の対称（対称の面の表示と、写しのカーソルはこれを読む）。
     pub symmetry: Option<yolu_core::geometry::SurfaceSymmetrySetup>,
-    /// Alt を押して押した点（動かさずに離したらクローンの元にする。動かしたら回す）。
-    pub clone_press: Option<egui::Pos2>,
+    /// クローンの元を決める組み合わせ（既定は Alt + 左）で押した点とボタン（動かさずに離したらクローンの元にする。動かしたらドラッグの操作だけ）。
+    pub clone_press: Option<(egui::Pos2, egui::PointerButton)>,
+    /// 視点の移動の間に押されていた移動キー（右ボタンを先に離しても、押したままの間は、キーの繰り返しをキーの表に渡さない。`keymap::take_fly_keys`）。
+    pub fly_held: Vec<egui::Key>,
+    /// 右ボタン（ペンのサイドボタン）を押した点と、押したときの見本（動かさずに離したらスポイト。動かしたら回すだけ）。
+    pub eyedrop: Option<crate::eyedrop::RightPress>,
+    /// 確定した 3D ストロークの終点（面の点。Shift + 押しの直線の始め。今のカメラで画面へ写し直して使う。今のモデルの世代のときだけ使う）。
+    pub previous_end: Option<yolu_core::geometry::SurfaceHit>,
+    /// 描いている 3D ストロークの今の終点（画面の点。Shift のぶれの抑え・向きの固定を当てた後）。
+    pub last_point: Option<egui::Pos2>,
+    /// 描いている 3D ストロークの入力で、面に当たった最後の点（確定すると `previous_end` になる。モデルの外へ出て終えても、面の上の終わりを覚える）。
+    pub last_hit: Option<yolu_core::geometry::SurfaceHit>,
+    /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定（画面の点。2D の `CanvasInput::shift_hold` と同じ決まり）。
+    pub shift_hold: Option<crate::state::ShiftHold>,
+    /// 定規にスナップするストロークの寄せ先（表示域の画面の点。ストロークの始めに凍結する）。
+    pub ruler_constraint: Option<crate::drafting::Constraint>,
+    /// グラデーション・図形・定規のドラッグの途中（画面の上の形。離すまで文書を変えない）。
+    pub draft: Option<draft::SurfaceDraft>,
 }
 
 impl SurfaceInput {
+    /// このフレームの 3D の表示の同期（変わったタイルの合成・上げ・ミップ）に `sync` かかった。このフレームに塗ったダブの数で割って、
+    /// 1 ダブの時間の見積もりに足す（塗っていないフレームでは何もしない）。
+    pub fn note_sync(&mut self, sync: std::time::Duration) {
+        let painted = std::mem::take(&mut self.frame_dabs);
+        self.dab_clock.record_sync(painted, sync);
+    }
+
     /// 押しの印と、回し・パン・拡縮の途中を全部捨てる（ビューが隠れて、ペンの離れ・ボタンの離れを受け取れなかったとき。印が残ると、次の押しを
     /// 前の押しの続きとして扱い、Alt で押した点の近くで離せばクローンの元を決めてしまう）。描いているストロークは別の持ち主が終える。
     pub fn drop_presses(&mut self) {
@@ -67,6 +108,8 @@ impl SurfaceInput {
         self.navigation = None;
         self.zoom = None;
         self.clone_press = None;
+        self.eyedrop = None;
+        self.draft = None;
     }
 }
 
@@ -80,6 +123,8 @@ pub struct View3dState {
     /// 見せる形（描画・当たり・カーソルが読む）。
     pub model: Option<Arc<ViewModel>>,
     pub camera: OrbitCamera,
+    /// 今の正投影は、軸の向きに入ったので自動で替えたもの（回して軸から外れたら透視へ戻す。`navigation::after_orbit`）。
+    pub auto_orthographic: bool,
     /// 描くテクスチャセット（マテリアルの組の番号。負ならどの面にも描かない）。`AppState::sync_view3d` が今のセットから決める。
     pub material: i32,
     /// メモリの予算が足りずに、絵を 3D に見せていないセットのマテリアル（今のセットでないセットだけ。描くたびに `other_sets::finish` が入れる。
@@ -111,8 +156,6 @@ pub struct View3dState {
     pub display: display::Display,
     /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
     pub pose: pose::PoseEditor,
-    /// クローンの元と設定。
-    pub clone: clone_source::CloneState,
     /// 3D の塗りの切り替え（隠れた所・裏の面・面の向きの弱め・継ぎ目のにじみ）。ストロークの始めに固める。設定のファイルに書く
     /// （`Settings::view3d_paint`）。
     pub projection: yolu_core::geometry::ProjectionSettings,
@@ -121,6 +164,10 @@ pub struct View3dState {
     /// 3D ビューのタブが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。別のタブの
     /// 裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
     pub visible: bool,
+    /// 最後に描いた 3D ビューの表示域（画面の点。パイから「収める」ときの縦横の比・G/R/S の線と札）。
+    pub view_rect: Option<egui::Rect>,
+    /// 最後に 3D ビューを描いたウィンドウ（G/R/S は、このウィンドウのキーとポインタで動かす）。
+    pub viewport: Option<egui::ViewportId>,
 }
 
 impl View3dState {
@@ -158,7 +205,7 @@ impl View3dState {
             .as_ref()
             .is_some_and(|m| m.name == model.name && m.triangle_count() == model.triangle_count());
         if !keep_camera {
-            self.camera = OrbitCamera::framing(&model.geometry.bounds());
+            self.reframe(&model.geometry.bounds());
         }
         self.full = Some(model);
         self.unpainted.clear();
@@ -369,16 +416,33 @@ impl View3dState {
 
     /// カメラをモデル全体が入る位置へ戻す。
     pub fn frame_model(&mut self) {
-        if let Some(m) = &self.full {
-            self.camera = OrbitCamera::framing(&m.geometry.bounds());
+        if let Some(bounds) = self.full.as_ref().map(|m| m.geometry.bounds()) {
+            self.reframe(&bounds);
         }
+    }
+
+    /// カメラを、この境界が全部入る既定の向きの位置へ置き直す。手で選んだ正投影は保ち、軸の向きで自動で替えた正投影は透視へ戻す
+    /// （既定の向きは軸の向きではない）。
+    fn reframe(&mut self, bounds: &yolu_core::geometry::Bounds) {
+        let orthographic = self.camera.is_orthographic() && !self.auto_orthographic;
+        self.camera = OrbitCamera::framing(bounds);
+        self.camera.set_orthographic(orthographic);
+        self.auto_orthographic = false;
     }
 
     /// ストロークが終わったら、待たせていたモデル・閉じる・隠すを当てる。
     pub(crate) fn stroke_ended(&mut self) {
         self.input.stroke = None;
+        self.input.released = false;
+        self.input.dab_clock = pacing::DabClock::default();
+        self.input.frame_dabs = 0;
         self.input.surface = None;
+        self.input.cover = None;
         self.input.symmetry = None;
+        self.input.last_point = None;
+        self.input.last_hit = None;
+        self.input.shift_hold = None;
+        self.input.ruler_constraint = None;
         if std::mem::take(&mut self.pending_close) {
             self.full = None;
             self.model = None;

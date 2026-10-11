@@ -19,8 +19,8 @@
 
 use eframe::egui_wgpu::{self, wgpu};
 use yolu_gpu::{
-    resident_requirements, GpuPainter, Options, ResidentCompositor, ResidentOptions, Unsupported,
-    UpdateStats,
+    device_can_composite, resident_requirements, GpuPainter, Options, ResidentCompositor,
+    ResidentOptions, Unsupported, UpdateStats,
 };
 
 use crate::engine::{Channel, Document};
@@ -79,6 +79,8 @@ pub enum Fallback {
     NoDevice,
     /// ソフトウェアのアダプター（`Auto` のとき）。
     SoftwareAdapter,
+    /// 装置が合成に要る上限（compute・storage）を持たない（WebGL2 の上限で作った OpenGL の装置など）。
+    DeviceLimits,
     /// この文書の中身を GPU で合成できない（グループの入れ子が深すぎる・文書にないチャンネル）。
     Unsupported(Unsupported),
     /// 描いたタイルを全部常駐させると GPU のメモリの予算を超える（文書が小さくなれば戻る）。
@@ -117,8 +119,8 @@ impl Failure {
     pub fn describe(&self, lang: Lang) -> String {
         match self.kind {
             FailureKind::TextureLimit => lang.pick(
-                "文書の大きさが GPU のテクスチャの上限を超えます",
-                "Document is larger than the GPU texture limit",
+                "キャンバスの大きさが GPU のテクスチャの上限を超えます",
+                "Canvas is larger than the GPU texture limit",
             ),
             FailureKind::Init => {
                 lang.pick("GPU の初期化に失敗しました", "GPU initialization failed")
@@ -136,13 +138,19 @@ impl Fallback {
             Fallback::Policy => lang
                 .pick("設定で GPU を使わない", "GPU turned off in the settings")
                 .into(),
-            Fallback::NoDevice => lang.pick("GPU の装置がありません", "No GPU device").into(),
+            Fallback::NoDevice => lang.pick("GPU が見つかりません", "No GPU found").into(),
             Fallback::SoftwareAdapter => lang
                 .pick("ソフトウェアの GPU です", "Software GPU adapter")
                 .into(),
+            Fallback::DeviceLimits => lang
+                .pick(
+                    "GPU の機能が足りません",
+                    "The GPU lacks the needed features",
+                )
+                .into(),
             Fallback::Unsupported(u) => match u {
                 Unsupported::UnknownChannel => lang
-                    .pick("文書にないチャンネルです", "Unknown channel")
+                    .pick("プロジェクトにないチャンネルです", "Unknown channel")
                     .into(),
                 Unsupported::GroupDepth => lang
                     .pick(
@@ -303,6 +311,10 @@ impl GpuCanvas {
             if *key == FailureKey::of(doc, channel) {
                 return Some(Fallback::Failed(failure.clone()));
             }
+        }
+        // 装置が合成のシェーダーを動かせない（予算の見積もりも作れず、予算を超えると見えてしまう）
+        if !device_can_composite(&rs.device.limits()) {
+            return Some(Fallback::DeviceLimits);
         }
         let key = (doc.id(), doc.revision(), channel);
         let checked = match self.checked {
@@ -565,6 +577,7 @@ mod tests {
             Fallback::Policy,
             Fallback::NoDevice,
             Fallback::SoftwareAdapter,
+            Fallback::DeviceLimits,
             Fallback::Unsupported(Unsupported::UnknownChannel),
             Fallback::Unsupported(Unsupported::GroupDepth),
             Fallback::OverBudget,

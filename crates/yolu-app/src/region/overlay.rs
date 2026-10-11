@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use egui::epaint::{Mesh, Vertex};
 use egui::{pos2, Color32, Painter, Rect, Shape, Stroke};
-use yolu_core::geometry::{CameraView, Ray};
+use yolu_core::geometry::CameraView;
 use yolu_core::glam::Vec4;
 
 use super::tools::{update_hover, Where};
@@ -81,19 +81,18 @@ pub fn paint_canvas(
 fn visible(hover: &super::tools::Hover, view: &CameraView) -> Arc<Vec<u32>> {
     let geometry = &hover.geometry;
     let triangles = geometry.triangles();
-    let camera = view.position;
     let occlusion = hover.tris.len() <= OCCLUSION_LIMIT;
     let mut out = Vec::with_capacity(hover.tris.len());
     for &i in hover.tris.iter() {
         let t = &triangles[i as usize];
         let centre = (t.a + t.b + t.c) / 3.0;
-        if t.normal().dot(centre - camera) >= 0.0 {
+        if t.normal().dot(view.to_viewer(centre)) <= 0.0 {
             continue; // 裏向き
         }
         if occlusion {
-            let distance = (centre - camera).length();
-            let ray = Ray::new(camera, centre - camera);
-            if let Some(hit) = geometry.raycast(ray, true, f32::INFINITY) {
+            let sight = view.sight(centre);
+            let distance = sight.distance;
+            if let Some(hit) = geometry.raycast(sight.ray(), true, f32::INFINITY) {
                 if hit.triangle != i
                     && hit.distance < distance - distance * 1e-3 - geometry.visibility_epsilon()
                 {
@@ -106,14 +105,14 @@ fn visible(hover: &super::tools::Hover, view: &CameraView) -> Arc<Vec<u32>> {
     Arc::new(out)
 }
 
-/// 3D ビュー: 範囲を求め直し（ポインタが表示域の上にあるときだけ）、範囲の面を薄い色で重ねる。回している・ポーズのモードでは出さない。
+/// 3D ビュー: 範囲を求め直し（ポインタが表示域の上にあるときだけ）、範囲の面を薄い色で重ねる。回している・ペイントのモードでないときは出さない。
 pub fn paint_surface(
     painter: &Painter,
     app: &mut AppState,
     rect: Rect,
     pointer: Option<egui::Pos2>,
 ) {
-    let busy = app.view3d.input.nav.is_some() || app.view3d.pose.mode;
+    let busy = app.view3d.input.nav.is_some() || !app.mode.paints();
     let picking = crate::bake::overlap::highlighting(app);
     if (!app.tool.is_region() && !picking) || busy {
         if app.region.hover.as_ref().is_some_and(|h| h.on_surface) {

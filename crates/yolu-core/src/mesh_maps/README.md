@@ -22,6 +22,10 @@ rayonの並列度を変えても画素と由来は同じ。`max_degree_of_parall
 `.ylp` へは `Project::with_mesh_map`（形式7だけ。旧形式は先に `upgraded`）、取り出しは `Project::mesh_map`。
 派生物を置き換えても文書と未知のエントリを保つ。
 
+## 重なった UV のテクセルの持ち主（ベイクの優先）
+
+同じテクセルを 2 つ以上の三角形が覆うとき、受け手の並びで先の三角形が持ち主になります（`priority.rs`。ベイクの割り当てだけが変わり、焼いた後の値の計算は変えません）。`MeshOverlapPriority` は、自動の決め方（`MeshOverlapRule`: 番号の小さい三角形・3D の面積の大きいアイランド・モデルの空間の +X の側・−X の側）と、0〜1 の外の UV のアイランドを焼かないか、手で選んだ「焼かない」「優先する」アイランド（それぞれ 4096 まで。モデルの指紋に結び付く）を持ちます。既定（番号の小さい三角形・外さない・手で選ばない）は今までと同じ並びで、焼いた値も由来の鍵もバイトまで同じです。重なったテクセルの図は `overlap.rs`（`UvOverlap`。ベイクの優先は見ない）。文書の設定は `.ylp` の正本の版 33 に保存します（`docs/YLP_FORMAT.md`）。
+
 ## 以前のマップを使ってよいかの判定
 
 以前のマップを黙って使わないために、C# の `MeshBaker.ConditionKey` と `MeshMapProvenance.Check` を移してある。
@@ -34,7 +38,7 @@ rayonの並列度を変えても画素と由来は同じ。`max_degree_of_parall
 
 ## 再現と計測
 
-- `bash tools/csharp-golden/mesh.sh`: Unity同梱のMonoで、合成メッシュの正解を作り直す。`mesh.sh <出力先> <中身の出力先>` は
+- `bash tools/csharp-golden/mesh.sh`: Unity同梱のMonoで、合成メッシュの正解を作り直す（C# の元は Unity ブリッジのタグ `0.4.0`。場所は環境変数 `YOLUPAINTER_UNITY_SOURCE`）。`mesh.sh <出力先> <中身の出力先>` は
   不規則なメッシュの結果の全バイトも2つ目の場所へ書く（照合に使うのは出力先の `rough.txt` のSHA-256）。
 - `cargo test -p yolu-core -p yolu-io`: 既知値、C#の正解、保存、拒否、取消、並列度、予算の照合。
 - `bash tools/csharp-golden/mesh.sh bench`: C#の計測。

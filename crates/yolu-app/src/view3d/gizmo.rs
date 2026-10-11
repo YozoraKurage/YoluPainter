@@ -70,7 +70,7 @@ pub fn rings(rig: &Rig, pose: &Pose, bone: usize, view: &CameraView) -> Option<R
         return None;
     }
     let q = Rig::world_rotation(&world, bone);
-    let toward_camera = (view.position - center).normalize_or_zero();
+    let toward_camera = view.to_viewer(center).normalize_or_zero();
     let axes = [q * Vec3::X, q * Vec3::Y, q * Vec3::Z, -view.forward];
     let points = std::array::from_fn(|i| {
         let a = axes[i];
@@ -224,22 +224,28 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2) {
             return;
         }
     }
-    // 輪の外: 面の下のボーンを選ぶ（見えている形で当て、三角形の番号をスキンと同じ受けたままの形の番号へ直す。隠したマテリアルや
-    // ボーンの影響で隠した面は見えないので当たらない）
-    let Some(model) = app.view3d.model.clone() else {
-        return;
-    };
-    let picked = pick(&model.geometry, &view, p)
-        .and_then(|hit| Some((app.view3d.full_triangle(hit.triangle)?, hit.barycentric)));
-    let Some(s) = app.view3d.pose.session.as_mut() else {
-        return;
-    };
-    if let Some((triangle, barycentric)) = picked {
-        if let Some(bone) = s.rig.bone_at_triangle(triangle, barycentric) {
+    // 輪の外: 面の下のボーンを選ぶ
+    if let Some(bone) = bone_at(app, rect, at) {
+        if let Some(s) = app.view3d.pose.session.as_mut() {
             s.selected = Some(bone);
             reveal(s, bone);
         }
     }
+}
+
+/// 画面の点の下の面のボーン（見えている形で当て、三角形の番号をスキンと同じ受けたままの形の番号へ直す。隠したマテリアルや
+/// ボーンの影響で隠した面は見えないので当たらない）。
+pub fn bone_at(app: &AppState, rect: Rect, at: Pos2) -> Option<usize> {
+    let model = app.view3d.model.as_ref()?;
+    let view = camera_view(app, rect);
+    let hit = pick(&model.geometry, &view, local(rect, at))?;
+    let triangle = app.view3d.full_triangle(hit.triangle)?;
+    app.view3d
+        .pose
+        .session
+        .as_ref()?
+        .rig
+        .bone_at_triangle(triangle, hit.barycentric)
 }
 
 /// 木で骨が見えるように、親を全部開く。

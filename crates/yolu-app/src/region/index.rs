@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use yolu_core::geometry::{uv_barycentric, SurfaceGeometry, SurfaceRegionKind, SurfaceTriangle};
+use yolu_core::geometry::{SurfaceGeometry, SurfaceRegionKind, SurfaceTriangle};
 use yolu_core::glam::Vec2;
 
 type Vertex = (i64, i64, i64);
@@ -195,77 +195,8 @@ impl RegionIndex {
     }
 }
 
-/// UV の点の下の三角形を引く格子（1 つのマテリアルの三角形だけ）。
-pub struct UvGrid {
-    geometry: Arc<SurfaceGeometry>,
-    material: i32,
-    cells: Vec<Vec<u32>>,
-    n: usize,
-}
-
-impl UvGrid {
-    pub fn new(geometry: &Arc<SurfaceGeometry>, material: i32) -> UvGrid {
-        let triangles = geometry.triangles();
-        let count = triangles.iter().filter(|t| t.material == material).count();
-        // 1 マスにおよそ数個の三角形が来る大きさ（16〜256）
-        let n = ((count as f64 / 4.0).sqrt().ceil() as usize).clamp(16, 256);
-        let mut cells = vec![Vec::new(); n * n];
-        let bin = |v: f32| ((v.clamp(0.0, 1.0) * n as f32) as usize).min(n - 1);
-        for (i, t) in triangles.iter().enumerate() {
-            if t.material != material {
-                continue;
-            }
-            let (x0, x1) = (
-                t.uv_a.x.min(t.uv_b.x).min(t.uv_c.x),
-                t.uv_a.x.max(t.uv_b.x).max(t.uv_c.x),
-            );
-            let (y0, y1) = (
-                t.uv_a.y.min(t.uv_b.y).min(t.uv_c.y),
-                t.uv_a.y.max(t.uv_b.y).max(t.uv_c.y),
-            );
-            if x1 < 0.0 || y1 < 0.0 || x0 > 1.0 || y0 > 1.0 {
-                continue;
-            }
-            for y in bin(y0)..=bin(y1) {
-                for x in bin(x0)..=bin(x1) {
-                    cells[y * n + x].push(i as u32);
-                }
-            }
-        }
-        UvGrid {
-            geometry: geometry.clone(),
-            material,
-            cells,
-            n,
-        }
-    }
-
-    pub fn is_for(&self, geometry: &Arc<SurfaceGeometry>, material: i32) -> bool {
-        self.material == material && Arc::ptr_eq(&self.geometry, geometry)
-    }
-
-    /// UV の点を含む三角形（重なっていれば番号の小さいもの）。UV の 0〜1 の外は None。
-    pub fn find(&self, uv: Vec2) -> Option<u32> {
-        self.find_all(uv).first().copied()
-    }
-
-    /// UV の点を含む三角形の全部（重なった UV では 2 つ以上。番号の昇順）。UV の 0〜1 の外は空。
-    pub fn find_all(&self, uv: Vec2) -> Vec<u32> {
-        if !(0.0..=1.0).contains(&uv.x) || !(0.0..=1.0).contains(&uv.y) {
-            return Vec::new();
-        }
-        let bin = |v: f32| ((v * self.n as f32) as usize).min(self.n - 1);
-        let cell = &self.cells[bin(uv.y) * self.n + bin(uv.x)];
-        let triangles = self.geometry.triangles();
-        let mut out: Vec<u32> = cell
-            .iter()
-            .copied()
-            .filter(|i| uv_barycentric(uv, &triangles[*i as usize]).is_some())
-            .collect();
-        out.sort_unstable();
-        out
-    }
-}
+/// UV の点の下の三角形を引く格子（core のもの。2D のストロークの 3D の対称も同じ格子を使う）。
+pub use yolu_core::geometry::UvGrid;
 
 #[cfg(test)]
 mod tests {

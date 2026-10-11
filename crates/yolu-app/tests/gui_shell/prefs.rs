@@ -1,4 +1,4 @@
-//! 設定のウィンドウ（言語・書き出しの余白・メモリの予算・CPU のスレッド・表示の合成・棚の場所・退避を残す数）: 値の選びが画面の状態・文書の予算に効くこと、
+//! 設定のウィンドウ（言語・書き出しのパディング・メモリの予算・CPU のスレッド・表示の合成・棚の場所・退避を残す数）: 値の選びが画面の状態・文書の予算に効くこと、
 //! 設定のファイルへの保存と起動での復元、壊れた値の理由、ウィンドウの操作と日英。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -12,8 +12,8 @@ use yolu_app::engine::{Document, LayerId, Rgba8};
 use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
 use yolu_app::pen::PenInput;
-use yolu_app::prefs::{self, entries, Pref, PrefChoice, PrefsAction};
-use yolu_app::settings::{Budget, BudgetKind, Compositing, Settings};
+use yolu_app::prefs::{self, entries, Category, Pref, PrefChoice, PrefsAction};
+use yolu_app::settings::{Budget, BudgetKind, Compositing, PenApi, Settings};
 use yolu_app::state::{Action, AppState, DialogRequest};
 use yolu_app::YoluApp;
 
@@ -454,13 +454,13 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
         labels(&entries(&s, PrefChoice::ExportPadding)),
         [
             "なし",
-            "2 テクセル",
-            "4 テクセル",
-            "8 テクセル",
-            "16 テクセル",
-            "32 テクセル",
-            "64 テクセル",
-            "届くかぎり"
+            "2 px 広げる",
+            "4 px 広げる",
+            "8 px 広げる",
+            "16 px 広げる",
+            "32 px 広げる",
+            "64 px 広げる",
+            "無限に広げる"
         ]
     );
     assert_eq!(
@@ -494,10 +494,13 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
         labels(&entries(&s, PrefChoice::CpuThreads))[0],
         "Automatic (8)"
     );
-    assert_eq!(labels(&entries(&s, PrefChoice::ExportPadding))[0], "Off");
+    assert_eq!(
+        labels(&entries(&s, PrefChoice::ExportPadding))[0],
+        "No padding"
+    );
     assert_eq!(
         labels(&entries(&s, PrefChoice::ExportPadding))[7],
-        "Fill (all the way)"
+        "Dilation infinite"
     );
     // 1 コア（並列にしない）の機械は 1 が 1 つだけ
     s.prefs.cores = 1;
@@ -544,6 +547,8 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
     let free = &mut h.state_mut().state.prefs.cache_free;
     free.retain(|(f, _)| *f != fixed_cache_folder());
     free.push((fixed_cache_folder(), Some(FIXED_CACHE_FREE)));
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(size.x);
     h.run();
     h
 }
@@ -554,6 +559,23 @@ fn open_settings(h: &mut Harness<'static, YoluApp>) {
     click(h, at);
     let item = popup_item(h, "設定…").center();
     click(h, item);
+}
+
+/// 左の区分を選ぶ（設定のウィンドウが開いている）。
+fn choose(h: &mut Harness<'static, YoluApp>, category: Category) {
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::Choose(category)));
+    h.run();
+}
+
+/// 左の区分の矩形（ウィンドウの左の列にある、その名前のもの）。
+fn side_rect(h: &Harness<'_, YoluApp>, category: Category) -> Rect {
+    let window = window_rect(h);
+    let label = category.label(h.state().state.lang);
+    rect_of(h, label, |r| {
+        window.contains_rect(r) && r.left() < window.left() + 220.0
+    })
 }
 
 /// 同じ名前の要素のうち、いちばん下にあるもの。
@@ -593,7 +615,9 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     assert!(!h.state().state.prefs.open);
     open_settings(&mut h);
     assert!(h.state().state.prefs.open);
-    // 棚の場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
+    // 初めて開くと「一般」（言語）
+    assert_eq!(h.state().state.prefs.category, Category::General);
+    // ライブラリの場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
     let shelf = PathBuf::from(if cfg!(windows) {
         "C:\\Library"
     } else {
@@ -612,7 +636,6 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
         ))));
     h.run();
     let window = window_rect(&h);
-    shot(&mut h, "prefs_window");
     // 値の箱（名前: 値）
     let pick = |h: &mut Harness<'static, YoluApp>, label: &str, item: &str| {
         let at = h.get_by_label(label).rect().center();
@@ -620,8 +643,10 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
         let at = popup_item(h, item).center();
         click(h, at);
     };
-    pick(&mut h, "書き出しの余白: 届くかぎり", "8 テクセル");
+    choose(&mut h, Category::Files);
+    pick(&mut h, "書き出しのパディング: 無限に広げる", "8 px 広げる");
     assert_eq!(h.state().state.export.padding, 8);
+    choose(&mut h, Category::Memory);
     pick(&mut h, "取り消し履歴: 自動（2048 MiB）", "512 MiB");
     assert_eq!(h.state().state.doc.undo_budget_bytes(), 512 * MIB);
     pick(&mut h, "レイヤーのメモリ: 自動（8192 MiB）", "4096 MiB");
@@ -630,24 +655,28 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     assert_eq!(h.state().state.doc.source_budget_bytes(), with_cache);
     pick(&mut h, "1 回の操作: 自動（1024 MiB）", "256 MiB");
     assert_eq!(h.state().state.doc.stroke_budget_bytes(), 256 * MIB);
+    choose(&mut h, Category::Display);
     pick(&mut h, "表示の合成: 自動", "CPU");
     assert_eq!(h.state().state.prefs.settings.compositing, Compositing::Cpu);
-    // CPU のスレッドは次の起動から効く（ウィンドウに出る）
+    // CPU のスレッドは次の起動から効く（行に出る）
+    choose(&mut h, Category::Processing);
     pick(&mut h, "CPU のスレッド: 自動（8）", "4");
     assert_eq!(h.state().state.prefs.settings.cpu_threads, Some(4));
     let _ = h.get_by_label("CPU のスレッド: 4 ・ 再起動で反映");
+    choose(&mut h, Category::LiveLink);
     h.get_by_label("Unity の Live Link を受け付ける").click();
     h.run();
     assert!(!h.state().state.settings().livelink_on_startup);
-    shot(&mut h, "prefs_window_changed");
     // 言語（選ぶとウィンドウの文言も替わる）
+    choose(&mut h, Category::General);
     pick(&mut h, "言語: 日本語", "English");
     assert_eq!(h.state().state.lang, Lang::En);
     let _ = h.get_by_label("Language: English");
+    choose(&mut h, Category::Processing);
     let _ = h.get_by_label("CPU threads: 4 · applies after restart");
-    shot(&mut h, "prefs_window_english");
-    // ウィンドウの中に全部収まっている（最後の行の下も）
-    let last = h.get_by_label("Keep all").rect();
+    // ウィンドウの中に全部収まっている（メモリの区分の最後の行の下も）
+    choose(&mut h, Category::Memory);
+    let last = h.get_by_label("Disk cache").rect();
     assert!(window.contains_rect(last), "{window:?} {last:?}");
     // ファイル: 変えた値だけが書かれている
     h.run();
@@ -692,6 +721,7 @@ fn the_minimum_undo_steps_slider_and_the_library_buttons_work() {
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     open_settings(&mut h);
+    choose(&mut h, Category::Memory);
     // スライダー（右端 = 100）
     let slider = h.get_by_label("最小の取り消し段数").rect();
     drag(
@@ -710,8 +740,8 @@ fn the_minimum_undo_steps_slider_and_the_library_buttons_work() {
         h.state().state.doc.minimum_undo_steps(),
         h.state().state.prefs.settings.min_undo_steps as usize
     );
-    // 棚の場所: 初めは既定（「既定に戻す」は押せない）。選ぶウィンドウを頼み、選んだ場所が出る。ボタンの名前はキャッシュの場所と同じなので、
-    // 下の節（ファイル）の方を押す
+    // ライブラリの場所: 初めは既定（「既定に戻す」は押せない）。選ぶウィンドウを頼み、選んだ場所が出る（ファイルの区分の「選ぶ…」は、ライブラリの場所だけ）
+    choose(&mut h, Category::Files);
     assert_eq!(h.state().state.prefs.settings.library_folder, None);
     lowest(&h, "選ぶ…").click();
     h.run();
@@ -880,66 +910,292 @@ fn drawn_texts(h: &Harness<'_, YoluApp>) -> Vec<(String, Rect)> {
     out
 }
 
+/// 設定のウィンドウが描いた文字（ウィンドウの地を描いたあとの文字だけ。後ろのパネルの文字は入れない）。
+fn window_texts(h: &Harness<'_, YoluApp>) -> Vec<(String, Rect)> {
+    use egui::epaint::Shape;
+    let window = window_rect(h);
+    let shapes = &h.output().shapes;
+    let start = shapes
+        .iter()
+        .rposition(|s| matches!(&s.shape, Shape::Rect(r) if r.rect == window))
+        .expect("ウィンドウの地を描いた");
+    let mut out = Vec::new();
+    fn walk(shape: &Shape, clip: Rect, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, out)),
+            Shape::Text(t) => {
+                let r = t.galley.rect.translate(t.pos.to_vec2());
+                out.push((t.galley.job.text.clone(), r.intersect(clip)));
+            }
+            _ => {}
+        }
+    }
+    for s in &shapes[start..] {
+        walk(&s.shape, s.clip_rect, &mut out);
+    }
+    out
+}
+
 fn english(h: &mut Harness<'static, YoluApp>, lang: Lang) {
     h.state_mut().state.lang = lang;
     h.run();
 }
 
-/// ウィンドウの高さの見積もり（描く行の数と合わせた表）が、実際に並べた高さと同じ（行を足して数え違えると、最後の行がウィンドウからはみ出す）。
-/// GPU とディスクキャッシュの詳しくの開け閉め・外からの操作の入り切（入っている間だけポート番号の行が出る）のどれでも。
+/// どの区分も、1280 × 800 の画面のウィンドウの右の欄にスクロール無しで収まる（日英）。GPU とディスクキャッシュの詳しくの開け閉め・外からの操作の入り切
+/// （入っている間だけポート番号の行が出る）・ペンの区分の行（macOS のタブレットの筆圧と Windows のペンの入力）を、それぞれ変えても。
 #[test]
-fn the_window_height_is_exactly_the_rows_it_lays_out_open_or_closed_in_both_languages() {
+fn every_category_fits_the_window_without_scrolling_at_1280_by_800_in_both_languages() {
     let dir = settings_dir("height");
     let path = dir.join("YoluPainter").join("settings.conf");
-    let mut h = app_with_settings(&path, vec2(1600.0, 1100.0));
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     // 外からの操作を入れても、ほかの試験・開いているアプリと番号が重ならない（0: OS が空いた番号を選ぶ）
     h.state_mut().state.prefs.settings.external_ops_port = 0;
     open_settings(&mut h);
+    let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0));
+    let check = |h: &Harness<'static, YoluApp>, what: &str| {
+        let window = window_rect(h);
+        assert!(screen.contains_rect(window), "{what}: {window:?}");
+        let pane = window.height() - yolu_app::ui::window::HEADER_HEIGHT - prefs::PANE_TOP;
+        let drawn = prefs::drawn_content_height(&h.ctx).expect("中身を並べた");
+        assert!(
+            drawn <= pane,
+            "{what}: 右の欄 {pane} に、中身 {drawn} が収まらない"
+        );
+    };
     for lang in Lang::ALL {
         english(&mut h, lang);
-        for ops in [false, true] {
-            h.state_mut().state.prefs.settings.external_ops = ops;
-            for (details, cache) in [(false, false), (true, false), (false, true), (true, true)] {
-                h.state_mut()
-                    .state
-                    .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
-                h.state_mut()
-                    .state
-                    .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
-                h.run();
-                h.run();
-                let window = window_rect(&h);
-                let drawn = prefs::drawn_content_height(&h.ctx).expect("中身を並べた");
-                let body = window.height() - yolu_app::ui::window::HEADER_HEIGHT;
-                assert!(
-                    (body - drawn).abs() < 0.5,
-                    "{lang:?} 外からの操作={ops} 詳しく={details} キャッシュの詳しく={cache}: ウィンドウの中身 {body} と、並べた高さ {drawn} が違う"
-                );
+        for category in Category::ALL
+            .into_iter()
+            .filter(|c| !matches!(c, Category::Shortcuts | Category::Updates))
+        {
+            choose(&mut h, category);
+            match category {
+                Category::LiveLink => {
+                    for ops in [false, true] {
+                        h.state_mut().state.prefs.settings.external_ops = ops;
+                        h.run();
+                        h.run();
+                        check(&h, &format!("{lang:?} {category:?} 外からの操作={ops}"));
+                    }
+                    h.state_mut().state.prefs.settings.external_ops = false;
+                    h.run();
+                }
+                // 「ペン」の区分は macOS と Windows の行がある。ほかの OS でも、出したときの高さを確かめる
+                Category::Pen => {
+                    for (tablet, pen_input) in
+                        [(false, false), (true, false), (false, true), (true, true)]
+                    {
+                        h.state_mut().state.prefs.tablet_row = tablet;
+                        h.state_mut().state.prefs.pen_input_row = pen_input;
+                        h.run();
+                        h.run();
+                        check(
+                            &h,
+                            &format!("{lang:?} ペン タブレット={tablet} ペンの入力={pen_input}"),
+                        );
+                    }
+                }
+                Category::Display | Category::Files => {
+                    for (details, cache) in
+                        [(false, false), (true, false), (false, true), (true, true)]
+                    {
+                        h.state_mut()
+                            .state
+                            .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
+                        h.state_mut()
+                            .state
+                            .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
+                        h.run();
+                        h.run();
+                        check(
+                            &h,
+                            &format!(
+                                "{lang:?} {category:?} 詳しく={details} キャッシュの詳しく={cache}"
+                            ),
+                        );
+                    }
+                }
+                _ => check(&h, &format!("{lang:?} {category:?}")),
             }
         }
     }
-    h.state_mut().state.prefs.settings.external_ops = false;
-    h.run();
 }
 
-/// どの大きさのウィンドウでも、最後の行（UV ワイヤーフレームでなく、いちばん下の「すべて残す」）まで届く: 収まらない低い画面では共通のスクロールで送り、
-/// 横にははみ出さない。日英・いちばん小さいウィンドウ（960 × 640）。
+/// 「ペン」の区分のタブレットの筆圧（試し）の行は macOS だけに出て、切り替えがペンの受け口の札と設定のファイルに届き、次の起動でも切のまま。
 #[test]
-fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both_languages() {
+fn the_pen_category_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_and_survives_a_restart(
+) {
+    let dir = settings_dir("tablet");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    // この試験は macOS の行だけを見る（Windows のペンの入力の行は、別の試験）
+    h.state_mut().state.prefs.pen_input_row = false;
+    open_settings(&mut h);
+    choose(&mut h, Category::Pen);
+    // 行が出るのは macOS だけ（区分そのものは、筆圧の調整があるのでどの OS にも出る）
+    assert_eq!(h.state().state.prefs.tablet_row, cfg!(target_os = "macos"));
+    if !cfg!(target_os = "macos") {
+        assert!(
+            h.query_by_label("タブレットの筆圧（試し）").is_none(),
+            "macOS 以外には行が無い"
+        );
+        h.state_mut().state.prefs.tablet_row = true;
+        h.run();
+        h.run();
+    }
+    let _ = h.get_by_label("タブレットの筆圧（試し）");
+    // 既定は入。札は設定から合わせる
+    assert!(h.state().state.settings().tablet_pressure);
+    assert!(h.state().pen().tablet_on());
+    shot(&mut h, "prefs_pen_tablet");
+    // 切る
+    h.get_by_label("タブレットの筆圧（試し）").click();
+    h.run();
+    h.run();
+    assert!(!h.state().state.settings().tablet_pressure);
+    assert!(!h.state().pen().tablet_on(), "ペンの受け口に届く");
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.lines().any(|l| l == "tablet_pressure=off"),
+        "{written}"
+    );
+    // 英語でも名前が出る
+    english(&mut h, Lang::En);
+    let _ = h.get_by_label("Tablet pressure (experimental)");
+    // 入れ直すと行が消える
+    h.get_by_label("Tablet pressure (experimental)").click();
+    h.run();
+    h.run();
+    assert!(h.state().state.settings().tablet_pressure && h.state().pen().tablet_on());
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("tablet_pressure"));
+    // 切って終わると、次の起動も切（札も切）
+    h.get_by_label("Tablet pressure (experimental)").click();
+    h.run();
+    h.run();
+    drop(h);
+    let h = app_with_settings(&path, vec2(1280.0, 900.0));
+    assert!(!h.state().state.settings().tablet_pressure);
+    assert!(
+        !h.state().pen().tablet_on(),
+        "起動のとき、設定の値が札に入る"
+    );
+}
+
+/// WinTab が使えず Windows Ink に戻したときの知らせは、設定の出どころの「注意」で、日英とも 1 文（ログに残る）。
+#[test]
+fn headless_wintab_unavailable_is_a_warning_from_settings_in_both_languages() {
+    use yolu_app::notice::{Kind, Source};
+    use yolu_app::pen::Unavailable;
+    for lang in Lang::ALL {
+        let mut s = AppState::new_in(64, 64, lang);
+        s.wintab_unavailable(Unavailable::NoLibrary);
+        let notice = s.current_notice().expect("知らせた").clone();
+        assert_eq!(
+            (notice.kind, notice.source),
+            (Kind::Warning, Source::Settings)
+        );
+        assert_eq!(notice.text, Unavailable::NoLibrary.text(lang));
+        assert_eq!(s.message, notice.text);
+        assert!(notice.text.contains("Windows Ink") && notice.text.contains("WinTab"));
+    }
+}
+
+/// 「ペン」の区分のペンの入力（Windows だけ）: 既定は Windows Ink で、WinTab を選ぶとペンの受け口の札と設定のファイルに届き、次の起動でも WinTab のまま。
+/// 選び直して Windows Ink に戻すと、設定のファイルの行が消える。
+#[test]
+fn the_pen_category_has_the_pen_input_choice_which_reaches_the_pen_input_and_survives_a_restart() {
+    let dir = settings_dir("peninput");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    // 行が出るのは Windows だけ（ほかの OS は差し替えて確かめる。macOS のタブレットの筆圧の行は外して、この行だけを見る）
+    assert_eq!(h.state().state.prefs.pen_input_row, cfg!(windows));
+    h.state_mut().state.prefs.pen_input_row = true;
+    h.state_mut().state.prefs.tablet_row = false;
+    open_settings(&mut h);
+    choose(&mut h, Category::Pen);
+    // 既定は Windows Ink。札は設定から合わせる
+    assert_eq!(h.state().state.settings().pen_input, PenApi::Ink);
+    assert!(!h.state().pen().wintab_on());
+    let _ = h.get_by_label("ペンの入力: Windows Ink");
+    shot(&mut h, "prefs_pen_input");
+    // WinTab を選ぶ
+    let at = h.get_by_label("ペンの入力: Windows Ink").rect().center();
+    click(&mut h, at);
+    let names: Vec<String> = ["Windows Ink", "WinTab"]
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+    assert_eq!(
+        labels(&entries(&h.state().state, PrefChoice::PenInput)),
+        names,
+        "選択肢は 2 つ"
+    );
+    let at = popup_item(&h, "WinTab").center();
+    click(&mut h, at);
+    h.run();
+    h.run();
+    assert_eq!(h.state().state.settings().pen_input, PenApi::WinTab);
+    assert!(h.state().pen().wintab_on(), "ペンの受け口に届く");
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.lines().any(|l| l == "pen_input=wintab"),
+        "{written}"
+    );
+    // 英語でも名前が出る
+    english(&mut h, Lang::En);
+    let _ = h.get_by_label("Pen input: WinTab");
+    english(&mut h, Lang::Ja);
+    // 終わって起動し直すと、WinTab のまま（札も WinTab）
+    drop(h);
+    let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
+    assert_eq!(h.state().state.settings().pen_input, PenApi::WinTab);
+    assert!(
+        h.state().pen().wintab_on(),
+        "起動のとき、設定の値が札に入る"
+    );
+    // Windows Ink に戻すと、行が消える（既定は書かない）
+    h.state_mut().state.prefs.pen_input_row = true;
+    h.state_mut().state.prefs.tablet_row = false;
+    open_settings(&mut h);
+    choose(&mut h, Category::Pen);
+    let at = h.get_by_label("ペンの入力: WinTab").rect().center();
+    click(&mut h, at);
+    let at = popup_item(&h, "Windows Ink").center();
+    click(&mut h, at);
+    h.run();
+    h.run();
+    assert_eq!(h.state().state.settings().pen_input, PenApi::Ink);
+    assert!(!h.state().pen().wintab_on());
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("pen_input"));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// 低い画面（960 × 400）では右の欄の中身が収まらないので、区分ごとに共通のスクロールで送る: ホイールで一番下まで送ると最後の行がウィンドウの中に入り、
+/// つまみを掴んで一番上へ戻せる。ウィンドウは画面の中に縮み、文字は横にはみ出さない。日英。
+#[test]
+fn every_row_scrolls_into_view_in_a_low_window_in_both_languages() {
     let dir = settings_dir("small");
     let path = dir.join("YoluPainter").join("settings.conf");
     for lang in Lang::ALL {
-        let mut h = app_with_settings(&path, vec2(960.0, 640.0));
+        let mut h = app_with_settings(&path, vec2(960.0, 400.0));
+        // 「ペン」の区分（macOS のタブレットの筆圧と、Windows のペンの入力）も並べた形で確かめる
+        h.state_mut().state.prefs.tablet_row = true;
+        h.state_mut().state.prefs.pen_input_row = true;
         // 小さいウィンドウでは編集のメニューも長くてポップアップの中で送るので、ウィンドウはキーで開く
         key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
         h.run();
         assert!(h.state().state.prefs.open);
         english(&mut h, lang);
+        choose(&mut h, Category::Pen);
         let window = window_rect(&h);
-        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 640.0));
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(960.0, 400.0));
         assert!(screen.contains_rect(window), "{lang:?}: {window:?}");
         // 横: どの文字もウィンドウの幅に収まる（見える所だけ）
-        for (text, r) in drawn_texts(&h)
+        for (text, r) in window_texts(&h)
             .into_iter()
             .filter(|(_, r)| r.height() > 0.0 && window.contains(r.center()))
         {
@@ -948,18 +1204,26 @@ fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both
                 "{lang:?}: ウィンドウの横からはみ出す「{text}」{r:?} {window:?}"
             );
         }
-        // 縦: 低い画面では中身がウィンドウに収まらないので、つまみがある。ホイールで一番下まで送ると、最後の行がウィンドウの中に入る
+        // 縦: 低い画面では中身が欄に収まらないので、つまみがある。ホイールで一番下まで送ると、最後の行がウィンドウの中に入る
         let bar_in = |h: &Harness<'static, YoluApp>| {
             h.query_all_by_role(egui::accesskit::Role::ScrollBar)
                 .map(|n| n.rect())
-                .find(|r| window.contains_rect(*r))
+                // ウィンドウの後ろのパネルのつまみも、ウィンドウの矩形の中に入る。右の欄のつまみだけを見る
+                .find(|r| window.contains_rect(*r) && r.left() > window.right() - 30.0)
         };
-        let bar = bar_in(&h)
-            .unwrap_or_else(|| panic!("{lang:?}: 収まらないのに、ウィンドウの中につまみが無い"));
+        let bar = bar_in(&h).unwrap_or_else(|| {
+            panic!(
+                "{lang:?}: 収まらないのに、ウィンドウの中につまみが無い {:?} {window:?} {:?}",
+                h.query_all_by_role(egui::accesskit::Role::ScrollBar)
+                    .map(|n| n.rect())
+                    .collect::<Vec<_>>(),
+                prefs::drawn_content_height(&h.ctx)
+            )
+        });
         assert!(bar.height() > 100.0, "{bar:?}");
-        let keep_all = lang.pick("すべて残す", "Keep all");
+        let last_row = lang.pick("既定", "Default");
         h.event(egui::Event::PointerMoved(
-            window.center() - vec2(100.0, 0.0),
+            window.center() + vec2(100.0, 0.0),
         ));
         h.step();
         h.event(egui::Event::MouseWheel {
@@ -970,7 +1234,7 @@ fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both
         });
         h.run();
         h.run();
-        let last = h.get_by_label(keep_all).rect();
+        let last = h.get_by_label(last_row).rect();
         assert!(
             window.contains_rect(last),
             "{lang:?}: 一番下の行 {last:?} がウィンドウ {window:?} の外"
@@ -980,13 +1244,54 @@ fn every_row_fits_the_window_or_scrolls_into_view_in_the_smallest_window_in_both
         let grab = egui::pos2(bar.center().x, bar.bottom() - 6.0);
         drag(&mut h, &[grab, egui::pos2(grab.x, bar.top() - 50.0)]);
         h.run();
-        let name = lang.pick("言語", "Language");
+        let name = lang.pick("ペンの入力: Windows Ink", "Pen input: Windows Ink");
         assert!(
-            drawn_texts(&h)
+            window_texts(&h)
                 .iter()
-                .any(|(t, r)| t == name && window.contains(r.center())),
-            "{lang:?}: 一番上へ戻すと最初の行が見える"
+                .any(|(t, r)| t.starts_with(lang.pick("ペンの入力", "Pen input"))
+                    && window.contains(r.center())),
+            "{lang:?}: 一番上へ戻すと最初の行（{name}）が見える"
         );
+        // 区分ごとに送る: 一番下まで送ってから別の区分を押して戻ると、右の欄は先頭から
+        h.event(egui::Event::PointerMoved(
+            window.center() + vec2(100.0, 0.0),
+        ));
+        h.step();
+        h.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -5000.0),
+            modifiers: egui::Modifiers::NONE,
+            phase: egui::TouchPhase::Move,
+        });
+        h.run();
+        h.run();
+        let pen_side = side_rect(&h, Category::Pen);
+        let display_side = side_rect(&h, Category::Display);
+        click(&mut h, display_side.center());
+        assert_eq!(h.state().state.prefs.category, Category::Display);
+        let first = h
+            .get_by_label(lang.pick("表示の合成: 自動", "Display compositing: Automatic"))
+            .rect();
+        assert!(window.contains_rect(first), "{lang:?}: {first:?}");
+        click(&mut h, pen_side.center());
+        h.run();
+        let top = h
+            .query_all_by_label_contains(lang.pick("ペンの入力", "Pen input"))
+            .next()
+            .expect("最初の行")
+            .rect();
+        assert!(window.contains_rect(top), "{lang:?}: 先頭から {top:?}");
+        // ショートカットを開くと、左の区分が 16 行（ショートカットの区分つき）になって、低いウィンドウからはみ出す。はみ出した行は描かない
+        choose(&mut h, Category::Shortcuts);
+        for (text, r) in window_texts(&h)
+            .into_iter()
+            .filter(|(_, r)| r.height() > 0.0)
+        {
+            assert!(
+                window.expand(1.0).contains_rect(r),
+                "{lang:?}: ウィンドウの外に描く「{text}」{r:?} {window:?}"
+            );
+        }
     }
 }
 
@@ -1052,13 +1357,14 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     // キーの一覧（読むだけのウィンドウ）にある
     let binding = yolu_app::shortcuts::bindings()
         .into_iter()
-        .find(|b| b.action == Action::Prefs(PrefsAction::Open))
+        .find(|b| b.action() == Some(Action::Prefs(PrefsAction::Open)))
         .expect("一覧に設定のキーがある");
     assert_eq!(yolu_app::shortcuts::key_label(&binding), "Ctrl+,");
     for lang in Lang::ALL {
         h.state_mut().state.lang = lang;
         assert_eq!(
-            yolu_app::shortcuts::action_label(&h.state().state, &binding.action).as_deref(),
+            yolu_app::shortcuts::action_label(&h.state().state, &binding.action().unwrap())
+                .as_deref(),
             Some(lang.pick("設定…", "Settings…"))
         );
     }
@@ -1068,10 +1374,10 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     );
 }
 
-/// 3D の視点の中心（回転・ズーム）を設定のウィンドウの「3D ビュー」の節でも選べる。3D ビューの表示の設定の「視点」と同じ値で、設定のファイルに
+/// 3D の視点の中心（回転・ズーム）を設定のウィンドウの「3D ビュー」の区分でも選べる。3D ビューの表示の設定の「視点」と同じ値で、設定のファイルに
 /// 書かれ、次の起動で戻る。
 #[test]
-fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_restart() {
+fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_category_and_survive_a_restart() {
     use yolu_app::view3d::navigation::{OrbitCenter, ZoomCenter};
     // 選択肢は 4 つと 2 つ。今の値に印
     let mut s = state();
@@ -1091,15 +1397,12 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
     assert_eq!(s.prefs.settings.navigation.orbit, OrbitCenter::TextureSet);
     assert_eq!(s.prefs.settings.navigation.zoom, ZoomCenter::Pointer);
 
-    // ウィンドウで選ぶ（節の見出しと値の箱）
+    // ウィンドウで選ぶ（左の区分と値の箱）
     let dir = settings_dir("pivot");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     open_settings(&mut h);
-    assert!(
-        drawn_texts(&h).iter().any(|(t, _)| t == "3D ビュー"),
-        "節の見出し"
-    );
+    choose(&mut h, Category::View3d);
     let pick = |h: &mut Harness<'static, YoluApp>, label: &str, item: &str| {
         let at = h.get_by_label(label).rect().center();
         click(h, at);
@@ -1125,6 +1428,11 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
         h.state().state.prefs.settings.navigation.zoom,
         ZoomCenter::Pointer
     );
+    // 軸の向きで正投影（既定は入）: 切ると設定のファイルに書き、次の起動でも切
+    assert!(h.state().state.prefs.settings.navigation.axis_ortho);
+    let at = h.get_by_label("軸の向きで正投影").rect().center();
+    click(&mut h, at);
+    assert!(!h.state().state.prefs.settings.navigation.axis_ortho);
     // 3D ビューの表示の設定と同じ値（見る口が同じ）
     assert_eq!(
         h.state().state.settings().navigation.orbit,
@@ -1140,8 +1448,13 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
         written.lines().any(|l| l == "view3d_zoom=pointer"),
         "{written}"
     );
+    assert!(
+        written.lines().any(|l| l == "view3d_axis_ortho=off"),
+        "{written}"
+    );
     drop(h);
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(!h.state().state.prefs.settings.navigation.axis_ortho);
     assert_eq!(
         h.state().state.prefs.settings.navigation.orbit,
         OrbitCenter::Model
@@ -1150,14 +1463,16 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_section_and_survive_a_re
         h.state().state.prefs.settings.navigation.zoom,
         ZoomCenter::Pointer
     );
-    // 英語でも節と値の名前が出る
+    // 英語でも区分と値の名前が出る
     let mut h = h;
     open_settings_in(&mut h, Lang::En);
+    choose(&mut h, Category::View3d);
     assert!(
         drawn_texts(&h).iter().any(|(t, _)| t == "3D View"),
-        "節の見出し"
+        "左の区分"
     );
     let _ = h.get_by_label("Orbit center: Model center");
+    let _ = h.get_by_label("Orthographic on axis views");
     let _ = h.get_by_label("Zoom center: Toward pointer");
 }
 
@@ -1206,6 +1521,7 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
         "切のあいだは丸が無い"
     );
     open_settings(&mut h);
+    choose(&mut h, Category::LiveLink);
     assert!(!h.state().state.prefs.settings.external_ops, "既定は切");
     h.get_by_label("外からの操作を受ける").click();
     h.run();
@@ -1304,32 +1620,21 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
         .contains("external_ops=on"));
 }
 
-/// ポート番号の行は、「外からの操作を受ける」を入れている間だけ、そのすぐ下に出る（切ると消え、ウィンドウも 1 行分低くなる）。日英の絵。
+/// ポート番号の行は、「外からの操作を受ける」を入れている間だけ、そのすぐ下に出る（切ると消える）。日英の絵。
 #[test]
 fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
     let dir = settings_dir("ops-port");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    // 棚の場所は、機械によらない場所にして撮る
-    let shelf = PathBuf::from(if cfg!(windows) {
-        "C:\\Library"
-    } else {
-        "/Library"
-    });
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
-            shelf,
-        )))));
     // 絵には既定の番号を出す。試験のアプリがその番号で外からの要求を受けないよう、先に取っておく（取れなければ、ほかのプログラムが
     // 使っている。どちらでも試験のアプリは待てず、ウィンドウの中身は同じ）
     let _held = std::net::TcpListener::bind(("127.0.0.1", yolu_mcp::DEFAULT_PORT));
     open_settings(&mut h);
+    choose(&mut h, Category::LiveLink);
     let has_port_row = |h: &Harness<'_, YoluApp>, label: &str| {
         drawn_texts(h).iter().any(|(text, _)| text == label)
     };
     assert!(!has_port_row(&h, "ポート番号"), "切のあいだは出ない");
-    let closed = window_rect(&h);
     h.get_by_label("外からの操作を受ける").click();
     h.run();
     assert!(h.state().state.settings().external_ops);
@@ -1351,24 +1656,21 @@ fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
         (field.center().y - label.center().y).abs() < 4.0,
         "名前と欄は同じ行"
     );
-    let open = window_rect(&h);
-    assert!(open.height() > closed.height(), "{closed:?} {open:?}");
     // 待てなかった知らせは状態の帯の丸の試験が見る。ここではウィンドウだけを撮る
     h.state_mut().state.clear_message();
     h.run();
-    shot(&mut h, "prefs_window_external_ops");
+    shot(&mut h, "prefs_livelink");
     english(&mut h, Lang::En);
     assert!(has_port_row(&h, "Port"));
     h.state_mut().state.clear_message();
     h.run();
-    shot(&mut h, "prefs_window_external_ops_english");
+    shot(&mut h, "prefs_livelink_english");
     english(&mut h, Lang::Ja);
     // 切ると消える
     h.get_by_label("外からの操作を受ける").click();
     h.run();
     assert!(!h.state().state.settings().external_ops);
     assert!(!has_port_row(&h, "ポート番号"), "切ると消える");
-    assert!((window_rect(&h).height() - closed.height()).abs() < 0.5);
 }
 
 /// ディスクキャッシュが入（既定）なら、今のセットの画素の予算は「メモリの上限（レイヤーのメモリ＋取り消し履歴）＋ディスクの上限 − ほかの
@@ -1433,21 +1735,15 @@ fn headless_the_disk_cache_adds_the_disk_limit_to_the_pixel_budget_and_follows_t
     assert_eq!(s.prefs.settings.disk_cache_folder, None);
 }
 
-/// 同じ名前の要素のうち、いちばん上にあるもの。
-fn highest<'h>(h: &'h Harness<'_, YoluApp>, label: &'h str) -> egui_kittest::Node<'h> {
-    h.query_all_by_label(label)
-        .min_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
-        .unwrap_or_else(|| panic!("「{label}」が無い"))
-}
-
-/// メモリの節のディスクキャッシュ: 入切・詳しく（上限・置き場所）の欄で選んだ値が設定のファイルと文書の予算に入る。日英の絵。
+/// メモリの区分のディスクキャッシュ: 入切・詳しく（上限・置き場所）の欄で選んだ値が設定のファイルと文書の予算に入る。日英の絵。
 #[test]
 fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_both_languages() {
     const GIB: u64 = 1024 * MIB;
     let dir = settings_dir("disk-cache");
     let path = dir.join("YoluPainter").join("settings.conf");
-    let mut h = app_with_settings(&path, vec2(1280.0, 1000.0));
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     open_settings(&mut h);
+    choose(&mut h, Category::Memory);
     // ウィンドウに出る場所は、機械によらない場所にして撮る
     let shelf = PathBuf::from(if cfg!(windows) {
         "C:\\Library"
@@ -1463,8 +1759,8 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
             .apply(Action::Prefs(PrefsAction::Set(pref)));
     }
     h.run();
-    // 詳しく（メモリの節の方。処理の節の GPU のメモリにもある）
-    highest(&h, "詳しく").click();
+    // 詳しく（表示の区分の GPU のメモリにもあるが、ここはメモリの区分）
+    h.get_by_label("詳しく").click();
     h.run();
     assert!(h.state().state.prefs.cache_details);
     shot(&mut h, "prefs_disk_cache");
@@ -1488,8 +1784,8 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
         h.state().state.doc.source_budget_bytes(),
         10 * GIB + 16 * GIB
     );
-    // 置き場所を選ぶウィンドウを頼む（棚の場所の「選ぶ…」より上の方）
-    highest(&h, "選ぶ…").click();
+    // 置き場所を選ぶウィンドウを頼む（メモリの区分の「選ぶ…」は、キャッシュの場所だけ）
+    h.get_by_label("選ぶ…").click();
     h.run();
     assert_eq!(
         h.state().state.dialog_request,
@@ -1509,9 +1805,140 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
     assert!(written.contains("disk_cache_folder="), "{written}");
     drop(h);
     // 次の起動も同じ設定
-    let h = app_with_settings(&path, vec2(1280.0, 1000.0));
+    let h = app_with_settings(&path, vec2(1280.0, 800.0));
     let s = &h.state().state.prefs.settings;
     assert!(!s.disk_cache);
     assert_eq!(s.disk_cache_limit, yolu_app::settings::DiskLimit::Gib(16));
     assert_eq!(s.disk_cache_folder, Some(fixed_cache_folder()));
+}
+
+/// 表示の区分の「ベイクで RT コアを使う」: 既定は入で、切るとベイクの GPU のデバイスへ届き、設定のファイルは切のときだけ行を持ち、次の起動も切。
+/// 欄の無い古い設定のファイルは入として読む。
+#[test]
+fn the_bake_rt_cores_row_defaults_on_reaches_the_bake_device_and_survives_a_restart_when_off() {
+    let dir = settings_dir("bake-rt-cores");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    // 欄の無い古い設定のファイル
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "language=ja\nbackups=3\n").unwrap();
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    // 環境変数が切のあいだは、設定が入でもデバイスは切（行は押せない）
+    let allowed = yolu_gpu::GpuBakeOptions::default().ray_query;
+    assert!(h.state().state.settings().bake_ray_query, "欄が無ければ入");
+    assert_eq!(h.state().state.bake.ray_query_enabled(), allowed);
+    open_settings(&mut h);
+    choose(&mut h, Category::Display);
+    let _ = h.get_by_label("ベイクで RT コアを使う");
+    if !allowed {
+        h.get_by_label("ベイクで RT コアを使う").click();
+        h.run();
+        assert!(
+            h.state().state.settings().bake_ray_query,
+            "環境変数で切っているとき、行は押せない"
+        );
+        return;
+    }
+    // 切る
+    h.get_by_label("ベイクで RT コアを使う").click();
+    h.run();
+    h.run();
+    assert!(!h.state().state.settings().bake_ray_query);
+    assert!(
+        !h.state().state.bake.ray_query_enabled(),
+        "ベイクの GPU のデバイスに届く"
+    );
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        written.lines().any(|l| l == "bake_ray_query=off"),
+        "{written}"
+    );
+    english(&mut h, Lang::En);
+    let _ = h.get_by_label("Use RT cores for baking");
+    // 入れ直すと行が消える
+    h.get_by_label("Use RT cores for baking").click();
+    h.run();
+    h.run();
+    assert!(h.state().state.settings().bake_ray_query);
+    assert_eq!(h.state().state.bake.ray_query_enabled(), allowed);
+    assert!(!std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("bake_ray_query"));
+    // 切って終わると、次の起動も切（デバイスの設定も切）
+    h.get_by_label("Use RT cores for baking").click();
+    h.run();
+    h.run();
+    drop(h);
+    let h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(!h.state().state.settings().bake_ray_query);
+    assert!(
+        !h.state().state.bake.ray_query_enabled(),
+        "起動のとき、設定の値がデバイスの設定に入る"
+    );
+}
+
+/// 垂直同期（表示の区分の「表示の合成」の下）: 既定は切（待たない = フレームの間隔に下限をかける）。入れると次の起動から効くので「再起動で反映」が出て、
+/// 起動のときの値に戻すと消える。設定のファイルは入のときだけ行を持つ。起動のとき読んだ値でフレームの間隔の下限が決まる。日英の絵。
+#[test]
+fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on() {
+    let dir = settings_dir("vsync");
+    let path = dir.join("YoluPainter").join("settings.conf");
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(!h.state().state.prefs.settings.vsync, "既定は待たない");
+    assert!(h.state().paces_frames(), "待たない形は、間隔の下限をかける");
+    assert!(!h.state().state.prefs.vsync_at_start);
+    open_settings(&mut h);
+    choose(&mut h, Category::Display);
+    // 表示の合成のすぐ下の行（同じ区分）
+    let compositing = h.get_by_label("表示の合成: 自動").rect();
+    let row = h.get_by_label("垂直同期").rect();
+    assert!(
+        row.top() > compositing.bottom() && row.top() < compositing.bottom() + 40.0,
+        "表示の合成の下: {compositing:?} {row:?}"
+    );
+    assert!(h.query_by_label("垂直同期 ・ 再起動で反映").is_none());
+    // 入れる: 次の起動から効く
+    h.get_by_label("垂直同期").click();
+    h.run();
+    assert!(h.state().state.settings().vsync);
+    let _ = h.get_by_label("垂直同期 ・ 再起動で反映");
+    assert!(
+        h.state().paces_frames(),
+        "今の起動の同期は変わらない（ウィンドウの面は起動のときに決まる）"
+    );
+    h.run();
+    let written = std::fs::read_to_string(&path).unwrap();
+    assert!(written.lines().any(|l| l == "vsync=on"), "{written}");
+    h.state_mut().state.clear_message();
+    h.run();
+    shot(&mut h, "prefs_display_vsync");
+    english(&mut h, Lang::En);
+    let _ = h.get_by_label("VSync · applies after restart");
+    h.state_mut().state.clear_message();
+    h.run();
+    shot(&mut h, "prefs_display_vsync_english");
+    english(&mut h, Lang::Ja);
+    // 起動のときの値（切）に戻すと、「再起動で反映」は消え、ファイルの行も消える
+    h.get_by_label("垂直同期 ・ 再起動で反映").click();
+    h.run();
+    assert!(!h.state().state.settings().vsync);
+    assert!(h.query_by_label("垂直同期 ・ 再起動で反映").is_none());
+    let _ = h.get_by_label("垂直同期");
+    h.run();
+    assert!(!std::fs::read_to_string(&path).unwrap().contains("vsync"));
+    // 入れて終わると、次の起動は垂直同期を待つ形（間隔の下限は無し）で、その値が「起動のときの値」
+    h.get_by_label("垂直同期").click();
+    h.run();
+    drop(h);
+    let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
+    assert!(h.state().state.prefs.settings.vsync);
+    assert!(h.state().state.prefs.vsync_at_start);
+    assert!(!h.state().paces_frames(), "待つ形は、間隔の下限をかけない");
+    open_settings(&mut h);
+    choose(&mut h, Category::Display);
+    assert!(h.query_by_label("垂直同期 ・ 再起動で反映").is_none());
+    // 切ると、起動のときの値と違うので「再起動で反映」
+    h.get_by_label("垂直同期").click();
+    h.run();
+    assert!(!h.state().state.settings().vsync);
+    let _ = h.get_by_label("垂直同期 ・ 再起動で反映");
 }

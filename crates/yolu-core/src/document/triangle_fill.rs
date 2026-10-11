@@ -363,6 +363,7 @@ impl Document {
             changed,
             stamps: 0,
             samples: 0,
+            copy_note: None,
         }
     }
 }

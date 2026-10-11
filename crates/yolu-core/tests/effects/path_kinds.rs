@@ -366,7 +366,7 @@ fn every_kind_draws_the_same_bytes_for_any_worker_count() {
     assert_eq!(run(4), one);
 }
 
-/// 描いた画素の指紋（FNV-1a 64）。SIMD の道（環境変数 `YOLU_SIMD` の scalar・sse41・avx2）ごとに同じ値になることを、
+/// 描いた画素の指紋（FNV-1a 64）。SIMD の道（環境変数 `YOLU_SIMD` の scalar・sse41・avx2・neon）ごとに同じ値になることを、
 /// 決めた値との照合で確かめる（道を替えて試験を回す）。
 fn fnv(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {

@@ -49,6 +49,36 @@ pub fn all() -> &'static [Doc] {
             en: en!("GUIDE.md"),
         },
         Doc {
+            name: "guide-start",
+            ja: ja!("GUIDE_START.md"),
+            en: en!("GUIDE_START.md"),
+        },
+        Doc {
+            name: "guide-paint",
+            ja: ja!("GUIDE_PAINT.md"),
+            en: en!("GUIDE_PAINT.md"),
+        },
+        Doc {
+            name: "guide-select",
+            ja: ja!("GUIDE_SELECT.md"),
+            en: en!("GUIDE_SELECT.md"),
+        },
+        Doc {
+            name: "guide-layers",
+            ja: ja!("GUIDE_LAYERS.md"),
+            en: en!("GUIDE_LAYERS.md"),
+        },
+        Doc {
+            name: "guide-settings",
+            ja: ja!("GUIDE_SETTINGS.md"),
+            en: en!("GUIDE_SETTINGS.md"),
+        },
+        Doc {
+            name: "guide-keys",
+            ja: ja!("GUIDE_KEYS.md"),
+            en: en!("GUIDE_KEYS.md"),
+        },
+        Doc {
             name: "cli",
             ja: ja!("CLI.md"),
             en: en!("CLI.md"),
@@ -109,11 +139,6 @@ pub fn all() -> &'static [Doc] {
             en: None,
         },
         Doc {
-            name: "window",
-            ja: ja!("WINDOW.md"),
-            en: None,
-        },
-        Doc {
             name: "save-for-distribution",
             ja: ja!("SAVE_FOR_DISTRIBUTION.md"),
             en: None,
@@ -124,9 +149,34 @@ pub fn all() -> &'static [Doc] {
             en: None,
         },
         Doc {
+            name: "ylp-decisions",
+            ja: ja!("YLP_DECISIONS.md"),
+            en: None,
+        },
+        Doc {
             name: "livelink",
             ja: ja!("LIVELINK.md"),
             en: en!("LIVELINK.md"),
+        },
+        Doc {
+            name: "guide-fill",
+            ja: ja!("GUIDE_FILL.md"),
+            en: en!("GUIDE_FILL.md"),
+        },
+        Doc {
+            name: "guide-paths",
+            ja: ja!("GUIDE_PATHS.md"),
+            en: en!("GUIDE_PATHS.md"),
+        },
+        Doc {
+            name: "guide-3d",
+            ja: ja!("GUIDE_3D.md"),
+            en: en!("GUIDE_3D.md"),
+        },
+        Doc {
+            name: "guide-files",
+            ja: ja!("GUIDE_FILES.md"),
+            en: en!("GUIDE_FILES.md"),
         },
     ];
     DOCS

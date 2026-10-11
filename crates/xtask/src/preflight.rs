@@ -3,19 +3,21 @@
 //!
 //! 確かめ（`--only` で絞れる。名前は [`CHECKS`]）:
 //! - `licenses`: 対象ごとの許諾の照合（`tools/third-party.py --target T --bundle` と同じ命令。許諾の全文の束も作る）
-//! - `attributes`: SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled`）が、`.gitattributes` で `eol=lf` か `-text` か
+//! - `attributes`: SHA-256 で照合する表記ファイル（`tools/licenses-reviewed.json` の `bundled` と、クレートの原文のうちリポジトリに置いた文 `repo`）が、`.gitattributes` で `eol=lf` か `-text` か
 //!   （Windows の checkout で CRLF になって照合が落ちた、0.3.0 の配布の失敗）
 //! - `nsis`: インストーラーの台本の `Target` が、公式の Windows 版 NSIS が持つ stub（x86-unicode・x86-ansi）か（amd64 は無く、0.3.0 の配布で落ちた）
 //! - `mcpb`: Claude Desktop の拡張（.mcpb）を作る対象（Windows）で、`manifest.json` が組めて形が合うことと、拡張に入れるコマンドラインの許諾の束
 //!   （`tools/third-party.py --package yolu-cli --built-with yolu-app --bundle`）が作れること、拡張に入れるロゴの PNG があること
+//! - `macos`: macOS の試作の配布物（universal の .app）を作る対象で、`Info.plist` が組めて版が合うこと、アイコンの元のロゴが 1024 x 1024 の PNG であること、
+//!   同梱する文書が一覧に載っていること。macOS の上では、加えて `lipo`・`codesign` などのツールと、2 つの Rust のターゲットが入っていること
 //! - `version`: yolu-app の版のタグ `v<版>` が origin にまだ無いか。`--kind stable` ならプレリリースの版でないか、`--kind prerelease` なら
 //!   試験版の形（`alpha.N`・`beta.N`・`rc.N`）の版か
 //! - `targets`: `tools/dist-targets.json` の対象が、この xtask が配れる対象（と、Windows はインストーラーつき）か
 //! - `workflows`: ワークフローの YAML が読めるか。release.yml の入力と対象の並びが食い違わないか（`tools/check-workflows.py`）
 //! - `installer`（`--installer` か `--only installer` のときだけ）: Wine で `tools/test-installer.py`（wine32 が要る）
 use super::{
-    check_mcpb_manifest, mcpb_manifest, python, root, third_party, third_party_cli,
-    workspace_version, Result, MCPB_LOGO,
+    check_docs_listed, check_mcpb_manifest, macos, mcpb_manifest, python, root, third_party,
+    third_party_cli, workspace_version, Result, MCPB_LOGO,
 };
 use semver::Version;
 use std::{
@@ -24,7 +26,9 @@ use std::{
     path::Path,
     process::{Command, Stdio},
 };
-use yolu_update::{is_archive_target, is_beta_version, WINDOWS_ARCHIVE};
+use yolu_update::{
+    is_archive_target, is_beta_version, MACOS_ARCHIVE, MACOS_TRIPLES, WINDOWS_ARCHIVE,
+};
 
 /// 確かめの名前（実行する順）。
 pub(crate) const CHECKS: &[&str] = &[
@@ -32,6 +36,7 @@ pub(crate) const CHECKS: &[&str] = &[
     "attributes",
     "nsis",
     "mcpb",
+    "macos",
     "version",
     "targets",
     "workflows",
@@ -96,7 +101,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options> {
         }
     }
     for target in &options.targets {
-        if !is_archive_target(target) {
+        // 配れる対象のほか、macOS の universal の配布物を作る 2 つの Rust のターゲットも、許諾の照合のために指せる
+        if !is_archive_target(target) && !MACOS_TRIPLES.contains(&target.as_str()) {
             return Err(format!("未対応の配布ターゲットです: {target}").into());
         }
     }
@@ -124,9 +130,19 @@ fn selected(options: &Options) -> Vec<&'static str> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DistTarget {
     pub target: String,
+    /// ビルドする runner（ワークフローの `runs-on`）。
+    pub os: String,
     pub installer: bool,
     /// release.yml のこの名前の入力が入のときだけ組む対象（`None` は常に組む）。
     pub input: Option<String>,
+    /// 入力の既定が入の対象。PR の CI（入力が無い）でもビルドする。
+    pub default_on: bool,
+    /// 試作の対象。ビルドが落ちても CI の結論を失敗にせず、配布も止めない（成果物が無ければ載せない）。
+    pub experimental: bool,
+    /// その対象のビルドのジョブの時間の上限（分）。無ければワークフローの既定。
+    pub timeout_minutes: Option<u64>,
+    /// ビルドに要る Rust のターゲット（空なら `target` そのもの）。macOS の universal は 2 つ。
+    pub rust_targets: Vec<String>,
 }
 
 pub(crate) fn parse_dist_targets(text: &str) -> Result<Vec<DistTarget>> {
@@ -141,6 +157,10 @@ pub(crate) fn parse_dist_targets(text: &str) -> Result<Vec<DistTarget>> {
                     .as_str()
                     .ok_or("対象に target がありません")?
                     .to_owned(),
+                os: item["os"]
+                    .as_str()
+                    .ok_or("対象に os がありません")?
+                    .to_owned(),
                 installer: item["installer"]
                     .as_bool()
                     .ok_or("対象に installer（真偽値）がありません")?,
@@ -148,6 +168,32 @@ pub(crate) fn parse_dist_targets(text: &str) -> Result<Vec<DistTarget>> {
                     serde_json::Value::Null => None,
                     serde_json::Value::String(name) => Some(name.clone()),
                     _ => return Err("対象の input は文字列か null です".into()),
+                },
+                default_on: match &item["default"] {
+                    serde_json::Value::Null => false,
+                    serde_json::Value::Bool(value) => *value,
+                    _ => return Err("対象の default は真偽値です".into()),
+                },
+                experimental: match &item["experimental"] {
+                    serde_json::Value::Null => false,
+                    serde_json::Value::Bool(value) => *value,
+                    _ => return Err("対象の experimental は真偽値です".into()),
+                },
+                timeout_minutes: match &item["timeout_minutes"] {
+                    serde_json::Value::Null => None,
+                    value => Some(
+                        value
+                            .as_u64()
+                            .filter(|minutes| *minutes >= 1)
+                            .ok_or("対象の timeout_minutes は 1 以上の整数です")?,
+                    ),
+                },
+                rust_targets: match &item["rust_targets"] {
+                    serde_json::Value::Null => Vec::new(),
+                    serde_json::Value::String(text) => {
+                        text.split_whitespace().map(str::to_owned).collect()
+                    }
+                    _ => return Err("対象の rust_targets は空白で区切った文字列です".into()),
                 },
             })
         })
@@ -208,8 +254,8 @@ fn check_licenses(root: &Path, target: &str, offline: bool) -> Outcome {
     }
 }
 
-/// `tools/licenses-reviewed.json` の `bundled`（クレートでない同梱物）のうち、SHA-256 で照合するリポジトリの中のファイル。
-/// クレートの原文（`crates`）は取得元か登録先のクレートの中の物で、リポジトリのファイルではない。
+/// `tools/licenses-reviewed.json` の、SHA-256 で照合するリポジトリの中のファイル: `bundled`（クレートでない同梱物）と、
+/// クレートの原文のうちリポジトリに置いた文（`crates` の `repo`）。クレートの原文のそれ以外は、取得元か登録先のクレートの中の物。
 fn reviewed_files(root: &Path) -> Result<Vec<String>> {
     let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(
         root.join("tools/licenses-reviewed.json"),
@@ -228,6 +274,20 @@ fn reviewed_files(root: &Path) -> Result<Vec<String>> {
                     if root.join(path).is_file() && !files.iter().any(|f| f == path) {
                         files.push(path.to_owned());
                     }
+                }
+            }
+        }
+    }
+    // クレートの原文のうち、上流の記載から組み立てて、リポジトリに置いた文（`repo`。tools/license-texts/）
+    for review in json["crates"]
+        .as_object()
+        .ok_or("licenses-reviewed.json に crates がありません")?
+        .values()
+    {
+        for spec in review["files"].as_array().into_iter().flatten() {
+            if let Some(path) = spec["repo"].as_str() {
+                if root.join(path).is_file() && !files.iter().any(|f| f == path) {
+                    files.push(path.to_owned());
                 }
             }
         }
@@ -407,6 +467,88 @@ fn check_nsis(root: &Path) -> Outcome {
     }
 }
 
+/// macOS の試作の配布物（universal の .app）を作る前の確かめ。ツールと Rust のターゲットは、macOS の上だけ見る（ほかの OS ではビルドしない）。
+/// `tool` は PATH にツールがあるか、`installed` はその Rust のターゲットのライブラリが入っているか。
+fn macos_problems(
+    root: &Path,
+    version: &Version,
+    on_macos: bool,
+    tool: impl Fn(&str) -> bool,
+    installed: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    let plist = macos::info_plist(version);
+    for needed in [
+        format!("<string>{version}</string>"),
+        format!("<string>{}</string>", macos::BUNDLE_ID),
+    ] {
+        if !plist.contains(&needed) {
+            problems.push(format!("Info.plist に {needed} がありません"));
+        }
+    }
+    if let Err(error) = macos::check_icon_source(&root.join(macos::ICON_SOURCE)) {
+        problems.push(error.to_string());
+    }
+    if let Err(error) = check_docs_listed(root) {
+        problems.push(error.to_string());
+    }
+    if on_macos {
+        for name in macos::HOST_TOOLS {
+            if !tool(name) {
+                problems.push(format!(
+                    "{name} が見つかりません（Xcode の Command Line Tools が要ります）"
+                ));
+            }
+        }
+        for triple in MACOS_TRIPLES {
+            if !installed(triple) {
+                problems.push(format!(
+                    "Rust のターゲット {triple} が入っていません（`rustup target add {}`）",
+                    MACOS_TRIPLES.join(" ")
+                ));
+            }
+        }
+    }
+    problems
+}
+
+/// Rust のターゲットのライブラリが、使っているツールチェーンに入っているか（`rustup` が無い環境でも見られるよう、sysroot の中を見る）。
+fn rust_target_installed(triple: &str) -> bool {
+    let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let Ok(output) = Command::new(rustc).args(["--print", "sysroot"]).output() else {
+        return false;
+    };
+    let sysroot = String::from_utf8_lossy(&output.stdout);
+    Path::new(sysroot.trim())
+        .join("lib/rustlib")
+        .join(triple)
+        .join("lib")
+        .is_dir()
+}
+
+fn check_macos(root: &Path) -> Outcome {
+    let version = match workspace_version() {
+        Ok(version) => version,
+        Err(error) => return Failed(vec![format!("版を取得できません: {error}")]),
+    };
+    let on_macos = cfg!(target_os = "macos");
+    let problems = macos_problems(
+        root,
+        &version,
+        on_macos,
+        |name| macos::find_tool(name).is_some(),
+        rust_target_installed,
+    );
+    if !problems.is_empty() {
+        return Failed(limited(problems));
+    }
+    Passed(if on_macos {
+        format!("Info.plist・アイコンの元・文書の一覧・ツール・Rust のターゲットがそろっている（版 {version}）")
+    } else {
+        format!("Info.plist・アイコンの元・文書の一覧がそろっている（版 {version}。ツールは macOS の上でだけ見る）")
+    })
+}
+
 /// `remote` にタグ `v<版>` があるか。問い合わせられなければ `Err`（ネットが無い・origin が無い）。
 fn tag_exists(root: &Path, remote: &str, version: &Version) -> std::result::Result<bool, String> {
     let reference = format!("refs/tags/v{version}");
@@ -472,6 +614,8 @@ fn check_version(root: &Path, kind: Option<Kind>) -> Outcome {
 }
 
 /// `dist-targets.json` の対象が、この xtask が配れる対象であること。Windows の zip はインストーラーと並べて出す（`updater-json` の決まり）。
+/// macOS の universal は macOS の runner でビルドし（`lipo`・`codesign` は macOS にしか無い）、2 つの Rust のターゲットを入れる。
+/// `default`（入力の既定が入）は入力のある対象だけ。
 fn targets_outcome(targets: &[DistTarget]) -> Outcome {
     let mut problems = Vec::new();
     for item in targets {
@@ -487,6 +631,43 @@ fn targets_outcome(targets: &[DistTarget]) -> Outcome {
                 item.target
             ));
         }
+        if item.default_on && item.input.is_none() {
+            problems.push(format!(
+                "{}: default は入力（input）のある対象だけに付ける（入力が無い対象は常にビルドする）",
+                item.target
+            ));
+        }
+        // 試作の対象は、落ちても配布が残りの対象で進む。Windows の zip・インストーラーは更新の対象で、欠けると更新が止まるので、試作にしない
+        if item.experimental && item.target == WINDOWS_ARCHIVE {
+            problems.push(format!(
+                "{}: Windows は試作にできません（experimental が true だと、ビルドが落ちても配布が進み、更新の対象が欠ける）",
+                item.target
+            ));
+        }
+        let is_macos = item.target == MACOS_ARCHIVE;
+        if is_macos && !item.experimental {
+            problems.push(format!(
+                "{}: macOS の配布物は試作です（experimental を true にする。署名なしの試作が、落ちたときに配布を止めないため）",
+                item.target
+            ));
+        }
+        if is_macos && !item.os.starts_with("macos-") {
+            problems.push(format!(
+                "{}: macOS の配布物は macOS の runner でビルドする（os が {}。lipo・codesign・iconutil・ditto は macOS にしか無い）",
+                item.target, item.os
+            ));
+        }
+        let wanted: Vec<String> = if is_macos {
+            MACOS_TRIPLES.iter().map(|t| (*t).to_owned()).collect()
+        } else {
+            Vec::new()
+        };
+        if item.rust_targets != wanted {
+            problems.push(format!(
+                "{}: rust_targets は {:?} にする（今は {:?}。universal の .app を作る 2 つの Rust のターゲットを、ワークフローが入れる）",
+                item.target, wanted.join(" "), item.rust_targets.join(" ")
+            ));
+        }
     }
     if !targets.iter().any(|t| t.input.is_none()) {
         problems.push("入力が要らない（常に組む）対象がありません".into());
@@ -495,9 +676,17 @@ fn targets_outcome(targets: &[DistTarget]) -> Outcome {
         Passed(
             targets
                 .iter()
-                .map(|t| match &t.input {
-                    Some(input) => format!("{}（入力 {input}）", t.target),
-                    None => t.target.clone(),
+                .map(|t| {
+                    let base = match (&t.input, t.default_on) {
+                        (Some(input), true) => format!("{}（入力 {input}・既定は入）", t.target),
+                        (Some(input), false) => format!("{}（入力 {input}）", t.target),
+                        (None, _) => t.target.clone(),
+                    };
+                    if t.experimental {
+                        format!("{base}（試作）")
+                    } else {
+                        base
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join("・"),
@@ -572,9 +761,10 @@ pub(crate) fn run(args: impl Iterator<Item = String>) -> Result<()> {
     let root = root();
     let known = dist_targets(&root)?;
     let targets: Vec<String> = if options.targets.is_empty() {
+        // PR の CI がビルドする対象（入力が要らない対象と、入力の既定が入の対象）
         known
             .iter()
-            .filter(|t| t.input.is_none())
+            .filter(|t| t.input.is_none() || t.default_on)
             .map(|t| t.target.clone())
             .collect()
     } else {
@@ -615,6 +805,16 @@ pub(crate) fn run(args: impl Iterator<Item = String>) -> Result<()> {
                     check_mcpb(&root, options.offline)
                 } else {
                     Skipped("拡張（.mcpb）を作る対象がありません".into())
+                };
+                reports.push(report(&mut out, name, outcome)?)
+            }
+            "macos" => {
+                // universal の .app を作る対象があるときだけ（許諾だけを見る macOS の Rust のターゲットの指定では見ない）
+                let uses_app = targets.iter().any(|target| target == MACOS_ARCHIVE);
+                let outcome = if uses_app {
+                    check_macos(&root)
+                } else {
+                    Skipped("macOS の .app を作る対象がありません".into())
                 };
                 reports.push(report(&mut out, name, outcome)?)
             }
@@ -717,10 +917,28 @@ mod tests {
         assert_eq!(options.kind, Some(Kind::Stable));
         assert_eq!(options.only, ["version", "nsis"]);
         assert!(options.installer && options.offline);
+        // macOS の universal の配布物と、それを作る 2 つの Rust のターゲット（許諾の照合のために）も指せる
+        let mac = parse_options(args(&[
+            "--target",
+            "universal-apple-darwin",
+            "--target",
+            "aarch64-apple-darwin",
+            "--target",
+            "x86_64-apple-darwin",
+        ]))
+        .unwrap();
+        assert_eq!(
+            mac.targets,
+            [
+                "universal-apple-darwin",
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin"
+            ]
+        );
         for bad in [
             vec!["--kind", "beta"],
             vec!["--only", "nothing"],
-            vec!["--target", "aarch64-apple-darwin"],
+            vec!["--target", "aarch64-pc-windows-msvc"],
             vec!["--target"],
             vec!["--unknown"],
         ] {
@@ -738,6 +956,7 @@ mod tests {
                 "attributes",
                 "nsis",
                 "mcpb",
+                "macos",
                 "version",
                 "targets",
                 "workflows"
@@ -861,6 +1080,13 @@ mod tests {
             files.iter().any(|f| f.ends_with("THIRD-PARTY-NOTICES.md")),
             "{files:?}"
         );
+        // 上流の記載から組み立てた許諾の文（クレートの原文としてリポジトリに置いた物）も、LF 固定を見張る対象
+        assert!(
+            files
+                .iter()
+                .any(|f| f.starts_with("tools/license-texts/") && f.ends_with(".txt")),
+            "{files:?}"
+        );
         assert_eq!(
             check_attributes_in(&root, &files),
             Passed(format!("{} ファイルが LF 固定か変換なし", files.len()))
@@ -964,10 +1190,21 @@ mod tests {
         let good = parse_dist_targets(
             r#"{"targets":[
                 {"target":"x86_64-pc-windows-msvc","os":"windows-latest","installer":true,"input":null},
-                {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-22.04","installer":false,"input":"linux"}]}"#,
+                {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-22.04","installer":false,"input":"linux"},
+                {"target":"universal-apple-darwin","os":"macos-14","installer":false,"input":"macos","default":true,
+                 "experimental":true,"timeout_minutes":90,
+                 "rust_targets":"aarch64-apple-darwin x86_64-apple-darwin"}]}"#,
         )
         .unwrap();
-        assert!(matches!(targets_outcome(&good), Passed(ref s) if s.contains("入力 linux")));
+        assert!(
+            matches!(targets_outcome(&good), Passed(ref s) if s.contains("入力 linux")
+            && s.contains("universal-apple-darwin（入力 macos・既定は入）（試作）"))
+        );
+        assert!(good[2].experimental && !good[0].experimental && !good[1].experimental);
+        assert_eq!(good[2].timeout_minutes, Some(90));
+        assert_eq!(good[0].timeout_minutes, None);
+        assert_eq!(good[2].rust_targets, MACOS_TRIPLES);
+        assert!(good[2].default_on && !good[1].default_on && good[0].rust_targets.is_empty());
         // 配れない対象・Linux にインストーラー・Windows にインストーラー無し・常に組む対象が無い。
         let mut unknown = good.clone();
         unknown[1].target = "aarch64-apple-darwin".into();
@@ -978,20 +1215,123 @@ mod tests {
         let mut no_installer = good.clone();
         no_installer[0].installer = false;
         assert!(matches!(targets_outcome(&no_installer), Failed(_)));
-        let mut all_optional = good;
+        let mut all_optional = good.clone();
         all_optional[0].input = Some("windows".into());
         assert!(matches!(targets_outcome(&all_optional), Failed(_)));
+        // macOS の配布物: macOS 以外の runner・Rust のターゲットの食い違い・足りない
+        let mut wrong_runner = good.clone();
+        wrong_runner[2].os = "ubuntu-22.04".into();
+        match targets_outcome(&wrong_runner) {
+            Failed(p) => assert!(p.iter().any(|l| l.contains("macOS の runner")), "{p:?}"),
+            other => panic!("{other:?}"),
+        }
+        for rust in [
+            vec![],
+            vec!["aarch64-apple-darwin".to_owned()],
+            vec![
+                "x86_64-apple-darwin".to_owned(),
+                "aarch64-apple-darwin".to_owned(),
+            ],
+        ] {
+            let mut wrong = good.clone();
+            wrong[2].rust_targets = rust;
+            match targets_outcome(&wrong) {
+                Failed(p) => assert!(p.iter().any(|l| l.contains("rust_targets")), "{p:?}"),
+                other => panic!("{other:?}"),
+            }
+        }
+        // Rust のターゲットは macOS の配布物だけが持つ（Windows に付けると、ワークフローが入れる物と食い違う）
+        let mut stray = good.clone();
+        stray[0].rust_targets = vec!["x86_64-pc-windows-msvc".into()];
+        assert!(matches!(targets_outcome(&stray), Failed(_)));
+        // Windows は試作にできない・macOS は試作でなければならない
+        let mut windows_experimental = good.clone();
+        windows_experimental[0].experimental = true;
+        match targets_outcome(&windows_experimental) {
+            Failed(p) => assert!(
+                p.iter().any(|l| l.contains("Windows は試作にできません")),
+                "{p:?}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        let mut macos_required = good.clone();
+        macos_required[2].experimental = false;
+        match targets_outcome(&macos_required) {
+            Failed(p) => assert!(
+                p.iter().any(|l| l.contains("macOS の配布物は試作です")),
+                "{p:?}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        // default は入力のある対象だけ（入力が無い対象は常にビルドする）
+        let mut default_without_input = good.clone();
+        default_without_input[0].default_on = true;
+        assert!(
+            matches!(targets_outcome(&default_without_input), Failed(ref p) if p[0].contains("default"))
+        );
         assert!(parse_dist_targets("{}").is_err());
         assert!(
             parse_dist_targets(r#"{"targets":[{"target":"x","installer":1,"input":null}]}"#)
                 .is_err()
         );
+        for bad in [
+            r#""default":"yes""#,
+            r#""rust_targets":["a"]"#,
+            r#""experimental":"yes""#,
+            r#""timeout_minutes":0"#,
+            r#""timeout_minutes":"90""#,
+        ] {
+            let text = format!(
+                r#"{{"targets":[{{"target":"x","os":"o","installer":false,"input":"i",{bad}}}]}}"#
+            );
+            assert!(parse_dist_targets(&text).is_err(), "{bad}");
+        }
         // 実際の一覧は通る。
         assert!(
             matches!(check_targets(&root()), Passed(_)),
             "{:?}",
             check_targets(&root())
         );
+    }
+
+    #[test]
+    fn the_macos_check_wants_the_plist_the_logo_the_listed_docs_and_on_a_mac_the_tools() {
+        let root = root();
+        let version = Version::parse("0.6.0").unwrap();
+        let all = |_: &str| true;
+        let none = |_: &str| false;
+        // macOS 以外ではツール・Rust のターゲットを見ない（そこではビルドしない）
+        assert!(macos_problems(&root, &version, false, none, none).is_empty());
+        assert!(macos_problems(&root, &version, true, all, all).is_empty());
+        // macOS の上でツールが無い・片方のターゲットが無いと、名前つきで並べる
+        let problems = macos_problems(
+            &root,
+            &version,
+            true,
+            |tool| tool != "iconutil",
+            |t| t != "x86_64-apple-darwin",
+        );
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].contains("iconutil") && problems[1].contains("x86_64-apple-darwin"));
+        assert!(problems[1].contains("rustup target add aarch64-apple-darwin x86_64-apple-darwin"));
+        // ロゴが無い・文書が一覧に載っていない repo は断る
+        let s = Scratch::new();
+        fs::create_dir_all(s.0.join("docs")).unwrap();
+        fs::write(s.0.join("docs/NEW.md"), "x").unwrap();
+        let problems = macos_problems(&s.0, &version, false, all, all);
+        assert!(problems.iter().any(|p| p.contains("ロゴ")), "{problems:?}");
+        assert!(
+            problems.iter().any(|p| p.contains("docs/NEW.md")),
+            "{problems:?}"
+        );
+        // この repo の実際の確かめは、macOS 以外では（ツールを見ないので）通る
+        if !cfg!(target_os = "macos") {
+            assert!(
+                matches!(check_macos(&root), Passed(_)),
+                "{:?}",
+                check_macos(&root)
+            );
+        }
     }
 
     #[test]
@@ -1026,7 +1366,7 @@ mod tests {
     #[test]
     fn license_check_reports_a_failing_script_by_its_lines() {
         // 存在しない対象は third-party.py が断る（引数の選択肢にない）。理由の行が並ぶ。
-        match check_licenses(&root(), "aarch64-apple-darwin", true) {
+        match check_licenses(&root(), "i686-pc-windows-msvc", true) {
             Failed(problems) => assert!(!problems.is_empty()),
             other => panic!("{other:?}"),
         }

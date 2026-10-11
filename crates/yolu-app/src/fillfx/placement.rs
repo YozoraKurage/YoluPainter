@@ -82,13 +82,21 @@ pub fn decal_at(hit: &SurfaceHit, view: &CameraView, gui: Vec2, image: (u32, u32
     }
     let ray = view.ray(gui);
     let above = view.ray(gui - Vec2::new(0.0, 1.0));
-    let top = view.ray(Vec2::new(gui.x, 0.0));
-    let bottom = view.ray(Vec2::new(gui.x, view.height));
-    let up = above.direction() - ray.direction();
-    let distance = hit.distance.max(1e-4);
-    let height = (top.direction().normalize_or_zero() - bottom.direction().normalize_or_zero())
-        .length()
-        * distance;
+    // 画面の上の向きと、当たった所で見えている高さ（正投影の視線は平行なので、向きでなく始めの点の差と、見える高さそのもの）
+    let (up, height) = match view.orthographic_height() {
+        Some(height) => (above.origin() - ray.origin(), height),
+        None => {
+            let top = view.ray(Vec2::new(gui.x, 0.0));
+            let bottom = view.ray(Vec2::new(gui.x, view.height));
+            let distance = hit.distance.max(1e-4);
+            (
+                above.direction() - ray.direction(),
+                (top.direction().normalize_or_zero() - bottom.direction().normalize_or_zero())
+                    .length()
+                    * distance,
+            )
+        }
+    };
     let forward = -normal; // +Z は面の中へ
     let mut up = up - forward * up.dot(forward);
     if up.length_squared() < 1e-10 {

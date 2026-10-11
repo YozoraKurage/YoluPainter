@@ -12,7 +12,7 @@ use egui::{pos2, vec2, Color32, Pos2, Rect, Shape as EguiShape, Stroke, Ui};
 use yolu_core::fill_image::ProjectionMode;
 use yolu_core::generator::Kind as GeneratorKind;
 use yolu_core::glam::Vec2;
-use yolu_core::{Channel, EffectSettings, FilterId, LayerId, LayerKind};
+use yolu_core::{Channel, EffectSettings, FilterId, LayerId, LayerKind, RulerId};
 
 use crate::notice::Source as NoticeSource;
 use crate::state::AppState;
@@ -27,12 +27,17 @@ pub enum Target {
     Gradient(LayerId, Channel),
     /// レイヤー（かマスク）のフィルターのスタックにある、形のグラデーションの Generator の形か、画像の Generator の投影の置き場。
     Filter(LayerId, FilterId),
+    /// レイヤーが持つ 3D の定規（編集のモードで選んだ定規。移動の矢印と回す輪、端の点の四角。大きさのつまみは無い）。
+    Ruler(LayerId, RulerId),
 }
 
 impl Target {
     pub fn layer(self) -> LayerId {
         match self {
-            Target::Projection(l) | Target::Gradient(l, _) | Target::Filter(l, _) => l,
+            Target::Projection(l)
+            | Target::Gradient(l, _)
+            | Target::Filter(l, _)
+            | Target::Ruler(l, _) => l,
         }
     }
 }
@@ -51,6 +56,8 @@ pub struct ShapeDrag {
     pub start: Shape,
     /// 押した点（3D ビューの表示域の左上から）。
     pub from: Vec2,
+    /// 定規の端の点のつまみを押したとき、押した点から端の四角の中心までのずれ（ドラッグの途中、ポインタにこのずれを足した所へ端を置く）。ほかは 0。
+    pub grab: Vec2,
     pub target: Target,
     pub source: Source,
     /// ドラッグを始めた文書（テクスチャセットを替えたら、別の文書の同じ番号のレイヤーへ当てない）。
@@ -69,6 +76,12 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 /// いまギズモを出す対象（無ければ `None`）。3D のモデルが無ければ出さない。形のグラデーションの Generator（フィルターの欄で「3D ビューで
 /// 編集」にしたもの）が先で、続けて塗りつぶしのグラデーション、投影の置き場。マスクを編集している間は Generator 以外は出さない。
 pub fn target(app: &AppState) -> Option<Target> {
+    // 編集のモードは、点の印で選んだ物（G/R/S の途中・Q で隠したときは出さない）。ポーズのモードは出さない
+    match app.mode {
+        crate::mode::EditorMode::Edit => return crate::objects::gizmo_target(app),
+        crate::mode::EditorMode::Pose => return None,
+        crate::mode::EditorMode::Paint => {}
+    }
     app.view3d.model.as_ref()?;
     let id = app.selected_layer?;
     let layer = app.doc.layer(id)?;
@@ -129,7 +142,30 @@ pub fn shape(app: &AppState, target: Target) -> Option<Shape> {
             .fill_gradient(ch)
             .map(|g| Shape::from_volume(&g.volume)),
         Target::Filter(l, f) => filter_shape(app, l, f),
+        Target::Ruler(l, id) => {
+            crate::rulers::edit3d::gizmo_shape(&crate::objects::ruler_of(app, l, id)?)
+        }
     }
+}
+
+/// ポインタの下のハンドル（定規の端の点の四角が先、そのあとは形のハンドル）。
+fn hit_at(
+    app: &AppState,
+    t: Target,
+    s: &Shape,
+    view: &yolu_core::geometry::CameraView,
+    p: Vec2,
+) -> Handle {
+    if let Target::Ruler(l, id) = t {
+        if let Some(r) = crate::objects::ruler_of(app, l, id) {
+            match crate::rulers::edit3d::end_at(&r, view, p) {
+                Some(crate::rulers::edit3d::End::A) => return Handle::EndA,
+                Some(crate::rulers::edit3d::End::B) => return Handle::EndB,
+                None => {}
+            }
+        }
+    }
+    sg::hit(s, &root(), view, p)
 }
 
 /// ポインタの下のハンドル（ギズモが出ていなければ `None`）。
@@ -141,7 +177,7 @@ pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
         return Handle::None;
     };
     let view = app.view3d.camera.view(rect.width(), rect.height());
-    sg::hit(&s, &root(), &view, local(rect, at))
+    hit_at(app, t, &s, &view, local(rect, at))
 }
 
 /// ハンドルの画面の点（画面の座標。試験が掴む位置に使う）。
@@ -149,6 +185,20 @@ pub fn handle_point(app: &AppState, rect: Rect, handle: Handle) -> Option<Pos2> 
     let t = target(app)?;
     let s = shape(app, t)?;
     let view = app.view3d.camera.view(rect.width(), rect.height());
+    if let (Target::Ruler(l, id), Handle::EndA | Handle::EndB) = (t, handle) {
+        let r = crate::objects::ruler_of(app, l, id)?;
+        let end = if handle == Handle::EndA {
+            crate::rulers::edit3d::End::A
+        } else {
+            crate::rulers::edit3d::End::B
+        };
+        let p = crate::rulers::edit3d::ends(&r)
+            .into_iter()
+            .find(|(e, _)| *e == end)?
+            .1;
+        let g = crate::rulers::edit3d::end_screen(&view, p)?;
+        return Some(pos2(rect.left() + g.x, rect.top() + g.y));
+    }
     sg::handle_points(&s, &root(), &view)
         .into_iter()
         .find(|(h, _)| *h == handle)
@@ -168,7 +218,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
     };
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let p = local(rect, at);
-    let handle = sg::hit(&start, &root(), &view, p);
+    let handle = hit_at(app, t, &start, &view, p);
     if handle == Handle::None {
         return false;
     }
@@ -180,10 +230,12 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
         return true; // ハンドルを押したので、下のツールで描き始めない
     }
     app.doc.end_coalescing(); // 前の欄のドラッグにまとめない
+    let grab = crate::rulers::edit3d::grab_offset(app, &view, t, handle, p);
     app.fillfx.drag = Some(ShapeDrag {
         handle,
         start,
         from: p,
+        grab,
         target: t,
         source,
         doc_id: app.doc.id(),
@@ -206,6 +258,10 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
         release(app, true);
         return;
     }
+    if matches!(d.handle, Handle::EndA | Handle::EndB) {
+        crate::rulers::edit3d::drag_end(app, rect, &d, at);
+        return;
+    }
     let view = app.view3d.camera.view(rect.width(), rect.height());
     let next = sg::drag(
         d.handle,
@@ -221,29 +277,41 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
     if Some(next) == shape(app, d.target) {
         return;
     }
+    if let Some(Err(e)) = write_shape(app, d.target, next, true) {
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            NoticeSource::FillLayer,
+            app.lang.core_error(&e),
+        );
+        release(app, false);
+    }
+}
+
+/// 対象の形を文書へ入れる（`coalesce` なら続けて変える操作として 1 回の Undo にまとめる）。値が範囲外なら理由を知らせて None
+/// （文書は変えない）。対象が無ければ None。入れたら（変わっていれば「変更あり」の印を付けて）Some(Ok)、core が断ったら Some(Err)。
+pub fn write_shape(
+    app: &mut AppState,
+    target: Target,
+    next: Shape,
+    coalesce: bool,
+) -> Option<Result<(), yolu_core::CoreError>> {
     let revision = app.doc.revision();
-    let result = match d.target {
+    let result = match target {
         Target::Projection(layer) => {
-            let Some(l) = app.doc.layer(layer) else {
-                return;
-            };
-            let mut p = *l.projection();
+            let mut p = *app.doc.layer(layer)?.projection();
             p.placement = next.into_placement();
             if let Err(e) = p.validate() {
                 app.fail(NoticeSource::FillLayer, app.lang.fill_error(&e));
-                return;
+                return None;
             }
-            app.doc.set_fill_projection(layer, p, true)
+            app.doc.set_fill_projection(layer, p, coalesce)
         }
         Target::Gradient(layer, ch) => {
-            let Some(mut g) = app
+            let mut g = app
                 .doc
                 .layer(layer)
                 .and_then(|l| l.fill_gradient(ch))
-                .cloned()
-            else {
-                return;
-            };
+                .cloned()?;
             g.volume = next.into_volume(&g.volume);
             if g.validate().is_err() {
                 app.fail(
@@ -251,18 +319,15 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
                     app.lang
                         .pick("形の値が範囲外です", "The shape is out of range"),
                 );
-                return;
+                return None;
             }
-            app.doc.set_fill_gradient(layer, ch, Some(g), true)
+            app.doc.set_fill_gradient(layer, ch, Some(g), coalesce)
         }
         Target::Filter(layer, filter) => {
-            let Some(mut g) = app
+            let mut g = app
                 .doc
                 .find_filter(filter)
-                .and_then(|(_, e, _)| e.settings().generator_settings().cloned())
-            else {
-                return;
-            };
+                .and_then(|(_, e, _)| e.settings().generator_settings().cloned())?;
             if g.kind == GeneratorKind::Image {
                 g.image.projection.placement = next.into_placement();
             } else {
@@ -274,27 +339,29 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
                     app.lang
                         .pick("形の値が範囲外です", "The shape is out of range"),
                 );
-                return;
+                return None;
             }
             app.doc
-                .set_filter_settings(layer, filter, EffectSettings::generator(g), true)
+                .set_filter_settings(layer, filter, EffectSettings::generator(g), coalesce)
+        }
+        Target::Ruler(layer, id) => {
+            let current = crate::objects::ruler_of(app, layer, id)?;
+            let moved = crate::rulers::edit3d::ruler_after_shape(&current, &next);
+            if moved.validate().is_err() {
+                app.fail(
+                    NoticeSource::Ruler,
+                    app.lang
+                        .pick("定規の値が範囲外です", "The ruler is out of range"),
+                );
+                return None;
+            }
+            app.ruler_put(layer, moved, coalesce)
         }
     };
-    match result {
-        Ok(()) => {
-            if app.doc.revision() != revision {
-                app.modified = true;
-            }
-        }
-        Err(e) => {
-            app.notify(
-                crate::notice::Kind::of_core(&e),
-                NoticeSource::FillLayer,
-                app.lang.core_error(&e),
-            );
-            release(app, false);
-        }
+    if result.is_ok() && app.doc.revision() != revision {
+        app.modified = true;
     }
+    Some(result)
 }
 
 /// ドラッグを終える。`commit` なら 1 回の Undo にまとめて確定、そうでなければ（Esc・フォーカスの喪失）ドラッグの前に戻して履歴にも残さない。
@@ -311,11 +378,20 @@ pub fn release(app: &mut AppState, commit: bool) {
     }
     match app.doc.cancel_coalescing() {
         Ok(true) => {
-            app.info(
-                NoticeSource::FillLayer,
-                app.lang
-                    .pick("形の操作をやめました", "Shape edit cancelled"),
-            );
+            let (source, text) = if matches!(d.target, Target::Ruler(..)) {
+                (
+                    NoticeSource::Ruler,
+                    app.lang
+                        .pick("定規の操作をやめました", "Ruler edit cancelled"),
+                )
+            } else {
+                (
+                    NoticeSource::FillLayer,
+                    app.lang
+                        .pick("形の操作をやめました", "Shape edit cancelled"),
+                )
+            };
+            app.info(source, text);
         }
         Ok(false) => {}
         Err(e) => {
@@ -356,9 +432,7 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> H
         Some(d) => d.handle,
         None => pointer
             .filter(|_| !app.is_stroking())
-            .map_or(Handle::None, |p| {
-                sg::hit(&s, &root(), &view, local(rect, p))
-            }),
+            .map_or(Handle::None, |p| hit_at(app, t, &s, &view, local(rect, p))),
     };
     app.fillfx.hover = hover;
     let painter = ui.painter_at(rect);

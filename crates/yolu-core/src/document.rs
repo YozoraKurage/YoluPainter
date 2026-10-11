@@ -26,6 +26,7 @@ mod operations;
 mod outputs;
 mod regions;
 mod resize;
+mod rulers;
 mod transform;
 mod warp;
 pub use warp::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh, WarpPoint};
@@ -232,6 +233,19 @@ impl Stroke {
             )
         })
     }
+    /// 3D の面のダブを 1 つ始める（ストロークの全部のチャンネルで）: ダブごとの色を次の色へ進め、塗るダブなら、そのゆらぎの不透明度と
+    /// 流量の係数を覚える（この後の `apply_pixel`・`apply_dab`・`apply_mapped_dab` が、係数と紙の質感を当てる）。
+    pub(crate) fn begin_surface_dab(
+        &mut self,
+        doc: &mut Document,
+        look: Option<crate::brush::SurfaceDabLook>,
+    ) -> Result<(), CoreError> {
+        doc.with_stroke(self.id, |state, _, _| {
+            state.begin_surface_dab(look);
+            Ok(false)
+        })
+        .map(|_| ())
+    }
     /// 指先の前の位置を忘れる（3D の面で UV の継ぎ目をまたぐとき。次のダブは位置を覚えるだけ）。
     pub fn reset_effect_direction(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         match doc.active.as_mut() {
@@ -260,6 +274,9 @@ pub struct StrokeResult {
     pub stamps: u64,
     /// 受け取った入力の点の数。
     pub samples: u64,
+    /// 3D の対称（[`crate::Brush::model_symmetry`]）の写しを作れなかった最後の理由（確定のときに描いた待ちのダブも含む。
+    /// 全部写せたか、3D の対称が無ければ None）。
+    pub copy_note: Option<crate::geometry::MirrorOutcome>,
 }
 
 /// 進行中のストロークの数（確定の前に見る）。
@@ -275,6 +292,9 @@ pub struct StrokeStats {
     pub parallel_dabs: u64,
     /// 同じ入力を受けるチャンネル（面）の数（複数チャンネルのストロークは 2 以上）。
     pub targets: usize,
+    /// 3D の対称（[`crate::Brush::model_symmetry`]）の写しを作れなかった最後の理由（面が無い・別のテクスチャセット。全部写せたか、
+    /// 3D の対称が無ければ None）。
+    pub copy_note: Option<crate::geometry::MirrorOutcome>,
 }
 
 /// ストロークが描く面: レイヤーのチャンネルか、レイヤーのマスク。
@@ -448,6 +468,10 @@ pub(crate) enum Command {
     },
     /// テキストレイヤーの値を変える・外す（画素の入れ替えを伴うことがある）。
     Text(layer_text::TextCommand),
+    /// レイヤーの定規の一覧の入れ替え（作る・動かす・消す・設定。別のレイヤーへ移すときは 2 つのレイヤー。画素も合成も変えない）。
+    Rulers {
+        changes: Vec<rulers::RulerChange>,
+    },
 }
 
 pub(crate) struct Entry {
@@ -477,6 +501,8 @@ pub(crate) enum CoalesceKey {
     IdColors,
     /// テキストレイヤーの値（打ちながら描く間）。
     Text(LayerId),
+    /// レイヤーの定規（ドラッグ・スライダー）。
+    Rulers(LayerId),
 }
 
 /// 変化の記録: チャンネルごとに、タイルが最後に変わった通し番号。
@@ -762,6 +788,7 @@ impl Document {
                     .map(|s| s.parallel_dabs)
                     .sum::<u64>(),
             targets: 1 + self.material.extra.len(),
+            copy_note: a.copy_note(),
         })
     }
 
@@ -985,6 +1012,13 @@ impl Document {
                     }
                     (Command::Look { new: n, .. }, Command::Look { new, .. }) => *n = new,
                     (Command::IdColors { new: n, .. }, Command::IdColors { new, .. }) => *n = new,
+                    (Command::Rulers { changes: top }, Command::Rulers { changes }) => {
+                        for (id, _, after) in changes {
+                            if let Some(slot) = top.iter_mut().find(|c| c.0 == id) {
+                                slot.2 = after;
+                            }
+                        }
+                    }
                     _ => unreachable!("まとめる段は同じ種類"),
                 }
                 self.revision += 1;
@@ -1521,6 +1555,7 @@ impl Document {
                     | Command::Look { .. }
                     | Command::SavedSelections { .. }
                     | Command::FilterSeams { .. }
+                    | Command::Rulers { .. }
             )
         {
             self.refresh_anchor_readers();
@@ -1537,6 +1572,7 @@ impl Document {
                 | Command::Look { .. }
                 | Command::SavedSelections { .. }
                 | Command::FilterSeams { .. }
+                | Command::Rulers { .. }
         ) {
             // クリッピングの組が変わると、下地のグループが通過と分離を行き来する: 変わる前の下地にも印を
             self.mark_clip_bases();
@@ -1723,6 +1759,7 @@ impl Document {
             Command::Path(m) => self.switch_path(m, backwards),
             Command::Compound(steps) => self.switch_compound(steps, backwards),
             Command::Text(m) => self.switch_text(m, backwards),
+            Command::Rulers { changes } => self.switch_rulers(changes, backwards),
         }
     }
 
@@ -2322,6 +2359,7 @@ impl Document {
             changed: !changes.is_empty(),
             stamps: state.stamp_count,
             samples: state.sample_count,
+            copy_note: state.copy_note(),
         };
         if !changes.is_empty() {
             let cost = 64

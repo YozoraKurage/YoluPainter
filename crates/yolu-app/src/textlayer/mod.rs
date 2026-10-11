@@ -8,6 +8,12 @@
 //!
 //! テキストの値（フォント・サイズ・色・行間・字間・揃え・折り返しの幅）は、打っている間はその文字、テキストレイヤーを選んでいればそのレイヤー、
 //! どちらでもなければ次に作る文字の既定（`defaults`）に当たる。移動・変形ツールで動かす・回すと、テキストレイヤーは画素でなく値（位置・回転）が変わる。
+//!
+//! 文字の色の元（`ColorSource`。ツールプロパティの「テキストの色」）は 2 つ。「描画色」（既定）は、新しい文字を描画色で作り、テキストのツールを使っている
+//! 間（テキストレイヤーを選んでいる間・打っている間）に描画色が変わると、そのレイヤーの色も変える（`text_follow_paint_color`。描画色の円のドラッグは
+//! 1 回の取り消し。ブラシなど、ほかのツールで描画色を選ぶときは、選んだままのテキストの色を変えない）。
+//! 「ツールの色」は、ツールが持つ色（`defaults.color`）で新しい文字を作り、その色を変えると、選んでいるレイヤーの色も変える。色は 1 つのテキストに 1 色
+//! （文字ごとの色は持たない）。
 
 pub mod canvas;
 pub mod props;
@@ -199,6 +205,22 @@ pub struct TextState {
     pub fonts: Fonts,
     /// 開いた文書のテキストレイヤーのフォントを確かめて知らせる（一覧が要れば、できるまで待つ）。
     pub check_fonts: bool,
+    /// 文字の色の元（ツールプロパティの「テキストの色」）。
+    pub color_source: ColorSource,
+    /// 描画色を前のフレームに見たときの値（変わったときだけ、選んでいるテキストへ当てる）。
+    followed_main: Option<[f32; 4]>,
+    /// 描画色の変更を、選んでいるテキストレイヤーへまとめて当てている最中か（ドラッグが終わったら、まとめを切る）。
+    following: bool,
+}
+
+/// 文字の色の元。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorSource {
+    /// 描画色（既定）。
+    #[default]
+    PaintColor,
+    /// ツールの色（`TextState::defaults` の色）。
+    ToolColor,
 }
 
 /// スライダーを動かしている間の値。同じ値のスライダーはオプションバー・ツールプロパティ・レイヤーのプロパティに同時に出るので、
@@ -240,6 +262,9 @@ impl Default for TextState {
             found: Vec::new(),
             fonts: Fonts::default(),
             check_fonts: false,
+            color_source: ColorSource::default(),
+            followed_main: None,
+            following: false,
         }
     }
 }
@@ -295,6 +320,11 @@ pub enum TextAction {
     SystemFont { path: PathBuf, index: u32 },
     /// 文字の値を外して画素だけにする（1 回の Undo）。
     Rasterize(LayerId),
+    /// 文字の色の元を替える（文書は変えない）。
+    ColorSource(ColorSource),
+    /// 「ツールの色」を変える（打っている文字・選んでいるテキストレイヤーの色も、同じ色にする）。`dragging` は色のウィンドウのドラッグの途中
+    /// （テキストレイヤーは前の変更とまとめて 1 回の取り消し）。
+    ToolColor { color: Rgba8, dragging: bool },
 }
 
 impl TextAction {
@@ -547,6 +577,16 @@ impl AppState {
             TextAction::FontFile(path) => self.text_font_file(&path, 0),
             TextAction::SystemFont { path, index } => self.text_font_file(&path, index),
             TextAction::Rasterize(id) => self.text_rasterize(id),
+            TextAction::ColorSource(source) => {
+                self.text.color_source = source;
+                // 描画色を見る基準を今の色にする（替えただけで、選んでいるテキストの色を変えない）
+                self.text.followed_main = Some(self.color.main);
+                self.text_end_follow();
+            }
+            TextAction::ToolColor { color, dragging } => {
+                self.text.defaults.color = color;
+                self.text_set(Field::Color(color), dragging);
+            }
         }
     }
 
@@ -573,8 +613,11 @@ impl AppState {
         value.text.clear();
         value.x = x.clamp(-text::MAX_COORDINATE, text::MAX_COORDINATE);
         value.y = y.clamp(-text::MAX_COORDINATE, text::MAX_COORDINATE);
-        // 新しい文字の色は描画色
-        value.color = crate::matpaint::single_value(self.color.main);
+        // 新しい文字の色は、描画色（既定）かツールの色
+        value.color = match self.text.color_source {
+            ColorSource::PaintColor => crate::matpaint::single_value(self.color.main),
+            ColorSource::ToolColor => self.text.defaults.color,
+        };
         match self.text_font(&value.font.clone()) {
             Ok((font, _)) => value.font = font,
             Err(reason) => {
@@ -717,6 +760,82 @@ impl AppState {
             // 作ったレイヤーを追加した段へまとめているので、1 回の取り消しでレイヤーごと消える
             if self.doc.undo().is_ok() && self.selected_layer == editing.layer {
                 self.selected_layer = self.doc.layers().last().map(|l| l.id());
+            }
+        }
+    }
+
+    /// 毎フレーム: 文字の色の元が描画色で、テキストのツールを使っている（か、文字を打っている）とき、描画色が変わったら、打っている文字・選んでいる
+    /// テキストレイヤーの色を同じ色にする。ほかのツール（ブラシなど）のあいだは、描画色が変わっても選んだままのテキストの色を変えない（基準の色は
+    /// 追い続けるので、テキストのツールへ替えただけでは色が変わらない）。
+    /// `pointer_down` はマウス・ペンのボタンが押されている間（円のドラッグ）で、その間の変更は前の変更とまとめて 1 回の取り消しにし、離したら
+    /// まとめを切る（16 進・色の列・スポイトなど、押していない間の変更は 1 回ずつ）。描いている間・読むだけのセット・ロックされたレイヤー・フォントが無い
+    /// レイヤーは、黙って変えない。テキストを選んでいないときは何もしない（新しい文字は、作るときの描画色で作る）。
+    pub fn text_follow_paint_color(&mut self, pointer_down: bool) {
+        let main = self.color.main;
+        // 最初の 1 回は基準を覚えるだけ（開いた直後に選んでいるテキストの色を、黙って変えない）
+        let changed = self.text.followed_main.is_some_and(|before| before != main);
+        self.text.followed_main = Some(main);
+        let active = self.tool == Tool::Text || self.text.editing.is_some();
+        let following = self.text.color_source == ColorSource::PaintColor && active;
+        if following && changed {
+            self.text_apply_paint_color(crate::matpaint::single_value(main));
+        }
+        if !pointer_down || !following {
+            self.text_end_follow();
+        }
+    }
+
+    /// 描画色のまとめを切る（まとめていなければ何もしない）。打っている最中は、打ち終わりまで 1 回の取り消しなので切らない。
+    fn text_end_follow(&mut self) {
+        if std::mem::take(&mut self.text.following) && self.text.editing.is_none() {
+            self.doc.end_coalescing();
+        }
+    }
+
+    fn text_apply_paint_color(&mut self, color: Rgba8) {
+        match self.text_target() {
+            // 次の文字は、作るときの描画色で作る
+            Target::Defaults => {}
+            Target::Editing => {
+                let Some(e) = self.text.editing.as_ref() else {
+                    return;
+                };
+                if e.value.color == color {
+                    return;
+                }
+                let (layer, mut value) = (e.layer, e.value.clone());
+                value.color = color;
+                match layer {
+                    Some(id) => self.text_redraw(Some(id), value),
+                    None => {
+                        if let Some(e) = self.text.editing.as_mut() {
+                            e.value = value;
+                        }
+                    }
+                }
+            }
+            Target::Layer(id) => {
+                // 描いている間・読むだけのセット・ロック（すべて・画素・透明部分。親のグループのものも）は、黙って変えない
+                // （毎フレーム断りを出さない。値の欄からの変更は、これまでどおり理由を出して断る）
+                if !self.can_edit() || self.doc.ensure_pixels_editable(id, true).is_err() {
+                    return;
+                }
+                let Some(mut value) = self.doc.layer(id).and_then(|l| l.text()).cloned() else {
+                    return;
+                };
+                if value.color == color {
+                    return;
+                }
+                value.color = color;
+                if self.text_font(&value.font).is_err() {
+                    return;
+                }
+                if !self.text.following {
+                    // 前に開いたままのまとめ（別の欄のドラッグ）に混ぜない
+                    self.doc.end_coalescing();
+                }
+                self.text.following = true;
+                self.text_set_layer(id, value, true);
             }
         }
     }

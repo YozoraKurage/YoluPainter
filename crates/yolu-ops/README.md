@@ -54,7 +54,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 | `layer.add` | `kind`（paint・fill・group・adjustment・text）、`name`、`above`、`fill`、`adjustment`、`channels`、`text` | `edited` | 編集 |
 | `layer.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `layer.move` | `layer`、`parent`、`to_root`、`index` | `edited` | 編集 |
-| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment`、`text` | `edited` | 編集（全部で 1 段） |
+| `layer.set` | `layer`、`name`、`visible`、`opacity`、`blend_mode`、`clipping`、`locks`、`channels`、`fill`、`adjustment`、`points`、`text` | `edited` | 編集（全部で 1 段） |
 | `mask.add` | `layer` | `edited` | 編集 |
 | `mask.delete` | `layer`、`confirm` | `edited` | 壊す |
 | `mask.set` | `layer`、`enabled`、`inverted`、`density` | `edited` | 編集 |
@@ -96,18 +96,18 @@ fn main() -> Result<(), yolu_ops::OpError> {
 
 ## 効果の種類と値
 
-効果は `kind`（種類の名前）と `values`（欄の名前 → 数・真偽・選択肢の文字列）で足し、変えます。種類・欄の型・範囲・既定は `effect.list_kinds` が返し、
-範囲の検査は文書（core）と同じ定義です（範囲の外は切り詰めず断ります）。渡さない欄は、足すときは既定、変えるときは今の値です。
+効果は `kind`（種類の名前）と `values`（欄の名前 → 数・真偽・選択肢の文字列）で追加し、変えます。種類・欄の型・範囲・既定は `effect.list_kinds` が返し、
+範囲の検査は文書（core）と同じ定義です（範囲の外は切り詰めず断ります）。渡さない欄は、追加するときは既定、変えるときは今の値です。
 
 - フィルター: `blur`・`sharpen`・`noise`・`levels`・`invert`・`normalize`・`color_balance`・`brightness_contrast`・`threshold`・`posterize`・
   `histogram_scan`・`histogram_range`・`slope_blur`・`directional_blur`・`warp`・`morphology`・`edge_detect`・`high_pass`・`median`・`glow`
   （調整レイヤーには `levels`・`invert`・`hue_saturation` などを `layer.add`・`layer.set` の `adjustment` で）。
 - Generator: `edge_wear`・`dirt`・`position_gradient`・`thickness`・`direction`・`procedural_noise`・`grunge`・`pattern`・`light`・`mask_builder`・`uv_island_variation`。
-- リスト・曲線・参照を持つ種類（`gradient_map`・`tone_curve`・`shape_gradient`・`id_color`・`anchor`・`image`）は、値だけでは足せません（`addable: false`）。
+- リスト・曲線・参照を持つ種類（`gradient_map`・`tone_curve`・`shape_gradient`・`id_color`・`anchor`・`image`）は、値だけでは追加できません（`addable: false`）。
   すでにある段は `effect.get` で読め、強さ・有効・チャンネルは変えられ、値を渡して変えるのは断ります（その部分を黙って作り直しません）。
-- Rust 版だけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション、
+- スタンドアロンだけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション、
   0.5.0 のフィルターとジェネレーター（上の一覧の `histogram_scan` から `glow` までと、`pattern`・`light`・`mask_builder`・`uv_island_variation`））を使ったセットは、新しい文書の版で保存され、
-  Unity 版（0.2.0）のブリッジは開けません（理由を言って断り、中身は消えません）。保存の返事の `notes` がそのセットを知らせます。
+  Unity 版（0.4.x まで）は開けません（理由を言って断り、中身は消えません。0.5.0 以降の Unity ブリッジは .ylp を開きません）。保存の返事の `notes` がそのセットを知らせます。
 - 効果の種類を変えるとき、適用中のチャンネルに使えない設定は、どのチャンネルかを言って断ります（`channels` で選び直します）。
 
 **画面なしでは効かない効果**: 焼いたメッシュマップ・モデルを読む Generator（`needs_baked_maps: true`。モデルの UV アイランドを読む `uv_island_variation` も）は、画面なしのホストにマップもモデルも無いので、入力のまま通します。
@@ -174,7 +174,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 
 ## 版
 
-命令の版は `COMMAND_VERSION`（今は 1）です。引数の欄を足すだけなら上げず、古い命令が読めなくなる変え方をするときに上げます。版の違う命令は `unsupported_version` で断ります。
+命令の版は `COMMAND_VERSION`（今は 1）です。引数の欄を追加するだけなら上げず、古い命令が読めなくなる変え方をするときに上げます。版の違う命令は `unsupported_version` で断ります。
 `.ylp` の形式は変えません（保存は今の形式 7 か、名前を付けて残した選択範囲を使うファイルの 8 のまま）。
 
 ## 起動中のアプリへの通信
@@ -196,6 +196,6 @@ cargo test -p yolu-ops
 cargo clippy -p yolu-ops --all-targets -- -D warnings
 ```
 
-## この版で扱わないこと
+## 命令にしていないこと
 
-描く（ストローク・塗りつぶし・選択）・ベイク・Live Link・モデルの読み込み・複数の文書を同時に開くこと。焼いたメッシュマップ・モデルを読む Generator の評価。
+描く（ストローク・塗りつぶし・選択）・ベイク・Live Link・モデルの読み込み・複数の文書を同時に開くこと。画面なしのホストでは、焼いたメッシュマップ・モデルを読む Generator の評価もしません。

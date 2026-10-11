@@ -1,4 +1,4 @@
-//! 見た目の設定の欄（プロパティの「マテリアル」のタブ）: 種類の切り替え・節の値・テクスチャのスロット・ひな形・Undo（egui_kittest）。
+//! 見た目の設定の欄（右のドックの「マテリアル」のパネル）: 種類の切り替え・節の値・テクスチャのスロット・ひな形・Undo（egui_kittest）。
 use crate::common;
 
 use common::*;
@@ -16,13 +16,12 @@ fn harness(lang: Lang) -> Harness<'static, YoluApp> {
     harness_sized(lang, 1600.0)
 }
 
-/// 欄の下の方の行までウィンドウに入る高さで（右の欄はウィンドウの高さで切れる）。
+/// 欄の下の方の行までウィンドウに入る高さで（右の欄はウィンドウの高さで切れる。マテリアルのパネルはプロパティの組の中なので、列の高さのうち組の取り分の分だけ高くしてある）。
 fn harness_sized(lang: Lang, height: f32) -> Harness<'static, YoluApp> {
-    let mut h = app(1500.0, height, 64);
+    let mut h = app(1500.0, height * 1.4, 64);
     h.state_mut().state.lang = lang;
-    // 描く文脈のマテリアルのタブ
-    h.state_mut().state.ui.property_tab = 1;
-    h.run();
+    // 右のドックの「マテリアル」のパネル
+    open_material(&mut h);
     h
 }
 

@@ -948,3 +948,254 @@ fn the_pose_goes_with_the_model_reference_and_stays_otherwise() {
     assert!(!entries(&copy).contains_key("pose.json"));
     assert!(copy.view_model().unwrap().is_none());
 }
+
+/// Live Link で開いたモデルの記録（根の `livelink.json`）。FBX と絵のファイルの絶対の場所・Unity のプロジェクトの場所・書き出しの置き場を持つ。
+const LIVE_LINK: &str = r#"{"format":1,"kind":"open","target":{"key":"GlobalObjectId_V1-2-0123-4567-0","name":"Prop","export":"C:\\Users\\tester\\export"},"models":[{"path":"C:\\Users\\tester\\models\\Prop.fbx"}],"unityProject":"C:\\Users\\tester\\UnityProject"}"#;
+
+#[test]
+fn the_live_link_record_goes_with_the_model_reference_and_stays_otherwise() {
+    let project = with_remembered()
+        .with_livelink(Some(LIVE_LINK.as_bytes()))
+        .unwrap();
+    assert!(entries(&project).contains_key("livelink.json"));
+    // 目録: モデルのファイルの名前に並べて、記録のエントリの名前も挙げる
+    assert_eq!(
+        names(&project, Removal::ModelReference),
+        ["Prop.fbx", "livelink.json"]
+    );
+    // モデルの参照を残すなら、記録も残る（バイト列のまま）
+    let kept = project
+        .for_distribution(writer(), &[Removal::SavedSelections])
+        .unwrap();
+    assert_eq!(
+        kept.livelink().unwrap().as_deref(),
+        Some(LIVE_LINK.as_bytes())
+    );
+    // モデルの参照を除くなら、記録も除く（絶対の場所とポーズが写しに残らない）
+    let copy = project
+        .for_distribution(writer(), &[Removal::ModelReference])
+        .unwrap();
+    assert!(!entries(&copy).contains_key("livelink.json"));
+    assert_eq!(copy.livelink().unwrap(), None);
+    let text = String::from_utf8_lossy(
+        &entries(&copy)
+            .values()
+            .flatten()
+            .copied()
+            .collect::<Vec<u8>>(),
+    )
+    .into_owned();
+    assert!(
+        !text.contains("tester") && !text.contains("GlobalObjectId"),
+        "作った人の場所や Unity のオブジェクトの鍵が残る"
+    );
+    // 読み直せて、除く物はもう無い
+    let again = Project::read(&copy.to_bytes().unwrap()).unwrap();
+    assert!(again.unknown_entries().is_empty());
+    assert!(!again
+        .distribution_inventory(&Removal::ALL)
+        .kinds()
+        .contains(&Removal::ModelReference));
+    // 開いているプロジェクトは変わらない
+    assert_eq!(
+        project.livelink().unwrap().as_deref(),
+        Some(LIVE_LINK.as_bytes())
+    );
+}
+
+#[test]
+fn a_live_link_record_without_a_view_still_counts_as_a_model_reference() {
+    // view.json が無い（モデルのファイルの参照が無い）プロジェクトでも、記録だけで種類が当たる
+    let base = Project::create(writer(), &[spec(SET_A, "Body", &doc_reading(&[]))], SET_A).unwrap();
+    assert!(!entries(&base).contains_key("view.json"));
+    assert!(names(&base, Removal::ModelReference).is_empty());
+    let project = base.with_livelink(Some(LIVE_LINK.as_bytes())).unwrap();
+    assert_eq!(names(&project, Removal::ModelReference), ["livelink.json"]);
+    let copy = project
+        .for_distribution(writer(), &[Removal::ModelReference])
+        .unwrap();
+    assert_eq!(copy.livelink().unwrap(), None);
+    assert!(copy.distribution_inventory(&Removal::ALL).is_empty());
+}
+
+// ───────── テキストレイヤーのフォントの場所 ─────────
+
+const FONT: &[u8] = include_bytes!("../../../yolu-app/assets/fonts/BIZUDPGothic-Regular.ttf");
+/// 利用者が入れたフォントの場所（Windows。ユーザー名を含む）と、ホームの隠しフォルダー（Linux）。
+const FONT_WINDOWS: &str =
+    "C:\\Users\\tester\\AppData\\Local\\Microsoft\\Windows\\Fonts\\Example Sans.ttf";
+const FONT_LINUX: &str = "/home/tester/.fonts/Other Face.ttf";
+
+fn file_font(path: &str, seed: u8) -> yolu_core::text::TextFont {
+    yolu_core::text::TextFont::File {
+        path: path.into(),
+        index: 0,
+        sha256: std::array::from_fn(|i| (i as u8).wrapping_mul(7).wrapping_add(seed)),
+        names: yolu_core::text::FontNames {
+            family: format!("Family {seed}"),
+            postscript: format!("Family{seed}-BoldItalic"),
+            weight: 700,
+            italic: true,
+        },
+    }
+}
+
+/// セット A はテキストレイヤーを 3 枚（Windows の道のフォント・Linux の道のフォント・同梱のフォント）、セット B は文字なし。
+fn font_text_project() -> Project {
+    use yolu_core::text::{TextFont, TextSettings};
+    let mut doc = Document::with_tile_size(96, 64, 32).unwrap();
+    for (name, font) in [
+        ("甲", file_font(FONT_WINDOWS, 1)),
+        ("乙", file_font(FONT_LINUX, 2)),
+        ("丙", TextFont::Bundled("biz-udpgothic".into())),
+    ] {
+        doc.add_text_layer(
+            name,
+            TextSettings::new("Text", font, 4.0, 40.0),
+            FONT,
+            None,
+            false,
+        )
+        .unwrap();
+    }
+    Project::create(
+        writer(),
+        &[
+            spec(SET_A, "Body", &doc),
+            spec(SET_B, "Prop", &doc_reading(&[])),
+        ],
+        SET_A,
+    )
+    .unwrap()
+}
+
+/// セットの正本の、テキストレイヤーのフォントの項目（`font_kind`・`font_path`・番号・SHA-256・名前・太さ・斜体など。正本の並びのまま）。
+fn fonts_of(project: &Project, set: &str) -> Vec<(String, yolu_io::NativeValue)> {
+    project
+        .sets()
+        .iter()
+        .find(|s| s.id == set)
+        .unwrap()
+        .document
+        .to_native()
+        .unwrap()
+        .fields()
+        .iter()
+        .filter(|f| f.path.contains(".text.font_"))
+        .map(|f| (f.path.clone(), f.value.clone()))
+        .collect()
+}
+
+#[test]
+fn the_font_path_of_a_text_layer_is_cut_to_the_file_name_and_the_rest_of_the_font_stays() {
+    let project = font_text_project();
+    let before = fonts_of(&project, SET_A);
+    assert_eq!(
+        before
+            .iter()
+            .filter(|(p, _)| p.ends_with(".font_path"))
+            .count(),
+        2,
+        "ファイルのフォントの 2 枚"
+    );
+    // 目録: 素材の出どころのパスの種類に、フォントのファイル名が挙がる（道は挙げない）
+    let listed = names(&project, Removal::SourcePaths);
+    assert_eq!(listed, ["Example Sans.ttf", "Other Face.ttf"]);
+    let copy = project
+        .for_distribution(writer(), &[Removal::SourcePaths])
+        .unwrap();
+    let after = fonts_of(&copy, SET_A);
+    assert_eq!(after.len(), before.len());
+    for ((bp, bv), (ap, av)) in before.iter().zip(&after) {
+        assert_eq!(bp, ap);
+        if bp.ends_with(".font_path") {
+            let (yolu_io::NativeValue::Text(was), yolu_io::NativeValue::Text(now)) = (bv, av)
+            else {
+                panic!()
+            };
+            assert!(!now.contains(['/', '\\']), "{now}");
+            assert!(was.ends_with(now.as_str()), "{was} {now}");
+        } else {
+            // 番号・SHA-256・ファミリー名・PostScript 名・太さ・斜体と、同梱のフォントの名前は残る
+            assert_eq!(bv, av, "{bp}");
+        }
+    }
+    // 絵（画素・レイヤー）は同じ: 道のほかの項目は全部同じ
+    let (was, now) = (
+        project.sets()[0].document.to_native().unwrap(),
+        copy.sets()[0].document.to_native().unwrap(),
+    );
+    assert_eq!(was.fields().len(), now.fields().len());
+    for (a, b) in was.fields().iter().zip(now.fields()) {
+        assert_eq!(a.path, b.path);
+        if !a.path.ends_with(".text.font_path") {
+            assert_eq!(a.value, b.value, "{}", a.path);
+        }
+    }
+    // セット B（文字なし）の正本・合成は元のバイト列のまま
+    let (x, y) = (entries(&project), entries(&copy));
+    for leaf in ["document.utpaint", "composite/Color.png"] {
+        let name = format!("sets/{SET_B}/{leaf}");
+        assert_eq!(x[&name], y[&name], "{name}");
+    }
+    // 読み直せる
+    let again = Project::read(&copy.to_bytes().unwrap()).unwrap();
+    assert!(again.unknown_entries().is_empty());
+    assert_eq!(fonts_of(&again, SET_A), after);
+    // 写しを写しても、もう外す物は無い
+    assert!(names(&again, Removal::SourcePaths).is_empty());
+    // 外さない選びなら、道はそのまま
+    let kept = project
+        .for_distribution(writer(), &[Removal::UnityValues])
+        .unwrap();
+    assert_eq!(fonts_of(&kept, SET_A), before);
+    // 開いているプロジェクトは変わらない
+    assert_eq!(fonts_of(&project, SET_A), before);
+}
+
+#[test]
+fn a_copy_has_no_path_of_the_author_in_any_entry() {
+    let project = unity_style_with_text();
+    let copy = project.for_distribution(writer(), &Removal::ALL).unwrap();
+    let all = entries(&Project::read(&copy.to_bytes().unwrap()).unwrap());
+    let mut text = String::new();
+    for (name, bytes) in &all {
+        text += name;
+        text += &String::from_utf8_lossy(bytes);
+    }
+    for needle in [
+        "tester",
+        "C:\\\\Users",
+        "C:\\Users",
+        "/home/",
+        "AppData",
+        ".fonts",
+        "Windows\\\\Fonts",
+        "Unity Project",
+    ] {
+        assert!(!text.contains(needle), "{needle} が写しに残る");
+    }
+    for sentinel in SENTINELS {
+        assert!(
+            !text.contains(sentinel) && !text.contains(&sentinel.replace('\\', "\\\\")),
+            "{sentinel}"
+        );
+    }
+}
+
+/// Unity 版が作ったような .ylp（`unity_style`）のセット A を、フォントのファイルを持つテキストレイヤーのある文書に替えたもの。
+fn unity_style_with_text() -> Project {
+    use yolu_core::text::TextSettings;
+    let base = unity_style();
+    let mut doc = Document::with_tile_size(96, 64, 32).unwrap();
+    doc.add_text_layer(
+        "文字",
+        TextSettings::new("Text", file_font(FONT_WINDOWS, 3), 4.0, 40.0),
+        FONT,
+        None,
+        false,
+    )
+    .unwrap();
+    base.with_document(SET_A, &NativeDocument::from_core(&doc).unwrap())
+        .unwrap()
+}

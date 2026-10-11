@@ -659,7 +659,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                     wheel.center().x + a.sin() * radius,
                     wheel.center().y - a.cos() * radius,
                 ),
-                wheel.width() * RING_THICKNESS * 0.42,
+                wheel.width() * RING_THICKNESS * super::color::MARKER_SCALE,
             );
             p.image(square, sq, uv, Color32::WHITE);
             w::outline(&p, sq, t::BORDER, 1.0, 0.0);
@@ -1104,5 +1104,16 @@ mod tests {
         assert_eq!(Pick::from_floats(p.floats(), true), p);
         assert_eq!(Pick::from_floats(p.floats(), false).alpha, None);
         assert_eq!(Pick::rgb([1, 2, 3]).floats()[3], 1.0);
+    }
+}
+
+#[cfg(test)]
+mod marker_room_tests {
+    use super::*;
+
+    /// 色相の選ぶ印の輪が円の外へはみ出す量は、円の置き場の余白（PAD）に収まる（ウィンドウの縁・見出しへ出ない）。
+    #[test]
+    fn the_marker_ring_stays_within_the_padding_around_the_wheel() {
+        assert!(PAD >= super::super::color::marker_overhang(WHEEL));
     }
 }

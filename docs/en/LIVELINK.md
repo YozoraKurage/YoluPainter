@@ -2,7 +2,7 @@
 
 [日本語](../LIVELINK.md)
 
-This is the specification of how YoluPainter in the Unity Editor (VPM package `net.yozolab.yolupainter`) and the standalone YoluPainter exchange JSON files in a folder on the same PC.
+This is the specification of how the Unity Bridge in the Unity Editor (VPM package `net.yozolab.yolupainter`) and the standalone YoluPainter exchange JSON files in a folder on the same PC.
 Unity writes a **request** with the chosen target's (a scene object's) **FBX paths, bone values, material values and texture paths**, and the standalone application picks it up and opens it.
 When you export in the standalone application, it writes a **reply** listing the PNG files it wrote, and Unity picks it up and imports them. Meshes and pixels are not sent; each side reads the files itself.
 
@@ -29,7 +29,7 @@ Both sides work out the same path on their own.
 While the standalone application accepts requests, it rewrites this file every 2 seconds, and removes it when it stops accepting or exits.
 
 ```json
-{ "format": 1, "app": "YoluPainter", "version": "0.5.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
+{ "format": 1, "app": "YoluPainter", "version": "0.6.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
 ```
 
 Unity treats the standalone application as running if `updated` (UTC) is less than 6 seconds old. Otherwise it starts the standalone application with `--livelink` and then places
@@ -42,7 +42,7 @@ the request (it need not wait; the standalone application picks it up once it is
   "format": 1,
   "kind": "open",
   "id": "8f0c2a4e-0000-4000-8000-000000000001",
-  "bridge": { "version": "0.5.0", "unity": "2022.3.22f1" },
+  "bridge": { "version": "0.6.0", "unity": "2022.3.22f1" },
   "project": { "root": "C:/Work/MyProject", "name": "MyProject" },
   "target": {
     "key": "GlobalObjectId_V1-2-…",
@@ -171,12 +171,14 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
   `jp.lilxyzw.liltoon` is it rendered as lilToon.
 - The `.ylp` keeps the applied request with the current pose and without material values (except `_lilToonVersion`) in the root entry `livelink.json`, so it reopens without Unity
   ([YLP_FORMAT.md](../YLP_FORMAT.md), Japanese).
+  The material values received stay in the set's `look.json` while "Save material values received from Unity" is on (the default; textures' pixels are not stored, and they are read from their files on reopening).
+  A copy made with Save for Distribution with "Model reference" removed does not contain `livelink.json` either ([SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md), Japanese).
 
 ## Reply `outbox/<id>-<n>.json` (standalone → Unity)
 
 ```json
 { "format": 1, "request": "8f0c2a4e-0000-4000-8000-000000000001", "kind": "exported",
-  "app": { "version": "0.5.0" },
+  "app": { "version": "0.6.0" },
   "problems": [ { "path": "Accessory", "reason": "bone_not_found" } ],
   "files": [ { "material": "guid:0123456789abcdef0123456789abcdef/fileid:2100000", "property": "_MainTex",
                "path": "C:/Work/MyProject/Assets/YoluPainter/Avatar/Avatar_Body_Main.png", "srgb": true, "normal_map": false } ] }
@@ -184,7 +186,7 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
 
 - `kind`: `opened` (accepted and opened, or a resend applied; anything that did not fit is in `problems`), `refused` (not accepted; reasons in `problems`), `exported` (you exported).
 - `<n>` counts from 0 per request. A reply to an unreadable request uses the `inbox/` file name (before the extension) as `request`.
-- `exported`: when you export a Live Link target's document, the export dialog starts in `target.export_dir` (or the folder you chose later). Of the PNG files written, images of the
+- `exported`: when you export a Live Link target's document, the Output Path in the Export Textures window starts at `target.export_dir` (or the folder you chose later). Of the PNG files written, images of the
   lilToon template (`Main` → `_MainTex`, `Normal` → `_BumpMap`, `Smoothness` → `_SmoothnessTex`, `Metallic` → `_MetallicGlossMap`, `Emission` → `_EmissionMap`) and slot images of
   the lilToon packing go into `files`. Images without a matching property, and images of the `none` group, are left out.
 

@@ -128,7 +128,7 @@ fn the_version_follows_the_features_used() {
     assert_eq!(PROCEDURAL_VERSION, 23);
     // 版 24（色調補正の 6 種）は adjust_bridge の試験が固定する
     assert_eq!(yolu_io::EFFECTS_VERSION, 28);
-    assert_eq!(MAX_NATIVE_VERSION, yolu_io::BAKE_PRIORITY_VERSION);
+    assert_eq!(MAX_NATIVE_VERSION, yolu_io::RULERS_VERSION);
     // Unity 版と同じ機能だけなら版 21 のまま（Unity 0.2.0 が読める）
     assert_eq!(
         NativeDocument::from_core(&plain()).unwrap().version(),

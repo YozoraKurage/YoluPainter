@@ -11,7 +11,11 @@ use crate::state::{Action, AppState, StrokeSource, Tool};
 
 /// 押した（ペン・マウス）。
 pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSource) {
-    if app.is_stroking() || app.tool != Tool::Gradient || app.gradient.drag.is_some() {
+    if app.is_stroking()
+        || app.tool != Tool::Gradient
+        || app.gradient.drag.is_some()
+        || app.view3d.input.draft.is_some()
+    {
         return;
     }
     if let Some(reason) = app.read_only_reason().map(str::to_owned) {
@@ -106,6 +110,11 @@ pub fn paint_overlay(painter: &Painter, view: &CanvasView, app: &AppState) {
     };
     let a = view.to_screen(drag.start.0, drag.start.1);
     let b = view.to_screen(drag.current.0, drag.current.1);
+    paint_line(painter, a, b);
+}
+
+/// ドラッグ中の始点から今の点までの線（2D のキャンバスと 3D ビューで同じ見た目）。
+pub(crate) fn paint_line(painter: &Painter, a: Pos2, b: Pos2) {
     painter.add(Shape::line_segment(
         [a, b],
         Stroke::new(3.0, Color32::from_black_alpha(140)),

@@ -22,7 +22,9 @@ use std::sync::Arc;
 
 use egui::{Rect, Vec2};
 
-use crate::engine::{Brush, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, StrokeAssist};
+use crate::engine::{
+    Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, StrokeAssist,
+};
 use crate::lang::Lang;
 use crate::m2;
 use crate::state::{AppState, BrushState, Tool};
@@ -196,6 +198,7 @@ pub fn canonical(brush: &Brush) -> Brush {
         assist: StrokeAssist::default(),
         stencil: None,
         symmetry: CanvasSymmetry::default(),
+        model_symmetry: None,
         ..brush.clone()
     }
 }
@@ -493,11 +496,10 @@ pub enum Category {
     /// 色の混ぜ（厚塗り。混ぜ方・絵の具の量と濃さ・色延び・下地・筆圧）。
     Mix,
     Effect,
-    Symmetry,
 }
 
 impl Category {
-    pub const ALL: [Category; 11] = [
+    pub const ALL: [Category; 10] = [
         Category::Shape,
         Category::Stroke,
         Category::Pressure,
@@ -508,7 +510,6 @@ impl Category {
         Category::Color,
         Category::Mix,
         Category::Effect,
-        Category::Symmetry,
     ];
 
     pub fn name(self, lang: Lang) -> &'static str {
@@ -523,7 +524,6 @@ impl Category {
             Category::Color => lang.pick("色の揺らぎ", "Color Dynamics"),
             Category::Mix => lang.pick("色の混ぜ", "Color Mixing"),
             Category::Effect => lang.pick("効果", "Effect"),
-            Category::Symmetry => lang.pick("対称", "Symmetry"),
         }
     }
 
@@ -539,7 +539,6 @@ impl Category {
             Category::Color => "palette",
             Category::Mix => "paint_brush",
             Category::Effect => "blur_on",
-            Category::Symmetry => "flip",
         }
     }
 }
@@ -575,9 +574,6 @@ pub struct BrushUi {
     pub list_content: f32,
     /// 次に一覧を描くとき、今のブラシの行が見えるところまでスクロールする（ブラシが替わったとき）。
     pub reveal: bool,
-    /// 左のパネル全体のスクロール（一覧とツールプロパティとブラシサイズが入りきらないとき）。
-    pub panel_scroll: f32,
-    pub panel_content: f32,
     /// 名前を変えているブラシと、入力欄がフォーカスを取った後か。
     pub renaming: Option<BrushKey>,
     pub rename_started: bool,
@@ -594,8 +590,6 @@ impl Default for BrushUi {
             list_scroll: 0.0,
             list_content: 0.0,
             reveal: false,
-            panel_scroll: 0.0,
-            panel_content: 0.0,
             renaming: None,
             rename_started: false,
             context: None,
@@ -657,6 +651,8 @@ pub enum BrushAction {
     /// 並びから外す（利用者のブラシのファイルは消さない。「＋」のウィンドウから戻せる）。
     Delete(BrushKey),
     StartRename(BrushKey),
+    /// このブラシに替えて、ブラシの詳細のウィンドウを開く（右クリックのメニューの「ブラシの設定…」）。
+    OpenDetail(BrushKey),
     /// 名前を変える（組み込みは、その場でファイルの写しに替えてから）。
     Rename(BrushKey, String),
     /// 同じグループの中で動かす。
@@ -719,6 +715,13 @@ impl AppState {
     pub fn brush_live(&self) -> Brush {
         let mut brush = self.m2.brush.clone();
         brush.base = self.brush.settings([1.0; 4], false);
+        // クローンの元から決めた offset は、ブラシの設定でなく、作業の位置: 比べる・覚えるときは、入れる前のブラシの offset と見なす
+        // （「変えた」の印を付けない。変えたままの設定にも登録にも入れない）
+        if let BrushEffect::Clone { offset } = &mut brush.effect {
+            if let Some(own) = self.clone.brush_offset(*offset) {
+                *offset = own;
+            }
+        }
         canonical(&brush)
     }
 
@@ -734,12 +737,15 @@ impl AppState {
             pressure_size: base.pressure_size,
             pressure_opacity: base.pressure_opacity,
             pressure_flow: base.pressure_flow,
+            anti_alias: base.anti_alias,
         };
         let assist = self.m2.brush.assist;
         self.m2.brush = Brush {
             assist,
             ..brush.clone()
         };
+        // 読んだブラシの offset をブラシの持つ値として覚え直す（2D の揃える offset が決まっていれば、それを入れ直して続ける）
+        self.clone.brush_loaded(&mut self.m2.brush.effect);
     }
 
     /// 今の設定を、今のブラシの「変えたままの設定」として一覧へ書き戻す（元と同じなら変更なし）。
@@ -1602,6 +1608,13 @@ impl AppState {
                 );
                 if placed {
                     self.toolset_persist();
+                }
+            }
+            BrushAction::OpenDetail(key) => {
+                self.brush_action(BrushAction::Select(key));
+                // 替えられたとき（描いている間・並びが読めないときの断りでは替わらない）だけ開く
+                if self.brushes.lib.current == key {
+                    self.brushes.ui.detail.open = true;
                 }
             }
             BrushAction::StartRename(key) => {

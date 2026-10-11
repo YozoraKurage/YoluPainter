@@ -2,6 +2,7 @@
 //! 画面なしで `AppState` を叩く: 各操作の結果と Undo 1 回、ロックでの断り、断った理由の日英、入力がそろうまでの理由と焼いた後に効くこと、
 //! 焼き直しで読むレイヤーだけが描き直されること、保存復元（Unity 版が書いた効果入りの正本を開いて編集して保存）。
 
+use std::time::Duration;
 use yolu_app::bake::{BakeAction, BakeBackend};
 use yolu_app::fx::{FilterKind, FxOp, Selected};
 use yolu_app::lang::Lang;
@@ -719,6 +720,50 @@ fn a_generator_says_which_map_is_missing_until_the_maps_are_baked_and_then_works
     assert_ne!(composite(&s), before, "焼いたマップで合成が変わる");
 }
 
+/// 焼いたマップがそろっているところへ、そのマップを読むジェネレーターを足す。文書へ渡すマップは今の効果が読む分だけなので、足した直後は
+/// まだ渡っていないが、その場で渡してから理由を見る: 足した知らせに「効果がありません（…のマップがありません）」が出ない（日英）。
+/// 本当に焼いていないマップ（厚み）は、今までどおり理由を言う。
+#[test]
+fn adding_a_generator_whose_maps_are_baked_does_not_claim_a_map_is_missing() {
+    for lang in [Lang::Ja, Lang::En] {
+        let claim = lang.pick("効果がありません", "It has no effect");
+        // 汚れ・隙間（AO と曲率）・エッジの摩耗（曲率）・位置のグラデーション（位置）・向き（ワールドの法線）
+        for kind in [
+            Kind::Dirt,
+            Kind::EdgeWear,
+            Kind::PositionGradient,
+            Kind::Direction,
+        ] {
+            let mut s = cube();
+            s.lang = lang;
+            bake(&mut s);
+            assert!(s.doc.inactive_effect_list().is_empty());
+            let (layer, id) = masked_fill(&mut s, kind);
+            assert!(
+                !s.message.contains(claim),
+                "{kind:?} {lang:?}: {}",
+                s.message
+            );
+            assert_eq!(
+                s.doc.generator_inactive(layer, id).unwrap(),
+                None,
+                "{kind:?}: {}",
+                s.message
+            );
+            // 足すだけでは取り消しの段は 1 つ（入力を渡すのは文書の版を上げない）
+            s.apply(Action::Undo);
+            assert_eq!(filters(&s, layer, FilterTarget::Mask), 0, "{kind:?}");
+        }
+        // 焼いていないマップ（厚み）は本当に無い
+        let mut s = cube();
+        s.lang = lang;
+        bake(&mut s);
+        let (layer, id) = masked_fill(&mut s, Kind::Thickness);
+        assert!(s.message.contains(claim), "{lang:?}: {}", s.message);
+        assert!(s.doc.generator_inactive(layer, id).unwrap().is_some());
+    }
+}
+
 #[test]
 fn maps_go_stale_with_the_bake_settings_and_the_generator_says_so() {
     let mut s = cube();
@@ -1392,6 +1437,255 @@ fn a_reopened_set_baked_with_an_overlap_priority_becomes_editable_once_its_model
         "reopen-priority",
         Some(PriorityOp::Rule(MeshOverlapRule::LargerArea)),
     );
+}
+
+/// 腕の FBX（骨 3 本・マテリアル 2 つ・UV つき）で位置のマップを焼いた状態（保存していない）。位置のマップを読むノイズ（位置の空間が既定）を、
+/// マスクのジェネレーターに持つこともできる。戻りは（状態、置き場のフォルダー、ノイズの段を持つレイヤーと段の ID）。
+fn baked_arm(
+    name: &str,
+    with_noise: bool,
+) -> (
+    AppState,
+    std::path::PathBuf,
+    LayerId,
+    Option<yolu_core::FilterId>,
+) {
+    use crate::common::livelink::Exchange;
+    use std::time::{Duration, Instant};
+    use yolu_app::newproject::NpAction;
+    let ex = Exchange::new(name);
+    let model = ex.write_arm("arm.fbx");
+    let dir = ex.dir.clone();
+    std::mem::forget(ex); // 置き場は試験の最後に自分で消す
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    s.apply(Action::Project(NpAction::OpenNew));
+    s.apply(Action::Project(NpAction::ChooseModel(model)));
+    let start = Instant::now();
+    while s.np.window.as_ref().is_some_and(|w| w.is_loading()) {
+        s.poll_newproject();
+        assert!(start.elapsed() < Duration::from_secs(60), "モデルの準備");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    s.apply(Action::Project(NpAction::Resolution(256)));
+    s.apply(Action::Project(NpAction::Submit));
+    assert!(s.np.window.is_none(), "{}", s.message);
+    s.bake.settings.maps = vec![MeshMapKind::Position];
+    s.bake.settings.padding = 4;
+    let (layer, id) = if with_noise {
+        let (layer, id) = masked_fill(&mut s, Kind::Noise);
+        (layer, Some(id))
+    } else {
+        s.apply(Action::M2(Edit::NewFill));
+        (s.selected_layer.unwrap(), None)
+    };
+    bake(&mut s);
+    assert!(
+        s.sets
+            .current()
+            .mesh_maps
+            .get(MeshMapKind::Position)
+            .is_some(),
+        "{}",
+        s.message
+    );
+    if let Some(id) = id {
+        assert_eq!(
+            s.doc.generator_fallback(layer, id).unwrap(),
+            None,
+            "{}",
+            s.message
+        );
+    }
+    (s, dir, layer, id)
+}
+
+/// `baked_arm` を保存した .ylp。戻りは（保存先の .ylp、レイヤーと段の ID）。
+fn arm_project_with_position_noise(
+    name: &str,
+    with_noise: bool,
+) -> (std::path::PathBuf, LayerId, Option<yolu_core::FilterId>) {
+    let (mut s, dir, layer, id) = baked_arm(name, with_noise);
+    let path = dir.join("arm.ylp");
+    s.apply(Action::SaveProjectAs(path.clone()));
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    (path, layer, id)
+}
+
+/// 腕の「Lower」の骨を曲げる（形が変わり、モデルは作り直される）。
+fn bend_the_arm(s: &mut AppState) {
+    use yolu_app::view3d::pose::set_pose;
+    use yolu_core::glam::Quat;
+    let session = s.view3d.pose.session.as_ref().expect("腕のポーズ");
+    let mut pose = session.pose().clone();
+    let bone = session
+        .rig
+        .bones()
+        .iter()
+        .position(|b| b.name == "Lower")
+        .expect("腕の骨");
+    pose.locals[bone].rotation = Quat::from_rotation_z(0.8);
+    set_pose(&mut s.view3d, pose).unwrap();
+}
+
+/// 起動した直後のアプリ（3D ビューは試しの立方体）で .ylp を開き、モデルの読み直しが終わるまで待つ。
+fn open_on_the_demo_cube(path: &std::path::Path) -> AppState {
+    use std::time::{Duration, Instant};
+    let mut again = AppState::new(64, 64);
+    again.bake.backend = BakeBackend::Cpu;
+    again.view3d.load_demo();
+    again.apply(Action::OpenProject(path.to_path_buf()));
+    let start = Instant::now();
+    while again.np.reopening.is_some() {
+        again.poll_newproject();
+        assert!(
+            start.elapsed() < Duration::from_secs(60),
+            "モデルの読み直し"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        again.view3d.full_model().is_some_and(|m| !m.demo),
+        "{}",
+        again.message
+    );
+    again
+}
+
+/// 画面の 1 フレームと同じ順（効果の入力を渡す → 使わない入力を手放す。ベイクのウィンドウは閉じたまま）で、`done` になるまで回す。
+fn frames_until(again: &mut AppState, what: &str, mut done: impl FnMut(&AppState) -> bool) {
+    use std::time::{Duration, Instant};
+    let start = Instant::now();
+    while !done(again) {
+        again.sync_effects();
+        again.release_idle_bake_input();
+        assert!(start.elapsed() < Duration::from_secs(30), "{what}");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// 位置のマップを読むノイズ（位置のマップが使えなければ UV に落として動き続ける）を持つセットは、開いても読むだけにならない。開いた瞬間のモデルは
+/// 試しの立方体なので、焼いたマップは立方体と照合して古く、ノイズは UV に落ちる。モデルを読み終えたら、ベイクのウィンドウを開かなくても、
+/// 画面の毎フレームの同期だけで入力ができて照合し直し、ノイズは位置で評価する。済んだあとはポーズを付けても、前の入力のまま照合する
+/// （ベイクのウィンドウを開いているあいだだけモデルの変更を追う）ので、焼いたマップを読む効果は止まらない。
+#[test]
+fn a_reopened_set_that_keeps_running_is_checked_again_once_without_opening_the_bake_window() {
+    let (path, layer, id) = arm_project_with_position_noise("reopen-noise", true);
+    let id = id.unwrap();
+    let dir = path.parent().unwrap().to_path_buf();
+    let mut again = open_on_the_demo_cube(&path);
+    // 読むだけにならずに開く。照合し直すまでは、立方体と照合して古い（ノイズは UV に落ちる）
+    assert!(!again.sets.current().waiting_inputs && again.read_only_reason().is_none());
+    let before = again.doc.generator_fallback(layer, id).unwrap();
+    assert!(
+        matches!(before, Some(generator::Inactive::StaleMap(_))),
+        "{before:?}"
+    );
+    // ウィンドウを開かずに毎フレームの同期だけで、読み終えたモデルで照合し直して最新になる
+    frames_until(
+        &mut again,
+        "モデルを読んだのに照合し直せない",
+        |a| a.doc.generator_fallback(layer, id).unwrap().is_none(),
+    );
+    assert!(again.bake.window.is_none());
+    let check = again.mesh_map_check(0, MeshMapKind::Position).unwrap();
+    assert_eq!(
+        check.state,
+        yolu_core::mesh_maps::MeshMapState::Current,
+        "{}",
+        yolu_app::bake::stale_reasons(&check)
+    );
+    // 済んだあとはポーズを付けても追わない: 前の入力のまま照合するので、効果は止まらない
+    bend_the_arm(&mut again);
+    for _ in 0..20 {
+        again.sync_effects();
+        again.release_idle_bake_input();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        again.doc.generator_fallback(layer, id).unwrap(),
+        None,
+        "ポーズを付けても位置のマップを読み続ける"
+    );
+    assert!(again.doc.inactive_effect_list().is_empty());
+    // ポーズは本当に形を変えている: 今の形の入力で照合すれば（ベイクのウィンドウが開いているときの動き）、位置のマップは古い
+    again.bake_input().expect("今の形の入力");
+    again.sync_effects();
+    assert!(
+        matches!(
+            again.doc.generator_fallback(layer, id).unwrap(),
+            Some(generator::Inactive::StaleMap(_))
+        ),
+        "{:?}",
+        again.doc.generator_fallback(layer, id)
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 焼いてからポーズを付け、そのあとで位置を読むジェネレーターを追加する（ベイクのウィンドウは閉じたまま）。ポーズは追わず、手元の入力（焼いたときの
+/// 形）のまま照合するので、位置のマップは渡って理由が消える。作りかけの入力を毎フレーム立てては捨てることもしない（そうすると入力が届かず、
+/// マップがいつまでも渡らなかった）。
+#[test]
+fn a_generator_added_after_a_pose_gets_the_baked_map_and_no_input_is_built_every_frame() {
+    use yolu_app::fx::FxOp;
+    let (mut s, dir, layer, _) = baked_arm("pose-add", false);
+    bend_the_arm(&mut s);
+    let started = s.bake.input_builds_started();
+    s.apply(Action::Fx(FxOp::AddGenerator {
+        target: FilterTarget::Content,
+        kind: Kind::PositionGradient,
+    }));
+    let id = s.doc.filters_of(layer, FilterTarget::Content).unwrap()[0].id();
+    frames_until(
+        &mut s,
+        "ポーズのあとに足したジェネレーターにマップが渡らない",
+        |a| a.doc.generator_inactive(layer, id).unwrap().is_none(),
+    );
+    for _ in 0..50 {
+        s.sync_effects();
+        s.release_idle_bake_input();
+    }
+    assert_eq!(
+        s.bake.input_builds_started(),
+        started,
+        "ウィンドウを閉じたまま、入力の作りかけを毎フレーム立てている"
+    );
+    assert!(!s.bake.is_checking());
+    assert!(s.doc.inactive_effect_list().is_empty());
+    // ポーズは形を変えている: ID の色のツールのように今のモデルを追うあいだは、位置のマップは古い
+    s.tool = yolu_app::state::Tool::IdSelect;
+    frames_until(
+        &mut s,
+        "ID の色のツールが今のモデルを追わない",
+        |a| a.doc.generator_inactive(layer, id).unwrap().is_some(),
+    );
+    assert!(s.bake.input_builds_started() > started);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 効果が焼いたマップを読まないセットも、開いた直後は入力が立方体のままで、後から焼いたマップを読むジェネレーターを足しても、そのマップが渡らず
+/// 効かなかった。モデルを読み終えて照合し直したあとに足せば、すぐ効く（ベイクのウィンドウは閉じたまま）。
+#[test]
+fn a_generator_added_to_a_reopened_set_reads_the_baked_map_without_the_bake_window() {
+    use yolu_app::fx::FxOp;
+    let (path, _, _) = arm_project_with_position_noise("reopen-add", false);
+    let dir = path.parent().unwrap().to_path_buf();
+    let mut again = open_on_the_demo_cube(&path);
+    assert!(again.read_only_reason().is_none());
+    let layer = again.doc.layers().last().unwrap().id();
+    again.selected_layer = Some(layer);
+    again.apply(Action::Fx(FxOp::AddGenerator {
+        target: FilterTarget::Content,
+        kind: Kind::PositionGradient,
+    }));
+    let id = again.doc.filters_of(layer, FilterTarget::Content).unwrap()[0].id();
+    frames_until(
+        &mut again,
+        "足したジェネレーターにマップが渡らない",
+        |a| a.doc.generator_inactive(layer, id).unwrap().is_none(),
+    );
+    assert!(again.bake.window.is_none());
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 #[test]

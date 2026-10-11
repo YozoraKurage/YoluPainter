@@ -8,9 +8,9 @@
 //! SIMD の道（`*_lanes`）は N 画素を 1 組で引く。N 画素が同じ格子に入れば角の値（特徴点）を全部のレーンで共有してレーンで補間し、
 //! またぐ組は 1 画素ずつ引く。どちらも 1 画素の式と同じ演算を同じ順に並べたもので、結果のビットは変わらない。
 pub(super) use super::noise::hash;
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use super::noise::{fade_lanes, lerp_lanes};
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::{self, Lanes};
 
 /// 1 つのレイヤーの最大のオクターブ数。
@@ -291,7 +291,7 @@ pub(super) fn worley3(p: [f64; 3], seed: u32, per: [i32; 2], cell: &mut WorleyCe
 /// N 画素が全部同じ格子に入るなら、その格子の整数の座標（`floor` が違えば格子は違う。大きすぎて整数に収まらない座標で、違う `floor` が
 /// 同じ整数になる場合も「違う」と見て 1 画素ずつ引くだけで、値は変わらない）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn same_cell<V: Lanes>(fx: V::F, fy: V::F, fz: V::F) -> Option<Key> {
     let mut floors = [[0.; 4]; 3];
     V::store_f64(&mut floors[0], fx);
@@ -313,7 +313,7 @@ unsafe fn same_cell<V: Lanes>(fx: V::F, fy: V::F, fz: V::F) -> Option<Key> {
 }
 /// N 画素を 1 画素ずつの式 `f` で引く（格子をまたぐ組）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn per_lane<V: Lanes>(p: [V::F; 3], mut f: impl FnMut([f64; 3]) -> f64) -> V::F {
     let mut at = [[0.; 4]; 3];
     for (axis, lanes) in at.iter_mut().enumerate() {
@@ -328,7 +328,7 @@ unsafe fn per_lane<V: Lanes>(p: [V::F; 3], mut f: impl FnMut([f64; 3]) -> f64) -
 
 /// N 画素の値のノイズ（`value3` と同じ値）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn value3_lanes<V: Lanes>(
     p: [V::F; 3],
     seed: u32,
@@ -366,7 +366,7 @@ pub(super) unsafe fn value3_lanes<V: Lanes>(
 
 /// N 画素の勾配（Perlin）ノイズ（`perlin3` と同じ値）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn perlin3_lanes<V: Lanes>(
     p: [V::F; 3],
     seed: u32,
@@ -414,7 +414,7 @@ pub(super) unsafe fn perlin3_lanes<V: Lanes>(
 
 /// `Cells` の N 画素ぶん。`id` は整数の値を持つ f64（`u32` を厳密に表せる）。
 #[derive(Clone, Copy)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) struct CellsLanes<V: Lanes> {
     pub f1: V::F,
     pub f2: V::F,
@@ -425,7 +425,7 @@ pub(super) struct CellsLanes<V: Lanes> {
 /// 独立に走査し（更新が前の点に依る列が 3 本に割れて、並んで進む）、走査順の早い範囲から順に畳む。畳み方は、最寄りは小さい方、同じ距離なら
 /// 早い範囲の点、2 番目は 4 つの値（各範囲の最寄りと 2 番目）の 2 番目に小さい値なので、1 本の列で `d < d1` の順に更新した結果と同じになる。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn nearest_lanes<V: Lanes>(points: &[Point; 27], p: [V::F; 3]) -> (V::F, V::F, V::F) {
     let start = (V::splat(f64::MAX), V::splat(f64::MAX), V::splat(0.));
     let mut parts = [start; 3];
@@ -464,7 +464,7 @@ unsafe fn nearest_lanes<V: Lanes>(points: &[Point; 27], p: [V::F; 3]) -> (V::F, 
 /// `nearest_lanes` の距離だけ版（勝者の点を持ち回らない）。最寄りは `min`、2 番目は `min(d2, max(d1, d))` で更新する（`d < d1` なら d1、
 /// `d < d2` なら d、それ以外は d2 になるので、勝者を選ぶ版と同じ値）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 unsafe fn nearest_distances_lanes<V: Lanes>(points: &[Point; 27], p: [V::F; 3]) -> (V::F, V::F) {
     let start = (V::splat(f64::MAX), V::splat(f64::MAX));
     let mut parts = [start; 3];
@@ -497,7 +497,7 @@ unsafe fn nearest_distances_lanes<V: Lanes>(points: &[Point; 27], p: [V::F; 3]) 
 }
 /// N 画素の Worley ノイズの最寄りと 2 番目の距離だけ（`worley3` の `f1`・`f2` と同じ値）。ID・点が要らない呼び手用で、その分だけ速い。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn worley_distances_lanes<V: Lanes>(
     p: [V::F; 3],
     seed: u32,
@@ -528,7 +528,7 @@ pub(super) unsafe fn worley_distances_lanes<V: Lanes>(
 }
 /// N 画素の Worley ノイズ（`worley3` と同じ値・同じ ID・同じ点。同じ距離のセルは元の走査の順で先のものが勝つ）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn worley3_lanes<V: Lanes>(
     p: [V::F; 3],
     seed: u32,
@@ -586,7 +586,7 @@ pub(super) unsafe fn worley3_lanes<V: Lanes>(
 
 /// N 画素の度の sin・cos（`sin_cos_deg` と同じ値）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn sin_cos_deg_lanes<V: Lanes>(deg: V::F) -> (V::F, V::F) {
     let q = V::floor(V::add(V::div(deg, V::splat(90.)), V::splat(0.5)));
     let r = V::mul(
@@ -645,7 +645,7 @@ pub(super) unsafe fn sin_cos_deg_lanes<V: Lanes>(deg: V::F) -> (V::F, V::F) {
 }
 /// N 画素のハッシュ（整数の値を持つ f64）を [0, 1) の値に（`unit24` と同じ値）。
 #[inline(always)]
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 pub(super) unsafe fn unit24_lanes<V: Lanes>(h: V::F) -> V::F {
     V::mul(
         V::floor(V::mul(h, V::splat(1. / 256.))),
@@ -899,9 +899,9 @@ mod tests {
         assert_eq!(checked, 3 * 3 * 3 * 1500);
     }
 
-    /// SIMD の道（AVX2・SSE4.1）の N 画素ぶんの値・Worley の ID と点・sin/cos・ハッシュの [0, 1) は、1 画素の式とビットまで同じ。
+    /// SIMD の道（AVX2・SSE4.1・NEON）の N 画素ぶんの値・Worley の ID と点・sin/cos・ハッシュの [0, 1) は、1 画素の式とビットまで同じ。
     /// 同じ格子に入る組・またぐ組・UV の周期つき・負の座標を通る。
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn lane_primitives_equal_the_plain_formulas_on_every_simd_level() {
         #[allow(clippy::needless_range_loop)]
@@ -1028,7 +1028,7 @@ mod tests {
 
     /// 27 点の探索を 3 つの範囲に割って畳んでも、1 本の列で走査した結果と同じ（同じ距離が走査の順で先の点に勝つ・2 番目が重なる場合を含む）。
     /// 座標を粗い格子の上に置いて、同じ距離・同じ最寄りを大量に作る。
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     #[test]
     fn partitioned_nearest_search_equals_the_sequential_scan_including_ties() {
         #[allow(clippy::needless_range_loop)]

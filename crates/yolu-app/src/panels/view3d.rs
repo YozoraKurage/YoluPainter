@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use egui::{pos2, vec2, Color32, CursorIcon, Modifiers, Order, Rect, Sense, Ui, ViewportId};
 
+use crate::mode::EditorMode;
 use crate::pen::PenSample;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::tools::input::Surface;
@@ -19,6 +20,7 @@ use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 use crate::view3d::brdf::Curve;
 use crate::view3d::display::{self, EnvKind, Op, SettingsTab, Shading};
 use crate::view3d::render::MeshMapSource;
+use crate::view3d::selection_overlay::Skip;
 use crate::view3d::{gizmo, input, render::View3dRenderer};
 
 /// タブの中身の置き場所。
@@ -76,6 +78,8 @@ impl View3dHost for RecordingHost {
 struct Corner {
     /// 設定のアイコンの矩形（設定のパネルは、その外を押すと閉じる。このアイコンは外に数えない）。
     settings: Option<Rect>,
+    /// アイコンの列の下の端（軸の印をその下に置く）。
+    bottom: f32,
 }
 
 #[derive(Default)]
@@ -121,7 +125,12 @@ impl View3dSlot {
         let full = ui.max_rect();
         ui.advance_cursor_after_rect(full);
         let content = full;
+        app.view3d.view_rect = Some(content);
+        app.view3d.viewport = Some(ui.ctx().viewport_id());
+        crate::objects::transform::settle(app);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
+        app.rulers
+            .note_pointer(crate::rulers::Place::View3d, response.contains_pointer());
         let ppp = ui.ctx().pixels_per_point();
         input::handle(
             ui,
@@ -140,8 +149,12 @@ impl View3dSlot {
         }
         // 3D の絵が元より縮んでいるとき（縮めた段、予算で決まったか）。メッシュマップの表示ではそのマップの縮め
         let mut reduced: Option<(u32, Option<bool>)> = None;
+        // 選択範囲の重ねが 3D の絵の予算に入らずに出せていないか
+        let mut overlay_skip: Option<Skip> = None;
         let drawn = match (app.view3d.model.clone(), renderer) {
             (Some(model), Some(renderer)) => {
+                // 選択範囲の重ね（縁・クイックマスクの赤・選択ペンの被覆）
+                renderer.set_overlay(crate::view3d::selection_overlay::input(app, ui.ctx()));
                 let size = [
                     (content.width() * ppp).round().max(1.0) as u32,
                     (content.height() * ppp).round().max(1.0) as u32,
@@ -174,6 +187,15 @@ impl View3dSlot {
                     ui.ctx().request_repaint();
                 }
                 let stats = renderer.stats;
+                overlay_skip = stats.overlay_skipped.then_some(if stats.overlay_too_large {
+                    Skip::Size
+                } else {
+                    Skip::Budget
+                });
+                // このフレームに塗ったダブの分の、表示の同期の時間（次のフレームから、枠のうち塗りに使う割合と、溜まった仕事の見込みに使う）
+                app.view3d
+                    .input
+                    .note_sync(std::time::Duration::from_micros(stats.last_sync_us));
                 app.view3d.display.drawn_samples = stats.samples;
                 reduced = match app.view3d.display.shading {
                     Shading::MeshMap(_) => (stats.map_level > 0).then_some((stats.map_level, None)),
@@ -193,31 +215,56 @@ impl View3dSlot {
                 false
             }
         };
-        // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。ポーズのモードでは描かないので出さない）
-        if drawn && !app.view3d.pose.mode {
+        // ステンシル（3D の絵の上に、画面に貼り付いた半透明の画像。編集・ポーズのモードでは描かないので出さない）
+        let mode = app.mode;
+        if drawn && mode.paints() {
             crate::stencil::draw_overlay(&ui.painter_at(content), &mut app.stencil, content);
-            // 対称の面と軸・クローンの元（ステンシルの上、ブラシのカーソルの下）
+            // 3D の定規（対称の面と軸を含む）・クローンの元（ステンシルの上、ブラシのカーソルの下）
             input::draw_overlays(ui, app, content);
+            // グラデーション・図形・定規のドラッグの途中の形
+            crate::view3d::draft::paint_overlay(&ui.painter_at(content), app, content);
+            // 選択のツールで引いている形と、打っている多角形の点（ゴムの線はポインタまで）
+            let hover = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| response.contains_pointer() && content.contains(*p));
+            crate::view3d::select::paint_overlay(&ui.painter_at(content), app, content, hover);
         }
         // 塗りつぶしレイヤーの置き場・形のギズモと、棚の画像のデカールの落とし先（3D の絵の上）
         let mut gizmo_cursor = None;
-        if drawn && !app.view3d.pose.mode {
+        if drawn && mode != EditorMode::Pose {
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
             crate::fillfx::gizmo::draw(ui, app, content, pointer);
-            crate::fillfx::points::draw(ui, app, content, pointer);
-            gizmo_cursor = pointer.and_then(|_| crate::fillfx::gizmo::cursor(app));
+            if mode == EditorMode::Edit {
+                // 編集のモード: 選べる物の点の印と、選んだ物の枠・線
+                crate::objects::draw(ui, app, content, pointer);
+            } else {
+                crate::fillfx::points::draw(ui, app, content, pointer);
+            }
+            // 棚の画像を落としてデカールを置く（編集のモードでは、置いたデカールを選ぶ）
             crate::fillfx::decal_drop(ui, app, content);
+            gizmo_cursor = pointer.and_then(|_| crate::fillfx::gizmo::cursor(app));
         }
         if !drawn {
             self.placeholder(ui, app, content);
-        } else if app.view3d.pose.mode {
-            // ポーズのモード: ギズモ（輪の上は掴む形のポインタ）
+        } else if let Some(press) = app.view3d.input.eyedrop {
+            // 右ボタンを押して、まだ動かしていない: 押したときの見本の輪とスポイトの絵（動かせば回すだけ。OS の矢印は隠す）
+            crate::eyedrop_mark::paint(
+                &ui.painter_at(content),
+                press.at,
+                crate::eyedrop::current_swatch(app),
+                press.sample,
+            );
+            ui.ctx().set_cursor_icon(CursorIcon::None);
+        } else if mode == EditorMode::Pose {
+            // ポーズのモード: ギズモ（輪の上は掴む形のポインタ。G/R/S の途中は出さない）
             let pointer = ui
                 .input(|i| i.pointer.hover_pos())
                 .filter(|p| response.contains_pointer() && content.contains(*p));
-            gizmo::draw(ui, app, content, pointer);
+            if !crate::objects::transforming(app) {
+                gizmo::draw(ui, app, content, pointer);
+            }
             if pointer.is_some() {
                 ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
                     CursorIcon::Move
@@ -232,6 +279,18 @@ impl View3dSlot {
         } else if let Some(icon) = gizmo_cursor {
             // 形のギズモのハンドルの上（ブラシの円は出さない）
             ui.ctx().set_cursor_icon(icon);
+        } else if mode == EditorMode::Edit {
+            // 編集のモード: 描かないので、ブラシの円もツールの印も出さない
+            if ui
+                .input(|i| i.pointer.hover_pos())
+                .is_some_and(|p| response.contains_pointer() && content.contains(p))
+            {
+                ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
+                    CursorIcon::Move
+                } else {
+                    CursorIcon::Default
+                });
+            }
         } else if app.tool.def().surface == Surface::Path {
             // パスのツール: 選んでいるレイヤーのパスの線と点を重ねる（ブラシの円は出さない）
             let pointer = ui
@@ -259,21 +318,44 @@ impl View3dSlot {
                     CursorIcon::Crosshair
                 });
             }
-        } else if app.tool.def().surface == Surface::Pick {
-            // スポイト: ブラシの円は出さない
-            let pointer = ui
+        } else if app.tool.def().surface == Surface::Screen {
+            // グラデーション・図形・定規: 画面の上で引くので十字（ブラシの円は出さない）
+            if ui
                 .input(|i| i.pointer.hover_pos())
-                .filter(|p| response.contains_pointer() && content.contains(*p));
-            if pointer.is_some() {
+                .is_some_and(|p| response.contains_pointer() && content.contains(p))
+            {
                 ui.ctx().set_cursor_icon(if app.view3d.input.nav.is_some() {
                     CursorIcon::Move
                 } else {
                     CursorIcon::Crosshair
                 });
             }
+        } else if app.tool.def().surface == Surface::Pick {
+            // スポイト: ブラシの円は出さない。回しているあいだは回すポインタ、ほかは見本の輪とスポイトの絵（OS の矢印は隠す）
+            let pointer = ui
+                .input(|i| i.pointer.hover_pos())
+                .filter(|p| response.contains_pointer() && content.contains(*p));
+            if let Some(p) = pointer {
+                if app.view3d.input.nav.is_some() {
+                    ui.ctx().set_cursor_icon(CursorIcon::Move);
+                } else {
+                    let sample = crate::eyedrop::sample_surface(app, content, p);
+                    crate::eyedrop_mark::paint(
+                        &ui.painter_at(content),
+                        p,
+                        crate::eyedrop::current_swatch(app),
+                        sample,
+                    );
+                    ui.ctx().set_cursor_icon(CursorIcon::None);
+                }
+            }
         } else if let Some(pointer) = ui.input(|i| i.pointer.hover_pos()) {
             // ブラシのカーソル（回している・パンしているあいだは出さない）
             if response.contains_pointer() && content.contains(pointer) {
+                // 2D の対称の写しのカーソルは、今のセットの UV の格子で引く（無ければここで作る）
+                if app.canvas_symmetry().enabled() {
+                    let _ = app.region_grid();
+                }
                 if let Some(zoom) = app.view3d.input.zoom {
                     ui.ctx()
                         .set_cursor_icon(crate::canvas::zoom_cursor(zoom.out));
@@ -291,9 +373,18 @@ impl View3dSlot {
                 }
             }
         }
-        let corner = self.corner(ui, app, content, reduced.filter(|_| drawn));
+        let corner = self.corner(
+            ui,
+            app,
+            content,
+            reduced.filter(|_| drawn),
+            overlay_skip.filter(|_| drawn),
+        );
         if app.view3d.display.settings_open {
             settings_panel(ui, app, content, corner.settings);
+        } else if drawn {
+            // 軸の印（アイコンの下。設定のパネルと重なるので、パネルが開いている間は出さない）
+            crate::view3d::axis_gizmo::show(ui, app, content, corner.bottom);
         }
 
         let placement = Placement {
@@ -337,6 +428,7 @@ impl View3dSlot {
         app: &mut AppState,
         view: Rect,
         reduced: Option<(u32, Option<bool>)>,
+        overlay_skip: Option<Skip>,
     ) -> Corner {
         if app.view3d.model.is_none() {
             return Corner::default();
@@ -354,6 +446,17 @@ impl View3dSlot {
                     "reduced",
                     "warning",
                     reduced_tooltip(lang, level, by_budget),
+                )
+                .indicator()
+                .color(t::WARNING),
+            );
+        }
+        if let Some(skip) = overlay_skip {
+            items.push(
+                w::CornerIcon::new(
+                    "selection-hidden",
+                    "warning",
+                    overlay_skipped_tooltip(lang, skip),
                 )
                 .indicator()
                 .color(t::WARNING),
@@ -417,6 +520,7 @@ impl View3dSlot {
                 .iter()
                 .position(|item| item.id == "settings")
                 .and_then(|i| out.rects.get(i).copied()),
+            bottom: w::corner_bottom(view, items.len()),
         }
     }
 
@@ -446,21 +550,62 @@ impl View3dSlot {
             );
         }
         if app.view3d.full_model().is_none() {
-            let r =
-                Rect::from_center_size(pos2(text.center().x, text.top() + 64.0), vec2(160.0, 24.0));
+            // モデルを開くのは新規プロジェクトを作ること。主の入り口は新規プロジェクトで、試しの立方体はその下に控えめに置く。
+            // 2 つの縦並びを枠の真ん中に置き、枠が低くて入りきらないときは試しの立方体を出さない（主のボタンは枠の上端に寄せて切らさない）
+            const NEW_H: f32 = 28.0;
+            const CUBE_H: f32 = 22.0;
+            const GAP: f32 = 8.0;
+            const MARGIN: f32 = 4.0;
+            let block = NEW_H + GAP + CUBE_H;
+            let top = (content.center().y - block / 2.0).max(content.top() + MARGIN);
+            let x = content.center().x;
+            let width = |wanted: f32| wanted.min((content.width() - 2.0 * MARGIN).max(0.0));
+            // メニューの新規プロジェクトと同じに、描いている間・保存の間は押せない（理由は保存の間だけ。描いている間はツールチップを見ない）
+            let saving = app.is_saving();
+            let idle = !app.is_stroking() && !saving;
+            let tip = if saving {
+                crate::lang::refusals::saving(lang).to_owned()
+            } else {
+                crate::shortcuts::tip_with_key(
+                    lang,
+                    lang.pick("新規プロジェクト", "New Project"),
+                    &Action::NewProjectDialog,
+                )
+            };
+            let r = Rect::from_center_size(pos2(x, top + NEW_H / 2.0), vec2(width(180.0), NEW_H));
             if w::button(
                 ui,
                 r,
-                "view3d.demo",
-                lang.pick("試しの立方体を読む", "Load Test Cube"),
+                "view3d.new_project",
+                lang.pick("新規プロジェクト…", "New Project…"),
                 true,
-                true,
-                None,
-                Some("view_in_ar"),
+                idle,
+                Some(&tip),
+                Some("add"),
             )
             .clicked()
             {
-                app.apply(Action::LoadDemoModel);
+                app.apply(Action::NewProjectDialog);
+            }
+            if top + block <= content.bottom() - MARGIN {
+                let r = Rect::from_center_size(
+                    pos2(x, top + NEW_H + GAP + CUBE_H / 2.0),
+                    vec2(width(160.0), CUBE_H),
+                );
+                if w::button(
+                    ui,
+                    r,
+                    "view3d.demo",
+                    lang.pick("試しの立方体を読む", "Load Test Cube"),
+                    false,
+                    true,
+                    None,
+                    None,
+                )
+                .clicked()
+                {
+                    app.apply(Action::LoadDemoModel);
+                }
             }
         }
     }
@@ -492,9 +637,30 @@ fn zoom_chord_held(ui: &Ui) -> Option<bool> {
         return None;
     }
     ui.input(|i| {
-        crate::gesture::zoom_chord(&i.modifiers, i.key_down(crate::keymap::VIEW_PAN))
+        crate::gesture::zoom_chord(&i.modifiers, crate::keymap::hold_down(i, "view.pan_hold"))
             .then_some(i.modifiers.alt)
     })
+}
+
+/// 選択範囲の重ねを 3D に出していない印のツールチップ（何が（なぜ）の 1 文。理由は予算か、文書の大きさか）。
+fn overlay_skipped_tooltip(lang: crate::lang::Lang, skip: Skip) -> String {
+    let reason = match skip {
+        Skip::Budget => lang.pick(
+            "GPU のメモリの予算（3D の絵の取り分）に入りません",
+            "it does not fit in the GPU memory budget for 3D pictures",
+        ),
+        Skip::Size => lang.pick(
+            "キャンバスの幅か高さが GPU のテクスチャの上限を超えています",
+            "the canvas is wider or taller than the GPU texture limit",
+        ),
+    };
+    lang.with_reason(
+        lang.pick(
+            "選択範囲を 3D に出していません",
+            "Selection not shown in 3D",
+        ),
+        reason,
+    )
 }
 
 /// 3D の絵が元の大きさより縮んでいることの印のツールチップ（隅の警告のアイコン）: 縮めた段と短い理由。`by_budget` は縮めがメモリの予算で
@@ -616,12 +782,10 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                         format!("{n}×")
                     };
                     let tip = if usable {
-                        lang.pick(
-                            "縁のぎざぎざをなめらかにする（MSAA）",
-                            "Smooths jagged edges (MSAA)",
-                        )
+                        format!("{} {label}", lang.pick("アンチエイリアス", "Anti-aliasing"))
                     } else {
-                        lang.pick("この機材は対応していません", "Not supported on this device")
+                        lang.pick("この GPU は対応していません", "Not supported on this GPU")
+                            .to_owned()
                     };
                     if w::button(
                         ui,
@@ -630,7 +794,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                         &label,
                         shown == *n,
                         usable,
-                        Some(tip),
+                        Some(&tip),
                         None,
                     )
                     .clicked()
@@ -661,21 +825,18 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     "view3d.set.bloom",
                     lang.pick("ブルーム", "Bloom"),
                     d.post.bloom,
-                    Some(lang.pick(
-                        "明るい所（発光など）の周りをにじませる",
-                        "Adds a glow around bright areas such as emission",
-                    )),
+                    None,
                     true,
                 );
                 if bloom != d.post.bloom {
                     app.apply(Action::View3d(Op::Bloom(bloom)));
                 }
                 let mut dragging = false;
-                for (id, label, tip, value, max, op) in [
+                let off = (!d.post.bloom).then(|| lang.pick("ブルームが切です", "Bloom is off"));
+                for (id, label, value, max, op) in [
                     (
                         "bloom_strength",
                         lang.pick("強さ", "Strength"),
-                        lang.pick("にじみの強さ", "Glow amount"),
                         d.post.bloom_strength,
                         display::BLOOM_STRENGTH_MAX,
                         Op::BloomStrength as fn(f32) -> Op,
@@ -683,10 +844,6 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     (
                         "bloom_threshold",
                         lang.pick("しきい値", "Threshold"),
-                        lang.pick(
-                            "これより明るい所がにじむ（1 が白）",
-                            "Brightness above which the glow starts (1 is white)",
-                        ),
                         d.post.bloom_threshold,
                         display::BLOOM_THRESHOLD_MAX,
                         Op::BloomThreshold as fn(f32) -> Op,
@@ -703,7 +860,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                             suffix: "",
                         },
                     )
-                    .tooltip(tip)
+                    .tooltip_reason(off)
                     .enabled(d.post.bloom);
                     let out = w::slider(ui, r, ("view3d.set", id), value, &spec);
                     if out.changed {
@@ -912,10 +1069,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 lang.pick("既定に戻す", "Reset"),
                 false,
                 true,
-                Some(lang.pick(
-                    "光・環境・影・トーンマッピング・ブルームを既定へ",
-                    "Light, environment, shadows, tone mapping and bloom to defaults",
-                )),
+                None,
                 Some("restart_alt"),
             )
             .clicked()

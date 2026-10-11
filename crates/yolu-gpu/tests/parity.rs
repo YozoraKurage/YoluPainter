@@ -227,6 +227,18 @@ fn invalid_input_budget_and_cpu_fallback() {
     assert!(g
         .brush_dabs(u32::MAX, u32::MAX, &[], &BrushSettings::default(), &[])
         .is_err());
+    // 縁のアンチエイリアスは core だけ: 段のあるブラシは断る（今の式で黙って描かない）
+    for level in [
+        yolu_core::AntiAlias::Weak,
+        yolu_core::AntiAlias::Medium,
+        yolu_core::AntiAlias::Strong,
+    ] {
+        let s = BrushSettings {
+            anti_alias: level,
+            ..BrushSettings::default()
+        };
+        assert!(g.brush_dabs(1, 1, &[0; 4], &s, &[]).is_err());
+    }
     // 文書にないチャンネルは断る（法線の種類のチャンネルは合成できる）
     assert!(g
         .composite_tiles(

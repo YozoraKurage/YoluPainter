@@ -183,6 +183,7 @@ fn slot_button(
     icon: (&str, &str),
     tooltip: &str,
     selected: bool,
+    returns: bool,
 ) -> egui::Response {
     let id = ui.make_persistent_id(("tool.slot", slot));
     let response = ui.interact(r, id, Sense::click_and_drag());
@@ -206,6 +207,12 @@ fn slot_button(
         },
         22.0,
     );
+    // キーを離すと戻るツール（押している間だけのツールのキーの間）に、小さな点
+    if returns {
+        let at = pos2(r.right() - 5.0, r.bottom() - 5.0);
+        p.circle_filled(at, 4.0, t::PANEL_BG);
+        p.circle_filled(at, 2.75, t::ACCENT);
+    }
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, true, selected, tooltip));
     response.on_hover_text(tooltip)
 }
@@ -217,13 +224,16 @@ struct StripRow {
     icon: super::IconChoice,
     gap: bool,
     selected: bool,
-    key: &'static str,
+    /// キーを離すと戻るツール（押している間だけのツールのキーの間）。
+    returns: bool,
+    key: String,
 }
 
 /// ツールの帯のツールの列（帯の下の端の 2 枚の色の分は、呼ぶ側が先に取る）。`bottom` は列の下の端。
 pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
     let lang = app.lang;
     let set = &app.toolset.set;
+    let return_slot = app.temp_tool_return_slot();
     let rows: Vec<StripRow> = set
         .slots()
         .iter()
@@ -233,11 +243,12 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             icon: s.icon(),
             gap: s.gap,
             selected: set.active() == Some(s.id),
+            returns: return_slot == Some(s.id),
             // キーは、そのキーで替わるツール（そのツールの列の最初の 1 つ）にだけ添える
             key: if set.first_of(s.tool) == Some(s.id) {
-                s.tool.key()
+                crate::shortcuts::tool_key(s.tool)
             } else {
-                ""
+                String::new()
             },
         })
         .collect();
@@ -264,7 +275,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
     let mut rects: Vec<(SlotId, Rect)> = Vec::with_capacity(rows.len());
     let mut gap_marks: Vec<(Option<SlotId>, f32)> = Vec::new();
     for (i, row) in rows.iter().enumerate() {
-        let (slot, name, key) = (&row.slot, &row.name, row.key);
+        let (slot, name, key) = (&row.slot, &row.name, row.key.as_str());
         if row.gap {
             w::strip_separator(
                 &p,
@@ -287,6 +298,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             (row.icon.normal, row.icon.selected),
             &tip,
             row.selected,
+            row.returns,
         );
         if response.clicked() {
             app.apply(Action::Tools(ToolsetAction::Select(*slot)));
@@ -649,4 +661,172 @@ pub fn group_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
         )
         .enabled(free),
     ]
+}
+
+/// ブラシ `key` を引いているとき、落とせるグループ（ブラシを今いるグループのほか、満杯でないグループ。並びが読めないときは無い）。
+/// グループのタブが、落とせることを光って見せる。
+pub fn droppable_groups(app: &AppState, key: BrushKey) -> Vec<GroupId> {
+    let set = &app.toolset.set;
+    if set.locked.is_some() {
+        return Vec::new();
+    }
+    let current = set.group_of(key);
+    set.slots()
+        .iter()
+        .flat_map(|s| s.groups.iter())
+        .filter(|g| Some(g.id) != current && g.has_room())
+        .map(|g| g.id)
+        .collect()
+}
+
+/// ブラシの行の右クリックのメニュー（対象は `brushes.ui.context`）。先頭はそのブラシの設定（ブラシの詳細のウィンドウ）。
+/// 押せない項目は、その理由（描いている間・並びが読めない・取り込み中・グループが満杯）をツールチップに出す。
+pub fn brush_menu(app: &AppState) -> Vec<crate::ui::menu::Entry<Action>> {
+    use crate::ui::menu::Entry;
+    let lang = app.lang;
+    let set = &app.toolset.set;
+    let Some(key) = app.brushes.ui.context else {
+        return Vec::new();
+    };
+    // 断る理由（描いている間 → 並びが読めない → 取り込み中の順。取り込み中は並び・数・名前を変える項目だけ）
+    let stroking = app
+        .is_stroking()
+        .then(|| crate::lang::refusals::during_stroke(lang).to_owned());
+    let locked = set.lock_refusal().map(|r| r.describe(lang));
+    let importing = app.brushes.import.is_busy().then(|| {
+        lang.pick("ブラシを取り込み中です。", "Importing brushes.")
+            .to_owned()
+    });
+    let reason = |layout: bool, changes: bool| -> Option<String> {
+        stroking
+            .clone()
+            .or_else(|| if layout { locked.clone() } else { None })
+            .or_else(|| if changes { importing.clone() } else { None })
+    };
+    // 項目の押せる条件と、断る理由（理由があれば押せず、理由をツールチップに）
+    let gate = |entry: Entry<Action>, ok: bool, why: Option<String>| match why {
+        Some(why) => entry.enabled(false).tooltip(why),
+        None => entry.enabled(ok),
+    };
+    let user = key.is_user();
+    let placed = set.contains(key);
+    let layout = set.locked.is_none() && placed;
+    let modified = app.brush_is_modified(key);
+    let mut entries = vec![
+        gate(
+            Entry::item(
+                lang.pick("ブラシの設定…", "Brush Settings…"),
+                Action::Brush(BrushAction::OpenDetail(key)),
+            ),
+            true,
+            reason(false, false),
+        ),
+        // 組み込みも、名前を変える・登録するとその場でファイルの写しになる
+        gate(
+            Entry::item(
+                lang.pick("名前を変更", "Rename"),
+                Action::Brush(BrushAction::StartRename(key)),
+            ),
+            user || layout,
+            reason(!user, !user),
+        ),
+        gate(
+            Entry::item(
+                lang.pick("複製", "Duplicate"),
+                Action::Brush(BrushAction::Duplicate(key)),
+            ),
+            set.locked.is_none(),
+            reason(true, true),
+        ),
+    ];
+    if let Some(menu) = move_menu(app, key, reason(true, true)) {
+        entries.push(menu);
+    }
+    entries.extend([
+        Entry::Separator,
+        gate(
+            Entry::item(
+                lang.pick("この設定で登録", "Register These Settings"),
+                Action::Brush(BrushAction::Register(key)),
+            ),
+            (user || layout) && modified,
+            reason(!user, true),
+        ),
+        gate(
+            Entry::item(
+                lang.pick("元に戻す", "Revert"),
+                Action::Brush(BrushAction::Revert(key)),
+            ),
+            modified,
+            reason(false, false),
+        ),
+        Entry::Separator,
+        gate(
+            Entry::item(
+                lang.pick("削除", "Delete"),
+                Action::Brush(BrushAction::Delete(key)),
+            ),
+            layout,
+            reason(true, true),
+        ),
+    ]);
+    entries
+}
+
+/// 「グループへ移す ▸」: ブラシのあるツールのグループの一覧（今のグループは印だけで押せない。満杯のグループは押せない）。ブラシを持つ別のツールが
+/// あれば、そのツールごとの入れ子のメニューに、そのグループ。並びに無いブラシ（置き場が無い）なら None。
+fn move_menu(
+    app: &AppState,
+    key: BrushKey,
+    why_not: Option<String>,
+) -> Option<crate::ui::menu::Entry<Action>> {
+    use crate::ui::menu::Entry;
+    let lang = app.lang;
+    let set = &app.toolset.set;
+    let (own, current) = (set.slot_of(key)?, set.group_of(key)?);
+    let groups = |slot: &super::ToolSlot| -> Vec<Entry<Action>> {
+        slot.groups
+            .iter()
+            .map(|g| {
+                let here = g.id == current;
+                let item = Entry::item(
+                    g.name_in(lang),
+                    Action::Brush(BrushAction::Place {
+                        key,
+                        group: g.id,
+                        at: DropAt::End,
+                        copy: false,
+                    }),
+                )
+                .radio(here);
+                if here {
+                    item.enabled(false)
+                } else if !g.has_room() {
+                    item.enabled(false)
+                        .tooltip(super::Refusal::TooManyBrushes.describe(lang))
+                } else {
+                    item
+                }
+            })
+            .collect()
+    };
+    let mut entries = set.slot(own).map(groups).unwrap_or_default();
+    for slot in set
+        .slots()
+        .iter()
+        .filter(|s| s.holds_brushes() && s.id != own)
+    {
+        if entries
+            .last()
+            .is_some_and(|e| !matches!(e, Entry::Separator))
+        {
+            entries.push(Entry::Separator);
+        }
+        entries.push(Entry::submenu(slot.name_in(lang), groups(slot)));
+    }
+    let menu = Entry::submenu(lang.pick("グループへ移す", "Move to Group"), entries);
+    Some(match why_not {
+        Some(why) => menu.enabled(false).tooltip(why),
+        None => menu,
+    })
 }

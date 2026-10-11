@@ -1,5 +1,6 @@
-//! 起動の CPU のスレッドの設定（`settings::apply_thread_setting`）: 設定のファイルの値が rayon の全体のスレッドプールに入る。
-//! rayon の全体のプールは 1 つのプロセスで 1 度しか作れないので、この試験はこのファイルに 1 つだけ置く（試験の実行ファイルは別プロセス）。
+//! 起動の設定（ウィンドウを作る前に設定のファイルから読む値）: CPU のスレッド（`settings::apply_thread_setting`）の値が rayon の全体のスレッドプールに入る。
+//! 同じ設定のフォルダの垂直同期（`settings::startup_vsync`。ウィンドウの面の同期を決める）も読む。
+//! rayon の全体のプールは 1 つのプロセスで 1 度しか作れず、設定のフォルダは環境変数で決まるので、この試験はこのファイルに 1 つだけ置く（試験の実行ファイルは別プロセス）。
 
 use yolu_app::settings::{self, Settings};
 
@@ -17,6 +18,21 @@ fn the_thread_count_in_the_settings_file_sets_the_global_rayon_pool_at_startup()
     std::env::set_var("APPDATA", &dir);
     let path = settings::path().expect("設定のファイルの場所");
     assert!(path.starts_with(&dir), "{path:?}");
+    // 垂直同期: ファイルが無い・項目が無い・読めない値は待たない。入っていれば待つ
+    assert!(!settings::startup_vsync(), "ファイルが無ければ待たない");
+    settings::save(&path, &Settings::default()).unwrap();
+    assert!(!settings::startup_vsync(), "項目が無ければ待たない");
+    std::fs::write(&path, "language=ja\nvsync=maybe\n").unwrap();
+    assert!(!settings::startup_vsync(), "読めない値は待たない");
+    settings::save(
+        &path,
+        &Settings {
+            vsync: true,
+            ..Settings::default()
+        },
+    )
+    .unwrap();
+    assert!(settings::startup_vsync(), "入っていれば待つ");
     // rayon の数を聞くと、聞いた時点で全体のプールが既定の数で作られてしまう。既定の数は OS に聞く
     let default_threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let wanted: u32 = if default_threads == 3 { 2 } else { 3 };

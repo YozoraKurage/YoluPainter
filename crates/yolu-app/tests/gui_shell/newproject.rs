@@ -1861,16 +1861,11 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
     // ファイルがあるかの確かめも別のスレッド（画面のスレッドは、遅い共有でも固まらないよう、モデルのファイルに触らない）
     assert!(t.np.reopening.is_some() && t.model.is_none());
     wait_reopen(&mut t);
-    assert!(
-        t.message.contains("モデル「c.fbx」が見つかりません。"),
-        "{}",
-        t.message
-    );
-    assert!(
-        t.message.starts_with("開きました"),
-        "開いた知らせの後ろに続く: {}",
-        t.message
-    );
+    // 注意はログの行（1 行に切る）に残る。開いた知らせの後ろに続けず、理由だけの単独の知らせにする（長い開いた知らせの後ろで切れない）
+    assert_eq!(t.message, "モデル「c.fbx」が見つかりません。");
+    let logged = t.notice_log.entries().last().expect("ログに残る");
+    assert_eq!(logged.notice.text, t.message);
+    assert_eq!(logged.notice.kind, yolu_app::notice::Kind::Warning);
     assert!(t.np.reopening.is_none() && t.model.is_none());
     assert!(t.np.model_file.is_some(), "参照は残す");
     // 別の場所へ保存しても、参照は（その場所からの相対で）残る
@@ -1903,6 +1898,228 @@ fn a_missing_model_is_told_and_its_reference_survives_a_save() {
         f.message.contains("The model \"c.fbx\" was not found."),
         "{}",
         f.message
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 前の版の .ylp を退避のフォルダー（`<名前>.ylp-backups~`）に作る: モデルは `models/` に置き、保存を 2 度（2 度目は絵を 1 点足す）。
+/// 戻りは（フォルダー、モデルのファイル、元の .ylp、退避）。
+fn project_with_a_backup(tag: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+    let dir = temp_dir(tag);
+    let model = character(&dir.join("work").join("models"), "c.fbx");
+    let ylp = dir.join("work").join("p.ylp");
+    let mut s = project_from(&model, 512);
+    s.apply(Action::SaveProjectAs(ylp.clone()));
+    paint_dot(&mut s, 0, (3, 3), Rgba8::new(10, 20, 30, 255));
+    s.apply(Action::SaveProject);
+    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    let kept = yolu_io::backups(&ylp).unwrap();
+    assert_eq!(kept.len(), 1, "前の版が退避に残る");
+    (dir, model, ylp, kept[0].clone())
+}
+
+/// 退避のフォルダーの中の .ylp を開く: view.json のモデルの道は元の .ylp から相対に書いてあるので、退避の中から開いても同じモデルを読み、
+/// 立方体に落ちない。別の場所へ保存した .ylp も、その場所から同じモデルを辿る。本体から開くのは今までどおり。
+#[test]
+fn a_backup_opens_with_the_model_of_the_file_it_backs_up_and_saved_elsewhere_still_finds_it() {
+    let (dir, model, ylp, backup) = project_with_a_backup("backup-model");
+    assert_eq!(
+        read_file(&backup).view_model().unwrap().as_deref(),
+        Some("models/c.fbx")
+    );
+    // 本体から開く
+    let mut main = S::new(64, 64);
+    main.apply(Action::OpenProject(ylp.clone()));
+    wait_reopen(&mut main);
+    assert!(main.model.is_some(), "{}", main.message);
+    // 退避から開く: モデルを読み、警告は出ない
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(backup.clone()));
+    wait_reopen(&mut t);
+    assert!(t.model.is_some(), "{}", t.message);
+    assert!(t.view3d.full_model().is_some_and(|m| !m.demo));
+    assert!(!t.message.contains("見つかりません"), "{}", t.message);
+    assert_eq!(
+        t.np.model_file.as_deref().and_then(Path::file_name),
+        model.file_name()
+    );
+    assert!(t.np.model_file.as_deref().is_some_and(Path::is_file));
+    assert!(t.notice_log.is_empty(), "警告も失敗も無い");
+    // 別の場所へ保存: その場所からの相対で書き直し、開き直してもモデルを読む
+    let other = dir.join("restored").join("q.ylp");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    t.apply(Action::SaveProjectAs(other.clone()));
+    assert!(t.message.starts_with("保存しました"), "{}", t.message);
+    assert_eq!(
+        read_file(&other).view_model().unwrap().as_deref(),
+        Some("../work/models/c.fbx")
+    );
+    let mut u = S::new(64, 64);
+    u.apply(Action::OpenProject(other));
+    wait_reopen(&mut u);
+    assert!(
+        u.view3d.full_model().is_some_and(|m| !m.demo),
+        "{}",
+        u.message
+    );
+    assert!(u.notice_log.is_empty(), "{}", u.message);
+    // 英語でも同じ
+    let mut e = S::new_in(64, 64, Lang::En);
+    e.apply(Action::OpenProject(backup));
+    wait_reopen(&mut e);
+    assert!(
+        e.view3d.full_model().is_some_and(|m| !m.demo),
+        "{}",
+        e.message
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 退避（前の版）を開いた文書は保存先を持たない（新しい文書と同じ）。「保存」は名前を付けて保存になり、始まりの場所は元の .ylp のフォルダー、
+/// 名前の候補は元の .ylp の名前。退避のファイルは変わらず、退避のフォルダーの中へは何も書かない。元の名前へ保存すれば、元が置き換わり、
+/// 前の元は今の保存の決まりで退避に回る。
+#[test]
+fn a_backup_is_opened_without_a_destination_and_save_asks_where_without_touching_it() {
+    let (dir, _model, ylp, backup) = project_with_a_backup("backup-nodest");
+    let backup_before = std::fs::read(&backup).unwrap();
+    let origin_before = std::fs::read(&ylp).unwrap();
+    let kept_before = yolu_io::backups(&ylp).unwrap().len();
+    let backup_folder = backup.parent().unwrap().to_path_buf();
+    let names_before = std::fs::read_dir(&backup_folder).unwrap().count();
+    for lang in [Lang::Ja, Lang::En] {
+        let mut t = S::new_in(64, 64, lang);
+        t.apply(Action::OpenProject(backup.clone()));
+        wait_reopen(&mut t);
+        assert!(t.project.as_ref().is_some_and(|p| !p.is_file()));
+        assert_eq!(t.project_name, "p", "題名は元の .ylp の名前");
+        assert!(!t.modified);
+        assert_eq!(t.save_folder.as_deref(), ylp.parent());
+        assert!(
+            t.message.contains(lang.pick("（退避）", "(backup)")),
+            "{}",
+            t.message
+        );
+        // 保存 → 名前を付けて保存。退避は変わらず、退避のフォルダーに何も増えない
+        t.apply(Action::SaveProject);
+        assert_eq!(t.dialog_request, Some(DialogRequest::SaveAs));
+        assert_eq!(std::fs::read(&backup).unwrap(), backup_before);
+        assert_eq!(
+            std::fs::read_dir(&backup_folder).unwrap().count(),
+            names_before
+        );
+        t.dialog_request = None;
+    }
+    // 元の名前へ保存する（ウィンドウが確かめて返した道）: 元が置き換わり、前の元が退避に回る
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(backup.clone()));
+    wait_reopen(&mut t);
+    t.apply(Action::SaveProjectAs(ylp.clone()));
+    assert!(t.message.starts_with("保存しました"), "{}", t.message);
+    let kept = yolu_io::backups(&ylp).unwrap();
+    assert_eq!(kept.len(), kept_before + 1);
+    assert!(
+        kept.iter()
+            .any(|b| std::fs::read(b).unwrap() == origin_before),
+        "前の元が退避に回る"
+    );
+    assert_ne!(std::fs::read(&ylp).unwrap(), origin_before);
+    assert_eq!(
+        std::fs::read(&backup).unwrap(),
+        backup_before,
+        "開いた退避は変わらない"
+    );
+    // 保存したら、行き先のある文書になる
+    assert!(t.project.as_ref().is_some_and(|p| p.is_file()));
+    assert_eq!(t.save_folder, None);
+    assert_eq!(
+        read_file(&ylp).view_model().unwrap().as_deref(),
+        Some("models/c.fbx")
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 前の版のアプリが退避の場所を基準に書き直したパス（退避から開いて保存した退避）は、元のファイルの場所から解いた 1 か所だけを探すので、
+/// 見つからない（退避の場所から解いた先に同じ名前のファイルがあっても、別のモデルを黙って拾わない）。参照は残り、モデルを選び直せば開ける。
+#[test]
+fn a_model_path_written_from_the_backup_folder_is_searched_only_from_the_original_folder() {
+    let (dir, model, ylp, backup) = project_with_a_backup("backup-legacy");
+    // 退避の場所から見た相対のパスに書き直した退避。元の場所から辿ると dir/models/c.fbx で、そこには無い
+    // （退避の場所から辿ると dir/work/models/c.fbx で、そこにはファイルがある）
+    let legacy = read_file(&backup)
+        .with_view_model(Some("../models/c.fbx"))
+        .unwrap();
+    let path = backup.with_file_name("p-20260102T000000000Z.ylp");
+    std::fs::write(&path, legacy.to_bytes().unwrap()).unwrap();
+    assert!(!dir.join("models").exists() && model.is_file());
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(path));
+    wait_reopen(&mut t);
+    assert!(t.model.is_none() && t.view3d.full_model().is_none_or(|m| m.demo));
+    assert_eq!(t.message, "モデル「c.fbx」が見つかりません。");
+    let logged = t.notice_log.entries().last().expect("ログに残る");
+    assert_eq!(logged.notice.text, t.message);
+    assert_eq!(
+        t.np.model_file.as_deref().and_then(Path::file_name),
+        model.file_name(),
+        "参照は残す"
+    );
+    assert!(
+        t.np.model_file
+            .as_deref()
+            .is_some_and(|p| p.starts_with(&dir) && !p.exists()),
+        "参照は元のファイルの場所から解いた道（ファイルは無い）: {:?}",
+        t.np.model_file
+    );
+    let _ = (ylp, std::fs::remove_dir_all(dir));
+}
+
+/// 前の版のアプリが作った、退避の中の退避（退避を開いて上書き保存した結果）も、元のファイルまでたどって同じモデルを読む。
+#[test]
+fn a_backup_of_a_backup_opens_with_the_model_of_the_original_file() {
+    let (dir, _model, _ylp, backup) = project_with_a_backup("backup-nested");
+    let nested_folder = backup.with_file_name(format!(
+        "{}-backups~",
+        backup.file_name().unwrap().to_string_lossy()
+    ));
+    std::fs::create_dir_all(&nested_folder).unwrap();
+    let stem = backup.file_stem().unwrap().to_string_lossy().into_owned();
+    let nested = nested_folder.join(format!("{stem}-20260102T000000000Z.ylp"));
+    std::fs::copy(&backup, &nested).unwrap();
+    assert_eq!(
+        yolu_io::backup_origin(&nested).as_deref(),
+        Some(backup.as_path())
+    );
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(nested));
+    wait_reopen(&mut t);
+    assert!(
+        t.view3d.full_model().is_some_and(|m| !m.demo),
+        "{}",
+        t.message
+    );
+    assert!(t.notice_log.is_empty(), "{}", t.message);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 退避の中の .ylp のモデルが元の場所にも退避の場所にも無いときは、本体と同じく理由だけの警告を出し、参照は残す（保存で失わない）。
+#[test]
+fn a_backup_with_a_missing_model_says_so_and_keeps_the_reference() {
+    let (dir, model, _ylp, backup) = project_with_a_backup("backup-missing");
+    std::fs::remove_file(&model).unwrap();
+    let mut t = S::new(64, 64);
+    t.apply(Action::OpenProject(backup));
+    wait_reopen(&mut t);
+    assert!(t.model.is_none());
+    assert_eq!(t.message, "モデル「c.fbx」が見つかりません。");
+    let logged = t.notice_log.entries().last().expect("ログに残る");
+    assert_eq!(logged.notice.text, t.message);
+    // 参照は元のファイルの場所を指したまま、別の場所へ保存してもその場所からの相対で残る
+    let other = dir.join("restored").join("q.ylp");
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    t.apply(Action::SaveProjectAs(other.clone()));
+    assert_eq!(
+        read_file(&other).view_model().unwrap().as_deref(),
+        Some("../work/models/c.fbx")
     );
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2052,12 +2269,15 @@ fn a_broken_model_file_is_told_when_the_project_opens_and_the_sets_stay() {
     let mut t = S::new(64, 64);
     t.apply(Action::OpenProject(ylp));
     wait_reopen(&mut t);
+    // 失敗はログの行に残るので、開いた知らせに続けず、理由だけの単独の知らせ
     assert!(
-        t.message.starts_with("開きました")
-            && t.message.contains("モデル「c.fbx」を読み込めません（"),
+        t.message.starts_with("モデル「c.fbx」を読み込めません（"),
         "{}",
         t.message
     );
+    let logged = t.notice_log.entries().last().expect("ログに残る");
+    assert_eq!(logged.notice.text, t.message);
+    assert_eq!(logged.notice.kind, yolu_app::notice::Kind::Error);
     assert!(t.model.is_none());
     assert_eq!(t.sets.len(), 3);
     let _ = std::fs::remove_dir_all(dir);

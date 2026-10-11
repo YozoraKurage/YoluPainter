@@ -11,8 +11,9 @@
 //!   焼き直したときだけで、状態だけが変わるときは写しを共有したまま状態を付け替える。
 //! - **モデルの入力（指紋）は待たない**: モデルが替わったあとの入力は別のスレッドで作る（`bake_input_nowait`）。できるまでは前の入力のまま
 //!   （起動の直後など、一度も渡していないときは入力無しのまま）。開くときだけは待って作る。作りかけの入力は、ベイクのウィンドウ・ID の色の
-//!   ツール・入力待ちの読むだけのセットのどれも無ければ、フレームの終わりに手放す（`release_idle_bake_input`）。そのあいだ編集できるセットは、
-//!   モデルを替えても前の入力のまま照合する。
+//!   ツール・入力待ちの読むだけのセット・.ylp を開いた直後の照合し直し（`expect_reopen_check`。モデルを読み終えた後の 1 回）のどれも無ければ、
+//!   フレームの終わりに手放す（`release_idle_bake_input`）。そのあいだ編集できるセットは、モデルを替えても（ポーズを変えても）前の入力のまま
+//!   照合する。
 //! - **画像は使うものだけ復号する**: 棚の画像（.ylp の素材）のうち、文書の塗りつぶしレイヤーが指しているものと、画面が先に頼んだもの
 //!   （`AppState::use_shelf_image`。文書が指したら文書の分になり、指さなくなれば手放す）、入力待ちの読むだけのセットが指していたものだけ。
 //!   大きな画像を全部は開かない。復号した画素の合計は `Project::image_inputs` と同じ 768 MiB で通算して断る（1 枚ずつ復号しても
@@ -337,7 +338,9 @@ pub fn missing_text(
 }
 
 impl AppState {
-    /// 入力を作るために必要なモデルの入力（指紋）。作り終えていなければ None（`wait` なら作り終えるまで待つ）。
+    /// 入力を作るために必要なモデルの入力（指紋）。今のモデルの入力を待つとき（`bake_input_followed`）は、作り終えていなければ None
+    /// （`wait` なら作り終えるまで待つ）。待たないとき（ウィンドウを閉じていて、ID の色のツールも開いた直後の照合し直しも無い）は、手元の入力を
+    /// モデルが違っても返し、新しく作り始めない（`release_idle_bake_input` が毎フレーム捨てるので、作ってもできない）。
     /// 焼いたマップを 1 枚も持たなければ要らないので、入力無しとして Some(None)。
     fn effect_bake_input(&mut self, wait: bool) -> Option<Option<Arc<MeshBakeInput>>> {
         if self.sets.iter().all(|s| s.mesh_maps.is_empty()) || self.view3d.full_model().is_none() {
@@ -348,8 +351,11 @@ impl AppState {
         } else if self.bake.window.is_some() {
             // ベイクのウィンドウが入力を作る（同じ入力を別に作り始めて、ウィンドウの「確かめている」を先に終わらせない）
             self.bake_input_ready().map(|r| r.ok())
-        } else {
+        } else if self.bake_input_followed() {
             self.bake_input_nowait().map(|r| r.ok())
+        } else {
+            // 手元の入力が無ければ作る側（上）に来るので、ここには必ずある
+            self.bake_input_held().map(|r| r.ok())
         }
     }
 
@@ -683,6 +689,8 @@ impl AppState {
                 continue;
             }
             let inputs = self.build_effect_inputs(index, input.as_deref(), frame, &needed);
+            // 効果の入力が替わると、文書の版は上がらないまま見える値が変わる（スポイトの印の見本を読み直させる）
+            self.eyedrop.sample_cache = None;
             match self.set_doc_mut(index).set_effect_inputs(inputs) {
                 Ok(()) => {
                     self.fx.inputs.keys.insert(uid, key);
@@ -782,6 +790,7 @@ impl AppState {
 
     /// セットの文書を入れ替える（今のセットなら画面の文書。選んでいるレイヤー・選択の状態は新しい文書に合わせる）。
     fn put_set_doc(&mut self, index: usize, doc: Document) {
+        self.eyedrop.sample_cache = None;
         if index == self.sets.current_index() {
             // 同じ文書を編集できるようにするだけで大きさは変わらないので、表示は今のまま
             self.install_document(

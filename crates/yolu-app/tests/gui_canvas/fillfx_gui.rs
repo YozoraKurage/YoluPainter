@@ -39,7 +39,7 @@ fn undo(h: &mut Harness<'_, YoluApp>) {
 
 /// 試しの立方体を焼いて（位置・法線）文書の入力へ足し、3D のタブを前へ出したウィンドウ。右（+X）と手前（−Z）の面が見えるカメラ。
 fn window() -> (Harness<'static, YoluApp>, Rect) {
-    let mut h = app(1280.0, 1200.0, 64);
+    let mut h = app(1280.0, 1500.0, 64);
     {
         let s = &mut h.state_mut().state;
         s.bake.backend = BakeBackend::Cpu;
@@ -60,7 +60,7 @@ fn window() -> (Harness<'static, YoluApp>, Rect) {
         s.view3d.camera.pitch = 15.0;
     }
     click_tab(&mut h, Tab::View3d);
-    // 左の列はブラシが前なので、棚（アセット）のタブを前へ出す
+    // 右上の組はテクスチャセットが前なので、棚（アセット）のタブを前へ出す
     click_tab(&mut h, Tab::Assets);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -82,9 +82,10 @@ fn layer_projection(h: &Harness<'_, YoluApp>, id: LayerId) -> Projection {
     *st(h).doc.layer(id).unwrap().projection()
 }
 
-/// 左の列の格子の中の素材。
+/// 右上の組（アセット）の格子の中の素材。
 fn card(h: &Harness<'_, YoluApp>, name: &str) -> Rect {
-    rect_of(h, name, |r| r.left() < 300.0 && r.top() > 150.0)
+    let body = top_right_body(h);
+    rect_of(h, name, |r| body.contains(r.center()))
 }
 
 #[test]
@@ -127,11 +128,11 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
     apply(&mut h, Action::M2(yolu_app::m2::Edit::NewFill));
     let layer = st(&h).selected_layer.unwrap();
     assert!(st(&h).fill_image_problem(layer, Channel::Color).is_none());
-    // 画像の箱（右の列。同じ名前の格子の素材は左の列）。まだ画像が無いので名前は「画像」。欄は縦に長く、箱がウィンドウの下端の外に
+    // 画像の箱（右の列。同じ名前の格子の素材は右上の組）。まだ画像が無いので名前は「画像」。欄は縦に長く、箱がウィンドウの下端の外に
     // 出ることがあるので、右の列を箱が見える所まで送ってから位置を取る
-    let in_column = |r: Rect| r.left() > 1000.0 && r.height() < 40.0 && r.width() > 100.0;
+    let in_column = |r: Rect| r.left() > rx() && r.height() < 40.0 && r.width() > 100.0;
     let first = rect_of(&h, "画像", in_column);
-    let scroll = st(&h).m2.props_scroll + (first.top() - 900.0).max(0.0);
+    let scroll = st(&h).m2.props_scroll + (first.top() - props_mid(&h)).max(0.0);
     h.state_mut().state.m2.props_scroll = scroll;
     h.run();
     let boxed = rect_of(&h, "画像", in_column);
@@ -153,7 +154,7 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
     );
     // 棚の画像をドラッグして落とす
     let boxed = rect_of(&h, "画像", |r| {
-        r.left() > 1000.0 && r.height() < 40.0 && r.width() > 100.0
+        r.left() > rx() && r.height() < 40.0 && r.width() > 100.0
     });
     let from = card(&h, "石の模様").center();
     drag(
@@ -174,7 +175,7 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
     assert!(!egui::DragAndDrop::has_any_payload(&h.ctx));
     // 画像の箱の名前は画像の名前になり、外すボタンで戻る
     let boxed = rect_of(&h, "石の模様", |r| {
-        r.left() > 1000.0 && r.height() < 40.0 && r.width() > 100.0
+        r.left() > rx() && r.height() < 40.0 && r.width() > 100.0
     });
     let clear = pos2(boxed.right() + 14.0, boxed.center().y);
     click(&mut h, clear);
@@ -188,8 +189,8 @@ fn dragging_a_shelf_image_onto_the_image_box_sets_it_and_the_box_opens_the_list(
 #[test]
 fn the_fill_image_box_gets_its_picture_from_another_thread_even_with_the_shelf_tab_closed() {
     let (mut h, _) = window();
-    // 左の列をブラシへ（棚の格子が絵を頼まない）。別のスレッドは、頼まれても止めておく
-    click_tab(&mut h, Tab::SubTools);
+    // 右上の組をテクスチャセットへ（棚の格子が絵を頼まない）。別のスレッドは、頼まれても止めておく
+    click_tab(&mut h, Tab::TextureSets);
     h.run();
     h.state_mut().state.shelf.hold_inspections(true);
     let (rid, image) = shelf_image(&mut h, "石の模様");
@@ -205,7 +206,7 @@ fn the_fill_image_box_gets_its_picture_from_another_thread_even_with_the_shelf_t
     );
     // 画像の箱は名前を出し、絵はまだ作っていない（画面のスレッドでは作らない）。頼んだ仕事が別のスレッドに積まれている
     let _ = rect_of(&h, "石の模様", |r| {
-        r.left() > 1000.0 && r.height() < 40.0 && r.width() > 100.0
+        r.left() > rx() && r.height() < 40.0 && r.width() > 100.0
     });
     for _ in 0..5 {
         h.step();
@@ -407,7 +408,7 @@ fn q_hides_and_shows_the_handles_and_the_gizmo_shows_move_and_rotate_together() 
     h.run();
     for label in ["移動", "回転"] {
         assert!(
-            !h.query_all_by_label(label).any(|n| n.rect().left() > 1000.0
+            !h.query_all_by_label(label).any(|n| n.rect().left() > rx()
                 && n.accesskit_node().role() == egui::accesskit::Role::Button),
             "欄に「{label}」の切り替えが残っている"
         );
@@ -437,7 +438,7 @@ fn q_hides_and_shows_the_handles_and_the_gizmo_shows_move_and_rotate_together() 
 
 #[test]
 fn the_gradient_tool_paints_with_a_real_drag_on_the_canvas_and_shift_g_selects_it() {
-    let mut h = app(1280.0, 1000.0, 64);
+    let mut h = app(1280.0, 1400.0, 64);
     h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
     key(&h, Key::G, Modifiers::SHIFT);
     h.run();
@@ -552,7 +553,7 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
                 let mut texts = Vec::new();
                 collect_texts_at(&shape.shape, &mut texts);
                 for (at, text) in texts {
-                    if at.x > 1050.0
+                    if at.x > rx() + 20.0
                         && shape
                             .clip_rect
                             .intersects(Rect::from_min_size(at, vec2(1.0, 1.0)))
@@ -649,17 +650,17 @@ fn dragging_a_ramp_slider_makes_one_undo_step_and_a_stop_click_makes_another() {
         use egui_kittest::kittest::Queryable;
         h.get_all_by_label("位置")
             .map(|n| n.rect())
-            .filter(|r| r.left() > 1000.0)
+            .filter(|r| r.left() > rx())
             .max_by(|a, b| a.top().total_cmp(&b.top()))
             .expect("分岐点の位置")
     };
     let found = position(&h);
-    let scroll = st(&h).m2.props_scroll + (found.top() - 760.0);
+    let scroll = st(&h).m2.props_scroll + (found.top() - props_mid(&h));
     h.state_mut().state.m2.props_scroll = scroll;
     h.run();
     let slider = position(&h);
     assert!(
-        slider.top() > 640.0 && slider.bottom() < 970.0,
+        slider.top() > props_body(&h).top() && slider.bottom() < props_body(&h).bottom(),
         "{slider:?}"
     );
     let y = slider.bottom() - 6.0;
@@ -719,17 +720,20 @@ fn projection_window() -> (Harness<'static, YoluApp>, LayerId, Pos2) {
         let mut us: Vec<Rect> = h
             .get_all_by_label("U")
             .map(|n| n.rect())
-            .filter(|r| r.left() > 1000.0)
+            .filter(|r| r.left() > rx())
             .collect();
         us.sort_by(|a, b| a.top().total_cmp(&b.top()));
         us.first().copied().expect("タイルの U の欄")
     };
     let top = tile_u(&h).top();
-    let scroll = st(&h).m2.props_scroll + (top - 760.0);
+    let scroll = st(&h).m2.props_scroll + (top - props_mid(&h));
     h.state_mut().state.m2.props_scroll = scroll;
     h.run();
     let field = tile_u(&h);
-    assert!(field.top() > 650.0 && field.bottom() < 970.0, "{field:?}");
+    assert!(
+        field.top() > props_body(&h).top() && field.bottom() < props_body(&h).bottom(),
+        "{field:?}"
+    );
     (h, layer, field.center())
 }
 
@@ -859,7 +863,7 @@ fn a_pen_drag_on_a_gizmo_handle_is_one_undo_with_the_property_fields_drawn_and_e
     // 右の列のプロパティ（投影の欄）を描いたまま動かす。欄は egui のポインタの押下が偽なら毎フレームまとめを終える
     // （ペンの接触は egui のポインタの押下にならない）ので、ギズモのドラッグの途中で終えないことを確かめる
     assert!(
-        h.get_all_by_label("投影").any(|n| n.rect().left() > 1000.0),
+        h.get_all_by_label("投影").any(|n| n.rect().left() > rx()),
         "プロパティの投影の欄が描かれている"
     );
     let start = layer_projection(&h, layer);
@@ -962,7 +966,7 @@ fn points_layer(h: &mut Harness<'_, YoluApp>) -> LayerId {
     h.run();
     assert!(
         h.get_all_by_label("点のグラデーション")
-            .any(|n| n.rect().left() > 1000.0),
+            .any(|n| n.rect().left() > rx()),
         "プロパティの点のグラデーションの欄が描かれている"
     );
     layer
@@ -1223,7 +1227,7 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
             let mut texts = Vec::new();
             collect_texts_at(&shape.shape, &mut texts);
             for (at, text) in texts {
-                if at.x > 1050.0
+                if at.x > rx() + 20.0
                     && shape
                         .clip_rect
                         .intersects(Rect::from_min_size(at, vec2(1.0, 1.0)))
@@ -1476,7 +1480,7 @@ fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
         h.state_mut().state.m2.props_scroll = 300.0;
         h.run();
         let label = lang.pick("異方性フィルター", "Anisotropic filtering");
-        let toggle = rect_of(&h, label, |r| r.left() > 1050.0);
+        let toggle = rect_of(&h, label, |r| r.left() > rx());
         let on = |h: &Harness<'_, YoluApp>| {
             st(h)
                 .doc

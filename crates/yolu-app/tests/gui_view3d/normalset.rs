@@ -236,18 +236,19 @@ fn open_channels(h: &mut Harness<'static, YoluApp>) {
     assert_eq!(h.state().state.ui.sections.get("normal"), Some(&true));
 }
 
-/// 左の列の中の、同じ名前の部品のうち一番下のもの（チャンネルの行と同じ名前の見出しなど）。
+/// 右上の組（チャンネル）の中の、同じ名前の部品のうち一番下のもの（チャンネルの行と同じ名前の見出しなど）。
 fn lowest(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
+    let body = top_right_body(h);
     h.get_all_by_label(label)
         .map(|n| n.rect())
-        .filter(|r| r.left() < 300.0)
+        .filter(|r| body.contains(r.center()))
         .max_by(|a, b| a.top().total_cmp(&b.top()))
         .unwrap_or_else(|| panic!("{label}"))
 }
 
 #[test]
 fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1600.0, 128);
     open_channels(&mut h);
     let base = h.state().state.doc.undo_count();
     // 初めは Height → Normal がオフ（強さと端は使えない）
@@ -316,7 +317,7 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
 
 #[test]
 fn strength_and_edges_wait_for_height_to_normal_and_a_read_only_set_disables_everything() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1600.0, 128);
     open_channels(&mut h);
     // オフのあいだは強さのスライダーを触っても何も変わらない
     let slider = lowest(&h, "強さ");

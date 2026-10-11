@@ -8,17 +8,15 @@ use std::sync::OnceLock;
 use yolu_core::LayerLocks;
 
 use crate::engine::{
-    AdjustmentSettings, BlendMode, Brush, BrushEffect, BrushPreset, Channel, ChannelBlend,
-    ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush, DualBrushMode, LayerId,
-    LayerKind, NormalSettings, NormalYDirection, PaperTexture, Rgba8, Stroke, TextureMode,
+    AdjustmentSettings, AntiAlias, BlendMode, Brush, BrushEffect, BrushPreset, Channel,
+    ChannelBlend, ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush,
+    DualBrushMode, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, Rgba8,
+    Stroke, TextureMode,
 };
 use crate::lang::Lang;
 use crate::layerops::Xform;
 use crate::notice::Source;
 use crate::state::AppState;
-
-/// プロパティの欄のタブの番号のうち、マスクに描くあいだは「マスク」になる 2 つ目（ステンシル・マテリアル/マスク・レイヤー）。
-pub const MASK_TAB: usize = 1;
 
 /// 調整レイヤーの種類（新しく足すときの選択肢）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -237,6 +235,8 @@ pub enum BrushOp {
     DualTip(Option<&'static str>),
     DualMode(DualBrushMode),
     DualEnabled(bool),
+    /// 縁のアンチエイリアス（基本の値 `AppState::brush` に持つ）。
+    AntiAlias(AntiAlias),
 }
 
 /// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。
@@ -377,6 +377,9 @@ pub struct M2State {
     /// プロパティの欄のスクロールと、前のフレームの中身の高さ（はみ出しの判定）。
     pub props_scroll: f32,
     pub props_content: f32,
+    /// マテリアルのパネルのスクロールと、前のフレームの中身の高さ。
+    pub material_scroll: f32,
+    pub material_content: f32,
 }
 
 impl Default for M2State {
@@ -398,6 +401,8 @@ impl Default for M2State {
             channels_content: 0.0,
             props_scroll: 0.0,
             props_content: 0.0,
+            material_scroll: 0.0,
+            material_content: 0.0,
         }
     }
 }
@@ -487,6 +492,16 @@ pub fn texture_mode_label(lang: Lang, mode: TextureMode) -> &'static str {
         TextureMode::ColorBurn => blend_label(lang, BlendMode::ColorBurn),
         TextureMode::LinearBurn => blend_label(lang, BlendMode::LinearBurn),
         TextureMode::HardMix => blend_label(lang, BlendMode::HardMix),
+    }
+}
+
+/// アンチエイリアスの段の名前。
+pub fn anti_alias_label(lang: Lang, level: AntiAlias) -> &'static str {
+    match level {
+        AntiAlias::None => lang.pick("なし", "None"),
+        AntiAlias::Weak => lang.pick("弱", "Weak"),
+        AntiAlias::Medium => lang.pick("中", "Medium"),
+        AntiAlias::Strong => lang.pick("強", "Strong"),
     }
 }
 
@@ -914,24 +929,16 @@ impl AppState {
         self.set_edit_mask(false);
     }
 
-    /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。プロパティの欄の 2 つ目のタブはマスクを描くあいだだけ
-    /// マスクで、それ以外はマテリアルなので、マスクに描くと決めたらマスクのタブへ、やめたときマスクのタブにいたなら
-    /// 先頭のタブ（ステンシル）へ戻す（マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
+    /// 描く先をマスクにする・やめる（`edit_mask` を替えるのはここだけ）。マスクに描くあいだは、ツールプロパティの「塗るチャンネル」の区分が
+    /// レイヤーマスクの欄に替わる（`panels::tool_props`）。
     /// 選んだ効果の行は、マスクを描き始めるとき閉じ、やめるときはマスクのスタックの行だけ閉じる（一覧に出ない行を選んだままにしない。
     /// 画素の効果の行を選んだ状態は、レイヤーの画素が対象なので残す）。
     pub fn set_edit_mask(&mut self, on: bool) {
-        let was = self.m2.edit_mask;
         self.m2.edit_mask = on;
         if on {
             self.fx.selected = None; // マスクの欄へ移る（選んだ効果の欄は閉じる）
-            self.ui.property_tab = MASK_TAB;
-        } else {
-            if was && self.ui.property_tab == MASK_TAB {
-                self.ui.property_tab = 0;
-            }
-            if self.fx.in_mask(&self.doc) {
-                self.fx.selected = None;
-            }
+        } else if self.fx.in_mask(&self.doc) {
+            self.fx.selected = None;
         }
     }
 
@@ -961,10 +968,21 @@ impl AppState {
             Edit::GroupSelected => self.group_selected_layers()?,
             Edit::Ungroup(id) => {
                 let first = self.doc.children_of(Some(id))?.last().copied();
+                // グループの定規は、グループの中でだけ意味を持つので、グループと一緒に外れる（取り消しで戻る）。黙って捨てずに知らせる
+                let rulers = self.doc.layer(id).map_or(0, |l| l.rulers().len());
                 self.doc.ungroup(id)?;
                 self.m2.collapsed.remove(&id);
                 self.selected_layer = first;
                 self.set_edit_mask(false);
+                if rulers > 0 {
+                    self.info(
+                        Source::Layer,
+                        self.lang.pick(
+                            format!("グループの定規 {rulers} 個も一緒に削除しました"),
+                            format!("Also deleted the group's {rulers} ruler(s)"),
+                        ),
+                    );
+                }
             }
             Edit::Duplicate(id) => {
                 let copy = self.doc.duplicate_layer(id, None)?;
@@ -1194,9 +1212,14 @@ impl AppState {
     }
 
     fn apply_brush_op(&mut self, op: BrushOp) {
+        if let BrushOp::AntiAlias(level) = op {
+            self.brush.anti_alias = level;
+            return;
+        }
         let b = &mut self.m2.brush;
         match op {
             BrushOp::Effect(kind) => {
+                let before = EffectKind::of(&b.effect);
                 b.effect = match kind {
                     EffectKind::Paint => BrushEffect::Paint,
                     EffectKind::Blur => match b.effect {
@@ -1214,6 +1237,11 @@ impl AppState {
                         },
                     },
                 };
+                // 種類を替えたときだけ、新しい効果をブラシの持つ値として覚え直す（2D の揃える offset が決まっていれば入れ直す）。同じ種類を
+                // 選び直しても、元から入れた offset はそのまま（「変えた」に数えない）
+                if before != kind {
+                    self.clone.brush_loaded(&mut self.m2.brush.effect);
+                }
                 // 効果のブラシは消しゴムにできない。描くツールへ戻す
                 if kind != EffectKind::Paint && self.tool.erases() {
                     self.tool = crate::state::Tool::Brush;
@@ -1282,6 +1310,8 @@ impl AppState {
                     d.mode = mode;
                 }
             }
+            // 基本の値なので先に当てた
+            BrushOp::AntiAlias(_) => {}
         }
     }
 
@@ -1335,7 +1365,7 @@ impl AppState {
                 .begin_brush_stroke_in(id, self.m2.paint_channel, brush)?
         };
         // クローンが、描くレイヤーだけでなく見えているレイヤーの重なり（チャンネルごと）を読む（最初のダブの前に凍結する。マスクには使えない）
-        if self.view3d.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
+        if self.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
             stroke.use_composite_clone_source(&mut self.doc)?;
         }
         // 色の混ぜが「全レイヤーから」拾うブラシも、同じ参照元（見えているレイヤーの重なり）を最初のダブの前に凍結する
@@ -1599,6 +1629,35 @@ mod tests {
         assert_eq!(s.doc.layers().len(), 1);
         assert_eq!(s.doc.layer(id).unwrap().parent(), None);
         assert_eq!(s.selected_layer, Some(id));
+    }
+
+    #[test]
+    fn ungrouping_a_group_with_rulers_deletes_them_with_it_says_so_and_undo_brings_them_back() {
+        let mut s = app();
+        s.apply(Action::M2(Edit::GroupSelected));
+        let group = s.selected_layer.unwrap();
+        let ruler = yolu_core::Ruler::canvas(
+            s.doc.new_ruler_id(),
+            yolu_core::RulerKind::Line,
+            yolu_core::glam::DVec2::new(0.0, 5.0),
+            yolu_core::glam::DVec2::new(10.0, 5.0),
+        );
+        s.doc.set_rulers(group, vec![ruler], false).unwrap();
+        s.message.clear();
+        s.apply(Action::M2(Edit::Ungroup(group)));
+        assert!(s.doc.layer(group).is_none());
+        assert!(
+            s.message.contains("定規 1 個"),
+            "黙って捨てない: {}",
+            s.message
+        );
+        s.apply(Action::Undo);
+        assert_eq!(s.doc.layer(group).unwrap().rulers().len(), 1);
+        // 定規の無いグループでは、定規の知らせを出さない
+        let plain = s.doc.add_group("plain", None).unwrap();
+        s.message.clear();
+        s.apply(Action::M2(Edit::Ungroup(plain)));
+        assert!(!s.message.contains("定規"), "{}", s.message);
     }
 
     #[test]

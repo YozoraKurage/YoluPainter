@@ -1,6 +1,6 @@
 //! 行（画素の並び）ごとの合成の核と、画素ごとの関数（[`super::blend`] など）が通る式。
 //!
-//! 道は 3 つ: AVX2（8 画素ずつ）・SSE4.1（4 画素ずつ）・スカラー（1 画素ずつ）。どの道も同じ f32 の式（[`super::lanes`] と
+//! 道は AVX2（8 画素ずつ）・SSE4.1（4 画素ずつ）・NEON（4 画素ずつ。aarch64）・スカラー（1 画素ずつ）。どの道も同じ f32 の式（[`super::lanes`] と
 //! この下の `*_block`）を通り、SIMD の道の端の画素（N で割った余り）・スカラーの道・画素ごとの関数は、1 本のレーン（[`Scalar1`]）で
 //! 同じ関数を呼ぶ。演算は IEEE の四則・平方根・floor・比較・選択だけなので、各画素の結果は道とスレッド数によらず同じバイトになる。
 //! 近道（上が透明・下が不透明・下が透明・Normal の量 1）は、レーンごとの条件に畳んで同じ結果を選ぶ。
@@ -12,6 +12,8 @@ use super::MIN_SHORTCUT_ALPHA;
 use crate::math::simd::{self, to_byte32 as to_byte, Lanes32, Level, Scalar1};
 use crate::types::{BlendMode, Rgba8};
 
+#[cfg(target_arch = "aarch64")]
+use crate::math::simd::Neonx4;
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{Avx2x8, Sse41x4};
 
@@ -54,10 +56,35 @@ impl RowAmount<'_> {
     }
 }
 
-/// 読み元の画素の刻み（0 は 1 画素を全部に使う、4 は連続）だけを SIMD で扱う。
+/// 読み元の画素の刻み（0 は 1 画素を全部に使う、4 は連続）だけを SIMD で扱う。ほかの刻みはスカラーの道に入る。
+/// Normal のチャンネルの核（`crate::normal`）も同じ判定を使う。
 #[inline(always)]
-fn simd_step(step: usize) -> bool {
-    step == 0 || step == 4
+pub(crate) fn simd_step(step: usize) -> bool {
+    let simd = step == 0 || step == 4;
+    #[cfg(test)]
+    if !simd {
+        scalar_steps::note();
+    }
+    simd
+}
+
+/// 試験用: 読み元の刻みが SIMD の道に入れない値で行の核が呼ばれた回数（呼んだスレッドの分だけ）。粗い合成が、歩幅つきの読み元を
+/// 詰めてから核へ渡すこと（歩幅つきのまま渡すとスカラーの道に落ちる）の確かめに使う。
+#[cfg(test)]
+pub(crate) mod scalar_steps {
+    use std::cell::Cell;
+
+    thread_local! {
+        static CALLS: Cell<usize> = const { Cell::new(0) };
+    }
+
+    pub(super) fn note() {
+        CALLS.with(|c| c.set(c.get() + 1));
+    }
+
+    pub(crate) fn count() -> usize {
+        CALLS.with(Cell::get)
+    }
 }
 
 // ───────── N 画素の式（レーンの核。画素ごとの関数も 1 本のレーンでこれを呼ぶ） ─────────
@@ -422,8 +449,13 @@ pub(crate) fn blend_row_at(
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { blend_row_sse41(res, sb, step, amount, mode) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { blend_row_neon(res, sb, step, amount, mode) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { dispatch_mode!(mode, blend_row_lanes::<Scalar1>(res, sb, step, amount)) },
+        Level::Scalar => unsafe {
+            dispatch_mode!(mode, blend_row_lanes::<Scalar1>(res, sb, step, amount))
+        },
     }
 }
 
@@ -449,6 +481,17 @@ unsafe fn blend_row_sse41(
     mode: BlendMode,
 ) {
     dispatch_mode!(mode, blend_row_lanes::<Sse41x4>(res, sb, step, amount))
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn blend_row_neon(
+    res: &mut [u8],
+    sb: &[u8],
+    step: usize,
+    amount: RowAmount<'_>,
+    mode: BlendMode,
+) {
+    dispatch_mode!(mode, blend_row_lanes::<Neonx4>(res, sb, step, amount))
 }
 
 /// クリッピングの下地（g）へクリッピングされたレイヤー（cb、刻みは [`blend_row`] と同じ）を重ねる。各画素は [`super::clip_onto`] と同じバイト。
@@ -477,8 +520,13 @@ pub(crate) fn clip_row_at(
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { clip_row_sse41(g, cb, step, amount, mode) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { clip_row_neon(g, cb, step, amount, mode) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { dispatch_mode!(mode, clip_row_lanes::<Scalar1>(g, cb, step, amount)) },
+        Level::Scalar => unsafe {
+            dispatch_mode!(mode, clip_row_lanes::<Scalar1>(g, cb, step, amount))
+        },
     }
 }
 
@@ -505,6 +553,17 @@ unsafe fn clip_row_sse41(
 ) {
     dispatch_mode!(mode, clip_row_lanes::<Sse41x4>(g, cb, step, amount))
 }
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn clip_row_neon(
+    g: &mut [u8],
+    cb: &[u8],
+    step: usize,
+    amount: RowAmount<'_>,
+    mode: BlendMode,
+) {
+    dispatch_mode!(mode, clip_row_lanes::<Neonx4>(g, cb, step, amount))
+}
 
 /// 調整した色（over、res と同じ並びの RGBA。アルファは見ない）を、下（res）へモードと量で混ぜる。各画素は [`super::mix_rgb`] と
 /// 同じバイト（量が 0 以下・下が完全に透明な画素はそのまま）。
@@ -522,8 +581,13 @@ pub(crate) fn mix_row_at(
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { mix_row_sse41(res, over, amount, mode) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { mix_row_neon(res, over, amount, mode) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { dispatch_mode!(mode, mix_row_lanes::<Scalar1>(res, over, amount)) },
+        Level::Scalar => unsafe {
+            dispatch_mode!(mode, mix_row_lanes::<Scalar1>(res, over, amount))
+        },
     }
 }
 
@@ -537,6 +601,11 @@ unsafe fn mix_row_avx2(res: &mut [u8], over: &[u8], amount: RowAmount<'_>, mode:
 #[target_feature(enable = "sse4.1")]
 unsafe fn mix_row_sse41(res: &mut [u8], over: &[u8], amount: RowAmount<'_>, mode: BlendMode) {
     dispatch_mode!(mode, mix_row_lanes::<Sse41x4>(res, over, amount))
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn mix_row_neon(res: &mut [u8], over: &[u8], amount: RowAmount<'_>, mode: BlendMode) {
+    dispatch_mode!(mode, mix_row_lanes::<Neonx4>(res, over, amount))
 }
 
 /// 通過のグループのフェード: res（下）と inner（中身、同じ並び）を量で補間して res へ。各画素は [`super::fade`] と同じバイト。
@@ -553,8 +622,11 @@ pub(crate) fn fade_row_at(level: Level, res: &mut [u8], inner: &[u8], amount: Ro
         #[cfg(target_arch = "x86_64")]
         // SAFETY: level は detect() 以下なので、SSE4.1 を持つ
         Level::Sse41 => unsafe { fade_row_sse41(res, inner, amount) },
+        #[cfg(target_arch = "aarch64")]
+        // SAFETY: level は detect() 以下なので、NEON を持つ（aarch64 の基本の命令）
+        Level::Neon => unsafe { fade_row_neon(res, inner, amount) },
         // SAFETY: 1 本のレーンは CPU の前提を持たない
-        _ => unsafe { fade_row_lanes::<Scalar1>(res, inner, amount) },
+        Level::Scalar => unsafe { fade_row_lanes::<Scalar1>(res, inner, amount) },
     }
 }
 
@@ -568,6 +640,11 @@ unsafe fn fade_row_avx2(res: &mut [u8], inner: &[u8], amount: RowAmount<'_>) {
 #[target_feature(enable = "sse4.1")]
 unsafe fn fade_row_sse41(res: &mut [u8], inner: &[u8], amount: RowAmount<'_>) {
     fade_row_lanes::<Sse41x4>(res, inner, amount)
+}
+#[cfg(target_arch = "aarch64")]
+#[target_feature(enable = "neon")]
+unsafe fn fade_row_neon(res: &mut [u8], inner: &[u8], amount: RowAmount<'_>) {
+    fade_row_lanes::<Neonx4>(res, inner, amount)
 }
 
 #[cfg(test)]

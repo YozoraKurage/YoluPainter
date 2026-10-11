@@ -7,7 +7,9 @@
 //! 両方を見る。ツールチップに渡す文字（`tooltip`・`on_hover_text` などの引数、`tooltip:` の欄、`let tip = …`、名前に tooltip・tip を
 //! 含む関数の中）は、説明を置く場所なので見ない。ツールチップの引数の場所は、ソースの関数の定義（引数の名前が tooltip・tip・hint）から
 //! 読む。
-//! 見ない範囲: ツールチップ、ボタンやメニューの名前、組み立て方が上の書き方に当たらない文（変数に入れてから別の場所で出す文）。
+//! 見ない範囲: ツールチップ、組み立て方が上の書き方に当たらない文（変数に入れてから別の場所で出す文）。ボタンやメニューや選択肢の名前も文字列としては
+//! 見る（指示の言葉を含まなければ通り、含めば引っかかる）。名前そのものが指示の言葉（「押す」「Tap」など）を含む選択肢だけは、`ALLOWED_NAMES` に
+//! 原文で並べて許す（断りの文の `ALLOWED` とは別。文は入れない）。
 //! 文として判定するのは「. か 。で終わる」か「. のあとに続きがある」文字列だけ（名前や状態の短い語は、指示の言葉があるときだけ見る）。
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -718,6 +720,18 @@ const ALLOWED: [&str; 2] = [
     "Cannot rotate during a stroke or drag.",
 ];
 
+/// 指示の言葉（「押す」「Tap」など）を名前の中に含むが、選択肢の名前そのもので、使い方の文ではない物（原文）。選択肢の名前だけを入れる。文は入れない。
+const ALLOWED_NAMES: [&str; 7] = [
+    // ショートカットの設定の、ツールのキーの動き方の選択肢
+    "押すと切り替え",
+    "Switch on Press",
+    "押している間だけ",
+    "短く押すと切り替え・長押しで押している間だけ",
+    "Tap to Switch, Hold for Temporary",
+    "短押し／長押し",
+    "Tap / Hold",
+];
+
 fn offenders(filter: impl Fn(&Literal) -> bool, rule: impl Fn(&str) -> bool) -> Vec<String> {
     collect_literals()
         .into_iter()
@@ -726,6 +740,7 @@ fn offenders(filter: impl Fn(&Literal) -> bool, rule: impl Fn(&str) -> bool) -> 
                 && filter(l)
                 && is_screen_text(&l.text)
                 && !ALLOWED.contains(&l.text.as_str())
+                && !ALLOWED_NAMES.contains(&l.text.as_str())
         })
         .filter(|l| rule(&l.text))
         .map(|l| format!("{}:{}: {}", l.file, l.line, l.text.replace('\n', "\\n")))
@@ -885,7 +900,7 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
             .any(|w| l.text.contains(w))
         })
         .filter(|l| !REASONS.contains(&l.text.as_str()))
-        .filter(|l| !(l.file == "prefs.rs" && SETTING_VALUES.contains(&l.text.as_str())))
+        .filter(|l| !(l.file == "prefs/mod.rs" && SETTING_VALUES.contains(&l.text.as_str())))
         .map(|l| format!("{}:{}: {}", l.file, l.line, l.text))
         .collect();
     assert!(

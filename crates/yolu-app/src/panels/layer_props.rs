@@ -50,6 +50,7 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
         layer_section(ui, app, rows, id, enabled, lang);
     }
     lock_section(ui, app, rows);
+    crate::rulers::props::section_for_layer(ui, app, rows);
     if app.doc.layer(id).is_some_and(|l| l.text().is_some()) {
         crate::textlayer::props::layer_section(ui, app, rows, enabled);
     }

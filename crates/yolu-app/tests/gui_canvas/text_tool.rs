@@ -7,10 +7,10 @@ use common::*;
 use egui::{pos2, Event, Key, Modifiers, Rect};
 use yolu_app::lang::Lang;
 use yolu_app::state::{Action, AppState, Tool};
-use yolu_app::textlayer::{Field, TextAction};
+use yolu_app::textlayer::{ColorSource, Field, TextAction};
 use yolu_app::YoluApp;
 use yolu_core::text::{TextAlign, TextFont, TextSettings};
-use yolu_core::{Affine2D, LayerId};
+use yolu_core::{Affine2D, LayerId, LayerLocks, Rgba8};
 
 fn state() -> AppState {
     let mut s = AppState::new(256, 256);
@@ -93,6 +93,293 @@ fn headless_retyping_a_text_layer_and_changing_values_redraws_it() {
     s.selected_layer = Some(id);
     s.apply(Action::Text(TextAction::Rasterize(id)));
     assert!(text_of(&s, id).is_none());
+}
+
+// ───────── テキストの色（描画色・ツールの色） ─────────
+
+const RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+const BLUE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+
+fn byte(color: [f32; 4]) -> Rgba8 {
+    yolu_app::matpaint::single_value(color)
+}
+
+fn color_of(s: &AppState, id: LayerId) -> Rgba8 {
+    text_of(s, id).expect("テキストの値").color
+}
+
+/// 描画色を `color` にして、1 フレームぶんの追従を回す（ボタンが押されていない間）。
+fn paint(s: &mut AppState, color: [f32; 4]) {
+    s.color.set_main(color);
+    s.text_follow_paint_color(false);
+}
+
+/// 描画色で文字を打ち、打ち終えて、そのテキストレイヤーを選んだままにする。
+fn typed_layer(s: &mut AppState, color: [f32; 4]) -> LayerId {
+    s.color.set_main(color);
+    s.text_follow_paint_color(false);
+    s.apply(Action::Text(TextAction::Begin { x: 10.0, y: 120.0 }));
+    s.text_typed("abc".into());
+    let id = editing_layer(s).expect("テキストレイヤー");
+    s.apply(Action::Text(TextAction::Commit));
+    assert_eq!(s.selected_layer, Some(id));
+    id
+}
+
+#[test]
+fn headless_a_new_text_is_made_in_the_paint_color_and_a_selected_text_layer_follows_it() {
+    let mut s = state();
+    assert_eq!(s.text.color_source, ColorSource::PaintColor, "既定は描画色");
+    let id = typed_layer(&mut s, RED);
+    assert_eq!(color_of(&s, id), byte(RED), "新しい文字は描画色");
+    // 選んでいるテキストレイヤーは、描画色が変わると同じ色になる（1 回の変更が 1 回の取り消し）
+    let undo = s.doc.undo_count();
+    paint(&mut s, BLUE);
+    assert_eq!(color_of(&s, id), byte(BLUE));
+    assert_eq!(s.doc.undo_count(), undo + 1);
+    // 描画色が変わらないフレームでは、何も起こさない
+    s.text_follow_paint_color(false);
+    s.text_follow_paint_color(false);
+    assert_eq!(s.doc.undo_count(), undo + 1);
+    s.apply(Action::Undo);
+    assert_eq!(color_of(&s, id), byte(RED));
+    s.apply(Action::Redo);
+    assert_eq!(color_of(&s, id), byte(BLUE));
+    // 色の円のドラッグ（押している間に何度も変わる）は 1 回の取り消し
+    let undo = s.doc.undo_count();
+    for step in 0..6 {
+        s.color.set_main([step as f32 / 6.0, 1.0, 0.0, 1.0]);
+        s.text_follow_paint_color(true);
+    }
+    assert_eq!(color_of(&s, id), byte([5.0 / 6.0, 1.0, 0.0, 1.0]));
+    s.text_follow_paint_color(false); // 離した
+    assert_eq!(s.doc.undo_count(), undo + 1, "ドラッグ 1 回は取り消し 1 回");
+    s.apply(Action::Undo);
+    assert_eq!(color_of(&s, id), byte(BLUE), "ドラッグの前の色に戻る");
+    s.apply(Action::Redo);
+    assert_eq!(color_of(&s, id), byte([5.0 / 6.0, 1.0, 0.0, 1.0]));
+    // 離したあとの変更は、別の取り消し
+    let undo = s.doc.undo_count();
+    paint(&mut s, GREEN);
+    paint(&mut s, RED);
+    assert_eq!(s.doc.undo_count(), undo + 2);
+    // テキストレイヤーを選んでいなければ、描画色が変わってもそのレイヤーは変わらない。次の文字は、作るときの描画色で作る
+    s.selected_layer = None;
+    paint(&mut s, BLUE);
+    assert_eq!(color_of(&s, id), byte(RED));
+    s.apply(Action::Text(TextAction::Begin { x: 30.0, y: 50.0 }));
+    s.text_typed("n".into());
+    let second = editing_layer(&s).unwrap();
+    s.apply(Action::Text(TextAction::Commit));
+    assert_eq!(color_of(&s, second), byte(BLUE));
+    assert_eq!(color_of(&s, id), byte(RED), "ほかのテキストは変わらない");
+}
+
+#[test]
+fn headless_the_first_frame_only_records_the_paint_color_and_leaves_the_selected_text_alone() {
+    let mut s = state();
+    s.apply(Action::Text(TextAction::Begin { x: 10.0, y: 120.0 }));
+    s.text_typed("abc".into());
+    let id = editing_layer(&s).unwrap();
+    s.apply(Action::Text(TextAction::Commit));
+    let made = color_of(&s, id);
+    // まだ 1 度も追従を回していない（開いた直後・起動の直後）。描画色がテキストの色と違っても、最初の 1 回では変えない
+    s.color.set_main(RED);
+    let undo = s.doc.undo_count();
+    s.text_follow_paint_color(false);
+    assert_eq!(color_of(&s, id), made);
+    assert_eq!(s.doc.undo_count(), undo);
+    // 次から、描画色が変わったら追従する
+    paint(&mut s, BLUE);
+    assert_eq!(color_of(&s, id), byte(BLUE));
+}
+
+#[test]
+fn headless_the_paint_color_also_changes_the_text_being_typed_in_one_undo() {
+    let mut s = state();
+    s.color.set_main(RED);
+    s.text_follow_paint_color(false);
+    let before = s.doc.undo_count();
+    s.apply(Action::Text(TextAction::Begin { x: 10.0, y: 120.0 }));
+    // まだ 1 文字も打っていないあいだに替えても、その文字の色になる
+    paint(&mut s, BLUE);
+    s.text_typed("a".into());
+    let id = editing_layer(&s).unwrap();
+    assert_eq!(color_of(&s, id), byte(BLUE));
+    // 打っている間に替える
+    paint(&mut s, GREEN);
+    assert_eq!(color_of(&s, id), byte(GREEN));
+    s.text_typed("ab".into());
+    s.apply(Action::Text(TextAction::Commit));
+    assert_eq!(color_of(&s, id), byte(GREEN));
+    assert_eq!(
+        s.doc.undo_count(),
+        before + 1,
+        "打った分と色は、打ち終わりまでで 1 回の取り消し"
+    );
+    s.apply(Action::Undo);
+    assert!(s.doc.layer(id).is_none());
+}
+
+#[test]
+fn headless_the_tool_color_makes_new_text_in_its_own_color_and_the_paint_color_stops_following() {
+    let mut s = state();
+    let id = typed_layer(&mut s, RED);
+    s.apply(Action::Text(TextAction::ColorSource(
+        ColorSource::ToolColor,
+    )));
+    assert_eq!(s.text.color_source, ColorSource::ToolColor);
+    // ツールの色のあいだは、描画色が変わってもテキストレイヤーは変わらない
+    let undo = s.doc.undo_count();
+    paint(&mut s, BLUE);
+    assert_eq!(color_of(&s, id), byte(RED));
+    assert_eq!(s.doc.undo_count(), undo);
+    // ツールの色を変えると、選んでいるテキストレイヤーも同じ色になり（1 回の取り消し）、次の文字もその色
+    s.apply(Action::Text(TextAction::ToolColor {
+        color: byte(GREEN),
+        dragging: false,
+    }));
+    assert_eq!(color_of(&s, id), byte(GREEN));
+    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.text.defaults.color, byte(GREEN));
+    s.apply(Action::Undo);
+    assert_eq!(color_of(&s, id), byte(RED));
+    s.selected_layer = None;
+    s.apply(Action::Text(TextAction::Begin { x: 40.0, y: 60.0 }));
+    s.text_typed("t".into());
+    let tool = editing_layer(&s).unwrap();
+    s.apply(Action::Text(TextAction::Commit));
+    assert_eq!(color_of(&s, tool), byte(GREEN), "ツールの色で作る");
+    // ドラッグ（色のウィンドウ）は 1 回の取り消し
+    let undo = s.doc.undo_count();
+    for step in 1..=4 {
+        s.apply(Action::Text(TextAction::ToolColor {
+            color: Rgba8::new(step * 50, 0, 0, 255),
+            dragging: true,
+        }));
+    }
+    s.m2_end_drag();
+    assert_eq!(color_of(&s, tool), Rgba8::new(200, 0, 0, 255));
+    assert_eq!(s.doc.undo_count(), undo + 1, "ドラッグ 1 回は取り消し 1 回");
+    s.apply(Action::Undo);
+    assert_eq!(color_of(&s, tool), byte(GREEN));
+    // 描画色に戻すと、新しい文字は描画色になる。戻しただけでは、選んでいるテキストの色を変えない
+    s.apply(Action::Text(TextAction::ColorSource(
+        ColorSource::PaintColor,
+    )));
+    s.selected_layer = Some(id);
+    let kept = color_of(&s, id);
+    s.text_follow_paint_color(false);
+    assert_eq!(color_of(&s, id), kept, "戻しただけでは変えない");
+    paint(&mut s, [0.5, 0.5, 0.5, 1.0]);
+    assert_eq!(color_of(&s, id), byte([0.5, 0.5, 0.5, 1.0]));
+}
+
+#[test]
+fn headless_the_paint_color_leaves_text_alone_when_it_cannot_be_changed() {
+    // 描いている間・読むだけのセットでは、黙って変えない
+    let mut s = state();
+    let id = typed_layer(&mut s, RED);
+    s.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+    s.message.clear();
+    paint(&mut s, BLUE);
+    assert_eq!(color_of(&s, id), byte(RED));
+    assert!(s.message.is_empty(), "{}", s.message);
+    s.sets.get_mut(0).unwrap().read_only = None;
+    let settings = s.stroke_settings(false);
+    let other = s.doc.add_layer("下").unwrap();
+    let stroke = s.doc.begin_stroke(other, &settings).unwrap();
+    paint(&mut s, GREEN);
+    assert_eq!(color_of(&s, id), byte(RED));
+    assert!(s.message.is_empty(), "{}", s.message);
+    s.doc.cancel_stroke(stroke);
+}
+
+#[test]
+fn headless_a_locked_text_layer_is_left_alone_without_a_message_every_frame() {
+    for (name, locks) in [
+        ("すべて", LayerLocks::ALL),
+        ("画素", LayerLocks::PIXELS),
+        ("透明部分", LayerLocks::TRANSPARENCY),
+    ] {
+        let mut s = state();
+        let id = typed_layer(&mut s, RED);
+        s.doc.set_layer_locks(id, locks).unwrap();
+        s.message.clear();
+        let undo = s.doc.undo_count();
+        // 何フレームも描画色を変えても、色は変わらず、断りも出ない
+        for color in [BLUE, GREEN, [0.5, 0.5, 0.5, 1.0]] {
+            paint(&mut s, color);
+            assert_eq!(color_of(&s, id), byte(RED), "{name}");
+            assert!(s.message.is_empty(), "{name}: {}", s.message);
+            assert!(s.last_notice.is_none(), "{name}");
+        }
+        assert_eq!(s.doc.undo_count(), undo, "{name}");
+        // ロックを外すと、次に変えたときから追従する
+        s.doc.set_layer_locks(id, LayerLocks::NONE).unwrap();
+        paint(&mut s, BLUE);
+        assert_eq!(color_of(&s, id), byte(BLUE), "{name}");
+    }
+}
+
+#[test]
+fn headless_the_paint_color_follows_only_while_the_text_tool_is_in_use() {
+    let mut s = state();
+    let id = typed_layer(&mut s, RED);
+    // ブラシに替えて次の色を選んでも、選んだままのテキストの色は変わらない
+    s.apply(Action::SelectTool(Tool::Brush));
+    assert_eq!(s.selected_layer, Some(id));
+    let undo = s.doc.undo_count();
+    paint(&mut s, BLUE);
+    paint(&mut s, GREEN);
+    assert_eq!(color_of(&s, id), byte(RED));
+    assert_eq!(s.doc.undo_count(), undo);
+    // テキストのツールへ戻しただけでは、色は変わらない（描画色の基準は追い続けている）
+    s.apply(Action::SelectTool(Tool::Text));
+    s.text_follow_paint_color(false);
+    assert_eq!(color_of(&s, id), byte(RED));
+    // テキストのツールのあいだに描画色を変えたら追従する
+    paint(&mut s, BLUE);
+    assert_eq!(color_of(&s, id), byte(BLUE));
+    // ドラッグの途中でほかのツールへ替わったら、まとめを切って、そこから先は追従しない
+    s.color.set_main([0.2, 0.2, 0.2, 1.0]);
+    s.text_follow_paint_color(true);
+    assert_eq!(color_of(&s, id), byte([0.2, 0.2, 0.2, 1.0]));
+    s.apply(Action::SelectTool(Tool::Move));
+    s.color.set_main([0.8, 0.8, 0.8, 1.0]);
+    s.text_follow_paint_color(true);
+    assert_eq!(color_of(&s, id), byte([0.2, 0.2, 0.2, 1.0]));
+    // 打っている間は、ツールによらず（打つのはテキストのツール）追従する
+    s.apply(Action::SelectTool(Tool::Text));
+    s.apply(Action::Text(TextAction::Edit(id)));
+    paint(&mut s, GREEN);
+    assert_eq!(color_of(&s, id), byte(GREEN));
+    s.apply(Action::Text(TextAction::Commit));
+}
+
+#[test]
+fn headless_a_text_layer_color_survives_saving_and_opening() {
+    let dir = std::env::temp_dir().join(format!("yolu-textcolor-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    crate::common::tmp::clean_up_after_test(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = state();
+    let id = typed_layer(&mut s, RED);
+    paint(&mut s, BLUE);
+    let file = dir.join("text-color.ylp");
+    s.apply(Action::SaveProjectAs(file.clone()));
+    assert!(file.exists(), "{}", s.message);
+    let mut t = AppState::new(32, 32);
+    t.apply(Action::OpenProject(file));
+    assert_eq!(color_of(&t, id), byte(BLUE), "{}", t.message);
+    // 開いたあと、そのレイヤーを選んでテキストのツールで描画色を変えると、また同じ色になる
+    t.apply(Action::SelectTool(Tool::Text));
+    t.selected_layer = Some(id);
+    t.text_follow_paint_color(false);
+    paint(&mut t, GREEN);
+    assert_eq!(color_of(&t, id), byte(GREEN));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -438,7 +725,7 @@ fn shared_slider_gpu() {
     let id = editing_layer(&h.state().state).expect("打ったテキストレイヤー");
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    h.state_mut().state.ui.property_tab = 2;
+    h.state_mut().state.ui.property_tab = 1;
     h.run();
     assert_eq!(h.state().state.selected_layer, Some(id));
     // 3 か所のサイズ（バー・左のドック・右のレイヤーのプロパティ）
@@ -448,7 +735,7 @@ fn shared_slider_gpu() {
             r.left() < 390.0 && r.top() > 62.0
         }),
         ("レイヤーのプロパティ", |r| {
-            r.left() > 1000.0 && r.top() > 62.0
+            r.left() > rx() && r.top() > 62.0
         }),
     ];
     let undo = h.state().state.doc.undo_count();
@@ -510,6 +797,84 @@ fn shared_slider_gpu() {
             "{place}の Esc は段を増やさない"
         );
         assert!(s.text.pending.is_none(), "{place}の Esc");
+    }
+}
+
+/// ツールプロパティの「テキストの色」: 見出しと 2 つの選び（描画色・ツールの色）。選ぶと色の元が替わり、描画色のあいだは、フレームごとに、
+/// 選んでいるテキストレイヤーが描画色に追従する（円のドラッグ中は 1 回の取り消し）。
+#[test]
+fn the_text_color_choice_in_the_tool_properties_switches_the_source_and_the_layer_follows_the_paint_color(
+) {
+    gpu_thread::run(text_color_gpu);
+}
+
+fn text_color_gpu() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 900.0, 256);
+        h.state_mut().state.lang = lang;
+        h.state_mut().state.apply(Action::SelectTool(Tool::Text));
+        h.run();
+        let paint_name = lang.pick("描画色", "Paint Color");
+        let tool_name = lang.pick("ツールの色", "Tool Color");
+        let paint = dock_rect(&h, paint_name);
+        let tool = dock_rect(&h, tool_name);
+        assert!(h.state().state.text.color_source == ColorSource::PaintColor);
+        click(&mut h, tool.center());
+        assert_eq!(h.state().state.text.color_source, ColorSource::ToolColor);
+        click(&mut h, paint.center());
+        assert_eq!(h.state().state.text.color_source, ColorSource::PaintColor);
+        // 画面の文字に日本語が混ざらない（英語）
+        if lang == Lang::En {
+            assert!(!has_japanese(paint_name) && !has_japanese(tool_name));
+        }
+        // 文字を打って、そのレイヤーを選んだまま、描画色を変える（フレームを回すだけで追従する）
+        let at = center(canvas_rect(&h));
+        click(&mut h, at);
+        h.event(Event::Text("Hi".into()));
+        h.run();
+        let id = editing_layer(&h.state().state).expect("打ったテキストレイヤー");
+        key(&h, Key::Escape, Modifiers::NONE);
+        h.run();
+        assert_eq!(h.state().state.selected_layer, Some(id));
+        h.state_mut().state.color.set_main(BLUE);
+        h.run();
+        assert_eq!(color_of(&h.state().state, id), byte(BLUE), "{lang:?}");
+        // 押している間に何度か変えるドラッグ（どこかを押したまま）は、離すまで 1 回の取り消し
+        let undo = h.state().state.doc.undo_count();
+        let hold = pos2(640.0, 880.0);
+        press(&h, hold, egui::PointerButton::Primary);
+        h.step();
+        for step in 1..=4 {
+            h.state_mut()
+                .state
+                .color
+                .set_main([step as f32 / 4.0, 0.5, 0.0, 1.0]);
+            h.step();
+        }
+        release(&h, hold, egui::PointerButton::Primary);
+        h.run();
+        assert_eq!(
+            color_of(&h.state().state, id),
+            byte([1.0, 0.5, 0.0, 1.0]),
+            "{lang:?}"
+        );
+        assert_eq!(h.state().state.doc.undo_count(), undo + 1, "{lang:?}");
+        if std::env::var_os("YOLU_TEXT_SHOTS").is_some() {
+            save(&mut h, &format!("text-color-paint-{lang:?}"));
+        }
+        // ツールの色に替えると、描画色を変えても追従しない
+        let tool = dock_rect(&h, tool_name);
+        click(&mut h, tool.center());
+        h.state_mut().state.color.set_main(GREEN);
+        h.run();
+        assert_eq!(
+            color_of(&h.state().state, id),
+            byte([1.0, 0.5, 0.0, 1.0]),
+            "{lang:?}: ツールの色のあいだは追従しない"
+        );
+        if std::env::var_os("YOLU_TEXT_SHOTS").is_some() {
+            save(&mut h, &format!("text-color-tool-{lang:?}"));
+        }
     }
 }
 
@@ -589,7 +954,7 @@ fn shots_gpu() {
         key(&h, Key::Escape, Modifiers::NONE);
         h.run();
         // テキストレイヤーを選んだプロパティの欄（レイヤーのタブ）
-        h.state_mut().state.ui.property_tab = 2;
+        h.state_mut().state.ui.property_tab = 1;
         h.run();
         save(&mut h, &format!("text-layer-props-{tag}"));
         // フォントの選び

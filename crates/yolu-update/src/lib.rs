@@ -33,10 +33,23 @@ pub const WINDOWS_ARCHIVE: &str = "x86_64-pc-windows-msvc";
 pub const LINUX_ARCHIVE: &str = "x86_64-unknown-linux-gnu";
 /// Windows のインストーラー（NSIS の setup.exe）。インストール済みの Windows のアプリが自分を更新するときの配布物。
 pub const WINDOWS_INSTALLER: &str = "x86_64-pc-windows-msvc-setup";
-pub const TARGETS: [&str; 3] = [WINDOWS_ARCHIVE, LINUX_ARCHIVE, WINDOWS_INSTALLER];
+/// macOS の試作の配布物（Intel と Apple Silicon の両方に入る universal の .app を入れた zip）の鍵。Rust のターゲットではなく、
+/// 2 つのターゲット（`MACOS_TRIPLES`）でビルドして 1 つにまとめた物の名前。署名は ad-hoc だけで、アプリは自分では入れ替えない
+/// （新しい版を知らせて、その版のリリースのページを開くだけ）。
+pub const MACOS_ARCHIVE: &str = "universal-apple-darwin";
+/// `MACOS_ARCHIVE` を作る 2 つの Rust のターゲット。
+pub const MACOS_TRIPLES: [&str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+/// `MACOS_ARCHIVE` の配布物名に入る呼び名（「試作」と分かる形）。
+const MACOS_NAME: &str = "macos-universal-experimental";
+pub const TARGETS: [&str; 4] = [
+    WINDOWS_ARCHIVE,
+    LINUX_ARCHIVE,
+    WINDOWS_INSTALLER,
+    MACOS_ARCHIVE,
+];
 /// アーカイブ（zip・tar.gz）の対象か。`build`・`bundle` に渡せるのはこれだけ。
 pub fn is_archive_target(target: &str) -> bool {
-    target == WINDOWS_ARCHIVE || target == LINUX_ARCHIVE
+    target == WINDOWS_ARCHIVE || target == LINUX_ARCHIVE || target == MACOS_ARCHIVE
 }
 
 /// 更新情報に、この環境の対象の配布物が無いときの `Error` の文（署名・形式は通っている。`Error::is_missing_target` が見分ける）。
@@ -110,13 +123,14 @@ pub struct Envelope {
 }
 
 pub fn asset_name(version: &Version, target: &str) -> Result<String, Error> {
-    let extension = match target {
-        WINDOWS_ARCHIVE => "zip",
-        LINUX_ARCHIVE => "tar.gz",
-        WINDOWS_INSTALLER => "exe",
+    let (stem, extension) = match target {
+        WINDOWS_ARCHIVE => (target, "zip"),
+        LINUX_ARCHIVE => (target, "tar.gz"),
+        WINDOWS_INSTALLER => (target, "exe"),
+        MACOS_ARCHIVE => (MACOS_NAME, "zip"),
         _ => return Err(fail("未対応の配布ターゲットです")),
     };
-    Ok(format!("yolupainter-{version}-{target}.{extension}"))
+    Ok(format!("yolupainter-{version}-{stem}.{extension}"))
 }
 pub fn asset_url(version: &Version, name: &str) -> String {
     format!("{RELEASE_BASE}/v{version}/{name}")
@@ -495,6 +509,54 @@ mod tests {
             m.assets.push(a);
             assert!(check(&client(m, |_| {})).is_err(), "{n}");
         }
+    }
+    #[test]
+    fn macos_is_a_zip_named_experimental_and_found_by_its_own_key() {
+        let version = Version::parse("1.2.0").unwrap();
+        // 鍵は Rust のターゲットではなく、2 つのターゲットをまとめた物の名前。配布物の名前は「試作」と分かる形
+        assert_eq!(
+            asset_name(&version, MACOS_ARCHIVE).unwrap(),
+            "yolupainter-1.2.0-macos-universal-experimental.zip"
+        );
+        assert!(is_archive_target(MACOS_ARCHIVE) && TARGETS.contains(&MACOS_ARCHIVE));
+        assert!(MACOS_TRIPLES.iter().all(|t| t.ends_with("-apple-darwin")));
+        assert!(MACOS_TRIPLES.iter().all(|t| !is_archive_target(t)));
+        // mac の配布物を載せた更新情報を、Windows・Linux の確かめは今までどおり読む。mac は自分の鍵で見つける
+        let mut m = manifest();
+        let name = asset_name(&version, MACOS_ARCHIVE).unwrap();
+        m.assets.push(Asset {
+            target: MACOS_ARCHIVE.into(),
+            url: asset_url(&version, &name),
+            name: name.clone(),
+            sha256: sha256(b"mac"),
+            size: 3,
+        });
+        let c = client(m, |_| {});
+        let current = Version::parse("1.0.0").unwrap();
+        assert_eq!(
+            check(&c).unwrap().unwrap().asset().name,
+            asset_name(&version, WINDOWS_ARCHIVE).unwrap()
+        );
+        let update = c
+            .check(URL, &current, MACOS_ARCHIVE, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(update.asset().name, name);
+        // mac の配布物を載せない版は、署名は正しいまま「対象の配布物がありません」
+        let error = client(manifest(), |_| {})
+            .check(URL, &current, MACOS_ARCHIVE, false)
+            .unwrap_err();
+        assert!(error.is_missing_target());
+        // 載せた mac の配布物の名前が違えば、ほかの対象と同じく断る
+        let mut m = manifest();
+        m.assets.push(Asset {
+            target: MACOS_ARCHIVE.into(),
+            url: asset_url(&version, "yolupainter-1.2.0-universal-apple-darwin.zip"),
+            name: "yolupainter-1.2.0-universal-apple-darwin.zip".into(),
+            sha256: sha256(b"mac"),
+            size: 3,
+        });
+        assert!(check(&client(m, |_| {})).is_err());
     }
     #[test]
     fn update_locations_follow_the_release_base_and_the_schema() {

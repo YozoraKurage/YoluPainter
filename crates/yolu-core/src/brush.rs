@@ -16,7 +16,7 @@
 //!   （`rows`。合成は `crate::blend` の Normal とフェード）。ダブの位置・形・筆圧・ゆらぎは倍精度で求め、画素の式へ渡すときに f32 へ丸める。
 //!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、ダブの形は libm（OS）によって 1 ULP ずれ得る。
 //!
-//! - ステンシルを使わないブラシの画素は、行ごとにレーンで描く（`rows`。道は AVX2・SSE4.1・スカラー。選択範囲・透明部分のロックは、
+//! - ステンシルを使わないブラシの画素は、行ごとにレーンで描く（`rows`。道は AVX2・SSE4.1・NEON・スカラー。選択範囲・透明部分のロックは、
 //!   色を塗る・消すだけのブラシなら行の核、画素ごとの色・効果のブラシでは画素ごとの式）。どの道も同じ式なので、結果のバイトは道と
 //!   スレッド数によらず、画素ごとの式（[`apply_at`]）とも同じ。ワーカーで描くかは、箱の大きさに画素ごとの時間の見積もりを掛けて決める。
 //!
@@ -50,9 +50,11 @@
 
 pub mod curve;
 mod dynamics;
+pub(crate) mod edge;
 mod effects;
 mod mix;
 mod mix_stroke;
+mod plan;
 mod presets;
 mod pressure;
 #[doc(hidden)]
@@ -73,7 +75,10 @@ use glam::DVec2;
 use rayon::prelude::*;
 
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
+pub use edge::AntiAlias;
+pub(crate) use edge::{Edge, TexelMetric};
 pub use mix::{ColorMix, MixGround, MixMode};
+pub(crate) use plan::{DabPlan, StampControls};
 pub use presets::{builtin_presets, BrushPreset};
 pub(crate) use pressure::PressureScale;
 pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
@@ -122,6 +127,8 @@ pub struct BrushSettings {
     pub pressure_flow: bool,
     /// 消しゴム（アルファを消す。色のアルファの割合だけ）。
     pub erase: bool,
+    /// 拡張（C# に無い）: 丸い筆先の縁のアンチエイリアスと、小さなダブの濃さ（[`AntiAlias`]）。既定は なし（今の式）。
+    pub anti_alias: AntiAlias,
 }
 
 impl Default for BrushSettings {
@@ -138,6 +145,7 @@ impl Default for BrushSettings {
             pressure_opacity: true,
             pressure_flow: false,
             erase: false,
+            anti_alias: AntiAlias::None,
         }
     }
 }
@@ -233,7 +241,7 @@ fn cos_sin(angle: f64) -> (f64, f64) {
 
 /// 角度 a から b へ短い向きに t だけ進んだ角度（回転の補間。差を ±π に折り返す）。
 #[inline]
-fn lerp_angle(a: f64, b: f64, t: f64) -> f64 {
+pub(crate) fn lerp_angle(a: f64, b: f64, t: f64) -> f64 {
     if a == b {
         return a;
     }
@@ -282,19 +290,20 @@ pub(crate) struct Budgets {
     pub stroke: u64,
 }
 
-/// 抜きのために待たせているダブ（道筋の上の位置・線の長さ・その時の線の向き）。
-#[derive(Clone, Copy)]
-struct PendingDab {
-    x: f64,
-    y: f64,
-    pressure: f64,
-    arc: f64,
-    direction: f64,
-    tilt_x: f64,
-    tilt_y: f64,
+/// 道筋の上の描点（位置・筆圧・線の長さ・その時の線の向き・傾き）。抜きのために待たせるダブもこれ。3D の面のストロークも同じ形で
+/// ダブの置き方（[`plan`]）に渡す（座標は y を上向きに直した画面の点）。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PendingDab {
+    pub x: f64,
+    pub y: f64,
+    pub pressure: f64,
+    pub arc: f64,
+    pub direction: f64,
+    pub tilt_x: f64,
+    pub tilt_y: f64,
     /// 拡張: ペンの回転と筆の速さ。
-    rotation: f64,
-    speed: f64,
+    pub rotation: f64,
+    pub speed: f64,
 }
 
 /// デュアルブラシのダブ（道筋の上の位置と線の長さ）。
@@ -348,7 +357,7 @@ pub(crate) struct StrokeState {
     stroke_length: f64,
     pending: VecDeque<PendingDab>,
     random: NetRandom,
-    // 色の変化: ストロークの色（ダブごとでないとき・3D の面のブラシ）、今のダブの色、色の乱数の列
+    // 色の変化: ストロークの色（ダブごとでないとき・パスの面のダブ）、今のダブの色、色の乱数の列
     stroke_color: Rgba8,
     dab_color: Rgba8,
     color_random: Option<NetRandom>,
@@ -388,6 +397,21 @@ pub(crate) struct StrokeState {
     pub rollback_bytes: u64,
     /// ストロークを始めたときの選択範囲（None は選択なし）。画素は選ばれた量の割合でだけ変わる（[`apply_at`]）。
     selection: Option<SelectionMask>,
+    /// 3D の面のダブの、今のダブのゆらぎの係数（[`StrokeState::begin_surface_dab`] で覚える）。None は面のダブを始めていない
+    /// （パスなど: 係数 1・紙の質感なしで塗る）。
+    surface_look: Option<SurfaceDabLook>,
+    /// 3D の対称（[`Brush::model_symmetry`]）の写しを作れなかった最後の理由。
+    copy_note: Option<crate::geometry::MirrorOutcome>,
+}
+
+/// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
+type SurfaceScales = ((f32, f32), Option<(DualBrushMode, f32, f32)>);
+
+/// 3D の面のダブ 1 つの、ゆらぎ・フェード・傾き・速さの不透明度と流量の係数（2D のダブの形の `opacity_scale`・`flow_scale` と同じ）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SurfaceDabLook {
+    pub opacity: f64,
+    pub flow: f64,
 }
 
 /// これを超える長さの区間（ダブの数）は断る（C# と同じ百万）。
@@ -400,7 +424,7 @@ pub const CURVE_PIECE_LENGTH: f64 = 1.0;
 pub const MAX_CURVE_PIECES: u32 = 65536;
 /// 色の乱数の列（C# の ColorStream）とデュアルブラシの乱数の列（DualStream）の種へ混ぜる値。
 const COLOR_STREAM: i32 = 0x2545F491;
-const DUAL_STREAM: i32 = 0x5DEECE6;
+pub(crate) const DUAL_STREAM: i32 = 0x5DEECE6;
 /// 回した四角い筆先の角は √2·r まで届く（C# の 1.4142135623730951 と同じ double）。
 const SQRT_2: f64 = std::f64::consts::SQRT_2;
 
@@ -421,7 +445,8 @@ impl StrokeState {
         let mut color_random = None;
         let mut tip_colors = false;
         if brush.effect.is_paint() && brush.color.is_active() && !brush.base.erase {
-            // ストロークの色を最初に 1 回引く（ダブごとでないとき、また 3D の面のブラシはこの色で塗る）
+            // ストロークの色を最初に 1 回引く（ダブごとでないときはこの色で塗る。ダブごとなら、2D の描点と 3D の面のダブ
+            // （`begin_surface_dab`）がダブごとに次の色を引く。面のダブを始めないパスの塗りは、この色のまま）
             let mut r = NetRandom::new(brush.seed ^ COLOR_STREAM);
             stroke_color = brush.color.next(brush.base.color, &mut r);
             color_random = Some(r);
@@ -492,6 +517,8 @@ impl StrokeState {
             tiles: HashMap::new(),
             rollback_bytes: 0,
             selection: None,
+            surface_look: None,
+            copy_note: None,
             brush: Arc::new(brush),
         }
     }
@@ -571,17 +598,14 @@ impl StrokeState {
             self.pen = sample;
             return self.add_pen_point(surface, sample, changed);
         }
-        let (dx, dy) = (sample.x - self.pen.x, sample.y - self.pen.y);
-        let d = (dx * dx + dy * dy).sqrt();
-        if d <= stabilizer {
-            return Ok(false); // 糸がたるんでいる間は筆は動かない
-        }
-        let k = (d - stabilizer) / d;
-        self.pen = BrushSample {
-            x: self.pen.x + dx * k,
-            y: self.pen.y + dy * k,
-            ..sample
+        let Some((x, y)) = self
+            .brush
+            .assist
+            .pull((self.pen.x, self.pen.y), (sample.x, sample.y))
+        else {
+            return Ok(false);
         };
+        self.pen = BrushSample { x, y, ..sample };
         self.add_pen_point(surface, self.pen, changed)
     }
 
@@ -866,17 +890,9 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数: 入りで育ち、抜きで細る（C# の Taper）。
+    /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数（[`StrokeAssist::taper`]）。
     fn taper(&self, arc: f64, end: f64) -> f64 {
-        let a = &self.brush.assist;
-        let mut f = 1.0;
-        if a.taper_in > 0.0 {
-            f = f64_min(f, arc / a.taper_in);
-        }
-        if a.taper_out > 0.0 && end.is_finite() {
-            f = f64_min(f, (end - arc) / a.taper_out);
-        }
-        f64_max(0.0, f64_min(1.0, f))
+        self.brush.assist.taper(arc, end)
     }
 
     /// 入力の終わり: 手ぶれ補正の筆を最後の入力の点まで描き、待たせている曲線の区間と抜きのダブを置く（C# の FinishInput）。
@@ -919,146 +935,25 @@ impl StrokeState {
         if brush.dual.is_some() {
             self.stamp_dual(dab.arc)?;
         }
-        // フェード（ストロークの何番目の描点か）と傾きは、筆圧と掛け合わせる。どれも使わなければ 1 のまま
-        let c = &brush.controls;
-        let tilt = if c.tilt_size || c.tilt_opacity || c.tilt_flow || c.tilt_angle {
-            pen_tilt::amount(dab.tilt_x, dab.tilt_y)
-        } else {
-            0.0
-        };
-        let mut size_control =
-            dynamics::fade(c.fade_size, index) * (if c.tilt_size { 1.0 - tilt } else { 1.0 });
-        let mut opacity_control =
-            dynamics::fade(c.fade_opacity, index) * (if c.tilt_opacity { 1.0 - tilt } else { 1.0 });
-        let mut flow_control =
-            dynamics::fade(c.fade_flow, index) * (if c.tilt_flow { 1.0 - tilt } else { 1.0 });
-        // 拡張: 速いほど小さく・薄く（速さの上限で 0）。切っていれば掛けない（C# と同じ値のまま）
-        if c.speed_size || c.speed_opacity || c.speed_flow {
-            let slow = 1.0 - clamp01(dab.speed / c.speed_max);
-            if c.speed_size {
-                size_control *= slow;
-            }
-            if c.speed_opacity {
-                opacity_control *= slow;
-            }
-            if c.speed_flow {
-                flow_control *= slow;
-            }
-        }
-        let tilt_turn = if c.tilt_angle && tilt > 0.0 {
-            pen_tilt::azimuth(dab.tilt_x, dab.tilt_y)
-        } else {
-            0.0
-        };
+        let c = brush.stamp_controls(&dab, index);
         let s = &brush.base;
-        let j = &brush.jitter;
-        // 筆圧は項目ごとの応え（最小値と曲線）を通す。既定の応えは筆圧をそのまま返し、切っている項目は掛けない
-        let size_pressure = if s.pressure_size {
-            brush.pressure.size.apply(dab.pressure)
-        } else {
-            1.0
-        };
-        let pressure = brush.pressure_scale(dab.pressure);
-        let hardness = if c.pressure_hardness {
-            s.hardness * brush.pressure.hardness.apply(dab.pressure)
-        } else {
-            s.hardness
-        };
         let mut any = false;
-        for _ in 0..j.count {
+        for _ in 0..brush.jitter.count {
             if self.tip_colors {
                 let r = self.color_random.as_mut().expect("色の乱数");
                 self.dab_color = brush.color.next(s.color, r);
             }
-            let mut radius = s.radius * size_pressure * size_factor;
-            if size_control != 1.0 {
-                radius *= size_control;
-            }
-            if j.size > 0.0 {
-                radius *= 1.0 - j.size * self.random.next_double();
-            }
-            if radius <= 0.0 {
+            let Some(plan) = brush.next_dab(
+                &c,
+                &dab,
+                s.radius * c.size_pressure * size_factor,
+                s.radius,
+                &mut self.random,
+                &mut self.tip_index,
+            ) else {
                 continue;
-            }
-            let (mut cx, mut cy) = (dab.x, dab.y);
-            if j.scatter > 0.0 {
-                let reach = s.radius * 2.0 * j.scatter;
-                cx += (self.random.next_double() * 2.0 - 1.0) * reach;
-                cy += (self.random.next_double() * 2.0 - 1.0) * reach;
-            }
-            let mut angle = brush.tip.angle * std::f64::consts::PI / 180.0
-                + (if brush.tip.follow_direction {
-                    dab.direction
-                } else {
-                    0.0
-                });
-            if tilt_turn != 0.0 {
-                angle += tilt_turn;
-            }
-            if c.rotation_angle && dab.rotation != 0.0 {
-                angle += dab.rotation; // 拡張: ペンの軸の回転
-            }
-            if j.angle > 0.0 {
-                angle += (self.random.next_double() * 2.0 - 1.0) * std::f64::consts::PI * j.angle;
-            }
-            let mut roundness = brush.tip.roundness;
-            if j.roundness > 0.0 {
-                roundness = f64_max(
-                    0.01,
-                    roundness * (1.0 - j.roundness * self.random.next_double()),
-                );
-            }
-            let mut opacity_scale = if j.opacity > 0.0 {
-                1.0 - j.opacity * self.random.next_double()
-            } else {
-                1.0
             };
-            let mut flow_scale = if j.flow > 0.0 {
-                1.0 - j.flow * self.random.next_double()
-            } else {
-                1.0
-            };
-            if opacity_control != 1.0 {
-                opacity_scale *= opacity_control;
-            }
-            if flow_control != 1.0 {
-                flow_scale *= flow_control;
-            }
-            let tip: Option<&BrushTip> = match brush.tip_list() {
-                None => brush.tip.image.as_deref(),
-                Some(list) => {
-                    let i = match brush.tip.selection {
-                        TipSelection::Sequential => {
-                            let i = (self.tip_index % list.len() as u64) as usize;
-                            self.tip_index += 1;
-                            i
-                        }
-                        TipSelection::Random => self.random.next_below(list.len() as i32) as usize,
-                    };
-                    Some(list[i].as_ref())
-                }
-            };
-            let shape = DabShape {
-                x: cx,
-                y: cy,
-                radius,
-                cos: cos_sin(angle).0,
-                sin: cos_sin(angle).1,
-                roundness,
-                aspect_x: 1.0,
-                aspect_y: 1.0,
-                hardness,
-                pressure,
-                opacity_scale,
-                flow_scale,
-                tip,
-                plain: angle == 0.0 && roundness == 1.0,
-                flip_x: brush.tip.flip_x,
-                flip_y: brush.tip.flip_y,
-                texture: brush.texture.as_ref().filter(|t| t.depth > 0.0),
-                dual: brush.dual.as_ref().map(|d| d.mode),
-            }
-            .with_aspect();
+            let shape = brush.dab_shape(&plan, &c).with_edge(s.anti_alias);
             any |= self.dab(surface, &brush, &shape, changed)?;
         }
         Ok(any)
@@ -1091,7 +986,10 @@ impl StrokeState {
     /// 2 つ目の筆先のダブ 1 つ（C# の DualDabAt）。丸い筆先も回転の式で測る（C# と同じ。角度 0 でも主の丸の近道とは丸めが違う）。
     fn dual_dab_at(&mut self, dual: &DualBrush, x: f64, y: f64) -> Result<(), CoreError> {
         let radius = dual.radius;
-        let extent = if dual.tip.is_none() {
+        let shape = plan::dual_shape(dual, x, y, radius, self.brush.base.anti_alias);
+        let extent = if !shape.edge.is_off() {
+            rows::dual_cover_shape(&shape).reach()
+        } else if dual.tip.is_none() {
             radius
         } else {
             radius * SQRT_2
@@ -1100,31 +998,12 @@ impl StrokeState {
         let max_x = ((x + extent - 0.5).floor() as i64).min(self.width - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(self.height - 1);
-        let angle = dual.angle * std::f64::consts::PI / 180.0;
-        let (cos, sin) = cos_sin(angle);
-        let (mut aspect_x, mut aspect_y) = (1.0, 1.0);
-        if let Some(t) = &dual.tip {
-            if t.width() >= t.height() {
-                aspect_y = t.height() as f64 / t.width() as f64;
-            } else {
-                aspect_x = t.width() as f64 / t.height() as f64;
+        if self.brush.symmetry.enabled() || self.brush.model_symmetry.is_some() {
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）。3D の対称だけで写しの無い
+            // ダブ（中心が面に無い）は、普通のダブ
+            if let Some(maps) = self.copy_maps(x, y, radius)? {
+                return self.symmetric_dual_dab(&shape, extent, &maps);
             }
-        }
-        let shape = DualShape {
-            x,
-            y,
-            radius,
-            cos,
-            sin,
-            roundness: dual.roundness,
-            hardness: dual.hardness,
-            aspect_x,
-            aspect_y,
-            tip: dual.tip.as_deref(),
-        };
-        if self.brush.symmetry.enabled() {
-            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
-            return self.symmetric_dual_dab(&shape, extent);
         }
         if min_x > max_x || min_y > max_y {
             return Ok(());
@@ -1181,20 +1060,19 @@ impl StrokeState {
         shape: &DabShape<'_>,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        let extent = if shape.tip.is_none() {
-            shape.radius
-        } else {
-            shape.radius * SQRT_2
-        };
+        let extent = shape.reach();
         let (w, h) = (self.width, self.height);
         let (x, y) = (shape.x, shape.y);
         let min_x = ((x - extent - 0.5).ceil() as i64).max(0);
         let max_x = ((x + extent - 0.5).floor() as i64).min(w - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(h - 1);
-        if brush.symmetry.enabled() {
-            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）
-            return self.symmetric_dab(surface, brush, shape, extent, changed);
+        if brush.symmetry.enabled() || brush.model_symmetry.is_some() {
+            // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）。3D の対称だけで写しの無い
+            // ダブ（中心が面に無い）は、普通のダブ
+            if let Some(maps) = self.copy_maps(x, y, shape.radius)? {
+                return self.symmetric_dab(surface, brush, shape, extent, &maps, changed);
+            }
         }
         if min_x > max_x || min_y > max_y {
             return Ok(false);
@@ -1585,7 +1463,46 @@ impl StrokeState {
         }
     }
 
-    /// 与えた覆いを 1 画素に塗る（C# の ApplyPixel。メッシュのダブ向け。筆圧で大きさは変えない。ストロークに 1 色）。
+    /// 3D の面のダブを 1 つ始める（2D の描点のダブの数のループの 1 回にあたる）: ダブごとの色（色の変化の「描点ごと」）を次の色へ進め、
+    /// 塗るダブなら、そのゆらぎの係数を覚える。覚えた係数と紙の質感は、この後の面の画素の塗り（`apply_pixel`・`apply_dab`・
+    /// `apply_mapped_dab`）が使う。大きさが 0 で塗らないダブ（`look` が None）も、2D と同じく色の乱数は 1 つ進める。
+    pub(crate) fn begin_surface_dab(&mut self, look: Option<SurfaceDabLook>) {
+        if self.tip_colors {
+            let r = self.color_random.as_mut().expect("色の乱数");
+            self.dab_color = self.brush.color.next(self.brush.base.color, r);
+        }
+        if look.is_some() {
+            self.surface_look = look;
+        }
+    }
+
+    /// 面の画素 (x, y) の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。面のダブを始めていなければ係数 1・質感なし
+    /// （今までの面の塗りと同じ）。紙の質感は 2D と同じく文書の画素の座標で読み、乗算は天井の係数に掛ける（2D の行の核と同じ f32 の式）。
+    /// 乗算の質感で天井の係数が 0 以下の画素は None（塗らない）。
+    fn surface_scales(&self, x: i64, y: i64) -> Option<SurfaceScales> {
+        let Some(look) = self.surface_look else {
+            return Some(((1.0, 1.0), None));
+        };
+        let (opacity, flow) = (look.opacity as f32, look.flow as f32);
+        let Some(tex) = self.brush.texture.as_ref().filter(|t| t.depth > 0.0) else {
+            return Some(((opacity, flow), None));
+        };
+        let grain = rows::Grain::new(tex, y);
+        let depth = tex.depth as f32;
+        match tex.mode.as_blend() {
+            None => {
+                let ceiling = rows::texture_scale_one(&grain, depth, opacity, x);
+                (ceiling > 0.0).then_some(((ceiling, flow), None))
+            }
+            Some(mode) => Some((
+                (opacity, flow),
+                Some((mode, rows::grain_one(&grain, x), depth)),
+            )),
+        }
+    }
+
+    /// 与えた覆いを 1 画素に塗る（C# の ApplyPixel。メッシュのダブ向け。筆圧で大きさは変えない。色は今のダブの色で、3D の面のダブは
+    /// `begin_surface_dab` でダブごとに進める）。
     /// キャンバスの外は何もしない。効果のブラシは断る（読み元を凍結するには [`StrokeState::apply_dab`]）。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_pixel(
@@ -1616,6 +1533,9 @@ impl StrokeState {
                 "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）",
             ));
         }
+        let Some((scales, paper)) = self.surface_scales(x, y) else {
+            return Ok(false);
+        };
         let brush = self.brush.clone();
         let pressure = self.shaped_pressure(&brush, pressure);
         let paint = self.paint(&brush, None);
@@ -1631,8 +1551,8 @@ impl StrokeState {
                 local,
                 coverage as f32,
                 pressure,
-                (1.0, 1.0),
-                None,
+                scales,
+                paper,
                 at,
             )
         })?;
@@ -1742,6 +1662,9 @@ impl StrokeState {
             if p.x < 0 || p.y < 0 || p.x >= self.width || p.y >= self.height {
                 continue;
             }
+            let Some((scales, paper)) = self.surface_scales(p.x, p.y) else {
+                continue;
+            };
             let point = points.map(|v| v[i]);
             let coord = TileCoord::new((p.x / ts) as u32, (p.y / ts) as u32);
             let local = ((p.y % ts) * ts + p.x % ts) as usize;
@@ -1758,8 +1681,8 @@ impl StrokeState {
                     local,
                     p.coverage as f32,
                     pressure,
-                    (1.0, 1.0),
-                    None,
+                    scales,
+                    paper,
                     point,
                 )
             });
@@ -1910,6 +1833,8 @@ struct DualShape<'a> {
     aspect_x: f64,
     aspect_y: f64,
     tip: Option<&'a BrushTip>,
+    /// 縁のアンチエイリアス（画素。主の筆先と同じ [`DabShape::with_edge`] の値）。
+    edge: Edge,
 }
 
 impl DualShape<'_> {
@@ -1919,6 +1844,26 @@ impl DualShape<'_> {
         let u = (self.cos * dx + self.sin * dy) / self.radius;
         let v = (-self.sin * dx + self.cos * dy) / (self.radius * self.roundness);
         match self.tip {
+            None if !self.edge.is_off() => {
+                let dist = (u * u + v * v).sqrt();
+                let minor = self.radius * self.roundness;
+                let g = edge::ellipse_gradient(u, v, dist, self.radius, minor);
+                let mid = 1.0 - (1.0 - self.hardness) * 0.5;
+                let floored = edge::box_floor(
+                    dist,
+                    g,
+                    mid,
+                    (u * self.radius, v * minor),
+                    (self.radius * mid, minor * mid),
+                );
+                edge::cover64_floored(
+                    dist,
+                    floored,
+                    self.hardness,
+                    self.edge.band * g,
+                    self.edge.density,
+                )
+            }
             None => {
                 let dist = (u * u + v * v).sqrt();
                 if dist > 1.0 {
@@ -1931,10 +1876,17 @@ impl DualShape<'_> {
                 }
                 c
             }
-            Some(t) => t.sample(
-                (u / self.aspect_x + 1.0) * 0.5,
-                (v / self.aspect_y + 1.0) * 0.5,
-            ),
+            Some(t) => {
+                let c = t.sample(
+                    (u / self.aspect_x + 1.0) * 0.5,
+                    (v / self.aspect_y + 1.0) * 0.5,
+                );
+                if self.edge.density != 1.0 {
+                    c * self.edge.density
+                } else {
+                    c
+                }
+            }
         }
     }
 }
@@ -1948,30 +1900,167 @@ enum Prepared {
     Effect(EffectFrame),
 }
 
-/// ダブの形。
-struct DabShape<'a> {
-    x: f64,
-    y: f64,
-    radius: f64,
-    cos: f64,
-    sin: f64,
-    roundness: f64,
-    aspect_x: f64,
-    aspect_y: f64,
-    hardness: f64,
-    pressure: PressureScale,
-    opacity_scale: f64,
-    flow_scale: f64,
-    tip: Option<&'a BrushTip>,
+/// ダブの形（中心・半径・角度・真円率・筆先・硬さ）と、塗りの係数（筆圧・ゆらぎの不透明度と流量・紙の質感・デュアルの合わせ方）。
+/// 座標の枠はダブの持ち主のもの（2D は文書の画素、3D の面のダブは y を上向きに直した画面の点）。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DabShape<'a> {
+    pub x: f64,
+    pub y: f64,
+    pub radius: f64,
+    pub cos: f64,
+    pub sin: f64,
+    pub roundness: f64,
+    pub aspect_x: f64,
+    pub aspect_y: f64,
+    pub hardness: f64,
+    pub pressure: PressureScale,
+    pub opacity_scale: f64,
+    pub flow_scale: f64,
+    pub tip: Option<&'a BrushTip>,
     /// 回転も潰しも無い丸（元の式そのもので測る）。
-    plain: bool,
-    flip_x: bool,
-    flip_y: bool,
-    texture: Option<&'a PaperTexture>,
-    dual: Option<DualBrushMode>,
+    pub plain: bool,
+    pub flip_x: bool,
+    pub flip_y: bool,
+    pub texture: Option<&'a PaperTexture>,
+    pub dual: Option<DualBrushMode>,
+    /// 縁のアンチエイリアス（帯の幅はダブの座標の単位。[`DabShape::with_edge`]。既定は今の式）。
+    pub edge: Edge,
 }
 
-impl DabShape<'_> {
+/// ダブの覆いを、中心からのずれ（y は上向き）ごとに 1 つずつ測る形（[`DabShape::coverage_fn`]。2D の行の核と同じ f32 の式・同じ値を
+/// 前もって作ったもの）。3D の面のダブが、投影の画素ごとに呼ぶ。
+pub(crate) struct ShapeCoverage<'a>(rows::Shape32<'a>);
+
+impl ShapeCoverage<'_> {
+    /// 中心からのずれ (dx, dy) の覆い（0〜1。外は 0）。2D の画素ごとの覆いの行（`rows::cover_row`）と同じ式の 1 本のレーン。
+    #[inline]
+    pub(crate) fn coverage(&self, dx: f32, dy: f32) -> f32 {
+        rows::cover_one(&self.0, dx, dy)
+    }
+}
+
+/// デュアルブラシの合わせ（主の覆いとデュアルの溜まり。2D の行の核と同じ f32 の式）。
+#[inline]
+pub(crate) fn combine_dual(mode: DualBrushMode, main: f32, dual: f32) -> f32 {
+    rows::combine32(mode, main, dual)
+}
+
+impl<'a> DabShape<'a> {
+    /// ダブが届く、中心からの距離（丸は半径、筆先の画像は回した四角の外接円の √2 × 半径）。2D のダブの外接の箱と、3D の面のダブが
+    /// 投影の画素を集める画面の円は、この半径。
+    pub(crate) fn reach(&self) -> f64 {
+        if self.edge.is_off() {
+            return if self.tip.is_none() {
+                self.radius
+            } else {
+                self.radius * SQRT_2
+            };
+        }
+        match self.tip {
+            // 真円は帯の外の端。潰した丸は、それと、覆いが半分になる楕円の外接の箱を帯の分だけ広げた箱の角までの、近い方（帯の式は
+            // 箱の外の距離で押さえるので、その外は 0）
+            None if self.plain || self.roundness >= 1.0 => self.radius * self.round_bounds().1,
+            None => {
+                let mid = 1.0 - (1.0 - self.hardness) * 0.5;
+                let grow = (self.radius * (1.0 - self.hardness)).max(self.edge.band) * 0.5 + 1e-3;
+                let (eu, ev) = (
+                    self.radius * mid + grow,
+                    self.radius * self.roundness * mid + grow,
+                );
+                (self.radius * self.round_bounds().1).min((eu * eu + ev * ev).sqrt())
+            }
+            // 広げた筆先は、縦が横より長くなりうる
+            Some(_) => self.radius * self.roundness.max(1.0) * SQRT_2,
+        }
+    }
+
+    /// 丸の縁の帯の内の端・外の端（規格化した距離。潰した丸は、帯がいちばん広くなる短い軸の向きの値）。
+    pub(crate) fn round_bounds(&self) -> (f64, f64) {
+        if self.edge.is_off() {
+            return (self.hardness, 1.0);
+        }
+        let minor = self.radius * self.roundness.min(1.0);
+        edge::bounds(self.hardness, self.edge.band / minor)
+    }
+
+    /// アンチエイリアスの段 level の縁を付ける（2D。ダブの座標は描く先の画素）。丸は帯の幅と濃さ、画像の筆先は小さなダブの
+    /// 広げと濃さだけ（画像の補間は今のまま）。段がなしなら今の式のまま。
+    pub(crate) fn with_edge(self, level: AntiAlias) -> Self {
+        self.with_edge_in(level, &TexelMetric::IDENTITY)
+    }
+
+    /// [`DabShape::with_edge`] の、テクセル 1 つの枠での大きさ metric を渡す形（3D の面のダブ: 枠は画面の点、metric はダブの中心の値）。
+    pub(crate) fn with_edge_in(mut self, level: AntiAlias, metric: &TexelMetric) -> Self {
+        let w = level.band();
+        self.edge = Edge::OFF;
+        if w <= 0.0 || !metric.usable() {
+            return self;
+        }
+        let identity = *metric == TexelMetric::IDENTITY;
+        let (c, s) = (self.cos, self.sin);
+        match self.tip {
+            None => {
+                let (a, b) = (self.radius, self.radius * self.roundness);
+                // 軸の向きのテクセルの半径
+                let (ta, tb) = if identity {
+                    (a, b)
+                } else {
+                    (
+                        metric.texel_length(c * a, s * a),
+                        metric.texel_length(-s * b, c * b),
+                    )
+                };
+                let e = edge::band_and_density(w, self.hardness, ta, tb);
+                // 帯の半分より細い軸は帯の半分まで広げ（濃さで面積を保つ）、その形に帯を付ける
+                let (fa, fb) = edge::widen_axes(&e, self.hardness, ta, tb);
+                if fa != 1.0 || fb != 1.0 {
+                    self.radius *= fa;
+                    self.roundness = self.roundness * fb / fa;
+                }
+                // 帯はテクセルの幅。枠の単位へは、2D はそのまま、3D はテクセルがいちばん長く写る向きの長さを掛ける（ダブの中で
+                // 1 つの値。どの向きでも帯がテクセル 1 つ分より細くならない側）
+                self.edge = if identity {
+                    e
+                } else {
+                    Edge {
+                        band: e.band * metric.eigen().0.sqrt(),
+                        density: e.density,
+                    }
+                };
+            }
+            Some(_) => {
+                let hu = self.radius * self.aspect_x;
+                let hv = self.radius * self.roundness * self.aspect_y;
+                let (tu, tv) = if identity {
+                    (hu, hv)
+                } else {
+                    (
+                        metric.texel_length(c * hu, s * hu),
+                        metric.texel_length(-s * hv, c * hv),
+                    )
+                };
+                let e = edge::band_and_density(w, 1.0, tu, tv);
+                let rho = e.band * 0.5;
+                let fu = if tu < rho { rho / tu } else { 1.0 };
+                let fv = if tv < rho { rho / tv } else { 1.0 };
+                if fu != 1.0 || fv != 1.0 {
+                    self.radius *= fu;
+                    self.roundness = self.roundness * fv / fu;
+                }
+                self.edge = Edge {
+                    band: 0.0,
+                    density: e.density,
+                };
+            }
+        }
+        self
+    }
+
+    /// 覆いを 1 画素ずつ測る形を作る（丸・筆先の画像・回転・真円率・反転。2D の行の核と同じ値）。
+    pub(crate) fn coverage_fn(&self) -> ShapeCoverage<'a> {
+        ShapeCoverage(rows::Shape32::new(self))
+    }
+
     /// 筆先の画像の縦横比（長い辺が直径にかかる）。
     fn with_aspect(mut self) -> Self {
         if let Some(t) = self.tip {

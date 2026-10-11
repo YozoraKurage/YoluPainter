@@ -98,10 +98,62 @@ def load(root):
     return documents, problems
 
 
+def check_dist_build(build, targets):
+    """配る物のビルドの手順（dist-build.yml）が、対象の一覧の指定（試作・時間・複数の Rust のターゲット）を読むこと。"""
+    problems = []
+    job = (build.get('jobs') or {}).get('build') or {}
+    steps = job.get('steps') or []
+    if any(t.get('experimental') for t in targets) and 'matrix.experimental' not in str(job.get('continue-on-error', '')):
+        problems.append('dist-build.yml: build の continue-on-error が matrix.experimental を読んでいません'
+                        '（試作の対象が落ちると、CI の結論が失敗になり、配布も止まる）')
+    if any(t.get('timeout_minutes') for t in targets) and 'matrix.timeout' not in str(job.get('timeout-minutes', '')):
+        problems.append('dist-build.yml: build の timeout-minutes が matrix.timeout を読んでいません（対象ごとの時間の上限が効かない）')
+    if any(t.get('rust_targets') for t in targets):
+        # 複数の Rust のターゲットで作る対象は、配る物の名前（matrix.target）を --target に渡さず、rust_targets を足す
+        single = [st for st in steps if str(st.get('if', '')).replace(' ', '') == '${{!matrix.rust_targets}}']
+        multiple = [st for st in steps if str(st.get('if', '')).replace(' ', '') == '${{matrix.rust_targets}}']
+        if not any('--target ${{ matrix.target }}' in str(st.get('run', '')) for st in single):
+            problems.append('dist-build.yml: rust_targets の無い対象の Rust の準備（--target ${{ matrix.target }}）が、`if: ${{ !matrix.rust_targets }}` の手順に無い')
+        if not any('rustup target add' in str(st.get('run', '')) and 'matrix.rust_targets' in str(st.get('run', '')) for st in multiple):
+            problems.append('dist-build.yml: rust_targets のある対象が、`if: ${{ matrix.rust_targets }}` の手順で `rustup target add ${{ matrix.rust_targets }}` を走らせていない')
+    return problems
+
+
+def check_experimental_flow(documents, targets):
+    """試作の対象（experimental）が落ちても配布が止まらない形（release.yml の find・metadata と main-tested.yml）が崩れていないこと。"""
+    problems = []
+    if not any(t.get('experimental') for t in targets):
+        return problems
+    release = documents.get('release.yml')
+    if release is not None:
+        jobs = release.get('jobs') or {}
+        outputs = (jobs.get('plan') or {}).get('outputs') or {}
+        for name in ('experimental', 'pattern'):
+            if name not in outputs:
+                problems.append(f'release.yml: plan の出力 {name} がありません（試作の対象・成果物の絞り込みを渡せない）')
+        for job_name, step_text in (('find', 'tools/dist.py find'), ('metadata', 'tools/dist.py install')):
+            text = json.dumps((jobs.get(job_name) or {}).get('steps') or [], ensure_ascii=False)
+            if step_text not in text or '--optional' not in text:
+                problems.append(f'release.yml: {job_name} が {step_text} に --optional を渡していません（試作の対象が欠けると、配布が止まる）')
+        metadata = jobs.get('metadata') or {}
+        if 'needs.build.result' in str(metadata.get('if', '')):
+            problems.append('release.yml: metadata の条件が build の結果を見ています（試作の対象だけが落ちたときに、下書きまで止まる。'
+                            '試作でない対象の欠けは install が止める）')
+        patterns = [str((st.get('with') or {}).get('pattern', '')) for st in metadata.get('steps') or [] if str(st.get('uses', '')).startswith('actions/download-artifact@')]
+        if not patterns or any('needs.plan.outputs.pattern' not in p for p in patterns):
+            problems.append('release.yml: metadata の成果物の取り込みが、plan の出力 pattern（対象の一覧で絞った物）を使っていません')
+    tested = documents.get('main-tested.yml')
+    if tested is not None and 'tools/dist.py ci-ok' not in json.dumps(list(steps_of(tested)), ensure_ascii=False):
+        problems.append('main-tested.yml: CI の結論を tools/dist.py ci-ok で見ていません（試作の対象だけが落ちた CI を成功とみなせず、main の確かめが落ちる）')
+    return problems
+
+
 def check(root):
     documents, problems = load(root)
     targets = json.loads((Path(root) / 'tools/dist-targets.json').read_text(encoding='utf-8'))['targets']
     switches = {t['input'] for t in targets if t['input']}
+    # 入力の既定: 対象の default が true なら入（PR の CI でもビルドする）、無ければ切
+    defaults = {t['input']: bool(t.get('default', False)) for t in targets if t['input']}
 
     # 外の Actions はコミットの SHA で固定する（版の名前のタグは動かせるため）。
     for name, document in documents.items():
@@ -133,10 +185,17 @@ def check(root):
         inputs = (triggers(release).get('workflow_dispatch') or {}).get('inputs') or {}
         for name in sorted(switches | {'rebuild'}):
             item = inputs.get(name)
+            expected = defaults.get(name, False)
             if not isinstance(item, dict):
                 problems.append(f'release.yml: 入力 {name} がありません（tools/dist-targets.json が参照している）')
-            elif item.get('type') != 'boolean' or item.get('default') is not False:
-                problems.append(f'release.yml: 入力 {name} は既定が切の真偽値にする')
+            elif item.get('type') != 'boolean' or item.get('default') is not expected:
+                problems.append(f'release.yml: 入力 {name} は既定が{"入" if expected else "切"}の真偽値にする'
+                                f'（tools/dist-targets.json の default {"あり" if expected else "なし"}と同じ）')
+        # 対象を選ぶ段（plan）が、切り替えられる入力を全部渡すこと（渡し忘れると、入力を切っても対象が変わらない）
+        plan_text = json.dumps((release.get('jobs') or {}).get('plan') or {}, ensure_ascii=False)
+        for name in sorted(switches):
+            if f'--input {name}=${{{{ inputs.{name} }}}}' not in plan_text:
+                problems.append(f'release.yml: plan が入力 {name} を渡していません（--input {name}=${{{{ inputs.{name} }}}}）')
         for name in sorted(set(inputs) - FIXED_INPUTS - switches):
             problems.append(f'release.yml: 入力 {name} を使う対象が tools/dist-targets.json にありません')
         # 下書きは、成果物を受け取って build が skipped の回にも作る。状態の関数が無いと暗に success() が付き、skipped の build につられて飛ばされる。
@@ -152,6 +211,9 @@ def check(root):
         problems.append('dist-build.yml がありません')
     elif 'workflow_call' not in triggers(build):
         problems.append('dist-build.yml: workflow_call で呼べません')
+    else:
+        problems.extend(check_dist_build(build, targets))
+    problems.extend(check_experimental_flow(documents, targets))
     for name in ('ci.yml', 'release.yml'):
         if name in documents and DIST_BUILD not in list(uses_of(documents[name])):
             problems.append(f'{name}: 配る物のビルド（{DIST_BUILD}）を呼んでいません')

@@ -12,16 +12,20 @@ pub fn is_installed_copy(exe: &Path) -> bool {
 
 /// 落としたインストーラーを置く利用者ごとのフォルダ（ほかの利用者が差し替えられない場所）。
 /// アンインストーラーもここを片付ける（installer/yolupainter.nsi の `updates`）。
+/// macOS は何も落とさない（新しい版を知らせて、リリースのページを開くだけ）ので、置き場を持たない。
 pub fn staging_dir() -> Option<PathBuf> {
-    let absolute = |key: &str| {
-        std::env::var_os(key)
-            .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
-    };
-    let base = if cfg!(windows) {
-        absolute("LOCALAPPDATA")?
-    } else {
-        absolute("XDG_CACHE_HOME").or_else(|| absolute("HOME").map(|home| home.join(".cache")))?
+    staging_for(std::env::consts::OS, |key| {
+        std::env::var_os(key).map(PathBuf::from)
+    })
+}
+
+fn staging_for(os: &str, env: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
+    let absolute = |key: &str| env(key).filter(|p| p.is_absolute());
+    let base = match os {
+        "windows" => absolute("LOCALAPPDATA")?,
+        "macos" => return None,
+        _ => absolute("XDG_CACHE_HOME")
+            .or_else(|| absolute("HOME").map(|home| home.join(".cache")))?,
     };
     Some(base.join("YoluPainter").join("updates"))
 }
@@ -407,5 +411,32 @@ mod tests {
             assert!(dir.ends_with("YoluPainter/updates") || dir.ends_with(r"YoluPainter\updates"));
             assert!(dir.is_absolute());
         }
+    }
+
+    #[test]
+    fn macos_keeps_no_staging_folder_because_it_downloads_nothing() {
+        // Windows ではドライブが無い道は絶対の道にならないので、`C:` を付けて絶対の道にする
+        let abs = |path: &str| {
+            PathBuf::from(if cfg!(windows) {
+                format!("C:{path}")
+            } else {
+                path.to_owned()
+            })
+        };
+        let home = |key: &str| (key == "HOME").then(|| abs("/Users/u"));
+        assert_eq!(staging_for("macos", home), None);
+        // ほかの OS は今までどおり（Linux は XDG か ~/.cache）
+        assert_eq!(
+            staging_for("linux", home),
+            Some(abs("/Users/u/.cache/YoluPainter/updates"))
+        );
+        let xdg = |key: &str| (key == "XDG_CACHE_HOME").then(|| abs("/var/cache/u"));
+        assert_eq!(
+            staging_for("linux", xdg),
+            Some(abs("/var/cache/u/YoluPainter/updates"))
+        );
+        // 相対の環境変数は使わない
+        let relative = |key: &str| (key == "XDG_CACHE_HOME").then(|| PathBuf::from("cache"));
+        assert_eq!(staging_for("linux", relative), None);
     }
 }

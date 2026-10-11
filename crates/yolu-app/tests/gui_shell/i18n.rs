@@ -556,6 +556,8 @@ fn english_app_sized(width: f32, height: f32, lang: Lang) -> Harness<'static, Yo
                 cc.wgpu_render_state.as_ref(),
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(width);
     h.run();
     h
 }
@@ -674,12 +676,27 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
         Tab::TextureSets,
         Tab::Layers,
         Tab::Properties,
+        Tab::Material,
         Tab::View3d,
         Tab::Canvas,
     ] {
         click_tab(&mut h, tab);
         assert_english(&h, tab.title_in(Lang::En), &[]);
     }
+    // ツールプロパティの「塗るチャンネル」（開いて、全部のチャンネルを組へ）
+    open_paint_channels(&mut h);
+    for channel in yolu_app::matpaint::CHANNELS {
+        h.state_mut()
+            .state
+            .apply(Action::Mat(yolu_app::matpaint::MatAction::Enabled(true)));
+        h.state_mut()
+            .state
+            .apply(Action::Mat(yolu_app::matpaint::MatAction::Channel(
+                channel, true,
+            )));
+    }
+    h.run();
+    assert_english(&h, "paint channels", &[]);
     // レイヤーの種類・マスク・合成モード・ブラシの種類ごとのプロパティ
     let apply = |h: &mut Harness<'_, YoluApp>, action: Action| {
         h.state_mut().state.apply(action);
@@ -854,6 +871,8 @@ fn app_with_system_lang(settings: &std::path::Path, system: Lang) -> Harness<'st
                 cc.wgpu_render_state.as_ref(),
             )
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(1280.0);
     h.run();
     h
 }
@@ -1187,8 +1206,9 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
 
 fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_languages_gpu() {
     use egui_kittest::kittest::NodeT;
-    use yolu_app::prefs;
+    use yolu_app::prefs::{self, Category, PrefsAction};
     use yolu_io::BackupKeep;
+    // 退避の欄は「ファイル」の区分にある。1280 × 800 に最後の行まで収まる
     for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
         let (view, item) = (lang.pick("編集", "Edit"), lang.pick("設定…", "Settings…"));
@@ -1210,6 +1230,21 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
             Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0)).contains_rect(rect),
             "{rect:?}"
         );
+        // 初めは「一般」の区分で、言語の名前が切れずに出る
+        let shown = texts_inside(&h, rect);
+        for want in [lang.pick("日本語", "English"), lang.pick("一般", "General")] {
+            assert!(
+                shown.iter().any(|t| t == want),
+                "{lang:?}: {want} {shown:?}"
+            );
+        }
+        if lang == Lang::En {
+            assert_english(&h, "settings window", &[]);
+        }
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::Choose(Category::Files)));
+        h.run();
         // 退避の欄の文字は、欄の名前・チェックの名前・値だけ（説明文・注記・開発用の数を置かない。閉じるは絵とツールチップ）。
         // 値は、画面に出している数（すべて残す間は、最後に選んだ数）。ウィンドウには、ほかの設定の欄もある
         let only = |h: &Harness<'_, YoluApp>, value: &str, what: &str| {
@@ -1232,9 +1267,6 @@ fn the_settings_window_opens_from_the_edit_menu_and_changes_the_backups_in_both_
             assert_eq!(near.len(), 2, "{lang:?} {what}: {near:?}");
         };
         only(&h, "10", "開いた直後");
-        if lang == Lang::En {
-            assert_english(&h, "settings window", &[]);
-        }
         // 「すべて残す」は入っている。外すと最後に選んだ数（まだ無ければ 10）になり、入れ直すとすべてに戻る
         let checked = |h: &Harness<'_, YoluApp>| {
             format!(
@@ -1298,7 +1330,7 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
 
 fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_keeps_the_old_count_gpu(
 ) {
-    use yolu_app::prefs::PrefsAction;
+    use yolu_app::prefs::{Category, PrefsAction};
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-drag");
     let path = dir.join("settings.conf");
@@ -1308,7 +1340,9 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
         h.state().state.prefs.settings.backups,
         BackupKeep::Count(10)
     );
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.state_mut()
+        .state
+        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
     h.run();
     let slider = h
         .get_by_role_and_label(egui::accesskit::Role::Slider, "Backups to keep")
@@ -1421,18 +1455,29 @@ fn the_saved_count_is_what_keep_all_returns_to_after_a_restart() {
 }
 
 fn the_saved_count_is_what_keep_all_returns_to_after_a_restart_gpu() {
-    use yolu_app::prefs::PrefsAction;
+    use yolu_app::prefs::{Category, PrefsAction};
     use yolu_io::BackupKeep;
     let dir = settings_dir("backups-remembered");
     let path = dir.join("settings.conf");
-    for saved in [5u32, 0, 1000] {
+    // 「ペン」の節（macOS のタブレットの筆圧と、Windows のペンの入力）を出した形でも同じ
+    for (saved, (tablet, pen_input)) in [
+        (5u32, (false, false)),
+        (0, (false, false)),
+        (1000, (false, false)),
+        (5, (true, false)),
+        (5, (false, true)),
+    ] {
         std::fs::write(&path, format!("language=en\nbackups={saved}\n")).unwrap();
         let mut h = app_with_settings(&path);
         assert_eq!(
             h.state().state.prefs.settings.backups,
             BackupKeep::Count(saved)
         );
-        h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+        h.state_mut().state.prefs.tablet_row = tablet;
+        h.state_mut().state.prefs.pen_input_row = pen_input;
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::OpenAt(Category::Files)));
         h.run();
         h.get_by_role_and_label(egui::accesskit::Role::CheckBox, "Keep all")
             .click();
@@ -1597,7 +1642,7 @@ fn english_texture_set_states_have_no_japanese_gpu() {
     assert!(texts.iter().any(|t| t.contains("Skin")), "{texts:?}");
     // 読むだけのセットは理由を英語で（開くときに言語で作る理由）
     h.state_mut().state.sets.get_mut(0).unwrap().read_only =
-        Some("Unsupported document features (1)".into());
+        Some("Unsupported project features (1)".into());
     h.state_mut().state.apply(Action::SelectSet(uids[0]));
     h.run();
     assert_english(&h, "read-only set", &[]);
@@ -1620,12 +1665,16 @@ fn walk_states(
         Tab::TextureSets,
         Tab::Layers,
         Tab::Properties,
+        Tab::Material,
         Tab::View3d,
         Tab::Canvas,
     ] {
         click_tab(&mut h, tab);
         visit(&mut h, tab.title_in(lang));
     }
+    // ツールプロパティの「塗るチャンネル」を開いた画面
+    open_paint_channels(&mut h);
+    visit(&mut h, "paint channels");
     // ブラシの一覧（全グループ）と詳細のウィンドウ（全カテゴリ）
     click_tab(&mut h, Tab::SubTools);
     for group in Group::ALL {
@@ -1781,11 +1830,10 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set() {
 fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu() {
     // チャンネルの名前（チャンネルのパネルの行。種類の欄は形式の名前だけなので、長い名前だけが詰まる）、プリセット・効果・合成モードの
     // 箱の値、テクスチャセットの名前。（レイヤーの不透明度は、パネルが狭いと合成モードの下の行へ積んで名前を詰めない。ここには入らない）
-    const KNOWN_JA: [&str; 2] = ["エミッション", "テクスチャセット 1"];
-    // 英語は同梱の書体（BIZ UDPGothic）の英字が幅広なので、テクスチャセットの名前も詰まる（日本語と同じ）。チャンネルの名前は詰まらない。
-    // ブラシの 2 つ（「効かない」注記と「Stabilizer & Taper」の見出し）は、ブラシの画面を作り直すとき
-    // （注記は欄を無効にしてツールチップへ）一覧から消える
-    const KNOWN_EN: [&str; 2] = ["Texture Set 1", "Watercolor Edge"];
+    const KNOWN_JA: [&str; 0] = [];
+    // 英語のマテリアルのパネルは、最小のウィンドウ（右の列が約 231 点）で「Rendering Mode」の名前と値の「Opaque」が 1 行に収まらない。
+    // 名前は行の 6 割まで広げて値の箱を残す（`look/panel.rs` の `choice`）が、それでも入らないので、名前も値も「…」で詰まる。
+    const KNOWN_EN: [&str; 2] = ["Opaque", "Rendering Mode"];
     let truncations = Truncations::start();
     for lang in Lang::ALL {
         let mut seen = std::collections::BTreeSet::new();
@@ -1805,10 +1853,12 @@ fn fixed_text_truncation_at_the_minimum_window_size_is_exactly_the_known_set_gpu
 
 #[test]
 fn live_link_accepting_can_be_toggled_in_both_languages() {
-    use yolu_app::prefs::PrefsAction;
+    use yolu_app::prefs::{Category, PrefsAction};
     for lang in Lang::ALL {
         let mut h = english_app_sized(1280.0, 800.0, lang);
-        h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+        h.state_mut()
+            .state
+            .apply(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
         h.run();
         let label = lang.pick(
             "Unity の Live Link を受け付ける",

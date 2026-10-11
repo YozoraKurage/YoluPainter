@@ -136,6 +136,27 @@ impl Compositing {
     }
 }
 
+/// Windows でペンの筆圧・傾きなどを読む方式（設定「ペンの入力」。Windows だけで効くが、設定のファイルには同じ書き方で残す）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PenApi {
+    /// Windows Ink（WM_POINTER）。
+    #[default]
+    Ink,
+    /// WinTab（`Wintab32.dll`。Wacom などのドライバーが出す）。使えない機械では Windows Ink に戻る。
+    WinTab,
+}
+
+impl PenApi {
+    pub const ALL: [PenApi; 2] = [PenApi::Ink, PenApi::WinTab];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            PenApi::Ink => "ink",
+            PenApi::WinTab => "wintab",
+        }
+    }
+}
+
 /// ディスクキャッシュに使う量の上限の指定: 自動（64 GiB と、置き場所の起動したときの空きの半分の小さい方）か GiB。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiskLimit {
@@ -164,9 +185,9 @@ impl DiskLimit {
     }
 }
 
-/// 書き出しの余白に選べる値（テクセル。-1 は届くかぎり全部、0 は塗り広げない）。
+/// 書き出しのパディングに選べる値（テクセル。-1 は無限に広げる、0 は塗り広げない）。
 pub const EXPORT_PADDINGS: [i32; 8] = [0, 2, 4, 8, 16, 32, 64, -1];
-/// 書き出しの余白の既定。
+/// 書き出しのパディングの既定。
 pub const DEFAULT_EXPORT_PADDING: i32 = -1;
 /// CPU のスレッドの数の上限（論理プロセッサの数より多くてもよい。多すぎると遅くなるだけ）。
 pub const MAX_CPU_THREADS: u32 = 1024;
@@ -178,8 +199,10 @@ pub const DEFAULT_MIN_UNDO_STEPS: u32 = 5;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     pub lang: Lang,
-    /// 書き出しで UV の外へ色を塗り広げるテクセルの数（-1 は届くかぎり全部）。
+    /// 書き出しで UV の外へ色を塗り広げるテクセルの数（-1 は無限に広げる）。
     pub export_padding: i32,
+    /// 書き出しのウィンドウで最後に選んだ出力テンプレート（次に開いたときの選び。文書ごとではなく設定に覚える）。設定のウィンドウの区分には出さない（書き出しのウィンドウが持つ）。
+    pub export_form: crate::export::ExportForm,
     pub undo_budget: Budget,
     pub source_budget: Budget,
     pub stroke_budget: Budget,
@@ -188,14 +211,27 @@ pub struct Settings {
     /// CPU の処理に使うスレッドの数（None は自動 = 論理プロセッサの数。起動のときに決まる）。
     pub cpu_threads: Option<u32>,
     pub compositing: Compositing,
+    /// 画面の更新を、モニターの垂直同期まで待たせるか（既定は待たない。待たないと画面の上下のずれ〔テアリング〕が出うる代わりに、
+    /// ペンの入力から線が画面に出るまでの遅れが短い）。ウィンドウの面を作るときに決まるので、変えた値は次の起動から効く
+    /// （`view3d::render::wgpu_configuration`）。
+    pub vsync: bool,
     /// 棚の場所（None は既定。`default_library_folder`）。
     pub library_folder: Option<PathBuf>,
     /// 上書き保存で置き換えた前の版（退避）をいくつ残すか。
     pub backups: BackupKeep,
     /// 選択範囲の下のボタンの帯を出すか（「選択範囲」メニューで切り替える。設定のウィンドウには無い）。
     pub selection_bar: bool,
-    /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。「表示 → 筆圧の調整…」のウィンドウ）。
+    /// 選択のツールのツールプロパティで、作成方法を 4 つ（新規・追加・削除・共通）出すか（切は共通を畳む。設定のウィンドウには無い。
+    /// 「共通」を選んでいるあいだは、この設定によらず 4 つ出す）。
+    pub selection_all_modes: bool,
+    /// 全体の筆圧の調整（端末ごと。ペンの筆圧を、ブラシへ渡す前に下限・上限と曲線で直す。設定の「ペン」の筆圧の調整）。
     pub pressure: PressureAdjust,
+    /// macOS のタブレット（Wacom・XP-Pen などのドライバー）の筆圧・傾き・消しゴムの端を NSEvent から読むか（試し。既定は入。`pen::mac_tablet`）。切ると、ペンはマウスと同じに描く。
+    /// macOS 以外では使わないが、設定のファイルには同じ書き方で残す（OS をまたいで設定のフォルダを共有しても消さない）。
+    pub tablet_pressure: bool,
+    /// Windows でペンを Windows Ink と WinTab のどちらで読むか（`pen::win_tab`。既定は Windows Ink）。Windows 以外では使わないが、
+    /// 設定のファイルには同じ書き方で残す（OS をまたいで設定のフォルダを共有しても消さない）。
+    pub pen_input: PenApi,
     pub navigation: crate::view3d::navigation::Preferences,
     /// 3D の絵の仕上げ（アンチエイリアス・ブルーム。「3D ビューの設定 → 画質」）。
     pub view3d_post: crate::view3d::display::PostFx,
@@ -220,6 +256,9 @@ pub struct Settings {
     pub color_wheel: bool,
     /// GPU のメモリ（3D の絵・キャンバスの GPU の合成・棚のサムネイルへ配る合計。配り方は `gpu_memory`）。
     pub gpu_memory: GpuMemory,
+    /// ベイクで GPU の RT コア（ray query）を使うか（既定は入。使えない GPU や、自己照合に通らないときは compute に戻る。切ると常に compute。
+    /// ドライバーが固まる PC で切る。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY=0` でも既定が切になる）。画面の描画の方式は変えない。
+    pub bake_ray_query: bool,
     /// メモリの予算（レイヤーのメモリ＋取り消し履歴）を超えた分のタイルの中身を、ディスクへ逃がすか（`yolu_core::tile_cache`）。既定は入。
     pub disk_cache: bool,
     /// ディスクキャッシュのファイルを置くフォルダ（None は OS の一時フォルダ）。
@@ -233,16 +272,21 @@ impl Default for Settings {
         Self {
             lang: Lang::default(),
             export_padding: DEFAULT_EXPORT_PADDING,
+            export_form: crate::export::ExportForm::default(),
             undo_budget: Budget::Auto,
             source_budget: Budget::Auto,
             stroke_budget: Budget::Auto,
             min_undo_steps: DEFAULT_MIN_UNDO_STEPS,
             cpu_threads: None,
             compositing: Compositing::Auto,
+            vsync: false,
             library_folder: None,
             backups: BackupKeep::All,
             selection_bar: true,
+            selection_all_modes: false,
             pressure: PressureAdjust::default(),
+            tablet_pressure: true,
+            pen_input: PenApi::default(),
             navigation: crate::view3d::navigation::Preferences::default(),
             view3d_post: crate::view3d::display::PostFx::default(),
             view3d_paint: yolu_core::geometry::ProjectionSettings::default(),
@@ -256,6 +300,7 @@ impl Default for Settings {
             external_ops_port: yolu_mcp::DEFAULT_PORT,
             color_wheel: true,
             gpu_memory: GpuMemory::Auto,
+            bake_ray_query: true,
             disk_cache: true,
             disk_cache_folder: None,
             disk_cache_limit: DiskLimit::Auto,
@@ -443,6 +488,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "language" => lang.pick("言語", "Language"),
         "view3d_orbit" => lang.pick("回転の中心", "Orbit center"),
         "view3d_zoom" => lang.pick("ズームの中心", "Zoom center"),
+        "view3d_axis_ortho" => lang.pick("軸の向きで正投影", "Orthographic on axis views"),
         "view3d_antialias" => lang.pick("アンチエイリアス", "Anti-aliasing"),
         "view3d_bloom" => lang.pick("ブルーム", "Bloom"),
         "view3d_bloom_strength" => lang.pick("ブルームの強さ", "Bloom strength"),
@@ -453,16 +499,19 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "view3d_paint_falloff_start" => lang.pick("弱め始め", "Fade start"),
         "view3d_paint_falloff_end" => lang.pick("塗らない角度", "Fade end"),
         "view3d_paint_seam_bleed" => lang.pick("継ぎ目のにじみ", "Seam bleed"),
-        "export_padding" => lang.pick("書き出しの余白", "Export padding"),
+        "export_padding" => lang.pick("書き出しのパディング", "Export padding"),
+        "export_form" => lang.pick("出力テンプレート", "Output template"),
         "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
         "source_budget_mib" => lang.pick("レイヤーのメモリ", "Layer memory"),
         "stroke_budget_mib" => lang.pick("1 回の操作", "One operation"),
         "min_undo_steps" => lang.pick("最小の取り消し段数", "Minimum undo steps"),
         "cpu_threads" => lang.pick("CPU のスレッド", "CPU threads"),
         "compositing" => lang.pick("表示の合成", "Display compositing"),
+        "vsync" => lang.pick("垂直同期", "VSync"),
         "library_folder" => lang.pick("ライブラリの場所", "Library folder"),
         "backups" => lang.pick("退避を残す数", "Backups to Keep"),
         "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
+        "bake_ray_query" => lang.pick("ベイクで RT コアを使う", "Use RT cores for baking"),
         "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),
         "external_ops_port" => lang.pick("ポート番号", "Port"),
         "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
@@ -470,6 +519,10 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
         "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
         "pressure_curve" => lang.pick("筆圧の曲線", "Pen pressure curve"),
+        "tablet_pressure" => {
+            lang.pick("タブレットの筆圧（試し）", "Tablet pressure (experimental)")
+        }
+        "pen_input" => lang.pick("ペンの入力", "Pen input"),
         "disk_cache" => lang.pick("ディスクキャッシュ", "Disk cache"),
         "disk_cache_folder" => lang.pick("キャッシュの場所", "Cache folder"),
         "disk_cache_limit_gib" => lang.pick("キャッシュの上限", "Cache limit"),
@@ -555,6 +608,10 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(v) => settings.export_padding = v,
                 None => invalid("export_padding"),
             },
+            "export_form" => match crate::export::ExportForm::from_key(value) {
+                Some(form) => settings.export_form = form,
+                None => invalid("export_form"),
+            },
             "min_undo_steps" => match value
                 .parse::<u32>()
                 .ok()
@@ -571,6 +628,8 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(c) => settings.compositing = c,
                 None => invalid("compositing"),
             },
+            // 入れたときだけ書く行（既定は待たない）。読めない値は待たないまま
+            "vsync" => settings.vsync = value == "on",
             "library_folder" => match parse_folder(value) {
                 Some(v) => settings.library_folder = v,
                 None => invalid("library_folder"),
@@ -581,6 +640,8 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
             },
             // 切ったときだけ書く行。読めない値は出す（既定）のまま、理由は出さない
             "selection_bar" => settings.selection_bar = value != "off",
+            // 入れたときだけ書く行（既定は切）。読めない値は切のまま
+            "selection_all_modes" => settings.selection_all_modes = value == "on",
             "pressure_low" => match value
                 .parse::<f32>()
                 .ok()
@@ -603,7 +664,7 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(points) => curve = Some(points),
                 None => invalid("pressure_curve"),
             },
-            "view3d_orbit" | "view3d_zoom" => {
+            "view3d_orbit" | "view3d_zoom" | "view3d_axis_ortho" => {
                 settings.navigation.parse(key.trim(), value, &mut problems)
             }
             "view3d_antialias" => match value
@@ -664,10 +725,18 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 _ => invalid("external_ops_port"),
             },
             "color_wheel" => settings.color_wheel = value != "off",
+            // 切ったときだけ書く行（既定は入）。読めない値は入のまま
+            "tablet_pressure" => settings.tablet_pressure = value != "off",
+            "pen_input" => match PenApi::ALL.into_iter().find(|a| a.key() == value) {
+                Some(a) => settings.pen_input = a,
+                None => invalid("pen_input"),
+            },
             "gpu_memory" => match GpuMemory::parse(value) {
                 Some(v) => settings.gpu_memory = v,
                 None => invalid("gpu_memory"),
             },
+            // 切ったときだけ書く行（既定は入）。環境変数と同じく 0・false・off・no が切で、ほかの値は入のまま
+            "bake_ray_query" => settings.bake_ray_query = !yolu_gpu::is_off_value(value),
             // 切ったときだけ書く行（既定は入）。読めない値は入のまま
             "disk_cache" => settings.disk_cache = value != "off",
             "disk_cache_folder" => match parse_folder(value) {
@@ -819,6 +888,9 @@ fn render(settings: &Settings) -> String {
         };
         text += &format!("export_padding={value}\n");
     }
+    if settings.export_form != default.export_form {
+        text += &format!("export_form={}\n", settings.export_form.key());
+    }
     for kind in BudgetKind::ALL {
         if let Budget::Mib(n) = settings.budget(kind) {
             let (lo, hi) = kind.range();
@@ -837,11 +909,17 @@ fn render(settings: &Settings) -> String {
     if settings.compositing != default.compositing {
         text += &format!("compositing={}\n", settings.compositing.key());
     }
+    if settings.vsync {
+        text += "vsync=on\n";
+    }
     if let BackupKeep::Count(n) = settings.backups {
         text += &format!("backups={}\n", n.min(MAX_BACKUPS_TO_KEEP));
     }
     if !settings.selection_bar {
         text += "selection_bar=off\n";
+    }
+    if settings.selection_all_modes {
+        text += "selection_all_modes=on\n";
     }
     let pressure = &settings.pressure;
     if pressure.low() != 0.0 {
@@ -855,6 +933,15 @@ fn render(settings: &Settings) -> String {
             "pressure_curve={}\n",
             crate::brushes::store::curve_text(pressure.curve())
         );
+    }
+    if !settings.tablet_pressure {
+        text += "tablet_pressure=off\n";
+    }
+    if settings.pen_input != default.pen_input {
+        text += &format!("pen_input={}\n", settings.pen_input.key());
+    }
+    if !settings.bake_ray_query {
+        text += "bake_ray_query=off\n";
     }
     settings.navigation.write(&mut text);
     write_post(&mut text, &settings.view3d_post);
@@ -984,6 +1071,12 @@ pub fn apply_thread_setting() {
     }
 }
 
+/// 起動のときに、設定のファイルの「垂直同期」を返す（ウィンドウの面を作る前に 1 回。読めない設定・項目が無いときは待たない）。
+/// `apply_thread_setting` と同じく、アプリが後で読む設定と同じファイルを見る。
+pub fn startup_vsync() -> bool {
+    path().is_some_and(|path| load(&path).0.vsync)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1007,15 +1100,18 @@ mod tests {
         Settings {
             lang: Lang::En,
             export_padding: 8,
+            export_form: crate::export::ExportForm::LilToon,
             undo_budget: Budget::Mib(512),
             source_budget: Budget::Mib(4096),
             stroke_budget: Budget::Auto,
             min_undo_steps: 12,
             cpu_threads: Some(4),
             compositing: Compositing::Cpu,
+            vsync: true,
             library_folder: Some(dir.join("shelf")),
             backups: BackupKeep::Count(7),
             selection_bar: true,
+            selection_all_modes: true,
             pressure: PressureAdjust::new(
                 0.125,
                 0.875,
@@ -1050,7 +1146,10 @@ mod tests {
             external_ops: true,
             external_ops_port: 23456,
             color_wheel: true,
+            tablet_pressure: false,
+            pen_input: PenApi::WinTab,
             gpu_memory: GpuMemory::Mib(1536),
+            bake_ray_query: false,
             disk_cache: false,
             disk_cache_folder: Some(dir.join("cache")),
             disk_cache_limit: DiskLimit::Gib(16),
@@ -1071,6 +1170,172 @@ mod tests {
         assert!(std::fs::read_to_string(&path)
             .unwrap()
             .contains("livelink_keep_values=off"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_tablet_pressure_defaults_on_and_survives_restart_when_switched_off() {
+        let dir = temp_dir("tabletpressure");
+        let path = dir.join("settings.conf");
+        assert!(load(&path).0.tablet_pressure, "ファイルが無ければ入");
+        let off = Settings {
+            tablet_pressure: false,
+            ..Settings::default()
+        };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), (off, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("tablet_pressure=off"));
+        // 入は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("tablet_pressure"));
+        // この項目を知らない古い設定は入として読む。読めない値も入
+        assert!(parse("language=ja\n").0.tablet_pressure);
+        let (settings, problems) = parse("tablet_pressure=maybe\nlanguage=en\n");
+        assert!(
+            settings.tablet_pressure && problems.is_empty(),
+            "{problems:?}"
+        );
+        // 画面の名前は日英とも「試し」と分かる
+        assert!(setting_name(Lang::Ja, "tablet_pressure").contains("試し"));
+        assert!(setting_name(Lang::En, "tablet_pressure").contains("experimental"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_rt_cores_for_baking_default_on_and_survive_a_restart_when_switched_off() {
+        let dir = temp_dir("bakeraytracing");
+        let path = dir.join("settings.conf");
+        assert!(Settings::default().bake_ray_query);
+        assert!(load(&path).0.bake_ray_query, "ファイルが無ければ入");
+        let off = Settings {
+            bake_ray_query: false,
+            ..Settings::default()
+        };
+        save(&path, &off).unwrap();
+        assert_eq!(load(&path), (off, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("bake_ray_query=off"));
+        // 入は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("bake_ray_query"));
+        // この項目を知らない古い設定は入として読む。読めない値も入
+        assert!(parse("language=ja\nbackups=3\n").0.bake_ray_query);
+        let (settings, problems) = parse("bake_ray_query=maybe\nlanguage=en\n");
+        assert!(
+            settings.bake_ray_query && problems.is_empty(),
+            "{problems:?}"
+        );
+        for off in ["off", "0", "false", "no", " OFF "] {
+            assert!(
+                !parse(&format!("bake_ray_query={off}\n")).0.bake_ray_query,
+                "{off:?}"
+            );
+        }
+        for on in ["on", "1", "true", "yes"] {
+            assert!(
+                parse(&format!("bake_ray_query={on}\n")).0.bake_ray_query,
+                "{on:?}"
+            );
+        }
+        assert!(setting_name(Lang::Ja, "bake_ray_query").contains("RT コア"));
+        assert!(setting_name(Lang::En, "bake_ray_query").contains("RT cores"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_export_form_defaults_to_the_channel_png_and_a_bad_value_resets_only_it() {
+        use crate::export::ExportForm;
+        let dir = temp_dir("exportform");
+        let path = dir.join("settings.conf");
+        // 項目が無ければ「PNG（今のチャンネル）」。既定は書かない
+        assert_eq!(parse("language=ja\n").0.export_form, ExportForm::ChannelPng);
+        save(&path, &with_lang(Lang::En)).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("export_form"));
+        // 選んだ形は次の起動で戻る（テンプレートの形はテンプレートの ID）
+        for form in ExportForm::ALL {
+            save(
+                &path,
+                &Settings {
+                    export_form: form,
+                    ..with_lang(Lang::En)
+                },
+            )
+            .unwrap();
+            assert_eq!(load(&path).0.export_form, form, "{form:?}");
+        }
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .any(|l| l == "export_form=liltoon"));
+        // 読めない値は、その項目だけ既定に戻して名前つきで知らせる
+        let (settings, problems) = parse("language=en\nexport_form=psd\nexport_padding=8\n");
+        assert_eq!(settings.export_form, ExportForm::ChannelPng);
+        assert_eq!(settings.export_padding, 8, "ほかの項目は生きる");
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(matches!(
+            &problems[0],
+            Problem::Invalid {
+                key: "export_form",
+                ..
+            }
+        ));
+        assert_eq!(setting_name(Lang::Ja, "export_form"), "出力テンプレート");
+        assert_eq!(setting_name(Lang::En, "export_form"), "Output template");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn the_pen_input_defaults_to_windows_ink_and_keeps_wintab_across_a_restart() {
+        let dir = temp_dir("peninput");
+        let path = dir.join("settings.conf");
+        assert_eq!(
+            load(&path).0.pen_input,
+            PenApi::Ink,
+            "ファイルが無ければ Windows Ink"
+        );
+        let wintab = Settings {
+            pen_input: PenApi::WinTab,
+            ..Settings::default()
+        };
+        save(&path, &wintab).unwrap();
+        assert_eq!(load(&path), (wintab, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .any(|l| l == "pen_input=wintab"));
+        // Windows Ink は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("pen_input"));
+        // この項目を知らない古い設定は Windows Ink として読む。書き方は 2 つだけ
+        assert_eq!(parse("language=ja\n").0.pen_input, PenApi::Ink);
+        assert_eq!(parse("pen_input=ink\n").0.pen_input, PenApi::Ink);
+        assert_eq!(parse("pen_input=wintab\n").0.pen_input, PenApi::WinTab);
+        // 知らない値は既定へ戻して、正しくない項目として知らせる（大文字は別の値）
+        for bad in ["pen_input=tablet", "pen_input=WinTab", "pen_input="] {
+            let (settings, problems) = parse(&format!("{bad}\nlanguage=en\n"));
+            assert_eq!(settings.pen_input, PenApi::Ink, "{bad}");
+            assert_eq!(settings.lang, Lang::En, "ほかの行は読む: {bad}");
+            assert!(
+                problems
+                    .iter()
+                    .any(|p| format!("{p:?}").contains("pen_input")),
+                "{bad}: {problems:?}"
+            );
+        }
+        // 画面の名前は日英で出る
+        assert_eq!(setting_name(Lang::Ja, "pen_input"), "ペンの入力");
+        assert_eq!(setting_name(Lang::En, "pen_input"), "Pen input");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1104,6 +1369,41 @@ mod tests {
             !settings.external_ops && problems.is_empty(),
             "{problems:?}"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn vsync_defaults_off_and_survives_restart_only_when_on() {
+        let dir = temp_dir("vsync");
+        let path = dir.join("settings.conf");
+        assert!(!Settings::default().vsync, "既定は垂直同期を待たない");
+        assert!(!load(&path).0.vsync, "ファイルが無ければ待たない");
+        let on = Settings {
+            vsync: true,
+            ..Settings::default()
+        };
+        save(&path, &on).unwrap();
+        assert_eq!(load(&path), (on, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .any(|l| l == "vsync=on"));
+        // 待たないは書かない（行が無い設定ファイルと同じ中身）
+        save(&path, &with_lang(Lang::En)).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
+        // この項目を知らない前の版の設定は、待たないとして読む。ほかの項目は前のまま生きる
+        let (old, problems) = parse("language=ja\ncpu_threads=4\nexternal_ops=on\n");
+        assert!(!old.vsync && problems.is_empty(), "{problems:?}");
+        assert_eq!((old.cpu_threads, old.external_ops), (Some(4), true));
+        // 読めない値・大文字・空は、待たないまま（知らせる問題にはしない）
+        for bad in ["maybe", "ON", "", "1", "true", "off"] {
+            let (read, problems) = parse(&format!("language=ja\nvsync={bad}\n"));
+            assert!(!read.vsync, "vsync={bad:?}");
+            assert!(problems.is_empty(), "vsync={bad:?}: {problems:?}");
+        }
+        // 画面の名前は日英で出る
+        assert_eq!(setting_name(Lang::Ja, "vsync"), "垂直同期");
+        assert_eq!(setting_name(Lang::En, "vsync"), "VSync");
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1639,11 +1939,13 @@ mod tests {
         for line in [
             "language=en",
             "export_padding=8",
+            "export_form=liltoon",
             "undo_budget_mib=512",
             "source_budget_mib=4096",
             "min_undo_steps=12",
             "cpu_threads=4",
             "compositing=cpu",
+            "vsync=on",
             "backups=7",
             "gpu_memory=1536",
             "pressure_low=0.125",
@@ -1662,6 +1964,9 @@ mod tests {
             "uv_overlap=off",
             "uv_overlap_color=10,20,30,40",
             "external_ops=on",
+            "tablet_pressure=off",
+            "pen_input=wintab",
+            "bake_ray_query=off",
             "disk_cache=off",
             "disk_cache_limit_gib=16",
             "external_ops_port=23456",
@@ -1673,16 +1978,21 @@ mod tests {
         // 選び直して既定に戻すと、行が消える
         let mut back = all.clone();
         back.export_padding = DEFAULT_EXPORT_PADDING;
+        back.export_form = crate::export::ExportForm::default();
         back.undo_budget = Budget::Auto;
         back.source_budget = Budget::Auto;
         back.min_undo_steps = DEFAULT_MIN_UNDO_STEPS;
         back.cpu_threads = None;
         back.compositing = Compositing::Auto;
+        back.vsync = false;
         back.library_folder = None;
         back.backups = BackupKeep::All;
         back.gpu_memory = GpuMemory::Auto;
         back.pressure = PressureAdjust::default();
         back.livelink_keep_values = true;
+        back.tablet_pressure = true;
+        back.pen_input = PenApi::Ink;
+        back.bake_ray_query = true;
         back.external_ops = false;
         back.external_ops_port = yolu_mcp::DEFAULT_PORT;
         back.view3d_post = crate::view3d::display::PostFx::default();
@@ -1692,6 +2002,7 @@ mod tests {
         back.disk_cache_limit = DiskLimit::Auto;
         back.uv_overlap = true;
         back.uv_overlap_color = crate::uv_wireframe::DEFAULT_OVERLAP_COLOR;
+        back.selection_all_modes = false;
         save(&path, &back).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "language=en\n");
         // 範囲の端の値
@@ -1706,7 +2017,7 @@ mod tests {
         };
         save(&path, &edge).unwrap();
         assert_eq!(load(&path), (edge.clone(), vec![]));
-        // 届くかぎり全部（-1）は既定なので書かず、fill と書いても読める
+        // 無限に広げる（-1）は既定なので書かず、fill と書いても読める
         edge.export_padding = -1;
         assert!(!render(&edge).contains("export_padding"));
         assert_eq!(
@@ -1942,6 +2253,35 @@ mod tests {
             (Settings::default(), vec![])
         );
         assert_eq!(parse("selection_bar=on\n"), (Settings::default(), vec![]));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_selection_modes_are_written_only_when_all_four_are_shown_and_restored() {
+        let dir = temp_dir("selection-modes");
+        let path = dir.join("settings.conf");
+        assert!(!Settings::default().selection_all_modes, "既定は畳む");
+        save(&path, &with_lang(Lang::Ja)).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=ja\n",
+            "畳む（既定）は書かない"
+        );
+        let all = Settings {
+            selection_all_modes: true,
+            ..with_lang(Lang::En)
+        };
+        save(&path, &all).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "language=en\nselection_all_modes=on\n"
+        );
+        assert_eq!(load(&path), (all, vec![]));
+        // 読めない値は既定（畳む）。理由は出さない
+        assert_eq!(
+            parse("selection_all_modes=maybe\n"),
+            (Settings::default(), vec![])
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 

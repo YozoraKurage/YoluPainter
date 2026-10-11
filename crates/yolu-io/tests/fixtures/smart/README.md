@@ -1,13 +1,13 @@
 # スマート素材の人工データ
 
-`tools/csharp-golden/run-smart.sh` が Unity に依存しない C# の Core を組み、既定で `target/csharp-smart/golden/` に生成します。ユーザーの素材は使いません。参照元の名前とパスは人工の値です。
+`tools/csharp-golden/run-smart.sh` が Unity に依存しない C# の Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`。場所は `YOLUPAINTER_UNITY_SOURCE`）をビルドし、既定で `target/csharp-smart/golden/` に生成します。ユーザーの素材は使いません。参照元の名前とパスは人工の値です。
 
 - `resize-*`: 3×2 の透明画素を含む面を 4 種の寸法へ 3 種の方法で配置した RGBA8。Rust の結果と全バイトを比べます。
 - `resize-sparse-*`、`resize-normal-*`、`resize-mask-*`: 複数タイルの疎な面（一様・ばらばら・無いタイル・端のタイル。9×7、タイル 2）、Normal のチャンネル（4×3）、マスク（5×4）を、寸法とタイル寸法を変えて 3 種の方法で配置した RGBA8（15・12・12 事例）。C# の Core `7db2a03f82c635e2` で生成し、`resize-*` の 12 事例は同じ版でも変わらないことを確かめています。
 - `raster`、`mask`、`multi`: ラスター、マスク、複数レイヤーの `.ylsmart`。正本と索引を core 経由で読み書きして全バイトを比べます。
 - `images`: 画像を同梱した素材。一括追加・重複排除・ID 衝突・予算拒否に使います。
 - `filtered`: フィルターを保持した素材。原本の保持と、core が保持できない属性の変換拒否に使います。
-- `resources.json` と `all/resources.json`: 画像と全種類の素材の索引。参照元はライブラリー、Unity アセット、内蔵、外部ファイル。空白も含め C# の出力と一致させます。
+- `resources.json` と `all/resources.json`: 画像と全種類の素材の索引。参照元はライブラリ、Unity アセット、内蔵、外部ファイル。空白も含め C# の出力と一致させます。
 - `used.txt`: C# の `Shelf` が数える使用メモリ。画像は画素、ブラシはファイルと1画素1バイト、スマート素材はファイルと断片の画素を数えます。
 
 `.ylsmart` の捕捉時に新しい ID を作るので、再生成したファイルのハッシュは変わります。索引と資源ファイルを同時に更新してください。保存原本の ZIP バイトは保持しますが、新規生成する ZIP/PNG の圧縮バイト一致は保証の対象外です。

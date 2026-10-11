@@ -82,7 +82,9 @@ impl Document {
                     || m.height() != self.height
                     || m.tile_size() != self.tile_size =>
             {
-                Err(CoreError::InvalidArgument("選択範囲の大きさが文書と違う"))
+                Err(CoreError::InvalidArgument(
+                    "選択範囲の大きさがキャンバスと違う",
+                ))
             }
             _ => Ok(()),
         }
@@ -164,7 +166,7 @@ impl Document {
             return Ok(self.selection.clone());
         };
         if r.width() != self.width || r.height() != self.height || r.tile_size() != self.tile_size {
-            return Err(CoreError::InvalidArgument("範囲の大きさが文書と違う"));
+            return Err(CoreError::InvalidArgument("範囲の大きさがキャンバスと違う"));
         }
         Ok(Some(match &self.selection {
             None => r.clone(),

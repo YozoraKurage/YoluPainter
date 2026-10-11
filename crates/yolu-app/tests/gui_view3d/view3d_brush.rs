@@ -1,4 +1,4 @@
-//! 3D ビューの効果ブラシ（ぼかし・指先・クローン）と 3D の対称（ミラー・放射状）の操作（egui_kittest。試しの立方体の上で）。
+//! 3D ビューの効果ブラシ（ぼかし・指先・クローン）と 3D の対称定規（鏡・回転）の操作（egui_kittest。試しの立方体の上で）。
 //! 面のダブの計算は core の `tests/surface_stroke.rs` が見る。ここは、画面の入力・状態・知らせ・Undo がつながっていること。
 use crate::common;
 
@@ -8,15 +8,16 @@ use egui_kittest::Harness;
 use yolu_app::engine::{composite_pixel, BrushEffect, Rgba8, Tilt};
 use yolu_app::pen::adjust::PressureAdjust;
 use yolu_app::pen::PenSample;
+use yolu_app::rulers::RulerAction;
+use yolu_app::state::Action;
 use yolu_app::YoluApp;
-use yolu_core::geometry::SymmetryAxis;
-use yolu_core::glam::Vec3;
+use yolu_core::glam::{DVec3, Vec3};
 
 const SIZE: u32 = 256;
 
 /// 3D のタブを出し、試しの立方体を読み、右（+X）と手前（−Z）の面が見えるカメラにする。
 pub(crate) fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
-    let mut h = app(1100.0, 760.0, SIZE);
+    let mut h = app(1470.0, 760.0, SIZE);
     h.state_mut().state.view3d.load_demo();
     h.state_mut().state.view3d.camera.yaw = -40.0;
     h.state_mut().state.view3d.camera.pitch = 15.0;
@@ -204,7 +205,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     release_with(&h, source, Modifiers::ALT);
     h.run();
     assert_eq!(message(&h), "クローンの元を決めました。");
-    assert!(h.state().state.view3d.clone.source.is_some());
+    assert!(h.state().state.clone.source.is_some());
     assert_eq!(h.state().state.view3d.camera.yaw, yaw);
     // 右の面へ描くと、手前の面の模様が写る
     h.state_mut().state.message.clear();
@@ -222,7 +223,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     }
     assert!(painted > 20, "{painted}");
     assert!(
-        h.state().state.view3d.clone.destination.is_some(),
+        h.state().state.clone.destination.is_some(),
         "揃えるクローンは、先の基準を次のストロークへ渡す"
     );
     key(&h, Key::Z, Modifiers::COMMAND);
@@ -249,7 +250,7 @@ fn alt_drag_still_orbits_with_the_clone_brush() {
     h.run();
     assert_ne!(h.state().state.view3d.camera.yaw, yaw, "回る");
     assert!(
-        h.state().state.view3d.clone.source.is_none(),
+        h.state().state.clone.source.is_none(),
         "動かしたクリックは元にしない"
     );
 }
@@ -258,7 +259,9 @@ fn alt_drag_still_orbits_with_the_clone_brush() {
 fn the_3d_mirror_paints_the_other_half_of_the_face() {
     let (mut h, rect) = cube_view();
     h.state_mut().state.color.set_main([0.9, 0.1, 0.1, 1.0]);
-    h.state_mut().state.sel.symmetry.surface.mirror = true; // X に直交する面、モデルの原点
+    // X に直交する面、モデルの原点
+    common::rulers::mirror_3d(&mut h.state_mut().state, DVec3::ZERO, DVec3::X);
+    let base = h.state().state.doc.undo_count();
     let at = screen_of(&h, rect, Vec3::new(0.25, 0.0, -0.5));
     click(&mut h, at);
     assert!(message(&h).is_empty(), "{}", message(&h));
@@ -275,11 +278,17 @@ fn the_3d_mirror_paints_the_other_half_of_the_face() {
         (left as f32 / right as f32 - 1.0).abs() < 0.2,
         "左右でほぼ同じ面積: {left} {right}"
     );
-    assert_eq!(h.state().state.doc.undo_count(), 1);
-    // ミラーを切ると、片側だけ
+    assert_eq!(h.state().state.doc.undo_count(), base + 1);
+    // 鏡を隠すと、片側だけ
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    h.state_mut().state.sel.symmetry.surface.mirror = false;
+    let layer = h.state().state.selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::Ruler(RulerAction::SetAllVisible {
+            owner: layer,
+            visible: false,
+        }));
     click(&mut h, at);
     let (left, right) = (count(&h, 0..mid), count(&h, mid..w));
     assert!(left == 0 || right == 0, "{left} {right}");
@@ -288,12 +297,15 @@ fn the_3d_mirror_paints_the_other_half_of_the_face() {
 #[test]
 fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() {
     let (mut h, rect) = cube_view();
-    {
-        let s = &mut h.state_mut().state.sel.symmetry.surface;
-        s.radial = true;
-        s.radial_axis = SymmetryAxis::Y;
-        s.set_radial_count(4);
-    }
+    // Y 軸のまわりの回転対称 4 本
+    let id = common::rulers::symmetry_3d(
+        &mut h.state_mut().state,
+        DVec3::ZERO,
+        DVec3::X,
+        DVec3::Y,
+        4,
+        false,
+    );
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     click(&mut h, at);
     // 見える 2 面（手前と右）だけ。後ろと左は見えないので、知らせて飛ばす
@@ -301,8 +313,22 @@ fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() 
     assert_eq!(message(&h), "見えない対称の写しは飛ばしました");
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    h.state_mut().state.sel.symmetry.surface.ignore_visibility = true;
-    h.state_mut().state.message.clear();
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        let mut ruler = common::rulers::of(s, layer)
+            .into_iter()
+            .find(|r| r.id == id)
+            .unwrap();
+        ruler.see_through = true;
+        s.apply(Action::Ruler(RulerAction::Replace {
+            owner: layer,
+            ruler,
+            coalesce: false,
+        }));
+        s.message.clear();
+    }
+    let base = h.state().state.doc.undo_count();
     click(&mut h, at);
     assert_eq!(
         painted_islands(&h),
@@ -310,13 +336,14 @@ fn the_3d_radial_rotates_around_the_axis_and_skips_hidden_copies_unless_asked() 
         "見えない面の写しも塗る"
     );
     assert!(message(&h).is_empty(), "{}", message(&h));
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.state().state.doc.undo_count(), base + 1);
 }
 
 #[test]
 fn smudge_and_clone_do_not_start_with_the_3d_symmetry() {
     let (mut h, rect) = cube_view();
-    h.state_mut().state.sel.symmetry.surface.mirror = true;
+    common::rulers::mirror_3d(&mut h.state_mut().state, DVec3::ZERO, DVec3::X);
+    let base = h.state().state.doc.undo_count();
     for effect in [
         BrushEffect::Smudge { strength: 1.0 },
         BrushEffect::Clone {
@@ -345,39 +372,72 @@ fn smudge_and_clone_do_not_start_with_the_3d_symmetry() {
             "指先・クローンでは対称を使えません",
             "{effect:?}"
         );
-        assert!(!h.state().state.doc.can_undo() && !h.state().state.is_stroking());
+        assert!(h.state().state.doc.undo_count() == base && !h.state().state.is_stroking());
     }
 }
 
 #[test]
-fn the_symmetry_panel_offers_the_3d_items_beside_the_2d_ones() {
-    use egui_kittest::kittest::Queryable;
-    // 対称の欄は、ブラシの詳細のウィンドウの「対称」のカテゴリ
-    let (mut h, _rect) = cube_view();
-    open_detail(&mut h, yolu_app::brushes::Category::Symmetry);
-    // 3D のビューを出しているので、2D と 3D の両方の項目
+fn the_ruler_panel_offers_the_axis_center_and_hidden_surface_items_for_a_3d_symmetry_ruler() {
     use egui::accesskit::Role;
-    assert!(h
-        .query_by_role_and_label(Role::CheckBox, "ミラー")
-        .is_some());
-    assert!(h
-        .query_by_role_and_label(Role::CheckBox, "放射状")
-        .is_some());
-    assert!(
-        h.query_by_role_and_label(Role::Button, "放射状").is_some(),
-        "2D のモード"
-    );
-    h.get_by_role_and_label(Role::CheckBox, "ミラー").click();
+    use egui_kittest::kittest::Queryable;
+    // プロパティの欄が縦に収まる高さの画面に、試しの立方体を出す
+    let mut h = app(1470.0, 2400.0, SIZE);
+    h.state_mut().state.view3d.load_demo();
+    click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
-    assert!(h.state().state.sel.symmetry.surface.mirror);
-    assert!(
-        h.query_by_label("境界の中心").is_some(),
-        "ミラーを入れると軸と中心が出る"
+    // 立方体の境界の中心は原点。中心をずらした 3D の対称定規（線対称 6 本、回転の軸は X）を置く
+    let id = common::rulers::symmetry_3d(
+        &mut h.state_mut().state,
+        DVec3::new(0.2, 0.0, 0.0),
+        DVec3::Y,
+        DVec3::X,
+        6,
+        true,
     );
+    h.state_mut().state.ui.property_tab = 1;
+    h.run();
+    let layer = h.state().state.selected_layer.unwrap();
+    let ruler = |h: &Harness<'_, YoluApp>| {
+        common::rulers::of(&h.state().state, layer)
+            .into_iter()
+            .find(|r| r.id == id)
+            .unwrap()
+    };
+    // 軸 [X][Y][Z]、中心 [原点][境界の中心]、見えない面にも写す
+    // 3D ビューの軸の部品にも同じ名前があるので、右の列（プロパティ）のものを取る
+    let in_props = |h: &Harness<'_, YoluApp>, name: &str| -> Option<Rect> {
+        h.query_all_by_role_and_label(Role::Button, name)
+            .map(|n| n.rect())
+            .find(|r| r.left() > rx())
+    };
+    assert!(in_props(&h, "X").is_some());
+    let z = in_props(&h, "Z").expect("軸の Z");
+    click(&mut h, z.center());
+    match ruler(&h).place {
+        yolu_core::RulerPlace::Model { up, b, a } => {
+            assert!(
+                (up - DVec3::Z).length() < 1e-9,
+                "回転の軸が Z になる: {up:?}"
+            );
+            assert!(
+                ((b - a).normalize() - DVec3::X).length() < 1e-9,
+                "最初の線は次の軸"
+            );
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(h.query_by_label("境界の中心").is_some());
     h.get_by_label("境界の中心").click();
     h.run();
-    // 立方体の中心は原点
-    assert!(h.state().state.sel.symmetry.surface.offset.abs() < 1e-5);
+    let yolu_core::RulerPlace::Model { a, .. } = ruler(&h).place else {
+        panic!()
+    };
+    assert!(a.length() < 1e-5, "立方体の中心は原点: {a:?}");
+    assert!(!ruler(&h).see_through);
+    h.get_by_role_and_label(Role::CheckBox, "見えない面にも写す")
+        .click();
+    h.run();
+    assert!(ruler(&h).see_through);
     // 説明文は画面に出さない（ツールチップだけ）
     assert!(h.query_by_label_contains("をクリック").is_none());
 }
@@ -401,7 +461,7 @@ fn all_layers_makes_the_2d_clone_read_the_visible_composite_too() {
         offset: DVec2::new(-10.0, 0.0),
     };
     for all_layers in [false, true] {
-        app.view3d.clone.all_layers = all_layers;
+        app.clone.all_layers = all_layers;
         let mut stroke = app.begin_canvas_stroke(target, false, None).unwrap();
         stroke
             .add_point(&mut app.doc, 14.5, 4.5, 1.0, DVec2::ZERO)
@@ -536,12 +596,12 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     h.step();
     release_with(&h, source, Modifiers::ALT);
     h.run();
-    assert!(h.state().state.view3d.clone.source.is_some());
+    assert!(h.state().state.clone.source.is_some());
     open_detail(&mut h, yolu_app::brushes::Category::Effect);
     assert!(!disabled(&h, "揃える"));
     assert!(h.query_by_label("元を決めました").is_none());
     // マスクを描くあいだは、全レイヤーから読めない（描いているマスクだけを読む）ので、切った表示で薄い
-    h.state_mut().state.view3d.clone.all_layers = true;
+    h.state_mut().state.clone.all_layers = true;
     h.run();
     assert!(!disabled(&h, "全レイヤーから"));
     let layer = h.state().state.selected_layer.expect("レイヤー");
@@ -556,7 +616,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
         Some(egui::accesskit::Toggled::False)
     );
     assert!(
-        h.state().state.view3d.clone.all_layers,
+        h.state().state.clone.all_layers,
         "設定は変えない（マスクをやめれば戻る）"
     );
 }
@@ -621,10 +681,10 @@ fn the_global_pressure_adjustment_reaches_pen_strokes_in_the_3d_view() {
     );
 }
 
-/// 3D ビューで速く動かして、1 回の入力の区間が長くなっても（ドックの境をまたぐ時など）、描いていたストロークは消えない。入力ごと・
-/// フレームごとに決まった数までダブを塗り、残りを持ち越して後のフレームで塗る。同じ点の列は、1 フレームに 1 点ずつ（持ち越しを
-/// 塗り終えてから次の点）与えても、1 フレームにまとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間にウィンドウのフォーカスを
-/// 失っても、同じ画素の 1 本の線になる（終える時に持ち越しを塗ってから確定する）。
+/// 3D ビューで速く動かして、1 回の入力の区間が長くなっても（ドックの境をまたぐ時など）、描いていたストロークは消えない。入力は区間のダブを
+/// 並べるだけで、塗るのはフレームごとに時間の枠まで。同じ点の列は、1 フレームに 1 点ずつ（持ち越しを塗り終えてから次の点）与えても、1 フレームに
+/// まとめて与えても、離すのと同じフレームに与えても、持ち越しの残る間にウィンドウのフォーカスを失っても、同じ画素の 1 本の線になる（離したあとも
+/// 時間の枠で塗り続け、塗り終えたら確定する）。
 #[test]
 fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_in() {
     let corners = [
@@ -643,6 +703,10 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
         let (mut h, rect) = cube_view();
         h.state_mut().state.brush.radius = 2.0;
         h.state_mut().state.brush.spacing = 0.05;
+        // 持ち越しが残る前提の場合は、1 フレーム 1 ダブの枠（0）にする
+        if matches!(how, "one frame" | "focus lost") {
+            h.state_mut().state.view3d.input.paint_budget = Some(std::time::Duration::ZERO);
+        }
         let points: Vec<Pos2> = corners.iter().map(|c| screen_of(&h, rect, *c)).collect();
         let last = *points.last().unwrap();
         press_with(&h, points[0], Modifiers::NONE);
@@ -679,10 +743,7 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
                     .as_ref()
                     .unwrap()
                     .queued();
-                assert!(
-                    left > 0,
-                    "{how}: 試験の前提: 1 回の入力で塗る数を超えて持ち越した"
-                );
+                assert!(left > 0, "{how}: 試験の前提: 時間の枠を超えて持ち越した");
                 if how == "focus lost" {
                     h.event(Event::WindowFocused(false));
                 } else {
@@ -697,9 +758,16 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
             }
         }
         h.step();
+        // 離したあとも時間の枠で塗り続け、塗り終えたら確定する
+        let mut frames = 0;
+        while h.state().state.is_stroking() {
+            h.step();
+            frames += 1;
+            assert!(frames < 5000, "{how}: 確定しない");
+        }
         assert!(
             h.state().state.view3d.input.surface.is_none(),
-            "{how}: 離したら確定"
+            "{how}: 塗り終えたら確定"
         );
         h.run();
         assert!(message(&h).is_empty(), "{how}: {}", message(&h));
@@ -714,4 +782,71 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
         shots[3] == shots[0],
         "フォーカスを失っても、持ち越しを塗ってから確定"
     );
+}
+
+/// 3D ビューのマウスの速さの制御も、2D のキャンバスと同じく、1 フレームに来るイベントの数（マウスの報告の頻度）によらない（イベントごとの
+/// 時刻はフレームの間を等分する）。同じ速さで動かせば、1 フレーム 1・2・4 イベントで同じ絵になり、倍の速さなら絵が変わる。
+#[test]
+fn mouse_speed_in_3d_does_not_depend_on_how_many_events_arrive_per_frame() {
+    let (mut h, rect) = cube_view();
+    {
+        let s = &mut h.state_mut().state;
+        s.m2.random_seed = false;
+        s.brush.hardness = 1.0;
+        s.brush.radius = 8.0;
+        s.m2.brush.controls.speed_size = true;
+        // 3D の速さは画面の点 / 秒（1 フレーム 8 点・60 フレーム毎秒で 480）
+        s.m2.brush.controls.speed_max = 2000.0;
+    }
+    let ink = |h: &Harness<'_, YoluApp>| {
+        let bounds = h.state().state.doc.bounds();
+        h.state()
+            .state
+            .doc
+            .composite(bounds)
+            .unwrap()
+            .chunks(4)
+            .map(|p| p[3] as u64)
+            .sum::<u64>()
+    };
+    // 手前の面の中ほどを右へ、1 フレームに 8 点（画面の点）ずつ
+    let start = offset(screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5)), -56.0, 0.0);
+    let frames = 14;
+    let per_frame = 8.0;
+    let run = |h: &mut Harness<'_, YoluApp>, events: usize, speed: f32| {
+        let at = |i: usize| offset(start, speed * per_frame * i as f32 / events as f32, 0.0);
+        let frames = (frames as f32 / speed) as usize;
+        press(h, at(0), PointerButton::Primary);
+        h.step();
+        for frame in 0..frames {
+            // 1 フレームに複数のイベント（ハーネスの step は、待たせたイベントを 1 つずつ別のフレームにするので、直に入れる）
+            for e in 1..=events {
+                h.input_mut()
+                    .events
+                    .push(Event::PointerMoved(at(frame * events + e)));
+            }
+            h.step();
+        }
+        release(h, at(frames * events), PointerButton::Primary);
+        h.step();
+        h.run();
+        let v = ink(h);
+        h.state_mut().state.apply(yolu_app::state::Action::Undo);
+        h.run();
+        v
+    };
+    let one = run(&mut h, 1, 1.0);
+    let two = run(&mut h, 2, 1.0);
+    let four = run(&mut h, 4, 1.0);
+    assert!(one > 0);
+    for (name, v) in [("2", two), ("4", four)] {
+        let diff = (v as f64 - one as f64).abs() / one as f64;
+        assert!(
+            diff < 0.08,
+            "1 フレーム {name} イベントでも同じ速さ: {v} と {one}（{diff:.3}）"
+        );
+    }
+    // 速さは実際に効いている: 倍の速さで動かすと絵が変わる
+    let fast = run(&mut h, 1, 2.0);
+    assert!(fast != one, "{fast} != {one}");
 }

@@ -258,8 +258,12 @@ pub struct SubToolUi {
     pub reveal: bool,
     /// 前のフレームに描いたパネルの右端（ブラシの詳細のウィンドウを、その右に置く）。描いていなければ 0。
     pub panel_right: f32,
-    /// ツールプロパティの欄の、前のフレームの中身の高さ（ツールごと。ツールを替えた最初のフレームから、そのツールの高さで組み立てる）。
+    /// ツールプロパティのパネルの、前のフレームの中身の高さ（ツールごと。ツールを替えた最初のフレームから、そのツールの高さで組み立てる）。
     pub props_content: [f32; Tool::ALL.len()],
+    /// ツールプロパティのパネルのスクロール（ツールごと）。
+    pub props_scroll: [f32; Tool::ALL.len()],
+    /// ブラシサイズのパネルのスクロール。
+    pub sizes_scroll: f32,
 }
 
 /// サブツールの状態の全部。
@@ -1146,9 +1150,6 @@ mod tests {
             current: yolu_core::glam::DVec2::ZERO,
             shift: false,
             alt: false,
-            ruler: false,
-            original: None,
-            handle: 0,
         });
         assert!(app.is_stroking());
         app.apply(crate::state::Action::SubTool(SubToolAction::Select(

@@ -56,6 +56,29 @@ fn play(h: &mut Harness<'_, YoluApp>, events: Vec<Event>) -> Vec<ViewportCommand
     sent
 }
 
+/// 入力をグループごとに 1 フレームで渡し、そのフレームごとにウィンドウへ送った頼みを集める（winit は、ペン・指の接触の始まりの Touch と、その押しの代わりの入力を、
+/// 同じ入力のまとまりに入れる）。
+fn play_groups(h: &mut Harness<'_, YoluApp>, groups: Vec<Vec<Event>>) -> Vec<ViewportCommand> {
+    let mut sent = Vec::new();
+    for group in groups {
+        // `Harness::event` は 1 つごとに 1 フレーム進めるので、まとめて入れる
+        h.input_mut().events.extend(group);
+        h.step();
+        sent.extend(commands(h));
+    }
+    sent
+}
+
+/// ペン・指の押しと引き（離しまで）。
+fn touch_drag(at: Pos2, by: egui::Vec2) -> Vec<Vec<Event>> {
+    vec![
+        vec![touch_start(at), pointer(at), button(at, true)],
+        vec![pointer(at + by * 0.5)],
+        vec![pointer(at + by)],
+        vec![button(at + by, false)],
+    ]
+}
+
 fn pointer(at: Pos2) -> Event {
     Event::PointerMoved(at)
 }
@@ -246,6 +269,35 @@ fn without_the_custom_frame_the_bar_has_no_buttons_and_the_edges_do_nothing() {
     assert_eq!(count(&sent, starts_drag), 0, "{sent:?}");
     let sent = double_click(&mut h, empty);
     assert_eq!(count(&sent, toggles_maximized), 0, "{sent:?}");
+}
+
+/// 主のウィンドウの帯も同じ: ペン・指の押しの引きは OS の移動の輪（`StartDrag`）に渡さず、アプリの側で動かす。マウスの引きは今までどおり `StartDrag`（見張りに伝える）。
+#[test]
+fn a_pen_drag_on_the_empty_bar_is_moved_by_the_app_but_a_mouse_drag_still_starts_the_os_move() {
+    let mut h = windows_app(WIDTH, HEIGHT);
+    let mover = TestMover::new(true);
+    h.state_mut().set_pen_mover(Some(mover.clone()));
+    let empty = empty_bar_point(&h);
+    // ペン: 触れた入力と押しを同じ入力のまとまりに入れて、引く
+    let by = vec2(60.0, 20.0);
+    let sent = play_groups(&mut h, touch_drag(empty, by));
+    assert_eq!(mover.calls(), 1, "引き始めでアプリの手を 1 度呼ぶ");
+    assert_eq!(count(&sent, starts_drag), 0, "{sent:?}");
+    assert_eq!(mover.handed(), 0);
+    // 動かせなくても（点が途絶えた・指）、ペン・指の押しは輪に渡さない
+    mover.answer(false);
+    let sent = play_groups(&mut h, touch_drag(empty, by));
+    assert_eq!(mover.calls(), 2);
+    assert_eq!(count(&sent, starts_drag), 0, "{sent:?}");
+    // マウス: 手を呼ばず、StartDrag を出して見張りに伝える
+    let sent = press_and_drag(&mut h, empty, by);
+    assert_eq!(mover.calls(), 2);
+    assert_eq!(count(&sent, starts_drag), 1, "{sent:?}");
+    assert_eq!(mover.handed(), 1);
+    // 手の無い受け口（Windows 以外）は、ペンの接触でも今までどおり StartDrag
+    h.state_mut().set_pen_mover(None);
+    let sent = play_groups(&mut h, touch_drag(empty, by));
+    assert_eq!(count(&sent, starts_drag), 1, "{sent:?}");
 }
 
 /// ボタンは帯の右端に 3 つ並び、帯の下の線の上までの高さで、名前・印は左に収まる（細いウィンドウでも）。
@@ -593,7 +645,8 @@ fn pressing_a_window_edge_begins_a_resize_in_that_direction() {
 fn inside_the_edge_nothing_resizes_and_the_cursor_stays() {
     let mut h = windows_app(WIDTH, HEIGHT);
     for at in [
-        pos2(WIDTH - titlebar::EDGE - 2.0, HEIGHT / 2.0),
+        // （右の列の組の境目を避けた高さ）
+        pos2(WIDTH - titlebar::EDGE - 2.0, 250.0),
         pos2(titlebar::EDGE + 2.0, HEIGHT / 2.0),
         pos2(WIDTH / 2.0, HEIGHT - titlebar::EDGE - 2.0),
         pos2(WIDTH / 2.0, 300.0),
@@ -922,7 +975,7 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
 #[test]
 fn a_scroll_thumb_at_the_right_edge_keeps_its_press() {
     // 背の低いウィンドウで、右のパネルの欄があふれてつまみが出る
-    let mut h = windows_app(WIDTH, 330.0);
+    let mut h = windows_app(WIDTH, 400.0);
     h.run();
     let thumbs: Vec<Rect> = h
         .get_all_by_role(egui::accesskit::Role::ScrollBar)

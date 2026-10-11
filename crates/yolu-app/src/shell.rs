@@ -1,16 +1,13 @@
 //! ウィンドウの外枠（Unity 版の Shell）: メニューの中身、オプションバー（今のツールの設定を 1 行で）、ツールの帯、ステータスバー、
 //! キーの割り当て。
 
-use egui::{pos2, vec2, Modifiers, Rect, Sense, Ui};
+use egui::{pos2, vec2, Rect, Sense, Ui};
 
-use yolu_core::export::ExportTemplate;
-
-use crate::bake::BakeAction;
 use crate::export::ExportAction;
 use crate::lang::Lang;
-use crate::layerops::{lock_name, Xform, LOCK_FLAGS};
+use crate::layerops::{menu_lock_name, Xform, LOCK_FLAGS};
 use crate::livelink::LinkIndicator;
-use crate::m2::{Edit, UiOp};
+use crate::m2::Edit;
 use crate::pathtool::PathAction;
 use crate::psd::{PsdAction, PsdTarget};
 use crate::shelf::ShelfOp;
@@ -19,7 +16,6 @@ use crate::ui::menu::Entry;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
 use crate::update::UpdateAction;
-use crate::view3d::pose::PoseAction;
 
 /// メニューバーの見出し（日本語）。
 pub const MENU_TITLES: [&str; 8] = [
@@ -53,58 +49,52 @@ pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     ]
 }
 
-/// ファイルメニューの読み込み（PSD）と書き出し（テンプレートの画像・PSD）。
+/// ファイルメニューのインポート（入れ子のメニュー。PSD を新しいテクスチャセットに・今のテクスチャセットに）と書き出し（テクスチャを書き出す・PSD）。
+/// 見出しは置かず、インポートと書き出しは同じ組に並べる。
 fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     let free = !app.is_stroking();
     let l = app.lang;
-    let mut entries = vec![
-        Entry::Separator,
-        Entry::Heading(l.pick("読み込み", "Import").to_owned()),
-        Entry::item(
-            l.pick(
-                "PSD を新しいテクスチャセットへ…",
-                "PSD as a New Texture Set…",
-            ),
-            Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)),
+    vec![
+        Entry::submenu(
+            l.pick("インポート", "Import"),
+            vec![
+                Entry::item(
+                    l.pick(
+                        "PSD を新しいテクスチャセットに…",
+                        "PSD as a New Texture Set…",
+                    ),
+                    Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)),
+                )
+                .enabled(free),
+                Entry::item(
+                    l.pick(
+                        "PSD を今のテクスチャセットに…",
+                        "PSD into the Current Texture Set…",
+                    ),
+                    Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
+                )
+                .enabled(free && app.read_only_reason().is_none()),
+            ],
         )
         .enabled(free),
         Entry::item(
-            l.pick(
-                "PSD を今のセットの文書へ…",
-                "PSD as the Current Set's Document…",
-            ),
-            Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
+            l.pick("テクスチャを書き出す…", "Export Textures…"),
+            Action::Export(ExportAction::OpenWindow),
         )
-        .enabled(free && app.read_only_reason().is_none()),
-        Entry::Heading(l.pick("書き出し", "Export").to_owned()),
-        Entry::item(
-            l.pick("チャンネルを PNG…", "Channel as PNG…"),
-            Action::Export(ExportAction::ChannelDialog),
-        )
+        .command_key("file.export")
         .enabled(free),
         Entry::item(
-            l.pick("全チャンネルを画像に…", "All Channels as Images…"),
-            Action::Export(ExportAction::ChannelsDialog),
+            l.pick("PSD を書き出す…", "Export PSD…"),
+            Action::Psd(PsdAction::ExportDialog),
         )
         .enabled(free),
-    ];
-    for template in ExportTemplate::built_in() {
-        entries.push(
-            Entry::item(
-                format!("{}: {}…", l.pick("テンプレート", "Template"), template.name),
-                Action::Export(ExportAction::Template(template.id)),
-            )
-            .enabled(free),
-        );
-    }
-    entries.push(
-        Entry::item(l.pick("PSD…", "PSD…"), Action::Psd(PsdAction::ExportDialog)).enabled(free),
-    );
-    entries
+    ]
 }
 
 /// メニューバーの見出しの中身。
 pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
+    // 項目のキーの文字は、今のモードで効く行から（編集のモードの H は印を隠すので、表示を左右反転に H を添えない）
+    let _mode = crate::shortcuts::menu_mode(app.mode);
     let free = !app.is_stroking();
     // 保存の間は、プロジェクトを入れ替える・もう 1 度保存する・配布用に保存するは断る（描く・見るは止めない）
     let idle = free && !app.is_saving();
@@ -121,11 +111,11 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                     l.pick("新規プロジェクト…", "New Project…"),
                     Action::NewProjectDialog,
                 )
-                .shortcut("Ctrl+N")
+                .command_key("file.new_project")
                 .enabled(idle)),
                 why(
                     Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
-                        .shortcut("Ctrl+O")
+                        .command_key("file.open")
                         .enabled(idle),
                 ),
                 why(Entry::item(
@@ -135,19 +125,24 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 .enabled(idle && app.recovery.is_enabled())),
                 Entry::Separator,
                 why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
-                    .shortcut("Ctrl+S")
+                    .command_key("file.save")
                     .enabled(idle)),
                 why(Entry::item(
                     l.pick("別名で保存…", "Save As…"),
                     Action::SaveProjectAsDialog,
                 )
-                .shortcut("Ctrl+Shift+S")
+                .command_key("file.save_as")
                 .enabled(idle)),
                 why(Entry::item(
                     l.pick("配布用に保存…", "Save for Distribution…"),
                     Action::Distribute(crate::distribute::DistributeAction::Start),
                 )
                 .enabled(idle && !app.distribute.is_open() && !app.distribute.is_busy())),
+                Entry::Separator,
+            ];
+            // インポート・書き出し。そのあと、プロジェクト設定は Live Link のすぐ上
+            entries.extend(import_export_entries(app));
+            entries.extend([
                 Entry::Separator,
                 Entry::item(
                     l.pick("プロジェクト設定…", "Project Configuration…"),
@@ -157,29 +152,17 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::Separator,
                 Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
                 Entry::Separator,
-                Entry::item(l.pick("終了", "Quit"), Action::Quit).shortcut("Ctrl+Q"),
-            ];
-            // 読み込み・書き出しは Live Link の前の区切りの前に入れる
-            if let Some(at) = entries.iter().position(|e| {
-                matches!(
-                    e,
-                    Entry::Item {
-                        action: Action::ToggleLiveLink,
-                        ..
-                    }
-                )
-            }) {
-                entries.splice(at - 1..at - 1, import_export_entries(app));
-            }
+                Entry::item(l.pick("終了", "Quit"), Action::Quit).command_key("app.quit"),
+            ]);
             entries
         }
         1 => {
             let mut entries = vec![
                 Entry::item(l.pick("取り消し", "Undo"), Action::Undo)
-                    .shortcut("Ctrl+Z")
+                    .command_key("edit.undo")
                     .enabled(free && app.can_undo()),
                 Entry::item(l.pick("やり直し", "Redo"), Action::Redo)
-                    .shortcut("Ctrl+Shift+Z / Ctrl+Y")
+                    .command_key("edit.redo")
                     .enabled(free && app.can_redo()),
                 Entry::Separator,
             ];
@@ -189,7 +172,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             // ツールの項目は、名前もキーもツールの表（`tools`）のとおり（メニューにキーを重ねて書かない）
             let tool_entry = |tool: Tool| {
                 Entry::item(tool.name_in(l), Action::SelectTool(tool))
-                    .shortcut(tool.key())
+                    .command_key(crate::commands::tool_command(tool))
                     .radio(app.tool == tool)
             };
             entries.extend([
@@ -214,19 +197,19 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                     l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
                     Action::SwapColors,
                 )
-                .shortcut("X"),
+                .command_key("color.swap"),
                 Entry::item(
                     l.pick("初期設定の色", "Default Colors"),
                     Action::DefaultColors,
                 )
-                .shortcut("D"),
+                .command_key("color.default"),
                 // 設定は、Unity の Edit ▸ Preferences と同じく編集のメニューの一番下（区切りの後）
                 Entry::Separator,
                 Entry::item(
                     l.pick("設定…", "Settings…"),
                     Action::Prefs(crate::prefs::PrefsAction::Open),
                 )
-                .shortcut("Ctrl+,"),
+                .command_key("app.settings"),
             ]);
             entries
         }
@@ -237,54 +220,62 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         5 => vec![
             crate::uv_wireframe::menu_entry(app),
             crate::uv_wireframe::overlap::menu_entry(app),
-            Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn).shortcut("Ctrl++"),
-            Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut).shortcut("Ctrl+-"),
+            Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn)
+                .command_key("view.zoom_in"),
+            Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut)
+                .command_key("view.zoom_out"),
             Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
-                .shortcut("Ctrl+0")
+                .command_key("view.fit")
                 .enabled(free),
             Entry::Separator,
             Entry::item(
                 l.pick("表示を左に回す", "Rotate View Left"),
                 Action::RotateLeft,
             )
-            .shortcut("-")
+            .command_key("view.rotate_left")
             .enabled(free),
             Entry::item(
                 l.pick("表示を右に回す", "Rotate View Right"),
                 Action::RotateRight,
             )
-            .shortcut("^")
+            .command_key("view.rotate_right")
             .enabled(free),
             Entry::item(
                 l.pick("回転を戻す", "Reset Rotation"),
                 Action::ResetRotation,
             )
-            .shortcut("Shift+R")
+            .command_key("view.reset_rotation")
             .enabled(free && app.view.angle != 0.0),
-            Entry::item(
-                l.pick("定規にスナップ", "Snap to Ruler"),
-                Action::ToggleRulerSnap,
-            )
-            .shortcut("Ctrl+1")
-            .checked(app.drafting.snap)
-            .enabled(free),
             Entry::item(l.pick("表示を左右反転", "Flip View"), Action::FlipView)
-                .shortcut("H")
+                .command_key("view.flip")
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
-            // 試しの立方体・人形は試験の口（`Action::LoadDemoModel`・`PoseAction::LoadFigure`）で、メニューには置かない
             Entry::item(
-                l.pick("3D ビューに FBX を開く…", "Open an FBX in the 3D View…"),
-                Action::Pose(PoseAction::OpenFbx),
+                l.pick("定規にスナップ", "Snap to Ruler"),
+                Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler),
             )
+            .command_key("view.ruler_snap")
+            .checked(app.rulers.snap_ruler)
             .enabled(free),
             Entry::item(
-                l.pick("ポーズのモード", "Pose Mode"),
-                Action::Pose(PoseAction::ToggleMode),
+                l.pick("特殊定規にスナップ", "Snap to Special Ruler"),
+                Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial),
             )
-            .checked(app.view3d.pose.mode)
-            .enabled(free && app.view3d.pose.session.is_some()),
+            .command_key("view.special_ruler_snap")
+            .checked(app.rulers.snap_special)
+            .enabled(free),
+            Entry::item(
+                l.pick(
+                    "スナップする特殊定規の切り替え",
+                    "Switch the Snapping Special Ruler",
+                ),
+                Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
+            )
+            .command_key("view.switch_special_ruler")
+            .enabled(free),
+            Entry::Separator,
+            crate::mode::view_menu_entry(app),
             Entry::item(
                 l.pick(
                     "3D ビューでモデル全体を見る",
@@ -293,21 +284,6 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Action::FrameModel,
             )
             .enabled(free && app.view3d.model.is_some()),
-            Entry::item(
-                l.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
-                Action::Bake(BakeAction::OpenWindow),
-            ),
-            Entry::Separator,
-            Entry::Heading(l.pick("言語", "Language").to_owned()),
-            Entry::item(Lang::Ja.name(), Action::M2Ui(UiOp::Language(Lang::Ja)))
-                .radio(l == Lang::Ja),
-            Entry::item(Lang::En.name(), Action::M2Ui(UiOp::Language(Lang::En)))
-                .radio(l == Lang::En),
-            Entry::Separator,
-            Entry::item(
-                l.pick("筆圧の調整…", "Pen Pressure…"),
-                Action::Pressure(crate::pen::window::PressureAction::Open),
-            ),
         ],
         WINDOW_MENU => crate::detach::menu::window_entries(app),
         _ => help_entries(app),
@@ -323,7 +299,6 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     );
     if !app.update.enabled() {
         return vec![
-            crate::shortcuts::menu_entry(l),
             Entry::item(
                 l.pick("ログのフォルダを開く", "Open Log Folder"),
                 Action::OpenLogFolder,
@@ -347,28 +322,7 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(!busy),
     );
-    let on = app.update.preference() == crate::update::Preference::On;
-    entries.push(
-        Entry::item(
-            l.pick("起動時に更新を確かめる", "Check for Updates at Startup"),
-            Action::Update(UpdateAction::SetCheckOnStartup(!on)),
-        )
-        .checked(on),
-    );
-    let beta = app.update.beta();
-    entries.push(
-        Entry::item(
-            l.pick("試験版を使う", "Use Beta Versions"),
-            Action::Update(UpdateAction::SetBeta(!beta)),
-        )
-        .checked(beta)
-        .tooltip(l.pick(
-            "正式版より前の試験版も、更新の候補にします。切ると正式版だけを見ます",
-            "Also offers beta versions as updates. When off, only stable releases are offered",
-        )),
-    );
     entries.push(Entry::Separator);
-    entries.push(crate::shortcuts::menu_entry(l));
     entries.push(Entry::item(
         l.pick("ログのフォルダを開く", "Open Log Folder"),
         Action::OpenLogFolder,
@@ -446,6 +400,13 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
                     Action::ToggleSetVisible(uid),
                 ),
                 Entry::Separator,
+                // 下の帯のベイクのボタンは、帯が狭いと隠れる。ここからも開ける（ベイクのウィンドウで、焼くセットを選ぶ）
+                Entry::item(
+                    l.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
+                    Action::Bake(crate::bake::BakeAction::OpenWindow),
+                )
+                .command_key("bake.open"),
+                Entry::Separator,
                 Entry::item(
                     l.pick("消す…", "Remove…"),
                     Action::Project(crate::newproject::NpAction::RemoveSets(vec![uid])),
@@ -454,14 +415,20 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
+        PopupKind::RulerLayer(id) => crate::rulers::layer_icon::menu_entries(app, id),
         PopupKind::Shelf => crate::panels::assets::menu_entries(app),
         PopupKind::View3dShading => crate::view3d::display::entries(app),
-        PopupKind::Symmetry => crate::selection::menu::symmetry_menu(app),
         PopupKind::LiveLink => link_entries(app),
         PopupKind::BakeIsland {
             set, island, map, ..
         } => crate::bake::overlap::menu_entries(app, set, island, map),
         PopupKind::DockTab(tab) => crate::detach::menu::tab_entries(app, tab),
+        PopupKind::Mode => crate::mode::entries(app),
+        PopupKind::ToolKeyMode(command) => {
+            crate::shortcuts::editor::tool_mode_entries(app, command)
+        }
+        // パイと G/R/S は項目の並びでなく、自分で描く（`pie::show`・`objects::transform::show`）
+        PopupKind::Pie | PopupKind::Transform | PopupKind::KeyCapture => Vec::new(),
     }
 }
 
@@ -478,14 +445,14 @@ fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
     Entry::item(name, Action::M2(Edit::Transform(x))).enabled(free)
 }
 
-/// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・変形・表示・削除は選んだレイヤーの全部に効く）。
+/// レイヤーの右クリックのメニュー（複数選んでいれば、複製・グループ化・結合・ロック・表示・削除は選んだレイヤーの全部に効く）。
 fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action>> {
     layer_menu(app, Some(id))
 }
 
 /// 「レイヤー」のメニューの全体（メニューバーの「レイヤー」・レイヤーの右クリック・一覧の空白の右クリックが同じ関数を使う）。
 /// 並びは 足す（新規レイヤー・塗りつぶし ▸・調整 ▸）→ 効果（フィルター ▸・ジェネレーター ▸・アンカー）→ グループ → 複製・結合など →
-/// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 変形 → 名前・表示 → 順序・削除。選んだレイヤーが無い（`None`）ときは、レイヤーに要らない
+/// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 名前・表示 → 順序・削除（左右反転・回転は「編集」のメニュー）。選んだレイヤーが無い（`None`）ときは、レイヤーに要らない
 /// 先頭の足す項目とグループだけ。
 pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Entry<Action>> {
     use crate::m2::{self, UiOp};
@@ -518,21 +485,24 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(Entry::Separator);
     v.push(new_group);
     if group && !multi {
-        v.push(
-            Entry::item(
-                lang.pick("グループ解除", "Ungroup"),
-                Action::M2(Edit::Ungroup(id)),
-            )
-            .shortcut("Ctrl+Shift+G")
-            .enabled(free),
-        );
+        let ungroup = Entry::item(
+            lang.pick("グループ解除", "Ungroup"),
+            Action::M2(Edit::Ungroup(id)),
+        )
+        .enabled(free);
+        // Ctrl+Shift+G は選んでいるレイヤーのグループ解除なので、右クリックしたグループが選んでいるレイヤーと同じときだけ出す
+        v.push(if app.selected_layer == Some(id) {
+            ungroup.command_key("layer.ungroup")
+        } else {
+            ungroup
+        });
     } else {
         v.push(
             Entry::item(
                 lang.pick("レイヤーをグループ化", "Group Layers"),
                 Action::M2(Edit::GroupSelected),
             )
-            .shortcut("Ctrl+G")
+            .command_key("layer.group")
             .enabled(free && app.selected_layer == Some(id)),
         );
     }
@@ -546,7 +516,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(if app.doc.selection().is_some() {
         duplicate
     } else {
-        duplicate.shortcut("Ctrl+J")
+        duplicate.command_key("layer.duplicate")
     });
     // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと）
     let merge_label = if members.len() > 1 {
@@ -558,7 +528,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     };
     v.push(
         Entry::item(merge_label, Action::M2(Edit::MergeDown))
-            .shortcut("Ctrl+E")
+            .command_key("layer.merge_down")
             .enabled(free && app.selected_layer == Some(id)),
     );
     v.push(
@@ -566,7 +536,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             lang.pick("表示レイヤーを結合", "Merge Visible"),
             Action::M2(Edit::MergeVisible),
         )
-        .shortcut("Ctrl+Shift+E")
+        .command_key("layer.merge_visible")
         .enabled(free),
     );
     if layer.is_some_and(|l| l.path().is_some()) {
@@ -690,14 +660,13 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     // ロック（選んでいるレイヤーの全部に効く。持っているロックにチェック）
     let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
-    v.push(Entry::Heading(lang.pick("ロック", "Lock").to_owned()));
     for flag in LOCK_FLAGS {
         let own = targets
             .iter()
             .all(|t| app.doc.layer(*t).is_some_and(|l| l.locks().contains(flag)));
         v.push(
             Entry::item(
-                lock_name(lang, flag),
+                menu_lock_name(lang, flag),
                 Action::M2(Edit::Lock {
                     ids: targets.clone(),
                     flag,
@@ -707,20 +676,6 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             .checked(own)
             .enabled(free),
         );
-    }
-    v.push(Entry::Separator);
-    v.push(Entry::Heading(lang.pick("変形", "Transform").to_owned()));
-    for x in [
-        Xform::Flip { horizontal: true },
-        Xform::Flip { horizontal: false },
-        Xform::Rotate90 { clockwise: true },
-        Xform::Rotate90 { clockwise: false },
-    ] {
-        v.push(transform_entry(
-            lang,
-            x,
-            free && app.selected_layer == Some(id),
-        ));
     }
     v.push(Entry::Separator);
     v.push(Entry::item(lang.pick("名前を変更", "Rename"), Action::StartRename(id)).enabled(free));
@@ -777,6 +732,14 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
 
 /// キーの割り当て（文字を打っている間・メニューを開いている間は見ない。メニューは自分でキーを見る）。割り当ては `keymap` の表。
 pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
+    // ツールのキーを押している間だけの切り替え: 離したか、戻す条件が揃ったかを先に見る（下の早い戻りでも離しを見落とさない）
+    crate::toolkeys::update(ctx, app);
+    // ショートカットの設定で割り当てに使ったキーは、離すまで繰り返しの押しを表へ渡さない
+    crate::shortcuts::editor::swallow_held(ctx, app);
+    // メニューなどから頼まれたパイを、ポインタの所に開く。外から閉じられた G/R/S はそこまでで決め、頼まれた G/R/S を始める
+    crate::pie::open_requested(ctx, app);
+    crate::objects::transform::settle(app);
+    crate::objects::transform::start_requested(ctx, app);
     if ctx.egui_wants_keyboard_input()
         || app.popup.is_some()
         || app.sel.dialog.is_some()
@@ -786,6 +749,8 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         return;
     }
     let mut actions = Vec::new();
+    // ツールのキーのうち、押している間だけの動き方のもの（切り替えと離しの戻しは `toolkeys` が持つ）
+    let mut holds = Vec::new();
     // 移動・変形のツール: 矢印キーで 1 画素（Shift で 10）。ドラッグの途中・描いている間は動かさない。キャンバスのタブが後ろにあって
     // 見えていない（3D ビューなどが前）ときも動かさない（このフレームの前に描いていなければ後ろ。複数パスの同じフレームは前）
     let canvas_shown = app.ui.canvas_frame.is_some_and(|f| {
@@ -798,30 +763,49 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
         && !app.is_stroking()
         && app.transform.drag.is_none();
     let mut arrows: Vec<((f64, f64), bool)> = Vec::new();
+    // 右ボタンを押して 3D の視点を動かしている間は、W/A/S/D/Q/E を視点の移動に使う（ツールの切り替えなどの表のキーに渡さない）
+    let flying = crate::view3d::navigation::flying(app);
     ctx.input_mut(|i| {
-        // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）
-        actions.extend(crate::clipboard::keys::shortcut_actions(i, &mut app.clip));
+        // キーの段 1「途中の操作」: 右を押している間の W/A/S/D/Q/E は視点の移動（表の `Scope::During` の行。下の段へ渡さない）
+        crate::keymap::take_fly_keys(i, &mut app.view3d.input.fly_held, flying);
+        // ツールのキーを押している間の、そのキーの繰り返しの押し（修飾を先に離したあとも）は、表のほかの割り当てへ渡さない
+        crate::toolkeys::swallow_repeats(i, app);
+        // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）。画素を変えるカット・ペーストは、ペイントのモードだけ
+        let paints = app.mode.paints();
+        actions.extend(
+            crate::clipboard::keys::shortcut_actions(i, &mut app.clip)
+                .into_iter()
+                .filter(|a| {
+                    paints || !matches!(a, Action::Clip(c) if crate::keymap::changes_pixels(*c))
+                }),
+        );
         if arrows_move {
-            for (k, dir) in crate::keymap::MOVE_KEYS {
-                if i.consume_key(Modifiers::SHIFT, k) {
-                    arrows.push((dir, true));
-                } else if i.consume_key(Modifiers::NONE, k) {
-                    arrows.push((dir, false));
+            for nudge in crate::keymap::NUDGES {
+                if crate::keymap::consume_command(i, app, nudge.command) {
+                    arrows.push((nudge.direction, nudge.shift));
                 }
             }
         }
-        actions.extend(crate::keymap::dispatch(i, app));
-        // ^ はキーの位置が配列で違うので文字で見る（JIS の ^ のキー、US の Shift+6）
-        if i.events
-            .iter()
-            .any(|e| matches!(e, egui::Event::Text(s) if s == crate::keymap::ROTATE_RIGHT_TEXT))
-        {
-            actions.push(Action::RotateRight);
+        // キーの段 2〜4「場面」「モード」「どこでも」（判定の順は `keymap::Keymap::order`）。^ の文字の入力（キーの位置が配列で違う）も、表の行として判定に入る
+        for fired in crate::keymap::dispatch_fired(&crate::keymap::current(), i, app) {
+            if fired.mode == crate::toolkeys::ToolKeyMode::Tap {
+                actions.push(fired.action);
+            } else {
+                holds.push(fired);
+            }
         }
     });
     for a in actions {
         app.apply(a);
     }
+    for fired in holds {
+        crate::toolkeys::press(ctx, app, fired);
+    }
+    // 押したのと同じフレームで離していたら、ここで戻す条件を見る
+    crate::toolkeys::update(ctx, app);
+    // キーで開いたパイ（Ctrl+Tab など）は、そのキーを押している間に開く（押したまま離すと、指している項目を実行する）。G/R/S はポインタの所から始める
+    crate::pie::open_requested(ctx, app);
+    crate::objects::transform::start_requested(ctx, app);
     for (dir, shift) in arrows {
         crate::transform::canvas::arrow(app, dir, shift);
     }
@@ -832,7 +816,25 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::hline(&p, r.left(), r.right(), r.bottom() - 1.0, t::BORDER);
-    let mut x = r.left() + 8.0;
+    // 左端はモードのドロップダウン
+    let mut x = crate::mode::dropdown(ui, app, r, r.left() + 8.0) + 8.0;
+    w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
+    x += 4.0;
+    if !app.mode.paints() {
+        // 編集・ポーズ: 今のツールのアイコン（ツールの設定は無い）
+        w::icon(
+            &p,
+            Rect::from_min_size(pos2(x, r.top()), vec2(22.0, r.height())),
+            crate::mode::EditTool::shown(app).icon(),
+            t::TEXT,
+            20.0,
+        );
+        x += 30.0;
+        w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
+        // G/R/S のスナップ（常にする・刻み）
+        crate::mode::snap_options(ui, app, r, x);
+        return;
+    }
     w::icon(
         &p,
         Rect::from_min_size(pos2(x, r.top()), vec2(22.0, r.height())),
@@ -853,8 +855,18 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
     // ツールの列はツールの並び（`toolset`）のとおり（区切りはツールごとの「前に区切り」）。帯の下の端に付く 2 枚の色の分の高さを先に取る
     let bottom = r.bottom() - crate::panels::color_swatch::reserved_height();
-    crate::toolset::ui::strip(ui, app, r, bottom);
-    crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
+    if app.mode.paints() {
+        crate::toolset::ui::strip(ui, app, r, bottom);
+        crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
+    } else {
+        // 編集・ポーズ: 選択・移動・回転・拡縮。色の 2 枚は暗くして押せない
+        crate::mode::edit_strip(ui, app, r, bottom);
+        let area = crate::panels::color_swatch::area(r);
+        w::enabled_scope(ui, "mode.swatch", false, |ui| {
+            crate::panels::color_swatch::draw(ui, app, area)
+        });
+        crate::mode::dimmed_reason(ui, app, area, "swatch");
+    }
 }
 
 /// 直前の操作の結果と理由（`message`）。状態の帯の左には出さず、小さな知らせ（`toast`）が短く出して消す。試験が読む口はここ。

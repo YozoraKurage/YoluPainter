@@ -203,7 +203,7 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         };
         if document.is_none() && !in_base {
             return Err(RecoveryError::Project(yolu_io::Error::InvalidData(
-                format!("セット「{}」の元の文書がありません", set.name),
+                format!("セット「{}」の元の中身がありません", set.name),
             )));
         }
         specs.push(SetSpec {

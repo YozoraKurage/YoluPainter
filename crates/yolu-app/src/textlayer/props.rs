@@ -6,11 +6,13 @@
 use egui::{pos2, vec2, Rect, Ui};
 use yolu_core::text::{TextAlign, TextFont, TextSettings};
 
-use super::{font_label, Field, FontStatus, Pending, Target, TextAction};
+use super::{font_label, ColorSource, Field, FontStatus, Pending, Target, TextAction};
 use crate::lang::Lang;
 use crate::m2_menu::Popup;
 use crate::panels::color_window::{self, Pick};
-use crate::panels::properties::{choice_buttons, open_popup, section, status_row, ChoiceButton};
+use crate::panels::properties::{
+    choice_buttons, group_label, open_popup, section, status_row, ChoiceButton,
+};
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
 use crate::ui::theme as t;
@@ -289,8 +291,9 @@ fn font_row(
     response.clicked().then_some(b)
 }
 
-/// テキストの値の欄の行（ツールプロパティとレイヤーのプロパティで同じ）。
-pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool) {
+/// テキストの値の欄の行（ツールプロパティとレイヤーのプロパティで同じ。色だけ違う: `tool_props` ならツールの設定として、色の元（描画色・ツールの色）の
+/// 選びと、その色を見せる。レイヤーのプロパティはそのレイヤーの色を見せ、変えるとそのレイヤーだけが変わる）。
+pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, tool_props: bool) {
     let lang = app.lang;
     let target = app.text_target();
     let deferred = matches!(target, Target::Layer(_));
@@ -332,6 +335,9 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool) {
         set(app, Field::Size(v.round().max(1.0)));
     }
     // 色（押すと色のウィンドウ。ウィンドウのドラッグ 1 回を 1 回の取り消しにまとめる）
+    if tool_props {
+        color_source_rows(ui, app, rows);
+    }
     let row = rows.row(t::ROW_HEIGHT, 3.0);
     let label = Rect::from_min_size(row.min, vec2(80.0, row.height()));
     let name = lang.pick("色", "Color");
@@ -348,11 +354,25 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool) {
         pos2(row.left() + 84.0, row.top() + 1.0),
         pos2(row.right(), row.bottom() - 1.0),
     );
-    let c = value.color;
-    let window_target = match target {
-        Target::Layer(id) => egui::Id::new(("text.color", id.0)),
-        Target::Editing => egui::Id::new(("text.color.editing", app.doc.id())),
-        Target::Defaults => egui::Id::new("text.color.defaults"),
+    // ツールプロパティの色: 描画色なら描画色そのもの（変えるのは描画色。選んでいるテキストへは `text_follow_paint_color` が当てる）、
+    // ツールの色ならそのツールの色。レイヤーのプロパティはそのレイヤーの色
+    let source = tool_props.then_some(app.text.color_source);
+    let c = match source {
+        Some(ColorSource::PaintColor) => crate::matpaint::single_value(app.color.main),
+        Some(ColorSource::ToolColor) => app.text.defaults.color,
+        None => value.color,
+    };
+    let window_target = match (source, target) {
+        (Some(ColorSource::PaintColor), _) => egui::Id::new("text.color.paint"),
+        (Some(ColorSource::ToolColor), _) => egui::Id::new("text.color.tool"),
+        (None, Target::Layer(id)) => egui::Id::new(("text.color", id.0)),
+        (None, Target::Editing) => egui::Id::new(("text.color.editing", app.doc.id())),
+        (None, Target::Defaults) => egui::Id::new("text.color.defaults"),
+    };
+    let tip = match source {
+        Some(ColorSource::PaintColor) => lang.pick("描画色", "Paint Color"),
+        Some(ColorSource::ToolColor) => lang.pick("ツールの色", "Tool Color"),
+        None => lang.pick("文字の色と不透明度", "Text color and opacity"),
     };
     if let Some(u) = color_window::field(
         ui,
@@ -363,17 +383,24 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool) {
             rgb: [c.r, c.g, c.b],
             alpha: Some(c.a),
         },
-        lang.pick("文字の色と不透明度", "Text color and opacity"),
+        tip,
         enabled,
     ) {
         let [r, g, b] = u.pick.rgb;
         let next = yolu_core::Rgba8::new(r, g, b, u.pick.alpha.unwrap_or(c.a));
         if next != c {
-            app.apply(Action::Text(if u.dragging {
-                TextAction::Drag(Field::Color(next))
-            } else {
-                TextAction::Set(Field::Color(next))
-            }));
+            match source {
+                Some(ColorSource::PaintColor) => app.color.set_main(u.pick.floats()),
+                Some(ColorSource::ToolColor) => app.apply(Action::Text(TextAction::ToolColor {
+                    color: next,
+                    dragging: u.dragging,
+                })),
+                None => app.apply(Action::Text(if u.dragging {
+                    TextAction::Drag(Field::Color(next))
+                } else {
+                    TextAction::Set(Field::Color(next))
+                })),
+            }
         }
         if u.done {
             app.m2_end_drag();
@@ -462,10 +489,37 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool) {
     }
 }
 
+/// 「テキストの色」の見出しと、色の元（描画色・ツールの色）の選び。
+fn color_source_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
+    let lang = app.lang;
+    group_label(ui, rows, lang.pick("テキストの色", "Text Color"));
+    let sources = [ColorSource::PaintColor, ColorSource::ToolColor];
+    let items: Vec<ChoiceButton> = sources
+        .iter()
+        .map(|source| ChoiceButton {
+            id: match source {
+                ColorSource::PaintColor => "text.color.source.paint",
+                ColorSource::ToolColor => "text.color.source.tool",
+            },
+            label: match source {
+                ColorSource::PaintColor => lang.pick("描画色", "Paint Color"),
+                ColorSource::ToolColor => lang.pick("ツールの色", "Tool Color"),
+            },
+            selected: app.text.color_source == *source,
+            // 色の元は、ツールの設定（文書を変えない）なので、描いている間も替えられる
+            enabled: true,
+            tooltip: Some(lang.pick("テキストの色", "Text Color")),
+        })
+        .collect();
+    if let Some(i) = choice_buttons(ui, rows, &items) {
+        app.apply(Action::Text(TextAction::ColorSource(sources[i])));
+    }
+}
+
 /// ツールプロパティ（左のドック）: テキストの値の欄。
 pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     let enabled = app.can_edit();
-    fields(ui, app, rows, enabled);
+    fields(ui, app, rows, enabled, true);
 }
 
 /// レイヤーのプロパティの「テキスト」の節（テキストレイヤーを選んでいるとき）。
@@ -481,7 +535,7 @@ pub fn layer_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: 
         None,
     );
     if open {
-        fields(ui, app, rows, enabled);
+        fields(ui, app, rows, enabled, false);
     }
 }
 

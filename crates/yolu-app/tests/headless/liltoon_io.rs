@@ -192,6 +192,7 @@ fn the_liltoon_template_export_adds_the_slot_images() {
     s.apply(Action::Export(ExportAction::TemplateTo {
         id: "liltoon".into(),
         dir: dir.0.clone(),
+        sets: None,
     }));
     s.wait_export();
     let mut files: Vec<String> = std::fs::read_dir(&dir.0)

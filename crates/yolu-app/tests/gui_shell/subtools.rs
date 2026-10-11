@@ -1,6 +1,7 @@
-//! 左のドックの「サブツール」（今のツールのサブツールの一覧・ツールプロパティ・ブラシサイズを 1 か所に）と、それに合わせたオプションバー・右のプロパティ
-//! （egui_kittest）。サブツールのプリセットの状態の操作（画面を描かない）は `src/subtool` の単体試験、ブラシの一覧の操作は `brush_list.rs`・`brushes.rs`。
-//! 見た目の試験は、パネルの中だけを撮る（ほかのパネルの変更で壊れない）。
+//! 左のドックの「サブツール」（今のツールのサブツールの一覧）と、その下に縦に並ぶ「ツールプロパティ」「ブラシサイズ」（どれも別のパネル）、それに合わせた
+//! オプションバー・右のプロパティ（egui_kittest）。サブツールのプリセットの状態の操作（画面を描かない）は `src/subtool` の単体試験、ブラシの一覧の操作は
+//! `brush_list.rs`・`brushes.rs`、新しいパネルの並びと「塗るチャンネル」は `tool_panels.rs`。見た目の試験は、パネルの中だけを撮る
+//! （ほかのパネルの変更で壊れない）。
 use crate::common;
 
 use common::*;
@@ -99,7 +100,7 @@ fn row_selected(h: &H, label: &str) -> bool {
 
 #[test]
 fn the_sub_tool_panel_is_the_first_tab_of_the_left_dock_in_both_languages() {
-    let mut h = app(1600.0, 900.0, 128);
+    let h = app(1600.0, 900.0, 128);
     let tab = h.state().tab_rects[&Tab::SubTools];
     assert!(tab.left() < 340.0 && tab.top() < 80.0);
     assert!(
@@ -108,10 +109,27 @@ fn the_sub_tool_panel_is_the_first_tab_of_the_left_dock_in_both_languages() {
     );
     assert_eq!(Tab::SubTools.title_in(Lang::Ja), "サブツール");
     assert_eq!(Tab::SubTools.title_in(Lang::En), "Tools");
-    // 日本語: ツールプロパティ・ブラシサイズ（ブラシ）
-    assert!(count(&h, "ツールプロパティ") == 1 && count(&h, "ブラシサイズ") == 1);
-    language(&mut h, Lang::En);
-    assert!(count(&h, "Tool Properties") == 1 && count(&h, "Brush Size") == 1);
+    // ツールプロパティとブラシサイズは別のタブで、サブツールの下に縦に並ぶ（その下がカラー）
+    assert_eq!(Tab::ToolProperties.title_in(Lang::Ja), "ツールプロパティ");
+    assert_eq!(Tab::ToolProperties.title_in(Lang::En), "Tool Properties");
+    assert_eq!(Tab::BrushSize.title_in(Lang::Ja), "ブラシサイズ");
+    assert_eq!(Tab::BrushSize.title_in(Lang::En), "Brush Size");
+    let column: Vec<Rect> = [
+        Tab::SubTools,
+        Tab::ToolProperties,
+        Tab::BrushSize,
+        Tab::Color,
+    ]
+    .iter()
+    .map(|t| h.state().tab_rects[t])
+    .collect();
+    for pair in column.windows(2) {
+        assert!(pair[0].top() < pair[1].top(), "上から順: {column:?}");
+        assert!(
+            (pair[0].left() - pair[1].left()).abs() < 2.0,
+            "同じ列: {column:?}"
+        );
+    }
 }
 
 // ───────── 一覧 ─────────
@@ -120,7 +138,8 @@ fn the_sub_tool_panel_is_the_first_tab_of_the_left_dock_in_both_languages() {
 fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages() {
     for lang in Lang::ALL {
         for tool in Tool::ALL {
-            let mut h = app(1280.0, 800.0, 128);
+            // （一覧の行が全部入る高さで）
+            let mut h = app(1280.0, 1400.0, 128);
             language(&mut h, lang);
             pick(&mut h, tool);
             match tool.def().subtools {
@@ -185,7 +204,8 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
 
 #[test]
 fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
-    let mut h = app(1280.0, 800.0, 128);
+    // （一覧の行が全部入る高さで）
+    let mut h = app(1280.0, 1400.0, 128);
     pick(&mut h, Tool::SelectRect);
     for tool in SELECTION_TOOLS {
         click_row(&mut h, tool.name_in(Lang::Ja));
@@ -202,7 +222,7 @@ fn the_selection_tool_rows_switch_the_tool_and_keep_the_same_list() {
 
 #[test]
 fn the_preset_rows_set_each_tools_settings_and_the_bar_follows_the_row() {
-    let mut h = app(1280.0, 900.0, 128);
+    let mut h = app(1280.0, 1300.0, 128);
     let steps = st(&h).doc.undo_count();
     // バケツ: 近い色（許容がバーにも出る）→ 三角形
     pick(&mut h, Tool::Fill);
@@ -235,11 +255,16 @@ fn the_preset_rows_set_each_tools_settings_and_the_bar_follows_the_row() {
     assert_eq!(st(&h).drafting.figure, yolu_app::drafting::Figure::Ellipse);
     pick(&mut h, Tool::Ruler);
     click_row(&mut h, "パース（2 点）");
-    assert_eq!(
-        st(&h).drafting.ruler_kind,
-        yolu_app::drafting::RulerKind::Perspective
-    );
-    assert!(st(&h).drafting.two_points);
+    assert_eq!(st(&h).rulers.kind, yolu_core::RulerKind::Perspective);
+    assert!(st(&h).rulers.two_points);
+    // 対称定規（線対称・2 本）と回転対称（6 本）
+    click_row(&mut h, "回転対称");
+    assert_eq!(st(&h).rulers.kind, yolu_core::RulerKind::Symmetry);
+    assert!(!st(&h).rulers.line_symmetry);
+    assert_eq!(st(&h).rulers.lines, 6);
+    click_row(&mut h, "対称定規");
+    assert!(st(&h).rulers.line_symmetry);
+    assert_eq!(st(&h).rulers.lines, 2);
     // スポイト
     pick(&mut h, Tool::Eyedropper);
     click_row(&mut h, "全レイヤー");
@@ -290,27 +315,48 @@ fn changing_a_setting_in_the_bar_moves_the_mark_to_the_matching_sub_tool() {
 }
 
 #[test]
-fn the_brush_and_eraser_bars_show_the_ruler_snap_and_the_button_toggles_it() {
+fn the_brush_and_eraser_bars_show_the_two_ruler_snaps_and_the_buttons_toggle_them() {
     for lang in Lang::ALL {
         for tool in [Tool::Brush, Tool::Eraser] {
             let mut h = app(1280.0, 800.0, 128);
             language(&mut h, lang);
             pick(&mut h, tool);
-            let label = lang.pick("定規にスナップ（Ctrl+1）", "Snap to Ruler (Ctrl+1)");
-            assert!(!st(&h).drafting.snap);
-            let at = bar_rect(&h, label).center();
-            click(&mut h, at);
-            assert!(st(&h).drafting.snap, "{lang:?} {tool:?}");
-            // 状態がバーに見える（押した状態の印）
-            let node = h.query_all_by_label(label).next().unwrap();
-            assert_eq!(
-                node.accesskit_node().toggled(),
-                Some(egui::accesskit::Toggled::True),
-                "{lang:?} {tool:?}"
-            );
-            let at = bar_rect(&h, label).center();
-            click(&mut h, at);
-            assert!(!st(&h).drafting.snap, "{lang:?} {tool:?}");
+            for (label, special) in [
+                (
+                    lang.pick("定規にスナップ（Ctrl+1）", "Snap to Ruler (Ctrl+1)"),
+                    false,
+                ),
+                (
+                    lang.pick(
+                        "特殊定規にスナップ（Ctrl+2）",
+                        "Snap to Special Ruler (Ctrl+2)",
+                    ),
+                    true,
+                ),
+            ] {
+                let on = |h: &H| {
+                    let r = &st(h).rulers;
+                    if special {
+                        r.snap_special
+                    } else {
+                        r.snap_ruler
+                    }
+                };
+                assert!(on(&h), "{lang:?} {tool:?} {label}: 既定は入");
+                // 状態がバーに見える（押した状態の印）
+                let node = h.query_all_by_label(label).next().unwrap();
+                assert_eq!(
+                    node.accesskit_node().toggled(),
+                    Some(egui::accesskit::Toggled::True),
+                    "{lang:?} {tool:?} {label}"
+                );
+                let at = bar_rect(&h, label).center();
+                click(&mut h, at);
+                assert!(!on(&h), "{lang:?} {tool:?} {label}");
+                let at = bar_rect(&h, label).center();
+                click(&mut h, at);
+                assert!(on(&h), "{lang:?} {tool:?} {label}");
+            }
         }
     }
 }
@@ -338,7 +384,8 @@ fn a_changed_setting_marks_the_row_as_modified_and_the_footer_reverts_it() {
 
 #[test]
 fn pressing_the_current_row_again_or_double_clicking_it_keeps_the_settings_changed_since() {
-    let mut h = app(1280.0, 900.0, 128);
+    // （足した行まで入る高さで）
+    let mut h = app(1280.0, 1400.0, 128);
     pick(&mut h, Tool::Fill);
     click_row(&mut h, "近い色");
     let similar = PresetKey::Builtin("similar-colors");
@@ -405,7 +452,7 @@ fn the_footer_adds_duplicates_and_deletes_user_sub_tools_and_each_step_is_saved(
     let dir = std::env::temp_dir().join(format!("yolu-subtools-ui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     crate::common::tmp::clean_up_after_test(&dir);
-    let mut h = app(1280.0, 900.0, 128);
+    let mut h = app(1280.0, 1300.0, 128);
     h.state_mut().state.attach_subtool_store(dir.clone());
     pick(&mut h, Tool::Fill);
     h.state_mut().state.region.tolerance = 77;
@@ -585,10 +632,7 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
     again
         .state
         .apply(Action::SubTool(SubToolAction::Select(Tool::Ruler, key)));
-    assert_eq!(
-        again.state.drafting.ruler_kind,
-        yolu_app::drafting::RulerKind::Concentric
-    );
+    assert_eq!(again.state.rulers.kind, yolu_core::RulerKind::Concentric);
     // 壊れたファイルは、起動の知らせに出る（ほかのツールの保存は読む）
     std::fs::write(dir.join("subtools").join("gradient.ylsubtool"), "x").unwrap();
     let broken = YoluApp::for_context_with_settings(&ctx, Some(settings), PenInput::detached());
@@ -670,16 +714,46 @@ fn the_option_bar_and_the_tool_properties_show_the_same_values() {
 }
 
 #[test]
-fn the_brush_size_section_is_only_for_tools_with_a_size() {
+fn the_brush_size_panel_is_empty_for_tools_without_a_size() {
     for tool in Tool::ALL {
-        let mut h = app(1280.0, 900.0, 128);
+        // （丸が 2 段とも入る高さで）
+        let mut h = app(1280.0, 1100.0, 128);
         pick(&mut h, tool);
-        assert_eq!(
-            count(&h, "ブラシサイズ"),
-            usize::from(tool.is_sized()),
+        // どのツールでもタブはあるが、丸（「16 px」など）は大きさを持つツールだけ
+        assert!(
+            h.state().tab_rects.contains_key(&Tab::BrushSize),
             "{tool:?}"
         );
-        assert_eq!(count(&h, "ツールプロパティ"), 1, "{tool:?}");
+        assert_eq!(count(&h, "16 px"), usize::from(tool.is_sized()), "{tool:?}");
+        // ツールプロパティの中身（タブの帯の下から、ブラシサイズの上まで）に描いた文字: 「ツールプロパティ」の見出しの帯は無く（タブの名前だけ）、
+        // 設定のあるブラシでは中身の文字が出ている
+        let (bar, size) = (
+            h.state().tab_rects[&Tab::ToolProperties],
+            h.state().tab_rects[&Tab::BrushSize],
+        );
+        let mut texts = Vec::new();
+        fn collect(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                egui::Shape::Text(t) => out.push((t.galley.job.text.clone(), t.pos)),
+                _ => {}
+            }
+        }
+        for shape in &h.output().shapes {
+            collect(&shape.shape, &mut texts);
+        }
+        let body: Vec<&str> = texts
+            .iter()
+            .filter(|(_, p)| p.x < bar.right() && p.y > bar.bottom() && p.y < size.top())
+            .map(|(t, _)| t.as_str())
+            .collect();
+        assert!(
+            !body.contains(&"ツールプロパティ"),
+            "{tool:?}: ツールプロパティはタブの名前だけ（見出しの帯は無い） {body:?}"
+        );
+        if tool == Tool::Brush {
+            assert!(!body.is_empty(), "{tool:?}: 中身が出ている");
+        }
     }
     assert!(Tool::Brush.is_sized() && Tool::Eraser.is_sized() && Tool::SelectPen.is_sized());
     assert!(!Tool::Fill.is_sized() && !Tool::Wand.is_sized() && !Tool::Liquify.is_sized());
@@ -688,8 +762,9 @@ fn the_brush_size_section_is_only_for_tools_with_a_size() {
 #[test]
 fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_properties() {
     let mut h = app(1600.0, 1000.0, 128);
-    // 右のプロパティ（ステンシル・マテリアル・レイヤーのタブ）の中身は、ツールによらない
-    let right = |r: Rect| r.left() > 1300.0 && r.top() > 560.0;
+    // 右のプロパティ（ステンシル・レイヤーのタブ）の中身は、ツールによらない
+    let props_tab = h.state().tab_rects[&Tab::Properties];
+    let right = move |r: Rect| r.left() > props_tab.left() - 2.0 && r.top() > props_tab.top();
     let fingerprint = |h: &H| -> Vec<String> {
         let mut found: Vec<(i32, i32, String)> = h
             .root()
@@ -705,7 +780,7 @@ fn every_tool_has_its_settings_in_the_tool_properties_and_none_in_the_right_prop
     };
     let base = fingerprint(&h);
     assert!(
-        base.iter().any(|l| l == "ステンシル") && base.iter().any(|l| l == "マテリアル"),
+        base.iter().any(|l| l == "ステンシル") && base.iter().any(|l| l == "レイヤー"),
         "{base:?}"
     );
     for tool in Tool::ALL {
@@ -815,12 +890,14 @@ fn the_panel_and_the_bar_of_every_tool_fit_the_smallest_window_in_both_languages
             yolu_app::ui::widgets::record_truncations(false);
             let (texts, clipped) = drawn(&h);
             assert!(clipped.is_empty(), "{what}: 切れた文字 {clipped:#?}");
-            // ツールの名前・値は詰めない（一覧の行・ツールプロパティ・バー）。詰められたのは、ブラシの名前（水彩の縁）など長い固有の名前だけ
+            // ツールの名前・値は詰めない（一覧の行・ツールプロパティ・バー）。詰められたのは、ブラシの名前（水彩の縁）など長い固有の名前と、
+            // 最小のウィンドウのツールプロパティの組（テキストの設定が入りきらず、スクロールの帯が幅を取る）のフォントの名前だけ
             for t in &truncated {
                 assert!(
                     t == "Watercolor Edge"
                         || t.starts_with("Texture Set")
-                        || t == "テクスチャセット 1",
+                        || t == "テクスチャセット 1"
+                        || (tool == Tool::Text && t.starts_with("BIZ UDP")),
                     "{what}: 「…」に詰められた {t}"
                 );
             }
@@ -839,8 +916,7 @@ fn the_panel_and_the_bar_of_every_tool_fit_the_smallest_window_in_both_languages
 }
 
 #[test]
-fn nothing_in_the_panel_is_clipped_with_the_modify_selection_and_path_blocks_open_at_the_smallest_window(
-) {
+fn nothing_in_the_selection_panel_is_clipped_at_the_smallest_window() {
     for lang in Lang::ALL {
         let mut h = app(960.0, 640.0, 128);
         language(&mut h, lang);
@@ -855,7 +931,7 @@ fn nothing_in_the_panel_is_clipped_with_the_modify_selection_and_path_blocks_ope
         assert!(clipped.is_empty(), "{lang:?}: {clipped:#?}");
         // スクロールしても（下のほうの行）切れない
         for scroll in [80.0, 160.0, 320.0] {
-            h.state_mut().state.brushes.ui.panel_scroll = scroll;
+            h.state_mut().state.subtools.ui.props_scroll[Tool::SelectRect as usize] = scroll;
             h.run();
             let (_, clipped) = drawn(&h);
             assert!(clipped.is_empty(), "{lang:?} {scroll}: {clipped:#?}");
@@ -896,6 +972,11 @@ fn switching_tools_with_keys_changes_the_list_and_the_selection_of_each_tool_sta
 
 /// パネルの全体の画像（タブの帯から、下のカラーのパネルの上まで）を撮って、正解の絵と比べる。
 fn shot(h: &mut H, name: &str) {
+    shot_width(h, name, 300.0);
+}
+
+/// `shot` の、横幅（点）を決める版（狭い列の絵）。
+fn shot_width(h: &mut H, name: &str, width: f32) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(Event::PointerGone);
     h.step();
@@ -903,7 +984,7 @@ fn shot(h: &mut H, name: &str) {
     let color = h.state().tab_rects[&Tab::Color];
     let rect = Rect::from_min_max(
         pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + 300.0, color.top()),
+        pos2(tab.left() + width, color.top()),
     );
     let image = h.render().expect("描画");
     let cropped = image::imageops::crop_imm(
@@ -936,5 +1017,58 @@ fn snapshots_of_the_sub_tool_panel_for_the_bucket_the_selection_and_the_liquify_
             }
             shot(&mut h, &format!("subtools_{label}_{name}"));
         }
+    }
+}
+
+#[test]
+fn snapshots_of_the_selection_tool_properties_the_four_modes_the_narrow_column_and_the_selection_pen(
+) {
+    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
+        let mut h = app(1280.0, 800.0, 128);
+        language(&mut h, lang);
+        h.state_mut().state.sel.animate = false;
+        pick(&mut h, Tool::SelectRect);
+        shot(&mut h, &format!("selection_props_{name}"));
+        // 選択ペン（選択ペンと選択消しの 2 つ）
+        pick(&mut h, Tool::SelectPen);
+        shot(&mut h, &format!("selection_pen_props_{name}"));
+    }
+    // 「⋯」で 4 つ開いた所
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.sel.animate = false;
+    pick(&mut h, Tool::SelectRect);
+    h.state_mut()
+        .state
+        .apply(Action::Sel(yolu_app::selection::SelAction::Ui(
+            yolu_app::selection::SelUiOp::AllModes(true),
+        )));
+    h.run();
+    shot(&mut h, "selection_props_all_modes");
+    // 共通を選んでいる所（畳む設定でも 4 つ。「⋯」は点いたまま押せない）
+    let mut h = app(1280.0, 800.0, 128);
+    h.state_mut().state.sel.animate = false;
+    pick(&mut h, Tool::SelectRect);
+    h.state_mut()
+        .state
+        .apply(Action::Sel(yolu_app::selection::SelAction::Ui(
+            yolu_app::selection::SelUiOp::Combine(yolu_app::engine::SelectionCombine::Intersect),
+        )));
+    h.run();
+    shot(&mut h, "selection_props_intersect");
+    // 狭い列: 名前を外してアイコンだけにする（英語は名前が長い）
+    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
+        let mut h = app(1000.0, 640.0, 128);
+        language(&mut h, lang);
+        h.state_mut().state.sel.animate = false;
+        let mut dock = egui_dock::DockState::new(vec![Tab::Canvas]);
+        let surface = dock.main_surface_mut();
+        let [_, left] = surface.split_left(egui_dock::NodeIndex::root(), 0.17, vec![Tab::SubTools]);
+        let [_, props] = surface.split_below(left, 0.3, vec![Tab::ToolProperties]);
+        surface.split_below(props, 0.8, vec![Tab::Color]);
+        h.state_mut().dock = dock;
+        pick(&mut h, Tool::SelectRect);
+        shot_width(&mut h, &format!("selection_props_narrow_{name}"), 172.0);
+        pick(&mut h, Tool::SelectPen);
+        shot_width(&mut h, &format!("selection_pen_props_narrow_{name}"), 172.0);
     }
 }

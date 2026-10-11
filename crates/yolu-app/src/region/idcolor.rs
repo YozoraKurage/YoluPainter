@@ -357,7 +357,11 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     }
     let tolerance = app.region.id_tolerance;
     // 組み合わせ方は選択のツールと同じ（キーの修飾が無ければ、オプションバーで選んだ方）
-    let mode = combine_of(app.sel.combine, app.region.modifiers);
+    let mode = combine_of(
+        app.sel.combine,
+        egui::PointerButton::Primary,
+        app.region.modifiers,
+    );
     let mask = match SelectionMask::from_id_colors(&app.doc, &map, &[rgb], tolerance) {
         Ok(m) => m,
         Err(e) => {
@@ -476,18 +480,36 @@ pub fn parse_rgb(s: &str) -> Option<u32> {
     })
 }
 
-/// 手動の ID の色の状態（個数と、.ylp に保存できないこと。短い 2 行）。
-pub fn manual_state_lines(lang: Lang, count: usize) -> Option<[String; 2]> {
+/// 手動の ID の色の状態（個数。色は文書の状態で、.ylp に保存される）。
+pub fn manual_state_line(lang: Lang, count: usize) -> Option<String> {
     (count > 0).then(|| {
-        [
-            lang.pick(
-                format!("手動の色 {count} 個"),
-                format!("{count} manual colors"),
-            ),
-            lang.pick(
-                "いまは .ylp に保存できません".to_owned(),
-                "Cannot be saved to .ylp yet".to_owned(),
-            ),
-        ]
+        lang.pick(
+            format!("手動の色 {count} 個"),
+            format!("{count} manual color{}", if count == 1 { "" } else { "s" }),
+        )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 手動の ID の色は .ylp に保存できる（正本の版 19 の塊）ので、状態の行は個数だけを言う。色が無ければ行も無い。
+    #[test]
+    fn the_manual_color_state_is_the_count_only() {
+        assert_eq!(manual_state_line(Lang::Ja, 0), None);
+        assert_eq!(manual_state_line(Lang::En, 0), None);
+        assert_eq!(
+            manual_state_line(Lang::Ja, 3).as_deref(),
+            Some("手動の色 3 個")
+        );
+        assert_eq!(
+            manual_state_line(Lang::En, 3).as_deref(),
+            Some("3 manual colors")
+        );
+        assert_eq!(
+            manual_state_line(Lang::En, 1).as_deref(),
+            Some("1 manual color")
+        );
+    }
 }

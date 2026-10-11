@@ -231,7 +231,7 @@ fn a_result_is_discarded_when_the_document_was_replaced() {
     s.doc = doc; // 同じ大きさでも別の文書
     s.wait_bake();
     assert!(s.sets.current().mesh_maps.is_empty());
-    assert!(s.message.contains("文書"), "{}", s.message);
+    assert!(s.message.contains("キャンバス"), "{}", s.message);
 }
 
 #[test]
@@ -864,6 +864,97 @@ fn the_window_builds_the_input_in_another_thread_and_waits_for_the_latest_model(
     assert!(!s.bake.is_checking());
 }
 
+/// 焼いたマップのある 2 枚の板の状態（ウィンドウは閉じている）から、.ylp を開き直してモデルを読み終えた状態にする: モデルは作り直され（入力は前の形のまま）、
+/// 照合し直しの印が付く。
+fn reopened_with_maps() -> AppState {
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
+    quick(&mut s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(!s.sets.current().mesh_maps.is_empty());
+    s.release_idle_bake_input();
+    assert!(s.bake.input.is_some(), "焼いたマップがあるので入力は残る");
+    lift(&mut s, 0.3);
+    s.expect_reopen_check();
+    s
+}
+
+/// 画面の毎フレーム（入力を求める → 使わない入力を手放す）。
+fn one_frame(s: &mut AppState) {
+    let _ = s.bake_input_nowait();
+    s.release_idle_bake_input();
+}
+
+#[test]
+fn the_reopen_check_keeps_the_building_input_until_it_arrives_and_then_lets_go() {
+    let mut s = reopened_with_maps();
+    assert!(s.bake.window.is_none());
+    // ウィンドウが閉じていても、読み終えたモデルの入力ができるまで作りかけを手放さない
+    let start = Instant::now();
+    while s.bake.reopen_check.is_some() {
+        one_frame(&mut s);
+        assert!(start.elapsed().as_secs() < 120, "入力ができない");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    let model = s.view3d.full_model().unwrap().clone();
+    assert!(
+        s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)),
+        "読み終えたモデルの入力ができている"
+    );
+    assert_eq!(
+        s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
+        MeshMapState::Stale,
+        "焼いたあとに形を替えたので、本当に古い"
+    );
+    // 済んだら今までどおり: ポーズ（モデルの作り直し）は追わず、作りかけは手放す
+    lift(&mut s, 0.6);
+    one_frame(&mut s);
+    assert!(!s.bake.is_checking(), "作りかけを持ち続けない");
+    assert!(
+        s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)),
+        "前の入力のまま"
+    );
+}
+
+#[test]
+fn the_reopen_check_does_not_follow_a_model_that_changes_before_the_input_arrives() {
+    let mut s = reopened_with_maps();
+    assert!(s.bake_input_nowait().is_none());
+    assert!(s.bake.is_checking());
+    // 照合するモデルから替わった（ポーズを付けた・差し替えた）: 追わずに手放す
+    lift(&mut s, 0.6);
+    s.release_idle_bake_input();
+    assert!(s.bake.reopen_check.is_none());
+    assert!(!s.bake.is_checking());
+}
+
+#[test]
+fn the_reopen_check_is_for_a_project_with_baked_maps_and_a_loaded_model_only() {
+    // 試しの立方体は読み終えたモデルではない
+    let mut s = cube();
+    s.expect_reopen_check();
+    assert!(s.bake.reopen_check.is_none());
+    // 焼いたマップが無ければ、印は最初のフレームで外れる
+    let mut t = AppState::new(64, 64);
+    t.bake.backend = BakeBackend::Cpu;
+    let _ = t.receive_link_model(&two_quads(1, 0.0));
+    t.expect_reopen_check();
+    assert!(t.bake.reopen_check.is_some());
+    assert!(t.bake_input_nowait().is_none());
+    t.release_idle_bake_input();
+    assert!(t.bake.reopen_check.is_none());
+    assert!(!t.bake.is_checking(), "マップが無ければ作りかけも手放す");
+    // 別のプロジェクトになったら無効
+    let mut u = reopened_with_maps();
+    assert!(u.bake_input_nowait().is_none());
+    u.np.generation += 1;
+    u.release_idle_bake_input();
+    assert!(u.bake.reopen_check.is_none());
+    assert!(!u.bake.is_checking());
+}
+
 #[test]
 fn a_failed_input_is_remembered_and_shown_as_the_reason() {
     use crate::view3d::model::ViewModel;
@@ -979,6 +1070,7 @@ fn stats(method: GpuBakeMethod) -> yolu_gpu::GpuBakeStats {
         input_bytes: 0,
         band_bytes: 0,
         ray_query_note: None,
+        ray_query_why: None,
     }
 }
 
@@ -1297,6 +1389,113 @@ fn canceling_a_cpu_bake_while_it_runs_leaves_the_record_of_the_maps_that_stay() 
 }
 
 #[test]
+fn the_ray_query_setting_reaches_the_device_and_a_change_forgets_the_gpu_check() {
+    let s = AppState::new(64, 64);
+    // 既定は入（環境変数が切にしているときは、設定が入でも切のまま）
+    let allowed = yolu_gpu::GpuBakeOptions::default().ray_query;
+    assert!(s.prefs.settings.bake_ray_query);
+    s.bake.follow_ray_query(s.prefs.settings.bake_ray_query);
+    assert_eq!(s.bake.ray_query_enabled(), allowed);
+    s.bake.fix_gpu_probe(false, Err("確かめ済み".into()));
+    // 同じ値なら確認の結果を捨てない
+    s.bake.follow_ray_query(allowed);
+    assert!(matches!(s.bake.gpu_probe(), GpuProbe::Done { .. }));
+    // 切ると、デバイスの設定が切になり、確認の結果を捨てる（RT コアの有無が変わるので確かめ直す）
+    s.bake.follow_ray_query(false);
+    assert!(!s.bake.ray_query_enabled());
+    if allowed {
+        assert!(matches!(s.bake.gpu_probe(), GpuProbe::Unknown));
+    }
+    // 入れ直すと、環境変数が許すときだけ入になる
+    s.bake.follow_ray_query(true);
+    assert_eq!(s.bake.ray_query_enabled(), allowed);
+}
+
+#[test]
+fn the_reason_the_rt_cores_were_not_used_is_a_short_sentence_in_the_language_without_numbers() {
+    use yolu_gpu::RayQueryWhy::*;
+    let all = [
+        Disabled,
+        NotSupported,
+        NotApplicable,
+        Device,
+        Shader,
+        Accel,
+        CheckRun,
+        CheckFailed,
+        RunFailed,
+    ];
+    for why in all {
+        let mut st = stats(GpuBakeMethod::Compute);
+        st.ray_query_why = Some(why);
+        // 詳しい文（数を含む）は、あっても画面に出さない
+        st.ray_query_note = Some("compute（ray query を使わない理由: レイ 2048 本、食い違い 3、最大差 2.47e-6、許す数 10）".into());
+        let run = BakeRun {
+            requested: BakeBackend::Auto,
+            gpu: Some((adapter(false, true), st)),
+            fallback_kind: None,
+            fallback_reason: None,
+        };
+        let (ja, en) = (run_line(Lang::Ja, &run), run_line(Lang::En, &run));
+        for line in [&ja, &en] {
+            assert!(!line.warn, "RT コアを使わなかっただけでは注意にしない");
+            assert!(
+                line.text.contains("compute") && !line.text.contains("ray query"),
+                "{}",
+                line.text
+            );
+        }
+        let (dj, de) = (ja.detail.unwrap(), en.detail.unwrap());
+        assert!(
+            has_japanese(&dj) && !has_japanese(&de),
+            "{why:?}: {dj} / {de}"
+        );
+        for d in [&dj, &de] {
+            assert!(
+                !d.chars().any(|c| c.is_ascii_digit()),
+                "{why:?}: 開発用の数を出さない: {d}"
+            );
+            assert!(!d.contains("2048") && !d.contains("e-6"), "{d}");
+        }
+    }
+    // 設定で切ると環境変数で切るは、別の文
+    let off = |env| ray_query_why_text(Lang::En, Disabled, env);
+    assert!(off(true).contains("environment variable") && off(false).contains("settings"));
+    // 使えたときは何も出さない。RT コアが関わらない（理由なし）ときも出さない
+    let used = BakeRun {
+        requested: BakeBackend::Auto,
+        gpu: Some((adapter(false, true), stats(GpuBakeMethod::RayQuery))),
+        fallback_kind: None,
+        fallback_reason: None,
+    };
+    let line = run_line(Lang::Ja, &used);
+    assert!(line.text.contains("ray query") && line.detail.is_none());
+    let none = BakeRun {
+        gpu: Some((adapter(false, false), stats(GpuBakeMethod::Compute))),
+        ..used
+    };
+    assert_eq!(run_line(Lang::Ja, &none).detail, None);
+}
+
+#[test]
+fn a_stale_gpu_check_is_not_written_back_after_the_setting_changed() {
+    let s = AppState::new(64, 64);
+    // 確認の途中の世代が古くなったら（設定が変わったら）、その結果を捨てる: 世代は、値が変わるたびに進む
+    let before = s.bake.probe_generation_for_test();
+    s.bake.follow_ray_query(true);
+    assert_eq!(
+        s.bake.probe_generation_for_test(),
+        before,
+        "同じ値では進めない"
+    );
+    let allowed = yolu_gpu::ray_query_env_allows();
+    s.bake.follow_ray_query(false);
+    if allowed {
+        assert_eq!(s.bake.probe_generation_for_test(), before + 1);
+    }
+}
+
+#[test]
 fn where_it_baked_reads_in_both_languages_without_mixing_them() {
     let hw = adapter(false, true);
     let rq = BakeRun {
@@ -1489,4 +1688,64 @@ fn the_uv_warning_of_the_previous_bake_is_not_carried_to_the_next() {
         s.message
     );
     assert!(!s.message.contains(warning), "{}", s.message);
+}
+
+#[test]
+fn the_export_window_follows_the_input_for_a_baked_ao_and_builds_it_once() {
+    use crate::export::{ExportAction, ExportForm};
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
+    quick(&mut s);
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    assert!(!s.sets.current().mesh_maps.is_empty());
+    s.release_idle_bake_input();
+    // 形が変わって（ポーズ）、持っている入力は前の形のもの。ベイクのウィンドウは閉じている
+    lift(&mut s, 0.3);
+    assert!(s.bake.window.is_none());
+    // 書き出しのウィンドウを開いて出力テンプレートにするだけでは、焼いた AO を照合するための入力を追う（作りかけを毎フレーム手放さない）
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    s.apply(Action::Export(ExportAction::SetForm(
+        ExportForm::UnityStandard,
+    )));
+    assert!(s.export_window_follows_input());
+    let before = s.bake.input_builds_started();
+    let model = s.view3d.full_model().unwrap().clone();
+    for _ in 0..500 {
+        // 画面の毎フレーム（一覧を求める → 使わない入力を手放す）
+        let _ = s.export_preview();
+        s.release_idle_bake_input();
+        if s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    assert!(
+        s.bake.input.as_ref().is_some_and(|c| c.model.is(&model)),
+        "今のモデルの入力ができた"
+    );
+    assert!(!s.bake.is_checking());
+    assert_eq!(
+        s.bake.input_builds_started() - before,
+        1,
+        "作りかけを立てては捨てず、1 回で作り終える"
+    );
+    // 追わない場合: 出力テンプレートが今のチャンネルの PNG なら、AO は要らないので追わない
+    s.apply(Action::Export(ExportAction::SetForm(
+        ExportForm::ChannelPng,
+    )));
+    assert!(!s.export_window_follows_input());
+    // ウィンドウを閉じても追わない
+    s.apply(Action::Export(ExportAction::SetForm(ExportForm::LilToon)));
+    assert!(s.export_window_follows_input());
+    s.apply(Action::Export(ExportAction::CloseWindow));
+    assert!(!s.export_window_follows_input());
+    // チェックしたセットに焼いた AO が無ければ追わない
+    s.apply(Action::Export(ExportAction::OpenWindow));
+    for i in 0..s.sets.len() {
+        let uid = s.sets.get(i).unwrap().uid;
+        s.apply(Action::Export(ExportAction::SetChecked { uid, on: false }));
+    }
+    assert!(!s.export_window_follows_input());
 }

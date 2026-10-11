@@ -496,7 +496,7 @@ fn fields_outside_the_kind_are_refused() {
 
 #[test]
 fn the_bytes_are_pinned_on_every_simd_path() {
-    // `YOLU_SIMD=scalar|sse41|avx2` で同じ値になる（レベル・減衰・反転は SIMD の道、アイランドの値は整数の hash と丸めの無い掛け算）
+    // `YOLU_SIMD=scalar|sse41|avx2|neon`（その CPU にある道）で同じ値になる（レベル・減衰・反転は SIMD の道、アイランドの値は整数の hash と丸めの無い掛け算）
     let mut s = settings(77);
     s.low = 0.15;
     s.high = 0.85;

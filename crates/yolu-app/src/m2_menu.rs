@@ -1,14 +1,14 @@
 //! M2 のポップアップ（自前のメニュー）の中身: 調整レイヤーの種類・一覧の空白の右クリック・ブラシの選択肢・チャンネルの種類。
 //! 開いている種類は `PopupKind::M2(Popup)`、選ばれた項目は `Action` で返る（閉じてから当てるのは `YoluApp`）。
 
-use crate::brushes::BrushAction;
 use crate::engine::{
-    Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection, TextureMode,
+    AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection,
+    TextureMode,
 };
 use crate::lang::Lang;
 use crate::m2::{
-    self, channel_format, dual_mode_label, kind_name, new_channel_info, texture_mode_label,
-    tip_label, BrushOp, Edit, EffectKind, UiOp,
+    self, anti_alias_label, channel_format, dual_mode_label, kind_name, new_channel_info,
+    texture_mode_label, tip_label, BrushOp, Edit, EffectKind, UiOp,
 };
 use crate::state::{Action, AppState};
 use crate::subtool::SubToolAction;
@@ -58,6 +58,8 @@ pub enum Popup {
     NormalDirection,
     /// 設定のウィンドウの選択肢。
     Pref(crate::prefs::PrefChoice),
+    /// 書き出しのウィンドウの形。
+    ExportForm,
     /// 塗りつぶしレイヤーのチャンネルの画像（棚の画像の一覧・ファイルから取り込む・外す）。
     FillImage(crate::engine::LayerId, Channel),
     /// 棚の画像の読み方（色空間）。
@@ -94,6 +96,10 @@ pub enum Popup {
     Take,
     /// テキストのフォント（同梱・インストール済み・選んだフォントのファイル・ファイルから選ぶ）。
     TextFont,
+    /// ブラシの縁のアンチエイリアス（なし・弱・中・強）。
+    AntiAlias,
+    /// パスのブラシの縁のアンチエイリアス。
+    PathAntiAlias,
 }
 
 fn tips(
@@ -205,6 +211,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         })
         .collect(),
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
+        Popup::ExportForm => crate::export::window::form_entries(app),
         Popup::Look(choice) => crate::look::panel::entries(app, choice),
         Popup::Take => crate::panels::pose::take_entries(app),
         Popup::TextFont => crate::textlayer::props::font_entries(app),
@@ -246,42 +253,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::NewFill => crate::layermenu::fill_entries(app),
         // 選んだレイヤーが無いときのメニューバーの「レイヤー」と同じ並び
         Popup::LayerBlank => crate::shell::layer_menu(app, None),
-        Popup::BrushContext => {
-            let Some(key) = app.brushes.ui.context else {
-                return Vec::new();
-            };
-            // 組み込みも、名前を変える・登録するとその場でファイルの写しになる。削除は並びから外すだけ（ファイルは「＋」のウィンドウから戻せる）
-            let user = key.is_user();
-            let layout = app.toolset.set.locked.is_none() && app.toolset.set.contains(key);
-            vec![
-                Entry::item(
-                    lang.pick("名前を変更", "Rename"),
-                    Action::Brush(BrushAction::StartRename(key)),
-                )
-                .enabled(free && (user || layout)),
-                Entry::item(
-                    lang.pick("複製", "Duplicate"),
-                    Action::Brush(BrushAction::Duplicate(key)),
-                )
-                .enabled(free && app.toolset.set.locked.is_none()),
-                Entry::item(
-                    lang.pick("この設定で登録", "Register These Settings"),
-                    Action::Brush(BrushAction::Register(key)),
-                )
-                .enabled(free && (user || layout) && app.brush_is_modified(key)),
-                Entry::item(
-                    lang.pick("元に戻す", "Revert"),
-                    Action::Brush(BrushAction::Revert(key)),
-                )
-                .enabled(free && app.brush_is_modified(key)),
-                Entry::Separator,
-                Entry::item(
-                    lang.pick("削除", "Delete"),
-                    Action::Brush(BrushAction::Delete(key)),
-                )
-                .enabled(free && layout),
-            ]
-        }
+        Popup::BrushContext => crate::toolset::ui::brush_menu(app),
         Popup::ToolStripContext => crate::toolset::ui::strip_menu(app),
         Popup::GroupContext => crate::toolset::ui::group_menu(app),
         Popup::CatalogContext => crate::panels::brush_catalog::context_menu(app),
@@ -374,6 +346,16 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 })
                 .collect()
         }
+        Popup::AntiAlias => AntiAlias::ALL
+            .iter()
+            .map(|a| {
+                Entry::item(
+                    anti_alias_label(lang, *a),
+                    Action::M2Ui(UiOp::Brush(BrushOp::AntiAlias(*a))),
+                )
+                .radio(app.brush.anti_alias == *a)
+            })
+            .collect(),
         Popup::DualMode => {
             let current = app.m2.brush.dual.as_ref().map(|d| d.mode);
             DualBrushMode::ALL
@@ -419,6 +401,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::PathRibbonMode => crate::panels::path_props::ribbon_mode_entries(app),
         Popup::PathTip => crate::panels::path_props::tip_entries(app),
         Popup::PathPresets => crate::panels::path_props::preset_entries(app),
+        Popup::PathAntiAlias => crate::panels::path_props::anti_alias_entries(app),
         Popup::ChannelContext(channel) => {
             let user = !channel.is_standard();
             vec![

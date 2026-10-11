@@ -39,6 +39,10 @@ pub struct PointDrag {
 
 /// 点を編集しているレイヤーとチャンネル（選んでいるレイヤーで、そのチャンネルに点のグラデーションがあるときだけ）。
 pub fn target(app: &AppState) -> Option<(LayerId, Channel)> {
+    // 編集のモードの点は、点の印で選んで G で動かす（`objects`）。ここの置く・掴むはペイントのモードだけ
+    if !app.mode.paints() {
+        return None;
+    }
     let (layer, channel) = app.fillfx.edit_points?;
     if app.selected_layer != Some(layer) || app.m2.edit_mask {
         return None;
@@ -354,12 +358,21 @@ pub fn delete_selected(app: &mut AppState) {
     let Some(i) = app.fillfx.point_selected else {
         return;
     };
-    let Some(mut g) = gradient(app, layer, channel) else {
-        return;
-    };
-    if i >= g.points.len() {
+    if gradient(app, layer, channel).is_some_and(|g| i >= g.points.len()) {
         app.fillfx.point_selected = None;
         return;
+    }
+    delete_point(app, layer, channel, i);
+}
+
+/// 点のグラデーションの `index` の点を消す（最後の 1 つは理由を出して断る）。1 回の Undo。消したら点の選びを外して true
+/// （ペイントのモードの点の選びと、編集のモードの選んだ点の両方がここを通る）。
+pub fn delete_point(app: &mut AppState, layer: LayerId, channel: Channel, index: usize) -> bool {
+    let Some(mut g) = gradient(app, layer, channel) else {
+        return false;
+    };
+    if index >= g.points.len() {
+        return false;
     }
     if g.points.len() == 1 {
         app.refuse(
@@ -370,13 +383,18 @@ pub fn delete_selected(app: &mut AppState) {
                 app.lang.pick("最後の点", "it is the last point"),
             ),
         );
-        return;
+        return false;
     }
-    g.points.remove(i);
+    g.points.remove(index);
     app.doc.end_coalescing();
-    if put(app, layer, channel, g, false) {
+    if !put(app, layer, channel, g, false) {
+        return false;
+    }
+    if app.fillfx.edit_points == Some((layer, channel)) {
         app.fillfx.point_selected = None;
     }
+    crate::objects::point_removed(app, layer, channel, index);
+    true
 }
 
 fn mark_color(c: Rgba8) -> Color32 {

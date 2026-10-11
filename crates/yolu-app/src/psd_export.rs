@@ -334,8 +334,8 @@ pub fn show_confirm(ctx: &egui::Context, app: &mut AppState) {
                 primary: true,
                 tooltip: Some(
                     lang.pick(
-                        "一覧のとおりに PSD を書きます。文書は変えません（効果は文書に残ります）",
-                        "Writes the PSD as listed. The document is not changed (its effects stay)",
+                        "一覧のとおりに PSD を書きます。プロジェクトは変えません（効果はプロジェクトに残ります）",
+                        "Writes the PSD as listed. The project is not changed (its effects stay)",
                     )
                     .into(),
                 ),

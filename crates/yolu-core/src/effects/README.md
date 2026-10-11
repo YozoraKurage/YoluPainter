@@ -30,4 +30,4 @@ Anchor はレイヤーまたはマスクに置く名前の付いた接続点で�
 
 ## 保存
 
-`yolu-io` の `to_core` / `from_core` が、フィルター・Generator・Anchor・塗りつぶしの画像と投影・グラデーション・パスを .ylp の正本とバイト一致で往復させます。形式の版は上げません。Generator のアルゴリズムの版は、階調（ramp）を持つときだけ 2 になります。
+`yolu-io` の `to_core` / `from_core` が、フィルター・Generator・Anchor・塗りつぶしの画像と投影・グラデーション・パスを .ylp の正本とバイト一致で往復させます。`.ylp` の形式は上げません。正本の版は使う機能で決まり（Unity 版が書ける効果は版 21 のまま、0.5.0 のフィルターの種類 70〜79 と Generator の種類 66〜70 は版 28 以降。表は `docs/YLP_FORMAT.md` の「正本の版の決まり」）、Generator のアルゴリズムの版は、階調（ramp）を持つときだけ 2 になります。効果の種類の一覧は `effects::catalog`、フィルターの式は `filter/README.md`、Generator の式は `generator/README.md` にあります。

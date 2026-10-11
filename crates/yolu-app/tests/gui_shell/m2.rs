@@ -220,8 +220,13 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
     for lang in Lang::ALL {
         for (width, stacked) in [(1280.0, false), (960.0, true)] {
             let mut h = app(width, 800.0, 128);
+            if stacked {
+                // 狭い列（今の既定の右の列は最小のウィンドウでも 232 点あるので、前の版の最小のウィンドウと同じ 170 点ほどの幅に動かす）にする
+                set_center_share(&mut h, 0.755);
+            }
             apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
-            let panel = |r: egui::Rect| r.left() > 700.0;
+            let body = layers_body(&h);
+            let panel = move |r: egui::Rect| body.contains(r.center());
             let slider = rect_of(&h, lang.pick("不透明度", "Opacity"), panel);
             let blend = rect_of(&h, lang.pick("通常", "Normal"), panel);
             if stacked {
@@ -561,82 +566,54 @@ fn headless_m2_edits_are_one_undo_each() {
     }
 }
 
-/// マスクに描くあいだだけ 3 つ目のタブはマスク。やめたときにマスクのタブにいたなら、そのタブはもう無いので先頭のタブ（アルファ）へ戻す
-/// （マスクのタブはマスクを描くあいだしか無い）。マスクを描いていないあいだに選んだマテリアルのタブには触らない。
+/// マスクに描くあいだも、プロパティの欄のタブ（ステンシル・レイヤーの 2 つ）は替えない。マスクの欄はツールプロパティの「塗るチャンネル」の区分に出る。
 #[test]
-fn headless_leaving_the_mask_returns_the_properties_tab_to_the_first_one() {
-    use yolu_app::m2::MASK_TAB;
-    let mut s = AppState::new(64, 64);
-    let id = s.selected_layer.unwrap();
-    assert_eq!(s.ui.property_tab, 0);
-    // マスクを足す → マスクのタブ。編集をやめる → 先頭（アルファ）。もう一度 → マスク
-    s.apply(Action::M2(Edit::AddMask(id)));
-    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (true, MASK_TAB));
-    s.apply(Action::M2Ui(UiOp::EditMask(false)));
-    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0));
-    s.apply(Action::M2Ui(UiOp::EditMask(true)));
-    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (true, MASK_TAB));
-    // マスクを消す
-    s.apply(Action::M2(Edit::RemoveMask(id)));
-    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0));
-    // マスクを足したあとの取り消し
-    s.apply(Action::M2(Edit::AddMask(id)));
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
-    assert_eq!(
-        (s.m2.edit_mask, s.ui.property_tab),
-        (false, 0),
-        "足す前に戻る"
-    );
-    // マスクの編集中に新しいレイヤーを足す・マスクのあるレイヤーを消す
-    s.apply(Action::M2(Edit::AddMask(id)));
-    s.apply(Action::NewLayer);
-    assert_eq!(
-        (s.m2.edit_mask, s.ui.property_tab),
-        (false, 0),
-        "新しいレイヤーを選ぶ"
-    );
-    s.selected_layer = Some(id);
-    s.apply(Action::M2Ui(UiOp::EditMask(true)));
-    assert_eq!(s.ui.property_tab, MASK_TAB);
-    let other = s
-        .doc
-        .layers()
-        .iter()
-        .map(|l| l.id())
-        .find(|l| *l != id)
-        .unwrap();
-    s.apply(Action::DeleteLayer); // マスクのレイヤーを消す（選んでいるのは id）
-    assert!(s.doc.layer(id).is_none() && s.doc.layer(other).is_some());
-    assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, 0), "消した");
-    // マテリアルのタブを自分で選んでいるだけなら、そのまま
-    s.ui.property_tab = MASK_TAB;
-    s.ensure_m2_selection();
-    s.apply(Action::M2Ui(UiOp::EditMask(false)));
-    assert_eq!(
-        s.ui.property_tab, MASK_TAB,
-        "マスクを描いていなければ触らない"
-    );
+fn headless_painting_on_a_mask_leaves_the_properties_tab_alone() {
+    for tab in [0, 1] {
+        let mut s = AppState::new(64, 64);
+        let id = s.selected_layer.unwrap();
+        s.ui.property_tab = tab;
+        // マスクを足す → マスクに描く。やめる → もう一度 → マスクを消す
+        s.apply(Action::M2(Edit::AddMask(id)));
+        assert!(s.m2.edit_mask);
+        assert_eq!(s.ui.property_tab, tab, "マスクを足す");
+        s.apply(Action::M2Ui(UiOp::EditMask(false)));
+        assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, tab));
+        s.apply(Action::M2Ui(UiOp::EditMask(true)));
+        assert_eq!((s.m2.edit_mask, s.ui.property_tab), (true, tab));
+        s.apply(Action::M2(Edit::RemoveMask(id)));
+        assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, tab));
+        // マスクを足したあとの取り消し
+        s.apply(Action::M2(Edit::AddMask(id)));
+        s.apply(Action::Undo);
+        s.apply(Action::Undo);
+        assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, tab));
+        // マスクの編集中に新しいレイヤーを足す・マスクのあるレイヤーを消す
+        s.apply(Action::M2(Edit::AddMask(id)));
+        s.apply(Action::NewLayer);
+        assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, tab));
+        s.selected_layer = Some(id);
+        s.apply(Action::M2Ui(UiOp::EditMask(true)));
+        s.apply(Action::DeleteLayer);
+        assert_eq!((s.m2.edit_mask, s.ui.property_tab), (false, tab));
+    }
 }
 
 #[test]
-fn selecting_another_layer_row_leaves_the_mask_tab() {
+fn selecting_another_layer_row_leaves_mask_editing_and_the_properties_tab() {
     let mut h = app(1280.0, 800.0, 128);
     let first = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::NewLayer);
     let top = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(top)));
-    assert_eq!(h.state().state.ui.property_tab, yolu_app::m2::MASK_TAB);
+    assert!(h.state().state.m2.edit_mask);
+    let tab = h.state().state.ui.property_tab;
     let name = h.state().state.doc.layer(first).unwrap().name().to_owned();
     let row = rect_of(&h, &name, |_| true);
     click(&mut h, pos2(row.left() + 90.0, row.center().y));
     assert_eq!(h.state().state.selected_layer, Some(first));
     assert!(!h.state().state.m2.edit_mask);
-    assert_eq!(
-        h.state().state.ui.property_tab,
-        0,
-        "使えないタブに落とさない"
-    );
+    assert_eq!(h.state().state.ui.property_tab, tab, "タブは替えない");
 }
 
 // ───────── グループを含む削除と上へ・下へ ─────────
@@ -862,7 +839,8 @@ fn snapshot_channels_panel() {
 /// 読まないユーザーチャンネルを 1 つ追加する（「そのほか」）。
 fn liltoon_channels(lang: Lang) -> Harness<'static, YoluApp> {
     use yolu_core::look::{LookKind, LookValue};
-    let mut h = app(1280.0, 1000.0, 256);
+    // （チャンネルの組の全部の行が入る高さで）
+    let mut h = app(1280.0, 1700.0, 256);
     apply(&mut h, Action::M2Ui(UiOp::Language(lang)));
     {
         let doc = &mut h.state_mut().state.doc;
@@ -898,11 +876,13 @@ fn liltoon_channels(lang: Lang) -> Harness<'static, YoluApp> {
 
 /// チャンネルの欄のまとまりの見出し（上から）と、開いているか。見出しは開閉の印を持つ低いボタン（行の部品より低い）。
 fn channel_groups(h: &Harness<'_, YoluApp>) -> Vec<(String, bool)> {
+    // チャンネルの組の中だけ（右の列の上の組。同じ列のレイヤーなどのボタンは含めない）
+    let body = top_right_body(h);
     let mut out: Vec<(f32, String, bool)> = h
         .query_all(egui_kittest::kittest::by().role(egui::accesskit::Role::Button))
         .filter(|n| {
             let r = n.rect();
-            r.left() < 320.0 && (r.height() - 20.0).abs() < 1.0
+            body.contains(r.center()) && (r.height() - 20.0).abs() < 1.0
         })
         .filter_map(|n| {
             let node = n.accesskit_node();
@@ -935,14 +915,16 @@ fn liltoon_user_channels_are_grouped_by_the_part_that_reads_them() {
         "インスペクターの並び。切っている部位（ラメ）はたたむ"
     );
     let row = |h: &Harness<'_, YoluApp>, name: &str| {
+        let body = top_right_body(h);
         h.query_all_by_label(name)
             .map(|n| n.rect())
-            .find(|r| r.left() < 320.0 && (r.height() - 28.0).abs() < 1.0)
+            .find(|r| body.contains(r.center()) && (r.height() - 28.0).abs() < 1.0)
     };
     let header = |h: &Harness<'_, YoluApp>, name: &str| {
+        let body = top_right_body(h);
         h.get_all_by_label(name)
             .map(|n| n.rect())
-            .find(|r| r.left() < 320.0 && r.height() < 24.0)
+            .find(|r| body.contains(r.center()) && r.height() < 24.0)
             .unwrap()
     };
     // 標準の 6 つは見出しより上
@@ -1070,6 +1052,9 @@ fn snapshot_properties_mask_and_english() {
     let mut h = app(1280.0, 1000.0, 256);
     let id = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(id)));
+    // プロパティのレイヤーのタブ（レイヤーマスクの節はここにもある）
+    h.state_mut().state.ui.property_tab = 1;
+    h.run();
     h.snapshot("m2_properties_mask");
     apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
     h.snapshot("m2_properties_mask_english");
@@ -1082,7 +1067,8 @@ fn canvas_alpha(h: &Harness<'_, YoluApp>, dx: f32) -> u8 {
 
 #[test]
 fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
-    let mut h = app(1280.0, 800.0, 128);
+    // （マスクの欄は、マスクに描くあいだ、ツールプロパティのブラシの欄の下に出る。入る高さで）
+    let mut h = app(1280.0, 1500.0, 128);
     {
         let b = &mut h.state_mut().state.brush;
         b.radius = 3.0;
@@ -1111,7 +1097,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
     );
     assert_eq!(canvas_alpha(&h, 0.0), 0, "マスクを塗った所は隠れる");
     assert_eq!(canvas_alpha(&h, 50.0), 255, "ほかは見えたまま");
-    // プロパティの欄のマスク（4 つ目のタブ）の反転・有効
+    // ツールプロパティのマスクの欄の反転・有効
     h.get_by_label("反転").click();
     h.run();
     assert_eq!(canvas_alpha(&h, 0.0), 255, "反転すると塗った所だけが見える");
@@ -1134,7 +1120,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
 
 #[test]
 fn fill_and_adjustment_properties_edit_and_undo() {
-    let mut h = app(1280.0, 1000.0, 128);
+    let mut h = app(1280.0, 1600.0, 128);
     h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
     toolbar_new_fill(&mut h);
     let fill = h.state().state.selected_layer.unwrap();
@@ -1875,7 +1861,7 @@ fn the_cube_stroke_uses_the_paint_channel_the_base_brush_and_the_mask() {
     assert!(plain.chunks(4).any(|p| p[3] > 0) && chalky.chunks(4).any(|p| p[3] > 0));
     assert!(plain != chalky, "基本の値は 3D でも効く");
     undo(&mut h);
-    // 筆先の画像と質感だけを外しても、3D の絵は 1 画素も変わらない（面のダブは受け取らない。プロパティの欄はそう出す）
+    // 筆先の画像と質感も 3D の面のダブに効く（外すと 3D の絵が変わる）
     {
         let brush = &mut h.state_mut().state.m2.brush;
         assert!(brush.tip.image.is_some() && brush.texture.is_some());
@@ -1883,10 +1869,7 @@ fn the_cube_stroke_uses_the_paint_channel_the_base_brush_and_the_mask() {
         brush.texture = None;
     }
     cube_stroke(&mut h, rect);
-    assert!(
-        composite(&h) == chalky,
-        "3D では筆先・質感は効かない（効くようになったら、プロパティの欄の「3D では効きません」も外す）"
-    );
+    assert!(composite(&h) != chalky, "3D でも筆先・質感が効く");
     undo(&mut h);
     // 色の変化は 3D でも効く
     apply(&mut h, Action::M2Ui(UiOp::Preset(0)));

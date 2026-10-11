@@ -6,7 +6,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 元 SVG の取得コミットは記録されていないため、版を推定しない。確認済み PNG の SHA-256 は `tools/licenses-reviewed.json` に固定する。
 
 `tools/` の通常版は regular、`_selected` は Fluent の filled・Phosphor の fill（長方形と楕円の選択は bold、多角形は通常版と同じ regular）。
-その他は regular（`lock_filled` のみ filled）。`arrow_maximize`・`arrow_minimize`・`copy_add` はスタンドアロン側の追加。
+その他は regular（`lock_filled` のみ filled）。`arrow_maximize`・`arrow_minimize`・`copy_add` はスタンドアロン側の追加。`snap_ruler`・`snap_special` は regular のアイコンに bold の磁石を重ねた物。
 多角形選択の通常・選択中の 2 枚は Unity 版の `uv_wireframe.png`（Phosphor polygon regular）とバイト一致する。
 
 | 同梱 PNG（拡張子省略） | セット | 元の名前 | 太さ |
@@ -56,6 +56,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `lock` | fluent | `lock_closed` | regular |
 | `lock_filled` | fluent | `lock_closed` | filled |
 | `lock_transparency` | fluent | `transparency_square` | regular |
+| `more_horizontal` | fluent | `more_horizontal` | regular |
 | `opacity` | fluent | `drop` | regular |
 | `paint_brush` | fluent | `paint_brush` | regular |
 | `palette` | fluent | `color` | regular |
@@ -72,6 +73,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `shape_subtract` | fluent | `shape_subtract` | regular |
 | `shape_union` | fluent | `shape_union` | regular |
 | `shapes` | fluent | `shapes` | regular |
+| `snap_ruler` | fluent + phosphor | `ruler`（regular）＋ `magnet`（bold）を重ねた物 | regular + bold |
+| `snap_special` | phosphor | `compass-tool`（regular）＋ `magnet`（bold）を重ねた物 | regular + bold |
 | `square` | fluent | `image` | regular |
 | `stop` | fluent | `stop` | regular |
 | `stylus` | fluent | `inking_tool` | regular |
@@ -103,6 +106,8 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `tools/path_selected` | fluent | `pen` | filled |
 | `tools/polygon-fill` | fluent | `triangle` | regular |
 | `tools/polygon-fill_selected` | fluent | `triangle` | filled |
+| `tools/ruler` | fluent | `ruler` | regular |
+| `tools/ruler_selected` | fluent | `ruler` | filled |
 | `tools/select-ellipse` | phosphor | `circle-dashed` | regular |
 | `tools/select-ellipse_selected` | phosphor | `circle-dashed` | bold |
 | `tools/select-pen` | phosphor | `highlighter` | regular |
@@ -140,6 +145,8 @@ tool icons `tools/select-rectangle` and `tools/select-rectangle_selected` are Ph
 `error_circle` (the error mark of the Log panel and its Errors Only toggle) and `document_copy` (its Copy All button) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
 
 `record`・`stop`・`play` (the Actions panel: start and stop recording, play an action) are Fluent regular, rendered white at 48 px by the same procedure as the rest.
+
+`more_horizontal` (the All Modes button of the selection tools' Tool Properties) is Fluent regular, rendered white at 48 px by the same procedure as the rest.
 
 ## Fluent UI System Icons
 

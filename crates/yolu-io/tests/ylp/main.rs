@@ -8,6 +8,7 @@
 mod legacy_layout;
 
 mod adjust_bridge;
+mod anti_alias_bridge;
 mod bake_priority_bridge;
 mod bundle_layout;
 mod compatibility;
@@ -27,6 +28,7 @@ mod path_lists_bridge;
 mod point_gradient_bridge;
 mod procedural_bridge;
 mod rejection;
+mod rulers_bridge;
 mod saved_selections;
 mod seams_bridge;
 mod selection;

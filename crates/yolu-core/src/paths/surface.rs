@@ -262,7 +262,8 @@ fn draw_surface_one(
         } else {
             radius
         };
-        let mut result = g.build_surface_dabs(
+        // 丸い筆先は縁のアンチエイリアス（筆先の画像は覆いを筆先から読むので、今のまま）
+        let mut result = g.build_surface_dabs_anti_aliased(
             &hit,
             reach,
             o.width as i32,
@@ -272,6 +273,11 @@ fn draw_surface_one(
                 1.0
             } else {
                 b.hardness as f32
+            },
+            if tip.is_some() {
+                crate::AntiAlias::None
+            } else {
+                b.anti_alias
             },
             &o.surface_budget,
             None,

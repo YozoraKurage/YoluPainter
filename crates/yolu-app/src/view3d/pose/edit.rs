@@ -230,7 +230,8 @@ fn live_edit(app: &mut AppState, next: Pose) {
 
 /// 続けて変える操作を、ポインタのボタンが離れていれば確定する（欄のドラッグを離した・打ち込んだ値）。ギズモのドラッグは自分で終える。
 pub fn finish_live_edit(app: &mut AppState, pointer_down: bool) {
-    if pointer_down || app.view3d.pose.drag.is_some() {
+    // G/R/S の途中は、決める・やめるときに自分で終える
+    if pointer_down || app.view3d.pose.drag.is_some() || crate::objects::transforming(app) {
         return;
     }
     if app

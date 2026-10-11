@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "comment": "配る対象の一覧。CI（ci.yml の main 向けの PR）・配布（release.yml）・cargo xtask preflight はすべてここを読む。input を持つ対象は、release.yml のその名前の真偽値の入力が入のときだけビルドする（CI は入れない）。",
+  "comment": "配る対象の一覧。CI（ci.yml の main 向けの PR）・配布（release.yml）・cargo xtask preflight はすべてここを読む。input を持つ対象は、release.yml のその名前の真偽値の入力が入のときだけビルドする。default が true の対象は、入力の既定が入で、PR の CI でもビルドする（切れるのは配布の入力だけ）。default が無い（false の）対象は、CI ではビルドしない。rust_targets は、1 つの配る物を作るために runner へ入れる Rust のターゲット（空白で区切る。無ければ target そのもの）。experimental が true の対象は試作で、ビルドが落ちても CI の結論を失敗にせず、配布も止めない（成果物が無ければ、ほかの対象だけで下書きを作る）。timeout_minutes は、その対象のビルドのジョブの時間の上限（分。無ければ dist-build.yml の既定）。",
   "targets": [
     {
       "target": "x86_64-pc-windows-msvc",
@@ -13,6 +13,16 @@
       "os": "ubuntu-22.04",
       "installer": false,
       "input": "linux"
+    },
+    {
+      "target": "universal-apple-darwin",
+      "os": "macos-14",
+      "installer": false,
+      "input": "macos",
+      "default": true,
+      "experimental": true,
+      "timeout_minutes": 90,
+      "rust_targets": "aarch64-apple-darwin x86_64-apple-darwin"
     }
   ]
 }

@@ -2471,20 +2471,25 @@ mod ui {
         h.run();
     }
 
-    /// 左の列の格子の中の素材（名前が同じ別の部品 — 絞り込みのアイコン・プロパティのタブ — より下）。
+    /// 「アセット」の格子の中の素材（名前が同じ別の部品 — 絞り込みのアイコン・プロパティのタブ — より下）。
     pub fn card(h: &Harness<'_, YoluApp>, name: &str) -> Rect {
-        rect_of(h, name, |r| r.left() < 300.0 && r.top() > 150.0)
+        let body = top_right_body(h);
+        rect_of(h, name, |r| {
+            body.contains(r.center()) && r.top() > body.top() + 67.0
+        })
     }
 
-    /// 左の列の格子に、その名前の素材が出ているか。
+    /// 「アセット」の格子に、その名前の素材が出ているか。
     fn card_shown(h: &Harness<'_, YoluApp>, name: &str) -> bool {
+        let body = top_right_body(h);
         h.query_all_by_label(name)
-            .any(|n| n.rect().left() < 300.0 && n.rect().top() > 150.0)
+            .any(|n| body.contains(n.rect().center()) && n.rect().top() > body.top() + 67.0)
     }
 
-    /// 右の列のレイヤーの行。
+    /// レイヤーの組のレイヤーの行。
     fn row(h: &Harness<'_, YoluApp>, name: &str) -> Rect {
-        rect_of(h, name, |r| r.left() > 1000.0 && r.height() < 40.0)
+        let body = layers_body(h);
+        rect_of(h, name, |r| body.contains(r.center()) && r.height() < 40.0)
     }
 
     fn layers(h: &Harness<'_, YoluApp>) -> Vec<String> {
@@ -2541,10 +2546,8 @@ mod ui {
             .get_all_by_role(egui::accesskit::Role::TextInput)
             .map(|n| n.rect())
             .collect();
-        let search = fields
-            .iter()
-            .find(|r| r.left() < 300.0 && r.top() < 150.0)
-            .unwrap();
+        let body = top_right_body(&h);
+        let search = fields.iter().find(|r| body.contains(r.center())).unwrap();
         click(&mut h, search.center());
         h.event(egui::Event::Text("MAS".into()));
         h.run();
@@ -2835,7 +2838,10 @@ mod ui {
     fn dropping_a_brush_on_the_layer_list_says_why_it_cannot_be_placed() {
         let mut h = window();
         three_layers(&mut h);
-        let filter = rect_of(&h, "ブラシ", |r| r.left() < 300.0 && r.top() < 130.0);
+        let body = top_right_body(&h);
+        let filter = rect_of(&h, "ブラシ", |r| {
+            body.contains(r.center()) && r.top() < body.top() + 60.0
+        });
         click(&mut h, filter.center());
         assert_eq!(st(&h).shelf.filter, Some(ItemKind::Brush));
         let from = card(&h, "ブラシ").center();

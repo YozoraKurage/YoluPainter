@@ -120,6 +120,7 @@ fn main() {
         pitch: 10.0,
         distance: 2.0,
         model_radius: 0.5,
+        ..Default::default()
     }
     .view(1280.0, 800.0);
     for radius in [0.05f32, 0.15, 0.3] {
@@ -135,6 +136,7 @@ fn main() {
         pitch: 0.0,
         distance: 1.6,
         model_radius: 0.6,
+        ..Default::default()
     }
     .view(1280.0, 800.0);
     for radius in [0.05f32, 0.15] {

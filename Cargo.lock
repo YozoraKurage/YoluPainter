@@ -4926,7 +4926,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "ed25519-dalek",
  "flate2",
@@ -4941,10 +4941,11 @@ dependencies = [
 
 [[package]]
 name = "yolu-app"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "arboard",
  "bevy_mikktspace",
+ "block2 0.6.2",
  "ed25519-dalek",
  "eframe",
  "egui",
@@ -4954,6 +4955,9 @@ dependencies = [
  "hex",
  "image",
  "libc",
+ "objc2 0.6.4",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
  "png",
  "pollster 1.0.1",
  "raw-window-handle",
@@ -4980,14 +4984,14 @@ dependencies = [
 
 [[package]]
 name = "yolu-brush-sets"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "yolu-cli"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "serde_json",
  "tokio",
@@ -4999,7 +5003,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-core"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "glam",
  "harfrust",
@@ -5012,7 +5016,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-gpu"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytemuck",
  "naga",
@@ -5023,7 +5027,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-io"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -5040,7 +5044,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-mcp"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "bytes",
  "http-body-util",
@@ -5057,7 +5061,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-model"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "ufbx",
  "yolu-core",
@@ -5065,7 +5069,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-ops"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "png",
  "schemars",
@@ -5077,7 +5081,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-protocol"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "libc",
  "serde",
@@ -5087,7 +5091,7 @@ dependencies = [
 
 [[package]]
 name = "yolu-update"
-version = "0.5.1"
+version = "0.6.0"
 dependencies = [
  "ed25519-dalek",
  "hex",

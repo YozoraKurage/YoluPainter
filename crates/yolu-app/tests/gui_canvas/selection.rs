@@ -1,5 +1,5 @@
-//! 選択範囲と 2D の対称の操作（egui_kittest）。どれも「操作 → 文書が変わる → Undo で戻る」。ツールの帯・オプションバー・メニュー・
-//! プロパティの欄・量を聞くウィンドウ・キャンバスの入力・対称のブラシ・.ylp の保存と読み込み。
+//! 選択範囲と 2D の対称定規で描く操作（egui_kittest）。どれも「操作 → 文書が変わる → Undo で戻る」。ツールの帯・オプションバー・メニュー・
+//! プロパティの欄・量を聞くウィンドウ・キャンバスの入力・対称定規のブラシ・.ylp の保存と読み込み。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
@@ -8,15 +8,17 @@ use egui::{Event, Key, Modifiers, PointerButton, Pos2};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use yolu_app::engine::{
-    BrushEffect, Channel, CoreError, Rgba8, SelectionCombine, SelectionMask, SymmetryMode,
-    TileCoord, DEFAULT_WORKING_BUDGET_BYTES,
+    BrushEffect, Channel, CoreError, Rgba8, SelectionCombine, SelectionMask, TileCoord,
+    DEFAULT_WORKING_BUDGET_BYTES,
 };
 use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
 use yolu_app::pen::PenSample;
-use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp, SymOp};
+use yolu_app::rulers::RulerAction;
+use yolu_app::selection::{ModifyKind, SelAction, SelEdit, SelUiOp};
 use yolu_app::state::{Action, AppState, PopupKind, Tool};
 use yolu_app::YoluApp;
+use yolu_core::{Ruler, RulerKind};
 
 type H = Harness<'static, YoluApp>;
 
@@ -26,10 +28,26 @@ fn st(h: &H) -> &AppState {
     &h.state().state
 }
 
-fn sym(h: &mut H, op: SymOp) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Symmetry(op)));
+/// 今の対称定規を全部外して、`put` で新しい対称定規を選んでいるレイヤーに置く（置いた定規の分の取り消しの段が 1 つ増える）。
+fn symmetry(h: &mut H, put: impl FnOnce(&mut AppState)) {
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        let ids: Vec<_> = common::rulers::of(s, layer).iter().map(|r| r.id).collect();
+        if !ids.is_empty() {
+            s.apply(Action::Ruler(RulerAction::Delete { owner: layer, ids }));
+        }
+        put(s);
+    }
+    h.run();
+}
+
+/// 「特殊定規にスナップ」を入れ直す。
+fn special_snap(h: &mut H, on: bool) {
+    let s = &mut h.state_mut().state;
+    if s.rulers.snap_special != on {
+        s.apply(Action::Ruler(RulerAction::ToggleSnapSpecial));
+    }
     h.run();
 }
 
@@ -204,15 +222,18 @@ fn tool_names_and_option_bar_follow_the_language() {
     }
     h.get_by_label("Magic Wand (W)").click();
     h.run();
-    // 作成方法は、オプションバーとツールプロパティの両方に（同じ値）。許容値はオプションバーとツールプロパティ、隣接と全レイヤーはツールプロパティ
+    // 作成方法は、オプションバー（4 つ。名前とキーのツールチップ）とツールプロパティ（新規・追加・削除に「⋯」）の両方に。
+    // 許容値はオプションバーとツールプロパティ、隣接と全レイヤーはツールプロパティ
     for label in [
-        "New: replace the selection",
-        "Add to the selection (Shift)",
-        "Subtract from the selection (Ctrl)",
-        "Intersect: keep only the overlap (Shift + Ctrl)",
+        "New",
+        "Add (Shift)",
+        "Subtract (Ctrl)",
+        "Intersect (Shift+Ctrl)",
         "Tolerance",
     ] {
         bar_rect(&h, label);
+    }
+    for label in ["New", "Add", "Subtract", "All modes", "Tolerance"] {
         dock_rect(&h, label);
     }
     for label in ["Contiguous", "Sample All Layers"] {
@@ -482,26 +503,26 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
     let (left, right) = (at(&h, -90.0, 0.0), at(&h, 60.0, 0.0));
     assert!(selected(&h, left) && amount_at(&h, right) == 0);
     // オプションバーの「足す」
-    let button = bar_rect(&h, "追加選択: 選択範囲に追加（Shift）").center();
+    let button = bar_rect(&h, "追加（Shift）").center();
     click(&mut h, button);
     assert_eq!(st(&h).sel.combine, SelectionCombine::Add);
     drag_rect(&mut h, (10.0, -60.0), (120.0, 60.0));
     assert!(selected(&h, left) && selected(&h, right), "足す");
     // 「引く」: 左の外側を引く
-    let button = bar_rect(&h, "一部削除: 選択範囲から引く（Ctrl）").center();
+    let button = bar_rect(&h, "削除（Ctrl）").center();
     click(&mut h, button);
     drag_rect(&mut h, (-130.0, -80.0), (-60.0, 80.0));
     assert_eq!(amount_at(&h, left), 0, "引いた所は外れる");
     assert!(selected(&h, at(&h, -30.0, 0.0)), "引いていない所は残る");
     assert!(selected(&h, right));
     // 「重ねる」: 右の半分と重なる所だけ
-    let button = bar_rect(&h, "選択中を選択: 重なる所だけ残す（Shift + Ctrl）").center();
+    let button = bar_rect(&h, "共通（Shift+Ctrl）").center();
     click(&mut h, button);
     drag_rect(&mut h, (0.0, -80.0), (130.0, 80.0));
     assert!(selected(&h, right));
     assert_eq!(amount_at(&h, at(&h, -30.0, 0.0)), 0);
     // 置き換え + Shift で足す・Ctrl で引く・Shift+Ctrl で重ねる
-    let button = bar_rect(&h, "新規選択: 新しい形で置き換える").center();
+    let button = bar_rect(&h, "新規").center();
     click(&mut h, button);
     drag_rect(&mut h, (-120.0, -60.0), (0.0, 60.0));
     drag_with_by(&mut h, &[(10.0, -60.0), (120.0, 60.0)], Modifiers::SHIFT);
@@ -528,23 +549,29 @@ fn option_bar_modes_and_modifier_keys_combine_shapes() {
 }
 
 #[test]
-fn tool_properties_select_all_deselect_and_invert_buttons() {
+fn select_all_deselect_and_invert_are_in_the_select_menu_not_the_tool_properties() {
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
-    h.get_by_label("すべてを選択（Ctrl+A）").click();
-    h.run();
-    assert!(selected(&h, at(&h, 0.0, 0.0)));
-    // 選択範囲があるあいだは、キャンバスの上の帯にも同じ名前のボタンがある（ここはツールプロパティのボタン）
-    let canvas = canvas_rect(&h);
-    let beside = |h: &Harness<'_, YoluApp>, label: &str| {
-        rect_of(h, label, |r| !canvas.contains_rect(r)).center()
+    // ツールプロパティ・オプションバーには、操作のボタンを置かない
+    for label in [
+        "すべてを選択（Ctrl+A）",
+        "選択を解除（Ctrl+D）",
+        "選択範囲を反転（Ctrl+Shift+I）",
+    ] {
+        assert!(h.query_all_by_label(label).next().is_none(), "{label}");
+    }
+    let run = |h: &mut H, label: &str| {
+        let title = menu_title(h, "選択範囲").center();
+        click(h, title);
+        let item = popup_item(h, label).center();
+        click(h, item);
     };
-    let deselect = beside(&h, "選択を解除（Ctrl+D）");
-    click(&mut h, deselect);
+    run(&mut h, "すべてを選択");
+    assert!(selected(&h, at(&h, 0.0, 0.0)));
+    run(&mut h, "選択を解除");
     assert!(st(&h).doc.selection().is_none());
     drag_rect(&mut h, (-50.0, -50.0), (50.0, 50.0));
-    let invert = beside(&h, "選択範囲を反転（Ctrl+Shift+I）");
-    click(&mut h, invert);
+    run(&mut h, "選択範囲を反転");
     assert_eq!(amount_at(&h, at(&h, 0.0, 0.0)), 0);
     assert!(selected(&h, at(&h, 100.0, 0.0)));
     undo(&mut h);
@@ -600,7 +627,7 @@ fn select_menu_items_and_keys_run_their_edits() {
 
 #[test]
 fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button() {
-    let mut h = app(1000.0, 640.0, 512);
+    let mut h = app(1280.0, 800.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
     drag_rect(&mut h, (-60.0, -40.0), (60.0, 40.0));
     let original = st(&h).doc.selection().unwrap().clone();
@@ -657,27 +684,36 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
 }
 
 #[test]
-fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
-    // ツールプロパティの下のほう（選択範囲を変更）まで見える高さのウィンドウ
-    let mut h = app(1280.0, 1100.0, 256);
+fn select_menu_modifies_the_selection_with_the_radius_and_edge_lock() {
+    let mut h = app(1280.0, 800.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     drag_rect(&mut h, (-40.0, -30.0), (40.0, 30.0));
     let original = st(&h).doc.selection().unwrap().clone();
-    h.state_mut().state.sel.radius = 6;
     let budget = DEFAULT_WORKING_BUDGET_BYTES;
+    let open = |h: &mut H, label: &str| {
+        let title = menu_title(h, "選択範囲").center();
+        click(h, title);
+        let item = popup_item(h, label).center();
+        click(h, item);
+    };
+    // 半径を使う 4 つは、量のウィンドウを開いて半径を決めて適用する。境界をくっきりは直に適用する
     for (label, expect) in [
-        ("拡張", original.grow(6, budget).unwrap()),
-        ("縮小", original.shrink(6, false, budget).unwrap()),
-        ("境界線", original.border(6, false, budget).unwrap()),
+        ("拡張…", original.grow(6, budget).unwrap()),
+        ("縮小…", original.shrink(6, false, budget).unwrap()),
+        ("境界線…", original.border(6, false, budget).unwrap()),
         (
-            "境界をぼかす",
+            "境界をぼかす…",
             original.feather(6.0, false, budget).unwrap(),
         ),
         ("境界をくっきり", original.sharpen()),
     ] {
-        let at = rect_of(&h, label, |r| r.left() < 340.0 && r.top() > 62.0).center();
         let before = steps(&h);
-        click(&mut h, at);
+        open(&mut h, label);
+        if label.ends_with('…') {
+            h.state_mut().state.sel.dialog.as_mut().unwrap().radius = 6;
+            key(&h, Key::Enter, Modifiers::NONE);
+            h.run();
+        }
         if expect == original {
             assert_eq!(steps(&h), before, "{label}: 変わらないなら段を積まない");
         } else {
@@ -691,12 +727,12 @@ fn properties_buttons_modify_the_selection_with_the_radius_and_edge_lock() {
             "{label} の後で戻る"
         );
     }
-    // 選択範囲が無ければ、ボタンは押せない
+    // 選択範囲が無ければ、項目は押せない
     key(&h, Key::D, Modifiers::COMMAND);
     h.run();
     let before = steps(&h);
-    let at = rect_of(&h, "拡張", |r| r.left() < 340.0 && r.top() > 62.0).center();
-    click(&mut h, at);
+    open(&mut h, "拡張…");
+    assert!(st(&h).sel.dialog.is_none());
     assert_eq!(steps(&h), before);
 }
 
@@ -757,16 +793,37 @@ fn selection_tools_do_not_paint_on_the_canvas_or_the_cube() {
         0,
         "選択のツールは描かない"
     );
-    // 3D のビューでも描き始めない（面に描くのはブラシ・消しゴムだけ）
+    // 3D のビューでも画素は描かない（面に描くのはブラシ・消しゴムだけ。引いた形は選択範囲になるので、取り消し 1 回）
     h.state_mut().state.view3d.load_demo();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
     let before = steps(&h);
     let a = rect.center();
-    drag(&mut h, &[a, offset(a, 30.0, 10.0), offset(a, 60.0, 20.0)]);
-    assert_eq!(steps(&h), before, "3D では選択のツールで描かない");
+    drag(
+        &mut h,
+        &[
+            a,
+            offset(a, 30.0, 10.0),
+            offset(a, 60.0, 20.0),
+            offset(a, 20.0, 50.0),
+        ],
+    );
+    assert_eq!(
+        steps(&h),
+        before + 1,
+        "3D の選択のツールは選択範囲を作る（取り消し 1 回）: {}",
+        st(&h).message
+    );
     assert!(!st(&h).doc.has_active_stroke());
+    let doc = &st(&h).doc;
+    assert!(
+        doc.composite(doc.bounds())
+            .unwrap()
+            .chunks(4)
+            .all(|p| p[3] == 0),
+        "3D では選択のツールで描かない"
+    );
     assert!(!st(&h).message.is_empty());
     key(&h, Key::D, Modifiers::COMMAND);
     h.run();
@@ -938,42 +995,45 @@ fn switching_to_a_selection_tool_during_a_pen_stroke_still_ends_the_stroke_when_
 // ───────── 対称 ─────────
 
 #[test]
-fn option_bar_toggle_and_menu_set_the_symmetry_mode_and_the_axes_show() {
-    let mut h = app(1000.0, 640.0, 256);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-    h.get_by_label("対称のオン・オフ（2D）").click();
-    h.run();
+fn the_special_snap_switch_turns_the_symmetry_ruler_off_and_on() {
+    let mut h = app(1000.0, 640.0, 512);
+    let r = canvas_rect(&h);
+    let view = st(&h).view.view(r, 512, 512);
+    let s = |x: f64, y: f64| view.to_screen(x, y);
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 256.0);
+    });
+    assert!(st(&h).rulers.snap_special, "特殊定規を作ると入る");
+    let dab = |h: &mut H, p: Pos2| drag(h, &[p, offset(p, 0.5, 0.0)]);
+    dab(&mut h, s(100.0, 400.0));
+    assert!(alpha_at(&h, s(412.0, 400.0)) > 0, "入っていれば映る");
+    undo(&mut h);
+    special_snap(&mut h, false);
+    dab(&mut h, s(100.0, 400.0));
+    assert!(alpha_at(&h, s(100.0, 400.0)) > 0);
+    assert_eq!(alpha_at(&h, s(412.0, 400.0)), 0, "切ると映さない");
+    undo(&mut h);
+    // 「表示」のメニューの項目でも切り替わる（チェックが付く）
+    let entries = yolu_app::shell::menu_entries(st(&h), 5);
+    let item = entries
+        .iter()
+        .find_map(|e| match e {
+            yolu_app::ui::menu::Entry::Item { label, check, .. }
+                if label == "特殊定規にスナップ" =>
+            {
+                Some(*check)
+            }
+            _ => None,
+        })
+        .expect("表示のメニューの特殊定規にスナップ");
     assert_eq!(
-        st(&h).sel.symmetry.mode,
-        SymmetryMode::Vertical,
-        "覚えが無ければ縦"
+        item,
+        yolu_app::ui::menu::Check::None,
+        "切ったのでチェックは外れる"
     );
-    // ▾ からモードを選ぶ
-    h.get_by_label("対称のモード").click();
-    h.run();
-    assert_eq!(
-        st(&h).popup.as_ref().map(|p| p.kind),
-        Some(PopupKind::Symmetry)
-    );
-    let item = popup_item(&h, "両方").center();
-    click(&mut h, item);
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::Both);
-    h.get_by_label("対称のオン・オフ（2D）").click();
-    h.run();
-    assert_eq!(st(&h).sel.symmetry.mode, SymmetryMode::None);
-    h.get_by_label("対称のオン・オフ（2D）").click();
-    h.run();
-    assert_eq!(
-        st(&h).sel.symmetry.mode,
-        SymmetryMode::Both,
-        "最後のモードを入れ直す"
-    );
-    // 軸の表示（メニュー）
-    h.get_by_label("対称のモード").click();
-    h.run();
-    let item = popup_item(&h, "軸を表示").center();
-    click(&mut h, item);
-    assert!(!st(&h).sel.symmetry.show_axes);
+    special_snap(&mut h, true);
+    dab(&mut h, s(100.0, 400.0));
+    assert!(alpha_at(&h, s(412.0, 400.0)) > 0);
 }
 
 #[test]
@@ -982,7 +1042,9 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     let r = canvas_rect(&h);
     let view = st(&h).view.view(r, 512, 512);
     let s = |x: f64, y: f64| view.to_screen(x, y);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 256.0);
+    });
     let dab = |h: &mut H, p: Pos2| drag(h, &[p, offset(p, 0.5, 0.0)]);
     dab(&mut h, s(100.0, 400.0));
     assert!(alpha_at(&h, s(100.0, 400.0)) > 0);
@@ -992,7 +1054,9 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     );
     assert_eq!(alpha_at(&h, s(100.0, 112.0)), 0, "横には映らない");
     undo(&mut h);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Both));
+    symmetry(&mut h, |s| {
+        common::rulers::both(s, (256.0, 256.0));
+    });
     dab(&mut h, s(100.0, 400.0));
     for (x, y) in [
         (100.0, 400.0),
@@ -1004,15 +1068,16 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     }
     undo(&mut h);
     // 中心をずらす: x = 128 で映る
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
-    sym(&mut h, SymOp::Center(0.25, 0.5));
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 128.0);
+    });
     dab(&mut h, s(60.0, 300.0));
     assert!(alpha_at(&h, s(196.0, 300.0)) > 0);
     undo(&mut h);
-    // 放射状 4 つ: 中心のまわりに 90° ずつ
-    sym(&mut h, SymOp::CenterCanvas);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Radial));
-    sym(&mut h, SymOp::Count(4));
+    // 回転対称 4 つ: 中心のまわりに 90° ずつ
+    symmetry(&mut h, |s| {
+        common::rulers::radial(s, (256.0, 256.0), 4);
+    });
     dab(&mut h, s(356.0, 256.0)); // 中心から右へ 100
     let copies = [
         (356.0, 256.0),
@@ -1028,8 +1093,37 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
     for (x, y) in copies {
         assert_eq!(alpha_at(&h, s(x, y)), 0);
     }
-    // 対称を切れば映さない
-    sym(&mut h, SymOp::Mode(SymmetryMode::None));
+    // 線対称 6 本: 鏡 3 枚（0°・60°・120° の軸）と回転 3 つ（120° ごと）で 6 つに映る。60° だけ回した点には映らない
+    symmetry(&mut h, |s| {
+        common::rulers::symmetry_2d(s, (256.0, 256.0), (1.0, 0.0), 6, true);
+    });
+    dab(&mut h, s(356.0, 266.0));
+    let (dx, dy) = (100.0, 10.0);
+    let image = |turn: f64, flip: bool| {
+        let y = if flip { -dy } else { dy };
+        let (sn, c) = turn.sin_cos();
+        s(256.0 + dx * c - y * sn, 256.0 + dx * sn + y * c)
+    };
+    for k in 0..3 {
+        for flip in [false, true] {
+            let turn = std::f64::consts::TAU * f64::from(k) / 3.0;
+            assert!(alpha_at(&h, image(turn, flip)) > 0, "{k} {flip}");
+        }
+    }
+    assert_eq!(
+        alpha_at(&h, image(std::f64::consts::TAU / 6.0, false)),
+        0,
+        "60° だけ回した点には映らない"
+    );
+    undo(&mut h);
+    // 対称定規を隠せば映さない
+    let layer = st(&h).selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::Ruler(RulerAction::SetAllVisible {
+            owner: layer,
+            visible: false,
+        }));
     dab(&mut h, s(356.0, 256.0));
     assert_eq!(alpha_at(&h, s(156.0, 256.0)), 0);
 }
@@ -1037,11 +1131,17 @@ fn symmetric_strokes_mirror_across_the_axes_and_the_radial_copies() {
 #[test]
 fn smudge_and_clone_cannot_be_combined_with_symmetry() {
     let mut h = app(1000.0, 640.0, 256);
-    sym(&mut h, SymOp::Mode(SymmetryMode::Vertical));
+    symmetry(&mut h, |s| {
+        common::rulers::vertical(s, 128.0);
+    });
     h.state_mut().state.m2.brush.effect = BrushEffect::Smudge { strength: 0.5 };
     let p = at(&h, 0.0, 0.0);
     drag(&mut h, &[p, offset(p, 20.0, 0.0)]);
-    assert!(!st(&h).doc.can_undo(), "断ったので何も描かない");
+    assert_eq!(
+        steps(&h),
+        1,
+        "断ったので何も描かない（定規を置いた 1 段だけ）"
+    );
     assert!(
         st(&h).message.contains("対称"),
         "理由が出る: {}",
@@ -1051,21 +1151,30 @@ fn smudge_and_clone_cannot_be_combined_with_symmetry() {
     // 効果をペイントに戻せば、対称のまま描ける
     h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
     drag(&mut h, &[p, offset(p, 20.0, 0.0)]);
-    assert!(st(&h).doc.can_undo());
+    assert_eq!(steps(&h), 2);
 }
 
 #[test]
-fn symmetry_axes_and_mirrored_cursors_are_drawn_on_the_canvas() {
+fn the_axes_of_a_radial_symmetry_ruler_are_drawn_and_a_hidden_ruler_draws_and_copies_nothing() {
     let mut h = app(1000.0, 640.0, 512);
     h.state_mut().state.sel.animate = false;
-    sym(&mut h, SymOp::Mode(SymmetryMode::Radial));
-    sym(&mut h, SymOp::Count(6));
-    sym(&mut h, SymOp::Center(0.4, 0.55));
-    h.snapshot("symmetry_radial_axes");
-    sym(&mut h, SymOp::Mode(SymmetryMode::Both));
-    sym(&mut h, SymOp::ShowAxes(false));
-    let before = h.state().state.sel.symmetry.clone();
-    assert!(!before.show_axes);
+    symmetry(&mut h, |s| {
+        common::rulers::radial(s, (0.4 * 512.0, 0.55 * 512.0), 6);
+    });
+    h.snapshot("rulers_symmetry_radial_axes");
+    // 隠すと線も消え、写しも効かない
+    let layer = st(&h).selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::Ruler(RulerAction::SetAllVisible {
+            owner: layer,
+            visible: false,
+        }));
+    h.run();
+    assert!(st(&h)
+        .rulers_shown(yolu_app::rulers::Place::Canvas)
+        .is_empty());
+    assert!(!st(&h).canvas_symmetry().enabled());
 }
 
 /// 左下 `limit` 画素四方に、1 画素おきの孤立した点（選ばれた画素ごとに縁が 4 本。つながらない）。
@@ -1247,14 +1356,16 @@ fn headless_selection_edits_are_refused_while_stroking_and_on_read_only_sets() {
         ModifyKind::Grow,
     ))));
     assert!(s.sel.dialog.is_none());
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Both,
-    ))));
-    assert_eq!(
-        s.sel.symmetry.mode,
-        SymmetryMode::None,
-        "描いている間は対称を替えない"
+    // 描いている間は定規を置けない（ストロークに固めた対称と食い違わせない）
+    let ruler = Ruler::canvas(
+        yolu_core::RulerId(1),
+        RulerKind::Symmetry,
+        yolu_core::glam::DVec2::new(5.0, 5.0),
+        yolu_core::glam::DVec2::new(5.0, 9.0),
     );
+    s.apply(Action::Ruler(RulerAction::Create(ruler)));
+    assert_eq!(common::rulers::total(&s), 0, "描いている間は定規を置かない");
+    assert!(s.message.contains("描いている間"), "{}", s.message);
     s.doc.cancel_stroke(stroke);
     // 読むだけのセット
     s.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
@@ -1366,8 +1477,7 @@ fn headless_refused_edits_change_nothing_and_say_why() {
             mode: SelectionCombine::Replace,
         },
         SelEdit::Wand {
-            x: 64,
-            y: 0,
+            seeds: vec![(64, 0)],
             mode: SelectionCombine::Replace,
         },
     ] {
@@ -1422,8 +1532,7 @@ fn headless_refusals_are_told_in_the_language_and_change_nothing() {
         ),
         (
             SelEdit::Wand {
-                x: 64,
-                y: 0,
+                seeds: vec![(64, 0)],
                 mode: SelectionCombine::Replace,
             },
             "種がキャンバスの外",
@@ -1503,10 +1612,10 @@ fn headless_selection_file_failures_are_told_in_the_language_and_touch_nothing()
     let stored = Selection::from_core(&small_mask).unwrap();
     for lang in [Lang::Ja, Lang::En] {
         let (ja, en) = (
-            ("選択範囲を戻せません", "選択範囲の大きさが文書と違う"),
+            ("選択範囲を戻せません", "選択範囲の大きさがキャンバスと違う"),
             (
                 "Cannot restore the selection",
-                "Selection size does not match document",
+                "Selection size does not match canvas",
             ),
         );
         // 読み込み: 大きさが違えば選択なしのまま理由を返す。同じ大きさなら戻る（Undo の段は増えない）
@@ -1589,8 +1698,7 @@ fn headless_wand_reads_the_selected_layer_or_the_composite() {
     paint_rect(&mut s, 128, 0, 256, 128, [0, 0, 255, 255]);
     s.sel.tolerance = 0;
     let wand = |x| SelEdit::Wand {
-        x,
-        y: 10,
+        seeds: vec![(x, 10)],
         mode: SelectionCombine::Replace,
     };
     // 選んでいる上のレイヤー（右下だけ青）: 左下は透明の画素なので、透明が選ばれる（青はつながらない別の色）
@@ -1639,10 +1747,7 @@ fn headless_fill_stays_inside_the_selection() {
 #[test]
 fn headless_symmetry_reaches_the_brush_and_follows_the_document_size() {
     let mut s = doc_state(64);
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Vertical,
-    ))));
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Center(0.25, 0.5))));
+    common::rulers::vertical(&mut s, 16.0);
     let id = s.selected_layer.unwrap();
     let mut stroke = s.begin_canvas_stroke(id, false, None).unwrap();
     let sample =
@@ -1656,21 +1761,24 @@ fn headless_symmetry_reaches_the_brush_and_follows_the_document_size() {
     assert_eq!(a(57, 20), 0);
     // 基本のブラシ（3D の面のストロークが使う）は対称を持たない
     assert!(!s.stroke_brush(false).symmetry.enabled());
-    // 大きさの違う文書でも、中心は文書に対する割合
+    // 対称定規の中心は文書の画素で持つ。画像のサイズを変えると、定規も一緒に写る（取り消しで戻る）
     let c = s.canvas_symmetry();
-    assert_eq!((c.center.x, c.center.y), (16.0, 32.0));
-    let mut big = doc_state(512);
-    big.sel.symmetry = s.sel.symmetry.clone();
-    let c = big.canvas_symmetry();
-    assert_eq!((c.center.x, c.center.y), (128.0, 256.0));
+    assert_eq!((c.center.x, c.center.y), (16.0, 0.0));
+    s.doc
+        .resize_image(512, 512, yolu_app::engine::CanvasResampling::Nearest)
+        .unwrap();
+    let c = s.canvas_symmetry();
+    assert_eq!((c.center.x, c.center.y), (128.0, 0.0));
+    assert!(c.enabled(), "サイズを変えたあとも効く");
+    s.doc.undo().unwrap();
+    let c = s.canvas_symmetry();
+    assert_eq!((c.center.x, c.center.y), (16.0, 0.0));
 }
 
 #[test]
 fn headless_symmetry_is_refused_for_smudge_and_clone_with_a_reason_and_no_stroke() {
     let mut s = doc_state(64);
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Both,
-    ))));
+    common::rulers::both(&mut s, (32.0, 32.0));
     let id = s.selected_layer.unwrap();
     for effect in [
         BrushEffect::Smudge { strength: 0.5 },
@@ -1710,6 +1818,8 @@ fn headless_a_canvas_stroke_obeys_the_selection_the_stencil_and_the_symmetry_tog
     let mut s = doc_state(64);
     s.brush.radius = 3.0;
     s.brush.hardness = 1.0;
+    // 縁の画素の 0・255 を確かめるので、縁の帯の無い丸で描く
+    s.brush.anti_alias = yolu_app::engine::AntiAlias::None;
     s.m2.random_seed = false;
     s.stencil.size = 1.0;
     s.apply(Action::Stencil(StencilOp::Load(half_open_png(&dir))));
@@ -1753,10 +1863,7 @@ fn headless_a_canvas_stroke_obeys_the_selection_the_stencil_and_the_symmetry_tog
     assert_eq!(alpha(&s, 24, 20), 0);
 
     // 対称（縦の軸 x = 32）: 3 本の別々のストローク。主・映しの片方だけが通る
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Mode(
-        SymmetryMode::Vertical,
-    ))));
-    s.apply(Action::Sel(SelAction::Symmetry(SymOp::Center(0.5, 0.5))));
+    common::rulers::vertical(&mut s, 32.0);
     // 主（x = 40〜44）はステンシルが塞ぎ、映し（x = 24〜20）は選択もステンシルも開いて塗れる
     line(&mut s, 12.0, 40.0, 44.0);
     assert_eq!(alpha(&s, 42, 12), 0, "主の側はステンシルが塞ぐ");
@@ -2028,8 +2135,7 @@ fn headless_every_edits_status_message_follows_the_language() {
                 mode: SelectionCombine::Intersect,
             },
             SelEdit::Wand {
-                x: 1,
-                y: 1,
+                seeds: vec![(1, 1)],
                 mode: SelectionCombine::Replace,
             },
             SelEdit::Invert,
@@ -2107,10 +2213,7 @@ fn headless_every_selection_label_exists_in_both_languages() {
         s.lang = lang;
         run(&mut s, SelEdit::All);
         let mut v = Vec::new();
-        for entries in [
-            yolu_app::selection::menu::select_menu(&s),
-            yolu_app::selection::menu::symmetry_menu(&s),
-        ] {
+        for entries in [yolu_app::selection::menu::select_menu(&s)] {
             for e in entries {
                 if let yolu_app::ui::menu::Entry::Item { label, .. } = e {
                     assert!(!label.trim().is_empty());
@@ -2121,10 +2224,6 @@ fn headless_every_selection_label_exists_in_both_languages() {
         for tool in Tool::ALL {
             assert!(!tool.name_in(lang).is_empty());
             v.push(tool.name_in(lang).to_owned());
-        }
-        for mode in yolu_app::selection::symmetry::MODES {
-            v.push(yolu_app::selection::symmetry::mode_name(lang, mode).to_owned());
-            v.push(yolu_app::selection::symmetry::mode_tooltip(lang, mode).to_owned());
         }
         for kind in ModifyKind::ALL {
             v.push(kind.name(lang).to_owned());

@@ -21,16 +21,31 @@ pub enum Stage {
     Dual,
     /// 1 枚のタイルの画素の核（`dab_tile`。タイルの出し入れを除く）。
     Kernel,
+    /// 3D のダブ 1 つ（`SurfaceStroke` の `paint_plan` の全体: 投影の塗りで画素を集めるところから、文書のストロークへ塗るところまで）。
+    SurfaceDab,
+    /// 3D のダブの投影の塗り（`build_dab`: 区画の作り直し・覆いの集め・並べ替え・対称の写し）。
+    SurfaceProject,
+    /// 投影の塗りのうち、覚えに無い区画を作る仕事（`build_bucket`。ワーカーを待つ時間も含む）。
+    SurfaceBuckets,
+    /// 投影の塗りのうち、円の中の投影の画素の覆いを出して並べる仕事（`gather`・区画ごとの位置順の列の併合・同じテクセルの 1 本化）。
+    SurfaceGather,
+    /// 3D のダブの画素を、文書のストロークへまとめて渡して塗る仕事（`Stroke::apply_dab`。渡す画素の並びの組み立ても含む）。
+    SurfaceApply,
 }
 
 impl Stage {
-    pub const ALL: [Stage; 6] = [
+    pub const ALL: [Stage; 11] = [
         Stage::Stamp,
         Stage::Prepare,
         Stage::Pixels,
         Stage::FirstTouch,
         Stage::Dual,
         Stage::Kernel,
+        Stage::SurfaceDab,
+        Stage::SurfaceProject,
+        Stage::SurfaceBuckets,
+        Stage::SurfaceGather,
+        Stage::SurfaceApply,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -40,6 +55,11 @@ impl Stage {
             Stage::FirstTouch => "初回の写し",
             Stage::Dual => "デュアルの溜まり",
             Stage::Kernel => "画素の核（タイル 1 枚分）",
+            Stage::SurfaceDab => "3D ダブ全体",
+            Stage::SurfaceProject => "3D 投影の塗り",
+            Stage::SurfaceBuckets => "3D 区画の作り直し",
+            Stage::SurfaceGather => "3D 覆いの集め+並べ替え",
+            Stage::SurfaceApply => "3D のキャンバスへ塗る",
         }
     }
 }
@@ -62,6 +82,8 @@ mod on {
     static TICKS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
     static CALLS: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
     static START: Mutex<Option<(Instant, u64)>> = Mutex::new(None);
+    /// 3D の段は 1 回ごとの時間も残す（中央値・最大を出すため。1 回が ms の単位なので、ロックの時間は無視できる）。
+    static SAMPLES: [Mutex<Vec<u64>>; N] = [const { Mutex::new(Vec::new()) }; N];
 
     #[inline(always)]
     fn now() -> u64 {
@@ -96,6 +118,9 @@ mod on {
             let dt = now().wrapping_sub(self.start);
             TICKS[self.stage].fetch_add(dt, Ordering::Relaxed);
             CALLS[self.stage].fetch_add(1, Ordering::Relaxed);
+            if self.stage >= Stage::SurfaceDab as usize {
+                SAMPLES[self.stage].lock().unwrap().push(dt);
+            }
         }
     }
 
@@ -103,8 +128,24 @@ mod on {
         for i in 0..N {
             TICKS[i].store(0, Ordering::Relaxed);
             CALLS[i].store(0, Ordering::Relaxed);
+            SAMPLES[i].lock().unwrap().clear();
         }
         *START.lock().unwrap() = Some((Instant::now(), now()));
+    }
+
+    /// 段の 1 回ごとの時間（ナノ秒、短い順。3D の段だけ。[`take`] の前に読む）。
+    pub fn samples(stage: Stage) -> Vec<f64> {
+        let (t0, c0) = START.lock().unwrap().expect("reset の後");
+        let nanos_per_tick =
+            t0.elapsed().as_secs_f64() * 1e9 / now().wrapping_sub(c0).max(1) as f64;
+        let mut v: Vec<f64> = SAMPLES[stage as usize]
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|&t| t as f64 * nanos_per_tick)
+            .collect();
+        v.sort_by(f64::total_cmp);
+        v
     }
 
     pub fn take() -> Vec<(Stage, Total)> {
@@ -128,7 +169,7 @@ mod on {
 }
 
 #[cfg(feature = "stroke-profile")]
-pub use on::{reset, scope, take, Guard};
+pub use on::{reset, samples, scope, take, Guard};
 
 #[cfg(not(feature = "stroke-profile"))]
 mod off {

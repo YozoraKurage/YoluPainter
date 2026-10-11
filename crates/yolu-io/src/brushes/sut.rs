@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use yolu_core::brush::MAX_STROKE_ASSIST;
 use yolu_core::curve::{Curve, CurvePoint};
-use yolu_core::{Brush, BrushTip, PaperTexture, PressureResponse, TipSelection};
+use yolu_core::{AntiAlias, Brush, BrushTip, PaperTexture, PressureResponse, TipSelection};
 
 use super::error::{BrushImportError, Fault};
 use super::notes::{Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented};
@@ -101,6 +101,9 @@ const COLOR_CHANGE: &[&str] = &[
     "brushsubcolor",
 ];
 const BLEND_MODE: &[&str] = &["compositemode"];
+// アンチエイリアス（整数。0 なし・1 弱・2 中・3 強と推定: 画面の選びの順。手元の書き出しでは 0・1・2 を見た）。デュアルブラシの
+// `DualAntiAlias` はデュアルブラシごと表せないので読まない
+const ANTI_ALIAS: &[&str] = &["antialias"];
 
 /// 読む列の名前の全部。
 const KNOWN: &[&[&str]] = &[
@@ -150,6 +153,7 @@ const KNOWN: &[&[&str]] = &[
     ROTATION_RANDOM,
     COLOR_CHANGE,
     BLEND_MODE,
+    ANTI_ALIAS,
 ];
 
 /// 割合の設定（0〜100 の百分率か 0〜1 の割合か列によって混ざるので、1 より大きければ百分率として見る）。
@@ -981,6 +985,19 @@ fn brush_from_row(
     }
     if let Some(v) = percent(row, THICKNESS) {
         brush.tip.roundness = v.clamp(0.0, 1.0).max(0.01);
+    }
+    // アンチエイリアス: 0〜3 を なし・弱・中・強へ。知らない値は写さずに（なし のまま）知らせる
+    if let Some(v) = row.first_number(ANTI_ALIAS) {
+        let level = (v.fract() == 0.0 && (0.0..=3.0).contains(&v))
+            .then(|| AntiAlias::from_index(v as u8))
+            .flatten();
+        match level {
+            Some(level) => {
+                brush.base.anti_alias = level;
+                mapped.push(SutMapped::AntiAliasing);
+            }
+            None => notes.push(Unrepresented::ClipStudio(SutNote::AntiAliasing(v))),
+        }
     }
 
     for (target, columns) in [

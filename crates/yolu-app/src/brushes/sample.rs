@@ -709,6 +709,10 @@ mod tests {
         let changes: Vec<Change> = vec![
             ("radius", Box::new(|b| b.base.radius = 30.0)),
             ("hardness", Box::new(|b| b.base.hardness = 0.1)),
+            (
+                "anti alias",
+                Box::new(|b| b.base.anti_alias = crate::engine::AntiAlias::Strong),
+            ),
             ("spacing", Box::new(|b| b.base.spacing = 0.5)),
             ("opacity", Box::new(|b| b.base.opacity = 0.5)),
             ("flow", Box::new(|b| b.base.flow = 0.2)),

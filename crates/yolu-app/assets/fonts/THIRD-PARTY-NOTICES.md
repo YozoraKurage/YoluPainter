@@ -1,7 +1,9 @@
 # BIZ UDPGothic の第三者表記
 
 Regular と Bold は [googlefonts/morisawa-biz-ud-gothic v1.051](https://github.com/googlefonts/morisawa-biz-ud-gothic/tree/18934af56b9c003ca58c54bffbf226848cb11032) の TTF を変更せず同梱している。
-許諾は SIL Open Font License 1.1。著作権表記と許諾の原文は次のとおり（隣の `OFL.txt` と同じ内容）。
+`BIZUDPGothic-Regular-Lines.ttf` と `BIZUDPGothic-Bold-Lines.ttf` は、この 2 つから下線・ダッシュ・マイナス・上線の 9 字だけを、ヒンティングの命令を外して抜き出した派生のフォントで
+（作り方は `tools/make-ui-font-lines.py`）、フォントの名前は `YoluPainter UI Lines` に変えてある。著作権表記・許諾の文・商標の注記は派生のフォントの name 表にも残し、許諾は同じ SIL Open Font License 1.1。
+著作権表記と許諾の原文は次のとおり（隣の `OFL.txt` と同じ内容）。
 `tools/licenses-reviewed.json` で TTF・OFL.txt・この表記の SHA-256 を照合し、配布用全文束へ含める。
 
 ```text

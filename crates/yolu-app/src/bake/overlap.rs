@@ -774,7 +774,7 @@ pub fn open_menu(
 pub fn menu_press(app: &mut AppState, w: Where, at: Pos2) {
     app.bake.menu_wait = None;
     app.bake.menu_press =
-        (app.tool == Tool::PolygonFill && !app.is_stroking() && app.region.drag.is_none())
+        (app.right_opens_island_menu() && !app.is_stroking() && app.region.drag.is_none())
             .then_some((at, w.is_surface(), Instant::now()));
     if app.bake.menu_press.is_some() {
         // 離すまでのあいだに、入力とアイランドの索引を別のスレッドで作り始める（離したときに待たずに済むことが多い）。

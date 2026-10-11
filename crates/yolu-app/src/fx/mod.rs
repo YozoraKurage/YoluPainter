@@ -324,7 +324,9 @@ impl AppState {
                 let id = self.doc.add_filter(layer, target, spec)?;
                 self.select_effect(layer, id);
                 let mut text = self.added_text(names::generator_name(lang, kind), target);
-                // 読むものが使えないなら、効かない理由を添える
+                // 読むものが使えないなら、効かない理由を添える。文書へ渡す効果の入力は今の効果が読むマップだけなので、足したジェネレーターが
+                // 読むマップは、毎フレームの同期を待つと渡っておらず「マップがありません」と誤る。先に渡す
+                self.sync_effect_inputs();
                 if let Ok(Some(why)) = self.doc.generator_inactive(layer, id) {
                     text += &format!(
                         " {}",

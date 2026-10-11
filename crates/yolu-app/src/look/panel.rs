@@ -1,4 +1,4 @@
-//! 見た目の設定の欄（右のプロパティの「マテリアル」のタブ）: 種類（標準・lilToon）と、lilToon のときはインスペクター（lilToon 2.3.4 の
+//! 見た目の設定の欄（右のドックの「マテリアル」のパネル）: 種類（標準・lilToon）と、lilToon のときはインスペクター（lilToon 2.3.4 の
 //! 詳細設定）と同じ節の分け方・並び・名前の欄（見た目はよるぺの欄の部品）。描画モード → 基本設定 → ライティング・明るさ設定 → UV 設定 →
 //! [色設定] メインカラー / 透過設定・影設定・リムシェード・発光設定 → [ノーマルマップ・光沢設定] ノーマルマップ設定・逆光ライト・
 //! 光沢設定・マットキャップ設定・リムライト設定・ラメ設定 → [拡張設定] 輪郭線設定・距離フェード。機能の入切は、その機能の節の頭
@@ -308,15 +308,20 @@ fn choice(
     enabled: bool,
 ) -> Option<Rect> {
     let r = rows.row(t::ROW_HEIGHT, 4.0);
+    // 名前が基準の幅に入らないとき（英語の「Rendering Mode」など）は、名前の幅まで広げる。ただし行の 6 割まで（値の箱を読めるように残す。それでも入らなければ
+    // 名前を「…」で詰める）
+    let label_width = (w::text_width(ui.painter(), label, t::LABEL) + 10.0)
+        .clamp(LABEL_W, (r.width() * 0.6).max(LABEL_W));
+    let shown = w::fit(ui.painter(), label, label_width - 10.0, t::LABEL);
     let (response, b) = w::dropdown(
         ui,
         r,
         id,
-        Some(label),
+        Some(&shown),
         value,
         Some(tooltip),
         enabled,
-        LABEL_W,
+        label_width,
     );
     response.clicked().then_some(b)
 }

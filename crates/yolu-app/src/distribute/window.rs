@@ -50,12 +50,12 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
             "Project assets (images, smart assets and brushes) that no layer or look setting uses. Assets in use stay",
         ),
         Removal::SourcePaths => lang.pick(
-            "素材を取り込んだ元のファイルやフォルダーの場所。使っている素材は残し、出どころだけを外します",
-            "Where the assets were imported from. Assets in use stay; only their source is dropped",
+            "素材を取り込んだ元のファイルやフォルダーの場所。使っている素材は残し、出どころだけを外します。テキストのフォントの場所はファイル名だけにします",
+            "Where the assets were imported from. Assets in use stay; only their source is dropped. The location of a text layer's font file is cut to its file name",
         ),
         Removal::ModelReference => lang.pick(
-            "開いていたモデルの場所と Unity のモデルの GUID、モデルのポーズ",
-            "The location of the model that was open, the Unity model GUID and the model's pose",
+            "開いていたモデルの場所と Unity のモデルの GUID、モデルのポーズ、Live Link で開いたモデルの記録（FBX や Unity のプロジェクトの場所）",
+            "The location of the model that was open, the Unity model GUID, the model's pose and the record of a model opened over Live Link (FBX and Unity project locations)",
         ),
         Removal::MeshMaps => lang.pick(
             "モデルの形から焼いたマップ。Generator が使うマップは、開いたあとにモデルから焼き直します",
@@ -66,8 +66,8 @@ pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
             "Values received from Unity materials over Live Link. Look settings stay",
         ),
         Removal::SavedSelections => lang.pick(
-            "名前を付けて残した選択範囲。除くと、写しは Unity 版でも開ける形式になります（今の選択範囲は残ります）",
-            "Selections saved under a name. Without them the copy can be opened by the Unity version too (the current selection stays)",
+            "名前を付けて残した選択範囲。除くと、写しの形式が 7 になり、古い版（0.3.x のスタンドアロン版・0.4.x までの Unity 版）も形式としては読めます。ほかの中身の版によっては開けません（今の選択範囲は残ります）",
+            "Selections saved under a name. Without them the copy is written in format 7, which older versions (standalone 0.3.x and the Unity version up to 0.4.x) accept as a format; they may still fail to open it, depending on the versions of its other contents (the current selection stays)",
         ),
         Removal::StaleEntries => lang.pick(
             "Unity 版が残したサムネイル・ブラシの設定など。スタンドアロン版は更新しません",
@@ -288,5 +288,33 @@ pub fn show_replace(ctx: &egui::Context, app: &mut AppState) {
         Some(Reply::Button(1)) => app.apply(Action::Distribute(DistributeAction::ConfirmReplace)),
         Some(_) => app.apply(Action::Distribute(DistributeAction::CancelReplace)),
         None => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// ツールチップは、読み手を実際にある版（0.3.x のスタンドアロン版・0.4.x までの Unity 版）で言い、どの種類にも日英がある。
+    /// 「覚えた選択範囲」は形式 7 に戻ること、「モデルの参照」は Live Link で開いたモデルの記録も除くことを言う。
+    #[test]
+    fn the_tooltips_name_the_readers_and_what_each_kind_takes_out() {
+        for lang in [Lang::Ja, Lang::En] {
+            for removal in Removal::ALL {
+                assert!(!tooltip(lang, removal).is_empty(), "{removal:?}");
+                assert!(!label(lang, removal).is_empty(), "{removal:?}");
+            }
+        }
+        let saved = tooltip(Lang::Ja, Removal::SavedSelections);
+        assert!(saved.contains("0.4.x") && saved.contains(" 7 "), "{saved}");
+        let saved = tooltip(Lang::En, Removal::SavedSelections);
+        assert!(
+            saved.contains("0.4.x") && saved.contains("format 7"),
+            "{saved}"
+        );
+        assert!(tooltip(Lang::Ja, Removal::SourcePaths).contains("フォント"));
+        assert!(tooltip(Lang::En, Removal::SourcePaths).contains("font"));
+        assert!(tooltip(Lang::Ja, Removal::ModelReference).contains("Live Link"));
+        assert!(tooltip(Lang::En, Removal::ModelReference).contains("Live Link"));
     }
 }

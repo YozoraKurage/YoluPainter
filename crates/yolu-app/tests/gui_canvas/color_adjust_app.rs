@@ -33,6 +33,9 @@ fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
 
 fn new_adjustment(h: &mut Harness<'_, YoluApp>, kind: AdjustmentKind) -> LayerId {
     apply(h, Action::M2(Edit::NewAdjustment(kind)));
+    // 狭い欄は、欄の中身の高さが分かった次のフレームで並びが変わる（スクロールバーの分）。そのあとで部品の位置を読む
+    h.step();
+    h.step();
     h.state()
         .state
         .selected_layer
@@ -56,7 +59,7 @@ fn undo_count(h: &Harness<'_, YoluApp>) -> usize {
 
 /// 右の列（プロパティの欄）の中で、スライダーの溝の `fraction` の位置を押す。
 fn click_panel_slider(h: &mut Harness<'_, YoluApp>, label: &str, fraction: f32) {
-    let r = rect_of(h, label, |r| r.left() > 1000.0);
+    let r = rect_of(h, label, |r| r.left() > rx());
     let width = (r.width()).max(120.0);
     let y = r.center().y + 8.0;
     click(h, pos2(r.left() + width * fraction, y));
@@ -65,7 +68,7 @@ fn click_panel_slider(h: &mut Harness<'_, YoluApp>, label: &str, fraction: f32) 
 #[test]
 fn every_kind_is_a_new_adjustment_layer_acting_on_the_channels_it_can() {
     for kind in SIX {
-        let mut h = app(1280.0, 1000.0, 64);
+        let mut h = app(1280.0, 1400.0, 64);
         let before = undo_count(&h);
         let id = new_adjustment(&mut h, kind);
         assert_eq!(undo_count(&h), before + 1, "{kind:?}: 1 回の Undo");
@@ -95,7 +98,7 @@ fn every_kind_is_a_new_adjustment_layer_acting_on_the_channels_it_can() {
 #[test]
 fn the_new_adjustment_menus_list_every_kind_in_both_languages() {
     for lang in Lang::ALL {
-        let mut h = app(1280.0, 1000.0, 64);
+        let mut h = app(1280.0, 1400.0, 64);
         h.state_mut().state.set_language(lang);
         h.run();
         let entries = yolu_app::m2_menu::entries(&h.state().state, Popup::NewAdjustment);
@@ -121,11 +124,11 @@ fn the_new_adjustment_menus_list_every_kind_in_both_languages() {
 
 #[test]
 fn a_threshold_slider_drag_in_the_panel_is_one_undo_step_and_undo_restores_it() {
-    let mut h = app(1280.0, 1000.0, 64);
+    let mut h = app(1280.0, 1400.0, 64);
     let id = new_adjustment(&mut h, AdjustmentKind::Threshold);
     let first = value_of(&h, id);
     let steps = undo_count(&h);
-    let r = rect_of(&h, "しきい値", |r| r.left() > 1000.0);
+    let r = rect_of(&h, "しきい値", |r| r.left() > rx());
     let y = r.center().y + 8.0;
     drag(
         &mut h,
@@ -172,6 +175,7 @@ fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
     let steps = undo_count(&h);
     click_label_in_panel(&mut h, "シャドウ");
     click_panel_slider(&mut h, "マゼンタ — グリーン", 1.0);
+    scroll_panel_to(&mut h, "輝度を保つ");
     click_check_in_panel(&mut h, "輝度を保つ");
     let ColorAdjust::ColorBalance(v) = value_of(&h, id) else {
         panic!()
@@ -183,25 +187,25 @@ fn brightness_contrast_posterize_and_color_balance_edits_are_undoable() {
 
 /// 右の列を、その名前の部品が見える所（ウィンドウの中ほど）まで送る（欄は縦に長く、ウィンドウの外にはみ出す）。
 fn scroll_panel_to(h: &mut Harness<'_, YoluApp>, label: &str) {
-    let r = rect_of(h, label, |r| r.left() > 1000.0);
-    let scroll = h.state().state.m2.props_scroll + (r.top() - 900.0);
+    let r = rect_of(h, label, |r| r.left() > rx());
+    let scroll = h.state().state.m2.props_scroll + (r.top() - props_mid(h));
     h.state_mut().state.m2.props_scroll = scroll.max(0.0);
     h.run();
 }
 
 fn click_label_in_panel(h: &mut Harness<'_, YoluApp>, label: &str) {
-    let r = rect_of(h, label, |r| r.left() > 1000.0);
+    let r = rect_of(h, label, |r| r.left() > rx());
     click(h, r.center());
 }
 
 fn click_check_in_panel(h: &mut Harness<'_, YoluApp>, label: &str) {
-    let r = rect_of(h, label, |r| r.left() > 1000.0);
+    let r = rect_of(h, label, |r| r.left() > rx());
     click(h, pos2(r.left() + 8.0, r.center().y));
 }
 
 #[test]
 fn the_gradient_map_panel_applies_a_preset_flips_and_undoes() {
-    let mut h = app(1280.0, 1500.0, 64);
+    let mut h = app(1280.0, 2000.0, 64);
     let id = new_adjustment(&mut h, AdjustmentKind::GradientMap);
     let first = value_of(&h, id);
     let steps = undo_count(&h);
@@ -225,7 +229,7 @@ fn the_gradient_map_panel_applies_a_preset_flips_and_undoes() {
 
 #[test]
 fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_what_lies_below() {
-    let mut h = app(1280.0, 1000.0, 64);
+    let mut h = app(1280.0, 1400.0, 64);
     // 下に絵のある調整レイヤー（分布が出る）
     apply(&mut h, Action::NewLayer);
     let paint = h.state().state.selected_layer.unwrap();
@@ -245,8 +249,8 @@ fn the_tone_curve_panel_edits_a_curve_with_one_undo_and_the_histogram_follows_wh
     }
     let id = new_adjustment(&mut h, AdjustmentKind::ToneCurve);
     let steps = undo_count(&h);
-    let strip = rect_of(&h, "RGB", |r| r.left() > 1000.0);
-    let blue = rect_of(&h, "B", |r| r.left() > 1000.0);
+    let strip = rect_of(&h, "RGB", |r| r.left() > rx());
+    let blue = rect_of(&h, "B", |r| r.left() > rx());
     let editor = Rect::from_min_max(
         pos2(strip.left(), strip.bottom() + 4.0),
         pos2(blue.right(), strip.bottom() + 4.0 + 116.0),
@@ -348,7 +352,7 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
             FilterKind::Threshold => "しきい値",
             _ => "階調",
         };
-        rect_of(&h, probe, |r| r.left() > 1000.0);
+        rect_of(&h, probe, |r| r.left() > rx());
         // 値を 1 つ替える（段の設定が変わり、元に戻せる）
         match kind {
             FilterKind::GradientMap => {
@@ -393,7 +397,7 @@ fn filter_stages_of_the_six_kinds_are_added_selected_edited_and_undone() {
 
 #[test]
 fn the_add_filter_menu_names_the_six_and_refuses_them_where_they_cannot_apply() {
-    let mut h = app(1280.0, 1000.0, 64);
+    let mut h = app(1280.0, 1400.0, 64);
     let _ = fill_layer(&mut h);
     // (ラベル, 押せるか, 理由)。理由はラベルに続けず、ツールチップに置く
     let label_of = |h: &Harness<'_, YoluApp>, kind: FilterKind| -> (String, bool, Option<String>) {
@@ -485,7 +489,7 @@ fn the_panels_for_layers_and_stages_have_no_instruction_text_and_the_english_one
     }
     for lang in Lang::ALL {
         for kind in SIX {
-            let mut h = app(1280.0, 1000.0, 64);
+            let mut h = app(1280.0, 1400.0, 64);
             h.state_mut().state.set_language(lang);
             h.run();
             let _ = new_adjustment(&mut h, kind);
@@ -601,7 +605,7 @@ fn dragging_in_the_colour_picker_is_one_undo_step_and_escape_goes_back_to_the_fi
     let steps = undo_count(&h);
     // 色の見本を押して色の選びを開き、四角の中で何度か動かす（1 回のドラッグ）
     scroll_panel_to(&mut h, "分岐点の色");
-    let swatch = rect_of(&h, "分岐点の色", |r| r.left() > 1000.0);
+    let swatch = rect_of(&h, "分岐点の色", |r| r.left() > rx());
     click(&mut h, swatch.center());
     let target = yolu_app::panels::ramp_rows::stop_target(("adjustment", id.0), 0);
     assert!(yolu_app::panels::color_window::is_target(&h.ctx, target));

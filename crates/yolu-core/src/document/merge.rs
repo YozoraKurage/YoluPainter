@@ -50,6 +50,8 @@ pub enum MergeRefusal {
     EmptyGroup,
     NothingVisible,
     DifferentGroups,
+    /// 外すレイヤーの定規を全部結果へ移すと、1 つのレイヤーに付けられる数（64）を超える。
+    TooManyRulers,
 }
 /// 利用者に見せる短い状態（どの結合を断ったかの理由。使い方の説明にはしない）。
 impl std::fmt::Display for MergeRefusal {
@@ -64,6 +66,7 @@ impl std::fmt::Display for MergeRefusal {
             MergeRefusal::EmptyGroup => "グループが空",
             MergeRefusal::NothingVisible => "表示中のレイヤーが無い",
             MergeRefusal::DifferentGroups => "親のグループが違う",
+            MergeRefusal::TooManyRulers => "定規が多すぎる",
         })
     }
 }
@@ -164,6 +167,8 @@ impl Document {
             Some(MergeRefusal::LayerBelowIsAdjustment)
         } else if !l.visible || !lower.visible {
             Some(MergeRefusal::HiddenLayer)
+        } else if l.rulers.len() + lower.rulers.len() > crate::rulers::MAX_RULERS_PER_LAYER {
+            Some(MergeRefusal::TooManyRulers)
         } else {
             None
         })
@@ -936,13 +941,25 @@ impl Document {
     }
     fn finish_merge(
         &mut self,
-        copy: Document,
+        mut copy: Document,
         removed: &[LayerId],
         method: MergeMethod,
         notes: u8,
         tolerance: u8,
         output_tiles: &BTreeMap<Channel, BTreeSet<TileCoord>>,
     ) -> Result<LayerMergeReport, CoreError> {
+        // 外すレイヤーの定規は黙って捨てず、結果のレイヤーへ全部移す（結果が 64 個を超えるときだけ、何も変えずに断る）
+        let moved_rulers = self.rulers_for_merge(removed)?;
+        if !moved_rulers.is_empty() {
+            let result_id = copy
+                .layers
+                .iter()
+                .find(|l| self.layer(l.id).is_none())
+                .expect("結合結果")
+                .id;
+            let index = copy.index_of(result_id).expect("結合結果");
+            copy.layers[index].rulers = moved_rulers;
+        }
         // 表示に寄与するレイヤーの結合だけは、結合前の合成でなく結果のレイヤーの画素と比べる（結合したレイヤーが全部の見た目を持つ）
         let visible = method == MergeMethod::Visible;
         let result = copy

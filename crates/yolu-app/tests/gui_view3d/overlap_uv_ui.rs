@@ -243,7 +243,12 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 860.0, 64);
         h.state_mut().state.set_language(lang);
-        apply(&mut h, Action::Prefs(yolu_app::prefs::PrefsAction::Open));
+        apply(
+            &mut h,
+            Action::Prefs(yolu_app::prefs::PrefsAction::OpenAt(
+                yolu_app::prefs::Category::View3d,
+            )),
+        );
         let wire = h
             .get_by_role_and_label(
                 Role::ColorWell,
@@ -276,7 +281,8 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
         // 設定のウィンドウの全体には機械ごとの値（メモリの自動の上限・スレッドの数・設定のフォルダ）が出るので、色の行と色のウィンドウだけを撮る
         let prefs = yolu_app::prefs::last_rect(&h.ctx).expect("設定のウィンドウ");
         let row = egui::Rect::from_min_max(
-            egui::pos2(prefs.left(), wire.top() - 4.0),
+            // 左の区分の列（幅 210）は撮らない
+            egui::pos2(prefs.left() + 210.0, wire.top() - 4.0),
             egui::pos2(over.right() + 4.0, wire.bottom() + 4.0),
         );
         shot_row_and_color_window(
@@ -542,7 +548,8 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         assert_eq!(island_menu(&h), Some((0, false, false)));
         let prefer = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake"));
         h.event(egui::Event::PointerMoved(prefer.center()));
-        h.step();
+        // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
+        h.run();
         h.snapshot(format!(
             "polygon_fill_island_menu_{}",
             lang.pick("ja", "en")
@@ -565,11 +572,20 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         let empty = view.to_screen(60.0, 60.0);
         right(&mut h, empty);
         assert_eq!(island_menu(&h), None);
-        // ほかのツールでは開かない
+        // ほかのツールでは開かない（右ボタンはスポイトになり、透明の所を取ろうとした知らせが出る。あとの絵に写らないよう、前の知らせへ戻す）
+        let (message, toast) = {
+            let s = &h.state().state;
+            (s.message.clone(), s.toast.clone())
+        };
         h.state_mut().state.tool = Tool::Brush;
         h.run();
         right(&mut h, at);
         assert_eq!(island_menu(&h), None);
+        {
+            let s = &mut h.state_mut().state;
+            s.message = message;
+            s.toast = toast;
+        }
         // 3D: 動かさずに離した右クリックは当たった面のアイランド（+X の四角）のメニュー、3D の面を強調する。右ドラッグは回すだけ
         h.state_mut().state.tool = Tool::PolygonFill;
         {
@@ -603,7 +619,8 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         assert!(hover.on_surface && hover.tris.len() == 2);
         let prefer = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake"));
         h.event(egui::Event::PointerMoved(prefer.center()));
-        h.step();
+        // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
+        h.run();
         h.snapshot(format!(
             "polygon_fill_island_menu_3d_{}",
             lang.pick("ja", "en")

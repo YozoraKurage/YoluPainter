@@ -253,6 +253,7 @@ fn path_brush() -> PathBrush {
         pressure_opacity: false,
         pressure_flow: false,
         erase: false,
+        anti_alias: yolu_core::AntiAlias::None,
     })
 }
 fn canvas_path(shift: f64) -> yolu_core::paths::CanvasPath {

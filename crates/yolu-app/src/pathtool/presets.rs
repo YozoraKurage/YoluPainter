@@ -3,7 +3,8 @@
 //!
 //! 1 つが 1 ファイル（`path-<番号>.json`。UTF-8 の JSON、16 MiB まで）: `format` 1、`name`、`kind`（stroke・ribbon・fill・smudge・
 //! erase）、`smudge_strength`・`ribbon_mode`（tile・stretch）・`ribbon_spacing`、`diameter`（画素）・`hardness`・`spacing`・
-//! `opacity`・`flow`・`color`（RGBA8）・`pressure_size`・`pressure_opacity`・`pressure_flow`、`material`（null か [チャンネルの番号,
+//! `opacity`・`flow`・`color`（RGBA8）・`pressure_size`・`pressure_opacity`・`pressure_flow`、`anti_alias`（weak・medium・strong。
+//! なし は書かず、無ければ なし）、`material`（null か [チャンネルの番号,
 //! R, G, B, A] の並び）、`tip`（null か `name`・`width`・`height`・`alpha`（覆いの 16 進））、`angle`・`follow`・`depth`（null は
 //! 自動）・`symmetry`。読めないファイル・新しい形式は読み飛ばして理由を残す（ほかのファイルは読む）。書き込みは一時ファイルへ
 //! 書いて読み戻して確かめてから 1 回の置換（`userfiles::write_text`）。
@@ -13,7 +14,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use yolu_core::paths::{ChannelPaint, PathKind, Ribbon, RibbonMode};
-use yolu_core::{BrushSettings, BrushTip, Channel, ImageId, Rgba8};
+use yolu_core::{AntiAlias, BrushSettings, BrushTip, Channel, ImageId, Rgba8};
 
 use super::{with_brush, with_material, with_style, PathAction};
 use crate::lang::Lang;
@@ -103,7 +104,7 @@ pub fn encode(name: &str, d: &PresetData) -> String {
     };
     let b = d.brush;
     let rgba = |c: Rgba8| json!([c.r, c.g, c.b, c.a]);
-    let value = json!({
+    let mut value = json!({
         "format": FORMAT,
         "name": name,
         "kind": kind_name(&d.kind),
@@ -135,6 +136,10 @@ pub fn encode(name: &str, d: &PresetData) -> String {
         "depth": d.depth,
         "symmetry": d.symmetry,
     });
+    // 縁のアンチエイリアスは なし でないときだけ書く（なし のプリセットは今までと同じ文）
+    if b.anti_alias != AntiAlias::None {
+        value["anti_alias"] = json!(b.anti_alias.id());
+    }
     serde_json::to_string_pretty(&value).unwrap_or_default()
 }
 
@@ -201,6 +206,13 @@ pub fn decode(text: &str) -> Result<(String, PresetData), String> {
         pressure_opacity: flag("pressure_opacity")?,
         pressure_flow: flag("pressure_flow")?,
         erase: false,
+        anti_alias: match &v["anti_alias"] {
+            Value::Null => AntiAlias::None,
+            x => x
+                .as_str()
+                .and_then(AntiAlias::from_id)
+                .ok_or("anti_alias")?,
+        },
     };
     let material = match &v["material"] {
         Value::Null => None,
@@ -577,6 +589,7 @@ impl AppState {
             b.pressure_size = data.brush.pressure_size;
             b.pressure_opacity = data.brush.pressure_opacity;
             b.pressure_flow = data.brush.pressure_flow;
+            b.anti_alias = data.brush.anti_alias;
             return;
         };
         // 組を持たないプリセットは、色をパスの今の色のまま（色は塗る値で、描き方の設定ではない）
@@ -611,7 +624,7 @@ impl AppState {
         };
         let keep = self.path_selected_index();
         if self.path_commit(Some(layer), next.clone(), keep) && data.symmetry {
-            // 対称は今の対称の設定で入れる（2 回目の Undo）
+            // 対称は、効いている対称定規の値で入れる（2 回目の Undo。効いている対称定規が無ければ断る）
             if next.style().symmetry == PathSymmetry::None {
                 self.path_apply(PathAction::Symmetry(true));
             }
@@ -630,6 +643,7 @@ mod tests {
             brush: BrushSettings {
                 radius: 12.5,
                 color: Rgba8::new(1, 2, 3, 4),
+                anti_alias: AntiAlias::Strong,
                 ..BrushSettings::default()
             },
             material: Some(vec![ChannelPaint {
@@ -644,9 +658,25 @@ mod tests {
         };
         let text = encode("名前", &data);
         let (name, back) = decode(&text).unwrap();
-        assert_eq!((name.as_str(), back), ("名前", data));
+        assert_eq!((name.as_str(), back), ("名前", data.clone()));
         assert!(decode("{\"format\":2}").is_err());
         assert!(decode(&text.replace("\"smudge\"", "\"spray\"")).is_err());
         assert!(decode("not json").is_err());
+        // 縁のアンチエイリアス: なし は書かず（無ければ なし）、知らない値は断る
+        assert!(text.contains("\"anti_alias\": \"strong\""), "{text}");
+        assert_eq!(
+            decode(&text.replace("\"strong\"", "\"soft\"")).err(),
+            Some("anti_alias".to_owned())
+        );
+        let plain = PresetData {
+            brush: BrushSettings {
+                anti_alias: AntiAlias::None,
+                ..data.brush
+            },
+            ..data.clone()
+        };
+        let text = encode("名前", &plain);
+        assert!(!text.contains("anti_alias"), "{text}");
+        assert_eq!(decode(&text).unwrap().1, plain);
     }
 }

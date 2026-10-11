@@ -97,10 +97,7 @@ pub fn draw(ui: &mut Ui, app: &mut AppState, area: Rect) {
         parts.swap,
         "color.swap",
         "swap_horiz",
-        lang.pick(
-            "メインとサブの色を入れ替え（X）",
-            "Swap foreground and background colors (X)",
-        ),
+        &swap_tip(lang, app.mode),
         false,
         true,
         12.0,
@@ -114,7 +111,7 @@ pub fn draw(ui: &mut Ui, app: &mut AppState, area: Rect) {
         parts.default,
         "color.default",
         "restart_alt",
-        lang.pick("初期設定の色（D）", "Default colors (D)"),
+        &default_tip(lang, app.mode),
         false,
         true,
         11.0,
@@ -123,6 +120,27 @@ pub fn draw(ui: &mut Ui, app: &mut AppState, area: Rect) {
     {
         app.apply(Action::DefaultColors);
     }
+}
+
+/// 入れ替えのボタンのツールチップ（キーは今の割り当て）。
+pub fn swap_tip(lang: crate::lang::Lang, mode: crate::mode::EditorMode) -> String {
+    crate::shortcuts::named_with_keys(
+        lang,
+        lang.pick(
+            "メインとサブの色を入れ替え",
+            "Swap foreground and background colors",
+        ),
+        &[crate::shortcuts::key_in("color.swap", mode)],
+    )
+}
+
+/// 初期設定の色のボタンのツールチップ（キーは今の割り当て）。
+pub fn default_tip(lang: crate::lang::Lang, mode: crate::mode::EditorMode) -> String {
+    crate::shortcuts::named_with_keys(
+        lang,
+        lang.pick("初期設定の色", "Default colors"),
+        &[crate::shortcuts::key_in("color.default", mode)],
+    )
 }
 
 #[cfg(test)]

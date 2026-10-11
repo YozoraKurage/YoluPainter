@@ -30,6 +30,7 @@ pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
             lang.pick("覚えた選択範囲を変える", "Edit remembered selections")
         }
         HistoryKind::Text => lang.pick("テキストを変える", "Edit Text"),
+        HistoryKind::Rulers => lang.pick("定規を変える", "Edit Ruler"),
     }
 }
 

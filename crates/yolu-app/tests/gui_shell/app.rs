@@ -14,7 +14,8 @@ fn popup_kind(h: &egui_kittest::Harness<'_, yolu_app::YoluApp>) -> Option<PopupK
 
 #[test]
 fn default_layout_snapshot() {
-    let mut h = app(1280.0, 800.0, 512);
+    // 既定の並び（3D ビューが左・キャンバスが右）
+    let mut h = app_default(1280.0, 800.0, 512);
     let c = canvas_rect(&h);
     drag(
         &mut h,
@@ -197,33 +198,37 @@ fn view_keys_rotate_and_flip_and_the_corner_icons_reset_them() {
 }
 
 #[test]
-fn rotate_drag_with_r_held() {
+fn rotate_drag_with_alt_held_turns_the_view_in_15_degree_steps_and_never_paints() {
     let mut h = app(1280.0, 800.0, 512);
     let r = canvas_rect(&h);
-    h.event(Event::Key {
-        key: Key::R,
-        physical_key: None,
+    let alt = Modifiers::ALT;
+    h.event(Event::ModifiersChanged(alt));
+    h.step();
+    // 中心の右から真下へ回す = 時計回りに 90°（15° の倍数）。押す・動く・離すに Alt を添える（実際のウィンドウのイベントもそうなる）
+    let start = offset(r.center(), 100.0, 0.0);
+    h.event(Event::PointerMoved(start));
+    h.event(Event::PointerButton {
+        pos: start,
+        button: PointerButton::Primary,
         pressed: true,
-        repeat: false,
-        modifiers: Modifiers::NONE,
+        modifiers: alt,
     });
     h.step();
-    // 中心の右から真下へ回す = 時計回りに 90°
-    drag(
-        &mut h,
-        &[
-            offset(r.center(), 100.0, 0.0),
-            offset(r.center(), 70.7, 70.7),
-            offset(r.center(), 0.0, 100.0),
-        ],
-    );
-    h.event(Event::Key {
-        key: Key::R,
-        physical_key: None,
+    for p in [
+        offset(r.center(), 70.7, 70.7),
+        offset(r.center(), 0.0, 100.0),
+    ] {
+        h.event(Event::PointerMoved(p));
+        h.step();
+    }
+    h.event(Event::PointerButton {
+        pos: offset(r.center(), 0.0, 100.0),
+        button: PointerButton::Primary,
         pressed: false,
-        repeat: false,
-        modifiers: Modifiers::NONE,
+        modifiers: alt,
     });
+    h.step();
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.run();
     assert!(
         (h.state().state.view.angle - 90.0).abs() < 0.5,
@@ -306,6 +311,63 @@ fn pen_samples_paint_with_pressure_and_the_eraser_end_erases() {
         Tool::Brush,
         "消しゴムの端はツールを変えない"
     );
+}
+
+/// 離しが届かないまま OS にペンの押しを奪われたとき: 離しが補われるまでは、その押しがキャンバスに残って別のポインタの番号の押しを使わない。補われた離しで
+/// ストロークが終わり、次の押し（別のポインタの番号）は新しい押しとして描ける。
+#[test]
+fn a_taken_pen_press_is_finished_by_the_supplied_lift_and_the_next_press_paints() {
+    use yolu_app::pen::capture::{seize, Loss};
+    use yolu_app::pen::wintab::{PressOwner, Touch};
+    let mut h = app(1280.0, 800.0, 256);
+    let r = canvas_rect(&h);
+    let c = r.center();
+    let pixel = h.state().state.view.view(r, 256, 256).pixel_size();
+    let (mut touch, mut owner) = (Touch::default(), PressOwner::default());
+    // 押して、少し動かす（離しは来ない）
+    for p in [c, offset(c, 20.0 * pixel, 0.0)] {
+        let s = pen(p, 0.5, true, false);
+        touch.note(&s);
+        h.state().pen().push(s);
+    }
+    h.run();
+    assert!(
+        h.state().state.doc.has_active_stroke(),
+        "離しが来ないあいだは描いている"
+    );
+    // 別のポインタの番号の押しは、前の押しが残っているあいだは使われない
+    let elsewhere = offset(c, 0.0, 60.0 * pixel);
+    let other = |contact: bool| PenSample {
+        pointer_id: 9,
+        ..pen(elsewhere, 0.5, contact, false)
+    };
+    h.state().pen().push(other(true));
+    h.state().pen().push(other(false));
+    h.run();
+    assert_eq!(
+        canvas_pixel(&h, elsewhere)[3],
+        0,
+        "前の押しが残っていると、次の押しは描けない"
+    );
+    // 押しを奪われた → 離しが補われ、ストロークが終わる
+    let lift = seize(&mut touch, &mut owner, Loss::Pointer { id: 7, kept: false })
+        .expect("触れていた押しの離しが補われる");
+    h.state().pen().push_lost(lift);
+    h.run();
+    assert!(!h.state().state.doc.has_active_stroke());
+    assert!(
+        canvas_pixel(&h, c)[3] > 0,
+        "終わったストロークは描かれている"
+    );
+    // 次の押しは新しい押しとして描ける
+    h.state().pen().push(other(true));
+    h.state().pen().push(other(false));
+    h.run();
+    assert!(
+        canvas_pixel(&h, elsewhere)[3] > 0,
+        "次の押しは新しい押しとして描ける"
+    );
+    assert!(!h.state().state.doc.has_active_stroke());
 }
 
 #[test]
@@ -467,13 +529,22 @@ fn properties_tabs_and_pen_toggles() {
     let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
     assert!(h.state().state.brush.pressure_flow);
-    // 右のプロパティはステンシルのタブから始まる（ブラシのタブも、筆先の形のアルファのタブも無い。筆先の形は詳細のウィンドウの「形状」）
+    // 右のプロパティはステンシルのタブから始まる。タブはステンシルとレイヤーの 2 つだけ（ブラシのタブも、マテリアルのタブも、筆先の形のアルファの
+    // タブも無い。マテリアルは別のパネル、筆先の形は詳細のウィンドウの「形状」）
     assert_eq!(h.state().state.ui.property_tab, 0);
     assert!(h.query_all_by_label("アルファ").next().is_none());
-    h.get_by_label("マテリアル").click();
-    h.run();
+    assert!(
+        h.query_all_by_label("マテリアル").next().is_none(),
+        "マテリアルはプロパティのタブではない"
+    );
+    // （「レイヤー」の名前は、右のプロパティのタブのほかにも出る。プロパティの組の中のもの）
+    let props = h.state().tab_rects[&yolu_app::Tab::Properties];
+    let tab = rect_of(&h, "レイヤー", |r| {
+        r.left() > props.left() - 2.0 && r.top() > props.top()
+    });
+    click(&mut h, tab.center());
     assert_eq!(h.state().state.ui.property_tab, 1);
-    h.snapshot("properties_material_tab");
+    h.snapshot("properties_layer_tab");
     h.get_by_label("ステンシル").click();
     h.run();
     assert_eq!(h.state().state.ui.property_tab, 0);

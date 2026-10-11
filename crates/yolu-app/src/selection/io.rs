@@ -46,10 +46,7 @@ pub fn write_into(
     for (id, mask) in selections {
         let next = mask.map(Selection::from_core).transpose().map_err(|e| {
             lang.with_reason(
-                lang.pick(
-                    "選択範囲を文書にできません",
-                    "Cannot turn the selection into the document",
-                ),
+                lang.pick("選択範囲の形にできません", "Cannot convert the selection"),
                 lang.io_error(&e),
             )
         })?;
@@ -111,9 +108,10 @@ fn skip_text(lang: Lang, s: &Skipped) -> String {
         SkipReason::Item(_) => lang.pick("項目の形が正しくありません", "malformed item"),
         SkipReason::MissingContent => lang.pick("中身がありません", "content is missing"),
         SkipReason::UnreadableContent(_) => lang.pick("中身を読めません", "content cannot be read"),
-        SkipReason::WrongSize => {
-            lang.pick("文書と大きさが違います", "size differs from the document")
-        }
+        SkipReason::WrongSize => lang.pick(
+            "キャンバスと大きさが違います",
+            "size differs from the canvas",
+        ),
         SkipReason::DuplicateName => lang.pick("名前が重なっています", "duplicate name"),
         SkipReason::TooMany => lang.pick("数の上限を超えています", "over the limit"),
     };
@@ -216,8 +214,8 @@ pub fn write_saved_into(
             let selection = Selection::from_core(&s.mask).map_err(|e| {
                 fail(
                     lang.pick(
-                        "覚えた選択範囲を文書にできません",
-                        "Cannot turn the remembered selections into the document",
+                        "覚えた選択範囲の形にできません",
+                        "Cannot convert the remembered selections",
                     ),
                     lang.io_error(&e),
                 )

@@ -1,15 +1,18 @@
-//! 主の wgpu の装置（eframe が 1 つだけ作る。ウィンドウの描画・キャンバスの GPU の表示・3D ビューが使う）の見張り。
+//! 主の wgpu のデバイス（eframe が 1 つだけ作る。ウィンドウの描画・キャンバスの GPU の表示・3D ビューが使う）の見張り。
 //!
-//! wgpu の既定は 2 つとも黙って困る形: 装置を失っても何も知らせず（以後の描画が黙って失敗し、ウィンドウが描き換わらなくなる）、受け手の無い
+//! wgpu の既定は 2 つとも黙って困る形: GPU を失っても何も知らせず（以後の描画が黙って失敗し、ウィンドウが描き換わらなくなる）、受け手の無い
 //! 誤り（検証・メモリ不足）は panic でアプリごと落とす。ここで両方の受け口を付け、どちらも画面のスレッドが次のフレームで読む。
 //!
-//! - 装置を失ったとき: `YoluApp` が、描いていた絵（core の文書）には触らずに復旧の書き置きを急いで取り、GPU の道（キャンバス・3D ビュー）を
-//!   手放して、理由を出し、終わる。eframe は装置を作り直せない（装置はウィンドウを初めて作るときに 1 度だけ作られ、`RenderState` に固定される。
-//!   作り直せるのは面だけ）ので、ウィンドウそのものが描けなくなる。続けられないので、復旧用に保存したあと、次の起動へ任せる。
+//! - GPU を失ったとき: `YoluApp` が、描いていた絵（core の文書）には触らずに復旧の書き置きを急いで取り、GPU の道（キャンバス・3D ビュー）を
+//!   手放して、理由を出し、失った GPU で 1 度も描かずにプロセスを終える（`app::gpu_lost`）。eframe はデバイスを作り直せない（デバイスはウィンドウを
+//!   初めて作るときに 1 度だけ作られ、`RenderState` に固定される。作り直せるのは面だけ）うえ、失ったデバイスでの描画は egui-wgpu の中で panic になる
+//!   ので、続けられない。復旧用に保存したあと、次の起動へ任せる。
 //! - 受け手の無い誤り: 落とさず、普段のログへ 1 行（同じ文は 1 度）。
 //!
 //! 保証の射程: 失ったことをすぐ知ることは保証しない。受け口が呼ばれるのは、wgpu が失ったと気づいたあと（次の提出・poll）で、その間の描画は
-//! 黙って失敗する。
+//! 黙って失敗する。画面のスレッドは、フレームの初めのほか、フレームの中の描画の区切り（別ウィンドウを描く前・別ウィンドウ 1 つの終わり・
+//! 別ウィンドウ 1 つを描いた直後・`ui` の終わり。`app::FramePoint`）で読む。区切りの間で失った分（読んだあと、eframe の描画の中で失ったと
+//! 分かる）は防げない。
 //!
 //! 受け口は別のスレッド（wgpu の内部）から呼ばれる。ここでは書き込みと描き直しの頼みだけをして、重い処理は画面のスレッドに任せる。
 use std::collections::{HashSet, VecDeque};
@@ -25,7 +28,7 @@ const ERROR_KEEP: usize = 16;
 /// 1 回の実行で、別々の文として記録する誤りの数の上限（毎フレーム違う文の誤りで、ログが埋まらないように）。
 const ERROR_KINDS: usize = 64;
 
-/// 失った装置の様子。
+/// 失った GPU の様子。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Lost {
     /// wgpu が言う理由（`Unknown`・`Destroyed`）。
@@ -37,7 +40,7 @@ pub struct Lost {
 /// 画面のスレッドが読む知らせ。
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Events {
-    /// 装置を失った（1 度だけ返す）。
+    /// GPU を失った（1 度だけ返す）。
     pub lost: Option<Lost>,
     /// 受け手の無い誤りの文（新しいものだけ）。
     pub errors: Vec<String>,
@@ -52,7 +55,7 @@ struct Inner {
     seen: HashSet<u64>,
 }
 
-/// 装置の見張り。複製は同じ状態を指す（wgpu の受け口へ渡す側と、読む側）。
+/// デバイスの見張り。複製は同じ状態を指す（wgpu の受け口へ渡す側と、読む側）。
 #[derive(Clone, Default)]
 pub struct GpuWatch(Arc<Mutex<Inner>>);
 
@@ -97,7 +100,7 @@ impl GpuWatch {
         inner.errors.push_back(text);
     }
 
-    /// 見張っている装置のアダプターの名前（記録だけに使う）。
+    /// 見張っている GPU のアダプターの名前（記録だけに使う）。
     pub fn set_adapter(&self, name: String) {
         self.inner().adapter = name;
     }
@@ -121,12 +124,12 @@ impl GpuWatch {
         }
     }
 
-    /// 装置を失ったか（知らせを取り出したあとも true）。
+    /// GPU を失ったか（知らせを取り出したあとも true）。
     pub fn is_lost(&self) -> bool {
         self.inner().lost.is_some()
     }
 
-    /// 試験用: 装置を失った知らせを入れる（本物の GPU の喪失を起こさずに、受ける側の流れを通す）。
+    /// 試験用: GPU を失った知らせを入れる（本物の GPU の喪失を起こさずに、受ける側の流れを通す）。
     #[doc(hidden)]
     pub fn inject_loss(&self, reason: &str, message: &str) {
         self.record_loss(reason.to_owned(), message.to_owned());
@@ -150,11 +153,11 @@ pub enum Saved {
     No,
 }
 
-/// 装置を失ったときの理由の文（画面と、終わる前のウィンドウに出す。名前・状態・短い理由だけ）。
+/// GPU でエラーが起きて続けられないときの理由の文（画面と、終わる前のウィンドウに出す。名前・状態・短い理由だけ）。
 pub fn lost_text(lang: Lang, saved: Saved) -> String {
     let head = lang.pick(
-        "GPU の装置が失われたため、続けられません。",
-        "The GPU device was lost, so YoluPainter cannot continue.",
+        "GPU でエラーが起きたため、続けられません。",
+        "A GPU error occurred, so YoluPainter cannot continue.",
     );
     let tail = match saved {
         Saved::Yes => lang.pick(
@@ -240,7 +243,10 @@ mod tests {
             for saved in [Saved::Yes, Saved::NothingToSave, Saved::No] {
                 let text = lost_text(lang, saved);
                 assert!(
-                    text.starts_with(lang.pick("GPU の装置が失われた", "The GPU device was lost")),
+                    text.starts_with(lang.pick(
+                        "GPU でエラーが起きたため、続けられません。",
+                        "A GPU error occurred, so YoluPainter cannot continue."
+                    )),
                     "{text}"
                 );
                 let dialog = lost_dialog_text(lang, saved);
@@ -251,6 +257,10 @@ mod tests {
                 if lang == Lang::En {
                     assert!(text.is_ascii(), "{text}");
                 }
+                // 画面・ウィンドウの文に、利用者に分かりにくい言葉（装置・機械・device）を使わない
+                for word in ["装置", "機械", "device", "Device"] {
+                    assert!(!dialog.contains(word), "{word}: {dialog}");
+                }
             }
         }
         assert!(lost_text(Lang::Ja, Saved::Yes).contains("復旧用に保存しました"));
@@ -258,5 +268,64 @@ mod tests {
         assert!(lost_text(Lang::Ja, Saved::No).contains("保存できませんでした"));
         assert!(lost_text(Lang::En, Saved::No).contains("Could not save"));
         assert!(!lost_text(Lang::En, Saved::NothingToSave).contains("recovery"));
+    }
+
+    /// 画面・ウィンドウに出る文は、日英とも次のとおり（書き置きの有無の 3 通りずつ）。
+    #[test]
+    fn the_texts_are_exactly_these() {
+        let ja = |saved| lost_text(Lang::Ja, saved);
+        let en = |saved| lost_text(Lang::En, saved);
+        assert_eq!(
+            ja(Saved::Yes),
+            "GPU でエラーが起きたため、続けられません。描いていた絵は復旧用に保存しました。"
+        );
+        assert_eq!(
+            ja(Saved::NothingToSave),
+            "GPU でエラーが起きたため、続けられません。"
+        );
+        assert_eq!(
+            ja(Saved::No),
+            "GPU でエラーが起きたため、続けられません。復旧用に保存できませんでした。"
+        );
+        assert_eq!(
+            en(Saved::Yes),
+            "A GPU error occurred, so YoluPainter cannot continue. Your work was saved for recovery."
+        );
+        assert_eq!(
+            en(Saved::NothingToSave),
+            "A GPU error occurred, so YoluPainter cannot continue."
+        );
+        assert_eq!(
+            en(Saved::No),
+            "A GPU error occurred, so YoluPainter cannot continue. Could not save for recovery."
+        );
+        assert_eq!(
+            lost_dialog_text(Lang::Ja, Saved::NothingToSave),
+            "GPU でエラーが起きたため、続けられません。\nこのあと終了します。"
+        );
+        assert_eq!(
+            lost_dialog_text(Lang::En, Saved::NothingToSave),
+            "A GPU error occurred, so YoluPainter cannot continue.\nYoluPainter will now close."
+        );
+    }
+
+    #[test]
+    fn the_crash_record_names_the_adapter_reason_and_whether_the_work_was_saved() {
+        let lost = Lost {
+            reason: "Unknown".into(),
+            message: "driver reset".into(),
+        };
+        for (saved, word) in [
+            (Saved::Yes, "Yes"),
+            (Saved::NothingToSave, "NothingToSave"),
+            (Saved::No, "No"),
+        ] {
+            assert_eq!(
+                lost_detail("Sample (Vulkan)", &lost, saved),
+                format!(
+                    "Adapter: Sample (Vulkan)\nReason: Unknown\nMessage: driver reset\nSaved for recovery: {word}"
+                )
+            );
+        }
     }
 }

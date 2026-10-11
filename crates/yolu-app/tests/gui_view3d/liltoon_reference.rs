@@ -81,6 +81,7 @@ fn camera(distance: f32, target: Vec3) -> OrbitCamera {
         pitch: 0.0,
         distance,
         model_radius: 1.0,
+        ..Default::default()
     }
 }
 
@@ -544,6 +545,7 @@ fn scenes() -> Vec<Scene> {
                 pitch: 5.0,
                 distance: 4.2,
                 model_radius: 1.0,
+                ..Default::default()
             },
             paint: |d| fill(d, [235, 205, 190, 255]),
             look: |_| {
@@ -620,6 +622,7 @@ fn scenes() -> Vec<Scene> {
                 pitch: 10.0,
                 distance: 2.5,
                 model_radius: 1.0,
+                ..Default::default()
             },
             paint: |d| fill(d, [230, 200, 190, 255]),
             look: |_| {
@@ -803,6 +806,7 @@ fn scenes() -> Vec<Scene> {
                 pitch: 20.0,
                 distance: 3.0,
                 model_radius: 1.0,
+                ..Default::default()
             },
             paint: |d| {
                 fill(d, [190, 190, 200, 255]);
@@ -926,6 +930,7 @@ fn scenes() -> Vec<Scene> {
                 pitch: -22.0,
                 distance: 3.0,
                 model_radius: 1.0,
+                ..Default::default()
             },
             paint: |d| fill(d, [220, 200, 200, 255]),
             look: |_| {
@@ -980,6 +985,7 @@ fn scenes() -> Vec<Scene> {
                 pitch: 15.0,
                 distance: 3.0,
                 model_radius: 1.0,
+                ..Default::default()
             },
             paint: |d| {
                 fill(d, [200, 170, 120, 255]);
@@ -1124,6 +1130,7 @@ fn scenes() -> Vec<Scene> {
                 pitch: 15.0,
                 distance: 3.0,
                 model_radius: 1.0,
+                ..Default::default()
             },
             paint: |d| fill(d, [120, 90, 70, 255]),
             look: |_| {
@@ -1370,6 +1377,7 @@ fn light_camera() -> OrbitCamera {
         pitch: 0.0,
         distance: 3.0,
         model_radius: 1.0,
+        ..Default::default()
     }
 }
 
@@ -1626,7 +1634,8 @@ fn render_as(
 ) -> (Harness<'static, YoluApp>, image::RgbaImage) {
     let mut h = harness();
     if let Some((w, hgt)) = view {
-        for _ in 0..4 {
+        // （ウィンドウを 1 点広げても 3D の表示域は 1 点より少ししか広がらないので、合うまで何度か繰り返す）
+        for _ in 0..12 {
             let rect = h.state().view3d_rect().expect("3D のタブ");
             let (dw, dh) = (
                 w as f32 - rect.width().round(),
@@ -1639,6 +1648,12 @@ fn render_as(
             h.set_size(size);
             h.run();
         }
+        let rect = h.state().view3d_rect().expect("3D のタブ");
+        assert_eq!(
+            (rect.width().round(), rect.height().round()),
+            (w as f32, hgt as f32),
+            "12 回の調整で、3D の表示域が指定の大きさ（{w}×{hgt}）に届かない"
+        );
     }
     {
         let state = &mut h.state_mut().state;
@@ -1813,11 +1828,13 @@ fn export_and_render() {
     eprintln!("書いた: {}", dir.display());
 }
 
-/// 2 枚の絵の差（両方で物の画素だけ。背景の色から 3 より離れた画素を物とみなす）。
+/// 2 枚の絵の差（両方で物の画素だけ。背景の色から 3 より離れた画素を物とみなす）。skip（絵の中の画素の矩形）の中は比べない
+/// （3D の絵の上に重ねた軸の印）。
 fn diff(
     ours: &image::RgbaImage,
     unity: &image::RgbaImage,
     background: [u8; 3],
+    skip: Option<egui::Rect>,
 ) -> Option<(f64, f64, u8, usize, usize)> {
     if ours.dimensions() != unity.dimensions() {
         return None;
@@ -1825,7 +1842,10 @@ fn diff(
     let is_bg = |p: [u8; 4]| (0..3).all(|k| p[k].abs_diff(background[k]) <= 3);
     let mut diffs: Vec<u8> = Vec::new();
     let mut only_one = 0usize;
-    for (a, b) in ours.pixels().zip(unity.pixels()) {
+    for ((x, y, a), b) in ours.enumerate_pixels().zip(unity.pixels()) {
+        if skip.is_some_and(|r| r.contains(egui::pos2(x as f32, y as f32))) {
+            continue;
+        }
         let (ba, bb) = (is_bg(a.0), is_bg(b.0));
         if ba && bb {
             continue;
@@ -1864,7 +1884,7 @@ fn compare() {
             continue;
         };
         let (ours, unity) = (ours.to_rgba8(), unity.to_rgba8());
-        match diff(&ours, &unity, background) {
+        match diff(&ours, &unity, background, None) {
             Some((mean, p95, max, n, only)) => println!(
                 "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} |",
                 scene.name
@@ -1986,12 +2006,12 @@ fn compare_through_live_link() {
         };
         let images = received.images.len();
         // 利用者の設定は既定のまま（標準）、受けた見た目だけで描く（Live Link でつないだ直後と同じ）
-        let (_h, ours) = render_as(&scene, Some(unity.dimensions()), &|doc| {
+        let (h, ours) = render_as(&scene, Some(unity.dimensions()), &|doc| {
             doc.set_received_look(Some(received.clone())).unwrap();
         });
         ours.save(dir.join(format!("link_{}.png", scene.name)))
             .unwrap();
-        match diff(&ours, &unity, background) {
+        match diff(&ours, &unity, background, axes_in_view(&h)) {
             Some((mean, p95, max, n, only)) => println!(
                 "| {} | {mean:.2} | {p95:.0} | {max} | {n} | {only} | {images} |",
                 scene.name
@@ -2016,6 +2036,13 @@ fn unity_image(name: &str) -> image::RgbaImage {
     image::open(&path)
         .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
         .to_rgba8()
+}
+
+/// 軸の印の、3D の表示域の絵（`render` の切り抜き）の中の矩形。
+fn axes_in_view(h: &Harness<'_, YoluApp>) -> Option<egui::Rect> {
+    let rect = h.state().view3d_rect()?;
+    let min = egui::pos2(rect.left().round(), rect.top().round());
+    view3d_axes_rect(h).map(|r| r.translate(-min.to_vec2()))
 }
 
 /// 場面ごとの差の上限: 平均（実 GPU）・平均（ソフトの描画）・95 % の値（0〜255）と、片方だけに物が写っている画素の数。
@@ -2092,14 +2119,15 @@ fn the_view_stays_within_the_measured_difference_from_unity_liltoon() {
         if scene.name == scenes[0].name {
             println!("{adapter}");
         }
-        let (mean, p95, max, n, only) = diff(&ours, &unity, background).unwrap_or_else(|| {
-            panic!(
-                "{}: 大きさが違う（{:?} と Unity の {:?}）",
-                scene.name,
-                ours.dimensions(),
-                unity.dimensions()
-            )
-        });
+        let (mean, p95, max, n, only) = diff(&ours, &unity, background, axes_in_view(&h))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: 大きさが違う（{:?} と Unity の {:?}）",
+                    scene.name,
+                    ours.dimensions(),
+                    unity.dimensions()
+                )
+            });
         let (_, gpu_mean, software_mean, bp, bo) = *BOUNDS
             .iter()
             .find(|b| b.0 == scene.name)

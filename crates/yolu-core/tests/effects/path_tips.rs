@@ -271,6 +271,37 @@ fn a_2d_symmetric_path_also_draws_its_mirrored_copy() {
 }
 
 #[test]
+fn a_2d_path_with_a_diagonal_lines_symmetry_also_draws_the_transposed_copy() {
+    use yolu_core::paths::PathSymmetry;
+    use yolu_core::CanvasSymmetry;
+    let line = [(8.0, 20.0), (24.0, 44.0)];
+    let mirrored = bytes2(&canvas(
+        &line,
+        2.0,
+        PathStyle {
+            symmetry: PathSymmetry::Canvas(
+                CanvasSymmetry::lines(yolu_core::glam::DVec2::new(32.0, 32.0), 2, 45.0).unwrap(),
+            ),
+            ..Default::default()
+        },
+    ));
+    // 中心 (32, 32) を通る 45 度の鏡: 画素 (x, y) は (y, x) へ写る
+    let mut drawn = 0;
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let a = alpha(&mirrored, x, y);
+            drawn += u32::from(a > 0);
+            assert_eq!(alpha(&mirrored, y, x), a, "({x}, {y})");
+        }
+    }
+    assert!(drawn > 40);
+    assert!(
+        alpha(&mirrored, 20, 8) > 0 || alpha(&mirrored, 20, 9) > 0,
+        "写し側の端"
+    );
+}
+
+#[test]
 fn a_3d_mirrored_path_lands_on_the_reflected_surface_and_reversing_keeps_the_pixels() {
     use yolu_core::paths::PathSymmetry;
     let g = plane();

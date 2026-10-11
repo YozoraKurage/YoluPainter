@@ -158,6 +158,8 @@ fn navigator_thumbnail_matches_gpu_canvas_composite() {
             app.set_canvas_backend(CanvasBackend::Gpu);
             app
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(960.0);
     h.run();
     let thumb = CanvasDisplay::thumbnail(&h.state().state.doc, Channel::Color).unwrap();
     let gpu = h

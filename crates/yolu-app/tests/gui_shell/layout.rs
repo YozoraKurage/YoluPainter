@@ -9,7 +9,7 @@ use common::*;
 use egui::{pos2, vec2, Rect};
 use egui_dock::{DockState, Node, Split, SurfaceIndex, TabDestination, TabInsert};
 use egui_kittest::Harness;
-use yolu_app::app::default_dock;
+use yolu_app::app::{default_dock, default_dock_for};
 use yolu_app::layout::{self, WindowRecord};
 use yolu_app::pen::PenInput;
 use yolu_app::state::Action;
@@ -102,7 +102,7 @@ fn changed_dock() -> DockState<Tab> {
     dock
 }
 
-/// 既定の並びから、履歴を浮かせたウィンドウにして（面 1）、ナビゲーターもそのウィンドウへ入れ、前のタブをナビゲーターにした並び。
+/// 既定の並びから、履歴を浮かせたウィンドウにして（面 1）、チャンネルもそのウィンドウへ入れ、前のタブをチャンネルにした並び。
 fn floating_dock() -> DockState<Tab> {
     let mut dock = default_dock();
     let history = dock.find_tab(&Tab::History).expect("履歴");
@@ -111,7 +111,7 @@ fn floating_dock() -> DockState<Tab> {
         Rect::from_min_size(pos2(300.0, 200.0), vec2(320.0, 240.0)),
     );
     assert_eq!(surface, SurfaceIndex(1));
-    let navigator = dock.find_tab(&Tab::Navigator).expect("ナビゲーター");
+    let navigator = dock.find_tab(&Tab::Channels).expect("チャンネル");
     let window_leaf = dock
         .find_tab(&Tab::History)
         .expect("履歴（浮かせたあと）")
@@ -121,8 +121,8 @@ fn floating_dock() -> DockState<Tab> {
         TabDestination::Node(window_leaf, TabInsert::Append),
     );
     let navigator = dock
-        .find_tab(&Tab::Navigator)
-        .expect("ナビゲーター（動かしたあと）");
+        .find_tab(&Tab::Channels)
+        .expect("チャンネル（動かしたあと）");
     dock.set_active_tab(navigator).expect("前へ");
     dock
 }
@@ -198,7 +198,7 @@ fn headless_the_written_file_does_not_depend_on_the_drawn_sizes() {
 #[test]
 fn headless_a_floating_window_survives_the_file_with_its_tabs_the_front_tab_and_its_place() {
     let mut dock = floating_dock();
-    // 浮かせたウィンドウの中の組と前のタブ（履歴・ナビゲーターの 2 つ、前はナビゲーター）
+    // 浮かせたウィンドウの中の組と前のタブ（履歴・チャンネルの 2 つ、前はチャンネル）
     let text = layout::render(&dock, None);
     let loaded = layout::parse(&text);
     assert_eq!(loaded.problems, Vec::<String>::new());
@@ -207,7 +207,7 @@ fn headless_a_floating_window_survives_the_file_with_its_tabs_the_front_tab_and_
         .into_iter()
         .find(|line| line.starts_with("1/"))
         .expect("浮かせたウィンドウの組");
-    assert_eq!(floating, "1/0 leaf [\"history\", \"navigator\"] active=1");
+    assert_eq!(floating, "1/0 leaf [\"history\", \"channels\"] active=1");
     assert_eq!(shape(&read), shape(&dock));
     assert_eq!(read.surfaces_count(), 2);
     // ウィンドウの位置と大きさ（最初に描くときの値）も戻る
@@ -253,12 +253,12 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
     let history = dock.find_tab(&Tab::History).unwrap();
     let w1 = dock.detach_tab(history, rect(40.0));
     check(&dock, "履歴を浮かせた");
-    let navigator = dock.find_tab(&Tab::Navigator).unwrap();
+    let navigator = dock.find_tab(&Tab::Channels).unwrap();
     let w2 = dock.detach_tab(navigator, rect(400.0));
-    check(&dock, "ナビゲーターも浮かせた");
+    check(&dock, "チャンネルも浮かせた");
     assert_ne!(w1, w2);
     // 2 つ目のウィンドウのタブを、1 つ目のウィンドウの組へ移す: 2 つ目のウィンドウは空になって消える
-    let navigator = dock.find_tab(&Tab::Navigator).unwrap();
+    let navigator = dock.find_tab(&Tab::Channels).unwrap();
     let target = dock.find_tab(&Tab::History).unwrap().node_path();
     dock.move_tab(navigator, TabDestination::Node(target, TabInsert::Append));
     check(
@@ -286,7 +286,7 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
     dock.move_tab(properties, TabDestination::Node(target, TabInsert::Append));
     check(&dock, "メインの組が空になって消えた");
     // 浮かせたウィンドウのタブを、メインの組へ戻す
-    for tab in [Tab::History, Tab::Navigator, Tab::Color] {
+    for tab in [Tab::History, Tab::Channels, Tab::Color] {
         let from = dock.find_tab(&tab).unwrap();
         let to = dock.find_tab(&Tab::Canvas).unwrap().node_path();
         dock.move_tab(from, TabDestination::Node(to, TabInsert::Append));
@@ -294,8 +294,8 @@ fn headless_every_arrangement_egui_dock_makes_passes_the_check_and_comes_back_th
     }
     // メインのタブを、キャンバスのほかは全部浮かせる（メインの木はほとんど空になる）
     for tab in Tab::ALL {
-        // ポーズ・アクションは既定の並びに無い
-        if tab == Tab::Canvas || tab == Tab::Pose || tab == Tab::Actions {
+        // ポーズ・アクション・ナビゲーターは既定の並びに無い
+        if tab == Tab::Canvas || tab == Tab::Pose || tab == Tab::Actions || tab == Tab::Navigator {
             continue;
         }
         let path = dock.find_tab(&tab).unwrap();
@@ -629,6 +629,8 @@ fn headless_the_tab_names_are_stable_and_every_tab_has_one() {
         keys,
         [
             "subtools",
+            "tool_properties",
+            "brush_size",
             "assets",
             "color",
             "pose",
@@ -637,6 +639,7 @@ fn headless_the_tab_names_are_stable_and_every_tab_has_one() {
             "texture_sets",
             "layers",
             "properties",
+            "material",
             "channels",
             "history",
             "color_sets",
@@ -741,7 +744,7 @@ fn the_dock_is_written_when_the_app_ends_and_comes_back_at_the_next_start() {
     let mut h = app_in(&dir);
     assert_eq!(
         shape(&h.state().dock),
-        shape(&default_dock()),
+        shape(&default_dock_for(1280.0)),
         "ファイルが無ければ既定の並び"
     );
     h.state_mut().dock = changed_dock();
@@ -813,7 +816,8 @@ fn a_change_is_written_about_a_second_later_without_waiting_for_the_end() {
             Node::Leaf(leaf) => leaf.rect,
             _ => panic!("組でない"),
         };
-        (rect(Tab::SubTools), rect(Tab::Canvas))
+        // 中央のいちばん左の組は 3D ビュー（左の列との区切りを動かす）
+        (rect(Tab::SubTools), rect(Tab::View3d))
     };
     let at = pos2((left.right() + center.left()) / 2.0, 400.0);
     let before = h
@@ -882,7 +886,7 @@ fn an_unreadable_file_starts_with_the_default_and_says_nothing_on_screen() {
         let h = app_in(&dir);
         assert_eq!(
             shape(&h.state().dock),
-            shape(&default_dock()),
+            shape(&default_dock_for(1280.0)),
             "{tag}: 既定の並び"
         );
         assert_eq!(h.state().state.message, "", "{tag}: 理由は画面に出さない");
@@ -891,7 +895,7 @@ fn an_unreadable_file_starts_with_the_default_and_says_nothing_on_screen() {
         assert!(after.problems.is_empty(), "{tag}: {:?}", after.problems);
         assert_eq!(
             shape(&after.dock.expect("読める")),
-            shape(&default_dock()),
+            shape(&default_dock_for(1280.0)),
             "{tag}"
         );
     }
@@ -936,14 +940,14 @@ fn reset_panel_layout_goes_back_to_the_default_and_the_default_is_what_gets_writ
     h.run();
     assert_eq!(
         shape(&h.state().dock),
-        shape(&default_dock()),
+        shape(&default_dock_for(1280.0)),
         "今まで通り既定へ"
     );
     h.state_mut().on_exit();
     let written = layout::parse(&std::fs::read_to_string(layout_file(&dir)).unwrap());
     assert_eq!(
         shape(&written.dock.unwrap()),
-        shape(&default_dock()),
+        shape(&default_dock_for(1280.0)),
         "戻した並びが書かれる"
     );
 }
@@ -1134,7 +1138,7 @@ fn a_floating_window_of_an_earlier_version_opens_as_an_outside_window_and_comes_
     assert_eq!(windows.len(), 1);
     assert_eq!(
         shape(&windows[0].dock),
-        vec!["0/0 leaf [\"history\", \"navigator\"] active=1"]
+        vec!["0/0 leaf [\"history\", \"channels\"] active=1"]
     );
     // メインウィンドウの内側の左上からの位置のまま（試験のウィンドウは内側の左上が原点）
     let record = windows[0].record.expect("置き場所");
@@ -1154,7 +1158,7 @@ fn a_floating_window_of_an_earlier_version_opens_as_an_outside_window_and_comes_
         assert_eq!(windows.len(), 1);
         assert_eq!(
             shape(&windows[0].dock),
-            vec!["0/0 leaf [\"history\", \"navigator\"] active=1"]
+            vec!["0/0 leaf [\"history\", \"channels\"] active=1"]
         );
         assert_eq!(windows[0].record, Some(record));
         h.state_mut().on_exit();

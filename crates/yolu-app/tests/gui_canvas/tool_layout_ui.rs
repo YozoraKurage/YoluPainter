@@ -175,7 +175,8 @@ fn dragging_a_tool_button_moves_it_in_the_strip() {
 
 #[test]
 fn the_plus_tab_adds_a_group_and_a_brush_dragged_onto_a_tab_moves_there() {
-    let mut h = app(1280.0, 800.0, 128);
+    // （一覧の行が全部入る高さで）
+    let mut h = app(1280.0, 1100.0, 128);
     let brush = st(&h).toolset.set.first_of(Tool::Brush).unwrap();
     let before = st(&h).toolset.set.slot(brush).unwrap().groups.len();
     h.get_by_label("グループを追加").click();

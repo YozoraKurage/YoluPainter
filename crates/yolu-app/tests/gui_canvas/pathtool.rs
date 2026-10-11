@@ -502,6 +502,262 @@ fn headless_rasterize_keeps_the_pixels_and_makes_the_layer_paintable_in_one_undo
     assert!(s.message.contains("すべて"), "{}", s.message);
 }
 
+/// 「新規パスレイヤー」を当てる（レイヤーのメニューと同じ操作）。
+fn new_path_layer(s: &mut AppState) {
+    s.apply(Action::LayerMenu(yolu_app::layermenu::Op::PathLayer));
+}
+
+#[test]
+fn headless_a_new_path_layer_is_empty_above_the_selected_layer_and_the_first_click_fills_it() {
+    let mut s = AppState::new(128, 128);
+    assert_ne!(s.tool, Tool::Path);
+    let base = s.selected_layer.unwrap();
+    s.apply(Action::NewLayer);
+    let top = s.selected_layer.unwrap();
+    s.selected_layer = Some(base);
+    let undo = s.doc.undo_count();
+    new_path_layer(&mut s);
+    // 選んでいたレイヤーのすぐ上に、点の無い 1 本のパスのレイヤー。選んで、パスのツールへ替える
+    let made = s.selected_layer.unwrap();
+    let order: Vec<_> = s.doc.layers().iter().map(|l| l.id()).collect();
+    assert_eq!(order, vec![base, made, top], "{}", s.message);
+    assert_eq!(s.doc.layers().len(), 3);
+    assert_eq!(s.tool, Tool::Path);
+    assert_eq!(s.doc.undo_count(), undo + 1, "1 回の Undo");
+    assert!(s.modified);
+    let layer = s.doc.layer(made).unwrap();
+    assert_eq!(layer.paths().len(), 1);
+    assert!(layer.has_paths());
+    assert_eq!(canvas_points(&s).len(), 0, "点は無い");
+    assert!(
+        (0..128).all(|x| pixel(&s, x, 64)[3] == 0),
+        "点が無ければ画素も無い"
+    );
+    // 最初の点は、新しいレイヤーを作らずに、このレイヤーのパスへ入る
+    click2d(&mut s, 40.0, 40.0);
+    assert_eq!(s.doc.layers().len(), 3, "{}", s.message);
+    assert_eq!(s.selected_layer, Some(made));
+    assert_eq!(canvas_points(&s).len(), 1);
+    assert!(pixel(&s, 40, 40)[3] > 0);
+    // 1 回ずつ戻る: 点 → レイヤー
+    s.apply(Action::Undo);
+    assert_eq!(canvas_points(&s).len(), 0);
+    s.apply(Action::Undo);
+    assert_eq!(s.doc.layers().len(), 2);
+    assert!(s.doc.layer(made).is_none());
+    s.apply(Action::Redo);
+    assert_eq!(s.doc.layers().len(), 3);
+    assert!(s.doc.layer(made).unwrap().has_paths());
+}
+
+#[test]
+fn headless_a_new_path_layer_goes_on_top_without_a_selection_and_inside_the_selected_group() {
+    let mut s = AppState::new(64, 64);
+    let base = s.selected_layer.unwrap();
+    s.selected_layer = None;
+    new_path_layer(&mut s);
+    let made = s.selected_layer.unwrap();
+    assert_eq!(s.doc.layers().last().unwrap().id(), made, "一番上");
+    // グループの中のレイヤーを選んでいれば、同じグループの中のすぐ上
+    s.apply(Action::M2(yolu_app::m2::Edit::NewGroup));
+    let group = s.selected_layer.unwrap();
+    s.apply(Action::M2(yolu_app::m2::Edit::Move {
+        id: base,
+        parent: Some(group),
+        position: 0,
+    }));
+    s.selected_layer = Some(base);
+    new_path_layer(&mut s);
+    let inside = s.selected_layer.unwrap();
+    assert_eq!(s.doc.layer(inside).unwrap().parent(), Some(group));
+    let siblings = s.doc.children_of(Some(group)).unwrap();
+    assert_eq!(siblings, vec![base, inside]);
+}
+
+#[test]
+fn headless_the_first_3d_point_turns_a_new_path_layer_into_a_surface_path_in_the_same_layer() {
+    let (mut s, rect) = state3d(two_material_plate());
+    s.tool = Tool::Brush;
+    new_path_layer(&mut s);
+    let layer = s.selected_layer.unwrap();
+    let id = s.doc.layer(layer).unwrap().paths()[0].id();
+    assert_eq!(s.doc.layers().len(), 2);
+    assert!(matches!(path(&s), Some(LayerPath::Canvas(_))));
+    // 3D の面に最初の点を置くと、同じレイヤー・同じ ID のまま 3D のパスになる（新しいレイヤーは作らない）
+    click3d(&mut s, rect, Vec3::new(-0.8, -0.4, 0.0));
+    assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
+    assert_eq!(s.selected_layer, Some(layer));
+    let entries = s.doc.layer(layer).unwrap().paths();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].id(), id, "同じパス");
+    assert_eq!(surface_path(&s).points.len(), 1);
+    assert!(alpha_at(&s, 0.1, 0.30) > 0, "面に投影した画素");
+    // 点のあるパスには、別の側の点は足せない（今までどおり）
+    s.message.clear();
+    click2d(&mut s, 30.0, 30.0);
+    assert!(s.message.contains("モデルの上のパス"), "{}", s.message);
+    assert_eq!(surface_path(&s).points.len(), 1);
+    // 1 回ずつ戻ると、点の無い 2D のパスのレイヤーへ戻る
+    s.apply(Action::Undo);
+    assert!(matches!(path(&s), Some(LayerPath::Canvas(c)) if c.points.is_empty()));
+    assert_eq!(s.doc.layers().len(), 2);
+    // 2D の点なら、2D のパスのまま
+    click2d(&mut s, 30.0, 30.0);
+    assert_eq!(canvas_points(&s).len(), 1);
+}
+
+/// パスの編集を抜ける操作（Esc と、プロパティの「新しいパス」）。
+fn leave_path_edit(s: &mut AppState, how: &str) {
+    match how {
+        // 点を選んでいれば、1 回目の Esc は点の選びを外すだけなので、2 回押す（フレームの番号は毎回違う）
+        "Esc" => {
+            static FRAME: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1000);
+            for _ in 0..2 {
+                s.path_cancel(FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+            }
+        }
+        _ => s.apply(Action::Path(PathAction::SelectPath(None))),
+    }
+}
+
+#[test]
+fn headless_leaving_the_edit_of_a_new_path_layer_keeps_its_one_empty_path_for_the_first_point_in_2d(
+) {
+    for how in ["Esc", "新しいパス"] {
+        let mut s = AppState::new(128, 128);
+        new_path_layer(&mut s);
+        let layer = s.selected_layer.unwrap();
+        let id = s.doc.layer(layer).unwrap().paths()[0].id();
+        leave_path_edit(&mut s, how);
+        click2d(&mut s, 40.0, 40.0);
+        assert_eq!(s.doc.layers().len(), 2, "{how}: {}", s.message);
+        let entries = s.doc.layer(layer).unwrap().paths();
+        assert_eq!(
+            entries.len(),
+            1,
+            "{how}: 空のパスと新しいパスの 2 本にしない"
+        );
+        assert_eq!(entries[0].path.point_count(), 1, "{how}");
+        assert_eq!(entries[0].id(), id, "{how}: 同じパスに入る");
+        assert!(pixel(&s, 40, 40)[3] > 0, "{how}");
+        // 点のあるパスでは、抜けると次の点は 2 本目を始める（今までどおり）
+        leave_path_edit(&mut s, how);
+        click2d(&mut s, 90.0, 90.0);
+        assert_eq!(s.doc.layer(layer).unwrap().paths().len(), 2, "{how}");
+    }
+}
+
+#[test]
+fn headless_leaving_the_edit_of_a_new_path_layer_keeps_its_one_empty_path_for_the_first_point_in_3d(
+) {
+    for how in ["Esc", "新しいパス"] {
+        let (mut s, rect) = state3d(two_material_plate());
+        new_path_layer(&mut s);
+        let layer = s.selected_layer.unwrap();
+        let id = s.doc.layer(layer).unwrap().paths()[0].id();
+        leave_path_edit(&mut s, how);
+        s.message.clear();
+        click3d(&mut s, rect, Vec3::new(-0.8, -0.4, 0.0));
+        assert_eq!(s.doc.layers().len(), 2, "{how}: {}", s.message);
+        let entries = s.doc.layer(layer).unwrap().paths();
+        assert_eq!(entries.len(), 1, "{how}: 空のパスを残さない");
+        assert_eq!(entries[0].id(), id, "{how}");
+        assert_eq!(surface_path(&s).points.len(), 1, "{how}");
+        assert!(alpha_at(&s, 0.1, 0.30) > 0, "{how}");
+        // 1 回の取り消しで、点の無い 2D のパスへ戻る
+        s.apply(Action::Undo);
+        assert!(
+            matches!(path(&s), Some(LayerPath::Canvas(c)) if c.points.is_empty()),
+            "{how}"
+        );
+    }
+}
+
+#[test]
+fn headless_leaving_the_edit_after_removing_every_point_also_keeps_one_path() {
+    let mut s = state(128);
+    click2d(&mut s, 30.0, 30.0);
+    let layer = s.selected_layer.unwrap();
+    s.apply(Action::Path(PathAction::DeleteSelected));
+    assert!(s.path_cancel(3));
+    click2d(&mut s, 60.0, 60.0);
+    let entries = s.doc.layer(layer).unwrap().paths();
+    assert_eq!(entries.len(), 1, "空のパスを残さない: {}", s.message);
+    assert_eq!(entries[0].path.point_count(), 1);
+}
+
+#[test]
+fn headless_removing_every_point_of_a_surface_path_lets_the_next_click_choose_the_side_again() {
+    let (mut s, rect) = state3d(two_material_plate());
+    click3d(&mut s, rect, Vec3::new(-0.8, -0.4, 0.0));
+    let layer = s.selected_layer.unwrap();
+    s.apply(Action::Path(PathAction::DeleteSelected));
+    assert!(matches!(path(&s), Some(LayerPath::Surface(p)) if p.points.is_empty()));
+    click2d(&mut s, 30.0, 30.0);
+    assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
+    assert_eq!(s.selected_layer, Some(layer));
+    assert_eq!(canvas_points(&s).len(), 1);
+}
+
+#[test]
+fn headless_a_new_path_layer_is_refused_while_stroking_and_in_a_read_only_set() {
+    let mut s = AppState::new(64, 64);
+    s.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+    new_path_layer(&mut s);
+    assert_eq!(s.doc.layers().len(), 1);
+    assert!(
+        s.message.contains("読むだけ") && s.message.contains("試験"),
+        "{}",
+        s.message
+    );
+    s.sets.get_mut(0).unwrap().read_only = None;
+    // 描いている最中は作らない
+    let layer = s.selected_layer.unwrap();
+    let settings = s.stroke_settings(false);
+    let stroke = s.doc.begin_stroke(layer, &settings).unwrap();
+    assert!(s.is_stroking());
+    s.message.clear();
+    new_path_layer(&mut s);
+    assert_eq!(s.doc.layers().len(), 1);
+    assert!(!s.message.is_empty());
+    s.doc.cancel_stroke(stroke);
+}
+
+#[test]
+fn headless_a_new_path_layer_survives_saving_and_opening() {
+    let dir = std::env::temp_dir().join(format!("yolu-newpathlayer-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    crate::common::tmp::clean_up_after_test(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new(64, 64);
+    new_path_layer(&mut s);
+    let layer = s.selected_layer.unwrap();
+    let name = s.doc.layer(layer).unwrap().name().to_owned();
+    let file = dir.join("empty-path.ylp");
+    s.apply(Action::SaveProjectAs(file.clone()));
+    assert!(file.exists(), "{}", s.message);
+    let mut t = AppState::new(32, 32);
+    t.apply(Action::OpenProject(file));
+    let opened = t
+        .doc
+        .layer(layer)
+        .unwrap_or_else(|| panic!("{}", t.message));
+    assert_eq!(opened.name(), name);
+    assert!(opened.has_paths());
+    assert_eq!(
+        opened.path().unwrap().point_count(),
+        0,
+        "点の無いパスのまま"
+    );
+    // 開いたあとも、パスのツールで点を置ける
+    t.apply(Action::SelectTool(Tool::Path));
+    t.selected_layer = Some(layer);
+    click2d(&mut t, 20.0, 20.0);
+    assert_eq!(t.doc.layers().len(), 2, "{}", t.message);
+    assert_eq!(canvas_points(&t).len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn headless_masks_read_only_sets_and_foreign_paths_are_refused_with_a_reason() {
     // マスク
@@ -2703,8 +2959,27 @@ fn headless_symmetry_and_reverse_are_one_undo_each() {
     click2d(&mut s, 40.0, 90.0);
     let before = canvas_points(&s);
     assert_eq!(pixel(&s, 118, 30)[3], 0);
+    // 対称定規が無ければ入れられない（理由が出る。取り消しの段も増えない）
+    let none = s.doc.undo_count();
+    s.apply(Action::Path(PathAction::Symmetry(true)));
+    assert_eq!(style_of(&s).symmetry, core_paths::PathSymmetry::None);
+    assert!(s.message.contains("対称定規"), "{}", s.message);
+    assert_eq!(s.doc.undo_count(), none);
+    // 効いている対称定規（縦、中心 x = 64）の値を写して映す
+    common::rulers::vertical(&mut s, 64.0);
+    // 対称定規はあるが「特殊定規にスナップ」が切れているときは、切れていることを理由にする（対称定規が無いとは言わない）
+    s.rulers.snap_special = false;
+    s.apply(Action::Path(PathAction::Symmetry(true)));
+    assert_eq!(style_of(&s).symmetry, core_paths::PathSymmetry::None);
+    assert!(
+        s.message.contains("特殊定規にスナップが切れています"),
+        "{}",
+        s.message
+    );
+    assert!(!s.message.contains("対称定規がありません"), "{}", s.message);
+    assert_eq!(s.doc.undo_count(), none + 1, "定規を置いた 1 回のまま");
+    s.rulers.snap_special = true;
     let undo = s.doc.undo_count();
-    // キャンバスの対称を切っていても、最後のモード（縦）で中心 x = 64 に映す
     s.apply(Action::Path(PathAction::Symmetry(true)));
     assert!(matches!(
         style_of(&s).symmetry,
@@ -2798,6 +3073,49 @@ fn headless_presets_save_apply_and_delete_through_the_settings_folder() {
     let mut empty = yolu_app::pathtool::presets::PathPresets::default();
     empty.attach(dir.clone());
     assert!(empty.list().is_empty(), "ファイルも消える");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn headless_a_preset_carries_the_anti_alias_with_or_without_a_selected_path() {
+    use yolu_app::engine::AntiAlias;
+    use yolu_app::pathtool::presets::PresetOp;
+    let dir = std::env::temp_dir().join(format!("yolu-pathpresets-aa-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    crate::common::tmp::clean_up_after_test(&dir);
+    let mut s = state(128);
+    s.path.presets.attach(dir.clone());
+    click2d(&mut s, 10.0, 60.0);
+    click2d(&mut s, 118.0, 60.0);
+    s.apply(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
+        AntiAlias::Strong,
+    ))));
+    assert_eq!(
+        pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
+        AntiAlias::Strong
+    );
+    s.apply(Action::Path(PathAction::Preset(PresetOp::Save)));
+    let id = s.path.presets.list()[0].id;
+    // 選んでいるパスへ当てる
+    s.apply(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
+        AntiAlias::None,
+    ))));
+    assert_eq!(
+        pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
+        AntiAlias::None
+    );
+    s.apply(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
+    assert_eq!(
+        pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
+        AntiAlias::Strong
+    );
+    // パスを選んでいないときは、次に作るパスが取る今のブラシへ
+    let mut t = state(128);
+    t.path.presets.attach(dir.clone());
+    assert!(path(&t).is_none());
+    t.brush.anti_alias = AntiAlias::None;
+    t.apply(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
+    assert_eq!(t.brush.anti_alias, AntiAlias::Strong);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3375,8 +3693,27 @@ fn sized_app(width: f32, height: f32, lang: Lang) -> Harness<'static, YoluApp> {
             )
             .with_render_state(cc.wgpu_render_state.as_ref())
         });
+    // 中央は 1 つの組（`common::app` と同じ並び）
+    h.state_mut().dock = common::tabbed_center_dock(width);
     h.run();
     h
+}
+
+/// 狭い英語の画面では、パスのブラシのアンチエイリアスの名前を上の行に置き、値の箱を詰めずに 1 行に出す（ほかの選びは名前と箱が 1 行）。
+#[test]
+fn snapshot_the_narrow_path_panel_puts_the_anti_alias_name_above_its_box() {
+    let mut h = sized_app(960.0, 640.0, Lang::En);
+    key(&h, Key::P, Modifiers::NONE);
+    h.run();
+    let aa = h.get_by_label("Anti-aliasing: Medium").rect();
+    let kind = h.get_by_label("Type: Stroke").rect();
+    assert!(
+        aa.left() + 20.0 < kind.left(),
+        "名前が上の行にあれば、箱は行の左から始まる: {aa:?} {kind:?}"
+    );
+    h.event(Event::PointerGone);
+    h.step();
+    h.snapshot("path_panel_narrow_english");
 }
 
 /// 画面に描いた文字（重複なし）。
@@ -3575,7 +3912,7 @@ fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
 // ───────── 確かめの絵（一覧・取っ手・右クリック・種類・筆先・プリセット・塗りつぶしレイヤー。日英） ─────────
 
 fn review_app(lang: Lang) -> Harness<'static, YoluApp> {
-    let mut h = app(1280.0, 1400.0, 256);
+    let mut h = app(1360.0, 1400.0, 256);
     h.state_mut().state.set_language(lang);
     key(&h, Key::P, Modifiers::NONE);
     h.run();
@@ -3806,6 +4143,8 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         h.state_mut().state.view3d.load_demo();
         h.state_mut().state.view3d.camera.yaw = -40.0;
         h.state_mut().state.view3d.camera.pitch = 15.0;
+        // 中央の表示域は右の列が広い分だけ狭いので、3 つの点が収まるようにカメラを引く
+        h.state_mut().state.view3d.camera.distance *= 1.3;
         click_tab(&mut h, yolu_app::Tab::View3d);
         let rect = h.state().view3d_rect().expect("3D のタブを描いた");
         let screen_of = |h: &Harness<'_, YoluApp>, p: Vec3| {
