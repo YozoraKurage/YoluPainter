@@ -615,25 +615,30 @@ mod tests {
         let mut app = AppState::new(8, 8);
         let add = index_of(Operation::SelectionAdd);
         let subtract = index_of(Operation::SelectionSubtract);
-        // 既定
+        // 既定（Mac は Ctrl の代わりに Cmd と書く）
+        let ctrl = if cfg!(target_os = "macos") {
+            "Cmd"
+        } else {
+            "Ctrl"
+        };
         for (lang, new, add_tip, sub_tip, isect_tip, pen, eraser) in [
             (
                 Lang::Ja,
-                "新規",
-                "追加（Shift）",
-                "削除（Ctrl）",
-                "共通（Shift+Ctrl）",
-                "選択ペン（Shift）",
-                "選択消し（Ctrl）",
+                "新規".to_string(),
+                "追加（Shift）".to_string(),
+                format!("削除（{ctrl}）"),
+                format!("共通（Shift+{ctrl}）"),
+                "選択ペン（Shift）".to_string(),
+                format!("選択消し（{ctrl}）"),
             ),
             (
                 Lang::En,
-                "New",
-                "Add (Shift)",
-                "Subtract (Ctrl)",
-                "Intersect (Shift+Ctrl)",
-                "Selection Pen (Shift)",
-                "Selection Eraser (Ctrl)",
+                "New".to_string(),
+                "Add (Shift)".to_string(),
+                format!("Subtract ({ctrl})"),
+                format!("Intersect (Shift+{ctrl})"),
+                "Selection Pen (Shift)".to_string(),
+                format!("Selection Eraser ({ctrl})"),
             ),
         ] {
             assert_eq!(combine_tooltip(lang, SelectionCombine::Replace), new);

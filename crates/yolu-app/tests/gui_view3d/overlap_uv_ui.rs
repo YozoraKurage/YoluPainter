@@ -548,7 +548,8 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         assert_eq!(island_menu(&h), Some((0, false, false)));
         let prefer = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake"));
         h.event(egui::Event::PointerMoved(prefer.center()));
-        h.step();
+        // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
+        h.run();
         h.snapshot(format!(
             "polygon_fill_island_menu_{}",
             lang.pick("ja", "en")
@@ -618,7 +619,8 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         assert!(hover.on_surface && hover.tris.len() == 2);
         let prefer = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake"));
         h.event(egui::Event::PointerMoved(prefer.center()));
-        h.step();
+        // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
+        h.run();
         h.snapshot(format!(
             "polygon_fill_island_menu_3d_{}",
             lang.pick("ja", "en")

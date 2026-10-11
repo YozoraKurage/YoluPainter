@@ -156,7 +156,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential pkg-config libx11-dev libxi-dev libxrandr-dev \
-            libxcursor-dev libxkbcommon-dev libwayland-dev zlib1g-dev \
+            libxcursor-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev zlib1g-dev \
             libegl1 libgl1-mesa-dri libglx-mesa0 libvulkan1 mesa-vulkan-drivers \
             xvfb xauth strace xdotool
       - name: 見張りのツールの試験
