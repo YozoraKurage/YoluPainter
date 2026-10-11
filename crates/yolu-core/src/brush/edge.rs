@@ -472,4 +472,91 @@ mod tests {
         );
         assert!(!TexelMetric::from_columns((1.0, 1.0), (2.0, 2.0)).usable());
     }
+
+    #[test]
+    fn is_off_only_without_a_band_at_full_density() {
+        // 帯なし・濃さ 1 だけが「今の式のまま」
+        assert!(Edge::OFF.is_off());
+        assert!(Edge {
+            band: 0.0,
+            density: 1.0
+        }
+        .is_off());
+        // 帯があるか濃さが 1 でなければ、今の式ではない
+        assert!(!Edge {
+            band: 0.1,
+            density: 1.0
+        }
+        .is_off());
+        assert!(!Edge {
+            band: 0.0,
+            density: 0.5
+        }
+        .is_off());
+    }
+
+    #[test]
+    fn band_and_density_picks_the_narrower_axis() {
+        // 細い線の広げは短い軸（a=0.5 < b=0.8）で決まる（帯は 1 まで）
+        let e = band_and_density(0.6, 1.0, 0.5, 0.8);
+        assert_eq!(e.band, 1.0, "広げは短い軸 0.5 で 1");
+        assert_eq!(e.density, 1.0);
+        // 短い軸が 2 番目でも同じ結果
+        let e2 = band_and_density(0.6, 1.0, 0.8, 0.5);
+        assert_eq!(e2.band, e.band);
+        assert_eq!(e2.density, e.density);
+    }
+
+    #[test]
+    fn above_is_strict() {
+        assert!(above(1.0, 0.0));
+        assert!(!above(0.0, 0.0), "等しいときは偽（否定して「以下」に使う）");
+        assert!(!above(-1.0, 0.0));
+    }
+
+    #[test]
+    fn band_for_outer_keeps_the_outer_edge_when_the_band_is_wide() {
+        // h=0.5: mid=0.75、2×mid=1.5。outer=2.0 はこれを超えるので、いちばん広い帯は outer のまま
+        assert_eq!(band_for_outer(0.5, 2.0), 2.0);
+    }
+
+    #[test]
+    fn ellipse_gradient_squares_the_minor_axis_term() {
+        // u=0, v=3, minor=1, d=3: 短い軸の項は (v/minor)² = 9 で、√9/3 = 1
+        let g = ellipse_gradient(0.0, 3.0, 3.0, 4.0, 1.0);
+        assert!((g - 1.0).abs() < 1e-12, "{g}");
+    }
+
+    #[test]
+    fn a_hard_dab_without_a_band_is_covered_at_its_radius() {
+        // 硬さ 1・帯なしの丸: 半径の上（d = 1）は覆い 1 のまま塗る（硬い縁）
+        assert_eq!(cover64(1.0, 1.0, 0.0, 1.0), 1.0);
+        assert_eq!(cover64_floored(1.0, 1.0, 1.0, 0.0, 1.0), 1.0);
+        // 半径の外は 0
+        assert_eq!(cover64(1.0 + 1e-9, 1.0, 0.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn texel_length_divides_by_the_determinant() {
+        // テクセルが X に 2・Y に 1 の長さの枠（J·Jᵀ = diag(4, 1)、det = 4）: 各軸のテクセル 1 つ分のベクトルは長さ 1
+        let m = TexelMetric {
+            xx: 4.0,
+            xy: 0.0,
+            yy: 1.0,
+        };
+        assert!((m.texel_length(2.0, 0.0) - 1.0).abs() < 1e-12);
+        assert!((m.texel_length(0.0, 1.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn usable_compares_the_determinant_with_xx_times_yy() {
+        // 一方の軸だけがごく短くても、直交していれば潰れていない（det = xx·yy が 1e-12·xx·yy を超える）
+        let thin = |xx: f64, yy: f64| TexelMetric { xx, xy: 0.0, yy }.usable();
+        assert!(thin(1.0, 1e-9));
+        assert!(thin(1e-7, 1.0));
+        // 大きな計量でも、det が xx·yy の 1e-12 倍に届かなければ潰れている
+        let (xx, yy) = (1e6, 1e6);
+        let xy = (xx * yy - 0.5f64).sqrt();
+        assert!(!TexelMetric { xx, xy, yy }.usable());
+    }
 }

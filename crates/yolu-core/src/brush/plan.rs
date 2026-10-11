@@ -310,4 +310,74 @@ mod tests {
         // 速さ 1500 / 上限 3000 → 1 − clamp01(0.5) = 0.5 を流量の係数に掛ける（足さない）
         assert!((c.flow - 0.5).abs() < 1e-12, "{}", c.flow);
     }
+
+    fn still_dab() -> PendingDab {
+        PendingDab {
+            x: 0.0,
+            y: 0.0,
+            pressure: 1.0,
+            arc: 0.0,
+            direction: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
+            rotation: 0.0,
+            speed: 0.0,
+        }
+    }
+
+    /// ブラシの最初の描点の計画（大きさ 4）。
+    fn first_plan<'a>(brush: &'a Brush, dab: &PendingDab) -> (StampControls, DabPlan<'a>) {
+        let c = brush.stamp_controls(dab, 0);
+        let mut random = NetRandom::new(0);
+        let mut tip_index = 0u64;
+        let plan = brush
+            .next_dab(&c, dab, 4.0, 4.0, &mut random, &mut tip_index)
+            .expect("大きさは正");
+        (c, plan)
+    }
+
+    #[test]
+    fn the_pen_rotation_turns_the_dab_the_same_way() {
+        // ペンの軸の回転は筆先の角度に足す（回した向きに回る）
+        let mut brush = Brush::default();
+        brush.controls.rotation_angle = true;
+        let dab = PendingDab {
+            rotation: 0.25,
+            ..still_dab()
+        };
+        let (_, plan) = first_plan(&brush, &dab);
+        assert!((plan.angle - 0.25).abs() < 1e-15, "{}", plan.angle);
+    }
+
+    #[test]
+    fn a_texture_with_no_depth_is_not_applied() {
+        // 深さ 0 の質感は「無し」と同じで当てない。深さがあれば当てる
+        let applied = |depth: f64| {
+            let brush = Brush {
+                texture: Some(PaperTexture::new(builtin_tip("grain").unwrap(), depth)),
+                ..Brush::default()
+            };
+            let (c, plan) = first_plan(&brush, &still_dab());
+            brush.dab_shape(&plan, &c).texture.is_some()
+        };
+        assert!(!applied(0.0));
+        assert!(applied(0.5));
+    }
+
+    #[test]
+    fn the_tilt_turns_the_dab_only_when_the_angle_follows_the_tilt() {
+        // 傾きで大きさだけを変えるブラシは、ペンを倒した向きへ筆先を回さない
+        let dab = PendingDab {
+            tilt_x: 0.3,
+            tilt_y: 0.4,
+            ..still_dab()
+        };
+        let mut brush = Brush::default();
+        brush.controls.tilt_size = true;
+        assert_eq!(brush.stamp_controls(&dab, 0).tilt_turn, 0.0);
+        // 角度を傾きに沿わせると、倒した向きだけ回す
+        brush.controls.tilt_angle = true;
+        let turn = brush.stamp_controls(&dab, 0).tilt_turn;
+        assert!((turn - pen_tilt::azimuth(0.3, 0.4)).abs() < 1e-15, "{turn}");
+    }
 }
