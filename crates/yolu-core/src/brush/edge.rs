@@ -378,6 +378,85 @@ mod tests {
     }
 
     #[test]
+    fn ellipse_gradient_uses_the_scaled_direction_when_d_is_positive() {
+        // d > 0 のときは (u/radius, v/minor) の大きさを d で割る（中心の式ではない）
+        let g = ellipse_gradient(3.0, 4.0, 5.0, 5.0, 2.0);
+        let want = ((3.0f64 / 5.0).powi(2) + (4.0f64 / 2.0).powi(2)).sqrt() / 5.0;
+        assert!((g - want).abs() < 1e-12, "{g} {want}");
+        assert!((g - 0.5).abs() > 1e-3, "中心の式（1/minor）とは違う: {g}");
+        // 中心（d = 0）は短い軸の向き
+        assert_eq!(ellipse_gradient(0.0, 0.0, 0.0, 5.0, 2.0), 0.5);
+    }
+
+    #[test]
+    fn ellipse_gradient_divides_by_d_instead_of_multiplying() {
+        // d で割る（掛けない）: u=0, v=4, d=4, radius=4, minor=2 → (4/2)/4 = 0.5
+        let g = ellipse_gradient(0.0, 4.0, 4.0, 4.0, 2.0);
+        assert!((g - 0.5).abs() < 1e-12, "{g}");
+    }
+
+    #[test]
+    fn box_floor_measures_the_outside_distance_from_the_box() {
+        // 箱 (bu, bv) = (3, 1) の外の (5, 0): 外の距離は 5 − 3 = 2、mid=0.5, g=1 → 2.5
+        let f = box_floor(0.0, 1.0, 0.5, (5.0, 0.0), (3.0, 1.0));
+        assert!((f - 2.5).abs() < 1e-12, "{f}");
+        // 箱の中は外の距離 0 なので、値は d のまま
+        assert_eq!(box_floor(0.7, 1.0, 0.5, (1.0, 0.5), (3.0, 1.0)), 0.7);
+    }
+
+    #[test]
+    fn band_for_outer_inverts_bounds() {
+        // h=0.5, outer=1.2: mid=(1+h)/2=0.75、帯は 2×(1.2−0.75)=0.9
+        let b = band_for_outer(0.5, 1.2);
+        assert!((b - 0.9).abs() < 1e-12, "{b}");
+        // bounds の外の端が outer に戻る
+        let (_, hi) = bounds(0.5, b);
+        assert!((hi - 1.2).abs() < 1e-12, "{hi}");
+    }
+
+    #[test]
+    fn band_and_density_uses_the_half_cover_radius() {
+        // h=0.5 のとき覆いが半分になる半径は mid=(1+h)/2=0.75
+        let e = band_and_density(1.0, 0.5, 0.5, 0.5);
+        assert_eq!(e.band, 1.0);
+        // 短い軸 0.5×0.75=0.375 は rho=0.5 より細いので濃さは 0.375/0.5=0.75、二乗で 0.5625
+        assert!((e.density - 0.5625).abs() < 1e-12, "{}", e.density);
+    }
+
+    #[test]
+    fn a_density_below_one_scales_the_band_cover() {
+        // 濃さ 0.5 のダブは帯の式の覆いを 0.5 倍する（今の式の分岐には入らない）
+        let c = cover64_floored(0.5, 0.5, 0.5, 0.2, 0.5);
+        assert!((c - 0.5).abs() < 1e-12, "{c}");
+    }
+
+    #[test]
+    fn widen_axes_grows_axes_narrower_than_half_the_band() {
+        let e = Edge {
+            band: 1.0,
+            density: 1.0,
+        };
+        // h=0.5: 覆いが半分になる半径は t×0.75。t=0.5 は 0.375 < rho=0.5 なので 0.5/0.375 倍
+        let (fa, fb) = widen_axes(&e, 0.5, 0.5, 2.0);
+        assert!((fa - 0.5 / 0.375).abs() < 1e-12, "{fa}");
+        // 太い軸は広げない
+        assert_eq!(fb, 1.0);
+    }
+
+    #[test]
+    fn texel_length_uses_the_inverse_metric() {
+        // J·Jᵀ = [[1, 1], [1, 2]]（xy ≠ 0）, det = 1×2 − 1×1 = 1
+        let m = TexelMetric::from_columns((1.0, 1.0), (0.0, 1.0));
+        assert!(m.usable());
+        // v=(1,0): (1×2 − 0 + 0)/1 = 2 → √2
+        assert!((m.texel_length(1.0, 0.0) - 2.0f64.sqrt()).abs() < 1e-12);
+        // v=(0,1): (0 − 0 + 1×1)/1 = 1
+        assert!((m.texel_length(0.0, 1.0) - 1.0).abs() < 1e-12);
+        // v=(1,1): (2 − 2 + 1)/1 = 1（xy の交差項が効く）
+        assert!((m.texel_length(1.0, 1.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
     fn the_metric_turns_frame_lengths_into_texels() {
         // テクセル 1 つが枠で x に 2、y に 0.5（軸に沿う）
         let m = TexelMetric::from_columns((2.0, 0.0), (0.0, 0.5));

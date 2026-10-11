@@ -285,3 +285,29 @@ pub(super) fn dual_shape(
     }
     shape
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn speed_flow_multiplies_the_flow_control() {
+        let mut brush = Brush::default();
+        brush.controls.speed_flow = true;
+        brush.controls.speed_max = 3000.0;
+        let dab = PendingDab {
+            x: 0.0,
+            y: 0.0,
+            pressure: 1.0,
+            arc: 0.0,
+            direction: 0.0,
+            tilt_x: 0.0,
+            tilt_y: 0.0,
+            rotation: 0.0,
+            speed: 1500.0,
+        };
+        let c = brush.stamp_controls(&dab, 0);
+        // 速さ 1500 / 上限 3000 → 1 − clamp01(0.5) = 0.5 を流量の係数に掛ける（足さない）
+        assert!((c.flow - 0.5).abs() < 1e-12, "{}", c.flow);
+    }
+}
