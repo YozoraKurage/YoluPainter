@@ -16,6 +16,14 @@
       "default": true
     },
     {
+      "target": "aarch64-unknown-linux-gnu",
+      "os": "ubuntu-22.04-arm",
+      "installer": false,
+      "input": "linux_arm",
+      "default": true,
+      "experimental": true
+    },
+    {
       "target": "universal-apple-darwin",
       "os": "macos-14",
       "installer": false,

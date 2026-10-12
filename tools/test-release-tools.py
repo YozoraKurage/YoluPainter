@@ -211,7 +211,7 @@ class LicenseChecks(unittest.TestCase):
         self.assertTrue(self.inspect()[2])
 
     def test_target_is_used_for_dependency_resolution(self):
-        for target in ['x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu']:
+        for target in ['x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu']:
             with patch.object(licenses, 'TARGET', target), patch.object(licenses, 'cargo', return_value='fixture v1.0.0') as cargo:
                 self.assertEqual(licenses.dependency_keys('fixture', 'normal,build', True), {'fixture@1.0.0'})
                 self.assertIn(target, cargo.call_args.args)

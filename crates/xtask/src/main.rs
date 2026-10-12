@@ -22,7 +22,7 @@ const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / netguard / build --target T --release [--require-update-key] / bundle --target T（build・bundle の T は x86_64-pc-windows-msvc・x86_64-unknown-linux-gnu・universal-apple-darwin。universal-apple-darwin は macOS の上で） / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / netguard / build --target T --release [--require-update-key] / bundle --target T（build・bundle の T は x86_64-pc-windows-msvc・x86_64-unknown-linux-gnu・aarch64-unknown-linux-gnu（試作）・universal-apple-darwin。universal-apple-darwin は macOS の上で） / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -1237,7 +1237,7 @@ fn keygen(output: &Path) -> Result<String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use yolu_update::LINUX_ARCHIVE;
+    use yolu_update::{LINUX_ARCHIVE, LINUX_ARM_ARCHIVE};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     struct Scratch(PathBuf);
     impl Scratch {
@@ -1356,7 +1356,12 @@ mod tests {
             entries.push((entry, source));
         }
         let path = d.0.join("fake-archive");
-        archive(&path, &entries, target != LINUX_ARCHIVE).unwrap();
+        archive(
+            &path,
+            &entries,
+            target == WINDOWS_ARCHIVE || target == MACOS_ARCHIVE,
+        )
+        .unwrap();
         fs::read(path).unwrap()
     }
     /// 使い捨ての鍵で署名した配布物の置き場。公開鍵の hex も返す。
@@ -2394,6 +2399,7 @@ mod tests {
         for (target, exe, cli) in [
             (WINDOWS_ARCHIVE, "yolupainter.exe", "yolupainter-cli.exe"),
             (LINUX_ARCHIVE, "yolupainter", "yolupainter-cli"),
+            (LINUX_ARM_ARCHIVE, "yolupainter", "yolupainter-cli"),
         ] {
             let names = payload_names(target);
             let mut sorted = names.clone();
@@ -2431,7 +2437,7 @@ mod tests {
     fn payload_sources_are_the_repository_files_the_build_and_the_license_bundle() {
         let root = root();
         let license_dir = Path::new("/licenses");
-        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE] {
+        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE, LINUX_ARM_ARCHIVE] {
             let entries = payload_entries(&root, target, license_dir);
             let source = |name: &str| {
                 entries
@@ -2624,7 +2630,12 @@ mod tests {
     #[test]
     fn archive_contents_must_match_the_payload_list() {
         let v = Version::new(1, 2, 3);
-        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE, MACOS_ARCHIVE] {
+        for target in [
+            WINDOWS_ARCHIVE,
+            LINUX_ARCHIVE,
+            LINUX_ARM_ARCHIVE,
+            MACOS_ARCHIVE,
+        ] {
             check_archive_contents(target, &v, &fake_archive(&v, target, &[], &[])).unwrap();
             // 文書が 1 つ欠けても、README が欠けても断る（名前つきで）。
             for missing in ["docs/en/GUIDE.md", "docs/PSD.md", "README.en.md"] {

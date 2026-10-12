@@ -333,7 +333,7 @@ def main():
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
     parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu',
-                                             'aarch64-apple-darwin', 'x86_64-apple-darwin', 'universal-apple-darwin'])
+                                             'aarch64-unknown-linux-gnu', 'aarch64-apple-darwin', 'x86_64-apple-darwin', 'universal-apple-darwin'])
     parser.add_argument('--include-update', action='store_true', help='将来組み込む更新クレートも全文束に含める')
     parser.add_argument('--include-cli', action='store_true', help='同じ配布物に入るコマンドライン（yolu-cli）の依存も全文束に含める')
     parser.add_argument('--built-with', choices=['yolu-app', 'yolu-update', 'yolu-cli'],

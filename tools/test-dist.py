@@ -36,6 +36,7 @@ TREE = 'a' * 40
 OTHER_TREE = 'b' * 40
 WINDOWS = 'x86_64-pc-windows-msvc'
 LINUX = 'x86_64-unknown-linux-gnu'
+LINUX_ARM = 'aarch64-unknown-linux-gnu'
 MACOS = 'universal-apple-darwin'
 KEY = 'c' * 64
 
@@ -145,19 +146,21 @@ class Targets(unittest.TestCase):
         config = dist.load_targets()
         self.assertEqual(self.names(config, set()), [WINDOWS])
         self.assertEqual(self.names(config, {'linux'}), [WINDOWS, LINUX])
+        self.assertEqual(self.names(config, {'linux_arm'}), [WINDOWS, LINUX_ARM])
         self.assertEqual(self.names(config, {'macos'}), [WINDOWS, MACOS])
-        self.assertEqual(self.names(config, {'linux', 'macos'}), [WINDOWS, LINUX, MACOS])
+        self.assertEqual(self.names(config, {'linux', 'linux_arm', 'macos'}), [WINDOWS, LINUX, LINUX_ARM, MACOS])
 
-    def test_linux_and_macos_are_on_unless_the_release_turns_them_off(self):
+    def test_linux_linux_arm_and_macos_are_on_unless_the_release_turns_them_off(self):
         config = dist.load_targets()
-        # 入力が無いとき（PR の CI）は、入力の既定が入の対象（Linux・macOS）までビルドする
-        self.assertEqual(dist.default_inputs(config), {'linux', 'macos'})
-        self.assertEqual(self.names(config, dist.resolve_inputs(config, [])), [WINDOWS, LINUX, MACOS])
-        # 配布の入力: false で外す。言わなかった入力は既定（入）のまま
-        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'macos=true'])), [WINDOWS, MACOS])
-        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'macos=false'])), [WINDOWS])
-        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['macos=false'])), [WINDOWS, LINUX])
-        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=true'])), [WINDOWS, LINUX, MACOS])
+        # 入力が無いとき（PR の CI）は、入力の既定が入の対象（Linux・Linux の ARM・macOS）までビルドする
+        self.assertEqual(dist.default_inputs(config), {'linux', 'linux_arm', 'macos'})
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, [])), [WINDOWS, LINUX, LINUX_ARM, MACOS])
+        # 配布の入力: false で外す。言わなかった入力は既定（入）のまま。Linux の x86_64 と ARM は別々に切れる
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'macos=true'])), [WINDOWS, LINUX_ARM, MACOS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux_arm=false'])), [WINDOWS, LINUX, MACOS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'linux_arm=false', 'macos=false'])), [WINDOWS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['macos=false'])), [WINDOWS, LINUX, LINUX_ARM])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=true'])), [WINDOWS, LINUX, LINUX_ARM, MACOS])
 
     def test_an_input_without_a_default_is_off_unless_turned_on(self):
         # 今の一覧には既定が切の入力が無い。default の無い対象の扱い（PR の CI ではビルドせず、入力が true のときだけ足す）は合成した一覧で確かめる
@@ -175,24 +178,28 @@ class Targets(unittest.TestCase):
         self.assertEqual(matrix, {'include': [
             {'os': 'windows-latest', 'target': WINDOWS, 'installer': True},
             {'os': 'ubuntu-22.04', 'target': LINUX, 'installer': False},
+            {'os': 'ubuntu-22.04-arm', 'target': LINUX_ARM, 'installer': False, 'experimental': True},
             {'os': 'macos-14', 'target': MACOS, 'installer': False,
              'rust_targets': 'aarch64-apple-darwin x86_64-apple-darwin', 'experimental': True, 'timeout': 90},
         ]})
-        # macOS と Linux を外した配布の matrix は Windows だけ（Rust のターゲットの項目も無い）
-        self.assertEqual(dist.plan(config, dist.resolve_inputs(config, ['linux=false', 'macos=false'])),
+        # 試作の 2 つと Linux を外した配布の matrix は Windows だけ（Rust のターゲットの項目も無い）
+        self.assertEqual(dist.plan(config, dist.resolve_inputs(config, ['linux=false', 'linux_arm=false', 'macos=false'])),
                          {'include': [{'os': 'windows-latest', 'target': WINDOWS, 'installer': True}]})
 
-    def test_only_macos_is_experimental_and_has_the_longer_time_limit(self):
+    def test_only_the_arm_linux_and_macos_are_experimental_and_only_macos_has_the_longer_time_limit(self):
         config = dist.load_targets()
-        self.assertEqual(dist.experimental_targets(config), {MACOS})
+        self.assertEqual(dist.experimental_targets(config), {LINUX_ARM, MACOS})
         self.assertEqual(dist.experimental_targets(config, [WINDOWS, LINUX]), set())
+        self.assertEqual(dist.experimental_targets(config, [WINDOWS, LINUX, LINUX_ARM]), {LINUX_ARM})
         self.assertEqual(dist.experimental_targets(config, [WINDOWS, MACOS]), {MACOS})
         matrix = dist.plan(config, dist.resolve_inputs(config, []))
         by_target = {item['target']: item for item in matrix['include']}
-        # Windows・Linux は試作でも時間の指定もなく（今までどおり）、macOS だけ試作で 90 分
+        # Windows・Linux（x86_64）は試作でも時間の指定もなく（今までどおり）、Linux の ARM は試作（時間は既定）、macOS は試作で 90 分
         for target in (WINDOWS, LINUX):
             self.assertNotIn('experimental', by_target[target])
             self.assertNotIn('timeout', by_target[target])
+        self.assertEqual(by_target[LINUX_ARM]['experimental'], True)
+        self.assertNotIn('timeout', by_target[LINUX_ARM])
         self.assertEqual((by_target[MACOS]['experimental'], by_target[MACOS]['timeout']), (True, 90))
 
     def test_the_artifact_pattern_keeps_only_the_planned_targets(self):
@@ -213,13 +220,15 @@ class Targets(unittest.TestCase):
     def test_plan_command_writes_the_matrix_the_targets_and_the_tree(self):
         with tempfile.TemporaryDirectory() as d:
             output = Path(d) / 'out'
-            for items, expected in (([], f'{WINDOWS},{LINUX},{MACOS}'), (['macos=false'], f'{WINDOWS},{LINUX}'), (['linux=false', 'macos=false'], WINDOWS), (['linux=false'], f'{WINDOWS},{MACOS}')):
+            for items, expected in (([], f'{WINDOWS},{LINUX},{LINUX_ARM},{MACOS}'), (['macos=false'], f'{WINDOWS},{LINUX},{LINUX_ARM}'),
+                                    (['linux=false', 'linux_arm=false', 'macos=false'], WINDOWS), (['linux=false', 'linux_arm=false'], f'{WINDOWS},{MACOS}'),
+                                    (['linux_arm=false'], f'{WINDOWS},{LINUX},{MACOS}')):
                 output.write_text('')
                 with unittest.mock.patch.dict(os.environ, {'GITHUB_OUTPUT': str(output)}):
                     dist.cmd_plan(type('A', (), {'input': items})())
                 lines = dict(line.split('=', 1) for line in output.read_text().splitlines())
                 self.assertEqual(lines['targets'], expected)
-                self.assertEqual(lines['experimental'], MACOS if MACOS in expected else '')
+                self.assertEqual(lines['experimental'], ','.join(t for t in expected.split(',') if t in (LINUX_ARM, MACOS)))
                 self.assertEqual(lines['pattern'], dist.artifact_pattern(lines['tree'], expected.split(',')))
                 self.assertEqual(json.loads(lines['matrix'])['include'][-1]['target'], expected.split(',')[-1])
                 self.assertEqual(len(lines['tree']), 40)
@@ -856,9 +865,11 @@ class Workflows(unittest.TestCase):
                 on['workflow_dispatch']['inputs'][name]['default'] = False
             return edit
 
-        def plan_forgets_macos(document):
-            step = document['jobs']['plan']['steps'][-1]
-            step['run'] = step['run'].replace(' --input macos=${{ inputs.macos }}', '')
+        def plan_forgets(name):
+            def edit(document):
+                step = document['jobs']['plan']['steps'][-1]
+                step['run'] = step['run'].replace(f' --input {name}=${{{{ inputs.{name} }}}}', '')
+            return edit
 
         def build_job(document):
             return document['jobs']['build']
@@ -960,7 +971,9 @@ class Workflows(unittest.TestCase):
             'stale input': ('release.yml', yaml_edit(stale_input), '使う対象が'),
             'macos default off': ('release.yml', yaml_edit(input_off('macos')), '入力 macos は既定が入'),
             'linux default off': ('release.yml', yaml_edit(input_off('linux')), '入力 linux は既定が入'),
-            'plan forgets macos': ('release.yml', yaml_edit(plan_forgets_macos), 'plan が入力 macos を渡していません'),
+            'linux_arm default off': ('release.yml', yaml_edit(input_off('linux_arm')), '入力 linux_arm は既定が入'),
+            'plan forgets linux_arm': ('release.yml', yaml_edit(plan_forgets('linux_arm')), 'plan が入力 linux_arm を渡していません'),
+            'plan forgets macos': ('release.yml', yaml_edit(plan_forgets('macos')), 'plan が入力 macos を渡していません'),
             'experimental build is required': ('dist-build.yml', yaml_edit(no_continue_on_error), 'continue-on-error'),
             'fixed time limit': ('dist-build.yml', yaml_edit(fixed_timeout), 'timeout-minutes'),
             'no multi-target rust step': ('dist-build.yml', yaml_edit(single_rust_step_only), 'rustup target add'),

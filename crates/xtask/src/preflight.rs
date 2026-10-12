@@ -27,7 +27,8 @@ use std::{
     process::{Command, Stdio},
 };
 use yolu_update::{
-    is_archive_target, is_beta_version, MACOS_ARCHIVE, MACOS_TRIPLES, WINDOWS_ARCHIVE,
+    is_archive_target, is_beta_version, LINUX_ARM_ARCHIVE, MACOS_ARCHIVE, MACOS_TRIPLES,
+    WINDOWS_ARCHIVE,
 };
 
 /// 確かめの名前（実行する順）。
@@ -644,6 +645,13 @@ fn targets_outcome(targets: &[DistTarget]) -> Outcome {
                 item.target
             ));
         }
+        // Linux の ARM は実機で確かめていない試作。落ちたときに、x86_64 の Linux と Windows の配布を止めない
+        if item.target == LINUX_ARM_ARCHIVE && !item.experimental {
+            problems.push(format!(
+                "{}: Linux の ARM の配布物は試作です（experimental を true にする。実機で確かめていない物が、落ちたときに配布を止めないため）",
+                item.target
+            ));
+        }
         let is_macos = item.target == MACOS_ARCHIVE;
         if is_macos && !item.experimental {
             problems.push(format!(
@@ -1193,14 +1201,18 @@ mod tests {
                 {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-22.04","installer":false,"input":"linux","default":true},
                 {"target":"universal-apple-darwin","os":"macos-14","installer":false,"input":"macos","default":true,
                  "experimental":true,"timeout_minutes":90,
-                 "rust_targets":"aarch64-apple-darwin x86_64-apple-darwin"}]}"#,
+                 "rust_targets":"aarch64-apple-darwin x86_64-apple-darwin"},
+                {"target":"aarch64-unknown-linux-gnu","os":"ubuntu-22.04-arm","installer":false,"input":"linux_arm","default":true,
+                 "experimental":true}]}"#,
         )
         .unwrap();
         assert!(
             matches!(targets_outcome(&good), Passed(ref s) if s.contains("入力 linux・既定は入")
-            && s.contains("universal-apple-darwin（入力 macos・既定は入）（試作）"))
+            && s.contains("universal-apple-darwin（入力 macos・既定は入）（試作）")
+            && s.contains("aarch64-unknown-linux-gnu（入力 linux_arm・既定は入）（試作）"))
         );
         assert!(good[2].experimental && !good[0].experimental && !good[1].experimental);
+        assert!(good[3].experimental && good[3].default_on && good[3].rust_targets.is_empty());
         assert_eq!(good[2].timeout_minutes, Some(90));
         assert_eq!(good[0].timeout_minutes, None);
         assert_eq!(good[2].rust_targets, MACOS_TRIPLES);
@@ -1264,6 +1276,17 @@ mod tests {
         match targets_outcome(&macos_required) {
             Failed(p) => assert!(
                 p.iter().any(|l| l.contains("macOS の配布物は試作です")),
+                "{p:?}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        // Linux の ARM は試作でなければならない（x86_64 の Linux は試作にしない）
+        let mut arm_required = good.clone();
+        arm_required[3].experimental = false;
+        match targets_outcome(&arm_required) {
+            Failed(p) => assert!(
+                p.iter()
+                    .any(|l| l.contains("Linux の ARM の配布物は試作です")),
                 "{p:?}"
             ),
             other => panic!("{other:?}"),

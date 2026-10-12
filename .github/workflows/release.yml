@@ -15,7 +15,12 @@ on:
         type: boolean
         default: true
       linux:
-        description: Linux の配布物も作る（x86_64、X11。Wayland の机では XWayland の上で動く）
+        description: Linux の配布物も作る（x86_64、X11。Wayland の環境では XWayland の上で動く）
+        required: true
+        type: boolean
+        default: true
+      linux_arm:
+        description: Linux の ARM（aarch64）の試作の配布物も作る
         required: true
         type: boolean
         default: true
@@ -55,7 +60,7 @@ jobs:
         with:
           persist-credentials: false
       - id: plan
-        run: python3 tools/dist.py plan --input linux=${{ inputs.linux }} --input macos=${{ inputs.macos }}
+        run: python3 tools/dist.py plan --input linux=${{ inputs.linux }} --input linux_arm=${{ inputs.linux_arm }} --input macos=${{ inputs.macos }}
 
   find:
     name: CI の成果物を探す

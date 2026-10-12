@@ -1,6 +1,6 @@
 # 第三者の許諾
 
-Windows MSVC・Windows GNU・Linux GNU・macOS（universal）向けの `yolu-app`（スタンドアロン、更新依存とコマンドライン `yolu-cli` の依存を含む）と
+Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（universal）向けの `yolu-app`（スタンドアロン、更新依存とコマンドライン `yolu-cli` の依存を含む）と
 `yolu-cli`（Claude Desktop 用の `.mcpb`。アプリと同じビルドでの部分木）、開発用 `xtask` の依存一覧。既定の機能、下表に記録した Cargo.lock が対象。
 依存を更新したときや別のターゲット・機能で配るときは、一覧と全文束を更新する。
 各対象の依存と、Linux の配布を止めている条件を分けて記載する。
@@ -236,8 +236,9 @@ Rust と C の著作権表記（2020 Samuli Raivio）を全文束に含め、C �
 python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-app --include-update --include-cli --bundle
 python3 tools/third-party.py --target x86_64-pc-windows-gnu --package yolu-app --include-update --include-cli --bundle
 python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-cli --built-with yolu-app --bundle
-# Linux の app は下記の条件が未承認のため終了 1。全文束を作らない。
 python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-app --include-update --include-cli --bundle
+# Linux の ARM（aarch64、試作）。x86_64 の Linux の部分集合で、新しい許諾は無い
+python3 tools/third-party.py --target aarch64-unknown-linux-gnu --package yolu-app --include-update --include-cli --bundle
 # macOS の universal は Apple Silicon と Intel の 2 つのターゲットの木の和（どちらか単独の aarch64-apple-darwin・x86_64-apple-darwin も指せる）。.mcpb は Windows だけなので cli の一覧は無い
 python3 tools/third-party.py --target universal-apple-darwin --package yolu-app --include-update --include-cli --bundle
 ```
@@ -253,10 +254,14 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 | Windows MSVC | 251 | 132 | 31 | 49 | 生成成功 |
 | Windows GNU | 251 | 132 | 31 | 49 | 生成成功 |
 | Linux GNU | 319 | 131 | 31 | 54 | 生成成功 |
+| Linux ARM（aarch64） | 317 | 130 | 30 | 52 | 生成成功 |
 | macOS universal | 246 | — | — | — | 生成成功 |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
+
+Linux の ARM（aarch64、試作の配布物）の app の 317 件は、x86_64 の Linux の 319 件から、x86_64 だけで入る `cpufeatures 0.3.1` と
+`curve25519-dalek-derive 0.1.1` を除いた部分集合で、ARM だけで入るクレートは無く、新しい許諾の種類も出ない。LGPL の protocol XML の扱いは x86_64 の Linux と同じ。
 
 Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` は、クレートの宣言は MIT で、同梱する protocol XML
 （plasma の `plasma-wayland-protocols/src/protocols/` の 31 件のうち 17 件と、misc の `protocols/server-decoration.xml`）が **LGPL-2.1-or-later**。
@@ -268,14 +273,14 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 
 ## Cargo.lock 全体と試験専用の依存
 
-`python3 tools/third-party.py --audit-lock --offline` は Windows MSVC・Windows GNU・Linux GNU・macOS（Apple Silicon と Intel）の workspace 全体を調べる。
+`python3 tools/third-party.py --audit-lock --offline` は Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（Apple Silicon と Intel）の workspace 全体を調べる。
 通常・ビルド依存に加えて試験依存の原文も照合し、他 OS・無効な機能の依存を含む lock 全件を
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
 照合した Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。外部クレート 496 件の内訳は次のとおり。
 
-| 範囲（5 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
+| 範囲（6 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
 | 通常・ビルド依存 | 387 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
 | 試験専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
