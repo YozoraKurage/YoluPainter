@@ -53,8 +53,9 @@ impl Document {
         }
     }
 
-    /// 塗りつぶしレイヤーの、パスの一覧に無いチャンネルの空の面を外す。塗りつぶしレイヤーが画素の面を持つのはパスの画素のためだけで、
-    /// 一覧から外れたチャンネルに空の面が残ると、保存が「塗りつぶしレイヤーの画素」として断る。ラスターレイヤーは面を持ち続けてよい。
+    /// 塗りつぶしレイヤーの、パスの一覧に無いチャンネルの空の面を外す。塗りつぶしレイヤーが画素の面を持つのはパスの画素のためだけ。
+    /// 一覧が空なのに面が残ると、保存が「画素はラスターレイヤーだけが持てます」と断る（一覧が残るなら、空の面が書かれるだけ）。
+    /// ラスターレイヤーは面を持ち続けてよい。
     fn drop_unused_fill_surfaces(&mut self, index: usize, channels: &[Channel]) {
         if self.layers[index].kind != LayerKind::Fill {
             return;
@@ -70,6 +71,10 @@ impl Document {
             {
                 self.layers[index].put_surface(c, None);
                 self.mark_layer(index, Some(c));
+                // ensure_surface と同じ: 空の面の有無でクリッピングの下地のグループが分離になるかが変わり得る
+                if self.layers[index].clipping {
+                    self.mark_clip_bases();
+                }
             }
         }
     }
@@ -246,6 +251,7 @@ impl Document {
                 }
             }
             undo_enabling(self, &enabled);
+            // 塗りつぶしレイヤーは、一覧に無いチャンネルの空の面を（この呼び出しの前からあった物も）落とす。面が要るのは一覧のチャンネルだけ
             self.drop_unused_fill_surfaces(index, &channels.iter().copied().collect::<Vec<_>>());
             for c in &channels {
                 self.mark_layer(index, Some(*c));
@@ -642,10 +648,18 @@ impl Document {
                     {
                         let (w, h, ts) = (self.width, self.height, self.tile_size);
                         self.layers[index].put_surface(c, Some(Surface::new(w, h, ts)));
+                        if self.layers[index].clipping {
+                            self.mark_clip_bases();
+                        }
                     }
                 }
             }
-            self.restore_material(pixels, backwards)?;
+            if let Err(e) = self.restore_material(pixels, backwards) {
+                // 画素の予算などで戻せなかった時も、作り直した空の面を残さない（パスの一覧は変わっていないので、今の一覧が基準）。
+                // 面を作る前に予算だけ確かめる案は、restore_material の ほかの失敗（有効の印の切り替え）を拾えないので採らない
+                self.drop_unused_fill_surfaces(index, &touched);
+                return Err(e);
+            }
         }
         self.layers[index].paths = if backwards {
             m.old.clone()
