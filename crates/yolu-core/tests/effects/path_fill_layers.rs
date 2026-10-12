@@ -120,3 +120,104 @@ fn undo_of_a_fill_layer_path_on_a_filled_channel_drops_the_empty_surface() {
     assert_eq!(px(&doc, 30, 32), BLUE);
     assert!(doc.layer(fill).unwrap().is_channel_enabled(Channel::Color));
 }
+
+#[test]
+fn a_refused_redo_of_a_fill_layer_path_leaves_no_empty_surface() {
+    let mut doc = Document::with_tile_size(64, 64, 16).unwrap();
+    let fill = doc
+        .add_fill_layer("塗り", &[(Channel::Color, RED)], None)
+        .unwrap();
+    doc.set_canvas_paths(fill, vec![line(32.0, BLUE)]).unwrap();
+    doc.undo().unwrap();
+    // 画素の予算がもう余っていないので、Redo は断られる
+    doc.set_source_budget_bytes(doc.allocated_bytes()).unwrap();
+    assert!(doc.redo().is_err());
+    assert!(!doc.layer(fill).unwrap().has_paths());
+    assert!(
+        doc.layer(fill).unwrap().surface(Channel::Color).is_none(),
+        "断られた Redo が空の面を残さない"
+    );
+    assert_eq!(px(&doc, 30, 32), RED);
+}
+
+#[test]
+fn a_refused_undo_of_removing_a_fill_layer_path_leaves_no_empty_surface() {
+    let mut doc = Document::with_tile_size(64, 64, 16).unwrap();
+    let fill = doc
+        .add_fill_layer("塗り", &[(Channel::Color, RED)], None)
+        .unwrap();
+    doc.set_canvas_paths(fill, vec![line(32.0, BLUE)]).unwrap();
+    doc.set_paths(fill, Vec::new(), Vec::new()).unwrap();
+    assert!(doc.layer(fill).unwrap().surface(Channel::Color).is_none());
+    // パスを外した Undo は、消えた画素を戻すので予算が要る。余っていなければ断られ、空の面は残らない
+    doc.set_source_budget_bytes(doc.allocated_bytes()).unwrap();
+    assert!(doc.undo().is_err());
+    assert!(!doc.layer(fill).unwrap().has_paths());
+    assert!(doc.layer(fill).unwrap().surface(Channel::Color).is_none());
+}
+
+/// クリッピングの下地・クリッピングされる側のどちらの塗りつぶしレイヤーでも、パスの付け外しと Undo・Redo のあとの合成が、
+/// 最初から計算し直した文書と同じ（面の作成・破棄でクリッピングの下地のキャッシュが古いまま残らない）。
+#[test]
+fn clipped_fill_layer_paths_composite_the_same_after_undo_and_redo() {
+    // fill_clipped: 塗りつぶしがグループの下地にクリッピングされる / そうでなければ、塗りつぶしが下地でラスターがクリッピングされる
+    for fill_clipped in [true, false] {
+        let build = |with_path: bool| -> (Document, yolu_core::LayerId) {
+            let mut doc = Document::with_tile_size(64, 64, 16).unwrap();
+            let fill;
+            if fill_clipped {
+                let base = doc.add_layer("下地").unwrap();
+                doc.set_canvas_paths(base, vec![line(32.0, RED)]).unwrap();
+                let group = doc.group_layers(&[base], "グループ").unwrap();
+                fill = doc
+                    .add_fill_layer("塗り", &[(Channel::Roughness, RED)], Some(group))
+                    .unwrap();
+                doc.set_layer_clipping(fill, true).unwrap();
+            } else {
+                fill = doc
+                    .add_fill_layer("塗り", &[(Channel::Roughness, RED)], None)
+                    .unwrap();
+                let top = doc.add_layer("上").unwrap();
+                doc.set_canvas_paths(top, vec![line(34.0, BLUE)]).unwrap();
+                doc.set_layer_clipping(top, true).unwrap();
+            }
+            if with_path {
+                doc.set_canvas_paths(fill, vec![line(34.0, Rgba8::new(0, 200, 0, 255))])
+                    .unwrap();
+            }
+            (doc, fill)
+        };
+        let sample = |d: &Document| -> Vec<Rgba8> {
+            let mut v = Vec::new();
+            for c in [Channel::Color, Channel::Roughness] {
+                for y in [10, 31, 33, 35, 50] {
+                    v.push(d.composite_pixel(c, 30, y).unwrap());
+                }
+            }
+            v
+        };
+        let (without, _) = build(false);
+        let expect_without = sample(&without);
+        let (with, _) = build(true);
+        let expect_with = sample(&with);
+        assert_ne!(expect_with, expect_without, "{fill_clipped}");
+        // 付ける前の合成を計算させて（キャッシュを温めて）から、付け外しを繰り返す
+        let (mut doc, fill) = build(false);
+        assert_eq!(sample(&doc), expect_without);
+        for _ in 0..2 {
+            doc.set_canvas_paths(fill, vec![line(34.0, Rgba8::new(0, 200, 0, 255))])
+                .unwrap();
+            assert_eq!(sample(&doc), expect_with, "{fill_clipped}: 付けた");
+            doc.undo().unwrap();
+            assert_eq!(sample(&doc), expect_without, "{fill_clipped}: Undo");
+            doc.redo().unwrap();
+            assert_eq!(sample(&doc), expect_with, "{fill_clipped}: Redo");
+            doc.set_paths(fill, Vec::new(), Vec::new()).unwrap();
+            assert_eq!(sample(&doc), expect_without, "{fill_clipped}: 外した");
+            doc.undo().unwrap();
+            assert_eq!(sample(&doc), expect_with, "{fill_clipped}: 外しの Undo");
+            doc.undo().unwrap();
+            assert_eq!(sample(&doc), expect_without);
+        }
+    }
+}

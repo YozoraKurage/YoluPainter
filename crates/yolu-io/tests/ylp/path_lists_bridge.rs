@@ -775,3 +775,61 @@ fn a_fill_layer_path_survives_undo_redo_save_and_reopen() {
         assert_eq!(composite(&back), base, "{fill_channel:?}: パスを外したあと");
     }
 }
+
+/// 予算で断られた Redo のあとも、塗りつぶしレイヤーの文書は保存できる。
+#[test]
+fn a_fill_layer_document_saves_after_a_refused_redo() {
+    let mut d = Document::with_tile_size(32, 32, 16).unwrap();
+    let fill = d
+        .add_fill_layer(
+            "塗り",
+            &[(Channel::Color, Rgba8::new(40, 90, 200, 255))],
+            None,
+        )
+        .unwrap();
+    d.set_canvas_paths(
+        fill,
+        vec![entry(
+            canvas(1, 6.5, Rgba8::new(200, 10, 10, 255)),
+            "",
+            true,
+        )],
+    )
+    .unwrap();
+    d.undo().unwrap();
+    d.set_source_budget_bytes(d.allocated_bytes()).unwrap();
+    assert!(d.redo().is_err());
+    NativeDocument::from_core(&d)
+        .unwrap_or_else(|e| panic!("断られた Redo のあとの保存が断られた: {e}"))
+        .to_core()
+        .unwrap();
+}
+
+/// パスを外した操作の Undo が予算で断られても、塗りつぶしレイヤーの文書は保存できる。
+#[test]
+fn a_fill_layer_document_saves_after_a_refused_undo_of_removing_paths() {
+    let mut d = Document::with_tile_size(32, 32, 16).unwrap();
+    let fill = d
+        .add_fill_layer(
+            "塗り",
+            &[(Channel::Color, Rgba8::new(40, 90, 200, 255))],
+            None,
+        )
+        .unwrap();
+    d.set_canvas_paths(
+        fill,
+        vec![entry(
+            canvas(1, 6.5, Rgba8::new(200, 10, 10, 255)),
+            "",
+            true,
+        )],
+    )
+    .unwrap();
+    d.set_paths(fill, Vec::new(), Vec::new()).unwrap();
+    d.set_source_budget_bytes(d.allocated_bytes()).unwrap();
+    assert!(d.undo().is_err());
+    NativeDocument::from_core(&d)
+        .unwrap_or_else(|e| panic!("断られた Undo のあとの保存が断られた: {e}"))
+        .to_core()
+        .unwrap();
+}
