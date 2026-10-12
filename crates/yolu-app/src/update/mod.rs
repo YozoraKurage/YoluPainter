@@ -33,8 +33,8 @@ use std::sync::Arc;
 use egui::Vec2;
 use yolu_update::{
     merge_channels, release_page, sha256, Asset, AvailableUpdate, Error, Transport, UpdateClient,
-    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, MACOS_ARCHIVE, UPDATER_URL, WINDOWS_ARCHIVE,
-    WINDOWS_INSTALLER,
+    Version, BETA_UPDATER_URL, LINUX_ARCHIVE, LINUX_ARM_ARCHIVE, MACOS_ARCHIVE, UPDATER_URL,
+    WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
 use crate::jobs::{JobCard, JobSpec};
@@ -229,6 +229,8 @@ fn platform_target(installed_copy: bool) -> (Option<&'static str>, Mode) {
 
 /// `platform_target` の中身（OS・CPU の名前は `std::env::consts` と同じ。試験は、動かしていない OS の答えも確かめる）。
 ///
+/// Linux は、x86_64 と ARM（aarch64）で別の鍵を使い、入れ方は `Page` だけ（ARM は試作）。
+///
 /// macOS は、Intel でも Apple Silicon でも同じ universal の配布物（試作の zip）の鍵を使い、入れ方は `Page` だけ。アプリは落として入れ替えず、
 /// 新しい版を知らせて、その版のリリースのページを開く（署名は ad-hoc だけで、アプリが自分を入れ替えるのは安全でないため）。
 fn target_for(os: &str, arch: &str, installed_copy: bool) -> (Option<&'static str>, Mode) {
@@ -241,6 +243,7 @@ fn target_for(os: &str, arch: &str, installed_copy: bool) -> (Option<&'static st
             }
         }
         ("linux", "x86_64") => (Some(LINUX_ARCHIVE), Mode::Page),
+        ("linux", "aarch64") => (Some(LINUX_ARM_ARCHIVE), Mode::Page),
         ("macos", "aarch64" | "x86_64") => (Some(MACOS_ARCHIVE), Mode::Page),
         _ => (None, Mode::Page),
     }
@@ -1173,6 +1176,9 @@ mod tests {
             // Linux は、インストールの有無にかかわらず、ページを開くだけ。
             assert_eq!((zip, mode), (Some(LINUX_ARCHIVE), Mode::Page));
             assert_eq!((setup, setup_mode), (Some(LINUX_ARCHIVE), Mode::Page));
+        } else if cfg!(all(target_os = "linux", target_arch = "aarch64")) {
+            assert_eq!((zip, mode), (Some(LINUX_ARM_ARCHIVE), Mode::Page));
+            assert_eq!((setup, setup_mode), (Some(LINUX_ARM_ARCHIVE), Mode::Page));
         } else if cfg!(target_os = "macos") {
             assert_eq!((zip, mode), (Some(MACOS_ARCHIVE), Mode::Page));
             assert_eq!((setup, setup_mode), (Some(MACOS_ARCHIVE), Mode::Page));
@@ -1207,6 +1213,22 @@ mod tests {
         // 対象の配布物を持たない OS・CPU は、更新の項目を出さない（今までどおり）。
         assert_eq!(target_for("macos", "powerpc", false).0, None);
         assert_eq!(target_for("windows", "aarch64", false).0, None);
+        assert_eq!(target_for("linux", "x86", false).0, None);
+    }
+
+    #[test]
+    fn linux_has_a_key_per_cpu_and_only_opens_the_page() {
+        // 動かしていない CPU の答えも確かめる。ARM は試作の配布物の鍵（x86_64 の鍵で代用しない）
+        for installed in [false, true] {
+            assert_eq!(
+                target_for("linux", "x86_64", installed),
+                (Some(LINUX_ARCHIVE), Mode::Page)
+            );
+            assert_eq!(
+                target_for("linux", "aarch64", installed),
+                (Some(LINUX_ARM_ARCHIVE), Mode::Page)
+            );
+        }
     }
 
     #[test]

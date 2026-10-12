@@ -2,7 +2,7 @@
 
 [English](en/INSTALL.md)
 
-[Releases](https://github.com/YozoraKurage/YoluPainter/releases) から入手します。Windows（64 ビット）には、インストーラーと zip の 2 つの形があります。Claude Desktop 用の拡張（`.mcpb`）も付きます。Mac には試作の zip があります（[下](#mac試作)）。
+[Releases](https://github.com/YozoraKurage/YoluPainter/releases) から入手します。Windows（64 ビット）には、インストーラーと zip の 2 つの形があります。Claude Desktop 用の拡張（`.mcpb`）も付きます。Linux には tar.gz（x86_64 と、試作の ARM）があります（[下](#linux)）。Mac には試作の zip があります（[下](#mac試作)）。
 
 - `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`（インストーラー）: 利用者ごとにインストールします。管理者権限は要りません。入れ先は `%LOCALAPPDATA%\Programs\YoluPainter`（変えられます）で、スタートメニューに登録し、`.ylp` をこのアプリで開く関連付けは選べます。
   - アンインストールは「設定 → アプリ」から行い、設定と復旧のデータも消すかを聞かれます（聞かれなければ残ります。自分で作った物はどちらでも消えません。[下の表](#アンインストールとデータ)）。
@@ -13,11 +13,24 @@
 
 どちらにも、コマンドラインのプログラム `yolupainter-cli.exe`（[使い方](CLI.md)）と、`README.md` と、この文書を含む `docs` フォルダ（英語は `docs/en`）が入っているので、ネットワークが無くても読めます。
 
+## Linux
+
+- `yolupainter-<版>-x86_64-unknown-linux-gnu.tar.gz`: x86_64 の Linux 向けです。
+- `yolupainter-<版>-aarch64-unknown-linux-gnu-experimental.tar.gz`: ARM（aarch64）の Linux 向けの試作です。ARM の実機では動かして確かめていません。
+
+どちらも展開して `yolupainter` を実行します（インストール不要）。展開した先に、コマンドラインのプログラム `yolupainter-cli`（[使い方](CLI.md)）、`README.md`、許諾の全文、この文書を含む `docs` フォルダ（英語は `docs/en`）が入ります。
+
+アプリのメニューに出すには、展開したフォルダの中で `./install-desktop-entry.sh` を実行します（この利用者だけに登録し、管理者の権限は要りません）。メニューの項目（`~/.local/share/applications/yolupainter.desktop`）とアイコンを置き、展開したフォルダの `yolupainter` を起動するようにします。フォルダを動かしたら、もう一度実行します。`./install-desktop-entry.sh --remove` で登録を外します。
+
+ウィンドウは X11 で開くので、Wayland のデスクトップでは XWayland の上で動きます（XWayland の無い Wayland だけの環境では起動できません）。GPU ドライバーが要ります。ファイル選択には D-Bus セッションと `xdg-desktop-portal`、デスクトップに合うポータルのバックエンドが、確認のウィンドウ（保存していない変更を捨てるかなど）には `zenity` が要ります（無いと、その確かめが要る操作は取りやめになります）。詳しくは [BUILDING の Linux の節](BUILDING.md#linux試用) を見てください。
+
+Linux のアプリは、自分では更新しません（ダウンロードも入れ替えもしません）。初回の問いで「はい」を選ぶと、起動のたびに（「ヘルプ → 更新を確かめる…」では手で）GitHub へ最新の版を問い合わせ、新しい版があれば「ヘルプ」の見出しに印が付いて、「YoluPainter x.y.z のリリースを開く」でその版のリリースのページを開きます。新しい tar.gz を展開し直してください。別のフォルダに展開したら、そのフォルダで `./install-desktop-entry.sh` をもう一度実行すると、メニューが新しい版を起動します。設定やプロジェクトは残ります。
+
 ## Mac（試作）
 
 - `yolupainter-<版>-macos-universal-experimental.zip`: 展開してできるフォルダに、`YoluPainter.app`（Apple Silicon 向けと Intel 向けの両方のコードを持つ universal）、`README.md`、許諾の全文、この文書を含む `docs` フォルダ（英語は `docs/en`）が入っています。`YoluPainter.app` を「アプリケーション」などへ移して使います。コマンドラインのプログラム（[使い方](CLI.md)）は `YoluPainter.app/Contents/MacOS/yolupainter-cli` です。
 
-試作のため、Apple の開発者の署名と公証はありません（署名は ad-hoc だけです）。実行ファイルが要求する最低の macOS は 11 です。Apple Silicon の Mac（macOS 27）で確かめたのは、起動、設定とログの書き込み、署名、universal の形までです。ウィンドウの表示と描画は確かめていません。Intel の Mac では動かしていません。署名がないので、zip を展開した `YoluPainter.app` を初めて開くと、macOS が止めます。次の順で開きます（[Apple の手引き](https://support.apple.com/ja-jp/guide/mac-help/mh40616/mac)）。
+試作のため、Apple の開発者の署名と公証はありません（署名は ad-hoc だけです）。実行ファイルが要求する最低の macOS は 11 です。0.6.0 を Apple Silicon の Mac（macOS 27）で開き、ウィンドウが出て描けることを確かめました。Intel の Mac では動かしていません。署名がないので、zip を展開した `YoluPainter.app` を初めて開くと、macOS が止めます。次の順で開きます（[Apple の手引き](https://support.apple.com/ja-jp/guide/mac-help/mh40616/mac)）。
 
 1. `YoluPainter.app` をダブルクリックします。止められるので、表示を閉じます。
 2. アップルメニュー →「システム設定」を開き、サイドバーの「プライバシーとセキュリティ」を押します。

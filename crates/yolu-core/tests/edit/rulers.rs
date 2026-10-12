@@ -351,8 +351,9 @@ fn the_scope_table_holds_for_every_owner_scope_and_drawing_layer() {
 #[test]
 fn group_scope_reaches_every_depth_and_a_top_level_owner_reaches_the_whole_document() {
     let mut t = tree();
-    // g1 の定規（既定の範囲 = 同じグループの中）は、入れ子の下の c・d・g2 の中にも効く（Q2）
-    let r = line(&mut t.d);
+    // g1 の定規（範囲 = 同じグループの中）は、入れ子の下の c・d・g2 の中にも効く（Q2）
+    let mut r = line(&mut t.d);
+    r.scope = RulerScope::Group;
     t.d.set_rulers(t.g1, vec![r.clone()], false).unwrap();
     for inside in [t.a, t.c, t.d_] {
         assert_eq!(ids(&t.d.rulers_seen_from(Some(inside))), vec![r.id]);
@@ -671,8 +672,10 @@ fn deleting_a_layer_takes_its_rulers_and_undo_brings_them_back() {
 #[test]
 fn reordering_and_regrouping_keep_the_rulers_on_their_layers() {
     let mut t = tree();
-    let r = line(&mut t.d);
-    let s = canvas(&mut t.d, RulerKind::Parallel, (0.0, 0.0), (3.0, 3.0));
+    let mut r = line(&mut t.d);
+    r.scope = RulerScope::Group;
+    let mut s = canvas(&mut t.d, RulerKind::Parallel, (0.0, 0.0), (3.0, 3.0));
+    s.scope = RulerScope::Group;
     t.d.set_rulers(t.t1, vec![r.clone()], false).unwrap();
     t.d.set_rulers(t.g2, vec![s.clone()], false).unwrap();
     // 並べ替え・グループへの出し入れ

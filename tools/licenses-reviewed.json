@@ -3603,26 +3603,28 @@
     "wayland-protocols-misc@0.3.12": {
       "declared": "MIT",
       "selected": [
-        "MIT"
+        "MIT",
+        "LGPL-2.1-or-later"
       ],
-      "blocked": [
-        "同梱する protocol XML（server-decoration.xml）に LGPL-2.1-or-later の表記あり。生成バインディングの配布条件を確認するまで Linux 配布を停止する。"
-      ],
+      "blocked": [],
       "files": [
         {
           "path": "LICENSE.txt",
           "sha256": "1cb6f4dee8c649f175736380495f0af0c753c87f22d50931692968bb24bf2161"
+        },
+        {
+          "path": "protocols/server-decoration.xml",
+          "sha256": "1b6d21b2ecb30b9e5580f07efc46e65e53fa1cc928aeb93607321ccef28d7d63"
         }
       ]
     },
     "wayland-protocols-plasma@0.3.12": {
       "declared": "MIT",
       "selected": [
-        "MIT"
+        "MIT",
+        "LGPL-2.1-or-later"
       ],
-      "blocked": [
-        "同梱する protocol XML に LGPL-2.1-or-later の表記あり。生成バインディングの配布条件を確認するまで Linux 配布を停止する。"
-      ],
+      "blocked": [],
       "files": [
         {
           "path": "LICENSE.txt",
@@ -6228,6 +6230,7 @@
     "x86_64-pc-windows-gnu",
     "x86_64-pc-windows-msvc",
     "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
     "aarch64-apple-darwin",
     "x86_64-apple-darwin"
   ]

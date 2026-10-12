@@ -671,8 +671,8 @@ mod tests {
         for left_out in ["docs/DEVELOPMENT.md", "docs/RELEASING.md"] {
             assert!(!names.iter().any(|n| n.ends_with(left_out)), "{left_out}");
         }
-        // 文書と許諾の表記は、Windows・Linux の配布物と同じ一覧（実行ファイルを除く）
-        let others: Vec<String> = super::super::payload_names(yolu_update::LINUX_ARCHIVE)
+        // 文書と許諾の表記は、Windows・Linux の配布物と同じ一覧（実行ファイルと、Linux だけのメニューの登録の台本とアイコンを除く）
+        let others: Vec<String> = super::super::payload_names(yolu_update::WINDOWS_ARCHIVE)
             .into_iter()
             .skip(2)
             .collect();
