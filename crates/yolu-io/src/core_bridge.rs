@@ -893,9 +893,11 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
     } else {
         0
     };
+    let mut saved_color = false;
     for k in 0..channel_count {
         let ch = format!("{p}.channels[{k}]");
         let c = f.channel(&format!("{ch}.channel"))?;
+        saved_color |= c == Channel::Color;
         if fill_paths {
             doc.ensure_fill_path_surface(id, c)?;
         }
@@ -916,6 +918,10 @@ fn load_layer(doc: &mut Document, f: &Fields<'_>, p: &str, version: i32) -> Resu
             doc.set_channel_enabled(id, c, true)?;
         }
         doc.set_channel_enabled(id, c, f.boolean(&format!("{ch}.enabled"))?)?;
+    }
+    // 色の面を書いていないラスター（色の出力が無かった結合の結果）は、`add_layer` が足した空の色の面を外して保存した時の形に戻す
+    if kind == 0 && !saved_color {
+        doc.drop_unsaved_color_for_load(id)?;
     }
     let has_mask = version >= 2 && f.boolean(&format!("{p}.has_mask"))?;
     if has_mask {
