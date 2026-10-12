@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.1
+
+### 日本語
+
+- **定規**: 新しく作る定規の「表示の範囲」のはじめを「選んでいるときだけ」にしました（付けたレイヤーを選んでいるときだけ見えて効きます）。「編集レイヤーに作成」を切にして新しいレイヤー「定規」に作る定規は、今までどおり「同じグループの中」です。「すべてのレイヤー」「同じグループの中」は今までどおり選べます。保存したプロジェクトの定規の範囲は変わりません。
+- **重なった UV**: 2D のキャンバスの「重なった UV」の表示を、はじめは切にしました。「表示」→「重なった UV」で入れると、次に起動しても入のままです。
+- **Mac（試作）**: 0.6.0 を Apple Silicon の Mac（macOS 27）で開き、ウィンドウが出て描けることを確かめたので、README とダウンロードの説明をその範囲に直しました。Intel の Mac では動かしていません。
+
+### English
+
+- **Rulers**: a new ruler's "Visible In" now starts as "Only While Selected" (it is seen and takes effect only while the layer it is on is selected). A ruler made on a new Ruler layer with Create on Edit Layer off stays Within the Same Group. "All Layers" and "Within the Same Group" can still be chosen. Rulers in saved projects keep their setting.
+- **Overlapping UVs**: the "Overlapping UVs" display on the 2D canvas now starts off. Turn it on with View → "Overlapping UVs", and it stays on at the next launch.
+- **Mac (experimental)**: version 0.6.0 has been opened on an Apple Silicon Mac (macOS 27), where the window appears and painting works; README and the install guide now say so. It has not been run on an Intel Mac.
+
 ## 0.6.0
 
 ### 日本語

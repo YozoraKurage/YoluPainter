@@ -32,7 +32,7 @@ Windows（64 ビット）のインストーラーと zip は [Releases](https://
 
 Mac には、試作の zip（`yolupainter-<版>-macos-universal-experimental.zip`）も付きます。Apple Silicon 向けと Intel 向けの両方のコードを持つ（universal の）`YoluPainter.app` が入っています。
 Apple の開発者の署名と公証はなく（署名は ad-hoc だけ）、アプリは自分では更新しません。新しい版は、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
-Apple Silicon の Mac（macOS 27）で確かめたのは、起動、設定とログの書き込み、署名、universal の形までです。ウィンドウの表示と描画は確かめていません。Intel の Mac では動かしていません。
+0.6.0 を Apple Silicon の Mac（macOS 27）で開き、ウィンドウが出て描けることを確かめました。Intel の Mac では動かしていません。
 
 署名がないので、zip を展開した `YoluPainter.app` を初めて開くと macOS が止めます。次の順で開きます（[Apple の手引き](https://support.apple.com/ja-jp/guide/mac-help/mh40616/mac)）。
 
