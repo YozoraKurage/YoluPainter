@@ -96,7 +96,7 @@ pub enum RulerScope {
     /// すべてのレイヤー。
     All = 0,
     /// 同じグループの中（持ち主がグループならその中、そうでなければ持ち主の親の中。入れ子の下まで全部。一番上のレイヤーの定規は
-    /// 文書の全部）。既定。
+    /// 文書の全部）。
     Group = 1,
     /// 選んでいるときだけ（描くレイヤーが持ち主、持ち主がグループならその中のレイヤー）。
     Selected = 2,
@@ -187,7 +187,7 @@ fn unit(v: DVec3) -> Option<DVec3> {
 }
 
 impl Ruler {
-    /// 2D の定規。表示、表示の範囲は同じグループの中、スナップの印なし。対称は線対称 2 本（鏡 1 枚）。
+    /// 2D の定規。表示、表示の範囲は選んでいるときだけ、スナップの印なし。対称は線対称 2 本（鏡 1 枚）。
     pub fn canvas(id: RulerId, kind: RulerKind, a: DVec2, b: DVec2) -> Ruler {
         Ruler::with_place(id, kind, RulerPlace::Canvas { a, b })
     }
@@ -208,7 +208,7 @@ impl Ruler {
             line_symmetry: symmetry,
             see_through: false,
             visible: true,
-            scope: RulerScope::Group,
+            scope: RulerScope::Selected,
             snap: false,
         }
     }

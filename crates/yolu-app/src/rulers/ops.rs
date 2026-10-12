@@ -195,7 +195,7 @@ impl AppState {
     }
 
     /// 新しい定規を作る。作る先は、ツールの「編集レイヤーに作成」が入なら選んでいるレイヤー（グループ）、切なら選んでいるレイヤーのすぐ上の
-    /// 新しいレイヤー「定規」（レイヤーと定規で 1 回の取り消し。選んでいるレイヤーはそのまま）。特殊定規は、描くレイヤーから見えるほかの特殊定規の
+    /// 新しいレイヤー「定規」（レイヤーと定規で 1 回の取り消し。選んでいるレイヤーはそのまま。範囲は「同じグループの中」）。特殊定規は、描くレイヤーから見えるほかの特殊定規の
     /// 印を外して印を付け、「特殊定規にスナップ」を入れる。選んでいるレイヤーに作ったときだけ、作った定規を選ぶ。
     pub fn ruler_create(&mut self, mut ruler: Ruler) -> Result<RulerId, CoreError> {
         let Some(drawing) = self.selected_layer else {
@@ -205,6 +205,10 @@ impl AppState {
         let name = self.lang.pick("定規", "Ruler");
         let special = ruler.is_special();
         ruler.snap = false;
+        if !on_layer {
+            // 「定規」のレイヤーには描かないので、「選んでいるときだけ」では効く時が無い。下のレイヤーに描くときに効く範囲にする
+            ruler.scope = RulerScope::Group;
+        }
         let (owner, id) = self.doc.batch(|d| {
             let owner = if on_layer {
                 drawing

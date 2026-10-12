@@ -518,8 +518,8 @@ fn a_symmetry_ruler_is_placed_by_dragging_mirrors_strokes_follows_the_layer_and_
     assert_eq!(painted(&h), 6, "戻すと写る");
     h.state_mut().state.apply(Action::Undo);
     h.run();
-    // 別のグループのレイヤー L2 を選んで描く: 「同じグループの中」（既定）なので、G1 の定規は見えず写らない
-    assert_eq!(rulers_of(&h, l1)[0].scope, RulerScope::Group);
+    // 別のグループのレイヤー L2 を選んで描く: 「選んでいるときだけ」（既定）なので、G1 の定規は見えず写らない
+    assert_eq!(rulers_of(&h, l1)[0].scope, RulerScope::Selected);
     h.state_mut().state.selected_layer = Some(l2);
     h.run();
     dab(&mut h);
@@ -583,7 +583,7 @@ fn a_symmetry_ruler_is_placed_by_dragging_mirrors_strokes_follows_the_layer_and_
     h.run();
     assert_eq!(
         rulers_of(&h, l1)[0].scope,
-        RulerScope::Group,
+        RulerScope::Selected,
         "範囲の変更が戻った"
     );
     h.state_mut().state.apply(Action::Undo);
