@@ -709,3 +709,69 @@ fn a_fill_layer_3d_path_is_dropped_with_its_surface_before_it_is_put_on_the_shel
     let err = SmartFile::from_core(&material, &writer()).unwrap_err();
     assert!(err.to_string().contains(REFUSAL_PATH_LISTS), "{err}");
 }
+
+/// 塗りつぶしレイヤーのパスを付けて Undo・Redo しても保存でき、開き直すと合成が同じ（Undo のあとは画素の面を残さない）。
+#[test]
+fn a_fill_layer_path_survives_undo_redo_save_and_reopen() {
+    let composite = |d: &Document| -> Vec<Rgba8> {
+        let mut out = Vec::new();
+        for c in [Channel::Color, Channel::Roughness] {
+            for (x, y) in [(10, 6), (10, 9), (10, 20), (28, 9)] {
+                out.push(d.composite_pixel(c, x, y).unwrap());
+            }
+        }
+        out
+    };
+    // 値のあるチャンネル（色）と、値の無いチャンネル（粗さへ色のパスを付ける前提で色の値を持たない）の両方
+    for fill_channel in [Channel::Color, Channel::Roughness] {
+        let mut d = Document::with_tile_size(32, 32, 16).unwrap();
+        let fill = d
+            .add_fill_layer(
+                "塗り",
+                &[(fill_channel, Rgba8::new(40, 90, 200, 255))],
+                None,
+            )
+            .unwrap();
+        let bare = NativeDocument::from_core(&d).unwrap().to_core().unwrap();
+        let base = composite(&d);
+        d.set_canvas_paths(
+            fill,
+            vec![entry(
+                canvas(1, 6.5, Rgba8::new(200, 10, 10, 255)),
+                "",
+                true,
+            )],
+        )
+        .unwrap();
+        let with_path = composite(&d);
+        assert_ne!(with_path, base);
+        // 付けた状態の保存・復元
+        let back = NativeDocument::from_core(&d).unwrap().to_core().unwrap();
+        assert_eq!(composite(&back), with_path, "{fill_channel:?}: 付けた状態");
+        // Undo の状態は保存でき、パスの無い文書と同じ
+        d.undo().unwrap();
+        let back = NativeDocument::from_core(&d)
+            .unwrap_or_else(|e| panic!("{fill_channel:?}: Undo のあとの保存が断られた: {e}"))
+            .to_core()
+            .unwrap();
+        assert_eq!(composite(&back), base, "{fill_channel:?}: Undo のあと");
+        assert_eq!(pixels_of(&back), pixels_of(&bare));
+        // Redo すると付けた状態に戻り、保存・復元も同じ
+        d.redo().unwrap();
+        assert_eq!(composite(&d), with_path, "{fill_channel:?}: Redo のあと");
+        let back = NativeDocument::from_core(&d)
+            .unwrap_or_else(|e| panic!("{fill_channel:?}: Redo のあとの保存が断られた: {e}"))
+            .to_core()
+            .unwrap();
+        assert_eq!(composite(&back), with_path, "{fill_channel:?}: Redo の保存");
+        assert_eq!(paths_of(&back), paths_of(&d));
+        // もう一度 Undo → Redo しても同じ
+        d.undo().unwrap();
+        d.redo().unwrap();
+        assert_eq!(composite(&d), with_path);
+        // パスを外すと（一覧を空にする）画素の面も外れ、保存できる
+        d.set_paths(fill, Vec::new(), Vec::new()).unwrap();
+        let back = NativeDocument::from_core(&d).unwrap().to_core().unwrap();
+        assert_eq!(composite(&back), base, "{fill_channel:?}: パスを外したあと");
+    }
+}

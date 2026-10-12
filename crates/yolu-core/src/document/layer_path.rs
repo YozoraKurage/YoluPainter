@@ -53,6 +53,27 @@ impl Document {
         }
     }
 
+    /// 塗りつぶしレイヤーの、パスの一覧に無いチャンネルの空の面を外す。塗りつぶしレイヤーが画素の面を持つのはパスの画素のためだけで、
+    /// 一覧から外れたチャンネルに空の面が残ると、保存が「塗りつぶしレイヤーの画素」として断る。ラスターレイヤーは面を持ち続けてよい。
+    fn drop_unused_fill_surfaces(&mut self, index: usize, channels: &[Channel]) {
+        if self.layers[index].kind != LayerKind::Fill {
+            return;
+        }
+        let used = list_channels(&self.layers[index].paths);
+        for &c in channels {
+            if used.contains(&c) {
+                continue;
+            }
+            if self.layers[index]
+                .surface(c)
+                .is_some_and(|s| s.tile_count() == 0)
+            {
+                self.layers[index].put_surface(c, None);
+                self.mark_layer(index, Some(c));
+            }
+        }
+    }
+
     fn validate_paths_target(
         &self,
         index: usize,
@@ -225,6 +246,7 @@ impl Document {
                 }
             }
             undo_enabling(self, &enabled);
+            self.drop_unused_fill_surfaces(index, &channels.iter().copied().collect::<Vec<_>>());
             for c in &channels {
                 self.mark_layer(index, Some(*c));
             }
@@ -236,6 +258,7 @@ impl Document {
             }
         }
         self.layers[index].paths = entries.clone();
+        self.drop_unused_fill_surfaces(index, &channels.iter().copied().collect::<Vec<_>>());
         self.revision += 1;
         // 履歴の費用は C# の SetPath と同じ（有効にしたチャンネルごとに 64 + パスの状態 + チャンネルごとの面の変化）。一覧はパスごとの
         // 状態と名前の和
@@ -607,7 +630,21 @@ impl Document {
         backwards: bool,
     ) -> Result<(), CoreError> {
         let index = self.index_of(m.layer)?;
+        let mut touched: Vec<Channel> = Vec::new();
         if let Some(pixels) = &m.pixels {
+            // 塗りつぶしレイヤーはパスの無いチャンネルの面を持たない（外した時に落としてある）ので、画素を戻す前に空の面を作り直す。
+            // 有効の印は restore_material が戻す
+            for (target, _) in &pixels.parts {
+                if let Target::Channel(c) = *target {
+                    touched.push(c);
+                    if self.layers[index].kind == LayerKind::Fill
+                        && self.layers[index].surface(c).is_none()
+                    {
+                        let (w, h, ts) = (self.width, self.height, self.tile_size);
+                        self.layers[index].put_surface(c, Some(Surface::new(w, h, ts)));
+                    }
+                }
+            }
             self.restore_material(pixels, backwards)?;
         }
         self.layers[index].paths = if backwards {
@@ -615,6 +652,7 @@ impl Document {
         } else {
             m.new.clone()
         };
+        self.drop_unused_fill_surfaces(index, &touched);
         Ok(())
     }
 }

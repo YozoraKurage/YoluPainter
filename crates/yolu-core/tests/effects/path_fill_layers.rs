@@ -84,3 +84,39 @@ fn a_fill_layer_path_shows_on_a_channel_without_a_fill_value_and_is_not_rasteriz
     );
     assert!(doc.layer(fill).unwrap().has_paths());
 }
+
+#[test]
+fn undo_and_redo_of_a_fill_layer_path_keep_the_surface_consistent() {
+    // 値の無いチャンネル（色）へのパス: 付けると面ができ、Undo で面ごと戻り、Redo でまた付く
+    let mut doc = Document::with_tile_size(64, 64, 16).unwrap();
+    let fill = doc
+        .add_fill_layer("塗り", &[(Channel::Roughness, RED)], None)
+        .unwrap();
+    doc.set_canvas_paths(fill, vec![line(32.0, BLUE)]).unwrap();
+    for _ in 0..3 {
+        doc.undo().unwrap();
+        assert!(!doc.layer(fill).unwrap().has_paths());
+        assert_eq!(px(&doc, 30, 32).a, 0);
+        assert!(
+            doc.layer(fill).unwrap().surface(Channel::Color).is_none(),
+            "塗りつぶしレイヤーは、パスを外したら画素の面を持たない"
+        );
+        doc.redo().unwrap();
+        assert_eq!(px(&doc, 30, 32), BLUE);
+    }
+}
+
+#[test]
+fn undo_of_a_fill_layer_path_on_a_filled_channel_drops_the_empty_surface() {
+    let mut doc = Document::with_tile_size(64, 64, 16).unwrap();
+    let fill = doc
+        .add_fill_layer("塗り", &[(Channel::Color, RED)], None)
+        .unwrap();
+    doc.set_canvas_paths(fill, vec![line(32.0, BLUE)]).unwrap();
+    doc.undo().unwrap();
+    assert!(doc.layer(fill).unwrap().surface(Channel::Color).is_none());
+    assert_eq!(px(&doc, 30, 32), RED);
+    doc.redo().unwrap();
+    assert_eq!(px(&doc, 30, 32), BLUE);
+    assert!(doc.layer(fill).unwrap().is_channel_enabled(Channel::Color));
+}
