@@ -210,7 +210,7 @@ python3 tools/third-party.py --bundle --offline
 
 初回など依存や原文が取得済みでない場合は `--offline` を外して実行します。照合に成功すると `target/third-party/<クレート>/THIRD_PARTY_LICENSES.txt` ができるので、該当する配布物に同梱します。追加の Python パッケージは不要です。
 
-`--target x86_64-pc-windows-msvc`・`--target x86_64-unknown-linux-gnu`・`--target universal-apple-darwin`（macOS の配布物。`aarch64-apple-darwin` と `x86_64-apple-darwin` の依存の和。この 2 つ単独も指せます）のどれかを指定すると、対象別に照合して `target/third-party/<target>/<クレート>/` へ出力します。省略時は従来の Windows GNU が対象です。`--package yolu-update` で更新クレートも確認できます。配布の詳細は [RELEASING](RELEASING.md) を参照してください。`tools/licenses-reviewed.json` に原文と SHA-256 を記録し、原文の欠落・変更や未確認の版・許諾では生成を失敗させます。製品ごとの範囲とクレート以外の表記は [THIRD_PARTY.md](../THIRD_PARTY.md) にあります。
+`--target x86_64-pc-windows-msvc`・`--target x86_64-unknown-linux-gnu`・`--target aarch64-unknown-linux-gnu`（Linux の ARM。試作）・`--target universal-apple-darwin`（macOS の配布物。`aarch64-apple-darwin` と `x86_64-apple-darwin` の依存の和。この 2 つ単独も指せます）のどれかを指定すると、対象別に照合して `target/third-party/<target>/<クレート>/` へ出力します。省略時は従来の Windows GNU が対象です。`--package yolu-update` で更新クレートも確認できます。配布の詳細は [RELEASING](RELEASING.md) を参照してください。`tools/licenses-reviewed.json` に原文と SHA-256 を記録し、原文の欠落・変更や未確認の版・許諾では生成を失敗させます。製品ごとの範囲とクレート以外の表記は [THIRD_PARTY.md](../THIRD_PARTY.md) にあります。
 
 ## CPU の速さをまとめて測る
 

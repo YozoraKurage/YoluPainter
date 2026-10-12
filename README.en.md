@@ -30,6 +30,10 @@ Windows is the primary platform. Mac and Linux support is experimental.
 The Windows (64-bit) installer and zip are on the [Releases](https://github.com/YozoraKurage/YoluPainter/releases) page.
 See [docs/en/INSTALL.md](docs/en/INSTALL.md) for installer options and updates.
 
+For Linux, an x86_64 tar.gz (`yolupainter-<version>-x86_64-unknown-linux-gnu.tar.gz`) and an experimental ARM (aarch64) tar.gz (`yolupainter-<version>-aarch64-unknown-linux-gnu-experimental.tar.gz`) are attached too.
+The window opens through X11, so on a Wayland desktop it runs on XWayland. The app does not update itself: when a new version is out, an item in the Help menu opens its release page.
+The ARM build has not been run on real ARM hardware. What you need to run it is in [the Linux section of docs/en/BUILDING.md](docs/en/BUILDING.md#linux-experimental).
+
 An experimental zip for Mac (`yolupainter-<version>-macos-universal-experimental.zip`) is attached too. It holds a universal `YoluPainter.app` with code for both Apple Silicon and Intel.
 It has no Apple Developer signature or notarization (only an ad-hoc signature), and the app does not update itself: when a new version is out, an item in the Help menu opens its release page.
 Version 0.6.0 has been opened on an Apple Silicon Mac (macOS 27), and the window appears and painting works. It has not been run on an Intel Mac.

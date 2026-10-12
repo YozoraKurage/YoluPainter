@@ -3,7 +3,7 @@
 Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（universal）向けの `yolu-app`（スタンドアロン、更新依存とコマンドライン `yolu-cli` の依存を含む）と
 `yolu-cli`（Claude Desktop 用の `.mcpb`。アプリと同じビルドでの部分木）、開発用 `xtask` の依存一覧。既定の機能、下表に記録した Cargo.lock が対象。
 依存を更新したときや別のターゲット・機能で配るときは、一覧と全文束を更新する。
-各対象の依存と、Linux の配布を止めている条件を分けて記載する。
+各対象の依存を分けて記載する。Linux の LGPL の protocol XML の扱いは「配布対象別の照合」に書く。
 
 `tools/third-party.py` は Cargo の通常依存とビルド依存を製品別にたどり、試験用依存を除く。
 手続きマクロとビルド依存も保守的に全文束へ含める。「実行時」は通常依存の到達範囲であり、
@@ -265,8 +265,11 @@ Linux の ARM（aarch64、試作の配布物）の app の 317 件は、x86_64 �
 
 Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` は、クレートの宣言は MIT で、同梱する protocol XML
 （plasma の `plasma-wayland-protocols/src/protocols/` の 31 件のうち 17 件と、misc の `protocols/server-decoration.xml`）が **LGPL-2.1-or-later**。
-Linux の実行ファイルには、これらの XML から生成された結びつき（プロトコルとメッセージの名前・引数の形）が入る（`winit` の Wayland の道と、
-`smithay-clipboard` が引く）。ウィンドウは X11 で開くので Wayland の道は使わないが、クリップボードとアクセシビリティの部品が引くため外せない。
+Linux の実行ファイルには、これらの XML から生成された結びつき（プロトコルとメッセージの名前・引数の形）が入る
+（`cargo tree -i wayland-protocols-plasma -e features --target x86_64-unknown-linux-gnu` と misc で確かめた辺: plasma は `winit` の Wayland の道が直接引き、
+misc は `egui-winit` のクリップボード（`smithay-clipboard`）が `smithay-client-toolkit 0.20` を経て引く。アクセシビリティの部品は引かない）。
+ウィンドウは X11 で開くので Wayland の道は使わないが、`eframe` の `wayland` 機能（`crates/yolu-app/Cargo.toml`）が `winit` の Wayland の道と
+クリップボードの Wayland 対応を有効にしているため、この 2 つは外せない。
 Linux の配布物の `THIRD_PARTY_LICENSES.txt` に、LGPL-2.1 の全文（plasma の `COPYING.LIB`）と `server-decoration.xml` の表記を入れる。
 LGPL の部分の元は crates.io の両クレートと上流（[plasma-wayland-protocols](https://invent.kde.org/libraries/plasma-wayland-protocols)）にあり、
 YoluPainter のソースはこのリポジトリで公開しているので、利用者は該当の部品を差し替えて作り直せる。
@@ -305,7 +308,7 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 | MIT |
 
 `egui_kittest → dify → colored 2.2.0` は MPL-2.0。許容一覧へ自動追加せず、原文と未承認理由だけを記録する。
-現在の製品の依存には含まれない。上記の lock 監査はこの 1 件と Linux の 2 件で終了 1 となる。
+現在の製品の依存には含まれない。上記の lock 監査はこの 1 件で終了 1 となる（Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱して承認済み）。
 
 全件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した（今の Cargo.lock の 496 件で、`gpl` の部分一致と `General Public License` を大文字小文字を区別せずに検索し、語としてのヒットは下に挙げた物だけだった。部分一致だけのヒットは `eggplant`・`SIGPLAN94`・`Placement`・`WindowsFilteringPlatform` など、別の語や識別子の一部）（`rusqlite` 系の 4 件と `schemars` 系の 6 件にはなく、`libsqlite3-sys` の `sqlite3.c` のヒットは単語 Eggplant）。Linux の既知の 2 件に加え、
 対象外の `orbclient 0.3.55` の `res/unifont-license.txt` に GPL-2.0-or-later とフォント埋め込み例外がある。
@@ -316,7 +319,6 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 ほかのヒットは LLVM 例外の GPLv2 への言及、`slotmap` の互換性の説明、`vcpkg` の試験用ファイル名一覧、
 前述の `tree_magic_mini` の無効な `with-gpl-data` 機能と変更履歴である。
 AGPL の表記は検出しなかった。文字列検索だけで許諾の不存在を保証するものではない。
-依存構成と各クレートの blocked は解除していない。
 
 ## Windows MSVC の製品別一覧
 
@@ -1202,7 +1204,8 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | Apache-2.0 AND MIT | 2 |
 | BSD-3-Clause | 3 |
 | ISC | 1 |
-| MIT | 297 |
+| MIT | 295 |
+| MIT AND LGPL-2.1-or-later | 2 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -1492,8 +1495,8 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | wayland-csd-frame | 0.3.0 | 実行時 | MIT | MIT | 確認済み |
 | wayland-cursor | 0.31.14 | 実行時 | MIT | MIT | 確認済み |
 | wayland-protocols-experimental | 20250721.0.1 | 実行時 | MIT | MIT | 確認済み |
-| wayland-protocols-misc | 0.3.12 | 実行時 | MIT | MIT・LGPL-2.1-or-later | 同梱する protocol XML（server-decoration.xml）が LGPL-2.1-or-later。表記と全文を同梱 |
-| wayland-protocols-plasma | 0.3.12 | 実行時 | MIT | MIT・LGPL-2.1-or-later | 同梱する protocol XML の 17 件が LGPL-2.1-or-later。全文（COPYING.LIB）を同梱 |
+| wayland-protocols-misc | 0.3.12 | 実行時 | MIT | MIT AND LGPL-2.1-or-later | 確認済み |
+| wayland-protocols-plasma | 0.3.12 | 実行時 | MIT | MIT AND LGPL-2.1-or-later | 確認済み |
 | wayland-protocols-wlr | 0.3.12 | 実行時 | MIT | MIT | 確認済み |
 | wayland-protocols | 0.32.13 | 実行時 | MIT | MIT | 確認済み |
 | wayland-scanner | 0.31.11 | ビルド・マクロ用 | MIT | MIT | 確認済み |

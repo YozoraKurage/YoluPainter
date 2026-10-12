@@ -1,6 +1,6 @@
 # 配布の手順
 
-Windows x86_64 MSVC の zip とインストーラー（NSIS の setup.exe）と、Linux x86_64 の tar.gz（試用。`release.yml` の入力 `linux` は入が既定）を出します。macOS は試作として、署名なし（ad-hoc の署名だけ）の `YoluPainter.app` の zip を出します
+Windows x86_64 MSVC の zip とインストーラー（NSIS の setup.exe）と、Linux x86_64 の tar.gz（試用。`release.yml` の入力 `linux` は入が既定）と、Linux ARM（aarch64）の tar.gz（試作。実機では確かめていません。入力 `linux_arm` は入が既定。ビルドが落ちても配布は止まらず、載せません）を出します。macOS は試作として、署名なし（ad-hoc の署名だけ）の `YoluPainter.app` の zip を出します
 （[macOS の試作](#macos-の試作)。入力 `macos` は入が既定で、切にすると載せません。試作なので、ビルドが落ちても配布は止まらず、Windows だけで出します。[macOS（試作）が落ちたとき](#macos試作が落ちたとき)）。AppImage は対象外です。
 実行ファイル・インストーラーのコード署名は、[SignPath Foundation への申し込み](#コード署名signpath-foundation)が通るまで付けません（署名なしで出します）。
 ビルドには Rust stable、Python 3.10 以降、各 OS の C/C++ ビルド環境が必要です。Windows のインストーラーには NSIS 3 も要ります。macOS の .app は macOS の上でだけ作れます（Xcode Command Line Tools の `lipo`・`codesign` など）。Linux の実行環境は [BUILDING.md の「Linux（試用）」](BUILDING.md#linux試用)を参照してください。
@@ -71,7 +71,7 @@ cargo xtask bundle --target x86_64-pc-windows-msvc
 cargo xtask installer --target x86_64-pc-windows-msvc
 cargo xtask symbols --target x86_64-pc-windows-msvc   # Windows だけ。PDB の付属物（下の「PDB の付属物」）
 cargo xtask mcpb --target x86_64-pc-windows-msvc      # Windows だけ。Claude Desktop に入れる拡張（下の「Claude Desktop の拡張（.mcpb）」）
-# Linux では target を x86_64-unknown-linux-gnu に替える（installer は Windows だけ）
+# Linux では target を x86_64-unknown-linux-gnu に替える（installer は Windows だけ）。Linux の ARM（試作）は aarch64-unknown-linux-gnu（ARM の Linux の上で。クロスコンパイルはしません）
 # macOS（macOS の上で）は target を universal-apple-darwin にする: build が Apple Silicon と Intel の 2 つをビルドして lipo で 1 つにし、bundle が .app を作って zip にする
 cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 ```
@@ -79,7 +79,7 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 `bundle` と `installer` は直前に同じコミットからビルドした release 実行ファイルを使います。古いビルドを使わないでください。
 `bundle` と `installer` は `target/dist` に過去の版を残すので、手元で出すときは `target/dist` を空にしてから作ります。
 違う版や余分なファイルが残っていると `updater-json` が拒否します（PDB の付属物 `yolupainter-<版>-x86_64-pc-windows-msvc-pdb.zip` の名前だけは例外。CI は毎回まっさらです）。
-出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`。macOS は `yolupainter-<版>-macos-universal-experimental.zip`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`、`symbols` を走らせたときの PDB の付属物、`mcpb` を走らせたときの `.mcpb`。
+出力は `target/dist/yolupainter-<版>-<target>.zip`（または `.tar.gz`。Linux の ARM は `yolupainter-<版>-aarch64-unknown-linux-gnu-experimental.tar.gz`。macOS は `yolupainter-<版>-macos-universal-experimental.zip`）と、Windows の `yolupainter-<版>-x86_64-pc-windows-msvc-setup.exe`、`symbols` を走らせたときの PDB の付属物、`mcpb` を走らせたときの `.mcpb`。
 実行ファイル（アプリの `yolupainter` と、コマンドラインと MCP サーバーの `yolupainter-cli`。`build` が同じ命令でビルドします）、LICENSE、操作・動作環境を含む README（日英）、THIRD_PARTY.md、対象別の DEPENDENCIES.md と許諾全文、使う人向けの `docs/`（`docs/en/` を含む）を
 同梱します（インストーラーも同じ物を入れます）。文書は配布物の中でもフォルダつきの `docs/GUIDE.md`・`docs/en/GUIDE.md` の名前で入るので、README からの相対のリンクがそのまま効きます。
 開発の手順（`docs/DEVELOPMENT.md`・`docs/RELEASING.md`）は入れません。入れる物の一覧は `crates/xtask/src/main.rs` の `BUNDLED_DOCS` と `LEFT_OUT_DOCS` の 1 か所で、
@@ -94,7 +94,7 @@ cargo xtask updater-json --version 0.1.0-rc.1 --assets target/dist
 `updater-json` の入力は、その版の配布物だけを置いた専用フォルダです。違う版や余分なファイルは拒否します
 （PDB の付属物は、名前が完全一致の 1 つだけ許し、更新情報には載せません）。
 Windows の zip があるのにインストーラーが無い版も拒否します（インストーラーで入れたアプリは、更新にインストーラーを使うので、並べて出します）。
-更新情報（schema 1）には、zip・tar.gz を対象の三つ組（`x86_64-pc-windows-msvc` など）で、インストーラーを別の鍵 `x86_64-pc-windows-msvc-setup` で、macOS の zip を鍵 `universal-apple-darwin` で載せます。
+更新情報（schema 1）には、zip・tar.gz を対象の三つ組（`x86_64-pc-windows-msvc` など）で、インストーラーを別の鍵 `x86_64-pc-windows-msvc-setup` で、Linux の ARM の tar.gz を鍵 `aarch64-unknown-linux-gnu` で、macOS の zip を鍵 `universal-apple-darwin` で載せます。
 ファイル名は `updater-v1.json`（schema の番号入り。[更新情報の互換](#更新情報の互換)を参照）。
 URL は `https://github.com/YozoraKurage/YoluPainter/releases/download/v<版>/<配布物名>` に固定です。アプリが更新情報を取る場所は
 `https://github.com/YozoraKurage/YoluPainter/releases/latest/download/updater-v1.json`（GitHub の「最新の Release」。下書き・プレリリースは含みません）です。
@@ -262,8 +262,8 @@ cargo xtask preflight --only version --kind prerelease
   PR の CI（`ci.yml`）は、main 向けの、同じリポジトリの枝からの PR のときだけ、試験のジョブと並べて「配る物のビルド」
   （`dist-plan` → `dist`）を走らせます（待ち時間は延びません）。フォークの PR ではビルドしません。
 - ビルドの手順は `.github/workflows/dist-build.yml` の 1 つで、`ci.yml` と `release.yml` の両方が呼びます。対象の並びは `tools/dist-targets.json` の 1 か所です
-  （Windows は常に。Linux は `release.yml` の入力 `linux` が入のときだけで、CI ではビルドしません。macOS の `universal-apple-darwin` は、入力 `macos` が既定で入なので、PR の CI でもビルドします
-  （配布で切にできるのは入力だけ。切にした配布は、macOS を除いた対象で、CI の成果物を受け取るか、ビルドします）。対象を追加したら、この一覧と、必要なら入力を直します。`cargo xtask preflight` の `targets`・`workflows` が食い違いを断ります）。
+  （Windows は常に。Linux の `x86_64-unknown-linux-gnu`・Linux の ARM の `aarch64-unknown-linux-gnu`（試作。台は `ubuntu-22.04-arm`）・macOS の `universal-apple-darwin` は、入力 `linux`・`linux_arm`・`macos` が既定で入なので、PR の CI でもビルドします
+  （配布で切にできるのは入力だけ。切にした配布は、その対象を除いて、CI の成果物を受け取るか、ビルドします。試作は ARM の Linux と macOS で、落ちても配布は止まりません）。対象を追加したら、この一覧と、必要なら入力を直します。`cargo xtask preflight` の `targets`・`workflows` が食い違いを断ります）。
   macOS の対象は macOS の runner（`macos-14`）でビルドし、一覧の `rust_targets`（Apple Silicon と Intel の 2 つ）を runner へ入れます。手順は 診断用の ID（`tools/dist.py revision`）→ `cargo xtask preflight --target <対象>` → `cargo xtask build --release`（PR の CI と dry-run=false の配布は `--require-update-key` も付け、公開鍵が空なら止めます）
   → `bundle`（macOS は .app の組み立て・署名・zip）→ `installer`（Windows。先に NSIS 3.11 を確かめます）→ `mcpb`・`symbols`（Windows）→ 目録（`tools/dist.py catalog`）→ 成果物のアップロードです。
 - 成果物の名前は `dist-<木>-<対象>`（保存 14 日）。木は `git rev-parse HEAD^{tree}` で、PR の CI は merge の commit の木です。中に `catalog.json`
@@ -272,10 +272,10 @@ cargo xtask preflight --only version --kind prerelease
   （`refs/pull/N/merge`）で、main にもタグにも入らず、PR を閉じたあとに参照できる保証が無いためです。昇格の条件で、PR の先頭の commit の木は成果物の木（＝配る参照の木）と同じなので、
   ID は配る物と同じ木の commit を指します。目録の `commit` はビルドした merge の commit、`revision` が ID の元の commit です。配布がビルドする場合は dispatch した commit です。
 - `release.yml` は、最初に `plan`（対象と、dispatch した参照の木）と `find`（探す）を走らせます。`find` は、その木の成果物を、次の**全部**を満たす実行の中から探します。
-  - `.github/workflows/ci.yml` の `pull_request` の実行で、完了して成功（全部のジョブが `success`。`skipped` も受け取らない。ただし試作の対象（macOS）のジョブの失敗は数えない）、同じリポジトリの枝からの実行
+  - `.github/workflows/ci.yml` の `pull_request` の実行で、完了して成功（全部のジョブが `success`。`skipped` も受け取らない。ただし試作の対象（Linux の ARM・macOS）のジョブの失敗は数えない）、同じリポジトリの枝からの実行
   - その実行の `head_sha`（PR の先頭の commit）の木が、GitHub の API で確かめて、成果物の名前の木と同じ
   - 成果物が期限切れでなく、GitHub が記録した digest があって落とした zip と同じ（digest の記録が無い成果物は確かめようが無いので受け取らない）で、目録の木・対象・組み込んだ公開鍵（いまのリポジトリ変数と同じ）・各ファイルの SHA-256 が合う
-  - 全部の対象が同じ 1 つの実行にそろっている（試作の対象（macOS）は、その実行に成果物があって目録が合うときだけ載せ、無ければ載せずに受け取る）
+  - 全部の対象が同じ 1 つの実行にそろっている（試作の対象（Linux の ARM・macOS）は、その実行に成果物があって目録が合うときだけ載せ、無ければ載せずに受け取る）
 - そろえば `build`（ビルド）を飛ばし、`metadata` が目録の SHA-256 をもう一度確かめて `target/dist` に集めます（取り込む成果物は、`plan` の出力 `pattern` で、今回の対象の一覧の物だけに絞ります。入力 `macos` を切にした配布は、CI に macOS の成果物があっても取り込みません）。そこから先（未署名の更新情報の確認・リリースの下書きの署名と作成）はビルドした場合と同じです。
   そろわなければ（木が違う・期限切れ・成功でない・Linux を追加した・鍵が変わった・API が失敗した）、いつもどおり同じ手順でビルドします。理由は実行の Summary に 1 行ずつ出ます。
   入力 `rebuild` を入にすると、探さずに必ずビルドします。

@@ -2,7 +2,7 @@
 
 [日本語](../INSTALL.md)
 
-Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). Windows (64-bit) has two distribution formats, an installer and a zip. An extension for Claude Desktop (`.mcpb`) is attached too. Mac has an experimental zip ([below](#mac-experimental)).
+Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). Windows (64-bit) has two distribution formats, an installer and a zip. An extension for Claude Desktop (`.mcpb`) is attached too. Linux has tar.gz files (x86_64, and an experimental ARM build) ([below](#linux)). Mac has an experimental zip ([below](#mac-experimental)).
 
 - `yolupainter-<version>-x86_64-pc-windows-msvc-setup.exe` (installer): installs per user without administrator privileges. The default destination is `%LOCALAPPDATA%\Programs\YoluPainter` (changeable), with a Start menu entry and optional `.ylp` file association. 
   - Uninstall through Settings → Apps; you will be asked whether to remove settings and recovery data as well (they remain if no prompt is shown). Things you made are removed in neither case ([table below](#uninstalling-and-your-data)).
@@ -12,6 +12,17 @@ Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). 
 - `yolupainter-<version>-x86_64-pc-windows-msvc.mcpb`: an extension for Claude Desktop ([Operating from an AI assistant](MCP.md)). Double-click it to install. It only relays to the running app, and the tools are answered by the app (they follow app updates). Claude Code and Codex use the plugin instead.
 
 Both include the command-line program `yolupainter-cli.exe` ([usage](CLI.md)), `README.md` and a `docs` folder (English under `docs/en`) with this document, so they can be read offline.
+
+## Linux
+
+- `yolupainter-<version>-x86_64-unknown-linux-gnu.tar.gz`: for x86_64 Linux.
+- `yolupainter-<version>-aarch64-unknown-linux-gnu-experimental.tar.gz`: an experimental build for ARM (aarch64) Linux. It has not been run on real ARM hardware.
+
+Extract either one and run `yolupainter`; no installation is needed. It also contains the command-line program `yolupainter-cli` ([usage](CLI.md)), `README.md`, the full license texts, and a `docs` folder with this document (English under `docs/en`).
+
+The window opens through X11, so on a Wayland desktop it runs on XWayland (it cannot start on a Wayland-only environment without XWayland). A GPU driver is required. File dialogs require a D-Bus session, `xdg-desktop-portal`, and a portal backend for your desktop; yes/no confirmations (such as discarding unsaved changes) need `zenity`, and without it actions that need the confirmation are cancelled. See [the Linux section of BUILDING](BUILDING.md#linux-experimental) for details.
+
+The Linux app does not update itself (it neither downloads nor replaces anything). If you answer Yes to the first question, it asks GitHub for the latest version at each launch (or by hand with Help → Check for Updates…); when a new version exists, the Help heading shows an indicator and “Open the YoluPainter x.y.z release” opens that version's release page. Extract the new tar.gz again to update; your settings and projects are kept.
 
 ## Mac (experimental)
 

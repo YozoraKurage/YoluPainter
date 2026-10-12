@@ -30,6 +30,10 @@ Windows を主な対象にしています。Mac と Linux は試用向けです�
 Windows（64 ビット）のインストーラーと zip は [Releases](https://github.com/YozoraKurage/YoluPainter/releases) にあります。
 インストールの選択肢と更新は [docs/INSTALL.md](docs/INSTALL.md) を見てください。
 
+Linux には、x86_64 の tar.gz（`yolupainter-<版>-x86_64-unknown-linux-gnu.tar.gz`）と、ARM（aarch64）の試作の tar.gz（`yolupainter-<版>-aarch64-unknown-linux-gnu-experimental.tar.gz`）も付きます。
+ウィンドウは X11 で開くので、Wayland のデスクトップでは XWayland の上で動きます。アプリは自分では更新しません。新しい版は、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
+ARM の実機では動かして確かめていません。実行に要る物は [docs/BUILDING.md の Linux の節](docs/BUILDING.md#linux試用)にあります。
+
 Mac には、試作の zip（`yolupainter-<版>-macos-universal-experimental.zip`）も付きます。Apple Silicon 向けと Intel 向けの両方のコードを持つ（universal の）`YoluPainter.app` が入っています。
 Apple の開発者の署名と公証はなく（署名は ad-hoc だけ）、アプリは自分では更新しません。新しい版は、ヘルプのメニューにリリースのページを開く項目が出て知らせます。
 0.6.0 を Apple Silicon の Mac（macOS 27）で開き、ウィンドウが出て描けることを確かめました。Intel の Mac では動かしていません。
