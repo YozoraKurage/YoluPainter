@@ -643,6 +643,26 @@ impl Document {
         Ok(())
     }
 
+    /// 読み込み用: 保存に書かれていなかったラスターの色の面（`add_layer` が足した空の面）を外し、保存した時の形に戻す（履歴を消す）。
+    /// 結合の結果は、色の出力が無ければ色の面を持たない。足したままだと、空でもクリッピングや通過のグループの分離に加わって見た目が
+    /// 変わり、保存し直すと正本も変わる。画素のある面は外さない。
+    pub fn drop_unsaved_color_for_load(&mut self, id: LayerId) -> Result<(), CoreError> {
+        self.ensure_loadable()?;
+        let i = self.index_of(id)?;
+        let layer = &mut self.layers[i];
+        if layer.kind != LayerKind::Raster
+            || !layer
+                .surface(Channel::Color)
+                .is_some_and(|s| s.tile_count() == 0)
+        {
+            return Ok(());
+        }
+        layer.put_surface(Channel::Color, None);
+        layer.set_enabled(Channel::Color, false);
+        self.external_mutation();
+        Ok(())
+    }
+
     /// 読み込み用: レイヤーの親を今の並びの順にまとめて置く（履歴を消す）。入れ子が正しくなければ断って何も変えない。
     pub fn set_structure_for_load(&mut self, parents: &[Option<LayerId>]) -> Result<(), CoreError> {
         self.ensure_loadable()?;
