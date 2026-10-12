@@ -20,9 +20,11 @@ Both include the command-line program `yolupainter-cli.exe` ([usage](CLI.md)), `
 
 Extract either one and run `yolupainter`; no installation is needed. It also contains the command-line program `yolupainter-cli` ([usage](CLI.md)), `README.md`, the full license texts, and a `docs` folder with this document (English under `docs/en`).
 
+To show it in the application menu, run `./install-desktop-entry.sh` inside the extracted folder (it registers it for the current user only, without root). It adds a menu entry (`~/.local/share/applications/yolupainter.desktop`) with an icon, which starts `yolupainter` in the extracted folder. Run it again after moving the folder. `./install-desktop-entry.sh --remove` unregisters it.
+
 The window opens through X11, so on a Wayland desktop it runs on XWayland (it cannot start on a Wayland-only environment without XWayland). A GPU driver is required. File dialogs require a D-Bus session, `xdg-desktop-portal`, and a portal backend for your desktop; yes/no confirmations (such as discarding unsaved changes) need `zenity`, and without it actions that need the confirmation are cancelled. See [the Linux section of BUILDING](BUILDING.md#linux-experimental) for details.
 
-The Linux app does not update itself (it neither downloads nor replaces anything). If you answer Yes to the first question, it asks GitHub for the latest version at each launch (or by hand with Help → Check for Updates…); when a new version exists, the Help heading shows an indicator and “Open the YoluPainter x.y.z release” opens that version's release page. Extract the new tar.gz again to update; your settings and projects are kept.
+The Linux app does not update itself (it neither downloads nor replaces anything). If you answer Yes to the first question, it asks GitHub for the latest version at each launch (or by hand with Help → Check for Updates…); when a new version exists, the Help heading shows an indicator and “Open the YoluPainter x.y.z release” opens that version's release page. Extract the new tar.gz again to update. If you extract it to another folder, run `./install-desktop-entry.sh` there again so the menu starts the new version. Your settings and projects are kept.
 
 ## Mac (experimental)
 

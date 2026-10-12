@@ -305,6 +305,10 @@ const ROOT_FILES: &[&str] = &[
     "DEPENDENCIES.md",
     "THIRD_PARTY_LICENSES.txt",
 ];
+/// Linux の配布物の根に足すファイル: アプリのメニューに登録する台本と、そのアイコン（展開したフォルダから登録するので、同じ所に置く）。
+const LINUX_DESKTOP_SCRIPT: &str = "install-desktop-entry.sh";
+const LINUX_DESKTOP_ICON: &str = "yolupainter.png";
+const LINUX_FILES: &[&str] = &[LINUX_DESKTOP_SCRIPT, LINUX_DESKTOP_ICON];
 fn exe_name(target: &str) -> &'static str {
     if target.contains("windows") {
         "yolupainter.exe"
@@ -330,6 +334,12 @@ fn payload_names(target: &str) -> Vec<String> {
         .into_iter()
         .chain(ROOT_FILES.iter().copied())
         .chain(BUNDLED_DOCS.iter().copied())
+        .chain(
+            LINUX_FILES
+                .iter()
+                .copied()
+                .filter(|_| target.contains("linux")),
+        )
         .map(str::to_owned)
         .collect()
 }
@@ -394,6 +404,8 @@ fn payload_source(root: &Path, target: &str, license_dir: &Path, name: &str) -> 
     match name {
         "DEPENDENCIES.md" => license_dir.join("THIRD_PARTY.md"),
         "THIRD_PARTY_LICENSES.txt" => license_dir.join("THIRD_PARTY_LICENSES.txt"),
+        LINUX_DESKTOP_SCRIPT => root.join("installer/linux").join(LINUX_DESKTOP_SCRIPT),
+        LINUX_DESKTOP_ICON => root.join("crates/yolu-app/assets/logo/yolupainter-256.png"),
         _ if executables(target).contains(&name) => {
             root.join("target").join(target).join("release").join(name)
         }
@@ -847,11 +859,16 @@ fn archive(path: &Path, entries: &[(String, PathBuf)], windows: bool) -> Result<
             let mut file = File::open(source)?;
             let mut header = tar::Header::new_gnu();
             header.set_size(file.metadata()?.len());
-            header.set_mode(if name == "yolupainter" || name == "yolupainter-cli" {
-                0o755
-            } else {
-                0o644
-            });
+            header.set_mode(
+                if name == "yolupainter"
+                    || name == "yolupainter-cli"
+                    || name == LINUX_DESKTOP_SCRIPT
+                {
+                    0o755
+                } else {
+                    0o644
+                },
+            );
             header.set_cksum();
             tar.append_data(&mut header, name, &mut file)?;
         }
@@ -1938,6 +1955,7 @@ mod tests {
             &p,
             &[
                 ("yolupainter-cli".into(), exe.clone()),
+                (LINUX_DESKTOP_SCRIPT.into(), exe.clone()),
                 ("docs/CLI.md".into(), exe),
             ],
             false,
@@ -1959,6 +1977,7 @@ mod tests {
             modes,
             [
                 ("yolupainter-cli".to_owned(), 0o755),
+                (LINUX_DESKTOP_SCRIPT.to_owned(), 0o755),
                 ("docs/CLI.md".to_owned(), 0o644)
             ]
         );
@@ -2431,6 +2450,14 @@ mod tests {
             for left_out in ["docs/DEVELOPMENT.md", "docs/RELEASING.md"] {
                 assert!(!names.iter().any(|n| n == left_out), "{target}: {left_out}");
             }
+            // メニューに登録する台本とアイコンは Linux だけ
+            for linux in LINUX_FILES {
+                assert_eq!(
+                    names.iter().any(|n| n == linux),
+                    target.contains("linux"),
+                    "{target}: {linux}"
+                );
+            }
         }
     }
     #[test]
@@ -2468,6 +2495,18 @@ mod tests {
                     || name.starts_with("DEPENDENCIES")
                     || name.starts_with("THIRD_PARTY_L")
                 {
+                    continue;
+                }
+                // Linux の台本とアイコンは、別の場所のリポジトリのファイル（アイコンはアプリのロゴの PNG）
+                if LINUX_FILES.contains(&name.as_str()) {
+                    let expected = match name.as_str() {
+                        LINUX_DESKTOP_SCRIPT => {
+                            root.join("installer/linux/install-desktop-entry.sh")
+                        }
+                        _ => root.join("crates/yolu-app/assets/logo/yolupainter-256.png"),
+                    };
+                    assert_eq!(path, &expected);
+                    assert!(path.is_file(), "{name} が無い");
                     continue;
                 }
                 assert_eq!(path, &root.join(name));
