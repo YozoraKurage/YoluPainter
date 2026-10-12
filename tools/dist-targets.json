@@ -12,7 +12,8 @@
       "target": "x86_64-unknown-linux-gnu",
       "os": "ubuntu-22.04",
       "installer": false,
-      "input": "linux"
+      "input": "linux",
+      "default": true
     },
     {
       "target": "universal-apple-darwin",

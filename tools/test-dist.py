@@ -148,27 +148,38 @@ class Targets(unittest.TestCase):
         self.assertEqual(self.names(config, {'macos'}), [WINDOWS, MACOS])
         self.assertEqual(self.names(config, {'linux', 'macos'}), [WINDOWS, LINUX, MACOS])
 
-    def test_macos_is_on_unless_the_release_turns_it_off_and_linux_is_off_unless_turned_on(self):
+    def test_linux_and_macos_are_on_unless_the_release_turns_them_off(self):
         config = dist.load_targets()
-        # 入力が無いとき（PR の CI）は、入力の既定が入の対象（macOS）までビルドする。Linux はビルドしない
-        self.assertEqual(dist.default_inputs(config), {'macos'})
-        self.assertEqual(self.names(config, dist.resolve_inputs(config, [])), [WINDOWS, MACOS])
-        # 配布の入力: macos=false で外し、linux=true で足す。言わなかった入力は既定のまま
+        # 入力が無いとき（PR の CI）は、入力の既定が入の対象（Linux・macOS）までビルドする
+        self.assertEqual(dist.default_inputs(config), {'linux', 'macos'})
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, [])), [WINDOWS, LINUX, MACOS])
+        # 配布の入力: false で外す。言わなかった入力は既定（入）のまま
         self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'macos=true'])), [WINDOWS, MACOS])
         self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=false', 'macos=false'])), [WINDOWS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['macos=false'])), [WINDOWS, LINUX])
         self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=true'])), [WINDOWS, LINUX, MACOS])
-        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['macos=false', 'linux=true'])), [WINDOWS, LINUX])
+
+    def test_an_input_without_a_default_is_off_unless_turned_on(self):
+        # 今の一覧には既定が切の入力が無い。default の無い対象の扱い（PR の CI ではビルドせず、入力が true のときだけ足す）は合成した一覧で確かめる
+        config = {'targets': [
+            {'target': WINDOWS, 'os': 'windows-latest', 'installer': True, 'input': None},
+            {'target': LINUX, 'os': 'ubuntu-22.04', 'installer': False, 'input': 'linux'},
+        ]}
+        self.assertEqual(dist.default_inputs(config), set())
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, [])), [WINDOWS])
+        self.assertEqual(self.names(config, dist.resolve_inputs(config, ['linux=true'])), [WINDOWS, LINUX])
 
     def test_matrix_carries_the_runner_and_the_rust_targets_of_a_universal_build(self):
         config = dist.load_targets()
         matrix = dist.plan(config, dist.resolve_inputs(config, []))
         self.assertEqual(matrix, {'include': [
             {'os': 'windows-latest', 'target': WINDOWS, 'installer': True},
+            {'os': 'ubuntu-22.04', 'target': LINUX, 'installer': False},
             {'os': 'macos-14', 'target': MACOS, 'installer': False,
              'rust_targets': 'aarch64-apple-darwin x86_64-apple-darwin', 'experimental': True, 'timeout': 90},
         ]})
-        # macOS を外した配布の matrix は Windows だけ（Rust のターゲットの項目も無い）
-        self.assertEqual(dist.plan(config, dist.resolve_inputs(config, ['macos=false'])),
+        # macOS と Linux を外した配布の matrix は Windows だけ（Rust のターゲットの項目も無い）
+        self.assertEqual(dist.plan(config, dist.resolve_inputs(config, ['linux=false', 'macos=false'])),
                          {'include': [{'os': 'windows-latest', 'target': WINDOWS, 'installer': True}]})
 
     def test_only_macos_is_experimental_and_has_the_longer_time_limit(self):
@@ -176,7 +187,7 @@ class Targets(unittest.TestCase):
         self.assertEqual(dist.experimental_targets(config), {MACOS})
         self.assertEqual(dist.experimental_targets(config, [WINDOWS, LINUX]), set())
         self.assertEqual(dist.experimental_targets(config, [WINDOWS, MACOS]), {MACOS})
-        matrix = dist.plan(config, dist.resolve_inputs(config, ['linux=true']))
+        matrix = dist.plan(config, dist.resolve_inputs(config, []))
         by_target = {item['target']: item for item in matrix['include']}
         # Windows・Linux は試作でも時間の指定もなく（今までどおり）、macOS だけ試作で 90 分
         for target in (WINDOWS, LINUX):
@@ -202,7 +213,7 @@ class Targets(unittest.TestCase):
     def test_plan_command_writes_the_matrix_the_targets_and_the_tree(self):
         with tempfile.TemporaryDirectory() as d:
             output = Path(d) / 'out'
-            for items, expected in (([], f'{WINDOWS},{MACOS}'), (['macos=false'], WINDOWS), (['linux=true'], f'{WINDOWS},{LINUX},{MACOS}')):
+            for items, expected in (([], f'{WINDOWS},{LINUX},{MACOS}'), (['macos=false'], f'{WINDOWS},{LINUX}'), (['linux=false', 'macos=false'], WINDOWS), (['linux=false'], f'{WINDOWS},{MACOS}')):
                 output.write_text('')
                 with unittest.mock.patch.dict(os.environ, {'GITHUB_OUTPUT': str(output)}):
                     dist.cmd_plan(type('A', (), {'input': items})())
@@ -823,7 +834,6 @@ class Workflows(unittest.TestCase):
     @unittest.skipIf(check_workflows.yaml is None, 'PyYAML が無い')
     def test_each_rule_fails_on_a_broken_copy(self):
         import shutil
-        switch = next(t['input'] for t in json.loads((ROOT / 'tools/dist-targets.json').read_text(encoding='utf-8'))['targets'] if t['input'])
 
         def add_push(document):
             on = document['on'] if 'on' in document else document[True]
@@ -836,17 +846,15 @@ class Workflows(unittest.TestCase):
         def add_cache(document):
             first_step_using(document, 'actions/setup-python').setdefault('with', {})['cache'] = 'pip'
 
-        def switch_on(document):
-            on = document['on'] if 'on' in document else document[True]
-            on['workflow_dispatch']['inputs'][switch]['default'] = True
-
         def stale_input(document):
             on = document['on'] if 'on' in document else document[True]
             on['workflow_dispatch']['inputs']['windows'] = {'description': 'x', 'required': True, 'type': 'boolean', 'default': False}
 
-        def macos_off(document):
-            on = document['on'] if 'on' in document else document[True]
-            on['workflow_dispatch']['inputs']['macos']['default'] = False
+        def input_off(name):
+            def edit(document):
+                on = document['on'] if 'on' in document else document[True]
+                on['workflow_dispatch']['inputs'][name]['default'] = False
+            return edit
 
         def plan_forgets_macos(document):
             step = document['jobs']['plan']['steps'][-1]
@@ -949,9 +957,9 @@ class Workflows(unittest.TestCase):
             'push trigger': ('ci.yml', yaml_edit(add_push), 'push で動かさない'),
             'unpinned action': ('ci.yml', yaml_edit(unpin), '固定されていません'),
             'cache in dist': ('dist-build.yml', yaml_edit(add_cache), 'キャッシュ'),
-            'switch default on': ('release.yml', yaml_edit(switch_on), '既定が切'),
             'stale input': ('release.yml', yaml_edit(stale_input), '使う対象が'),
-            'macos default off': ('release.yml', yaml_edit(macos_off), '入力 macos は既定が入'),
+            'macos default off': ('release.yml', yaml_edit(input_off('macos')), '入力 macos は既定が入'),
+            'linux default off': ('release.yml', yaml_edit(input_off('linux')), '入力 linux は既定が入'),
             'plan forgets macos': ('release.yml', yaml_edit(plan_forgets_macos), 'plan が入力 macos を渡していません'),
             'experimental build is required': ('dist-build.yml', yaml_edit(no_continue_on_error), 'continue-on-error'),
             'fixed time limit': ('dist-build.yml', yaml_edit(fixed_timeout), 'timeout-minutes'),

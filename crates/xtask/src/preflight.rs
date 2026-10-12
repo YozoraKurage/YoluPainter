@@ -1190,21 +1190,26 @@ mod tests {
         let good = parse_dist_targets(
             r#"{"targets":[
                 {"target":"x86_64-pc-windows-msvc","os":"windows-latest","installer":true,"input":null},
-                {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-22.04","installer":false,"input":"linux"},
+                {"target":"x86_64-unknown-linux-gnu","os":"ubuntu-22.04","installer":false,"input":"linux","default":true},
                 {"target":"universal-apple-darwin","os":"macos-14","installer":false,"input":"macos","default":true,
                  "experimental":true,"timeout_minutes":90,
                  "rust_targets":"aarch64-apple-darwin x86_64-apple-darwin"}]}"#,
         )
         .unwrap();
         assert!(
-            matches!(targets_outcome(&good), Passed(ref s) if s.contains("入力 linux")
+            matches!(targets_outcome(&good), Passed(ref s) if s.contains("入力 linux・既定は入")
             && s.contains("universal-apple-darwin（入力 macos・既定は入）（試作）"))
         );
         assert!(good[2].experimental && !good[0].experimental && !good[1].experimental);
         assert_eq!(good[2].timeout_minutes, Some(90));
         assert_eq!(good[0].timeout_minutes, None);
         assert_eq!(good[2].rust_targets, MACOS_TRIPLES);
-        assert!(good[2].default_on && !good[1].default_on && good[0].rust_targets.is_empty());
+        assert!(
+            good[1].default_on
+                && good[2].default_on
+                && !good[0].default_on
+                && good[0].rust_targets.is_empty()
+        );
         // 配れない対象・Linux にインストーラー・Windows にインストーラー無し・常に組む対象が無い。
         let mut unknown = good.clone();
         unknown[1].target = "aarch64-apple-darwin".into();
