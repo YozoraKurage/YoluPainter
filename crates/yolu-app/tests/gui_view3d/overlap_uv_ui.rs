@@ -70,6 +70,14 @@ fn with_model(lang: Lang) -> Harness<'static, YoluApp> {
     h
 }
 
+/// 2D のキャンバスに重なりを出したモデル（表示は既定で切なので入れる）。
+fn shown_model(lang: Lang) -> Harness<'static, YoluApp> {
+    let mut h = with_model(lang);
+    h.state_mut().state.prefs.settings.uv_overlap = true;
+    h.run();
+    h
+}
+
 /// 重なりを数え終えるまでフレームを回す。
 fn counted(h: &mut Harness<'_, YoluApp>) {
     let start = std::time::Instant::now();
@@ -106,7 +114,7 @@ fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
 #[test]
 fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
     for lang in Lang::ALL {
-        let mut h = with_model(lang);
+        let mut h = shown_model(lang);
         apply(&mut h, Action::Bake(BakeAction::OpenWindow));
         h.state_mut().state.bake.window.as_mut().unwrap().page = Page::Overlap;
         h.run();
@@ -195,7 +203,9 @@ fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
     for lang in Lang::ALL {
         let mut h = with_model(lang);
         counted(&mut h);
-        assert!(h.state().state.prefs.settings.uv_overlap, "既定は入");
+        assert!(!h.state().state.prefs.settings.uv_overlap, "既定は切");
+        apply(&mut h, Action::ToggleUvOverlap);
+        assert!(h.state().state.prefs.settings.uv_overlap);
         if lang == Lang::Ja {
             h.event(egui::Event::PointerGone);
             h.step();
@@ -374,7 +384,7 @@ fn island_menu(h: &Harness<'_, YoluApp>) -> Option<(usize, bool, bool)> {
 
 /// ウィンドウの「重なった UV」の項目を出し、モデルの入力（アイランド）を作り終えるまで回す。
 fn overlap_page(lang: Lang) -> Harness<'static, YoluApp> {
-    let mut h = with_model(lang);
+    let mut h = shown_model(lang);
     counted(&mut h);
     apply(&mut h, Action::Bake(BakeAction::OpenWindow));
     h.state_mut().state.bake.window.as_mut().unwrap().page = Page::Overlap;
@@ -530,7 +540,7 @@ fn the_uv_map_shows_the_preferred_and_skipped_islands() {
 fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
     let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
-        let mut h = with_model(lang);
+        let mut h = shown_model(lang);
         counted(&mut h);
         h.state_mut().state.tool = Tool::PolygonFill;
         h.state_mut().state.bake_input().unwrap();

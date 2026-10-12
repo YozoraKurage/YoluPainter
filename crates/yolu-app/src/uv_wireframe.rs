@@ -249,8 +249,8 @@ pub fn save_settings(text: &mut String, s: &crate::settings::Settings) {
         let [r, g, b, a] = s.uv_wireframe_color;
         text.push_str(&format!("uv_wireframe_color={r},{g},{b},{a}\n"));
     }
-    if !s.uv_overlap {
-        text.push_str("uv_overlap=off\n");
+    if s.uv_overlap {
+        text.push_str("uv_overlap=on\n");
     }
     if s.uv_overlap_color != DEFAULT_OVERLAP_COLOR {
         let [r, g, b, a] = s.uv_overlap_color;
