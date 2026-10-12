@@ -4,21 +4,17 @@
 
 ### 日本語
 
-- **定規**: 新しく作る定規の「表示の範囲」のはじめを「選んでいるときだけ」にしました（付けたレイヤーを選んでいるときだけ見えて効きます）。「編集レイヤーに作成」を切にして新しいレイヤー「定規」に作る定規は、今までどおり「同じグループの中」です。「すべてのレイヤー」「同じグループの中」は今までどおり選べます。保存したプロジェクトの定規の範囲は変わりません。
-- **重なった UV**: 2D のキャンバスの「重なった UV」の表示を、はじめは切にしました。「表示」→「重なった UV」で入れると、次に起動しても入のままです。
-- **塗りつぶしレイヤーのパス**: 塗りつぶしレイヤーにパスを付けて取り消し・やり直しをすると落ちる不具合と、その後の保存が断られる不具合を直しました。
-- **結合したレイヤーの保存**: 結合（下のレイヤーと結合・グループを結合・表示レイヤーを結合など）で色の出力が無かったレイヤーを保存して開き直すと、次の保存の中身が 1 回目と変わる不具合を直しました。見た目は変わりません。
-- **Linux**: Linux の x86_64 の tar.gz を Release に付けるようにしました。ARM（aarch64）の試作の tar.gz も付けます（ARM の実機では確かめていません）。ウィンドウは X11 で開き、Wayland のデスクトップでは XWayland の上で動きます。展開したフォルダの `install-desktop-entry.sh` で、アプリのメニューに登録できます（[ダウンロードと更新の「Linux」](docs/INSTALL.md#linux)）。部品の一部（Wayland のプロトコルの定義）は LGPL-2.1-or-later で、許諾の全文を同梱しています。
-- **Mac（試作）**: 0.6.0 を Apple Silicon の Mac（macOS 27）で開き、ウィンドウが出て描けることを確かめたので、README とダウンロードの説明をその範囲に直しました。Intel の Mac では動かしていません。
+- 新しい定規の「表示の範囲」のはじめを「選んでいるときだけ」に。
+- 「重なった UV」の表示のはじめを切に。
+- Linux 版（x86_64。ARM は試作）を配布。
+- 塗りつぶしレイヤーのパスの取り消しで落ちる不具合と、結合したレイヤーの保存の不具合を修正。
 
 ### English
 
-- **Rulers**: a new ruler's "Visible In" now starts as "Only While Selected" (it is seen and takes effect only while the layer it is on is selected). A ruler made on a new Ruler layer with Create on Edit Layer off stays Within the Same Group. "All Layers" and "Within the Same Group" can still be chosen. Rulers in saved projects keep their setting.
-- **Overlapping UVs**: the "Overlapping UVs" display on the 2D canvas now starts off. Turn it on with View → "Overlapping UVs", and it stays on at the next launch.
-- **Fill layer paths**: fixed a crash when undoing and redoing a path on a fill layer, and the save that was refused afterwards.
-- **Saving merged layers**: a layer made by merging (Merge Down, Merge Group, Merge Visible and others) with no color output now saves the same content again after reopening. The look does not change.
-- **Linux**: the Release now has an x86_64 tar.gz for Linux, and an experimental ARM (aarch64) tar.gz (not checked on ARM hardware). The window opens through X11, and on a Wayland desktop it runs on XWayland. `install-desktop-entry.sh` in the extracted folder adds it to the application menu (["Linux" in Download and updates](docs/en/INSTALL.md#linux)). Some parts (the Wayland protocol definitions) are under LGPL-2.1-or-later, and the full license text is included.
-- **Mac (experimental)**: version 0.6.0 has been opened on an Apple Silicon Mac (macOS 27), where the window appears and painting works; README and the install guide now say so. It has not been run on an Intel Mac.
+- New rulers start with "Visible In" set to "Only While Selected".
+- "Overlapping UVs" starts off.
+- Linux builds (x86_64; ARM experimental).
+- Fixed a crash when undoing a path on a fill layer, and a save issue with merged layers.
 
 ## 0.6.0
 
