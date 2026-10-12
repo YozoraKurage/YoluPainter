@@ -267,7 +267,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
-      # 対象は tools/dist-targets.json の「入力が要らない対象」（Windows）と「入力の既定が入の対象」（macOS の試作）だけ（Linux は wayland-protocols の LGPL の判断が済むまで入れない）
+      # 対象は tools/dist-targets.json の「入力が要らない対象」（Windows）と「入力の既定が入の対象」（Linux・Linux の ARM の試作・macOS の試作）
       - id: plan
         run: python3 tools/dist.py plan
 

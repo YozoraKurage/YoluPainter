@@ -331,3 +331,121 @@ fn a_snapshot_writes_the_same_native_bytes_as_its_source() {
     }
     assert!(converted >= 5, "写せる正本の数が減った: {converted}");
 }
+
+/// 結合の結果を保存して開き直し、もう一度保存しても正本が同じ（色の出力が無かった結合の結果は色の面を持たず、保存ではチャンネル 0 件。
+/// 開き直しても色の面を足さない）。
+#[test]
+fn a_merged_layer_saves_the_same_after_reopening() {
+    fn stable(doc: &Document, what: &str) {
+        let first = NativeDocument::from_core(doc).unwrap().to_bytes();
+        let reopened = NativeDocument::read(&first).unwrap().to_core().unwrap();
+        let second = NativeDocument::from_core(&reopened).unwrap().to_bytes();
+        assert!(first == second, "保存し直すと正本が変わる: {what}");
+    }
+    // 画素の無いレイヤー 2 枚をまとめて結合
+    let mut d = Document::new(64, 64).unwrap();
+    let a = d.add_layer("a").unwrap();
+    let b = d.add_layer("b").unwrap();
+    let merged = d.merge_layers(&[a, b], 0).unwrap().result_id;
+    stable(&d, "空のレイヤーのまとめての結合");
+    // 開き直した結合のレイヤーにも描ける（色の面は描いたときに入で作られる）
+    let bytes = NativeDocument::from_core(&d).unwrap().to_bytes();
+    let mut reopened = NativeDocument::read(&bytes).unwrap().to_core().unwrap();
+    let mut stroke = reopened
+        .begin_stroke(merged, &BrushSettings::default())
+        .unwrap();
+    stroke
+        .add_point(&mut reopened, 32.0, 32.0, 1.0, Default::default())
+        .unwrap();
+    reopened.end_stroke(stroke).unwrap();
+    assert!(
+        reopened
+            .composite(reopened.bounds())
+            .unwrap()
+            .chunks(4)
+            .any(|p| p[3] > 0),
+        "開き直した結合のレイヤーに描けない"
+    );
+    // 塗りつぶし 2 つを下へ結合（下が色を持つので結果も色の面を持つ。色の面の無い道の比べとして置く）
+    let mut d = Document::new(64, 64).unwrap();
+    d.add_fill_layer("f1", &[(Channel::Color, Rgba8::new(10, 20, 30, 255))], None)
+        .unwrap();
+    let f2 = d
+        .add_fill_layer("f2", &[(Channel::Color, Rgba8::new(200, 0, 0, 128))], None)
+        .unwrap();
+    d.merge_down(f2, 0).unwrap();
+    stable(&d, "塗りつぶしの下への結合");
+    // 空のレイヤーのグループを結合
+    let mut d = Document::new(64, 64).unwrap();
+    let a = d.add_layer("a").unwrap();
+    let g = d.group_layers(&[a], "g").unwrap();
+    d.merge_group(g, 0).unwrap();
+    stable(&d, "空のグループの結合");
+    // 表示レイヤーの結合（空のレイヤーだけ）
+    let mut d = Document::new(64, 64).unwrap();
+    d.add_layer("a").unwrap();
+    d.add_layer("b").unwrap();
+    d.merge_visible("v", 0).unwrap();
+    stable(&d, "表示レイヤーの結合");
+}
+
+/// 色を持たない塗りつぶし（通過のグループにクリッピング）へ空のレイヤーを結合すると、結果は色の面を持たないクリッピングのラスターになる。
+/// 開き直しても、結合の前・保存した時と見た目が同じ（空の色の面を入で足すと、クリッピングの組に加わってグループを分離させ、
+/// グループの中の調整の効き方が変わる）。
+#[test]
+fn a_merged_clipped_layer_without_color_keeps_the_look_after_reopening() {
+    use yolu_core::{ChannelInfo, ChannelKind, ColorSpace};
+    let mut d = Document::new(32, 32).unwrap();
+    let extra = d
+        .add_channel(ChannelInfo {
+            name: "Extra".into(),
+            kind: ChannelKind::Scalar,
+            color_space: ColorSpace::Linear,
+            default: Rgba8::new(5, 5, 5, 255),
+        })
+        .unwrap();
+    let base = d.add_layer("base").unwrap();
+    let inner = d.add_layer("inner").unwrap();
+    for y in 0..32 {
+        for x in 0..32 {
+            d.set_pixel(base, x, y, Rgba8::new(40, 90, 200, 255))
+                .unwrap();
+            if x < 16 {
+                d.set_pixel(inner, x, y, Rgba8::new(220, 30, 60, 160))
+                    .unwrap();
+            }
+        }
+    }
+    let invert = d
+        .add_adjustment_layer(
+            "invert",
+            yolu_core::AdjustmentSettings::invert(),
+            None,
+            Some(inner),
+        )
+        .unwrap();
+    let group = d.group_layers(&[inner, invert], "pass").unwrap();
+    let fill = d
+        .add_fill_layer(
+            "fill",
+            &[(extra, Rgba8::new(10, 200, 10, 255))],
+            Some(group),
+        )
+        .unwrap();
+    d.set_layer_clipping(fill, true).unwrap();
+    let empty = d.add_layer_above("empty", Some(fill)).unwrap();
+    let before = d.composite(d.bounds()).unwrap();
+    d.merge_down(empty, 0).unwrap();
+    assert!(
+        d.composite(d.bounds()).unwrap() == before,
+        "結合で見た目が変わる"
+    );
+    let first = NativeDocument::from_core(&d).unwrap().to_bytes();
+    let reopened = NativeDocument::read(&first).unwrap().to_core().unwrap();
+    assert!(
+        reopened.composite(reopened.bounds()).unwrap() == before,
+        "開き直すと見た目が変わる"
+    );
+    let second = NativeDocument::from_core(&reopened).unwrap().to_bytes();
+    assert!(first == second, "保存し直すと正本が変わる");
+}

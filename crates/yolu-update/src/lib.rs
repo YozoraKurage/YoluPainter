@@ -31,6 +31,9 @@ pub const MAX_ASSETS: usize = 32;
 /// 知らない鍵の配布物は旧いクライアントが読み飛ばすので、種類を足しても schema は上げない。
 pub const WINDOWS_ARCHIVE: &str = "x86_64-pc-windows-msvc";
 pub const LINUX_ARCHIVE: &str = "x86_64-unknown-linux-gnu";
+/// Linux の ARM（aarch64）の試作の配布物（tar.gz）の鍵。実機では確かめておらず、アプリは自分では入れ替えない
+/// （新しい版を知らせて、その版のリリースのページを開くだけ）。
+pub const LINUX_ARM_ARCHIVE: &str = "aarch64-unknown-linux-gnu";
 /// Windows のインストーラー（NSIS の setup.exe）。インストール済みの Windows のアプリが自分を更新するときの配布物。
 pub const WINDOWS_INSTALLER: &str = "x86_64-pc-windows-msvc-setup";
 /// macOS の試作の配布物（Intel と Apple Silicon の両方に入る universal の .app を入れた zip）の鍵。Rust のターゲットではなく、
@@ -41,15 +44,22 @@ pub const MACOS_ARCHIVE: &str = "universal-apple-darwin";
 pub const MACOS_TRIPLES: [&str; 2] = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
 /// `MACOS_ARCHIVE` の配布物名に入る呼び名（「試作」と分かる形）。
 const MACOS_NAME: &str = "macos-universal-experimental";
-pub const TARGETS: [&str; 4] = [
+/// `LINUX_ARM_ARCHIVE` の配布物名に入る呼び名（x86_64 の Linux と並べて見分けられるよう、ターゲットの名前に「試作」を足した形）。
+const LINUX_ARM_NAME: &str = "aarch64-unknown-linux-gnu-experimental";
+/// 並びは更新情報の配布物の並び。試験が添字で指す先頭の 4 つ（Windows の zip・Linux・Windows のインストーラー・macOS）の位置は変えない。
+pub const TARGETS: [&str; 5] = [
     WINDOWS_ARCHIVE,
     LINUX_ARCHIVE,
     WINDOWS_INSTALLER,
     MACOS_ARCHIVE,
+    LINUX_ARM_ARCHIVE,
 ];
 /// アーカイブ（zip・tar.gz）の対象か。`build`・`bundle` に渡せるのはこれだけ。
 pub fn is_archive_target(target: &str) -> bool {
-    target == WINDOWS_ARCHIVE || target == LINUX_ARCHIVE || target == MACOS_ARCHIVE
+    target == WINDOWS_ARCHIVE
+        || target == LINUX_ARCHIVE
+        || target == LINUX_ARM_ARCHIVE
+        || target == MACOS_ARCHIVE
 }
 
 /// 更新情報に、この環境の対象の配布物が無いときの `Error` の文（署名・形式は通っている。`Error::is_missing_target` が見分ける）。
@@ -126,6 +136,7 @@ pub fn asset_name(version: &Version, target: &str) -> Result<String, Error> {
     let (stem, extension) = match target {
         WINDOWS_ARCHIVE => (target, "zip"),
         LINUX_ARCHIVE => (target, "tar.gz"),
+        LINUX_ARM_ARCHIVE => (LINUX_ARM_NAME, "tar.gz"),
         WINDOWS_INSTALLER => (target, "exe"),
         MACOS_ARCHIVE => (MACOS_NAME, "zip"),
         _ => return Err(fail("未対応の配布ターゲットです")),
@@ -554,6 +565,61 @@ mod tests {
             url: asset_url(&version, "yolupainter-1.2.0-universal-apple-darwin.zip"),
             name: "yolupainter-1.2.0-universal-apple-darwin.zip".into(),
             sha256: sha256(b"mac"),
+            size: 3,
+        });
+        assert!(check(&client(m, |_| {})).is_err());
+    }
+    #[test]
+    fn linux_arm_is_a_tar_gz_named_experimental_and_found_by_its_own_key() {
+        let version = Version::parse("1.2.0").unwrap();
+        assert_eq!(
+            asset_name(&version, LINUX_ARM_ARCHIVE).unwrap(),
+            "yolupainter-1.2.0-aarch64-unknown-linux-gnu-experimental.tar.gz"
+        );
+        assert!(is_archive_target(LINUX_ARM_ARCHIVE) && TARGETS.contains(&LINUX_ARM_ARCHIVE));
+        // x86_64 の Linux の配布物の名前は今までどおり（試作の呼び名は ARM だけ）
+        assert_eq!(
+            asset_name(&version, LINUX_ARCHIVE).unwrap(),
+            "yolupainter-1.2.0-x86_64-unknown-linux-gnu.tar.gz"
+        );
+        // ARM の配布物を載せた更新情報を、Windows の確かめは今までどおり読む。ARM は自分の鍵で見つける
+        let mut m = manifest();
+        let name = asset_name(&version, LINUX_ARM_ARCHIVE).unwrap();
+        m.assets.push(Asset {
+            target: LINUX_ARM_ARCHIVE.into(),
+            url: asset_url(&version, &name),
+            name: name.clone(),
+            sha256: sha256(b"arm"),
+            size: 3,
+        });
+        let c = client(m, |_| {});
+        let current = Version::parse("1.0.0").unwrap();
+        assert_eq!(
+            check(&c).unwrap().unwrap().asset().name,
+            asset_name(&version, WINDOWS_ARCHIVE).unwrap()
+        );
+        let update = c
+            .check(URL, &current, LINUX_ARM_ARCHIVE, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(update.asset().name, name);
+        // x86_64 の Linux は載っていないので、ARM で代用せず断る
+        assert!(c.check(URL, &current, LINUX_ARCHIVE, false).is_err());
+        // ARM の配布物を載せない版は、署名は正しいまま「対象の配布物がありません」
+        let error = client(manifest(), |_| {})
+            .check(URL, &current, LINUX_ARM_ARCHIVE, false)
+            .unwrap_err();
+        assert!(error.is_missing_target());
+        // 載せた ARM の配布物の名前が違えば（ターゲットの名前のままなど）、ほかの対象と同じく断る
+        let mut m = manifest();
+        m.assets.push(Asset {
+            target: LINUX_ARM_ARCHIVE.into(),
+            url: asset_url(
+                &version,
+                "yolupainter-1.2.0-aarch64-unknown-linux-gnu.tar.gz",
+            ),
+            name: "yolupainter-1.2.0-aarch64-unknown-linux-gnu.tar.gz".into(),
+            sha256: sha256(b"arm"),
             size: 3,
         });
         assert!(check(&client(m, |_| {})).is_err());

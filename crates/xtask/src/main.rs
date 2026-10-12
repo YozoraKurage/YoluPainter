@@ -22,7 +22,7 @@ const PRIVATE_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PRIVATE_KEY";
 const PUBLIC_KEY_ENV: &str = "YOLUPAINTER_UPDATE_PUBLIC_KEY";
 /// exe とインストーラーのアイコン（ロゴ。build.rs も同じファイルを読む）。
 const LOGO_ICON: &str = "crates/yolu-app/assets/logo/yolupainter.ico";
-const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / netguard / build --target T --release [--require-update-key] / bundle --target T（build・bundle の T は x86_64-pc-windows-msvc・x86_64-unknown-linux-gnu・universal-apple-darwin。universal-apple-darwin は macOS の上で） / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
+const USAGE: &str = "命令: preflight [--target T]... [--kind stable|prerelease] [--only 確かめ,...] [--installer] [--offline] / netguard / build --target T --release [--require-update-key] / bundle --target T（build・bundle の T は x86_64-pc-windows-msvc・x86_64-unknown-linux-gnu・aarch64-unknown-linux-gnu（試作）・universal-apple-darwin。universal-apple-darwin は macOS の上で） / installer --target T / mcpb --target T / symbols --target T / updater-json --version V --assets DIR [--sign] [--key-file PATH] / verify --version V --assets DIR --public-key HEX / beta-channel --version V --assets DIR --public-key HEX --output DIR [--existing PATH] / keygen --output PATH / pubkey --key-file PATH";
 /// リポジトリの根（`crates/xtask` の 2 つ上）。`canonicalize` は使わない: Windows では `\\?\C:\…` の形になり、
 /// makensis や Python に渡す道が、その形に対応しているとは限らないため。
 fn root() -> PathBuf {
@@ -305,6 +305,10 @@ const ROOT_FILES: &[&str] = &[
     "DEPENDENCIES.md",
     "THIRD_PARTY_LICENSES.txt",
 ];
+/// Linux の配布物の根に足すファイル: アプリのメニューに登録する台本と、そのアイコン（展開したフォルダから登録するので、同じ所に置く）。
+const LINUX_DESKTOP_SCRIPT: &str = "install-desktop-entry.sh";
+const LINUX_DESKTOP_ICON: &str = "yolupainter.png";
+const LINUX_FILES: &[&str] = &[LINUX_DESKTOP_SCRIPT, LINUX_DESKTOP_ICON];
 fn exe_name(target: &str) -> &'static str {
     if target.contains("windows") {
         "yolupainter.exe"
@@ -330,6 +334,12 @@ fn payload_names(target: &str) -> Vec<String> {
         .into_iter()
         .chain(ROOT_FILES.iter().copied())
         .chain(BUNDLED_DOCS.iter().copied())
+        .chain(
+            LINUX_FILES
+                .iter()
+                .copied()
+                .filter(|_| target.contains("linux")),
+        )
         .map(str::to_owned)
         .collect()
 }
@@ -394,6 +404,8 @@ fn payload_source(root: &Path, target: &str, license_dir: &Path, name: &str) -> 
     match name {
         "DEPENDENCIES.md" => license_dir.join("THIRD_PARTY.md"),
         "THIRD_PARTY_LICENSES.txt" => license_dir.join("THIRD_PARTY_LICENSES.txt"),
+        LINUX_DESKTOP_SCRIPT => root.join("installer/linux").join(LINUX_DESKTOP_SCRIPT),
+        LINUX_DESKTOP_ICON => root.join("crates/yolu-app/assets/logo/yolupainter-256.png"),
         _ if executables(target).contains(&name) => {
             root.join("target").join(target).join("release").join(name)
         }
@@ -847,11 +859,16 @@ fn archive(path: &Path, entries: &[(String, PathBuf)], windows: bool) -> Result<
             let mut file = File::open(source)?;
             let mut header = tar::Header::new_gnu();
             header.set_size(file.metadata()?.len());
-            header.set_mode(if name == "yolupainter" || name == "yolupainter-cli" {
-                0o755
-            } else {
-                0o644
-            });
+            header.set_mode(
+                if name == "yolupainter"
+                    || name == "yolupainter-cli"
+                    || name == LINUX_DESKTOP_SCRIPT
+                {
+                    0o755
+                } else {
+                    0o644
+                },
+            );
             header.set_cksum();
             tar.append_data(&mut header, name, &mut file)?;
         }
@@ -1237,7 +1254,7 @@ fn keygen(output: &Path) -> Result<String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use yolu_update::LINUX_ARCHIVE;
+    use yolu_update::{LINUX_ARCHIVE, LINUX_ARM_ARCHIVE};
     static NEXT: AtomicUsize = AtomicUsize::new(0);
     struct Scratch(PathBuf);
     impl Scratch {
@@ -1356,7 +1373,12 @@ mod tests {
             entries.push((entry, source));
         }
         let path = d.0.join("fake-archive");
-        archive(&path, &entries, target != LINUX_ARCHIVE).unwrap();
+        archive(
+            &path,
+            &entries,
+            target == WINDOWS_ARCHIVE || target == MACOS_ARCHIVE,
+        )
+        .unwrap();
         fs::read(path).unwrap()
     }
     /// 使い捨ての鍵で署名した配布物の置き場。公開鍵の hex も返す。
@@ -1933,6 +1955,7 @@ mod tests {
             &p,
             &[
                 ("yolupainter-cli".into(), exe.clone()),
+                (LINUX_DESKTOP_SCRIPT.into(), exe.clone()),
                 ("docs/CLI.md".into(), exe),
             ],
             false,
@@ -1954,6 +1977,7 @@ mod tests {
             modes,
             [
                 ("yolupainter-cli".to_owned(), 0o755),
+                (LINUX_DESKTOP_SCRIPT.to_owned(), 0o755),
                 ("docs/CLI.md".to_owned(), 0o644)
             ]
         );
@@ -2394,6 +2418,7 @@ mod tests {
         for (target, exe, cli) in [
             (WINDOWS_ARCHIVE, "yolupainter.exe", "yolupainter-cli.exe"),
             (LINUX_ARCHIVE, "yolupainter", "yolupainter-cli"),
+            (LINUX_ARM_ARCHIVE, "yolupainter", "yolupainter-cli"),
         ] {
             let names = payload_names(target);
             let mut sorted = names.clone();
@@ -2425,13 +2450,21 @@ mod tests {
             for left_out in ["docs/DEVELOPMENT.md", "docs/RELEASING.md"] {
                 assert!(!names.iter().any(|n| n == left_out), "{target}: {left_out}");
             }
+            // メニューに登録する台本とアイコンは Linux だけ
+            for linux in LINUX_FILES {
+                assert_eq!(
+                    names.iter().any(|n| n == linux),
+                    target.contains("linux"),
+                    "{target}: {linux}"
+                );
+            }
         }
     }
     #[test]
     fn payload_sources_are_the_repository_files_the_build_and_the_license_bundle() {
         let root = root();
         let license_dir = Path::new("/licenses");
-        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE] {
+        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE, LINUX_ARM_ARCHIVE] {
             let entries = payload_entries(&root, target, license_dir);
             let source = |name: &str| {
                 entries
@@ -2462,6 +2495,18 @@ mod tests {
                     || name.starts_with("DEPENDENCIES")
                     || name.starts_with("THIRD_PARTY_L")
                 {
+                    continue;
+                }
+                // Linux の台本とアイコンは、別の場所のリポジトリのファイル（アイコンはアプリのロゴの PNG）
+                if LINUX_FILES.contains(&name.as_str()) {
+                    let expected = match name.as_str() {
+                        LINUX_DESKTOP_SCRIPT => {
+                            root.join("installer/linux/install-desktop-entry.sh")
+                        }
+                        _ => root.join("crates/yolu-app/assets/logo/yolupainter-256.png"),
+                    };
+                    assert_eq!(path, &expected);
+                    assert!(path.is_file(), "{name} が無い");
                     continue;
                 }
                 assert_eq!(path, &root.join(name));
@@ -2624,7 +2669,12 @@ mod tests {
     #[test]
     fn archive_contents_must_match_the_payload_list() {
         let v = Version::new(1, 2, 3);
-        for target in [WINDOWS_ARCHIVE, LINUX_ARCHIVE, MACOS_ARCHIVE] {
+        for target in [
+            WINDOWS_ARCHIVE,
+            LINUX_ARCHIVE,
+            LINUX_ARM_ARCHIVE,
+            MACOS_ARCHIVE,
+        ] {
             check_archive_contents(target, &v, &fake_archive(&v, target, &[], &[])).unwrap();
             // 文書が 1 つ欠けても、README が欠けても断る（名前つきで）。
             for missing in ["docs/en/GUIDE.md", "docs/PSD.md", "README.en.md"] {

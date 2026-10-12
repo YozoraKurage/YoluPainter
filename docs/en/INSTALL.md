@@ -2,7 +2,7 @@
 
 [日本語](../INSTALL.md)
 
-Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). Windows (64-bit) has two distribution formats, an installer and a zip. An extension for Claude Desktop (`.mcpb`) is attached too. Mac has an experimental zip ([below](#mac-experimental)).
+Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). Windows (64-bit) has two distribution formats, an installer and a zip. An extension for Claude Desktop (`.mcpb`) is attached too. Linux has tar.gz files (x86_64, and an experimental ARM build) ([below](#linux)). Mac has an experimental zip ([below](#mac-experimental)).
 
 - `yolupainter-<version>-x86_64-pc-windows-msvc-setup.exe` (installer): installs per user without administrator privileges. The default destination is `%LOCALAPPDATA%\Programs\YoluPainter` (changeable), with a Start menu entry and optional `.ylp` file association. 
   - Uninstall through Settings → Apps; you will be asked whether to remove settings and recovery data as well (they remain if no prompt is shown). Things you made are removed in neither case ([table below](#uninstalling-and-your-data)).
@@ -13,11 +13,24 @@ Download from [Releases](https://github.com/YozoraKurage/YoluPainter/releases). 
 
 Both include the command-line program `yolupainter-cli.exe` ([usage](CLI.md)), `README.md` and a `docs` folder (English under `docs/en`) with this document, so they can be read offline.
 
+## Linux
+
+- `yolupainter-<version>-x86_64-unknown-linux-gnu.tar.gz`: for x86_64 Linux.
+- `yolupainter-<version>-aarch64-unknown-linux-gnu-experimental.tar.gz`: an experimental build for ARM (aarch64) Linux. It has not been run on real ARM hardware.
+
+Extract either one and run `yolupainter`; no installation is needed. It also contains the command-line program `yolupainter-cli` ([usage](CLI.md)), `README.md`, the full license texts, and a `docs` folder with this document (English under `docs/en`).
+
+To show it in the application menu, run `./install-desktop-entry.sh` inside the extracted folder (it registers it for the current user only, without root). It adds a menu entry (`~/.local/share/applications/yolupainter.desktop`) with an icon, which starts `yolupainter` in the extracted folder. Run it again after moving the folder. `./install-desktop-entry.sh --remove` unregisters it.
+
+The window opens through X11, so on a Wayland desktop it runs on XWayland (it cannot start on a Wayland-only environment without XWayland). A GPU driver is required. File dialogs require a D-Bus session, `xdg-desktop-portal`, and a portal backend for your desktop; yes/no confirmations (such as discarding unsaved changes) need `zenity`, and without it actions that need the confirmation are cancelled. See [the Linux section of BUILDING](BUILDING.md#linux-experimental) for details.
+
+The Linux app does not update itself (it neither downloads nor replaces anything). If you answer Yes to the first question, it asks GitHub for the latest version at each launch (or by hand with Help → Check for Updates…); when a new version exists, the Help heading shows an indicator and “Open the YoluPainter x.y.z release” opens that version's release page. Extract the new tar.gz again to update. If you extract it to another folder, run `./install-desktop-entry.sh` there again so the menu starts the new version. Your settings and projects are kept.
+
 ## Mac (experimental)
 
 - `yolupainter-<version>-macos-universal-experimental.zip`: the folder it unzips to holds `YoluPainter.app` (a universal build with code for both Apple Silicon and Intel), `README.md`, the full license texts, and a `docs` folder with this document (English under `docs/en`). Move `YoluPainter.app` to Applications or elsewhere and use it from there. The command-line program ([usage](CLI.md)) is `YoluPainter.app/Contents/MacOS/yolupainter-cli`.
 
-This is an experimental build with no Apple Developer signature or notarization (only an ad-hoc signature). The executables require macOS 11 or later, and on an Apple Silicon Mac (macOS 27), only launching, writing settings and logs, the signature and the universal structure have been checked. The window display and drawing have not been checked, and it has not been run on an Intel Mac. Because it is unsigned, macOS blocks `YoluPainter.app` the first time you open it after unzipping. To open it, follow these steps ([Apple's guide](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac)):
+This is an experimental build with no Apple Developer signature or notarization (only an ad-hoc signature). The executables require macOS 11 or later, and version 0.6.0 has been opened on an Apple Silicon Mac (macOS 27), where the window appears and painting works. It has not been run on an Intel Mac. Because it is unsigned, macOS blocks `YoluPainter.app` the first time you open it after unzipping. To open it, follow these steps ([Apple's guide](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unidentified-developer-mh40616/mac)):
 
 1. Double-click `YoluPainter.app`. It is blocked; close the message.
 2. Choose Apple menu > System Settings, then click Privacy & Security in the sidebar.

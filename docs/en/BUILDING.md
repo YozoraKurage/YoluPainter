@@ -52,3 +52,5 @@ cargo build --release -p yolu-app --locked
 ```
 
 You can paint with a mouse. Pressure input depends on the desktop environment and input device.
+
+The distribution for ARM (aarch64) Linux is experimental and has not been run on real ARM hardware.

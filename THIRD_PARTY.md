@@ -1,9 +1,9 @@
 # 第三者の許諾
 
-Windows MSVC・Windows GNU・Linux GNU・macOS（universal）向けの `yolu-app`（スタンドアロン、更新依存とコマンドライン `yolu-cli` の依存を含む）と
+Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（universal）向けの `yolu-app`（スタンドアロン、更新依存とコマンドライン `yolu-cli` の依存を含む）と
 `yolu-cli`（Claude Desktop 用の `.mcpb`。アプリと同じビルドでの部分木）、開発用 `xtask` の依存一覧。既定の機能、下表に記録した Cargo.lock が対象。
 依存を更新したときや別のターゲット・機能で配るときは、一覧と全文束を更新する。
-各対象の依存と、Linux の配布を止めている条件を分けて記載する。
+各対象の依存を分けて記載する。Linux の LGPL の protocol XML の扱いは「配布対象別の照合」に書く。
 
 `tools/third-party.py` は Cargo の通常依存とビルド依存を製品別にたどり、試験用依存を除く。
 手続きマクロとビルド依存も保守的に全文束へ含める。「実行時」は通常依存の到達範囲であり、
@@ -236,8 +236,9 @@ Rust と C の著作権表記（2020 Samuli Raivio）を全文束に含め、C �
 python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-app --include-update --include-cli --bundle
 python3 tools/third-party.py --target x86_64-pc-windows-gnu --package yolu-app --include-update --include-cli --bundle
 python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-cli --built-with yolu-app --bundle
-# Linux の app は下記の条件が未承認のため終了 1。全文束を作らない。
 python3 tools/third-party.py --target x86_64-unknown-linux-gnu --package yolu-app --include-update --include-cli --bundle
+# Linux の ARM（aarch64、試作）。x86_64 の Linux の部分集合で、新しい許諾は無い
+python3 tools/third-party.py --target aarch64-unknown-linux-gnu --package yolu-app --include-update --include-cli --bundle
 # macOS の universal は Apple Silicon と Intel の 2 つのターゲットの木の和（どちらか単独の aarch64-apple-darwin・x86_64-apple-darwin も指せる）。.mcpb は Windows だけなので cli の一覧は無い
 python3 tools/third-party.py --target universal-apple-darwin --package yolu-app --include-update --include-cli --bundle
 ```
@@ -252,29 +253,39 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 |---|---:|---:|---:|---:|---|
 | Windows MSVC | 251 | 132 | 31 | 49 | 生成成功 |
 | Windows GNU | 251 | 132 | 31 | 49 | 生成成功 |
-| Linux GNU | 319 | 131 | 31 | 54 | 判断待ち |
+| Linux GNU | 319 | 131 | 31 | 54 | 生成成功 |
+| Linux ARM（aarch64） | 317 | 130 | 30 | 52 | 生成成功 |
 | macOS universal | 246 | — | — | — | 生成成功 |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
 
-Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` はクレートの宣言が MIT でも、
-同梱 protocol XML に **LGPL-2.1-or-later** の条件がある。生成バインディングの配布条件について判断待ちであり、
-`blocked` を維持する。以下の Linux 集計の MIT 件数にはこの 2 件も含まれるが、許可済みという意味ではない。
-Linux app の全文束は生成せず、依存の変更・削除も行わない。update・xtask の照合は成功する。
+Linux の ARM（aarch64、試作の配布物）の app の 317 件は、x86_64 の Linux の 319 件から、x86_64 だけで入る `cpufeatures 0.3.1` と
+`curve25519-dalek-derive 0.1.1` を除いた部分集合で、ARM だけで入るクレートは無く、新しい許諾の種類も出ない。LGPL の protocol XML の扱いは x86_64 の Linux と同じ。
+
+Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` は、クレートの宣言は MIT で、同梱する protocol XML
+（plasma の `plasma-wayland-protocols/src/protocols/` の 31 件のうち 17 件と、misc の `protocols/server-decoration.xml`）が **LGPL-2.1-or-later**。
+Linux の実行ファイルには、これらの XML から生成された結びつき（プロトコルとメッセージの名前・引数の形）が入る
+（`cargo tree -i wayland-protocols-plasma -e features --target x86_64-unknown-linux-gnu` と misc で確かめた辺: plasma は `winit` の Wayland の道が直接引き、
+misc は `egui-winit` のクリップボード（`smithay-clipboard`）が `smithay-client-toolkit 0.20` を経て引く。アクセシビリティの部品は引かない）。
+ウィンドウは X11 で開くので Wayland の道は使わないが、`eframe` の `wayland` 機能（`crates/yolu-app/Cargo.toml`）が `winit` の Wayland の道と
+クリップボードの Wayland 対応を有効にしているため、この 2 つは外せない。
+Linux の配布物の `THIRD_PARTY_LICENSES.txt` に、LGPL-2.1 の全文（plasma の `COPYING.LIB`）と `server-decoration.xml` の表記を入れる。
+LGPL の部分の元は crates.io の両クレートと上流（[plasma-wayland-protocols](https://invent.kde.org/libraries/plasma-wayland-protocols)）にあり、
+YoluPainter のソースはこのリポジトリで公開しているので、利用者は該当の部品を差し替えて作り直せる。
 
 ## Cargo.lock 全体と試験専用の依存
 
-`python3 tools/third-party.py --audit-lock --offline` は Windows MSVC・Windows GNU・Linux GNU・macOS（Apple Silicon と Intel）の workspace 全体を調べる。
+`python3 tools/third-party.py --audit-lock --offline` は Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（Apple Silicon と Intel）の workspace 全体を調べる。
 通常・ビルド依存に加えて試験依存の原文も照合し、他 OS・無効な機能の依存を含む lock 全件を
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
-照合した Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。外部クレート 496 件の内訳は次のとおり。
+照合した Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。外部クレート 496 件の内訳は次のとおり。
 
-| 範囲（5 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
+| 範囲（6 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
-| 通常・ビルド依存 | 387 | 原文を照合。Linux の protocol XML 2 件は判断待ち |
+| 通常・ビルド依存 | 387 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
 | 試験専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
 | 対象外（他 OS・現在無効な機能） | 97 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
 | Cargo.lock に無い古い登録 | 0 | 削除なし |
@@ -297,7 +308,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 | MIT |
 
 `egui_kittest → dify → colored 2.2.0` は MPL-2.0。許容一覧へ自動追加せず、原文と未承認理由だけを記録する。
-現在の製品の依存には含まれない。上記の lock 監査はこの 1 件と Linux の 2 件で終了 1 となる。
+現在の製品の依存には含まれない。上記の lock 監査はこの 1 件で終了 1 となる（Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱して承認済み）。
 
 全件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した（今の Cargo.lock の 496 件で、`gpl` の部分一致と `General Public License` を大文字小文字を区別せずに検索し、語としてのヒットは下に挙げた物だけだった。部分一致だけのヒットは `eggplant`・`SIGPLAN94`・`Placement`・`WindowsFilteringPlatform` など、別の語や識別子の一部）（`rusqlite` 系の 4 件と `schemars` 系の 6 件にはなく、`libsqlite3-sys` の `sqlite3.c` のヒットは単語 Eggplant）。Linux の既知の 2 件に加え、
 対象外の `orbclient 0.3.55` の `res/unifont-license.txt` に GPL-2.0-or-later とフォント埋め込み例外がある。
@@ -308,13 +319,12 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 ほかのヒットは LLVM 例外の GPLv2 への言及、`slotmap` の互換性の説明、`vcpkg` の試験用ファイル名一覧、
 前述の `tree_magic_mini` の無効な `with-gpl-data` 機能と変更履歴である。
 AGPL の表記は検出しなかった。文字列検索だけで許諾の不存在を保証するものではない。
-依存構成と各クレートの blocked は解除していない。
 
 ## Windows MSVC の製品別一覧
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
@@ -591,7 +601,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -748,7 +758,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
@@ -1025,7 +1035,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -1182,7 +1192,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 319 件（同名の別版は別件）。実行時 271 件。
 
@@ -1194,7 +1204,8 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | Apache-2.0 AND MIT | 2 |
 | BSD-3-Clause | 3 |
 | ISC | 1 |
-| MIT | 297 |
+| MIT | 295 |
+| MIT AND LGPL-2.1-or-later | 2 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -1484,8 +1495,8 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | wayland-csd-frame | 0.3.0 | 実行時 | MIT | MIT | 確認済み |
 | wayland-cursor | 0.31.14 | 実行時 | MIT | MIT | 確認済み |
 | wayland-protocols-experimental | 20250721.0.1 | 実行時 | MIT | MIT | 確認済み |
-| wayland-protocols-misc | 0.3.12 | 実行時 | MIT | MIT | 同梱する protocol XML（server-decoration.xml）に LGPL-2.1-or-later の表記あり。生成バインディングの配布条件を確認するまで Linux 配布を停止する。 |
-| wayland-protocols-plasma | 0.3.12 | 実行時 | MIT | MIT | 同梱する protocol XML に LGPL-2.1-or-later の表記あり。生成バインディングの配布条件を確認するまで Linux 配布を停止する。 |
+| wayland-protocols-misc | 0.3.12 | 実行時 | MIT | MIT AND LGPL-2.1-or-later | 確認済み |
+| wayland-protocols-plasma | 0.3.12 | 実行時 | MIT | MIT AND LGPL-2.1-or-later | 確認済み |
 | wayland-protocols-wlr | 0.3.12 | 実行時 | MIT | MIT | 確認済み |
 | wayland-protocols | 0.32.13 | 実行時 | MIT | MIT | 確認済み |
 | wayland-scanner | 0.31.11 | ビルド・マクロ用 | MIT | MIT | 確認済み |
@@ -1526,7 +1537,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 131 件（同名の別版は別件）。実行時 108 件。
 
@@ -1682,7 +1693,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 246 件（同名の別版は別件）。実行時 206 件。
 

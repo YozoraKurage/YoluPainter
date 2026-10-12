@@ -494,9 +494,16 @@ mod tests {
         let group = s.doc.group_layers(&[top], "G").unwrap();
         s.selected_layer = Some(top);
         s.doc.clear_history().unwrap();
-        // 一番上の段のレイヤーに付けた定規は、文書の全部のレイヤーから見える（既定の範囲）
+        // 一番上の段のレイヤーに付けた「同じグループの中」の定規は、文書の全部のレイヤーから見える
         s.selected_layer = Some(below);
-        put(&mut s, RulerKind::Line, (0.0, 10.0), (64.0, 10.0));
+        let mut r = Ruler::canvas(
+            RulerId(1),
+            RulerKind::Line,
+            DVec2::new(0.0, 10.0),
+            DVec2::new(64.0, 10.0),
+        );
+        r.scope = yolu_core::RulerScope::Group;
+        s.ruler_create(r).unwrap();
         s.selected_layer = Some(top);
         assert_eq!(s.rulers_shown(Place::Canvas).len(), 1);
         assert!(

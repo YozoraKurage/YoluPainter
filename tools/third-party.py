@@ -22,7 +22,9 @@ COMPONENTS = {'universal-apple-darwin': ('aarch64-apple-darwin', 'x86_64-apple-d
 # BSL-1.0 と Hack フォントの Bitstream Vera は 2026-10-04 にユーザーが追加承認。
 ALLOWED = {'MIT', 'Apache-2.0', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Zlib',
            'ISC', 'Unicode-DFS-2016', 'Unicode-3.0', 'OFL-1.1', 'Ubuntu-font-1.0',
-           'BSL-1.0', 'Bitstream-Vera'}
+           'BSL-1.0', 'Bitstream-Vera',
+           # Linux の wayland-protocols-plasma・misc の protocol XML（生成された結びつきが入る）。本文と元の入手先を同梱する
+           'LGPL-2.1-or-later'}
 
 
 def cargo(*args):
@@ -331,7 +333,7 @@ def main():
     parser.add_argument('--bundle', action='store_true', help='照合成功時だけ配布用 THIRD_PARTY_LICENSES.txt を作る')
     parser.add_argument('--offline', action='store_true', help='取得済みの原文だけを使う')
     parser.add_argument('--target', choices=['x86_64-pc-windows-gnu', 'x86_64-pc-windows-msvc', 'x86_64-unknown-linux-gnu',
-                                             'aarch64-apple-darwin', 'x86_64-apple-darwin', 'universal-apple-darwin'])
+                                             'aarch64-unknown-linux-gnu', 'aarch64-apple-darwin', 'x86_64-apple-darwin', 'universal-apple-darwin'])
     parser.add_argument('--include-update', action='store_true', help='将来組み込む更新クレートも全文束に含める')
     parser.add_argument('--include-cli', action='store_true', help='同じ配布物に入るコマンドライン（yolu-cli）の依存も全文束に含める')
     parser.add_argument('--built-with', choices=['yolu-app', 'yolu-update', 'yolu-cli'],

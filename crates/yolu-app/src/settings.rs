@@ -292,7 +292,7 @@ impl Default for Settings {
             view3d_paint: yolu_core::geometry::ProjectionSettings::default(),
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
-            uv_overlap: true,
+            uv_overlap: false,
             uv_overlap_color: crate::uv_wireframe::DEFAULT_OVERLAP_COLOR,
             livelink_on_startup: true,
             livelink_keep_values: true,
@@ -711,7 +711,7 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(c) => settings.uv_wireframe_color = c,
                 None => invalid("uv_wireframe_color"),
             },
-            "uv_overlap" => settings.uv_overlap = value != "off",
+            "uv_overlap" => settings.uv_overlap = value == "on",
             "uv_overlap_color" => match crate::uv_wireframe::parse_color(value) {
                 Some(c) => settings.uv_overlap_color = c,
                 None => invalid("uv_overlap_color"),
@@ -1139,7 +1139,7 @@ mod tests {
             },
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
-            uv_overlap: false,
+            uv_overlap: true,
             uv_overlap_color: [10, 20, 30, 40],
             livelink_on_startup: true,
             livelink_keep_values: false,
@@ -1170,6 +1170,31 @@ mod tests {
         assert!(std::fs::read_to_string(&path)
             .unwrap()
             .contains("livelink_keep_values=off"));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_overlapping_uvs_default_off_and_survive_restart_when_turned_on() {
+        let dir = temp_dir("uvoverlap");
+        let path = dir.join("settings.conf");
+        assert!(!load(&path).0.uv_overlap, "ファイルが無ければ切");
+        let on = Settings {
+            uv_overlap: true,
+            ..Settings::default()
+        };
+        save(&path, &on).unwrap();
+        assert_eq!(load(&path), (on, vec![]));
+        assert!(std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("uv_overlap=on"));
+        // 切は書かない（行が無い設定ファイルと同じ）
+        save(&path, &Settings::default()).unwrap();
+        assert!(!std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("uv_overlap="));
+        // 前の版が書いた切も、行の無い設定も切として読む
+        assert!(!parse("uv_overlap=off\n").0.uv_overlap);
+        assert!(!parse("language=ja\n").0.uv_overlap);
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -1961,7 +1986,7 @@ mod tests {
             "view3d_paint_falloff_start=60",
             "view3d_paint_falloff_end=75",
             "view3d_paint_seam_bleed=4",
-            "uv_overlap=off",
+            "uv_overlap=on",
             "uv_overlap_color=10,20,30,40",
             "external_ops=on",
             "tablet_pressure=off",
@@ -2000,7 +2025,7 @@ mod tests {
         back.disk_cache = true;
         back.disk_cache_folder = None;
         back.disk_cache_limit = DiskLimit::Auto;
-        back.uv_overlap = true;
+        back.uv_overlap = false;
         back.uv_overlap_color = crate::uv_wireframe::DEFAULT_OVERLAP_COLOR;
         back.selection_all_modes = false;
         save(&path, &back).unwrap();

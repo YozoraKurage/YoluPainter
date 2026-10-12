@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.1
+
+### 日本語
+
+- 新しい定規の「表示の範囲」のはじめを「選んでいるときだけ」に。
+- 「重なった UV」の表示のはじめを切に。
+- Linux 版（x86_64。ARM は試作）を配布。
+- 塗りつぶしレイヤーのパスの取り消しで落ちる不具合と、結合したレイヤーの保存の不具合を修正。
+
+### English
+
+- New rulers start with "Visible In" set to "Only While Selected".
+- "Overlapping UVs" starts off.
+- Linux builds (x86_64; ARM experimental).
+- Fixed a crash when undoing a path on a fill layer, and a save issue with merged layers.
+
 ## 0.6.0
 
 ### 日本語

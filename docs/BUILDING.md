@@ -52,3 +52,5 @@ cargo build --release -p yolu-app --locked
 ```
 
 マウスで描画できます。筆圧の取得はデスクトップ環境と入力機器に依存します。
+
+ARM（aarch64）の Linux 向けの配布物は試作で、ARM の実機では動かして確かめていません。
