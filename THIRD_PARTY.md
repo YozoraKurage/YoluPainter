@@ -281,7 +281,7 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
-照合した Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。外部クレート 496 件の内訳は次のとおり。
+照合した Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。外部クレート 496 件の内訳は次のとおり。
 
 | 範囲（6 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
@@ -324,7 +324,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
@@ -601,7 +601,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -758,7 +758,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
@@ -1035,7 +1035,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -1192,7 +1192,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 319 件（同名の別版は別件）。実行時 271 件。
 
@@ -1537,7 +1537,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 131 件（同名の別版は別件）。実行時 108 件。
 
@@ -1693,7 +1693,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `626bc8ffd69f876e625a4c8a6feec75468d17e2ecf01d4b19a9bc3c757d69588`。
+対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
 
 外部クレート 246 件（同名の別版は別件）。実行時 206 件。
 
