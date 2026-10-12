@@ -15,10 +15,10 @@ on:
         type: boolean
         default: true
       linux:
-        description: Linux の配布物も作る（wayland-protocols の LGPL の表記の判断が済むまで切）
+        description: Linux の配布物も作る（x86_64、X11。Wayland の机では XWayland の上で動く）
         required: true
         type: boolean
-        default: false
+        default: true
       macos:
         description: macOS の試作の配布物（署名なしの .app の zip）も作る（切にすると、macOS を載せずに配る）
         required: true

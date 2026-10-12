@@ -1,15 +1,14 @@
 # 配布の手順
 
-Windows x86_64 MSVC の zip とインストーラー（NSIS の setup.exe）を出します。Linux x86_64 の tar.gz も作れますが、下の許諾の判断が済むまでは配りません
-（`release.yml` の入力 `linux` は切が既定です）。macOS は試作として、署名なし（ad-hoc の署名だけ）の `YoluPainter.app` の zip を出します
+Windows x86_64 MSVC の zip とインストーラー（NSIS の setup.exe）と、Linux x86_64 の tar.gz（試用。`release.yml` の入力 `linux` は入が既定）を出します。macOS は試作として、署名なし（ad-hoc の署名だけ）の `YoluPainter.app` の zip を出します
 （[macOS の試作](#macos-の試作)。入力 `macos` は入が既定で、切にすると載せません。試作なので、ビルドが落ちても配布は止まらず、Windows だけで出します。[macOS（試作）が落ちたとき](#macos試作が落ちたとき)）。AppImage は対象外です。
 実行ファイル・インストーラーのコード署名は、[SignPath Foundation への申し込み](#コード署名signpath-foundation)が通るまで付けません（署名なしで出します）。
 ビルドには Rust stable、Python 3.10 以降、各 OS の C/C++ ビルド環境が必要です。Windows のインストーラーには NSIS 3 も要ります。macOS の .app は macOS の上でだけ作れます（Xcode Command Line Tools の `lipo`・`codesign` など）。Linux の実行環境は [BUILDING.md の「Linux（試用）」](BUILDING.md#linux試用)を参照してください。
 Ubuntu 22.04 で作るため、これより古い glibc 環境での動作は保証しません。
 
-Linux の既存依存 `wayland-protocols-plasma` と `wayland-protocols-misc` の protocol XML には LGPL-2.1-or-later の表記があり、
-`tools/licenses-reviewed.json` の `blocked` に記録しています。条件を確認するか依存構成を変更するまで、Linux の `bundle` は停止し、
-入力 `linux` を入にした配布も進みません。`blocked` を外すのは、生成バインディングへの条件の適用を確認した後だけです。
+Linux の既存依存 `wayland-protocols-plasma` と `wayland-protocols-misc` の protocol XML は LGPL-2.1-or-later で、実行ファイルには
+そこから生成された結びつきが入ります。`tools/licenses-reviewed.json` で両方に `LGPL-2.1-or-later` を選び、全文（`COPYING.LIB`）と
+`server-decoration.xml` の表記を照合して `THIRD_PARTY_LICENSES.txt` に入れます（[THIRD_PARTY.md](../THIRD_PARTY.md)）。
 
 依存を追加・更新して `licenses-reviewed.json` へ承認を追加するときは、クレートの宣言だけでなく、同梱する XML・ソース全体に
 GPL/LGPL の表記が無いかを調べます。ヒットしたら、選ばないデュアルライセンスの側（例: `self_cell` の GPL）かを確かめ、そうでなければ `blocked` に理由を書きます。

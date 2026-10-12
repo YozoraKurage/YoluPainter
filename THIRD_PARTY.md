@@ -252,16 +252,19 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 |---|---:|---:|---:|---:|---|
 | Windows MSVC | 251 | 132 | 31 | 49 | 生成成功 |
 | Windows GNU | 251 | 132 | 31 | 49 | 生成成功 |
-| Linux GNU | 319 | 131 | 31 | 54 | 判断待ち |
+| Linux GNU | 319 | 131 | 31 | 54 | 生成成功 |
 | macOS universal | 246 | — | — | — | 生成成功 |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
 更新・梱包用のクレートも含めて原文を照合し、未確認のクレートが無いことを確認した。
 
-Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` はクレートの宣言が MIT でも、
-同梱 protocol XML に **LGPL-2.1-or-later** の条件がある。生成バインディングの配布条件について判断待ちであり、
-`blocked` を維持する。以下の Linux 集計の MIT 件数にはこの 2 件も含まれるが、許可済みという意味ではない。
-Linux app の全文束は生成せず、依存の変更・削除も行わない。update・xtask の照合は成功する。
+Linux の `wayland-protocols-plasma 0.3.12` と `wayland-protocols-misc 0.3.12` は、クレートの宣言は MIT で、同梱する protocol XML
+（plasma の `plasma-wayland-protocols/src/protocols/` の 31 件のうち 17 件と、misc の `protocols/server-decoration.xml`）が **LGPL-2.1-or-later**。
+Linux の実行ファイルには、これらの XML から生成された結びつき（プロトコルとメッセージの名前・引数の形）が入る（`winit` の Wayland の道と、
+`smithay-clipboard` が引く）。ウィンドウは X11 で開くので Wayland の道は使わないが、クリップボードとアクセシビリティの部品が引くため外せない。
+Linux の配布物の `THIRD_PARTY_LICENSES.txt` に、LGPL-2.1 の全文（plasma の `COPYING.LIB`）と `server-decoration.xml` の表記を入れる。
+LGPL の部分の元は crates.io の両クレートと上流（[plasma-wayland-protocols](https://invent.kde.org/libraries/plasma-wayland-protocols)）にあり、
+YoluPainter のソースはこのリポジトリで公開しているので、利用者は該当の部品を差し替えて作り直せる。
 
 ## Cargo.lock 全体と試験専用の依存
 
@@ -274,7 +277,7 @@ Linux app の全文束は生成せず、依存の変更・削除も行わない�
 
 | 範囲（5 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
-| 通常・ビルド依存 | 387 | 原文を照合。Linux の protocol XML 2 件は判断待ち |
+| 通常・ビルド依存 | 387 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
 | 試験専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
 | 対象外（他 OS・現在無効な機能） | 97 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
 | Cargo.lock に無い古い登録 | 0 | 削除なし |
@@ -1484,8 +1487,8 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | wayland-csd-frame | 0.3.0 | 実行時 | MIT | MIT | 確認済み |
 | wayland-cursor | 0.31.14 | 実行時 | MIT | MIT | 確認済み |
 | wayland-protocols-experimental | 20250721.0.1 | 実行時 | MIT | MIT | 確認済み |
-| wayland-protocols-misc | 0.3.12 | 実行時 | MIT | MIT | 同梱する protocol XML（server-decoration.xml）に LGPL-2.1-or-later の表記あり。生成バインディングの配布条件を確認するまで Linux 配布を停止する。 |
-| wayland-protocols-plasma | 0.3.12 | 実行時 | MIT | MIT | 同梱する protocol XML に LGPL-2.1-or-later の表記あり。生成バインディングの配布条件を確認するまで Linux 配布を停止する。 |
+| wayland-protocols-misc | 0.3.12 | 実行時 | MIT | MIT・LGPL-2.1-or-later | 同梱する protocol XML（server-decoration.xml）が LGPL-2.1-or-later。表記と全文を同梱 |
+| wayland-protocols-plasma | 0.3.12 | 実行時 | MIT | MIT・LGPL-2.1-or-later | 同梱する protocol XML の 17 件が LGPL-2.1-or-later。全文（COPYING.LIB）を同梱 |
 | wayland-protocols-wlr | 0.3.12 | 実行時 | MIT | MIT | 確認済み |
 | wayland-protocols | 0.32.13 | 実行時 | MIT | MIT | 確認済み |
 | wayland-scanner | 0.31.11 | ビルド・マクロ用 | MIT | MIT | 確認済み |
