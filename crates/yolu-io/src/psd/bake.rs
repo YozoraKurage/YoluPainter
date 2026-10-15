@@ -2030,7 +2030,7 @@ fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<Cor
     if output.is_none() {
         let default = d
             .channel_info(channel)
-            .ok_or(CoreError::InvalidArgument("文書にないチャンネル"))?
+            .ok_or(CoreError::InvalidArgument("プロジェクトにないチャンネル"))?
             .default;
         let fill = wrapped.add_fill_layer("Default", &[(channel, default)], None)?;
         wrapped.move_layer(fill, 0)?;
