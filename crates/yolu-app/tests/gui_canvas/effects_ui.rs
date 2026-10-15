@@ -1,6 +1,7 @@
 //! 効果の行（レイヤーの行の下）と、選んだ効果の欄・メニューの画面（egui_kittest）。行を押す・目・上へ・下へ・消す・右クリック・メニュー、
 //! 日英の見た目（説明の文を置かない）、スナップショット。文書の操作そのものは `headless/effects.rs`（画面なし）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{epaint::Shape, pos2, PointerButton, Rect};
@@ -15,7 +16,7 @@ use yolu_core::generator::Kind;
 use yolu_core::{AnchorPlacement, FilterTarget};
 
 fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
-    h.state_mut().state.apply(action);
+    h.act(action);
     h.run();
 }
 
@@ -26,7 +27,7 @@ fn fx(h: &mut Harness<'_, YoluApp>, op: FxOp) {
 /// 効果の行を並べた文書: 下地のレイヤー（ぼかし・階調の反転・アンカー）と、マスクにマップを読む Generator。
 fn effect_document(h: &mut Harness<'_, YoluApp>) {
     apply(h, Action::M2(Edit::NewFill));
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     fx(
         h,
         FxOp::AddAnchor {
@@ -64,14 +65,14 @@ fn props_button(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
 }
 
 fn selected(h: &Harness<'_, YoluApp>) -> Option<Selected> {
-    h.state().state.fx.selected
+    h.fx().selected
 }
 
 #[test]
 fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1400.0, 128);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         effect_document(&mut h);
         let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
         if lang == Lang::Ja {
@@ -84,26 +85,12 @@ fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
 fn snapshot_a_selected_filter_and_a_selected_anchor() {
     let mut h = app(1280.0, 1400.0, 128);
     effect_document(&mut h);
-    let layer = h.state().state.selected_layer.unwrap();
-    let blur = h
-        .state()
-        .state
-        .doc
-        .filters_of(layer, FilterTarget::Content)
-        .unwrap()[0]
-        .id();
+    let layer = h.selected_layer().unwrap();
+    let blur = h.doc().filters_of(layer, FilterTarget::Content).unwrap()[0].id();
     fx(&mut h, FxOp::SelectFilter { layer, id: blur });
     let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
     common::shot::region(&mut h, "fx_rows_blur_selected", rect);
-    let anchor = h
-        .state()
-        .state
-        .doc
-        .layer(layer)
-        .unwrap()
-        .anchor()
-        .unwrap()
-        .id();
+    let anchor = h.doc().layer(layer).unwrap().anchor().unwrap().id();
     fx(&mut h, FxOp::SelectAnchor(anchor));
     common::shot::region(&mut h, "fx_rows_anchor_selected", rect);
 }
@@ -113,12 +100,12 @@ fn snapshot_the_add_menu() {
     let mut h = app(1280.0, 1400.0, 128);
     effect_document(&mut h);
     fx(&mut h, FxOp::Deselect);
-    h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
+    h.ui_mut().property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
     h.run();
     let at = props_button(&h, "フィルターを追加").center();
     click(&mut h, at);
     assert!(matches!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
+        h.popup().as_ref().map(|p| p.kind),
         Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddFilter(
             FilterTarget::Content
         )))
@@ -131,7 +118,7 @@ fn snapshot_the_add_menu() {
 
 /// マスクのサムネイル（一覧に 1 つだけ）。
 fn mask_thumb(h: &Harness<'_, YoluApp>) -> Rect {
-    let lang = h.state().state.lang;
+    let lang = h.lang();
     h.get_by_label(lang.pick(
         "レイヤーマスク（押すとマスクが対象）",
         "Layer mask (click to target the mask)",
@@ -141,7 +128,7 @@ fn mask_thumb(h: &Harness<'_, YoluApp>) -> Rect {
 
 /// マスクのあるレイヤーの、レイヤーのサムネイル（マスクと同じ行）。
 fn pixels_thumb(h: &Harness<'_, YoluApp>) -> Rect {
-    let lang = h.state().state.lang;
+    let lang = h.lang();
     let mask = mask_thumb(h);
     rect_of(h, lang.pick("レイヤーの画素", "Layer pixels"), |r| {
         (r.center().y - mask.center().y).abs() < 2.0 && r.right() < mask.left()
@@ -150,17 +137,17 @@ fn pixels_thumb(h: &Harness<'_, YoluApp>) -> Rect {
 
 /// レイヤーの行の名前の所（行の真ん中）。
 fn name_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> egui::Pos2 {
-    let name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
+    let name = h.doc().layer(layer).unwrap().name().to_owned();
     rect_of(h, &name, |r| r.width() > 100.0 && r.left() > rx()).center()
 }
 
 fn editing_mask(h: &Harness<'_, YoluApp>) -> bool {
-    h.state().state.m2.edit_mask
+    h.m2().edit_mask
 }
 
 /// 青い枠の付いたレイヤーのサムネイル（選んだ状態の「レイヤーの画素」）。
 fn framed_pixels_thumbs(h: &Harness<'_, YoluApp>) -> Vec<Rect> {
-    let lang = h.state().state.lang;
+    let lang = h.lang();
     h.get_all_by_label(lang.pick("レイヤーの画素", "Layer pixels"))
         .filter(|n| n.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True))
         .map(|n| n.rect())
@@ -170,21 +157,18 @@ fn framed_pixels_thumbs(h: &Harness<'_, YoluApp>) -> Vec<Rect> {
 #[test]
 fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() {
     let mut h = app(1280.0, 1400.0, 128);
-    let base = h.state().state.selected_layer.unwrap();
+    let base = h.selected_layer().unwrap();
     effect_document(&mut h);
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     assert_ne!(base, layer);
     // レイヤーのサムネイル: レイヤーの画素が対象（もう一度押しても同じ）。選んでいた効果の欄は閉じる
     for _ in 0..2 {
         let at = pixels_thumb(&h).center();
         click(&mut h, at);
         assert!(!editing_mask(&h));
-        assert_eq!(h.state().state.selected_layer, Some(layer));
+        assert_eq!(h.selected_layer(), Some(layer));
         assert_eq!(selected(&h), None);
-        assert_eq!(
-            yolu_app::fx::menu::target(&h.state().state),
-            FilterTarget::Content
-        );
+        assert_eq!(yolu_app::fx::menu::target(h.app()), FilterTarget::Content);
         assert_eq!(framed_pixels_thumbs(&h), vec![pixels_thumb(&h)]);
     }
     // マスクのサムネイル: マスクが対象（切り替えではないので、もう一度押してもマスクのまま）。レイヤーのサムネイルの枠は消える
@@ -192,10 +176,7 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
         let at = mask_thumb(&h).center();
         click(&mut h, at);
         assert!(editing_mask(&h));
-        assert_eq!(
-            yolu_app::fx::menu::target(&h.state().state),
-            FilterTarget::Mask
-        );
+        assert_eq!(yolu_app::fx::menu::target(h.app()), FilterTarget::Mask);
         assert!(framed_pixels_thumbs(&h).is_empty());
     }
     // 同じレイヤーの名前を押しても対象はそのまま
@@ -205,7 +186,7 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
     // 別のレイヤーの名前は、そのレイヤーの画素
     let at = name_of(&h, base);
     click(&mut h, at);
-    assert_eq!(h.state().state.selected_layer, Some(base));
+    assert_eq!(h.selected_layer(), Some(base));
     assert!(!editing_mask(&h));
     // マスクの無いレイヤーでも、画素が対象ならレイヤーのサムネイルに枠（選んだレイヤーの 1 つだけ）
     let framed = framed_pixels_thumbs(&h);
@@ -214,14 +195,14 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
     // 選んでいないレイヤーのマスクのサムネイルは、そのレイヤーを選んでマスクを対象にする
     let at = mask_thumb(&h).center();
     click(&mut h, at);
-    assert_eq!(h.state().state.selected_layer, Some(layer));
+    assert_eq!(h.selected_layer(), Some(layer));
     assert!(editing_mask(&h));
     // 選んでいないレイヤーの、レイヤーのサムネイルは、そのレイヤーを選んで画素を対象にする
     let at = name_of(&h, base);
     click(&mut h, at);
     let at = pixels_thumb(&h).center();
     click(&mut h, at);
-    assert_eq!(h.state().state.selected_layer, Some(layer));
+    assert_eq!(h.selected_layer(), Some(layer));
     assert!(!editing_mask(&h));
 }
 
@@ -229,7 +210,7 @@ fn the_thumbnails_choose_the_pixels_or_the_mask_and_the_name_keeps_the_choice() 
 fn the_mask_thumbnail_menu_adds_to_the_mask_and_switches_the_mask() {
     let mut h = app(1280.0, 1400.0, 128);
     effect_document(&mut h);
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     let at = pixels_thumb(&h).center();
     click(&mut h, at);
     assert!(!editing_mask(&h));
@@ -240,22 +221,14 @@ fn the_mask_thumbnail_menu_adds_to_the_mask_and_switches_the_mask() {
         release(h, at, PointerButton::Secondary);
         h.run();
         assert_eq!(
-            h.state().state.popup.as_ref().map(|p| p.kind),
+            h.popup().as_ref().map(|p| p.kind),
             Some(PopupKind::M2(yolu_app::m2_menu::Popup::MaskContext(layer)))
         );
     };
     open_menu(&mut h);
-    let before = h
-        .state()
-        .state
-        .doc
-        .filters_of(layer, FilterTarget::Mask)
-        .unwrap()
-        .len();
+    let before = h.doc().filters_of(layer, FilterTarget::Mask).unwrap().len();
     let content = h
-        .state()
-        .state
-        .doc
+        .doc()
         .filters_of(layer, FilterTarget::Content)
         .unwrap()
         .len();
@@ -267,19 +240,12 @@ fn the_mask_thumbnail_menu_adds_to_the_mask_and_switches_the_mask() {
     let blur = h.get_by_label("ぼかし（ガウス）").rect();
     click(&mut h, blur.center());
     assert_eq!(
-        h.state()
-            .state
-            .doc
-            .filters_of(layer, FilterTarget::Mask)
-            .unwrap()
-            .len(),
+        h.doc().filters_of(layer, FilterTarget::Mask).unwrap().len(),
         before + 1,
         "レイヤーの画素が対象でも、マスクのメニューはマスクへ足す"
     );
     assert_eq!(
-        h.state()
-            .state
-            .doc
+        h.doc()
             .filters_of(layer, FilterTarget::Content)
             .unwrap()
             .len(),
@@ -289,33 +255,17 @@ fn the_mask_thumbnail_menu_adds_to_the_mask_and_switches_the_mask() {
     open_menu(&mut h);
     let item = popup_item(&h, "反転");
     click(&mut h, item.center());
-    assert!(h
-        .state()
-        .state
-        .doc
-        .layer(layer)
-        .unwrap()
-        .mask()
-        .unwrap()
-        .inverted());
+    assert!(h.doc().layer(layer).unwrap().mask().unwrap().inverted());
     // 取り消すと元へ
     apply(&mut h, Action::Undo);
-    assert!(!h
-        .state()
-        .state
-        .doc
-        .layer(layer)
-        .unwrap()
-        .mask()
-        .unwrap()
-        .inverted());
+    assert!(!h.doc().layer(layer).unwrap().mask().unwrap().inverted());
 }
 
 // ───────── 効果の行は、選んだレイヤーでは対象の側だけ ─────────
 
 /// レイヤーのサムネイルと同じ行の、そのレイヤーのマスクのサムネイル（マスクのあるレイヤーが複数あるときの取り分け）。
 fn mask_thumb_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> Rect {
-    let lang = h.state().state.lang;
+    let lang = h.lang();
     let y = name_of(h, layer).y;
     rect_of(
         h,
@@ -328,7 +278,7 @@ fn mask_thumb_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> 
 }
 
 fn pixels_thumb_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -> Rect {
-    let lang = h.state().state.lang;
+    let lang = h.lang();
     let y = name_of(h, layer).y;
     rect_of(h, lang.pick("レイヤーの画素", "Layer pixels"), |r| {
         (r.center().y - y).abs() < 2.0
@@ -337,10 +287,10 @@ fn pixels_thumb_of(h: &Harness<'_, YoluApp>, layer: yolu_app::engine::LayerId) -
 
 /// 効果の行の名前（一覧に出す文字）。
 fn label_of(h: &Harness<'_, YoluApp>, id: yolu_core::FilterId) -> String {
-    let s = &h.state().state;
-    let (_, effect, target) = s.doc.find_filter(id).expect("効果がある");
-    yolu_app::fx::names::effect_label(s.lang, effect, target, s.m2.paint_channel, |c| {
-        yolu_app::m2::channel_name(s.lang, &s.doc, c)
+    let s = h.app();
+    let (_, effect, target) = s.doc().find_filter(id).expect("効果がある");
+    yolu_app::fx::names::effect_label(s.lang(), effect, target, s.m2().paint_channel, |c| {
+        yolu_app::m2::channel_name(s.lang(), s.doc(), c)
     })
 }
 
@@ -374,9 +324,7 @@ fn ids_of(
     layer: yolu_app::engine::LayerId,
     target: FilterTarget,
 ) -> Vec<yolu_core::FilterId> {
-    h.state()
-        .state
-        .doc
+    h.doc()
         .filters_of(layer, target)
         .unwrap()
         .iter()
@@ -389,7 +337,7 @@ fn ids_of(
 fn both_stacks(
     h: &mut Harness<'_, YoluApp>,
 ) -> (yolu_app::engine::LayerId, yolu_app::engine::LayerId) {
-    let base = h.state().state.selected_layer.unwrap();
+    let base = h.selected_layer().unwrap();
     apply(h, Action::M2(Edit::AddMask(base)));
     fx(
         h,
@@ -406,7 +354,7 @@ fn both_stacks(
         },
     );
     effect_document(h);
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     fx(
         h,
         FxOp::AddFilter {
@@ -471,7 +419,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
         })
     );
     assert!(!editing_mask(&h));
-    assert!(yolu_app::fx::props_visible(&h.state().state));
+    assert!(yolu_app::fx::props_visible(h.app()));
     assert_eq!(shown(&h, &content), [true, true]);
     // マスクへ移ってマスクの効果の行を押すと、選んだ行は残り、マスクが対象のまま（レイヤーの効果の行へ戻らない）
     let at = mask_thumb_of(&h, layer).center();
@@ -481,20 +429,13 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     click(&mut h, at);
     assert_eq!(selected(&h), Some(Selected::Filter { layer, id: mask[0] }));
     assert!(editing_mask(&h));
-    assert!(yolu_app::fx::props_visible(&h.state().state));
+    assert!(yolu_app::fx::props_visible(h.app()));
     assert_eq!(shown(&h, &mask), [true, true]);
     assert_eq!(shown(&h, &content), [false, false]);
     // 目・下へ（先に掛かる）・消す・取り消し: マスクの行でも今までどおり、そのたびにマスクが対象のまま
     let eye = row_button(&h, mask[0], "フィルターを無効にする");
     click(&mut h, eye.center());
-    assert!(!h
-        .state()
-        .state
-        .doc
-        .find_filter(mask[0])
-        .unwrap()
-        .1
-        .enabled());
+    assert!(!h.doc().find_filter(mask[0]).unwrap().1.enabled());
     // 一番下（先に掛かる）のマスクの効果を、上へ（後から掛かる）
     let up = row_button(&h, mask[0], "上へ（後から掛かる）");
     click(&mut h, up.center());
@@ -523,7 +464,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     // 別のレイヤーの名前を押すと、そのレイヤーの画素が対象。前のレイヤー（マスクの効果を選んでいた）の下はレイヤーの効果
     let at = name_of(&h, base);
     click(&mut h, at);
-    assert_eq!(h.state().state.selected_layer, Some(base));
+    assert_eq!(h.selected_layer(), Some(base));
     assert!(!editing_mask(&h));
     assert_eq!(selected(&h), None);
     assert_eq!(shown(&h, &content), [true, true]);
@@ -533,7 +474,7 @@ fn the_effect_rows_show_only_the_target_side_of_the_selected_layer() {
     // 選んでいないレイヤーのマスクのサムネイル: そのレイヤーを選んでマスクが対象（もう一方のレイヤーはレイヤーの効果）
     let at = mask_thumb_of(&h, layer).center();
     click(&mut h, at);
-    assert_eq!(h.state().state.selected_layer, Some(layer));
+    assert_eq!(h.selected_layer(), Some(layer));
     assert_eq!(shown(&h, &mask), [true, true]);
     assert_eq!(shown(&h, &base_content), [true]);
     // マスクの効果の行の右クリックは、その行を選んでマスクが対象のまま
@@ -587,10 +528,10 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
     let (base, layer) = both_stacks(&mut h);
     // マスクはあるが効果の無いレイヤー（印は出ない）
     apply(&mut h, Action::NewLayer);
-    let empty = h.state().state.selected_layer.unwrap();
+    let empty = h.selected_layer().unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(empty)));
     for lang in Lang::ALL {
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         h.run();
         let tip = |n: usize| yolu_app::panels::layers::mask_effects_tip(lang, n);
         let marks = |h: &Harness<'_, YoluApp>, n: usize| -> Vec<Rect> {
@@ -638,7 +579,7 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
         // 印の上を押すと、下のマスクのサムネイルが受けてマスクが対象になる
         click(&mut h, two[0].center());
         assert!(editing_mask(&h), "{lang:?}");
-        assert_eq!(h.state().state.selected_layer, Some(layer));
+        assert_eq!(h.selected_layer(), Some(layer));
         // マスクが対象: そのレイヤーの印は消える（行が出ている）。ほかのレイヤー（レイヤーの効果を出している）の印は残る
         assert!(marks(&h, 2).is_empty(), "{lang:?}");
         assert_eq!(marks(&h, 1).len(), 1, "{lang:?}");
@@ -649,7 +590,7 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
         assert_eq!(marks(&h, 2).len(), 1, "{lang:?}");
     }
     // マスクの効果が無くなれば印は消える
-    let lang = h.state().state.lang;
+    let lang = h.lang();
     let at = pixels_thumb_of(&h, layer).center();
     click(&mut h, at);
     assert_eq!(
@@ -672,13 +613,7 @@ fn a_mark_on_the_mask_thumbnail_tells_that_the_mask_effects_are_hidden() {
 #[test]
 fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
     let order = |h: &Harness<'_, YoluApp>| -> Vec<yolu_app::engine::LayerId> {
-        h.state()
-            .state
-            .doc
-            .layers()
-            .iter()
-            .map(|l| l.id())
-            .collect()
+        h.doc().layers().iter().map(|l| l.id()).collect()
     };
     for mask_side in [false, true] {
         let what = if mask_side {
@@ -692,7 +627,7 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
         let at = name_of(&h, base);
         click(&mut h, at);
         apply(&mut h, Action::NewLayer);
-        let middle = h.state().state.selected_layer.unwrap();
+        let middle = h.selected_layer().unwrap();
         fx(
             &mut h,
             FxOp::AddFilter {
@@ -715,7 +650,7 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
         let from = name_of(&h, layer);
         let to = pos2(from.x, name_of(&h, middle).y + 11.0);
         drag(&mut h, &[from, offset(from, 0.0, 12.0), to]);
-        assert!(h.state().state.ui.layer_drag.is_none(), "{what}");
+        assert!(h.ui().layer_drag.is_none(), "{what}");
         assert_eq!(order(&h), vec![base, layer, middle], "{what}");
         assert_eq!(
             editing_mask(&h),
@@ -746,7 +681,7 @@ fn dragging_a_layer_row_drops_in_the_same_place_whichever_side_is_the_target() {
             !editing_mask(&h),
             "{what}: つかんだレイヤーの画素が対象になる"
         );
-        assert_eq!(h.state().state.selected_layer, Some(middle));
+        assert_eq!(h.selected_layer(), Some(middle));
     }
 }
 
@@ -761,42 +696,33 @@ fn right_click(h: &mut Harness<'_, YoluApp>, at: egui::Pos2) {
 #[test]
 fn a_right_click_on_the_layer_thumbnail_opens_the_layer_menu_like_the_row() {
     let mut h = app(1280.0, 1400.0, 128);
-    let base = h.state().state.selected_layer.unwrap();
+    let base = h.selected_layer().unwrap();
     effect_document(&mut h);
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     assert_ne!(base, layer);
     let layer_menu = PopupKind::LayerContext(layer);
     // 選んでいないレイヤー（下地）を選んだ状態から、マスクのあるレイヤーの本体のサムネイルを右クリック: そのレイヤーを選んでレイヤーのメニュー
     let at = name_of(&h, base);
     click(&mut h, at);
-    assert_eq!(h.state().state.selected_layer, Some(base));
+    assert_eq!(h.selected_layer(), Some(base));
     let at = pixels_thumb(&h).center();
     right_click(&mut h, at);
-    assert_eq!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
-        Some(layer_menu)
-    );
-    assert_eq!(h.state().state.selected_layer, Some(layer));
+    assert_eq!(h.popup().as_ref().map(|p| p.kind), Some(layer_menu));
+    assert_eq!(h.selected_layer(), Some(layer));
     // メニューにはレイヤーのメニューの項目（フィルターを追加 ▸）が並ぶ
     let _ = popup_item(&h, "フィルターを追加");
     // 選んだレイヤーの本体のサムネイルでも同じ（開くだけでマスクの対象は変えない）
-    h.state_mut().state.popup = None;
+    *h.popup_mut() = None;
     h.run();
     let at = pixels_thumb(&h).center();
     right_click(&mut h, at);
-    assert_eq!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
-        Some(layer_menu)
-    );
+    assert_eq!(h.popup().as_ref().map(|p| p.kind), Some(layer_menu));
     // 行の名前の所の右クリックも、今までどおり同じメニュー
-    h.state_mut().state.popup = None;
+    *h.popup_mut() = None;
     h.run();
     let at = name_of(&h, layer);
     right_click(&mut h, at);
-    assert_eq!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
-        Some(layer_menu)
-    );
+    assert_eq!(h.popup().as_ref().map(|p| p.kind), Some(layer_menu));
 }
 
 #[test]
@@ -804,7 +730,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
     for lang in Lang::ALL {
         let suffix = lang.pick("ja", "en");
         let mut h = app(1280.0, 1400.0, 128);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         effect_document(&mut h);
         // マスクの効果を 2 つにする（マスクが対象のときの行が 2 行になる）
         fx(
@@ -818,7 +744,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         // レイヤーの効果の行が並び、効果の付いたマスクのサムネイルの角に印
         let at = pixels_thumb(&h).center();
         click(&mut h, at);
-        h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
+        h.ui_mut().property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
         move_to(&h, pos2(640.0, 500.0));
         h.run();
         let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
@@ -839,7 +765,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         let at = props_button(&h, lang.pick("ジェネレーターを追加", "Add Generator")).center();
         click(&mut h, at);
         assert_eq!(
-            h.state().state.popup.as_ref().map(|p| p.kind),
+            h.popup().as_ref().map(|p| p.kind),
             Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddGenerator(
                 FilterTarget::Content
             )))
@@ -875,7 +801,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
 fn rows_select_toggle_move_and_remove_from_the_panel() {
     let mut h = app(1280.0, 1400.0, 128);
     apply(&mut h, Action::M2(Edit::NewFill));
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     fx(
         &mut h,
         FxOp::AddFilter {
@@ -891,16 +817,14 @@ fn rows_select_toggle_move_and_remove_from_the_panel() {
         },
     );
     let ids: Vec<_> = h
-        .state()
-        .state
-        .doc
+        .doc()
         .filters_of(layer, FilterTarget::Content)
         .unwrap()
         .iter()
         .map(|e| e.id())
         .collect();
     // レイヤーの行を押すと、選んでいた効果は外れる
-    let layer_name = h.state().state.doc.layer(layer).unwrap().name().to_owned();
+    let layer_name = h.doc().layer(layer).unwrap().name().to_owned();
     h.get_by_label(&layer_name).click();
     h.run();
     assert_eq!(selected(&h), None);
@@ -910,20 +834,18 @@ fn rows_select_toggle_move_and_remove_from_the_panel() {
     h.run();
     assert_eq!(selected(&h), Some(Selected::Filter { layer, id: ids[0] }));
     // 上へ（後から掛かる）: ぼかしが 1 つ上の段になる。1 回の Undo
-    let steps = h.state().state.doc.undo_count();
+    let steps = h.doc().undo_count();
     h.get_by_label("上へ（後から掛かる）").click();
     h.run();
     let order: Vec<_> = h
-        .state()
-        .state
-        .doc
+        .doc()
         .filters_of(layer, FilterTarget::Content)
         .unwrap()
         .iter()
         .map(|e| e.id())
         .collect();
     assert_eq!(order, vec![ids[1], ids[0]]);
-    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert_eq!(h.doc().undo_count(), steps + 1);
     // 目で無効にする
     h.get_all_by_label("フィルターを無効にする")
         .next()
@@ -931,16 +853,14 @@ fn rows_select_toggle_move_and_remove_from_the_panel() {
         .click();
     h.run();
     assert!(
-        !h.state().state.doc.find_filter(ids[0]).unwrap().1.enabled(),
+        !h.doc().find_filter(ids[0]).unwrap().1.enabled(),
         "一番上の行（ぼかし）の目で無効になる"
     );
     // 消す
     h.get_by_label("フィルターを削除").click();
     h.run();
     assert_eq!(
-        h.state()
-            .state
-            .doc
+        h.doc()
             .filters_of(layer, FilterTarget::Content)
             .unwrap()
             .len(),
@@ -951,9 +871,7 @@ fn rows_select_toggle_move_and_remove_from_the_panel() {
     key(&h, egui::Key::Z, egui::Modifiers::COMMAND);
     h.run();
     assert_eq!(
-        h.state()
-            .state
-            .doc
+        h.doc()
             .filters_of(layer, FilterTarget::Content)
             .unwrap()
             .len(),
@@ -965,7 +883,7 @@ fn rows_select_toggle_move_and_remove_from_the_panel() {
 fn the_context_menu_of_a_row_acts_on_that_row() {
     let mut h = app(1280.0, 1400.0, 128);
     apply(&mut h, Action::M2(Edit::NewFill));
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     fx(
         &mut h,
         FxOp::AddFilter {
@@ -973,13 +891,7 @@ fn the_context_menu_of_a_row_acts_on_that_row() {
             kind: FilterKind::Blur,
         },
     );
-    let id = h
-        .state()
-        .state
-        .doc
-        .filters_of(layer, FilterTarget::Content)
-        .unwrap()[0]
-        .id();
+    let id = h.doc().filters_of(layer, FilterTarget::Content).unwrap()[0].id();
     fx(&mut h, FxOp::Deselect);
     let at = h.get_by_label("ぼかし（ガウス）  4 px").rect().center();
     press(&h, at, PointerButton::Secondary);
@@ -992,16 +904,14 @@ fn the_context_menu_of_a_row_acts_on_that_row() {
         "右クリックで選ぶ"
     );
     assert!(matches!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
+        h.popup().as_ref().map(|p| p.kind),
         Some(PopupKind::M2(yolu_app::m2_menu::Popup::EffectContext))
     ));
     // 行の消すボタンと同じ名前なので、メニューの項目（幅のある矩形）を選ぶ
     let item = rect_of(&h, "フィルターを削除", |r| r.width() > 80.0);
     click(&mut h, item.center());
     assert!(h
-        .state()
-        .state
-        .doc
+        .doc()
         .filters_of(layer, FilterTarget::Content)
         .unwrap()
         .is_empty());
@@ -1010,17 +920,15 @@ fn the_context_menu_of_a_row_acts_on_that_row() {
 #[test]
 fn a_filter_is_added_from_the_properties_button_and_the_filter_menu() {
     let mut h = app(1280.0, 1400.0, 128);
-    let layer = h.state().state.selected_layer.unwrap();
-    h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
+    let layer = h.selected_layer().unwrap();
+    h.ui_mut().property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1; // レイヤーのタブ（最後）
     h.run();
     let at = props_button(&h, "フィルターを追加").center();
     click(&mut h, at);
     let item = popup_item(&h, "シャープ（アンシャープマスク）");
     click(&mut h, item.center());
     assert_eq!(
-        h.state()
-            .state
-            .doc
+        h.doc()
             .filters_of(layer, FilterTarget::Content)
             .unwrap()
             .len(),
@@ -1030,15 +938,13 @@ fn a_filter_is_added_from_the_properties_button_and_the_filter_menu() {
     let title = menu_title(&h, "フィルター");
     click(&mut h, title.center());
     assert!(matches!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
+        h.popup().as_ref().map(|p| p.kind),
         Some(PopupKind::MenuBar(4))
     ));
     let item = popup_item(&h, "階調の反転");
     click(&mut h, item.center());
     assert_eq!(
-        h.state()
-            .state
-            .doc
+        h.doc()
             .filters_of(layer, FilterTarget::Content)
             .unwrap()
             .len(),
@@ -1049,7 +955,7 @@ fn a_filter_is_added_from_the_properties_button_and_the_filter_menu() {
 #[test]
 fn dragging_a_slider_in_the_effect_panel_is_one_undo_step() {
     let mut h = app(1280.0, 1400.0, 128);
-    let layer = h.state().state.selected_layer.unwrap();
+    let layer = h.selected_layer().unwrap();
     fx(
         &mut h,
         FxOp::AddFilter {
@@ -1057,14 +963,8 @@ fn dragging_a_slider_in_the_effect_panel_is_one_undo_step() {
             kind: FilterKind::Blur,
         },
     );
-    let id = h
-        .state()
-        .state
-        .doc
-        .filters_of(layer, FilterTarget::Content)
-        .unwrap()[0]
-        .id();
-    let steps = h.state().state.doc.undo_count();
+    let id = h.doc().filters_of(layer, FilterTarget::Content).unwrap()[0].id();
+    let steps = h.doc().undo_count();
     let slider = rect_of(&h, "半径", |r| r.left() > rx());
     let y = slider.center().y + 8.0;
     drag(
@@ -1075,18 +975,14 @@ fn dragging_a_slider_in_the_effect_panel_is_one_undo_step() {
             pos2(slider.left() + 120.0, y),
         ],
     );
-    let radius = match h.state().state.doc.find_filter(id).unwrap().1.settings() {
+    let radius = match h.doc().find_filter(id).unwrap().1.settings() {
         yolu_core::EffectSettings::Filter(yolu_core::filter::Settings::GaussianBlur { radius }) => {
             *radius
         }
         other => panic!("{other:?}"),
     };
     assert_ne!(radius, 4, "つまみで半径が変わる");
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        steps + 1,
-        "ドラッグは 1 回の Undo"
-    );
+    assert_eq!(h.doc().undo_count(), steps + 1, "ドラッグは 1 回の Undo");
     let _ = UiOp::EditMask(false);
 }
 
@@ -1109,7 +1005,7 @@ const NEW_FILTERS: [FilterKind; 10] = [
 /// `kind` を描くチャンネル（スカラーだけの種類は Roughness）の画素に足して選んだウィンドウ。
 fn with_new_filter(lang: Lang, kind: FilterKind) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, 1400.0, 128);
-    h.state_mut().state.set_language(lang);
+    h.app_mut().set_language(lang);
     let scalar = matches!(
         kind,
         FilterKind::HistogramScan
@@ -1134,7 +1030,7 @@ fn with_new_filter(lang: Lang, kind: FilterKind) -> Harness<'static, YoluApp> {
 }
 
 fn selected_settings(h: &Harness<'_, YoluApp>) -> yolu_core::EffectSettings {
-    let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
+    let (_, effect, _) = h.fx().filter(h.doc()).unwrap();
     effect.settings().clone()
 }
 
@@ -1172,7 +1068,7 @@ fn the_new_filters_show_every_value_by_name_in_both_languages() {
 #[test]
 fn a_choice_button_and_a_slider_of_a_new_filter_are_one_undo_step_each() {
     let mut h = with_new_filter(Lang::Ja, FilterKind::SlopeBlur);
-    let steps = h.state().state.doc.undo_count();
+    let steps = h.doc().undo_count();
     // 合わせ方のボタン（最大）
     let max = rect_of(&h, "最大", |r| r.left() > rx());
     click(&mut h, max.center());
@@ -1183,7 +1079,7 @@ fn a_choice_button_and_a_slider_of_a_new_filter_are_one_undo_step_each() {
             ..
         })
     ));
-    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert_eq!(h.doc().undo_count(), steps + 1);
     // 長さのスライダーのドラッグは 1 回の取り消し
     let slider = rect_of(&h, "長さ", |r| r.left() > rx());
     let y = slider.center().y + 8.0;
@@ -1203,7 +1099,7 @@ fn a_choice_button_and_a_slider_of_a_new_filter_are_one_undo_step_each() {
         other => panic!("{other:?}"),
     };
     assert_ne!(intensity, 8.0, "つまみで長さが変わる");
-    assert_eq!(h.state().state.doc.undo_count(), steps + 2);
+    assert_eq!(h.doc().undo_count(), steps + 2);
     apply(&mut h, Action::Undo);
     apply(&mut h, Action::Undo);
     assert_eq!(
@@ -1235,7 +1131,7 @@ fn snapshot_three_new_filter_panels() {
 /// 0.5.0 の Generator（模様・ライト・マスクの組み立て）を画素に足して選んだウィンドウ。
 fn with_new_generator(lang: Lang, kind: Kind, height: f32) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, height, 128);
-    h.state_mut().state.set_language(lang);
+    h.app_mut().set_language(lang);
     fx(
         &mut h,
         FxOp::AddGenerator {
@@ -1298,7 +1194,7 @@ fn the_new_generators_show_their_own_values_and_the_common_rows_in_both_language
 #[test]
 fn a_pattern_shape_button_changes_the_generator_in_one_undo_step() {
     let mut h = with_new_generator(Lang::Ja, Kind::Pattern, 1000.0);
-    let steps = h.state().state.doc.undo_count();
+    let steps = h.doc().undo_count();
     let dots = rect_of(&h, "水玉", |r| r.left() > rx());
     click(&mut h, dots.center());
     let shape = selected_settings(&h)
@@ -1307,7 +1203,7 @@ fn a_pattern_shape_button_changes_the_generator_in_one_undo_step() {
         .pattern
         .shape;
     assert_eq!(shape, yolu_core::generator::PatternShape::Dots);
-    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+    assert_eq!(h.doc().undo_count(), steps + 1);
     apply(&mut h, Action::Undo);
     assert_eq!(
         selected_settings(&h)
@@ -1377,18 +1273,18 @@ fn four_plates() -> yolu_app::view3d::model::ViewModel {
 fn snapshot_the_uv_island_variation_panel_and_canvas() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1400.0, 128);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         {
-            let s = &mut h.state_mut().state;
-            let layer = s.selected_layer.unwrap();
+            let s = h.app_mut();
+            let layer = s.selected_layer().unwrap();
             for y in 0..128 {
                 for x in 0..128 {
-                    s.doc
+                    s.doc_mut()
                         .set_pixel(layer, x, y, yolu_core::Rgba8::new(196, 120, 64, 255))
                         .unwrap();
                 }
             }
-            s.view3d.set_model(four_plates());
+            s.view3d_mut().set_model(four_plates());
             s.sync_effect_inputs_with(true);
         }
         fx(
@@ -1413,7 +1309,7 @@ fn snapshot_the_uv_island_variation_panel_and_canvas() {
             },
         );
         assert_eq!(
-            h.state().state.doc.generator_inactive(layer, id).unwrap(),
+            h.doc().generator_inactive(layer, id).unwrap(),
             None,
             "{lang:?}: モデルを読んでいる"
         );
@@ -1454,29 +1350,15 @@ fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese()
     for lang in Lang::ALL {
         for select in 0..3 {
             let mut h = app(1280.0, 1400.0, 128);
-            h.state_mut().state.set_language(lang);
+            h.app_mut().set_language(lang);
             effect_document(&mut h);
-            let layer = h.state().state.selected_layer.unwrap();
-            let stage = h
-                .state()
-                .state
-                .doc
-                .filters_of(layer, FilterTarget::Content)
-                .unwrap()[0]
-                .id();
+            let layer = h.selected_layer().unwrap();
+            let stage = h.doc().filters_of(layer, FilterTarget::Content).unwrap()[0].id();
             match select {
                 0 => {}
                 1 => fx(&mut h, FxOp::SelectFilter { layer, id: stage }),
                 _ => {
-                    let anchor = h
-                        .state()
-                        .state
-                        .doc
-                        .layer(layer)
-                        .unwrap()
-                        .anchor()
-                        .unwrap()
-                        .id();
+                    let anchor = h.doc().layer(layer).unwrap().anchor().unwrap().id();
                     fx(&mut h, FxOp::SelectAnchor(anchor));
                 }
             }
@@ -1508,8 +1390,8 @@ fn the_effect_screens_have_no_instruction_text_and_the_english_one_no_japanese()
 fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localised() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1400.0, 128);
-        h.state_mut().state.set_language(lang);
-        h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
+        h.app_mut().set_language(lang);
+        h.ui_mut().property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
         h.run();
         let at = props_button(&h, lang.pick("フィルターを追加", "Add Filter")).center();
         click(&mut h, at);
@@ -1518,10 +1400,9 @@ fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localis
                 assert!(!has_japanese(&text), "{text:?}");
             }
         }
-        let mut entries =
-            yolu_app::fx::menu::add_filter_entries(&h.state().state, FilterTarget::Content);
+        let mut entries = yolu_app::fx::menu::add_filter_entries(h.app(), FilterTarget::Content);
         entries.extend(yolu_app::fx::menu::add_generator_entries(
-            &h.state().state,
+            h.app(),
             FilterTarget::Content,
         ));
         let names: Vec<String> = yolu_app::ui::menu::leaves(&entries)
@@ -1542,7 +1423,7 @@ fn the_add_menu_in_english_has_no_japanese_and_in_japanese_every_name_is_localis
 fn a_generator_row_without_maps_has_a_mark_whose_tooltip_gives_the_reason() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1400.0, 128);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         effect_document(&mut h);
         let label = format!(
             "{}  {}",
@@ -1581,7 +1462,7 @@ fn reason_tooltips(h: &Harness<'_, YoluApp>, row: Rect, reason: &str) -> Vec<Str
 fn over_the_warning_mark_only_the_mark_tooltip_shows_and_elsewhere_on_the_row_the_row_tooltip() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1000.0, 128);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         effect_document(&mut h);
         let label = format!(
             "{}  {}",
@@ -1612,7 +1493,7 @@ fn over_the_warning_mark_only_the_mark_tooltip_shows_and_elsewhere_on_the_row_th
 }
 
 fn procedural(h: &Harness<'_, YoluApp>) -> yolu_core::generator::Settings {
-    let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
+    let (_, effect, _) = h.fx().filter(h.doc()).unwrap();
     match effect.settings() {
         yolu_core::EffectSettings::Generator(g) => *g.clone(),
         _ => panic!("Generator"),
@@ -1624,7 +1505,7 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
     use yolu_core::generator::{CellOutput, GrungePreset, NoiseBasis};
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1800.0, 32);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         fx(
             &mut h,
             FxOp::AddGenerator {
@@ -1632,11 +1513,11 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
                 kind: Kind::Noise,
             },
         );
-        let steps = h.state().state.doc.undo_count();
+        let steps = h.doc().undo_count();
         h.get_by_label(lang.pick("振り直す", "Reroll")).click();
         h.run();
         assert_ne!(procedural(&h).procedural.seed, 0);
-        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        assert_eq!(h.doc().undo_count(), steps + 1);
         apply(&mut h, Action::Undo);
         assert_eq!(procedural(&h).procedural.seed, 0);
         let slider = rect_of(&h, lang.pick("模様の大きさ", "Pattern Size"), |r| {
@@ -1652,7 +1533,7 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
             ],
         );
         assert_ne!(procedural(&h).procedural.scale, 0.1);
-        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        assert_eq!(h.doc().undo_count(), steps + 1);
         apply(&mut h, Action::Undo);
         assert_eq!(procedural(&h).procedural.scale, 0.1);
         let basis = rect_of(&h, lang.pick("基底: Perlin", "Basis: Perlin"), |r| {
@@ -1685,11 +1566,11 @@ fn procedural_controls_and_presets_are_one_undo_and_bilingual() {
                 kind: Kind::Grunge,
             },
         );
-        let steps = h.state().state.doc.undo_count();
+        let steps = h.doc().undo_count();
         h.get_by_label(lang.pick("布目", "Weave")).click();
         h.run();
         assert_eq!(procedural(&h).procedural.preset, GrungePreset::Weave);
-        assert_eq!(h.state().state.doc.undo_count(), steps + 1);
+        assert_eq!(h.doc().undo_count(), steps + 1);
         apply(&mut h, Action::Undo);
         assert_eq!(procedural(&h).procedural.preset, GrungePreset::Stain);
         if lang == Lang::En {
@@ -1710,15 +1591,15 @@ fn touch_every_procedural_control(h: &mut Harness<'_, YoluApp>, lang: Lang, kind
         steps: usize,
         before: &yolu_core::generator::Settings,
     ) {
-        let state = &h.state().state;
-        assert!(state.message.is_empty(), "{what}: {}", state.message);
+        let state = h.app();
+        assert!(state.message().is_empty(), "{what}: {}", state.message());
         assert_ne!(&procedural(h), before, "{what}: 設定が変わらない");
-        assert_eq!(state.doc.undo_count(), steps + 1, "{what}: 1 回の Undo");
+        assert_eq!(state.doc().undo_count(), steps + 1, "{what}: 1 回の Undo");
     }
     let run =
         |h: &mut Harness<'_, YoluApp>, what: &str, act: &dyn Fn(&mut Harness<'_, YoluApp>)| {
-            h.state_mut().state.message.clear();
-            let (steps, before) = (h.state().state.doc.undo_count(), procedural(h));
+            h.message_mut().clear();
+            let (steps, before) = (h.doc().undo_count(), procedural(h));
             act(h);
             accepted(h, what, steps, &before);
         };
@@ -1845,19 +1726,15 @@ fn touch_every_procedural_control(h: &mut Harness<'_, YoluApp>, lang: Lang, kind
             t("加算", "Add"),
         )
     });
-    let (steps, strength) = (h.state().state.doc.undo_count(), selected_strength(h));
+    let (steps, strength) = (h.doc().undo_count(), selected_strength(h));
     slide(h, t("強さ", "Strength"));
     assert_ne!(selected_strength(h), strength);
-    assert_eq!(h.state().state.doc.undo_count(), steps + 1);
-    assert!(
-        h.state().state.message.is_empty(),
-        "{}",
-        h.state().state.message
-    );
+    assert_eq!(h.doc().undo_count(), steps + 1);
+    assert!(h.message().is_empty(), "{}", h.message());
 }
 
 fn selected_strength(h: &Harness<'_, YoluApp>) -> f64 {
-    let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
+    let (_, effect, _) = h.fx().filter(h.doc()).unwrap();
     effect.strength()
 }
 
@@ -1866,7 +1743,7 @@ fn procedural_panels_have_no_breakup_rows_and_every_visible_control_is_accepted(
     for lang in Lang::ALL {
         for kind in [Kind::Noise, Kind::Grunge] {
             let mut h = app(1280.0, 3200.0, 32);
-            h.state_mut().state.set_language(lang);
+            h.app_mut().set_language(lang);
             fx(
                 &mut h,
                 FxOp::AddGenerator {
@@ -1932,18 +1809,18 @@ fn shape_generator_edit_button_toggles_the_3d_target() {
     let Some(Selected::Filter { layer, id }) = selected(&h) else {
         panic!("選択")
     };
-    let steps = h.state().state.doc.undo_count();
+    let steps = h.doc().undo_count();
     h.get_by_label("3D ビューで編集").click();
     h.run();
-    assert_eq!(h.state().state.fillfx.edit_filter, Some((layer, id)));
+    assert_eq!(h.fillfx().edit_filter, Some((layer, id)));
     assert_eq!(
-        yolu_app::fillfx::gizmo::target(&h.state().state),
+        yolu_app::fillfx::gizmo::target(h.app()),
         Some(yolu_app::fillfx::gizmo::Target::Filter(layer, id))
     );
     h.get_by_label("3D ビューで編集").click();
     h.run();
-    assert_eq!(h.state().state.fillfx.edit_filter, None);
-    assert_eq!(h.state().state.doc.undo_count(), steps);
+    assert_eq!(h.fillfx().edit_filter, None);
+    assert_eq!(h.doc().undo_count(), steps);
 }
 
 #[test]
@@ -1951,7 +1828,7 @@ fn the_shape_row_of_a_generator_tells_each_shape_with_the_same_sentences_as_the_
     use yolu_app::fx::names;
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1800.0, 32);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         apply(&mut h, Action::LoadDemoModel);
         fx(
             &mut h,
@@ -1998,7 +1875,7 @@ fn snapshot_procedural_panels() {
     for lang in Lang::ALL {
         for (kind, name) in [(Kind::Noise, "noise"), (Kind::Grunge, "grunge")] {
             let mut h = app(1280.0, 1800.0, 32);
-            h.state_mut().state.set_language(lang);
+            h.app_mut().set_language(lang);
             fx(
                 &mut h,
                 FxOp::AddGenerator {
@@ -2025,8 +1902,8 @@ fn procedural_fallback_mark_explains_uv_in_both_languages() {
     for lang in Lang::ALL {
         for target in [FilterTarget::Content, FilterTarget::Mask] {
             let mut h = app(1280.0, 1800.0, 32);
-            h.state_mut().state.set_language(lang);
-            let layer = h.state().state.selected_layer.unwrap();
+            h.app_mut().set_language(lang);
+            let layer = h.selected_layer().unwrap();
             if target == FilterTarget::Mask {
                 apply(&mut h, Action::M2(Edit::AddMask(layer)));
             }
@@ -2037,13 +1914,13 @@ fn procedural_fallback_mark_explains_uv_in_both_languages() {
                     kind: Kind::Noise,
                 },
             );
-            let (_, effect, _) = h.state().state.fx.filter(&h.state().state.doc).unwrap();
+            let (_, effect, _) = h.fx().filter(h.doc()).unwrap();
             let label = yolu_app::fx::names::effect_label(
                 lang,
                 effect,
                 target,
-                h.state().state.m2.paint_channel,
-                |c| yolu_app::m2::channel_name(lang, &h.state().state.doc, c),
+                h.m2().paint_channel,
+                |c| yolu_app::m2::channel_name(lang, h.doc(), c),
             );
             let row = h.get_by_label(&label).rect();
             move_to(&h, pos2(row.right() - 74.0, row.center().y));
