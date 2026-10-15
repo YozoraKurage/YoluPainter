@@ -467,11 +467,9 @@ pub struct YoluApp {
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
-    /// 保存していない変更の問い（アプリの中のウィンドウ。聞いている間だけ Some。`discard`）。
-    discard_ask: Option<crate::discard::Ask>,
     /// 問いに「変更を破棄」と答えた（次に閉じる流れを回すとき、もう問わずに閉じる）。
     close_discarded: bool,
-    /// 問いをアプリの中のウィンドウで出すか（実際のウィンドウは `dialogs` と同じ。試験は単独で入れて、問いのウィンドウだけを確かめる）。
+    /// 問いをアプリの中のウィンドウで出すか（実際のウィンドウは `dialogs` と同じ。テストは単独で入れて、問いのウィンドウだけを確かめる）。
     discard_window: bool,
     /// OS の終了を待たせる印（`session_end::set_saving`）に最後に伝えた「保存の間か」。ウィンドウが見えている間は `ui`、隠れている間は `logic` が
     /// 保存の結果を受けるたびに合わせる。
@@ -1011,7 +1009,6 @@ impl YoluApp {
             ops: McpServer::new(),
             dialogs: false,
             closing: false,
-            discard_ask: None,
             close_discarded: false,
             discard_window: false,
             close_answer: None,
@@ -1052,16 +1049,10 @@ impl YoluApp {
         self.close_answer = Some(Box::new(answer));
     }
 
-    /// 試験用: 保存していない変更の問いを、アプリの中のウィンドウで出す（ファイルのウィンドウは開かない）。
+    /// テスト用: 保存していない変更の問いを、アプリの中のウィンドウで出す（ファイルのウィンドウは開かない）。
     #[doc(hidden)]
     pub fn set_discard_window(&mut self, on: bool) {
         self.discard_window = on;
-    }
-
-    /// 保存していない変更の問いが開いているか（試験が読む）。
-    #[doc(hidden)]
-    pub fn discard_ask(&self) -> Option<&crate::discard::Ask> {
-        self.discard_ask.as_ref()
     }
 
     /// 終わると決めたか（保存の途中なら、保存が終わるまで決めない）。
@@ -1111,20 +1102,20 @@ impl YoluApp {
             self.discard_then(crate::discard::AfterDiscard::LinkDiscard);
         }
         // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。ウィンドウを開かない試験では聞かない）
-        if self.discard_ask.is_none() {
+        if self.state.discard_ask.is_none() {
             if let Some(open) = self.state.recovery.take_open_request() {
                 self.discard_then(crate::discard::AfterDiscard::Recovery(open));
             }
         }
         // 最近開いたプロジェクトから開く（ウィンドウは開かない）。保存していない変更は、「開く」と同じ問い
-        if self.discard_ask.is_none() {
+        if self.state.discard_ask.is_none() {
             if let Some(DialogRequest::OpenPath(path)) = self.state.dialog_request.clone() {
                 self.state.dialog_request = None;
                 self.discard_then(crate::discard::AfterDiscard::OpenPath(path));
             }
         }
         // 問いに答えるまで、ファイルの頼みは残しておく（答えのあとの次のフレームで当てる）
-        if !(self.dialogs || self.discard_window) || self.discard_ask.is_some() {
+        if !(self.dialogs || self.discard_window) || self.state.discard_ask.is_some() {
             return;
         }
         match self.state.dialog_request.take() {
@@ -1442,8 +1433,8 @@ impl YoluApp {
             return true;
         }
         // 閉じる頼みは止めて（`close_flow`）、アプリの中のウィンドウで聞く。答えが「変更を破棄」・「終わる」なら、もう一度閉じる流れを回して閉じる
-        if self.discard_ask.is_none() {
-            self.discard_ask = Some(crate::discard::Ask {
+        if self.state.discard_ask.is_none() {
+            self.state.discard_ask = Some(crate::discard::Ask {
                 kind: if self.state.modified {
                     crate::discard::Kind::Changes
                 } else {
@@ -1456,12 +1447,12 @@ impl YoluApp {
         false
     }
 
-    /// 保存していない変更の問いを、アプリの中のウィンドウで出すか（ウィンドウを開かない試験では聞かない）。
+    /// 保存していない変更の問いを、アプリの中のウィンドウで出すか（ウィンドウを開かないテストでは聞かない）。
     fn asks_in_app(&self) -> bool {
         self.dialogs || self.discard_window
     }
 
-    /// 保存していない変更を捨ててよければ `then` を続ける。変更が無い・ウィンドウを開かない試験では、聞かずにすぐ続ける。聞くときは、問いの
+    /// 保存していない変更を捨ててよければ `then` を続ける。変更が無い・ウィンドウを開かないテストでは、聞かずにすぐ続ける。聞くときは、問いの
     /// ウィンドウを出して（`show_discard_ask`）答えを待つ。保存の途中は、保存の結果が出るまで、頼む前の印のまま聞く（保存の頼みは「変更あり」を
     /// 下ろすが、保存が失敗すれば戻る。その変更を黙って捨てない）。問いが開いている間に来た頼みは、重ねずに捨てる（Live Link の頼みは次のフレームで
     /// 聞き直し、ファイルの頼みは問いが閉じるまで残る）。
@@ -1470,10 +1461,10 @@ impl YoluApp {
             self.run_after_discard(then);
             return;
         }
-        if self.discard_ask.is_some() {
+        if self.state.discard_ask.is_some() {
             return;
         }
-        self.discard_ask = Some(crate::discard::Ask {
+        self.state.discard_ask = Some(crate::discard::Ask {
             kind: crate::discard::Kind::Changes,
             text: self
                 .state
@@ -1546,15 +1537,17 @@ impl YoluApp {
 
     /// 保存していない変更の問いのウィンドウ（開いている間、毎フレーム）。答えが出たら、続ける・戻る。
     fn show_discard_ask(&mut self, ctx: &egui::Context) {
-        let Some(ask) = self.discard_ask.as_ref() else {
+        let Some(ask) = self.state.discard_ask.as_ref() else {
             return;
         };
         let Some(choice) = crate::discard::show(ctx, self.state.lang, ask) else {
             return;
         };
-        let Some(ask) = self.discard_ask.take() else {
+        let Some(ask) = self.state.discard_ask.take() else {
             return;
         };
+        // 答えの続きは次のフレームの頼みで当てる（入力が無くても描き直す）
+        ctx.request_repaint();
         match choice {
             crate::discard::Choice::Discard => self.run_after_discard(ask.then),
             crate::discard::Choice::Review | crate::discard::Choice::Cancel => {
@@ -2464,8 +2457,6 @@ impl YoluApp {
         self.state.crash.show(&ctx, self.state.lang);
         // 直前の操作の知らせ（状態の帯の左には出さず、短く出して消える）
         crate::toast::show(&ctx, &mut self.state);
-        // 保存していない変更の問い（開いている間だけ）
-        self.show_discard_ask(&ctx);
         if self.dialogs {
             self.state.crash.execute_request(self.state.lang);
         }
@@ -2484,19 +2475,21 @@ impl YoluApp {
             .map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当てる
-        let asking = self.discard_ask.is_some();
         self.handle_requests();
         self.link_exported();
         self.state.link = self.link.view(&self.state);
         // 「保存して更新」: 保存先を選ぶウィンドウも済んだこのフレームの終わりに、保存の結果を見て入れる
         self.state.update_finish_save();
-        // 終了・ウィンドウを閉じる: 保存していない変更があれば聞く（ウィンドウを開かない試験では聞かない）
+        // 終了・ウィンドウを閉じる: 保存していない変更があれば聞く（ウィンドウを開かないテストでは聞かない）
+        self.close_and_ask(&ctx);
+    }
+
+    /// 閉じる頼みを見て（`close_flow`）、保存していない変更の問いのウィンドウを描く。問いはこのフレームの最後（頼みを当てたあと）に描くので、
+    /// 開いたフレームのうちに見え、答えは次のフレームの頼みから効く。
+    fn close_and_ask(&mut self, ctx: &egui::Context) {
         let close_requested = ctx.input(|i| i.viewport().close_requested());
-        self.close_flow(&ctx, close_requested);
-        // 問いを開いたフレームの次に、問いのウィンドウを描く
-        if !asking && self.discard_ask.is_some() {
-            ctx.request_repaint();
-        }
+        self.close_flow(ctx, close_requested);
+        self.show_discard_ask(ctx);
     }
 
     /// 保存の結果を受けて（フレームの初め）、OS の終了を待たせる印を今の保存の有無に合わせる。ウィンドウが見えている間（`ui`）も隠れている間
@@ -2713,7 +2706,7 @@ impl YoluApp {
         } else if self.state.quit {
             self.close_flow(ctx, false);
             // 問いは見えるウィンドウでしか答えられないので、ウィンドウを出す
-            if self.discard_ask.is_some() {
+            if self.state.discard_ask.is_some() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             }
         }

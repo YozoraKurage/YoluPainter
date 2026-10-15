@@ -838,6 +838,9 @@ pub struct AppState {
     pub rewritten_sets: usize,
     pub reset_layout: bool,
     pub quit: bool,
+    /// 保存していない変更の問い（アプリの中のウィンドウ。聞いている間だけ Some。`discard`）。開いている間は、キーの割り当て・キャンバスの入力を止める
+    /// （`windows::modal_open`）ので、後ろの文書は変わらない。
+    pub discard_ask: Option<crate::discard::Ask>,
     /// テクスチャセット（今のセットの文書は `doc`）。
     pub sets: TextureSets,
     /// 読み込んだモデル（Live Link で受けたもの。3D ビューが読む）。
@@ -1112,6 +1115,7 @@ impl AppState {
             rewritten_sets: 0,
             reset_layout: false,
             quit: false,
+            discard_ask: None,
             sets,
             model: None,
             link: LinkView::default(),
@@ -1179,6 +1183,42 @@ impl AppState {
             .with_reason(what, crate::lang::refusals::saving(self.lang));
         self.refuse(Source::Save, text);
         true
+    }
+
+    /// .ylp を開く（描いている最中は断る）。
+    fn open_project(&mut self, path: PathBuf) {
+        if self.is_stroking() {
+            let text = crate::lang::refusals::during_stroke(self.lang);
+            return self.refuse(Source::Edit, text);
+        }
+        crate::project::open_into(self, &path);
+    }
+
+    /// 最近開いたプロジェクトから開く。ファイルが無ければ開かずに断って一覧から外し、あれば（保存していない変更を聞いてから開くよう）頼みを残す。
+    fn open_recent(&mut self, path: PathBuf) {
+        if self.is_stroking() {
+            let text = crate::lang::refusals::during_stroke(self.lang);
+            return self.refuse(Source::Edit, text);
+        }
+        if self.refuse_while_saving(
+            self.lang
+                .pick("プロジェクトを開けません", "Cannot open a project"),
+        ) {
+            return;
+        }
+        if !path.is_file() {
+            let lang = self.lang;
+            self.recent_projects.remove(&path);
+            self.refuse(
+                crate::notice::Source::Open,
+                lang.with_reason(
+                    crate::project::cannot_open(lang, &path),
+                    crate::lang::refusals::file_missing(lang),
+                ),
+            );
+            return;
+        }
+        self.dialog_request = Some(DialogRequest::OpenPath(path));
     }
 
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
@@ -1652,36 +1692,8 @@ impl AppState {
                 }
                 self.dialog_request = Some(DialogRequest::SaveAs)
             }
-            Action::OpenProject(path) => {
-                if stroking {
-                    return refuse(self);
-                }
-                crate::project::open_into(self, &path);
-            }
-            Action::OpenRecent(path) => {
-                if stroking {
-                    return refuse(self);
-                }
-                if self.refuse_while_saving(
-                    self.lang
-                        .pick("プロジェクトを開けません", "Cannot open a project"),
-                ) {
-                    return;
-                }
-                if !path.is_file() {
-                    let lang = self.lang;
-                    self.recent_projects.remove(&path);
-                    self.refuse(
-                        crate::notice::Source::Open,
-                        lang.with_reason(
-                            crate::project::cannot_open(lang, &path),
-                            crate::lang::refusals::file_missing(lang),
-                        ),
-                    );
-                    return;
-                }
-                self.dialog_request = Some(DialogRequest::OpenPath(path));
-            }
+            Action::OpenProject(path) => self.open_project(path),
+            Action::OpenRecent(path) => self.open_recent(path),
             Action::ClearRecent => self.recent_projects.clear(),
             Action::SaveProject => {
                 if stroking {

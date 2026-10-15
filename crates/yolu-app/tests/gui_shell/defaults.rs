@@ -1,5 +1,5 @@
 //! 初めの設定（既定）の束: プロパティの欄の初めのタブ・スポイトの対象・知らせの位置・保存せずに閉じるときの問い・ブラシサイズの段・最近開いたプロジェクト。
-//! 試験は運転の口（`common::drive::Drive`）を通す。
+//! テストは運転の口（`common::drive::Drive`）を通す。
 use crate::common;
 
 use common::drive::Drive;
@@ -153,7 +153,7 @@ fn a_toast_that_fits_has_no_tooltip_and_the_text_readers_see_the_full_sentence()
     assert_eq!(
         h.message(),
         "新しいプロジェクトを作りました。",
-        "試験が読む口は今のまま"
+        "テストが読む口は今のまま"
     );
     assert_eq!(
         yolu_app::shell::status_text(h.app()),
@@ -194,7 +194,7 @@ fn closing_with_unsaved_changes_asks_with_three_buttons_and_the_first_choice_sta
         h.set_lang(lang);
         h.act(yolu_app::state::Action::Quit);
         h.run();
-        assert!(h.state().discard_ask().is_some(), "{lang:?}: 問いが開く");
+        assert!(h.discard_ask().is_some(), "{lang:?}: 問いが開く");
         assert!(yolu_app::discard::window_rect(&h.ctx).is_some());
         assert!(!h.state().is_closing(), "答えるまで閉じない");
         let [review, discard, cancel] = yolu_app::discard::labels(lang);
@@ -209,7 +209,7 @@ fn closing_with_unsaved_changes_asks_with_three_buttons_and_the_first_choice_sta
             assert_eq!(h.query_all_by_label(label).count(), 1, "{label}");
         }
         // 文は、ボタンに合う文（捨てるかの問いにしない）
-        let text = h.state().discard_ask().unwrap().text.clone();
+        let text = h.discard_ask().as_ref().unwrap().text.clone();
         assert_eq!(
             text,
             lang.pick(
@@ -220,7 +220,7 @@ fn closing_with_unsaved_changes_asks_with_three_buttons_and_the_first_choice_sta
         // Enter は「変更を確認」: 閉じずにアプリへ戻る（変更は残る）
         common::key(&h, egui::Key::Enter, egui::Modifiers::NONE);
         h.run();
-        assert!(h.state().discard_ask().is_none() && !h.state().is_closing());
+        assert!(h.discard_ask().is_none() && !h.state().is_closing());
         assert!(h.modified() && !h.quit());
     }
 }
@@ -233,7 +233,7 @@ fn the_discard_button_closes_and_review_and_cancel_and_escape_do_not() {
     h.run();
     press(&mut h, "変更を破棄");
     assert!(h.state().is_closing(), "変更を破棄で閉じる");
-    assert!(h.state().discard_ask().is_none());
+    assert!(h.discard_ask().is_none());
     // 変更を確認・キャンセル・Esc: 閉じない
     for how in ["変更を確認", "キャンセル", "Esc"] {
         let mut h = modified_app();
@@ -246,15 +246,56 @@ fn the_discard_button_closes_and_review_and_cancel_and_escape_do_not() {
             press(&mut h, how);
         }
         assert!(
-            !h.state().is_closing() && h.state().discard_ask().is_none(),
+            !h.state().is_closing() && h.discard_ask().is_none(),
             "{how}"
         );
         assert!(h.modified(), "{how}: 変更は残る");
         // もう一度閉じると、また聞く
         h.act(yolu_app::state::Action::Quit);
         h.run();
-        assert!(h.state().discard_ask().is_some(), "{how}: もう一度聞く");
+        assert!(h.discard_ask().is_some(), "{how}: もう一度聞く");
     }
+}
+
+#[test]
+fn while_the_question_is_open_undo_save_and_new_keys_do_not_reach_the_document() {
+    use egui::{Key, Modifiers};
+    let mut h = modified_app();
+    let c = common::canvas_rect(&h).center();
+    common::drag(&mut h, &[c, common::offset(c, 10.0, 0.0)]);
+    assert_eq!(common::canvas_pixel(&h, c)[3], 255, "線が引けた");
+    h.act(yolu_app::state::Action::Quit);
+    h.run();
+    assert!(h.discard_ask().is_some());
+    for (key, modifiers) in [
+        (Key::Z, Modifiers::COMMAND),
+        (Key::S, Modifiers::COMMAND),
+        (Key::N, Modifiers::COMMAND),
+        (Key::O, Modifiers::COMMAND),
+    ] {
+        common::key(&h, key, modifiers);
+        h.run();
+        assert!(h.discard_ask().is_some(), "{key:?}: 問いは開いたまま");
+        assert_eq!(
+            common::canvas_pixel(&h, c)[3],
+            255,
+            "{key:?}: 後ろの文書は変わらない"
+        );
+        assert!(h.modified(), "{key:?}");
+        assert!(
+            h.dialog_request().is_none(),
+            "{key:?}: ファイルの頼みも出ない"
+        );
+    }
+    // 答えたあとは、同じキーが文書に届く
+    press(&mut h, "変更を確認");
+    common::key(&h, Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert_eq!(
+        common::canvas_pixel(&h, c)[3],
+        0,
+        "問いが閉じたら元に戻せる"
+    );
 }
 
 #[test]
@@ -264,15 +305,15 @@ fn nothing_is_asked_without_changes_and_the_dialogs_off_form_is_unchanged() {
     h.act(yolu_app::state::Action::Quit);
     h.run();
     assert!(
-        h.state().discard_ask().is_none() && h.state().is_closing(),
+        h.discard_ask().is_none() && h.state().is_closing(),
         "変更が無ければ聞かない"
     );
-    // ウィンドウを開かない試験の形（問いのウィンドウも許さない）は、聞かずに閉じる
+    // ウィンドウを開かないテストの形（問いのウィンドウも許さない）は、聞かずに閉じる
     let mut h = common::app(1000.0, 700.0, 128);
     h.set_modified(true);
     h.act(yolu_app::state::Action::Quit);
     h.run();
-    assert!(h.state().discard_ask().is_none() && h.state().is_closing());
+    assert!(h.discard_ask().is_none() && h.state().is_closing());
 }
 
 #[test]
@@ -298,7 +339,7 @@ fn opening_a_dropped_project_over_unsaved_changes_asks_the_same_three_buttons() 
     // 変更を確認: 開かない（何も言わない）
     let mut h = modified_app();
     drop(&mut h);
-    assert!(h.state().discard_ask().is_some());
+    assert!(h.discard_ask().is_some());
     press(&mut h, "変更を確認");
     assert!(h.message().is_empty(), "開かない: {}", h.message());
     assert!(h.modified());
@@ -318,7 +359,7 @@ fn the_new_project_request_asks_before_the_window_and_only_discard_goes_on() {
     let mut h = modified_app();
     *h.dialog_request_mut() = Some(DialogRequest::New);
     h.run();
-    assert!(h.state().discard_ask().is_some());
+    assert!(h.discard_ask().is_some());
     assert!(
         !h.np().window.is_some(),
         "答えるまで新しいプロジェクトのウィンドウは開かない"
@@ -345,7 +386,7 @@ fn a_question_about_running_jobs_only_has_two_buttons_and_enter_does_not_quit() 
     assert!(h.psd().is_busy() && !h.modified());
     h.act(Action::Quit);
     h.run();
-    let ask = h.state().discard_ask().expect("仕事を取り消すので聞く");
+    let ask = h.discard_ask().as_ref().expect("仕事を取り消すので聞く");
     assert_eq!(ask.kind, yolu_app::discard::Kind::JobsOnly);
     {
         use egui_kittest::kittest::Queryable;
@@ -360,7 +401,7 @@ fn a_question_about_running_jobs_only_has_two_buttons_and_enter_does_not_quit() 
     // Enter は終わらない（キャンセル）
     common::key(&h, egui::Key::Enter, egui::Modifiers::NONE);
     h.run();
-    assert!(h.state().discard_ask().is_none() && !h.state().is_closing() && h.psd().is_busy());
+    assert!(h.discard_ask().is_none() && !h.state().is_closing() && h.psd().is_busy());
     // 終わる: 仕事を取り消して閉じる
     h.act(Action::Quit);
     h.run();
@@ -414,7 +455,7 @@ fn names(entries: &[yolu_app::ui::menu::Entry<yolu_app::state::Action>]) -> Vec<
 }
 
 fn paths(h: &impl Drive) -> Vec<std::path::PathBuf> {
-    h.app().recent_projects.items().to_vec()
+    h.recent_projects().items().to_vec()
 }
 
 #[test]
@@ -452,9 +493,9 @@ fn a_missing_recent_file_is_refused_and_dropped_and_clear_empties_the_list_and_t
     let dir = common::tmp::test_dir("recent-missing");
     let conf = dir.join("recent.conf");
     let mut h = AppState::new(32, 32);
-    h.app_mut().recent_projects = Recent::load(Some(conf.clone()));
+    *h.recent_projects_mut() = Recent::load(Some(conf.clone()));
     let gone = dir.join("gone.ylp");
-    h.app_mut().recent_projects.add(&gone);
+    h.recent_projects_mut().add(&gone);
     assert_eq!(paths(&h), std::slice::from_ref(&gone));
     h.act(Action::OpenRecent(gone.clone()));
     assert!(
@@ -475,9 +516,7 @@ fn a_missing_recent_file_is_refused_and_dropped_and_clear_empties_the_list_and_t
     assert!(h.message().contains("does not exist"), "{}", h.message());
     // 一覧を消す
     for n in 0..3 {
-        h.app_mut()
-            .recent_projects
-            .add(&dir.join(format!("p{n}.ylp")));
+        h.recent_projects_mut().add(&dir.join(format!("p{n}.ylp")));
     }
     h.act(Action::ClearRecent);
     assert!(paths(&h).is_empty());
@@ -491,7 +530,7 @@ fn saving_and_opening_a_project_put_it_first_and_choosing_it_opens_it() {
     let dir = common::tmp::test_dir("recent-open");
     let conf = dir.join("recent.conf");
     let mut h = AppState::new(32, 32);
-    h.app_mut().recent_projects = Recent::load(Some(conf.clone()));
+    *h.recent_projects_mut() = Recent::load(Some(conf.clone()));
     let a = dir.join("a.ylp");
     let b = dir.join("b.ylp");
     // 名前を付けて保存も入れる
@@ -527,7 +566,7 @@ fn the_file_menu_has_a_nested_open_recent_under_open_that_is_off_while_the_list_
         (yolu_app::lang::Lang::En, "Open Recent", "Clear Recent"),
     ] {
         h.set_lang(lang);
-        h.app_mut().recent_projects = Recent::default();
+        *h.recent_projects_mut() = Recent::default();
         let file_menu = yolu_app::shell::menu_entries(h.app(), 0);
         let labels = names(&file_menu);
         let at = labels
@@ -545,8 +584,7 @@ fn the_file_menu_has_a_nested_open_recent_under_open_that_is_off_while_the_list_
         // 12 件足しても 10 件。新しい順・名前はファイル名・ツールチップはフルパス・最後に区切りと一覧を消す
         let dir = std::env::temp_dir();
         for n in 0..12 {
-            h.app_mut()
-                .recent_projects
+            h.recent_projects_mut()
                 .add(&dir.join(format!("menu{n}.ylp")));
         }
         let file_menu = yolu_app::shell::menu_entries(h.app(), 0);
@@ -626,11 +664,10 @@ fn an_unreadable_or_newer_recent_file_starts_empty_and_is_moved_aside_before_it_
 fn a_state_without_a_place_never_touches_the_users_settings_folder() {
     use yolu_app::recent::Recent;
     let mut h = AppState::new(32, 32);
-    assert_eq!(h.app().recent_projects.items().len(), 0);
-    h.app_mut()
-        .recent_projects
+    assert_eq!(h.recent_projects().items().len(), 0);
+    h.recent_projects_mut()
         .add(&std::env::temp_dir().join("only-in-memory.ylp"));
     assert_eq!(paths(&h).len(), 1, "覚えるのは開いている間だけ");
-    // 置き場を持たない一覧は何も書かない（試験の状態の既定）
+    // 置き場を持たない一覧は何も書かない（テストの状態の既定）
     let _ = Recent::default_path();
 }

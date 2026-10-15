@@ -60,7 +60,7 @@ pub enum Choice {
     Cancel,
 }
 
-/// ウィンドウの id（試験が矩形を読む）。
+/// ウィンドウの id（テストが矩形を読む）。
 pub fn window_id() -> Id {
     Id::new("yolu.window.discard")
 }
@@ -165,7 +165,7 @@ pub fn show(ctx: &egui::Context, lang: Lang, ask: &Ask) -> Option<Choice> {
     chosen
 }
 
-/// ウィンドウの最後に描いた矩形（試験が読む）。
+/// ウィンドウの最後に描いた矩形（テストが読む）。
 pub fn window_rect(ctx: &egui::Context) -> Option<Rect> {
     window::last_rect(ctx, window_id())
 }

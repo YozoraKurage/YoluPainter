@@ -26,7 +26,7 @@ fn rect() -> Rect {
 fn state() -> AppState {
     let mut s = AppState::new(64, 64);
     s.set_tool(Tool::Eyedropper);
-    // 初めは全レイヤーを対象。この束の試験は選んだレイヤーから始める
+    // 初めは全レイヤーを対象。この束のテストは選んだレイヤーから始める
     s.act(Action::SubTool(yolu_app::subtool::SubToolAction::Select(
         Tool::Eyedropper,
         yolu_app::subtool::Key::Builtin("layer"),
@@ -312,7 +312,7 @@ fn plate_state(size: u32) -> AppState {
 fn plate_state_of(size: u32, model: ViewModel) -> AppState {
     let mut s = AppState::new(size, size);
     s.set_tool(Tool::Eyedropper);
-    // 初めは全レイヤーを対象。この束の試験は選んだレイヤーから始める
+    // 初めは全レイヤーを対象。この束のテストは選んだレイヤーから始める
     s.act(Action::SubTool(yolu_app::subtool::SubToolAction::Select(
         Tool::Eyedropper,
         yolu_app::subtool::Key::Builtin("layer"),
@@ -621,7 +621,7 @@ fn clicking_with_the_eyedropper_picks_and_the_option_bar_chooses_the_layer_or_al
         put(s, top, Channel::Color, 40, 40, [0, 0, 200, 255]);
         s.set_selected_layer(Some(bottom));
         s.act(Action::SelectTool(Tool::Eyedropper));
-        // 初めは全レイヤーを対象。この試験は選んだレイヤーから始める
+        // 初めは全レイヤーを対象。このテストは選んだレイヤーから始める
         s.act(Action::SubTool(yolu_app::subtool::SubToolAction::Select(
             Tool::Eyedropper,
             yolu_app::subtool::Key::Builtin("layer"),

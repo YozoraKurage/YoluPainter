@@ -446,8 +446,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
             // ファイルのとおりに開いたので、変更は無い
-            state.reset_project_identity(name, shelf);
-            state.recent_projects.add(path);
+            state.reset_to_opened_file(name, shelf, path);
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -640,6 +639,12 @@ impl AppState {
         self.project_name = name;
         self.save_folder = None;
         self.modified = false;
+    }
+
+    /// `reset_project_identity` に加えて、開いた .ylp を最近開いたプロジェクトの先頭へ入れる。
+    fn reset_to_opened_file(&mut self, name: String, shelf: ShelfState, path: &Path) {
+        self.reset_project_identity(name, shelf);
+        self.recent_projects.add(path);
     }
 }
 

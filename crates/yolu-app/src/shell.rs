@@ -91,7 +91,6 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     ]
 }
 
-/// メニューバーの見出しの中身。
 /// ファイルのメニューの「最近開いたプロジェクト」（新しい順に最大 10。項目はファイル名、ツールチップにフルパス。最後に区切りと一覧を消す。
 /// 一覧が空なら押せない）。
 fn recent_entry(app: &AppState, enabled: bool) -> Entry<Action> {
@@ -117,6 +116,16 @@ fn recent_entry(app: &AppState, enabled: bool) -> Entry<Action> {
         .enabled(enabled && !app.recent_projects.is_empty())
 }
 
+/// ファイルのメニューの「復旧…」（保存の間・描いている間は押せない。復旧が無効のときも押せない）。
+fn recovery_entry(app: &AppState, idle: bool) -> Entry<Action> {
+    Entry::item(
+        app.lang.pick("復旧…", "Recovery…"),
+        Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
+    )
+    .enabled(idle && app.recovery.is_enabled())
+}
+
+/// メニューバーの見出しの中身。
 pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     // 項目のキーの文字は、今のモードで効く行から（編集のモードの H は印を隠すので、表示を左右反転に H を添えない）
     let _mode = crate::shortcuts::menu_mode(app.mode);
@@ -135,11 +144,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 why(command_item(l, "file.new_project", Action::NewProjectDialog).enabled(idle)),
                 why(command_item(l, "file.open", Action::OpenProjectDialog).enabled(idle)),
                 why(recent_entry(app, idle)),
-                why(Entry::item(
-                    l.pick("復旧…", "Recovery…"),
-                    Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
-                )
-                .enabled(idle && app.recovery.is_enabled())),
+                why(recovery_entry(app, idle)),
                 Entry::Separator,
                 why(command_item(l, "file.save", Action::SaveProject).enabled(idle)),
                 why(command_item(l, "file.save_as", Action::SaveProjectAsDialog).enabled(idle)),
@@ -830,7 +835,7 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
 }
 
-/// 直前の操作の結果と理由（`message`）。状態の帯の左に、知らせ（`toast`）が短く出して消す。試験が読む口はここ。
+/// 直前の操作の結果と理由（`message`）。状態の帯の左に、知らせ（`toast`）が短く出して消す。テストが読む口はここ。
 pub fn status_text(app: &AppState) -> &str {
     &app.message
 }
@@ -871,7 +876,7 @@ pub fn status_layout(p: &egui::Painter, app: &AppState, r: Rect) -> StatusLayout
     }
 }
 
-/// 状態の帯: 左は、直前の操作の知らせ（`toast`。出ているあいだだけ）。右端に、版とビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。
+/// 状態の帯: 左は、直前の操作の知らせ（`toast`。出ているあいだだけ）。右端に、バージョンとビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。
 /// 実際のウィンドウだけで、測れない値は出さない）。
 pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     let p = ui.painter().clone();

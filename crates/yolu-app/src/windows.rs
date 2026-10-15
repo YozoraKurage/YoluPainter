@@ -269,9 +269,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     app.release_idle_bake_input();
 }
 
-/// 確認のウィンドウや結果のウィンドウが開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal`）。
+/// 確認のウィンドウや結果のウィンドウが開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal` と、保存していない変更の問い）。
 pub fn modal_open(app: &AppState) -> bool {
-    crate::jobs::modal_open(app)
+    app.discard_ask.is_some() || crate::jobs::modal_open(app)
 }
 
 /// 終わる頼みを、保存が終わるまで待たせている（保存を捨てて閉じない）。

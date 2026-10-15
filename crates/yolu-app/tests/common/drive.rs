@@ -520,6 +520,15 @@ pub trait Drive {
     fn temp_tool_mut(&mut self) -> &mut yolu_app::toolkeys::TempTool {
         &mut self.app_mut().temp_tool
     }
+    fn recent_projects(&self) -> &yolu_app::recent::Recent {
+        &self.app().recent_projects
+    }
+    fn recent_projects_mut(&mut self) -> &mut yolu_app::recent::Recent {
+        &mut self.app_mut().recent_projects
+    }
+    fn discard_ask(&self) -> &Option<yolu_app::discard::Ask> {
+        &self.app().discard_ask
+    }
 }
 
 impl Drive for Harness<'_, YoluApp> {
