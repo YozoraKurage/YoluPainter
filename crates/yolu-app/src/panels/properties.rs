@@ -329,7 +329,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let context = context(app);
     let mut top = r.top();
-    let mut tab = app.ui.property_tab.min(TAB_STENCIL.max(TAB_LAYER));
+    let mut tab = if TAB_ORDER.contains(&app.ui.property_tab) {
+        app.ui.property_tab
+    } else {
+        TAB_LAYER
+    };
     if context == Context::Paint {
         let strip = Rect::from_min_size(r.min, vec2(r.width(), t::PROPERTY_TAB_STRIP_HEIGHT));
         let labels = tab_labels(app);
