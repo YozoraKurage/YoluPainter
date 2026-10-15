@@ -238,6 +238,7 @@ impl BrushBuild {
             depth: self.depth,
             scale: self.scale,
             mode: yolu_core::TextureMode::Multiply,
+            angle: 0.0,
         });
         self.brush.effect = match self.effect {
             None | Some("Paint") => BrushEffect::Paint,

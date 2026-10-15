@@ -789,6 +789,7 @@ fn texture(
         depth,
         scale: used_scale,
         mode,
+        angle: 0.0,
     });
     if preset.bool("TxtC") == Some(true) {
         notes.push(Unrepresented::Texture(TextureNote::EachTip));

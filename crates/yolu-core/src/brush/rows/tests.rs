@@ -227,8 +227,13 @@ fn random_case(seed: u64) -> Case {
     };
     // アンチエイリアスの段は最後に引く（前の項目の乱数の列を変えない）
     case.brush.base.anti_alias = r.pick(&AntiAlias::ALL);
-    // 比較暗・筆先の並びの繰り返し方法と反転のしかたも、最後に引く（同じ理由）
+    // 比較暗・質感の回転・筆先の並びの繰り返し方法と反転のしかたも、最後に引く（同じ理由）
     case.brush.tip.darken_overlap = r.chance(0.3);
+    if let Some(t) = case.brush.texture.as_mut() {
+        if r.chance(0.4) {
+            t.angle = r.pick(&[30.0, 90.0, 143.0, -20.0]);
+        }
+    }
     if r.chance(0.25) {
         case.brush.tip.images = ["grain", "dots", "rim"]
             .iter()

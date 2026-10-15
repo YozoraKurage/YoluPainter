@@ -376,6 +376,10 @@ pub enum SutMapped {
     TipFlip,
     /// ブラシ先端同士の比較暗の合成。
     TipDarken,
+    /// 質感の回転。
+    TextureRotation,
+    /// 質感の明るさ・コントラスト（取り込みのとき画像へ焼き込む。元に戻せない）。
+    TextureTone,
 }
 
 impl SutMapped {
@@ -400,6 +404,11 @@ impl SutMapped {
             Self::TipOrder => ("筆先の繰り返し方法", "tip repeat method"),
             Self::TipFlip => ("筆先の反転", "tip flip"),
             Self::TipDarken => ("先端同士の比較暗", "darken between tips"),
+            Self::TextureRotation => ("質感の回転", "texture rotation"),
+            Self::TextureTone => (
+                "質感の明るさ・コントラスト",
+                "texture brightness and contrast",
+            ),
         }
     }
 }
@@ -427,6 +436,10 @@ pub enum SutNote {
     TextureMissing,
     /// 質感の素材を名前で決められず、素材の並びで当てた（別の画像かもしれない）。
     TextureGuessed,
+    /// 質感の明るさ・コントラストを、一般的な式で画像へ焼き込んだ（CLIP STUDIO の式は公開の説明に無く、同じ結果になるか確かめていない）。
+    TextureToneApprox,
+    /// 質感の回転・明るさ・コントラストは、取り込みのとき写す（[`SutMapped::TextureRotation`]・[`SutMapped::TextureTone`]）ので、今の取り込みは
+    /// この 3 つを出さない。前のバージョンが書いたブラシのファイルの印を読むために残す。
     TextureRotation,
     TextureBrightness,
     TextureContrast,
@@ -518,6 +531,10 @@ impl SutNote {
             Self::TipOrderApprox => (
                 "筆先の繰り返し方法（折り返し・ランダムに一巡）は近い動きで写した".into(),
                 "The tip repeat method (Reverse, One random cycle) is carried over with a close behavior.".into(),
+            ),
+            Self::TextureToneApprox => (
+                "質感の明るさ・コントラストは一般的な式で画像へ焼き込んだ（近い動き。元に戻せない）".into(),
+                "Texture brightness and contrast are baked into the image with a common formula (a close behavior; it cannot be undone).".into(),
             ),
             Self::TipFlip => (
                 "筆先の反転が知らない値なので、反転しない".into(),

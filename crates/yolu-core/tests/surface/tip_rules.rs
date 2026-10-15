@@ -1,11 +1,13 @@
-//! 筆先の繰り返し方法・反転のしかた・ダブの重なりの比較暗の 3D: カメラに正面を向けた平らな四角（UV が文書の全体）で、2D と同じ
+//! 筆先の繰り返し方法・反転のしかた・ダブの重なりの比較暗・質感の回転の 3D: カメラに正面を向けた平らな四角（UV が文書の全体）で、2D と同じ
 //! 設定・同じ点の列を描く。筆先の選びと反転は 2D と同じ関数が決める（同じ種なら同じ並び）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use std::sync::Arc;
 
 use yolu_core::geometry::{SurfaceStroke, SurfaceStrokeOptions};
 use yolu_core::glam::Vec2;
-use yolu_core::{Brush, BrushSettings, BrushTip, FlipRule, PressureSwitches, Rgba8, TipSelection};
+use yolu_core::{
+    Brush, BrushSettings, BrushTip, FlipRule, PaperTexture, PressureSwitches, Rgba8, TipSelection,
+};
 
 use crate::anti_alias::{bytes, document, front, quad, screen, W};
 
@@ -221,4 +223,38 @@ fn overlapping_dabs_do_not_add_up_when_they_keep_the_darker_value() {
     let max = |a: &[u8]| *a.iter().max().unwrap();
     assert!(max(&added) > 200, "{}", max(&added));
     assert!(max(&darker) <= 78 && max(&darker) >= 76, "{}", max(&darker));
+}
+
+#[test]
+fn a_turned_texture_runs_its_ramp_along_the_turned_axis_on_the_surface() {
+    let ramp = || {
+        let alpha: Vec<u8> = (0..16 * 16).map(|i| (i % 16) as u8 * 16).collect();
+        Arc::new(BrushTip::new("ramp", 16, 16, alpha).unwrap())
+    };
+    let paint = |angle: f64| {
+        let mut b = base(0.1);
+        b.base.radius = 14.0;
+        let mut t = PaperTexture::new(ramp(), 1.0);
+        t.angle = angle;
+        b.texture = Some(t);
+        draw(&b, &[(20.0, 32.0), (76.0, 32.0)])
+    };
+    let w = W as usize;
+    // 面の画素の並びは行・列の向きが上下逆でも、ランプの向きは行（列）の増える向きに対して決まる: 0° は x へ、90° は行の向きへ
+    let at = |a: &[u8], x: usize, y: usize| a[y * w + x];
+    let flat = paint(0.0);
+    let row = busiest_row(&flat);
+    assert!(
+        at(&flat, 54, row) > at(&flat, 51, row),
+        "0°: x の増える向きへ増える"
+    );
+    let turned = paint(90.0);
+    let (up, down) = (row - 4, row + 4);
+    // 90°: 質感は y（世界の y。面の画素の行とは逆向きかもしれない）に沿って増える。0° の x に沿った増え方とは違う
+    assert_eq!(
+        at(&turned, 50, row),
+        at(&turned, 54, row),
+        "90°: x に沿っては変わらない"
+    );
+    assert_ne!(at(&turned, 50, up), at(&turned, 50, down));
 }

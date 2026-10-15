@@ -6,7 +6,7 @@
 //! バイト単位で同じストロークになる。
 //! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]。ダブごとのしかたは [`FlipRule`]）、筆先の繰り返し方法の折り返し・
 //! 繰り返さない・一巡のみ・ランダムに一巡（[`TipSelection`]）、ダブの重なりの比較暗（[`TipShape::darken_overlap`]）、紙の質感のモード（[`TextureMode`] の
-//! 乗算以外）。どれも既定では C# と同じ。
+//! 乗算以外）と回転（[`PaperTexture::angle`]）。どれも既定では C# と同じ。
 
 use crate::Reason;
 use std::sync::Arc;
@@ -209,6 +209,8 @@ pub struct PaperTexture {
     /// 質感の 1 画素あたりのキャンバスの画素（2 = 2 倍に大きく。0.05〜64）。
     pub scale: f64,
     pub mode: TextureMode,
+    /// 質感の回転（度、反時計回り。キャンバスの Y は上向き。0 = 回さない）。回した向きでも継ぎ目なく並ぶよう、画像は回さず、読む位置を回す。
+    pub angle: f64,
 }
 
 impl TextureMode {
@@ -239,6 +241,19 @@ impl TextureMode {
 }
 
 impl PaperTexture {
+    /// キャンバスの座標 (x, y)（画素の中心は i + 0.5）の質感（0〜1）。角度の分だけ回して、並べた画像を読む（f64。行の核の 1 画素ずつの
+    /// 式とは丸めが違うので、対称の写しの画素ごとの式だけが使う）。
+    pub(crate) fn grain_at(&self, x: f64, y: f64) -> f64 {
+        if self.angle == 0.0 {
+            return self.image.sample_tiled(x / self.scale, y / self.scale);
+        }
+        let (sin, cos) = (self.angle * std::f64::consts::PI / 180.0).sin_cos();
+        self.image.sample_tiled(
+            (cos * x + sin * y) / self.scale,
+            (cos * y - sin * x) / self.scale,
+        )
+    }
+
     /// 乗算・大きさ 1 の質感。
     pub fn new(image: Arc<BrushTip>, depth: f64) -> PaperTexture {
         PaperTexture {
@@ -246,6 +261,7 @@ impl PaperTexture {
             depth,
             scale: 1.0,
             mode: TextureMode::Multiply,
+            angle: 0.0,
         }
     }
 }
@@ -526,6 +542,7 @@ impl Brush {
         if let Some(tex) = &self.texture {
             require_finite(tex.depth, Reason::TextureDepth)?;
             require_finite(tex.scale, Reason::TextureScale)?;
+            require_finite(tex.angle, Reason::TextureAngle)?;
             if !(0.0..=1.0).contains(&tex.depth) {
                 return Err(CoreError::InvalidArgument(Reason::TextureDepthRange));
             }

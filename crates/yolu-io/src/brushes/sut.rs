@@ -35,7 +35,7 @@ use yolu_core::{
 
 use super::error::{BrushImportError, Fault};
 use super::notes::{Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented};
-use super::png_tip;
+use super::png_tip::{self, Tone};
 use super::reader::Budget;
 use super::{short_text, ImportedBrush, ImportedSet, SkipReason, SkippedBrush};
 use blob::{parse_effector, parse_refs, Effector, Refs};
@@ -791,7 +791,7 @@ struct Library<'a> {
     /// 素材の C2F を読む仕事の残り（全部の素材で共有）。
     c2f_work: c2f::Work,
     tips: HashMap<usize, Option<Arc<BrushTip>>>,
-    textures: HashMap<(usize, bool), Option<Arc<BrushTip>>>,
+    textures: HashMap<(usize, bool, Tone), Option<Arc<BrushTip>>>,
     /// 画像を取り出せなかった素材（使おうとしたもの）。
     unreadable: HashSet<usize>,
 }
@@ -846,22 +846,23 @@ impl<'a> Library<'a> {
         Ok(tip.map(|t| (t, self.preview(index))))
     }
 
-    /// 素材の画像を質感（白が塗れる）にする。
+    /// 素材の画像を質感（白が塗れる）にする。`tone` は明るさ・コントラストの補正（画像へ焼き込む）。
     fn texture(
         &mut self,
         index: usize,
         name: &str,
         invert: bool,
+        tone: Tone,
         budget: &mut Budget,
     ) -> Result<Option<(Arc<BrushTip>, bool)>, Fault> {
-        if let Some(done) = self.textures.get(&(index, invert)) {
+        if let Some(done) = self.textures.get(&(index, invert, tone)) {
             return Ok(done.clone().map(|t| (t, self.preview(index))));
         }
         let png = self.materials()?.0[index]
             .image
             .as_ref()
             .map(|i| i.png.clone());
-        let tip = match png.map(|png| png_tip::read_png_texture(&png, name, invert)) {
+        let tip = match png.map(|png| png_tip::read_png_texture(&png, name, invert, tone)) {
             Some(Ok(tip)) => {
                 budget.take(tip.width() as u64 * tip.height() as u64)?;
                 Some(Arc::new(tip))
@@ -871,7 +872,7 @@ impl<'a> Library<'a> {
                 None
             }
         };
-        self.textures.insert((index, invert), tip.clone());
+        self.textures.insert((index, invert, tone), tip.clone());
         Ok(tip.map(|t| (t, self.preview(index))))
     }
 
@@ -1008,9 +1009,10 @@ fn texture(
         }
     };
     let invert = row.on(TEXTURE_REVERSE);
+    let tone = texture_tone(row);
     let found = match pick {
         Some((index, by_order)) => library
-            .texture(index, &format!("{name} texture"), invert, budget)?
+            .texture(index, &format!("{name} texture"), invert, tone, budget)?
             .map(|(image, preview)| (image, preview, by_order)),
         None => None,
     };
@@ -1040,27 +1042,46 @@ fn texture(
             yolu_core::TextureMode::Multiply
         }),
     };
+    // 回転は度（反時計回りは未確認。0 は回さない）。画像は回さず、読む位置を回す
+    let angle = row
+        .first_number(TEXTURE_ROTATE)
+        .filter(|v| v.is_finite() && *v != 0.0)
+        .map_or(0.0, |v| v.rem_euclid(360.0));
     brush.texture = Some(PaperTexture {
         image,
         depth,
         scale,
         mode,
+        angle,
     });
     mapped.push(SutMapped::Texture);
+    if angle != 0.0 {
+        mapped.push(SutMapped::TextureRotation);
+    }
+    if !tone.is_none() {
+        mapped.push(SutMapped::TextureTone);
+        notes.push(Unrepresented::ClipStudio(SutNote::TextureToneApprox));
+    }
     if preview && !notes.contains(&Unrepresented::ClipStudio(SutNote::PreviewImage)) {
         notes.push(Unrepresented::ClipStudio(SutNote::PreviewImage));
     }
-    for (columns, note) in [
-        (TEXTURE_ROTATE, SutNote::TextureRotation),
-        (TEXTURE_BRIGHTNESS, SutNote::TextureBrightness),
-        (TEXTURE_CONTRAST, SutNote::TextureContrast),
-        (TEXTURE_EACH_TIP, SutNote::TextureEachTip),
-    ] {
-        if row.on(columns) {
-            notes.push(Unrepresented::ClipStudio(note));
-        }
+    if row.on(TEXTURE_EACH_TIP) {
+        notes.push(Unrepresented::ClipStudio(SutNote::TextureEachTip));
     }
     Ok(())
+}
+
+/// 質感の明るさ・コントラスト（どちらも -100〜100 の整数に収める）。両方 0（か列が無い）なら補正なし。
+fn texture_tone(row: &Row) -> Tone {
+    let value = |names: &[&str]| {
+        row.first_number(names)
+            .filter(|v| v.is_finite())
+            .map_or(0, |v| v.round().clamp(-100.0, 100.0) as i32)
+    };
+    Tone {
+        brightness: value(TEXTURE_BRIGHTNESS),
+        contrast: value(TEXTURE_CONTRAST),
+    }
 }
 
 /// 繰り返し方法（`BrushPatternOrderType`）の値から、エンジンの選び方と、近い動きか。知らない値は None。

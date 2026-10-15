@@ -10,8 +10,8 @@
 //! （`pressure_size` などの切り替え・`controls.tilt_*`・`controls.speed_size` など・`controls.pressure_hardness`・`pressure.*`・
 //! `mix.<項目>.pressure`・`.min`・`.curve`）は書かない（読むときも、版 7 にあれば知らない項目として断る）。ほかの版 2〜6 の項目は、その鍵のまま書く。
 //! 版 1〜6 で書けるブラシは、今までと同じ鍵・同じバイトで書く。
-//! 版 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗）
-//! を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`。影響元は版 7 と
+//! 版 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗、
+//! 質感の回転）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`。影響元は版 7 と
 //! 同じ鍵で書く）。使わないブラシは版 1〜7 のままで、今までと同じバイト。版 7 までのファイルに版 8 の鍵や値があれば、知らない項目として断る。
 //! 版 2〜8 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
@@ -61,8 +61,8 @@ pub const HEADER_V6: &str = "yolupainter-brush 6";
 /// 版 1〜6 のままで、今までと同じバイト。版 6 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V7: &str = "yolupainter-brush 7";
 /// 版 7 までの項目で書けない物を使うブラシの版。版 8 は版 7 の書き方（影響元は `influence.<項目>.<入力>.…`）に、入り抜きを掛ける項目と
-/// 最小値（`assist.taper.<項目>`。既定の大きさだけ・最小値 0 でないとき）と、筆先の繰り返し方法・反転のしかた・先端同士の比較暗を足す。
-/// 使わないブラシは版 1〜7 のままで、今までと同じバイト。版 7 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで
+/// 最小値（`assist.taper.<項目>`。既定の大きさだけ・最小値 0 でないとき）と、筆先の繰り返し方法・反転のしかた・先端同士の比較暗・質感の回転を
+/// 足す。使わないブラシは版 1〜7 のままで、今までと同じバイト。版 7 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで
 /// 読み飛ばす。版 8 の鍵が版 7 までのファイルにあれば、知らない項目として断る。
 pub const HEADER_V8: &str = "yolupainter-brush 8";
 const EXTENSION: &str = "ylbrush";
@@ -465,6 +465,9 @@ fn write_texture_and_dual(w: &mut Writer, pending: &mut Pending, b: &Brush) {
         w.line("texture.depth", tex.depth);
         w.line("texture.scale", tex.scale);
         w.line("texture.mode", mode_id(tex.mode));
+        if tex.angle != 0.0 {
+            w.line("texture.angle", tex.angle);
+        }
     }
     if let Some(d) = &b.dual {
         w.line("dual", 1);
@@ -716,13 +719,14 @@ fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
     assist.is_some_and(|a| !a.taper_targets.is_default()) || uses_tip_rules(b)
 }
 
-/// 筆先の繰り返し方法（版 1〜7 が書ける乱数・順だけでない）・反転のしかた・先端同士の比較暗を使うか。
+/// 筆先の繰り返し方法（版 1〜7 が書ける乱数・順だけでない）・反転のしかた・先端同士の比較暗・質感の回転を使うか。
 fn uses_tip_rules(b: &Brush) -> bool {
     let t = &b.tip;
     !matches!(t.selection, TipSelection::Random | TipSelection::Sequential)
         || t.flip_x_rule != FlipRule::Fixed
         || t.flip_y_rule != FlipRule::Fixed
         || t.darken_overlap
+        || b.texture.as_ref().is_some_and(|tex| tex.angle != 0.0)
 }
 
 /// 筆先の繰り返し方法のファイルに書く名前（`random`・`sequential` は版 1〜7 の値）。
@@ -869,7 +873,7 @@ pub fn decode_user(
     let legacy = version <= 6;
     read_base(&mut r, &mut b, version)?;
     read_tip_and_jitter(&mut r, &mut b, version, load)?;
-    read_texture_and_dual(&mut r, &mut b, load)?;
+    read_texture_and_dual(&mut r, &mut b, version, load)?;
     read_color_and_controls(&mut r, &mut b, version)?;
     // 筆圧の応えは版 2〜6 の項目（版 1・7 のファイルにあれば、知らない項目として断る）
     if (2..=6).contains(&version) {
@@ -1017,12 +1021,17 @@ fn read_tip_and_jitter(
 fn read_texture_and_dual(
     r: &mut Reader,
     b: &mut Brush,
+    version: u32,
     load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
 ) -> Result<(), StoreError> {
     if let Some(image) = r.tip("texture", load)? {
         let mut texture = PaperTexture::new(image, 0.5);
         texture.depth = r.float("texture.depth", texture.depth)?;
         texture.scale = r.float("texture.scale", texture.scale)?;
+        // 質感の回転は版 8 の項目（版 7 までのファイルにあれば、知らない項目として断る）
+        if version >= 8 {
+            texture.angle = r.float("texture.angle", texture.angle)?;
+        }
         if let Some(mode) = r.take("texture.mode") {
             texture.mode =
                 texture_mode(&mode).ok_or(StoreError::BadValue("texture.mode".into()))?;
@@ -2464,6 +2473,11 @@ mod tests {
         let mut b = Brush::default();
         b.tip.darken_overlap = true;
         out.push(("darken", b));
+        let mut b = Brush::default();
+        let mut t = PaperTexture::new(grain(), 0.5);
+        t.angle = 143.0;
+        b.texture = Some(t);
+        out.push(("texture angle", b));
         out
     }
 
@@ -2492,7 +2506,7 @@ mod tests {
         old.texture = Some(PaperTexture::new(builtin_tip("grain").unwrap(), 0.5));
         let t = text(&user(1, old.clone()));
         assert!(t.starts_with("yolupainter-brush 1\n"), "{t}");
-        for key in ["flip_x_rule", "flip_y_rule", "darken"] {
+        for key in ["flip_x_rule", "flip_y_rule", "darken", "texture.angle"] {
             assert!(!t.contains(key), "{key}");
         }
         assert_eq!(

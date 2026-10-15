@@ -65,7 +65,7 @@
 版 7 までの項目で書けないものを使うブラシだけは 1 行目を `yolupainter-brush 8` にします（版 7 と同じ影響元の鍵に加えて書きます）。今は次の 2 つで、どちらも使わないブラシは今までと同じ版・同じバイトです。版 7 までのファイルにこれらの鍵があれば、知らない項目として断ります。
 
 - 入り抜きを掛ける項目が既定（大きさだけ・最小値 0）でない入り抜きを持つブラシ: `assist.taper.<項目>`（項目は影響元と同じ 8 つ。掛けない項目は `off`、掛ける項目は最小値 0〜1）を 8 行とも書きます。
-- 筆先の繰り返し方法の `pingpong`・`hold`・`once`・`shuffle`、筆先の反転の `random`・`fold`、先端同士の比較暗を使うブラシ: `tip.selection` の新しい値・`tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken=1` を書きます。
+- 筆先の繰り返し方法の `pingpong`・`hold`・`once`・`shuffle`、筆先の反転の `random`・`fold`、先端同士の比較暗、質感の回転を使うブラシ: `tip.selection` の新しい値・`tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken=1`・`texture.angle`（度）を書きます。
 
 ```
 yolupainter-brush 3

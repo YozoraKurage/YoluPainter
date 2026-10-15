@@ -254,6 +254,7 @@ fn put_texture_image(
             depth: prefs.depth,
             scale: prefs.scale,
             mode: prefs.mode,
+            angle: 0.0,
         },
     });
 }

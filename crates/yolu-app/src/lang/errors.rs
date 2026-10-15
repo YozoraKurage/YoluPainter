@@ -611,6 +611,7 @@ fn core_reason(reason: Reason) -> &'static str {
         Reason::Scatter => "scatter",
         Reason::Count => "count",
         Reason::TextureDepth => "texture depth",
+        Reason::TextureAngle => "texture angle",
         Reason::TextureScale => "texture scale",
         Reason::TextureDepthRange => "Texture depth (0–1)",
         Reason::TextureScaleRange => "Texture scale (0.05–64)",

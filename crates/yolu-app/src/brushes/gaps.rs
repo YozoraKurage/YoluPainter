@@ -301,6 +301,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::TipMissing | SutNote::TipGuessed | SutNote::ProprietaryImage => Gap::TipImage,
             SutNote::TipOrder | SutNote::TipOrderApprox => Gap::TipOrder,
             SutNote::TipFlip => Gap::TipFlip,
+            SutNote::TextureToneApprox => Gap::TextureBrightness,
             SutNote::TextureMissing | SutNote::TextureGuessed => Gap::TexturePattern,
             SutNote::TextureRotation => Gap::TextureRotation,
             SutNote::TextureBrightness => Gap::TextureBrightness,
@@ -339,7 +340,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 18] = [
+pub const MAPPED_ALL: [SutMapped; 20] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -358,6 +359,8 @@ pub const MAPPED_ALL: [SutMapped; 18] = [
     SutMapped::TipOrder,
     SutMapped::TipFlip,
     SutMapped::TipDarken,
+    SutMapped::TextureRotation,
+    SutMapped::TextureTone,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -381,6 +384,8 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::TipOrder => "tip-order",
         SutMapped::TipFlip => "tip-flip",
         SutMapped::TipDarken => "tip-darken",
+        SutMapped::TextureRotation => "texture-rotation",
+        SutMapped::TextureTone => "texture-tone",
     }
 }
 

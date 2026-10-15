@@ -1,11 +1,13 @@
-//! 筆先の繰り返し方法（`TipSelection` の 6 種）・反転のしかた（`FlipRule`）・ダブの重なりの比較暗（`TipShape::darken_overlap`）の 2D。筆先は 3 枚（全部・左半分・右半分）で、間隔を広くして重ならないダブの並びを見る。今までの設定（繰り返し方法が
-//! 乱数か順、反転が固定、重ねが足す）は、新しい乱数の列を引かないので、同じバイトのまま。
+//! 筆先の繰り返し方法（`TipSelection` の 6 種）・反転のしかた（`FlipRule`）・ダブの重なりの比較暗（`TipShape::darken_overlap`）・質感の回転
+//! （`PaperTexture::angle`）の 2D。筆先は 3 枚（全部・左半分・右半分）で、間隔を広くして重ならないダブの並びを見る。今までの設定（繰り返し方法が
+//! 乱数か順、反転が固定、重ねが足す、回転 0）は、新しい乱数の列を引かないので、同じバイトのまま。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use std::sync::Arc;
 
 use yolu_core::glam::DVec2;
 use yolu_core::{
-    Brush, BrushSettings, BrushTip, Channel, Document, FlipRule, LayerId, Rgba8, TipSelection,
+    Brush, BrushSettings, BrushTip, Channel, Document, FlipRule, LayerId, PaperTexture, Rgba8,
+    TipSelection,
 };
 
 const W: u32 = 160;
@@ -365,4 +367,84 @@ fn without_darken_the_overlap_still_builds_up_by_the_old_formula() {
     let d = overlapping(0.5, false, (1.0, 1.0));
     assert_eq!(alpha(&d, 44.0, Y), 191);
     assert!((127..=128).contains(&alpha(&d, 33.0, Y)));
+}
+
+/// 横に 0 → 240 と増えていく 16 × 16 の質感（x の番号 × 16）。
+fn ramp() -> Arc<BrushTip> {
+    let alpha: Vec<u8> = (0..16 * 16).map(|i| (i % 16) as u8 * 16).collect();
+    Arc::new(BrushTip::new("ramp", 16, 16, alpha).unwrap())
+}
+
+/// 周期 16 でなめらかに繰り返す質感（継ぎ目で値が飛ばない）。
+fn waves() -> Arc<BrushTip> {
+    let alpha: Vec<u8> = (0..16 * 16)
+        .map(|i| {
+            let (x, y) = ((i % 16) as f64, (i / 16) as f64);
+            let t = std::f64::consts::TAU / 16.0;
+            (128.0 + 100.0 * (x * t).sin() * (y * t).cos()) as u8
+        })
+        .collect();
+    Arc::new(BrushTip::new("waves", 16, 16, alpha).unwrap())
+}
+
+fn textured(image: Arc<BrushTip>, angle: f64) -> Document {
+    let mut b = base(0.1);
+    b.base.radius = 14.0;
+    let mut t = PaperTexture::new(image, 1.0);
+    t.angle = angle;
+    b.texture = Some(t);
+    stroke(&b, (30.0, Y), (130.0, Y))
+}
+
+#[test]
+fn a_turned_texture_runs_its_ramp_along_the_turned_axis() {
+    // 横に増える質感を反時計回りに回す: 0° は右へ、90° は上へ（y が大きい側へ）、180° は左へ、-90° は下へ増える。
+    // 周期 16 の 1 周の中（継ぎ目をまたがない 2 点）で比べる
+    let at = |angle: f64, x: f64, y: f64| alpha(&textured(ramp(), angle), x, y);
+    assert!(at(0.0, 68.0, Y) > at(0.0, 65.0, Y), "0°: 右へ増える");
+    assert!(at(180.0, 68.0, Y) < at(180.0, 65.0, Y), "180°: 左へ増える");
+    // y 方向: x = 64 の列で、y = 18..24 は質感の 2..8 番目（90°）。-90° は逆向き（16 - y の側）
+    assert!(
+        at(90.0, 64.0, 22.0) > at(90.0, 64.0, 18.0),
+        "90°: 上へ増える"
+    );
+    assert!(
+        at(-90.0, 64.0, 22.0) < at(-90.0, 64.0, 18.0),
+        "-90°: 下へ増える"
+    );
+    // 0° の絵は y によらない（縦じまの向きのまま）
+    let plain = textured(ramp(), 0.0);
+    assert_eq!(alpha(&plain, 64.0, 18.0), alpha(&plain, 64.0, 22.0));
+}
+
+#[test]
+fn a_turned_texture_has_no_seam_where_the_tiles_meet() {
+    // 継ぎ目なく繰り返す質感は、どの角度でも隣の画素との差が滑らかな変化の範囲に収まる（回した画像が並ぶのでなく、読む位置を回す）
+    let step = |angle: f64| -> u8 {
+        let b = bytes(&textured(waves(), angle));
+        let row =
+            |y: usize| -> Vec<u8> { (40..120).map(|x| b[(y * W as usize + x) * 4 + 3]).collect() };
+        (14..19)
+            .flat_map(|y| {
+                let r = row(y);
+                r.windows(2)
+                    .map(|w| w[0].abs_diff(w[1]))
+                    .collect::<Vec<_>>()
+            })
+            .max()
+            .unwrap()
+    };
+    let flat = step(0.0);
+    assert!(flat < 60, "{flat}");
+    for angle in [11.0, 37.0, 143.0] {
+        let turned = step(angle);
+        assert!(turned < 60, "{angle}°: {turned}");
+    }
+}
+
+#[test]
+fn a_turned_texture_paints_the_same_bytes_every_time() {
+    let a = bytes(&textured(waves(), 143.0));
+    assert_eq!(a, bytes(&textured(waves(), 143.0)));
+    assert_ne!(a, bytes(&textured(waves(), 0.0)));
 }

@@ -703,7 +703,8 @@ fn a_texture_whose_first_reference_is_not_found_does_not_borrow_the_second() {
 }
 
 #[test]
-fn texture_settings_the_engine_cannot_apply_are_reported_only_when_set() {
+fn texture_each_tip_is_reported_only_when_set() {
+    // 描点ごとに質感は表せない。回転・明るさ・コントラストは写すので、知らせない
     let png = png_gray(1, 1, &[128]);
     let build = |on: i64| {
         SutBuilder::new()
@@ -722,17 +723,125 @@ fn texture_settings_the_engine_cannot_apply_are_reported_only_when_set() {
             .build()
     };
     let on = &ok(&build(1)).brushes[0];
+    assert!(has(on, SutNote::TextureEachTip));
+    assert!(
+        has(on, SutNote::TextureToneApprox),
+        "明るさ・コントラストは近い式なので知らせる"
+    );
     for n in [
         SutNote::TextureRotation,
         SutNote::TextureBrightness,
         SutNote::TextureContrast,
-        SutNote::TextureEachTip,
     ] {
-        assert!(has(on, n.clone()), "{n:?}");
+        assert!(!has(on, n.clone()), "{n:?} は写したので知らせない");
+    }
+    for m in [SutMapped::TextureRotation, SutMapped::TextureTone] {
+        assert!(mapped(on, m), "{m:?}");
     }
     let off = &ok(&build(0)).brushes[0];
     assert!(off.brush.texture.is_some());
     assert_eq!(off.unrepresented, vec![note(SutNote::PreviewImage)]);
+    assert!(!mapped(off, SutMapped::TextureRotation) && !mapped(off, SutMapped::TextureTone));
+}
+
+/// 4 画素の質感（輝度 255・200・100・0。覆いは行が下から [100, 0, 255, 200]）に、回転・明るさ・コントラストを付けた 1 本のブラシ。
+fn toned(reverse: i64, columns: &[(&'static str, i64)]) -> ImportedBrush {
+    let png = png_gray(2, 2, &[255, 200, 100, 0]);
+    let mut cells = vec![
+        (
+            "TextureImage",
+            blob(refs(&[["g/grain.png", "c/g", "grain"]])),
+        ),
+        ("TextureReverseDensity", int(reverse)),
+    ];
+    cells.extend(columns.iter().map(|&(name, v)| (name, int(v))));
+    let file = SutBuilder::new()
+        .material(Some("grain"), material_with_thumbnail(&png))
+        .brush("Toned", 1, &cells)
+        .build();
+    ok(&file).brushes[0].clone()
+}
+
+fn texture_alpha(b: &ImportedBrush) -> Vec<u8> {
+    b.brush.texture.as_ref().unwrap().image.alpha().to_vec()
+}
+
+#[test]
+fn texture_rotation_is_carried_as_an_angle_and_does_not_touch_the_image() {
+    let plain = toned(0, &[]);
+    let turned = toned(0, &[("TextureRotate", 143)]);
+    assert_eq!(plain.brush.texture.as_ref().unwrap().angle, 0.0);
+    assert_eq!(turned.brush.texture.as_ref().unwrap().angle, 143.0);
+    // 画像は回さない（継ぎ目が崩れない）
+    assert_eq!(texture_alpha(&plain), texture_alpha(&turned));
+    assert!(mapped(&turned, SutMapped::TextureRotation));
+    assert!(!mapped(&plain, SutMapped::TextureRotation));
+    // 負の角度は 0〜360 に直す
+    assert_eq!(
+        toned(0, &[("TextureRotate", -30)])
+            .brush
+            .texture
+            .as_ref()
+            .unwrap()
+            .angle,
+        330.0
+    );
+}
+
+#[test]
+fn texture_brightness_and_contrast_are_baked_into_the_image() {
+    // 補正なしは今までと同じ画素
+    assert_eq!(texture_alpha(&toned(0, &[])), [100, 0, 255, 200]);
+    // 明るさ +20: 値に 0.2 を足して 0〜1 に収める
+    let bright = toned(0, &[("TextureBrightness", 20)]);
+    assert_eq!(texture_alpha(&bright), [151, 51, 255, 251]);
+    assert!(mapped(&bright, SutMapped::TextureTone) && has(&bright, SutNote::TextureToneApprox));
+    // コントラスト +50: 0.5 を中心に 1.5 倍に広げる。-100 は 0.5 の一様
+    assert_eq!(
+        texture_alpha(&toned(0, &[("TextureContrast", 50)])),
+        [86, 0, 255, 236]
+    );
+    assert_eq!(
+        texture_alpha(&toned(0, &[("TextureContrast", -100)])),
+        [128, 128, 128, 128]
+    );
+    // 反転は補正のあと（補正した画像を反転する）
+    assert_eq!(
+        texture_alpha(&toned(1, &[("TextureBrightness", 20)])),
+        [104, 204, 0, 4]
+    );
+    // 範囲の外は -100〜100 に収める。0 は補正なし（印も付けない）
+    assert_eq!(
+        texture_alpha(&toned(0, &[("TextureBrightness", 500)])),
+        [255, 255, 255, 255]
+    );
+    let none = toned(0, &[("TextureBrightness", 0)]);
+    assert!(!mapped(&none, SutMapped::TextureTone) && !has(&none, SutNote::TextureToneApprox));
+}
+
+#[test]
+fn the_same_material_with_different_tones_gives_different_images() {
+    // 同じ素材でも補正が違えば別の画像（取り込みの間の使い回しは、補正も見て決める）
+    let png = png_gray(2, 2, &[255, 200, 100, 0]);
+    let brush = |name: &str, id: i64, brightness: i64| (name.to_string(), id, brightness);
+    let mut builder = SutBuilder::new().material(Some("grain"), material_with_thumbnail(&png));
+    for (name, id, brightness) in [brush("A", 1, 0), brush("B", 2, 30), brush("C", 3, 30)] {
+        builder = builder.brush(
+            &name,
+            id,
+            &[
+                (
+                    "TextureImage",
+                    blob(refs(&[["g/grain.png", "c/g", "grain"]])),
+                ),
+                ("TextureBrightness", int(brightness)),
+            ],
+        );
+    }
+    let set = ok(&builder.build());
+    let images: Vec<Vec<u8>> = set.brushes.iter().map(texture_alpha).collect();
+    assert_ne!(images[0], images[1]);
+    assert_eq!(images[1], images[2]);
 }
 
 // ---------------- 筆先の繰り返し方法・反転・比較暗 ----------------
@@ -1183,6 +1292,7 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::TipOrder,
         SutNote::TipOrderApprox,
         SutNote::TipFlip,
+        SutNote::TextureToneApprox,
         SutNote::TextureMissing,
         SutNote::TextureGuessed,
         SutNote::TextureRotation,

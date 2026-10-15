@@ -348,10 +348,7 @@ impl StrokeState {
                     let mut ceiling = s.opacity_scale;
                     let mut paper = None;
                     if let Some(tex) = s.texture {
-                        let grain = tex.image.sample_tiled(
-                            (px as f64 + 0.5) / tex.scale,
-                            (py as f64 + 0.5) / tex.scale,
-                        );
+                        let grain = tex.grain_at(px as f64 + 0.5, py as f64 + 0.5);
                         let depth = super::texture_depth(tex, s.texture_density);
                         match tex.mode.as_blend() {
                             None => ceiling *= 1.0 - depth * (1.0 - grain),

@@ -1358,12 +1358,51 @@ pub(super) struct Grain<'a> {
     row1: usize,
     fy: f32,
     scale: f32,
+    /// 回した質感の読み（角度が 0 のときは None で、今までの行の読み）。
+    turn: Option<GrainTurn<'a>>,
+}
+
+/// 回した質感の 1 行の読み: キャンバスの画素の中心を角度の分だけ逆に回して、並べた画像を読む（画像は回さないので、継ぎ目は崩れない）。
+/// 1 画素ずつ f64 で測り、レーンの数によらず同じ値にする。
+struct GrainTurn<'a> {
+    image: &'a BrushTip,
+    cos: f64,
+    sin: f64,
+    scale: f64,
+    /// 行の画素の中心の y。
+    y: f64,
+}
+
+impl GrainTurn<'_> {
+    /// キャンバスの画素 px（中心 px + 0.5）の質感（0〜1）。
+    fn at(&self, px: f32) -> f32 {
+        let x = f64::from(px) + 0.5;
+        let u = (self.cos * x + self.sin * self.y) / self.scale;
+        let v = (self.cos * self.y - self.sin * x) / self.scale;
+        self.image.sample_tiled(u, v) as f32
+    }
+}
+
+/// 質感の角度（度）から、回した読みの cos・sin。0 度は回さない（None）。
+fn grain_turn(tex: &PaperTexture) -> Option<(f64, f64)> {
+    (tex.angle != 0.0).then(|| {
+        let (sin, cos) = (tex.angle * std::f64::consts::PI / 180.0).sin_cos();
+        (cos, sin)
+    })
 }
 
 impl<'a> Grain<'a> {
     pub(super) fn new(tex: &'a PaperTexture, py: i64) -> Self {
         let r = tex.image.tiled_row((py as f64 + 0.5) / tex.scale);
+        let turn = grain_turn(tex).map(|(cos, sin)| GrainTurn {
+            image: &tex.image,
+            cos,
+            sin,
+            scale: tex.scale,
+            y: py as f64 + 0.5,
+        });
         Grain {
+            turn,
             alpha: tex.image.alpha(),
             width: tex.image.width() as i32,
             row0: r.row0,
@@ -1378,6 +1417,11 @@ impl<'a> Grain<'a> {
 #[inline(always)]
 unsafe fn grain_block<V: Slice32>(g: &Grain<'_>, px: V::F) -> V::F {
     unsafe {
+        if let Some(turn) = &g.turn {
+            let mut xs = [0.0f32; 8];
+            V::store_f32(&mut xs, px);
+            return V::from_fn(|k| turn.at(xs[k]));
+        }
         let (one, half) = (V::splat(1.0), V::splat(0.5));
         let x = V::sub(V::div(V::add(px, half), V::splat(g.scale)), half);
         let x0 = V::floor(x);
