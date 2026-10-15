@@ -2,6 +2,7 @@
 //! ウィンドウの枠を外すのは Windows だけ（`main.rs`）だが、帯と縁の中身は OS に依らないので、Linux でも `set_custom_frame(true)` で
 //! Windows の帯を描いて確かめる。ウィンドウへ送る頼み（`ViewportCommand`）は、フレームごとの出力から読む。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{
@@ -178,7 +179,7 @@ fn resizes(commands: &[ViewportCommand]) -> Vec<ResizeDirection> {
 
 /// 入口の印の矩形（名前はツールチップの文）。
 fn link_rect(h: &Harness<'_, YoluApp>) -> Rect {
-    let tip = h.state().state.link.tooltip(h.state().state.lang);
+    let tip = h.link().tooltip(h.lang());
     h.get_by_label(&tip).rect()
 }
 
@@ -188,7 +189,7 @@ fn last_menu_title(lang: Lang) -> &'static str {
 
 /// 帯の何も無い所（メニューの見出しの右、クラッシュ・Live Link の印の左）の点。
 fn empty_bar_point(h: &Harness<'_, YoluApp>) -> Pos2 {
-    let lang = h.state().state.lang;
+    let lang = h.lang();
     let from = menu_title(h, last_menu_title(lang)).right();
     let to = link_rect(h).left() - 30.0;
     assert!(to - from > 60.0, "何も無い所が足りない: {from}..{to}");
@@ -212,9 +213,9 @@ fn the_windows_bar_looks_right() {
     let mut results = SnapshotResults::new();
     for (lang, suffix) in [(Lang::Ja, ""), (Lang::En, "_english")] {
         let mut h = windows_app(WIDTH, HEIGHT);
-        h.state_mut().state.lang = lang;
-        h.state_mut().state.project_name = lang.pick("名称未設定", "Untitled").into();
-        h.state_mut().state.modified = true;
+        h.set_lang(lang);
+        *h.project_name_mut() = lang.pick("名称未設定", "Untitled").into();
+        h.set_modified(true);
         h.run();
         h.event(Event::PointerGone);
         h.step();
@@ -242,7 +243,7 @@ fn the_windows_bar_looks_right() {
 fn without_the_custom_frame_the_bar_has_no_buttons_and_the_edges_do_nothing() {
     let mut h = app(WIDTH, HEIGHT, 64);
     for lang in Lang::ALL {
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         for button in Button::ALL {
             for maximized in [false, true] {
@@ -306,9 +307,9 @@ fn the_buttons_sit_at_the_right_end_and_the_name_and_marks_stay_left_of_them() {
     for lang in Lang::ALL {
         for width in [960.0, 1280.0] {
             let mut h = windows_app(width, HEIGHT);
-            h.state_mut().state.lang = lang;
-            h.state_mut().state.project_name = "とても長いプロジェクトの名前を付けた作品".repeat(3);
-            h.state_mut().state.modified = true;
+            h.set_lang(lang);
+            *h.project_name_mut() = "とても長いプロジェクトの名前を付けた作品".repeat(3);
+            h.set_modified(true);
             h.run();
             let rects = Button::ALL.map(|b| h.get_by_label(b.name(lang, false)).rect());
             for (i, r) in rects.iter().enumerate() {
@@ -355,7 +356,7 @@ fn the_buttons_sit_at_the_right_end_and_the_name_and_marks_stay_left_of_them() {
 fn the_maximize_button_becomes_restore_while_maximized() {
     for lang in Lang::ALL {
         let mut h = windows_app(WIDTH, HEIGHT);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         h.get_by_label(lang.pick("最小化", "Minimize"));
         h.get_by_label(lang.pick("最大化", "Maximize"));
@@ -421,23 +422,23 @@ fn close_goes_the_same_way_as_the_quit_menu_item() {
     for modified in [false, true] {
         // メニューの「終了」を選んだとき
         let mut via_menu = windows_app(WIDTH, HEIGHT);
-        via_menu.state_mut().state.modified = modified;
-        via_menu.state_mut().state.apply(Action::Quit);
+        via_menu.set_modified(modified);
+        via_menu.act(Action::Quit);
         via_menu.step();
         let menu = (
-            via_menu.state().state.quit,
+            via_menu.quit(),
             commands(&via_menu)
                 .iter()
                 .any(|c| matches!(c, ViewportCommand::Close)),
         );
         // 閉じるのボタン
         let mut h = windows_app(WIDTH, HEIGHT);
-        h.state_mut().state.modified = modified;
+        h.set_modified(modified);
         h.run();
         let at = h.get_by_label("閉じる").rect().center();
         let sent = single_click(&mut h, at);
         let button = (
-            h.state().state.quit,
+            h.quit(),
             sent.iter().any(|c| matches!(c, ViewportCommand::Close)),
         );
         assert_eq!(button, menu, "modified={modified}");
@@ -505,14 +506,14 @@ fn dragging_over_the_project_name_also_moves_the_window() {
 fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
     for lang in Lang::ALL {
         let mut h = windows_app(WIDTH, HEIGHT);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         // メニューの見出し（引いても、ダブルクリックしても）
         for title in shell::menu_titles(lang) {
             let at = menu_title(&h, title).center();
             let sent = press_and_drag(&mut h, at, vec2(24.0, 0.0));
             assert_eq!(count(&sent, starts_drag), 0, "{lang:?} {title}: {sent:?}");
-            h.state_mut().state.popup = None;
+            *h.popup_mut() = None;
             h.run();
             let sent = double_click(&mut h, at);
             assert_eq!(
@@ -520,14 +521,14 @@ fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
                 0,
                 "{lang:?} {title}: {sent:?}"
             );
-            h.state_mut().state.popup = None;
+            *h.popup_mut() = None;
             h.run();
         }
         // Live Link の印（押すとウィンドウが開く）
         let at = link_rect(&h).center();
         let sent = press_and_drag(&mut h, at, vec2(24.0, 0.0));
         assert_eq!(count(&sent, starts_drag), 0, "{lang:?} 印: {sent:?}");
-        h.state_mut().state.popup = None;
+        *h.popup_mut() = None;
         h.run();
         let sent = double_click(&mut h, at);
         assert_eq!(count(&sent, toggles_maximized), 0, "{lang:?} 印: {sent:?}");
@@ -537,14 +538,14 @@ fn pressing_the_menus_and_the_link_mark_never_moves_the_window() {
     let at = menu_title(&h, "ファイル").center();
     single_click(&mut h, at);
     assert!(matches!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
+        h.popup().as_ref().map(|p| p.kind),
         Some(PopupKind::MenuBar(0))
     ));
     let mut h = windows_app(WIDTH, HEIGHT);
     let at = link_rect(&h).center();
     single_click(&mut h, at);
     assert!(matches!(
-        h.state().state.popup.as_ref().map(|p| p.kind),
+        h.popup().as_ref().map(|p| p.kind),
         Some(PopupKind::LiveLink)
     ));
 }
@@ -566,7 +567,7 @@ fn an_open_menu_covers_the_bar_so_it_does_not_start_a_drag() {
     let mut h = windows_app(WIDTH, HEIGHT);
     let at = menu_title(&h, "ファイル").center();
     single_click(&mut h, at);
-    assert!(h.state().state.popup.is_some());
+    assert!(h.popup().is_some());
     let empty = empty_bar_point(&h);
     let sent = press_and_drag(&mut h, empty, vec2(40.0, 0.0));
     assert_eq!(count(&sent, starts_drag), 0, "{sent:?}");
@@ -710,7 +711,7 @@ fn a_menu_over_the_edge_keeps_the_press() {
     let mut h = windows_app(WIDTH, HEIGHT);
     let at = menu_title(&h, "ファイル").center();
     single_click(&mut h, at);
-    assert!(h.state().state.popup.is_some());
+    assert!(h.popup().is_some());
     let edge = pos2(1.0, HEIGHT / 2.0);
     let sent = play(&mut h, vec![pointer(edge)]);
     assert_ne!(
@@ -764,10 +765,7 @@ fn an_edge_press_over_the_canvas_does_not_paint() {
     let sent = play(&mut h, vec![pointer(edge), button(edge, true)]);
     assert_eq!(resizes(&sent), vec![ResizeDirection::East], "{sent:?}");
     play(&mut h, vec![pointer(edge - vec2(0.0, 8.0))]);
-    assert!(
-        !h.state().state.is_stroking(),
-        "縁の押しでストロークが始まった"
-    );
+    assert!(!h.app().is_stroking(), "縁の押しでストロークが始まった");
     play(&mut h, vec![button(edge - vec2(0.0, 8.0), false)]);
     // 縁より内側: 描き始める（対照）
     let inner = pos2(WIDTH - titlebar::EDGE - 20.0, y);
@@ -780,10 +778,7 @@ fn an_edge_press_over_the_canvas_does_not_paint() {
         ],
     );
     assert!(resizes(&sent).is_empty(), "{sent:?}");
-    assert!(
-        h.state().state.is_stroking(),
-        "縁の内側ではストロークが始まる"
-    );
+    assert!(h.app().is_stroking(), "縁の内側ではストロークが始まる");
     play(&mut h, vec![button(inner - vec2(0.0, 8.0), false)]);
 }
 
@@ -803,7 +798,7 @@ fn a_press_at_the_edge_during_a_stroke_does_not_begin_a_resize() {
             pointer(inner - vec2(0.0, 8.0)),
         ],
     );
-    assert!(h.state().state.is_stroking(), "描いている最中");
+    assert!(h.app().is_stroking(), "描いている最中");
     let edge = pos2(WIDTH - 1.0, y);
     let sent = play(&mut h, vec![pointer(edge), button(edge, true)]);
     assert!(
@@ -811,7 +806,7 @@ fn a_press_at_the_edge_during_a_stroke_does_not_begin_a_resize() {
         "描いている最中の縁の押しが大きさを変えた: {sent:?}"
     );
     play(&mut h, vec![button(edge, false)]);
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     // 描き終えたあとは、同じ縁の押しを受ける（対照）
     let sent = play(&mut h, vec![button(edge, true)]);
     assert_eq!(resizes(&sent), vec![ResizeDirection::East], "{sent:?}");
@@ -869,7 +864,7 @@ fn a_stroke_that_runs_into_the_edge_keeps_painting_and_does_not_resize() {
         ],
     );
     assert!(resizes(&sent).is_empty(), "{sent:?}");
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     play(&mut h, vec![button(pos2(WIDTH - 1.0, y + 6.0), false)]);
 }
 
@@ -890,12 +885,12 @@ fn the_top_edge_yields_to_the_menu_titles_but_resizes_over_the_empty_bar() {
     assert!(resizes(&sent).is_empty(), "{sent:?}");
     assert!(
         matches!(
-            h.state().state.popup.as_ref().map(|p| p.kind),
+            h.popup().as_ref().map(|p| p.kind),
             Some(PopupKind::MenuBar(0))
         ),
         "メニューが開く"
     );
-    h.state_mut().state.popup = None;
+    *h.popup_mut() = None;
     h.run();
     let empty = pos2(empty_bar_point(&h).x, 1.0);
     let sent = play(&mut h, vec![pointer(empty), button(empty, true)]);
@@ -922,13 +917,13 @@ fn the_top_edge_yields_to_the_link_mark() {
     );
     assert!(
         matches!(
-            h.state().state.popup.as_ref().map(|p| p.kind),
+            h.popup().as_ref().map(|p| p.kind),
             Some(PopupKind::LiveLink)
         ),
         "Live Link のウィンドウが開く"
     );
     // 印の外の同じ高さ（何も無い所）は、上へ大きさを変える（対照）
-    h.state_mut().state.popup = None;
+    *h.popup_mut() = None;
     h.run();
     let empty = pos2(empty_bar_point(&h).x, 2.0);
     let sent = play(&mut h, vec![pointer(empty), button(empty, true)]);
@@ -940,7 +935,7 @@ fn the_top_edge_yields_to_the_link_mark() {
 #[test]
 fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let mut h = windows_app(WIDTH, HEIGHT);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.state_mut().dock = egui_dock::DockState::new(vec![Tab::View3d]);
     h.run();
     let y = HEIGHT / 2.0;
@@ -948,14 +943,14 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let sent = play(&mut h, vec![pointer(edge), alt_button(edge, true)]);
     assert_eq!(resizes(&sent), vec![ResizeDirection::East], "{sent:?}");
     assert!(
-        h.state().state.view3d.input.nav.is_none(),
+        h.view3d().input.nav.is_none(),
         "縁の押しで回す操作が始まった"
     );
     // 縁の押しを持ったまま動かしても、回さない
     let moved = edge + vec2(-30.0, 12.0);
     play(&mut h, vec![pointer(moved)]);
     assert!(
-        h.state().state.view3d.input.nav.is_none(),
+        h.view3d().input.nav.is_none(),
         "縁の押しのまま動かして回した"
     );
     play(&mut h, vec![alt_button(moved, false)]);
@@ -964,11 +959,11 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let sent = play(&mut h, vec![pointer(inner), alt_button(inner, true)]);
     assert!(resizes(&sent).is_empty(), "{sent:?}");
     assert!(
-        h.state().state.view3d.input.nav.is_some(),
+        h.view3d().input.nav.is_some(),
         "縁の内側で回す操作が始まらない"
     );
     play(&mut h, vec![alt_button(inner, false)]);
-    assert!(h.state().state.view3d.input.nav.is_none());
+    assert!(h.view3d().input.nav.is_none());
 }
 
 /// 右の縁にあるスクロールのつまみは、縁より先に押しを受ける（つまみを掴んで動かせる）。

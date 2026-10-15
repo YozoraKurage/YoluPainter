@@ -3,6 +3,7 @@
 //! 2D と 3D のビューに見出しの帯は置かず、その高さをビューに返す。帯にあった操作は、ビューの右上の隅に重ねた小さなアイコン（文字なし。名前は
 //! ツールチップ）へ。開発用の数は、画面に出さずに状態（AppState）から試験で読む。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::epaint::Shape;
@@ -97,9 +98,9 @@ fn assert_status_bar_left_is_empty(h: &mut Harness<'_, YoluApp>, what: &str) {
 fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goes_away() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 512);
-        h.state_mut().state.lang = lang;
-        h.state_mut().apply(Action::LoadDemoModel);
-        h.state_mut().state.message = String::new();
+        h.set_lang(lang);
+        h.act(Action::LoadDemoModel);
+        *h.message_mut() = String::new();
         h.run();
         // 描く・3D を出す、のあとでも、状態の帯は空（message が空なら知らせも無い）
         let c = canvas_rect(&h);
@@ -110,18 +111,18 @@ fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goe
                 offset(c.center(), 40.0, 10.0),
             ],
         );
-        h.state_mut().state.message = String::new();
+        *h.message_mut() = String::new();
         h.run();
-        assert_eq!(shell::status_text(&h.state().state), "");
+        assert_eq!(shell::status_text(h.app()), "");
         assert_no_developer_text(&h, &format!("{lang:?}"));
         assert_status_bar_left_is_empty(&mut h, &format!("{lang:?} 知らせなし"));
         let bar_top = 800.0 - t::STATUS_BAR_HEIGHT;
 
         // message があっても、状態の帯には出さない。小さな知らせが、状態の帯のすぐ上に出る
-        h.state_mut().state.message = "試験の知らせ".into();
+        *h.message_mut() = "試験の知らせ".into();
         h.run();
         assert_eq!(
-            shell::status_text(&h.state().state),
+            shell::status_text(h.app()),
             "試験の知らせ",
             "message の読み口は今のまま"
         );
@@ -144,13 +145,13 @@ fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goe
             text_rect(&h, "試験の知らせ").is_none(),
             "{lang:?}: 普通の知らせは数秒で消える"
         );
-        assert_eq!(h.state().state.message, "試験の知らせ");
+        assert_eq!(h.message(), "試験の知らせ");
 
         // 画面に出さなくなった数は、状態から読める
         let s = h.state();
         assert!(s.display().stats.total_tiles > 0);
-        assert!(s.state.doc.allocated_bytes() > 0);
-        assert_eq!(s.state.doc.width(), 512);
+        assert!(s.state.doc().allocated_bytes() > 0);
+        assert_eq!(s.state.doc().width(), 512);
     }
 }
 
@@ -159,9 +160,7 @@ fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goe
 fn an_error_toast_stays_longer_and_pressing_it_dismisses_it() {
     use yolu_app::notice::Source;
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut()
-        .state
-        .fail(Source::Open, "開けません: 試験のファイル");
+    h.app_mut().fail(Source::Open, "開けません: 試験のファイル");
     h.run();
     assert!(text_rect(&h, "開けません: 試験のファイル").is_some());
     // 普通の知らせが消える秒数のあとも、エラーは残る
@@ -180,17 +179,16 @@ fn an_error_toast_stays_longer_and_pressing_it_dismisses_it() {
         text_rect(&h, "開けません: 試験のファイル").is_none(),
         "押したら消える"
     );
-    assert_eq!(h.state().state.message, "開けません: 試験のファイル");
+    assert_eq!(h.message(), "開けません: 試験のファイル");
     // 書き直されない（操作が文を書かない）あいだは、出し直さない。別の文になれば出る
     h.run();
     assert!(text_rect(&h, "開けません: 試験のファイル").is_none());
-    h.state_mut().state.info(Source::Save, "保存しました。");
+    h.app_mut().info(Source::Save, "保存しました。");
     h.run();
     assert!(text_rect(&h, "保存しました。").is_some());
     // エラーでも、時間が来れば消える（ポインタを乗せていると延びるので、離しておく）
     h.event(egui::Event::PointerGone);
-    h.state_mut()
-        .state
+    h.app_mut()
         .fail(Source::Settings, "Cannot save the settings.");
     h.run();
     for _ in 0..(((toast::LONG_SECONDS + 1.0) * 60.0) as usize) {
@@ -207,8 +205,8 @@ fn the_same_sentence_written_by_a_repeated_operation_shows_again() {
         std::env::temp_dir().join(format!("yolu-chrome-missing-{}.ylp", std::process::id()));
     let mut h = app(1280.0, 800.0, 256);
     h.event(egui::Event::PointerGone);
-    h.state_mut().apply(Action::OpenProject(missing.clone()));
-    let text = h.state().state.message.clone();
+    h.act(Action::OpenProject(missing.clone()));
+    let text = h.message().to_string();
     assert!(text.contains("を開けません（"), "{text}");
     h.run();
     assert!(text_rect(&h, &text).is_some(), "最初の 1 回");
@@ -219,8 +217,8 @@ fn the_same_sentence_written_by_a_repeated_operation_shows_again() {
     h.run();
     assert!(text_rect(&h, &text).is_none(), "押したら消える");
     h.event(egui::Event::PointerGone);
-    h.state_mut().apply(Action::OpenProject(missing.clone()));
-    assert_eq!(h.state().state.message, text, "同じ文");
+    h.act(Action::OpenProject(missing.clone()));
+    assert_eq!(h.message(), text, "同じ文");
     h.run();
     assert!(
         text_rect(&h, &text).is_some(),
@@ -232,8 +230,8 @@ fn the_same_sentence_written_by_a_repeated_operation_shows_again() {
         h.step();
     }
     assert!(text_rect(&h, &text).is_none(), "時間切れで消える");
-    assert_eq!(h.state().state.message, text, "最後の文は読める");
-    h.state_mut().apply(Action::OpenProject(missing));
+    assert_eq!(h.message(), text, "最後の文は読める");
+    h.act(Action::OpenProject(missing));
     h.run();
     assert!(
         text_rect(&h, &text).is_some(),
@@ -257,11 +255,9 @@ fn a_sentence_written_inside_a_frame_shows_again_when_it_repeats() {
     }
     let mut h = app(1280.0, 800.0, 256);
     h.event(egui::Event::PointerGone);
-    let layer = h.state().state.doc.layers().last().expect("レイヤー").id();
+    let layer = h.doc().layers().last().expect("レイヤー").id();
     let stroke = h
-        .state_mut()
-        .state
-        .doc
+        .doc_mut()
         .begin_stroke(layer, &yolu_app::engine::BrushSettings::default())
         .expect("ストローク");
     let drop = |h: &mut Harness<'_, YoluApp>| {
@@ -273,7 +269,7 @@ fn a_sentence_written_inside_a_frame_shows_again_when_it_repeats() {
         h.run();
     };
     drop(&mut h);
-    let text = h.state().state.message.clone();
+    let text = h.message().to_string();
     assert_eq!(
         text,
         yolu_app::lang::refusals::during_stroke(Lang::Ja),
@@ -290,7 +286,7 @@ fn a_sentence_written_inside_a_frame_shows_again_when_it_repeats() {
         text_rect(&h, &text).is_some(),
         "フレームの中で同じ文が書かれたら、押して消したあとでも出る"
     );
-    h.state_mut().state.doc.cancel_stroke(stroke);
+    h.doc_mut().cancel_stroke(stroke);
 }
 
 /// 状態の帯の右端に、版とビルド・使っているメモリ（ユーザーの頼み）。短い数で、内訳はツールチップ。日英。左は空のまま。
@@ -299,12 +295,12 @@ fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tool
     use yolu_app::usage::Usage;
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
-        h.state_mut().state.message = String::new();
+        h.set_lang(lang);
+        *h.message_mut() = String::new();
         h.run();
         // 値が無い（測っていない）うちは何も出さない
         assert!(text_rect(&h, "0.1.0 · abc1234").is_none());
-        h.state_mut().state.usage = Usage {
+        *h.usage_mut() = Usage {
             build: Some("0.1.0 · abc1234".into()),
             process: Some(812 * 1024 * 1024),
             gpu: Some(1536 * 1024 * 1024),
@@ -374,35 +370,35 @@ fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tool
 fn the_memory_is_measured_only_at_the_interval_and_the_process_size_is_available() {
     let mut s = yolu_app::state::AppState::new(64, 64);
     assert_eq!(
-        s.usage,
+        *s.usage(),
         yolu_app::usage::Usage::default(),
         "試験のウィンドウは測らない"
     );
     assert!(s.refresh_usage(100.0, || Some(5)));
-    assert_eq!(s.usage.gpu, Some(5));
-    assert_eq!(s.usage.sampled_at, Some(100.0));
+    assert_eq!(s.usage().gpu, Some(5));
+    assert_eq!(s.usage().sampled_at, Some(100.0));
     #[cfg(any(target_os = "linux", windows))]
     assert!(
-        s.usage.process.is_some_and(|b| b > 1024 * 1024),
+        s.usage().process.is_some_and(|b| b > 1024 * 1024),
         "{:?}",
-        s.usage.process
+        s.usage().process
     );
-    assert!(s.usage.layers > 0 || s.usage.history == 0);
+    assert!(s.usage().layers > 0 || s.usage().history == 0);
     // 間隔の中では測り直さない（GPU の量を測る呼び出しも、呼ばない）
     assert!(!s.refresh_usage(100.5, || panic!("間隔の中では測らない")));
     assert!(s.refresh_usage(100.0 + yolu_app::usage::INTERVAL + 0.1, || None));
-    assert_eq!(s.usage.gpu, None);
+    assert_eq!(s.usage().gpu, None);
     // 版とビルドは測り直しても消えない
-    s.usage.build = Some("x".into());
+    s.usage_mut().build = Some("x".into());
     assert!(s.refresh_usage(200.0, || None));
-    assert_eq!(s.usage.build.as_deref(), Some("x"));
+    assert_eq!(s.usage().build.as_deref(), Some("x"));
 }
 
 #[test]
 fn the_views_have_no_header_band_and_get_its_height_back() {
     let mut h = app(1280.0, 800.0, 512);
-    h.state_mut().apply(Action::LoadDemoModel);
-    h.state_mut().state.message = String::new(); // 読んだという知らせは状態の帯に出る（見出しの帯の名前とは別）
+    h.act(Action::LoadDemoModel);
+    *h.message_mut() = String::new(); // 読んだという知らせは状態の帯に出る（見出しの帯の名前とは別）
     h.run();
     // キャンバス: 表示域はタブの帯のすぐ下から始まる（見出しの帯の分だけ下がらない）
     let strip = h.state().tab_rects[&Tab::Canvas];
@@ -430,7 +426,7 @@ fn the_views_have_no_header_band_and_get_its_height_back() {
 #[test]
 fn the_3d_corner_icon_sits_at_the_top_right_and_is_not_a_paint_surface() {
     let mut h = app(1280.0, 800.0, 512);
-    h.state_mut().apply(Action::LoadDemoModel);
+    h.act(Action::LoadDemoModel);
     click_tab(&mut h, Tab::View3d);
     h.run();
     let view = h.state().view3d_rect().expect("3D ビュー");
@@ -442,17 +438,14 @@ fn the_3d_corner_icon_sits_at_the_top_right_and_is_not_a_paint_surface() {
         "{icon:?} は {view:?} の右上の隅"
     );
     // アイコンを押しても描き始めない（下のビューの入力へ通さない）
-    let before = h.state().state.doc.can_undo();
+    let before = h.doc().can_undo();
     let at = icon.center();
     press(&h, at, egui::PointerButton::Primary);
     h.step();
-    assert!(
-        !h.state().state.is_stroking(),
-        "隅のアイコンの上で描き始めた"
-    );
+    assert!(!h.app().is_stroking(), "隅のアイコンの上で描き始めた");
     release(&h, at, egui::PointerButton::Primary);
     h.run();
-    assert_eq!(h.state().state.doc.can_undo(), before, "文書は変わらない");
+    assert_eq!(h.doc().can_undo(), before, "文書は変わらない");
 }
 
 #[test]
@@ -477,11 +470,11 @@ fn the_2d_corner_icons_appear_only_when_the_state_needs_them() {
     let at = icon.center();
     press(&h, at, egui::PointerButton::Primary);
     h.step();
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     release(&h, at, egui::PointerButton::Primary);
     h.run();
-    assert_eq!(h.state().state.view.angle, 0.0);
-    assert!(!h.state().state.doc.can_undo(), "アイコンの上では描かない");
+    assert_eq!(h.view().angle, 0.0);
+    assert!(!h.doc().can_undo(), "アイコンの上では描かない");
     assert!(
         h.query_by_label(label).is_none(),
         "戻したら隅のアイコンも消える"
@@ -514,9 +507,9 @@ fn the_texts_the_user_named_never_appear_on_screen() {
         for model in [false, true] {
             for tab in [Tab::Canvas, Tab::View3d] {
                 let mut h = app(1280.0, 800.0, 512);
-                h.state_mut().state.lang = lang;
+                h.set_lang(lang);
                 if model {
-                    h.state_mut().apply(Action::LoadDemoModel);
+                    h.act(Action::LoadDemoModel);
                 }
                 click_tab(&mut h, tab);
                 // 描いたあとと、知らせを消したあと
@@ -530,7 +523,7 @@ fn the_texts_the_user_named_never_appear_on_screen() {
                         ],
                     );
                 }
-                h.state_mut().state.message = String::new();
+                *h.message_mut() = String::new();
                 h.run();
                 let texts = screen_texts(&h);
                 for text in &texts {
@@ -573,8 +566,8 @@ fn the_status_bar_with_the_build_the_memory_and_a_toast_looks_right() {
     use yolu_app::usage::Usage;
     for (lang, suffix) in [(Lang::Ja, ""), (Lang::En, "_english")] {
         let mut h = app(1000.0, 700.0, 128);
-        h.state_mut().state.lang = lang;
-        h.state_mut().state.usage = Usage {
+        h.set_lang(lang);
+        *h.usage_mut() = Usage {
             build: Some("0.1.0 · a1b2c3d".into()),
             process: Some(812 * 1024 * 1024),
             gpu: Some(1536 * 1024 * 1024),
@@ -582,14 +575,14 @@ fn the_status_bar_with_the_build_the_memory_and_a_toast_looks_right() {
             history: 64 * 1024 * 1024,
             sampled_at: Some(1.0e9),
         };
-        h.state_mut().state.info(
+        h.app_mut().info(
             yolu_app::notice::Source::Project,
             lang.pick("新しいプロジェクトを作りました。", "Created a new project."),
         );
         h.run();
         bottom_shot(&mut h, &format!("status_bar_toast{suffix}"));
         // 失敗の知らせ（左の帯が赤）
-        h.state_mut().state.fail(
+        h.app_mut().fail(
             yolu_app::notice::Source::Open,
             lang.pick("開けません: 試験のファイル", "Cannot open: sample file"),
         );

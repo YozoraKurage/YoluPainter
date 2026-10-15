@@ -5,6 +5,7 @@
 #[path = "../brush_import_files/mod.rs"]
 mod brush_import_files;
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,7 +24,7 @@ use yolu_app::YoluApp;
 type H = Harness<'static, YoluApp>;
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
@@ -91,7 +92,7 @@ fn drop_files(h: &mut H, files: &[&Path]) {
 /// PSD の仕事（別のスレッド）が終わるまでフレームを回す。
 fn settle(h: &mut H) {
     let start = Instant::now();
-    while st(h).psd.is_busy() {
+    while st(h).psd().is_busy() {
         h.step();
         assert!(
             start.elapsed() < Duration::from_secs(120),
@@ -117,50 +118,54 @@ fn a_dropped_psd_goes_through_the_import_check_and_becomes_a_new_texture_set() {
     let dir = temp_dir("flow");
     let lossy = psd_file(&dir, "Ids.psd", true);
     let mut h = app(1280.0, 800.0, 32);
-    assert_eq!(st(&h).sets.len(), 1);
+    assert_eq!(st(&h).sets().len(), 1);
     drop_files(&mut h, &[&lossy]);
     assert!(
-        st(&h).message.contains("Ids.psd"),
+        st(&h).message().contains("Ids.psd"),
         "読む PSD の名前: {}",
-        st(&h).message
+        st(&h).message()
     );
     settle(&mut h);
     // 変わるものがあるので、取り込みの確認のウィンドウが出て、取り込むまで何も入れない
-    let check = st(&h).psd.import_check.as_ref().expect("取り込みの確かめ");
+    let check = st(&h)
+        .psd()
+        .import_check
+        .as_ref()
+        .expect("取り込みの確かめ");
     assert_eq!(check.file(), "Ids.psd");
     assert!(yolu_app::windows::window_rect(&h.ctx, "psd-import").is_some());
-    assert_eq!(st(&h).sets.len(), 1, "確かめるまで入れない");
+    assert_eq!(st(&h).sets().len(), 1, "確かめるまで入れない");
     // 行き先は新しいセット: 今のセットの文書は替わらず、セットが 1 つ増える
-    let first_doc = st(&h).doc.id();
+    let first_doc = st(&h).doc().id();
     h.get_by_label("取り込む").click();
     h.run();
-    assert!(st(&h).psd.import_check.is_none());
-    assert_eq!(st(&h).sets.len(), 2);
-    assert_eq!(st(&h).sets.current().name, "Ids");
-    assert_ne!(st(&h).doc.id(), first_doc, "新しいセットの文書が前に出る");
+    assert!(st(&h).psd().import_check.is_none());
+    assert_eq!(st(&h).sets().len(), 2);
+    assert_eq!(st(&h).sets().current().name, "Ids");
+    assert_ne!(st(&h).doc().id(), first_doc, "新しいセットの文書が前に出る");
     assert!(
-        st(&h).sets.iter().any(|s| s.name != "Ids"),
+        st(&h).sets().iter().any(|s| s.name != "Ids"),
         "前のセットは残る"
     );
     // やめる: 何も入れない
     let again = psd_file(&dir, "Again.psd", true);
     drop_files(&mut h, &[&again]);
     settle(&mut h);
-    assert!(st(&h).psd.import_check.is_some());
+    assert!(st(&h).psd().import_check.is_some());
     h.get_by_label("やめる").click();
     h.run();
-    assert!(st(&h).psd.import_check.is_none());
-    assert_eq!(st(&h).sets.len(), 2);
+    assert!(st(&h).psd().import_check.is_none());
+    assert_eq!(st(&h).sets().len(), 2);
     // 確かめの要らない PSD（落とす・変わるものが無い）は、拡張子が大文字でも、ウィンドウを出さずにそのまま入る
     let plain = psd_file(&dir, "Plain.PSD", false);
     drop_files(&mut h, &[&plain]);
     settle(&mut h);
     assert!(
-        st(&h).psd.import_check.is_none(),
+        st(&h).psd().import_check.is_none(),
         "確認のウィンドウは出ない"
     );
-    assert_eq!(st(&h).sets.len(), 3);
-    assert_eq!(st(&h).sets.current().name, "Plain");
+    assert_eq!(st(&h).sets().len(), 3);
+    assert_eq!(st(&h).sets().current().name, "Plain");
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -172,12 +177,12 @@ fn several_dropped_psds_import_only_the_first_and_say_why() {
         let second = psd_file(&dir, "b.psd", false);
         let third = psd_file(&dir, "c.psd", false);
         let mut h = app(1280.0, 800.0, 32);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         drop_files(&mut h, &[&first, &second, &third]);
         settle(&mut h);
         // 取り込みの仕事が終わった文に、取り込まなかった件数と理由が足される
-        let message = st(&h).message.clone();
+        let message = st(&h).message().to_string();
         assert!(
             message.contains("a.psd"),
             "{lang:?}: 取り込んだファイルの名前: {message}"
@@ -191,10 +196,10 @@ fn several_dropped_psds_import_only_the_first_and_say_why() {
             yolu_app::notice::Kind::Warning,
             "{lang:?}: 取り込めたのに断り・失敗として出さない（一部を取り込まなかった注意）: {message}"
         );
-        assert_eq!(st(&h).sets.len(), 2, "{lang:?}: 1 つだけ入る");
-        assert_eq!(st(&h).sets.current().name, "a");
+        assert_eq!(st(&h).sets().len(), 2, "{lang:?}: 1 つだけ入る");
+        assert_eq!(st(&h).sets().current().name, "a");
         assert!(
-            !st(&h).sets.iter().any(|s| s.name == "b" || s.name == "c"),
+            !st(&h).sets().iter().any(|s| s.name == "b" || s.name == "c"),
             "{lang:?}"
         );
         std::fs::remove_dir_all(dir).unwrap();
@@ -207,30 +212,30 @@ fn a_psd_dropped_while_stroking_is_refused_and_nothing_starts() {
     let psd = psd_file(&dir, "a.psd", false);
     let mut h = app(1280.0, 800.0, 32);
     let stroke = {
-        let app = &mut h.state_mut().state;
-        let layer = app.selected_layer.unwrap();
+        let app = h.app_mut();
+        let layer = app.selected_layer().unwrap();
         let settings = app.stroke_settings(false);
-        app.doc.begin_stroke(layer, &settings).unwrap()
+        app.doc_mut().begin_stroke(layer, &settings).unwrap()
     };
-    h.state_mut().state.stroke = Some(stroke);
+    *h.stroke_mut() = Some(stroke);
     h.run();
     assert!(st(&h).is_stroking());
     drop_files(&mut h, &[&psd]);
-    assert!(!st(&h).psd.is_busy(), "読み始めない");
-    assert!(st(&h).psd.import_check.is_none());
-    assert_eq!(st(&h).sets.len(), 1);
+    assert!(!st(&h).psd().is_busy(), "読み始めない");
+    assert!(st(&h).psd().import_check.is_none());
+    assert_eq!(st(&h).sets().len(), 1);
     assert!(
-        st(&h).message.contains("描いている間"),
+        st(&h).message().contains("描いている間"),
         "{}",
-        st(&h).message
+        st(&h).message()
     );
     // 終わると、落とした PSD は取り込める
-    let stroke = h.state_mut().state.stroke.take().unwrap();
-    h.state_mut().state.doc.cancel_stroke(stroke);
+    let stroke = h.stroke_mut().take().unwrap();
+    h.doc_mut().cancel_stroke(stroke);
     h.run();
     drop_files(&mut h, &[&psd]);
     settle(&mut h);
-    assert_eq!(st(&h).sets.len(), 2);
+    assert_eq!(st(&h).sets().len(), 2);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -238,7 +243,7 @@ fn a_psd_dropped_while_stroking_is_refused_and_nothing_starts() {
 fn brush_files_and_pngs_dropped_with_a_psd_follow_the_same_rules_as_before() {
     let dir = temp_dir("brushes");
     let mut h = app(1600.0, 960.0, 32);
-    h.state_mut().state.attach_brush_store(dir.join("brushes"));
+    h.app_mut().attach_brush_store(dir.join("brushes"));
     h.run();
     let png = dir.join("tip.png");
     std::fs::write(&png, b"not even a png").unwrap();
@@ -250,34 +255,38 @@ fn brush_files_and_pngs_dropped_with_a_psd_follow_the_same_rules_as_before() {
     drop_files(&mut h, &[&psd, &png]);
     settle(&mut h);
     wait_brush_import(&mut h);
-    assert_eq!(st(&h).sets.len(), 2, "PSD は読む");
+    assert_eq!(st(&h).sets().len(), 2, "PSD は読む");
     assert_eq!(
         st(&h).brush_entries_in(Group::Imported).len(),
         before,
         "一覧の外の PNG はブラシにしない"
     );
-    assert!(!st(&h).message.contains("tip.png"), "{}", st(&h).message);
+    assert!(
+        !st(&h).message().contains("tip.png"),
+        "{}",
+        st(&h).message()
+    );
     // ブラシのファイルはブラシとして取り込み、PSD は PSD として読む（どちらも落とした場所によらない）
     let again = psd_file(&dir, "b.psd", false);
     drop_files(&mut h, &[&again, &gbr_path]);
     settle(&mut h);
     wait_brush_import(&mut h);
-    assert_eq!(st(&h).sets.len(), 3, "PSD も読む");
+    assert_eq!(st(&h).sets().len(), 3, "PSD も読む");
     assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), before + 1);
     // PSD の入らない落とし方（ブラシのファイルだけ）は PSD の取り込みを起こさない
-    let sets = st(&h).sets.len();
+    let sets = st(&h).sets().len();
     let imported = st(&h).brush_entries_in(Group::Imported).len();
     let abr = dir.join("old.abr");
     std::fs::write(&abr, abr_v1()).unwrap();
     drop_files(&mut h, &[&abr]);
-    assert!(!st(&h).psd.is_busy());
+    assert!(!st(&h).psd().is_busy());
     wait_brush_import(&mut h);
     assert_eq!(
         st(&h).brush_entries_in(Group::Imported).len(),
         imported + 2,
         "ABR は取り込む（PSD が付かなくても）"
     );
-    assert_eq!(st(&h).sets.len(), sets);
+    assert_eq!(st(&h).sets().len(), sets);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -289,8 +298,12 @@ fn a_ylp_dropped_with_a_psd_is_still_opened_instead_and_the_psd_is_left_alone() 
     let mut h = app(1280.0, 800.0, 32);
     drop_files(&mut h, &[&psd, &missing]);
     // .ylp が先（開けなくても、PSD は取り込まない）
-    assert!(!st(&h).psd.is_busy());
-    assert_eq!(st(&h).sets.len(), 1);
-    assert!(st(&h).message.contains("開けません"), "{}", st(&h).message);
+    assert!(!st(&h).psd().is_busy());
+    assert_eq!(st(&h).sets().len(), 1);
+    assert!(
+        st(&h).message().contains("開けません"),
+        "{}",
+        st(&h).message()
+    );
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -2,6 +2,7 @@
 //! ドラッグ 1 回・ボタン 1 回が 1 回の取り消しになる。別の色の欄を押すと相手が替わり、相手のレイヤーを消すと閉じる。Esc は開いたときの色へ戻す。
 //! ウィンドウの絵（日英）。分岐点の色のウィンドウの細かい振る舞いは `gui_canvas/ramp_panel.rs`。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Key, Modifiers, Rect};
@@ -15,30 +16,23 @@ use yolu_app::state::Action;
 use yolu_app::YoluApp;
 
 fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
-    h.state_mut().state.apply(action);
+    h.act(action);
     h.run();
 }
 
 /// 描画色を赤にして、塗りつぶしレイヤーを作る（値は描画色）。
 fn fill_layer(h: &mut Harness<'_, YoluApp>) -> LayerId {
-    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     apply(h, Action::M2(Edit::NewFill));
-    h.state()
-        .state
-        .selected_layer
-        .expect("作ったレイヤーを選ぶ")
+    h.selected_layer().expect("作ったレイヤーを選ぶ")
 }
 
 fn value(h: &Harness<'_, YoluApp>, id: LayerId, channel: Channel) -> Option<Rgba8> {
-    h.state()
-        .state
-        .doc
-        .layer(id)
-        .and_then(|l| l.fill_value(channel))
+    h.doc().layer(id).and_then(|l| l.fill_value(channel))
 }
 
 fn undo_count(h: &Harness<'_, YoluApp>) -> usize {
-    h.state().state.doc.undo_count()
+    h.doc().undo_count()
 }
 
 fn window(h: &Harness<'_, YoluApp>) -> Rect {
@@ -76,7 +70,7 @@ fn a_fill_value_opens_the_window_and_one_drag_in_it_is_one_undo_and_escape_goes_
     assert_eq!(undo_count(&h), steps + 1, "ドラッグは 1 回の取り消し");
     assert!(color_window::is_open(&h.ctx), "ドラッグのあとも開いたまま");
     // 描画色は動かない
-    assert_eq!(h.state().state.color.main, [1.0, 0.0, 0.0, 1.0]);
+    assert_eq!(h.color().main, [1.0, 0.0, 0.0, 1.0]);
     // Esc: 開いたときの色へ戻して閉じる（戻すのも 1 回の取り消し）
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
@@ -148,7 +142,7 @@ fn an_escape_another_part_already_used_neither_closes_the_window_nor_reverts_its
         &mut h,
         Action::Mat(MatAction::Channel(Channel::Emission, true)),
     );
-    let first = h.state().state.mat.emission;
+    let first = h.mat().emission;
     let at = h
         .get_by_label("ストロークが塗るエミッションの色")
         .rect()
@@ -160,24 +154,21 @@ fn an_escape_another_part_already_used_neither_closes_the_window_nor_reverts_its
     ));
     let sq = yolu_app::panels::color::wheel_square(color_window::wheel_of(window(&h)));
     click(&mut h, sq.left_top() + vec2(6.0, 6.0));
-    let changed = h.state().state.mat.emission;
+    let changed = h.mat().emission;
     assert_ne!(changed, first);
     // 塗りつぶしを走らせて、Esc をその取消に使わせる
-    yolu_app::region::bucket::start(&mut h.state_mut().state, vec![(1.0, 1.0)]);
-    assert!(
-        h.state().state.region.job.is_some(),
-        "塗りつぶしの仕事が走っている"
-    );
+    yolu_app::region::bucket::start(h.app_mut(), vec![(1.0, 1.0)]);
+    assert!(h.region().job.is_some(), "塗りつぶしの仕事が走っている");
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(h.state().state.region.job.is_none(), "仕事は取り消された");
+    assert!(h.region().job.is_none(), "仕事は取り消された");
     assert!(color_window::is_open(&h.ctx), "ウィンドウは閉じない");
-    assert_eq!(h.state().state.mat.emission, changed, "相手の値は戻さない");
+    assert_eq!(h.mat().emission, changed, "相手の値は戻さない");
     // 次の Esc がウィンドウのもの
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert!(!color_window::is_open(&h.ctx));
-    assert_eq!(h.state().state.mat.emission, first);
+    assert_eq!(h.mat().emission, first);
 }
 
 #[test]
@@ -200,7 +191,7 @@ fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_take
     click(&mut h, at);
     let placed = window(&h);
     // 描画色を入れる（1 回の取り消し）
-    h.state_mut().state.color.set_main([0.0, 0.0, 1.0, 1.0]);
+    h.color_mut().set_main([0.0, 0.0, 1.0, 1.0]);
     h.run();
     let steps = undo_count(&h);
     h.get_by_label("描画色を入れる").click();
@@ -211,7 +202,7 @@ fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_take
     );
     assert_eq!(undo_count(&h), steps + 1);
     // 今のカラーセットの色（1 回の取り消し）
-    let first = h.state().state.colorsets.palette().colors[0].clone();
+    let first = h.colorsets().palette().colors[0].clone();
     let cell = h
         .get_all_by_label(&first.label())
         .map(|n| n.rect())
@@ -238,7 +229,7 @@ fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_take
     // 相手のレイヤーを消すと閉じる
     apply(&mut h, Action::DeleteLayer);
     h.run();
-    assert!(h.state().state.doc.layer(id).is_none());
+    assert!(h.doc().layer(id).is_none());
     assert!(!color_window::is_open(&h.ctx), "相手が無くなったら閉じる");
 }
 
@@ -278,7 +269,7 @@ fn snapshot_the_colour_window_on_a_fill_value() {
         (Lang::En, "en", "Value of Color"),
     ] {
         let mut h = app(1280.0, 1500.0, 64);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         fill_layer(&mut h);
         let swatch = h.get_by_label(label).rect();
@@ -303,10 +294,9 @@ fn a_liltoon_colour_and_the_brush_emission_share_the_window() {
         &mut h,
         Action::Mat(MatAction::Channel(Channel::Emission, true)),
     );
-    let doc = h.state().state.doc.id();
-    let main_color = |h: &Harness<'_, YoluApp>| {
-        yolu_app::look::liltoon::value(h.state().state.doc.drawn_look(), "_Color")
-    };
+    let doc = h.doc().id();
+    let main_color =
+        |h: &Harness<'_, YoluApp>| yolu_app::look::liltoon::value(h.doc().drawn_look(), "_Color");
     // メインカラーの節を開く
     let header = h
         .get_all_by_label("メインカラー / 透過設定")
@@ -335,7 +325,7 @@ fn a_liltoon_colour_and_the_brush_emission_share_the_window() {
     assert_ne!(main_color(&h), before, "その場で値が変わる");
     assert_eq!(undo_count(&h), steps + 1, "ドラッグは 1 回の取り消し");
     // ブラシのエミッションの見本を押すと、ウィンドウはそのままで相手が替わる
-    let emission = h.state().state.mat.emission;
+    let emission = h.mat().emission;
     let at = h
         .get_by_label("ストロークが塗るエミッションの色")
         .rect()
@@ -346,13 +336,13 @@ fn a_liltoon_colour_and_the_brush_emission_share_the_window() {
         egui::Id::new("mat.emission")
     ));
     assert_eq!(window(&h), placed);
-    h.state_mut().state.color.set_main([0.2, 0.6, 0.4, 1.0]);
+    h.color_mut().set_main([0.2, 0.6, 0.4, 1.0]);
     h.run();
     h.get_by_label("描画色を入れる").click();
     h.run();
-    let main = h.state().state.color.main;
-    assert_ne!(h.state().state.mat.emission, emission);
-    for (e, m) in h.state().state.mat.emission.iter().zip(main) {
+    let main = h.color().main;
+    assert_ne!(h.mat().emission, emission);
+    for (e, m) in h.mat().emission.iter().zip(main) {
         assert!((e - m).abs() < 1.0 / 255.0);
     }
     assert_eq!(

@@ -2,6 +2,7 @@
 //! 最大化を、終わるときに書き、次の起動で戻す。読めない・古い版・知らないタブ・足りない／重なるタブは捨てて既定の並び（理由は画面に出さない）。
 //! 「ウィンドウ → パネルの並びを戻す」は既定へ。ウィンドウの大きさと位置は、ドックとは別に確かめる。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 
@@ -889,7 +890,7 @@ fn an_unreadable_file_starts_with_the_default_and_says_nothing_on_screen() {
             shape(&default_dock_for(1280.0)),
             "{tag}: 既定の並び"
         );
-        assert_eq!(h.state().state.message, "", "{tag}: 理由は画面に出さない");
+        assert_eq!(h.message(), "", "{tag}: 理由は画面に出さない");
         // 使えなかったファイルは、今の（既定の）並びで置き換わる（次の起動で、また同じ理由で捨てることにならない）
         let after = layout::parse(&std::fs::read_to_string(layout_file(&dir)).unwrap());
         assert!(after.problems.is_empty(), "{tag}: {:?}", after.problems);
@@ -936,7 +937,7 @@ fn reset_panel_layout_goes_back_to_the_default_and_the_default_is_what_gets_writ
         shape(&changed_dock())
     );
     // ウィンドウ → パネルの並びを戻す
-    h.state_mut().state.apply(Action::ResetLayout);
+    h.act(Action::ResetLayout);
     h.run();
     assert_eq!(
         shape(&h.state().dock),
@@ -957,19 +958,14 @@ fn opening_the_actions_panel_puts_it_in_the_dock_and_it_is_written_and_reset_awa
     use eframe::App;
     let dir = settings_dir("show-panel");
     let mut h = app_in(&dir);
-    h.state_mut()
-        .state
-        .apply(Action::Dock(yolu_app::detach::DockOp::Show(Tab::Actions)));
+    h.act(Action::Dock(yolu_app::detach::DockOp::Show(Tab::Actions)));
     h.run();
     let dock = &h.state().dock;
     let actions = dock.find_tab(&Tab::Actions).expect("開いた");
     let leaf = dock.leaf(actions.node_path()).unwrap();
     assert!(leaf.tabs.contains(&Tab::Layers));
     assert_eq!(leaf.tabs[leaf.active.0], Tab::Actions, "前に出る");
-    assert!(
-        h.state().state.ui.dock_ops.is_empty(),
-        "頼みは 1 回で使い切る"
-    );
+    assert!(h.ui().dock_ops.is_empty(), "頼みは 1 回で使い切る");
     h.state_mut().on_exit();
     drop(h);
     let mut h = app_in(&dir);
@@ -978,7 +974,7 @@ fn opening_the_actions_panel_puts_it_in_the_dock_and_it_is_written_and_reset_awa
         "次の起動でも開いている"
     );
     // パネルの並びを戻すと、既定の並び（アクションは無い）
-    h.state_mut().state.apply(Action::ResetLayout);
+    h.act(Action::ResetLayout);
     h.run();
     assert!(h.state().dock.find_tab(&Tab::Actions).is_none());
 }

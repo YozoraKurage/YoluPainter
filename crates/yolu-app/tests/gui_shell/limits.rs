@@ -3,6 +3,7 @@
 //! レイヤーの数・入れ子の上限は yolu-io（`psd_import.rs`・`nesting_native.rs`）と yolu-core（`nesting.rs`）が確かめる。
 
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::fbx::temp_dir;
 use egui::{Key, Modifiers};
@@ -51,14 +52,14 @@ fn model_with(materials: usize) -> Model {
 /// 64×64 の PSD を書いて、そのバイト列を返す（アプリの書き出し）。
 fn write_psd(path: &std::path::Path) -> Vec<u8> {
     let mut s = AppState::new(64, 64);
-    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
-    s.apply(Action::Psd(PsdAction::Export(path.to_path_buf())));
+    s.bake_mut().backend = yolu_app::bake::BakeBackend::Cpu;
+    s.act(Action::Psd(PsdAction::Export(path.to_path_buf())));
     s.wait_psd();
     std::fs::read(path).unwrap()
 }
 
 fn report_text(s: &AppState) -> String {
-    let r = s.psd.report.as_ref().expect("理由のウィンドウ");
+    let r = s.psd().report.as_ref().expect("理由のウィンドウ");
     let mut text = r.summary.clone();
     for line in &r.lines {
         text.push('\n');
@@ -68,7 +69,7 @@ fn report_text(s: &AppState) -> String {
 }
 
 fn import(s: &mut AppState, path: &std::path::Path, target: PsdTarget) {
-    s.apply(Action::Psd(PsdAction::Import {
+    s.act(Action::Psd(PsdAction::Import {
         path: path.to_path_buf(),
         target,
     }));
@@ -91,18 +92,18 @@ fn a_psd_wider_than_the_ylp_limit_is_refused_with_its_reason_and_nothing_changes
     let mut s = AppState::new(64, 64);
     for target in [PsdTarget::NewSet, PsdTarget::CurrentSet] {
         import(&mut s, &path, target);
-        assert_eq!(s.sets.len(), 1, "何も変えない");
-        assert!(!s.modified);
-        assert_eq!((s.doc.width(), s.doc.height()), (64, 64));
+        assert_eq!(s.sets().len(), 1, "何も変えない");
+        assert!(!s.modified());
+        assert_eq!((s.doc().width(), s.doc().height()), (64, 64));
         let text = report_text(&s);
         assert!(text.contains("8193") && text.contains("8192"), "{text}");
         assert!(
             !text.contains("予算"),
             "予算を上げても取り込めない理由: {text}"
         );
-        s.psd.report = None;
+        s.psd_mut().report = None;
     }
-    s.lang = Lang::En;
+    s.set_lang(Lang::En);
     import(&mut s, &path, PsdTarget::NewSet);
     let text = report_text(&s);
     assert!(
@@ -121,19 +122,19 @@ fn a_new_set_psd_is_refused_when_the_project_already_has_the_most_sets() {
     for _ in 1..MAX_SETS {
         s.add_texture_set().unwrap();
     }
-    assert_eq!(s.sets.len(), MAX_SETS);
+    assert_eq!(s.sets().len(), MAX_SETS);
     import(&mut s, &good, PsdTarget::NewSet);
-    assert_eq!(s.sets.len(), MAX_SETS, "65 個目は作らない");
-    assert!(!s.psd.is_busy(), "読み始める前に断る");
-    assert!(s.message.contains("64"), "{}", s.message);
-    s.lang = Lang::En;
+    assert_eq!(s.sets().len(), MAX_SETS, "65 個目は作らない");
+    assert!(!s.psd().is_busy(), "読み始める前に断る");
+    assert!(s.message().contains("64"), "{}", s.message());
+    s.set_lang(Lang::En);
     import(&mut s, &good, PsdTarget::NewSet);
-    assert!(s.message.contains("at most 64"), "{}", s.message);
+    assert!(s.message().contains("at most 64"), "{}", s.message());
     // 今のセットを替える取り込みは、セットの数に関わらない
-    s.lang = Lang::Ja;
+    s.set_lang(Lang::Ja);
     import(&mut s, &good, PsdTarget::CurrentSet);
-    assert_eq!(s.sets.len(), MAX_SETS);
-    assert!(s.message.contains("読み込みました"), "{}", s.message);
+    assert_eq!(s.sets().len(), MAX_SETS);
+    assert!(s.message().contains("読み込みました"), "{}", s.message());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -146,17 +147,17 @@ fn a_psd_read_while_the_sets_filled_up_is_not_installed() {
     for _ in 2..MAX_SETS {
         s.add_texture_set().unwrap();
     }
-    assert_eq!(s.sets.len(), MAX_SETS - 1);
+    assert_eq!(s.sets().len(), MAX_SETS - 1);
     // 読み始めたときはまだ 1 つ足せる。結果を受ける前に、ほかの手でセットが上限まで増える
-    s.apply(Action::Psd(PsdAction::Import {
+    s.act(Action::Psd(PsdAction::Import {
         path: good.clone(),
         target: PsdTarget::NewSet,
     }));
-    assert!(s.psd.is_busy());
+    assert!(s.psd().is_busy());
     s.add_texture_set().unwrap();
     s.wait_psd();
-    assert_eq!(s.sets.len(), MAX_SETS, "入れない");
-    assert!(s.message.contains("64"), "{}", s.message);
+    assert_eq!(s.sets().len(), MAX_SETS, "入れない");
+    assert!(s.message().contains("64"), "{}", s.message());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -167,7 +168,7 @@ fn a_live_link_model_with_more_materials_than_a_project_holds_gets_sets_up_to_th
     let mut s = AppState::new(64, 64);
     let (report, _) = s.receive_link_model(&model_with(MAX_SETS + 1));
     assert_eq!(
-        s.sets.len(),
+        s.sets().len(),
         MAX_SETS,
         "65 個目のマテリアルにはセットを作らない"
     );
@@ -181,15 +182,15 @@ fn a_live_link_model_with_more_materials_than_a_project_holds_gets_sets_up_to_th
     // 保存できる（.ylp の上限に収まる）
     let dir = temp_dir("limits-link");
     let path = dir.join("p.ylp");
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     let saved = yolu_io::SaveTarget::open(&path).unwrap().0;
     assert_eq!(saved.sets().len(), MAX_SETS);
     let _ = std::fs::remove_dir_all(dir);
     // 上限に収まるモデルは今までどおり、知らせない
     let mut t = AppState::new(64, 64);
     let (report, _) = t.receive_link_model(&model_with(5));
-    assert_eq!((t.sets.len(), report.skipped), (5, 0));
+    assert_eq!((t.sets().len(), report.skipped), (5, 0));
     assert!(report.limit_text(Lang::Ja).is_none());
 }
 
@@ -237,7 +238,7 @@ fn ctrl_minus_and_plus_do_not_zoom_the_whole_interface() {
 fn about_names_the_product_and_the_version_and_nothing_else() {
     for lang in Lang::ALL {
         let mut s = AppState::new_in(64, 64, lang);
-        s.apply(Action::About);
+        s.act(Action::About);
         // 正式版は製品名と版だけ。試験版（0.4.0-rc.1 のような版）には、版のあとに試験版の印が付く
         let version = env!("CARGO_PKG_VERSION");
         let beta = yolu_update::Version::parse(version)
@@ -247,7 +248,7 @@ fn about_names_the_product_and_the_version_and_nothing_else() {
             (true, Lang::Ja) => "（試験版）",
             (true, Lang::En) => " (beta)",
         };
-        assert_eq!(s.message, format!("YoluPainter {version}{mark}"));
+        assert_eq!(s.message(), format!("YoluPainter {version}{mark}"));
     }
 }
 
@@ -260,13 +261,17 @@ fn the_save_notice_names_the_file_and_the_writer_is_the_product_name() {
         (Lang::En, "Saved: 作品.ylp."),
     ] {
         let mut s = AppState::new_in(64, 64, lang);
-        s.apply(Action::SaveProjectAs(path.clone()));
-        assert_eq!(s.message, text, "形式・セットの数・書き直した数は出さない");
-        assert_eq!(s.rewritten_sets, 1, "書き直した数は試験が見る");
+        s.act(Action::SaveProjectAs(path.clone()));
+        assert_eq!(
+            s.message(),
+            text,
+            "形式・セットの数・書き直した数は出さない"
+        );
+        assert_eq!(s.rewritten_sets(), 1, "書き直した数は試験が見る");
         let _ = std::fs::remove_file(&path);
     }
     let mut s = AppState::new(64, 64);
-    s.apply(Action::SaveProjectAs(path.clone()));
+    s.act(Action::SaveProjectAs(path.clone()));
     let saved = yolu_io::SaveTarget::open(&path).unwrap().0;
     let by = saved.info().saved_by.clone().unwrap();
     assert_eq!(

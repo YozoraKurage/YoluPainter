@@ -1,5 +1,6 @@
 //! ウィンドウの全体の振る舞いと見た目（egui_kittest。描画は wgpu のソフトの描画）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use super::shots;
 use common::*;
@@ -10,7 +11,7 @@ use yolu_app::pen::PenSample;
 use yolu_app::state::{PopupKind, Tool};
 
 fn popup_kind(h: &egui_kittest::Harness<'_, yolu_app::YoluApp>) -> Option<PopupKind> {
-    h.state().state.popup.as_ref().map(|p| p.kind)
+    h.popup().as_ref().map(|p| p.kind)
 }
 
 #[test]
@@ -65,13 +66,13 @@ fn menu_item_runs_its_action() {
     click(&mut h, at);
     let at = popup_item(&h, "表示を左右反転").center();
     click(&mut h, at);
-    assert!(h.state().state.view.flip);
+    assert!(h.view().flip);
     assert_eq!(popup_kind(&h), None, "選んだら閉じる");
     let at = menu_title(&h, "レイヤー").center();
     click(&mut h, at);
     let at = popup_item(&h, "新規レイヤー").center();
     click(&mut h, at);
-    assert_eq!(h.state().state.doc.layers().len(), 2);
+    assert_eq!(h.doc().layers().len(), 2);
     // 無効の項目は押しても閉じない・何もしない（やり直すものが無いときのやり直し）
     let at = menu_title(&h, "編集").center();
     click(&mut h, at);
@@ -88,10 +89,7 @@ fn click_outside_closes_the_menu_without_painting() {
     let c = canvas_rect(&h).center();
     drag(&mut h, &[c, offset(c, 40.0, 0.0)]);
     assert_eq!(popup_kind(&h), None);
-    assert!(
-        !h.state().state.doc.can_undo(),
-        "閉じるための押下は描かない"
-    );
+    assert!(!h.doc().can_undo(), "閉じるための押下は描かない");
     assert_eq!(canvas_pixel(&h, c)[3], 0);
 }
 
@@ -117,7 +115,7 @@ fn stroke_uploads_only_the_changed_tiles() {
         "変わったタイルだけを上げる: {uploaded}"
     );
     assert_eq!(canvas_pixel(&h, start), [0, 0, 0, 255]);
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
 }
 
 #[test]
@@ -129,10 +127,10 @@ fn every_pointer_move_in_a_frame_becomes_a_point() {
         move_to(&h, offset(c, i as f32 * 3.0, 0.0));
     }
     h.step(); // 1 フレームに 11 の点
-    assert_eq!(h.state().state.canvas.stroke_points, 11);
+    assert_eq!(h.canvas().stroke_points, 11);
     release(&h, offset(c, 30.0, 0.0), PointerButton::Primary);
     h.run();
-    assert!(h.state().state.canvas.stroke.is_none());
+    assert!(h.canvas().stroke.is_none());
 }
 
 #[test]
@@ -140,7 +138,7 @@ fn wheel_zooms_around_the_pointer() {
     let mut h = app(1280.0, 800.0, 512);
     let r = canvas_rect(&h);
     let p = offset(r.center(), 50.0, 30.0);
-    let before = h.state().state.view.view(r, 512, 512).to_canvas(p);
+    let before = h.view().view(r, 512, 512).to_canvas(p);
     move_to(&h, p);
     h.event(Event::MouseWheel {
         unit: egui::MouseWheelUnit::Line,
@@ -149,7 +147,7 @@ fn wheel_zooms_around_the_pointer() {
         phase: egui::TouchPhase::Move,
     });
     h.run();
-    let view = h.state().state.view;
+    let view = h.view();
     assert!(view.zoom > 1.4, "{}", view.zoom);
     let after = view.view(r, 512, 512).to_canvas(p);
     assert!((before.0 - after.0).abs() < 0.05 && (before.1 - after.1).abs() < 0.05);
@@ -160,19 +158,15 @@ fn view_keys_rotate_and_flip_and_the_corner_icons_reset_them() {
     let mut h = app(1280.0, 800.0, 512);
     key(&h, Key::Minus, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.view.angle, -15.0);
+    assert_eq!(h.view().angle, -15.0);
     h.event(Event::Text("^".into())); // JIS の ^ のキー
     h.event(Event::Text("^".into()));
     h.run();
-    assert_eq!(h.state().state.view.angle, 15.0);
+    assert_eq!(h.view().angle, 15.0);
     key(&h, Key::H, Modifiers::NONE);
     h.run();
-    assert!(h.state().state.view.flip);
-    assert_eq!(
-        h.state().state.view.angle,
-        -15.0,
-        "反転すると角度の符号が変わる"
-    );
+    assert!(h.view().flip);
+    assert_eq!(h.view().angle, -15.0, "反転すると角度の符号が変わる");
     let c = canvas_rect(&h);
     drag(
         &mut h,
@@ -194,11 +188,11 @@ fn view_keys_rotate_and_flip_and_the_corner_icons_reset_them() {
     h.get_by_label("表示を回しています（-15°）。押すと回転を戻します（Shift+R）")
         .click();
     h.run();
-    assert_eq!(h.state().state.view.angle, 0.0);
+    assert_eq!(h.view().angle, 0.0);
     h.get_by_label("表示を左右反転しています。押すと戻します（H）")
         .click();
     h.run();
-    assert!(!h.state().state.view.flip);
+    assert!(!h.view().flip);
 }
 
 #[test]
@@ -234,12 +228,8 @@ fn rotate_drag_with_alt_held_turns_the_view_in_15_degree_steps_and_never_paints(
     h.step();
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.run();
-    assert!(
-        (h.state().state.view.angle - 90.0).abs() < 0.5,
-        "{}",
-        h.state().state.view.angle
-    );
-    assert!(!h.state().state.doc.can_undo(), "回すドラッグでは描かない");
+    assert!((h.view().angle - 90.0).abs() < 0.5, "{}", h.view().angle);
+    assert!(!h.doc().can_undo(), "回すドラッグでは描かない");
 }
 
 #[test]
@@ -253,8 +243,8 @@ fn escape_cancels_the_stroke_and_focus_loss_commits_it() {
     h.step();
     release(&h, offset(c, 20.0, 0.0), PointerButton::Primary);
     h.run();
-    assert!(h.state().state.canvas.stroke.is_none());
-    assert!(!h.state().state.doc.can_undo());
+    assert!(h.canvas().stroke.is_none());
+    assert!(!h.doc().can_undo());
     assert_eq!(canvas_pixel(&h, c)[3], 0);
 
     press(&h, c, PointerButton::Primary);
@@ -263,10 +253,10 @@ fn escape_cancels_the_stroke_and_focus_loss_commits_it() {
     h.event(Event::WindowFocused(false));
     h.step();
     assert!(
-        h.state().state.canvas.stroke.is_none(),
+        h.canvas().stroke.is_none(),
         "フォーカスを失ったらストロークを終える"
     );
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 255]);
     release(&h, offset(c, 20.0, 0.0), PointerButton::Primary);
     h.run();
@@ -291,7 +281,7 @@ fn pen_samples_paint_with_pressure_and_the_eraser_end_erases() {
     let mut h = app(1280.0, 800.0, 256);
     let r = canvas_rect(&h);
     let c = r.center();
-    let pixel = h.state().state.view.view(r, 256, 256).pixel_size();
+    let pixel = h.view().view(r, 256, 256).pixel_size();
     // 半径 16 の筆圧 0.5 = 半径 8（画素）、不透明度も 0.5。中心から 12 画素の所は塗られず、5 画素の所は半分の覆い
     for (p, contact) in [
         (c, true),
@@ -301,7 +291,7 @@ fn pen_samples_paint_with_pressure_and_the_eraser_end_erases() {
         h.state().pen().push(pen(p, 0.5, contact, false));
     }
     h.run();
-    assert!(!h.state().state.doc.has_active_stroke());
+    assert!(!h.doc().has_active_stroke());
     assert_eq!(canvas_pixel(&h, offset(c, 5.0 * pixel, 0.0))[3], 128);
     assert_eq!(canvas_pixel(&h, offset(c, 12.0 * pixel, 0.0))[3], 0);
     // 消しゴムの端
@@ -310,11 +300,7 @@ fn pen_samples_paint_with_pressure_and_the_eraser_end_erases() {
     }
     h.run();
     assert_eq!(canvas_pixel(&h, c)[3], 0);
-    assert_eq!(
-        h.state().state.tool,
-        Tool::Brush,
-        "消しゴムの端はツールを変えない"
-    );
+    assert_eq!(h.tool(), Tool::Brush, "消しゴムの端はツールを変えない");
 }
 
 /// 離しが届かないまま OS にペンの押しを奪われたとき: 離しが補われるまでは、その押しがキャンバスに残って別のポインタの番号の押しを使わない。補われた離しで
@@ -326,7 +312,7 @@ fn a_taken_pen_press_is_finished_by_the_supplied_lift_and_the_next_press_paints(
     let mut h = app(1280.0, 800.0, 256);
     let r = canvas_rect(&h);
     let c = r.center();
-    let pixel = h.state().state.view.view(r, 256, 256).pixel_size();
+    let pixel = h.view().view(r, 256, 256).pixel_size();
     let (mut touch, mut owner) = (Touch::default(), PressOwner::default());
     // 押して、少し動かす（離しは来ない）
     for p in [c, offset(c, 20.0 * pixel, 0.0)] {
@@ -336,7 +322,7 @@ fn a_taken_pen_press_is_finished_by_the_supplied_lift_and_the_next_press_paints(
     }
     h.run();
     assert!(
-        h.state().state.doc.has_active_stroke(),
+        h.doc().has_active_stroke(),
         "離しが来ないあいだは描いている"
     );
     // 別のポインタの番号の押しは、前の押しが残っているあいだは使われない
@@ -358,7 +344,7 @@ fn a_taken_pen_press_is_finished_by_the_supplied_lift_and_the_next_press_paints(
         .expect("触れていた押しの離しが補われる");
     h.state().pen().push_lost(lift);
     h.run();
-    assert!(!h.state().state.doc.has_active_stroke());
+    assert!(!h.doc().has_active_stroke());
     assert!(
         canvas_pixel(&h, c)[3] > 0,
         "終わったストロークは描かれている"
@@ -371,7 +357,7 @@ fn a_taken_pen_press_is_finished_by_the_supplied_lift_and_the_next_press_paints(
         canvas_pixel(&h, elsewhere)[3] > 0,
         "次の押しは新しい押しとして描ける"
     );
-    assert!(!h.state().state.doc.has_active_stroke());
+    assert!(!h.doc().has_active_stroke());
 }
 
 #[test]
@@ -380,13 +366,13 @@ fn layer_panel_add_hide_blend_and_opacity() {
     let mut h = app(1280.0, 800.0, 256);
     h.get_by_label("新規レイヤー").click();
     h.run();
-    assert_eq!(h.state().state.doc.layers().len(), 2);
-    let top = h.state().state.selected_layer.unwrap();
-    assert_eq!(h.state().state.doc.layers()[1].id(), top);
+    assert_eq!(h.doc().layers().len(), 2);
+    let top = h.selected_layer().unwrap();
+    assert_eq!(h.doc().layers()[1].id(), top);
     // 一番上の行の目
     let eye = rect_of(&h, "非表示にする", |_| true);
     click(&mut h, eye.center());
-    assert!(!h.state().state.doc.layer(top).unwrap().visible());
+    assert!(!h.doc().layer(top).unwrap().visible());
     // 合成モード（自前のドロップダウン）
     h.get_by_label("通常").click();
     h.run();
@@ -397,7 +383,7 @@ fn layer_panel_add_hide_blend_and_opacity() {
     let at = popup_item(&h, "乗算").center();
     click(&mut h, at);
     assert_eq!(
-        h.state().state.doc.layer(top).unwrap().blend_mode(),
+        h.doc().layer(top).unwrap().blend_mode(),
         BlendMode::Multiply
     );
     // 不透明度のドラッグは 1 回の取り消しにまとまる（レイヤーのパネルの中の不透明度。オプションバーとプロパティにも同じ名前がある）
@@ -414,10 +400,10 @@ fn layer_panel_add_hide_blend_and_opacity() {
             pos2(slider.left() + slider.width() * 0.25, slider.center().y),
         ],
     );
-    let opacity = h.state().state.doc.layer(top).unwrap().opacity();
+    let opacity = h.doc().layer(top).unwrap().opacity();
     assert!((0.2..0.3).contains(&opacity), "{opacity}");
-    h.state_mut().state.apply(yolu_app::state::Action::Undo);
-    assert_eq!(h.state().state.doc.layer(top).unwrap().opacity(), 1.0);
+    h.act(yolu_app::state::Action::Undo);
+    assert_eq!(h.doc().layer(top).unwrap().opacity(), 1.0);
 }
 
 #[test]
@@ -431,20 +417,20 @@ fn layer_rename_by_double_click() {
         h.step();
     }
     h.run();
-    assert!(h.state().state.ui.renaming.is_some());
+    assert!(h.ui().renaming.is_some());
     key(&h, Key::A, Modifiers::COMMAND);
     h.event(Event::Text("背景".into()));
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.doc.layers()[0].name(), "背景");
-    assert!(h.state().state.ui.renaming.is_none());
+    assert_eq!(h.doc().layers()[0].name(), "背景");
+    assert!(h.ui().renaming.is_none());
 }
 
 #[test]
 fn layer_drag_reorders() {
     let mut h = app(1280.0, 800.0, 256);
     for _ in 0..2 {
-        h.state_mut().state.apply(yolu_app::state::Action::NewLayer);
+        h.act(yolu_app::state::Action::NewLayer);
     }
     h.run();
     let top = rect_of(&h, "レイヤー 3", |_| true);
@@ -460,9 +446,7 @@ fn layer_drag_reorders() {
         ],
     );
     let names: Vec<String> = h
-        .state()
-        .state
-        .doc
+        .doc()
         .layers()
         .iter()
         .map(|l| l.name().to_owned())
@@ -479,20 +463,20 @@ fn color_panel_picks_hex_swap_and_wheel() {
     use egui_kittest::kittest::Queryable;
     let mut h = app(1280.0, 800.0, 256);
     // 既定は色相の円と中の四角。四角と色相の帯へ切り替えてから選ぶ（終わりに円へ戻す）
-    assert!(h.state().state.color.wheel);
+    assert!(h.color().wheel);
     h.get_by_label("四角と色相の帯").click();
     h.run();
-    assert!(!h.state().state.color.wheel);
+    assert!(!h.color().wheel);
     let sv = h.get_by_label("彩度と明度").rect();
     click(&mut h, pos2(sv.right() - 0.5, sv.top() + 0.5));
-    let c = h.state().state.color.main;
+    let c = h.color().main;
     assert!(c[0] > 0.97 && c[1] < 0.03 && c[2] < 0.03, "{c:?}");
     let hue = h.get_by_label("色相").rect();
     click(
         &mut h,
         pos2(hue.center().x, hue.top() + hue.height() * 2.0 / 3.0),
     ); // 色相 1/3 = 緑
-    let c = h.state().state.color.main;
+    let c = h.color().main;
     assert!(c[1] > 0.95 && c[0] < 0.05, "{c:?}");
     // 16 進
     // 16 進の欄（アセットの検索の欄も文字の入力なので、カラーのパネルの中のものを選ぶ）
@@ -506,20 +490,14 @@ fn color_panel_picks_hex_swap_and_wheel() {
     h.event(Event::Text("#3366cc".into()));
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
-    assert_eq!(
-        yolu_app::state::to_hex(h.state().state.color.main),
-        "3366CC"
-    );
+    assert_eq!(yolu_app::state::to_hex(h.color().main), "3366CC");
     h.get_by_label("メインとサブの色を入れ替え（X）").click();
     h.run();
-    assert_eq!(
-        yolu_app::state::to_hex(h.state().state.color.main),
-        "FFFFFF"
-    );
-    assert_eq!(yolu_app::state::to_hex(h.state().state.color.sub), "3366CC");
+    assert_eq!(yolu_app::state::to_hex(h.color().main), "FFFFFF");
+    assert_eq!(yolu_app::state::to_hex(h.color().sub), "3366CC");
     h.get_by_label("色相の円").click();
     h.run();
-    assert!(h.state().state.color.wheel);
+    assert!(h.color().wheel);
     let panel = shots::group(&h, yolu_app::Tab::Color);
     common::shot::region(&mut h, "color_wheel", panel);
 }
@@ -532,13 +510,13 @@ fn properties_tabs_and_pen_toggles() {
     let in_panel = |r: egui::Rect| r.left() < 390.0 && r.top() > 80.0;
     let pen = rect_of(&h, "筆圧で直径を変える", in_panel);
     click(&mut h, pen.center());
-    assert!(!h.state().state.brush.pressure.size);
+    assert!(!h.brush().pressure.size);
     let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
-    assert!(h.state().state.brush.pressure.flow);
+    assert!(h.brush().pressure.flow);
     // 右のプロパティはステンシルのタブから始まる。タブはステンシルとレイヤーの 2 つだけ（ブラシのタブも、マテリアルのタブも、筆先の形のアルファの
     // タブも無い。マテリアルは別のパネル、筆先の形は詳細のウィンドウの「形状」）
-    assert_eq!(h.state().state.ui.property_tab, 0);
+    assert_eq!(h.ui().property_tab, 0);
     assert!(h.query_all_by_label("アルファ").next().is_none());
     assert!(
         h.query_all_by_label("マテリアル").next().is_none(),
@@ -550,12 +528,12 @@ fn properties_tabs_and_pen_toggles() {
         r.left() > props.left() - 2.0 && r.top() > props.top()
     });
     click(&mut h, tab.center());
-    assert_eq!(h.state().state.ui.property_tab, 1);
+    assert_eq!(h.ui().property_tab, 1);
     let panel = shots::group(&h, yolu_app::Tab::Properties);
     common::shot::region(&mut h, "properties_layer_tab", panel);
     h.get_by_label("ステンシル").click();
     h.run();
-    assert_eq!(h.state().state.ui.property_tab, 0);
+    assert_eq!(h.ui().property_tab, 0);
     let panel = shots::group(&h, yolu_app::Tab::Properties);
     common::shot::region(&mut h, "properties_stencil_tab", panel);
 }
@@ -614,17 +592,17 @@ fn shortcuts_switch_tools_colors_size_and_history() {
     let mut h = app(1280.0, 800.0, 256);
     key(&h, Key::E, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::Eraser);
+    assert_eq!(h.tool(), Tool::Eraser);
     key(&h, Key::B, Modifiers::NONE);
     key(&h, Key::X, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::Brush);
-    assert_eq!(h.state().state.color.main, [1.0, 1.0, 1.0, 1.0]);
+    assert_eq!(h.tool(), Tool::Brush);
+    assert_eq!(h.color().main, [1.0, 1.0, 1.0, 1.0]);
     key(&h, Key::D, Modifiers::NONE);
     key(&h, Key::CloseBracket, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.color.main, [0.0, 0.0, 0.0, 1.0]);
-    assert!((h.state().state.brush.radius - 16.0 * 1.15).abs() < 1e-4);
+    assert_eq!(h.color().main, [0.0, 0.0, 0.0, 1.0]);
+    assert!((h.brush().radius - 16.0 * 1.15).abs() < 1e-4);
     let c = canvas_rect(&h).center();
     drag(&mut h, &[c, offset(c, 10.0, 0.0)]);
     key(&h, Key::Z, Modifiers::COMMAND);

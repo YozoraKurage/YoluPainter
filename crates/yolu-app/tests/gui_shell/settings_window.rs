@@ -1,6 +1,7 @@
 //! 設定のウィンドウの区分と探す欄、メニューの置き場（ファイル・表示・ヘルプ）。メニューから外した操作が、今までどおり動いて、設定のウィンドウから行けること。
 //! 区分ごとの絵と、メニューの絵は日英（ウィンドウの中だけ・メニューの中だけを撮る）。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 
@@ -42,7 +43,7 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
     use yolu_app::view3d::pose::PoseAction;
     for lang in Lang::ALL {
         let mut app = AppState::new(64, 64);
-        app.lang = lang;
+        app.set_lang(lang);
         let file = shell::menu_entries(&app, 0);
         let names = labels(&file);
         let at = |name: &str| names.iter().position(|n| n == name).unwrap_or(usize::MAX);
@@ -209,21 +210,21 @@ fn headless_the_actions_taken_out_of_the_menus_still_run_and_open_their_categori
     use yolu_app::view3d::pose::PoseAction;
     let mut app = AppState::new(64, 64);
     // 言語
-    app.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    assert_eq!(app.lang, Lang::En);
-    app.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::Ja)));
-    assert_eq!(app.lang, Lang::Ja);
+    app.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    assert_eq!(app.lang(), Lang::En);
+    app.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::Ja)));
+    assert_eq!(app.lang(), Lang::Ja);
     // ショートカット・筆圧の調整
-    assert!(!app.prefs.open);
-    app.apply(Action::ShowShortcuts);
-    assert!(app.prefs.shows(Category::Shortcuts));
-    app.apply(Action::Prefs(PrefsAction::Close));
-    app.apply(Action::Pressure(PressureAction::Open));
-    assert!(app.prefs.open);
-    assert_eq!(app.prefs.category, Category::Pen);
+    assert!(!app.prefs().open);
+    app.act(Action::ShowShortcuts);
+    assert!(app.prefs().shows(Category::Shortcuts));
+    app.act(Action::Prefs(PrefsAction::Close));
+    app.act(Action::Pressure(PressureAction::Open));
+    assert!(app.prefs().open);
+    assert_eq!(app.prefs().category, Category::Pen);
     // FBX を開く
-    app.apply(Action::Pose(PoseAction::OpenFbx));
-    assert_eq!(app.dialog_request, Some(DialogRequest::OpenModel));
+    app.act(Action::Pose(PoseAction::OpenFbx));
+    assert_eq!(*app.dialog_request(), Some(DialogRequest::OpenModel));
     // 外した物の名前はキーの表にも無い（キーの表の操作は `commands` の ID。ショートカット・言語・筆圧の調整・FBX の ID は持たない。
     // ベイクだけは、メニューから外した代わりに `bake.open` を持つ（下の `headless_bake_can_be_opened_…`）
     for command in yolu_app::commands::all() {
@@ -249,7 +250,7 @@ fn headless_bake_can_be_opened_by_a_command_without_a_default_key_and_from_the_s
     use yolu_app::state::PopupKind;
     for lang in Lang::ALL {
         let mut app = AppState::new(64, 64);
-        app.lang = lang;
+        app.set_lang(lang);
         // 操作: 名前・実行する Action・既定のキーが無い・キーの設定の表に載る（キーを割り当てられる）
         let command = yolu_app::commands::find("bake.open").expect("操作 bake.open");
         assert_eq!(
@@ -269,14 +270,14 @@ fn headless_bake_can_be_opened_by_a_command_without_a_default_key_and_from_the_s
         assert!(yolu_app::shortcuts::editor::all_groups(&app)
             .contains(&("bake.open", Scope::Everywhere)));
         // パイから: 項目として実行できる
-        assert!(app.bake.window.is_none());
+        assert!(app.bake().window.is_none());
         yolu_app::pie::run(&mut app, &PieItem::Command("bake.open".into()));
         assert!(
-            app.bake.window.is_some(),
+            app.bake().window.is_some(),
             "パイの項目でベイクのウィンドウが開く"
         );
         // セットの右クリックのメニューに入口がある
-        let uid = app.sets.current().uid;
+        let uid = app.sets().current().uid;
         let entries = shell::popup_entries(&app, PopupKind::SetContext(uid));
         assert!(
             has(&entries, &Action::Bake(BakeAction::OpenWindow)),
@@ -294,9 +295,7 @@ fn the_set_context_menu_and_an_assigned_key_open_the_bake_window() {
     use yolu_app::keymap::{Scope, Trigger};
     let dir = settings_dir("bake-entrance");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
-    h.state_mut()
-        .state
-        .apply(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    h.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
     h.run();
     let row = h.get_by_label("テクスチャセット 1").rect().center();
     press(&h, row, egui::PointerButton::Secondary);
@@ -305,32 +304,26 @@ fn the_set_context_menu_and_an_assigned_key_open_the_bake_window() {
     h.run();
     let item = popup_item(&h, "メッシュマップをベイク…").center();
     click(&mut h, item);
-    assert!(
-        h.state().state.bake.window.is_some(),
-        "右クリックのメニューから開く"
-    );
+    assert!(h.bake().window.is_some(), "右クリックのメニューから開く");
     // 閉じて、キーを割り当てると、そのキーで開く
-    h.state_mut().state.bake.window = None;
-    h.state_mut().state.keys.set(
+    h.bake_mut().window = None;
+    h.keys_mut().set(
         ("bake.open", Scope::Everywhere),
         vec![Trigger::Key {
             modifiers: egui::Modifiers::COMMAND | egui::Modifiers::ALT,
             key: egui::Key::B,
         }],
     );
-    h.state_mut().state.keys_changed();
+    h.app_mut().keys_changed();
     h.run();
-    assert!(!h.state().state.keys.has_conflicts());
+    assert!(!h.keys().has_conflicts());
     key(
         &h,
         egui::Key::B,
         egui::Modifiers::COMMAND | egui::Modifiers::ALT,
     );
     h.run();
-    assert!(
-        h.state().state.bake.window.is_some(),
-        "割り当てたキーで開く"
-    );
+    assert!(h.bake().window.is_some(), "割り当てたキーで開く");
 }
 
 // ───────── 設定のウィンドウ ─────────
@@ -357,23 +350,21 @@ fn app_with_settings(dir: &Path, size: egui::Vec2) -> H {
             YoluApp::for_context_with_settings(&cc.egui_ctx, Some(path), PenInput::detached())
                 .with_render_state(cc.wgpu_render_state.as_ref())
         });
-    h.state_mut().state.prefs.ram_mib = 16384;
-    h.state_mut().state.prefs.cores = 8;
+    h.prefs_mut().ram_mib = 16384;
+    h.prefs_mut().cores = 8;
     // PC によらない値にする（絵に出る置き場所と空き）
-    h.state_mut().state.prefs.settings.library_folder = Some(PathBuf::from(if cfg!(windows) {
+    h.prefs_mut().settings.library_folder = Some(PathBuf::from(if cfg!(windows) {
         "C:\\Library"
     } else {
         "/Library"
     }));
-    h.state_mut().state.prefs.settings.disk_cache_folder = Some(PathBuf::from(if cfg!(windows) {
+    h.prefs_mut().settings.disk_cache_folder = Some(PathBuf::from(if cfg!(windows) {
         "C:\\Cache"
     } else {
         "/Cache"
     }));
-    let folder = h.state().state.prefs.settings.disk_cache_folder();
-    h.state_mut()
-        .state
-        .prefs
+    let folder = h.prefs().settings.disk_cache_folder();
+    h.prefs_mut()
         .cache_free
         .push((folder, Some(100 * 1024 * 1024 * 1024)));
     h.run();
@@ -393,7 +384,7 @@ fn side(h: &H, label: &str) -> Rect {
 }
 
 fn click_side(h: &mut H, category: Category) {
-    let label = category.label(h.state().state.lang);
+    let label = category.label(h.lang());
     let at = side(h, label).center();
     click(h, at);
 }
@@ -439,7 +430,7 @@ fn window_texts(h: &H) -> Vec<(String, Rect)> {
 }
 
 fn open(h: &mut H) {
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.act(Action::Prefs(PrefsAction::Open));
     h.run();
 }
 
@@ -457,7 +448,7 @@ fn the_sidebar_switches_the_categories_and_the_window_remembers_the_last_one() {
     let dir = settings_dir("sidebar");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
     open(&mut h);
-    assert_eq!(h.state().state.prefs.category, Category::General);
+    assert_eq!(h.prefs().category, Category::General);
     let w = window(&h);
     // 区分の名前は左の列に並ぶ（更新は、公開鍵の無いこのビルドでは出ない）
     let mut last_top = f32::MIN;
@@ -474,7 +465,7 @@ fn the_sidebar_switches_the_categories_and_the_window_remembers_the_last_one() {
         .all(|n| !w.contains_rect(n.rect())));
     // 押すと右の欄が替わる（その区分の行が出て、前の区分の行は消える）
     click_side(&mut h, Category::Memory);
-    assert_eq!(h.state().state.prefs.category, Category::Memory);
+    assert_eq!(h.prefs().category, Category::Memory);
     let _ = h.get_by_label("取り消し履歴: 自動（2048 MiB）");
     assert!(h.query_by_label("言語: 日本語").is_none());
     click_side(&mut h, Category::General);
@@ -482,42 +473,42 @@ fn the_sidebar_switches_the_categories_and_the_window_remembers_the_last_one() {
     assert!(h.query_by_label("取り消し履歴: 自動（2048 MiB）").is_none());
     // 閉じて開くと、前に開いた区分
     click_side(&mut h, Category::View3d);
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Close));
+    h.act(Action::Prefs(PrefsAction::Close));
     h.run();
-    assert!(prefs::last_rect(&h.ctx).is_none() || !h.state().state.prefs.open);
+    assert!(prefs::last_rect(&h.ctx).is_none() || !h.prefs().open);
     open(&mut h);
-    assert_eq!(h.state().state.prefs.category, Category::View3d);
+    assert_eq!(h.prefs().category, Category::View3d);
     let _ = h.get_by_label("回転の中心: 画面の中心");
     // 編集 → 設定… と Ctrl+, も、前に開いた区分で開く
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Close));
+    h.act(Action::Prefs(PrefsAction::Close));
     h.run();
     key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
     h.run();
-    assert!(h.state().state.prefs.shows(Category::View3d));
+    assert!(h.prefs().shows(Category::View3d));
 }
 
 /// 区分を移すと、右の欄はその区分の先頭から始まる（区分ごとにスクロールする）。
 #[test]
 fn headless_choosing_another_category_clears_the_search_and_starts_from_the_top() {
     let mut app = AppState::new(64, 64);
-    app.prefs.search = "メモリ".into();
-    app.apply(Action::Prefs(PrefsAction::Choose(Category::Files)));
-    assert_eq!(app.prefs.category, Category::Files);
-    assert!(app.prefs.search.is_empty(), "区分を選ぶと探す欄は空");
-    app.apply(Action::Prefs(PrefsAction::OpenAt(Category::Pen)));
-    assert!(app.prefs.shows(Category::Pen));
+    app.prefs_mut().search = "メモリ".into();
+    app.act(Action::Prefs(PrefsAction::Choose(Category::Files)));
+    assert_eq!(app.prefs().category, Category::Files);
+    assert!(app.prefs().search.is_empty(), "区分を選ぶと探す欄は空");
+    app.act(Action::Prefs(PrefsAction::OpenAt(Category::Pen)));
+    assert!(app.prefs().shows(Category::Pen));
 }
 
 /// このビルドに無い区分（公開鍵の無いビルドの「更新」）を開くよう頼まれたら、「一般」を開く。
 #[test]
 fn headless_a_category_the_build_does_not_have_opens_general_instead() {
     let mut app = AppState::new(64, 64);
-    assert!(!app.update.enabled());
-    app.apply(Action::Prefs(PrefsAction::OpenAt(Category::Updates)));
-    assert!(app.prefs.open);
-    assert_eq!(app.prefs.category, Category::General);
-    app.apply(Action::Prefs(PrefsAction::Choose(Category::Updates)));
-    assert_eq!(app.prefs.category, Category::General);
+    assert!(!app.update().enabled());
+    app.act(Action::Prefs(PrefsAction::OpenAt(Category::Updates)));
+    assert!(app.prefs().open);
+    assert_eq!(app.prefs().category, Category::General);
+    app.act(Action::Prefs(PrefsAction::Choose(Category::Updates)));
+    assert_eq!(app.prefs().category, Category::General);
 }
 
 // ───────── 探す欄 ─────────
@@ -527,10 +518,10 @@ fn headless_a_category_the_build_does_not_have_opens_general_instead() {
 fn headless_every_item_belongs_to_one_category_with_a_name_in_both_languages() {
     let mut app = AppState::new(64, 64);
     // ペンの行は OS ごと。ここでは全部出す
-    app.prefs.tablet_row = true;
-    app.prefs.pen_input_row = true;
+    app.prefs_mut().tablet_row = true;
+    app.prefs_mut().pen_input_row = true;
     for lang in Lang::ALL {
-        app.lang = lang;
+        app.set_lang(lang);
         let mut seen: Vec<Item> = Vec::new();
         for category in Category::ALL {
             for item in category.items(&app) {
@@ -585,7 +576,7 @@ fn headless_the_search_matches_item_names_and_category_names_in_the_current_lang
         vec![(Category::Shortcuts, Vec::new())]
     );
     // 英語に替えると、英語の名前で当たり、日本語では当たらない（大文字小文字は区別しない）
-    app.lang = Lang::En;
+    app.set_lang(Lang::En);
     assert_eq!(
         groups(&app, "vsync"),
         vec![(Category::Display, vec![Item::Vsync])]
@@ -596,7 +587,7 @@ fn headless_the_search_matches_item_names_and_category_names_in_the_current_lang
         vec![(Category::Shortcuts, Vec::new())]
     );
     // 筆圧の調整は、ペンの区分の名前に当たったときも、名前に当たったときも出る
-    app.lang = Lang::Ja;
+    app.set_lang(Lang::Ja);
     let found = groups(&app, "筆圧");
     assert!(found
         .iter()
@@ -634,7 +625,7 @@ fn headless_the_search_matches_item_names_and_category_names_in_the_current_lang
     ] {
         assert_eq!(groups(&app, query), want, "{query}");
     }
-    app.lang = Lang::En;
+    app.set_lang(Lang::En);
     for (query, want) in [
         // "Export padding" にも "port" がある
         (
@@ -667,8 +658,8 @@ fn headless_the_search_matches_item_names_and_category_names_in_the_current_lang
 fn headless_every_item_is_listed_in_some_category() {
     let mut app = AppState::new(64, 64);
     // ペンの行は OS ごと。ここでは全部出す。更新の区分は、公開鍵のあるビルドの形にする
-    app.prefs.tablet_row = true;
-    app.prefs.pen_input_row = true;
+    app.prefs_mut().tablet_row = true;
+    app.prefs_mut().pen_input_row = true;
     let _rig = crate::update::rig(&mut app, "0.1.0", yolu_app::update::Mode::Installer);
     let listed: Vec<Item> = Category::ALL
         .into_iter()
@@ -700,7 +691,7 @@ fn typing_in_the_search_field_lists_the_matching_items_and_lights_the_categories
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
     open(&mut h);
     type_in_search(&mut h, "メモリ");
-    assert_eq!(h.state().state.prefs.search, "メモリ");
+    assert_eq!(h.prefs().search, "メモリ");
     // 右に並ぶのは、GPU のメモリ（表示）と、メモリの区分の項目。ほかの区分の行は出ない
     let _ = h.get_by_label("GPU のメモリ: 自動");
     let _ = h.get_by_label("取り消し履歴: 自動（2048 MiB）");
@@ -733,7 +724,7 @@ fn typing_in_the_search_field_lists_the_matching_items_and_lights_the_categories
         assert!(!lit(&h, category.label(Lang::Ja)), "{category:?}");
     }
     // 英語の名前で探す（言語を替えると、今の言語の文字で当たる）
-    h.state_mut().state.lang = Lang::En;
+    h.set_lang(Lang::En);
     h.run();
     type_in_search(&mut h, "vsync");
     let _ = h.get_by_label("VSync");
@@ -741,15 +732,15 @@ fn typing_in_the_search_field_lists_the_matching_items_and_lights_the_categories
     // 項目は、探した結果の中でも使える（値を替えると設定に入る）
     h.get_by_label("VSync").click();
     h.run();
-    assert!(h.state().state.settings().vsync);
+    assert!(h.app().settings().vsync);
     // 区分を押す: 探す欄は空になり、その区分が開く
     click_side(&mut h, Category::Files);
-    assert!(h.state().state.prefs.search.is_empty());
-    assert_eq!(h.state().state.prefs.category, Category::Files);
+    assert!(h.prefs().search.is_empty());
+    assert_eq!(h.prefs().category, Category::Files);
     let _ = h.get_by_label("Export padding: Dilation infinite");
     // Esc: 探す欄の文字を消す → もう一度で閉じる
     type_in_search(&mut h, "pen");
-    assert!(!h.state().state.prefs.search.is_empty());
+    assert!(!h.prefs().search.is_empty());
     let inside = window(&h).center();
     move_to(&h, inside);
     h.run();
@@ -757,14 +748,11 @@ fn typing_in_the_search_field_lists_the_matching_items_and_lights_the_categories
         .memory_mut(|m| m.surrender_focus(egui::Id::new("yolu.prefs.search")));
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.run();
-    assert!(
-        h.state().state.prefs.search.is_empty(),
-        "最初の Esc は探す欄を空にする"
-    );
-    assert!(h.state().state.prefs.open);
+    assert!(h.prefs().search.is_empty(), "最初の Esc は探す欄を空にする");
+    assert!(h.prefs().open);
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.run();
-    assert!(!h.state().state.prefs.open, "次の Esc で閉じる");
+    assert!(!h.prefs().open, "次の Esc で閉じる");
 }
 
 /// 探した結果にショートカットの区分の名前があるとき、その行を押すとショートカットの区分が開く。
@@ -780,8 +768,8 @@ fn a_search_hit_on_the_shortcut_category_opens_it_from_the_row() {
         w.contains_rect(r) && r.left() > w.left() + 220.0 && r.top() > w.top() + 60.0
     });
     click(&mut h, row.center());
-    assert!(h.state().state.prefs.shows(Category::Shortcuts));
-    assert!(h.state().state.prefs.search.is_empty());
+    assert!(h.prefs().shows(Category::Shortcuts));
+    assert!(h.prefs().search.is_empty());
 }
 
 // ───────── メニューから外した物が設定のウィンドウにある ─────────
@@ -798,11 +786,11 @@ fn everything_taken_out_of_the_menus_is_in_the_settings_window() {
     click(&mut h, at);
     let at = popup_item(&h, "English").center();
     click(&mut h, at);
-    assert_eq!(h.state().state.lang, Lang::En);
+    assert_eq!(h.lang(), Lang::En);
     let _ = h.get_by_label("Language: English");
     // ショートカット: 左の区分を押すと、下にショートカットの区分が出て、右に表と下の帯
     click_side(&mut h, Category::Shortcuts);
-    assert!(h.state().state.prefs.shows(Category::Shortcuts));
+    assert!(h.prefs().shows(Category::Shortcuts));
     for label in [
         "Everywhere & View",
         "Paint",
@@ -816,23 +804,17 @@ fn everything_taken_out_of_the_menus_is_in_the_settings_window() {
     for label in ["Reset to Default", "Export…", "Import…", "Find by Key"] {
         let _ = h.get_by_label(label);
     }
-    assert!(
-        h.state().state.shortcuts.search_rect.is_some(),
-        "表の探す欄"
-    );
+    assert!(h.shortcuts().search_rect.is_some(), "表の探す欄");
     // ペン: 筆圧の調整
     click_side(&mut h, Category::Pen);
-    assert!(h.state().state.pressure.open());
+    assert!(h.pressure().open());
     for label in ["Auto", "Clear", "Revert", "Default", "Low", "High"] {
         let _ = h.get_by_label(label);
     }
-    assert!(!h.state().state.shortcuts.capturing());
+    assert!(!h.shortcuts().capturing());
     // ショートカットの区分に戻ると、表はまた使える
     click_side(&mut h, Category::Shortcuts);
-    assert!(
-        !h.state().state.pressure.open(),
-        "ペンを離れると描く枠は無い"
-    );
+    assert!(!h.pressure().open(), "ペンを離れると描く枠は無い");
 }
 
 // ───────── Esc ─────────
@@ -851,18 +833,15 @@ fn escape_closes_only_the_popup_when_one_of_the_window_is_open() {
     open(&mut h);
     let at = h.get_by_label("言語: 日本語").rect().center();
     click(&mut h, at);
-    assert!(h.state().state.popup.is_some(), "言語の選びが開く");
+    assert!(h.popup().is_some(), "言語の選びが開く");
     esc(&mut h);
+    assert!(h.popup().is_none(), "Esc でポップアップが閉じる");
     assert!(
-        h.state().state.popup.is_none(),
-        "Esc でポップアップが閉じる"
-    );
-    assert!(
-        h.state().state.prefs.open,
+        h.prefs().open,
         "ポップアップを閉じた Esc で、設定のウィンドウは閉じない"
     );
     esc(&mut h);
-    assert!(!h.state().state.prefs.open, "次の Esc で閉じる");
+    assert!(!h.prefs().open, "次の Esc で閉じる");
 }
 
 /// ポート番号の欄（探す欄以外の入力欄）に打っている途中の Esc: 欄が入力をやめるだけで、ウィンドウは閉じない。値は変わらない。
@@ -872,11 +851,9 @@ fn escape_while_typing_in_the_port_field_only_leaves_the_field() {
     let dir = settings_dir("esc-port");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
     // OS が空いた番号を選ぶ（ほかの試験・開いているアプリと番号が重ならない）
-    h.state_mut().state.prefs.settings.external_ops_port = 0;
-    h.state_mut().state.prefs.settings.external_ops = true;
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
+    h.prefs_mut().settings.external_ops_port = 0;
+    h.prefs_mut().settings.external_ops = true;
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
     h.run();
     let toggle = h.get_by_label("外からの操作を受ける").rect();
     let field = h
@@ -889,17 +866,14 @@ fn escape_while_typing_in_the_port_field_only_leaves_the_field() {
     h.run();
     assert!(h.ctx.memory(|m| m.focused()).is_some(), "欄に打っている");
     esc(&mut h);
-    assert!(
-        h.state().state.prefs.open,
-        "打っている途中の Esc では閉じない"
-    );
+    assert!(h.prefs().open, "打っている途中の Esc では閉じない");
     assert!(
         h.ctx.memory(|m| m.focused()).is_none(),
         "欄はフォーカスを手放した"
     );
-    assert_eq!(h.state().state.prefs.settings.external_ops_port, 0);
+    assert_eq!(h.prefs().settings.external_ops_port, 0);
     esc(&mut h);
-    assert!(!h.state().state.prefs.open, "次の Esc で閉じる");
+    assert!(!h.prefs().open, "次の Esc で閉じる");
 }
 
 /// ショートカットの表の探す欄に打っている途中の Esc: 欄が入力をやめるだけで、ウィンドウは閉じない。
@@ -907,19 +881,17 @@ fn escape_while_typing_in_the_port_field_only_leaves_the_field() {
 fn escape_while_typing_in_the_shortcut_table_search_only_leaves_the_field() {
     let dir = settings_dir("esc-table");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Shortcuts)));
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::Shortcuts)));
     h.run();
-    let field = h.state().state.shortcuts.search_rect.expect("表の探す欄");
+    let field = h.shortcuts().search_rect.expect("表の探す欄");
     click(&mut h, field.center());
     h.event(egui::Event::Text("abc".into()));
     h.run();
-    assert_eq!(h.state().state.shortcuts.search, "abc");
+    assert_eq!(h.shortcuts().search, "abc");
     esc(&mut h);
-    assert!(h.state().state.prefs.open, "表の探す欄の Esc では閉じない");
+    assert!(h.prefs().open, "表の探す欄の Esc では閉じない");
     esc(&mut h);
-    assert!(!h.state().state.prefs.open, "次の Esc で閉じる");
+    assert!(!h.prefs().open, "次の Esc で閉じる");
 }
 
 /// 入力欄でない部品（スイッチ）を押したあとの Esc は、すぐ閉じる（押した部品のフォーカスを、打っている印と間違えない）。
@@ -927,9 +899,7 @@ fn escape_while_typing_in_the_shortcut_table_search_only_leaves_the_field() {
 fn escape_right_after_pressing_a_toggle_closes_the_window() {
     let dir = settings_dir("esc-toggle");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::LiveLink)));
     h.run();
     h.get_by_label("Unity の Live Link を受け付ける").click();
     h.run();
@@ -937,7 +907,7 @@ fn escape_right_after_pressing_a_toggle_closes_the_window() {
     move_to(&h, inside);
     h.run();
     esc(&mut h);
-    assert!(!h.state().state.prefs.open);
+    assert!(!h.prefs().open);
 }
 
 /// 色のウィンドウ（UV ワイヤーフレームの色）を開いている間の Esc は、色のウィンドウだけを閉じる。設定のウィンドウは閉じない。
@@ -945,9 +915,7 @@ fn escape_right_after_pressing_a_toggle_closes_the_window() {
 fn escape_closes_the_color_window_of_the_settings_and_not_the_settings() {
     let dir = settings_dir("esc-color");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::View3d)));
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::View3d)));
     h.run();
     h.get_by_role_and_label(
         egui::accesskit::Role::ColorWell,
@@ -964,9 +932,9 @@ fn escape_closes_the_color_window_of_the_settings_and_not_the_settings() {
         !yolu_app::panels::color_window::is_open(&h.ctx),
         "色のウィンドウが閉じる"
     );
-    assert!(h.state().state.prefs.open, "設定のウィンドウは閉じない");
+    assert!(h.prefs().open, "設定のウィンドウは閉じない");
     esc(&mut h);
-    assert!(!h.state().state.prefs.open, "次の Esc で閉じる");
+    assert!(!h.prefs().open, "次の Esc で閉じる");
 }
 
 // ───────── 閉じる・開く ─────────
@@ -975,16 +943,16 @@ fn escape_closes_the_color_window_of_the_settings_and_not_the_settings() {
 #[test]
 fn headless_closing_empties_the_search_and_reopening_starts_from_the_last_category() {
     let mut app = AppState::new(64, 64);
-    app.apply(Action::Prefs(PrefsAction::OpenAt(Category::Memory)));
-    app.prefs.search = "垂直".into();
+    app.act(Action::Prefs(PrefsAction::OpenAt(Category::Memory)));
+    app.prefs_mut().search = "垂直".into();
     assert!(
-        !app.prefs.shows(Category::Memory),
+        !app.prefs().shows(Category::Memory),
         "探している間は、区分を見ていない"
     );
-    app.apply(Action::Prefs(PrefsAction::Close));
-    assert!(app.prefs.search.is_empty());
-    app.apply(Action::Prefs(PrefsAction::Open));
-    assert!(app.prefs.shows(Category::Memory), "前に開いた区分から");
+    app.act(Action::Prefs(PrefsAction::Close));
+    assert!(app.prefs().search.is_empty());
+    app.act(Action::Prefs(PrefsAction::Open));
+    assert!(app.prefs().shows(Category::Memory), "前に開いた区分から");
 }
 
 /// ぶつかるキーが残ったままショートカットの区分を離れて、別の区分から閉じても、保存していないことを知らせる（区分を離れただけでは知らせない）。
@@ -993,32 +961,30 @@ fn closing_from_another_category_still_tells_that_the_conflicting_keys_are_not_s
     use yolu_app::keymap::{Scope, Trigger};
     let dir = settings_dir("unsaved-keys");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Shortcuts)));
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::Shortcuts)));
     h.run();
     // 消しゴムのキーをブラシの B にする（ぶつかる）
-    h.state_mut().state.keys.set(
+    h.keys_mut().set(
         ("tool.eraser", Scope::Paint),
         vec![Trigger::Key {
             modifiers: egui::Modifiers::NONE,
             key: egui::Key::B,
         }],
     );
-    h.state_mut().state.keys_changed();
+    h.app_mut().keys_changed();
     h.run();
-    assert!(h.state().state.keys.has_conflicts());
-    h.state_mut().state.clear_message();
+    assert!(h.keys().has_conflicts());
+    h.app_mut().clear_message();
     click_side(&mut h, Category::General);
     assert!(
-        h.state().state.message.is_empty(),
+        h.message().is_empty(),
         "区分を離れただけでは知らせない: {}",
-        h.state().state.message
+        h.message()
     );
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Close));
+    h.act(Action::Prefs(PrefsAction::Close));
     h.run();
     assert_eq!(
-        h.state().state.message,
+        h.message(),
         "ぶつかるキーがあるので、キーの設定を保存していません"
     );
 }
@@ -1030,9 +996,7 @@ fn closing_from_another_category_still_tells_that_the_conflicting_keys_are_not_s
 fn the_sidebar_scrolls_when_the_categories_do_not_fit_and_the_lower_ones_can_be_chosen() {
     let dir = settings_dir("side-scroll");
     let mut h = app_with_settings(&dir, vec2(960.0, 400.0));
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Shortcuts)));
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::Shortcuts)));
     h.run();
     h.run();
     let w = window(&h);
@@ -1068,7 +1032,7 @@ fn the_sidebar_scrolls_when_the_categories_do_not_fit_and_the_lower_ones_can_be_
     let r = side(&h, target.label(Lang::Ja));
     assert!(w.contains_rect(r), "送ると見える: {r:?} {w:?}");
     click(&mut h, r.center());
-    assert!(h.state().state.prefs.shows(target), "押すと開く");
+    assert!(h.prefs().shows(target), "押すと開く");
     // 開いた区分の見出しの名前が、区分の列のはみ出しを描かない（ウィンドウの外へは描かない）
     for (text, r) in window_texts(&h)
         .into_iter()
@@ -1100,9 +1064,7 @@ fn shot_menu(h: &mut H, name: &str) {
     h.event(egui::Event::PointerGone);
     h.step();
     let popup = h
-        .state()
-        .state
-        .popup
+        .popup()
         .as_ref()
         .expect("popup open")
         .state
@@ -1116,15 +1078,11 @@ fn snapshot_the_categories_of_the_settings_window_in_both_languages() {
     let dir = settings_dir("shots");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
     // Windows の行と更新を出した形で撮る（ほかの OS・公開鍵の無いビルドでも同じ絵）
-    h.state_mut().state.prefs.pen_input_row = true;
-    h.state_mut().state.prefs.tablet_row = false;
-    let _rig = crate::update::rig(
-        &mut h.state_mut().state,
-        "0.1.0",
-        yolu_app::update::Mode::Installer,
-    );
+    h.prefs_mut().pen_input_row = true;
+    h.prefs_mut().tablet_row = false;
+    let _rig = crate::update::rig(h.app_mut(), "0.1.0", yolu_app::update::Mode::Installer);
     for (lang, suffix) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         for (category, name) in [
             (Category::General, "general"),
             (Category::Pen, "pen"),
@@ -1133,23 +1091,19 @@ fn snapshot_the_categories_of_the_settings_window_in_both_languages() {
             (Category::Files, "files"),
             (Category::Updates, "updates"),
         ] {
-            h.state_mut()
-                .state
-                .apply(Action::Prefs(PrefsAction::OpenAt(category)));
-            h.state_mut().state.clear_message();
+            h.act(Action::Prefs(PrefsAction::OpenAt(category)));
+            h.app_mut().clear_message();
             h.run();
             shot(&mut h, &format!("settings_{name}_{suffix}"));
         }
         // 探した結果（メモリ: 表示の GPU のメモリと、メモリの区分）
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::OpenAt(Category::General)));
+        h.act(Action::Prefs(PrefsAction::OpenAt(Category::General)));
         h.run();
         type_in_search(&mut h, lang.pick("メモリ", "memory"));
-        h.state_mut().state.clear_message();
+        h.app_mut().clear_message();
         h.run();
         shot(&mut h, &format!("settings_search_{suffix}"));
-        h.state_mut().state.prefs.search.clear();
+        h.prefs_mut().search.clear();
         h.run();
     }
 }
@@ -1158,13 +1112,9 @@ fn snapshot_the_categories_of_the_settings_window_in_both_languages() {
 fn snapshot_the_file_view_and_help_menus_in_both_languages() {
     let dir = settings_dir("menus");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
-    let _rig = crate::update::rig(
-        &mut h.state_mut().state,
-        "0.1.0",
-        yolu_app::update::Mode::Installer,
-    );
+    let _rig = crate::update::rig(h.app_mut(), "0.1.0", yolu_app::update::Mode::Installer);
     for (lang, suffix) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         for (title, name) in [
             (lang.pick("ファイル", "File"), "file"),
@@ -1185,26 +1135,22 @@ fn snapshot_the_file_view_and_help_menus_in_both_languages() {
 fn every_category_runs_to_the_right_edge_of_the_search_field_in_both_languages() {
     let dir = settings_dir("right-edge");
     let mut h = app_with_settings(&dir, vec2(1280.0, 800.0));
-    let _rig = crate::update::rig(
-        &mut h.state_mut().state,
-        "0.1.0",
-        yolu_app::update::Mode::Installer,
-    );
+    let _rig = crate::update::rig(h.app_mut(), "0.1.0", yolu_app::update::Mode::Installer);
     open(&mut h);
     for lang in Lang::ALL {
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         let available: Vec<Category> = Category::ALL
             .into_iter()
             // ショートカットは表（下の試験）。更新は入り切りのチェックだけで、右端まで伸びる箱が無い
             .filter(|c| !matches!(c, Category::Shortcuts | Category::Updates))
-            .filter(|c| c.available(&h.state().state))
+            .filter(|c| c.available(h.app()))
             .collect();
         for category in available {
             click_side(&mut h, category);
             // 外からの操作を入れると、ポート番号の入力欄の行が出る（Live Link と外からの操作の区分は、これが右端まで伸びる唯一の箱）
-            h.state_mut().state.prefs.settings.external_ops = category == Category::LiveLink;
-            h.state_mut().state.prefs.settings.external_ops_port = 0;
+            h.prefs_mut().settings.external_ops = category == Category::LiveLink;
+            h.prefs_mut().settings.external_ops_port = 0;
             h.run();
             h.run();
             let w = window(&h);

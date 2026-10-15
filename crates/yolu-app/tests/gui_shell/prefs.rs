@@ -1,6 +1,7 @@
 //! 設定のウィンドウ（言語・書き出しのパディング・メモリの予算・CPU のスレッド・表示の合成・棚の場所・退避を残す数）: 値の選びが画面の状態・文書の予算に効くこと、
 //! 設定のファイルへの保存と起動での復元、壊れた値の理由、ウィンドウの操作と日英。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 
@@ -20,13 +21,13 @@ use yolu_app::YoluApp;
 const MIB: u64 = 1024 * 1024;
 
 fn set(s: &mut AppState, pref: Pref) {
-    s.apply(Action::Prefs(PrefsAction::Set(pref)));
+    s.act(Action::Prefs(PrefsAction::Set(pref)));
 }
 
 fn state() -> AppState {
     let mut s = AppState::new(64, 64);
-    s.prefs.ram_mib = 16384;
-    s.prefs.cores = 8;
+    s.prefs_mut().ram_mib = 16384;
+    s.prefs_mut().cores = 8;
     s
 }
 
@@ -53,16 +54,16 @@ fn labels(entries: &[yolu_app::ui::menu::Entry<Action>]) -> Vec<String> {
 fn headless_an_unmanaged_state_keeps_the_core_budgets_until_settings_are_loaded() {
     let mut s = state();
     let before = (
-        s.doc.undo_budget_bytes(),
-        s.doc.source_budget_bytes(),
-        s.doc.stroke_budget_bytes(),
+        s.doc().undo_budget_bytes(),
+        s.doc().source_budget_bytes(),
+        s.doc().stroke_budget_bytes(),
     );
     s.sync_budgets();
     assert_eq!(
         (
-            s.doc.undo_budget_bytes(),
-            s.doc.source_budget_bytes(),
-            s.doc.stroke_budget_bytes()
+            s.doc().undo_budget_bytes(),
+            s.doc().source_budget_bytes(),
+            s.doc().stroke_budget_bytes()
         ),
         before,
         "設定を読んでいない状態は、core の既定のまま"
@@ -70,42 +71,42 @@ fn headless_an_unmanaged_state_keeps_the_core_budgets_until_settings_are_loaded(
     // 設定を読むと自動の予算（16 GB: 取り消し 2048・レイヤーのメモリ 8192・1 回の操作 1024）
     s.load_settings(without_cache());
     s.sync_budgets();
-    assert_eq!(s.doc.undo_budget_bytes(), 2048 * MIB);
-    assert_eq!(s.doc.source_budget_bytes(), 8192 * MIB);
-    assert_eq!(s.doc.stroke_budget_bytes(), 1024 * MIB);
-    assert_eq!(s.doc.minimum_undo_steps(), 5);
+    assert_eq!(s.doc().undo_budget_bytes(), 2048 * MIB);
+    assert_eq!(s.doc().source_budget_bytes(), 8192 * MIB);
+    assert_eq!(s.doc().stroke_budget_bytes(), 1024 * MIB);
+    assert_eq!(s.doc().minimum_undo_steps(), 5);
 }
 
 #[test]
 fn headless_choosing_a_budget_changes_the_current_document_and_new_documents_follow() {
     let mut s = state();
     s.load_settings(without_cache());
-    s.apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    s.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Mib(512)));
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(4096)));
     set(&mut s, Pref::Budget(BudgetKind::Stroke, Budget::Mib(128)));
     set(&mut s, Pref::MinUndoSteps(9));
-    assert_eq!(s.doc.undo_budget_bytes(), 512 * MIB);
-    assert_eq!(s.doc.source_budget_bytes(), 4096 * MIB);
-    assert_eq!(s.doc.stroke_budget_bytes(), 128 * MIB);
-    assert_eq!(s.doc.minimum_undo_steps(), 9);
-    assert_eq!(s.prefs.settings.undo_budget, Budget::Mib(512));
+    assert_eq!(s.doc().undo_budget_bytes(), 512 * MIB);
+    assert_eq!(s.doc().source_budget_bytes(), 4096 * MIB);
+    assert_eq!(s.doc().stroke_budget_bytes(), 128 * MIB);
+    assert_eq!(s.doc().minimum_undo_steps(), 9);
+    assert_eq!(s.prefs().settings.undo_budget, Budget::Mib(512));
     // 範囲の外は範囲に収める
     set(&mut s, Pref::Budget(BudgetKind::Stroke, Budget::Mib(1)));
-    assert_eq!(s.prefs.settings.stroke_budget, Budget::Mib(8));
+    assert_eq!(s.prefs().settings.stroke_budget, Budget::Mib(8));
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Mib(999_999)));
-    assert_eq!(s.prefs.settings.undo_budget, Budget::Mib(16384));
+    assert_eq!(s.prefs().settings.undo_budget, Budget::Mib(16384));
     set(&mut s, Pref::MinUndoSteps(9999));
-    assert_eq!(s.prefs.settings.min_undo_steps, 100);
+    assert_eq!(s.prefs().settings.min_undo_steps, 100);
     // 自動に戻すと、メモリから
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Auto));
-    assert_eq!(s.doc.undo_budget_bytes(), 2048 * MIB);
+    assert_eq!(s.doc().undo_budget_bytes(), 2048 * MIB);
     // 新しいプロジェクト（新しい文書）にも、次の同期で入る
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(1024)));
-    s.apply(Action::NewProject);
+    s.act(Action::NewProject);
     s.sync_budgets();
-    assert_eq!(s.doc.source_budget_bytes(), 1024 * MIB, "新しい文書");
-    assert_eq!(s.doc.minimum_undo_steps(), 100);
+    assert_eq!(s.doc().source_budget_bytes(), 1024 * MIB, "新しい文書");
+    assert_eq!(s.doc().minimum_undo_steps(), 100);
 }
 
 /// 文書のレイヤーに、タイルを `count` 枚ぶん（先頭から）不透明に塗って、画素を確保する（1 タイル 128 × 128 × 4 バイト = 64 KiB）。
@@ -130,46 +131,46 @@ fn fill_tiles(
 #[test]
 fn headless_the_pixel_and_history_budgets_are_the_projects_total_shared_by_all_the_texture_sets() {
     let mut s = AppState::new(2048, 2048);
-    s.prefs.ram_mib = 16384;
+    s.prefs_mut().ram_mib = 16384;
     let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
-    assert_eq!(s.sets.len(), 2);
+    assert_eq!(s.sets().len(), 2);
     s.load_settings(without_cache());
     // 全体の予算: 画素 16 MiB（最小）・取り消し履歴 64 MiB・最小の取り消し段数 9
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Mib(64)));
     set(&mut s, Pref::MinUndoSteps(9));
-    let (first, second) = (s.sets.current_index(), 1 - s.sets.current_index());
+    let (first, second) = (s.sets().current_index(), 1 - s.sets().current_index());
     // ほかのセットが何も使っていなければ、今のセットが全体を使える
-    assert_eq!(s.doc.source_budget_bytes(), 16 * MIB);
-    assert_eq!(s.doc.undo_budget_bytes(), 64 * MIB);
+    assert_eq!(s.doc().source_budget_bytes(), 16 * MIB);
+    assert_eq!(s.doc().undo_budget_bytes(), 64 * MIB);
     // 今のセットが画素と履歴を使う（100 タイル = 6.25 MiB）
-    let layer = s.selected_layer.unwrap();
-    fill_tiles(&mut s.doc, layer, 100).unwrap();
+    let layer = s.selected_layer().unwrap();
+    fill_tiles(s.doc_mut(), layer, 100).unwrap();
     // ストロークを 1 本（先頭のタイルの中。履歴に 1 段入る。画素を直に書く操作は履歴を消す）
     let mut stroke = s.begin_paint_stroke(layer, false).unwrap();
     stroke
-        .add_point(&mut s.doc, 20.5, 20.5, 1.0, yolu_app::engine::DVec2::ZERO)
+        .add_point(s.doc_mut(), 20.5, 20.5, 1.0, yolu_app::engine::DVec2::ZERO)
         .unwrap();
     stroke
-        .add_point(&mut s.doc, 90.5, 60.5, 1.0, yolu_app::engine::DVec2::ZERO)
+        .add_point(s.doc_mut(), 90.5, 60.5, 1.0, yolu_app::engine::DVec2::ZERO)
         .unwrap();
-    s.doc.end_stroke(stroke).unwrap();
-    let (used, history) = (s.doc.allocated_bytes(), s.doc.history_bytes());
+    s.doc_mut().end_stroke(stroke).unwrap();
+    let (used, history) = (s.doc().allocated_bytes(), s.doc().history_bytes());
     assert_eq!(used, 100 * 65536);
     assert!(history > 0, "ストロークで履歴が増える");
     // 切り替えると、新しい今のセットには「設定 − ほかのセットの使用量」が入る
     s.switch_set(second).unwrap();
-    assert_eq!(s.doc.source_budget_bytes(), 16 * MIB - used);
-    assert_eq!(s.doc.undo_budget_bytes(), 64 * MIB - history);
+    assert_eq!(s.doc().source_budget_bytes(), 16 * MIB - used);
+    assert_eq!(s.doc().undo_budget_bytes(), 64 * MIB - history);
     assert_eq!(
-        s.doc.minimum_undo_steps(),
+        s.doc().minimum_undo_steps(),
         9,
         "最小の取り消し段数はセットごとに残る"
     );
     // 2 つ目のセットは、残りまでしか塗れない（断られても何も壊れず、合計が設定を超えない）
-    let layer = s.selected_layer.unwrap();
-    let refused = fill_tiles(&mut s.doc, layer, 256).unwrap_err();
+    let layer = s.selected_layer().unwrap();
+    let refused = fill_tiles(s.doc_mut(), layer, 256).unwrap_err();
     assert_eq!(refused, yolu_app::engine::CoreError::SourceBudgetExceeded);
     let total = s.set_doc(first).allocated_bytes() + s.set_doc(second).allocated_bytes();
     assert!(total <= 16 * MIB, "{total}");
@@ -177,25 +178,25 @@ fn headless_the_pixel_and_history_budgets_are_the_projects_total_shared_by_all_t
     // 戻ると、1 つ目のセットの予算は 2 つ目の使用量を引いた分（今の画素以上）
     s.switch_set(first).unwrap();
     assert_eq!(
-        s.doc.source_budget_bytes(),
+        s.doc().source_budget_bytes(),
         16 * MIB - s.set_doc(second).allocated_bytes()
     );
-    assert!(s.doc.source_budget_bytes() >= s.doc.allocated_bytes());
+    assert!(s.doc().source_budget_bytes() >= s.doc().allocated_bytes());
     // 設定を変えると、今のセットだけに次の同期で入る（全体の値から、ほかのセットの使用量を引いて）
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(64)));
     assert_eq!(
-        s.doc.source_budget_bytes(),
+        s.doc().source_budget_bytes(),
         64 * MIB - s.set_doc(second).allocated_bytes()
     );
     s.switch_set(second).unwrap();
     assert_eq!(
-        s.doc.source_budget_bytes(),
+        s.doc().source_budget_bytes(),
         64 * MIB - s.set_doc(first).allocated_bytes()
     );
     // 自動の予算でも同じ（16 GB: 画素 8192 MiB）
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Auto));
     assert_eq!(
-        s.doc.source_budget_bytes(),
+        s.doc().source_budget_bytes(),
         8192 * MIB - s.set_doc(first).allocated_bytes()
     );
 }
@@ -204,39 +205,39 @@ fn headless_the_pixel_and_history_budgets_are_the_projects_total_shared_by_all_t
 fn headless_the_largest_budgets_are_shared_between_the_sets_without_overflow() {
     // 自動の最大（物理メモリが十分にあるとき）: レイヤーのメモリ 64 GiB・取り消し 16 GiB・1 回の操作 4 GiB
     let mut s = AppState::new(2048, 2048);
-    s.prefs.ram_mib = 1 << 20;
+    s.prefs_mut().ram_mib = 1 << 20;
     let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
     s.load_settings(without_cache());
     s.sync_budgets();
-    let (first, second) = (s.sets.current_index(), 1 - s.sets.current_index());
-    assert_eq!(s.doc.source_budget_bytes(), 65536 * MIB);
-    assert_eq!(s.doc.undo_budget_bytes(), 16384 * MIB);
-    assert_eq!(s.doc.stroke_budget_bytes(), 4096 * MIB);
+    let (first, second) = (s.sets().current_index(), 1 - s.sets().current_index());
+    assert_eq!(s.doc().source_budget_bytes(), 65536 * MIB);
+    assert_eq!(s.doc().undo_budget_bytes(), 16384 * MIB);
+    assert_eq!(s.doc().stroke_budget_bytes(), 4096 * MIB);
     // 予約ではない: 予算が大きくても、使っていない間の画素は増えない
     assert!(
-        s.doc.allocated_bytes() < 64 * MIB,
+        s.doc().allocated_bytes() < 64 * MIB,
         "{}",
-        s.doc.allocated_bytes()
+        s.doc().allocated_bytes()
     );
     // 使った分だけ、ほかのセットの予算から引かれる（全体が最大でも引き算が合う）
-    let layer = s.selected_layer.unwrap();
-    fill_tiles(&mut s.doc, layer, 100).unwrap();
-    let used = s.doc.allocated_bytes();
+    let layer = s.selected_layer().unwrap();
+    fill_tiles(s.doc_mut(), layer, 100).unwrap();
+    let used = s.doc().allocated_bytes();
     s.switch_set(second).unwrap();
-    assert_eq!(s.doc.source_budget_bytes(), 65536 * MIB - used);
+    assert_eq!(s.doc().source_budget_bytes(), 65536 * MIB - used);
     assert_eq!(
-        s.doc.undo_budget_bytes(),
+        s.doc().undo_budget_bytes(),
         16384 * MIB - s.set_doc(first).history_bytes()
     );
-    assert_eq!(s.doc.stroke_budget_bytes(), 4096 * MIB);
+    assert_eq!(s.doc().stroke_budget_bytes(), 4096 * MIB);
     // 設定の最大の値を選んでも同じ（範囲の上限）。1 つ上へは指定できない（範囲に丸める）
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(65536)));
-    assert_eq!(s.prefs.settings.source_budget, Budget::Mib(65536));
-    assert_eq!(s.doc.source_budget_bytes(), 65536 * MIB - used);
+    assert_eq!(s.prefs().settings.source_budget, Budget::Mib(65536));
+    assert_eq!(s.doc().source_budget_bytes(), 65536 * MIB - used);
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(65537)));
     assert_eq!(
-        s.prefs.settings.source_budget,
+        s.prefs().settings.source_budget,
         Budget::Mib(65536),
         "上限に丸める"
     );
@@ -247,48 +248,48 @@ fn headless_the_largest_budgets_are_shared_between_the_sets_without_overflow() {
 #[test]
 fn headless_a_project_already_over_the_pixel_budget_keeps_its_pixels_and_says_so_once() {
     let mut s = AppState::new(2048, 2048);
-    s.prefs.ram_mib = 16384;
+    s.prefs_mut().ram_mib = 16384;
     let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
     s.load_settings(without_cache());
     // 1 つ目のセットが 20 MiB（2048 × 2048 の 1 レイヤーは 16 MiB なので 2 レイヤー）使っているところへ、全体の予算 16 MiB
-    let first = s.sets.current_index();
+    let first = s.sets().current_index();
     for _ in 0..2 {
-        s.apply(Action::NewLayer);
-        let layer = s.selected_layer.unwrap();
-        fill_tiles(&mut s.doc, layer, 160).unwrap();
+        s.act(Action::NewLayer);
+        let layer = s.selected_layer().unwrap();
+        fill_tiles(s.doc_mut(), layer, 160).unwrap();
     }
-    s.message.clear();
+    s.message_mut().clear();
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     assert_eq!(
-        s.doc.source_budget_bytes(),
-        s.doc.allocated_bytes(),
+        s.doc().source_budget_bytes(),
+        s.doc().allocated_bytes(),
         "画素は捨てず、予算を今の量まで広げる"
     );
     assert_eq!(
-        s.message,
+        s.message(),
         "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。"
     );
     // 同じ状況では知らせ直さない
-    s.message.clear();
+    s.message_mut().clear();
     s.sync_budgets();
-    assert_eq!(s.message, "");
+    assert_eq!(s.message(), "");
     // 足せない（今の量が予算）
-    let layer = s.selected_layer.unwrap();
-    assert!(fill_tiles(&mut s.doc, layer, 256).is_err());
+    let layer = s.selected_layer().unwrap();
+    assert!(fill_tiles(s.doc_mut(), layer, 256).is_err());
     // もう 1 つのセットは、残りが無いので 0（足せない）。知らせは今のセットの画素が超えているときだけ
     s.switch_set(1 - first).unwrap();
-    assert_eq!(s.doc.source_budget_bytes(), 0);
+    assert_eq!(s.doc().source_budget_bytes(), 0);
     // 予算を上げれば、また足せる
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(1024)));
-    let layer = s.selected_layer.unwrap();
-    assert!(fill_tiles(&mut s.doc, layer, 10).is_ok());
+    let layer = s.selected_layer().unwrap();
+    assert!(fill_tiles(s.doc_mut(), layer, 10).is_ok());
     // 英語
     s.switch_set(first).unwrap();
-    s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    s.act(Action::M2Ui(UiOp::Language(Lang::En)));
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     assert_eq!(
-        s.message,
+        s.message(),
         "The layer memory is already over the budget; nothing can be added until it is raised."
     );
 }
@@ -332,52 +333,52 @@ fn two_sets_model() -> yolu_protocol::Model {
 fn headless_a_budget_is_not_changed_while_drawing_and_a_too_small_pixel_budget_widens_to_the_current_pixels(
 ) {
     let mut s = AppState::new(4096, 4096);
-    s.prefs.ram_mib = 16384;
+    s.prefs_mut().ram_mib = 16384;
     s.load_settings(without_cache());
     // 描いている間は入れず、終わったフレームで入れる
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     set(&mut s, Pref::Budget(BudgetKind::Undo, Budget::Mib(256)));
-    assert_ne!(s.doc.undo_budget_bytes(), 256 * MIB);
-    s.doc.cancel_stroke(stroke);
+    assert_ne!(s.doc().undo_budget_bytes(), 256 * MIB);
+    s.doc_mut().cancel_stroke(stroke);
     s.sync_budgets();
-    assert_eq!(s.doc.undo_budget_bytes(), 256 * MIB);
+    assert_eq!(s.doc().undo_budget_bytes(), 256 * MIB);
     // 今の画素（20 MiB 以上）より小さい画素の予算（16 MiB）: 画素は捨てず、予算を今の量まで広げて知らせる
-    let id = s.selected_layer.unwrap();
+    let id = s.selected_layer().unwrap();
     for ty in 0..32u32 {
         for tx in 0..10u32 {
-            s.doc
+            s.doc_mut()
                 .set_pixel(id, tx * 128, ty * 128, Rgba8::new(1, 2, 3, 255))
                 .unwrap();
         }
     }
     assert!(
-        s.doc.allocated_bytes() > 16 * MIB,
+        s.doc().allocated_bytes() > 16 * MIB,
         "{}",
-        s.doc.allocated_bytes()
+        s.doc().allocated_bytes()
     );
-    s.message.clear();
+    s.message_mut().clear();
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     assert_eq!(
-        s.doc.source_budget_bytes(),
-        s.doc.allocated_bytes(),
+        s.doc().source_budget_bytes(),
+        s.doc().allocated_bytes(),
         "予算を今の量まで広げた（足せない）"
     );
     assert_eq!(
-        s.message,
+        s.message(),
         "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。"
     );
     // 選んだ値は設定に残る（画素の少ない文書なら効く）。何度も知らせ直さない
-    assert_eq!(s.prefs.settings.source_budget, Budget::Mib(16));
-    s.message.clear();
+    assert_eq!(s.prefs().settings.source_budget, Budget::Mib(16));
+    s.message_mut().clear();
     s.sync_budgets();
-    assert_eq!(s.message, "");
-    s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    assert_eq!(s.message(), "");
+    s.act(Action::M2Ui(UiOp::Language(Lang::En)));
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(64)));
-    assert_eq!(s.doc.source_budget_bytes(), 64 * MIB);
+    assert_eq!(s.doc().source_budget_bytes(), 64 * MIB);
     set(&mut s, Pref::Budget(BudgetKind::Source, Budget::Mib(16)));
     assert_eq!(
-        s.message,
+        s.message(),
         "The layer memory is already over the budget; nothing can be added until it is raised."
     );
 }
@@ -386,59 +387,62 @@ fn headless_a_budget_is_not_changed_while_drawing_and_a_too_small_pixel_budget_w
 fn headless_the_other_values_are_kept_clamped_or_refused() {
     let mut s = state();
     set(&mut s, Pref::ExportPadding(8));
-    assert_eq!((s.export.padding, s.prefs.settings.export_padding), (8, 8));
+    assert_eq!(
+        (s.export().padding, s.prefs().settings.export_padding),
+        (8, 8)
+    );
     set(&mut s, Pref::ExportPadding(-1));
-    assert_eq!(s.export.padding, -1);
+    assert_eq!(s.export().padding, -1);
     set(&mut s, Pref::ExportPadding(3));
-    assert_eq!(s.export.padding, -1, "選択肢に無い余白は受けない");
+    assert_eq!(s.export().padding, -1, "選択肢に無い余白は受けない");
     set(&mut s, Pref::CpuThreads(Some(0)));
-    assert_eq!(s.prefs.settings.cpu_threads, Some(1));
+    assert_eq!(s.prefs().settings.cpu_threads, Some(1));
     set(&mut s, Pref::CpuThreads(Some(5000)));
-    assert_eq!(s.prefs.settings.cpu_threads, Some(1024));
+    assert_eq!(s.prefs().settings.cpu_threads, Some(1024));
     set(&mut s, Pref::CpuThreads(None));
-    assert_eq!(s.prefs.settings.cpu_threads, None);
+    assert_eq!(s.prefs().settings.cpu_threads, None);
     set(&mut s, Pref::Compositing(Compositing::Gpu));
-    assert_eq!(s.prefs.settings.compositing, Compositing::Gpu);
+    assert_eq!(s.prefs().settings.compositing, Compositing::Gpu);
     // 棚の場所: 絶対パスだけ。None で既定
     let folder = std::env::current_dir().unwrap().join("shelf");
     set(&mut s, Pref::LibraryFolder(Some(folder.clone())));
-    assert_eq!(s.prefs.settings.library_folder, Some(folder.clone()));
+    assert_eq!(s.prefs().settings.library_folder, Some(folder.clone()));
     set(
         &mut s,
         Pref::LibraryFolder(Some(PathBuf::from("relative/shelf"))),
     );
     assert_eq!(
-        s.prefs.settings.library_folder,
+        s.prefs().settings.library_folder,
         Some(folder),
         "相対パスは受けない"
     );
-    assert_eq!(s.message, "ライブラリの場所は絶対パスで指定します。");
-    s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    assert_eq!(s.message(), "ライブラリの場所は絶対パスで指定します。");
+    s.act(Action::M2Ui(UiOp::Language(Lang::En)));
     set(
         &mut s,
         Pref::LibraryFolder(Some(PathBuf::from("relative/shelf"))),
     );
-    assert_eq!(s.message, "The library folder must be an absolute path.");
+    assert_eq!(s.message(), "The library folder must be an absolute path.");
     set(&mut s, Pref::LibraryFolder(None));
-    assert_eq!(s.prefs.settings.library_folder, None);
+    assert_eq!(s.prefs().settings.library_folder, None);
     // 言語は画面の言語が持ち、設定の取り出しで重なる
     assert_eq!(s.settings().lang, Lang::En);
-    s.apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    s.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     assert_eq!(s.settings().lang, Lang::Ja);
     // 棚の場所を選ぶウィンドウを頼む
-    s.apply(Action::Prefs(PrefsAction::ChooseLibraryFolder));
-    assert_eq!(s.dialog_request, Some(DialogRequest::PrefsLibraryFolder));
+    s.act(Action::Prefs(PrefsAction::ChooseLibraryFolder));
+    assert_eq!(*s.dialog_request(), Some(DialogRequest::PrefsLibraryFolder));
     // ウィンドウの開け閉め
-    s.apply(Action::Prefs(PrefsAction::Open));
-    assert!(s.prefs.open);
-    s.apply(Action::Prefs(PrefsAction::Close));
-    assert!(!s.prefs.open);
+    s.act(Action::Prefs(PrefsAction::Open));
+    assert!(s.prefs().open);
+    s.act(Action::Prefs(PrefsAction::Close));
+    assert!(!s.prefs().open);
 }
 
 #[test]
 fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
     let mut s = state();
-    s.apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    s.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     let ja = labels(&entries(&s, PrefChoice::Budget(BudgetKind::Undo)));
     assert_eq!(ja[0], "自動（2048 MiB）", "{ja:?}");
     assert!(ja.contains(&"0 MiB".to_string()) && ja.contains(&"8192 MiB".to_string()));
@@ -472,8 +476,8 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
         ["日本語", "English"]
     );
     // ファイルに書いた中途半端な数も、選択肢に出る（選び直せる）
-    s.prefs.settings.undo_budget = Budget::Mib(777);
-    s.prefs.settings.cpu_threads = Some(3);
+    s.prefs_mut().settings.undo_budget = Budget::Mib(777);
+    s.prefs_mut().settings.cpu_threads = Some(3);
     assert_eq!(
         labels(&entries(&s, PrefChoice::Budget(BudgetKind::Undo)))
             .last()
@@ -485,7 +489,7 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
         "3"
     );
     // 英語
-    s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    s.act(Action::M2Ui(UiOp::Language(Lang::En)));
     assert_eq!(
         labels(&entries(&s, PrefChoice::Budget(BudgetKind::Undo)))[0],
         "Auto (2048 MiB)"
@@ -503,8 +507,8 @@ fn headless_the_choices_mark_the_current_value_and_add_an_odd_one() {
         "Dilation infinite"
     );
     // 1 コア（並列にしない）の機械は 1 が 1 つだけ
-    s.prefs.cores = 1;
-    s.prefs.settings.cpu_threads = None;
+    s.prefs_mut().cores = 1;
+    s.prefs_mut().settings.cpu_threads = None;
     assert_eq!(
         labels(&entries(&s, PrefChoice::CpuThreads)),
         ["Automatic (1)", "1 (no parallel work)"]
@@ -541,10 +545,10 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
             YoluApp::for_context_with_settings(&cc.egui_ctx, Some(path), PenInput::detached())
                 .with_render_state(cc.wgpu_render_state.as_ref())
         });
-    h.state_mut().state.prefs.ram_mib = 16384;
-    h.state_mut().state.prefs.cores = 8;
+    h.prefs_mut().ram_mib = 16384;
+    h.prefs_mut().cores = 8;
     // 作るときのフレームで測った値があれば置き換える
-    let free = &mut h.state_mut().state.prefs.cache_free;
+    let free = &mut h.prefs_mut().cache_free;
     free.retain(|(f, _)| *f != fixed_cache_folder());
     free.push((fixed_cache_folder(), Some(FIXED_CACHE_FREE)));
     // 中央は 1 つの組（`common::app` と同じ並び）
@@ -563,16 +567,14 @@ fn open_settings(h: &mut Harness<'static, YoluApp>) {
 
 /// 左の区分を選ぶ（設定のウィンドウが開いている）。
 fn choose(h: &mut Harness<'static, YoluApp>, category: Category) {
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Choose(category)));
+    h.act(Action::Prefs(PrefsAction::Choose(category)));
     h.run();
 }
 
 /// 左の区分の矩形（ウィンドウの左の列にある、その名前のもの）。
 fn side_rect(h: &Harness<'_, YoluApp>, category: Category) -> Rect {
     let window = window_rect(h);
-    let label = category.label(h.state().state.lang);
+    let label = category.label(h.lang());
     rect_of(h, label, |r| {
         window.contains_rect(r) && r.left() < window.left() + 220.0
     })
@@ -603,28 +605,24 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert!(!h.state().state.prefs.open);
+    assert!(!h.prefs().open);
     open_settings(&mut h);
-    assert!(h.state().state.prefs.open);
+    assert!(h.prefs().open);
     // 初めて開くと「一般」（言語）
-    assert_eq!(h.state().state.prefs.category, Category::General);
+    assert_eq!(h.prefs().category, Category::General);
     // ライブラリの場所は、機械によらない場所にして撮る（既定の場所は設定のフォルダの下で、機械で違う）
     let shelf = PathBuf::from(if cfg!(windows) {
         "C:\\Library"
     } else {
         "/Library"
     });
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
-            shelf,
-        )))));
+    h.act(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
+        shelf,
+    )))));
     // キャッシュの置き場所も（既定は OS の一時フォルダで、機械で違う）
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::DiskCacheFolder(
-            Some(fixed_cache_folder()),
-        ))));
+    h.act(Action::Prefs(PrefsAction::Set(Pref::DiskCacheFolder(
+        Some(fixed_cache_folder()),
+    ))));
     h.run();
     let window = window_rect(&h);
     // 値の箱（名前: 値）
@@ -636,32 +634,32 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     };
     choose(&mut h, Category::Files);
     pick(&mut h, "書き出しのパディング: 無限に広げる", "8 px 広げる");
-    assert_eq!(h.state().state.export.padding, 8);
+    assert_eq!(h.export().padding, 8);
     choose(&mut h, Category::Memory);
     pick(&mut h, "取り消し履歴: 自動（2048 MiB）", "512 MiB");
-    assert_eq!(h.state().state.doc.undo_budget_bytes(), 512 * MIB);
+    assert_eq!(h.doc().undo_budget_bytes(), 512 * MIB);
     pick(&mut h, "レイヤーのメモリ: 自動（8192 MiB）", "4096 MiB");
     // ディスクキャッシュが入（既定）: 画素の予算は、メモリの上限（レイヤーのメモリ＋取り消し履歴）＋ディスクの上限（空き 100 GiB の半分）
     let with_cache = (4096 + 512) * MIB + FIXED_CACHE_FREE / 2;
-    assert_eq!(h.state().state.doc.source_budget_bytes(), with_cache);
+    assert_eq!(h.doc().source_budget_bytes(), with_cache);
     pick(&mut h, "1 回の操作: 自動（1024 MiB）", "256 MiB");
-    assert_eq!(h.state().state.doc.stroke_budget_bytes(), 256 * MIB);
+    assert_eq!(h.doc().stroke_budget_bytes(), 256 * MIB);
     choose(&mut h, Category::Display);
     pick(&mut h, "表示の合成: 自動", "CPU");
-    assert_eq!(h.state().state.prefs.settings.compositing, Compositing::Cpu);
+    assert_eq!(h.prefs().settings.compositing, Compositing::Cpu);
     // CPU のスレッドは次の起動から効く（行に出る）
     choose(&mut h, Category::Processing);
     pick(&mut h, "CPU のスレッド: 自動（8）", "4");
-    assert_eq!(h.state().state.prefs.settings.cpu_threads, Some(4));
+    assert_eq!(h.prefs().settings.cpu_threads, Some(4));
     let _ = h.get_by_label("CPU のスレッド: 4 ・ 再起動で反映");
     choose(&mut h, Category::LiveLink);
     h.get_by_label("Unity の Live Link を受け付ける").click();
     h.run();
-    assert!(!h.state().state.settings().livelink_on_startup);
+    assert!(!h.app().settings().livelink_on_startup);
     // 言語（選ぶとウィンドウの文言も替わる）
     choose(&mut h, Category::General);
     pick(&mut h, "言語: 日本語", "English");
-    assert_eq!(h.state().state.lang, Lang::En);
+    assert_eq!(h.lang(), Lang::En);
     let _ = h.get_by_label("Language: English");
     choose(&mut h, Category::Processing);
     let _ = h.get_by_label("CPU threads: 4 · applies after restart");
@@ -689,21 +687,21 @@ fn the_settings_window_opens_from_the_edit_menu_and_edits_every_value_into_the_f
     // 閉じる
     h.get_by_label("Close").click();
     h.run();
-    assert!(!h.state().state.prefs.open);
+    assert!(!h.prefs().open);
     drop(h);
     // 次の起動は、書いた設定で始まる（スレッドは起動のときの値として覚える）
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    let s = &h.state().state;
-    assert_eq!(s.lang, Lang::En);
-    assert_eq!(s.export.padding, 8);
-    assert_eq!(s.prefs.settings.cpu_threads, Some(4));
-    assert_eq!(s.prefs.threads_at_start, Some(4));
+    let s = h.app();
+    assert_eq!(s.lang(), Lang::En);
+    assert_eq!(s.export().padding, 8);
+    assert_eq!(s.prefs().settings.cpu_threads, Some(4));
+    assert_eq!(s.prefs().threads_at_start, Some(4));
     assert!(!s.settings().livelink_on_startup);
-    assert_eq!(s.prefs.settings.compositing, Compositing::Cpu);
-    assert_eq!(s.doc.undo_budget_bytes(), 512 * MIB, "文書にも入っている");
-    assert_eq!(s.doc.source_budget_bytes(), with_cache);
-    assert_eq!(s.doc.stroke_budget_bytes(), 256 * MIB);
-    assert_eq!(s.message, "");
+    assert_eq!(s.prefs().settings.compositing, Compositing::Cpu);
+    assert_eq!(s.doc().undo_budget_bytes(), 512 * MIB, "文書にも入っている");
+    assert_eq!(s.doc().source_budget_bytes(), with_cache);
+    assert_eq!(s.doc().stroke_budget_bytes(), 256 * MIB);
+    assert_eq!(s.message(), "");
 }
 
 #[test]
@@ -723,50 +721,40 @@ fn the_minimum_undo_steps_slider_and_the_library_buttons_work() {
         ],
     );
     assert!(
-        h.state().state.prefs.settings.min_undo_steps > 50,
+        h.prefs().settings.min_undo_steps > 50,
         "{}",
-        h.state().state.prefs.settings.min_undo_steps
+        h.prefs().settings.min_undo_steps
     );
     assert_eq!(
-        h.state().state.doc.minimum_undo_steps(),
-        h.state().state.prefs.settings.min_undo_steps as usize
+        h.doc().minimum_undo_steps(),
+        h.prefs().settings.min_undo_steps as usize
     );
     // ライブラリの場所: 初めは既定（「既定に戻す」は押せない）。選ぶウィンドウを頼み、選んだ場所が出る（ファイルの区分の「選ぶ…」は、ライブラリの場所だけ）
     choose(&mut h, Category::Files);
-    assert_eq!(h.state().state.prefs.settings.library_folder, None);
+    assert_eq!(h.prefs().settings.library_folder, None);
     lowest(&h, "選ぶ…").click();
     h.run();
-    assert_eq!(
-        h.state().state.dialog_request,
-        Some(DialogRequest::PrefsLibraryFolder)
-    );
+    assert_eq!(*h.dialog_request(), Some(DialogRequest::PrefsLibraryFolder));
     let folder = dir.join("MyLibrary");
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
-            folder.clone(),
-        )))));
+    h.act(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
+        folder.clone(),
+    )))));
     h.run();
-    assert_eq!(
-        h.state().state.prefs.settings.library_folder,
-        Some(folder.clone())
-    );
+    assert_eq!(h.prefs().settings.library_folder, Some(folder.clone()));
     lowest(&h, "既定に戻す").click();
     h.run();
-    assert_eq!(h.state().state.prefs.settings.library_folder, None);
+    assert_eq!(h.prefs().settings.library_folder, None);
     // 設定のファイルに入った棚の場所は、次の起動で読める
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
-            folder.clone(),
-        )))));
+    h.act(Action::Prefs(PrefsAction::Set(Pref::LibraryFolder(Some(
+        folder.clone(),
+    )))));
     h.run();
     assert!(std::fs::read_to_string(&path)
         .unwrap()
         .contains("library_folder="));
     drop(h);
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert_eq!(h.state().state.prefs.settings.library_folder, Some(folder));
+    assert_eq!(h.prefs().settings.library_folder, Some(folder));
 }
 
 #[test]
@@ -781,42 +769,40 @@ fn broken_values_in_the_file_fall_back_one_by_one_and_say_why_in_the_status_bar(
     .unwrap();
     let before = std::fs::read_to_string(&path).unwrap();
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    let s = &h.state().state;
-    assert_eq!(s.lang, Lang::En);
+    let s = h.app();
+    assert_eq!(s.lang(), Lang::En);
     assert_eq!(
-        s.prefs.settings.undo_budget,
+        s.prefs().settings.undo_budget,
         Budget::Auto,
         "壊れた項目だけ既定"
     );
-    assert_eq!(s.prefs.settings.cpu_threads, None);
+    assert_eq!(s.prefs().settings.cpu_threads, None);
     assert_eq!(
-        s.prefs.settings.compositing,
+        s.prefs().settings.compositing,
         Compositing::Gpu,
         "正しい項目は生かす"
     );
-    assert_eq!(s.export.padding, 16);
+    assert_eq!(s.export().padding, 16);
     assert!(
-        s.message.contains("Undo history") && s.message.contains("CPU threads"),
+        s.message().contains("Undo history") && s.message().contains("CPU threads"),
         "{}",
-        s.message
+        s.message()
     );
-    assert!(s.message.contains("lots"), "{}", s.message);
+    assert!(s.message().contains("lots"), "{}", s.message());
     // 読んだだけではファイルを書き換えない
     assert_eq!(std::fs::read_to_string(&path).unwrap(), before);
     drop(h);
     // 読めないファイルは全部既定（日本語）で、理由
     std::fs::write(&path, "junk without equals\n").unwrap();
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert_eq!(h.state().state.lang, Lang::Ja);
-    assert_eq!(h.state().state.message, "設定を読めません。");
+    assert_eq!(h.lang(), Lang::Ja);
+    assert_eq!(h.message(), "設定を読めません。");
     // 何か選び直すと、新しい中身で置き換える
     drop(h);
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::Compositing(
-            Compositing::Cpu,
-        ))));
+    h.act(Action::Prefs(PrefsAction::Set(Pref::Compositing(
+        Compositing::Cpu,
+    ))));
     h.run();
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
@@ -840,9 +826,7 @@ fn the_compositing_setting_reaches_the_canvas_display_at_startup_and_when_chosen
         (Compositing::Cpu, CanvasBackend::Cpu),
         (Compositing::Auto, CanvasBackend::from_env()),
     ] {
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::Set(Pref::Compositing(choice))));
+        h.act(Action::Prefs(PrefsAction::Set(Pref::Compositing(choice))));
         h.run();
         assert_eq!(h.state().canvas_backend(), want, "{choice:?}");
     }
@@ -928,7 +912,7 @@ fn window_texts(h: &Harness<'_, YoluApp>) -> Vec<(String, Rect)> {
 }
 
 fn english(h: &mut Harness<'static, YoluApp>, lang: Lang) {
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     h.run();
 }
 
@@ -940,7 +924,7 @@ fn every_category_fits_the_window_without_scrolling_at_1280_by_800_in_both_langu
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     // 外からの操作を入れても、ほかの試験・開いているアプリと番号が重ならない（0: OS が空いた番号を選ぶ）
-    h.state_mut().state.prefs.settings.external_ops_port = 0;
+    h.prefs_mut().settings.external_ops_port = 0;
     open_settings(&mut h);
     let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(1280.0, 800.0));
     let check = |h: &Harness<'static, YoluApp>, what: &str| {
@@ -963,12 +947,12 @@ fn every_category_fits_the_window_without_scrolling_at_1280_by_800_in_both_langu
             match category {
                 Category::LiveLink => {
                     for ops in [false, true] {
-                        h.state_mut().state.prefs.settings.external_ops = ops;
+                        h.prefs_mut().settings.external_ops = ops;
                         h.run();
                         h.run();
                         check(&h, &format!("{lang:?} {category:?} 外からの操作={ops}"));
                     }
-                    h.state_mut().state.prefs.settings.external_ops = false;
+                    h.prefs_mut().settings.external_ops = false;
                     h.run();
                 }
                 // 「ペン」の区分は macOS と Windows の行がある。ほかの OS でも、出したときの高さを確かめる
@@ -976,8 +960,8 @@ fn every_category_fits_the_window_without_scrolling_at_1280_by_800_in_both_langu
                     for (tablet, pen_input) in
                         [(false, false), (true, false), (false, true), (true, true)]
                     {
-                        h.state_mut().state.prefs.tablet_row = tablet;
-                        h.state_mut().state.prefs.pen_input_row = pen_input;
+                        h.prefs_mut().tablet_row = tablet;
+                        h.prefs_mut().pen_input_row = pen_input;
                         h.run();
                         h.run();
                         check(
@@ -990,12 +974,8 @@ fn every_category_fits_the_window_without_scrolling_at_1280_by_800_in_both_langu
                     for (details, cache) in
                         [(false, false), (true, false), (false, true), (true, true)]
                     {
-                        h.state_mut()
-                            .state
-                            .apply(Action::Prefs(PrefsAction::GpuDetails(details)));
-                        h.state_mut()
-                            .state
-                            .apply(Action::Prefs(PrefsAction::CacheDetails(cache)));
+                        h.act(Action::Prefs(PrefsAction::GpuDetails(details)));
+                        h.act(Action::Prefs(PrefsAction::CacheDetails(cache)));
                         h.run();
                         h.run();
                         check(
@@ -1020,30 +1000,30 @@ fn the_pen_category_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_a
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
     // この試験は macOS の行だけを見る（Windows のペンの入力の行は、別の試験）
-    h.state_mut().state.prefs.pen_input_row = false;
+    h.prefs_mut().pen_input_row = false;
     open_settings(&mut h);
     choose(&mut h, Category::Pen);
     // 行が出るのは macOS だけ（区分そのものは、筆圧の調整があるのでどの OS にも出る）
-    assert_eq!(h.state().state.prefs.tablet_row, cfg!(target_os = "macos"));
+    assert_eq!(h.prefs().tablet_row, cfg!(target_os = "macos"));
     if !cfg!(target_os = "macos") {
         assert!(
             h.query_by_label("タブレットの筆圧（試し）").is_none(),
             "macOS 以外には行が無い"
         );
-        h.state_mut().state.prefs.tablet_row = true;
+        h.prefs_mut().tablet_row = true;
         h.run();
         h.run();
     }
     let _ = h.get_by_label("タブレットの筆圧（試し）");
     // 既定は入。札は設定から合わせる
-    assert!(h.state().state.settings().tablet_pressure);
+    assert!(h.app().settings().tablet_pressure);
     assert!(h.state().pen().tablet_on());
     shot(&mut h, "prefs_pen_tablet");
     // 切る
     h.get_by_label("タブレットの筆圧（試し）").click();
     h.run();
     h.run();
-    assert!(!h.state().state.settings().tablet_pressure);
+    assert!(!h.app().settings().tablet_pressure);
     assert!(!h.state().pen().tablet_on(), "ペンの受け口に届く");
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(
@@ -1057,7 +1037,7 @@ fn the_pen_category_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_a
     h.get_by_label("Tablet pressure (experimental)").click();
     h.run();
     h.run();
-    assert!(h.state().state.settings().tablet_pressure && h.state().pen().tablet_on());
+    assert!(h.app().settings().tablet_pressure && h.state().pen().tablet_on());
     assert!(!std::fs::read_to_string(&path)
         .unwrap()
         .contains("tablet_pressure"));
@@ -1067,7 +1047,7 @@ fn the_pen_category_has_the_tablet_pressure_toggle_which_reaches_the_pen_input_a
     h.run();
     drop(h);
     let h = app_with_settings(&path, vec2(1280.0, 900.0));
-    assert!(!h.state().state.settings().tablet_pressure);
+    assert!(!h.app().settings().tablet_pressure);
     assert!(
         !h.state().pen().tablet_on(),
         "起動のとき、設定の値が札に入る"
@@ -1088,7 +1068,7 @@ fn headless_wintab_unavailable_is_a_warning_from_settings_in_both_languages() {
             (Kind::Warning, Source::Settings)
         );
         assert_eq!(notice.text, Unavailable::NoLibrary.text(lang));
-        assert_eq!(s.message, notice.text);
+        assert_eq!(s.message(), notice.text);
         assert!(notice.text.contains("Windows Ink") && notice.text.contains("WinTab"));
     }
 }
@@ -1101,13 +1081,13 @@ fn the_pen_category_has_the_pen_input_choice_which_reaches_the_pen_input_and_sur
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
     // 行が出るのは Windows だけ（ほかの OS は差し替えて確かめる。macOS のタブレットの筆圧の行は外して、この行だけを見る）
-    assert_eq!(h.state().state.prefs.pen_input_row, cfg!(windows));
-    h.state_mut().state.prefs.pen_input_row = true;
-    h.state_mut().state.prefs.tablet_row = false;
+    assert_eq!(h.prefs().pen_input_row, cfg!(windows));
+    h.prefs_mut().pen_input_row = true;
+    h.prefs_mut().tablet_row = false;
     open_settings(&mut h);
     choose(&mut h, Category::Pen);
     // 既定は Windows Ink。札は設定から合わせる
-    assert_eq!(h.state().state.settings().pen_input, PenApi::Ink);
+    assert_eq!(h.app().settings().pen_input, PenApi::Ink);
     assert!(!h.state().pen().wintab_on());
     let _ = h.get_by_label("ペンの入力: Windows Ink");
     shot(&mut h, "prefs_pen_input");
@@ -1119,7 +1099,7 @@ fn the_pen_category_has_the_pen_input_choice_which_reaches_the_pen_input_and_sur
         .map(|n| n.to_string())
         .collect();
     assert_eq!(
-        labels(&entries(&h.state().state, PrefChoice::PenInput)),
+        labels(&entries(h.app(), PrefChoice::PenInput)),
         names,
         "選択肢は 2 つ"
     );
@@ -1127,7 +1107,7 @@ fn the_pen_category_has_the_pen_input_choice_which_reaches_the_pen_input_and_sur
     click(&mut h, at);
     h.run();
     h.run();
-    assert_eq!(h.state().state.settings().pen_input, PenApi::WinTab);
+    assert_eq!(h.app().settings().pen_input, PenApi::WinTab);
     assert!(h.state().pen().wintab_on(), "ペンの受け口に届く");
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(
@@ -1141,14 +1121,14 @@ fn the_pen_category_has_the_pen_input_choice_which_reaches_the_pen_input_and_sur
     // 終わって起動し直すと、WinTab のまま（札も WinTab）
     drop(h);
     let mut h = app_with_settings(&path, vec2(1280.0, 900.0));
-    assert_eq!(h.state().state.settings().pen_input, PenApi::WinTab);
+    assert_eq!(h.app().settings().pen_input, PenApi::WinTab);
     assert!(
         h.state().pen().wintab_on(),
         "起動のとき、設定の値が札に入る"
     );
     // Windows Ink に戻すと、行が消える（既定は書かない）
-    h.state_mut().state.prefs.pen_input_row = true;
-    h.state_mut().state.prefs.tablet_row = false;
+    h.prefs_mut().pen_input_row = true;
+    h.prefs_mut().tablet_row = false;
     open_settings(&mut h);
     choose(&mut h, Category::Pen);
     let at = h.get_by_label("ペンの入力: WinTab").rect().center();
@@ -1157,7 +1137,7 @@ fn the_pen_category_has_the_pen_input_choice_which_reaches_the_pen_input_and_sur
     click(&mut h, at);
     h.run();
     h.run();
-    assert_eq!(h.state().state.settings().pen_input, PenApi::Ink);
+    assert_eq!(h.app().settings().pen_input, PenApi::Ink);
     assert!(!h.state().pen().wintab_on());
     assert!(!std::fs::read_to_string(&path)
         .unwrap()
@@ -1174,12 +1154,12 @@ fn every_row_scrolls_into_view_in_a_low_window_in_both_languages() {
     for lang in Lang::ALL {
         let mut h = app_with_settings(&path, vec2(960.0, 400.0));
         // 「ペン」の区分（macOS のタブレットの筆圧と、Windows のペンの入力）も並べた形で確かめる
-        h.state_mut().state.prefs.tablet_row = true;
-        h.state_mut().state.prefs.pen_input_row = true;
+        h.prefs_mut().tablet_row = true;
+        h.prefs_mut().pen_input_row = true;
         // 小さいウィンドウでは編集のメニューも長くてポップアップの中で送るので、ウィンドウはキーで開く
         key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
         h.run();
-        assert!(h.state().state.prefs.open);
+        assert!(h.prefs().open);
         english(&mut h, lang);
         choose(&mut h, Category::Pen);
         let window = window_rect(&h);
@@ -1259,7 +1239,7 @@ fn every_row_scrolls_into_view_in_a_low_window_in_both_languages() {
         let pen_side = side_rect(&h, Category::Pen);
         let display_side = side_rect(&h, Category::Display);
         click(&mut h, display_side.center());
-        assert_eq!(h.state().state.prefs.category, Category::Display);
+        assert_eq!(h.prefs().category, Category::Display);
         let first = h
             .get_by_label(lang.pick("表示の合成: 自動", "Display compositing: Automatic"))
             .rect();
@@ -1292,7 +1272,7 @@ fn settings_is_the_last_item_of_the_edit_menu_after_a_separator_and_not_in_the_v
     use yolu_app::ui::menu::Entry;
     for lang in Lang::ALL {
         let mut s = state();
-        s.lang = lang;
+        s.set_lang(lang);
         let edit = yolu_app::shell::menu_entries(&s, 1);
         let Some(Entry::Item {
             label,
@@ -1337,14 +1317,14 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     let dir = settings_dir("key");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert!(!h.state().state.prefs.open);
+    assert!(!h.prefs().open);
     key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
     h.run();
-    assert!(h.state().state.prefs.open, "Ctrl+, で開く");
+    assert!(h.prefs().open, "Ctrl+, で開く");
     // 開いたままもう一度押しても、そのまま（閉じも、二重にもならない）
     key(&h, egui::Key::Comma, egui::Modifiers::COMMAND);
     h.run();
-    assert!(h.state().state.prefs.open);
+    assert!(h.prefs().open);
     // キーの一覧（読むだけのウィンドウ）にある
     let binding = yolu_app::shortcuts::bindings()
         .into_iter()
@@ -1352,10 +1332,10 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
         .expect("一覧に設定のキーがある");
     assert_eq!(yolu_app::shortcuts::key_label(&binding), "Ctrl+,");
     for lang in Lang::ALL {
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         assert_eq!(
             yolu_app::commands::for_action(&binding.action().unwrap())
-                .and_then(|c| c.label(&h.state().state))
+                .and_then(|c| c.label(h.app()))
                 .as_deref(),
             Some(lang.pick("設定…", "Settings…"))
         );
@@ -1381,13 +1361,13 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_category_and_survive_a_r
     assert_eq!(
         labels(&entries(&s, PrefChoice::OrbitCenter)),
         OrbitCenter::ALL
-            .map(|c| c.label(s.lang).to_owned())
+            .map(|c| c.label(s.lang()).to_owned())
             .to_vec()
     );
     set(&mut s, Pref::OrbitCenter(OrbitCenter::TextureSet));
     set(&mut s, Pref::ZoomCenter(ZoomCenter::Pointer));
-    assert_eq!(s.prefs.settings.navigation.orbit, OrbitCenter::TextureSet);
-    assert_eq!(s.prefs.settings.navigation.zoom, ZoomCenter::Pointer);
+    assert_eq!(s.prefs().settings.navigation.orbit, OrbitCenter::TextureSet);
+    assert_eq!(s.prefs().settings.navigation.zoom, ZoomCenter::Pointer);
 
     // ウィンドウで選ぶ（左の区分と値の箱）
     let dir = settings_dir("pivot");
@@ -1401,35 +1381,20 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_category_and_survive_a_r
         let at = popup_item(h, item).center();
         click(h, at);
     };
-    assert_eq!(
-        h.state().state.prefs.settings.navigation.orbit,
-        OrbitCenter::View
-    );
+    assert_eq!(h.prefs().settings.navigation.orbit, OrbitCenter::View);
     pick(&mut h, "回転の中心: 画面の中心", "面の位置（自動深度）");
-    assert_eq!(
-        h.state().state.prefs.settings.navigation.orbit,
-        OrbitCenter::Surface
-    );
+    assert_eq!(h.prefs().settings.navigation.orbit, OrbitCenter::Surface);
     pick(&mut h, "回転の中心: 面の位置（自動深度）", "モデルの中心");
-    assert_eq!(
-        h.state().state.prefs.settings.navigation.orbit,
-        OrbitCenter::Model
-    );
+    assert_eq!(h.prefs().settings.navigation.orbit, OrbitCenter::Model);
     pick(&mut h, "ズームの中心: 画面の中心へ", "ポインタの所へ");
-    assert_eq!(
-        h.state().state.prefs.settings.navigation.zoom,
-        ZoomCenter::Pointer
-    );
+    assert_eq!(h.prefs().settings.navigation.zoom, ZoomCenter::Pointer);
     // 軸の向きで正投影（既定は入）: 切ると設定のファイルに書き、次の起動でも切
-    assert!(h.state().state.prefs.settings.navigation.axis_ortho);
+    assert!(h.prefs().settings.navigation.axis_ortho);
     let at = h.get_by_label("軸の向きで正投影").rect().center();
     click(&mut h, at);
-    assert!(!h.state().state.prefs.settings.navigation.axis_ortho);
+    assert!(!h.prefs().settings.navigation.axis_ortho);
     // 3D ビューの表示の設定と同じ値（見る口が同じ）
-    assert_eq!(
-        h.state().state.settings().navigation.orbit,
-        OrbitCenter::Model
-    );
+    assert_eq!(h.app().settings().navigation.orbit, OrbitCenter::Model);
     h.run();
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(
@@ -1446,15 +1411,9 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_category_and_survive_a_r
     );
     drop(h);
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert!(!h.state().state.prefs.settings.navigation.axis_ortho);
-    assert_eq!(
-        h.state().state.prefs.settings.navigation.orbit,
-        OrbitCenter::Model
-    );
-    assert_eq!(
-        h.state().state.prefs.settings.navigation.zoom,
-        ZoomCenter::Pointer
-    );
+    assert!(!h.prefs().settings.navigation.axis_ortho);
+    assert_eq!(h.prefs().settings.navigation.orbit, OrbitCenter::Model);
+    assert_eq!(h.prefs().settings.navigation.zoom, ZoomCenter::Pointer);
     // 英語でも区分と値の名前が出る
     let mut h = h;
     open_settings_in(&mut h, Lang::En);
@@ -1469,9 +1428,9 @@ fn the_orbit_and_zoom_centers_are_chosen_in_the_3d_view_category_and_survive_a_r
 }
 
 fn open_settings_in(h: &mut Harness<'static, YoluApp>, lang: Lang) {
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     h.run();
-    h.state_mut().state.apply(Action::Prefs(PrefsAction::Open));
+    h.act(Action::Prefs(PrefsAction::Open));
     h.run();
 }
 
@@ -1504,7 +1463,7 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
         l.local_addr().unwrap().port()
     };
     let port = free();
-    h.state_mut().state.prefs.settings.external_ops_port = port;
+    h.prefs_mut().settings.external_ops_port = port;
     let waiting = |port: u16| format!("外からの操作を待っています（http://127.0.0.1:{port}/mcp）");
     assert!(
         h.query_by_label(&waiting(port)).is_none(),
@@ -1512,14 +1471,11 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     );
     open_settings(&mut h);
     choose(&mut h, Category::LiveLink);
-    assert!(!h.state().state.prefs.settings.external_ops, "既定は切");
+    assert!(!h.prefs().settings.external_ops, "既定は切");
     h.get_by_label("外からの操作を受ける").click();
     h.run();
-    assert!(h.state().state.settings().external_ops);
-    assert_eq!(
-        h.state().state.ops.status,
-        yolu_app::mcp_server::OpsStatus::Listening
-    );
+    assert!(h.app().settings().external_ops);
+    assert_eq!(h.ops().status, yolu_app::mcp_server::OpsStatus::Listening);
     // まだ誰もつないでいない: 丸は「待っている」
     status_bar_shot(&mut h, "status_bar_ops_listening");
     let dot = h.get_by_label(&waiting(port)).rect();
@@ -1544,11 +1500,11 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     // つながると、丸は「つながっている」になる（色が替わる。ツールチップも）
     let held = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-    while h.state().state.ops.status != yolu_app::mcp_server::OpsStatus::Connected(1) {
+    while h.ops().status != yolu_app::mcp_server::OpsStatus::Connected(1) {
         assert!(
             std::time::Instant::now() < deadline,
             "つながらない: {:?}",
-            h.state().state.ops.status
+            h.ops().status
         );
         h.step();
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1579,7 +1535,7 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     h.event(egui::Event::Text(moved.to_string()));
     key(&h, egui::Key::Enter, egui::Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.settings().external_ops_port, moved);
+    assert_eq!(h.app().settings().external_ops_port, moved);
     assert_eq!(h.state().ops().port(), Some(moved));
     assert!(std::net::TcpStream::connect(("127.0.0.1", port)).is_err());
     assert!(std::fs::read_to_string(&path)
@@ -1592,16 +1548,13 @@ fn the_external_commands_row_turns_listening_on_and_off_and_the_status_bar_shows
     h.event(egui::Event::Text("80".into()));
     key(&h, egui::Key::Enter, egui::Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.settings().external_ops_port, moved);
-    assert_eq!(h.state().state.message, "ポート番号は 1024〜65535 です。");
+    assert_eq!(h.app().settings().external_ops_port, moved);
+    assert_eq!(h.message(), "ポート番号は 1024〜65535 です。");
     // 切る: 待ち受けをやめ、丸も消える
     h.get_by_label("外からの操作を受ける").click();
     h.run();
-    assert!(!h.state().state.settings().external_ops);
-    assert_eq!(
-        h.state().state.ops.status,
-        yolu_app::mcp_server::OpsStatus::Off
-    );
+    assert!(!h.app().settings().external_ops);
+    assert_eq!(h.ops().status, yolu_app::mcp_server::OpsStatus::Off);
     assert!(h.query_by_label(&waiting(moved)).is_none());
     assert!(std::net::TcpStream::connect(("127.0.0.1", moved)).is_err());
     h.run();
@@ -1627,7 +1580,7 @@ fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
     assert!(!has_port_row(&h, "ポート番号"), "切のあいだは出ない");
     h.get_by_label("外からの操作を受ける").click();
     h.run();
-    assert!(h.state().state.settings().external_ops);
+    assert!(h.app().settings().external_ops);
     let toggle = h.get_by_label("外からの操作を受ける").rect();
     let (_, label) = drawn_texts(&h)
         .into_iter()
@@ -1647,19 +1600,19 @@ fn the_port_row_appears_below_external_commands_only_while_it_is_on() {
         "名前と欄は同じ行"
     );
     // 待てなかった知らせは状態の帯の丸の試験が見る。ここではウィンドウだけを撮る
-    h.state_mut().state.clear_message();
+    h.app_mut().clear_message();
     h.run();
     shot(&mut h, "prefs_livelink");
     english(&mut h, Lang::En);
     assert!(has_port_row(&h, "Port"));
-    h.state_mut().state.clear_message();
+    h.app_mut().clear_message();
     h.run();
     shot(&mut h, "prefs_livelink_english");
     english(&mut h, Lang::Ja);
     // 切ると消える
     h.get_by_label("外からの操作を受ける").click();
     h.run();
-    assert!(!h.state().state.settings().external_ops);
+    assert!(!h.app().settings().external_ops);
     assert!(!has_port_row(&h, "ポート番号"), "切ると消える");
 }
 
@@ -1671,42 +1624,44 @@ fn headless_the_disk_cache_adds_the_disk_limit_to_the_pixel_budget_and_follows_t
     use yolu_app::settings::DiskLimit;
     const GIB: u64 = 1024 * MIB;
     let mut s = state();
-    s.prefs
+    s.prefs_mut()
         .cache_free
         .push((std::env::temp_dir(), Some(40 * GIB)));
     s.load_settings(Settings::default());
     s.sync_budgets();
     // 16 GB: レイヤーのメモリ 8 GiB・取り消し 2 GiB、空き 40 GiB の半分 20 GiB
-    assert_eq!(s.doc.source_budget_bytes(), 10 * GIB + 20 * GIB);
+    assert_eq!(s.doc().source_budget_bytes(), 10 * GIB + 20 * GIB);
     assert_eq!(s.load_source_bytes(), 30 * GIB);
     assert_eq!(
-        s.doc.undo_budget_bytes(),
+        s.doc().undo_budget_bytes(),
         2 * GIB,
         "取り消しの予算は変えない"
     );
     set(&mut s, Pref::DiskCacheLimit(DiskLimit::Gib(8)));
-    assert_eq!(s.doc.source_budget_bytes(), 18 * GIB);
+    assert_eq!(s.doc().source_budget_bytes(), 18 * GIB);
     set(&mut s, Pref::DiskCacheLimit(DiskLimit::Gib(99_999)));
     assert_eq!(
-        s.prefs.settings.disk_cache_limit,
+        s.prefs().settings.disk_cache_limit,
         DiskLimit::Gib(4096),
         "範囲に丸める"
     );
     set(&mut s, Pref::DiskCacheLimit(DiskLimit::Auto));
     // 空きの多い置き場所では 64 GiB まで
     let roomy = std::env::temp_dir().join("roomy");
-    s.prefs.cache_free.push((roomy.clone(), Some(1000 * GIB)));
+    s.prefs_mut()
+        .cache_free
+        .push((roomy.clone(), Some(1000 * GIB)));
     set(&mut s, Pref::DiskCacheFolder(Some(roomy.clone())));
-    assert_eq!(s.prefs.settings.disk_cache_folder, Some(roomy));
-    assert_eq!(s.doc.source_budget_bytes(), 10 * GIB + 64 * GIB);
+    assert_eq!(s.prefs().settings.disk_cache_folder, Some(roomy));
+    assert_eq!(s.doc().source_budget_bytes(), 10 * GIB + 64 * GIB);
     // 相対パスは断る（今の場所のまま）
-    s.message.clear();
+    s.message_mut().clear();
     set(
         &mut s,
         Pref::DiskCacheFolder(Some(PathBuf::from("relative/cache"))),
     );
-    assert!(s.prefs.settings.disk_cache_folder.is_some());
-    assert_eq!(s.message, "キャッシュの場所は絶対パスで指定します。");
+    assert!(s.prefs().settings.disk_cache_folder.is_some());
+    assert_eq!(s.message(), "キャッシュの場所は絶対パスで指定します。");
     // 選択肢: 自動（今の場所での量）と GiB の並び
     let names = labels(&entries(&s, PrefChoice::DiskCacheLimit));
     assert_eq!(names[0], "自動（64 GiB）");
@@ -1716,13 +1671,13 @@ fn headless_the_disk_cache_adds_the_disk_limit_to_the_pixel_budget_and_follows_t
     );
     // 切ると、キャッシュの無い予算
     set(&mut s, Pref::DiskCache(false));
-    assert_eq!(s.doc.source_budget_bytes(), 8 * GIB);
+    assert_eq!(s.doc().source_budget_bytes(), 8 * GIB);
     assert_eq!(s.load_source_bytes(), 8 * GIB);
     // 場所を選ぶウィンドウ・既定に戻す
-    s.apply(Action::Prefs(PrefsAction::ChooseCacheFolder));
-    assert_eq!(s.dialog_request, Some(DialogRequest::PrefsCacheFolder));
+    s.act(Action::Prefs(PrefsAction::ChooseCacheFolder));
+    assert_eq!(*s.dialog_request(), Some(DialogRequest::PrefsCacheFolder));
     set(&mut s, Pref::DiskCacheFolder(None));
-    assert_eq!(s.prefs.settings.disk_cache_folder, None);
+    assert_eq!(s.prefs().settings.disk_cache_folder, None);
 }
 
 /// メモリの区分のディスクキャッシュ: 入切・詳しく（上限・置き場所）の欄で選んだ値が設定のファイルと文書の予算に入る。日英の絵。
@@ -1744,15 +1699,13 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
         Pref::LibraryFolder(Some(shelf)),
         Pref::DiskCacheFolder(Some(fixed_cache_folder())),
     ] {
-        h.state_mut()
-            .state
-            .apply(Action::Prefs(PrefsAction::Set(pref)));
+        h.act(Action::Prefs(PrefsAction::Set(pref)));
     }
     h.run();
     // 詳しく（表示の区分の GPU のメモリにもあるが、ここはメモリの区分）
     h.get_by_label("詳しく").click();
     h.run();
-    assert!(h.state().state.prefs.cache_details);
+    assert!(h.prefs().cache_details);
     shot(&mut h, "prefs_disk_cache");
     english(&mut h, Lang::En);
     shot(&mut h, "prefs_disk_cache_english");
@@ -1766,27 +1719,21 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
     let at = popup_item(&h, "16 GiB").center();
     click(&mut h, at);
     assert_eq!(
-        h.state().state.prefs.settings.disk_cache_limit,
+        h.prefs().settings.disk_cache_limit,
         yolu_app::settings::DiskLimit::Gib(16)
     );
     // 画素の予算: メモリの上限（8192 + 2048 MiB）＋ディスクの上限
-    assert_eq!(
-        h.state().state.doc.source_budget_bytes(),
-        10 * GIB + 16 * GIB
-    );
+    assert_eq!(h.doc().source_budget_bytes(), 10 * GIB + 16 * GIB);
     // 置き場所を選ぶウィンドウを頼む（メモリの区分の「選ぶ…」は、キャッシュの場所だけ）
     h.get_by_label("選ぶ…").click();
     h.run();
-    assert_eq!(
-        h.state().state.dialog_request,
-        Some(DialogRequest::PrefsCacheFolder)
-    );
-    h.state_mut().state.dialog_request = None;
+    assert_eq!(*h.dialog_request(), Some(DialogRequest::PrefsCacheFolder));
+    *h.dialog_request_mut() = None;
     // 切ると、キャッシュの無い予算
     h.get_by_label("ディスクキャッシュ").click();
     h.run();
-    assert!(!h.state().state.prefs.settings.disk_cache);
-    assert_eq!(h.state().state.doc.source_budget_bytes(), 8 * GIB);
+    assert!(!h.prefs().settings.disk_cache);
+    assert_eq!(h.doc().source_budget_bytes(), 8 * GIB);
     h.run();
     let written = std::fs::read_to_string(&path).unwrap();
     for line in ["disk_cache=off", "disk_cache_limit_gib=16"] {
@@ -1796,7 +1743,7 @@ fn the_disk_cache_rows_switch_the_cache_and_choose_the_limit_and_the_folder_in_b
     drop(h);
     // 次の起動も同じ設定
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    let s = &h.state().state.prefs.settings;
+    let s = &h.prefs().settings;
     assert!(!s.disk_cache);
     assert_eq!(s.disk_cache_limit, yolu_app::settings::DiskLimit::Gib(16));
     assert_eq!(s.disk_cache_folder, Some(fixed_cache_folder()));
@@ -1814,8 +1761,8 @@ fn the_bake_rt_cores_row_defaults_on_reaches_the_bake_device_and_survives_a_rest
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
     // 環境変数が切のあいだは、設定が入でもデバイスは切（行は押せない）
     let allowed = yolu_gpu::GpuBakeOptions::default().ray_query;
-    assert!(h.state().state.settings().bake_ray_query, "欄が無ければ入");
-    assert_eq!(h.state().state.bake.ray_query_enabled(), allowed);
+    assert!(h.app().settings().bake_ray_query, "欄が無ければ入");
+    assert_eq!(h.bake().ray_query_enabled(), allowed);
     open_settings(&mut h);
     choose(&mut h, Category::Display);
     let _ = h.get_by_label("ベイクで RT コアを使う");
@@ -1823,7 +1770,7 @@ fn the_bake_rt_cores_row_defaults_on_reaches_the_bake_device_and_survives_a_rest
         h.get_by_label("ベイクで RT コアを使う").click();
         h.run();
         assert!(
-            h.state().state.settings().bake_ray_query,
+            h.app().settings().bake_ray_query,
             "環境変数で切っているとき、行は押せない"
         );
         return;
@@ -1832,9 +1779,9 @@ fn the_bake_rt_cores_row_defaults_on_reaches_the_bake_device_and_survives_a_rest
     h.get_by_label("ベイクで RT コアを使う").click();
     h.run();
     h.run();
-    assert!(!h.state().state.settings().bake_ray_query);
+    assert!(!h.app().settings().bake_ray_query);
     assert!(
-        !h.state().state.bake.ray_query_enabled(),
+        !h.bake().ray_query_enabled(),
         "ベイクの GPU のデバイスに届く"
     );
     let written = std::fs::read_to_string(&path).unwrap();
@@ -1848,8 +1795,8 @@ fn the_bake_rt_cores_row_defaults_on_reaches_the_bake_device_and_survives_a_rest
     h.get_by_label("Use RT cores for baking").click();
     h.run();
     h.run();
-    assert!(h.state().state.settings().bake_ray_query);
-    assert_eq!(h.state().state.bake.ray_query_enabled(), allowed);
+    assert!(h.app().settings().bake_ray_query);
+    assert_eq!(h.bake().ray_query_enabled(), allowed);
     assert!(!std::fs::read_to_string(&path)
         .unwrap()
         .contains("bake_ray_query"));
@@ -1859,9 +1806,9 @@ fn the_bake_rt_cores_row_defaults_on_reaches_the_bake_device_and_survives_a_rest
     h.run();
     drop(h);
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert!(!h.state().state.settings().bake_ray_query);
+    assert!(!h.app().settings().bake_ray_query);
     assert!(
-        !h.state().state.bake.ray_query_enabled(),
+        !h.bake().ray_query_enabled(),
         "起動のとき、設定の値がデバイスの設定に入る"
     );
 }
@@ -1873,9 +1820,9 @@ fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on
     let dir = settings_dir("vsync");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert!(!h.state().state.prefs.settings.vsync, "既定は待たない");
+    assert!(!h.prefs().settings.vsync, "既定は待たない");
     assert!(h.state().paces_frames(), "待たない形は、間隔の下限をかける");
-    assert!(!h.state().state.prefs.vsync_at_start);
+    assert!(!h.prefs().vsync_at_start);
     open_settings(&mut h);
     choose(&mut h, Category::Display);
     // 表示の合成のすぐ下の行（同じ区分）
@@ -1889,7 +1836,7 @@ fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on
     // 入れる: 次の起動から効く
     h.get_by_label("垂直同期").click();
     h.run();
-    assert!(h.state().state.settings().vsync);
+    assert!(h.app().settings().vsync);
     let _ = h.get_by_label("垂直同期 ・ 再起動で反映");
     assert!(
         h.state().paces_frames(),
@@ -1898,19 +1845,19 @@ fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on
     h.run();
     let written = std::fs::read_to_string(&path).unwrap();
     assert!(written.lines().any(|l| l == "vsync=on"), "{written}");
-    h.state_mut().state.clear_message();
+    h.app_mut().clear_message();
     h.run();
     shot(&mut h, "prefs_display_vsync");
     english(&mut h, Lang::En);
     let _ = h.get_by_label("VSync · applies after restart");
-    h.state_mut().state.clear_message();
+    h.app_mut().clear_message();
     h.run();
     shot(&mut h, "prefs_display_vsync_english");
     english(&mut h, Lang::Ja);
     // 起動のときの値（切）に戻すと、「再起動で反映」は消え、ファイルの行も消える
     h.get_by_label("垂直同期 ・ 再起動で反映").click();
     h.run();
-    assert!(!h.state().state.settings().vsync);
+    assert!(!h.app().settings().vsync);
     assert!(h.query_by_label("垂直同期 ・ 再起動で反映").is_none());
     let _ = h.get_by_label("垂直同期");
     h.run();
@@ -1920,8 +1867,8 @@ fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on
     h.run();
     drop(h);
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert!(h.state().state.prefs.settings.vsync);
-    assert!(h.state().state.prefs.vsync_at_start);
+    assert!(h.prefs().settings.vsync);
+    assert!(h.prefs().vsync_at_start);
     assert!(!h.state().paces_frames(), "待つ形は、間隔の下限をかけない");
     open_settings(&mut h);
     choose(&mut h, Category::Display);
@@ -1929,6 +1876,6 @@ fn the_vsync_row_defaults_off_shows_the_restart_note_and_is_written_only_when_on
     // 切ると、起動のときの値と違うので「再起動で反映」
     h.get_by_label("垂直同期").click();
     h.run();
-    assert!(!h.state().state.settings().vsync);
+    assert!(!h.app().settings().vsync);
     let _ = h.get_by_label("垂直同期 ・ 再起動で反映");
 }

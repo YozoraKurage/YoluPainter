@@ -10,6 +10,7 @@
 //! ウィンドウごとに自分のデバイスを作る（`.wgpu()`。共用の接続 `common::shared_gpu` は使わない）: デバイスを破棄する試験・見張りの受け口を付ける試験が、
 //! 共用のデバイスを壊したり、ほかの試験の誤りの受け口を取り替えたりしないため。ウィンドウは `gpu_thread::builder` の貸し出しで 1 つずつ作る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::cell::RefCell;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
@@ -90,10 +91,10 @@ fn window(lang: Lang, root: &std::path::Path, device: Arc<Mutex<Option<Device>>>
             available: 1 << 39,
         })
     });
-    state.recovery.set_space_probe(Some(probe));
+    state.recovery_mut().set_space_probe(Some(probe));
     // 間隔は長く（GPU を失ったときに「急いで」書くことを確かめる。時間では書かれない）
     state
-        .recovery
+        .recovery_mut()
         .enable(
             root.to_path_buf(),
             RecoverySettings {
@@ -121,7 +122,7 @@ fn window(lang: Lang, root: &std::path::Path, device: Arc<Mutex<Option<Device>>>
                 &cc.egui_ctx,
             )
         });
-    h.state_mut().state.bake.backend = yolu_app::bake::BakeBackend::Cpu;
+    h.bake_mut().backend = yolu_app::bake::BakeBackend::Cpu;
     // 中央は 1 つの組（`common::app` と同じ並び）
     h.state_mut().dock = common::tabbed_center_dock(900.0);
     h.run();
@@ -129,18 +130,18 @@ fn window(lang: Lang, root: &std::path::Path, device: Arc<Mutex<Option<Device>>>
 }
 
 fn paint(s: &mut AppState, x: f64) {
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), x, 20.0, 1.0, DVec2::ZERO)
         .unwrap();
-    s.doc.end_stroke(stroke).unwrap();
-    s.modified = true;
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.set_modified(true);
 }
 
 fn generations(h: &H) -> usize {
-    GenerationStore::new(h.state().state.recovery.session_dir().unwrap())
+    GenerationStore::new(h.recovery().session_dir().unwrap())
         .list()
         .unwrap()
         .len()
@@ -155,11 +156,11 @@ fn offered_rows(root: &std::path::Path) -> usize {
             available: 1 << 39,
         })
     });
-    next.recovery.set_space_probe(Some(probe));
-    next.recovery
+    next.recovery_mut().set_space_probe(Some(probe));
+    next.recovery_mut()
         .enable(root.to_path_buf(), RecoverySettings::default())
         .unwrap();
-    next.recovery.window.as_ref().map_or(0, |w| w.rows.len())
+    next.recovery().window.as_ref().map_or(0, |w| w.rows.len())
 }
 
 /// 失った知らせを入れて、フレームを進める。フレームには戻らずに終える（終了コードが返る）。
@@ -175,10 +176,10 @@ fn lose(h: &mut H) -> i32 {
 fn losing_the_device_saves_a_checkpoint_keeps_the_document_and_closes_with_the_reason() {
     let dir = TempDir::new("lose");
     let mut h = window(Lang::Ja, &dir.0.join("recovery"), Arc::default());
-    paint(&mut h.state_mut().state, 20.0);
+    paint(h.app_mut(), 20.0);
     let (revision, pixel) = {
-        let s = &h.state().state;
-        (s.doc.revision(), composite_pixel(&s.doc, 20, 20))
+        let s = h.app();
+        (s.doc().revision(), composite_pixel(s.doc(), 20, 20))
     };
     assert_ne!(pixel, [0, 0, 0, 0], "描いてある");
     assert!(
@@ -200,26 +201,34 @@ fn losing_the_device_saves_a_checkpoint_keeps_the_document_and_closes_with_the_r
     assert_eq!(app.gpu_lost().map(|l| l.reason.as_str()), Some("Unknown"));
     assert_eq!(generations(&h), 1, "復旧の書き置きを急いで取る");
     assert!(
-        app.state.recovery.is_marked_dirty(),
+        app.state.recovery().is_marked_dirty(),
         "保存していない作業の印が残る（次の起動の復旧のウィンドウから開ける）"
     );
     let s = &app.state;
-    assert_eq!(s.doc.revision(), revision, "文書は触らない");
-    assert_eq!(composite_pixel(&s.doc, 20, 20), pixel, "描いた絵はそのまま");
-    assert!(s.modified, "保存していない印も、そのまま");
+    assert_eq!(s.doc().revision(), revision, "文書は触らない");
+    assert_eq!(
+        composite_pixel(s.doc(), 20, 20),
+        pixel,
+        "描いた絵はそのまま"
+    );
+    assert!(s.modified(), "保存していない印も、そのまま");
     assert!(
-        s.message
+        s.message()
             .starts_with("GPU でエラーが起きたため、続けられません。"),
         "{}",
-        s.message
+        s.message()
     );
-    assert!(s.message.contains("復旧用に保存しました"), "{}", s.message);
+    assert!(
+        s.message().contains("復旧用に保存しました"),
+        "{}",
+        s.message()
+    );
     assert!(
         app.view3d_stats().is_none() && app.view3d_adapter().is_none(),
         "GPU の道（3D ビュー）は手放す"
     );
     assert!(
-        !s.quit,
+        !s.quit(),
         "閉じる頼みの流れ（描き終えてから閉じる）には戻らず、その場で終える"
     );
     assert_eq!(
@@ -238,11 +247,11 @@ fn losing_the_device_saves_a_checkpoint_keeps_the_document_and_closes_with_the_r
 fn the_reason_is_in_english_and_a_clean_document_needs_no_checkpoint() {
     let dir = TempDir::new("clean");
     let mut h = window(Lang::En, &dir.0.join("recovery"), Arc::default());
-    assert!(!h.state().state.modified);
+    assert!(!h.modified());
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        s.message,
+        s.message(),
         "A GPU error occurred, so YoluPainter cannot continue."
     );
     assert!(h.state().gpu_lost().is_some());
@@ -276,13 +285,13 @@ fn without_a_recovery_session_the_reason_says_it_could_not_be_saved() {
     h.state_mut().dock = common::tabbed_center_dock(900.0);
     h.run();
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
-    let s = &h.state().state;
+    let s = h.app();
     assert!(
-        s.message.ends_with("Could not save for recovery."),
+        s.message().ends_with("Could not save for recovery."),
         "{}",
-        s.message
+        s.message()
     );
-    assert!(s.modified, "絵は消えない");
+    assert!(s.modified(), "絵は消えない");
 }
 
 /// 描いている最中に失っても、描いた所までで確定して書き置きに入る（取り残さない）。
@@ -291,23 +300,23 @@ fn a_stroke_in_progress_is_committed_before_the_checkpoint() {
     let dir = TempDir::new("stroke");
     let mut h = window(Lang::Ja, &dir.0.join("recovery"), Arc::default());
     {
-        let s = &mut h.state_mut().state;
-        let layer = s.selected_layer.unwrap();
+        let s = h.app_mut();
+        let layer = s.selected_layer().unwrap();
         let brush = s.stroke_settings(false);
-        let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+        let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
         stroke
-            .add_point(&mut s.doc, 30.0, 20.0, 1.0, DVec2::ZERO)
+            .add_point(s.doc_mut(), 30.0, 20.0, 1.0, DVec2::ZERO)
             .unwrap();
         // 札は state に預ける（キャンバスの入力が持つ形）。描いている最中の印が立つ
-        s.stroke = Some(stroke);
-        s.modified = true;
+        *s.stroke_mut() = Some(stroke);
+        s.set_modified(true);
     }
-    assert!(h.state().state.is_stroking());
+    assert!(h.app().is_stroking());
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
-    let s = &h.state().state;
+    let s = h.app();
     assert!(!s.is_stroking(), "ストロークは取り残さない");
     assert_ne!(
-        composite_pixel(&s.doc, 30, 20),
+        composite_pixel(s.doc(), 30, 20),
         [0, 0, 0, 0],
         "描いた所は残る"
     );
@@ -323,7 +332,7 @@ fn an_uncaptured_gpu_error_does_not_end_the_app() {
     watch.inject_error("Validation Error: buffer too large");
     h.step();
     assert!(h.state().gpu_lost().is_none(), "誤りだけでは終わらない");
-    assert!(!h.state().state.quit);
+    assert!(!h.quit());
     assert!(watch.take().errors.is_empty(), "フレームが読み取った");
 }
 
@@ -333,7 +342,7 @@ fn destroying_the_real_device_runs_the_same_flow() {
     let dir = TempDir::new("destroy");
     let device: Arc<Mutex<Option<Device>>> = Arc::default();
     let mut h = window(Lang::Ja, &dir.0.join("recovery"), device.clone());
-    paint(&mut h.state_mut().state, 20.0);
+    paint(h.app_mut(), 20.0);
     let device = device.lock().unwrap().clone().expect("デバイス");
     device.destroy();
     // 破棄は、積んだ仕事が終わった時点で「失った」になり、受け口が呼ばれる（`poll` が進める）
@@ -384,8 +393,8 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_gpu_was_lost() {
     let dir = TempDir::new("next");
     let root = dir.0.join("recovery");
     let mut h = window(Lang::Ja, &root, Arc::default());
-    paint(&mut h.state_mut().state, 20.0);
-    let expected = composite_pixel(&h.state().state.doc, 20, 20);
+    paint(h.app_mut(), 20.0);
+    let expected = composite_pixel(h.doc(), 20, 20);
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
     drop(h);
     let mut next = AppState::new_in(64, 64, Lang::Ja);
@@ -395,12 +404,12 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_gpu_was_lost() {
             available: 1 << 39,
         })
     });
-    next.recovery.set_space_probe(Some(probe));
-    next.recovery
+    next.recovery_mut().set_space_probe(Some(probe));
+    next.recovery_mut()
         .enable(root.clone(), RecoverySettings::default())
         .unwrap();
     let offered = next
-        .recovery
+        .recovery()
         .window
         .as_ref()
         .expect("落ちた体と同じに、復旧のウィンドウが開く");
@@ -412,7 +421,7 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_gpu_was_lost() {
         id: offered.rows[0].id.clone(),
     };
     next.recovery_open(request);
-    assert_eq!(composite_pixel(&next.doc, 20, 20), expected);
+    assert_eq!(composite_pixel(next.doc(), 20, 20), expected);
 
     // 変更が無いまま GPU を失った: 正しく閉じる（次の起動にウィンドウは出ない）
     let clean_root = dir.0.join("clean");
@@ -426,12 +435,12 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_gpu_was_lost() {
             available: 1 << 39,
         })
     });
-    again.recovery.set_space_probe(Some(probe));
+    again.recovery_mut().set_space_probe(Some(probe));
     again
-        .recovery
+        .recovery_mut()
         .enable(clean_root, RecoverySettings::default())
         .unwrap();
-    assert!(again.recovery.window.is_none());
+    assert!(again.recovery().window.is_none());
 }
 
 /// 書き置きの書き込みが終わらない（遅いディスク・止まったネットワークドライブ）ときも、GPU を失って終える処理は期限で返る。急いで取る側と、
@@ -445,9 +454,7 @@ fn a_stalled_checkpoint_write_does_not_hold_the_exit() {
     // 書き手を、組み立ての前で止める。止めたままにしても、直す前の（期限なしの）待ちが試験ごと固まらないよう、4 秒で放す
     let release = Arc::new(AtomicBool::new(false));
     let held = release.clone();
-    h.state_mut()
-        .state
-        .recovery
+    h.recovery_mut()
         .set_fault(Some(Arc::new(move |stage: &str| {
             if stage == "snapshot" {
                 while !held.load(Ordering::SeqCst) {
@@ -463,7 +470,7 @@ fn a_stalled_checkpoint_write_does_not_hold_the_exit() {
             release.store(true, Ordering::SeqCst);
         })
     };
-    paint(&mut h.state_mut().state, 20.0);
+    paint(h.app_mut(), 20.0);
 
     let started = Instant::now();
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
@@ -474,9 +481,9 @@ fn a_stalled_checkpoint_write_does_not_hold_the_exit() {
     );
     assert!(h.state().gpu_lost().is_some());
     assert!(
-        h.state().state.message.contains("保存できませんでした"),
+        h.message().contains("保存できませんでした"),
         "{}",
-        h.state().state.message
+        h.message()
     );
     assert_eq!(
         generations(&h),
@@ -487,9 +494,9 @@ fn a_stalled_checkpoint_write_does_not_hold_the_exit() {
     // 止めていた書き込みが終われば、世代が 1 つ入って印が付く
     release.store(true, Ordering::SeqCst);
     releaser.join().unwrap();
-    h.state_mut().state.recovery_wait();
+    h.app_mut().recovery_wait();
     assert_eq!(generations(&h), 1);
-    assert!(h.state().state.recovery.is_marked_dirty());
+    assert!(h.recovery().is_marked_dirty());
 }
 
 /// 隠れているウィンドウ（最小化など）でも、失った知らせを受ければ、フレームに戻らずに終える（`ui` が回らない間の道 `tick_hidden`）。
@@ -497,7 +504,7 @@ fn a_stalled_checkpoint_write_does_not_hold_the_exit() {
 fn a_hidden_window_also_ends_without_returning() {
     let dir = TempDir::new("hidden");
     let mut h = window(Lang::En, &dir.0.join("recovery"), Arc::default());
-    paint(&mut h.state_mut().state, 20.0);
+    paint(h.app_mut(), 20.0);
     h.state()
         .gpu_watch()
         .unwrap()
@@ -517,13 +524,11 @@ fn a_save_in_progress_is_waited_for_before_the_exit() {
     let path = dir.0.join("work.ylp");
     let root = dir.0.join("recovery");
     let mut h = window(Lang::En, &root, Arc::default());
-    paint(&mut h.state_mut().state, 20.0);
-    h.state_mut().state.save.background = true;
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    assert!(h.state().state.is_saving());
+    paint(h.app_mut(), 20.0);
+    h.save_mut().background = true;
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.app().is_saving());
     // 保存は 0.3 秒あとに動き出す（待つ上限は 60 秒）
     let releaser = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(300));
@@ -532,11 +537,11 @@ fn a_save_in_progress_is_waited_for_before_the_exit() {
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
     releaser.join().unwrap();
     assert!(
-        !h.state().state.is_saving() && path.is_file(),
+        !h.app().is_saving() && path.is_file(),
         "保存が終わってから終える"
     );
     assert_eq!(
-        h.state().state.message,
+        h.message(),
         "A GPU error occurred, so YoluPainter cannot continue.",
         "保存が済んだので、書き置きは要らない"
     );
@@ -555,31 +560,26 @@ fn drawing_during_a_save_is_in_the_checkpoint_taken_after_the_save() {
     let dir = TempDir::new("drawsave");
     let root = dir.0.join("recovery");
     let mut h = window(Lang::En, &root, Arc::default());
-    paint(&mut h.state_mut().state, 20.0);
-    h.state_mut().state.save.background = true;
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(dir.0.join("work.ylp")));
-    assert!(h.state().state.is_saving());
+    paint(h.app_mut(), 20.0);
+    h.save_mut().background = true;
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(dir.0.join("work.ylp")));
+    assert!(h.app().is_saving());
     // 保存の間に描き足す
-    paint(&mut h.state_mut().state, 40.0);
-    assert!(h.state().state.modified);
+    paint(h.app_mut(), 40.0);
+    assert!(h.modified());
     let releaser = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(300));
         hold.release();
     });
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
     releaser.join().unwrap();
-    assert!(!h.state().state.is_saving());
+    assert!(!h.app().is_saving());
     assert_eq!(generations(&h), 1, "保存のあとに書き置きを取る");
     assert!(
-        h.state()
-            .state
-            .message
-            .ends_with("Your work was saved for recovery."),
+        h.message().ends_with("Your work was saved for recovery."),
         "{}",
-        h.state().state.message
+        h.message()
     );
     drop(h);
     assert_eq!(offered_rows(&root), 1, "次の起動の復旧のウィンドウに並ぶ");
@@ -594,15 +594,13 @@ fn a_save_that_does_not_finish_in_time_does_not_hold_the_exit_and_keeps_the_reco
     let mut h = window(Lang::En, &root, Arc::default());
     h.state_mut()
         .set_gpu_lost_save_wait(Duration::from_millis(300));
-    paint(&mut h.state_mut().state, 20.0);
+    paint(h.app_mut(), 20.0);
     // 前の書き置きがある（保存が切れても、これは残る）
-    assert!(h.state_mut().state.recovery_flush());
+    assert!(h.app_mut().recovery_flush());
     assert_eq!(generations(&h), 1);
-    h.state_mut().state.save.background = true;
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(dir.0.join("slow.ylp")));
+    h.save_mut().background = true;
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(dir.0.join("slow.ylp")));
     let started = Instant::now();
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
     assert!(
@@ -610,21 +608,18 @@ fn a_save_that_does_not_finish_in_time_does_not_hold_the_exit_and_keeps_the_reco
         "{:?}",
         started.elapsed()
     );
-    assert!(h.state().state.is_saving(), "保存はまだ終わっていない");
+    assert!(h.app().is_saving(), "保存はまだ終わっていない");
     assert!(
-        h.state()
-            .state
-            .message
-            .ends_with("Could not save for recovery."),
+        h.message().ends_with("Could not save for recovery."),
         "{}",
-        h.state().state.message
+        h.message()
     );
     assert!(
-        h.state().state.recovery.is_enabled(),
+        h.recovery().is_enabled(),
         "保存の途中のまま終えるので、書き置きの印を正しく閉じる側へ進めない"
     );
     hold.release();
-    h.state_mut().state.wait_save();
+    h.app_mut().wait_save();
     drop(h);
     assert_eq!(
         offered_rows(&root),
@@ -640,27 +635,22 @@ fn a_failed_save_in_progress_still_leaves_a_checkpoint() {
     let dir = TempDir::new("failedsave");
     let target = dir.0.join("work.ylp");
     let mut h = window(Lang::En, &dir.0.join("recovery"), Arc::default());
-    paint(&mut h.state_mut().state, 20.0);
-    h.state_mut().state.save.background = true;
-    let hold = h.state_mut().state.save.hold_next();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(target.clone()));
-    assert!(h.state().state.is_saving());
-    assert!(!h.state().state.modified, "保存の頼みが印を下ろしている");
+    paint(h.app_mut(), 20.0);
+    h.save_mut().background = true;
+    let hold = h.save_mut().hold_next();
+    h.act(Action::SaveProjectAs(target.clone()));
+    assert!(h.app().is_saving());
+    assert!(!h.modified(), "保存の頼みが印を下ろしている");
     // 書き込み先の名前にフォルダができて、置換できず保存は失敗する
     std::fs::create_dir(&target).unwrap();
     hold.release();
     assert_eq!(lose(&mut h), GPU_LOST_EXIT_CODE);
-    assert!(h.state().state.modified, "保存に失敗したので、変更は戻る");
+    assert!(h.modified(), "保存に失敗したので、変更は戻る");
     assert_eq!(generations(&h), 1, "書き置きを取ってから終える");
     assert!(
-        h.state()
-            .state
-            .message
-            .ends_with("Your work was saved for recovery."),
+        h.message().ends_with("Your work was saved for recovery."),
         "{}",
-        h.state().state.message
+        h.message()
     );
 }
 
@@ -670,7 +660,7 @@ fn a_failed_save_in_progress_still_leaves_a_checkpoint() {
 fn a_loss_found_at_the_end_of_the_frame_ends_before_the_frame_is_painted() {
     let dir = TempDir::new("uiend");
     let mut h = window(Lang::En, &dir.0.join("recovery"), Arc::default());
-    paint(&mut h.state_mut().state, 20.0);
+    paint(h.app_mut(), 20.0);
     let watch = h.state().gpu_watch().unwrap().clone();
     let seen: Rc<RefCell<Vec<FramePoint>>> = Rc::default();
     let log = seen.clone();
@@ -729,13 +719,9 @@ mod detached_windows {
                 )
             });
         h.run();
-        h.state_mut()
-            .state
-            .apply(Action::Dock(DockOp::Detach(Tab::History)));
+        h.act(Action::Dock(DockOp::Detach(Tab::History)));
         h.run();
-        h.state_mut()
-            .state
-            .apply(Action::Dock(DockOp::Detach(Tab::Channels)));
+        h.act(Action::Dock(DockOp::Detach(Tab::Channels)));
         h.run();
         h.run();
         assert_eq!(h.state().detached.windows.len(), 2);

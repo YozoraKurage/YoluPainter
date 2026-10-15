@@ -1,6 +1,7 @@
 //! 復旧のウィンドウの画面（egui_kittest）: 落ちた次の起動で出る・世代を選んで開く・捨てる（確かめてから）・設定を選ぶ・メニューから開く・
 //! 日本語と英語。書き置きの頃合い・失敗・落ちた体の起動の細かい振る舞いは `recovery.rs`（アプリの状態だけ）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -61,14 +62,14 @@ fn plenty() -> SpaceProbe {
     })
 }
 fn paint(s: &mut AppState, x: f64) {
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), x, 20.0, 1.0, DVec2::ZERO)
         .unwrap();
-    s.doc.end_stroke(stroke).unwrap();
-    s.modified = true;
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.set_modified(true);
 }
 fn write_after(s: &mut AppState, from: Instant) -> Instant {
     s.recovery_tick_at(from);
@@ -81,20 +82,20 @@ fn write_after(s: &mut AppState, from: Instant) -> Instant {
 /// 落ちた実行を作る（世代が `count` 個の置き場を残して、終わらずに捨てる）。
 fn crashed_root(dir: &TempDir, count: usize, saved_as: Option<&Path>) {
     let mut s = AppState::new(64, 64);
-    s.recovery.set_space_probe(Some(plenty()));
-    s.recovery.enable(dir.root(), settings()).unwrap();
+    s.recovery_mut().set_space_probe(Some(plenty()));
+    s.recovery_mut().enable(dir.root(), settings()).unwrap();
     let mut t = Instant::now();
     for i in 0..count {
         paint(&mut s, 10.0 + 10.0 * i as f64);
         if i == 0 {
             if let Some(path) = saved_as {
-                s.apply(Action::SaveProjectAs(path.to_path_buf()));
+                s.act(Action::SaveProjectAs(path.to_path_buf()));
                 paint(&mut s, 5.0);
             }
         }
         t = write_after(&mut s, t + Duration::from_secs(100));
     }
-    assert_eq!(s.recovery.checkpoints(), count as u64);
+    assert_eq!(s.recovery().checkpoints(), count as u64);
     drop(s);
 }
 
@@ -124,8 +125,8 @@ fn started_with(
     settings: RecoverySettings,
 ) -> Harness<'static, YoluApp> {
     let mut state = AppState::new_in(64, 64, lang);
-    state.recovery.set_space_probe(Some(plenty()));
-    state.recovery.enable(dir.root(), settings).unwrap();
+    state.recovery_mut().set_space_probe(Some(plenty()));
+    state.recovery_mut().enable(dir.root(), settings).unwrap();
     app_with(state)
 }
 
@@ -133,12 +134,7 @@ fn window(h: &Harness<'_, YoluApp>) -> Rect {
     yolu_app::windows::window_rect(&h.ctx, "recovery").expect("復旧のウィンドウを描いた")
 }
 fn rows(h: &Harness<'_, YoluApp>) -> usize {
-    h.state()
-        .state
-        .recovery
-        .window
-        .as_ref()
-        .map_or(0, |w| w.rows.len())
+    h.recovery().window.as_ref().map_or(0, |w| w.rows.len())
 }
 fn button_in(h: &Harness<'_, YoluApp>, label: &str, area: Rect) -> Rect {
     rect_of(h, label, |r| area.contains(r.center()))
@@ -201,10 +197,7 @@ fn a_crash_opens_the_window_at_the_next_start_with_one_row_per_generation() {
     assert!(!is_disabled(&h, "開く"));
     assert!(!is_disabled(&h, "捨てる"));
     // 新しい行（上）が選ばれている
-    assert_eq!(
-        h.state().state.recovery.window.as_ref().unwrap().selected,
-        Some(0)
-    );
+    assert_eq!(h.recovery().window.as_ref().unwrap().selected, Some(0));
     // 説明の文は画面に置かない（名前・状態・短い理由だけ）
     assert!(texts.iter().all(|t| t.chars().count() <= 24), "{texts:?}");
 }
@@ -226,17 +219,14 @@ fn opening_the_selected_generation_from_the_window_recovers_it_as_untitled() {
         .max_by(|a, b| a.top().total_cmp(&b.top()))
         .unwrap();
     click(&mut h, second.center());
-    assert_eq!(
-        h.state().state.recovery.window.as_ref().unwrap().selected,
-        Some(1)
-    );
+    assert_eq!(h.recovery().window.as_ref().unwrap().selected, Some(1));
     let open = button_in(&h, "開く", area).center();
     click(&mut h, open);
-    let s = &h.state().state;
-    assert_eq!(s.project_name, "名称未設定（復旧）");
-    assert!(s.modified);
-    assert!(s.recovery.window.is_none(), "開いたらウィンドウを閉じる");
-    assert!(s.message.starts_with("復旧しました"), "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.project_name(), "名称未設定（復旧）");
+    assert!(s.modified());
+    assert!(s.recovery().window.is_none(), "開いたらウィンドウを閉じる");
+    assert!(s.message().starts_with("復旧しました"), "{}", s.message());
     assert_eq!(
         std::fs::read(&original).unwrap(),
         before,
@@ -258,7 +248,7 @@ fn a_double_click_on_a_row_opens_it() {
     h.step();
     release(&h, at, egui::PointerButton::Primary);
     h.run();
-    assert_eq!(h.state().state.project_name, "名称未設定（復旧）");
+    assert_eq!(h.project_name(), "名称未設定（復旧）");
 }
 
 #[test]
@@ -269,30 +259,14 @@ fn discarding_asks_first_and_the_confirm_is_a_separate_modal_window() {
     let area = window(&h);
     let discard = button_in(&h, "捨てる", area).center();
     click(&mut h, discard);
-    assert!(h
-        .state()
-        .state
-        .recovery
-        .window
-        .as_ref()
-        .unwrap()
-        .confirm
-        .is_some());
+    assert!(h.recovery().window.as_ref().unwrap().confirm.is_some());
     let modal =
         yolu_app::windows::window_rect(&h.ctx, "recovery-discard").expect("確認のウィンドウ");
     assert_eq!(rows(&h), 2, "確かめるまで消さない");
     // やめる
     let cancel = button_in(&h, "やめる", modal).center();
     click(&mut h, cancel);
-    assert!(h
-        .state()
-        .state
-        .recovery
-        .window
-        .as_ref()
-        .unwrap()
-        .confirm
-        .is_none());
+    assert!(h.recovery().window.as_ref().unwrap().confirm.is_none());
     assert_eq!(rows(&h), 2);
     // 捨てる
     click(&mut h, discard);
@@ -300,15 +274,7 @@ fn discarding_asks_first_and_the_confirm_is_a_separate_modal_window() {
     let confirm = button_in(&h, "捨てる", modal).center();
     click(&mut h, confirm);
     assert_eq!(rows(&h), 1);
-    assert!(h
-        .state()
-        .state
-        .recovery
-        .window
-        .as_ref()
-        .unwrap()
-        .confirm
-        .is_none());
+    assert!(h.recovery().window.as_ref().unwrap().confirm.is_none());
     // 最後の 1 つを捨てると、一覧は空（何も書かない。空の欄の文言を置かない）で、開く・捨てるは押せない
     click(&mut h, discard);
     let modal = yolu_app::windows::window_rect(&h.ctx, "recovery-discard").unwrap();
@@ -331,9 +297,7 @@ fn an_empty_window_writes_nothing_where_the_list_would_be_in_either_language() {
         let dir = TempDir::new("empty");
         let mut h = started(&dir, lang);
         // 世代が 1 つも無くても、メニューから開ける（間隔と世代の数を選べる）。一覧の場所は空くだけで、文言は出さない
-        h.state_mut()
-            .state
-            .recovery_apply(RecoveryAction::OpenWindow);
+        h.app_mut().recovery_apply(RecoveryAction::OpenWindow);
         h.run();
         assert_eq!(rows(&h), 0);
         let texts = window_texts(&h, window(&h));
@@ -395,18 +359,14 @@ fn the_window_closes_with_the_button_the_close_icon_and_escape() {
     let mut h = started(&dir, Lang::Ja);
     let close = button_in(&h, "閉じる", window(&h)).center();
     click(&mut h, close);
-    assert!(h.state().state.recovery.window.is_none());
-    h.state_mut()
-        .state
-        .recovery_apply(RecoveryAction::OpenWindow);
+    assert!(h.recovery().window.is_none());
+    h.app_mut().recovery_apply(RecoveryAction::OpenWindow);
     h.run();
     assert_eq!(rows(&h), 1, "閉じても世代は残り、開き直せる");
     let x = h.get_by_label("ウィンドウを閉じる").rect().center();
     click(&mut h, x);
-    assert!(h.state().state.recovery.window.is_none());
-    h.state_mut()
-        .state
-        .recovery_apply(RecoveryAction::OpenWindow);
+    assert!(h.recovery().window.is_none());
+    h.app_mut().recovery_apply(RecoveryAction::OpenWindow);
     h.run();
     move_to(&h, window(&h).center());
     h.step();
@@ -418,7 +378,7 @@ fn the_window_closes_with_the_button_the_close_icon_and_escape() {
         modifiers: Modifiers::NONE,
     });
     h.run();
-    assert!(h.state().state.recovery.window.is_none());
+    assert!(h.recovery().window.is_none());
 }
 
 #[test]
@@ -427,25 +387,20 @@ fn the_interval_and_the_kept_generations_are_chosen_in_the_window() {
     crashed_root(&dir, 1, None);
     let mut h = started(&dir, Lang::Ja);
     let file = dir.0.join("recovery.conf");
-    h.state_mut()
-        .state
-        .recovery
-        .set_settings_path(Some(file.clone()));
+    h.recovery_mut().set_settings_path(Some(file.clone()));
     let area = window(&h);
     let at = button_in(&h, "30 秒", area).center();
     click(&mut h, at);
-    assert_eq!(h.state().state.recovery.settings().interval_seconds, 30);
+    assert_eq!(h.recovery().settings().interval_seconds, 30);
     let at = button_in(&h, "10", area).center();
     click(&mut h, at);
-    assert_eq!(h.state().state.recovery.settings().generations_to_keep, 10);
+    assert_eq!(h.recovery().settings().generations_to_keep, 10);
     let (saved, _) = RecoverySettings::load(&file).unwrap();
     assert_eq!(
         (saved.interval_seconds, saved.generations_to_keep),
         (30, 10)
     );
-    h.state_mut()
-        .state
-        .recovery_apply(RecoveryAction::SetInterval(45));
+    h.app_mut().recovery_apply(RecoveryAction::SetInterval(45));
     h.run();
     assert!(
         h.query_by_label("45 秒").is_some(),
@@ -458,14 +413,14 @@ fn the_window_opens_from_the_file_menu_and_the_item_needs_a_running_recovery() {
     let dir = TempDir::new("menu");
     let mut h = started(&dir, Lang::Ja);
     assert!(
-        h.state().state.recovery.window.is_none(),
+        h.recovery().window.is_none(),
         "落ちていなければ自動では出ない"
     );
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     let item = popup_item(&h, "復旧…").center();
     click(&mut h, item);
-    assert!(h.state().state.recovery.window.is_some());
+    assert!(h.recovery().window.is_some());
     h.run();
     window(&h);
     // 復旧を動かしていないアプリでは、押せない
@@ -504,13 +459,11 @@ fn the_window_is_in_english_without_japanese_text() {
     // 開く: 英語の名前・知らせ
     let open = button_in(&h, "Open", area).center();
     click(&mut h, open);
-    let s = &h.state().state;
-    assert_eq!(s.project_name, "Untitled (Recovered)");
-    assert!(s.message.starts_with("Recovered"), "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.project_name(), "Untitled (Recovered)");
+    assert!(s.message().starts_with("Recovered"), "{}", s.message());
     // 確認のウィンドウも英語
-    h.state_mut()
-        .state
-        .recovery_apply(RecoveryAction::OpenWindow);
+    h.app_mut().recovery_apply(RecoveryAction::OpenWindow);
     h.run();
     let area = window(&h);
     let discard = button_in(&h, "Discard", area).center();
@@ -545,15 +498,13 @@ fn run_frames(h: &mut Harness<'_, YoluApp>, frames: usize) {
         h.step();
         std::thread::sleep(Duration::from_millis(5));
     }
-    h.state_mut().state.recovery_wait();
+    h.app_mut().recovery_wait();
 }
 
 /// 書き置きが `count` 個になるまでフレームを回す（期限は 120 秒）。
 fn run_until_checkpoints(h: &mut Harness<'_, YoluApp>, count: u64) {
     let began = Instant::now();
-    while h.state().state.recovery.checkpoints() < count
-        && began.elapsed() < Duration::from_secs(120)
-    {
+    while h.recovery().checkpoints() < count && began.elapsed() < Duration::from_secs(120) {
         h.step();
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -570,95 +521,89 @@ fn slow_settings() -> RecoverySettings {
 fn losing_the_window_focus_writes_a_checkpoint_from_the_frame_loop() {
     let dir = TempDir::new("focus-lost");
     let mut h = started_with(&dir, Lang::Ja, slow_settings());
-    paint(&mut h.state_mut().state, 10.0);
+    paint(h.app_mut(), 10.0);
     // フォーカスを得ても書かない（間隔は 600 秒）
     set_focus(&mut h, true);
     run_frames(&mut h, 20);
     assert_eq!(
-        h.state().state.recovery.checkpoints(),
+        h.recovery().checkpoints(),
         0,
         "フォーカスを得た側では書かない"
     );
     // フォーカスを失った次のフレームで、時間を待たずに書く
     set_focus(&mut h, false);
     run_until_checkpoints(&mut h, 1);
-    let st = &h.state().state;
-    assert_eq!(st.recovery.checkpoints(), 1, "{}", st.message);
-    assert!(st.recovery.is_marked_dirty());
+    let st = h.app();
+    assert_eq!(st.recovery().checkpoints(), 1, "{}", st.message());
+    assert!(st.recovery().is_marked_dirty());
     // 戻って描き、また外れる: もう 1 つ書く
     set_focus(&mut h, true);
     run_frames(&mut h, 5);
-    paint(&mut h.state_mut().state, 40.0);
+    paint(h.app_mut(), 40.0);
     run_frames(&mut h, 20);
     assert_eq!(
-        h.state().state.recovery.checkpoints(),
+        h.recovery().checkpoints(),
         1,
         "戻って描いても、外れるまでは書かない"
     );
     set_focus(&mut h, false);
     run_until_checkpoints(&mut h, 2);
-    assert_eq!(h.state().state.recovery.checkpoints(), 2);
+    assert_eq!(h.recovery().checkpoints(), 2);
 }
 
 #[test]
 fn a_window_that_never_had_the_focus_or_only_gained_it_does_not_write() {
     let dir = TempDir::new("focus-never");
     let mut h = started_with(&dir, Lang::Ja, slow_settings());
-    paint(&mut h.state_mut().state, 10.0);
+    paint(h.app_mut(), 10.0);
     // 最初から外れている（得たことが無い）: 失った瞬間ではない
     set_focus(&mut h, false);
     run_frames(&mut h, 30);
-    assert_eq!(h.state().state.recovery.checkpoints(), 0);
+    assert_eq!(h.recovery().checkpoints(), 0);
     // 外れたまま → 得る: 書かない
     set_focus(&mut h, true);
     run_frames(&mut h, 30);
-    assert_eq!(h.state().state.recovery.checkpoints(), 0);
-    assert!(h.state().state.recovery.is_idle());
+    assert_eq!(h.recovery().checkpoints(), 0);
+    assert!(h.recovery().is_idle());
 }
 
 #[test]
 fn failed_writes_are_shown_in_the_status_band_and_painting_goes_on() {
     let dir = TempDir::new("frames");
     let mut h = started(&dir, Lang::Ja);
-    paint(&mut h.state_mut().state, 10.0);
-    h.state_mut().state.recovery_request_flush();
+    paint(h.app_mut(), 10.0);
+    h.app_mut().recovery_request_flush();
     run_until_checkpoints(&mut h, 1);
-    let st = &h.state().state;
+    let st = h.app();
     assert_eq!(
-        st.recovery.checkpoints(),
+        st.recovery().checkpoints(),
         1,
         "{} enabled={} idle={} modified={} stroking={}",
-        st.message,
-        st.recovery.is_enabled(),
-        st.recovery.is_idle(),
-        st.modified,
+        st.message(),
+        st.recovery().is_enabled(),
+        st.recovery().is_idle(),
+        st.modified(),
         st.is_stroking()
     );
     // 失敗は状態の帯に、短い理由で出る（描くのは止まらない）
-    h.state_mut()
-        .state
-        .recovery
+    h.recovery_mut()
         .set_fault(Some(std::sync::Arc::new(|stage: &str| {
             if stage == "before-pointer" {
                 return Err(std::io::Error::from(std::io::ErrorKind::StorageFull));
             }
             Ok(())
         })));
-    paint(&mut h.state_mut().state, 40.0);
-    h.state_mut().state.recovery_request_flush();
+    paint(h.app_mut(), 40.0);
+    h.app_mut().recovery_request_flush();
     let began = Instant::now();
-    while !h
-        .state()
-        .state
-        .message
-        .starts_with("復旧用の書き置きに失敗")
+    while !h.message().starts_with("復旧用の書き置きに失敗")
         && began.elapsed() < Duration::from_secs(120)
     {
         h.step();
         std::thread::sleep(Duration::from_millis(5));
     }
     assert_eq!(
-        h.state().state.message,
+        h.message(),
         "復旧用の書き置きに失敗しました（ディスクの空きがありません）。"
     );
 }
@@ -693,10 +638,10 @@ fn an_unreadable_recovery_setting_is_reported_in_the_status_band_when_the_app_st
                 app
             });
         h.run();
-        let st = &h.state().state;
-        assert_eq!(st.message, expected);
+        let st = h.app();
+        assert_eq!(st.message(), expected);
         assert!(
-            st.recovery.is_enabled(),
+            st.recovery().is_enabled(),
             "読めない設定でも、既定で復旧は動く"
         );
         assert_eq!(
@@ -712,16 +657,13 @@ fn closing_the_app_cleanly_writes_the_last_changes_and_removes_the_mark() {
     use eframe::App;
     let dir = TempDir::new("exit");
     let mut h = started(&dir, Lang::Ja);
-    paint(&mut h.state_mut().state, 10.0);
+    paint(h.app_mut(), 10.0);
     h.state_mut().on_exit();
     // 次の起動は落ちたとは見ず、世代は残っている
     let again = started(&dir, Lang::Ja);
-    assert!(again.state().state.recovery.window.is_none());
+    assert!(again.recovery().window.is_none());
     let mut again = again;
-    again
-        .state_mut()
-        .state
-        .recovery_apply(RecoveryAction::OpenWindow);
+    again.app_mut().recovery_apply(RecoveryAction::OpenWindow);
     again.run();
     assert_eq!(rows(&again), 1);
 }
@@ -768,7 +710,7 @@ fn the_window_looks_the_same_in_both_languages() {
             2 << 30,
             Some(180 << 30),
         );
-        state.recovery.window = Some(window);
+        state.recovery_mut().window = Some(window);
         let mut h = app_with(state);
         shot(
             &mut h,
@@ -794,11 +736,11 @@ fn the_details_open_to_the_limit_slider_and_a_custom_amount_is_marked_in_both_la
             Some(180 << 30),
         );
         window.details = true;
-        state.recovery.window = Some(window);
-        state.recovery.set_space_probe(Some(plenty()));
+        state.recovery_mut().window = Some(window);
+        state.recovery_mut().set_space_probe(Some(plenty()));
         let dir = TempDir::new("details-shot");
         state
-            .recovery
+            .recovery_mut()
             .enable(
                 dir.root(),
                 RecoverySettings {
@@ -823,12 +765,9 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
         crashed_root(&dir, 1, None);
         let mut h = started(&dir, lang);
         let file = dir.0.join("recovery.conf");
-        h.state_mut()
-            .state
-            .recovery
-            .set_settings_path(Some(file.clone()));
+        h.recovery_mut().set_settings_path(Some(file.clone()));
         let area = window(&h);
-        let disk = |h: &Harness<'_, YoluApp>| h.state().state.recovery.settings().disk;
+        let disk = |h: &Harness<'_, YoluApp>| h.recovery().settings().disk;
         assert_eq!(disk(&h), DiskBudget::Auto);
         for choice in [
             DiskBudget::High,
@@ -856,7 +795,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
         })
         .center();
         click(&mut h, details);
-        assert!(h.state().state.recovery.window.as_ref().unwrap().details);
+        assert!(h.recovery().window.as_ref().unwrap().details);
         assert!(window(&h).height() > area.height());
         assert_eq!(disk(&h), DiskBudget::Auto);
         // スライダーを動かしている間は選びを変えず（世代を消さない）、離したときに指定した量にする
@@ -871,15 +810,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
         h.step();
         h.step();
         assert_eq!(disk(&h), DiskBudget::Auto, "動かしている途中は当てない");
-        assert!(h
-            .state()
-            .state
-            .recovery
-            .window
-            .as_ref()
-            .unwrap()
-            .drag_gib
-            .is_some());
+        assert!(h.recovery().window.as_ref().unwrap().drag_gib.is_some());
         release(&h, to, egui::PointerButton::Primary);
         h.run();
         let DiskBudget::Gib(n) = disk(&h) else {
@@ -890,15 +821,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
             RecoverySettings::load(&file).unwrap().0.disk,
             DiskBudget::Gib(n)
         );
-        assert!(h
-            .state()
-            .state
-            .recovery
-            .window
-            .as_ref()
-            .unwrap()
-            .drag_gib
-            .is_none());
+        assert!(h.recovery().window.as_ref().unwrap().drag_gib.is_none());
         assert!(
             h.query_by_label(lang.pick("指定", "Custom")).is_some(),
             "指定した量の印が選択肢の末尾に出る"
@@ -920,7 +843,7 @@ fn the_used_amount_is_one_short_text_and_its_tooltip_breaks_it_down() {
         let mut h = started(&dir, lang);
         let area = window(&h);
         let (usage, cap, free) = {
-            let w = h.state().state.recovery.window.as_ref().unwrap();
+            let w = h.recovery().window.as_ref().unwrap();
             (w.usage, w.cap, w.free)
         };
         assert!(usage.crashed > 0 && usage.own < usage.total(), "{usage:?}");

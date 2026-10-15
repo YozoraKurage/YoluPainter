@@ -1,4 +1,5 @@
 //! 画面の絵の切り抜き先の範囲を求める補助。撮る口は `common::shot`（ここは範囲を決めるだけ）。
+use crate::common::drive::Drive;
 use egui::Rect;
 use egui_kittest::Harness;
 use yolu_app::{Tab, YoluApp};
@@ -20,9 +21,7 @@ pub fn group(h: &Harness<'_, YoluApp>, tab: Tab) -> Rect {
 
 /// いま開いているポップアップ（メニュー・ドロップダウン）の本体の範囲。
 pub fn popup(h: &Harness<'_, YoluApp>) -> Rect {
-    h.state()
-        .state
-        .popup
+    h.popup()
         .as_ref()
         .expect("ポップアップが開いている")
         .state
