@@ -1,6 +1,7 @@
 //! マテリアルで塗る・範囲のツール（バケツ・ポリゴン塗りつぶし・ID の色で選択）・手動の ID の色の画面の振る舞いと見た目。
 //! どれも「操作 → 文書が変わる → Undo で戻る」と、日本語と英語、断られた理由。`headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Key, Modifiers, Pos2, Rect};
@@ -84,10 +85,10 @@ const TRI4: (f32, f32) = (0.58, 0.10); // B
 /// モデルを読んだ状態（画面を使わない）。3D の見せ方は、正面から（yaw・pitch 0）。
 fn with_model(size: u32) -> (AppState, Rect) {
     let mut s = AppState::new(size, size);
-    s.view3d.set_model(two_parts_model());
-    s.view3d.material = 0;
-    s.view3d.camera.yaw = 0.0;
-    s.view3d.camera.pitch = 0.0;
+    s.view3d_mut().set_model(two_parts_model());
+    s.view3d_mut().material = 0;
+    s.view3d_mut().camera.yaw = 0.0;
+    s.view3d_mut().camera.pitch = 0.0;
     (
         s,
         Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0)),
@@ -96,16 +97,16 @@ fn with_model(size: u32) -> (AppState, Rect) {
 
 /// 2D キャンバスで UV の点が見える画面の点。
 fn at_uv(s: &AppState, rect: Rect, uv: (f32, f32)) -> Pos2 {
-    let view = s.view.view(rect, s.doc.width(), s.doc.height());
+    let view = s.view().view(rect, s.doc().width(), s.doc().height());
     view.to_screen(
-        uv.0 as f64 * s.doc.width() as f64,
-        uv.1 as f64 * s.doc.height() as f64,
+        uv.0 as f64 * s.doc().width() as f64,
+        uv.1 as f64 * s.doc().height() as f64,
     )
 }
 
 /// 3D ビューでモデルの点が見える画面の点。
 fn at_model(s: &AppState, rect: Rect, p: Vec3) -> Pos2 {
-    let view = s.view3d.camera.view(rect.width(), rect.height());
+    let view = s.view3d().camera.view(rect.width(), rect.height());
     let q = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + q.x, rect.top() + q.y)
 }
@@ -113,9 +114,9 @@ fn at_model(s: &AppState, rect: Rect, p: Vec3) -> Pos2 {
 /// 文書の UV の点の合成の画素（Color）。
 fn px(s: &AppState, uv: (f32, f32)) -> [u8; 4] {
     composite_pixel(
-        &s.doc,
-        (uv.0 * s.doc.width() as f32) as u32,
-        (uv.1 * s.doc.height() as f32) as u32,
+        s.doc(),
+        (uv.0 * s.doc().width() as f32) as u32,
+        (uv.1 * s.doc().height() as f32) as u32,
     )
 }
 
@@ -124,7 +125,7 @@ fn painted(s: &AppState, uv: (f32, f32)) -> bool {
 }
 
 fn canvas_view(s: &AppState, rect: Rect) -> yolu_app::canvas::view::CanvasView {
-    s.view.view(rect, s.doc.width(), s.doc.height())
+    s.view().view(rect, s.doc().width(), s.doc().height())
 }
 
 // ───────── マテリアルで塗る ─────────
@@ -132,19 +133,19 @@ fn canvas_view(s: &AppState, rect: Rect) -> yolu_app::canvas::view::CanvasView {
 /// 画面を使わずにストロークで塗る（2D の点を 2 つ）。
 fn stroke(s: &mut AppState, from: (f64, f64), to: (f64, f64)) {
     use yolu_app::engine::DVec2;
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let mut stroke = s.begin_paint_stroke(layer, false).expect("始められる");
     for p in [from, to] {
         stroke
-            .add_point(&mut s.doc, p.0, p.1, 1.0, DVec2::ZERO)
+            .add_point(s.doc_mut(), p.0, p.1, 1.0, DVec2::ZERO)
             .unwrap();
     }
-    s.doc.end_stroke(stroke).unwrap();
+    s.doc_mut().end_stroke(stroke).unwrap();
 }
 
 /// マスクの画素の隠す量（0 は見せる、255 は隠す）。
 fn mask_hide(s: &AppState, id: yolu_app::engine::LayerId, x: u32, y: u32) -> u8 {
-    s.doc
+    s.doc()
         .layer(id)
         .unwrap()
         .mask()
@@ -156,7 +157,7 @@ fn mask_hide(s: &AppState, id: yolu_app::engine::LayerId, x: u32, y: u32) -> u8 
 }
 
 fn channel_pixel(s: &AppState, channel: Channel, x: u32, y: u32) -> Rgba8 {
-    let layer = s.doc.layer(s.selected_layer.unwrap()).unwrap();
+    let layer = s.doc().layer(s.selected_layer().unwrap()).unwrap();
     layer
         .surface(channel)
         .and_then(|surface| surface.pixel(x, y).ok())
@@ -166,23 +167,27 @@ fn channel_pixel(s: &AppState, channel: Channel, x: u32, y: u32) -> Rgba8 {
 #[test]
 fn headless_a_material_stroke_paints_every_channel_in_one_undo() {
     let mut s = AppState::new(64, 64);
-    s.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
         Channel::Color,
     )));
-    s.apply(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Enabled(true)));
     assert_eq!(
-        s.mat.included(),
+        s.mat().included(),
         vec![Channel::Color],
         "描くチャンネル 1 つから始まる"
     );
-    s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Emission, true)));
-    s.mat.set_scalar(Channel::Roughness, 0.25);
-    s.apply(Action::Mat(MatAction::Emission([0.0, 1.0, 0.0])));
-    let before = s.doc.undo_count();
+    s.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Emission, true)));
+    s.mat_mut().set_scalar(Channel::Roughness, 0.25);
+    s.act(Action::Mat(MatAction::Emission([0.0, 1.0, 0.0])));
+    let before = s.doc().undo_count();
     stroke(&mut s, (10.0, 32.0), (50.0, 32.0));
-    assert_eq!(s.doc.undo_count(), before + 1, "全チャンネルで 1 回の Undo");
+    assert_eq!(
+        s.doc().undo_count(),
+        before + 1,
+        "全チャンネルで 1 回の Undo"
+    );
     assert_eq!(
         channel_pixel(&s, Channel::Color, 30, 32),
         Rgba8::new(255, 0, 0, 255)
@@ -200,11 +205,11 @@ fn headless_a_material_stroke_paints_every_channel_in_one_undo() {
         Rgba8::TRANSPARENT,
         "組に無いチャンネルは塗らない"
     );
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     for c in [Channel::Color, Channel::Roughness, Channel::Emission] {
         assert_eq!(channel_pixel(&s, c, 30, 32), Rgba8::TRANSPARENT, "{c:?}");
     }
-    s.apply(Action::Redo);
+    s.act(Action::Redo);
     assert_eq!(
         channel_pixel(&s, Channel::Roughness, 30, 32),
         Rgba8::new(64, 64, 64, 255),
@@ -215,12 +220,12 @@ fn headless_a_material_stroke_paints_every_channel_in_one_undo() {
 #[test]
 fn headless_material_off_paints_only_the_paint_channel_and_the_mask_ignores_the_material() {
     let mut s = AppState::new(64, 64);
-    s.color.set_main([0.0, 0.0, 1.0, 1.0]);
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-    s.apply(Action::Mat(MatAction::Enabled(false)));
+    s.color_mut().set_main([0.0, 0.0, 1.0, 1.0]);
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    s.act(Action::Mat(MatAction::Enabled(false)));
     assert!(
-        s.mat.included().contains(&Channel::Roughness),
+        s.mat().included().contains(&Channel::Roughness),
         "組はオフにしても残る"
     );
     stroke(&mut s, (10.0, 20.0), (50.0, 20.0));
@@ -234,10 +239,10 @@ fn headless_material_off_paints_only_the_paint_channel_and_the_mask_ignores_the_
         "オフなら描くチャンネルだけ"
     );
     // マスクに描くあいだは、オンでもマスクだけを塗る
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    let id = s.selected_layer.unwrap();
-    s.apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
-    assert!(s.m2.edit_mask);
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    let id = s.selected_layer().unwrap();
+    s.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    assert!(s.m2().edit_mask);
     assert!(!s.paints_material());
     let layer_before = channel_pixel(&s, Channel::Roughness, 30, 40);
     stroke(&mut s, (10.0, 40.0), (50.0, 40.0));
@@ -248,45 +253,45 @@ fn headless_material_off_paints_only_the_paint_channel_and_the_mask_ignores_the_
 #[test]
 fn headless_enabling_the_material_asks_for_a_channel_first_and_keeps_one() {
     let mut s = AppState::new(64, 64);
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
         Channel::Metallic,
     )));
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    assert_eq!(s.mat.included(), vec![Channel::Metallic]);
-    s.apply(Action::Mat(MatAction::Channel(Channel::Metallic, false)));
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    assert_eq!(s.mat().included(), vec![Channel::Metallic]);
+    s.act(Action::Mat(MatAction::Channel(Channel::Metallic, false)));
     assert_eq!(
-        s.mat.included(),
+        s.mat().included(),
         vec![Channel::Metallic],
         "最後の 1 つは外せない"
     );
-    assert!(s.message.contains("1 つ以上"), "{}", s.message);
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Metallic, false)));
-    assert!(s.message.contains("at least one"), "{}", s.message);
+    assert!(s.message().contains("1 つ以上"), "{}", s.message());
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Metallic, false)));
+    assert!(s.message().contains("at least one"), "{}", s.message());
 }
 
 #[test]
 fn headless_material_actions_set_the_values_and_refuse_while_drawing() {
     let mut s = AppState::new(64, 64);
-    s.color.set_main([0.2, 0.4, 0.6, 1.0]);
-    s.apply(Action::Mat(MatAction::EmissionFromPaint));
-    assert_eq!(s.mat.emission, [0.2, 0.4, 0.6]);
-    s.apply(Action::Mat(MatAction::Emission([2.0, -1.0, 0.5])));
-    assert_eq!(s.mat.emission, [1.0, 0.0, 0.5], "0〜1 に丸める");
-    s.mat.set_normal(0.5, 0.5);
-    s.apply(Action::Mat(MatAction::NormalFlat));
-    assert_eq!(s.mat.normal, [0.0, 0.0]);
+    s.color_mut().set_main([0.2, 0.4, 0.6, 1.0]);
+    s.act(Action::Mat(MatAction::EmissionFromPaint));
+    assert_eq!(s.mat().emission, [0.2, 0.4, 0.6]);
+    s.act(Action::Mat(MatAction::Emission([2.0, -1.0, 0.5])));
+    assert_eq!(s.mat().emission, [1.0, 0.0, 0.5], "0〜1 に丸める");
+    s.mat_mut().set_normal(0.5, 0.5);
+    s.act(Action::Mat(MatAction::NormalFlat));
+    assert_eq!(s.mat().normal, [0.0, 0.0]);
     // 描いている間は変えない
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    assert!(!s.mat.enabled, "描いている間はできない");
-    assert!(s.message.contains("描いている間"), "{}", s.message);
-    s.apply(Action::Region(RegionAction::Erase(true)));
-    assert!(!s.region.erase);
-    s.doc.cancel_stroke(stroke);
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    assert!(s.mat.enabled);
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    assert!(!s.mat().enabled, "描いている間はできない");
+    assert!(s.message().contains("描いている間"), "{}", s.message());
+    s.act(Action::Region(RegionAction::Erase(true)));
+    assert!(!s.region().erase);
+    s.doc_mut().cancel_stroke(stroke);
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    assert!(s.mat().enabled);
 }
 
 #[test]
@@ -322,9 +327,9 @@ fn headless_refusals_are_short_reasons_in_both_languages() {
 
 fn fill_state(kind: SurfaceRegionKind) -> (AppState, Rect) {
     let (mut s, rect) = with_model(128);
-    s.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    s.tool = Tool::Fill;
-    s.apply(Action::Region(RegionAction::FillRange(kind)));
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    s.set_tool(Tool::Fill);
+    s.act(Action::Region(RegionAction::FillRange(kind)));
     (s, rect)
 }
 
@@ -360,18 +365,18 @@ fn headless_bucket_fills_the_clicked_region_in_2d_for_each_kind_with_one_undo() 
     for (kind, press, filled, empty) in cases {
         let (mut s, rect) = fill_state(kind);
         let view = canvas_view(&s, rect);
-        let before = s.doc.undo_count();
+        let before = s.doc().undo_count();
         let at = at_uv(&s, rect, press);
         bucket(&mut s, Where::Canvas(&view), at);
-        assert_eq!(s.doc.undo_count(), before + 1, "{kind:?}: 1 回の Undo");
-        assert!(s.modified);
+        assert_eq!(s.doc().undo_count(), before + 1, "{kind:?}: 1 回の Undo");
+        assert!(s.modified());
         for p in &filled {
             assert_eq!(px(&s, *p), [255, 0, 0, 255], "{kind:?} {p:?}");
         }
         for p in &empty {
             assert!(!painted(&s, *p), "{kind:?} {p:?}");
         }
-        s.apply(Action::Undo);
+        s.act(Action::Undo);
         for p in filled.iter().chain(&empty) {
             assert!(!painted(&s, *p), "{kind:?}: Undo で戻る {p:?}");
         }
@@ -385,10 +390,10 @@ fn headless_bucket_by_model_range_also_fills_the_range_under_each_copy_in_2d() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
     common::rulers::vertical(&mut s, 64.0);
     let view = canvas_view(&s, rect);
-    let before = s.doc.undo_count();
+    let before = s.doc().undo_count();
     let at = at_uv(&s, rect, TRI0);
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.doc.undo_count(), before + 1, "1 回の Undo");
+    assert_eq!(s.doc().undo_count(), before + 1, "1 回の Undo");
     // 押した A の左のアイランドと、写し (0.92, 0.10) の下の B（UV アイランド）
     for p in [TRI0, TRI1, TRI4, (0.92, 0.10), (0.78, 0.40)] {
         assert_eq!(px(&s, p), [255, 0, 0, 255], "{p:?}");
@@ -396,12 +401,12 @@ fn headless_bucket_by_model_range_also_fills_the_range_under_each_copy_in_2d() {
     for p in [TRI2, TRI3] {
         assert!(!painted(&s, p), "写しの下にない A の右のアイランド {p:?}");
     }
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     for p in [TRI0, TRI1, TRI4, (0.92, 0.10)] {
         assert!(!painted(&s, p), "Undo で戻る {p:?}");
     }
     // 切: 押した範囲だけ
-    s.region.snap_symmetry = false;
+    s.region_mut().snap_symmetry = false;
     let at = at_uv(&s, rect, TRI0);
     bucket(&mut s, Where::Canvas(&view), at);
     assert!(painted(&s, TRI0) && painted(&s, TRI1));
@@ -414,16 +419,20 @@ fn headless_bucket_by_model_range_uses_only_the_copies_that_have_a_triangle() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::Triangle);
     common::rulers::vertical(&mut s, 64.0);
     let view = canvas_view(&s, rect);
-    let base = s.doc.undo_count();
+    let base = s.doc().undo_count();
     // どちらにも三角形が無い (0.27, 0.70) と、その写し (0.73, 0.70): 断る
     let at = at_uv(&s, rect, (0.27, 0.70));
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.doc.undo_count(), base);
-    assert!(s.message.contains("三角形がありません"), "{}", s.message);
+    assert_eq!(s.doc().undo_count(), base);
+    assert!(
+        s.message().contains("三角形がありません"),
+        "{}",
+        s.message()
+    );
     // 押した (0.27, 0.20) は A の 2 つのアイランドの間で三角形が無く、写し (0.73, 0.20) は B の最初の三角形の下
     let at = at_uv(&s, rect, (0.27, 0.20));
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.doc.undo_count(), base + 1, "{}", s.message);
+    assert_eq!(s.doc().undo_count(), base + 1, "{}", s.message());
     assert!(painted(&s, TRI4), "写しの下の三角形");
     assert!(
         !painted(&s, (0.92, 0.10)) && !painted(&s, TRI0),
@@ -436,10 +445,10 @@ fn headless_bucket_by_model_range_uses_only_the_copies_that_have_a_triangle() {
 fn headless_bucket_in_3d_ignores_the_symmetry_ruler() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
     common::rulers::vertical(&mut s, 64.0);
-    let before = s.doc.undo_count();
+    let before = s.doc().undo_count();
     let at = at_model(&s, rect, Vec3::new(0.25, 0.25, 0.0));
     bucket(&mut s, Where::Surface(rect), at);
-    assert_eq!(s.doc.undo_count(), before + 1);
+    assert_eq!(s.doc().undo_count(), before + 1);
     assert!(
         painted(&s, TRI0) && painted(&s, TRI1),
         "押した面のアイランド"
@@ -475,7 +484,7 @@ fn headless_bucket_in_3d_picks_the_face_under_the_pointer() {
         let (mut s, rect) = fill_state(kind);
         let at = at_model(&s, rect, press);
         bucket(&mut s, Where::Surface(rect), at);
-        assert_eq!(s.doc.undo_count(), 1, "{kind:?}: {}", s.message);
+        assert_eq!(s.doc().undo_count(), 1, "{kind:?}: {}", s.message());
         for p in &filled {
             assert!(painted(&s, *p), "{kind:?} {p:?}");
         }
@@ -489,18 +498,18 @@ fn headless_bucket_in_3d_picks_the_face_under_the_pointer() {
 fn headless_bucket_stays_inside_the_selection_and_the_material_paints_every_channel() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::Material);
     // 文書の左半分だけ選ぶ（UV の x < 0.5）
-    let w = s.doc.width() as i64;
-    let selection = SelectionMask::rectangle(&s.doc, 0, 0, w / 2, s.doc.height() as i64);
-    s.doc.set_selection(Some(selection)).unwrap();
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-    s.mat.set_scalar(Channel::Roughness, 1.0);
+    let w = s.doc().width() as i64;
+    let selection = SelectionMask::rectangle(s.doc(), 0, 0, w / 2, s.doc().height() as i64);
+    s.doc_mut().set_selection(Some(selection)).unwrap();
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    s.mat_mut().set_scalar(Channel::Roughness, 1.0);
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         undo + 1,
         "選択範囲と塗りで別々の段、塗りは 1 段"
     );
@@ -513,7 +522,7 @@ fn headless_bucket_stays_inside_the_selection_and_the_material_paints_every_chan
         channel_pixel(&s, Channel::Roughness, x, y),
         Rgba8::new(255, 255, 255, 255)
     );
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert!(!painted(&s, TRI0));
     assert_eq!(
         channel_pixel(&s, Channel::Roughness, x, y),
@@ -529,17 +538,17 @@ fn headless_bucket_erase_and_the_mask_follow_paint_and_erase() {
     let at = at_uv(&s, rect, TRI0);
     bucket(&mut s, Where::Canvas(&view), at);
     assert!(painted(&s, TRI0));
-    s.apply(Action::Region(RegionAction::Erase(true)));
+    s.act(Action::Region(RegionAction::Erase(true)));
     bucket(&mut s, Where::Canvas(&view), at);
     assert!(!painted(&s, TRI0), "消すで透明に");
     // マスク: 塗る = 白（見せる）= 隠す量 0、消す = 黒（隠す）
-    let id = s.selected_layer.unwrap();
-    s.apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
-    s.apply(Action::Region(RegionAction::Erase(true)));
+    let id = s.selected_layer().unwrap();
+    s.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    s.act(Action::Region(RegionAction::Erase(true)));
     bucket(&mut s, Where::Canvas(&view), at);
     let (x, y) = ((TRI0.0 * 128.0) as u32, (TRI0.1 * 128.0) as u32);
     assert_eq!(mask_hide(&s, id, x, y), 255, "黒で隠す");
-    s.apply(Action::Region(RegionAction::Erase(false)));
+    s.act(Action::Region(RegionAction::Erase(false)));
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(mask_hide(&s, id, x, y), 0, "白で見せる");
 }
@@ -550,26 +559,26 @@ fn headless_bucket_on_an_inverted_mask_writes_the_opposite_value() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
-    let id = s.selected_layer.unwrap();
-    s.apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
-    s.apply(Action::M2(yolu_app::m2::Edit::MaskInverted(id, true)));
-    assert!(s.m2.edit_mask);
+    let id = s.selected_layer().unwrap();
+    s.act(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    s.act(Action::M2(yolu_app::m2::Edit::MaskInverted(id, true)));
+    assert!(s.m2().edit_mask);
     let (x, y) = ((TRI0.0 * 128.0) as u32, (TRI0.1 * 128.0) as u32);
     assert_eq!(mask_hide(&s, id, x, y), 0, "初めは 0");
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(mask_hide(&s, id, x, y), 255, "反転したマスクの塗る（白）");
-    s.apply(Action::Region(RegionAction::Erase(true)));
+    s.act(Action::Region(RegionAction::Erase(true)));
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(mask_hide(&s, id, x, y), 0, "反転したマスクの消す（黒）");
     // 反転しないマスクは逆
-    s.apply(Action::M2(yolu_app::m2::Edit::MaskInverted(id, false)));
+    s.act(Action::M2(yolu_app::m2::Edit::MaskInverted(id, false)));
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(
         mask_hide(&s, id, x, y),
         255,
         "反転しないマスクの消す（黒 = 隠す）"
     );
-    s.apply(Action::Region(RegionAction::Erase(false)));
+    s.act(Action::Region(RegionAction::Erase(false)));
     bucket(&mut s, Where::Canvas(&view), at);
     assert_eq!(
         mask_hide(&s, id, x, y),
@@ -577,8 +586,8 @@ fn headless_bucket_on_an_inverted_mask_writes_the_opposite_value() {
         "反転しないマスクの塗る（白 = 見せる）"
     );
     // ポリゴン塗りつぶしも同じ向き
-    s.apply(Action::M2(yolu_app::m2::Edit::MaskInverted(id, true)));
-    s.tool = Tool::PolygonFill;
+    s.act(Action::M2(yolu_app::m2::Edit::MaskInverted(id, true)));
+    s.set_tool(Tool::PolygonFill);
     assert!(begin_polygon(&mut s, Where::Canvas(&view), at));
     assert!(finish_drag(&mut s, false));
     assert_eq!(
@@ -591,105 +600,110 @@ fn headless_bucket_on_an_inverted_mask_writes_the_opposite_value() {
 #[test]
 fn headless_bucket_by_color_fills_the_similar_area_in_2d_and_3d() {
     let mut s = AppState::new(64, 64);
-    s.color.set_main([0.0, 1.0, 0.0, 1.0]);
-    s.tool = Tool::Fill;
-    s.apply(Action::Region(RegionAction::ByColor(true)));
+    s.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
+    s.set_tool(Tool::Fill);
+    s.act(Action::Region(RegionAction::ByColor(true)));
     let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(512.0, 512.0));
     let view = canvas_view(&s, rect);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     bucket(&mut s, Where::Canvas(&view), rect.center());
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     assert_eq!(
-        composite_pixel(&s.doc, 5, 5),
+        composite_pixel(s.doc(), 5, 5),
         [0, 255, 0, 255],
         "空のレイヤーは全体が近い色"
     );
     // 3D でも使える: 押した面の UV が指す画素から、2D と同じ近い色の範囲を求める（空のレイヤーは全体が近い色）
     let (mut s3, rect3) = with_model(64);
-    s3.color.set_main([0.0, 1.0, 0.0, 1.0]);
-    s3.tool = Tool::Fill;
-    s3.apply(Action::Region(RegionAction::ByColor(true)));
+    s3.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
+    s3.set_tool(Tool::Fill);
+    s3.act(Action::Region(RegionAction::ByColor(true)));
     let on_face = at_model(&s3, rect3, Vec3::new(0.1, 0.1, 0.0));
     bucket(&mut s3, Where::Surface(rect3), on_face);
-    assert_eq!(s3.doc.undo_count(), 1);
+    assert_eq!(s3.doc().undo_count(), 1);
     assert_eq!(
-        composite_pixel(&s3.doc, 5, 5),
+        composite_pixel(s3.doc(), 5, 5),
         [0, 255, 0, 255],
         "3D でも空のレイヤーは全体が近い色"
     );
     // 面の無い所では塗らず、理由を出す
     let mut empty = with_model(64).0;
-    empty.tool = Tool::Fill;
-    empty.apply(Action::Region(RegionAction::ByColor(true)));
+    empty.set_tool(Tool::Fill);
+    empty.act(Action::Region(RegionAction::ByColor(true)));
     bucket(
         &mut empty,
         Where::Surface(rect3),
         pos2(rect3.left() + 1.0, rect3.top() + 1.0),
     );
-    assert_eq!(empty.doc.undo_count(), 0);
+    assert_eq!(empty.doc().undo_count(), 0);
     assert!(
-        empty.message.contains("三角形がありません"),
+        empty.message().contains("三角形がありません"),
         "{}",
-        empty.message
+        empty.message()
     );
 }
 
 #[test]
 fn headless_bucket_says_why_it_cannot_fill() {
     let mut s = AppState::new(64, 64);
-    s.tool = Tool::Fill;
+    s.set_tool(Tool::Fill);
     let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(512.0, 512.0));
     let view = canvas_view(&s, rect);
     bucket(&mut s, Where::Canvas(&view), rect.center());
     assert_eq!(
-        s.message, "モデルがありません",
+        s.message(),
+        "モデルがありません",
         "モデルが無いと範囲が決まらない"
     );
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     bucket(&mut s, Where::Canvas(&view), rect.center());
-    assert_eq!(s.message, "No model");
+    assert_eq!(s.message(), "No model");
     // 塗れないレイヤー（塗りつぶしレイヤー）
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
-    s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
+    s.act(Action::M2(yolu_app::m2::Edit::NewFill));
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.doc.undo_count(), undo);
+    assert_eq!(s.doc().undo_count(), undo);
     assert!(
-        s.message.contains("このレイヤーには描けません"),
+        s.message().contains("このレイヤーには描けません"),
         "{}",
-        s.message
+        s.message()
     );
     // モデルの面でない所
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, (0.8, 0.9));
     bucket(&mut s, Where::Canvas(&view), at);
-    assert!(s.message.contains("三角形がありません"), "{}", s.message);
-    assert_eq!(s.doc.undo_count(), 0);
+    assert!(
+        s.message().contains("三角形がありません"),
+        "{}",
+        s.message()
+    );
+    assert_eq!(s.doc().undo_count(), 0);
 }
 
 #[test]
 fn headless_a_loaded_model_without_the_current_set_says_so_instead_of_no_model() {
     let (mut s, rect) = with_model(64);
-    s.view3d.material = -1; // モデルはあるが、今のテクスチャセットはモデルのマテリアルに付いていない
-    let name = s.sets.current().name.clone();
+    s.view3d_mut().material = -1; // モデルはあるが、今のテクスチャセットはモデルのマテリアルに付いていない
+    let name = s.sets().current().name.clone();
     let ja = format!("今のテクスチャセット「{name}」はこのモデルにありません。");
     assert_eq!(s.region_missing_reason(), ja);
-    s.tool = Tool::Fill;
+    s.set_tool(Tool::Fill);
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, ja, "バケツ");
-    s.message.clear();
-    s.tool = Tool::PolygonFill;
+    assert_eq!(s.message(), ja, "バケツ");
+    s.message_mut().clear();
+    s.set_tool(Tool::PolygonFill);
     assert!(!begin_polygon(&mut s, Where::Canvas(&view), at));
-    assert_eq!(s.message, ja, "ポリゴン塗りつぶし");
-    assert_eq!(s.doc.undo_count(), 0);
+    assert_eq!(s.message(), ja, "ポリゴン塗りつぶし");
+    assert_eq!(s.doc().undo_count(), 0);
     assert!(!s.is_stroking());
-    s.message.clear();
-    s.tool = Tool::IdSelect;
+    s.message_mut().clear();
+    s.set_tool(Tool::IdSelect);
     let on_face = at_model(
         &s,
         Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0)),
@@ -700,19 +714,19 @@ fn headless_a_loaded_model_without_the_current_set_says_so_instead_of_no_model()
         Where::Surface(Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0))),
         on_face,
     );
-    assert!(s.doc.selection().is_none());
+    assert!(s.doc().selection().is_none());
     // モデルが無いときは、これまでどおり「モデルがありません」
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     // 既定の名前は言語で変わるので、切り替えたあとの名前で確かめる
-    let name = s.sets.current().name.clone();
+    let name = s.sets().current().name.clone();
     let en = format!("Texture set “{name}” is not in this model.");
     assert_eq!(s.region_missing_reason(), en);
-    s.tool = Tool::Fill;
+    s.set_tool(Tool::Fill);
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, en, "英語");
+    assert_eq!(s.message(), en, "英語");
     let mut none = AppState::new(64, 64);
     assert_eq!(none.region_missing_reason(), "モデルがありません");
-    none.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    none.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     assert_eq!(none.region_missing_reason(), "No model");
 }
 
@@ -760,9 +774,9 @@ fn second_set_state() -> AppState {
     let mut s = AppState::new(64, 64);
     let (_, shape) = s.receive_link_model(&two_materials_link_model());
     shape.expect("3D に読める");
-    let uid = s.sets.iter().nth(1).expect("2 つ目のセット").uid;
-    s.apply(Action::SelectSet(uid));
-    assert_eq!(s.view3d.material, 1, "2 つ目のセットはマテリアル 1");
+    let uid = s.sets().iter().nth(1).expect("2 つ目のセット").uid;
+    s.act(Action::SelectSet(uid));
+    assert_eq!(s.view3d().material, 1, "2 つ目のセットはマテリアル 1");
     s
 }
 
@@ -770,7 +784,7 @@ fn second_set_state() -> AppState {
 fn headless_the_part_switcher_counts_inside_the_current_set_not_the_whole_model() {
     use yolu_app::panels::region_props::part_position;
     let mut s = second_set_state();
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     let parts = ready_parts(&mut s);
     assert_eq!(parts, vec![1, 2], "セット 1 の部品はモデル全体の 1 と 2");
     for (at, ja, en) in [
@@ -780,8 +794,8 @@ fn headless_the_part_switcher_counts_inside_the_current_set_not_the_whole_model(
         assert_eq!(part_position(Lang::Ja, at, parts.len()), ja);
         assert_eq!(part_position(Lang::En, at, parts.len()), en);
     }
-    let uid = s.sets.iter().next().unwrap().uid;
-    s.apply(Action::SelectSet(uid));
+    let uid = s.sets().iter().next().unwrap().uid;
+    s.act(Action::SelectSet(uid));
     assert_eq!(ready_parts(&mut s), vec![0], "セット 0 は部品 A だけ");
 }
 
@@ -789,47 +803,53 @@ fn headless_the_part_switcher_counts_inside_the_current_set_not_the_whole_model(
 fn headless_a_locked_layer_refuses_every_way_of_painting_with_a_short_reason() {
     use yolu_core::LayerLocks;
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
-    let id = s.selected_layer.unwrap();
-    s.doc.set_layer_locks(id, LayerLocks::PIXELS).unwrap();
+    let id = s.selected_layer().unwrap();
+    s.doc_mut().set_layer_locks(id, LayerLocks::PIXELS).unwrap();
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     // バケツ
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.doc.undo_count(), undo);
+    assert_eq!(s.doc().undo_count(), undo);
     assert!(!painted(&s, TRI0));
-    assert_eq!(s.message, "レイヤーの「画素」がロックされています");
+    assert_eq!(s.message(), "レイヤーの「画素」がロックされています");
     // ポリゴン塗りつぶし（始められない）
-    s.message.clear();
+    s.message_mut().clear();
     assert!(!begin_polygon(&mut s, Where::Canvas(&view), at));
-    assert_eq!(s.message, "レイヤーの「画素」がロックされています");
+    assert_eq!(s.message(), "レイヤーの「画素」がロックされています");
     assert!(!s.is_stroking());
     // ブラシ
     assert!(s.begin_paint_stroke(id, false).is_err());
     // マテリアルで塗るときも
-    s.apply(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Enabled(true)));
     bucket(&mut s, Where::Canvas(&view), at);
-    assert!(s.message.contains("ロック"), "{}", s.message);
+    assert!(s.message().contains("ロック"), "{}", s.message());
     // 英語
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "The layer has \"Image pixels\" locked");
+    assert_eq!(s.message(), "The layer has \"Image pixels\" locked");
     // すべてのロック・親グループのロック
-    s.doc.set_layer_locks(id, LayerLocks::ALL).unwrap();
+    s.doc_mut().set_layer_locks(id, LayerLocks::ALL).unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "The layer has \"All\" locked");
-    s.doc.set_layer_locks(id, LayerLocks::NONE).unwrap();
-    let group = s.doc.group_layers(&[id], "g").unwrap();
-    s.doc
+    assert_eq!(s.message(), "The layer has \"All\" locked");
+    s.doc_mut().set_layer_locks(id, LayerLocks::NONE).unwrap();
+    let group = s.doc_mut().group_layers(&[id], "g").unwrap();
+    s.doc_mut()
         .set_layer_locks(group, LayerLocks::PIXELS | LayerLocks::POSITION)
         .unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert!(s.message.starts_with("A parent group has"), "{}", s.message);
-    assert!(s.message.contains("Image pixels"), "{}", s.message);
+    assert!(
+        s.message().starts_with("A parent group has"),
+        "{}",
+        s.message()
+    );
+    assert!(s.message().contains("Image pixels"), "{}", s.message());
     // ロックを外せば塗れる
-    s.doc.set_layer_locks(group, LayerLocks::NONE).unwrap();
+    s.doc_mut()
+        .set_layer_locks(group, LayerLocks::NONE)
+        .unwrap();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert!(painted(&s, TRI0), "{}", s.message);
+    assert!(painted(&s, TRI0), "{}", s.message());
 }
 
 #[test]
@@ -837,17 +857,17 @@ fn headless_the_bucket_and_the_brush_write_the_same_value_into_a_scalar_channel(
     // 描くチャンネルが Roughness（スカラー）で描画色が赤。ブラシのストロークと、バケツ・ポリゴン塗りつぶしの値が同じ（描画色のまま）
     let red = Rgba8::new(255, 0, 0, 255);
     let prepare = |s: &mut AppState| {
-        s.color.set_main([1.0, 0.0, 0.0, 1.0]);
-        let id = s.selected_layer.unwrap();
-        s.apply(Action::M2(yolu_app::m2::Edit::ChannelEnabled {
+        s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+        let id = s.selected_layer().unwrap();
+        s.act(Action::M2(yolu_app::m2::Edit::ChannelEnabled {
             id,
             channel: Channel::Roughness,
             enabled: true,
         }));
-        s.apply(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
+        s.act(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(
             Channel::Roughness,
         )));
-        assert!(!s.mat.enabled, "マテリアルはオフ");
+        assert!(!s.mat().enabled, "マテリアルはオフ");
     };
     // ブラシ
     let (mut brush, _) = with_model(128);
@@ -857,7 +877,7 @@ fn headless_the_bucket_and_the_brush_write_the_same_value_into_a_scalar_channel(
     assert_eq!(by_brush, red, "ブラシは描画色の RGB のまま");
     // バケツ
     let (mut s, rect) = with_model(128);
-    s.tool = Tool::Fill;
+    s.set_tool(Tool::Fill);
     prepare(&mut s);
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
@@ -867,11 +887,11 @@ fn headless_the_bucket_and_the_brush_write_the_same_value_into_a_scalar_channel(
         channel_pixel(&s, Channel::Roughness, x, y),
         by_brush,
         "バケツはブラシと同じ値: {}",
-        s.message
+        s.message()
     );
     // ポリゴン塗りつぶし
     let (mut p, rect) = with_model(128);
-    p.tool = Tool::PolygonFill;
+    p.set_tool(Tool::PolygonFill);
     prepare(&mut p);
     let view = canvas_view(&p, rect);
     let at = at_uv(&p, rect, TRI0);
@@ -895,46 +915,46 @@ fn headless_the_bucket_and_the_brush_write_the_same_value_into_a_scalar_channel(
 fn headless_a_read_only_set_refuses_the_bucket_the_polygon_fill_and_the_id_select() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
     bake_id(&mut s);
-    let uid_index = s.sets.current_index();
-    s.sets.get_mut(uid_index).unwrap().read_only =
+    let uid_index = s.sets().current_index();
+    s.sets_mut().get_mut(uid_index).unwrap().read_only =
         Some("フィルターのあるレイヤーがあります".into());
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
     let at = at_uv(&s, rect, TRI0);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     let reason = "このテクスチャセットは読むだけです（フィルターのあるレイヤーがあります）。";
     // バケツ
     bucket(&mut s, w, at);
-    assert_eq!(s.message, reason);
+    assert_eq!(s.message(), reason);
     assert!(!painted(&s, TRI0));
     // ポリゴン塗りつぶし
-    s.message.clear();
+    s.message_mut().clear();
     assert!(!begin_polygon(&mut s, w, at));
-    assert_eq!(s.message, reason);
-    assert!(s.region.drag.is_none() && !s.is_stroking());
+    assert_eq!(s.message(), reason);
+    assert!(s.region().drag.is_none() && !s.is_stroking());
     // ID の色で選択（選択範囲も変えない。変えても Undo が断られて戻せない）
-    s.message.clear();
-    s.tool = Tool::IdSelect;
+    s.message_mut().clear();
+    s.set_tool(Tool::IdSelect);
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
-    assert_eq!(s.message, reason);
-    assert!(s.doc.selection().is_none());
-    assert_eq!(s.doc.undo_count(), undo, "履歴に何も積まない");
+    assert_eq!(s.message(), reason);
+    assert!(s.doc().selection().is_none());
+    assert_eq!(s.doc().undo_count(), undo, "履歴に何も積まない");
     // 英語
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    s.sets.get_mut(uid_index).unwrap().read_only = Some("has filters".into());
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    s.sets_mut().get_mut(uid_index).unwrap().read_only = Some("has filters".into());
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
-    assert_eq!(s.message, "This texture set is read-only (has filters).");
+    assert_eq!(s.message(), "This texture set is read-only (has filters).");
     // 読むだけでなくなれば選べる
-    s.sets.get_mut(uid_index).unwrap().read_only = None;
+    s.sets_mut().get_mut(uid_index).unwrap().read_only = None;
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
-    assert!(s.doc.selection().is_some(), "{}", s.message);
+    assert!(s.doc().selection().is_some(), "{}", s.message());
 }
 
 /// 小さい予算の文書（タイル 4 枚分の覆いまで。512 の文書で A のアイランドは 2〜4 枚、B のアイランドは別の 4 枚）。
 fn four_tile_budget(s: &mut AppState) -> u64 {
-    let ts = s.doc.tile_size() as u64;
+    let ts = s.doc().tile_size() as u64;
     let budget = 4 * (16 + 2 * ts * ts);
-    s.doc.set_stroke_budget_bytes(budget).unwrap();
+    s.doc_mut().set_stroke_budget_bytes(budget).unwrap();
     budget
 }
 
@@ -942,12 +962,12 @@ fn four_tile_budget(s: &mut AppState) -> u64 {
 fn headless_polygon_fill_over_the_budget_is_refused_and_leaves_the_document_as_it_was() {
     // 最初の範囲で超える: 始まらない
     let (mut s, rect) = with_model(512);
-    s.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    s.tool = Tool::PolygonFill;
-    s.apply(Action::Region(RegionAction::FillRange(
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    s.set_tool(Tool::PolygonFill);
+    s.act(Action::Region(RegionAction::FillRange(
         SurfaceRegionKind::UvIsland,
     )));
-    s.doc.set_stroke_budget_bytes(1).unwrap();
+    s.doc_mut().set_stroke_budget_bytes(1).unwrap();
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
     let (a, b) = (at_uv(&s, rect, TRI0), at_uv(&s, rect, TRI4));
@@ -955,30 +975,30 @@ fn headless_polygon_fill_over_the_budget_is_refused_and_leaves_the_document_as_i
         !begin_polygon(&mut s, w, a),
         "最初の範囲で予算を超えたら始まらない"
     );
-    assert!(s.region.drag.is_none() && !s.is_stroking() && !s.doc.has_active_stroke());
-    assert!(s.message.contains("予算"), "{}", s.message);
-    assert_eq!(s.doc.undo_count(), 0);
+    assert!(s.region().drag.is_none() && !s.is_stroking() && !s.doc().has_active_stroke());
+    assert!(s.message().contains("予算"), "{}", s.message());
+    assert_eq!(s.doc().undo_count(), 0);
     assert!(!painted(&s, TRI0));
     // 途中で超える: 最初のアイランドは塗れて、別の部品を足すと予算を超え、そこまでの塗りも戻す
     let budget = four_tile_budget(&mut s);
-    assert!(begin_polygon(&mut s, w, a), "{}", s.message);
+    assert!(begin_polygon(&mut s, w, a), "{}", s.message());
     assert!(
         painted(&s, TRI0),
         "最初のアイランドは塗れている（予算 {budget}）"
     );
     drag_to(&mut s, w, b);
-    assert!(s.region.drag.is_none(), "超えたら札を手放す");
-    assert!(!s.is_stroking() && !s.doc.has_active_stroke());
-    assert!(s.message.contains("予算"), "{}", s.message);
+    assert!(s.region().drag.is_none(), "超えたら札を手放す");
+    assert!(!s.is_stroking() && !s.doc().has_active_stroke());
+    assert!(s.message().contains("予算"), "{}", s.message());
     assert!(!painted(&s, TRI0) && !painted(&s, TRI4), "文書は元のまま");
-    assert_eq!(s.doc.undo_count(), 0, "履歴に何も積まない");
+    assert_eq!(s.doc().undo_count(), 0, "履歴に何も積まない");
     assert!(!finish_drag(&mut s, false), "離しても終えるものが無い");
     // 英語
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    s.doc.set_stroke_budget_bytes(1).unwrap();
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    s.doc_mut().set_stroke_budget_bytes(1).unwrap();
     assert!(!begin_polygon(&mut s, w, a));
     assert_eq!(
-        s.message,
+        s.message(),
         "Over the memory budget of one operation (cancelled)"
     );
 }
@@ -986,15 +1006,15 @@ fn headless_polygon_fill_over_the_budget_is_refused_and_leaves_the_document_as_i
 #[test]
 fn headless_bucket_over_the_budget_is_refused_and_leaves_the_document_as_it_was() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::Material);
-    let allocated = s.doc.allocated_bytes();
-    s.doc.set_source_budget_bytes(allocated).unwrap();
+    let allocated = s.doc().allocated_bytes();
+    s.doc_mut().set_source_budget_bytes(allocated).unwrap();
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.message, "レイヤーのメモリの予算を超えます");
-    assert_eq!(s.doc.undo_count(), 0);
+    assert_eq!(s.message(), "レイヤーのメモリの予算を超えます");
+    assert_eq!(s.doc().undo_count(), 0);
     assert!(!painted(&s, TRI0) && !painted(&s, TRI4), "文書は元のまま");
-    assert!(!s.modified);
+    assert!(!s.modified());
 }
 
 // ───────── ポリゴン塗りつぶし ─────────
@@ -1002,13 +1022,13 @@ fn headless_bucket_over_the_budget_is_refused_and_leaves_the_document_as_it_was(
 #[test]
 fn headless_polygon_fill_adds_the_regions_it_passes_and_commits_as_one_undo() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
-    s.tool = Tool::PolygonFill;
+    s.set_tool(Tool::PolygonFill);
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
     let a = at_uv(&s, rect, TRI0);
     let b = at_uv(&s, rect, TRI2);
     let c = at_uv(&s, rect, TRI4);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     assert!(begin_polygon(&mut s, w, a));
     assert!(s.is_stroking(), "ドラッグの間は描いている扱い");
     assert!(
@@ -1018,7 +1038,7 @@ fn headless_polygon_fill_adds_the_regions_it_passes_and_commits_as_one_undo() {
     drag_to(&mut s, w, b);
     drag_to(&mut s, w, c);
     assert_eq!(
-        s.region.drag.as_ref().unwrap().regions(),
+        s.region().drag.as_ref().unwrap().regions(),
         3,
         "通ったアイランドの数"
     );
@@ -1026,15 +1046,15 @@ fn headless_polygon_fill_adds_the_regions_it_passes_and_commits_as_one_undo() {
         painted(&s, TRI2) && painted(&s, TRI4),
         "動かすと足す。間のアイランドも飛ばさない"
     );
-    assert_eq!(s.doc.undo_count(), undo, "離すまで履歴に積まない");
+    assert_eq!(s.doc().undo_count(), undo, "離すまで履歴に積まない");
     // 描いている間は文書を変える操作を断る
-    s.apply(Action::Undo);
-    assert!(s.message.contains("描いている間"), "{}", s.message);
+    s.act(Action::Undo);
+    assert!(s.message().contains("描いている間"), "{}", s.message());
     assert!(finish_drag(&mut s, false));
-    assert_eq!(s.doc.undo_count(), undo + 1, "離して 1 回の Undo");
+    assert_eq!(s.doc().undo_count(), undo + 1, "離して 1 回の Undo");
     assert!(!s.is_stroking());
-    assert!(s.message.contains("UV アイランド × 3"), "{}", s.message);
-    s.apply(Action::Undo);
+    assert!(s.message().contains("UV アイランド × 3"), "{}", s.message());
+    s.act(Action::Undo);
     for p in [TRI0, TRI1, TRI2, TRI3, TRI4] {
         assert!(!painted(&s, p), "{p:?}");
     }
@@ -1043,7 +1063,7 @@ fn headless_polygon_fill_adds_the_regions_it_passes_and_commits_as_one_undo() {
 #[test]
 fn headless_polygon_fill_cancel_leaves_nothing_and_erase_removes() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::Triangle);
-    s.tool = Tool::PolygonFill;
+    s.set_tool(Tool::PolygonFill);
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
     let a = at_uv(&s, rect, TRI0);
@@ -1051,29 +1071,33 @@ fn headless_polygon_fill_cancel_leaves_nothing_and_erase_removes() {
     assert!(painted(&s, TRI0));
     assert!(finish_drag(&mut s, true));
     assert!(!painted(&s, TRI0), "取り消すと戻る");
-    assert_eq!(s.doc.undo_count(), 0, "履歴に何も残さない");
-    assert!(s.region.drag.is_none());
+    assert_eq!(s.doc().undo_count(), 0, "履歴に何も残さない");
+    assert!(s.region().drag.is_none());
     // 塗ってから消す
     assert!(begin_polygon(&mut s, w, a));
     assert!(finish_drag(&mut s, false));
-    s.apply(Action::Region(RegionAction::Erase(true)));
+    s.act(Action::Region(RegionAction::Erase(true)));
     assert!(begin_polygon(&mut s, w, a));
     assert!(finish_drag(&mut s, false));
     assert!(!painted(&s, TRI0), "消すで透明に");
-    assert!(s.message.contains("消しました"), "{}", s.message);
+    assert!(s.message().contains("消しました"), "{}", s.message());
     // 何も無い所からのドラッグ: 何も塗らず、理由を出す
     let nothing = at_uv(&s, rect, (0.8, 0.9));
     assert!(begin_polygon(&mut s, w, nothing));
     assert!(finish_drag(&mut s, false));
-    assert!(s.message.contains("三角形がありません"), "{}", s.message);
+    assert!(
+        s.message().contains("三角形がありません"),
+        "{}",
+        s.message()
+    );
 }
 
 #[test]
 fn headless_polygon_fill_in_3d_follows_the_pointer_across_faces() {
     let (mut s, rect) = fill_state(SurfaceRegionKind::MeshPart);
-    s.tool = Tool::PolygonFill;
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    s.set_tool(Tool::PolygonFill);
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
     let w = Where::Surface(rect);
     let on_a = at_model(&s, rect, Vec3::new(0.2, 0.5, 0.0));
     let on_b = at_model(&s, rect, Vec3::new(3.5, 0.5, 0.0));
@@ -1086,14 +1110,14 @@ fn headless_polygon_fill_in_3d_follows_the_pointer_across_faces() {
     drag_to(&mut s, w, on_b);
     assert!(painted(&s, TRI0) && painted(&s, TRI4));
     assert!(finish_drag(&mut s, false));
-    assert_eq!(s.doc.undo_count(), 1);
+    assert_eq!(s.doc().undo_count(), 1);
     let (x, y) = ((TRI4.0 * 128.0) as u32, (TRI4.1 * 128.0) as u32);
     assert_eq!(
         channel_pixel(&s, Channel::Roughness, x, y),
         Rgba8::new(128, 128, 128, 255),
         "マテリアルの全チャンネル"
     );
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(
         channel_pixel(&s, Channel::Roughness, x, y),
         Rgba8::TRANSPARENT
@@ -1113,33 +1137,33 @@ fn headless_hover_finds_the_region_under_the_pointer_and_clears_outside() {
         (SurfaceRegionKind::MeshPart, 4, 8),
         (SurfaceRegionKind::Material, 6, 12),
     ] {
-        s.apply(Action::Region(RegionAction::FillRange(kind)));
+        s.act(Action::Region(RegionAction::FillRange(kind)));
         {
             let at = at_uv(&s, rect, TRI0);
             update_hover(&mut s, w, Some(at));
         }
         assert_eq!(s.region_hover_len(), Some(tris), "{kind:?}");
         assert_eq!(
-            s.region.hover.as_ref().unwrap().outline.len(),
+            s.region().hover.as_ref().unwrap().outline.len(),
             outline,
             "{kind:?} の UV の輪郭"
         );
     }
     // 三角形が変わらなければ同じ強調のまま、モデルの面でない所では消える
-    s.apply(Action::Region(RegionAction::FillRange(
+    s.act(Action::Region(RegionAction::FillRange(
         SurfaceRegionKind::UvIsland,
     )));
     {
         let at = at_uv(&s, rect, TRI0);
         update_hover(&mut s, w, Some(at));
     }
-    let key = s.region.hover.as_ref().unwrap().key;
+    let key = s.region().hover.as_ref().unwrap().key;
     {
         let at = at_uv(&s, rect, TRI1);
         update_hover(&mut s, w, Some(at));
     }
     assert_eq!(
-        s.region.hover.as_ref().unwrap().key,
+        s.region().hover.as_ref().unwrap().key,
         key,
         "同じアイランドなら引き直さない"
     );
@@ -1147,28 +1171,28 @@ fn headless_hover_finds_the_region_under_the_pointer_and_clears_outside() {
         let at = at_uv(&s, rect, (0.8, 0.9));
         update_hover(&mut s, w, Some(at));
     }
-    assert!(s.region.hover.is_none());
+    assert!(s.region().hover.is_none());
     // 3D
     let rect3 = Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0));
     let on_face = at_model(&s, rect3, Vec3::new(0.1, 0.1, 0.0));
     update_hover(&mut s, Where::Surface(rect3), Some(on_face));
     assert_eq!(s.region_hover_len(), Some(2));
-    assert!(s.region.hover.as_ref().unwrap().on_surface);
+    assert!(s.region().hover.as_ref().unwrap().on_surface);
     // ブラシでは出さない
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     {
         let at = at_uv(&s, rect, TRI0);
         update_hover(&mut s, w, Some(at));
     }
-    assert!(s.region.hover.is_none());
+    assert!(s.region().hover.is_none());
     // 近い色のバケツは範囲を持たない
-    s.tool = Tool::Fill;
-    s.apply(Action::Region(RegionAction::ByColor(true)));
+    s.set_tool(Tool::Fill);
+    s.act(Action::Region(RegionAction::ByColor(true)));
     {
         let at = at_uv(&s, rect, TRI0);
         update_hover(&mut s, w, Some(at));
     }
-    assert!(s.region.hover.is_none());
+    assert!(s.region().hover.is_none());
 }
 
 #[test]
@@ -1179,33 +1203,33 @@ fn headless_a_panel_without_the_pointer_clears_only_its_own_hover() {
     let surface = Where::Surface(rect);
     let at = at_uv(&s, rect, TRI0);
     update_hover(&mut s, canvas, Some(at));
-    let made = s.region.hover.as_ref().expect("2D の強調").tris.clone();
+    let made = s.region().hover.as_ref().expect("2D の強調").tris.clone();
     // 3D のパネル（ポインタが無い）が毎フレーム呼んでも、2D の強調は消さず、2D は引き直さない
     for _ in 0..3 {
         update_hover(&mut s, surface, None);
         update_hover(&mut s, canvas, Some(at));
-        let now = &s.region.hover.as_ref().expect("残っている").tris;
+        let now = &s.region().hover.as_ref().expect("残っている").tris;
         assert!(Arc::ptr_eq(&made, now), "同じ範囲を作り直していない");
     }
     // 持ち主（2D）のポインタが無くなれば消す
     update_hover(&mut s, canvas, None);
-    assert!(s.region.hover.is_none());
+    assert!(s.region().hover.is_none());
     // 3D の強調も同じ（2D のパネルのポインタが無いのでは消えない）
     let on_face = at_model(&s, rect, Vec3::new(0.1, 0.1, 0.0));
     update_hover(&mut s, surface, Some(on_face));
-    assert!(s.region.hover.as_ref().is_some_and(|h| h.on_surface));
+    assert!(s.region().hover.as_ref().is_some_and(|h| h.on_surface));
     update_hover(&mut s, canvas, None);
     assert!(
-        s.region.hover.is_some(),
+        s.region().hover.is_some(),
         "2D のパネルは 3D の強調を消さない"
     );
     update_hover(&mut s, surface, None);
-    assert!(s.region.hover.is_none());
+    assert!(s.region().hover.is_none());
     // ツールが範囲を出さないときは、どの画面のものも消す
     update_hover(&mut s, canvas, Some(at));
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     update_hover(&mut s, surface, None);
-    assert!(s.region.hover.is_none());
+    assert!(s.region().hover.is_none());
 }
 
 #[test]
@@ -1227,20 +1251,12 @@ fn the_hover_under_the_pointer_is_not_rebuilt_every_frame_with_the_canvas_and_th
     // 3D にポインタを置く
     move_to(&h, a);
     h.run();
-    let first = h
-        .state()
-        .state
-        .region
-        .hover
-        .as_ref()
-        .expect("3D の強調")
-        .tris
-        .clone();
-    assert!(h.state().state.region.hover.as_ref().unwrap().on_surface);
+    let first = h.region().hover.as_ref().expect("3D の強調").tris.clone();
+    assert!(h.region().hover.as_ref().unwrap().on_surface);
     // 動かさずに何フレーム回しても、同じ範囲（2D のパネルがポインタが無いと消さない）
     for _ in 0..3 {
         h.step();
-        let hover = h.state().state.region.hover.as_ref().expect("残っている");
+        let hover = h.region().hover.as_ref().expect("残っている");
         assert!(
             Arc::ptr_eq(&first, &hover.tris),
             "毎フレーム引き直していない"
@@ -1250,7 +1266,7 @@ fn the_hover_under_the_pointer_is_not_rebuilt_every_frame_with_the_canvas_and_th
     let at = canvas_at(&h, TRI0);
     move_to(&h, at);
     h.run();
-    let hover = h.state().state.region.hover.as_ref().expect("2D の強調");
+    let hover = h.region().hover.as_ref().expect("2D の強調");
     assert!(!hover.on_surface);
 }
 
@@ -1281,56 +1297,62 @@ fn headless_manual_id_colors_are_one_undo_each_and_are_saved_and_come_back_when_
     let (mut s, _) = with_model(64);
     let parts = ready_parts(&mut s);
     assert_eq!(parts, vec![0, 1], "A と B の 2 つのメッシュの塊");
-    let undo = s.doc.undo_count();
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    let undo = s.doc().undo_count();
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 1,
         rgb: Some(0x336699),
     })));
-    assert_eq!(s.doc.undo_count(), undo + 1);
-    assert_eq!(s.doc.id_colors().colors().get(&1), Some(&0x336699));
-    assert!(s.modified);
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    assert_eq!(s.doc().undo_count(), undo + 1);
+    assert_eq!(s.doc().id_colors().colors().get(&1), Some(&0x336699));
+    assert!(s.modified());
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
         rgb: Some(0xff0000),
     })));
-    assert_eq!(s.doc.undo_count(), undo + 2);
+    assert_eq!(s.doc().undo_count(), undo + 2);
     // 保存できる（黙って落とさない）。開き直すと同じ色が戻り、取り消しの履歴は空
     let dir = temp_dir("save");
-    s.apply(Action::SaveProjectAs(dir.join("manual.ylp")));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(dir.join("manual.ylp")));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert!(dir.join("manual.ylp").exists());
-    assert!(!s.modified);
+    assert!(!s.modified());
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(dir.join("manual.ylp")));
-    assert_eq!(again.doc.id_colors().colors(), s.doc.id_colors().colors());
-    assert_eq!(again.doc.id_colors().binding(), s.doc.id_colors().binding());
-    assert_eq!(again.doc.id_colors().colors().len(), 2);
-    assert!(!again.doc.can_undo() && !again.doc.can_redo());
-    assert!(again.sets.get(0).unwrap().read_only.is_none());
+    again.act(Action::OpenProject(dir.join("manual.ylp")));
+    assert_eq!(
+        again.doc().id_colors().colors(),
+        s.doc().id_colors().colors()
+    );
+    assert_eq!(
+        again.doc().id_colors().binding(),
+        s.doc().id_colors().binding()
+    );
+    assert_eq!(again.doc().id_colors().colors().len(), 2);
+    assert!(!again.doc().can_undo() && !again.doc().can_redo());
+    assert!(again.sets().get(0).unwrap().read_only.is_none());
     // 自動に戻す・全部戻す・Undo
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
         rgb: None,
     })));
-    assert_eq!(s.doc.id_colors().colors().len(), 1);
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::ResetAll)));
-    assert!(s.doc.id_colors().colors().is_empty());
-    s.apply(Action::Undo);
+    assert_eq!(s.doc().id_colors().colors().len(), 1);
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::ResetAll)));
+    assert!(s.doc().id_colors().colors().is_empty());
+    s.act(Action::Undo);
     assert_eq!(
-        s.doc.id_colors().colors().len(),
+        s.doc().id_colors().colors().len(),
         1,
         "全部戻したのも 1 回の Undo"
     );
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
-    assert!(s.doc.id_colors().colors().is_empty());
+    s.act(Action::Undo);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
+    assert!(s.doc().id_colors().colors().is_empty());
     // 手動の色が無ければ保存できる（塊を書かない）
-    s.apply(Action::SaveProjectAs(dir.join("plain.ylp")));
-    assert!(dir.join("plain.ylp").exists(), "{}", s.message);
+    s.act(Action::SaveProjectAs(dir.join("plain.ylp")));
+    assert!(dir.join("plain.ylp").exists(), "{}", s.message());
     let mut plain = AppState::new(64, 64);
-    plain.apply(Action::OpenProject(dir.join("plain.ylp")));
-    assert!(plain.doc.id_colors().colors().is_empty());
+    plain.act(Action::OpenProject(dir.join("plain.ylp")));
+    assert!(plain.doc().id_colors().colors().is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1342,46 +1364,46 @@ fn headless_manual_id_colors_come_back_with_their_model_fingerprint_and_are_kept
     let (mut s, _) = with_model(64);
     ready_parts(&mut s);
     for (part, rgb) in [(1, 0x336699), (0, 0xff0000)] {
-        s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+        s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
             part,
             rgb: Some(rgb),
         })));
     }
-    let before = s.doc.id_colors().clone();
+    let before = s.doc().id_colors().clone();
     assert_eq!(before.colors().len(), 2);
     let dir = temp_dir("fingerprint");
-    s.apply(Action::SaveProjectAs(dir.join("manual.ylp")));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(dir.join("manual.ylp")));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     // 開き直す（モデルはファイルに無い）: 色は指紋ごと元のまま
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(dir.join("manual.ylp")));
-    assert_eq!(again.doc.id_colors().binding(), before.binding());
-    assert_eq!(again.doc.id_colors().colors(), before.colors());
-    assert!(!again.doc.can_undo());
+    again.act(Action::OpenProject(dir.join("manual.ylp")));
+    assert_eq!(again.doc().id_colors().binding(), before.binding());
+    assert_eq!(again.doc().id_colors().colors(), before.colors());
+    assert!(!again.doc().can_undo());
     // 同じモデルなら指紋が合い、別のモデルのものではない
-    again.view3d.set_model(two_parts_model());
-    again.view3d.material = 0;
+    again.view3d_mut().set_model(two_parts_model());
+    again.view3d_mut().material = 0;
     ready_parts(&mut again);
     assert!(!again.id_colors_foreign());
     // 別のモデルなら、色は残したまま別のモデルのものとして編集を断る
     again
-        .view3d
+        .view3d_mut()
         .set_model(yolu_app::view3d::model::ViewModel::demo(2));
     ready_parts(&mut again);
     assert!(again.id_colors_foreign());
-    assert_eq!(again.doc.id_colors().colors(), before.colors());
+    assert_eq!(again.doc().id_colors().colors(), before.colors());
     // その状態で保存し直しても、色は消えない
-    again.modified = true;
-    again.apply(Action::SaveProjectAs(dir.join("kept.ylp")));
+    again.set_modified(true);
+    again.act(Action::SaveProjectAs(dir.join("kept.ylp")));
     assert!(
-        again.message.starts_with("保存しました"),
+        again.message().starts_with("保存しました"),
         "{}",
-        again.message
+        again.message()
     );
     let mut third = AppState::new(64, 64);
-    third.apply(Action::OpenProject(dir.join("kept.ylp")));
-    assert_eq!(third.doc.id_colors().binding(), before.binding());
-    assert_eq!(third.doc.id_colors().colors(), before.colors());
+    third.act(Action::OpenProject(dir.join("kept.ylp")));
+    assert_eq!(third.doc().id_colors().binding(), before.binding());
+    assert_eq!(third.doc().id_colors().colors(), before.colors());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1391,37 +1413,37 @@ fn headless_manual_id_colors_come_back_with_their_model_fingerprint_and_are_kept
 fn headless_changing_only_the_manual_id_colors_of_an_opened_project_is_saved() {
     let (mut s, _) = with_model(64);
     ready_parts(&mut s);
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 1,
         rgb: Some(0x336699),
     })));
     let dir = temp_dir("edit-saved");
     let path = dir.join("manual.ylp");
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(path.clone()));
-    again.view3d.set_model(two_parts_model());
-    again.view3d.material = 0;
+    again.act(Action::OpenProject(path.clone()));
+    again.view3d_mut().set_model(two_parts_model());
+    again.view3d_mut().material = 0;
     ready_parts(&mut again);
-    assert!(!again.modified);
+    assert!(!again.modified());
     // 開いたあとに色だけを変える（画素は変えない）
-    again.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    again.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
         rgb: Some(0xff0000),
     })));
-    assert!(again.modified);
-    again.apply(Action::SaveProject);
+    assert!(again.modified());
+    again.act(Action::SaveProject);
     assert!(
-        again.message.starts_with("保存しました"),
+        again.message().starts_with("保存しました"),
         "{}",
-        again.message
+        again.message()
     );
-    assert_eq!(again.rewritten_sets, 1, "色だけを変えたセットも書き直す");
+    assert_eq!(again.rewritten_sets(), 1, "色だけを変えたセットも書き直す");
     let mut third = AppState::new(64, 64);
-    third.apply(Action::OpenProject(path));
+    third.act(Action::OpenProject(path));
     assert_eq!(
-        third.doc.id_colors().colors(),
+        third.doc().id_colors().colors(),
         &std::collections::BTreeMap::from([(0, 0xff0000), (1, 0x336699)])
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -1430,46 +1452,50 @@ fn headless_changing_only_the_manual_id_colors_of_an_opened_project_is_saved() {
 #[test]
 fn headless_manual_id_colors_refuse_unknown_parts_and_other_models() {
     let (mut s, _) = with_model(64);
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 9,
         rgb: Some(1),
     })));
-    assert!(s.message.contains("その部品はありません"), "{}", s.message);
-    assert_eq!(s.doc.undo_count(), 0);
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    assert!(
+        s.message().contains("その部品はありません"),
+        "{}",
+        s.message()
+    );
+    assert_eq!(s.doc().undo_count(), 0);
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
         rgb: Some(0x123456),
     })));
     // モデルを替えると、手動の色は別のモデルのものになり、編集を断る
-    s.view3d
+    s.view3d_mut()
         .set_model(yolu_app::view3d::model::ViewModel::demo(2));
     ready_parts(&mut s);
     assert!(s.id_colors_foreign());
-    let undo = s.doc.undo_count();
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    let undo = s.doc().undo_count();
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
         rgb: Some(0x654321),
     })));
-    assert_eq!(s.doc.undo_count(), undo);
-    assert!(s.message.contains("別のモデル"), "{}", s.message);
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    assert_eq!(s.doc().undo_count(), undo);
+    assert!(s.message().contains("別のモデル"), "{}", s.message());
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
         rgb: Some(0x654321),
     })));
-    assert!(s.message.contains("another model"), "{}", s.message);
+    assert!(s.message().contains("another model"), "{}", s.message());
     // 全部戻すはできる
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::ResetAll)));
-    assert!(s.doc.id_colors().colors().is_empty());
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::ResetAll)));
+    assert!(s.doc().id_colors().colors().is_empty());
 }
 
 #[test]
 fn headless_the_id_panel_does_not_wait_for_the_model_input_and_shows_checking() {
     let (mut s, _) = with_model(64);
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     // モデルが替わった直後のフレーム: 入力を別のスレッドで作らせ、待たずに None（画面は「確かめています」）
     assert!(s.id_set_parts().is_none(), "待たない");
-    assert!(s.bake.is_checking(), "別のスレッドで作っている");
+    assert!(s.bake().is_checking(), "別のスレッドで作っている");
     assert!(!s.id_colors_foreign(), "待たずに false");
     assert_eq!(s.id_part_hint(0), None);
     // ID のツールを選んでいる間は、ウィンドウが無くても作っている最中のものを手放さないので、いつかは求まる
@@ -1483,46 +1509,46 @@ fn headless_the_id_panel_does_not_wait_for_the_model_input_and_shows_checking() 
         std::thread::sleep(std::time::Duration::from_millis(2));
     };
     assert_eq!(parts, vec![0, 1]);
-    assert!(!s.bake.is_checking());
+    assert!(!s.bake().is_checking());
     // 同じモデルなら、次のフレームからは作り直さない
     assert_eq!(s.id_set_parts(), Some(vec![0, 1]));
-    assert!(!s.bake.is_checking());
+    assert!(!s.bake().is_checking());
     // 別のモデルに替わると、また待たずに None
-    s.view3d
+    s.view3d_mut()
         .set_model(yolu_app::view3d::model::ViewModel::demo(2));
     assert!(s.id_set_parts().is_none());
     // 押して直すときは、作り終えるまで待つ
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 0,
         rgb: Some(0x445566),
     })));
     assert_eq!(
-        s.doc.id_colors().colors().get(&0),
+        s.doc().id_colors().colors().get(&0),
         Some(&0x445566),
         "{}",
-        s.message
+        s.message()
     );
 }
 
 /// 今のセットの ID マップを、アプリのベイク（ベイクのウィンドウと同じ道）で焼く。UV アイランドごとに色が付く。
 fn bake_id(s: &mut AppState) {
-    s.bake.settings.maps = vec![MeshMapKind::Id];
-    s.bake.settings.id_source = MeshIdSource::UvIsland;
-    s.bake.settings.padding = 0;
-    s.apply(Action::Bake(BakeAction::Start));
+    s.bake_mut().settings.maps = vec![MeshMapKind::Id];
+    s.bake_mut().settings.id_source = MeshIdSource::UvIsland;
+    s.bake_mut().settings.padding = 0;
+    s.act(Action::Bake(BakeAction::Start));
     s.wait_bake();
     assert!(
-        s.sets.current().mesh_maps.get(MeshMapKind::Id).is_some(),
+        s.sets().current().mesh_maps.get(MeshMapKind::Id).is_some(),
         "焼けた: {}",
-        s.message
+        s.message()
     );
 }
 
 fn selected(s: &AppState, uv: (f32, f32)) -> u8 {
-    s.doc.selection().map_or(0, |m| {
+    s.doc().selection().map_or(0, |m| {
         m.amount(
-            (uv.0 * s.doc.width() as f32) as u32,
-            (uv.1 * s.doc.height() as f32) as u32,
+            (uv.0 * s.doc().width() as f32) as u32,
+            (uv.1 * s.doc().height() as f32) as u32,
         )
     })
 }
@@ -1530,12 +1556,12 @@ fn selected(s: &AppState, uv: (f32, f32)) -> u8 {
 #[test]
 fn headless_id_select_picks_the_part_under_the_pointer_with_combine_modes() {
     let (mut s, rect) = with_model(64);
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     bake_id(&mut s);
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
     let press = |s: &mut AppState, uv: (f32, f32), shift: bool, ctrl: bool| {
-        s.region.modifiers = Modifiers {
+        s.region_mut().modifiers = Modifiers {
             shift,
             ctrl,
             command: ctrl,
@@ -1549,11 +1575,11 @@ fn headless_id_select_picks_the_part_under_the_pointer_with_combine_modes() {
     assert_eq!(selected(&s, TRI1), 255, "同じアイランド");
     assert_eq!(selected(&s, TRI2), 0, "別のアイランド");
     assert_eq!(selected(&s, TRI4), 0);
-    assert!(s.message.contains("ID の色 #"), "{}", s.message);
-    assert!(s.message.contains("新規"), "{}", s.message);
-    let undo = s.doc.undo_count();
+    assert!(s.message().contains("ID の色 #"), "{}", s.message());
+    assert!(s.message().contains("新規"), "{}", s.message());
+    let undo = s.doc().undo_count();
     press(&mut s, TRI4, true, false);
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     assert_eq!(
         (selected(&s, TRI0), selected(&s, TRI4)),
         (255, 255),
@@ -1572,13 +1598,13 @@ fn headless_id_select_picks_the_part_under_the_pointer_with_combine_modes() {
         "Shift+Ctrl で重ねる（今の選択の中の同じ色）"
     );
     // 選択の 1 回ごとが Undo の 1 段
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(selected(&s, TRI4), 255);
     // ID の色のない所（UV の外）は選ばず、理由を出す
-    let before = s.doc.undo_count();
+    let before = s.doc().undo_count();
     press(&mut s, (0.8, 0.9), false, false);
-    assert_eq!(s.doc.undo_count(), before);
-    assert!(s.message.contains("部品がありません"), "{}", s.message);
+    assert_eq!(s.doc().undo_count(), before);
+    assert!(s.message().contains("部品がありません"), "{}", s.message());
 }
 
 #[test]
@@ -1586,31 +1612,31 @@ fn headless_id_select_follows_the_combine_mode_of_the_selection_tools() {
     use yolu_app::selection::{SelAction, SelUiOp};
     use yolu_core::SelectionCombine;
     let (mut s, rect) = with_model(64);
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     bake_id(&mut s);
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
-    s.region.modifiers = Modifiers::NONE;
+    s.region_mut().modifiers = Modifiers::NONE;
     let press = |s: &mut AppState, uv: (f32, f32)| {
         let at = at_uv(s, rect, uv);
         yolu_app::region::idcolor::select_by_id(s, w, at);
     };
     // オプションバーで「足す」を選ぶと、キーの修飾が無くても足す（選択のツールと同じ値）
-    s.apply(Action::Sel(SelAction::Ui(SelUiOp::Combine(
+    s.act(Action::Sel(SelAction::Ui(SelUiOp::Combine(
         SelectionCombine::Add,
     ))));
     press(&mut s, TRI0);
     press(&mut s, TRI4);
     assert_eq!((selected(&s, TRI0), selected(&s, TRI4)), (255, 255));
-    assert!(s.message.contains("追加"), "{}", s.message);
+    assert!(s.message().contains("追加"), "{}", s.message());
     // 「引く」なら、押した部品だけが外れる
-    s.apply(Action::Sel(SelAction::Ui(SelUiOp::Combine(
+    s.act(Action::Sel(SelAction::Ui(SelUiOp::Combine(
         SelectionCombine::Subtract,
     ))));
     press(&mut s, TRI0);
     assert_eq!((selected(&s, TRI0), selected(&s, TRI4)), (0, 255));
     // Shift は選んでいる方に関わらず足す
-    s.region.modifiers = Modifiers {
+    s.region_mut().modifiers = Modifiers {
         shift: true,
         ..Default::default()
     };
@@ -1621,7 +1647,7 @@ fn headless_id_select_follows_the_combine_mode_of_the_selection_tools() {
 #[test]
 fn headless_id_select_in_3d_reads_the_texel_of_the_face_under_the_pointer() {
     let (mut s, rect) = with_model(64);
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     bake_id(&mut s);
     let at = at_model(&s, rect, Vec3::new(3.5, 0.5, 0.0));
     yolu_app::region::idcolor::select_by_id(&mut s, Where::Surface(rect), at);
@@ -1632,52 +1658,53 @@ fn headless_id_select_in_3d_reads_the_texel_of_the_face_under_the_pointer() {
 #[test]
 fn headless_id_select_refuses_a_missing_or_stale_map_with_a_reason() {
     let (mut s, rect) = with_model(64);
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
     let at = at_uv(&s, rect, TRI0);
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
-    assert_eq!(s.message, "ID マップがありません");
-    assert!(s.doc.selection().is_none());
+    assert_eq!(s.message(), "ID マップがありません");
+    assert!(s.doc().selection().is_none());
     // 焼いた後に設定が変わった（ID の分け方）
     bake_id(&mut s);
-    s.bake.settings.id_source = MeshIdSource::MaterialSlot;
+    s.bake_mut().settings.id_source = MeshIdSource::MaterialSlot;
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
-    assert_eq!(s.message, "ID マップが古いです（ベイクし直し）");
-    assert!(s.doc.selection().is_none(), "古いマップでは選ばない");
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
+    assert_eq!(s.message(), "ID マップが古いです（ベイクし直し）");
+    assert!(s.doc().selection().is_none(), "古いマップでは選ばない");
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
-    assert_eq!(s.message, "The ID map is stale (bake again)");
+    assert_eq!(s.message(), "The ID map is stale (bake again)");
     // 焼いた後にモデルが替わった
-    s.bake.settings.id_source = MeshIdSource::UvIsland;
+    s.bake_mut().settings.id_source = MeshIdSource::UvIsland;
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
     assert!(
-        s.doc.selection().is_some(),
+        s.doc().selection().is_some(),
         "設定を戻せば使える: {}",
-        s.message
+        s.message()
     );
     let mut other = two_parts_model();
     other.meshes[1].uvs[0] = Vec2::new(0.56, 0.05);
     let other = ViewModel::new("別", other.meshes.clone(), vec![Some("材".into())], 3).unwrap();
-    s.view3d.set_model(other);
-    s.apply(Action::Undo);
-    assert!(s.doc.selection().is_none());
+    s.view3d_mut().set_model(other);
+    s.act(Action::Undo);
+    assert!(s.doc().selection().is_none());
     yolu_app::region::idcolor::select_by_id(&mut s, w, at);
     assert_eq!(
-        s.message, "The ID map is stale (bake again)",
+        s.message(),
+        "The ID map is stale (bake again)",
         "モデルが替わった"
     );
-    assert!(s.doc.selection().is_none());
+    assert!(s.doc().selection().is_none());
 }
 
 #[test]
 fn headless_manual_id_colors_reach_the_baked_id_map_and_make_the_old_one_stale() {
     let (mut s, rect) = with_model(64);
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     bake_id(&mut s);
     assert!(s.usable_id_map().is_ok());
     // 手動の色を直すと、前の ID マップは古い
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
         part: 1,
         rgb: Some(0x123456),
     })));
@@ -1692,17 +1719,17 @@ fn headless_manual_id_colors_reach_the_baked_id_map_and_make_the_old_one_stale()
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI4);
     yolu_app::region::idcolor::select_by_id(&mut s, Where::Canvas(&view), at);
-    assert!(s.message.contains("#123456"), "{}", s.message);
+    assert!(s.message().contains("#123456"), "{}", s.message());
     assert_eq!(selected(&s, TRI4), 255);
     // 自動に戻すと、また古い
-    s.apply(Action::Region(RegionAction::IdColor(IdColorOp::ResetAll)));
+    s.act(Action::Region(RegionAction::IdColor(IdColorOp::ResetAll)));
     assert!(s.usable_id_map().is_err());
 }
 
 #[test]
 fn headless_id_hover_highlights_the_triangles_of_the_color_under_the_pointer() {
     let (mut s, rect) = with_model(64);
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     bake_id(&mut s);
     let view = canvas_view(&s, rect);
     {
@@ -1719,7 +1746,7 @@ fn headless_id_hover_highlights_the_triangles_of_the_color_under_the_pointer() {
         let at = at_uv(&s, rect, (0.8, 0.9));
         update_hover(&mut s, Where::Canvas(&view), Some(at));
     }
-    assert!(s.region.hover.is_none());
+    assert!(s.region().hover.is_none());
 }
 
 #[test]
@@ -1730,20 +1757,20 @@ fn headless_id_hover_is_not_reused_after_another_tool_replaced_it() {
     let w = Where::Canvas(&view);
     let at = at_uv(&s, rect, TRI2);
     // ID の色の強調 → バケツ（メッシュの塊）→ ID の色。ポインタは動かさない
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     update_hover(&mut s, w, Some(at));
     assert_eq!(
         s.region_hover_len(),
         Some(2),
         "A の右のアイランド（ID の色の範囲）"
     );
-    s.tool = Tool::Fill;
-    s.apply(Action::Region(RegionAction::FillRange(
+    s.set_tool(Tool::Fill);
+    s.act(Action::Region(RegionAction::FillRange(
         SurfaceRegionKind::MeshPart,
     )));
     update_hover(&mut s, w, Some(at));
     assert_eq!(s.region_hover_len(), Some(4), "バケツの範囲は A の全体");
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     update_hover(&mut s, w, Some(at));
     assert_eq!(
         s.region_hover_len(),
@@ -1751,10 +1778,10 @@ fn headless_id_hover_is_not_reused_after_another_tool_replaced_it() {
         "ID の色に戻したら ID の色の範囲"
     );
     // 強調が消えたあとも、前の条件で作ったことにしない（バケツ → 消える → ID の色）
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     update_hover(&mut s, w, Some(at));
-    assert!(s.region.hover.is_none());
-    s.tool = Tool::IdSelect;
+    assert!(s.region().hover.is_none());
+    s.set_tool(Tool::IdSelect);
     update_hover(&mut s, w, Some(at));
     assert_eq!(s.region_hover_len(), Some(2));
     // 3D でも同じ（ID の色 → バケツ → ID の色）
@@ -1763,10 +1790,10 @@ fn headless_id_hover_is_not_reused_after_another_tool_replaced_it() {
     let w3 = Where::Surface(rect3);
     update_hover(&mut s, w3, Some(on_face));
     let id_tris = s.region_hover_len().expect("3D の ID の色の強調");
-    s.tool = Tool::Fill;
+    s.set_tool(Tool::Fill);
     update_hover(&mut s, w3, Some(on_face));
     assert_eq!(s.region_hover_len(), Some(4), "3D のバケツ（メッシュの塊）");
-    s.tool = Tool::IdSelect;
+    s.set_tool(Tool::IdSelect);
     update_hover(&mut s, w3, Some(on_face));
     assert_eq!(s.region_hover_len(), Some(id_tris), "3D の ID の色に戻る");
 }
@@ -1779,19 +1806,19 @@ fn app_with_model(width: f32, height: f32, size: u32) -> Harness<'static, YoluAp
 
 fn model_app_from(mut h: Harness<'static, YoluApp>) -> Harness<'static, YoluApp> {
     {
-        let s = &mut h.state_mut().state;
-        s.view3d.set_model(two_parts_model());
-        s.view3d.material = 0;
-        s.view3d.camera.yaw = 0.0;
-        s.view3d.camera.pitch = 0.0;
-        s.color.set_main([0.9, 0.3, 0.1, 1.0]);
+        let s = h.app_mut();
+        s.view3d_mut().set_model(two_parts_model());
+        s.view3d_mut().material = 0;
+        s.view3d_mut().camera.yaw = 0.0;
+        s.view3d_mut().camera.pitch = 0.0;
+        s.color_mut().set_main([0.9, 0.3, 0.1, 1.0]);
     }
     h.run();
     h
 }
 
 fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
-    h.state_mut().state.apply(action);
+    h.act(action);
     h.run();
 }
 
@@ -1808,14 +1835,14 @@ fn the_tools_have_buttons_keys_and_menu_entries() {
     ] {
         key(&h, key_, modifiers);
         h.run();
-        assert_eq!(h.state().state.tool, tool, "{tool:?}");
+        assert_eq!(h.tool(), tool, "{tool:?}");
     }
     // ツールの帯のボタン（名前はツールチップ）
     for tool in [Tool::Fill, Tool::PolygonFill, Tool::IdSelect] {
         let label = format!("{}（{}）", tool.name_in(Lang::Ja), tool.key());
         h.get_by_label(&label).click();
         h.run();
-        assert_eq!(h.state().state.tool, tool);
+        assert_eq!(h.tool(), tool);
     }
     // 編集メニューの項目（描くツール）と、選択範囲メニューの項目（選ぶツールの ID の色で選択）
     let at = menu_title(&h, "編集").center();
@@ -1828,7 +1855,7 @@ fn the_tools_have_buttons_keys_and_menu_entries() {
     click(&mut h, at);
     let item = popup_item(&h, Tool::IdSelect.name_in(Lang::Ja)).center();
     click(&mut h, item);
-    assert_eq!(h.state().state.tool, Tool::IdSelect);
+    assert_eq!(h.tool(), Tool::IdSelect);
 }
 
 #[test]
@@ -1842,30 +1869,27 @@ fn paint_channels_toggle_chips_and_values_change_the_state() {
     };
     let header = rect_of(&h, "塗るチャンネル", in_props);
     click(&mut h, header.center());
-    assert!(!h.state().state.mat.enabled);
+    assert!(!h.mat().enabled);
     paint_channels_shot(&mut h, "region_paint_channels_off");
     let toggle = h.get_by_label("複数のチャンネルを一度に塗る");
     toggle.click();
     h.run();
-    assert!(h.state().state.mat.enabled);
-    assert_eq!(h.state().state.mat.included(), vec![Channel::Color]);
+    assert!(h.mat().enabled);
+    assert_eq!(h.mat().included(), vec![Channel::Color]);
     // チップ（右の列にあるラフネス）で組に足す。最後の 1 つは外せない
     let chip = rect_of(&h, "ラフネス", |r| in_props(r) && r.height() < 30.0);
     click(&mut h, chip.center());
-    assert_eq!(
-        h.state().state.mat.included(),
-        vec![Channel::Color, Channel::Roughness]
-    );
+    assert_eq!(h.mat().included(), vec![Channel::Color, Channel::Roughness]);
     let chip = rect_of(&h, "カラー", |r| in_props(r) && r.height() < 30.0);
     click(&mut h, chip.center());
     let at = rect_of(&h, "ラフネス", |r| in_props(r) && r.height() < 30.0).center();
     click(&mut h, at);
     assert_eq!(
-        h.state().state.mat.included(),
+        h.mat().included(),
         vec![Channel::Roughness],
         "最後の 1 つは外せない"
     );
-    assert!(h.state().state.message.contains("1 つ以上"));
+    assert!(h.message().contains("1 つ以上"));
     // 値と見た目
     for c in [
         Channel::Roughness,
@@ -1874,12 +1898,12 @@ fn paint_channels_toggle_chips_and_values_change_the_state() {
         Channel::Normal,
         Channel::Emission,
     ] {
-        let s = &mut h.state_mut().state;
-        s.mat.set_enabled(true, Channel::Color);
-        s.mat.set_channel(c, true);
+        let s = h.app_mut();
+        s.mat_mut().set_enabled(true, Channel::Color);
+        s.mat_mut().set_channel(c, true);
     }
-    h.state_mut().state.mat.set_normal(0.3, -0.2);
-    h.state_mut().state.mat.emission = [0.2, 0.8, 0.4];
+    h.mat_mut().set_normal(0.3, -0.2);
+    h.mat_mut().emission = [0.2, 0.8, 0.4];
     h.run();
     paint_channels_shot(&mut h, "region_paint_channels_on");
 }
@@ -1929,7 +1953,7 @@ fn pen_one_frame(h: &mut Harness<'_, YoluApp>, steps: &[(Pos2, bool)]) {
 
 /// 2D キャンバスで UV の点が見える画面の点（画面を回した後も）。
 fn canvas_at(h: &Harness<'_, YoluApp>, uv: (f32, f32)) -> Pos2 {
-    at_uv(&h.state().state, canvas_rect(h), uv)
+    at_uv(h.app(), canvas_rect(h), uv)
 }
 
 /// 3D のタブを前に出し、モデルの点が見える画面の点を返す口を作る。
@@ -1941,7 +1965,7 @@ fn show_3d(h: &mut Harness<'_, YoluApp>) -> Rect {
 
 /// 3D の A の左のアイランド・A の右のアイランド・B の上の点。
 fn face_points(h: &Harness<'_, YoluApp>, rect: Rect) -> [Pos2; 3] {
-    let s = &h.state().state;
+    let s = h.app();
     [
         at_model(s, rect, Vec3::new(0.1, 0.1, 0.0)),
         at_model(s, rect, Vec3::new(0.9, 0.5, 0.0)),
@@ -1952,7 +1976,7 @@ fn face_points(h: &Harness<'_, YoluApp>, rect: Rect) -> [Pos2; 3] {
 /// バケツを 1 回押したのと同じ結果（不透明度 0.5 の A の左のアイランドの塗り: 画素のアルファ）。押し直したかどうかが重なりで見える。
 fn single_fill_alpha() -> u8 {
     let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
-    s.brush.opacity = 0.5;
+    s.brush_mut().opacity = 0.5;
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
     bucket(&mut s, Where::Canvas(&view), at);
@@ -1963,17 +1987,17 @@ fn bucket_app() -> Harness<'static, YoluApp> {
     let mut h = app_with_model(1280.0, 800.0, 256);
     key(&h, Key::G, Modifiers::NONE);
     h.run();
-    h.state_mut().state.brush.opacity = 0.5;
+    h.brush_mut().opacity = 0.5;
     h
 }
 
 fn assert_filled_once(h: &Harness<'_, YoluApp>, alpha: u8, what: &str) {
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         1,
         "{what}: 1 回の Undo（{}）",
-        s.message
+        s.message()
     );
     assert_eq!(px(s, TRI0)[3], alpha, "{what}: 押し直して重ねていない");
     assert!(painted(s, TRI1), "{what}: 押したアイランド");
@@ -1994,20 +2018,15 @@ fn bucket_click_in_the_canvas_fills_one_undo() {
     // A の左のアイランドを押す
     let at = canvas_at(&h, (0.15, 0.25));
     click(&mut h, at);
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        1,
-        "{}",
-        h.state().state.message
-    );
-    assert!(painted(&h.state().state, TRI0) && painted(&h.state().state, TRI1));
+    assert_eq!(h.doc().undo_count(), 1, "{}", h.message());
+    assert!(painted(h.app(), TRI0) && painted(h.app(), TRI1));
     assert!(
-        !painted(&h.state().state, TRI2),
+        !painted(h.app(), TRI2),
         "UV アイランド: 継ぎ目の向こうは塗らない"
     );
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert!(!painted(&h.state().state, TRI0));
+    assert!(!painted(h.app(), TRI0));
 }
 
 /// 線対称 6 本の定規を置き、近い色のバケツで 1 回押すと、6 つの写しの四角が塗られる（画面の絵は日英。ツールプロパティの切り替えも写る）。
@@ -2025,45 +2044,41 @@ fn bucket_with_a_six_line_symmetry_ruler_fills_every_copy_and_snapshots_in_both_
         .to_vec();
     let decoy = at_polar(50.0);
     {
-        let s = &mut h.state_mut().state;
-        let layer = s.selected_layer.unwrap();
+        let s = h.app_mut();
+        let layer = s.selected_layer().unwrap();
         for &(x, y) in images.iter().chain([&decoy]) {
             for py in y as u32 - 12..y as u32 + 12 {
                 for px in x as u32 - 12..x as u32 + 12 {
-                    s.doc
+                    s.doc_mut()
                         .set_pixel(layer, px, py, Rgba8::new(230, 60, 60, 255))
                         .unwrap();
                 }
             }
         }
         common::rulers::symmetry_2d(s, center, (1.0, 0.0), 6, true);
-        s.color.set_main([0.2, 0.7, 0.3, 1.0]);
-        s.apply(Action::SelectTool(Tool::Fill));
-        s.apply(Action::SubTool(yolu_app::subtool::SubToolAction::Select(
+        s.color_mut().set_main([0.2, 0.7, 0.3, 1.0]);
+        s.act(Action::SelectTool(Tool::Fill));
+        s.act(Action::SubTool(yolu_app::subtool::SubToolAction::Select(
             Tool::Fill,
             yolu_app::subtool::Key::Builtin("similar-colors"),
         )));
-        s.rulers.selected = None;
+        s.rulers_mut().selected = None;
     }
     h.run();
     let r = canvas_rect(&h);
-    let view = h.state().state.view.view(r, 256, 256);
-    let before = h.state().state.doc.undo_count();
+    let view = h.view().view(r, 256, 256);
+    let before = h.doc().undo_count();
     click(&mut h, view.to_screen(images[0].0, images[0].1));
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        before + 1,
-        "1 回の取り消し"
-    );
+    assert_eq!(h.doc().undo_count(), before + 1, "1 回の取り消し");
     let green = |s: &AppState, (x, y): (f64, f64)| {
-        let p = composite_pixel(&s.doc, x as u32, y as u32);
+        let p = composite_pixel(s.doc(), x as u32, y as u32);
         p[1] > p[0] && p[3] == 255
     };
     for &p in &images {
-        assert!(green(&h.state().state, p), "{p:?}");
+        assert!(green(h.app(), p), "{p:?}");
     }
-    assert!(!green(&h.state().state, decoy), "写しでない四角は塗らない");
-    h.state_mut().state.message.clear();
+    assert!(!green(h.app(), decoy), "写しでない四角は塗らない");
+    h.message_mut().clear();
     h.run();
     let rect = canvas_rect(&h);
     common::shot::region(&mut h, "region_bucket_symmetry_lines6", rect);
@@ -2082,36 +2097,36 @@ fn wand_with_a_six_line_symmetry_ruler_selects_every_copy_and_snapshots_in_both_
         .map(at_polar)
         .to_vec();
     {
-        let s = &mut h.state_mut().state;
-        let layer = s.selected_layer.unwrap();
+        let s = h.app_mut();
+        let layer = s.selected_layer().unwrap();
         for &(x, y) in images.iter().chain([&at_polar(50.0)]) {
             for py in y as u32 - 12..y as u32 + 12 {
                 for px in x as u32 - 12..x as u32 + 12 {
-                    s.doc
+                    s.doc_mut()
                         .set_pixel(layer, px, py, Rgba8::new(230, 60, 60, 255))
                         .unwrap();
                 }
             }
         }
         common::rulers::symmetry_2d(s, center, (1.0, 0.0), 6, true);
-        s.apply(Action::SelectTool(Tool::Wand));
-        s.sel.tolerance = 0;
-        s.rulers.selected = None;
+        s.act(Action::SelectTool(Tool::Wand));
+        s.sel_mut().tolerance = 0;
+        s.rulers_mut().selected = None;
     }
     h.run();
     let r = canvas_rect(&h);
-    let view = h.state().state.view.view(r, 256, 256);
-    let before = h.state().state.doc.undo_count();
+    let view = h.view().view(r, 256, 256);
+    let before = h.doc().undo_count();
     click(&mut h, view.to_screen(images[0].0, images[0].1));
-    let s = &h.state().state;
-    assert_eq!(s.doc.undo_count(), before + 1, "1 回の取り消し");
-    let mask = s.doc.selection().expect("選択範囲");
+    let s = h.app();
+    assert_eq!(s.doc().undo_count(), before + 1, "1 回の取り消し");
+    let mask = s.doc().selection().expect("選択範囲");
     for &(x, y) in &images {
         assert_eq!(mask.amount(x as u32, y as u32), 255, "{x},{y}");
     }
     let (x, y) = at_polar(50.0);
     assert_eq!(mask.amount(x as u32, y as u32), 0, "写しでない四角");
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     h.run();
     let rect = canvas_rect(&h);
     common::shot::region(&mut h, "selection_wand_symmetry_lines6", rect);
@@ -2127,7 +2142,7 @@ fn bucket_click_in_the_3d_view_fills_one_undo() {
     assert_filled_once(&h, single, "3D のマウス");
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert!(!painted(&h.state().state, TRI0), "Undo で戻る");
+    assert!(!painted(h.app(), TRI0), "Undo で戻る");
 }
 
 #[test]
@@ -2145,21 +2160,21 @@ fn a_pen_held_on_the_bucket_fills_once_in_the_canvas_even_when_it_slides_over_ot
         &[(a, true), (a, true), (b, true), (c, true), (c, false)],
     );
     assert_filled_once(&h, single, "ペン（別のフレーム）");
-    assert!(h.state().state.region.drag.is_none());
+    assert!(h.region().drag.is_none());
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert!(!painted(&h.state().state, TRI0), "Undo で戻る");
+    assert!(!painted(h.app(), TRI0), "Undo で戻る");
     // 1 フレームにまとめて来ても同じ
     pen_one_frame(&mut h, &[(a, true), (b, true), (c, true), (c, false)]);
     assert_filled_once(&h, single, "ペン（1 フレーム）");
     // 離したあとに触れ直せば、また 1 回押したことになる（印は離したときに下りる）
     pen_frames(&mut h, &[(b, true), (b, true), (b, false)]);
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         2,
         "触れ直すと次のアイランドを塗る: {}",
-        s.message
+        s.message()
     );
     assert!(painted(s, TRI2) && painted(s, TRI3));
     assert!(!painted(s, TRI4));
@@ -2178,16 +2193,16 @@ fn a_pen_held_on_the_bucket_fills_once_in_the_3d_view_even_when_it_slides_over_o
     assert_filled_once(&h, single, "3D のペン（別のフレーム）");
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert!(!painted(&h.state().state, TRI0), "Undo で戻る");
+    assert!(!painted(h.app(), TRI0), "Undo で戻る");
     pen_one_frame(&mut h, &[(a, true), (b, true), (c, true), (c, false)]);
     assert_filled_once(&h, single, "3D のペン（1 フレーム）");
     pen_frames(&mut h, &[(b, true), (b, true), (b, false)]);
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         2,
         "触れ直すと次のアイランドを塗る: {}",
-        s.message
+        s.message()
     );
     assert!(painted(s, TRI2) && painted(s, TRI3));
 }
@@ -2232,7 +2247,7 @@ fn polygon_app() -> Harness<'static, YoluApp> {
     let mut h = app_with_model(1280.0, 800.0, 256);
     key(&h, Key::Num4, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::PolygonFill);
+    assert_eq!(h.tool(), Tool::PolygonFill);
     h
 }
 
@@ -2248,14 +2263,14 @@ fn polygon_points(h: &mut Harness<'_, YoluApp>, in_3d: bool) -> [Pos2; 3] {
 
 /// ドラッグもストロークも残らず、Undo の段が `undo` であること。
 fn assert_polygon_idle(h: &Harness<'_, YoluApp>, undo: usize, what: &str) {
-    let s = &h.state().state;
-    assert!(s.region.drag.is_none(), "{what}: ドラッグが残っている");
+    let s = h.app();
+    assert!(s.region().drag.is_none(), "{what}: ドラッグが残っている");
     assert!(!s.is_stroking(), "{what}: ストロークが残っている");
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         undo,
         "{what}: Undo の段（{}）",
-        s.message
+        s.message()
     );
 }
 
@@ -2265,7 +2280,7 @@ fn polygon_fill_ends_cleanly_with_the_mouse_and_the_pen_in_the_canvas_and_the_3d
         let mut h = model_app_from(common::app(1280.0, 800.0, 256));
         key(&h, Key::Num4, Modifiers::NONE);
         h.run();
-        assert_eq!(h.state().state.tool, Tool::PolygonFill);
+        assert_eq!(h.tool(), Tool::PolygonFill);
         h
     };
     for in_3d in [false, true] {
@@ -2275,18 +2290,12 @@ fn polygon_fill_ends_cleanly_with_the_mouse_and_the_pen_in_the_canvas_and_the_3d
             let mut h = polygon_app();
             let [a, b, c] = polygon_points(&mut h, in_3d);
             hold_over(&mut h, source, &[a, b, c]);
-            assert!(
-                h.state().state.region.drag.is_some(),
-                "{what}: ドラッグの途中"
-            );
-            assert!(h.state().state.is_stroking(), "{what}");
-            assert!(
-                painted(&h.state().state, TRI2),
-                "{what}: 途中でも塗れている"
-            );
+            assert!(h.region().drag.is_some(), "{what}: ドラッグの途中");
+            assert!(h.app().is_stroking(), "{what}");
+            assert!(painted(h.app(), TRI2), "{what}: 途中でも塗れている");
             lift_at(&mut h, source, c);
             assert_polygon_idle(&h, 1, &format!("{what} 離す"));
-            let s = &h.state().state;
+            let s = h.app();
             assert!(
                 painted(s, TRI0) && painted(s, TRI2) && painted(s, TRI4),
                 "{what}: 通った範囲"
@@ -2294,7 +2303,7 @@ fn polygon_fill_ends_cleanly_with_the_mouse_and_the_pen_in_the_canvas_and_the_3d
             key(&h, Key::Z, Modifiers::COMMAND);
             h.run();
             assert!(
-                !painted(&h.state().state, TRI0) && !painted(&h.state().state, TRI4),
+                !painted(h.app(), TRI0) && !painted(h.app(), TRI4),
                 "{what}: Undo で戻る"
             );
             assert_polygon_idle(&h, 0, &format!("{what} Undo"));
@@ -2303,17 +2312,17 @@ fn polygon_fill_ends_cleanly_with_the_mouse_and_the_pen_in_the_canvas_and_the_3d
             let mut h = polygon_app();
             let [a, b, c] = polygon_points(&mut h, in_3d);
             hold_over(&mut h, source, &[a, b]);
-            assert!(painted(&h.state().state, TRI2), "{what}: 途中は塗れている");
+            assert!(painted(h.app(), TRI2), "{what}: 途中は塗れている");
             key(&h, Key::Escape, Modifiers::NONE);
             h.step();
             assert_polygon_idle(&h, 0, &format!("{what} Esc"));
             assert!(
-                !painted(&h.state().state, TRI0) && !painted(&h.state().state, TRI2),
+                !painted(h.app(), TRI0) && !painted(h.app(), TRI2),
                 "{what}: Esc で捨てる"
             );
             lift_at(&mut h, source, c);
             assert_polygon_idle(&h, 0, &format!("{what} Esc のあと離す"));
-            assert!(!painted(&h.state().state, TRI0), "{what}");
+            assert!(!painted(h.app(), TRI0), "{what}");
 
             // ウィンドウのフォーカスを失う: そこまでを確定する（1 回の Undo）
             let mut h = polygon_app();
@@ -2322,17 +2331,14 @@ fn polygon_fill_ends_cleanly_with_the_mouse_and_the_pen_in_the_canvas_and_the_3d
             h.event(egui::Event::WindowFocused(false));
             h.step();
             assert_polygon_idle(&h, 1, &format!("{what} フォーカス喪失"));
-            let s = &h.state().state;
+            let s = h.app();
             assert!(
                 painted(s, TRI0) && painted(s, TRI2),
                 "{what}: そこまでを確定"
             );
             lift_at(&mut h, source, c);
             assert_polygon_idle(&h, 1, &format!("{what} フォーカス喪失のあと離す"));
-            assert!(
-                !painted(&h.state().state, TRI4),
-                "{what}: 離す前に確定した分だけ"
-            );
+            assert!(!painted(h.app(), TRI4), "{what}: 離す前に確定した分だけ");
         }
     }
 }
@@ -2350,13 +2356,13 @@ fn polygon_fill_pressed_and_released_within_one_frame_is_one_undo() {
         h.step();
         h.run();
         assert_polygon_idle(&h, 1, &format!("マウス（1 フレーム） 3D={in_3d}"));
-        assert!(painted(&h.state().state, TRI4), "押した所から離した所まで");
+        assert!(painted(h.app(), TRI4), "押した所から離した所まで");
         // ペン: 1 フレームにまとめた点
         let mut h = polygon_app();
         let [a, b, c] = polygon_points(&mut h, in_3d);
         pen_one_frame(&mut h, &[(a, true), (b, true), (c, true), (c, false)]);
         assert_polygon_idle(&h, 1, &format!("ペン（1 フレーム） 3D={in_3d}"));
-        let s = &h.state().state;
+        let s = h.app();
         assert!(painted(s, TRI0) && painted(s, TRI2) && painted(s, TRI4));
         // 離したあとに触れ直せば、また 1 つのドラッグ（印は離したときに下りる）
         pen_frames(&mut h, &[(b, true), (b, true), (b, false)]);
@@ -2366,20 +2372,20 @@ fn polygon_fill_pressed_and_released_within_one_frame_is_one_undo() {
 
 fn id_app() -> Harness<'static, YoluApp> {
     let mut h = app_with_model(1280.0, 800.0, 256);
-    bake_id(&mut h.state_mut().state);
+    bake_id(h.app_mut());
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::IdSelect);
+    assert_eq!(h.tool(), Tool::IdSelect);
     h
 }
 
 fn assert_selected_once(h: &Harness<'_, YoluApp>, what: &str) {
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         1,
         "{what}: 1 回の Undo（{}）",
-        s.message
+        s.message()
     );
     assert_eq!(selected(s, TRI4), 255, "{what}: 押した部品");
     assert_eq!(selected(s, TRI0), 0, "{what}: 滑らせた先へ選び直さない");
@@ -2407,8 +2413,8 @@ fn id_select_by_the_mouse_and_the_held_pen_selects_once_in_the_canvas() {
     assert_selected_once(&h, "2D のペン（1 フレーム）");
     // 離したあとに触れ直せば、また選ぶ
     pen_frames(&mut h, &[(a, true), (a, true), (a, false)]);
-    let s = &h.state().state;
-    assert_eq!(s.doc.undo_count(), 2, "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.doc().undo_count(), 2, "{}", s.message());
     assert_eq!(
         (selected(s, TRI0), selected(s, TRI4)),
         (255, 0),
@@ -2437,8 +2443,8 @@ fn id_select_by_the_mouse_and_the_held_pen_selects_once_in_the_3d_view() {
     pen_one_frame(&mut h, &[(b, true), (a, true), (a, false)]);
     assert_selected_once(&h, "3D のペン（1 フレーム）");
     pen_frames(&mut h, &[(a, true), (a, true), (a, false)]);
-    let s = &h.state().state;
-    assert_eq!(s.doc.undo_count(), 2, "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.doc().undo_count(), 2, "{}", s.message());
     assert_eq!(
         (selected(s, TRI0), selected(s, TRI4)),
         (255, 0),
@@ -2448,7 +2454,7 @@ fn id_select_by_the_mouse_and_the_held_pen_selects_once_in_the_3d_view() {
 
 /// レイヤーの Color と Roughness の、塗られた画素（アルファが 0 でない）の集合が同じで、数が多少ある。
 fn painted_pixels(s: &AppState, channel: Channel) -> Vec<(u32, u32)> {
-    let (w, hh) = (s.doc.width(), s.doc.height());
+    let (w, hh) = (s.doc().width(), s.doc().height());
     let mut out = Vec::new();
     for y in 0..hh {
         for x in 0..w {
@@ -2464,10 +2470,10 @@ fn painted_pixels(s: &AppState, channel: Channel) -> Vec<(u32, u32)> {
 fn a_material_stroke_in_the_canvas_and_the_3d_view_paints_every_channel_in_one_undo() {
     let mut h = app_with_model(1280.0, 800.0, 256);
     {
-        let s = &mut h.state_mut().state;
-        s.apply(Action::Mat(MatAction::Enabled(true)));
-        s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-        s.mat.set_scalar(Channel::Roughness, 1.0);
+        let s = h.app_mut();
+        s.act(Action::Mat(MatAction::Enabled(true)));
+        s.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+        s.mat_mut().set_scalar(Channel::Roughness, 1.0);
     }
     // 2D
     let c = canvas_rect(&h).center();
@@ -2479,8 +2485,8 @@ fn a_material_stroke_in_the_canvas_and_the_3d_view_paints_every_channel_in_one_u
             offset(c, 40.0, 10.0),
         ],
     );
-    let s = &h.state().state;
-    assert_eq!(s.doc.undo_count(), 1, "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.doc().undo_count(), 1, "{}", s.message());
     let color = painted_pixels(s, Channel::Color);
     assert!(color.len() > 200, "{}", color.len());
     assert_eq!(
@@ -2490,21 +2496,21 @@ fn a_material_stroke_in_the_canvas_and_the_3d_view_paints_every_channel_in_one_u
     );
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert!(painted_pixels(&h.state().state, Channel::Roughness).is_empty());
+    assert!(painted_pixels(h.app(), Channel::Roughness).is_empty());
     // 3D（A の面をなぞる）
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブ");
-    let s = &h.state().state;
+    let s = h.app();
     let a = at_model(s, rect, Vec3::new(0.15, 0.3, 0.0));
     let b = at_model(s, rect, Vec3::new(0.85, 0.6, 0.0));
     drag(&mut h, &[a, b]);
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         1,
         "2D の分は取り消した後。3D も 1 回の Undo: {}",
-        s.message
+        s.message()
     );
     let color = painted_pixels(s, Channel::Color);
     assert!(color.len() > 50, "{}", color.len());
@@ -2519,7 +2525,7 @@ fn a_material_stroke_in_the_canvas_and_the_3d_view_paints_every_channel_in_one_u
     );
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    let s = &h.state().state;
+    let s = h.app();
     assert!(
         painted_pixels(s, Channel::Color).is_empty()
             && painted_pixels(s, Channel::Roughness).is_empty()
@@ -2529,19 +2535,17 @@ fn a_material_stroke_in_the_canvas_and_the_3d_view_paints_every_channel_in_one_u
 #[test]
 fn a_locked_layer_says_why_the_brush_cannot_start() {
     let mut h = app_with_model(1280.0, 800.0, 128);
-    let id = h.state().state.selected_layer.unwrap();
-    h.state_mut()
-        .state
-        .doc
+    let id = h.selected_layer().unwrap();
+    h.doc_mut()
         .set_layer_locks(id, yolu_core::LayerLocks::PIXELS)
         .unwrap();
-    let before = h.state().state.doc.undo_count();
+    let before = h.doc().undo_count();
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -40.0, 0.0), offset(c, 40.0, 0.0)]);
-    let s = &h.state().state;
-    assert_eq!(s.doc.undo_count(), before, "何も描いていない");
+    let s = h.app();
+    assert_eq!(s.doc().undo_count(), before, "何も描いていない");
     assert_eq!(
-        s.message,
+        s.message(),
         "描けません（レイヤーの「画素」がロックされています）。"
     );
     let rect = crate::toast_area(&h);
@@ -2556,36 +2560,33 @@ fn polygon_fill_dragging_in_the_3d_view_is_one_undo_and_escape_cancels() {
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブ");
-    let s = &h.state().state;
+    let s = h.app();
     let a = at_model(s, rect, Vec3::new(0.1, 0.1, 0.0));
     let b = at_model(s, rect, Vec3::new(0.9, 0.5, 0.0));
     let c = at_model(s, rect, Vec3::new(3.5, 0.5, 0.0));
     // なぞって離す
     drag(&mut h, &[a, b, c]);
-    let s = &h.state().state;
-    assert_eq!(s.doc.undo_count(), 1, "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.doc().undo_count(), 1, "{}", s.message());
     for p in [TRI0, TRI2, TRI4] {
         assert!(painted(s, p), "{p:?}");
     }
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert!(!painted(&h.state().state, TRI4));
+    assert!(!painted(h.app(), TRI4));
     // 押したまま Esc: 捨てる
     press(&h, a, egui::PointerButton::Primary);
     h.step();
     move_to(&h, b);
     h.step();
-    assert!(
-        painted(&h.state().state, TRI2),
-        "ドラッグの途中は塗れている"
-    );
+    assert!(painted(h.app(), TRI2), "ドラッグの途中は塗れている");
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
     release(&h, b, egui::PointerButton::Primary);
     h.run();
-    let s = &h.state().state;
+    let s = h.app();
     assert!(!painted(s, TRI0) && !painted(s, TRI2), "Esc で捨てる");
-    assert_eq!(s.doc.undo_count(), 0);
+    assert_eq!(s.doc().undo_count(), 0);
     assert!(!s.is_stroking());
     // ウィンドウのフォーカスを失う: そこまでを確定する
     press(&h, a, egui::PointerButton::Primary);
@@ -2596,12 +2597,12 @@ fn polygon_fill_dragging_in_the_3d_view_is_one_undo_and_escape_cancels() {
     h.run();
     release(&h, b, egui::PointerButton::Primary);
     h.run();
-    let s = &h.state().state;
+    let s = h.app();
     assert!(
         painted(s, TRI0) && painted(s, TRI2),
         "フォーカスを失うとそこまでを確定"
     );
-    assert_eq!(s.doc.undo_count(), 1);
+    assert_eq!(s.doc().undo_count(), 1);
     assert!(!s.is_stroking());
 }
 
@@ -2613,23 +2614,23 @@ fn hover_highlight_in_the_3d_view_and_the_canvas_snapshots() {
     // 2D: ポインタの下の UV アイランドの輪郭
     let rect = canvas_rect(&h);
     let at = {
-        let s = &h.state().state;
-        s.view
+        let s = h.app();
+        s.view()
             .view(rect, 256, 256)
             .to_screen(0.15 * 256.0, 0.25 * 256.0)
     };
     move_to(&h, at);
     h.run();
-    assert_eq!(h.state().state.region_hover_len(), Some(2));
+    assert_eq!(h.app().region_hover_len(), Some(2));
     common::shot::region(&mut h, "region_hover_canvas", rect);
     // 3D
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブ");
-    let at = at_model(&h.state().state, rect, Vec3::new(0.1, 0.2, 0.0));
+    let at = at_model(h.app(), rect, Vec3::new(0.1, 0.2, 0.0));
     move_to(&h, at);
     h.run();
-    assert_eq!(h.state().state.region_hover_len(), Some(2));
+    assert_eq!(h.app().region_hover_len(), Some(2));
     common::shot::region(&mut h, "region_hover_3d", rect);
     // 消すなら桃色
     apply(&mut h, Action::Region(RegionAction::Erase(true)));
@@ -2637,7 +2638,7 @@ fn hover_highlight_in_the_3d_view_and_the_canvas_snapshots() {
     // 面でない所では消える
     move_to(&h, rect.min + vec2(5.0, 5.0));
     h.run();
-    assert!(h.state().state.region.hover.is_none());
+    assert!(h.region().hover.is_none());
 }
 
 #[test]
@@ -2645,7 +2646,7 @@ fn the_id_select_panel_shows_the_same_creation_band_as_the_selection_tools() {
     let mut h = app_with_model(1280.0, 800.0, 128);
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::IdSelect);
+    assert_eq!(h.tool(), Tool::IdSelect);
     // 新規・追加・削除に「⋯」（共通は畳んでいる）。選択のツールと同じ帯
     for label in ["新規", "追加", "削除", "すべての作成方法"] {
         dock_rect(&h, label);
@@ -2660,7 +2661,7 @@ fn the_id_select_panel_shows_the_same_creation_band_as_the_selection_tools() {
     let intersect = dock_rect(&h, "共通");
     click(&mut h, intersect.center());
     assert_eq!(
-        h.state().state.sel.combine,
+        h.sel().combine,
         yolu_app::engine::SelectionCombine::Intersect
     );
 }
@@ -2671,19 +2672,19 @@ fn id_select_panel_and_the_options_bar_snapshots_in_both_languages() {
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
     // 部品の欄はモデルの入力を別のスレッドで作り終えるまで「確かめています」なので、撮る前に作り終えさせる（撮る時機に頼らない）
-    ready_parts(&mut h.state_mut().state);
+    ready_parts(h.app_mut());
     h.run();
     let rect = crate::tool_panels(&h);
     common::shot::region(&mut h, "region_idselect_no_map", rect);
     {
-        let s = &mut h.state_mut().state;
-        s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
+        let s = h.app_mut();
+        s.act(Action::Region(RegionAction::IdColor(IdColorOp::Set {
             part: 1,
             rgb: Some(0x3a7bd5),
         })));
         bake_id(s);
         // 焼いた時間（秒）が撮るたびに変わるので、ステータスバーの知らせは空にする
-        s.message.clear();
+        s.message_mut().clear();
     }
     h.run();
     common::shot::region(&mut h, "region_idselect_manual", rect);
@@ -2708,19 +2709,19 @@ fn the_sub_tool_list_has_the_ranges_and_the_bucket_adds_similar_colors() {
     ] {
         let _ = dock_rect(&h, name);
     }
-    assert_eq!(h.state().state.region.kind, SurfaceRegionKind::UvIsland);
+    assert_eq!(h.region().kind, SurfaceRegionKind::UvIsland);
     let at = dock_rect(&h, "近い色").center();
     click(&mut h, at);
-    assert!(h.state().state.region.by_color);
+    assert!(h.region().by_color);
     // 範囲の種類を選ぶと、近い色はやめる
     let at = dock_rect(&h, "メッシュの塊").center();
     click(&mut h, at);
-    assert!(!h.state().state.region.by_color);
-    assert_eq!(h.state().state.region.kind, SurfaceRegionKind::MeshPart);
+    assert!(!h.region().by_color);
+    assert_eq!(h.region().kind, SurfaceRegionKind::MeshPart);
     // ポリゴン塗りつぶしには近い色が無く、自分の一覧の選び（初めは UV アイランド）
     key(&h, Key::Num4, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.region.kind, SurfaceRegionKind::UvIsland);
+    assert_eq!(h.region().kind, SurfaceRegionKind::UvIsland);
     let names: Vec<_> = ["近い色", "三角形"]
         .iter()
         .map(|n| h.query_all_by_label(n).count())
@@ -2730,23 +2731,23 @@ fn the_sub_tool_list_has_the_ranges_and_the_bucket_adds_similar_colors() {
     // バケツへ戻ると、バケツが最後に選んだ範囲
     key(&h, Key::G, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.region.kind, SurfaceRegionKind::MeshPart);
+    assert_eq!(h.region().kind, SurfaceRegionKind::MeshPart);
 }
 
 /// ID の色で選択のツールを選び、部品が求まるまで待った画面。
 fn id_panel(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app_with_model(1280.0, 800.0, 128);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::IdSelect);
-    ready_parts(&mut h.state_mut().state);
+    assert_eq!(h.tool(), Tool::IdSelect);
+    ready_parts(h.app_mut());
     h.run();
     h
 }
 
 fn manual_color(h: &Harness<'_, YoluApp>, part: usize) -> Option<u32> {
-    h.state().state.doc.id_colors().colors().get(&part).copied()
+    h.doc().id_colors().colors().get(&part).copied()
 }
 
 /// 部品の ID の色の見本を押すと色のウィンドウが出て、円・四角のドラッグがその場で入り、1 回の取り消しになる（ドラッグの間は知らせを出さず、
@@ -2758,8 +2759,8 @@ fn the_part_id_color_opens_the_color_window_and_escape_goes_back_to_automatic() 
     use yolu_app::panels::color::wheel_square;
     use yolu_app::panels::color_window::{self, wheel_of};
     let mut h = id_panel(Lang::Ja);
-    let steps = h.state().state.doc.undo_count();
-    let doc = h.state().state.doc.id();
+    let steps = h.doc().undo_count();
+    let doc = h.doc().id();
     let target = |part: usize| egui::Id::new(("id.part.color", doc, part));
     let swatch = h.get_by_label("この部品の ID の色").rect();
     click(&mut h, swatch.center());
@@ -2767,7 +2768,7 @@ fn the_part_id_color_opens_the_color_window_and_escape_goes_back_to_automatic() 
     let window = color_window::rect(&h.ctx).expect("色のウィンドウ");
     let sq = wheel_square(wheel_of(window));
     // ドラッグの途中: その場で入るが、知らせは出さない
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     let end = sq.right_bottom() - vec2(8.0, 30.0);
     press(&h, sq.left_top() + vec2(8.0, 8.0), PointerButton::Primary);
     h.step();
@@ -2779,33 +2780,26 @@ fn the_part_id_color_opens_the_color_window_and_escape_goes_back_to_automatic() 
     let dragged = manual_color(&h, 0);
     assert!(dragged.is_some(), "その場で入る");
     assert!(
-        !h.state().state.message.contains("変えました"),
+        !h.message().contains("変えました"),
         "ドラッグの間は知らせない: {}",
-        h.state().state.message
+        h.message()
     );
     release(&h, end, PointerButton::Primary);
     h.step();
     h.run();
     assert_eq!(manual_color(&h, 0), dragged);
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        steps + 1,
-        "ドラッグは 1 回の取り消し"
-    );
+    assert_eq!(h.doc().undo_count(), steps + 1, "ドラッグは 1 回の取り消し");
     assert!(
-        h.state()
-            .state
-            .message
-            .contains("手動の ID の色を変えました"),
+        h.message().contains("手動の ID の色を変えました"),
         "離して 1 回知らせる: {}",
-        h.state().state.message
+        h.message()
     );
     // Esc: 開いたときの「自動」へ戻して閉じる（戻すのも 1 回の取り消し）
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     assert_eq!(manual_color(&h, 0), None, "自動へ戻る");
     assert!(!color_window::is_open(&h.ctx));
-    assert_eq!(h.state().state.doc.undo_count(), steps + 2);
+    assert_eq!(h.doc().undo_count(), steps + 2);
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     assert_eq!(manual_color(&h, 0), dragged);
@@ -2851,13 +2845,13 @@ fn escape_while_dragging_the_part_id_color_in_the_window_does_not_report_a_chang
     use yolu_app::panels::color::wheel_square;
     use yolu_app::panels::color_window::{self, wheel_of};
     let mut h = id_panel(Lang::Ja);
-    let steps = h.state().state.doc.undo_count();
+    let steps = h.doc().undo_count();
     let swatch = h.get_by_label("この部品の ID の色").rect();
     click(&mut h, swatch.center());
     let sq = wheel_square(wheel_of(
         color_window::rect(&h.ctx).expect("色のウィンドウ"),
     ));
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     press(&h, sq.left_top() + vec2(8.0, 8.0), PointerButton::Primary);
     h.step();
     for p in [sq.center(), sq.right_bottom() - vec2(8.0, 30.0)] {
@@ -2880,16 +2874,16 @@ fn escape_while_dragging_the_part_id_color_in_the_window_does_not_report_a_chang
     );
     h.run();
     assert_eq!(manual_color(&h, 0), None, "自動へ戻る");
-    assert_eq!(h.state().state.doc.undo_count(), steps, "段は残さない");
+    assert_eq!(h.doc().undo_count(), steps, "段は残さない");
     assert!(
-        !h.state().state.message.contains("変えました"),
+        !h.message().contains("変えました"),
         "変えていないので知らせない: {}",
-        h.state().state.message
+        h.message()
     );
     assert!(
-        h.state().state.message.contains("取り消しました"),
+        h.message().contains("取り消しました"),
         "取り消した知らせが残る: {}",
-        h.state().state.message
+        h.message()
     );
 }
 
@@ -2904,7 +2898,7 @@ fn snapshot_the_colour_window_on_a_part_id_color() {
         let swatch = h.get_by_label(label).rect();
         click(&mut h, swatch.center());
         assert!(yolu_app::panels::color_window::is_open(&h.ctx));
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.run();
         let rect =
             yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウを描いている");
@@ -2924,18 +2918,18 @@ fn the_id_panel_shows_the_part_position_of_the_second_texture_set() {
         .unwrap();
     h.run();
     {
-        let s = &mut h.state_mut().state;
-        let uid = s.sets.iter().nth(1).expect("2 つ目のセット").uid;
-        s.apply(Action::SelectSet(uid));
+        let s = h.app_mut();
+        let uid = s.sets().iter().nth(1).expect("2 つ目のセット").uid;
+        s.act(Action::SelectSet(uid));
     }
     h.run();
-    assert_eq!(h.state().state.view3d.material, 1);
+    assert_eq!(h.view3d().material, 1);
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::IdSelect);
-    ready_parts(&mut h.state_mut().state);
+    assert_eq!(h.tool(), Tool::IdSelect);
+    ready_parts(h.app_mut());
     apply(&mut h, Action::Region(RegionAction::IdPart(1)));
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     h.run();
     let rect = crate::tool_panels(&h);
     common::shot::region(&mut h, "region_idselect_second_set", rect);
@@ -2953,7 +2947,7 @@ fn the_options_bar_of_each_range_tool_fits_a_narrow_window_in_both_languages() {
     common::shot::region(&mut h, "region_bucket_by_color_narrow_english", bar);
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
-    ready_parts(&mut h.state_mut().state);
+    ready_parts(h.app_mut());
     h.run();
     common::shot::region(&mut h, "region_idselect_narrow_english", bar);
 }
@@ -2963,14 +2957,14 @@ fn headless_bucket_surface_region_ignores_color_reference_and_gap_but_scales_are
     let (mut s, rect) = fill_state(SurfaceRegionKind::Triangle);
     let view = canvas_view(&s, rect);
     let at = at_uv(&s, rect, TRI0);
-    s.region.color.reference = yolu_app::region::color::Reference::Marked;
-    s.region.color.gap = 32;
-    s.region.color.margin = -200;
-    let before = s.doc.undo_count();
+    s.region_mut().color.reference = yolu_app::region::color::Reference::Marked;
+    s.region_mut().color.gap = 32;
+    s.region_mut().color.margin = -200;
+    let before = s.doc().undo_count();
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.doc.undo_count(), before);
-    s.region.color.margin = 0;
+    assert_eq!(s.doc().undo_count(), before);
+    s.region_mut().color.margin = 0;
     bucket(&mut s, Where::Canvas(&view), at);
-    assert_eq!(s.doc.undo_count(), before + 1);
+    assert_eq!(s.doc().undo_count(), before + 1);
     assert!(painted(&s, TRI0));
 }

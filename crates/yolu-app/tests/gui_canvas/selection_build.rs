@@ -2,6 +2,7 @@
 //! （アンチエイリアス・縦横比・中心から・角の丸め）・選択ペンと選択消し・境界をぼかす・保存と読み込み・クイックマスク。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{Event, Key, Modifiers, PointerButton, Pos2};
@@ -26,11 +27,11 @@ type H = Harness<'static, YoluApp>;
 // ───────── ツール ─────────
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn pick_tool(h: &mut H, tool: Tool) {
-    h.state_mut().state.apply(Action::SelectTool(tool));
+    h.act(Action::SelectTool(tool));
     h.run();
 }
 
@@ -45,7 +46,7 @@ fn redo(h: &mut H) {
 }
 
 fn steps(h: &H) -> usize {
-    st(h).doc.undo_count()
+    st(h).doc().undo_count()
 }
 
 fn at(h: &H, dx: f32, dy: f32) -> Pos2 {
@@ -55,15 +56,15 @@ fn at(h: &H, dx: f32, dy: f32) -> Pos2 {
 /// 画面の点をキャンバスの座標へ。
 fn to_canvas(h: &H, p: Pos2) -> (f64, f64) {
     let s = st(h);
-    s.view
-        .view(canvas_rect(h), s.doc.width(), s.doc.height())
+    s.view()
+        .view(canvas_rect(h), s.doc().width(), s.doc().height())
         .to_canvas(p)
 }
 
 fn amount_at(h: &H, p: Pos2) -> u8 {
     let (x, y) = to_canvas(h, p);
     st(h)
-        .doc
+        .doc()
         .selection()
         .map_or(0, |m| m.amount(x.floor() as u32, y.floor() as u32))
 }
@@ -177,7 +178,7 @@ fn dock_modes(h: &H) -> Vec<&'static str> {
 }
 
 fn run(s: &mut AppState, e: SelEdit) {
-    s.apply(Action::Sel(SelAction::Edit(e)));
+    s.act(Action::Sel(SelAction::Edit(e)));
 }
 
 fn rect(mode: SelectionCombine, x0: i64, y0: i64, x1: i64, y1: i64) -> SelEdit {
@@ -218,7 +219,7 @@ fn pen_stroke(h: &mut H, points: &[Pos2], pressure: f32, eraser: bool) {
 
 /// 太さを決めたブラシ（硬い・不透明・筆圧は使わない）。
 fn set_brush(h: &mut H, diameter: f32, hardness: f32, opacity: f32) {
-    let b = &mut h.state_mut().state.brush;
+    let b = h.brush_mut();
     b.radius = diameter / 2.0;
     b.hardness = hardness;
     b.opacity = opacity;
@@ -252,7 +253,7 @@ fn the_creation_mode_buttons_pick_the_mode_and_light_up_with_the_modifier_keys()
         (SelectionCombine::Replace, NEW, 0),
     ] {
         click_bar(&mut h, label);
-        assert_eq!(st(&h).sel.combine, mode);
+        assert_eq!(st(&h).sel().combine, mode);
         check(&h, shown, label);
     }
     // 帯のボタンでも選べる
@@ -263,7 +264,7 @@ fn the_creation_mode_buttons_pick_the_mode_and_light_up_with_the_modifier_keys()
     ] {
         let at = dock_rect(&h, name).center();
         click(&mut h, at);
-        assert_eq!(st(&h).sel.combine, mode, "帯の {name}");
+        assert_eq!(st(&h).sel().combine, mode, "帯の {name}");
     }
     // 修飾キーを押しているあいだ、効く作成方法が一時的に点く（選んでいる値は変わらない）
     for (mods, shown) in [
@@ -290,7 +291,7 @@ fn the_creation_mode_buttons_pick_the_mode_and_light_up_with_the_modifier_keys()
             shown == 3,
             "{mods:?}: 畳んでいる帯は共通のあいだ「⋯」が点く"
         );
-        assert_eq!(st(&h).sel.combine, SelectionCombine::Replace);
+        assert_eq!(st(&h).sel().combine, SelectionCombine::Replace);
     }
     // 離すと選んでいる作成方法に戻る
     h.event(Event::ModifiersChanged(Modifiers::NONE));
@@ -303,9 +304,7 @@ fn the_creation_mode_buttons_pick_the_mode_and_light_up_with_the_modifier_keys()
 #[test]
 fn the_creation_mode_buttons_follow_the_language_and_all_selection_tools_show_them() {
     let mut h = app(1000.0, 640.0, 256);
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     for tool in [
         Tool::SelectRect,
         Tool::SelectEllipse,
@@ -378,13 +377,13 @@ fn the_more_button_shows_all_four_modes_and_the_choice_survives_a_restart() {
     let (loaded, problems) = yolu_app::settings::load(&path);
     assert!(problems.is_empty() && loaded.selection_all_modes);
     let mut h2 = app(1000.0, 640.0, 256);
-    h2.state_mut().state.load_settings(loaded);
+    h2.app_mut().load_settings(loaded);
     pick_tool(&mut h2, Tool::SelectRect);
     assert_eq!(dock_modes(&h2), DOCK_MODES.to_vec());
     // 4 つの帯の「共通」で選べる。もう一度押すと畳む
     let isect = dock_rect(&h2, "共通");
     click(&mut h2, isect.center());
-    assert_eq!(st(&h2).sel.combine, SelectionCombine::Intersect);
+    assert_eq!(st(&h2).sel().combine, SelectionCombine::Intersect);
     assert!(dock_lit(&h2, "共通"));
     // 共通を選んでいるあいだは「⋯」は押せない（畳めない）。別の作成方法に替えてから畳む
     let more = dock_rect(&h2, MORE);
@@ -403,7 +402,7 @@ fn choosing_intersect_keeps_all_four_modes_shown_even_when_the_setting_is_folded
     let mut h = app(1000.0, 640.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
     click_bar(&mut h, ISECT);
-    assert_eq!(st(&h).sel.combine, SelectionCombine::Intersect);
+    assert_eq!(st(&h).sel().combine, SelectionCombine::Intersect);
     assert!(!st(&h).settings().selection_all_modes, "設定は畳むのまま");
     assert_eq!(
         dock_modes(&h),
@@ -439,13 +438,13 @@ fn choosing_intersect_keeps_all_four_modes_shown_even_when_the_setting_is_folded
 fn narrow_props_app(lang: Lang) -> H {
     use egui_dock::{DockState, NodeIndex};
     let mut h = app(1000.0, 640.0, 256);
-    h.state_mut().state.lang = lang;
+    h.set_lang(lang);
     let mut dock = DockState::new(vec![yolu_app::Tab::Canvas]);
     let surface = dock.main_surface_mut();
     let [_, left] = surface.split_left(NodeIndex::root(), 0.17, vec![yolu_app::Tab::SubTools]);
     surface.split_below(left, 0.3, vec![yolu_app::Tab::ToolProperties]);
     h.state_mut().dock = dock;
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     pick_tool(&mut h, Tool::SelectRect);
     h
 }
@@ -486,7 +485,7 @@ fn the_names_in_the_bands_are_drawn_only_when_every_button_has_room_for_them() {
         (Lang::En, ["New", "Add", "Subtract"], false),
     ] {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         pick_tool(&mut h, Tool::SelectRect);
         for name in names {
             assert_eq!(name_drawn(&h, name), shown, "{lang:?} {name}");
@@ -506,7 +505,7 @@ fn the_names_in_the_bands_are_drawn_only_when_every_button_has_room_for_them() {
         (Lang::En, ["Pen", "Eraser"]),
     ] {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         pick_tool(&mut h, Tool::SelectPen);
         for name in names {
             assert!(name_drawn(&h, name), "{lang:?} {name}");
@@ -593,23 +592,23 @@ fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes
     assert_eq!((a.height(), a.top()), (24.0, b.top()), "1 行");
     assert!(a.right() <= b.left() && (a.width() - b.width()).abs() < 0.5);
     click_bar(&mut h, eraser);
-    assert!(st(&h).sel.pen_erase);
+    assert!(st(&h).sel().pen_erase);
     assert!(lit(&h, eraser) && !lit(&h, pen));
     assert!(dock_lit(&h, dock_eraser) && !dock_lit(&h, dock_pen));
     // 帯のボタンでも替えられる
     let at = dock_rect(&h, dock_pen).center();
     click(&mut h, at);
-    assert!(!st(&h).sel.pen_erase);
+    assert!(!st(&h).sel().pen_erase);
     let at = dock_rect(&h, dock_eraser).center();
     click(&mut h, at);
-    assert!(st(&h).sel.pen_erase);
+    assert!(st(&h).sel().pen_erase);
     // 押しているあいだ替わる: Shift は選択ペン（選んでいる選択消しは枠だけ）
     h.event(Event::ModifiersChanged(Modifiers::SHIFT));
     h.step();
     h.run();
     assert!(lit(&h, pen) && !lit(&h, eraser));
     assert!(dock_lit(&h, dock_pen) && !dock_lit(&h, dock_eraser));
-    assert!(st(&h).sel.pen_erase, "選んでいる値は変わらない");
+    assert!(st(&h).sel().pen_erase, "選んでいる値は変わらない");
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.step();
     h.run();
@@ -622,7 +621,7 @@ fn the_selection_pen_shows_the_pen_and_eraser_pair_instead_of_the_creation_modes
 fn headless_anti_alias_off_makes_the_edge_all_or_nothing() {
     let edge_values = |anti_alias: bool| -> Vec<u8> {
         let mut s = AppState::new(64, 64);
-        s.sel.antialias = anti_alias;
+        s.sel_mut().antialias = anti_alias;
         run(
             &mut s,
             SelEdit::Ellipse {
@@ -634,7 +633,7 @@ fn headless_anti_alias_off_makes_the_edge_all_or_nothing() {
             },
         );
         let mut v: Vec<u8> = s
-            .doc
+            .doc()
             .selection()
             .unwrap()
             .to_canvas_bytes()
@@ -652,7 +651,7 @@ fn headless_anti_alias_off_makes_the_edge_all_or_nothing() {
     assert!(edge_values(false).is_empty(), "切ると 0 か 255 だけ");
     // なげなわ・多角形も同じ
     let mut s = AppState::new(64, 64);
-    s.sel.antialias = false;
+    s.sel_mut().antialias = false;
     run(
         &mut s,
         SelEdit::Polygon {
@@ -661,7 +660,7 @@ fn headless_anti_alias_off_makes_the_edge_all_or_nothing() {
         },
     );
     assert!(s
-        .doc
+        .doc()
         .selection()
         .unwrap()
         .to_canvas_bytes()
@@ -673,23 +672,23 @@ fn headless_anti_alias_off_makes_the_edge_all_or_nothing() {
 fn a_fixed_ratio_makes_a_square_and_the_setting_works_without_a_modifier_key() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     drag_by(&mut h, &[(-100.0, -60.0), (60.0, 20.0)]);
-    let (x0, y0, x1, y1) = bounds(st(&h).doc.selection().unwrap()).unwrap();
+    let (x0, y0, x1, y1) = bounds(st(&h).doc().selection().unwrap()).unwrap();
     assert!(
         (x1 - x0).abs_diff(y1 - y0) > 20,
         "設定が無ければ長方形のまま"
     );
     undo(&mut h);
-    h.state_mut().state.sel.fixed_ratio = true;
+    h.sel_mut().fixed_ratio = true;
     drag_by(&mut h, &[(-100.0, -60.0), (60.0, 20.0)]);
-    let (x0, y0, x1, y1) = bounds(st(&h).doc.selection().unwrap()).unwrap();
+    let (x0, y0, x1, y1) = bounds(st(&h).doc().selection().unwrap()).unwrap();
     assert!((x1 - x0).abs_diff(y1 - y0) <= 1, "{x0},{y0} {x1},{y1}");
     // 楕円も正円
     undo(&mut h);
     pick_tool(&mut h, Tool::SelectEllipse);
     drag_by(&mut h, &[(-100.0, -60.0), (60.0, 20.0)]);
-    let (x0, y0, x1, y1) = bounds(st(&h).doc.selection().unwrap()).unwrap();
+    let (x0, y0, x1, y1) = bounds(st(&h).doc().selection().unwrap()).unwrap();
     assert!((x1 - x0).abs_diff(y1 - y0) <= 2, "{x0},{y0} {x1},{y1}");
 }
 
@@ -697,14 +696,14 @@ fn a_fixed_ratio_makes_a_square_and_the_setting_works_without_a_modifier_key() {
 fn shift_pressed_after_the_press_holds_the_ratio_but_shift_from_the_press_still_adds() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     // 左に 1 つ作っておく
     drag_by(&mut h, &[(-200.0, -60.0), (-120.0, 0.0)]);
-    let left = st(&h).doc.selection().unwrap().clone();
+    let left = st(&h).doc().selection().unwrap().clone();
     // 押し始めは修飾なし、離すときに Shift: 縦横比の固定（追加にはならず、新規で置き換わる）
     let (p, q) = (at(&h, -50.0, -60.0), at(&h, 80.0, -20.0));
     drag_with(&mut h, &[p, q], Modifiers::NONE, Modifiers::SHIFT);
-    let now = st(&h).doc.selection().unwrap().clone();
+    let now = st(&h).doc().selection().unwrap().clone();
     let (x0, y0, x1, y1) = bounds(&now).unwrap();
     assert!((x1 - x0).abs_diff(y1 - y0) <= 1, "正方形");
     assert_eq!(now.amount(0, 0), 0);
@@ -719,7 +718,7 @@ fn shift_pressed_after_the_press_holds_the_ratio_but_shift_from_the_press_still_
     undo(&mut h);
     let (p, q) = (at(&h, -50.0, -60.0), at(&h, 80.0, -20.0));
     drag_with(&mut h, &[p, q], Modifiers::SHIFT, Modifiers::SHIFT);
-    let both = st(&h).doc.selection().unwrap().clone();
+    let both = st(&h).doc().selection().unwrap().clone();
     assert!(left
         .to_canvas_bytes()
         .iter()
@@ -732,11 +731,11 @@ fn shift_pressed_after_the_press_holds_the_ratio_but_shift_from_the_press_still_
 fn from_the_center_grows_around_the_press_with_the_setting_or_with_alt() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     let start = at(&h, 0.0, 0.0);
     let (sx, sy) = to_canvas(&h, start);
     let centered = |h: &H| -> (f64, f64) {
-        let (x0, y0, x1, y1) = bounds(st(h).doc.selection().unwrap()).unwrap();
+        let (x0, y0, x1, y1) = bounds(st(h).doc().selection().unwrap()).unwrap();
         ((x0 + x1) as f64 / 2.0, (y0 + y1) as f64 / 2.0)
     };
     // 設定が無ければ、押した点は角
@@ -748,7 +747,7 @@ fn from_the_center_grows_around_the_press_with_the_setting_or_with_alt() {
     );
     undo(&mut h);
     // 設定: 中心から
-    h.state_mut().state.sel.from_center = true;
+    h.sel_mut().from_center = true;
     drag_by(&mut h, &[(0.0, 0.0), (80.0, 50.0)]);
     let (cx, cy) = centered(&h);
     assert!(
@@ -757,7 +756,7 @@ fn from_the_center_grows_around_the_press_with_the_setting_or_with_alt() {
     );
     undo(&mut h);
     // 設定なしでも、押したあとに Alt を押していれば中心から（押しの始めの Alt は表示を回す組み合わせなので、始めには持たない）
-    h.state_mut().state.sel.from_center = false;
+    h.sel_mut().from_center = false;
     let (p, q) = (at(&h, 0.0, 0.0), at(&h, 80.0, 50.0));
     drag_with(&mut h, &[p, q], Modifiers::NONE, Modifiers::ALT);
     let (cx, cy) = centered(&h);
@@ -771,12 +770,12 @@ fn from_the_center_grows_around_the_press_with_the_setting_or_with_alt() {
 fn a_rounded_rectangle_cuts_the_corners_and_undo_removes_it_in_one_step() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
-    h.state_mut().state.sel.corner_radius = 40;
+    h.sel_mut().animate = false;
+    h.sel_mut().corner_radius = 40;
     let before = steps(&h);
     drag_by(&mut h, &[(-100.0, -80.0), (100.0, 80.0)]);
     assert_eq!(steps(&h), before + 1);
-    let m = st(&h).doc.selection().unwrap().clone();
+    let m = st(&h).doc().selection().unwrap().clone();
     let (x0, y0, x1, y1) = bounds(&m).unwrap();
     assert_eq!(m.amount((x0 + x1) / 2, (y0 + y1) / 2), 255, "中は選ばれる");
     assert_eq!(m.amount(x0, y0), 0, "角の画素は外れる");
@@ -787,18 +786,18 @@ fn a_rounded_rectangle_cuts_the_corners_and_undo_removes_it_in_one_step() {
         "縁は滑らか"
     );
     undo(&mut h);
-    assert!(st(&h).doc.selection().is_none());
+    assert!(st(&h).doc().selection().is_none());
     // アンチエイリアスを切ると縁は 0 か 255 だけ
-    h.state_mut().state.sel.antialias = false;
+    h.sel_mut().antialias = false;
     drag_by(&mut h, &[(-100.0, -80.0), (100.0, 80.0)]);
-    let m = st(&h).doc.selection().unwrap();
+    let m = st(&h).doc().selection().unwrap();
     assert!(m.to_canvas_bytes().iter().all(|a| *a == 0 || *a == 255));
     assert_eq!(m.amount(bounds(m).unwrap().0, bounds(m).unwrap().1), 0);
     // 角の丸めが 0 なら、これまでどおりの長方形
     undo(&mut h);
-    h.state_mut().state.sel.corner_radius = 0;
+    h.sel_mut().corner_radius = 0;
     drag_by(&mut h, &[(-100.0, -80.0), (100.0, 80.0)]);
-    let m = st(&h).doc.selection().unwrap();
+    let m = st(&h).doc().selection().unwrap();
     let (x0, y0, ..) = bounds(m).unwrap();
     assert_eq!(m.amount(x0, y0), 255);
 }
@@ -807,7 +806,7 @@ fn a_rounded_rectangle_cuts_the_corners_and_undo_removes_it_in_one_step() {
 fn the_selection_properties_show_the_tool_settings_in_both_languages() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         pick_tool(&mut h, Tool::SelectRect);
         for label in lang.pick(
             ["アンチエイリアス", "縦横比を固定", "中心から", "角の丸め"],
@@ -834,24 +833,24 @@ fn the_selection_properties_show_the_tool_settings_in_both_languages() {
 fn the_tool_setting_toggles_change_the_state_from_the_properties_panel() {
     let mut h = app(1280.0, 800.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.corner_radius = 8;
+    h.sel_mut().corner_radius = 8;
     h.run();
     for (label, read) in [
         (
             "縦横比を固定",
-            (|s: &AppState| s.sel.fixed_ratio) as fn(&AppState) -> bool,
+            (|s: &AppState| s.sel().fixed_ratio) as fn(&AppState) -> bool,
         ),
-        ("中心から", |s| s.sel.from_center),
+        ("中心から", |s| s.sel().from_center),
     ] {
         assert!(!read(st(&h)));
         h.get_by_label(label).click();
         h.run();
         assert!(read(st(&h)), "{label}");
     }
-    assert!(st(&h).sel.antialias);
+    assert!(st(&h).sel().antialias);
     h.get_by_label("アンチエイリアス").click();
     h.run();
-    assert!(!st(&h).sel.antialias);
+    assert!(!st(&h).sel().antialias);
 }
 
 // ───────── 選択ペン・選択消し ─────────
@@ -860,7 +859,7 @@ fn the_tool_setting_toggles_change_the_state_from_the_properties_panel() {
 fn the_selection_pen_adds_a_hard_stroke_as_one_undo_and_redo_returns_it() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectPen);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     set_brush(&mut h, 20.0, 1.0, 1.0);
     let before = steps(&h);
     drag_by(
@@ -873,12 +872,14 @@ fn the_selection_pen_adds_a_hard_stroke_as_one_undo_and_redo_returns_it() {
     assert_eq!(amount_at(&h, at(&h, 100.0, 0.0)), 255, "終わりの点");
     assert_eq!(amount_at(&h, at(&h, 0.0, 60.0)), 0, "線から離れた所");
     assert_eq!(amount_at(&h, at(&h, 160.0, 0.0)), 0, "終わりの先");
-    assert!(st(&h).modified);
+    assert!(st(&h).modified());
     assert!(
-        st(&h).canvas.stroke.is_none() && st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none()
+        st(&h).canvas().stroke.is_none()
+            && st(&h).sel().pen.is_none()
+            && st(&h).sel().drag.is_none()
     );
     undo(&mut h);
-    assert!(st(&h).doc.selection().is_none());
+    assert!(st(&h).doc().selection().is_none());
     redo(&mut h);
     assert_eq!(amount_at(&h, at(&h, 0.0, 0.0)), 255);
     // 画素は描かない
@@ -889,10 +890,10 @@ fn the_selection_pen_adds_a_hard_stroke_as_one_undo_and_redo_returns_it() {
 fn the_selection_pen_follows_the_brush_diameter_hardness_and_opacity() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectPen);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     // 直径: 大きいほど太い
     let width_of = |h: &H| -> u32 {
-        let (x0, _, x1, _) = bounds(st(h).doc.selection().unwrap()).unwrap();
+        let (x0, _, x1, _) = bounds(st(h).doc().selection().unwrap()).unwrap();
         x1 - x0
     };
     set_brush(&mut h, 20.0, 1.0, 1.0);
@@ -909,7 +910,7 @@ fn the_selection_pen_follows_the_brush_diameter_hardness_and_opacity() {
     click_by(&mut h, 0.0, 0.0);
     let center = to_canvas(&h, at(&h, 0.0, 0.0));
     let (cx, cy) = (center.0 as u32, center.1 as u32);
-    let m = st(&h).doc.selection().unwrap().clone();
+    let m = st(&h).doc().selection().unwrap().clone();
     let (x0, _, x1, _) = bounds(&m).unwrap();
     let radius = (x1 - x0) / 2;
     let ramp: Vec<u8> = (0..radius.saturating_sub(2))
@@ -929,9 +930,9 @@ fn the_selection_pen_follows_the_brush_diameter_hardness_and_opacity() {
 fn the_selection_pen_adds_to_the_current_selection_and_the_eraser_removes_from_it() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     drag_by(&mut h, &[(-150.0, -60.0), (-40.0, 60.0)]);
-    let base = st(&h).doc.selection().unwrap().clone();
+    let base = st(&h).doc().selection().unwrap().clone();
     pick_tool(&mut h, Tool::SelectPen);
     set_brush(&mut h, 20.0, 1.0, 1.0);
     // 足す: 元の選択範囲は残り、右に伸びる
@@ -943,9 +944,7 @@ fn the_selection_pen_adds_to_the_current_selection_and_the_eraser_removes_from_i
         "元の選択範囲は残る"
     );
     // 消す: 選択消しに替える
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::PenErase(true))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::PenErase(true))));
     let before = steps(&h);
     drag_by(&mut h, &[(-120.0, 20.0), (-60.0, 20.0)]);
     assert_eq!(steps(&h), before + 1);
@@ -958,14 +957,14 @@ fn the_selection_pen_adds_to_the_current_selection_and_the_eraser_removes_from_i
     undo(&mut h);
     assert_eq!(amount_at(&h, at(&h, -90.0, 20.0)), 255);
     undo(&mut h);
-    assert_eq!(st(&h).doc.selection(), Some(&base));
+    assert_eq!(st(&h).doc().selection(), Some(&base));
 }
 
 #[test]
 fn ctrl_swaps_the_selection_pen_to_the_eraser_and_shift_back_to_the_pen() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     drag_by(&mut h, &[(-150.0, -90.0), (150.0, -10.0)]);
     pick_tool(&mut h, Tool::SelectPen);
     set_brush(&mut h, 20.0, 1.0, 1.0);
@@ -973,12 +972,10 @@ fn ctrl_swaps_the_selection_pen_to_the_eraser_and_shift_back_to_the_pen() {
     let pts = [at(&h, -80.0, -50.0), at(&h, 0.0, -50.0)];
     drag_with(&mut h, &pts, Modifiers::COMMAND, Modifiers::COMMAND);
     assert_eq!(amount_at(&h, at(&h, -40.0, -50.0)), 0);
-    assert!(!st(&h).sel.pen_erase, "選んでいる切り替えは変わらない");
+    assert!(!st(&h).sel().pen_erase, "選んでいる切り替えは変わらない");
     undo(&mut h);
     // 選択消しにして Shift を押して始める: 足す（選択範囲の外に描く）
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::PenErase(true))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::PenErase(true))));
     let pts = [at(&h, -80.0, 60.0), at(&h, 0.0, 60.0)];
     drag_with(&mut h, &pts, Modifiers::SHIFT, Modifiers::SHIFT);
     assert_eq!(amount_at(&h, at(&h, -40.0, 60.0)), 255);
@@ -988,16 +985,16 @@ fn ctrl_swaps_the_selection_pen_to_the_eraser_and_shift_back_to_the_pen() {
 fn the_selection_pen_works_with_the_pen_pressure_and_the_eraser_end() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectPen);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     set_brush(&mut h, 60.0, 1.0, 1.0);
-    h.state_mut().state.brush.pressure.size = true;
+    h.brush_mut().pressure.size = true;
     let line = |h: &H, y: f32| -> Vec<Pos2> {
         (0..=8)
             .map(|i| at(h, -100.0 + 25.0 * i as f32, y))
             .collect()
     };
     let height_of = |h: &H| -> i32 {
-        let (_, y0, _, y1) = bounds(st(h).doc.selection().unwrap()).unwrap();
+        let (_, y0, _, y1) = bounds(st(h).doc().selection().unwrap()).unwrap();
         (y1 - y0) as i32
     };
     let full = line(&h, -40.0);
@@ -1014,18 +1011,18 @@ fn the_selection_pen_works_with_the_pen_pressure_and_the_eraser_end() {
     );
     undo(&mut h);
     // 筆圧で変えない設定なら同じ太さ
-    h.state_mut().state.brush.pressure.size = false;
+    h.brush_mut().pressure.size = false;
     pen_stroke(&mut h, &full, 0.5, false);
     assert!((height_of(&h) - full_height).abs() <= 2);
     undo(&mut h);
-    h.state_mut().state.brush.pressure.size = true;
+    h.brush_mut().pressure.size = true;
     pen_stroke(&mut h, &full, 1.0, false);
     assert_eq!(steps(&h), 1);
     // ペンの消しゴムの端: 消す
     pen_stroke(&mut h, &full, 1.0, true);
     assert_eq!(amount_at(&h, at(&h, 0.0, -40.0)), 0);
     assert!(
-        st(&h).doc.selection().is_none(),
+        st(&h).doc().selection().is_none(),
         "消し切ると選択範囲が無くなる"
     );
     assert_eq!(steps(&h), 2);
@@ -1034,15 +1031,15 @@ fn the_selection_pen_works_with_the_pen_pressure_and_the_eraser_end() {
         .pen()
         .push(pen_at(at(&h, 0.0, 0.0), false, 0.0, false));
     h.step();
-    assert!(st(&h).sel.pen.is_none());
+    assert!(st(&h).sel().pen.is_none());
 }
 
 #[test]
 fn the_selection_pen_and_its_overlay_follow_a_rotated_and_flipped_view() {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
-    h.state_mut().state.view.angle = 30.0;
-    h.state_mut().state.view.flip = true;
+    h.sel_mut().animate = false;
+    h.view_mut().angle = 30.0;
+    h.view_mut().flip = true;
     pick_tool(&mut h, Tool::SelectPen);
     set_brush(&mut h, 24.0, 1.0, 1.0);
     // 押したまま動かしている途中: 画面のなぞった所の下に被覆の重ねがある（絵を持つタイル、または 1 面の四角）
@@ -1060,7 +1057,7 @@ fn the_selection_pen_and_its_overlay_follow_a_rotated_and_flipped_view() {
     move_to(&h, b);
     h.step();
     h.step();
-    assert!(st(&h).sel.pen_overlay.texture_count() > 0);
+    assert!(st(&h).sel().pen_overlay.texture_count() > 0);
     release(&h, b, PointerButton::Primary);
     h.run();
     // 回して反転した表示でも、なぞった線の上が選ばれ、離れた所は選ばれない
@@ -1075,7 +1072,7 @@ fn the_selection_pen_and_its_overlay_follow_a_rotated_and_flipped_view() {
 fn escape_and_focus_loss_do_not_leave_a_selection_pen_stroke_behind() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectPen);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     set_brush(&mut h, 30.0, 1.0, 1.0);
     let start = at(&h, -50.0, 0.0);
     h.event(Event::PointerMoved(start));
@@ -1089,20 +1086,20 @@ fn escape_and_focus_loss_do_not_leave_a_selection_pen_stroke_behind() {
     move_to(&h, at(&h, 50.0, 0.0));
     h.step();
     h.step();
-    assert!(st(&h).sel.pen.is_some(), "描いている途中");
-    assert!(st(&h).doc.selection().is_none(), "途中は文書を変えない");
+    assert!(st(&h).sel().pen.is_some(), "描いている途中");
+    assert!(st(&h).doc().selection().is_none(), "途中は文書を変えない");
     assert!(
-        st(&h).sel.pen_overlay.texture_count() > 0,
+        st(&h).sel().pen_overlay.texture_count() > 0,
         "途中の被覆を重ねて見せる"
     );
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
     h.run();
-    assert!(st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none());
+    assert!(st(&h).sel().pen.is_none() && st(&h).sel().drag.is_none());
     release(&h, at(&h, 50.0, 0.0), PointerButton::Primary);
     h.run();
     assert!(
-        st(&h).doc.selection().is_none(),
+        st(&h).doc().selection().is_none(),
         "Esc で捨てたものは離しても選択範囲にならない"
     );
     assert_eq!(steps(&h), 0);
@@ -1118,22 +1115,22 @@ fn escape_and_focus_loss_do_not_leave_a_selection_pen_stroke_behind() {
     h.event(Event::WindowFocused(false));
     h.step();
     h.run();
-    assert!(st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none());
-    assert!(st(&h).doc.selection().is_none());
+    assert!(st(&h).sel().pen.is_none() && st(&h).sel().drag.is_none());
+    assert!(st(&h).doc().selection().is_none());
 }
 
 #[test]
 fn headless_the_selection_pen_result_is_refused_while_drawing() {
     let mut s = AppState::new(64, 64);
-    s.apply(Action::SelectTool(Tool::SelectPen));
+    s.act(Action::SelectTool(Tool::SelectPen));
     // 描いている間は選択範囲を変えられない
-    s.canvas.stroke = Some(StrokeSource::Mouse);
-    s.apply(Action::Sel(SelAction::Edit(SelEdit::Shape {
-        mask: SelectionMask::all(&s.doc),
+    s.canvas_mut().stroke = Some(StrokeSource::Mouse);
+    s.act(Action::Sel(SelAction::Edit(SelEdit::Shape {
+        mask: SelectionMask::all(s.doc()),
         mode: SelectionCombine::Add,
     })));
-    assert!(s.doc.selection().is_none());
-    s.canvas.stroke = None;
+    assert!(s.doc().selection().is_none());
+    s.canvas_mut().stroke = None;
 }
 
 #[test]
@@ -1188,7 +1185,7 @@ fn headless_the_dab_profile_matches_the_brush_edge_and_the_preview_matches_the_c
     // クイックマスクの見た目（始めの選択範囲に被覆を重ねたもの）は、文書で組み合わせた結果と同じ
     let mut s = AppState::new(256, 256);
     run(&mut s, rect(SelectionCombine::Replace, 20, 20, 120, 120));
-    let base = s.doc.selection().unwrap().clone();
+    let base = s.doc().selection().unwrap().clone();
     for erase in [false, true] {
         let params = PenParams {
             radius: 25.0,
@@ -1197,7 +1194,7 @@ fn headless_the_dab_profile_matches_the_brush_edge_and_the_preview_matches_the_c
             pressure: yolu_app::engine::PressureSwitches::NONE,
         };
         let mut stroke =
-            PenStroke::new(&s.doc, erase, Some(base.clone()), params, 1 << 28).unwrap();
+            PenStroke::new(s.doc(), erase, Some(base.clone()), params, 1 << 28).unwrap();
         for i in 0..40 {
             stroke
                 .add(
@@ -1224,19 +1221,22 @@ fn headless_the_dab_profile_matches_the_brush_edge_and_the_preview_matches_the_c
 fn the_button_bar_feather_button_asks_for_the_radius_and_applies_it_as_one_undo() {
     let mut h = app(1280.0, 800.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     drag_by(&mut h, &[(-60.0, -40.0), (60.0, 40.0)]);
-    let original = st(&h).doc.selection().unwrap().clone();
+    let original = st(&h).doc().selection().unwrap().clone();
     h.get_by_label("境界をぼかす…").click();
     h.run();
-    assert_eq!(st(&h).sel.dialog.map(|d| d.kind), Some(ModifyKind::Feather));
-    h.state_mut().state.sel.dialog.as_mut().unwrap().radius = 7;
+    assert_eq!(
+        st(&h).sel().dialog.map(|d| d.kind),
+        Some(ModifyKind::Feather)
+    );
+    h.sel_mut().dialog.as_mut().unwrap().radius = 7;
     let before = steps(&h);
     h.get_by_label("OK").click();
     h.run();
     assert_eq!(steps(&h), before + 1);
     assert_eq!(
-        st(&h).doc.selection(),
+        st(&h).doc().selection(),
         Some(
             &original
                 .feather(7.0, false, DEFAULT_WORKING_BUDGET_BYTES)
@@ -1244,14 +1244,14 @@ fn the_button_bar_feather_button_asks_for_the_radius_and_applies_it_as_one_undo(
         )
     );
     undo(&mut h);
-    assert_eq!(st(&h).doc.selection(), Some(&original));
+    assert_eq!(st(&h).doc().selection(), Some(&original));
 }
 
 #[test]
 fn headless_feather_over_the_working_budget_is_refused_and_changes_nothing() {
     let mut s = AppState::new(8192, 8192);
     run(&mut s, SelEdit::All);
-    let before = s.doc.undo_count();
+    let before = s.doc().undo_count();
     run(
         &mut s,
         SelEdit::Modify {
@@ -1260,18 +1260,16 @@ fn headless_feather_over_the_working_budget_is_refused_and_changes_nothing() {
             edge_lock: false,
         },
     );
-    assert_eq!(s.doc.undo_count(), before, "断られたら段を積まない");
-    assert!(!s.message.is_empty());
-    assert_eq!(s.doc.selection(), Some(&SelectionMask::all(&s.doc)));
+    assert_eq!(s.doc().undo_count(), before, "断られたら段を積まない");
+    assert!(!s.message().is_empty());
+    assert_eq!(s.doc().selection(), Some(&SelectionMask::all(s.doc())));
 }
 
 #[test]
 fn the_english_select_menu_has_feather_quick_mask_and_saved_selections() {
     let mut h = app(1000.0, 640.0, 256);
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
-    run(&mut h.state_mut().state, SelEdit::All);
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
+    run(h.app_mut(), SelEdit::All);
     h.run();
     let title = menu_title(&h, "Select").center();
     click(&mut h, title);
@@ -1288,7 +1286,7 @@ fn the_english_select_menu_has_feather_quick_mask_and_saved_selections() {
 // ───────── 保存と読み込み ─────────
 
 fn save(s: &mut AppState, name: &str) {
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Save(name.into()))));
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Save(name.into()))));
 }
 
 fn recall(s: &mut AppState, index: usize, mode: SelectionCombine) {
@@ -1304,33 +1302,33 @@ fn headless_saved_selections_recall_with_all_four_modes_each_as_one_undo() {
     assert_eq!(s.saved_selections()[0].name, "A");
     // 別の選択範囲を作って、4 つの作成方法で呼び出す
     run(&mut s, rect(SelectionCombine::Replace, 40, 40, 110, 110));
-    let current = s.doc.selection().unwrap().clone();
-    let saved = SelectionMask::rectangle(&s.doc, 10, 10, 70, 70);
+    let current = s.doc().selection().unwrap().clone();
+    let saved = SelectionMask::rectangle(s.doc(), 10, 10, 70, 70);
     for mode in [
         SelectionCombine::Replace,
         SelectionCombine::Add,
         SelectionCombine::Subtract,
         SelectionCombine::Intersect,
     ] {
-        let steps = s.doc.undo_count();
+        let steps = s.doc().undo_count();
         recall(&mut s, 0, mode);
-        assert_eq!(s.doc.undo_count(), steps + 1, "{mode:?}");
+        assert_eq!(s.doc().undo_count(), steps + 1, "{mode:?}");
         let want = match mode {
             SelectionCombine::Replace => saved.clone(),
             m => current.combine(&saved, m).unwrap(),
         };
-        assert_eq!(s.doc.selection(), Some(&want), "{mode:?}");
-        s.apply(Action::Undo);
-        assert_eq!(s.doc.selection(), Some(&current), "{mode:?} の Undo");
+        assert_eq!(s.doc().selection(), Some(&want), "{mode:?}");
+        s.act(Action::Undo);
+        assert_eq!(s.doc().selection(), Some(&current), "{mode:?} の Undo");
     }
     // 選択範囲が無い状態へ「削除」で呼ぶと、何も選ばれないまま（段も積まない）
-    s.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
-    let steps = s.doc.undo_count();
+    s.act(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+    let steps = s.doc().undo_count();
     recall(&mut s, 0, SelectionCombine::Subtract);
-    assert_eq!(s.doc.undo_count(), steps);
+    assert_eq!(s.doc().undo_count(), steps);
     // 新規なら呼び出せる
     recall(&mut s, 0, SelectionCombine::Replace);
-    assert_eq!(s.doc.selection(), Some(&saved));
+    assert_eq!(s.doc().selection(), Some(&saved));
 }
 
 #[test]
@@ -1341,7 +1339,7 @@ fn headless_saving_needs_a_selection_replaces_a_same_name_and_has_a_limit() {
         s.saved_selections().is_empty(),
         "選択範囲が無ければ覚えない"
     );
-    assert!(!s.message.is_empty());
+    assert!(!s.message().is_empty());
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 20, 20));
     save(&mut s, "  A  ");
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 40, 40));
@@ -1349,10 +1347,10 @@ fn headless_saving_needs_a_selection_replaces_a_same_name_and_has_a_limit() {
     assert_eq!(s.saved_selections().len(), 1, "同じ名前は入れ替える");
     assert_eq!(s.saved_selections()[0].mask.amount(30, 30), 255);
     // 取り消すと、入れ替える前の選択範囲へ戻る（残すのは 1 回の Undo）
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(s.saved_selections()[0].mask.amount(30, 30), 0);
     assert_eq!(s.saved_selections()[0].mask.amount(10, 10), 255);
-    s.apply(Action::Redo);
+    s.act(Action::Redo);
     assert_eq!(s.saved_selections()[0].mask.amount(30, 30), 255);
     // 名前が空なら既定の名前（選択範囲 N）
     save(&mut s, "   ");
@@ -1364,10 +1362,10 @@ fn headless_saving_needs_a_selection_replaces_a_same_name_and_has_a_limit() {
     }
     assert_eq!(s.saved_selections().len(), MAX_SAVED);
     // 消す
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     assert_eq!(s.saved_selections().len(), MAX_SAVED - 1);
     assert_ne!(s.saved_selections()[0].name, "A");
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(999))));
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Delete(999))));
     assert_eq!(
         s.saved_selections().len(),
         MAX_SAVED - 1,
@@ -1380,7 +1378,7 @@ fn headless_a_saved_selection_follows_a_resize_of_the_document_and_the_undo_of_i
     let mut s = AppState::new(64, 64);
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 32, 32));
     save(&mut s, "A");
-    s.doc
+    s.doc_mut()
         .resize_image(32, 32, yolu_app::engine::CanvasResampling::Nearest)
         .unwrap();
     let saved = s.saved_selections()[0].clone();
@@ -1390,22 +1388,22 @@ fn headless_a_saved_selection_follows_a_resize_of_the_document_and_the_undo_of_i
         "文書の大きさに合わせて作り直す"
     );
     // 呼び出せる（大きさが合う）
-    s.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
+    s.act(Action::Sel(SelAction::Edit(SelEdit::Clear)));
     recall(&mut s, 0, SelectionCombine::Replace);
-    assert_eq!(bounds(s.doc.selection().unwrap()), Some((0, 0, 16, 16)));
+    assert_eq!(bounds(s.doc().selection().unwrap()), Some((0, 0, 16, 16)));
     // 大きさの変更を取り消すと、元の大きさの選択範囲へ戻る
-    s.doc.undo().unwrap();
-    s.doc.undo().unwrap();
-    s.doc.undo().unwrap();
+    s.doc_mut().undo().unwrap();
+    s.doc_mut().undo().unwrap();
+    s.doc_mut().undo().unwrap();
     assert_eq!(
-        (s.doc.width(), s.saved_selections()[0].mask.width()),
+        (s.doc().width(), s.saved_selections()[0].mask.width()),
         (64, 64)
     );
     // 範囲外の番号は断る
-    let steps = s.doc.undo_count();
+    let steps = s.doc().undo_count();
     recall(&mut s, 5, SelectionCombine::Replace);
-    assert_eq!(s.doc.undo_count(), steps);
-    assert!(!s.message.is_empty(), "無い番号は断る");
+    assert_eq!(s.doc().undo_count(), steps);
+    assert!(!s.message().is_empty(), "無い番号は断る");
 }
 
 fn saved_names(s: &AppState) -> Vec<&str> {
@@ -1419,31 +1417,31 @@ fn saved_names(s: &AppState) -> Vec<&str> {
 fn headless_saved_selections_belong_to_the_texture_set_and_each_save_is_one_undo_step_of_it() {
     let mut s = AppState::new(64, 64);
     run(&mut s, SelEdit::All);
-    let steps = s.doc.undo_count();
-    let revision = s.doc.revision();
-    s.modified = false;
+    let steps = s.doc().undo_count();
+    let revision = s.doc().revision();
+    s.set_modified(false);
     save(&mut s, "A");
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         steps + 1,
         "覚えるのは文書の 1 回の取り消し"
     );
-    assert!(s.doc.revision() > revision);
-    assert!(s.modified, "保存が要る変更として数える");
+    assert!(s.doc().revision() > revision);
+    assert!(s.modified(), "保存が要る変更として数える");
     // 描いている間は覚えない
-    s.canvas.stroke = Some(StrokeSource::Mouse);
+    s.canvas_mut().stroke = Some(StrokeSource::Mouse);
     save(&mut s, "B");
-    s.canvas.stroke = None;
+    s.canvas_mut().stroke = None;
     assert_eq!(saved_names(&s), ["A"]);
     // 別のセットの一覧には出ない。そこで覚えたものは元のセットには出ず、戻ると見える
-    let first = s.sets.current().uid;
+    let first = s.sets().current().uid;
     s.add_texture_set().unwrap();
-    assert_ne!(s.sets.current().uid, first);
+    assert_ne!(s.sets().current().uid, first);
     assert!(
         s.saved_selections().is_empty(),
         "2 つ目のセットには何も無い"
     );
-    assert_eq!(s.doc.undo_count(), 0, "取り消しの履歴もセットごと");
+    assert_eq!(s.doc().undo_count(), 0, "取り消しの履歴もセットごと");
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 16, 16));
     save(&mut s, "B");
     assert_eq!(saved_names(&s), ["B"]);
@@ -1454,11 +1452,11 @@ fn headless_saved_selections_belong_to_the_texture_set_and_each_save_is_one_undo
     // 呼び出しは今のセットの札（番号 0 は、1 つ目のセットでは A・2 つ目では B）
     run(&mut s, SelEdit::Clear);
     recall(&mut s, 0, SelectionCombine::Replace);
-    assert_eq!(bounds(s.doc.selection().unwrap()), Some((0, 0, 16, 16)));
+    assert_eq!(bounds(s.doc().selection().unwrap()), Some((0, 0, 16, 16)));
     s.switch_set(0).unwrap();
     run(&mut s, SelEdit::Clear);
     recall(&mut s, 0, SelectionCombine::Replace);
-    assert_eq!(bounds(s.doc.selection().unwrap()), Some((0, 0, 64, 64)));
+    assert_eq!(bounds(s.doc().selection().unwrap()), Some((0, 0, 64, 64)));
 }
 
 #[test]
@@ -1466,91 +1464,91 @@ fn headless_saved_selections_go_with_their_set_and_are_not_carried_to_another_pr
     let mut s = AppState::new(64, 64);
     run(&mut s, SelEdit::All);
     save(&mut s, "A");
-    let first = s.sets.current().uid;
+    let first = s.sets().current().uid;
     s.add_texture_set().unwrap();
-    let second = s.sets.current().uid;
+    let second = s.sets().current().uid;
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 16, 16));
     save(&mut s, "B");
     // 今のセットを消すと、そのセットの覚えた選択範囲も消える（今のセットは並びの前のセットに替わる）
     s.remove_sets(&[second]).unwrap();
-    assert_eq!(s.sets.current().uid, first);
+    assert_eq!(s.sets().current().uid, first);
     assert_eq!(saved_names(&s), ["A"], "残ったセットのものは残る");
     // 今でないセットを消しても同じ
     s.add_texture_set().unwrap();
-    let third = s.sets.current().uid;
+    let third = s.sets().current().uid;
     save(&mut s, "C");
     s.switch_set(0).unwrap();
     s.remove_sets(&[third]).unwrap();
     assert_eq!(saved_names(&s), ["A"]);
     // 別のプロジェクトを開く（セットの並びを丸ごと置き換える）と、前のセットのものは持ち越さない（文書が新しい）
     let doc = Document::new(64, 64).unwrap();
-    let sets = TextureSets::first_in(&doc, s.lang);
+    let sets = TextureSets::first_in(&doc, s.lang());
     s.replace_sets(sets, doc);
     assert!(s.saved_selections().is_empty(), "新しい文書は何も持たない");
     // 消して空になっても、段は取り消せる
     run(&mut s, SelEdit::All);
     save(&mut s, "D");
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     assert!(s.saved_selections().is_empty());
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(saved_names(&s), ["D"]);
 }
 
 #[test]
 fn headless_renaming_deleting_and_saving_each_undo_and_redo_and_refuse_what_they_must() {
     let mut s = AppState::new(64, 64);
-    s.lang = Lang::Ja;
+    s.set_lang(Lang::Ja);
     run(&mut s, rect(SelectionCombine::Replace, 0, 0, 20, 20));
     save(&mut s, "A");
     run(&mut s, rect(SelectionCombine::Replace, 30, 30, 50, 50));
     save(&mut s, "B");
     let rename = |s: &mut AppState, index: usize, name: &str| {
-        s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+        s.act(Action::Sel(SelAction::Saved(SavedOp::Rename {
             index,
             name: name.into(),
         })));
     };
     // 名前を変える: 1 回の取り消し（前後の空白は除く）
-    let steps = s.doc.undo_count();
-    s.modified = false;
+    let steps = s.doc().undo_count();
+    s.set_modified(false);
     rename(&mut s, 0, "  前髪 ");
     assert_eq!(saved_names(&s), ["前髪", "B"]);
-    assert_eq!(s.doc.undo_count(), steps + 1);
-    assert!(s.modified);
-    s.apply(Action::Undo);
+    assert_eq!(s.doc().undo_count(), steps + 1);
+    assert!(s.modified());
+    s.act(Action::Undo);
     assert_eq!(saved_names(&s), ["A", "B"]);
-    s.apply(Action::Redo);
+    s.act(Action::Redo);
     assert_eq!(saved_names(&s), ["前髪", "B"]);
     // 同じ名前・今と同じ名前・範囲外・長すぎる名前・空の名前は断り、段を積まない（理由を言う）
-    let steps = s.doc.undo_count();
+    let steps = s.doc().undo_count();
     rename(&mut s, 0, "B");
-    assert_eq!(s.message, "同じ名前の選択範囲があります。");
+    assert_eq!(s.message(), "同じ名前の選択範囲があります。");
     rename(&mut s, 0, "前髪");
     rename(&mut s, 9, "x");
     rename(&mut s, 0, &"あ".repeat(yolu_core::MAX_SAVED_NAME_CHARS + 1));
-    assert!(s.message.contains("長すぎ"), "{}", s.message);
+    assert!(s.message().contains("長すぎ"), "{}", s.message());
     rename(&mut s, 0, "   ");
-    assert!(!s.message.is_empty());
-    assert_eq!(s.doc.undo_count(), steps);
+    assert!(!s.message().is_empty());
+    assert_eq!(s.doc().undo_count(), steps);
     assert_eq!(saved_names(&s), ["前髪", "B"]);
-    s.lang = Lang::En;
+    s.set_lang(Lang::En);
     rename(&mut s, 0, "B");
-    assert_eq!(s.message, "A saved selection with that name exists.");
+    assert_eq!(s.message(), "A saved selection with that name exists.");
     rename(&mut s, 0, &"x".repeat(yolu_core::MAX_SAVED_NAME_CHARS + 1));
-    assert!(s.message.contains("too long"), "{}", s.message);
+    assert!(s.message().contains("too long"), "{}", s.message());
     // 描いている間は変えない
-    s.canvas.stroke = Some(StrokeSource::Mouse);
+    s.canvas_mut().stroke = Some(StrokeSource::Mouse);
     rename(&mut s, 0, "z");
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
-    s.canvas.stroke = None;
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
+    s.canvas_mut().stroke = None;
     assert_eq!(saved_names(&s), ["前髪", "B"]);
     // 消す: 取り消せる。呼び戻しは文書の今のものを見る
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(1))));
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Delete(1))));
     assert_eq!(saved_names(&s), ["前髪"]);
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(saved_names(&s), ["前髪", "B"]);
     recall(&mut s, 1, SelectionCombine::Replace);
-    assert_eq!(bounds(s.doc.selection().unwrap()), Some((30, 30, 50, 50)));
+    assert_eq!(bounds(s.doc().selection().unwrap()), Some((30, 30, 50, 50)));
 }
 
 #[test]
@@ -1558,47 +1556,47 @@ fn headless_a_read_only_set_refuses_to_change_the_saved_selections() {
     let mut s = AppState::new(64, 64);
     run(&mut s, SelEdit::All);
     save(&mut s, "A");
-    let uid = s.sets.current().uid;
-    let index = s.sets.index_of(uid).unwrap();
-    s.sets.get_mut(index).unwrap().read_only = Some("試験".into());
-    let steps = s.doc.undo_count();
+    let uid = s.sets().current().uid;
+    let index = s.sets().index_of(uid).unwrap();
+    s.sets_mut().get_mut(index).unwrap().read_only = Some("試験".into());
+    let steps = s.doc().undo_count();
     save(&mut s, "B");
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Rename {
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Rename {
         index: 0,
         name: "z".into(),
     })));
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
+    s.act(Action::Sel(SelAction::Saved(SavedOp::Delete(0))));
     assert_eq!(saved_names(&s), ["A"]);
-    assert_eq!(s.doc.undo_count(), steps);
+    assert_eq!(s.doc().undo_count(), steps);
     // ウィンドウを開く・閉じるは、読むだけのセットでもできる
-    s.apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
-    assert!(s.sel.saved_window.is_some());
+    s.act(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
+    assert!(s.sel().saved_window.is_some());
 }
 
 #[test]
 fn headless_saved_selections_past_the_budget_are_refused_across_all_sets_and_change_nothing() {
     let mut s = AppState::new(64, 64);
-    s.lang = Lang::Ja;
+    s.set_lang(Lang::Ja);
     run(&mut s, SelEdit::All);
-    let one = s.doc.selection().unwrap().allocated_bytes();
+    let one = s.doc().selection().unwrap().allocated_bytes();
     // 札 1 枚と半分の予算
-    s.sel.saved_budget = one + one / 2;
+    s.sel_mut().saved_budget = one + one / 2;
     save(&mut s, "A");
     assert_eq!(saved_names(&s), ["A"]);
     save(&mut s, "B");
     assert_eq!(saved_names(&s), ["A"], "2 枚目は断る（一覧が変わらない）");
-    assert_eq!(s.message, "覚えた選択範囲が大きすぎます。");
+    assert_eq!(s.message(), "覚えた選択範囲が大きすぎます。");
     // 同じ名前の入れ替えは、置き換わる分を数えないので通る
     save(&mut s, "A");
-    assert_eq!(s.message, "選択範囲を覚えました: A");
+    assert_eq!(s.message(), "選択範囲を覚えました: A");
     // 合計はプロジェクト全体: 別のセットでも、ほかのセットの分を引いた残りで見る
     s.add_texture_set().unwrap();
     run(&mut s, SelEdit::All);
     save(&mut s, "C");
     assert!(s.saved_selections().is_empty());
-    assert_eq!(s.message, "覚えた選択範囲が大きすぎます。");
+    assert_eq!(s.message(), "覚えた選択範囲が大きすぎます。");
     // 予算を戻せば通る
-    s.sel.saved_budget = SAVED_BUDGET_BYTES;
+    s.sel_mut().saved_budget = SAVED_BUDGET_BYTES;
     save(&mut s, "C");
     assert_eq!(saved_names(&s), ["C"]);
 }
@@ -1607,21 +1605,15 @@ fn headless_saved_selections_past_the_budget_are_refused_across_all_sets_and_cha
 fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     let mut h = app(1280.0, 800.0, 256);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     drag_by(&mut h, &[(-80.0, -50.0), (-10.0, 50.0)]);
     let title = menu_title(&h, "選択範囲").center();
     click(&mut h, title);
     let item = popup_item(&h, "覚えた選択範囲…").center();
     click(&mut h, item);
-    assert!(st(&h).sel.saved_window.is_some());
+    assert!(st(&h).sel().saved_window.is_some());
     // ウィンドウはキャンバスの真ん中を覆うので、下へ寄せる
-    h.state_mut()
-        .state
-        .sel
-        .saved_window
-        .as_mut()
-        .unwrap()
-        .offset = egui::vec2(0.0, 330.0);
+    h.sel_mut().saved_window.as_mut().unwrap().offset = egui::vec2(0.0, 330.0);
     h.run();
     h.get_by_label("覚える").click();
     h.run();
@@ -1648,7 +1640,7 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     let before = steps(&h);
     h.get_by_label("名前を変える: 選択範囲 2").click();
     h.run();
-    assert_eq!(st(&h).sel.saved_window.as_ref().unwrap().rename, Some(0));
+    assert_eq!(st(&h).sel().saved_window.as_ref().unwrap().rename, Some(0));
     key(&h, Key::A, Modifiers::COMMAND);
     h.step();
     h.event(Event::Text("前髪".to_owned()));
@@ -1659,7 +1651,7 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     assert_eq!(st(&h).saved_selections()[0].name, "前髪");
     assert_eq!(steps(&h), before + 1);
     assert_eq!(
-        st(&h).sel.saved_window.as_ref().unwrap().rename,
+        st(&h).sel().saved_window.as_ref().unwrap().rename,
         None,
         "決めたら元の表示へ"
     );
@@ -1674,11 +1666,11 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     h.run();
     h.run();
     assert!(
-        st(&h).sel.saved_window.is_some(),
+        st(&h).sel().saved_window.is_some(),
         "名前の欄の Esc では、ウィンドウは閉じない"
     );
     assert_eq!(
-        st(&h).sel.saved_window.as_ref().unwrap().rename,
+        st(&h).sel().saved_window.as_ref().unwrap().rename,
         None,
         "欄はやめて元の表示へ"
     );
@@ -1687,23 +1679,21 @@ fn the_saved_selections_window_saves_lists_recalls_and_removes() {
     // 閉じる
     h.get_by_label("閉じる").click();
     h.run();
-    assert!(st(&h).sel.saved_window.is_none());
+    assert!(st(&h).sel().saved_window.is_none());
 }
 
 #[test]
 fn the_saved_selections_window_draws_in_both_languages_and_keeps_names_short() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
-        h.state_mut().state.sel.animate = false;
+        h.set_lang(lang);
+        h.sel_mut().animate = false;
         run(
-            &mut h.state_mut().state,
+            h.app_mut(),
             rect(SelectionCombine::Replace, 20, 20, 100, 100),
         );
-        save(&mut h.state_mut().state, "Alpha");
-        h.state_mut()
-            .state
-            .apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
+        save(h.app_mut(), "Alpha");
+        h.act(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
         h.run();
         // 何をするかはボタンのツールチップに出る（画面に説明の文は置かない）
         let remember = h
@@ -1730,14 +1720,14 @@ fn the_saved_selections_window_draws_in_both_languages_and_keeps_names_short() {
 fn quick_mask_shows_the_selection_in_red_and_the_brush_and_eraser_edit_it_as_one_undo_each() {
     let mut h = app(1000.0, 640.0, 512);
     pick_tool(&mut h, Tool::SelectRect);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     drag_by(&mut h, &[(-100.0, -70.0), (30.0, 60.0)]);
-    let base = st(&h).doc.selection().unwrap().clone();
+    let base = st(&h).doc().selection().unwrap().clone();
     // Shift+Q で入る
     key(&h, Key::Q, Modifiers::SHIFT);
     h.run();
-    assert!(st(&h).sel.quick);
-    assert!(st(&h).sel.quick_overlay.texture_count() > 0, "赤い重ね");
+    assert!(st(&h).sel().quick);
+    assert!(st(&h).sel().quick_overlay.texture_count() > 0, "赤い重ね");
     assert_eq!(steps(&h), 1, "入るだけでは段を積まない");
     // ブラシで描き足す（画素は描かない）
     pick_tool(&mut h, Tool::Brush);
@@ -1756,7 +1746,7 @@ fn quick_mask_shows_the_selection_in_red_and_the_brush_and_eraser_edit_it_as_one
         layer_before,
         "クイックマスクではレイヤーに描かない"
     );
-    assert!(st(&h).canvas.stroke.is_none() && st(&h).sel.pen.is_none());
+    assert!(st(&h).canvas().stroke.is_none() && st(&h).sel().pen.is_none());
     // 消しゴムで直す
     pick_tool(&mut h, Tool::Eraser);
     drag_by(&mut h, &[(-90.0, 0.0), (-30.0, 0.0)]);
@@ -1768,15 +1758,15 @@ fn quick_mask_shows_the_selection_in_red_and_the_brush_and_eraser_edit_it_as_one
     assert_eq!(amount_at(&h, at(&h, -60.0, 0.0)), 255);
     undo(&mut h);
     assert_eq!(amount_at(&h, at(&h, 100.0, 0.0)), 0);
-    assert_eq!(st(&h).doc.selection(), Some(&base));
-    assert!(st(&h).sel.quick, "取り消してもクイックマスクのまま");
+    assert_eq!(st(&h).doc().selection(), Some(&base));
+    assert!(st(&h).sel().quick, "取り消してもクイックマスクのまま");
     // もう一度 Shift+Q で戻る: 選択範囲は残り、ブラシはふつうに描く
     key(&h, Key::Q, Modifiers::SHIFT);
     h.run();
-    assert!(!st(&h).sel.quick);
-    assert_eq!(st(&h).doc.selection(), Some(&base));
+    assert!(!st(&h).sel().quick);
+    assert_eq!(st(&h).doc().selection(), Some(&base));
     assert_eq!(
-        st(&h).sel.quick_overlay.texture_count(),
+        st(&h).sel().quick_overlay.texture_count(),
         0,
         "重ねの絵は捨てる"
     );
@@ -1791,15 +1781,13 @@ fn quick_mask_shows_the_selection_in_red_and_the_brush_and_eraser_edit_it_as_one
 #[test]
 fn quick_mask_with_no_selection_starts_empty_and_a_soft_brush_makes_partial_amounts() {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    h.sel_mut().animate = false;
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 80.0, 0.0, 0.6);
     click_by(&mut h, 0.0, 0.0);
     let m = st(&h)
-        .doc
+        .doc()
         .selection()
         .expect("描いた所が選択範囲になる")
         .clone();
@@ -1813,24 +1801,22 @@ fn quick_mask_with_no_selection_starts_empty_and_a_soft_brush_makes_partial_amou
     pick_tool(&mut h, Tool::Eraser);
     set_brush(&mut h, 200.0, 1.0, 1.0);
     click_by(&mut h, 0.0, 0.0);
-    assert!(st(&h).doc.selection().is_none());
+    assert!(st(&h).doc().selection().is_none());
 }
 
 #[test]
 fn quick_mask_follows_the_pen_pressure_and_the_pen_eraser_end() {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    h.sel_mut().animate = false;
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 60.0, 1.0, 1.0);
-    h.state_mut().state.brush.pressure.size = true;
+    h.brush_mut().pressure.size = true;
     let line: Vec<Pos2> = (0..=8)
         .map(|i| at(&h, -100.0 + 25.0 * i as f32, 0.0))
         .collect();
     let height_of = |h: &H| -> i32 {
-        let (_, y0, _, y1) = bounds(st(h).doc.selection().unwrap()).unwrap();
+        let (_, y0, _, y1) = bounds(st(h).doc().selection().unwrap()).unwrap();
         (y1 - y0) as i32
     };
     pen_stroke(&mut h, &line, 1.0, false);
@@ -1841,7 +1827,7 @@ fn quick_mask_follows_the_pen_pressure_and_the_pen_eraser_end() {
     assert!((full - 2 * height_of(&h)).abs() <= 4, "筆圧で直径が変わる");
     undo(&mut h);
     // ペンの消しゴムの端: 選択範囲を消す
-    run(&mut h.state_mut().state, SelEdit::All);
+    run(h.app_mut(), SelEdit::All);
     h.run();
     pen_stroke(&mut h, &line, 1.0, true);
     assert_eq!(amount_at(&h, at(&h, 0.0, 0.0)), 0, "なぞった所は外れる");
@@ -1856,10 +1842,8 @@ fn quick_mask_follows_the_pen_pressure_and_the_pen_eraser_end() {
 #[test]
 fn quick_mask_strokes_are_cancelled_by_escape_and_committed_by_focus_loss() {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    h.sel_mut().animate = false;
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 30.0, 1.0, 1.0);
     let start = at(&h, -50.0, 0.0);
@@ -1874,13 +1858,13 @@ fn quick_mask_strokes_are_cancelled_by_escape_and_committed_by_focus_loss() {
     move_to(&h, at(&h, 50.0, 0.0));
     h.step();
     assert!(st(&h).is_stroking());
-    assert!(st(&h).doc.selection().is_none(), "途中は文書を変えない");
+    assert!(st(&h).doc().selection().is_none(), "途中は文書を変えない");
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
     h.run();
     assert!(!st(&h).is_stroking());
     assert!(
-        st(&h).doc.selection().is_none() && steps(&h) == 0,
+        st(&h).doc().selection().is_none() && steps(&h) == 0,
         "Esc で捨てる"
     );
     // フォーカスを失うと、そこまでを確定する（描くストロークと同じ）
@@ -1905,28 +1889,28 @@ fn quick_mask_strokes_are_cancelled_by_escape_and_committed_by_focus_loss() {
 #[test]
 fn quick_mask_is_off_when_the_document_changes_and_refused_while_drawing() {
     let mut s = AppState::new(64, 64);
-    s.apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
-    assert!(s.sel.quick);
+    s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    assert!(s.sel().quick);
     s.sel_doc_changed();
-    assert!(!s.sel.quick);
-    s.canvas.stroke = Some(StrokeSource::Mouse);
-    s.apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))));
-    assert!(!s.sel.quick, "描いている間は入らない");
-    s.canvas.stroke = None;
-    s.apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))));
-    assert!(s.sel.quick);
-    s.apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))));
-    assert!(!s.sel.quick, "切り替え");
+    assert!(!s.sel().quick);
+    s.canvas_mut().stroke = Some(StrokeSource::Mouse);
+    s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))));
+    assert!(!s.sel().quick, "描いている間は入らない");
+    s.canvas_mut().stroke = None;
+    s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))));
+    assert!(s.sel().quick);
+    s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))));
+    assert!(!s.sel().quick, "切り替え");
     // どちらの言語でも名前が出る
     for lang in Lang::ALL {
-        s.lang = lang;
-        s.apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+        s.set_lang(lang);
+        s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
         assert!(
-            has_japanese(&s.message) == (lang == Lang::Ja),
+            has_japanese(s.message()) == (lang == Lang::Ja),
             "{}",
-            s.message
+            s.message()
         );
-        s.apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
+        s.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
     }
 }
 
@@ -1940,7 +1924,7 @@ fn the_quick_mask_menu_item_is_checked_while_on_and_toggles() {
     assert_eq!(h.query_all_by_label("クイックマスク（Shift+Q）").count(), 0);
     // メニューの項目の印（入っているあいだ Checked）
     let mark = |h: &H| {
-        yolu_app::selection::menu::select_menu(&h.state().state)
+        yolu_app::selection::menu::select_menu(h.app())
             .into_iter()
             .find_map(|e| match e {
                 Entry::Item {
@@ -1956,11 +1940,11 @@ fn the_quick_mask_menu_item_is_checked_while_on_and_toggles() {
         let item = popup_item(h, label).center();
         click(h, item);
     };
-    assert!(!st(&h).sel.quick && !mark(&h));
+    assert!(!st(&h).sel().quick && !mark(&h));
     toggle(&mut h);
-    assert!(st(&h).sel.quick && mark(&h), "入っているあいだ印が付く");
+    assert!(st(&h).sel().quick && mark(&h), "入っているあいだ印が付く");
     toggle(&mut h);
-    assert!(!st(&h).sel.quick && !mark(&h));
+    assert!(!st(&h).sel().quick && !mark(&h));
 }
 
 // ───────── ツールの帯とキー・スナップショット ─────────
@@ -1970,11 +1954,11 @@ fn the_selection_pen_is_the_last_selection_tool_in_the_strip_with_its_own_key() 
     let mut h = app(1000.0, 640.0, 256);
     h.get_by_label("選択ペン（S）").click();
     h.run();
-    assert_eq!(st(&h).tool, Tool::SelectPen);
+    assert_eq!(st(&h).tool(), Tool::SelectPen);
     pick_tool(&mut h, Tool::Brush);
     key(&h, Key::S, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).tool, Tool::SelectPen);
+    assert_eq!(st(&h).tool(), Tool::SelectPen);
     assert!(Tool::SelectPen.is_select());
     let all = Tool::ALL;
     let at = all.iter().position(|t| *t == Tool::SelectPen).unwrap();
@@ -1990,13 +1974,13 @@ fn the_selection_pen_is_the_last_selection_tool_in_the_strip_with_its_own_key() 
     key(&h, Key::S, Modifiers::COMMAND);
     h.run();
     pick_tool(&mut h, Tool::Brush);
-    assert_eq!(st(&h).tool, Tool::Brush);
+    assert_eq!(st(&h).tool(), Tool::Brush);
 }
 
 #[test]
 fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_saved_window() {
     let mut h = app(1280.0, 800.0, 512);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     pick_tool(&mut h, Tool::SelectRect);
     drag_by(&mut h, &[(-120.0, -70.0), (60.0, 50.0)]);
     // 作成方法の組（Shift を押している間は追加が点き、選んでいる新規は枠だけ）
@@ -2032,21 +2016,15 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
     release(&h, at(&h, 80.0, -140.0), PointerButton::Primary);
     h.run();
     // クイックマスクの赤い重ね
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     h.run();
     let rect = canvas_rect(&h);
     common::shot::region(&mut h, "selection_build_quick_mask", rect);
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
     // 覚えた選択範囲のウィンドウ
-    save(&mut h.state_mut().state, "選択範囲 1");
-    save(&mut h.state_mut().state, "顔まわり");
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
+    save(h.app_mut(), "選択範囲 1");
+    save(h.app_mut(), "顔まわり");
+    h.act(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
     h.run();
     let rect = yolu_app::selection::saved::last_rect(&h.ctx).expect("ウィンドウを描いている");
     common::shot::region(&mut h, "selection_build_saved_window", crate::outward(rect));
@@ -2077,30 +2055,28 @@ fn let_go(h: &mut H, at: Pos2) {
 }
 
 fn quick_on(h: &mut H) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     h.run();
 }
 
 /// ストロークが何も残していない（選択範囲・段・描くストローク・ペンの印）。
 fn assert_nothing_left(h: &H, what: &str) {
     let s = st(h);
-    assert!(s.doc.selection().is_none(), "{what}: 選択範囲にならない");
+    assert!(s.doc().selection().is_none(), "{what}: 選択範囲にならない");
     assert_eq!(steps(h), 0, "{what}: 段を積まない");
     assert!(!s.is_stroking(), "{what}: 描いている状態が戻る");
     assert!(
-        s.sel.pen.is_none() && s.sel.drag.is_none() && s.sel.pen_down.is_none(),
+        s.sel().pen.is_none() && s.sel().drag.is_none() && s.sel().pen_down.is_none(),
         "{what}: ペンの印が残らない"
     );
-    assert!(!s.doc.has_active_stroke(), "{what}");
+    assert!(!s.doc().has_active_stroke(), "{what}");
 }
 
 /// 予算を 1 タイルにして、タイルをまたぐ線をなぞる。断ったあと離しても何も起きず、予算を戻せばまた描ける。
 fn a_stroke_past_the_pen_budget_is_dropped(quick: bool, stylus: bool) {
     let what = format!("quick={quick} stylus={stylus}");
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     if quick {
         quick_on(&mut h);
         pick_tool(&mut h, Tool::Brush);
@@ -2108,8 +2084,8 @@ fn a_stroke_past_the_pen_budget_is_dropped(quick: bool, stylus: bool) {
         pick_tool(&mut h, Tool::SelectPen);
     }
     set_brush(&mut h, 20.0, 1.0, 1.0);
-    let tile = st(&h).doc.tile_size() as f64;
-    h.state_mut().state.sel.pen_budget = (tile as u64).pow(2) * 3;
+    let tile = st(&h).doc().tile_size() as f64;
+    h.sel_mut().pen_budget = (tile as u64).pow(2) * 3;
     let line = [
         at(&h, -100.0, -100.0),
         at(&h, -40.0, -60.0),
@@ -2130,13 +2106,13 @@ fn a_stroke_past_the_pen_budget_is_dropped(quick: bool, stylus: bool) {
     } else {
         hold(&mut h, &line);
     }
-    let lang = st(&h).lang;
+    let lang = st(&h).lang();
     assert!(
-        st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none(),
+        st(&h).sel().pen.is_none() && st(&h).sel().drag.is_none(),
         "{what}: 予算を超えたところで捨てる"
     );
     assert!(!st(&h).is_stroking(), "{what}: 描いている状態が戻る");
-    assert_eq!(st(&h).message, PenError::TooLarge.text(lang), "{what}");
+    assert_eq!(st(&h).message(), PenError::TooLarge.text(lang), "{what}");
     // 断ったあとに離しても何も選択範囲にならない
     let last = *line.last().unwrap();
     if stylus {
@@ -2153,7 +2129,7 @@ fn a_stroke_past_the_pen_budget_is_dropped(quick: bool, stylus: bool) {
         "{what}: レイヤーにも描かない"
     );
     // 予算を戻せば、同じ線がふつうに 1 回の Undo で通る
-    h.state_mut().state.sel.pen_budget = PEN_BUDGET_BYTES;
+    h.sel_mut().pen_budget = PEN_BUDGET_BYTES;
     if stylus {
         pen_stroke(&mut h, &line, 1.0, false);
     } else {
@@ -2186,18 +2162,18 @@ fn a_quick_mask_stylus_stroke_past_the_budget_is_dropped_and_releasing_selects_n
 #[test]
 fn switching_the_tool_during_a_selection_pen_stroke_drops_it_and_releasing_selects_nothing() {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     pick_tool(&mut h, Tool::SelectPen);
     set_brush(&mut h, 30.0, 1.0, 1.0);
     let line = [at(&h, -80.0, 0.0), at(&h, 0.0, 0.0), at(&h, 80.0, 0.0)];
     hold(&mut h, &line);
     assert!(
-        st(&h).sel.pen.is_some() && st(&h).sel.drag.is_some(),
+        st(&h).sel().pen.is_some() && st(&h).sel().drag.is_some(),
         "描いている途中"
     );
     pick_tool(&mut h, Tool::SelectRect);
     assert!(
-        st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none(),
+        st(&h).sel().pen.is_none() && st(&h).sel().drag.is_none(),
         "ツールを替えたら捨てる"
     );
     let_go(&mut h, line[2]);
@@ -2210,19 +2186,19 @@ fn switching_the_tool_during_a_selection_pen_stroke_drops_it_and_releasing_selec
 #[test]
 fn switching_the_texture_set_during_a_selection_pen_stroke_drops_it_in_both_sets() {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
+    h.sel_mut().animate = false;
     pick_tool(&mut h, Tool::SelectPen);
     set_brush(&mut h, 30.0, 1.0, 1.0);
     let line = [at(&h, -80.0, 0.0), at(&h, 0.0, 0.0), at(&h, 80.0, 0.0)];
     hold(&mut h, &line);
-    assert!(st(&h).sel.pen.is_some(), "描いている途中");
+    assert!(st(&h).sel().pen.is_some(), "描いている途中");
     // 選択ペンのストロークは描くストロークではないので、セットは替えられる（途中のストロークは捨てる）
-    h.state_mut().state.add_texture_set().unwrap();
+    h.app_mut().add_texture_set().unwrap();
     h.run();
-    assert!(st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none());
+    assert!(st(&h).sel().pen.is_none() && st(&h).sel().drag.is_none());
     let_go(&mut h, line[2]);
     assert_nothing_left(&h, "2 つ目のセット");
-    h.state_mut().state.switch_set(0).unwrap();
+    h.app_mut().switch_set(0).unwrap();
     h.run();
     assert_nothing_left(&h, "1 つ目のセット");
 }
@@ -2231,31 +2207,31 @@ fn switching_the_texture_set_during_a_selection_pen_stroke_drops_it_in_both_sets
 fn during_a_quick_mask_stroke_the_set_stays_and_the_brush_stays_and_a_select_tool_keeps_the_stroke()
 {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
-    h.state_mut().state.add_texture_set().unwrap();
-    h.state_mut().state.switch_set(0).unwrap();
+    h.sel_mut().animate = false;
+    h.app_mut().add_texture_set().unwrap();
+    h.app_mut().switch_set(0).unwrap();
     h.run();
     quick_on(&mut h);
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 30.0, 1.0, 1.0);
     let line = [at(&h, -80.0, 0.0), at(&h, 0.0, 0.0), at(&h, 80.0, 0.0)];
     hold(&mut h, &line);
-    assert!(st(&h).is_stroking() && st(&h).sel.pen.as_ref().is_some_and(|a| a.quick));
+    assert!(st(&h).is_stroking() && st(&h).sel().pen.as_ref().is_some_and(|a| a.quick));
     // セットは替えられない（描いている間）
-    assert!(h.state_mut().state.switch_set(1).is_err());
-    assert_eq!(st(&h).sets.current_index(), 0);
+    assert!(h.app_mut().switch_set(1).is_err());
+    assert_eq!(st(&h).sets().current_index(), 0);
     // ブラシから消しゴムへも替わらない
-    h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
-    assert_eq!(st(&h).tool, Tool::Brush);
-    assert!(st(&h).sel.pen.is_some(), "ストロークは続く");
+    h.act(Action::SelectTool(Tool::Eraser));
+    assert_eq!(st(&h).tool(), Tool::Brush);
+    assert!(st(&h).sel().pen.is_some(), "ストロークは続く");
     // 選択のツールへは替わるが、始めたストロークは離しで終わる（取り残さない）
     pick_tool(&mut h, Tool::SelectRect);
     assert!(
-        st(&h).sel.pen.is_some(),
+        st(&h).sel().pen.is_some(),
         "クイックマスクのストロークはツールでは捨てない"
     );
     let_go(&mut h, line[2]);
-    assert!(!st(&h).is_stroking() && st(&h).sel.pen.is_none() && st(&h).sel.drag.is_none());
+    assert!(!st(&h).is_stroking() && st(&h).sel().pen.is_none() && st(&h).sel().drag.is_none());
     assert_eq!(steps(&h), 1, "1 ストロークが 1 回の Undo");
     assert_eq!(amount_at(&h, line[1]), 255);
 }
@@ -2263,15 +2239,15 @@ fn during_a_quick_mask_stroke_the_set_stays_and_the_brush_stays_and_a_select_too
 #[test]
 fn the_quick_mask_stroke_shows_no_mirrored_cursors_and_does_not_mirror() {
     let mut h = app(1000.0, 640.0, 512);
-    h.state_mut().state.sel.animate = false;
-    common::rulers::vertical(&mut h.state_mut().state, 256.0);
+    h.sel_mut().animate = false;
+    common::rulers::vertical(h.app_mut(), 256.0);
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 20.0, 1.0, 1.0);
     // ふつうのブラシのストロークは写しを出し、対称を覚えて残す
     assert!(active_symmetry(st(&h)).is_some());
     drag_by(&mut h, &[(-100.0, -80.0), (-60.0, -80.0)]);
     assert!(
-        st(&h).sel.stroke_symmetry.is_some(),
+        st(&h).sel().stroke_symmetry.is_some(),
         "前のストロークの対称が残る"
     );
     assert!(active_symmetry(st(&h)).is_some());
@@ -2293,9 +2269,7 @@ fn the_quick_mask_stroke_shows_no_mirrored_cursors_and_does_not_mirror() {
     assert_eq!(amount_at(&h, at(&h, -80.0, 0.0)), 255);
     assert_eq!(amount_at(&h, at(&h, 80.0, 0.0)), 0, "映さない");
     // 選択ペンのツールも対称を使わない。ブラシに戻れば写しが戻る
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
     pick_tool(&mut h, Tool::SelectPen);
     assert!(active_symmetry(st(&h)).is_none());
     pick_tool(&mut h, Tool::Brush);
