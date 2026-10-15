@@ -514,9 +514,9 @@ fn properties_tabs_and_pen_toggles() {
     let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
     assert!(h.brush().pressure.flow);
-    // 右のプロパティはステンシルのタブから始まる。タブはステンシルとレイヤーの 2 つだけ（ブラシのタブも、マテリアルのタブも、筆先の形のアルファの
+    // 右のプロパティはレイヤーのタブから始まる。タブはレイヤーとステンシルの 2 つだけ（ブラシのタブも、マテリアルのタブも、筆先の形のアルファの
     // タブも無い。マテリアルは別のパネル、筆先の形は詳細のウィンドウの「形状」）
-    assert_eq!(h.ui().property_tab, 0);
+    assert_eq!(h.ui().property_tab, 1);
     assert!(h.query_all_by_label("アルファ").next().is_none());
     assert!(
         h.query_all_by_label("マテリアル").next().is_none(),

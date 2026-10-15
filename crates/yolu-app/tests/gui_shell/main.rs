@@ -43,3 +43,4 @@ mod titlebar;
 mod tool_panels;
 mod update;
 mod widgets;
+mod defaults;

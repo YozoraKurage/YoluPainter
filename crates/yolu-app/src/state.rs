@@ -766,7 +766,7 @@ pub struct UiTemp {
     pub popup_was_open: bool,
     /// 見出しの開閉（キー → 開いているか）。
     pub sections: HashMap<&'static str, bool>,
-    /// プロパティの欄のタブ（ステンシル・レイヤー）の番号。
+    /// プロパティの欄のタブ（`panels::properties::TAB_STENCIL`・`TAB_LAYER`）。初めはレイヤー。画面の並びの順ではなく名前の値（保存しない）。
     pub property_tab: usize,
     /// タブのありか（メインウィンドウ・別ウィンドウ。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
     pub panels: crate::detach::PanelIndex,
@@ -1088,7 +1088,10 @@ impl AppState {
             log_view: Default::default(),
             toast: crate::toast::Toast::default(),
             usage: crate::usage::Usage::default(),
-            ui: UiTemp::default(),
+            ui: UiTemp {
+                property_tab: crate::panels::properties::TAB_LAYER,
+                ..UiTemp::default()
+            },
             canvas: CanvasInput::default(),
             popup: None,
             project_name: lang.pick("名称未設定", "Untitled").into(),
