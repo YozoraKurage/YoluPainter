@@ -184,10 +184,9 @@ fn a_merge_beyond_the_tolerance_is_refused_with_the_same_report() {
 }
 
 /// クリッピングされた下のレイヤーへ、クリッピングされていない上のレイヤーを結合すると、上のレイヤーにクリッピングしていた調整レイヤーは
-/// 下のレイヤーの組の下地（結合しないレイヤー）へ移る。その下地の画素は結合したレイヤーのタイルの外にあっても比べ、許容差 0 なら断る。
-/// クリッピングされた下のレイヤーへ、クリッピングされていない上のレイヤーを結合すると、上のレイヤーにクリッピングしていた調整レイヤーは
 /// 下のレイヤーの組の下地（base）へ移る。base の出す所（channel の画素）は結合したレイヤーの画素の所ではないので、許容差 0 でも
 /// 見た目の変わる結合を断れること。channel は base の画素と調整の効くチャンネル。
+/// 乱数で作った長い操作の列（調整・文字・パスを含む）で見つかった漏れの、機構だけを残した最小の形。
 fn clipping_base_onto_clipped_layer(channel: Channel) {
     let mut d = Document::with_tile_size(64, 64, 16).unwrap();
     let base = d.add_layer("base").unwrap();
