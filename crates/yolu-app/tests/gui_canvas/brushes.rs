@@ -523,18 +523,18 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
 
 #[test]
 fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
-    // （丸が 2 段とも入る高さで）
-    let mut h = app(1600.0, 1100.0, 128);
-    // 既定の直径 32 の丸が今の大きさ
-    let cell = |h: &H, size: u32| {
-        rect_of(h, &format!("{size} px"), |r| {
+    // （丸が 4 段とも入る高さで）
+    let mut h = app(1600.0, 1400.0, 128);
+    // 既定の直径 32 に近い 30 の丸が今の大きさ
+    let cell = |h: &H, size: f32| {
+        rect_of(h, &yolu_app::panels::brushes::size_name(size), |r| {
             r.left() < 400.0 && r.top() > 100.0 && r.width() < 60.0
         })
     };
-    for size in [1u32, 3, 8, 24, 64, 128, 256] {
+    for size in [1.0f32, 3.0, 8.0, 25.0, 60.0, 120.0, 250.0] {
         let at = cell(&h, size).center();
         click(&mut h, at);
-        assert_eq!(st(&h).brush().radius, size as f32 / 2.0, "{size}");
+        assert_eq!(st(&h).brush().radius, size / 2.0, "{size}");
         let near = yolu_app::panels::brushes::SIZES
             [yolu_app::panels::brushes::nearest_size(st(&h).brush().radius * 2.0)];
         assert_eq!(near, size);
@@ -544,16 +544,16 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
     h.run();
     assert_eq!(
         yolu_app::panels::brushes::SIZES[yolu_app::panels::brushes::nearest_size(36.0)],
-        32
+        40.0
     );
     // 大きさを持たないツールでは、パネルは空（丸は出ない）
     h.act(Action::SelectTool(Tool::Fill));
     h.run();
-    assert!(h.query_by_label("32 px").is_none());
+    assert!(h.query_by_label("30 px").is_none());
     // 英語（丸の名前は同じ）
     h.act(Action::SelectTool(Tool::Brush));
     language(&mut h, Lang::En);
-    assert!(h.query_by_label("32 px").is_some());
+    assert!(h.query_by_label("30 px").is_some());
 }
 
 // ───────── ブラシの詳細のウィンドウ ─────────

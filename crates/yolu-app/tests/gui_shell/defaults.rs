@@ -368,3 +368,33 @@ fn a_question_about_running_jobs_only_has_two_buttons_and_enter_does_not_quit() 
     assert!(h.state().is_closing() && !h.psd().is_busy());
     let _ = std::fs::remove_dir_all(dir);
 }
+
+// ───────── ブラシサイズの段 ─────────
+
+#[test]
+fn the_brush_size_panel_has_twenty_eight_circles_with_decimal_names_that_set_the_diameter() {
+    use yolu_app::panels::brushes::{nearest_size, size_name, SIZES};
+    let mut h = common::app(1600.0, 1400.0, 128);
+    h.event(egui::Event::PointerGone);
+    let cell = |h: &egui_kittest::Harness<'_, yolu_app::YoluApp>, size: f32| {
+        common::rect_of(h, &size_name(size), |r| {
+            r.left() < 400.0 && r.top() > 100.0 && r.width() < 60.0
+        })
+    };
+    assert_eq!(SIZES.len(), 28);
+    for size in SIZES {
+        let _ = cell(&h, size);
+    }
+    for (size, radius) in [
+        (1.0f32, 0.5f32),
+        (1.5, 0.75),
+        (2.5, 1.25),
+        (17.0, 8.5),
+        (250.0, 125.0),
+    ] {
+        let at = cell(&h, size).center();
+        common::click(&mut h, at);
+        assert_eq!(h.brush().radius, radius, "{size}");
+        assert_eq!(SIZES[nearest_size(h.brush().radius * 2.0)], size);
+    }
+}

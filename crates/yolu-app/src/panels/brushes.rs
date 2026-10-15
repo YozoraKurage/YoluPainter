@@ -19,8 +19,16 @@ use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, Rows, SliderSpec};
 
-/// 決まった直径（px）。アプリの直径の上限（256）まで。
-pub const SIZES: [u32; 15] = [1, 2, 3, 5, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256];
+/// 決まった直径（px）。直径の下限（1。半径 0.5）から上限（256。`state::MAX_RADIUS` の 2 倍）の内側まで。
+pub const SIZES: [f32; 28] = [
+    1.0, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 17.0, 20.0, 25.0, 30.0,
+    40.0, 50.0, 60.0, 70.0, 80.0, 100.0, 120.0, 150.0, 170.0, 200.0, 250.0,
+];
+
+/// 大きさの名前（整数は「10 px」、小数は「1.5 px」）。
+pub fn size_name(size: f32) -> String {
+    format!("{size} px")
+}
 
 /// グループのタブの 1 段の高さ（入りきらなければ段を足す）。
 pub(super) const TAB_HEIGHT: f32 = 26.0;
@@ -48,7 +56,7 @@ pub fn nearest_size(diameter: f32) -> usize {
         .iter()
         .enumerate()
         .min_by(|(_, a), (_, b)| {
-            let (da, db) = ((d / **a as f32).ln().abs(), (d / **b as f32).ln().abs());
+            let (da, db) = ((d / **a).ln().abs(), (d / **b).ln().abs());
             da.total_cmp(&db)
         })
         .map(|(i, _)| i)
@@ -1057,7 +1065,6 @@ pub(super) fn sizes_height(width: f32) -> f32 {
 
 /// ブラシサイズの格子: 決まった大きさの丸（押すと直径を替える。今の直径に近い丸に印）。欄の幅に入るだけ並べ、入りきらなければ段を足す。
 pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
-    let lang = app.lang;
     let editable = !app.is_stroking();
     let diameter = app.brush.radius * 2.0;
     let near = nearest_size(diameter);
@@ -1077,10 +1084,10 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             ),
             vec2(cell_w, SIZE_ROW),
         );
-        let label = lang.pick(format!("{size} px"), format!("{size} px"));
+        let label = size_name(*size);
         let response = ui.interact(
             cell,
-            ui.make_persistent_id(("brush.size-cell", *size)),
+            ui.make_persistent_id(("brush.size-cell", i)),
             if editable {
                 Sense::click()
             } else {
@@ -1095,7 +1102,7 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             w::rounded(p, cell.shrink2(vec2(0.5, 0.0)), t::CONTROL_HOVER, 3.0);
         }
         // 丸は大きさの対数で 2〜16 点
-        let draw = 2.0 + 14.0 * (*size as f32).log2() / (SIZES[n - 1] as f32).log2();
+        let draw = 2.0 + 14.0 * size.log2() / SIZES[n - 1].log2();
         let center = pos2(cell.center().x, cell.top() + 15.0);
         p.circle_filled(
             center,
@@ -1124,7 +1131,7 @@ pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
             WidgetInfo::selected(WidgetType::SelectableLabel, editable, on, &label)
         });
         if response.clicked() {
-            app.brush.radius = (*size as f32 / 2.0).max(0.5);
+            app.brush.radius = (*size / 2.0).max(0.5);
         }
         let _ = response.on_hover_text(label);
     }
@@ -1136,18 +1143,36 @@ mod tests {
 
     #[test]
     fn the_size_nearest_to_the_diameter_is_marked() {
-        assert_eq!(SIZES[nearest_size(16.0)], 16);
-        assert_eq!(SIZES[nearest_size(1.0)], 1);
-        assert_eq!(SIZES[nearest_size(256.0)], 256);
-        assert_eq!(SIZES[nearest_size(300.0)], 256);
-        assert_eq!(SIZES[nearest_size(0.2)], 1);
-        // 比で近いほう（10 は 8 と 12 の間。12 のほうが比で近い）
-        assert_eq!(SIZES[nearest_size(10.0)], 12);
-        assert_eq!(SIZES[nearest_size(35.0)], 32);
-        assert_eq!(SIZES[nearest_size(45.0)], 48);
+        assert_eq!(SIZES[nearest_size(15.5)], 15.0);
+        assert_eq!(SIZES[nearest_size(16.0)], 17.0);
+        assert_eq!(SIZES[nearest_size(1.0)], 1.0);
+        assert_eq!(SIZES[nearest_size(250.0)], 250.0);
+        assert_eq!(SIZES[nearest_size(256.0)], 250.0);
+        assert_eq!(SIZES[nearest_size(300.0)], 250.0);
+        assert_eq!(SIZES[nearest_size(0.2)], 1.0);
+        // 比で近いほう（8 と 10 の幾何平均は約 8.94）
+        assert_eq!(SIZES[nearest_size(8.9)], 8.0);
+        assert_eq!(SIZES[nearest_size(9.0)], 10.0);
+        assert_eq!(SIZES[nearest_size(34.0)], 30.0);
+        assert_eq!(SIZES[nearest_size(35.0)], 40.0);
+        assert_eq!(SIZES[nearest_size(1.2)], 1.0);
+        assert_eq!(SIZES[nearest_size(1.3)], 1.5);
         for (i, s) in SIZES.iter().enumerate() {
-            assert_eq!(nearest_size(*s as f32), i);
+            assert_eq!(nearest_size(*s), i);
         }
+    }
+
+    #[test]
+    fn the_sizes_rise_inside_the_diameter_limits_and_are_named_by_their_number() {
+        assert_eq!(SIZES.len(), 28);
+        assert!(SIZES.windows(2).all(|w| w[0] < w[1]), "増えていく");
+        // 直径の下限は半径 0.5（直径 1）、上限は `MAX_RADIUS` の直径（256）。下限より小さい 0.7 や上限を超える 300 は入れない
+        assert_eq!(SIZES[0], 1.0);
+        assert!(SIZES[SIZES.len() - 1] <= crate::state::MAX_RADIUS * 2.0);
+        assert!(!SIZES.contains(&0.7) && !SIZES.iter().any(|s| *s >= 300.0));
+        assert_eq!(size_name(1.5), "1.5 px");
+        assert_eq!(size_name(10.0), "10 px");
+        assert_eq!(size_name(250.0), "250 px");
     }
 
     #[test]

@@ -721,12 +721,12 @@ fn the_brush_size_panel_is_empty_for_tools_without_a_size() {
         // （丸が 2 段とも入る高さで）
         let mut h = app(1280.0, 1100.0, 128);
         pick(&mut h, tool);
-        // どのツールでもタブはあるが、丸（「16 px」など）は大きさを持つツールだけ
+        // どのツールでもタブはあるが、丸（「15 px」など）は大きさを持つツールだけ
         assert!(
             h.state().tab_rects.contains_key(&Tab::BrushSize),
             "{tool:?}"
         );
-        assert_eq!(count(&h, "16 px"), usize::from(tool.is_sized()), "{tool:?}");
+        assert_eq!(count(&h, "15 px"), usize::from(tool.is_sized()), "{tool:?}");
         // ツールプロパティの中身（タブの帯の下から、ブラシサイズの上まで）に描いた文字: 「ツールプロパティ」の見出しの帯は無く（タブの名前だけ）、
         // 設定のあるブラシでは中身の文字が出ている
         let (bar, size) = (
