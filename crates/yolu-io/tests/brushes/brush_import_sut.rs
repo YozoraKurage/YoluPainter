@@ -2291,6 +2291,20 @@ fn vector_flags_and_a_size_unit_are_reported_and_never_dropped_silently() {
         let b = one(&[(column, int(0))]);
         assert!(b.unrepresented.is_empty(), "{column}");
     }
+    // 実物の行は両方の列を持つ。片方が 0 でも、もう片方の旗を見落とさない
+    for (eraser, magnet) in [(0, 1), (1, 0), (1, 1)] {
+        let b = one(&[
+            ("BrushUseVectorEraser", int(eraser)),
+            ("BrushUseVectorMagnet", int(magnet)),
+        ]);
+        assert!(has(&b, SutNote::VectorTools), "{eraser} {magnet}");
+        assert_eq!(b.unrepresented.len(), 1, "{eraser} {magnet}");
+    }
+    let b = one(&[
+        ("BrushUseVectorEraser", int(0)),
+        ("BrushUseVectorMagnet", int(0)),
+    ]);
+    assert!(b.unrepresented.is_empty());
     // 単位が 0 でなければ知らせ、値は px として読む
     let b = one(&[("BrushSize", real(40.0)), ("BrushSizeUnit", int(1))]);
     assert_eq!(b.brush.base.radius, 20.0);

@@ -105,8 +105,9 @@ const FLICKER: &[&str] = &["flickerreduction"];
 const FLICKER_BY_SPEED: &[&str] = &["flickerreductionbyspeed"];
 // 後補正の旗（強さ・速度・表示倍率・ベジェの列は、後補正をエンジンで表せないので読まない）
 const POST_CORRECTION: &[&str] = &["brushuserevision"];
-// ベクターレイヤー向けの旗（ベクター消去・ベクター吸着）
-const VECTOR: &[&str] = &["brushusevectoreraser", "brushusevectormagnet"];
+// ベクターレイヤー向けの旗（ベクター消去・ベクター吸着）。実物の行はふつう両方の列を持つので、列ごとに旗を見る
+const VECTOR_ERASER: &[&str] = &["brushusevectoreraser"];
+const VECTOR_MAGNET: &[&str] = &["brushusevectormagnet"];
 // 筆先の向きの影響元（旗の整数。下位 0x03 は常に立つ・0x10 ペンの向き・0x20 ペン軸の回転・0x40 線の方向・0x80 ランダム）と、ランダムの強さ
 // （百分率の整数）
 const ROTATION_EFFECTOR: &[&str] = &["brushrotationeffector"];
@@ -172,7 +173,8 @@ const KNOWN: &[&[&str]] = &[
     FLICKER,
     FLICKER_BY_SPEED,
     POST_CORRECTION,
-    VECTOR,
+    VECTOR_ERASER,
+    VECTOR_MAGNET,
     ROTATION_EFFECTOR,
     ROTATION_RANDOM,
     COLOR_CHANGE,
@@ -633,7 +635,7 @@ fn start_end(
 /// 手ぶれ補正: 画面の「手ブレ補正」（`FlickerReduction`。0〜100）を糸の長さ（画素）へ 1 対 1 で写す（換算は測っていないので推定）。
 /// 強さが 0 なら写すものが無い。速度による手ブレ補正（`FlickerReductionBySpeed`）は、強さが 0 でないときだけ表せないと知らせる
 /// （強さ 0 の行にも旗の既定値は入っている）。後補正（`BrushUseRevision` 系）は手ぶれ補正とは別の機能で、エンジンに無いので写さずに
-/// 知らせる（旗が立っているときだけ。強さ・速度・表示倍率・ベジェの列には、後補正が切でも既定値が入っている）。
+/// 知らせる（旗が立っているときだけ。強さ・速度・表示倍率の列には、後補正が切でも既定値が入っている。実物の行では速度・表示倍率の旗が 1、ベジェの旗は 0）。
 fn stabilizer(
     row: &Row,
     brush: &mut Brush,
@@ -1172,7 +1174,7 @@ fn brush_from_row(
     if row.on(WATER_EDGE) {
         notes.push(Unrepresented::WetEdges);
     }
-    if row.on(VECTOR) {
+    if row.on(VECTOR_ERASER) || row.on(VECTOR_MAGNET) {
         notes.push(Unrepresented::ClipStudio(SutNote::VectorTools));
     }
     for (columns, note) in [

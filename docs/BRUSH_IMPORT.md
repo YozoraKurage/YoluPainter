@@ -78,7 +78,7 @@
 | 素材の参照の列（`BrushPatternImageArray`・`TextureImage`） | ビッグエンディアンの BLOB。先頭の整数（8）、項目の数、項目ごとに「大きさ・名前の長さ（バイト）・名前（UTF-16LE。元の場所）」と、種類（1 カタログの場所・それ以外は画像の名前。0 で終わり）・長さ・文字列の並び | 1 つの解析 |
 | 入り抜きの列 | `BrushUseIn`・`BrushUseOut`（旗の整数）、`BrushInLength`・`BrushOutLength`（実数。値は画素と推定）、`BrushInLengthUnit`・`BrushOutLengthUnit`（整数。実物はすべて 0）、`BrushInRatio`・`BrushOutRatio`（実数。実物はすべて 30）、`BrushInOutBySpeed`（旗）、`BrushInOutType`（整数。実物はすべて 0）、`BrushInOutTarget`（BLOB。整数 12・項目の数・12 のあと、項目ごとに「項目の番号・旗・旗」。実物は項目 21 個で旗はすべて 0） | 列の名前と値の型は実物 7 つで確かめた。単位 0 が画素・影響先の既定が大きさであること、割合の意味は推測（実物はどれも既定の値で、ほかの値を見ていない） |
 | 手ぶれ補正の列 | `FlickerReduction`（画面の「手ブレ補正」の値そのまま。0〜100）、`FlickerReductionBySpeed`（速度による手ブレ補正の旗）、`FlickerReductionBySpeedType`（補正タイプ） | 設定を 1 項目ずつ変えて書き出した .sut の比べで、画面の項目との対応を確かめた。画素への換算は測っていない（推測） |
-| 後補正の列 | `BrushUseRevision`（旗）、`BrushRevision`（強さ）、`BrushRevisionBySpeed`・`BrushRevisionByViewScale`・`BrushRevisionBezier`（旗。後補正が切でも既定で 1 が入る） | 1 項目ずつ変えた書き出しの比べで、画面の「後補正」の項目との対応を確かめた。後補正は手ぶれ補正とは別の機能で、このアプリには無い |
+| 後補正の列 | `BrushUseRevision`（旗）、`BrushRevision`（強さ）、`BrushRevisionBySpeed`・`BrushRevisionByViewScale`・`BrushRevisionBezier`（旗。後補正が切でも、速度・表示倍率の旗には既定で 1 が入る。ベジェの旗は 0） | 1 項目ずつ変えた書き出しの比べで、画面の「後補正」の項目との対応を確かめた。後補正は手ぶれ補正とは別の機能で、このアプリには無い |
 | 間隔の列 | `BrushAutoIntervalType`（0 固定・1 広い・2 普通・3 狭い）、`BrushInterval`（固定のときの数値。直径に対する %） | 1 項目ずつ変えた書き出しの比べで確かめた。広い・普通・狭いの間隔（直径の 12%・8%・4%）は、円形の硬い筆先の線の縁の濃さの揺れの周期から測った。素材の筆先で同じ割合かは確かめていない |
 | 厚さの向きの列 | `BrushVerticalThicknes`（綴りのまま。0 水平・1 垂直。1 が既定） | 1 項目ずつ変えた書き出しと、そのときの画面の筆先の見本で確かめた（垂直は横長の楕円、水平は縦長の楕円） |
 | 筆先の向きの列 | `BrushRotation`（実数の度。実物は 0・1・180・220）、`BrushRotationEffector`（整数の旗。下位 0x03 は常に立つ。0x10 ペンの向き・0x20 ペン軸の回転・0x40 線の方向・0x80 ランダム）、`BrushRotationRandomScale`（百分率の整数。実物は 30・80・100） | 旗は 1 項目ずつ変えた書き出しの比べで確かめた。強さの意味と角度の向きの正負は推測 |
