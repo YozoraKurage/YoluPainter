@@ -437,16 +437,16 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         }
     }
     state.replace_sets(sets, doc);
-    state.shelf = ShelfState::from_project(&project).inherit_running_from(&state.shelf);
+    let shelf = ShelfState::from_project(&project);
     // 次に名前を付けて保存を開くフォルダー（退避は元の .ylp のフォルダー。ほかは前の保存・OS の既定）
-    state.save_folder = None;
     let mut text = match &file {
         Opened::File(path, _) => {
-            state.project_name = path
+            let name = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
-            state.modified = false;
+            // ファイルのとおりに開いたので、変更は無い
+            state.reset_project_identity(name, shelf);
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -459,17 +459,17 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
             // 題名と保存の名前の候補は元の .ylp の名前（退避の名前の時刻の部分ではない）。始まりの場所も元の .ylp のフォルダー
             let origin = yolu_io::backup_origin(path);
             let stem = |p: &Path| p.file_stem().map(|s| s.to_string_lossy().into_owned());
-            state.project_name = origin
+            let name = origin
                 .as_deref()
                 .and_then(stem)
                 .or_else(|| stem(path))
                 .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
+            // ファイルのとおりに開いたので、変更は無い
+            state.reset_project_identity(name, shelf);
             state.save_folder = origin
                 .as_deref()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf);
-            // ファイルのとおりに開いたので、変更は無い
-            state.modified = false;
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -480,7 +480,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
             )
         }
         Opened::Recovered => {
-            state.project_name = crate::recovery::recovered_name(state.lang).into();
+            state.reset_project_identity(crate::recovery::recovered_name(state.lang).into(), shelf);
             // 書き置きの正本から開いた文書は、保存した .ylp とは別物（保存していない）。合成の PNG も無いので、全セットを書き直す
             state.modified = true;
             for i in 0..state.sets.len() {
@@ -630,6 +630,18 @@ pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
     ))
 }
 
+impl AppState {
+    /// プロジェクトを入れ替えた直後の、プロジェクトの名乗りを初期化する（棚・ファイルとの結び付き・題名・保存先のフォルダー・変更の印）。
+    /// 動いている棚の仕事は前の棚から引き継ぐ。ファイルとの結び付き（`project`）は空にする（開いたときは後で入れる）。
+    pub(crate) fn reset_project_identity(&mut self, name: String, shelf: ShelfState) {
+        self.shelf = shelf.inherit_running_from(&self.shelf);
+        self.project = None;
+        self.project_name = name;
+        self.save_folder = None;
+        self.modified = false;
+    }
+}
+
 /// 新しいプロジェクト（空の 2048² のセット 1 つ）にする。Live Link のモデルがあれば、そのマテリアルにセットを付ける。前のプロジェクトの
 /// モデル（FBX・試しの人形）は外す。テンプレート・モデル・解像度などを選ぶウィンドウは `newproject`。
 pub fn new_into(state: &mut AppState) {
@@ -651,11 +663,8 @@ pub fn new_into(state: &mut AppState) {
     let (doc, _) = blank_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, state.lang);
     let sets = TextureSets::first_in(&doc, state.lang);
     state.replace_sets(sets, doc);
-    state.shelf = ShelfState::default().inherit_running_from(&state.shelf);
-    state.project = None;
-    state.project_name = state.lang.pick("名称未設定", "Untitled").into();
-    state.save_folder = None;
-    state.modified = false;
+    let name = state.lang.pick("名称未設定", "Untitled").into();
+    state.reset_project_identity(name, ShelfState::default());
     state.info(
         Source::Project,
         state

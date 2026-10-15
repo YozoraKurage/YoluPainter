@@ -134,11 +134,10 @@ fn install(
     app.replace_sets_with(sets, doc, false);
     // ウィンドウで選んだ解像度（Live Link の元の絵が、最初のセットの大きさを黙って替えない）
     app.resolution_chosen = true;
-    app.shelf = ShelfState::default().inherit_running_from(&app.shelf);
-    app.project = None;
-    app.project_name = lang.pick("名称未設定", "Untitled").into();
-    app.save_folder = None;
-    app.modified = false;
+    app.reset_project_identity(
+        lang.pick("名称未設定", "Untitled").into(),
+        ShelfState::default(),
+    );
     app.sync_mesh_map_view();
     // 上限を超えるマテリアルがあれば、セットにならなかった数を言う（黙って落とさない）
     let over = if over_limit > 0 {
