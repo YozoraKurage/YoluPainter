@@ -4,7 +4,7 @@ use crate::common;
 
 use common::drive::Drive;
 use yolu_app::panels::properties::{tab_labels, TAB_LAYER, TAB_ORDER, TAB_STENCIL};
-use yolu_app::state::AppState;
+use yolu_app::state::{AppState, Tool};
 
 #[test]
 fn the_properties_panel_starts_on_the_layer_tab_which_is_the_left_one() {
@@ -32,4 +32,24 @@ fn the_properties_tab_strip_shows_layer_on_the_left_and_shows_the_layer_body_fir
     assert_eq!((TAB_STENCIL, TAB_LAYER), (0, 1));
     common::click(&mut h, stencil.center());
     assert_eq!(h.ui().property_tab, TAB_STENCIL);
+}
+
+#[test]
+fn the_eyedropper_starts_on_all_layers_and_the_selected_layer_row_turns_it_off() {
+    use yolu_app::subtool::{Key, SubToolAction};
+    let mut h = AppState::new(32, 32);
+    assert!(h.eyedrop().all_layers);
+    let list = h.app().subtool_list(Tool::Eyedropper).unwrap();
+    assert_eq!(list.current(), Key::Builtin("all"));
+    assert!(!h.app().subtool_is_modified(Tool::Eyedropper, list.current()));
+    h.act(yolu_app::state::Action::SubTool(SubToolAction::Select(
+        Tool::Eyedropper,
+        Key::Builtin("layer"),
+    )));
+    assert!(!h.eyedrop().all_layers);
+    h.act(yolu_app::state::Action::SubTool(SubToolAction::Select(
+        Tool::Eyedropper,
+        Key::Builtin("all"),
+    )));
+    assert!(h.eyedrop().all_layers);
 }

@@ -32,9 +32,9 @@ use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Rows};
 
 /// スポイトの設定（画面の状態。文書には入らない）。
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EyedropState {
-    /// 選んでいるレイヤーでなく、全レイヤーの合成から取る。
+    /// 選んでいるレイヤーでなく、全レイヤーの合成から取る（初めは全レイヤー）。
     pub all_layers: bool,
     pub screen_request: Option<crate::screen_pick::Mode>,
     /// ランプの色の分岐点のスポイトが、画面の色を待っている（`screen_pick` は取れた色を描画色でなく `ramp_stop_pick` へ入れる）。
@@ -43,6 +43,18 @@ pub struct EyedropState {
     pub ramp_stop_pick: Option<[u8; 3]>,
     /// スポイトの印に出す「ポインタの下の色」の、最後に読んだ結果（同じ画素・同じ文書・同じ設定なら読み直さない）。
     pub sample_cache: Option<(SampleKey, Option<Color32>)>,
+}
+
+impl Default for EyedropState {
+    fn default() -> Self {
+        EyedropState {
+            all_layers: true,
+            screen_request: None,
+            ramp_stop_pending: false,
+            ramp_stop_pick: None,
+            sample_cache: None,
+        }
+    }
 }
 
 /// 印の見本を読んだ画素と、読み方（文書の版・選んでいるレイヤー・チャンネルが変わったら読み直す）。

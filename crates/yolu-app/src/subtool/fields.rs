@@ -334,7 +334,7 @@ static RULER: [Field; 7] = [
 static EYEDROPPER: [Field; 1] = [Field {
     key: "all_layers",
     kind: Kind::Bool,
-    default: Value::Bool(false),
+    default: Value::Bool(true),
     get: |a| Value::Bool(a.eyedrop.all_layers),
     set: |a, v| a.eyedrop.all_layers = flag(v),
 }];
@@ -601,13 +601,13 @@ static RULER_BUILTINS: [Builtin; 7] = [
 ];
 
 static EYEDROPPER_BUILTINS: [Builtin; 2] = [
-    builtin("layer", "選んだレイヤー", "Selected Layer", &[]),
     builtin(
-        "all",
-        "全レイヤー",
-        "All Layers",
-        &[("all_layers", Value::Bool(true))],
+        "layer",
+        "選んだレイヤー",
+        "Selected Layer",
+        &[("all_layers", Value::Bool(false))],
     ),
+    builtin("all", "全レイヤー", "All Layers", &[]),
 ];
 
 static MOVE_BUILTINS: [Builtin; 4] = [
