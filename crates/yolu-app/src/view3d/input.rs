@@ -1252,7 +1252,11 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         }
         return;
     }
-    let blocked = app.popup.is_some() || app.ui.popup_was_open || app.sel.dialog.is_some();
+    // 保存していない変更の問いが開いている間も止める（別ウィンドウの 3D ビューは問いの覆いの外で、入力を直に読むため）
+    let blocked = app.popup.is_some()
+        || app.ui.popup_was_open
+        || app.sel.dialog.is_some()
+        || crate::windows::modal_open(app);
     app.region.modifiers = ui.input(|i| i.modifiers);
     // 設定のパネルを開いているあいだの押しは、パネルの外でも 3D に使わない（パネルは外の押しで閉じる。その押しが描き始め・回し始めに
     // ならないように。このフレームの押しで閉じるときも、パネルはこの後に描くので開いている）。ホイールは使える。ドックのタブの見出しを

@@ -1824,3 +1824,98 @@ fn while_the_unsaved_changes_question_is_open_an_outside_panel_does_not_change_t
     assert_eq!(h.doc().undo_count(), undo, "キーでも変わらない");
     assert!(h.discard_ask().is_some(), "問いは開いたまま");
 }
+
+/// 別ウィンドウのキャンバスに、押す→動かす→離すで 1 本引く。
+fn stroke_in_child(h: &mut Harness<'static, YoluApp>, driver: &Driver, id: ViewportId, c: Pos2) {
+    let press = |pressed: bool, at: Pos2| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    driver.child(id, |c2| {
+        c2.events.push(Event::PointerMoved(c));
+        c2.events.push(press(true, c));
+    });
+    h.step();
+    for dx in [10.0, 20.0, 30.0] {
+        driver.child(id, |c2| {
+            c2.events.push(Event::PointerMoved(c + vec2(dx, 0.0)))
+        });
+        h.step();
+    }
+    driver.child(id, |c2| c2.events.push(press(false, c + vec2(30.0, 0.0))));
+    h.run();
+}
+
+#[test]
+fn while_the_unsaved_changes_question_is_open_the_canvas_in_an_outside_window_does_not_draw() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_discard_window(true);
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::Canvas,
+        Rect::from_min_size(pos2(1300.0, 0.0), vec2(700.0, 600.0)),
+    );
+    h.run();
+    let c = h
+        .state()
+        .canvas_view_rect()
+        .expect("別ウィンドウでキャンバスを描いた")
+        .center();
+    // 問いが無ければ描ける（同じ操作で Undo の数が増える）
+    let before = h.doc().undo_count();
+    stroke_in_child(&mut h, &driver, id, c);
+    let drawn = h.doc().undo_count();
+    assert!(drawn > before, "問いが無いと別ウィンドウに描ける");
+    h.set_modified(true);
+    h.act(Action::Quit);
+    h.run();
+    assert!(h.discard_ask().is_some(), "問いが開く");
+    // 問いが開いている間は、同じ操作で文書は変わらない
+    stroke_in_child(&mut h, &driver, id, c + vec2(0.0, 40.0));
+    assert_eq!(
+        h.doc().undo_count(),
+        drawn,
+        "別ウィンドウのキャンバスに描けない"
+    );
+    assert!(!h.app().is_stroking(), "ストロークも残らない");
+    assert!(h.discard_ask().is_some(), "問いは開いたまま");
+}
+
+#[test]
+fn while_the_unsaved_changes_question_is_open_the_3d_view_in_an_outside_window_does_not_paint() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_discard_window(true);
+    h.view3d_mut().load_demo();
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::View3d,
+        Rect::from_min_size(pos2(1300.0, 0.0), vec2(700.0, 600.0)),
+    );
+    h.run();
+    let c = h
+        .state()
+        .view3d_rect()
+        .expect("別ウィンドウで 3D ビューを描いた")
+        .center();
+    // 問いが無ければ描ける（同じ操作で Undo の数が増える）
+    let before = h.doc().undo_count();
+    stroke_in_child(&mut h, &driver, id, c);
+    let drawn = h.doc().undo_count();
+    assert!(
+        drawn > before,
+        "問いが無いと別ウィンドウの 3D ビューに描ける"
+    );
+    h.set_modified(true);
+    h.act(Action::Quit);
+    h.run();
+    assert!(h.discard_ask().is_some(), "問いが開く");
+    // 問いが開いている間は、同じ操作で文書は変わらない
+    stroke_in_child(&mut h, &driver, id, c + vec2(0.0, 20.0));
+    assert_eq!(h.doc().undo_count(), drawn, "3D ビューに描けない");
+    assert!(h.stroke().is_none(), "ストロークも残らない");
+    assert!(h.discard_ask().is_some(), "問いは開いたまま");
+}
