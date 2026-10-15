@@ -1093,6 +1093,16 @@ impl SurfaceStroke {
         if plan.radius != 1.0 {
             radius *= plan.radius as f32;
         }
+        // 最低 1 ピクセル: world_radius はモデル全体で 1 つの換算なので、UV の密度が低い面（テクセルがモデルの単位で大きい面）では、
+        // plan.radius の下限だけではテクセルの中心に届かない。当てた面のテクセルの大きさで、半径をテクセルの半分以上にする
+        if self.brush.controls.min_one_pixel {
+            let texel = hit
+                .and_then(|h| self.geometry.triangles().get(h.triangle as usize))
+                .map_or(0.0, |t| t.texel_size(self.width, self.height));
+            if texel > 0.0 {
+                radius = fmax(radius, MIN_ONE_PIXEL_RADIUS as f32 * texel);
+            }
+        }
         let hardness = match &self.hardness_response {
             Some(r) => (self.hardness as f64 * r.apply(pressure as f64)) as f32,
             None => self.hardness,

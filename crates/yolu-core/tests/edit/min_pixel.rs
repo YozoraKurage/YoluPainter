@@ -3,7 +3,9 @@
 //! アンチエイリアスの小さなダブの式は、下限をかけた後の大きさに掛かる（直径 1 画素のブラシで描いたのと同じバイト）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 use yolu_core::glam::DVec2;
-use yolu_core::{AntiAlias, Brush, BrushSettings, Channel, Document, Rgba8};
+use yolu_core::{
+    AntiAlias, Brush, BrushSettings, Channel, CoreError, Document, LayerId, LayerLocks, Rgba8,
+};
 
 const SIZE: u32 = 64;
 
@@ -146,5 +148,85 @@ fn the_anti_alias_small_dab_rule_applies_to_the_floored_size() {
         let reference = draw(&one_pixel, &points(1.0));
         assert!(painted(&on) > 0, "{level:?}");
         assert_eq!(on, reference, "{level:?}");
+    }
+}
+
+/// 太い線（切のブラシ）を 1 本引いた文書（Undo・取消・ロックの試験で、元に戻る先の画素を空にしないため）。
+fn document_with_a_base_line() -> (Document, LayerId) {
+    let mut doc = Document::with_tile_size(SIZE, SIZE, 32).unwrap();
+    let layer = doc.add_layer("a").unwrap();
+    let mut base = brush(AntiAlias::None, 3.0, 0.1, false);
+    base.base.color = Rgba8::new(200, 30, 30, 255);
+    let mut s = doc.begin_brush_stroke(layer, &base).unwrap();
+    for (x, y) in [(8.5, 8.5), (50.5, 8.5)] {
+        s.add_point(&mut doc, x, y, 1.0, DVec2::ZERO).unwrap();
+    }
+    doc.end_stroke(s).unwrap();
+    (doc, layer)
+}
+
+fn canvas(doc: &Document) -> Vec<u8> {
+    doc.layers()[0]
+        .surface(Channel::Color)
+        .map_or_else(Vec::new, |s| s.to_canvas_bytes())
+}
+
+#[test]
+fn undo_and_redo_restore_a_zero_pressure_floored_stroke_and_a_cancel_leaves_nothing() {
+    let (mut doc, layer) = document_with_a_base_line();
+    let before = canvas(&doc);
+    let undo_before = doc.undo_count();
+    let floored = brush(AntiAlias::None, 8.0, 0.0625, true);
+    let mut s = doc.begin_brush_stroke(layer, &floored).unwrap();
+    for &(x, y, pressure) in &line(0.0) {
+        s.add_point(&mut doc, x, y + 10.0, pressure, DVec2::ZERO)
+            .unwrap();
+    }
+    doc.end_stroke(s).unwrap();
+    let after = canvas(&doc);
+    assert_ne!(before, after, "筆圧 0 の下限のストロークが画素を変える");
+    assert_eq!(
+        doc.undo_count(),
+        undo_before + 1,
+        "1 本のストローク = 1 つの Undo"
+    );
+    assert!(doc.undo().unwrap());
+    assert_eq!(canvas(&doc), before, "Undo で描く前に戻る");
+    assert!(doc.redo().unwrap());
+    assert_eq!(canvas(&doc), after, "Redo で描いた後に戻る");
+
+    // 描いている途中の取消: 何も残らず、Undo の履歴も増えない
+    let (mut doc, layer) = document_with_a_base_line();
+    let before = canvas(&doc);
+    let undo_before = doc.undo_count();
+    let mut s = doc.begin_brush_stroke(layer, &floored).unwrap();
+    for &(x, y, pressure) in &line(0.0) {
+        s.add_point(&mut doc, x, y + 10.0, pressure, DVec2::ZERO)
+            .unwrap();
+    }
+    doc.cancel_stroke(s);
+    assert_eq!(canvas(&doc), before);
+    assert_eq!(doc.undo_count(), undo_before);
+}
+
+#[test]
+fn a_floored_stroke_on_a_locked_layer_is_refused_and_changes_nothing() {
+    for lock in [LayerLocks::PIXELS, LayerLocks::ALL] {
+        let (mut doc, layer) = document_with_a_base_line();
+        doc.set_layer_locks(layer, lock).unwrap();
+        let before = canvas(&doc);
+        let (undo, redo) = (doc.undo_count(), doc.redo_count());
+        let floored = brush(AntiAlias::None, 8.0, 0.0625, true);
+        let refused = doc.begin_brush_stroke(layer, &floored);
+        assert!(
+            matches!(refused, Err(CoreError::LayerLocked { .. })),
+            "{lock:?}"
+        );
+        assert_eq!(canvas(&doc), before, "{lock:?}");
+        assert_eq!(
+            (doc.undo_count(), doc.redo_count()),
+            (undo, redo),
+            "{lock:?}"
+        );
     }
 }
