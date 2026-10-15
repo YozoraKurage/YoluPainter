@@ -347,6 +347,9 @@ pub(crate) enum Command {
         layer: LayerId,
         target: Target,
         changes: Vec<TileChange>,
+        /// この段で初めてチャンネルの面を作った（`Target::Channel` のときだけ）。取り消しで空に戻った面を外してチャンネルを無効に戻し、
+        /// やり直しで作り直す（空の面でもレイヤーは合成に入るので、残すと見た目が戻らない）。
+        created: bool,
     },
     /// まとまり（レイヤー、またはグループと中身。len 枚）を index へ入れる。
     Insert {
@@ -1602,7 +1605,8 @@ impl Document {
                 layer,
                 target,
                 changes,
-            } => self.restore_tiles(*layer, *target, changes, backwards),
+                created,
+            } => self.restore_tiles(*layer, *target, changes, *created, backwards),
             Command::Insert { index, len, block } => {
                 if backwards {
                     self.take_block(*index, *len, block)
@@ -2034,9 +2038,19 @@ impl Document {
         layer: LayerId,
         target: Target,
         changes: &[TileChange],
+        created: bool,
         backwards: bool,
     ) -> Result<(), CoreError> {
         let index = self.index_of(layer)?;
+        let created = match target {
+            Target::Channel(c) if created => Some(c),
+            _ => None,
+        };
+        if let (Some(c), false) = (created, backwards) {
+            if self.ensure_surface(index, c) {
+                self.mark_layer(index, Some(c));
+            }
+        }
         let growth = self.growth_for(index, target);
         let surface = self
             .target_surface_mut(index, target)
@@ -2068,7 +2082,23 @@ impl Document {
         for c in changes {
             self.mark_target_tile(index, target, c.coord);
         }
+        if let (Some(c), true) = (created, backwards) {
+            self.drop_empty_created_surface(index, c);
+        }
         Ok(())
+    }
+
+    /// ストロークが作った面が空なら外し、チャンネルを無効に戻す（作る前と同じ合成に）。外したら true。
+    fn drop_empty_created_surface(&mut self, index: usize, channel: Channel) -> bool {
+        if !self.layers[index]
+            .surface(channel)
+            .is_some_and(|s| s.tile_count() == 0)
+        {
+            return false;
+        }
+        self.drop_created_surface(index, channel, true);
+        self.mark_layer(index, Some(channel));
+        true
     }
 
     /// レイヤーの元画素（チャンネルの面かマスク）のタイルが変わった。元画素の変化の記録（評価のキャッシュの鍵）と、合成が変わり得るタイル
@@ -2173,7 +2203,7 @@ impl Document {
         let keep_alpha = self.pixel_write_guard(layer, brush.base.erase)?;
         self.ensure_raster(index)?;
         self.refuse_path_layer(index)?;
-        self.ensure_surface(index, channel);
+        let created = self.ensure_surface(index, channel);
         if !self.layers[index].is_channel_enabled(channel) {
             return Err(CoreError::Unsupported("無効のチャンネルには描けない"));
         }
@@ -2195,7 +2225,8 @@ impl Document {
             StrokeState::new(
                 id, layer, index, channel, kind, brush, budgets, size, keep_alpha,
             )
-            .with_selection(self.selection.clone()),
+            .with_selection(self.selection.clone())
+            .with_created_surface(created),
         );
         self.active_target = target;
         Ok(Stroke { id })
@@ -2355,6 +2386,14 @@ impl Document {
                 });
             }
         }
+        let created = match target {
+            Target::Channel(c) if state.created_surface => Some(c),
+            _ => None,
+        };
+        // 画素を変えなかったストロークは、始めに作った空の面も残さない（段を積まないので、見た目も保存の中身も始める前のまま）
+        if let (Some(c), true) = (created, changes.is_empty()) {
+            self.drop_empty_created_surface(state.layer_index, c);
+        }
         let result = StrokeResult {
             changed: !changes.is_empty(),
             stamps: state.stamp_count,
@@ -2376,6 +2415,7 @@ impl Document {
                     layer: state.layer,
                     target,
                     changes,
+                    created: created.is_some(),
                 },
                 cost,
             });
@@ -2416,6 +2456,9 @@ impl Document {
         }
         for coord in coords {
             self.mark_target_tile(state.layer_index, target, coord);
+        }
+        if let (Target::Channel(c), true) = (target, state.created_surface) {
+            restored |= self.drop_empty_created_surface(state.layer_index, c);
         }
         if restored {
             self.revision += 1;

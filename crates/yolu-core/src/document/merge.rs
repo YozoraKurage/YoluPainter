@@ -939,6 +939,27 @@ impl Document {
             &output_tiles,
         )
     }
+    /// クリッピングされたレイヤーごとの下地（合成の計画と同じ規則: 同じ親の中で、直前のクリッピングでない兄弟。親の最初の子は下地）。
+    /// 下地が調整レイヤーなら、その組は合成に出ないので印（true）を付ける。`rename` は結合で外すレイヤーの id を結果の id へ読み替える。
+    fn clip_bases(
+        &self,
+        rename: &dyn Fn(LayerId) -> LayerId,
+    ) -> BTreeMap<LayerId, (LayerId, bool)> {
+        let mut current: BTreeMap<Option<LayerId>, usize> = BTreeMap::new();
+        let mut out = BTreeMap::new();
+        for (i, l) in self.layers.iter().enumerate() {
+            match current.get(&l.parent) {
+                Some(&b) if l.clipping => {
+                    let base = &self.layers[b];
+                    out.insert(l.id, (rename(base.id), base.kind == LayerKind::Adjustment));
+                }
+                _ => {
+                    current.insert(l.parent, i);
+                }
+            }
+        }
+        out
+    }
     fn finish_merge(
         &mut self,
         mut copy: Document,
@@ -982,6 +1003,19 @@ impl Document {
             changed_by_channel: BTreeMap::new(),
         };
         let parent = result.parent;
+        // 結合で、外さないレイヤーのクリッピングの下地が替わることがある（クリッピングされた下のレイヤーへ、クリッピングされていない上の
+        // レイヤーを結合すると、上のレイヤーにクリッピングしていたレイヤーは下のレイヤーの組の下地へ移る）。そのレイヤーの出す所は
+        // 結合したレイヤーの画素の所に限らないので、キャンバス全体を比べる
+        let rebased = !visible && {
+            let result_id = result.id;
+            let rename = |id: LayerId| if removed.contains(&id) { result_id } else { id };
+            let before = self.clip_bases(&rename);
+            let after = copy.clip_bases(&|id| id);
+            copy.layers
+                .iter()
+                .filter(|l| l.id != result_id)
+                .any(|l| before.get(&l.id) != after.get(&l.id))
+        };
         for c in self.channels() {
             let mut coords: BTreeSet<_> = self
                 .layers
@@ -993,6 +1027,9 @@ impl Document {
             // 結合したレイヤーの出力は、元の画素の無いタイルへも届く（Generator など）。比べる所に足す
             if let Some(tiles) = output_tiles.get(&c) {
                 coords.extend(tiles.iter().copied());
+            }
+            if rebased {
+                coords.extend(self.canvas_tiles());
             }
             if visible || method == MergeMethod::Layers {
                 for (i, l) in self.layers.iter().enumerate() {

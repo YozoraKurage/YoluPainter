@@ -332,6 +332,8 @@ struct EffectState {
 pub(crate) struct StrokeState {
     /// 透明部分のロック: 描く画素のアルファと透明画素の RGB を守る。作るときに必ず決める（[`StrokeState::new`]）。
     keep_alpha: bool,
+    /// ストロークを始めるときにチャンネルの面を作った（画素を変えずに終われば外す。段は取り消しで外す）。
+    pub created_surface: bool,
     pub id: u64,
     pub layer: LayerId,
     pub layer_index: usize,
@@ -515,6 +517,7 @@ impl StrokeState {
             sample_count: 0,
             parallel_dabs: 0,
             tiles: HashMap::new(),
+            created_surface: false,
             rollback_bytes: 0,
             selection: None,
             surface_look: None,
@@ -526,6 +529,12 @@ impl StrokeState {
     /// 文書の今の選択範囲の内側だけに描く（C# の BrushStroke が始めに document.Selection を覚えるのと同じ）。
     pub(crate) fn with_selection(mut self, selection: Option<SelectionMask>) -> Self {
         self.selection = selection;
+        self
+    }
+
+    /// 始めるときにチャンネルの面を作ったストロークにする（[`StrokeState::created_surface`]）。
+    pub(crate) fn with_created_surface(mut self, created: bool) -> Self {
+        self.created_surface = created;
         self
     }
 

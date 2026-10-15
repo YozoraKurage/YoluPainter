@@ -233,6 +233,7 @@ impl Document {
                 layer,
                 target,
                 changes,
+                created: false,
             },
             cost,
         });
