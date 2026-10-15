@@ -306,6 +306,7 @@ impl Psd {
                 .name
                 .bytes()
                 .map(|b| if b < 128 { b } else { b'?' })
+                .take(255)
                 .collect();
             extra.push(name.len() as u8);
             extra.extend(&name);
@@ -1888,6 +1889,44 @@ fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
             limit: 2048
         }
     );
+}
+
+#[test]
+fn a_layer_name_over_the_limit_is_cut_and_told_instead_of_refusing_the_whole_file() {
+    // 10 万字の名前のレイヤーが 1 枚あっても、ファイル全体は断らない。名前を上限（4096 UTF-16 単位）まで切り詰めて、落としたものとして知らせる
+    let limit = Limits::default().max_name_code_units;
+    let long = "あ".repeat(100_000);
+    let layers = vec![
+        red("普通", (0, 0, 2, 2)).id(1),
+        red(&long, (0, 0, 2, 2)).id(2),
+    ];
+    let bytes = Psd::new(2, 2, layers).build();
+    // 原本を保つ読みは、原本の名前を変えられないのでこれまでどおり断る
+    assert_eq!(
+        psd::read(&bytes, &Limits::default()).unwrap().mode(),
+        CompatibilityMode::Rejected
+    );
+    let (d, notes) = imported(&bytes);
+    assert_eq!(d.layers().len(), 2);
+    let cut = d.layers().iter().find(|l| l.name() != "普通").unwrap();
+    assert_eq!(cut.name().chars().count(), limit);
+    assert!(cut.name().chars().all(|c| c == 'あ'));
+    assert_eq!(pixel(&d, cut.name(), 0, 0), [255, 0, 0, 255]);
+    let n = note(&notes, ImportFeature::LayerNameTruncated).unwrap_or_else(|| panic!("{notes:?}"));
+    assert_eq!((n.action, n.count), (ImportAction::Dropped, 1));
+    assert_eq!(n.layers, vec![cut.name().to_string()]);
+    // 上限ちょうどの名前は切らず、知らせない
+    let exact = Psd::new(2, 2, vec![red(&"い".repeat(limit), (0, 0, 2, 2)).id(1)]).build();
+    let (d, notes) = imported(&exact);
+    assert_eq!(d.layers()[0].name().chars().count(), limit);
+    assert!(note(&notes, ImportFeature::LayerNameTruncated).is_none());
+    // 2 単位の文字（代用対）の途中では切らない: 1 + 2×2047 = 4095 単位で止め、4096 単位目で対の片方だけを残さない
+    let name = format!("a{}", "\u{20bb7}".repeat(3000));
+    let (d, notes) = imported(&Psd::new(2, 2, vec![red(&name, (0, 0, 2, 2)).id(1)]).build());
+    let kept = d.layers()[0].name();
+    assert_eq!(kept.encode_utf16().count(), limit - 1);
+    assert!(kept.starts_with('a') && kept.chars().skip(1).all(|c| c == '\u{20bb7}'));
+    assert!(note(&notes, ImportFeature::LayerNameTruncated).is_some());
 }
 
 /// `n` 個のグループを入れ子にして、一番内側にレイヤー 1 枚を置いた PSD。

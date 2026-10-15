@@ -285,6 +285,7 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
         }
         F::LayerIds => plain("レイヤー ID の欠落・重複", "Missing or duplicate layer IDs"),
         F::LayerName => plain("レイヤー名の文字", "Layer name characters"),
+        F::LayerNameTruncated => plain("長すぎるレイヤー名", "Layer name too long"),
         F::LayerEffects => plain("レイヤー効果", "Layer effects"),
         F::BlendIf => plain("ブレンド条件", "Blend If"),
         F::FillOpacity => plain("塗りの不透明度", "Fill opacity"),
@@ -471,6 +472,7 @@ mod tests {
             F::CompositeUnchecked(Unchecked::Budget),
             F::LayerIds,
             F::LayerName,
+            F::LayerNameTruncated,
             F::LayerEffects,
             F::BlendIf,
             F::FillOpacity,

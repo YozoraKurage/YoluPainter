@@ -72,6 +72,8 @@ pub enum ImportFeature {
     LayerIds,
     /// レイヤーの名前の中の NUL・Unicode 名のない非 ASCII 名。
     LayerName,
+    /// レイヤーの名前が長すぎるので、上限（`Limits::max_name_code_units`）まで切り詰めた。
+    LayerNameTruncated,
     /// レイヤー効果（`lfx2` など）。評価しない。
     LayerEffects,
     /// 既定値以外のブレンド条件（Blend If）。
@@ -410,6 +412,7 @@ pub(super) fn sort_preserve(s: &mut State, code: &str) {
         | "LegacyNameEncoding" => (F::LayerName, Ignored, None),
         "LayerLocks" | "SheetColor" | "SectionDivider" | "GroupBlend" | "DividerPixels"
         | "DividerMask" | "AdjustmentPixels" | "MaskTail" => (F::LayerMetadata, Ignored, None),
+        "NameTruncated" => (F::LayerNameTruncated, Dropped, None),
         "LayerFlags" | "Clipping" => (F::LayerFlags, Ignored, None),
         "LayerChannel" => (F::LayerChannels, Ignored, None),
         "TransparencyShapes" => (F::TransparencyShapes, Ignored, None),

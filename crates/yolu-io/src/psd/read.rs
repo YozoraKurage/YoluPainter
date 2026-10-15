@@ -698,6 +698,19 @@ fn tree(records: Vec<Record>, s: &State) -> Result<Vec<Layer>> {
     current.reverse();
     Ok(current)
 }
+/// 名前を UTF-16 の `max` 単位以内に切る（代用対の途中では切らない）。
+fn cut_utf16(name: &str, max: usize) -> String {
+    let mut units = 0;
+    let mut end = name.len();
+    for (at, c) in name.char_indices() {
+        units += c.len_utf16();
+        if units > max {
+            end = at;
+            break;
+        }
+    }
+    name[..end].to_owned()
+}
 fn mask(mut r: Reader, s: &mut State) -> Result<Option<Mask>> {
     if r.remaining() == 0 {
         return Ok(None);
@@ -1291,8 +1304,15 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                     continue;
                 }
                 let n = b.u32()? as usize;
-                check_budget(n <= s.limits.max_name_code_units, "Unicode名長の予算超過")?;
+                let max = s.limits.max_name_code_units;
+                // 写しとしての取り込みは、長すぎる名前でファイル全体を断らず、上限まで切り詰めて知らせる（原本を保つ読みは、原本の名前を変えられないので断る）
+                let cut = n > max && s.copy.is_some();
+                check_budget(n <= max || cut, "Unicode名長の予算超過")?;
                 rec.layer.name = b.utf16(n)?;
+                if cut {
+                    rec.layer.name = cut_utf16(&rec.layer.name, max);
+                    s.preserve("NameTruncated", "luni が長すぎます", start, length);
+                }
                 if b.remaining() > 3 {
                     s.preserve("UnicodeNameTail", "未知のluni末尾", b.pos, b.remaining())
                 } else {
