@@ -566,8 +566,7 @@ impl YoluApp {
         app.state.places =
             crate::dialog::places::Places::load(crate::dialog::places::Places::default_path());
         // 最近開いたプロジェクト: 設定のフォルダの `recent.conf` から読む（起動の引数のプロジェクトを開くより先に。実際のウィンドウだけ）
-        app.state.recent_projects =
-            crate::recent::Recent::load(crate::recent::Recent::default_path());
+        app.state.recent_projects = crate::recent::Recent::load(crate::settings::recent_path());
         #[cfg(windows)]
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -2461,7 +2460,8 @@ impl YoluApp {
         crate::panels::color_window::show_in_app(&ctx, &mut self.state);
         self.state.crash.show(&ctx, self.state.lang);
         // 直前の操作の知らせ（状態の帯の左には出さず、短く出して消える）
-        crate::toast::show(&ctx, &mut self.state);
+        let free_right = crate::shell::status_free_right(&ctx, &self.state);
+        crate::toast::show(&ctx, &mut self.state, free_right);
         if self.dialogs {
             self.state.crash.execute_request(self.state.lang);
         }

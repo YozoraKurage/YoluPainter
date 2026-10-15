@@ -21,6 +21,11 @@ pub fn path() -> Option<PathBuf> {
     })
 }
 
+/// 最近開いたプロジェクトの一覧（`recent`）を残す、設定のフォルダの `recent.conf`（設定のフォルダが分からなければ None）。
+pub fn recent_path() -> Option<PathBuf> {
+    path().map(|p| p.with_file_name("recent.conf"))
+}
+
 fn config_base(os: &str, env: impl Fn(&str) -> Option<PathBuf>) -> Option<PathBuf> {
     let absolute = |key| env(key).filter(|p| p.is_absolute());
     match os {

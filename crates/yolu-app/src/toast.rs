@@ -179,23 +179,18 @@ const TEXT_INSET: f32 = 12.0;
 /// 種類の色の印の幅。
 const MARK_WIDTH: f32 = 3.0;
 
-/// 知らせの置き場（状態の帯の左の端から、右の項目の手前まで）。
-pub fn strip_rect(ctx: &egui::Context, app: &AppState) -> Rect {
+/// 知らせの置き場（状態の帯の左の端から、右の項目の手前 `free_right` まで。`free_right` は `shell::status_free_right`）。
+pub fn strip_rect(ctx: &egui::Context, free_right: f32) -> Rect {
     let screen = ctx.content_rect();
     let bar = Rect::from_min_max(
         pos2(screen.left(), screen.bottom() - t::STATUS_BAR_HEIGHT),
         screen.max,
     );
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        Order::Foreground,
-        egui::Id::new("yolu.toast.measure"),
-    ));
-    let right = crate::shell::status_layout(&painter, app, bar).free_right;
-    Rect::from_min_max(bar.min, pos2(right.max(bar.left()), bar.bottom()))
+    Rect::from_min_max(bar.min, pos2(free_right.max(bar.left()), bar.bottom()))
 }
 
 /// 知らせを描く（毎フレーム。状態の帯の左の端から 1 行。右の項目に重ならない幅で切り、切ったときは全文をツールチップに出す）。消える時刻に描き直しを頼む。
-pub fn show(ctx: &egui::Context, app: &mut AppState) {
+pub fn show(ctx: &egui::Context, app: &mut AppState, free_right: f32) {
     let now = ctx.input(|i| i.time);
     // フレームの中で、ここまでに書かれた文（`apply` の外の書き込みも）をすぐ出す
     app.flush_message();
@@ -207,7 +202,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let text = app.toast.text().replace(['\r', '\n'], " ");
     let kind = app.toast.kind();
     let opacity = app.toast.opacity(now);
-    let strip = strip_rect(ctx, app);
+    let strip = strip_rect(ctx, free_right);
     if strip.width() < TEXT_INSET + 8.0 {
         return;
     }

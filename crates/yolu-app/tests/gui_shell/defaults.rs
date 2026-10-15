@@ -762,12 +762,11 @@ fn an_unreadable_or_newer_recent_file_starts_empty_and_is_moved_aside_before_it_
 
 #[test]
 fn a_state_without_a_place_never_touches_the_users_settings_folder() {
-    use yolu_app::recent::Recent;
     let mut h = AppState::new(32, 32);
     assert_eq!(h.recent_projects().items().len(), 0);
     h.recent_projects_mut()
         .add(&std::env::temp_dir().join("only-in-memory.ylp"));
     assert_eq!(paths(&h).len(), 1, "覚えるのは開いている間だけ");
     // 置き場を持たない一覧は何も書かない（テストの状態の既定）
-    let _ = Recent::default_path();
+    let _ = yolu_app::settings::recent_path();
 }

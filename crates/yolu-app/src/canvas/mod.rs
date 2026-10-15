@@ -954,10 +954,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     ctx.data_mut(|d| d.insert_temp(typing_id(), typing));
     let (now, frame_dt) = ctx.input(|i| (i.time, i.unstable_dt as f64));
     // 保存していない変更の問いが開いている間も止める（別ウィンドウのキャンバスは問いの覆いの外で、入力を直に読むため）
-    let blocked = app.popup.is_some()
-        || app.ui.popup_was_open
-        || app.sel.dialog.is_some()
-        || crate::windows::modal_open(app);
+    let blocked = crate::windows::pointer_blocked(app);
     let (events, modifiers, r_down, space_down) = ui.input(|i| {
         (
             i.events.clone(),

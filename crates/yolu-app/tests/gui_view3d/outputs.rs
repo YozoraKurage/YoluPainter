@@ -238,7 +238,7 @@ fn the_bake_window_lists_sets_and_maps_and_matches_its_snapshot() {
     open_bake_window(&mut h);
     shot(&mut h, "bake", "bake_window");
     // プロパティのレイヤーのタブにも「位置」のチェックがあるので、チェックを役割と名前で探せるよう、ステンシルのタブへ替える
-    h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_STENCIL;
+    h.ui_mut().property_tab = yolu_app::panels::properties::TAB_STENCIL;
     h.run();
     // 焼くマップのチェック（既定は先頭の 5 つ）
     for name in ["ワールド法線", "位置", "AO", "曲率", "厚み"] {

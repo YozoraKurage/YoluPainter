@@ -274,6 +274,12 @@ pub fn modal_open(app: &AppState) -> bool {
     app.discard_ask.is_some() || crate::jobs::modal_open(app)
 }
 
+/// キャンバスと 3D ビューの押し始め・ホイール・Esc を止めるか: ポップアップ（このフレームに閉じた物も）・選択範囲のダイアログ・確認のウィンドウ
+/// （[`modal_open`]）が開いている間。別ウィンドウの入力は覆いの下を通らずに直に読むので、覆いではなくこの判定で止める。
+pub fn pointer_blocked(app: &AppState) -> bool {
+    app.popup.is_some() || app.ui.popup_was_open || app.sel.dialog.is_some() || modal_open(app)
+}
+
 /// 終わる頼みを、保存が終わるまで待たせている（保存を捨てて閉じない）。
 pub(crate) fn waiting_to_close(app: &AppState) -> bool {
     app.quit && app.is_saving()

@@ -31,11 +31,6 @@ pub struct Recent {
 }
 
 impl Recent {
-    /// 設定のフォルダの `recent.conf`（設定のフォルダが分からなければ None）。
-    pub fn default_path() -> Option<PathBuf> {
-        crate::settings::path().map(|p| p.with_file_name("recent.conf"))
-    }
-
     /// ファイルから読む。無ければ空から始める（書くときに作る）。読めないファイルは空の一覧で始め、書き直す前に移す。
     pub fn load(path: Option<PathBuf>) -> Recent {
         let Some(file) = path else {

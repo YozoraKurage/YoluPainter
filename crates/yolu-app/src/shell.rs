@@ -850,6 +850,20 @@ pub struct StatusLayout {
     pub free_right: f32,
 }
 
+/// 状態の帯の、右の項目の手前の x（知らせ `toast` を、右の項目に重ならない幅で置くため）。
+pub fn status_free_right(ctx: &egui::Context, app: &AppState) -> f32 {
+    let screen = ctx.content_rect();
+    let bar = Rect::from_min_max(
+        pos2(screen.left(), screen.bottom() - t::STATUS_BAR_HEIGHT),
+        screen.max,
+    );
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("yolu.toast.measure"),
+    ));
+    status_layout(&painter, app, bar).free_right
+}
+
 /// 状態の帯 `r` の右端の項目の置き場。
 pub fn status_layout(p: &egui::Painter, app: &AppState, r: Rect) -> StatusLayout {
     let mut right = r.right() - 10.0;

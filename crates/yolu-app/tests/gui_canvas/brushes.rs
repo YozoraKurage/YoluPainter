@@ -3,7 +3,6 @@
 use crate::common;
 use crate::common::drive::Drive;
 
-use common::drive::Drive;
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};

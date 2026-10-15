@@ -7,7 +7,6 @@ use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 
-use common::drive::Drive;
 use common::*;
 use eframe::App as _;
 use egui::{pos2, vec2, Event, Rect};
