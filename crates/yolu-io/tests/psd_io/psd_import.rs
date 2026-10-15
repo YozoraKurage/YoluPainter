@@ -1962,6 +1962,14 @@ fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
         CopyOutcome::Imported(i) => assert_eq!(i.document.layers().len(), 2048),
         CopyOutcome::Refused(why) => panic!("{}", why.message()),
     }
+    // 記録の数（区切りを含む 3072）が予算の上限を超えるが、レイヤーは 2048 枚で .ylp に収まるときは、予算の上限で断る
+    assert_eq!(
+        refused(&groups(false), 256 * MIB),
+        CopyRefusal::TooManyLayers {
+            count: 3072,
+            limit: 256
+        }
+    );
     assert_eq!(
         refused(&groups(true), 4096 * MIB),
         CopyRefusal::LayerCountOverLimit {
@@ -2027,12 +2035,15 @@ fn a_layer_over_the_canvas_edge_keeps_the_same_pixels_in_every_compression() {
     };
     for compression in 0..=3u16 {
         let (d, notes) = imported(&Psd::new(4, 4, vec![shaped(compression, 0)]).build());
-        for (cx, cy) in [(0u32, 0u32), (3, 0), (0, 3), (3, 3), (1, 2)] {
-            assert_eq!(
-                pixel(&d, "はみ出す", cx, cy),
-                [(cx as u8 + 3) * 10 + 1, (cy as u8 + 2) * 10 + 1, 7, 255],
-                "圧縮 {compression} の ({cx}, {cy})"
-            );
+        // キャンバスの中の 16 画素の全部が、圧縮によらず同じバイト
+        for cy in 0..4u32 {
+            for cx in 0..4u32 {
+                assert_eq!(
+                    pixel(&d, "はみ出す", cx, cy),
+                    [(cx as u8 + 3) * 10 + 1, (cy as u8 + 2) * 10 + 1, 7, 255],
+                    "圧縮 {compression} の ({cx}, {cy})"
+                );
+            }
         }
         assert!(
             note(&notes, ImportFeature::OutsideCanvas).is_none(),

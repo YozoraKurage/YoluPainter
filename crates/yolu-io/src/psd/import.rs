@@ -567,7 +567,7 @@ fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> (usize, Option<std::io::Err
     }
     (filled, None)
 }
-/// レイヤーの矩形がキャンバスからはみ出すとき、キャンバスの中の部分（レイヤーの左上が原点）。はみ出さなければ None。キャンバスにかからなければ空の窓。
+/// レイヤーの矩形がキャンバスからはみ出すとき、キャンバスの中の範囲（レイヤーの左上が原点）。はみ出さなければ None。キャンバスにかからなければ空の範囲。
 fn canvas_window(l: &Layer, canvas_w: u32, canvas_h: u32) -> Option<read::Window> {
     let (left, top) = (i64::from(l.left), i64::from(l.top));
     let (right, bottom) = (left + i64::from(l.width), top + i64::from(l.height));
@@ -934,13 +934,18 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     if count == 0 {
         return Err(Stop::Refused(CopyRefusal::NoLayers));
     }
-    // 記録の数が予算から決めた上限を超えるかは、文書のレイヤーの数（.ylp の上限）を確かめたあとで断る（下）。予算を上げても取り込めない数なら、
-    // 予算の上限でなく .ylp の上限で知らせるため。記録は区切りや落とすレイヤーも数えるので、文書のレイヤーの数は読み終えるまで分からない
+    // 記録の数が予算から決めた上限を超えるかは、文書のレイヤーの数（.ylp の上限）を数えたあとで断る（記録を読み終えた後）。予算を上げても取り込めない数なら、
+    // 予算の上限でなく .ylp の上限で知らせるため。記録は区切りや落とすレイヤーも数えるので、文書のレイヤーの数は読み終えるまで分からない。
+    // 断ると決まった（記録の数が予算の上限を超えた、または文書のレイヤーが .ylp の上限を超えた）後の記録は、数えるだけで持たない
+    // （名前と知らせのメモリが、ファイルの大きさに比例して増えないように）
 
     // レイヤーの記録（付加情報は 1 枚ずつ読んで、知らせだけ残す）
-    let mut parsed: Vec<Parsed> = Vec::with_capacity(count);
+    let mut parsed: Vec<Parsed> = Vec::with_capacity(count.min(limits.max_layers));
+    let mut layers_seen = 0usize;
+    let mut doomed = false;
     for i in 0..count {
         cancelled(o.cancel)?;
+        doomed |= i >= limits.max_layers;
         let mut head = [0u8; 18];
         r.read_exact(&mut head)?;
         let n = u16::from_be_bytes([head[16], head[17]]) as usize;
@@ -1012,10 +1017,34 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
                 let v = (u32::from(rec.layer.opacity) * u32::from(rec.fill_opacity) + 127) / 255;
                 rec.layer.opacity = v as u8;
             }
-            let name = rec.layer.name.clone();
-            s.copy.as_mut().unwrap().flush_layer(&name);
+            // 文書のレイヤーの数（グループは数え、区切りの記録と落としたレイヤーは数えない）
+            if !dropped {
+                layers_seen += 1;
+                doomed |= layers_seen > crate::MAX_DOCUMENT_LAYERS;
+            }
+            if doomed {
+                s.copy.as_mut().unwrap().discard_layer();
+            } else {
+                let name = rec.layer.name.clone();
+                s.copy.as_mut().unwrap().flush_layer(&name);
+            }
         }
-        parsed.push(Parsed { rec, dropped });
+        if !doomed {
+            parsed.push(Parsed { rec, dropped });
+        }
+    }
+    // .ylp の上限（予算を上げても変わらない）を先に、予算から決めた上限をその次に断る。画素は読まない
+    if layers_seen > crate::MAX_DOCUMENT_LAYERS {
+        return Err(Stop::Refused(CopyRefusal::LayerCountOverLimit {
+            count: layers_seen,
+            limit: crate::MAX_DOCUMENT_LAYERS,
+        }));
+    }
+    if count > limits.max_layers {
+        return Err(Stop::Refused(CopyRefusal::TooManyLayers {
+            count,
+            limit: limits.max_layers,
+        }));
     }
 
     // レイヤーの並び（下から上）と、グループの親。落としたレイヤーは並びに入れない
@@ -1066,19 +1095,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     if !open.is_empty() {
         return malformed("閉じていないグループ区切り");
     }
-    // 文書のレイヤーの数（区切りの記録と、落としたレイヤーを除く）。.ylp に書ける数を超えれば、画素を読む前に断る
-    if items.len() > crate::MAX_DOCUMENT_LAYERS {
-        return Err(Stop::Refused(CopyRefusal::LayerCountOverLimit {
-            count: items.len(),
-            limit: crate::MAX_DOCUMENT_LAYERS,
-        }));
-    }
-    if count > limits.max_layers {
-        return Err(Stop::Refused(CopyRefusal::TooManyLayers {
-            count,
-            limit: limits.max_layers,
-        }));
-    }
+    debug_assert_eq!(items.len(), layers_seen);
 
     // レイヤー ID: 欠落・重複・不正だけに新しい ID を振る（名前では補修しない）。
     // 先に全部のレイヤーを見て、正で最初に出た一意な ID（区切りの ID を含む）をすべて取っておき、そのあとで振る。
@@ -1134,8 +1151,8 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         let l = &mut p.rec.layer;
         let raster = kept && matches!(l.kind, LayerKind::Raster);
         let (w, hh) = (l.width, l.height);
-        // キャンバスからはみ出すレイヤーは、キャンバスの中の窓だけを持つ（外の画素は 1 行ずつ展開して、見える画素があるかだけを見て捨てる）。
-        // 持つ大きさと予算の確かめは窓の大きさで行う
+        // キャンバスからはみ出すレイヤーは、キャンバスの中の範囲だけを持つ（外の画素は 1 行ずつ展開して、見える画素があるかだけを見て捨てる）。
+        // 持つ大きさと予算の確かめは範囲の大きさで行う
         let window = if raster && w > 0 && hh > 0 {
             canvas_window(l, width, height)
         } else {
@@ -1144,7 +1161,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         let (kept_w, kept_h) =
             window.map_or((w, hh), |win| (win.width() as u32, win.height() as u32));
         let layer_bytes = u64::from(kept_w) * u64::from(kept_h) * 4;
-        // 窓の外に見える画素があったか（アルファのチャンネルを読んだときだけ決まる）
+        // 範囲の外に見える画素があったか（アルファのチャンネルを読んだときだけ決まる）
         let mut alpha_outside: Option<bool> = None;
         if raster && layer_bytes > o.source_budget {
             return Err(Stop::Refused(CopyRefusal::LayerTooLarge {
@@ -1181,7 +1198,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         for (id, len) in channel_list {
             let wanted = match id {
                 -2 => kept && l.mask.as_ref().is_some_and(|m| m.width > 0 && m.height > 0),
-                // 窓が空のレイヤーも、アルファだけは外に見える画素があるかを見るために読む
+                // 範囲が空のレイヤーも、アルファだけは外に見える画素があるかを見るために読む
                 -1..=2 => raster && (layer_bytes > 0 || id == -1 && window.is_some()),
                 _ => false,
             };
@@ -1249,10 +1266,10 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         }
         let mut cut_visible = false;
         if let Some(win) = window {
-            // 窓の外に見える画素があったか: アルファを読んだならその値で、読まなかった（アルファのない）レイヤーは全面が不透明なので窓の外があれば
+            // 範囲の外に見える画素があったか: アルファを読んだならその値で、読まなかった（アルファのない）レイヤーは全面が不透明なので範囲の外があれば
             cut_visible = alpha_outside
                 .unwrap_or(u64::from(kept_w) * u64::from(kept_h) < u64::from(w) * u64::from(hh));
-            // 以降は窓を、そのレイヤーの矩形として扱う（キャンバスの中に収まる）
+            // 以降は範囲を、そのレイヤーの矩形として扱う（キャンバスの中に収まる）
             l.left += win.x0 as i32;
             l.top += win.y0 as i32;
             l.width = kept_w;

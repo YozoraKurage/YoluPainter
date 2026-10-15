@@ -1021,7 +1021,7 @@ fn check_rows_from(
         }
     }
 }
-/// チャンネルの矩形（幅 × 高さ）の中の窓（x は `x0..x1`、y は `y0..y1`。矩形の左上が原点）。
+/// チャンネルの矩形（幅 × 高さ）の中の範囲（x は `x0..x1`、y は `y0..y1`。矩形の左上が原点）。
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Window {
     pub x0: usize,
@@ -1037,8 +1037,8 @@ impl Window {
         self.y1 - self.y0
     }
 }
-/// `decode` の、矩形の中の窓だけを `out`（窓の幅 × stride のバイトの行が上から並ぶ面）の component へ書く形。矩形全体の面は持たず、1 行ずつ展開して窓を写す
-/// （キャンバスよりずっと大きなレイヤーを、全画素のメモリを取らずに読む）。書く値・誤り・知らせは `decode` と同じ。窓の外に 0 でない値があれば true。
+/// `decode` の、矩形の中の範囲だけを `out`（範囲の幅 × stride のバイトの行が上から並ぶ面）の component へ書く形。矩形全体の面は持たず、1 行ずつ展開して範囲を写す
+/// （キャンバスよりずっと大きなレイヤーを、全画素のメモリを取らずに読む）。書く値・誤り・知らせは `decode` と同じ。範囲の外に 0 でない値があれば true。
 pub(super) fn decode_window(
     mut r: Reader,
     w: u32,
