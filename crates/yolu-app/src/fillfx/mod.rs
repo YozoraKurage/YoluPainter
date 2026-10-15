@@ -496,7 +496,7 @@ impl AppState {
             }
             FillOp::ImportImageDialog => {
                 if !self.shelf_refuse_while_saving() {
-                    self.dialog_request = Some(DialogRequest::FillImage)
+                    self.ui.dialog_request = Some(DialogRequest::FillImage)
                 }
             }
             FillOp::Handles(hidden) => {

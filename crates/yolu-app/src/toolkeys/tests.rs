@@ -320,7 +320,7 @@ fn a_popup_opening_counts_as_a_release() {
     rig.mode("tool.eraser", ToolKeyMode::Hold);
     rig.down(Key::E);
     let anchor = egui::Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(10.0, 10.0));
-    rig.app.popup = Some(OpenPopup {
+    rig.app.ui.popup = Some(OpenPopup {
         kind: PopupKind::Mode,
         state: PopupState::new(&rig.ctx, anchor),
     });

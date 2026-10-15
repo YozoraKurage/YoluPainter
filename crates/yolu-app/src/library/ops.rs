@@ -646,7 +646,7 @@ impl AppState {
     pub(crate) fn library_ask_remove(&mut self, rel: &str) {
         if self.library.entry(rel).is_some() {
             self.library.pending_remove = Some(rel.to_owned());
-            self.dialog_request = Some(DialogRequest::LibraryRemove);
+            self.ui.dialog_request = Some(DialogRequest::LibraryRemove);
         }
     }
 

@@ -291,7 +291,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
 impl AppState {
     /// 取り込むウィンドウを開く頼み。
     pub(super) fn brush_import_dialog(&mut self) {
-        self.dialog_request = Some(DialogRequest::ImportBrushes);
+        self.ui.dialog_request = Some(DialogRequest::ImportBrushes);
     }
 
     pub fn is_brush_importing(&self) -> bool {

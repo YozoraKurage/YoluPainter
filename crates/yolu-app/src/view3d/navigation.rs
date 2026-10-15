@@ -478,7 +478,7 @@ pub fn shortcut(ui: &Ui, app: &mut AppState, rect: Rect, foreign: bool) {
     let ctx = ui.ctx();
     if foreign
         || ctx.egui_wants_keyboard_input()
-        || app.popup.is_some()
+        || app.ui.popup.is_some()
         || app.ui.popup_was_open
         || app.view3d.display.settings_open
         || app.dock_grabbed()

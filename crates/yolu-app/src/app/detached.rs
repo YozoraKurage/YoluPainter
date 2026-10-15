@@ -404,7 +404,7 @@ pub(super) fn tab_events(
     }
     if let Some((tab, at)) = pass.context {
         if !state.is_stroking() {
-            state.popup = Some(OpenPopup {
+            state.ui.popup = Some(OpenPopup {
                 kind: PopupKind::DockTab(tab),
                 state: PopupState::new(ctx, Rect::from_min_size(at, Vec2::ZERO)),
             });
@@ -428,7 +428,7 @@ impl YoluApp {
             _ => return Some(open),
         };
         if keep {
-            self.state.popup.get_or_insert(open);
+            self.state.ui.popup.get_or_insert(open);
         }
         None
     }
@@ -436,15 +436,15 @@ impl YoluApp {
     /// 別ウィンドウで開いたポップアップを、そのウィンドウで描く（ほかのウィンドウのポップアップは描かない）。
     fn popup_in(&mut self, ctx: &egui::Context, id: ViewportId) {
         // 保存していない変更の問いが開いている間は、別ウィンドウのメニューから文書を変えない（開いていたメニューは閉じる）
-        if self.state.discard_ask.is_some() {
-            self.state.popup = None;
+        if self.state.ui.discard_ask.is_some() {
+            self.state.ui.popup = None;
             return;
         }
-        let Some(open) = self.state.popup.take() else {
+        let Some(open) = self.state.ui.popup.take() else {
             return;
         };
         if open.state.viewport != id {
-            self.state.popup = Some(open);
+            self.state.ui.popup = Some(open);
             return;
         }
         let Some(mut open) = self.show_self_drawn_popup(ctx, open) else {
@@ -452,7 +452,7 @@ impl YoluApp {
         };
         let entries = crate::shell::popup_entries(&self.state, open.kind);
         match menu::show(ctx, Id::new("yolu.popup"), &mut open.state, &entries, &[]) {
-            PopupOutcome::Open | PopupOutcome::Step(_) => self.state.popup = Some(open),
+            PopupOutcome::Open | PopupOutcome::Step(_) => self.state.ui.popup = Some(open),
             PopupOutcome::Close => {}
             PopupOutcome::Chosen(action) => self.state.apply(action),
         }
@@ -465,11 +465,12 @@ impl YoluApp {
         };
         if self
             .state
+            .ui
             .popup
             .as_ref()
             .is_some_and(|p| !alive(p.state.viewport))
         {
-            self.state.popup = None;
+            self.state.ui.popup = None;
         }
     }
 
@@ -798,12 +799,13 @@ fn settle_and_record(ctx: &egui::Context, win: &mut OsWindow, info: &ViewportInf
 pub(super) fn close_foreign_popup(ctx: &egui::Context, state: &mut crate::state::AppState) {
     let here = ctx.viewport_id();
     if state
+        .ui
         .popup
         .as_ref()
         .is_some_and(|p| p.state.viewport != here)
         && ctx.input(|i| i.pointer.any_pressed())
     {
-        state.popup = None;
+        state.ui.popup = None;
     }
 }
 

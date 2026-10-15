@@ -338,7 +338,7 @@ fn set_row(
     }
     if response.secondary_clicked() {
         if let Some(at) = response.interact_pointer_pos() {
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::SetContext(uid),
                 state: PopupState::new(ctx, context_anchor(at)),
             });

@@ -581,7 +581,7 @@ fn list_rows(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             app.apply(Action::Path(PathAction::SelectPath(Some(id))));
             if let Some(at) = response.interact_pointer_pos() {
                 let ctx = ui.ctx().clone();
-                app.popup = Some(OpenPopup {
+                app.ui.popup = Some(OpenPopup {
                     kind: PopupKind::M2(Popup::PathContext(id)),
                     state: PopupState::new(&ctx, context_anchor(at)),
                 });

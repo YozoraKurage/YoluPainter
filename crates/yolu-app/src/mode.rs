@@ -248,7 +248,7 @@ pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
         pos2(x, bar.top() + 5.0),
         vec2(DROPDOWN_WIDTH, bar.height() - 10.0),
     );
-    let open = matches!(app.popup.as_ref().map(|p| p.kind), Some(PopupKind::Mode));
+    let open = matches!(app.ui.popup.as_ref().map(|p| p.kind), Some(PopupKind::Mode));
     let id = ui.make_persistent_id("options.mode");
     let response = ui.interact(r, id, Sense::click());
     let live = !w::stroke_held(ui.ctx());
@@ -303,13 +303,13 @@ pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
     let clicked = response.on_hover_text(tip).clicked();
     if clicked {
         if open {
-            app.popup = None;
+            app.ui.popup = None;
         } else {
             let anchor =
                 Rect::from_min_size(pos2(r.left(), r.bottom() + 2.0), vec2(r.width(), 0.0));
             let mut state = PopupState::new(ui.ctx(), anchor).with_min_width(r.width());
             state.selected = EditorMode::ALL.iter().position(|m| *m == mode);
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Mode,
                 state,
             });

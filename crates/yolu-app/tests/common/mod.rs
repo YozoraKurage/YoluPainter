@@ -315,6 +315,7 @@ pub fn popup_item(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
     let body = h
         .state()
         .state
+        .ui
         .popup
         .as_ref()
         .expect("popup open")

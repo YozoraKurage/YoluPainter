@@ -221,7 +221,7 @@ impl KindColumn {
 }
 
 fn open(app: &mut AppState, ctx: &egui::Context, kind: PopupKind, anchor: Rect) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind,
         state: PopupState::new(ctx, anchor),
     });

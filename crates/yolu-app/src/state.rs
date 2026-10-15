@@ -1,7 +1,6 @@
 //! 画面の状態（文書・選んでいるレイヤー・ツール・ブラシ・色・表示）と操作（`Action`）。メニュー・キー・ボタンは同じ `Action` を
 //! 通す（試験も同じ道で叩く）。計算は core（`engine`）に任せ、ここは選ぶ・渡す・覚えるだけ。
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use egui::{Pos2, Vec2};
@@ -11,12 +10,15 @@ use crate::engine::unit_f32_to_byte;
 use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8};
 use crate::lang::Lang;
 use crate::livelink::{LinkRequest, LinkView};
-use crate::m2::{Edit, LayerDrag, M2State, UiOp};
+use crate::m2::{Edit, M2State, UiOp};
 use crate::notice::Source;
 use crate::sets::TextureSets;
 use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
+
+mod ui_state;
+pub use ui_state::UiState;
 
 /// straight の RGBA（0〜1）。
 pub type Rgba = [f32; 4];
@@ -737,47 +739,6 @@ impl Action {
     }
 }
 
-/// 画面の一時の状態（前のフレームの結果・入力の途中。保存しない）。文書を替えると、前の文書を指す物（名前の変更・レイヤーのドラッグ）は
-/// `AppState::install_document` が戻す。
-#[derive(Debug, Default)]
-pub struct UiTemp {
-    /// 名前を変えているレイヤー。
-    pub renaming: Option<LayerId>,
-    /// 名前の入力欄がフォーカスを取った後か（外れたら名前の変更を終える）。
-    pub rename_started: bool,
-    /// レイヤーの欄のスクロール。
-    pub layer_scroll: f32,
-    /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
-    pub layer_drag: Option<LayerDrag>,
-    /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
-    pub renaming_set: Option<u32>,
-    pub rename_set_started: bool,
-    /// テクスチャセットの欄のスクロール。
-    pub set_scroll: f32,
-    /// 最後に描いたキャンバスの表示域（画面の点。試験と別ウィンドウの位置合わせ用）。
-    pub canvas_rect: Option<egui::Rect>,
-    /// キャンバスのタブが画面に出ているか（前のフレームの結果。`canvas_drawn` はこのフレームで描いたか）。ドックを分けると、
-    /// キャンバスと 3D ビューが同時に出る。プロパティの欄が、描く先が 3D だけのときに限って 2D の設定を無効にする。
-    pub canvas_visible: bool,
-    pub canvas_drawn: bool,
-    /// 最後にキャンバスのタブを描いたフレームの番号（メインウィンドウの `Context::cumulative_frame_nr_for`。キャンバスを別ウィンドウへ出しても、メインウィンドウの番号）。
-    /// タブが後ろにあるあいだは進まない。
-    pub canvas_frame: Option<u64>,
-    /// ドックのタブの見出しをつかんで動かしている（前のフレームと、その前のフレーム。離した直後のフレームも入る）。つかんでいる間と
-    /// 離した直後は、キャンバスと 3D ビューが描き始め・回し始めない。`YoluApp::frame` がタブの見出しの押しから毎フレーム入れる。
-    pub dock_grab: [bool; 2],
-    /// 前のフレームでポップアップが開いていた（このフレームの押下はキャンバスへ渡さない）。
-    pub popup_was_open: bool,
-    /// 見出しの開閉（キー → 開いているか）。
-    pub sections: HashMap<&'static str, bool>,
-    /// プロパティの欄のタブ（`panels::properties::TAB_STENCIL`・`TAB_LAYER`）。初めはレイヤー。画面の並びの順ではなく名前の値（保存しない）。
-    pub property_tab: usize,
-    /// タブのありか（メインウィンドウ・別ウィンドウ。メニューの「ウィンドウ」とタブの右クリックが読む。`YoluApp` が毎フレーム入れる）。
-    pub panels: crate::detach::PanelIndex,
-    /// ドックの操作の頼み（メニュー・タブの右クリックから。`YoluApp` が同じフレームのうちに当てる）。
-    pub dock_ops: Vec<crate::detach::DockOp>,
-}
-
 /// 画面の状態の全部。
 pub struct AppState {
     /// 画面の言語（文言は `lang.pick("日本語", "English")`）。
@@ -806,25 +767,16 @@ pub struct AppState {
     pub last_notice: Option<crate::notice::Notice>,
     /// 起動してからの注意と失敗（ログのウィンドウが読む）。
     pub notice_log: crate::notice::NoticeLog,
-    /// ログのウィンドウの画面の状態（絞り・選んだ行）。
-    pub log_view: crate::panels::log::LogView,
-    /// 小さな知らせの出し方の状態（どの文をいつから出したか・消したか）。
-    pub toast: crate::toast::Toast,
     /// 状態の帯の右端の版・ビルドと使っているメモリ。
     pub usage: crate::usage::Usage,
-    /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・見出しの開閉など。保存しない）。
-    pub ui: UiTemp,
+    /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・開いているポップアップ・知らせの表示など。保存しない）。
+    pub ui: UiState,
     pub canvas: CanvasInput,
-    pub popup: Option<OpenPopup>,
     /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
     pub places: crate::dialog::places::Places,
     /// 最近開いたプロジェクト（ファイルのメニュー。実際のウィンドウは起動で `recent.conf` から読む）。
     pub recent_projects: crate::recent::Recent,
-    pub reset_layout: bool,
     pub quit: bool,
-    /// 保存していない変更の問い（アプリの中のウィンドウ。聞いている間だけ Some。`discard`）。開いている間は、キーの割り当て・キャンバスの入力を止める
-    /// （`windows::modal_open`）ので、後ろの文書は変わらない。
-    pub discard_ask: Option<crate::discard::Ask>,
     /// Live Link の様子（毎フレーム `LiveLink` から写す。状態の帯とメニューが読む）。
     pub link: LinkView,
     /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
@@ -837,8 +789,6 @@ pub struct AppState {
     pub ops: crate::mcp_server::OpsView,
     /// Live Link で入れた「元の絵」のレイヤーの印（レイヤーの欄が読む。保存しない）。
     pub link_originals: crate::livelink::OriginalMarks,
-    /// ファイルのウィンドウを開く頼み（`YoluApp` が開く。試験では開かない）。
-    pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
     /// クローンの元と設定（2D のキャンバスと 3D ビューで共有する。元は 2D が文書の点、3D が面の点を別々に持つ）。
@@ -887,9 +837,6 @@ pub struct AppState {
     pub uv_wireframe: crate::uv_wireframe::Wireframe,
     /// 重なった UV の図（表示と塗りの知らせ）。
     pub uv_overlap: crate::uv_wireframe::overlap::OverlapState,
-    pub shortcuts: crate::shortcuts::ShortcutWindow,
-    /// 筆圧の調整（設定の「ペン」。枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。
-    pub pressure: crate::pen::window::PressureWindow,
     /// 今描いているウィンドウのペンの点のうち、OS に押しを奪われて補った離し（本物の離しではない）のポインタの番号。ウィンドウごとのパスの始めに、そのウィンドウの
     /// ペンの受け口（`PenInput::drain_with_lost`）から入れる。2D と 3D の入力は `pen_release_lost` で見る。アプリの状態で、.ylp には入れない。
     pub pen_lost: Vec<u32>,
@@ -1069,27 +1016,21 @@ impl AppState {
             message: String::new(),
             last_notice: None,
             notice_log: Default::default(),
-            log_view: Default::default(),
-            toast: crate::toast::Toast::default(),
             usage: crate::usage::Usage::default(),
-            ui: UiTemp {
+            ui: UiState {
                 property_tab: crate::panels::properties::TAB_LAYER,
-                ..UiTemp::default()
+                ..UiState::default()
             },
             canvas: CanvasInput::default(),
-            popup: None,
             places: Default::default(),
             recent_projects: Default::default(),
-            reset_layout: false,
             quit: false,
-            discard_ask: None,
             link: LinkView::default(),
             link_request: None,
             link_target: None,
             link_reopen: None,
             ops: Default::default(),
             link_originals: Default::default(),
-            dialog_request: None,
             view3d: View3dState::default(),
             clone: Default::default(),
             shelf: ShelfState::default(),
@@ -1115,8 +1056,6 @@ impl AppState {
             prefs: crate::prefs::PrefsState::default(),
             uv_wireframe: crate::uv_wireframe::Wireframe::default(),
             uv_overlap: Default::default(),
-            shortcuts: crate::shortcuts::ShortcutWindow::default(),
-            pressure: crate::pen::window::PressureWindow::default(),
             pen_lost: Vec::new(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
@@ -1180,7 +1119,7 @@ impl AppState {
             );
             return;
         }
-        self.dialog_request = Some(DialogRequest::OpenPath(path));
+        self.ui.dialog_request = Some(DialogRequest::OpenPath(path));
     }
 
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
@@ -1555,7 +1494,7 @@ impl AppState {
                 }
             }
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
-            Action::ResetLayout => self.reset_layout = true,
+            Action::ResetLayout => self.ui.reset_layout = true,
             Action::SelectTool(tool) => {
                 // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
                 self.switch_tool(tool, false);
@@ -1632,7 +1571,7 @@ impl AppState {
                 )) {
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::New)
+                self.ui.dialog_request = Some(DialogRequest::New)
             }
             Action::NewProject => {
                 if stroking {
@@ -1650,7 +1589,7 @@ impl AppState {
                 ) {
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::Open)
+                self.ui.dialog_request = Some(DialogRequest::Open)
             }
             Action::SaveProjectAsDialog => {
                 if stroking {
@@ -1662,7 +1601,7 @@ impl AppState {
                 ) {
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::SaveAs)
+                self.ui.dialog_request = Some(DialogRequest::SaveAs)
             }
             Action::OpenProject(path) => self.open_project(path),
             Action::OpenRecent(path) => self.open_recent(path),
@@ -1686,7 +1625,7 @@ impl AppState {
                     .map(|p| p.path().to_path_buf())
                 {
                     Some(path) => crate::project::save_from(self, &path),
-                    None => self.dialog_request = Some(DialogRequest::SaveAs),
+                    None => self.ui.dialog_request = Some(DialogRequest::SaveAs),
                 }
             }
             Action::SaveProjectAs(path) => {

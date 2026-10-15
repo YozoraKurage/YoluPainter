@@ -64,7 +64,7 @@ pub fn open_popup(
     anchor: Rect,
     min_width: f32,
 ) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::M2(popup),
         state: PopupState::new(ctx, anchor).with_min_width(min_width),
     });

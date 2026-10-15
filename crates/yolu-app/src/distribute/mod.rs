@@ -307,7 +307,7 @@ impl AppState {
                     return refuse(self);
                 }
                 if self.distribute.window.is_some() && self.distribute.job.is_none() {
-                    self.dialog_request = Some(DialogRequest::DistributeSave);
+                    self.ui.dialog_request = Some(DialogRequest::DistributeSave);
                 }
             }
             DistributeAction::Save(path) => {
@@ -551,7 +551,7 @@ impl AppState {
                 let mut window = Window::new(*prepared);
                 // 除く物が無ければウィンドウを出さず、すぐ保存先を選ぶ
                 if window.inventory.is_empty() {
-                    self.dialog_request = Some(DialogRequest::DistributeSave);
+                    self.ui.dialog_request = Some(DialogRequest::DistributeSave);
                 } else {
                     window.visible = true;
                     self.distribute.window_scroll = 0.0;

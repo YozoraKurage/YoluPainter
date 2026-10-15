@@ -664,7 +664,7 @@ impl AppState {
         // 前の文書のレイヤーを指す途中の操作は捨てる
         self.ui.renaming = None;
         self.ui.layer_drag = None;
-        self.popup = None;
+        self.ui.popup = None;
         // 打っている文字は前の文書のもの（まとめた段は前の文書の履歴に残る）。開いた文書のテキストレイヤーのフォントは探し直して知らせる
         self.text.editing = None;
         self.text.press = None;
@@ -1098,7 +1098,7 @@ pub(crate) mod install_testing {
             id: layer,
             target: None,
         });
-        app.popup = Some(OpenPopup {
+        app.ui.popup = Some(OpenPopup {
             kind: PopupKind::LayerContext(layer),
             state: crate::ui::menu::PopupState::new(&egui::Context::default(), egui::Rect::ZERO),
         });
@@ -1112,7 +1112,7 @@ pub(crate) mod install_testing {
     pub(crate) fn assert_settled(app: &AppState, what: &str) {
         assert!(app.ui.renaming.is_none(), "{what}: 名前の変更");
         assert!(app.ui.layer_drag.is_none(), "{what}: レイヤーのドラッグ");
-        assert!(app.popup.is_none(), "{what}: ポップアップ");
+        assert!(app.ui.popup.is_none(), "{what}: ポップアップ");
         assert!(app.fx.selected.is_none(), "{what}: 効果の選び");
     }
 

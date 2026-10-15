@@ -1076,10 +1076,10 @@ pub fn finish(app: &mut AppState, commit: bool) {
         return;
     };
     if matches!(
-        app.popup.as_ref().map(|p| p.kind),
+        app.ui.popup.as_ref().map(|p| p.kind),
         Some(PopupKind::Transform)
     ) {
-        app.popup = None;
+        app.ui.popup = None;
     }
     if !t.still_valid(app) {
         t.cancel(app);
@@ -1099,7 +1099,7 @@ pub fn finish(app: &mut AppState, commit: bool) {
 pub fn settle(app: &mut AppState) {
     if super::transforming(app)
         && !matches!(
-            app.popup.as_ref().map(|p| p.kind),
+            app.ui.popup.as_ref().map(|p| p.kind),
             Some(PopupKind::Transform)
         )
     {
@@ -1124,7 +1124,7 @@ pub fn start_requested(ctx: &egui::Context, app: &mut AppState) {
         );
         app.refuse(Source::Edit, text);
     };
-    if crate::pie::dragging(app) || ctx.input(|i| i.pointer.any_down()) || app.popup.is_some() {
+    if crate::pie::dragging(app) || ctx.input(|i| i.pointer.any_down()) || app.ui.popup.is_some() {
         refuse_with(
             app,
             lang.pick("ほかの操作の途中です", "another operation is in progress"),
@@ -1147,7 +1147,7 @@ pub fn start_requested(ctx: &egui::Context, app: &mut AppState) {
         .unwrap_or_default();
     match begin(app, kind, pointer, ctx.cumulative_frame_nr()) {
         Ok(()) => {
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Transform,
                 state: PopupState::new(ctx, Rect::from_min_size(pointer, egui::Vec2::ZERO)),
             });
@@ -1162,12 +1162,12 @@ pub fn start_drag(ctx: &egui::Context, app: &mut AppState) {
     let Some((kind, at, source)) = app.objects.drag_request.take() else {
         return;
     };
-    if app.popup.is_some() || super::transforming(app) {
+    if app.ui.popup.is_some() || super::transforming(app) {
         return;
     }
     match begin_with(app, kind, at, ctx.cumulative_frame_nr(), Some(source)) {
         Ok(()) => {
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Transform,
                 state: PopupState::new(ctx, Rect::from_min_size(at, egui::Vec2::ZERO)),
             });

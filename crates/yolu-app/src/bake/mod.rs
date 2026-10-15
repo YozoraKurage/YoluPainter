@@ -1130,7 +1130,7 @@ impl AppState {
     /// （右クリックを押してから離すまで・離したメニューがアイランドの索引を待っている間も同じ。押したまま離さなかったときは、少しで手放す）。
     fn island_menu_open(&self) -> bool {
         matches!(
-            self.popup.as_ref().map(|p| p.kind),
+            self.ui.popup.as_ref().map(|p| p.kind),
             Some(crate::state::PopupKind::BakeIsland { .. })
         ) || self.bake.menu_wait.is_some()
             || self.bake.menu_press.is_some()

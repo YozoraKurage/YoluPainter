@@ -442,19 +442,19 @@ impl AppState {
     /// 操作の中では、前の操作の文は見えない。
     pub fn message_begin(&mut self) -> String {
         let kind = self.message_kind();
-        self.toast.begin(&mut self.message, kind)
+        self.ui.toast.begin(&mut self.message, kind)
     }
 
     /// `message_begin` の出口。書かれていれば新しい知らせとして出し、書かれていなければ前の文を戻す。
     pub fn message_end(&mut self, prior: String) {
         // 種類が要るのは書かれたとき（書かれていなければ前の文に戻すだけで、知らせは出し直さない）
         let kind = self.message_kind();
-        self.toast.end(&mut self.message, prior, kind);
+        self.ui.toast.end(&mut self.message, prior, kind);
     }
 
     /// `message` を明示して空にする（操作の中では、空のまま終わっても前の文を戻さない。保存の結果が書かれたかを見分ける所が使う）。
     pub fn clear_message(&mut self) {
-        self.toast.clear(&mut self.message);
+        self.ui.toast.clear(&mut self.message);
         self.last_notice = None;
     }
 
@@ -492,7 +492,7 @@ impl AppState {
     /// トーストへ、ここまでに書かれた `message` を渡す（フレームの中で、`apply` の外の書き込みもすぐ出す）。
     pub(crate) fn flush_message(&mut self) {
         let kind = self.message_kind();
-        self.toast.flush(&self.message, kind);
+        self.ui.toast.flush(&self.message, kind);
     }
 
     /// 診断の記録へ、知らせを通さずに書かれた `message`（外からの直の書き込み）だけを渡す。`notify` の文は `notify` が書いた。
@@ -729,15 +729,15 @@ mod tests {
         let prior = app.message_begin();
         app.fail(Source::Save, "保存できません");
         app.message_end(prior);
-        app.toast.update(0.0);
-        assert_eq!(app.toast.kind(), Kind::Error);
-        assert_eq!(app.toast.lifetime(), crate::toast::LONG_SECONDS);
+        app.ui.toast.update(0.0);
+        assert_eq!(app.ui.toast.kind(), Kind::Error);
+        assert_eq!(app.ui.toast.lifetime(), crate::toast::LONG_SECONDS);
         let prior = app.message_begin();
         app.info(Source::Save, "保存しました。");
         app.message_end(prior);
-        app.toast.update(1.0);
-        assert_eq!(app.toast.kind(), Kind::Info);
-        assert_eq!(app.toast.lifetime(), crate::toast::INFO_SECONDS);
+        app.ui.toast.update(1.0);
+        assert_eq!(app.ui.toast.kind(), Kind::Info);
+        assert_eq!(app.ui.toast.lifetime(), crate::toast::INFO_SECONDS);
         // 何も書かない操作は、前の文と種類を戻す
         let prior = app.message_begin();
         app.message_end(prior);

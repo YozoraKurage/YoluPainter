@@ -38,7 +38,7 @@ fn fill(app: &mut AppState, op: FillOp) {
 
 /// ポップアップを開く。
 fn open(app: &mut AppState, ctx: &egui::Context, popup: Popup, anchor: Rect) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::M2(popup),
         state: PopupState::new(ctx, anchor).with_min_width(anchor.width()),
     });

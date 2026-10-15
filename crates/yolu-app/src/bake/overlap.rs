@@ -578,7 +578,7 @@ fn pinned(app: &mut AppState) -> Option<(usize, bool)> {
         island,
         map,
         surface,
-    }) = app.popup.as_ref().map(|p| p.kind)
+    }) = app.ui.popup.as_ref().map(|p| p.kind)
     {
         if set == app.session.sets.current().uid {
             return Some((island, if map { shown_side } else { surface }));
@@ -757,7 +757,7 @@ pub fn open_menu(
     map: bool,
     surface: bool,
 ) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::BakeIsland {
             set: app.session.sets.current().uid,
             island,
@@ -864,7 +864,7 @@ pub fn poll_menu(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let same_model = app.view3d.full_model().is_some_and(|m| wait.model.is(m));
-    if app.tool != Tool::PolygonFill || app.is_stroking() || app.popup.is_some() || !same_model {
+    if app.tool != Tool::PolygonFill || app.is_stroking() || app.ui.popup.is_some() || !same_model {
         return;
     }
     match app.overlap_islands(false) {

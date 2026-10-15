@@ -436,7 +436,7 @@ impl View3dSlot {
         let lang = app.lang;
         let shading = display::shading_label(app, app.view3d.display.shading);
         let open_shading = matches!(
-            app.popup.as_ref().map(|p| p.kind),
+            app.ui.popup.as_ref().map(|p| p.kind),
             Some(PopupKind::View3dShading)
         );
         let mut items = Vec::new();
@@ -499,7 +499,7 @@ impl View3dSlot {
                     let ctx = ui.ctx().clone();
                     let b = out.rects[i];
                     // 押したアイコンの下に開く
-                    app.popup = Some(OpenPopup {
+                    app.ui.popup = Some(OpenPopup {
                         kind: PopupKind::View3dShading,
                         state: PopupState::new(
                             &ctx,
@@ -1083,7 +1083,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let outside =
         pressed && at.is_some_and(|a| !panel.contains(a) && !button.is_some_and(|b| b.contains(a)));
-    if (outside || escape) && app.popup.is_none() {
+    if (outside || escape) && app.ui.popup.is_none() {
         app.apply(Action::View3d(Op::CloseSettings));
     }
 }

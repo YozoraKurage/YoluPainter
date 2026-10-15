@@ -230,7 +230,7 @@ impl AppState {
                     self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
-                self.dialog_request = Some(DialogRequest::ExportDestination);
+                self.ui.dialog_request = Some(DialogRequest::ExportDestination);
             }
             ExportAction::Destination(path) => self.choose_export_destination(path),
             ExportAction::Run => self.run_export_window(),
@@ -786,7 +786,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     for request in requests {
         match request {
             Request::Popup(popup, anchor) => {
-                app.popup = Some(OpenPopup {
+                app.ui.popup = Some(OpenPopup {
                     kind: PopupKind::M2(popup),
                     state: PopupState::new(ctx, anchor).with_min_width(anchor.width()),
                 });

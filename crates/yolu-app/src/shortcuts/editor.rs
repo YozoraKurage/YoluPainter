@@ -149,7 +149,7 @@ impl PickKind {
 }
 
 /// ウィンドウの状態（アプリの状態。保存しない）。
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct ShortcutWindow {
     scroll: f32,
     pub section: Section,
@@ -420,11 +420,11 @@ fn held_modifiers(m: &Modifiers) -> String {
 
 /// 割り当てを待ち始める（キーの表・キャンバス・3D ビューのキーを止める受け皿を開く）。
 fn begin_capture(ctx: &egui::Context, app: &mut AppState, target: Target, at: Rect) {
-    app.shortcuts.capture = Some(Capture {
+    app.ui.shortcuts.capture = Some(Capture {
         target,
         opened: ctx.cumulative_frame_nr(),
     });
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::KeyCapture,
         state: PopupState::new(ctx, at),
     });
@@ -432,18 +432,18 @@ fn begin_capture(ctx: &egui::Context, app: &mut AppState, target: Target, at: Re
 
 /// 待つのをやめる（受け皿を閉じる）。
 pub fn end_capture(app: &mut AppState) {
-    app.shortcuts.capture = None;
+    app.ui.shortcuts.capture = None;
     if matches!(
-        app.popup.as_ref().map(|p| p.kind),
+        app.ui.popup.as_ref().map(|p| p.kind),
         Some(PopupKind::KeyCapture)
     ) {
-        app.popup = None;
+        app.ui.popup = None;
     }
 }
 
 /// 割り当てに使ったキーを、離すまで取り除く（キーの表へ繰り返しの押しを渡さない）。キーの処理の初めに呼ぶ。
 pub fn swallow_held(ctx: &egui::Context, app: &mut AppState) {
-    let Some(key) = app.shortcuts.swallow else {
+    let Some(key) = app.ui.shortcuts.swallow else {
         return;
     };
     let mut released = false;
@@ -464,21 +464,21 @@ pub fn swallow_held(ctx: &egui::Context, app: &mut AppState) {
         }
     });
     if released {
-        app.shortcuts.swallow = None;
+        app.ui.shortcuts.swallow = None;
     }
 }
 
 /// 待っている間の入力を受ける（キーかボタンで決める・Esc でやめる・Backspace で外す）。待つのが終わったら true。
 fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
-    let Some(capture) = app.shortcuts.capture else {
+    let Some(capture) = app.ui.shortcuts.capture else {
         return false;
     };
     // 受け皿が外から閉じられた（メニューバーを開いたなど）: やめる
     if !matches!(
-        app.popup.as_ref().map(|p| p.kind),
+        app.ui.popup.as_ref().map(|p| p.kind),
         Some(PopupKind::KeyCapture)
     ) {
-        app.shortcuts.capture = None;
+        app.ui.shortcuts.capture = None;
         return true;
     }
     let frame = ctx.cumulative_frame_nr();
@@ -523,7 +523,7 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
             // この Esc は待つのをやめるのに使った（後で描くウィンドウが閉じない）
             crate::ui::window::note_escape_taken(ctx);
             end_capture(app);
-            app.shortcuts.swallow = Some(key);
+            app.ui.shortcuts.swallow = Some(key);
             return true;
         }
         if key == Key::Backspace && plain {
@@ -542,10 +542,10 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                     app.keys.set_combo(index, None);
                     app.keys_changed();
                 }
-                Target::Search => app.shortcuts.key_filter = None,
+                Target::Search => app.ui.shortcuts.key_filter = None,
             }
             end_capture(app);
-            app.shortcuts.swallow = Some(key);
+            app.ui.shortcuts.swallow = Some(key);
             return true;
         }
         match capture.target {
@@ -573,14 +573,14 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                 app.keys.set(group, triggers);
                 app.keys_changed();
                 end_capture(app);
-                app.shortcuts.swallow = Some(key);
+                app.ui.shortcuts.swallow = Some(key);
                 return true;
             }
             Target::Search => {
-                app.shortcuts.key_filter = Some(keyconfig::trigger_of(key, &m));
-                app.shortcuts.scroll = 0.0;
+                app.ui.shortcuts.key_filter = Some(keyconfig::trigger_of(key, &m));
+                app.ui.shortcuts.scroll = 0.0;
                 end_capture(app);
-                app.shortcuts.swallow = Some(key);
+                app.ui.shortcuts.swallow = Some(key);
                 return true;
             }
             // マウスの欄はボタンで決める（キーは数えない）
@@ -591,7 +591,7 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
         if frame == capture.opened {
             continue;
         }
-        let chip = app.shortcuts.chip_rect(capture.target);
+        let chip = app.ui.shortcuts.chip_rect(capture.target);
         match capture.target {
             Target::Mouse(index) if chip.is_some_and(|r| r.contains(pos)) => {
                 // 始めたあとに効く修飾の行（ステンシルの回転の刻み）は、修飾だけを変える（ボタンは、回す操作のボタン。修飾の無い押しは
@@ -601,7 +601,7 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                 };
                 app.keys.set_combo(index, Some(combo));
                 app.keys_changed();
-                app.shortcuts.ignore_click = true;
+                app.ui.shortcuts.ignore_click = true;
                 end_capture(app);
                 return true;
             }
@@ -638,7 +638,7 @@ fn chip(
     }
     .max(28.0);
     let r = Rect::from_min_size(at, vec2(width, 20.0));
-    app.shortcuts.chips.push((target, r));
+    app.ui.shortcuts.chips.push((target, r));
     let id = Id::new(("yolu.shortcuts.chip", format!("{target:?}")));
     let response = ui.interact(
         r,
@@ -708,21 +708,21 @@ fn chip(
 /// （その Esc・Enter でウィンドウを閉じない・入力欄へフォーカスを移さない）。ほかの区分を見ているときは、待つのを終えるだけ。
 pub(crate) fn begin_frame(ctx: &egui::Context, app: &mut AppState, shown: bool) -> bool {
     if !shown {
-        if app.shortcuts.capturing() {
+        if app.ui.shortcuts.capturing() {
             end_capture(app);
         }
         return false;
     }
     let finished = take_capture(ctx, app);
-    if app.shortcuts.swallow.is_some() || finished {
+    if app.ui.shortcuts.swallow.is_some() || finished {
         if let Some(focused) = ctx.memory(|m| m.focused()) {
             ctx.memory_mut(|m| m.surrender_focus(focused));
         }
     }
-    if app.shortcuts.ignore_click && !ctx.input(|i| i.pointer.any_down()) {
+    if app.ui.shortcuts.ignore_click && !ctx.input(|i| i.pointer.any_down()) {
         // 離しのフレームまでは数えない
         if !ctx.input(|i| i.pointer.any_released()) {
-            app.shortcuts.ignore_click = false;
+            app.ui.shortcuts.ignore_click = false;
         }
     }
     finished
@@ -731,13 +731,13 @@ pub(crate) fn begin_frame(ctx: &egui::Context, app: &mut AppState, shown: bool) 
 /// 「ショートカット」の区分を離れる・設定のウィンドウを閉じる: 待っているキーをやめ、選びかけのパイの項目を捨てる。
 pub(crate) fn leave(app: &mut AppState) {
     end_capture(app);
-    app.shortcuts.picker = None;
+    app.ui.shortcuts.picker = None;
     // 描いていない欄の位置は残さない
-    app.shortcuts.chips.clear();
-    app.shortcuts.mode_boxes.clear();
-    app.shortcuts.search_rect = None;
-    app.shortcuts.slot_rects.clear();
-    app.shortcuts.pick_rect = None;
+    app.ui.shortcuts.chips.clear();
+    app.ui.shortcuts.mode_boxes.clear();
+    app.ui.shortcuts.search_rect = None;
+    app.ui.shortcuts.slot_rects.clear();
+    app.ui.shortcuts.pick_rect = None;
 }
 
 /// ぶつかるキーが残っていて保存していないことを知らせる（設定のウィンドウを閉じたときに、どの区分を見ていても出す）。
@@ -750,10 +750,10 @@ pub(crate) fn warn_unsaved(app: &mut AppState) {
 
 /// 設定のウィンドウの左で、ショートカットの区分（どこでも・視点／ペイント…）を選ぶ（「キーで探す」の絞り込みは外す）。
 pub(crate) fn select_section(app: &mut AppState, section: Section) {
-    app.shortcuts.section = section;
-    app.shortcuts.key_filter = None;
-    app.shortcuts.scroll = 0.0;
-    app.shortcuts.picker = None;
+    app.ui.shortcuts.section = section;
+    app.ui.shortcuts.key_filter = None;
+    app.ui.shortcuts.scroll = 0.0;
+    app.ui.shortcuts.picker = None;
 }
 
 fn unsaved_reason(lang: Lang) -> &'static str {
@@ -765,10 +765,10 @@ fn unsaved_reason(lang: Lang) -> &'static str {
 
 /// 右の欄の中身（`pane` は設定のウィンドウの右の欄のうち、上の探す欄より下）: 表かパイメニューの編集と、下の帯。
 pub(crate) fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
-    app.shortcuts.chips.clear();
-    app.shortcuts.mode_boxes.clear();
+    app.ui.shortcuts.chips.clear();
+    app.ui.shortcuts.mode_boxes.clear();
     let main = Rect::from_min_max(pane.min, pos2(pane.right(), pane.bottom() - FOOTER));
-    if app.shortcuts.section == Section::Pies && app.shortcuts.key_filter.is_none() {
+    if app.ui.shortcuts.section == Section::Pies && app.ui.shortcuts.key_filter.is_none() {
         pies(ui, app, main.shrink2(vec2(16.0, 10.0)));
     } else {
         table(ui, app, main.shrink2(vec2(16.0, 10.0)));
@@ -808,10 +808,10 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         app.keys_reset_all();
     }
     if button(ui, lang.pick("書き出し…", "Export…"), "export") {
-        app.dialog_request = Some(DialogRequest::KeymapExport);
+        app.ui.dialog_request = Some(DialogRequest::KeymapExport);
     }
     if button(ui, lang.pick("読み込み…", "Import…"), "import") {
-        app.dialog_request = Some(DialogRequest::KeymapImport);
+        app.ui.dialog_request = Some(DialogRequest::KeymapImport);
     }
     if app.keys.unsaved || app.keys.has_conflicts() {
         let reason = unsaved_reason(lang);
@@ -827,12 +827,12 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
 fn search_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let lang = app.lang;
     let ctx = ui.ctx().clone();
-    let button_label = match app.shortcuts.key_filter {
+    let button_label = match app.ui.shortcuts.key_filter {
         Some(t) => trigger_label(&t),
         None => lang.pick("キーで探す", "Find by Key").to_owned(),
     };
     let searching = matches!(
-        app.shortcuts.capture,
+        app.ui.shortcuts.capture,
         Some(Capture {
             target: Target::Search,
             ..
@@ -854,8 +854,8 @@ fn search_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
         );
     }
     let inner = Rect::from_min_max(field.min + vec2(30.0, 1.0), field.max - vec2(6.0, 1.0));
-    app.shortcuts.search_rect = Some(inner);
-    let mut text = app.shortcuts.search.clone();
+    app.ui.shortcuts.search_rect = Some(inner);
+    let mut text = app.ui.shortcuts.search.clone();
     let response = ui.put(
         inner,
         egui::TextEdit::singleline(&mut text)
@@ -868,27 +868,27 @@ fn search_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .vertical_align(egui::Align::Center),
     );
     if response.changed() {
-        app.shortcuts.search = text;
-        app.shortcuts.scroll = 0.0;
+        app.ui.shortcuts.search = text;
+        app.ui.shortcuts.scroll = 0.0;
     }
     if w::button(
         ui,
         b,
         ("yolu.shortcuts", "find_key"),
         &button_label,
-        searching || app.shortcuts.key_filter.is_some(),
+        searching || app.ui.shortcuts.key_filter.is_some(),
         true,
         None,
         None,
     )
     .clicked()
     {
-        if app.shortcuts.key_filter.take().is_none() && !searching {
+        if app.ui.shortcuts.key_filter.take().is_none() && !searching {
             begin_capture(&ctx, app, Target::Search, b);
         } else if searching {
             end_capture(app);
         }
-        app.shortcuts.scroll = 0.0;
+        app.ui.shortcuts.scroll = 0.0;
     }
 }
 
@@ -899,10 +899,10 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let head = Rect::from_min_size(pos2(r.left(), r.top() + TOP - 14.0), vec2(r.width(), HEAD));
     let col_key = head.left() + head.width() * 0.46;
     let col_mouse = head.left() + head.width() * 0.74;
-    let section = app.shortcuts.section;
-    let mut window = std::mem::take(&mut app.shortcuts);
+    let section = app.ui.shortcuts.section;
+    let mut window = std::mem::take(&mut app.ui.shortcuts);
     let lines = lines(&mut window, app, section);
-    app.shortcuts = window;
+    app.ui.shortcuts = window;
     // マウスの欄には、ツールの行では、キーの動き方の箱が並ぶ（その行があれば、見出しも）
     let has_tool_rows = lines.iter().any(
         |l| matches!(l, Line::Key { group, locked: false } if commands::selected_tool(group.0).is_some()),
@@ -940,11 +940,11 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
         w::hline(p, head.left(), head.right(), head.bottom(), t::SEPARATOR);
     }
     let list = Rect::from_min_max(pos2(r.left(), head.bottom() + 1.0), r.max);
-    let mut scroll = app.shortcuts.scroll;
+    let mut scroll = app.ui.shortcuts.scroll;
     let bar = Scroll::begin(ui, list, lines.len() as f32 * ROW, &mut scroll);
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
-    let capture = app.shortcuts.capture;
+    let capture = app.ui.shortcuts.capture;
     let held = ctx.input(|i| i.modifiers);
     for (i, line) in lines.iter().enumerate() {
         let row = Rect::from_min_size(
@@ -959,7 +959,7 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
         );
     }
     bar.end(ui, Id::new("yolu.shortcuts.scroll"), &mut scroll);
-    app.shortcuts.scroll = scroll;
+    app.ui.shortcuts.scroll = scroll;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1090,8 +1090,8 @@ fn draw_line(
                     tip.as_deref(),
                     &name,
                 );
-                if clicked && !app.shortcuts.ignore_click {
-                    let r = app.shortcuts.chip_rect(target).unwrap_or(row);
+                if clicked && !app.ui.shortcuts.ignore_click {
+                    let r = app.ui.shortcuts.chip_rect(target).unwrap_or(row);
                     begin_capture(ctx, app, target, r);
                 }
                 x += width + 6.0;
@@ -1119,13 +1119,13 @@ fn draw_line(
                         None,
                         &name,
                     );
-                    if clicked && !app.shortcuts.ignore_click {
-                        let r = app.shortcuts.chip_rect(target).unwrap_or(row);
+                    if clicked && !app.ui.shortcuts.ignore_click {
+                        let r = app.ui.shortcuts.chip_rect(target).unwrap_or(row);
                         begin_capture(ctx, app, target, r);
                     }
                 } else {
                     let r = Rect::from_min_size(pos2(x, chip_y), vec2(20.0, 20.0));
-                    app.shortcuts.chips.push((target, r));
+                    app.ui.shortcuts.chips.push((target, r));
                     if w::icon_button(
                         ui,
                         r,
@@ -1220,8 +1220,8 @@ fn draw_line(
                 tip.as_deref(),
                 &name,
             );
-            if clicked && !app.shortcuts.ignore_click && !capturing {
-                let r = app.shortcuts.chip_rect(target).unwrap_or(row);
+            if clicked && !app.ui.shortcuts.ignore_click && !capturing {
+                let r = app.ui.shortcuts.chip_rect(target).unwrap_or(row);
                 begin_capture(ctx, app, target, r);
             }
         }
@@ -1266,9 +1266,9 @@ fn tool_mode_box(
     let mode = app.keys.tool_mode(command);
     let width = (row.right() - 36.0 - col_mouse).clamp(90.0, 190.0);
     let r = Rect::from_min_size(pos2(col_mouse, chip_y), vec2(width, 20.0));
-    app.shortcuts.mode_boxes.push((command, r));
+    app.ui.shortcuts.mode_boxes.push((command, r));
     let open = matches!(
-        app.popup.as_ref().map(|p| p.kind),
+        app.ui.popup.as_ref().map(|p| p.kind),
         Some(PopupKind::ToolKeyMode(c)) if c == command
     );
     let (response, _) = w::dropdown(
@@ -1283,13 +1283,13 @@ fn tool_mode_box(
     );
     if response.clicked() {
         if open {
-            app.popup = None;
+            app.ui.popup = None;
         } else {
             let anchor =
                 Rect::from_min_size(pos2(r.left(), r.bottom() + 2.0), vec2(r.width(), 0.0));
             let mut state = PopupState::new(ctx, anchor).with_min_width(r.width());
             state.selected = ToolKeyMode::ALL.iter().position(|m| *m == mode);
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::ToolKeyMode(command),
                 state,
             });
@@ -1365,8 +1365,8 @@ pub fn slot_name(lang: Lang, slot: usize) -> &'static str {
 fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let lang = app.lang;
     let ctx = ui.ctx().clone();
-    if app.shortcuts.pie >= app.pie.menus.len() {
-        app.shortcuts.pie = 0;
+    if app.ui.shortcuts.pie >= app.pie.menus.len() {
+        app.ui.shortcuts.pie = 0;
     }
     // パイの並び（押して選ぶ）と、追加・削除
     let mut x = r.left();
@@ -1380,15 +1380,15 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
             b,
             ("yolu.shortcuts.pie", i),
             name,
-            app.shortcuts.pie == i,
+            app.ui.shortcuts.pie == i,
             true,
             None,
             None,
         )
         .clicked()
         {
-            app.shortcuts.pie = i;
-            app.shortcuts.picker = None;
+            app.ui.shortcuts.pie = i;
+            app.ui.shortcuts.picker = None;
         }
         x = b.right() + 6.0;
     }
@@ -1406,11 +1406,11 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
     .clicked()
     {
         app.pie.add_user(lang);
-        app.shortcuts.pie = app.pie.menus.len() - 1;
-        app.shortcuts.picker = None;
+        app.ui.shortcuts.pie = app.pie.menus.len() - 1;
+        app.ui.shortcuts.picker = None;
         app.keys_changed();
     }
-    let index = app.shortcuts.pie;
+    let index = app.ui.shortcuts.pie;
     let menu = app.pie.menus[index].clone();
     let user = matches!(menu.name, PieName::User(_));
     let remove = Rect::from_min_size(pos2(add.right() + 4.0, y + 2.0), vec2(22.0, 22.0));
@@ -1439,8 +1439,8 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
             app.keys.forget_command(command);
         }
         app.pie.remove_user(&menu.id);
-        app.shortcuts.pie = 0;
-        app.shortcuts.picker = None;
+        app.ui.shortcuts.pie = 0;
+        app.ui.shortcuts.picker = None;
         app.keys_changed();
         return;
     }
@@ -1473,7 +1473,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .filter(|n| !n.is_empty())
         {
             app.pie.menus[index].name = PieName::User(name);
-            app.shortcuts.names = None;
+            app.ui.shortcuts.names = None;
             app.keys_changed();
         }
     } else {
@@ -1494,7 +1494,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
     if let Some(command) = menu.command {
         let held = ctx.input(|i| i.modifiers);
         let group = (command, Scope::Everywhere);
-        let capture = app.shortcuts.capture;
+        let capture = app.ui.shortcuts.capture;
         let triggers = app.keys.triggers(group);
         let mut x = r.left() + label_w;
         let name = command_name(app, command);
@@ -1524,7 +1524,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
                 &name,
             );
             if clicked {
-                let rr = app.shortcuts.chip_rect(target).unwrap_or(r);
+                let rr = app.ui.shortcuts.chip_rect(target).unwrap_or(r);
                 begin_capture(&ctx, app, target, rr);
             }
             x += width + 6.0;
@@ -1550,14 +1550,14 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
                 &name,
             );
             if clicked {
-                let rr = app.shortcuts.chip_rect(target).unwrap_or(r);
+                let rr = app.ui.shortcuts.chip_rect(target).unwrap_or(r);
                 begin_capture(&ctx, app, target, rr);
             }
         }
     }
     y += 40.0;
     // 8 か所
-    app.shortcuts.slot_rects.clear();
+    app.ui.shortcuts.slot_rects.clear();
     for slot in 0..crate::ui::pie::SLOTS {
         let row = Rect::from_min_size(pos2(r.left(), y), vec2(r.width(), 28.0));
         let p = ui.painter().clone();
@@ -1577,12 +1577,8 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .as_ref()
             .map(|i| crate::pie::slot_of(app, i).label)
             .unwrap_or_default();
-        let picking = app
-            .shortcuts
-            .picker
-            .as_ref()
-            .is_some_and(|p| p.slot == slot);
-        app.shortcuts.slot_rects.push(value);
+        let picking = matches!(&app.ui.shortcuts.picker, Some(p) if p.slot == slot);
+        app.ui.shortcuts.slot_rects.push(value);
         if w::button(
             ui,
             value,
@@ -1595,7 +1591,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
         )
         .clicked()
         {
-            app.shortcuts.picker = if picking {
+            app.ui.shortcuts.picker = if picking {
                 None
             } else {
                 Some(Picker {
@@ -1630,7 +1626,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
         }
         y += 30.0;
     }
-    if app.shortcuts.picker.is_some() {
+    if app.ui.shortcuts.picker.is_some() {
         picker(
             ui,
             app,
@@ -1643,7 +1639,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
 /// 項目を選ぶ所（種類のタブ・名前で探す欄・候補の並び。命令は JSON の欄）。
 fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
     let lang = app.lang;
-    let Some(mut picker) = app.shortcuts.picker.clone() else {
+    let Some(mut picker) = app.ui.shortcuts.picker.clone() else {
         return;
     };
     let labels: Vec<&str> = PickKind::ALL.iter().map(|k| k.label(lang)).collect();
@@ -1683,7 +1679,7 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
             if valid {
                 app.pie.menus[index].slots[picker.slot] = Some(PieItem::Ops(text));
                 app.keys_changed();
-                app.shortcuts.picker = None;
+                app.ui.shortcuts.picker = None;
                 return;
             }
             app.refuse(
@@ -1694,11 +1690,11 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
                 ),
             );
         }
-        app.shortcuts.picker = Some(picker);
+        app.ui.shortcuts.picker = Some(picker);
         return;
     }
     let mut query = picker.query.clone();
-    app.shortcuts.pick_rect = Some(field);
+    app.ui.shortcuts.pick_rect = Some(field);
     {
         let p = ui.painter();
         w::rounded(p, field, t::CONTROL_BG, 3.0);
@@ -1750,9 +1746,9 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
     let list = Rect::from_min_max(pos2(r.left(), y), pos2(r.left() + tabs.width(), r.bottom()));
     let row_h = 24.0;
     if response.changed() {
-        app.shortcuts.pick_scroll = 0.0;
+        app.ui.shortcuts.pick_scroll = 0.0;
     }
-    let mut scroll = app.shortcuts.pick_scroll;
+    let mut scroll = app.ui.shortcuts.pick_scroll;
     let bar = Scroll::begin(ui, list, shown.len() as f32 * row_h, &mut scroll);
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
@@ -1779,12 +1775,12 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
         }
     }
     bar.end(ui, Id::new("yolu.shortcuts.pick_scroll"), &mut scroll);
-    app.shortcuts.pick_scroll = scroll;
+    app.ui.shortcuts.pick_scroll = scroll;
     if let Some(item) = chosen {
         app.pie.menus[index].slots[picker.slot] = Some(item);
         app.keys_changed();
-        app.shortcuts.picker = None;
+        app.ui.shortcuts.picker = None;
         return;
     }
-    app.shortcuts.picker = Some(picker);
+    app.ui.shortcuts.picker = Some(picker);
 }

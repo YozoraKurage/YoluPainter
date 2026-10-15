@@ -508,7 +508,7 @@ fn writes_and_saves_are_refused_while_the_unsaved_changes_question_is_open_and_r
     let mut live = Live::on();
     live.frame();
     live.app.state.session.mark_modified();
-    live.app.state.discard_ask = Some(yolu_app::discard::Ask {
+    live.app.state.ui.discard_ask = Some(yolu_app::discard::Ask {
         kind: yolu_app::discard::Kind::Changes,
         text: "保存していない変更があります。".to_owned(),
         then: yolu_app::discard::AfterDiscard::New,
@@ -530,12 +530,12 @@ fn writes_and_saves_are_refused_while_the_unsaved_changes_question_is_open_and_r
     }
     assert_eq!(layer_count(&live), before, "断った命令は何も変えない");
     assert!(!file.exists(), "断った保存はファイルを書かない");
-    assert!(live.app.state.discard_ask.is_some(), "問いは開いたまま");
+    assert!(live.app.state.ui.discard_ask.is_some(), "問いは開いたまま");
     assert!(
         matches!(live.ok(json!({"command": "set.info"})), Reply::Set(_)),
         "読む命令は問いの間も答える"
     );
-    live.app.state.discard_ask = None;
+    live.app.state.ui.discard_ask = None;
     live.ok(json!({"command": "layer.add", "args": {"kind": "paint"}}));
     assert_eq!(layer_count(&live), before + 1, "答えたあとは通る");
 }

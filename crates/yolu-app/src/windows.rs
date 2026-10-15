@@ -271,13 +271,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 
 /// 確認のウィンドウや結果のウィンドウが開いている（キーの割り当てを止める。仕事の表 `jobs::JOBS` の `modal` と、保存していない変更の問い）。
 pub fn modal_open(app: &AppState) -> bool {
-    app.discard_ask.is_some() || crate::jobs::modal_open(app)
+    app.ui.discard_ask.is_some() || crate::jobs::modal_open(app)
 }
 
 /// キャンバスと 3D ビューの押し始め・ホイール・Esc を止めるか: ポップアップ（このフレームに閉じた物も）・選択範囲のダイアログ・確認のウィンドウ
 /// （[`modal_open`]）が開いている間。別ウィンドウの入力は覆いの下を通らずに直に読むので、覆いではなくこの判定で止める。
 pub fn pointer_blocked(app: &AppState) -> bool {
-    app.popup.is_some() || app.ui.popup_was_open || app.sel.dialog.is_some() || modal_open(app)
+    app.ui.popup.is_some() || app.ui.popup_was_open || app.sel.dialog.is_some() || modal_open(app)
 }
 
 /// 終わる頼みを、保存が終わるまで待たせている（保存を捨てて閉じない）。

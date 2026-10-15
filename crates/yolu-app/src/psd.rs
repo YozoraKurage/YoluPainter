@@ -580,7 +580,7 @@ impl AppState {
                         return;
                     }
                 }
-                self.dialog_request = Some(DialogRequest::PsdImport(target));
+                self.ui.dialog_request = Some(DialogRequest::PsdImport(target));
             }
             PsdAction::Import { path, target } => {
                 if stroking {
@@ -623,7 +623,7 @@ impl AppState {
                     return refuse(self);
                 }
                 self.psd.options_open = false;
-                self.dialog_request = Some(DialogRequest::PsdExport);
+                self.ui.dialog_request = Some(DialogRequest::PsdExport);
             }
             PsdAction::Export(path) => {
                 if stroking {
@@ -1697,7 +1697,7 @@ mod tests {
         // 読むだけのセットには入れない
         b.session.sets.get_mut(0).unwrap().read_only = Some("試験".into());
         b.apply(Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)));
-        assert_eq!(b.dialog_request, None);
+        assert_eq!(b.ui.dialog_request, None);
         assert!(b.message.contains("読むだけ"), "{}", b.message);
     }
 
@@ -1790,21 +1790,21 @@ mod tests {
         let mut s = AppState::new(32, 32);
         s.apply(Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)));
         assert_eq!(
-            s.dialog_request,
+            s.ui.dialog_request,
             Some(DialogRequest::PsdImport(PsdTarget::NewSet))
         );
-        s.dialog_request = None;
+        s.ui.dialog_request = None;
         s.apply(Action::Psd(PsdAction::ExportDialog));
         assert!(s.psd.options_open);
-        assert_eq!(s.dialog_request, None);
+        assert_eq!(s.ui.dialog_request, None);
         s.apply(Action::Psd(PsdAction::ChooseExportFile));
         assert!(!s.psd.options_open);
-        assert_eq!(s.dialog_request, Some(DialogRequest::PsdExport));
+        assert_eq!(s.ui.dialog_request, Some(DialogRequest::PsdExport));
         // やめる
-        s.dialog_request = None;
+        s.ui.dialog_request = None;
         s.apply(Action::Psd(PsdAction::ExportDialog));
         s.apply(Action::Psd(PsdAction::CancelExportOptions));
-        assert!(!s.psd.options_open && s.dialog_request.is_none());
+        assert!(!s.psd.options_open && s.ui.dialog_request.is_none());
     }
 
     #[test]
@@ -3042,7 +3042,7 @@ mod tests {
         s.apply(Action::Psd(PsdAction::Export(dir.0.join("never.psd"))));
         assert!(!s.psd.is_busy());
         s.apply(Action::Psd(PsdAction::ExportDialog));
-        assert_eq!(s.dialog_request, None);
+        assert_eq!(s.ui.dialog_request, None);
         s.session.doc.end_stroke(stroke).unwrap();
         assert_eq!(dir.files(), ["big.psd"]);
         // 描き終えれば始められる

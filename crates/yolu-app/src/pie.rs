@@ -392,7 +392,7 @@ pub fn open_at(
         menu: id,
         run: Runtime::new(ctx, center, key),
     });
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::Pie,
         state: PopupState::new(ctx, Rect::from_center_size(center, Vec2::ZERO)),
     });

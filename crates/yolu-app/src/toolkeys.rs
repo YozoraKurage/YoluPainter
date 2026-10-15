@@ -252,7 +252,7 @@ pub fn update(ctx: &egui::Context, app: &mut AppState) {
     let focused = ctx.input(|i| i.focused);
     // ポップアップ・ダイアログ・文字の入力が開いたら、離したことにする（そのあとのキーの離しは、表へ届かない）
     let blocked = ctx.egui_wants_keyboard_input()
-        || app.popup.is_some()
+        || app.ui.popup.is_some()
         || app.sel.dialog.is_some()
         || crate::windows::modal_open(app);
     let mut levels = std::mem::take(&mut app.temp_tool.levels);

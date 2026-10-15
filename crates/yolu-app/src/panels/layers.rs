@@ -200,7 +200,7 @@ fn own_legend(ui: &mut Ui, blend: Rect, name: &str, tip: &str) {
 }
 
 fn open_popup(app: &mut AppState, ctx: &egui::Context, kind: PopupKind, anchor: Rect, min: f32) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind,
         state: PopupState::new(ctx, anchor).with_min_width(min),
     });

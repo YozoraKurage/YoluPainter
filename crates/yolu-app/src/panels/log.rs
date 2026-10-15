@@ -54,7 +54,7 @@ impl Default for LogView {
 
 /// 一覧に出す行（絞りを当てた後。古い順）。
 pub fn visible_entries(app: &AppState) -> Vec<&Entry> {
-    let errors_only = app.log_view.errors_only;
+    let errors_only = app.ui.log_view.errors_only;
     app.notice_log
         .entries()
         .filter(|e| !errors_only || e.notice.kind == Kind::Error)
@@ -82,7 +82,7 @@ pub fn copy_text(app: &AppState, selected_only: bool) -> String {
     let lang = app.lang;
     visible_entries(app)
         .into_iter()
-        .filter(|e| !selected_only || app.log_view.selected.contains(&e.id))
+        .filter(|e| !selected_only || app.ui.log_view.selected.contains(&e.id))
         .map(|e| row_text(lang, e))
         .collect::<Vec<_>>()
         .join("\n")
@@ -91,14 +91,14 @@ pub fn copy_text(app: &AppState, selected_only: bool) -> String {
 /// 画面の一覧を消す（診断の記録のファイルは消さない）。
 pub fn clear(app: &mut AppState) {
     app.notice_log.clear();
-    app.log_view.selected.clear();
-    app.log_view.anchor = None;
-    app.log_view.scroll = 0.0;
+    app.ui.log_view.selected.clear();
+    app.ui.log_view.anchor = None;
+    app.ui.log_view.scroll = 0.0;
 }
 
 /// エラーだけに絞る・戻す（見えなくなった行の選びは外す）。
 pub fn set_errors_only(app: &mut AppState, on: bool) {
-    app.log_view.errors_only = on;
+    app.ui.log_view.errors_only = on;
     if on {
         let errors: BTreeSet<u64> = app
             .notice_log
@@ -106,13 +106,13 @@ pub fn set_errors_only(app: &mut AppState, on: bool) {
             .filter(|e| e.notice.kind == Kind::Error)
             .map(|e| e.id)
             .collect();
-        app.log_view.selected.retain(|id| errors.contains(id));
+        app.ui.log_view.selected.retain(|id| errors.contains(id));
     }
 }
 
 /// 行を押した: 押しただけなら 1 行を選び、Ctrl（command）なら足し引き、Shift なら起点からの範囲。
 pub fn click_row(app: &mut AppState, id: u64, modifiers: egui::Modifiers) {
-    let view = &mut app.log_view;
+    let view = &mut app.ui.log_view;
     if modifiers.shift {
         if let Some(anchor) = view.anchor {
             let ids: Vec<u64> = {
@@ -123,7 +123,7 @@ pub fn click_row(app: &mut AppState, id: u64, modifiers: egui::Modifiers) {
                     .map(|e| e.id)
                     .collect()
             };
-            let view = &mut app.log_view;
+            let view = &mut app.ui.log_view;
             let (a, b) = (
                 ids.iter().position(|i| *i == anchor),
                 ids.iter().position(|i| *i == id),
@@ -137,7 +137,7 @@ pub fn click_row(app: &mut AppState, id: u64, modifiers: egui::Modifiers) {
             }
         }
     }
-    let view = &mut app.log_view;
+    let view = &mut app.ui.log_view;
     if modifiers.command {
         if !view.selected.remove(&id) {
             view.selected.insert(id);
@@ -176,13 +176,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         "log.errors_only",
         "error_circle",
         lang.pick("エラーだけ", "Errors Only"),
-        app.log_view.errors_only,
+        app.ui.log_view.errors_only,
         true,
         17.0,
     )
     .clicked()
     {
-        let on = !app.log_view.errors_only;
+        let on = !app.ui.log_view.errors_only;
         set_errors_only(app, on);
     }
     let mut copy = None;
@@ -194,7 +194,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         "content_copy",
         lang.pick("選んだ行を写す", "Copy Selected"),
         false,
-        !app.log_view.selected.is_empty(),
+        !app.ui.log_view.selected.is_empty(),
         16.0,
     )
     .clicked()
@@ -236,15 +236,15 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let rows: Vec<Entry> = visible_entries(app).into_iter().cloned().collect();
     let content = rows.len() as f32 * ROW_HEIGHT;
     // 新しい行が来たとき、一番下を見ていたなら一番下へ送る
-    if rows.len() != app.log_view.seen {
-        if app.log_view.pinned {
-            app.log_view.scroll = f32::MAX;
+    if rows.len() != app.ui.log_view.seen {
+        if app.ui.log_view.pinned {
+            app.ui.log_view.scroll = f32::MAX;
         }
-        app.log_view.seen = rows.len();
+        app.ui.log_view.seen = rows.len();
     }
-    let mut scroll = app.log_view.scroll;
+    let mut scroll = app.ui.log_view.scroll;
     let bars = Scroll::begin(ui, body, content, &mut scroll);
-    app.log_view.scroll = scroll;
+    app.ui.log_view.scroll = scroll;
     // 一覧の何も無い所も押せる（キーボードの Ctrl+C を受けるための選び）
     let list = ui.interact(body, list_id, Sense::click());
     if list.clicked() {
@@ -257,14 +257,14 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         let row = Rect::from_min_size(
             pos2(
                 body.left(),
-                body.top() + i as f32 * ROW_HEIGHT - app.log_view.scroll,
+                body.top() + i as f32 * ROW_HEIGHT - app.ui.log_view.scroll,
             ),
             vec2(width, ROW_HEIGHT),
         );
         if row.bottom() < body.top() || row.top() > body.bottom() {
             continue;
         }
-        let selected = app.log_view.selected.contains(&entry.id);
+        let selected = app.ui.log_view.selected.contains(&entry.id);
         let full = row_text(lang, entry);
         let response = ui
             .interact(
@@ -290,10 +290,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     if let Some((id, modifiers)) = clicked {
         click_row(app, id, modifiers);
     }
-    let mut scroll = app.log_view.scroll;
+    let mut scroll = app.ui.log_view.scroll;
     bars.end(ui, "log.scroll", &mut scroll);
-    app.log_view.scroll = scroll;
-    app.log_view.pinned = scroll >= bars.max - 0.5;
+    app.ui.log_view.scroll = scroll;
+    app.ui.log_view.pinned = scroll >= bars.max - 0.5;
 
     // 一覧（か、その行）を押したあとは Ctrl+C で写す（選んでいなければ全部）。ほかの所の Ctrl+C（画素の写し）は取らない
     let focused = ui.ctx().memory(|m| {
@@ -312,7 +312,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             event || i.consume_key(modifiers, key)
         });
         if pressed && !rows.is_empty() {
-            copy = Some(copy_text(app, !app.log_view.selected.is_empty()));
+            copy = Some(copy_text(app, !app.ui.log_view.selected.is_empty()));
         }
     }
     if let Some(text) = copy.filter(|t| !t.is_empty()) {

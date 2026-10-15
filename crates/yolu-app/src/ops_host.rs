@@ -96,7 +96,7 @@ impl<'a> AppHost<'a> {
         if self.state.is_stroking() {
             return Some(busy("描いている最中です", "A stroke is in progress"));
         }
-        if self.state.discard_ask.is_some() {
+        if self.state.ui.discard_ask.is_some() {
             return Some(busy(
                 "保存していない変更の問いに答える前です",
                 "The question about unsaved changes is waiting for an answer",

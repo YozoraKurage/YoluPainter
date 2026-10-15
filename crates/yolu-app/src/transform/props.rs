@@ -47,7 +47,7 @@ fn usable(app: &AppState) -> bool {
 }
 
 fn open_resampling(app: &mut AppState, ctx: &egui::Context, anchor: Rect) {
-    app.popup = Some(OpenPopup {
+    app.ui.popup = Some(OpenPopup {
         kind: PopupKind::M2(Popup::Resampling),
         state: PopupState::new(ctx, anchor).with_min_width(anchor.width()),
     });

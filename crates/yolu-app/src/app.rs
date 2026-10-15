@@ -346,7 +346,7 @@ impl TabViewer for Tabs<'_> {
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
         // 保存していない変更の問いが開いている間は、別ウィンドウの中身を触れなくする（メインウィンドウは問いの下の覆い（`ui::window`）が受ける。
         // 別ウィンドウは別の OS のウィンドウなので、そのパスの中で止める）。egui_dock はタブの中身の Ui を親から作り直す（親の無効は引き継がれない）ので、ここで止める
-        if self.app.discard_ask.is_some() && ui.ctx().viewport_id() != egui::ViewportId::ROOT {
+        if self.app.ui.discard_ask.is_some() && ui.ctx().viewport_id() != egui::ViewportId::ROOT {
             ui.disable();
         }
         // 前のタブ（キャンバス・3D ビュー）の押しで描き始めたなら、このタブからは描き始める前の見た目を使う
@@ -877,7 +877,7 @@ impl YoluApp {
             now.uv_overlap_color = saved.uv_overlap_color;
             now.gpu_memory = saved.gpu_memory;
         }
-        if self.state.pressure.dragging {
+        if self.state.ui.pressure.dragging {
             now.pressure = saved.pressure.clone();
         }
         // 3D の仕上げのスライダー（ブルーム）と 3D の塗りの切り替えのスライダーも、ドラッグ中は書かず、離したときの値を書く
@@ -1106,23 +1106,23 @@ impl YoluApp {
             self.discard_then(crate::discard::AfterDiscard::LinkDiscard);
         }
         // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。ウィンドウを開かない試験では聞かない）
-        if self.state.discard_ask.is_none() {
+        if self.state.ui.discard_ask.is_none() {
             if let Some(open) = self.state.recovery.take_open_request() {
                 self.discard_then(crate::discard::AfterDiscard::Recovery(open));
             }
         }
         // 最近開いたプロジェクトから開く（ウィンドウは開かない）。保存していない変更は、「開く」と同じ問い
-        if self.state.discard_ask.is_none() {
-            if let Some(DialogRequest::OpenPath(path)) = self.state.dialog_request.clone() {
-                self.state.dialog_request = None;
+        if self.state.ui.discard_ask.is_none() {
+            if let Some(DialogRequest::OpenPath(path)) = self.state.ui.dialog_request.clone() {
+                self.state.ui.dialog_request = None;
                 self.discard_then(crate::discard::AfterDiscard::OpenPath(path));
             }
         }
         // 問いに答えるまで、ファイルの頼みは残しておく（答えのあとの次のフレームで当てる）
-        if !(self.dialogs || self.discard_window) || self.state.discard_ask.is_some() {
+        if !(self.dialogs || self.discard_window) || self.state.ui.discard_ask.is_some() {
             return;
         }
-        match self.state.dialog_request.take() {
+        match self.state.ui.dialog_request.take() {
             Some(DialogRequest::New) => {
                 // 保存していない変更は先に聞く（ウィンドウを開いてから聞くと、作業を捨てる前にウィンドウの設定が無駄になる）
                 self.discard_then(crate::discard::AfterDiscard::New);
@@ -1437,8 +1437,8 @@ impl YoluApp {
             return true;
         }
         // 閉じる頼みは止めて（`close_flow`）、アプリの中のウィンドウで聞く。答えが「変更を破棄」・「終わる」なら、もう一度閉じる流れを回して閉じる
-        if self.state.discard_ask.is_none() {
-            self.state.discard_ask = Some(crate::discard::Ask {
+        if self.state.ui.discard_ask.is_none() {
+            self.state.ui.discard_ask = Some(crate::discard::Ask {
                 kind: if self.state.session.is_modified() {
                     crate::discard::Kind::Changes
                 } else {
@@ -1469,10 +1469,10 @@ impl YoluApp {
             self.run_after_discard(then);
             return;
         }
-        if self.state.discard_ask.is_some() {
+        if self.state.ui.discard_ask.is_some() {
             return;
         }
-        self.state.discard_ask = Some(crate::discard::Ask {
+        self.state.ui.discard_ask = Some(crate::discard::Ask {
             kind: crate::discard::Kind::Changes,
             text: self
                 .state
@@ -1545,13 +1545,13 @@ impl YoluApp {
 
     /// 保存していない変更の問いのウィンドウ（開いている間、毎フレーム）。答えが出たら、続ける・戻る。
     fn show_discard_ask(&mut self, ctx: &egui::Context) {
-        let Some(ask) = self.state.discard_ask.as_ref() else {
+        let Some(ask) = self.state.ui.discard_ask.as_ref() else {
             return;
         };
         let Some(choice) = crate::discard::show(ctx, self.state.lang, ask) else {
             return;
         };
-        let Some(ask) = self.state.discard_ask.take() else {
+        let Some(ask) = self.state.ui.discard_ask.take() else {
             return;
         };
         // 答えの続きは次のフレームの頼みで当てる（入力が無くても描き直す）
@@ -2068,7 +2068,7 @@ impl YoluApp {
     /// フレームの終わりの `message`: 失敗・断り・警告を記録へ（同じ文なら何もしない）。新しい知らせがあれば、すぐ出すための描き直しを頼む。
     fn finish_message(&mut self, ctx: &egui::Context) {
         self.state.record_message();
-        if self.state.toast.is_pending() {
+        if self.state.ui.toast.is_pending() {
             ctx.request_repaint();
         }
     }
@@ -2110,7 +2110,7 @@ impl YoluApp {
         // このアプリのキーの割り当て（ショートカットの設定）を、このスレッドで効かせる
         crate::keymap::install(self.state.keys.map());
         self.poll_gpu_watch(&ctx);
-        self.state.ui.popup_was_open = self.state.popup.is_some();
+        self.state.ui.popup_was_open = self.state.ui.popup.is_some();
         crate::region::bucket::poll(&mut self.state, &ctx);
         // 設定の「タブレットの筆圧（試し）」（設定のウィンドウで切り替えた値を、ペンの受け口へ。別ウィンドウの受け口は同じ札を共有する）
         self.pen
@@ -2137,7 +2137,7 @@ impl YoluApp {
         // 筆圧の調整（設定の「ペン」）: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
         self.state.pressure_observe(ctx.pixels_per_point(), &pen);
         // 描く枠が出ているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
-        if self.state.pressure.open() && !self.pen.is_hooked() {
+        if self.state.ui.pressure.open() && !self.pen.is_hooked() {
             ctx.input(|i| self.state.pressure_observe_touch(&i.events));
         }
         for sample in &mut pen {
@@ -2197,12 +2197,12 @@ impl YoluApp {
             self.bring_forward(Tab::View3d);
         }
         self.ensure_pose_tab();
-        if self.state.reset_layout {
+        if self.state.ui.reset_layout {
             self.dock = default_dock_for(ctx.content_rect().width());
             self.dock_auto = Some(ctx.content_rect().width());
             self.dock_refit = false;
             self.detached.clear();
-            self.state.reset_layout = false;
+            self.state.ui.reset_layout = false;
         }
         self.state.ui.panels = self.detached.index(&self.dock);
 
@@ -2233,7 +2233,7 @@ impl YoluApp {
                 // 自前の枠: 右端の 3 つのボタンの左までが帯の中身。何も無い所は、ウィンドウを動かす・最大化する部品（メニューの見出しなどより先に作る）
                 let content = titlebar::content_rect(r, custom_frame);
                 let drag = custom_frame.then(|| titlebar::drag_zone(ui, content));
-                let open_menu = match self.state.popup.as_ref().map(|p| p.kind) {
+                let open_menu = match self.state.ui.popup.as_ref().map(|p| p.kind) {
                     Some(PopupKind::MenuBar(i)) => Some(i),
                     _ => None,
                 };
@@ -2287,7 +2287,7 @@ impl YoluApp {
                         .on_hover_text(&self.state.session.project_name);
                 }
                 let link_open = matches!(
-                    self.state.popup.as_ref().map(|p| p.kind),
+                    self.state.ui.popup.as_ref().map(|p| p.kind),
                     Some(PopupKind::LiveLink)
                 );
                 let crash_rect = Rect::from_min_size(
@@ -2478,10 +2478,10 @@ impl YoluApp {
             });
         let popup_rect = self
             .state
+            .ui
             .popup
             .as_ref()
-            .filter(|p| p.state.viewport == view3d_window)
-            .map(|p| p.state.rect);
+            .and_then(|p| (p.state.viewport == view3d_window).then_some(p.state.rect));
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当てる
         self.handle_requests();
@@ -2553,7 +2553,7 @@ impl YoluApp {
         if let Some(item) = bar.rects.get(index) {
             let anchor =
                 Rect::from_min_size(pos2(item.left(), item.bottom()), vec2(item.width(), 0.0));
-            self.state.popup = Some(OpenPopup {
+            self.state.ui.popup = Some(OpenPopup {
                 kind: PopupKind::MenuBar(index),
                 state: PopupState::new(ctx, anchor),
             });
@@ -2566,14 +2566,14 @@ impl YoluApp {
         bar: &menu::BarOutcome,
         link_icon: Option<shell::LinkIcon>,
     ) {
-        let open_bar = match self.state.popup.as_ref().map(|p| p.kind) {
+        let open_bar = match self.state.ui.popup.as_ref().map(|p| p.kind) {
             Some(PopupKind::MenuBar(i)) => Some(i),
             _ => None,
         };
         // メニューバー: 押したら開く（開いている見出しなら閉じる）、開いているあいだは別の見出しへ移れば切り替える
         if let Some(i) = bar.pressed {
             if open_bar == Some(i) {
-                self.state.popup = None;
+                self.state.ui.popup = None;
             } else if !self.state.is_stroking() {
                 self.open_bar_menu(ctx, bar, i);
             }
@@ -2585,23 +2585,23 @@ impl YoluApp {
         // Live Link の入口: 押したらウィンドウを開く（開いていれば閉じる）
         if let Some(icon) = link_icon.filter(|i| i.pressed) {
             if matches!(
-                self.state.popup.as_ref().map(|p| p.kind),
+                self.state.ui.popup.as_ref().map(|p| p.kind),
                 Some(PopupKind::LiveLink)
             ) {
-                self.state.popup = None;
+                self.state.ui.popup = None;
             } else if !self.state.is_stroking() {
-                self.state.popup = Some(OpenPopup {
+                self.state.ui.popup = Some(OpenPopup {
                     kind: PopupKind::LiveLink,
                     state: PopupState::new(ctx, icon.rect),
                 });
             }
         }
-        let Some(open) = self.state.popup.take() else {
+        let Some(open) = self.state.ui.popup.take() else {
             return;
         };
         // 別ウィンドウで開いたポップアップは、そのウィンドウのパスが描く
         if open.state.viewport != egui::ViewportId::ROOT {
-            self.state.popup = Some(open);
+            self.state.ui.popup = Some(open);
             return;
         }
         let Some(mut open) = self.show_self_drawn_popup(ctx, open) else {
@@ -2609,7 +2609,7 @@ impl YoluApp {
         };
         // キーを待っている間の受け皿は、設定のウィンドウの「ショートカット」の区分が受けて閉じる
         if open.kind == PopupKind::KeyCapture {
-            self.state.popup = Some(open);
+            self.state.ui.popup = Some(open);
             return;
         }
         let entries = shell::popup_entries(&self.state, open.kind);
@@ -2619,7 +2619,7 @@ impl YoluApp {
             _ => Vec::new(),
         };
         match menu::show(ctx, Id::new("yolu.popup"), &mut open.state, &entries, &keep) {
-            PopupOutcome::Open => self.state.popup = Some(open),
+            PopupOutcome::Open => self.state.ui.popup = Some(open),
             PopupOutcome::Close => {}
             PopupOutcome::Chosen(action) => self.state.apply(action),
             PopupOutcome::Step(d) => {
@@ -2627,7 +2627,7 @@ impl YoluApp {
                     let n = shell::MENU_TITLES.len() as i32;
                     self.open_bar_menu(ctx, bar, (i as i32 + d).rem_euclid(n) as usize);
                 } else {
-                    self.state.popup = Some(open);
+                    self.state.ui.popup = Some(open);
                 }
             }
         }
@@ -2715,7 +2715,7 @@ impl YoluApp {
         } else if self.state.quit {
             self.close_flow(ctx, false);
             // 問いは見えるウィンドウでしか答えられないので、ウィンドウを出す
-            if self.state.discard_ask.is_some() {
+            if self.state.ui.discard_ask.is_some() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             }
         }

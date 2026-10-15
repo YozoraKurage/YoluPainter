@@ -194,14 +194,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, free_right: f32) {
     let now = ctx.input(|i| i.time);
     // フレームの中で、ここまでに書かれた文（`apply` の外の書き込みも）をすぐ出す
     app.flush_message();
-    app.toast.update(now);
-    if !app.toast.is_visible(now) {
+    app.ui.toast.update(now);
+    if !app.ui.toast.is_visible(now) {
         return;
     }
     // 1 行で出す（文の中の改行は空白にする）
-    let text = app.toast.text().replace(['\r', '\n'], " ");
-    let kind = app.toast.kind();
-    let opacity = app.toast.opacity(now);
+    let text = app.ui.toast.text().replace(['\r', '\n'], " ");
+    let kind = app.ui.toast.kind();
+    let opacity = app.ui.toast.opacity(now);
     let strip = strip_rect(ctx, free_right);
     if strip.width() < TEXT_INSET + 8.0 {
         return;
@@ -239,14 +239,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, free_right: f32) {
             }
         });
     if dismissed {
-        app.toast.dismiss();
+        app.ui.toast.dismiss();
         return;
     }
     if hovered {
-        app.toast.hold(now);
+        app.ui.toast.hold(now);
     }
     // 消える時刻（と、うすくなっていく間）に描き直す
-    let remaining = app.toast.remaining(now);
+    let remaining = app.ui.toast.remaining(now);
     let wait = if remaining > FADE_SECONDS {
         remaining - FADE_SECONDS
     } else {

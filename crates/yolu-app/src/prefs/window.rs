@@ -95,9 +95,9 @@ impl AppState {
         }
         self.prefs.shortcuts_shown = shortcuts;
         let pressure = pressure_in_view(self);
-        if pressure && !self.pressure.entered() {
+        if pressure && !self.ui.pressure.entered() {
             self.pressure_enter();
-        } else if !pressure && self.pressure.entered() {
+        } else if !pressure && self.ui.pressure.entered() {
             self.pressure_leave();
         }
     }
@@ -133,7 +133,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     for request in out.requests {
         match request {
             Request::Open(which, anchor) => {
-                app.popup = Some(OpenPopup {
+                app.ui.popup = Some(OpenPopup {
                     kind: PopupKind::M2(crate::m2_menu::Popup::Pref(which)),
                     state: PopupState::new(ctx, anchor).with_min_width(anchor.width()),
                 });
@@ -156,7 +156,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 fn take_escape(ui: &Ui, app: &mut AppState, window: Rect, finished: bool) -> bool {
     let ctx = ui.ctx();
     if finished
-        || app.shortcuts.capturing()
+        || app.ui.shortcuts.capturing()
         || !ui.input(|i| i.key_pressed(Key::Escape))
         || window::escape_taken(ctx)
         || !ui
@@ -167,7 +167,7 @@ fn take_escape(ui: &Ui, app: &mut AppState, window: Rect, finished: bool) -> boo
     }
     // ポップアップ（このフレームの初めに Esc で閉じたものも。`popups` がこの描き方より先に閉じる）・確認のウィンドウ・色のウィンドウ・
     // スライダーや曲線を掴んでいる間の Esc は、それぞれが使う
-    if app.popup.is_some()
+    if app.ui.popup.is_some()
         || app.ui.popup_was_open
         || crate::windows::modal_open(app)
         || crate::panels::color_window::is_open(ctx)
@@ -251,7 +251,7 @@ fn sidebar(ui: &mut Ui, app: &mut AppState, side: Rect, found: &[(Category, Vec<
         let current = app.prefs.category == category && !searching;
         // ショートカットの区分を開いているときは、下の区分の 1 つが選ばれた印になる（「キーで探す」で絞っている間は、ここが選ばれた印）
         let expanded = category == Category::Shortcuts && current;
-        let selected = current && (!expanded || app.shortcuts.key_filter.is_some());
+        let selected = current && (!expanded || app.ui.shortcuts.key_filter.is_some());
         let lit = searching && found.iter().any(|(c, _)| *c == category);
         let response = ui.interact(
             r,
@@ -296,7 +296,8 @@ fn sidebar(ui: &mut Ui, app: &mut AppState, side: Rect, found: &[(Category, Vec<
             for section in editor::Section::ALL {
                 let r = Rect::from_min_size(pos2(side.left(), y), vec2(row_width, SIDE_ROW));
                 y += SIDE_ROW;
-                let on = app.shortcuts.section == section && app.shortcuts.key_filter.is_none();
+                let on =
+                    app.ui.shortcuts.section == section && app.ui.shortcuts.key_filter.is_none();
                 let response = ui.interact(
                     r,
                     Id::new(("yolu.prefs.shortcuts_section", section as u8)),

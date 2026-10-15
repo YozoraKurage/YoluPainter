@@ -783,7 +783,7 @@ fn card_cell(
     if response.secondary_clicked() {
         select(app, card);
         if let Some(at) = response.interact_pointer_pos() {
-            app.popup = Some(OpenPopup {
+            app.ui.popup = Some(OpenPopup {
                 kind: PopupKind::Shelf,
                 state: PopupState::new(ui.ctx(), context_anchor(at)),
             });

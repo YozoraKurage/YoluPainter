@@ -585,7 +585,7 @@ impl AppState {
             TextAction::Commit => self.text_commit(),
             TextAction::Set(field) => self.text_set(field, false),
             TextAction::Drag(field) => self.text_set(field, true),
-            TextAction::PickFontFile => self.dialog_request = Some(DialogRequest::TextFont),
+            TextAction::PickFontFile => self.ui.dialog_request = Some(DialogRequest::TextFont),
             TextAction::FontFile(path) => self.text_font_file(&path, 0),
             TextAction::SystemFont { path, index } => self.text_font_file(&path, index),
             TextAction::Rasterize(id) => self.text_rasterize(id),

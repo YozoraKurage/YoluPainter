@@ -128,16 +128,16 @@ pub trait Drive {
         &mut self.app_mut().notice_log
     }
     fn log_view(&self) -> &yolu_app::panels::log::LogView {
-        &self.app().log_view
+        &self.app().ui.log_view
     }
     fn log_view_mut(&mut self) -> &mut yolu_app::panels::log::LogView {
-        &mut self.app_mut().log_view
+        &mut self.app_mut().ui.log_view
     }
     fn toast(&self) -> &yolu_app::toast::Toast {
-        &self.app().toast
+        &self.app().ui.toast
     }
     fn toast_mut(&mut self) -> &mut yolu_app::toast::Toast {
-        &mut self.app_mut().toast
+        &mut self.app_mut().ui.toast
     }
     fn usage(&self) -> &yolu_app::usage::Usage {
         &self.app().usage
@@ -145,10 +145,10 @@ pub trait Drive {
     fn usage_mut(&mut self) -> &mut yolu_app::usage::Usage {
         &mut self.app_mut().usage
     }
-    fn ui(&self) -> &yolu_app::state::UiTemp {
+    fn ui(&self) -> &yolu_app::state::UiState {
         &self.app().ui
     }
-    fn ui_mut(&mut self) -> &mut yolu_app::state::UiTemp {
+    fn ui_mut(&mut self) -> &mut yolu_app::state::UiState {
         &mut self.app_mut().ui
     }
     fn canvas(&self) -> &yolu_app::state::CanvasInput {
@@ -158,10 +158,10 @@ pub trait Drive {
         &mut self.app_mut().canvas
     }
     fn popup(&self) -> &Option<yolu_app::state::OpenPopup> {
-        &self.app().popup
+        &self.app().ui.popup
     }
     fn popup_mut(&mut self) -> &mut Option<yolu_app::state::OpenPopup> {
-        &mut self.app_mut().popup
+        &mut self.app_mut().ui.popup
     }
     fn project_name(&self) -> &String {
         &self.app().session.project_name
@@ -198,10 +198,10 @@ pub trait Drive {
         self.app_mut().session.rewritten_sets = value;
     }
     fn reset_layout(&self) -> bool {
-        self.app().reset_layout
+        self.app().ui.reset_layout
     }
     fn set_reset_layout(&mut self, value: bool) {
-        self.app_mut().reset_layout = value;
+        self.app_mut().ui.reset_layout = value;
     }
     fn quit(&self) -> bool {
         self.app().quit
@@ -273,10 +273,10 @@ pub trait Drive {
         &mut self.app_mut().session.project
     }
     fn dialog_request(&self) -> &Option<yolu_app::state::DialogRequest> {
-        &self.app().dialog_request
+        &self.app().ui.dialog_request
     }
     fn dialog_request_mut(&mut self) -> &mut Option<yolu_app::state::DialogRequest> {
-        &mut self.app_mut().dialog_request
+        &mut self.app_mut().ui.dialog_request
     }
     fn view3d(&self) -> &yolu_app::view3d::View3dState {
         &self.app().view3d
@@ -429,16 +429,16 @@ pub trait Drive {
         &mut self.app_mut().uv_overlap
     }
     fn shortcuts(&self) -> &yolu_app::shortcuts::ShortcutWindow {
-        &self.app().shortcuts
+        &self.app().ui.shortcuts
     }
     fn shortcuts_mut(&mut self) -> &mut yolu_app::shortcuts::ShortcutWindow {
-        &mut self.app_mut().shortcuts
+        &mut self.app_mut().ui.shortcuts
     }
     fn pressure(&self) -> &yolu_app::pen::window::PressureWindow {
-        &self.app().pressure
+        &self.app().ui.pressure
     }
     fn pressure_mut(&mut self) -> &mut yolu_app::pen::window::PressureWindow {
-        &mut self.app_mut().pressure
+        &mut self.app_mut().ui.pressure
     }
     fn pen_lost(&self) -> &Vec<u32> {
         &self.app().pen_lost
@@ -528,7 +528,7 @@ pub trait Drive {
         &mut self.app_mut().recent_projects
     }
     fn discard_ask(&self) -> &Option<yolu_app::discard::Ask> {
-        &self.app().discard_ask
+        &self.app().ui.discard_ask
     }
 }
 

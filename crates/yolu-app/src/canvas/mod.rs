@@ -936,7 +936,7 @@ fn typing_id() -> egui::Id {
 /// 文字の入力中と、描く・形を作る・移動と変形・グラデーション・図形・パスなどの途中は、呼ぶ側が先に見る（やめるものがあればそちらが先）。
 fn escape_is_free(app: &AppState, ctx: &egui::Context) -> bool {
     app.session.doc.selection().is_some()
-        && app.popup.is_none()
+        && app.ui.popup.is_none()
         && !app.ui.popup_was_open
         && app.sel.dialog.is_none()
         && !crate::windows::modal_open(app)
@@ -1034,7 +1034,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     // ポリゴン塗りつぶしの右クリック: アイランドの優先・焼かないのメニュー（開いているアイランドのメニューの外の右クリックは、
                     // 重なった次のアイランドのメニュー。開いているメニューの受け皿が上にあるので、そのときはメニューの本体の外かだけを見る）
                     let menu = *button == PointerButton::Secondary
-                        && app.popup.as_ref().is_some_and(|p| {
+                        && app.ui.popup.as_ref().is_some_and(|p| {
                             matches!(
                                 p.kind,
                                 crate::state::PopupKind::BakeIsland { map: false, .. }

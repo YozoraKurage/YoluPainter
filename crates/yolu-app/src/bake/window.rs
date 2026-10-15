@@ -210,7 +210,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         data: app.overlap_map(),
         priority: priority.clone(),
         overlap: crate::uv_wireframe::overlap::texture_for_map(ctx, app),
-        menu: match app.popup.as_ref().map(|p| p.kind) {
+        menu: match app.ui.popup.as_ref().map(|p| p.kind) {
             Some(crate::state::PopupKind::BakeIsland {
                 set,
                 island,

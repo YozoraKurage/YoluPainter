@@ -710,7 +710,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     crate::objects::transform::settle(app);
     crate::objects::transform::start_requested(ctx, app);
     if ctx.egui_wants_keyboard_input()
-        || app.popup.is_some()
+        || app.ui.popup.is_some()
         || app.sel.dialog.is_some()
         || crate::windows::modal_open(app)
     {

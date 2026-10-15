@@ -186,7 +186,7 @@ impl AppState {
 
     /// このフレームのペンの点（調整を通す前）を、ウィンドウが開いていれば枠の中の線として集める。
     pub fn pressure_observe(&mut self, pixels_per_point: f32, samples: &[PenSample]) {
-        let window = &mut self.pressure;
+        let window = &mut self.ui.pressure;
         if !window.open() {
             return;
         }
@@ -201,7 +201,7 @@ impl AppState {
 
     /// Windows Ink が使えない環境で、ペンが egui の Touch の力として来る点を集める（`pressure_observe` と同じ枠の線へ）。
     pub fn pressure_observe_touch(&mut self, events: &[egui::Event]) {
-        let window = &mut self.pressure;
+        let window = &mut self.ui.pressure;
         if !window.open() {
             return;
         }
@@ -245,20 +245,20 @@ impl AppState {
                     self.prefs.settings.pressure = next;
                 }
             }
-            PressureAction::Fit => match fit(&self.pressure.samples()) {
+            PressureAction::Fit => match fit(&self.ui.pressure.samples()) {
                 Ok(adjust) => {
                     self.prefs.settings.pressure = adjust;
-                    self.pressure.note = None;
+                    self.ui.pressure.note = None;
                 }
-                Err(why) => self.pressure.note = Some(why),
+                Err(why) => self.ui.pressure.note = Some(why),
             },
             PressureAction::Clear => {
-                self.pressure.strokes.clear();
-                self.pressure.drawing = None;
-                self.pressure.note = None;
+                self.ui.pressure.strokes.clear();
+                self.ui.pressure.drawing = None;
+                self.ui.pressure.note = None;
             }
             PressureAction::Revert => {
-                self.prefs.settings.pressure = self.pressure.opened_with.clone();
+                self.prefs.settings.pressure = self.ui.pressure.opened_with.clone();
             }
             PressureAction::Reset => self.prefs.settings.pressure = PressureAdjust::default(),
         }
@@ -268,23 +268,23 @@ impl AppState {
 impl AppState {
     /// 描く枠が画面に出始めた（「ペン」の区分を開いた）: 今の調整を「元に戻す」の行き先に覚え、前の線を捨てる。
     pub(crate) fn pressure_enter(&mut self) {
-        self.pressure.entered = true;
-        self.pressure.opened_with = self.prefs.settings.pressure.clone();
-        self.pressure.strokes.clear();
-        self.pressure.note = None;
-        self.pressure.drawing = None;
+        self.ui.pressure.entered = true;
+        self.ui.pressure.opened_with = self.prefs.settings.pressure.clone();
+        self.ui.pressure.strokes.clear();
+        self.ui.pressure.note = None;
+        self.ui.pressure.drawing = None;
     }
 
     /// 描く枠が画面から消えた（区分を離れた・設定のウィンドウを閉じた）: 描いた線を捨てる（文書には入っていない）。
     pub(crate) fn pressure_leave(&mut self) {
-        self.pressure.entered = false;
-        self.pressure.dragging = false;
-        self.pressure.strokes.clear();
-        self.pressure.frame = None;
-        self.pressure.visible = None;
-        self.pressure.curve_frame = None;
-        self.pressure.drawing = None;
-        self.pressure.note = None;
+        self.ui.pressure.entered = false;
+        self.ui.pressure.dragging = false;
+        self.ui.pressure.strokes.clear();
+        self.ui.pressure.frame = None;
+        self.ui.pressure.visible = None;
+        self.ui.pressure.curve_frame = None;
+        self.ui.pressure.drawing = None;
+        self.ui.pressure.note = None;
     }
 }
 
@@ -366,11 +366,11 @@ pub(crate) fn rows(ui: &mut egui::Ui, rows: &mut w::Rows, app: &mut AppState, vi
     let id = block_id();
     let mut actions: Vec<PressureAction> = Vec::new();
     let adjust = app.prefs.settings.pressure.clone();
-    let samples = app.pressure.samples();
-    let note = app.pressure.note;
+    let samples = app.ui.pressure.samples();
+    let note = app.ui.pressure.note;
     let can_fit = !samples.is_empty();
-    let has_strokes = !app.pressure.strokes.is_empty();
-    let reverted = adjust == app.pressure.opened_with;
+    let has_strokes = !app.ui.pressure.strokes.is_empty();
+    let reverted = adjust == app.ui.pressure.opened_with;
     let mut dragging = false;
     let curve_rect = rows.row(CURVE_HEIGHT, GAP);
     if let Some(next) = curve::curve_editor(
@@ -430,7 +430,7 @@ pub(crate) fn rows(ui: &mut egui::Ui, rows: &mut w::Rows, app: &mut AppState, vi
         }
     }
     let draw = rows.row(DRAW_HEIGHT, GAP);
-    draw_frame(ui, draw, &app.pressure, &adjust);
+    draw_frame(ui, draw, &app.ui.pressure, &adjust);
     ui.interact(draw, id.with("draw"), egui::Sense::hover())
         .on_hover_text(lang.pick(
             "普段の強さで何本か描く。描いた線はプロジェクトに入らない",
@@ -510,10 +510,10 @@ pub(crate) fn rows(ui: &mut egui::Ui, rows: &mut w::Rows, app: &mut AppState, vi
     // 描く枠が画面に出ている間だけ、ペンの点を集める。点の位置は枠全体からの距離で持ち、スクロールで隠れた部分では集めない
     let shown = draw.intersect(visible);
     let on_screen = shown.width() > 0.0 && shown.height() > 0.0;
-    app.pressure.frame = on_screen.then_some(draw);
-    app.pressure.visible = on_screen.then_some(shown);
-    app.pressure.curve_frame = Some(curve_rect);
-    app.pressure.dragging = dragging;
+    app.ui.pressure.frame = on_screen.then_some(draw);
+    app.ui.pressure.visible = on_screen.then_some(shown);
+    app.ui.pressure.curve_frame = Some(curve_rect);
+    app.ui.pressure.dragging = dragging;
     for action in actions {
         app.apply(Action::Pressure(action));
     }
