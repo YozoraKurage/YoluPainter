@@ -77,3 +77,41 @@ fn each_layer_set_becomes_a_top_level_group_and_only_the_output_is_shown() {
     d.remove_layer_set(named).unwrap();
     assert_eq!(export(&d, Channel::Color), single);
 }
+
+#[test]
+fn an_anchor_in_another_layer_set_is_still_not_read_after_export() {
+    use yolu_core::generator::{self, anchor::ReadMode, Settings};
+    use yolu_core::{AnchorPlacement, EffectSettings, FilterSpec, FilterTarget};
+    let mut d = Document::with_tile_size(32, 16, 8).unwrap();
+    let a = d.add_layer("下").unwrap();
+    paint(&mut d, a, Rgba8::new(200, 30, 30, 255), 0, 32);
+    let b = d.add_layer("上").unwrap();
+    paint(&mut d, b, Rgba8::new(10, 40, 230, 255), 0, 32);
+    let anchor = d.add_anchor(a, AnchorPlacement::Layer, None, None).unwrap();
+    let mut g = Settings::new(generator::Kind::Anchor);
+    g.blend = generator::Blend::Replace;
+    let fid = d
+        .add_filter(
+            b,
+            FilterTarget::Content,
+            FilterSpec::new(EffectSettings::generator(g)).channels(&[Channel::Color]),
+        )
+        .unwrap();
+    d.set_generator_anchor(b, fid, Some(anchor), Channel::Color, ReadMode::Value, false)
+        .unwrap();
+    // a だけを別のレイヤーセットへ移す（b から見て、その Anchor は別のレイヤーセットのもの）
+    let other = d.add_layer_set("x").unwrap();
+    d.move_layers_to_set(&[a], other).unwrap();
+    let want = d.composite_channel(Channel::Color, d.bounds()).unwrap();
+    let out = export(&d, Channel::Color);
+    let bytes = psd::write(&out, &Limits::default()).unwrap();
+    let back = psd::read(&bytes, &Limits::default())
+        .unwrap()
+        .to_core()
+        .unwrap();
+    assert_eq!(
+        back.composite_channel(Channel::Color, back.bounds())
+            .unwrap(),
+        want
+    );
+}

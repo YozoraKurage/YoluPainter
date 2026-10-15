@@ -11,7 +11,9 @@
 use std::collections::HashMap;
 
 use super::{Command, Document, Entry, HistoryKind, Order};
+use crate::effects::EffectSettings;
 use crate::error::CoreError;
+use crate::generator;
 use crate::layer::{Layer, LayerId, LayerSetId};
 use crate::types::Channel;
 
@@ -384,11 +386,30 @@ impl Document {
         }
         let mut copy = self.capture_snapshot()?;
         let only = copy.layer_sets[0].id;
+        // 元の文書で別のレイヤーセットの Anchor を指していた読み手の参照（`resolve_anchor` が `Missing` にして入力を通す）は、
+        // 写しでは同じレイヤーセットに見えて解決されてしまうので、未選択（ID 0）にして同じく入力を通す。
+        let points = self.anchor_points();
+        let cross_set = |set: LayerSetId, id: u128| {
+            id != 0
+                && points
+                    .iter()
+                    .find(|p| p.id == id)
+                    .is_some_and(|p| self.layers[p.host].set != set)
+        };
         let mut layers = Vec::with_capacity(self.layers.len() + self.layer_sets.len());
         for (k, info) in self.layer_sets.iter().enumerate().rev() {
             let gid = copy.new_layer_id();
             for l in self.layers.iter().filter(|l| l.set == info.id) {
                 let mut l = l.clone();
+                let own = l.set;
+                let masked = l.mask.as_mut().map(|m| &mut m.filters);
+                for e in l.filters.iter_mut().chain(masked.into_iter().flatten()) {
+                    if let EffectSettings::Generator(g) = &mut e.settings {
+                        if g.kind == generator::Kind::Anchor && cross_set(own, g.anchor.id) {
+                            g.anchor.id = 0;
+                        }
+                    }
+                }
                 l.parent = l.parent.or(Some(gid));
                 l.set = only;
                 layers.push(l);
