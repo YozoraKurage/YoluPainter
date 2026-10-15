@@ -1030,3 +1030,202 @@ fn in_a_document_the_stages_composite_like_the_whole_image_and_follow_resizes() 
         report.notes
     );
 }
+
+// ───────── 半径・長さの端で同じバイト ─────────
+
+/// FNV-1a（試験の中で出力のバイト列を 1 つの数にする）。
+fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+/// 灰色にところどころ透明を混ぜた画像（スカラー用。透明な画素の RGB は 0 以外にして、ウィンドウに数えないことも見る）。
+fn scalar_with_holes(w: u32, h: u32) -> Vec<u8> {
+    let mut v = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let g = ((x * 29 + y * 53 + (x * y) % 17 * 11) % 256) as u8;
+            let a = if (x * 5 + y * 3) % 7 == 0 { 0 } else { 255 };
+            v.extend_from_slice(&[g, g, g, a]);
+        }
+    }
+    v
+}
+
+/// 方向のぼかし・モルフォロジー・グローを、半径・長さの端の値（最小・1・小数・画像より大きい値・範囲の最大）で評価し、出力のバイトが
+/// 速くする前の実装と同じことを確かめる（`GOLDEN` は前の実装で得た出力の FNV-1a）。ブロックの分け方（既定と 8 画素）で出力が変わらないことも見る。
+#[test]
+fn directional_blur_morphology_and_glow_keep_their_bytes_at_the_ends_of_radius_and_distance() {
+    let mut got: Vec<(String, u64)> = Vec::new();
+    let mut check = |label: String, data: &[u8], w: u32, h: u32, ty: ValueType, s: Settings| {
+        let src = Image::new(data, w, h).unwrap();
+        let eval = |block_size: u32| {
+            evaluate(
+                &src,
+                ty,
+                &[Stage::new(s.clone())],
+                full(w, h),
+                &Options {
+                    block_size,
+                    ..Options::default()
+                },
+            )
+            .unwrap()
+        };
+        let whole = eval(Options::default().block_size);
+        assert_eq!(eval(8), whole, "{label}: ブロックの分け方で変わった");
+        got.push((label, fnv(&whole)));
+    };
+    for (w, h) in [(37u32, 29u32), (150, 21)] {
+        let color = pattern(w, h);
+        let scalar = scalar_with_holes(w, h);
+        for distance in [0.0, 0.3, 1.0, 2.5, 13.0, 64.0, 256.0] {
+            for angle in [0.0, 33.5, 90.0, 225.0] {
+                check(
+                    format!("directional {w}x{h} d={distance} a={angle}"),
+                    &color,
+                    w,
+                    h,
+                    ValueType::Color,
+                    Settings::DirectionalBlur { angle, distance },
+                );
+            }
+        }
+        for radius in [1, 2, 5, 17, 40, 64] {
+            for mode in [MorphologyMode::Dilate, MorphologyMode::Erode] {
+                check(
+                    format!("morphology {w}x{h} r={radius} {mode:?}"),
+                    &scalar,
+                    w,
+                    h,
+                    ValueType::Scalar,
+                    Settings::Morphology { mode, radius },
+                );
+            }
+        }
+        for radius in [1, 2, 9, 40, 77, 256] {
+            check(
+                format!("glow {w}x{h} r={radius}"),
+                &color,
+                w,
+                h,
+                ValueType::Color,
+                Settings::Glow {
+                    threshold: 0.2,
+                    radius,
+                    intensity: 0.8,
+                },
+            );
+        }
+    }
+    let expected: Vec<(&str, u64)> = GOLDEN.to_vec();
+    let lines: Vec<String> = got
+        .iter()
+        .map(|(l, h)| format!("    (\"{l}\", 0x{h:016x}),"))
+        .collect();
+    assert!(
+        got.len() == expected.len()
+            && got
+                .iter()
+                .zip(&expected)
+                .all(|(g, e)| g.0 == e.0 && g.1 == e.1),
+        "出力のバイトが変わった。得た値:\n{}",
+        lines.join("\n")
+    );
+}
+
+const GOLDEN: &[(&str, u64)] = &[
+    ("directional 37x29 d=0 a=0", 0xa70a7cd6bbde2ec4),
+    ("directional 37x29 d=0 a=33.5", 0xa70a7cd6bbde2ec4),
+    ("directional 37x29 d=0 a=90", 0xa70a7cd6bbde2ec4),
+    ("directional 37x29 d=0 a=225", 0xa70a7cd6bbde2ec4),
+    ("directional 37x29 d=0.3 a=0", 0x7932a2e827485871),
+    ("directional 37x29 d=0.3 a=33.5", 0x6335f892ca422ade),
+    ("directional 37x29 d=0.3 a=90", 0x268e128e395654a4),
+    ("directional 37x29 d=0.3 a=225", 0x42ebc402a0ffce3e),
+    ("directional 37x29 d=1 a=0", 0x0ee38e2113d5f9a0),
+    ("directional 37x29 d=1 a=33.5", 0x22d39da244ee56bc),
+    ("directional 37x29 d=1 a=90", 0xd80e553b03a4a057),
+    ("directional 37x29 d=1 a=225", 0x535fe0a066e471b6),
+    ("directional 37x29 d=2.5 a=0", 0x6d94ed349d2f78b6),
+    ("directional 37x29 d=2.5 a=33.5", 0x4e9fecff092ec44a),
+    ("directional 37x29 d=2.5 a=90", 0x64dde0bcac1d9de8),
+    ("directional 37x29 d=2.5 a=225", 0x002fc2ba6b3139f1),
+    ("directional 37x29 d=13 a=0", 0x50ac778a96ec1a66),
+    ("directional 37x29 d=13 a=33.5", 0x2ff778b7c7fabbeb),
+    ("directional 37x29 d=13 a=90", 0xc33870a15e0e0c35),
+    ("directional 37x29 d=13 a=225", 0x6dfaf76119fcc2c7),
+    ("directional 37x29 d=64 a=0", 0x3173997f943ef537),
+    ("directional 37x29 d=64 a=33.5", 0x8ed1fcc54592b86f),
+    ("directional 37x29 d=64 a=90", 0x57a93f9eec1e337f),
+    ("directional 37x29 d=64 a=225", 0xf24532a1b37e3ebd),
+    ("directional 37x29 d=256 a=0", 0xab63131f6afe7395),
+    ("directional 37x29 d=256 a=33.5", 0x033b1e04590e4803),
+    ("directional 37x29 d=256 a=90", 0x48ab55789d1e5c36),
+    ("directional 37x29 d=256 a=225", 0x8e1d7f155b73553b),
+    ("morphology 37x29 r=1 Dilate", 0xf05bc0c9fe09c8f7),
+    ("morphology 37x29 r=1 Erode", 0x9cb15b3d71a232b0),
+    ("morphology 37x29 r=2 Dilate", 0x9e5d286d89a12fc4),
+    ("morphology 37x29 r=2 Erode", 0xdb4446dfe240f723),
+    ("morphology 37x29 r=5 Dilate", 0x2b2f26f976cfbf38),
+    ("morphology 37x29 r=5 Erode", 0x99e0d91dc15fa473),
+    ("morphology 37x29 r=17 Dilate", 0xcfa8547258f3f6c4),
+    ("morphology 37x29 r=17 Erode", 0x1771b0c94fcbbd6d),
+    ("morphology 37x29 r=40 Dilate", 0xcfa8547258f3f6c4),
+    ("morphology 37x29 r=40 Erode", 0x1771b0c94fcbbd6d),
+    ("morphology 37x29 r=64 Dilate", 0xcfa8547258f3f6c4),
+    ("morphology 37x29 r=64 Erode", 0x1771b0c94fcbbd6d),
+    ("glow 37x29 r=1", 0x06433d5db0358204),
+    ("glow 37x29 r=2", 0xe594e89d88bfb73b),
+    ("glow 37x29 r=9", 0xe096c690095076ee),
+    ("glow 37x29 r=40", 0xca3891f6673de94a),
+    ("glow 37x29 r=77", 0xd091d87fb6c871c2),
+    ("glow 37x29 r=256", 0x895e6a4286ac9314),
+    ("directional 150x21 d=0 a=0", 0xc1837e6cfbcdc036),
+    ("directional 150x21 d=0 a=33.5", 0xc1837e6cfbcdc036),
+    ("directional 150x21 d=0 a=90", 0xc1837e6cfbcdc036),
+    ("directional 150x21 d=0 a=225", 0xc1837e6cfbcdc036),
+    ("directional 150x21 d=0.3 a=0", 0x902f240373890adc),
+    ("directional 150x21 d=0.3 a=33.5", 0x4fda65ab7957b5da),
+    ("directional 150x21 d=0.3 a=90", 0xedc516a155ed672c),
+    ("directional 150x21 d=0.3 a=225", 0x62c3039cf3cf9ca5),
+    ("directional 150x21 d=1 a=0", 0x97e27cce92f30de6),
+    ("directional 150x21 d=1 a=33.5", 0xfb41f18fac4055f3),
+    ("directional 150x21 d=1 a=90", 0x46678c4373060495),
+    ("directional 150x21 d=1 a=225", 0x755e5168562b264f),
+    ("directional 150x21 d=2.5 a=0", 0xbd5deacd22bd12f0),
+    ("directional 150x21 d=2.5 a=33.5", 0xeae913f9ccc15b44),
+    ("directional 150x21 d=2.5 a=90", 0xbc3dadd41be57ac7),
+    ("directional 150x21 d=2.5 a=225", 0x13dcc0d159c967e6),
+    ("directional 150x21 d=13 a=0", 0xd8746aca88956a0b),
+    ("directional 150x21 d=13 a=33.5", 0x436a1ec385ad3e7f),
+    ("directional 150x21 d=13 a=90", 0x72b0a8b377ae0f5c),
+    ("directional 150x21 d=13 a=225", 0x731b00f0c892db03),
+    ("directional 150x21 d=64 a=0", 0xc6499214043737fb),
+    ("directional 150x21 d=64 a=33.5", 0xb7f07f71880fa3b5),
+    ("directional 150x21 d=64 a=90", 0x7222e9869a7c8035),
+    ("directional 150x21 d=64 a=225", 0x4853660a1e57dafd),
+    ("directional 150x21 d=256 a=0", 0xdf096ae9e94f62b1),
+    ("directional 150x21 d=256 a=33.5", 0x262411aeb3893a81),
+    ("directional 150x21 d=256 a=90", 0xee80ce8678ce320c),
+    ("directional 150x21 d=256 a=225", 0x98ea914c7485b84c),
+    ("morphology 150x21 r=1 Dilate", 0xf8ba864e3930a18b),
+    ("morphology 150x21 r=1 Erode", 0xa00b73385fb7e13b),
+    ("morphology 150x21 r=2 Dilate", 0x8a08ef4ce629c831),
+    ("morphology 150x21 r=2 Erode", 0xa7f1fa391cdca5f5),
+    ("morphology 150x21 r=5 Dilate", 0xdf501115ff77b729),
+    ("morphology 150x21 r=5 Erode", 0xa1974ea821a0ab09),
+    ("morphology 150x21 r=17 Dilate", 0x8dbc2961f1738d06),
+    ("morphology 150x21 r=17 Erode", 0xa593a5f201243645),
+    ("morphology 150x21 r=40 Dilate", 0x8dbc2961f1738d06),
+    ("morphology 150x21 r=40 Erode", 0x36580925e37f4f8e),
+    ("morphology 150x21 r=64 Dilate", 0x8dbc2961f1738d06),
+    ("morphology 150x21 r=64 Erode", 0x36580925e37f4f8e),
+    ("glow 150x21 r=1", 0xafba511246ebb662),
+    ("glow 150x21 r=2", 0x298a0d183b5203bd),
+    ("glow 150x21 r=9", 0xe901ba0b7a2f0a09),
+    ("glow 150x21 r=40", 0xe53a3cfb4320de5a),
+    ("glow 150x21 r=77", 0xebbb72653a02d0d4),
+    ("glow 150x21 r=256", 0x73ec3724efb7e390),
+];

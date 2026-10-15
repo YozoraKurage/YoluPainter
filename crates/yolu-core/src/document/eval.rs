@@ -170,7 +170,8 @@ pub(crate) struct EffectState {
     pub inputs_revision: u64,
     /// モデルの UV の位相が別の物に替わるたびに増える（継ぎ目をまたぐ段の評価の鍵。マップや画像の差し替えでは増えない）。
     pub topology_revision: u64,
-    /// 読み込み・直接の書き込みのたびに増える（キャッシュを全部無効にする）。
+    /// 読み込みと、元画素の変化の記録を通らない直接の書き込み（`external_mutation`）のたびに増える（キャッシュを全部無効にする）。画素・タイルの直接の書き込みは
+    /// 元画素の変化の記録を通るので増やさない（`pixel_mutation`）。
     pub generation: u64,
     /// 元画素の変化の時計（タイルが変わるたびに進む）。
     pub clock: u64,

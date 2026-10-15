@@ -1112,7 +1112,7 @@ impl Document {
         };
         if changed {
             self.mark_target_tile(index, Target::Channel(channel), coord);
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1168,7 +1168,7 @@ impl Document {
                     Ok(true) => {
                         changed += 1;
                         self.mark_target_tile(index, Target::Channel(channel), coord);
-                        self.external_mutation();
+                        self.pixel_mutation();
                     }
                     Err(e) => {
                         // 1 枚ずつ呼ぶなら、面を作るのは最初の 1 枚。それが断られたときだけ面を消す
@@ -1208,7 +1208,7 @@ impl Document {
             .import_tile(coord, bytes, growth)?;
         if changed {
             self.mark_target_tile(index, Target::Mask, coord);
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1254,7 +1254,7 @@ impl Document {
                 Target::Channel(channel),
                 TileCoord::new(x / ts, y / ts),
             );
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1278,7 +1278,7 @@ impl Document {
         let changed = surface.set_pixel(x, y, Rgba8::new(0, 0, 0, hide), growth)?;
         if changed {
             self.mark_target_tile(index, Target::Mask, TileCoord::new(x / ts, y / ts));
-            self.external_mutation();
+            self.pixel_mutation();
         }
         Ok(changed)
     }
@@ -1326,6 +1326,15 @@ impl Document {
         // 直接の書き込み（読み込み・管理）は、レイヤーの元画素の変化の記録を通らないことがある: 評価済みのものは全部作り直す
         self.effects.generation += 1;
         self.release_effect_cache();
+        self.refresh_anchor_readers();
+    }
+
+    /// 画素・タイルの直接の書き込みの後始末。`mark_target_tile` が元画素の変化の記録（評価のキャッシュの鍵）と、フィルターの届く範囲の
+    /// 変化を済ませているので、`external_mutation` と違い評価のキャッシュは捨てない: 変わったタイルとその届く範囲を含むブロックだけ、鍵が
+    /// 合わなくなって次に読むときに評価し直される（ストロークと同じ道）。履歴は消す。
+    fn pixel_mutation(&mut self) {
+        self.clear_history_unchecked();
+        self.revision += 1;
         self.refresh_anchor_readers();
     }
 
