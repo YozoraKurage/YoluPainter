@@ -1340,7 +1340,7 @@ fn layer_row(
                     );
                 }
                 crate::automation::record::after(app, pending);
-                app.modified = true;
+                app.mark_modified();
             }
         }
         if !first && !out.focused {

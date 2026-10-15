@@ -1023,6 +1023,18 @@ pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Opti
 pub const DEFAULT_DOCUMENT_SIZE: u32 = 2048;
 
 impl AppState {
+    /// 保存していない変更がある印を立てる（`modified = true` を直に書かない。下ろす側は保存・開くが `modified = false` で行う）。
+    pub fn mark_modified(&mut self) {
+        self.modified = true;
+    }
+
+    /// 今の文書の版が `before`（編集の前に控えた `doc.revision()`）と違えば、保存していない変更の印を立てる。
+    pub fn mark_modified_if_changed(&mut self, before: u64) {
+        if self.doc.revision() != before {
+            self.mark_modified();
+        }
+    }
+
     /// 表示の言語を替える。既定の名前のまま（利用者が付けていない。復旧から開いて、まだ保存していない名前を含む）のプロジェクト名・最初のテクスチャセット・
     /// まだ編集していない文書の最初のレイヤーは、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
     pub fn set_language(&mut self, lang: Lang) {
@@ -1371,7 +1383,7 @@ impl AppState {
                 match self.doc.undo() {
                     Ok(true) => {
                         self.info(Source::Edit, self.lang.pick("取り消しました。", "Undone."));
-                        self.modified = true;
+                        self.mark_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1393,7 +1405,7 @@ impl AppState {
                 match self.doc.redo() {
                     Ok(true) => {
                         self.info(Source::Edit, self.lang.pick("やり直しました。", "Redone."));
-                        self.modified = true;
+                        self.mark_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1411,7 +1423,7 @@ impl AppState {
                 let name = self.layer_name_for_new();
                 if let Ok(id) = self.doc.add_layer_above(&name, self.selected_layer) {
                     self.selected_layer = Some(id);
-                    self.modified = true;
+                    self.mark_modified();
                 }
             }
             Action::DeleteLayer => {
@@ -1427,9 +1439,7 @@ impl AppState {
                             self.lang.core_error(&e),
                         );
                     }
-                    if self.doc.revision() != revision {
-                        self.modified = true;
-                    }
+                    self.mark_modified_if_changed(revision);
                     self.ensure_selection();
                     return;
                 }
@@ -1456,7 +1466,7 @@ impl AppState {
                             self.selected_layer = start
                                 .map(|i| layers[i.saturating_sub(1).min(layers.len() - 1)].id());
                             self.set_edit_mask(false);
-                            self.modified = true;
+                            self.mark_modified();
                         }
                         Err(e) => self.notify(
                             crate::notice::Kind::of_core(&e),
@@ -1474,7 +1484,7 @@ impl AppState {
                     // 選んだレイヤーをまとめて 1 段（それぞれの兄弟の中で。選んだレイヤーどうしは追い越さない）
                     let ids = self.selected_layers();
                     if let Ok(true) = self.doc.step_layers(&ids, action == Action::LayerUp) {
-                        self.modified = true;
+                        self.mark_modified();
                     }
                     return;
                 }
@@ -1487,7 +1497,7 @@ impl AppState {
                         let to = if up { i + 1 } else { i.wrapping_sub(1) };
                         if to < siblings.len() {
                             let _ = self.doc.move_layer(id, to);
-                            self.modified = true;
+                            self.mark_modified();
                         }
                     }
                 }
@@ -1498,7 +1508,7 @@ impl AppState {
                 }
                 if let Some(visible) = self.doc.layer(id).map(|l| l.visible()) {
                     let _ = self.doc.set_layer_visible(id, !visible);
-                    self.modified = true;
+                    self.mark_modified();
                 }
             }
             Action::SetBlend(id, mode) => {
@@ -1513,7 +1523,7 @@ impl AppState {
                     );
                     return;
                 }
-                self.modified = true;
+                self.mark_modified();
             }
             Action::StartRename(id) => {
                 self.ui.renaming = Some(id);

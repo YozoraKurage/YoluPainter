@@ -564,9 +564,7 @@ impl AppState {
             Ok(text) => self.info(Source::Selection, text),
             Err(e) => self.refuse(Source::Selection, e),
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.mark_modified_if_changed(revision);
     }
 
     /// 選択範囲を `next` にする。今と同じ中身なら Undo の段を積まず、false を返す。

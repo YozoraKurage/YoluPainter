@@ -217,7 +217,7 @@ impl AppState {
         }) {
             Ok(id) => {
                 // 断られて巻き戻したときは変更番号だけが進むので、変更の印は作れたときだけ付ける
-                self.modified = true;
+                self.mark_modified();
                 self.select_new(id);
                 Some(id)
             }

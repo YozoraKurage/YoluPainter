@@ -287,7 +287,7 @@ mod tests {
                 .add_point(&mut state.doc, 20.0, 20.0, 1.0, DVec2::ZERO)
                 .unwrap();
             state.doc.end_stroke(stroke).unwrap();
-            state.modified = true;
+            state.mark_modified();
         }
         let ctx = egui::Context::default();
         let mut app = YoluApp::for_context(&ctx, state, PenInput::detached());

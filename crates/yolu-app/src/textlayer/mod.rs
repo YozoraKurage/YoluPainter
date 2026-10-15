@@ -720,7 +720,7 @@ impl AppState {
         };
         match result {
             Ok(id) => {
-                self.modified = true;
+                self.mark_modified();
                 if let Some(e) = self.text.editing.as_mut() {
                     e.created |= e.layer.is_none();
                     e.layer = Some(id);
@@ -887,7 +887,7 @@ impl AppState {
             }
         };
         match self.doc.set_text(id, value, &font, coalesce) {
-            Ok(()) => self.modified = true,
+            Ok(()) => self.mark_modified(),
             Err(e) => self.notify(Kind::of_core(&e), Source::Text, self.lang.core_error(&e)),
         }
     }
@@ -935,7 +935,7 @@ impl AppState {
         }
         match self.doc.rasterize(id) {
             Ok(()) => {
-                self.modified = true;
+                self.mark_modified();
                 self.info(
                     Source::Text,
                     lang.pick("ラスタライズしました。", "Rasterized."),

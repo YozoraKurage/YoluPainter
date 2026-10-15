@@ -470,7 +470,7 @@ impl AppState {
                 };
                 match self.shelf.set_image_color_space(lang, &id, text) {
                     Ok(true) => {
-                        self.modified = true;
+                        self.mark_modified();
                         // 読み方を読み替えるのは、復号している画像だけ（使っていない画像を復号して、予算に残さない）
                         if self.fx.inputs.has_decoded_image(image) {
                             if let Err(why) = self.use_shelf_image(&id) {
@@ -564,9 +564,7 @@ impl AppState {
                 self.fillfx.point_selected = index;
             }
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.mark_modified_if_changed(revision);
     }
 
     /// 投影の種類を替える（C# の `SetProjectionMode`）。デカールは画像を 1 回（繰り返さない）、UV から型の上の投影に替えたとき置き場が
@@ -797,7 +795,7 @@ impl AppState {
                 let added = self.shelf.resources().len() > before;
                 self.shelf.selected = Some(id);
                 if added {
-                    self.modified = true;
+                    self.mark_modified();
                 }
                 self.info(
                     Source::FillLayer,

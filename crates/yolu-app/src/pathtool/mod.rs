@@ -574,7 +574,7 @@ impl AppState {
             above,
         ) {
             Ok(layer) => {
-                self.modified = true;
+                self.mark_modified();
                 self.select_new(layer);
                 // ツールを替えると、ほかのツールの途中の状態を捨てる。編集するパスは、そのあとで決める
                 self.switch_tool(crate::state::Tool::Path, false);
@@ -842,7 +842,7 @@ impl AppState {
                     path: path.id(),
                     index,
                 });
-                self.modified = true;
+                self.mark_modified();
                 if gaps > 0 {
                     self.warn(Source::Path, gaps_message(lang, gaps));
                 }
@@ -1196,7 +1196,7 @@ impl AppState {
                 match self.doc.rasterize(id) {
                     Ok(()) => {
                         self.path.selected = None;
-                        self.modified = true;
+                        self.mark_modified();
                         self.info(
                             Source::Path,
                             lang.pick("ラスタライズしました。", "Rasterized."),
@@ -1531,7 +1531,7 @@ impl AppState {
             ));
         }
         if !all.is_empty() {
-            self.modified = true;
+            self.mark_modified();
             // 全部を描き直せたなら済んだ知らせ。画素にした・残したパスがあれば気をつけること
             let text = rebind_message(lang, &all);
             if all.iter().all(|r| r.outcome == rebind::Outcome::Redrawn) {

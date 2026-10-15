@@ -567,7 +567,7 @@ pub(super) fn apply(
     app.ui.set_scroll = 0.0;
     app.sync_mesh_map_view();
     app.sync_view3d();
-    app.modified = true;
+    app.mark_modified();
     app.np.generation += 1;
     app.np.reopening = None;
     // 知らせ

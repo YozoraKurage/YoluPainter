@@ -179,7 +179,7 @@ impl AppState {
                     .map_err(|e| lang.core_error(&e))
                 {
                     Ok(()) => {
-                        self.modified = true;
+                        self.mark_modified();
                         self.path.selected = None;
                         self.path.active = Some(ActivePath { layer, path: id });
                         self.path.fresh = None;
@@ -290,7 +290,7 @@ impl AppState {
             .is_some_and(|a| a.layer == layer && !next.iter().any(|e| e.id() == a.path));
         match self.path_write_list(layer, next) {
             Ok(gaps) => {
-                self.modified = true;
+                self.mark_modified();
                 self.path.selected = None;
                 if let Some(id) = select {
                     self.path.active = Some(ActivePath { layer, path: id });

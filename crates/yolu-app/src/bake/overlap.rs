@@ -418,7 +418,7 @@ impl AppState {
         }
         match self.doc.set_bake_priority(next) {
             Ok(()) => {
-                self.modified = true;
+                self.mark_modified();
                 self.info(
                     Source::Bake,
                     done.unwrap_or_else(|| {
@@ -544,7 +544,7 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
     };
     if undo {
         match app.doc.undo() {
-            Ok(_) => app.modified = true,
+            Ok(_) => app.mark_modified(),
             Err(e) => {
                 app.region.cycle = None;
                 app.notify(

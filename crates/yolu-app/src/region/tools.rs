@@ -484,7 +484,7 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let erase = app.region.erase;
     match fill_with(app, layer, &mask) {
         Ok(true) => {
-            app.modified = true;
+            app.mark_modified();
             if !erase && !app.m2.edit_mask {
                 app.color.remember();
             }
@@ -551,7 +551,7 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
         let (index, undo) = cycle_index(app, CycleKind::Fill, at, &keys, true);
         if undo {
             match app.doc.undo() {
-                Ok(_) => app.modified = true,
+                Ok(_) => app.mark_modified(),
                 Err(e) => {
                     app.region.cycle = None;
                     app.notify(
@@ -695,7 +695,7 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
                 app.region.cycle = None;
             }
             if result.changed {
-                app.modified = true;
+                app.mark_modified();
                 let text = if drag.erase {
                     format!(
                         "{what} × {regions} {}",

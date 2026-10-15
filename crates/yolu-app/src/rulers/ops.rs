@@ -97,9 +97,7 @@ impl AppState {
                 if let Err(e) = self.ruler_edit(edit) {
                     self.notify(Kind::of_core(&e), Source::Ruler, self.lang.core_error(&e));
                 }
-                if self.doc.revision() != before {
-                    self.modified = true;
-                }
+                self.mark_modified_if_changed(before);
             }
         }
     }
@@ -178,9 +176,7 @@ impl AppState {
         *slot = ruler;
         let before = self.doc.revision();
         self.doc.set_rulers(owner, list, coalesce)?;
-        if self.doc.revision() != before {
-            self.modified = true;
-        }
+        self.mark_modified_if_changed(before);
         Ok(())
     }
 

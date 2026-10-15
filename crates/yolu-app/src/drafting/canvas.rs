@@ -137,7 +137,7 @@ pub(crate) fn finish_paint(
         );
     }
     if app.doc.revision() != before {
-        app.modified = true;
+        app.mark_modified();
         app.color.remember();
     }
 }

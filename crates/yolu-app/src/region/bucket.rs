@@ -106,7 +106,7 @@ fn apply(
     match result {
         Ok(changed) => {
             if changed {
-                app.modified = true;
+                app.mark_modified();
                 if !style.erase && !style.mask {
                     app.color.remember();
                 }

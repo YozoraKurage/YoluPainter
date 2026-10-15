@@ -359,7 +359,7 @@ pub fn write_shape(
         }
     };
     if result.is_ok() && app.doc.revision() != revision {
-        app.modified = true;
+        app.mark_modified();
     }
     Some(result)
 }

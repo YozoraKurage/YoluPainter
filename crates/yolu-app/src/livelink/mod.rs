@@ -1092,7 +1092,7 @@ impl LiveLink {
                     );
                     installed.push((uid, m, keep_size));
                     // 保存したプロジェクトの中身が変わった
-                    state.modified = true;
+                    state.mark_modified();
                 }
                 None => {
                     record.source = source.clone();
@@ -1167,7 +1167,7 @@ impl LiveLink {
         if !first_install {
             pose::sync_modified(state);
             if rebuilt {
-                state.modified = true;
+                state.mark_modified();
             }
         }
         // 入れた元の絵を覚える（入れた直後の文書の ID と版。受けた見た目とポーズは文書の版を進めない）。無くなったセットの覚えは捨てる

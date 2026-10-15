@@ -1961,7 +1961,7 @@ impl AppState {
                 self.shelf.inspected.insert(staged.id.clone(), info);
             }
             self.shelf.changed = true;
-            self.modified = true;
+            self.mark_modified();
         }
         self.shelf_reveal(&staged.id, kind, name);
         if staged.added {
@@ -1980,7 +1980,7 @@ impl AppState {
                 self.shelf.inspected.insert(staged.id.clone(), info);
             }
             self.shelf.changed = true;
-            self.modified = true;
+            self.mark_modified();
         }
         self.shelf.selected = Some(staged.id);
         if staged.added {
@@ -2155,7 +2155,7 @@ impl AppState {
                 Ok(result) => {
                     self.selected_layer = Some(layer);
                     self.set_edit_mask(true);
-                    self.modified = true;
+                    self.mark_modified();
                     let mut text = format!(
                         "{}: {name}",
                         if had_mask {
@@ -2194,7 +2194,7 @@ impl AppState {
                 if let Some(p) = parent {
                     self.m2.collapsed.remove(&p);
                 }
-                self.modified = true;
+                self.mark_modified();
                 let n = result.layers.len();
                 let mut text = format!(
                     "{}: {name}（{n} {}",
@@ -2277,7 +2277,7 @@ impl AppState {
                     self.shelf.selected = None;
                 }
                 self.shelf.changed = true;
-                self.modified = true;
+                self.mark_modified();
                 self.info(
                     Source::Assets,
                     format!(

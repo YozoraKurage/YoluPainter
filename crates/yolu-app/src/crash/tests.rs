@@ -203,7 +203,7 @@ fn child_crash() {
             .add_point(&mut state.doc, 20.0, 20.0, 1.0, crate::engine::DVec2::ZERO)
             .unwrap();
         state.doc.end_stroke(stroke).unwrap();
-        state.modified = true;
+        state.mark_modified();
         state.recovery_flush();
         let _ = fs::remove_dir_all(root);
         panic!("final panic");

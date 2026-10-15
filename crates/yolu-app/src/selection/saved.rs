@@ -170,7 +170,7 @@ impl AppState {
                                 lang.pick("選択範囲を覚えました", "Remembered")
                             ),
                         );
-                        self.modified |= self.doc.revision() != revision;
+                        self.mark_modified_if_changed(revision);
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),
@@ -196,7 +196,7 @@ impl AppState {
                             Source::Selection,
                             format!("{}: {gone}", lang.pick("削除", "Removed")),
                         );
-                        self.modified = true;
+                        self.mark_modified();
                         if let Some(win) = self.sel.saved_window.as_mut() {
                             // 消した行より後ろの名前の変更は、番号が 1 つずれる
                             match win.rename {
@@ -231,7 +231,7 @@ impl AppState {
                             Source::Selection,
                             format!("{}: {name}", lang.pick("名前を変えました", "Renamed")),
                         );
-                        self.modified = true;
+                        self.mark_modified();
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),

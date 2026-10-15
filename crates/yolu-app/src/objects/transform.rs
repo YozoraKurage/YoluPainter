@@ -679,9 +679,7 @@ impl Transform {
                 let revision = app.doc.revision();
                 match app.doc.set_fill_points(layer, channel, Some(g), true) {
                     Ok(()) => {
-                        if app.doc.revision() != revision {
-                            app.modified = true;
-                        }
+                        app.mark_modified_if_changed(revision);
                     }
                     Err(e) => app.notify(
                         crate::notice::Kind::of_core(&e),

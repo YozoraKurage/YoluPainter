@@ -359,7 +359,7 @@ impl OpHost for AppHost<'_> {
             doc,
         );
         if (doc.id(), doc.revision()) != before {
-            state.modified = true;
+            state.mark_modified();
             if current {
                 // 消したレイヤーを選んだままにしない（画面の取り消しと同じ後始末）
                 state.ensure_selection();

@@ -216,7 +216,7 @@ impl AppState {
         };
         match self.doc.set_id_colors(next, drag) {
             Ok(()) => {
-                self.modified = true;
+                self.mark_modified();
                 self.region.hover = None;
                 if drag {
                     self.region.id.dragged = Some(self.doc.undo_count());
@@ -381,7 +381,7 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
         );
         return;
     }
-    app.modified = true;
+    app.mark_modified();
     app.info(
         Source::Selection,
         if app.doc.selection().is_none() {

@@ -296,7 +296,7 @@ fn begin(
     if !erase {
         app.color.remember();
     }
-    app.modified = true;
+    app.mark_modified();
     // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
     crate::uv_wireframe::overlap::note_surface(app, rect, at);
     if line {

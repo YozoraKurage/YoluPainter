@@ -281,7 +281,9 @@ pub fn commit(app: &mut AppState) -> bool {
     }
     match result {
         Ok(changed) => {
-            app.modified |= changed;
+            if changed {
+                app.mark_modified();
+            }
             app.transform.forget_bounds();
         }
         Err(e) => app.notify(

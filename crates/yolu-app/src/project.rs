@@ -482,7 +482,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         Opened::Recovered => {
             state.reset_project_identity(crate::recovery::recovered_name(state.lang).into(), shelf);
             // 書き置きの正本から開いた文書は、保存した .ylp とは別物（保存していない）。合成の PNG も無いので、全セットを書き直す
-            state.modified = true;
+            state.mark_modified();
             for i in 0..state.sets.len() {
                 if let Some(set) = state.sets.get_mut(i) {
                     set.saved = None;
@@ -780,7 +780,7 @@ mod tests {
                 }
             }
         }
-        s.modified = true;
+        s.mark_modified();
         let small = yolu_io::Thresholds {
             classic_total_bytes: 1 << 10,
             ..yolu_io::Thresholds::REAL

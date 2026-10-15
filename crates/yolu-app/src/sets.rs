@@ -872,7 +872,7 @@ impl AppState {
         if set.name != name {
             set.name = name.to_owned();
             set.auto_name = false;
-            self.modified = true;
+            self.mark_modified();
         }
         Ok(())
     }
@@ -936,7 +936,7 @@ impl AppState {
         if let Some(set) = self.sets.get_mut(uid_index) {
             set.bound = free.map(|g| g.index as u32);
         }
-        self.modified = true;
+        self.mark_modified();
         self.switch_set(uid_index)?;
         self.info(
             Source::TextureSet,
@@ -1015,7 +1015,7 @@ impl AppState {
         self.ui.set_scroll = 0.0;
         self.sync_mesh_map_view();
         self.sync_view3d();
-        self.modified = true;
+        self.mark_modified();
         Ok(names)
     }
 

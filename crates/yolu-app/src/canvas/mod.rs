@@ -441,7 +441,7 @@ fn begin_stroke(
             if !settings.erase {
                 app.color.remember();
             }
-            app.modified = true;
+            app.mark_modified();
             true
         }
         Err(e) => {

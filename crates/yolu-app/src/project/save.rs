@@ -606,7 +606,7 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
             // 入れなかったセットは、画面にあってファイルに無い。「保存していない変更」のままにして、閉じる・開き直す・捨てるときに聞く
             // （次の保存でも同じ。知らせは保存の時点の 1 回だけで、あとの知らせに上書きされうるので、注意としてログにも残す）
             if !job.left_out.is_empty() {
-                state.modified = true;
+                state.mark_modified();
             }
             if done.caveat {
                 state.warn(Source::Save, done.text);
@@ -633,7 +633,9 @@ fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget
     if let (Some(file), Some(target), true) = (state.project.as_mut(), target, job.reuse) {
         file.target = Some(target);
     }
-    state.modified |= job.was_modified;
+    if job.was_modified {
+        state.mark_modified();
+    }
     state.shelf.changed |= job.shelf_was_changed;
     if job.report {
         state.save.outcome = Some(SaveOutcome {

@@ -671,9 +671,7 @@ impl AppState {
             let before = self.doc.revision();
             match paint_slot(&mut self.doc, slot, lang) {
                 Ok(channel) => {
-                    if self.doc.revision() != before {
-                        self.modified = true;
-                    }
+                    self.mark_modified_if_changed(before);
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
                 Err(e) => self.notify(
@@ -688,7 +686,7 @@ impl AppState {
             let lang = self.lang;
             match new_slot_channel(&mut self.doc, slot, plane, lang) {
                 Ok(channel) => {
-                    self.modified = true;
+                    self.mark_modified();
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
                 Err(e) => self.notify(
@@ -703,7 +701,7 @@ impl AppState {
             let lang = self.lang;
             match apply_template(&mut self.doc, lang) {
                 Ok(made) => {
-                    self.modified = true;
+                    self.mark_modified();
                     self.info(
                         Source::Material,
                         lang.pick(
@@ -812,9 +810,7 @@ impl AppState {
         let before = self.doc.revision();
         match self.doc.set_look(look, coalesce) {
             Ok(()) => {
-                if self.doc.revision() != before {
-                    self.modified = true;
-                }
+                self.mark_modified_if_changed(before);
             }
             Err(e) => self.notify(
                 crate::notice::Kind::of_core(&e),

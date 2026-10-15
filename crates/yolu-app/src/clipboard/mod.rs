@@ -160,9 +160,7 @@ impl AppState {
             Ok(text) => self.info(Source::Clipboard, text),
             Err(text) => self.refuse(Source::Clipboard, text),
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.mark_modified_if_changed(revision);
     }
 
     /// OS への書き込みの失敗を受ける（フレームの初めに）。

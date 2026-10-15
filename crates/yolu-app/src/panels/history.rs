@@ -55,7 +55,7 @@ pub fn go_to(app: &mut AppState, target: usize) {
             app.doc.redo()
         };
         match result {
-            Ok(true) => app.modified = true,
+            Ok(true) => app.mark_modified(),
             Ok(false) => break,
             Err(e) => {
                 app.notify(Kind::of_core(&e), Source::Edit, app.lang.core_error(&e));

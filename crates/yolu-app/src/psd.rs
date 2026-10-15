@@ -1209,7 +1209,7 @@ impl AppState {
                 self.install_document(doc, crate::sets::Keep::reset());
             }
         }
-        self.modified = true;
+        self.mark_modified();
         switched
     }
 

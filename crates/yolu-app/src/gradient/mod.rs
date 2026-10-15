@@ -266,9 +266,7 @@ impl AppState {
                 lang.core_error(&e),
             ),
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.mark_modified_if_changed(revision);
     }
 
     /// ドラッグの途中の形を捨てる（Esc・ツールの切り替え・フォーカスを失ったとき。2D のキャンバスと 3D ビューの両方）。何かあったか。

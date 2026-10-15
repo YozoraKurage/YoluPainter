@@ -258,9 +258,7 @@ impl AppState {
                 self.lang.core_error(&e),
             ),
         }
-        if self.doc.revision() != revision {
-            self.modified = true;
-        }
+        self.mark_modified_if_changed(revision);
         self.ensure_selection();
     }
 
@@ -604,9 +602,7 @@ impl AppState {
                     lang.core_error(&e),
                 ),
             }
-            if self.doc.revision() != revision {
-                self.modified = true;
-            }
+            self.mark_modified_if_changed(revision);
         }
         true
     }

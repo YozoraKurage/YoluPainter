@@ -1523,7 +1523,7 @@ impl AppState {
             set.mesh_maps.set_run(run.clone());
             set.mesh_maps.put(result.maps);
         }
-        self.modified = true;
+        self.mark_modified();
         if self.bake.view == MeshMapView::None && index == self.sets.current_index() {
             self.bake.view = MeshMapView::Coverage;
         }
