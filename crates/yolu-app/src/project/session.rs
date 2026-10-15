@@ -83,11 +83,13 @@ impl Session {
     /// `AppState::install_document`。
     pub(crate) fn install(&mut self, doc: Document) -> Document {
         let previous = std::mem::replace(&mut self.doc, doc);
-        self.advance_doc_epoch();
+        self.doc_epoch = self.doc_epoch.wrapping_add(1);
         previous
     }
 
-    /// 文書の世代だけを進める（同じ `Document` の中身を丸ごと替えたときに、キャンバスの表示に前の合成を捨てさせる）。
+    /// 文書の世代だけを進める（テストが、同じ `Document` のまま中身を替えたことにして、キャンバスの表示に前の合成を捨てさせる）。
+    /// アプリの中で世代を進めるのは [`Session::install`] だけ。
+    #[cfg(test)]
     pub(crate) fn advance_doc_epoch(&mut self) {
         self.doc_epoch = self.doc_epoch.wrapping_add(1);
     }
@@ -164,6 +166,15 @@ mod tests {
         let mut s = session();
         s.project_name = "作品".into();
         s.save_folder = Some(std::path::PathBuf::from("/tmp/x"));
+        let sample = include_bytes!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../yolu-io/tests/fixtures/format1.ylp"
+        ));
+        s.project = Some(ProjectFile {
+            path: std::path::PathBuf::from("/tmp/x/作品.ylp"),
+            target: None,
+            original: std::sync::Arc::new(yolu_io::Project::read(sample).unwrap()),
+        });
         s.mark_modified();
         s.reset_identity("新しい".into());
         assert!(s.project.is_none());
