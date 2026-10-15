@@ -5,6 +5,8 @@
 *.ylp binary
 crates/*/tests/golden/** -text
 crates/*/tests/fixtures/** -text
+# ブラシの保存の見本（.ylbrush）は、読んで書き戻したバイトを見本と照合するため、改行を変換しない
+crates/*/tests/ylbrush_files/** -text
 *.ttf binary
 crates/yolu-app/assets/fonts/OFL.txt -text
 crates/yolu-brush-sets/data/** -text
