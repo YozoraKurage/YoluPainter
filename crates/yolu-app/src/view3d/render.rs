@@ -698,6 +698,12 @@ pub fn wgpu_configuration(vsync: bool) -> egui_wgpu::WgpuConfiguration {
     let mut config =
         egui_wgpu::WgpuConfiguration::default().with_surface_config(surface_config(vsync));
     if let egui_wgpu::WgpuSetup::CreateNew(setup) = &mut config.wgpu_setup {
+        // D3D12 のシェーダーのコンパイラー（Windows の msvc では組み込みの DXC。使えなければ FXC。環境変数の指定が先）
+        setup
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .shader_compiler = yolu_gpu::dx12_compiler();
         let base = setup.device_descriptor.clone();
         setup.device_descriptor = Arc::new(move |adapter| {
             let mut descriptor = base(adapter);

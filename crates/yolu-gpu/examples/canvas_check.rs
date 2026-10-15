@@ -74,8 +74,7 @@ fn check(g: &mut ResidentCompositor, d: &Document, what: &str, premultiplied: bo
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // インスタンスは 1 つだけ作り、デバイスを `from_device` で共有する（インスタンスを作り直すと落ちる環境がある）
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let instance = wgpu::Instance::new(yolu_gpu::instance_descriptor());
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
     let info = adapter.get_info();

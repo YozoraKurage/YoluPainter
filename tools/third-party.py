@@ -23,6 +23,8 @@ COMPONENTS = {'universal-apple-darwin': ('aarch64-apple-darwin', 'x86_64-apple-d
 ALLOWED = {'MIT', 'Apache-2.0', '0BSD', 'BSD-2-Clause', 'BSD-3-Clause', 'Zlib',
            'ISC', 'Unicode-DFS-2016', 'Unicode-3.0', 'OFL-1.1', 'Ubuntu-font-1.0',
            'BSL-1.0', 'Bitstream-Vera',
+           # D3D12 のシェーダーのコンパイラー DXC（mach-dxcompiler-rs が静的にリンクする。LLVM 由来の University of Illinois/NCSA）。全文を同梱する
+           'NCSA',
            # Linux の wayland-protocols-plasma・misc の protocol XML（生成された結びつきが入る）。本文と元の入手先を同梱する
            'LGPL-2.1-or-later'}
 

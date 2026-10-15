@@ -5,8 +5,10 @@ use std::{fmt, sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
 use yolu_core::{BrushSettings, Channel, Document, Rect, TileCoord};
 
+mod dx12;
 mod plan;
 mod source;
+pub use dx12::{dx12_compiler, instance_descriptor};
 use plan::Plan;
 pub use plan::{supports, Unsupported};
 
@@ -223,8 +225,7 @@ impl GpuPainter {
         pollster::block_on(Self::create(options))
     }
     async fn create(options: Options) -> Result<Self, GpuError> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance = wgpu::Instance::new(instance_descriptor());
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 force_fallback_adapter: options.force_fallback_adapter,

@@ -11,5 +11,10 @@ wgpu = "30.0.1"
 pollster = "1"
 bytemuck = { version = "1", features = ["derive"] }
 
+# D3D12 のシェーダーのコンパイラー DXC を exe に静的に組み込む（Windows の x86_64 msvc だけ。wgpu-hal の mach-dxcompiler-rs が入る。MIT、中の DXC は NCSA ほか）。
+# 条件は wgpu-hal の `static_dxc`（build.rs）と同じ。ほかの OS・x86_64-pc-windows-gnu では何も増えない。
+[target.'cfg(all(windows, target_env = "msvc", target_arch = "x86_64"))'.dependencies]
+wgpu = { version = "30.0.1", features = ["static-dxc"] }
+
 [dev-dependencies]
 naga = { version = "30", features = ["wgsl-in", "spv-out"] }   # MIT OR Apache-2.0（wgpu と同じ版。WGSL の Params の並びを Rust の構造体と照合する試験用）

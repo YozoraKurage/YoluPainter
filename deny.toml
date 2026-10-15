@@ -21,6 +21,7 @@ ignore = [
 allow = [
     "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "Zlib", "BSD-2-Clause", "BSD-3-Clause",
     "BSL-1.0", "OFL-1.1", "Ubuntu-font-1.0", "Bitstream-Vera", "ISC", "Unicode-3.0", "Unicode-DFS-2016",
+    "NCSA",   # D3D12 のシェーダーのコンパイラー DXC（Windows の msvc の配布だけ。mach-dxcompiler-rs が静的にリンクする）
 ]
 confidence-threshold = 0.9
 unused-allowed-license = "allow"

@@ -792,8 +792,7 @@ fn premultiplied_display_is_the_cpu_conversion_of_the_straight_display() {
 #[test]
 fn shared_device_and_limited_devices() {
     gpu_lease::lease();
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let instance = wgpu::Instance::new(yolu_gpu::instance_descriptor());
     let Ok(adapter) =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
     else {

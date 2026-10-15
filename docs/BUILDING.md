@@ -10,7 +10,7 @@ Rust の stable ツールチェーンと C/C++ のビルド環境が必要です
 
 ## Windows
 
-64 ビットの Windows と、Visual Studio Build Tools の「C++ によるデスクトップ開発」（Windows SDK を含む）、Rust の MSVC ツールチェーンを用意します。PowerShell で実行します。
+64 ビットの Windows と、Visual Studio Build Tools（2022 の 17.11 以降）の「C++ によるデスクトップ開発」（Windows SDK を含む）と、個別のコンポーネントの C++ ATL（ID `Microsoft.VisualStudio.Component.VC.ATL`）、Rust の MSVC ツールチェーンを用意します。シェーダーのコンパイラー（DXC）を実行ファイルに組み込むため、ビルドのときに GitHub からそのライブラリを取得します（`curl.exe` と `tar.exe` が使えること）。PowerShell で実行します。
 
 ```powershell
 cargo build --release -p yolu-app --locked --target x86_64-pc-windows-msvc

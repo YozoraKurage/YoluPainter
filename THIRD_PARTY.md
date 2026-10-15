@@ -83,6 +83,17 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
   [NSIS の許諾](https://nsis.sourceforge.io/NSIS_License) を参照。インストーラーに入れるファイルは zip と同じで、全文束も同じ物を入れる。
 - 自作部分の配布許諾、Rust 標準ライブラリ、実際にリンクする MinGW/GCC ランタイム、追加で同梱する DLL の表記は、
   最終的な配布物と使用ツールチェーンに合わせて別途確認する。このクレート一覧だけで製品全体の配布可否は確定しない。
+- `yolu-gpu` は D3D12 のシェーダーのコンパイラー DXC を実行ファイルに静的に組み込む（wgpu の `static-dxc`。Windows の x86_64 msvc のビルドだけ。
+  Windows GNU・Linux・macOS の依存は変わらない）。増えるクレートは `mach-dxcompiler-rs 0.1.6+2026.09.16-48d5a66.1`（MIT。実行時）と、そのビルド用の `lhash 1.1.0`
+  （BSL-1.0。クレートに許諾の本文が無いので、発行時コミットの上流の `LICENSE` を SHA-256 で照合する）の 2 件。DXC 本体は、クレートのビルド（`build.rs`）が
+  [mach-dxcompiler のリリース `2026.09.16+48d5a66.1`](https://github.com/DouglasDwyer/mach-dxcompiler/releases/tag/2026.09.16%2B48d5a66.1)（改変できないリリースとして公開されている物）の
+  静的ライブラリを取り、SHA-256 を照合してリンクする。その元のソースは `hexops/DirectXShaderCompiler` のコミット `4190bb0c90d374c6b4d0b0f2c7b45b604eda24b6`
+  （mach-dxcompiler の `build.zig` の `source_revision`）で、SPIR-V の出力は組み込まない（同じ `build.zig` の `spirv` の選択は既定で偽、リリースを作る `ci.yml` の `zig build` にも指定が無い）。
+  掛かる許諾は、DXC の **University of Illinois/NCSA**（LLVM Release License）と、その `LICENSE.TXT` に並ぶ LLVM 由来の部品（`Files:` の行で見ると、miniz・Henry Spencer の regex・ConvertUTF・MD5・OpenBSD の `regstrlcpy`。ほかに試験用の googletest・YamlParser と、ビルド補助の `autoconf/config.guess`（GPL の全文と configure の例外）の項も並ぶ。これらがライブラリに入る部品かは、`Files:` の行からは確かめていない）、
+  Mach の署名部分（Apache-2.0 または MIT。MIT を選び、クレートの `LICENSE` を同梱する）。DXC の `LICENSE.TXT` と `ThirdPartyNotices.txt`（どちらもそのコミットの原文）を
+  クレートの許諾と一緒に全文束へ入れる（`NCSA` は `tools/third-party.py` と `deny.toml` の許す一覧に足した）。NCSA の条件は、著作権表記・条件・免責を付属の資料に載せることと、
+  LLVM Team・イリノイ大学・寄稿者の名前を宣伝に使わないこと。このビルドは `dxil.dll` を使わない。ビルドの時に GitHub への通信、`curl`・`tar`、Visual Studio 2022 17.11 以上の
+  `cl.exe`、ATL の静的ライブラリ（`atls.lib`）が要る。
 
 ## フォントとアイコン
 
@@ -251,7 +262,7 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 
 | 対象 | app（更新・コマンドライン込み） | cli（app と同じビルド） | update 単独 | xtask | app の全文束 |
 |---|---:|---:|---:|---:|---|
-| Windows MSVC | 251 | 132 | 31 | 49 | 生成成功 |
+| Windows MSVC | 253 | 132 | 31 | 49 | 生成成功 |
 | Windows GNU | 251 | 132 | 31 | 49 | 生成成功 |
 | Linux GNU | 319 | 131 | 31 | 54 | 生成成功 |
 | Linux ARM（aarch64） | 317 | 130 | 30 | 52 | 生成成功 |
@@ -281,11 +292,11 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
-照合した Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。外部クレート 496 件の内訳は次のとおり。
+照合した Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。外部クレート 498 件の内訳は次のとおり。
 
 | 範囲（6 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
 |---|---:|---|
-| 通常・ビルド依存 | 387 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
+| 通常・ビルド依存 | 389 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
 | 試験専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
 | 対象外（他 OS・現在無効な機能） | 97 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
 | Cargo.lock に無い古い登録 | 0 | 削除なし |
@@ -324,9 +335,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。
 
-外部クレート 251 件（同名の別版は別件）。実行時 207 件。
+外部クレート 253 件（同名の別版は別件）。実行時 208 件。
 
 ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
 
@@ -335,9 +346,10 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | Apache-2.0 | 11 |
 | Apache-2.0 AND MIT | 2 |
 | BSD-3-Clause | 3 |
-| BSL-1.0 | 2 |
+| BSL-1.0 | 3 |
 | ISC | 1 |
 | MIT | 226 |
+| MIT AND NCSA | 1 |
 | MIT AND OFL-1.1 AND Ubuntu-font-1.0 AND Bitstream-Vera | 1 |
 | MIT AND Unicode-3.0 | 1 |
 | MIT AND Zlib | 2 |
@@ -455,6 +467,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | khronos-egl | 6.0.0 | 実行時 | MIT/Apache-2.0 | MIT | 確認済み |
 | khronos_api | 3.1.0 | ビルド・マクロ用 | Apache-2.0 | Apache-2.0 | 確認済み |
 | kurbo | 0.13.1 | 実行時 | Apache-2.0 OR MIT | MIT | 確認済み |
+| lhash | 1.1.0 | ビルド・マクロ用 | BSL-1.0 | BSL-1.0 | 確認済み |
 | libc | 0.2.190 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | libloading | 0.8.9 | 実行時 | ISC | ISC | 確認済み |
 | libm | 0.2.16 | 実行時 | MIT | MIT | 確認済み |
@@ -464,6 +477,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | litrs | 1.0.0 | ビルド・マクロ用 | MIT OR Apache-2.0 | MIT | 確認済み |
 | lock_api | 0.4.14 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | log | 0.4.34 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
+| mach-dxcompiler-rs | 0.1.6+2026.09.16-48d5a66.1 | 実行時 | MIT | MIT AND NCSA | 確認済み |
 | memchr | 2.8.3 | 実行時 | Unlicense OR MIT | MIT | 確認済み |
 | memmap2 | 0.9.11 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | miniz_oxide | 0.8.9 | 実行時 | MIT OR Zlib OR Apache-2.0 | MIT | 確認済み |
@@ -601,7 +615,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -758,7 +772,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。
 
 外部クレート 251 件（同名の別版は別件）。実行時 207 件。
 
@@ -1035,7 +1049,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。
 
 外部クレート 132 件（同名の別版は別件）。実行時 109 件。
 
@@ -1192,7 +1206,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。
 
 外部クレート 319 件（同名の別版は別件）。実行時 271 件。
 
@@ -1537,7 +1551,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。
 
 外部クレート 131 件（同名の別版は別件）。実行時 108 件。
 
@@ -1693,7 +1707,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `f0b6931b23f24d08449c18b4a19f70119aa9234206498c5308563d50436343b0`。
+対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `645b886d85a6f95bcc1b0fb93522559aba0632261a7ef08d4f3e2046e568b9b8`。
 
 外部クレート 246 件（同名の別版は別件）。実行時 206 件。
 

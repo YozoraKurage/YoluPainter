@@ -397,8 +397,7 @@ impl BakeGpu {
     async fn create(options: GpuBakeOptions) -> Result<Self, GpuBakeError> {
         // Instance はデバイスごとに作る。プロセスで共有すると、GL（EGL）では別のデバイスが 1 つの GL のコンテキストを分け合い、
         // 別のスレッドから同時に使うと make_current が失敗して落ちる（ベイクの裏のスレッドとキャンバスの合成が同時に動く）
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance = wgpu::Instance::new(crate::instance_descriptor());
         let mut adapters = instance.enumerate_adapters(wgpu::Backends::all()).await;
         let found = adapters.len();
         adapters.retain(|a| {

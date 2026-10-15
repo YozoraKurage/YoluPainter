@@ -59,7 +59,7 @@ fn select_device() -> Result<WgpuSetupExisting, String> {
             if !backends.intersects(backend) {
                 continue;
             }
-            let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
+            let mut descriptor = yolu_gpu::instance_descriptor();
             descriptor.backends = backend;
             let instance = wgpu::Instance::new(descriptor);
             let mut adapters = instance.enumerate_adapters(backend).await;
