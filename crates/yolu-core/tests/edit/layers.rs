@@ -500,12 +500,7 @@ fn adding_and_removing_a_mask_is_undoable() {
     d.undo().unwrap();
     d.undo().unwrap();
     assert!(d.layer(l).unwrap().mask().is_none());
-    assert!(d
-        .begin_brush_mask_stroke(
-            l,
-            &yolu_core::Brush::simple(hard(false), yolu_core::PressureSwitches::NONE)
-        )
-        .is_err());
+    assert!(d.begin_mask_stroke(l, &hard(false)).is_err());
 }
 
 #[test]

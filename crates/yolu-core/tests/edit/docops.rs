@@ -43,12 +43,7 @@ fn transparency_keeps_alpha_and_hidden_rgb_and_undo() {
     let before = pixels(&d, id);
     d.set_layer_locks(id, LayerLocks::TRANSPARENCY).unwrap();
     d.clear_history().unwrap();
-    let mut s = d
-        .begin_brush_stroke(
-            id,
-            &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-        )
-        .unwrap();
+    let mut s = d.begin_stroke(id, &hard()).unwrap();
     s.add_point(&mut d, 4., 3., 1., glam::DVec2::ZERO).unwrap();
     d.end_stroke(s).unwrap();
     for (a, b) in pixels(&d, id).iter().zip(&before) {
@@ -72,12 +67,7 @@ fn transparent_only_brush_needs_no_budget_or_history() {
     d.set_layer_locks(id, LayerLocks::TRANSPARENCY).unwrap();
     d.clear_history().unwrap();
     d.set_stroke_budget_bytes(0).unwrap();
-    let mut s = d
-        .begin_brush_stroke(
-            id,
-            &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-        )
-        .unwrap();
+    let mut s = d.begin_stroke(id, &hard()).unwrap();
     s.add_point(&mut d, 3., 3., 1., glam::DVec2::ZERO).unwrap();
     assert!(!d.end_stroke(s).unwrap().changed);
     assert_eq!(d.undo_count(), 0);
@@ -89,7 +79,7 @@ fn inherited_lock_names_holder_and_does_not_create_channel() {
     d.set_layer_locks(g, LayerLocks::PIXELS).unwrap();
     let rev = d.revision();
     assert!(
-        matches!(d.begin_brush_stroke_in(id,Channel::Emission, &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE)),Err(CoreError::LayerLocked { holder, .. }) if holder==g)
+        matches!(d.begin_stroke_in(id,Channel::Emission,&hard()),Err(CoreError::LayerLocked { holder, .. }) if holder==g)
     );
     assert!(d.layer(id).unwrap().surface(Channel::Emission).is_none());
     assert_eq!(d.revision(), rev);
@@ -111,12 +101,7 @@ fn image_lock_allows_mask_and_integer_move_but_not_scale() {
     let (mut d, id) = patterned();
     d.add_layer_mask(id).unwrap();
     d.set_layer_locks(id, LayerLocks::PIXELS).unwrap();
-    let mut s = d
-        .begin_brush_mask_stroke(
-            id,
-            &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-        )
-        .unwrap();
+    let mut s = d.begin_mask_stroke(id, &hard()).unwrap();
     s.apply_pixel(&mut d, 1, 1, 1., 1.).unwrap();
     d.end_stroke(s).unwrap();
     assert!(d
@@ -145,15 +130,12 @@ fn erase_and_position_refusals_are_atomic() {
     let rev = d.revision();
     let b = pixels(&d, id);
     assert!(d
-        .begin_brush_stroke(
+        .begin_stroke(
             id,
-            &yolu_core::Brush::simple(
-                BrushSettings {
-                    erase: true,
-                    ..hard()
-                },
-                yolu_core::PressureSwitches::NONE
-            )
+            &BrushSettings {
+                erase: true,
+                ..hard()
+            }
         )
         .is_err());
     assert!(d
@@ -1070,12 +1052,7 @@ fn set_locks_for_load_clears_history_and_refuses_during_a_stroke_and_unknown_lay
         Err(CoreError::LayerNotFound)
     );
     // 進行中のストロークがあれば断る（ロックは変わらない）
-    let stroke = d
-        .begin_brush_stroke(
-            b,
-            &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-        )
-        .unwrap();
+    let stroke = d.begin_stroke(b, &hard()).unwrap();
     assert_eq!(
         d.set_locks_for_load(b, LayerLocks::PIXELS),
         Err(CoreError::StrokeActive)
@@ -1556,56 +1533,31 @@ fn fill_entry(d: &mut Document, started: Result<TriangleFill, CoreError>) -> Res
 fn write_entries() -> Vec<Entry> {
     vec![
         entry("begin_stroke", true, false, |d, id| {
-            let s = d.begin_brush_stroke(
-                id,
-                &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_stroke(id, &hard());
             stroke_entry(d, s)
         }),
         entry("begin_stroke（消す）", true, true, |d, id| {
-            let s = d.begin_brush_stroke(
-                id,
-                &yolu_core::Brush::simple(erasing(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_stroke(id, &erasing());
             stroke_entry(d, s)
         }),
         entry("begin_stroke_in", true, false, |d, id| {
-            let s = d.begin_brush_stroke_in(
-                id,
-                Channel::Emission,
-                &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_stroke_in(id, Channel::Emission, &hard());
             stroke_entry(d, s)
         }),
         entry("begin_brush_stroke", true, false, |d, id| {
-            let s = d.begin_brush_stroke(
-                id,
-                &Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_brush_stroke(id, &Brush::from(hard()));
             stroke_entry(d, s)
         }),
         entry("begin_material_stroke", true, false, |d, id| {
-            let s = d.begin_material_brush_stroke(
-                id,
-                &two_channels(),
-                &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_material_stroke(id, &two_channels(), &hard());
             stroke_entry(d, s)
         }),
         entry("begin_material_stroke（消す）", true, true, |d, id| {
-            let s = d.begin_material_brush_stroke(
-                id,
-                &two_channels(),
-                &yolu_core::Brush::simple(erasing(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_material_stroke(id, &two_channels(), &erasing());
             stroke_entry(d, s)
         }),
         entry("begin_material_brush_stroke", true, false, |d, id| {
-            let s = d.begin_material_brush_stroke(
-                id,
-                &two_channels(),
-                &Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_material_brush_stroke(id, &two_channels(), &Brush::from(hard()));
             stroke_entry(d, s)
         }),
         entry("begin_triangle_fill", true, false, |d, id| {
@@ -1676,17 +1628,11 @@ fn write_entries() -> Vec<Entry> {
         ),
         // ここから下はマスクへの書き込み: 画像・透明部分のロックでは通り、すべてのロックでだけ断る
         entry("begin_mask_stroke", false, false, |d, id| {
-            let s = d.begin_brush_mask_stroke(
-                id,
-                &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_mask_stroke(id, &hard());
             stroke_entry(d, s)
         }),
         entry("begin_brush_mask_stroke", false, false, |d, id| {
-            let s = d.begin_brush_mask_stroke(
-                id,
-                &Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-            );
+            let s = d.begin_brush_mask_stroke(id, &Brush::from(hard()));
             stroke_entry(d, s)
         }),
         entry("begin_mask_triangle_fill", false, false, |d, id| {
@@ -1797,11 +1743,7 @@ fn refused_material_writes_leave_no_channel_enabled_and_no_surface() {
             // 断ったあとにマテリアルの状態が残らない: ロックを外せばすぐ次のストロークが始まる
             d.set_layer_locks(id, LayerLocks::NONE).unwrap();
             let s = d
-                .begin_material_brush_stroke(
-                    id,
-                    &two_channels(),
-                    &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-                )
+                .begin_material_stroke(id, &two_channels(), &hard())
                 .unwrap();
             d.cancel_stroke(s);
             assert!(!d.has_active_stroke(), "{}", e.name);
@@ -1856,11 +1798,7 @@ fn transparency_lock_keeps_alpha_and_hidden_rgb_in_every_channel_of_every_materi
         (
             "begin_material_stroke",
             Box::new(|d, id, m| {
-                let mut s = d.begin_material_brush_stroke(
-                    id,
-                    m,
-                    &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-                )?;
+                let mut s = d.begin_material_stroke(id, m, &hard())?;
                 s.add_point(d, 4., 3., 1., glam::DVec2::ZERO)?;
                 d.end_stroke(s).map(|_| ())
             }),
@@ -1995,11 +1933,7 @@ fn locked_material_writes_equal_painting_each_channel_alone() {
         .unwrap();
     // ストローク
     let mut s = together
-        .begin_material_brush_stroke(
-            id,
-            &material,
-            &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-        )
+        .begin_material_stroke(id, &material, &hard())
         .unwrap();
     s.add_point(&mut together, 4., 3., 1., glam::DVec2::ZERO)
         .unwrap();
@@ -2007,13 +1941,7 @@ fn locked_material_writes_equal_painting_each_channel_alone() {
     for m in &material {
         let mut settings = hard();
         settings.color = m.value;
-        let mut s = alone
-            .begin_brush_stroke_in(
-                id2,
-                m.channel,
-                &yolu_core::Brush::simple(settings, yolu_core::PressureSwitches::NONE),
-            )
-            .unwrap();
+        let mut s = alone.begin_stroke_in(id2, m.channel, &settings).unwrap();
         s.add_point(&mut alone, 4., 3., 1., glam::DVec2::ZERO)
             .unwrap();
         alone.end_stroke(s).unwrap();
@@ -2250,11 +2178,7 @@ fn budgeted_writes() -> Vec<(&'static str, WriteEntry)> {
         (
             "begin_material_stroke",
             Box::new(|d, id| {
-                let mut s = d.begin_material_brush_stroke(
-                    id,
-                    &two_channels(),
-                    &yolu_core::Brush::simple(hard(), yolu_core::PressureSwitches::NONE),
-                )?;
+                let mut s = d.begin_material_stroke(id, &two_channels(), &hard())?;
                 s.add_point(d, 4., 3., 1., glam::DVec2::ZERO)?;
                 d.end_stroke(s).map(|_| ())
             }),
@@ -2326,14 +2250,7 @@ fn locked_writes_refused_by_the_stroke_budget_leave_everything_as_it_was() {
                             // 断ったあとにマテリアルの状態が残らない: 予算を戻せば次のストロークが始まる
                             d.set_stroke_budget_bytes(64 << 20).unwrap();
                             let s = d
-                                .begin_material_brush_stroke(
-                                    id,
-                                    &two_channels(),
-                                    &yolu_core::Brush::simple(
-                                        hard(),
-                                        yolu_core::PressureSwitches::NONE,
-                                    ),
-                                )
+                                .begin_material_stroke(id, &two_channels(), &hard())
                                 .unwrap();
                             d.cancel_stroke(s);
                             refused += 1;

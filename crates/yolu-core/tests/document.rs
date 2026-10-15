@@ -292,12 +292,7 @@ fn duplicate_positions_make_no_extra_dab() {
 fn settings_are_frozen_and_edits_wait_for_the_stroke() {
     let (mut doc, l) = small();
     let mut brush = opaque(RED);
-    let mut s = doc
-        .begin_brush_stroke(
-            l,
-            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
-        )
-        .unwrap();
+    let mut s = doc.begin_stroke(l, &brush).unwrap();
     brush.color = Rgba8::new(0, 0, 255, 255);
     let _ = brush;
     s.apply_pixel(&mut doc, 1, 1, 1.0, 1.0).unwrap();
@@ -309,10 +304,7 @@ fn settings_are_frozen_and_edits_wait_for_the_stroke() {
         Err(CoreError::StrokeActive)
     );
     assert!(matches!(
-        doc.begin_brush_stroke(
-            l,
-            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE)
-        ),
+        doc.begin_stroke(l, &brush),
         Err(CoreError::StrokeActive)
     ));
     doc.end_stroke(s).unwrap();
@@ -363,39 +355,30 @@ fn time_must_not_go_back_and_a_failure_cancels() {
     assert!(!doc.has_active_stroke());
     // 間違った設定は始める前に断る
     assert!(doc
-        .begin_brush_stroke(
+        .begin_stroke(
             l,
-            &yolu_core::Brush::simple(
-                BrushSettings {
-                    spacing: 0.0,
-                    ..opaque(RED)
-                },
-                yolu_core::PressureSwitches::NONE
-            )
+            &BrushSettings {
+                spacing: 0.0,
+                ..opaque(RED)
+            }
         )
         .is_err());
     assert!(doc
-        .begin_brush_stroke(
+        .begin_stroke(
             l,
-            &yolu_core::Brush::simple(
-                BrushSettings {
-                    radius: f64::INFINITY,
-                    ..opaque(RED)
-                },
-                yolu_core::PressureSwitches::NONE
-            )
+            &BrushSettings {
+                radius: f64::INFINITY,
+                ..opaque(RED)
+            }
         )
         .is_err());
     assert!(doc
-        .begin_brush_stroke(
+        .begin_stroke(
             l,
-            &yolu_core::Brush::simple(
-                BrushSettings {
-                    hardness: 1.5,
-                    ..opaque(RED)
-                },
-                yolu_core::PressureSwitches::NONE
-            )
+            &BrushSettings {
+                hardness: 1.5,
+                ..opaque(RED)
+            }
         )
         .is_err());
 }
