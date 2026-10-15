@@ -562,6 +562,9 @@ impl YoluApp {
         // ファイルを選ぶウィンドウの始まりの場所: 前に使った場所を、設定のフォルダの `places.conf` から読む（実際のウィンドウだけ）
         app.state.places =
             crate::dialog::places::Places::load(crate::dialog::places::Places::default_path());
+        // 最近開いたプロジェクト: 設定のフォルダの `recent.conf` から読む（起動の引数のプロジェクトを開くより先に。実際のウィンドウだけ）
+        app.state.recent_projects =
+            crate::recent::Recent::load(crate::recent::Recent::default_path());
         #[cfg(windows)]
         {
             use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -1113,6 +1116,13 @@ impl YoluApp {
                 self.discard_then(crate::discard::AfterDiscard::Recovery(open));
             }
         }
+        // 最近開いたプロジェクトから開く（ウィンドウは開かない）。保存していない変更は、「開く」と同じ問い
+        if self.discard_ask.is_none() {
+            if let Some(DialogRequest::OpenPath(path)) = self.state.dialog_request.clone() {
+                self.state.dialog_request = None;
+                self.discard_then(crate::discard::AfterDiscard::OpenPath(path));
+            }
+        }
         // 問いに答えるまで、ファイルの頼みは残しておく（答えのあとの次のフレームで当てる）
         if !(self.dialogs || self.discard_window) || self.discard_ask.is_some() {
             return;
@@ -1138,6 +1148,10 @@ impl YoluApp {
             }
             Some(DialogRequest::Open) => {
                 self.discard_then(crate::discard::AfterDiscard::Open);
+            }
+            // （最近開いたプロジェクトは、上で先に受ける。ここへ来るのは同じフレームに重なった頼みだけ）
+            Some(DialogRequest::OpenPath(path)) => {
+                self.discard_then(crate::discard::AfterDiscard::OpenPath(path));
             }
             Some(DialogRequest::SaveAs) => {
                 let lang = self.state.lang;

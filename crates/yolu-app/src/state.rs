@@ -564,6 +564,10 @@ pub enum Action {
     /// .ylp を選んで開く（ファイルのウィンドウ）。
     OpenProjectDialog,
     OpenProject(PathBuf),
+    /// 最近開いたプロジェクトから開く（無いファイルは断って一覧から外す。保存していない変更は「開く」と同じ流れで聞く）。
+    OpenRecent(PathBuf),
+    /// 最近開いたプロジェクトの一覧を消す。
+    ClearRecent,
     /// 開いた .ylp に上書きで保存する（まだ無ければ別名で）。
     SaveProject,
     SaveProjectAsDialog,
@@ -671,6 +675,8 @@ impl Action {
             Self::NewProject => "NewProject",
             Self::OpenProjectDialog => "OpenProjectDialog",
             Self::OpenProject(..) => "OpenProject",
+            Self::OpenRecent(..) => "OpenRecent",
+            Self::ClearRecent => "ClearRecent",
             Self::SaveProject => "SaveProject",
             Self::SaveProjectAsDialog => "SaveProjectAsDialog",
             Self::SaveProjectAs(..) => "SaveProjectAs",
@@ -823,6 +829,8 @@ pub struct AppState {
     pub save_folder: Option<std::path::PathBuf>,
     /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
     pub places: crate::dialog::places::Places,
+    /// 最近開いたプロジェクト（ファイルのメニュー。実際のウィンドウは起動で `recent.conf` から読む）。
+    pub recent_projects: crate::recent::Recent,
     /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
     pub modified: bool,
     /// 直前の保存で書き直したテクスチャセット（正本）の数。画面には出さない（試験が、変えていないセットを書き直さないことを確かめる）。
@@ -943,6 +951,8 @@ pub struct AppState {
 pub enum DialogRequest {
     New,
     Open,
+    /// このプロジェクトを開く（保存していない変更は先に聞く。最近開いたプロジェクトから）。
+    OpenPath(PathBuf),
     SaveAs,
     /// 3D ビューに開くモデル（FBX）を選ぶ。
     OpenModel,
@@ -1097,6 +1107,7 @@ impl AppState {
             project_name: lang.pick("名称未設定", "Untitled").into(),
             save_folder: None,
             places: Default::default(),
+            recent_projects: Default::default(),
             modified: false,
             rewritten_sets: 0,
             reset_layout: false,
@@ -1647,6 +1658,31 @@ impl AppState {
                 }
                 crate::project::open_into(self, &path);
             }
+            Action::OpenRecent(path) => {
+                if stroking {
+                    return refuse(self);
+                }
+                if self.refuse_while_saving(
+                    self.lang
+                        .pick("プロジェクトを開けません", "Cannot open a project"),
+                ) {
+                    return;
+                }
+                if !path.is_file() {
+                    let lang = self.lang;
+                    self.recent_projects.remove(&path);
+                    self.refuse(
+                        crate::notice::Source::Open,
+                        lang.with_reason(
+                            crate::project::cannot_open(lang, &path),
+                            crate::lang::refusals::file_missing(lang),
+                        ),
+                    );
+                    return;
+                }
+                self.dialog_request = Some(DialogRequest::OpenPath(path));
+            }
+            Action::ClearRecent => self.recent_projects.clear(),
             Action::SaveProject => {
                 if stroking {
                     return refuse(self);

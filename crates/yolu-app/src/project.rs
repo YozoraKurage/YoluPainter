@@ -278,7 +278,7 @@ enum Opened {
 }
 
 /// 「「ファイル」を開けません」（理由は `Lang::with_reason` で添える）。
-fn cannot_open(lang: Lang, path: &Path) -> String {
+pub(crate) fn cannot_open(lang: Lang, path: &Path) -> String {
     let file = lang.quote(&path.display().to_string());
     lang.pick(format!("{file}を開けません"), format!("Cannot open {file}"))
 }
@@ -447,6 +447,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
             // ファイルのとおりに開いたので、変更は無い
             state.reset_project_identity(name, shelf);
+            state.recent_projects.add(path);
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())

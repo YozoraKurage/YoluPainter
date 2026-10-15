@@ -61,6 +61,11 @@ pub fn set_size(lang: Lang) -> String {
     )
 }
 
+/// 最近開いたプロジェクトのファイルが無い（開かずに断る理由）。
+pub fn file_missing(lang: Lang) -> &'static str {
+    lang.pick("ファイルがありません", "The file does not exist")
+}
+
 /// 保存を断る・待たせる理由（保存の途中に、ほかの保存・開く・新規・配布用に保存・更新の入れ替えが来たとき）。
 pub fn saving(lang: Lang) -> &'static str {
     lang.pick("保存の途中です", "A save is in progress")

@@ -398,3 +398,239 @@ fn the_brush_size_panel_has_twenty_eight_circles_with_decimal_names_that_set_the
         assert_eq!(SIZES[nearest_size(h.brush().radius * 2.0)], size);
     }
 }
+
+// ───────── 最近開いたプロジェクト ─────────
+
+fn names(entries: &[yolu_app::ui::menu::Entry<yolu_app::state::Action>]) -> Vec<String> {
+    use yolu_app::ui::menu::Entry;
+    entries
+        .iter()
+        .map(|e| match e {
+            Entry::Item { label, .. } | Entry::Submenu { label, .. } => label.clone(),
+            Entry::Separator => "-".into(),
+            Entry::Heading(h) => h.clone(),
+        })
+        .collect()
+}
+
+fn paths(h: &impl Drive) -> Vec<std::path::PathBuf> {
+    h.app().recent_projects.items().to_vec()
+}
+
+#[test]
+fn the_recent_list_puts_new_files_first_moves_a_repeat_to_the_front_and_keeps_ten() {
+    use yolu_app::recent::{Recent, MAX};
+    let dir = common::tmp::test_dir("recent-list");
+    let mut recent = Recent::load(Some(dir.join("recent.conf")));
+    assert!(recent.is_empty());
+    let file = |n: usize| dir.join(format!("p{n}.ylp"));
+    for n in 0..12 {
+        recent.add(&file(n));
+    }
+    assert_eq!(MAX, 10);
+    assert_eq!(recent.items().len(), 10, "10 で切る");
+    assert_eq!(recent.items()[0], file(11), "新しい順");
+    assert_eq!(recent.items()[9], file(2), "古い 2 つは落ちる");
+    // 同じファイルは前へ動かす（増えない）
+    recent.add(&file(5));
+    assert_eq!(recent.items().len(), 10);
+    assert_eq!(recent.items()[0], file(5));
+    assert_eq!(recent.items().iter().filter(|p| **p == file(5)).count(), 1);
+    // ファイルから読み直しても同じ
+    let again = Recent::load(Some(dir.join("recent.conf")));
+    assert_eq!(again.items(), recent.items());
+    // 相対パスは覚えない（絶対にして覚える）
+    let mut other = Recent::default();
+    other.add(std::path::Path::new("relative.ylp"));
+    assert!(other.items()[0].is_absolute());
+}
+
+#[test]
+fn a_missing_recent_file_is_refused_and_dropped_and_clear_empties_the_list_and_the_file() {
+    use yolu_app::recent::Recent;
+    use yolu_app::state::Action;
+    let dir = common::tmp::test_dir("recent-missing");
+    let conf = dir.join("recent.conf");
+    let mut h = AppState::new(32, 32);
+    h.app_mut().recent_projects = Recent::load(Some(conf.clone()));
+    let gone = dir.join("gone.ylp");
+    h.app_mut().recent_projects.add(&gone);
+    assert_eq!(paths(&h), [gone.clone()]);
+    h.act(Action::OpenRecent(gone.clone()));
+    assert!(
+        h.message().contains("ファイルがありません"),
+        "{}",
+        h.message()
+    );
+    assert!(h.dialog_request().is_none(), "開こうとしない");
+    assert!(paths(&h).is_empty(), "一覧から外す");
+    assert_eq!(
+        Recent::load(Some(conf.clone())).items().len(),
+        0,
+        "ファイルからも外れる"
+    );
+    // 英語
+    h.set_lang(yolu_app::lang::Lang::En);
+    h.act(Action::OpenRecent(gone));
+    assert!(h.message().contains("does not exist"), "{}", h.message());
+    // 一覧を消す
+    for n in 0..3 {
+        h.app_mut()
+            .recent_projects
+            .add(&dir.join(format!("p{n}.ylp")));
+    }
+    h.act(Action::ClearRecent);
+    assert!(paths(&h).is_empty());
+    assert!(Recent::load(Some(conf)).is_empty());
+}
+
+#[test]
+fn saving_and_opening_a_project_put_it_first_and_choosing_it_opens_it() {
+    use yolu_app::recent::Recent;
+    use yolu_app::state::{Action, DialogRequest};
+    let dir = common::tmp::test_dir("recent-open");
+    let conf = dir.join("recent.conf");
+    let mut h = AppState::new(32, 32);
+    h.app_mut().recent_projects = Recent::load(Some(conf.clone()));
+    let a = dir.join("a.ylp");
+    let b = dir.join("b.ylp");
+    // 名前を付けて保存も入れる
+    h.act(Action::SaveProjectAs(a.clone()));
+    h.app_mut().wait_save();
+    h.act(Action::SaveProjectAs(b.clone()));
+    h.app_mut().wait_save();
+    assert_eq!(paths(&h), [b.clone(), a.clone()]);
+    // 開いたら前へ動く
+    h.act(Action::OpenProject(a.clone()));
+    assert!(h.message().contains("開きました"), "{}", h.message());
+    assert_eq!(paths(&h), [a.clone(), b.clone()]);
+    // 選ぶと、「開く」と同じ流れ（保存していない変更の問い）へ
+    h.act(Action::OpenRecent(b.clone()));
+    assert_eq!(
+        h.dialog_request(),
+        &Some(DialogRequest::OpenPath(b.clone()))
+    );
+    assert_eq!(Recent::load(Some(conf)).items(), [a, b]);
+}
+
+#[test]
+fn the_file_menu_has_a_nested_open_recent_under_open_that_is_off_while_the_list_is_empty() {
+    use yolu_app::recent::Recent;
+    use yolu_app::ui::menu::Entry;
+    let mut h = AppState::new(32, 32);
+    for (lang, label, clear) in [
+        (
+            yolu_app::lang::Lang::Ja,
+            "最近開いたプロジェクト",
+            "一覧を消す",
+        ),
+        (yolu_app::lang::Lang::En, "Open Recent", "Clear Recent"),
+    ] {
+        h.set_lang(lang);
+        h.app_mut().recent_projects = Recent::default();
+        let file_menu = yolu_app::shell::menu_entries(h.app(), 0);
+        let labels = names(&file_menu);
+        let at = labels
+            .iter()
+            .position(|l| l == label)
+            .expect("入れ子のメニュー");
+        assert!(
+            matches!(&file_menu[at - 1], Entry::Item { label, .. } if label.starts_with(lang.pick("開く", "Open"))),
+            "「開く…」のすぐ下: {labels:?}"
+        );
+        assert!(
+            matches!(&file_menu[at], Entry::Submenu { enabled: false, .. }),
+            "空なら押せない"
+        );
+        // 12 件足しても 10 件。新しい順・名前はファイル名・ツールチップはフルパス・最後に区切りと一覧を消す
+        let dir = std::env::temp_dir();
+        for n in 0..12 {
+            h.app_mut()
+                .recent_projects
+                .add(&dir.join(format!("menu{n}.ylp")));
+        }
+        let file_menu = yolu_app::shell::menu_entries(h.app(), 0);
+        let Entry::Submenu {
+            entries, enabled, ..
+        } = &file_menu[at]
+        else {
+            panic!("入れ子");
+        };
+        assert!(*enabled);
+        assert_eq!(entries.len(), 10 + 2);
+        match &entries[0] {
+            Entry::Item { label, tooltip, .. } => {
+                assert_eq!(label, "menu11.ylp");
+                assert_eq!(
+                    tooltip.as_deref(),
+                    Some(dir.join("menu11.ylp").display().to_string().as_str())
+                );
+            }
+            _ => panic!("項目"),
+        }
+        let last = names(entries);
+        assert_eq!(&last[10..], ["-", clear]);
+    }
+}
+
+#[test]
+fn an_unreadable_or_newer_recent_file_starts_empty_and_is_moved_aside_before_it_is_written() {
+    use yolu_app::recent::Recent;
+    for (tag, bytes) in [
+        ("garbage", vec![0xffu8, 0xfe, 0x00, 0x41]),
+        (
+            "newer",
+            b"yolupainter-recent 2\n/somewhere/a.ylp\n".to_vec(),
+        ),
+        ("headerless", b"/somewhere/a.ylp\n".to_vec()),
+    ] {
+        let dir = common::tmp::test_dir(&format!("recent-broken-{tag}"));
+        let conf = dir.join("recent.conf");
+        std::fs::write(&conf, &bytes).unwrap();
+        let mut recent = Recent::load(Some(conf.clone()));
+        assert!(recent.is_empty(), "{tag}: 空の一覧");
+        assert_eq!(
+            std::fs::read(&conf).unwrap(),
+            bytes,
+            "{tag}: 読んだだけでは触らない"
+        );
+        recent.add(&dir.join("new.ylp"));
+        assert_eq!(
+            std::fs::read(dir.join("recent.conf.broken")).unwrap(),
+            bytes,
+            "{tag}: 前のファイルは別の名前で残る"
+        );
+        assert_eq!(
+            Recent::load(Some(conf)).items(),
+            [dir.join("new.ylp")],
+            "{tag}"
+        );
+        // もう一度壊れても、前の移したファイルを上書きしない
+        std::fs::write(dir.join("recent.conf"), [0xffu8]).unwrap();
+        let mut again = Recent::load(Some(dir.join("recent.conf")));
+        again.add(&dir.join("x.ylp"));
+        assert_eq!(
+            std::fs::read(dir.join("recent.conf.broken")).unwrap(),
+            bytes,
+            "{tag}"
+        );
+        assert_eq!(
+            std::fs::read(dir.join("recent.conf.broken-2")).unwrap(),
+            [0xffu8],
+            "{tag}"
+        );
+    }
+}
+
+#[test]
+fn a_state_without_a_place_never_touches_the_users_settings_folder() {
+    use yolu_app::recent::Recent;
+    let mut h = AppState::new(32, 32);
+    assert_eq!(h.app().recent_projects.items().len(), 0);
+    h.app_mut()
+        .recent_projects
+        .add(&std::env::temp_dir().join("only-in-memory.ylp"));
+    assert_eq!(paths(&h).len(), 1, "覚えるのは開いている間だけ");
+    // 置き場を持たない一覧は何も書かない（試験の状態の既定）
+    let _ = Recent::default_path();
+}

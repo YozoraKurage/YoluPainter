@@ -92,6 +92,31 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
 }
 
 /// メニューバーの見出しの中身。
+/// ファイルのメニューの「最近開いたプロジェクト」（新しい順に最大 10。項目はファイル名、ツールチップにフルパス。最後に区切りと一覧を消す。
+/// 一覧が空なら押せない）。
+fn recent_entry(app: &AppState, enabled: bool) -> Entry<Action> {
+    let l = app.lang;
+    let mut entries: Vec<Entry<Action>> = app
+        .recent_projects
+        .items()
+        .iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            Entry::item(name, Action::OpenRecent(path.clone())).tooltip(path.display().to_string())
+        })
+        .collect();
+    entries.push(Entry::Separator);
+    entries.push(Entry::item(
+        l.pick("一覧を消す", "Clear Recent"),
+        Action::ClearRecent,
+    ));
+    Entry::submenu(l.pick("最近開いたプロジェクト", "Open Recent"), entries)
+        .enabled(enabled && !app.recent_projects.is_empty())
+}
+
 pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     // 項目のキーの文字は、今のモードで効く行から（編集のモードの H は印を隠すので、表示を左右反転に H を添えない）
     let _mode = crate::shortcuts::menu_mode(app.mode);
@@ -109,6 +134,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             let mut entries = vec![
                 why(command_item(l, "file.new_project", Action::NewProjectDialog).enabled(idle)),
                 why(command_item(l, "file.open", Action::OpenProjectDialog).enabled(idle)),
+                why(recent_entry(app, idle)),
                 why(Entry::item(
                     l.pick("復旧…", "Recovery…"),
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),

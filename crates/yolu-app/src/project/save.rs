@@ -598,6 +598,7 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                 }
             }
             state.save_folder = None;
+            state.recent_projects.add(&job.path);
             state.project_name = job
                 .path
                 .file_stem()
