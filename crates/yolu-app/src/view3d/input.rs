@@ -803,6 +803,14 @@ fn note_click(
     }
 }
 
+/// 記録に出す、今動かしているビューの操作の名前（無ければ "none"）。
+fn nav_name(app: &AppState) -> String {
+    app.view3d
+        .input
+        .nav
+        .map_or_else(|| "none".to_string(), |(nav, _)| format!("{nav:?}"))
+}
+
 /// ポインタ・ペンが動いた（`previous` は前の位置）。
 fn nav_move(app: &mut AppState, rect: Rect, pos: Pos2, previous: Pos2) {
     if app
@@ -991,6 +999,20 @@ fn pen_sample(
                 settle(app);
             }
             let kind = press_kind(ui, app, rect, p, s, frame);
+            crate::pen::log::event(|| {
+                crate::pen::log::press_line(
+                    crate::pen::log::Site {
+                        view: "view3d",
+                        src: "pen",
+                        frame: ui.ctx().cumulative_frame_nr(),
+                        pen_frame: true,
+                    },
+                    &format!("{kind:?}"),
+                    p,
+                    if s.barrel { "Secondary" } else { "Primary" },
+                    false,
+                )
+            });
             app.view3d.input.pen_press = Some(PenPress {
                 id: s.pointer_id,
                 kind,
@@ -1073,7 +1095,23 @@ fn pen_sample(
     if s.contact {
         match press.kind {
             PressKind::Ignored | PressKind::Eyedrop => {}
-            PressKind::View => nav_move(app, rect, p, press.last),
+            PressKind::View => {
+                crate::pen::log::event(|| {
+                    crate::pen::log::move_line(
+                        crate::pen::log::Site {
+                            view: "view3d",
+                            src: "pen",
+                            frame: ui.ctx().cumulative_frame_nr(),
+                            pen_frame: true,
+                        },
+                        p,
+                        press.last,
+                        &nav_name(app),
+                        true,
+                    )
+                });
+                nav_move(app, rect, p, press.last)
+            }
             PressKind::Tool => {
                 if app.view3d.input.stroke == Some(source) {
                     add(app, rect, p, s.pressure, PenState::of(s));
@@ -1271,6 +1309,18 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
 
     // ペン（Windows Ink）。ペンの押し（触れてから離すまで）は、ペンの点だけで扱い、同じ押しが egui のポインタの押しとして二重に来ても使わない
     let pen_frame = app.view3d.input.pen_press.is_some() || pen.iter().any(|s| s.contact);
+    if crate::pen::log::enabled() && (pen_frame || app.view3d.input.nav.is_some()) {
+        crate::pen::log::event(|| {
+            crate::pen::log::frame_line(
+                "view3d",
+                ui.ctx().cumulative_frame_nr(),
+                pen_frame,
+                app.view3d.input.pen_press.is_some(),
+                pen.len(),
+                &nav_name(app),
+            )
+        });
+    }
     let frame = Frame {
         press_blocked,
         modifiers,
@@ -1319,12 +1369,40 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     }
                     if pen_frame {
                         // ペンの押しは、ペンの点が持つ（これは同じ押しの egui のポインタの代わりの入力）
+                        crate::pen::log::event(|| {
+                            crate::pen::log::press_line(
+                                crate::pen::log::Site {
+                                    view: "view3d",
+                                    src: "mouse",
+                                    frame: ui.ctx().cumulative_frame_nr(),
+                                    pen_frame: true,
+                                },
+                                "none",
+                                pos,
+                                &format!("{button:?}"),
+                                true,
+                            )
+                        });
                         continue;
                     }
                     // 押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作と離しの操作を別々に引く。ドラッグの操作があれば
                     // 始め、離しの操作は覚えて、動かさずに離したら行う（動いたら捨てる）。どちらも無ければ、左ボタンはツールの押し
                     let nav = nav_of(*button, m, space);
                     let click = click_of(app, *button, m, space);
+                    crate::pen::log::event(|| {
+                        crate::pen::log::press_line(
+                            crate::pen::log::Site {
+                                view: "view3d",
+                                src: "mouse",
+                                frame: ui.ctx().cumulative_frame_nr(),
+                                pen_frame: false,
+                            },
+                            &format!("nav={nav:?} click={}", click.is_some()),
+                            pos,
+                            &format!("{button:?}"),
+                            false,
+                        )
+                    });
                     if let Some(nav) = nav {
                         nav_press(app, nav, *button, pos, m);
                     }
@@ -1470,6 +1548,22 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     drag_at = Some(pos);
                 }
                 // ペンの押しの回す・パン・拡縮は、ペンの点が動かす
+                if crate::pen::log::enabled() && app.view3d.input.nav.is_some() {
+                    crate::pen::log::event(|| {
+                        crate::pen::log::move_line(
+                            crate::pen::log::Site {
+                                view: "view3d",
+                                src: "mouse",
+                                frame: ui.ctx().cumulative_frame_nr(),
+                                pen_frame,
+                            },
+                            pos,
+                            previous,
+                            &nav_name(app),
+                            !pen_frame,
+                        )
+                    });
+                }
                 if !pen_frame {
                     nav_move(app, rect, pos, previous);
                 }

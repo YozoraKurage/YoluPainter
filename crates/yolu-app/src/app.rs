@@ -2668,6 +2668,12 @@ impl eframe::App for YoluApp {
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         self.remap_pen_buttons(&mut raw_input.events);
+        // `YOLU_PEN_LOG` があるときだけ、egui が受けるポインターのイベントを記録する（振る舞いは変えない）
+        crate::pen::log::egui_events(
+            ctx.cumulative_frame_nr_for(raw_input.viewport_id),
+            raw_input.viewport_id == egui::ViewportId::ROOT,
+            &raw_input.events,
+        );
         self.pace_frame(ctx, raw_input);
     }
 

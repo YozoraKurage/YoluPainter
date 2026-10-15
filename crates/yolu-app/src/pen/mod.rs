@@ -20,6 +20,7 @@
 
 pub mod adjust;
 pub mod capture;
+pub mod log;
 #[cfg(target_os = "macos")]
 mod mac_tablet;
 pub mod tablet;

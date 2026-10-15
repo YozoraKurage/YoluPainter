@@ -18,8 +18,6 @@
 
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::fs::{File, OpenOptions};
-use std::io::{BufWriter, Write};
 use std::mem::size_of;
 use std::ptr::null_mut;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
@@ -166,38 +164,7 @@ impl Api {
 
 // ───────── 調べるための記録 ─────────
 
-fn log_file() -> Option<&'static Mutex<BufWriter<File>>> {
-    static LOG: OnceLock<Option<Mutex<BufWriter<File>>>> = OnceLock::new();
-    LOG.get_or_init(|| {
-        let path = std::env::var_os("YOLU_PEN_LOG").filter(|p| !p.is_empty())?;
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)
-            .ok()
-            .map(|f| Mutex::new(BufWriter::new(f)))
-    })
-    .as_ref()
-}
-
-fn log_enabled() -> bool {
-    log_file().is_some()
-}
-
-/// 記録に 1 行（先頭は OS の時刻のミリ秒）。
-fn log_line(line: &str) {
-    if let Some(file) = log_file() {
-        let mut w = file.lock().unwrap_or_else(|e| e.into_inner());
-        // SAFETY: 引数無し。
-        let _ = writeln!(w, "{} {line}", unsafe { GetTickCount() });
-    }
-}
-
-fn log_flush() {
-    if let Some(file) = log_file() {
-        let _ = file.lock().unwrap_or_else(|e| e.into_inner()).flush();
-    }
-}
+use super::log::{enabled as log_enabled, flush as log_flush, line as log_line};
 
 /// WinTab のメッセージ（動きを伴わない物）の記録。
 fn log_message(what: &str, offset: u32, lparam: isize) {
@@ -207,13 +174,7 @@ fn log_message(what: &str, offset: u32, lparam: isize) {
     }
 }
 
-/// 記録に 1 行（`YOLU_PEN_LOG` があるときだけ。行は記録が有効なときにだけ作る）。
-pub(super) fn log_event(line: impl FnOnce() -> String) {
-    if log_enabled() {
-        log_line(&line());
-        log_flush();
-    }
-}
+pub(super) use super::log::event as log_event;
 
 /// Windows Ink の点の記録（WinTab と見比べるため）。
 pub(super) fn log_ink(samples: &[PenSample]) {

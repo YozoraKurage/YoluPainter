@@ -680,6 +680,20 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
                 crate::view3d::input::settle(app);
             }
             let kind = press_kind(ui, app, rect, p, s, frame);
+            crate::pen::log::event(|| {
+                crate::pen::log::press_line(
+                    crate::pen::log::Site {
+                        view: "canvas",
+                        src: "pen",
+                        frame: ui.ctx().cumulative_frame_nr(),
+                        pen_frame: true,
+                    },
+                    &format!("{kind:?}"),
+                    p,
+                    &format!("{:?}", pen_button(s)),
+                    false,
+                )
+            });
             if kind == PressKind::Tool && app.mode.paints() {
                 app.rulers.last_drew = Some(crate::rulers::Place::Canvas);
             }
@@ -727,7 +741,23 @@ fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Fr
     if s.contact {
         match press.kind {
             PressKind::Ignored => {}
-            PressKind::View => nav::moved(app, rect, p, press.last, frame.modifiers.shift),
+            PressKind::View => {
+                crate::pen::log::event(|| {
+                    crate::pen::log::move_line(
+                        crate::pen::log::Site {
+                            view: "canvas",
+                            src: "pen",
+                            frame: ui.ctx().cumulative_frame_nr(),
+                            pen_frame: true,
+                        },
+                        p,
+                        press.last,
+                        nav_name(app),
+                        true,
+                    )
+                });
+                nav::moved(app, rect, p, press.last, frame.modifiers.shift)
+            }
             PressKind::Eyedrop => crate::eyedrop::right_move(app, source, p),
             PressKind::Tool => {
                 // 描いている・選択の形を作っているときだけ続ける（ツールを途中で替えても、始めた側を終わらせる）
@@ -867,6 +897,19 @@ fn press_kind(
     }
 }
 
+/// 記録に出す、今動かしている表示の操作の名前（無ければ "none"）。
+fn nav_name(app: &AppState) -> &'static str {
+    if app.canvas.rotating.is_some() {
+        "rotate"
+    } else if app.canvas.panning {
+        "pan"
+    } else if app.canvas.zooming.is_some() {
+        "zoom"
+    } else {
+        "none"
+    }
+}
+
 /// ペンの押しのボタン（サイドボタンは右ボタン、ペン先は左ボタン）。
 fn pen_button(s: &PenSample) -> PointerButton {
     if s.barrel {
@@ -939,6 +982,18 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
 
     // ペン（Windows Ink）。ペンの押し（触れてから離すまで）は、ペンの点だけで扱い、同じ押しが egui のポインタの押しとして二重に来ても使わない。
     let pen_frame = app.canvas.pen_press.is_some() || pen.iter().any(|s| s.contact);
+    if crate::pen::log::enabled() && (pen_frame || nav_name(app) != "none") {
+        crate::pen::log::event(|| {
+            crate::pen::log::frame_line(
+                "canvas",
+                ctx.cumulative_frame_nr(),
+                pen_frame,
+                app.canvas.pen_press.is_some(),
+                pen.len(),
+                nav_name(app),
+            )
+        });
+    }
     for s in pen {
         pen_sample(ui, app, rect, s, &frame);
     }
@@ -992,6 +1047,22 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                         );
                     }
                     // ペンの押しは、ペンの点が持つ（これは同じ押しの egui のポインタの代わりの入力）。スポイトの途中は、ほかのボタンで始めない
+                    if pen_frame {
+                        crate::pen::log::event(|| {
+                            crate::pen::log::press_line(
+                                crate::pen::log::Site {
+                                    view: "canvas",
+                                    src: "mouse",
+                                    frame: ctx.cumulative_frame_nr(),
+                                    pen_frame: true,
+                                },
+                                "none",
+                                pos,
+                                &format!("{button:?}"),
+                                true,
+                            )
+                        });
+                    }
                     if menu
                         || frame.no_press
                         || !on_top(ui, rect, pos)
@@ -1005,6 +1076,20 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     // 押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作と離しの操作を別々に引く（`nav::start_of`）
                     let start = nav::start_of(app, *button, event_modifiers);
                     let click = nav::click_of(app, *button, event_modifiers);
+                    crate::pen::log::event(|| {
+                        crate::pen::log::press_line(
+                            crate::pen::log::Site {
+                                view: "canvas",
+                                src: "mouse",
+                                frame: ctx.cumulative_frame_nr(),
+                                pen_frame: false,
+                            },
+                            &format!("start={start:?} click={}", click.is_some()),
+                            pos,
+                            &format!("{button:?}"),
+                            false,
+                        )
+                    });
                     if app.is_stroking() {
                         // 描いている間は、表示を動かす操作もスポイトも始めない（描くのは今のストロークのボタンが続ける）
                     } else if start.moves_view() {
@@ -1155,6 +1240,22 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     );
                 }
                 // ペンの押しの回す・パン・拡縮は、ペンの点が動かす
+                if crate::pen::log::enabled() && nav_name(app) != "none" {
+                    crate::pen::log::event(|| {
+                        crate::pen::log::move_line(
+                            crate::pen::log::Site {
+                                view: "canvas",
+                                src: "mouse",
+                                frame: ctx.cumulative_frame_nr(),
+                                pen_frame,
+                            },
+                            pos,
+                            previous,
+                            nav_name(app),
+                            !pen_frame,
+                        )
+                    });
+                }
                 if !pen_frame {
                     nav::moved(app, rect, pos, previous, modifiers.shift);
                     crate::eyedrop::right_move(app, StrokeSource::Mouse, pos);
