@@ -6,10 +6,10 @@
 pub mod canvas;
 pub mod props;
 
+use crate::engine::{LayerKind, Rgba8};
 use egui::Pos2;
 use yolu_core::glam::DVec2;
 use yolu_core::material::{ChannelPaint, GradientSettings, GradientShape};
-use yolu_core::{LayerKind, Rgba8};
 
 use crate::matpaint::single_value;
 use crate::matpaint::MaterialPaint;

@@ -1,8 +1,8 @@
 //! 組み込みのグラデーションセット（色味の違う一揃いを数組）。色はこのアプリのために作ったもので、位置は端と真ん中が中心、中点は 0.5、
 //! 不透明度はすべて 1（PSD の刻みに乗る）。最初の組「基本」だけは、メインの色とサブの色（描画色）から作る見本を含む。
 
+use crate::engine::Rgba8;
 use yolu_core::generator::{ColorStop, OpacityStop, Preset, Ramp};
-use yolu_core::Rgba8;
 
 /// 組み込みの 1 つ（名前は日本語・英語）。
 pub struct Builtin {
