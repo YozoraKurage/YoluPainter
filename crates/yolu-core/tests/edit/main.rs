@@ -12,6 +12,7 @@ mod anti_alias;
 mod batch;
 mod bundle_layout;
 mod channels;
+mod clip_isolation;
 mod clipboard;
 mod comp2d;
 mod docops;

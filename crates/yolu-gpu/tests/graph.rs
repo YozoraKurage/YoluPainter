@@ -1229,3 +1229,96 @@ fn display_is_correct_at_the_smallest_budget_that_holds_one_batch() {
     add_painted(&mut single, &mut rng, &[255, 90]);
     check_smallest_budget(&single, "1 面");
 }
+
+/// 通過のグループにクリッピングされたレイヤーが 1 枚でもあれば、見えるかによらずグループは分離する（CPU の合成と同じ）。
+/// 基（左 赤・右 青）の上に通過のグループ（緑の帯のラスターと反転の調整）、その上にクリッピングされたレイヤー。帯の外は、分離しなければ反転する。
+#[test]
+fn a_pass_group_with_any_clipped_layer_is_isolated_like_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let red = Rgba8::new(200, 0, 0, 255);
+    let blue = Rgba8::new(0, 0, 255, 255);
+    let green = Rgba8::new(0, 255, 0, 255);
+    let cyan = Rgba8::new(0, 255, 255, 255);
+    let inverted_red = Rgba8::new(55, 255, 255, 255);
+    let inverted_blue = Rgba8::new(255, 255, 0, 255);
+    // (名前, 分離するか, クリッピングされたレイヤーの状態)
+    type Setup = fn(&mut Document, LayerId);
+    let cases: [(&str, bool, Setup); 6] = [
+        ("クリッピング無し", false, |_, _| {}),
+        ("非表示", true, |d, c| {
+            d.set_layer_visible(c, false).unwrap()
+        }),
+        ("透明", true, |d, c| {
+            for y in 0..d.height() {
+                for x in 0..d.width() {
+                    d.set_pixel(c, x, y, Rgba8::new(0, 0, 0, 0)).unwrap();
+                }
+            }
+        }),
+        ("色のチャンネルを切った", true, |d, c| {
+            d.set_channel_enabled(c, Channel::Color, false).unwrap()
+        }),
+        ("不透明度 0", true, |d, c| {
+            d.set_layer_opacity(c, 0.0, false).unwrap()
+        }),
+        ("見える", true, |_, _| {}),
+    ];
+    for (name, isolated, setup) in cases {
+        for group_mode in [BlendMode::PassThrough, BlendMode::Normal] {
+            let mut d = doc();
+            let base = d.add_layer("基").unwrap();
+            let band = d.add_layer("緑").unwrap();
+            for y in 0..d.height() {
+                for x in 0..d.width() {
+                    d.set_pixel(base, x, y, if x < 26 { red } else { blue })
+                        .unwrap();
+                    if (10..40).contains(&x) {
+                        d.set_pixel(band, x, y, green).unwrap();
+                    }
+                }
+            }
+            let inv = d
+                .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
+                .unwrap();
+            let grp = d.group_layers(&[band, inv], "グループ").unwrap();
+            d.set_layer_blend_mode(grp, group_mode).unwrap();
+            if name != "クリッピング無し" {
+                let c = d.add_layer("クリッピング").unwrap();
+                for y in 0..d.height() {
+                    for x in 20..30 {
+                        d.set_pixel(c, x, y, cyan).unwrap();
+                    }
+                }
+                setup(&mut d, c);
+                d.set_layer_clipping(c, true).unwrap();
+            }
+            let what = format!("{name}・{group_mode:?}");
+            check(&mut g, &d, &what);
+            let cpu = d.composite_channel(Channel::Color, d.bounds()).unwrap();
+            let at = |x: u32, y: u32| {
+                let i = ((y * d.width() + x) * 4) as usize;
+                Rgba8::from_slice(&cpu[i..i + 4])
+            };
+            let split = isolated || group_mode != BlendMode::PassThrough;
+            let (outer_red, outer_blue) = if split {
+                (red, blue)
+            } else {
+                (inverted_red, inverted_blue)
+            };
+            assert_eq!(at(2, 5), outer_red, "{what}: CPU の帯の外（赤）");
+            assert_eq!(at(50, 5), outer_blue, "{what}: CPU の帯の外（青）");
+            // GPU の表示も同じ値（許しの範囲で）
+            let gpu_px = read(&mut g, d.bounds());
+            let gi = ((5 * d.width() + 2) * 4) as usize;
+            let gj = ((5 * d.width() + 50) * 4) as usize;
+            assert!(
+                max_diff(&gpu_px[gi..gi + 4], &outer_red.to_array()) <= TOLERANCE,
+                "{what}: GPU の帯の外（赤）"
+            );
+            assert!(
+                max_diff(&gpu_px[gj..gj + 4], &outer_blue.to_array()) <= TOLERANCE,
+                "{what}: GPU の帯の外（青）"
+            );
+        }
+    }
+}

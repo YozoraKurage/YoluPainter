@@ -420,6 +420,54 @@ fn anchor_omits_above_and_ancestor_opacity() {
     let p = Plan::new(&layers, 2, (1, 1), ChannelKind::Color).unwrap();
     assert_eq!(p.pixel(0, 0), Rgba8::new(200, 0, 0, 128));
 }
+/// 通過のグループにクリッピングされたレイヤーが 1 枚でもあれば、見えるかによらず Anchor の合成もそのグループを分離する（文書の合成と同じ）。
+/// 基（赤）の上に通過のグループ（緑の帯のラスターと反転）、その上にクリッピングされたレイヤー、一番上が host。帯は左の画素だけ。
+#[test]
+fn anchor_isolates_a_pass_through_group_with_any_clipped_layer() {
+    use anchor::*;
+    let red = Rgba8::new(200, 0, 0, 255);
+    let band_data = [0, 255, 0, 255, 0, 0, 0, 0];
+    let band = Image::new(&band_data, 2, 1).unwrap();
+    let inverted_red = Rgba8::new(55, 255, 255, 255);
+    let inverted_green = Rgba8::new(255, 0, 255, 255);
+    // 1 つ目は、クリッピングされたレイヤーの状態（隠す・有効でない・不透明度 0・透明・無し）
+    type Edit = fn(&mut Layer<'_>);
+    let cases: [(&str, bool, Edit); 5] = [
+        ("無し", false, |l| {
+            l.clipping = false;
+            l.visible = false
+        }),
+        ("非表示", true, |l| l.visible = false),
+        ("チャンネルを切った", true, |l| l.enabled = false),
+        ("不透明度 0", true, |l| l.opacity = 0.),
+        ("透明", true, |l| {
+            l.content = Content::Fill(Rgba8::TRANSPARENT)
+        }),
+    ];
+    for (name, isolated, edit) in cases {
+        let mut layers = vec![
+            Layer::new(Content::Fill(red)),
+            Layer::new(Content::Pixels(&band)),
+            Layer::new(Content::Adjustment(yolu_core::AdjustmentSettings::invert())),
+            Layer::new(Content::Group),
+            Layer::new(Content::Fill(Rgba8::new(0, 255, 255, 255))),
+            Layer::new(Content::Fill(Rgba8::TRANSPARENT)),
+        ];
+        layers[1].parent = Some(3);
+        layers[2].parent = Some(3);
+        layers[3].blend = BlendMode::PassThrough;
+        layers[4].clipping = true;
+        edit(&mut layers[4]);
+        let p = Plan::new(&layers, 5, (2, 1), ChannelKind::Color).unwrap();
+        let (outside, inside) = (p.pixel(1, 0), p.pixel(0, 0));
+        assert_eq!(inside, inverted_green, "{name}: 帯の中");
+        assert_eq!(
+            outside,
+            if isolated { red } else { inverted_red },
+            "{name}: 帯の外"
+        );
+    }
+}
 #[test]
 fn anchor_rejects_parent_cycles_normal_and_budget() {
     use anchor::*;

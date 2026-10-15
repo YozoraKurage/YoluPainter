@@ -1566,8 +1566,8 @@ impl<'a> Builder<'a> {
     /// レイヤーが PSD で表示か。そのチャンネルで合成に出ないレイヤー（有効でない・面や値が無い・効かない調整）は隠して書く。
     fn visible(&self, l: &CoreLayer, baked_group: bool) -> bool {
         match l.kind() {
-            // 画素にしたグループは、合成が落とす（中身が無い・不透明度 0）なら隠す。残すと、クリッピングの組に入って、下地のグループの
-            // 通過（組が無いときだけ通過）を妨げる
+            // 画素にしたグループは、合成が落とす（中身が無い・不透明度 0）なら隠す（隠しても、下地のグループはクリッピングされたレイヤーが
+            // あるので分離のまま。合成も同じ）
             CoreKind::Group if baked_group => {
                 l.visible() && self.d.contributes(l.id(), self.c).unwrap_or(true)
             }

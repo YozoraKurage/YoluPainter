@@ -16,6 +16,8 @@ struct Entry<'a> {
     layer: &'a Layer,
     children: Vec<Entry<'a>>,
     clips: Vec<Entry<'a>>,
+    /// すぐ上にクリッピングされたレイヤーが 1 枚でもある（見えるかどうかによらない）。通過のグループを分離させる（core の `Entry::clipped_above` と同じ）。
+    clipped_above: bool,
     /// 反転・レベル補正のほかの調整は、core の式（表を 1 回だけ作る）で当てる。ほかの調整と変換できない値は None。
     core: Option<yolu_core::AdjustmentSettings>,
 }
@@ -41,6 +43,7 @@ fn entry(l: &Layer) -> Option<Entry<'_>> {
         layer: l,
         children,
         clips: Vec::new(),
+        clipped_above: false,
         core,
     })
 }
@@ -58,6 +61,7 @@ fn plan(layers: &[Layer]) -> Vec<Entry<'_>> {
         let Some(mut e) = entry(l) else { continue };
         if !matches!(l.kind, LayerKind::Adjustment(_)) {
             for c in bottom.iter().skip(i + 1).take_while(|c| c.clipping) {
+                e.clipped_above = true;
                 if let Some(c) = entry(c) {
                     e.clips.push(c)
                 }
@@ -97,7 +101,7 @@ fn evaluate(p: &[Entry], mut below: Rgba8, x: i64, y: i64) -> Rgba8 {
             continue;
         }
         let group = matches!(l.kind, LayerKind::Group { .. });
-        if group && l.blend_mode == BlendMode::PassThrough && e.clips.is_empty() {
+        if group && l.blend_mode == BlendMode::PassThrough && !e.clipped_above {
             below = fade(below, evaluate(&e.children, below, x, y), a);
             continue;
         }
@@ -215,6 +219,72 @@ mod tests {
                 ..Layer::default()
             }],
             composite_rgba: None,
+        }
+    }
+
+    /// 通過のグループにクリッピングされたレイヤーが 1 枚でもあれば、見えるかによらずグループは分離する（文書の合成と同じ）。
+    #[test]
+    fn a_pass_through_group_with_a_hidden_clipped_layer_is_isolated() {
+        let compose = |clip: Option<bool>| {
+            let mut layers = Vec::new();
+            if let Some(visible) = clip {
+                layers.push(Layer {
+                    id: 4,
+                    name: "クリッピング".into(),
+                    left: 0,
+                    top: 0,
+                    width: 1,
+                    height: 1,
+                    visible,
+                    clipping: true,
+                    pixels_rgba: vec![0, 255, 255, 255],
+                    ..Layer::default()
+                });
+            }
+            layers.push(Layer {
+                id: 3,
+                name: "グループ".into(),
+                blend_mode: BlendMode::PassThrough,
+                kind: LayerKind::Group {
+                    children: vec![
+                        Layer {
+                            id: 5,
+                            kind: LayerKind::Adjustment(Adjustment::Invert),
+                            ..Layer::default()
+                        },
+                        Layer {
+                            id: 6,
+                            width: 1,
+                            height: 1,
+                            pixels_rgba: vec![0, 255, 0, 255],
+                            ..Layer::default()
+                        },
+                    ],
+                    divider_id: 7,
+                },
+                ..Layer::default()
+            });
+            layers.push(Layer {
+                id: 1,
+                width: 2,
+                height: 1,
+                pixels_rgba: vec![200, 0, 0, 255, 0, 0, 255, 255],
+                ..Layer::default()
+            });
+            composite(&Document {
+                width: 2,
+                height: 1,
+                layers,
+                composite_rgba: None,
+            })
+        };
+        // 帯の外（右の青）: クリッピングが無ければ反転し、あれば（非表示でも）分離して反転しない
+        assert_eq!(compose(None)[4..8], [255, 255, 0, 255]);
+        assert_eq!(compose(Some(false))[4..8], [0, 0, 255, 255]);
+        assert_eq!(compose(Some(true))[4..8], [0, 0, 255, 255]);
+        // 帯の中（左）は、どれも反転した緑（分離しても中の調整は効く）
+        for clip in [None, Some(false)] {
+            assert_eq!(compose(clip)[..4], [255, 0, 255, 255]);
         }
     }
 

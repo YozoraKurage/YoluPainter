@@ -285,6 +285,8 @@ struct Entry {
     layer: usize,
     children: Vec<Entry>,
     clips: Vec<Entry>,
+    /// すぐ上にクリッピングされた兄弟が 1 枚でもある（見えるかどうかによらない）。通過のグループを分離させる（core の `Entry::clipped_above` と同じ）。
+    clipped_above: bool,
 }
 /// 祖先の不透明度・表示・マスクを適用せず、分離グループの境界で透明に戻す合成計画。
 pub struct Plan<'a> {
@@ -387,6 +389,7 @@ impl<'a> Plan<'a> {
             layer: i,
             children,
             clips: vec![],
+            clipped_above: false,
         })
     }
     fn level(
@@ -416,6 +419,7 @@ impl<'a> Plan<'a> {
             if ordinal > 0 && l.clipping {
                 if takes {
                     if let Some(b) = base {
+                        entries[b].clipped_above = true;
                         if let Some(e) = self.entry(i, kind) {
                             entries[b].clips.push(e);
                         }
@@ -456,7 +460,7 @@ impl<'a> Plan<'a> {
             }
             if matches!(l.content, Content::Group)
                 && l.blend == BlendMode::PassThrough
-                && e.clips.is_empty()
+                && !e.clipped_above
             {
                 below = blend::fade(below, self.composite(&e.children, below, x, y), amount);
                 continue;
