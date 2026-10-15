@@ -634,7 +634,7 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
 
 #[test]
 fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_knows_version_one() {
-    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無い版 9 を同じ形で確かめる）
+    // バージョン 1 しか読めない古いアプリは、バージョン 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無いバージョン 9 を同じ形で確かめる）
     let dir = temp_dir("future-version");
     std::fs::write(
         dir.join("brush-00000001.ylbrush"),

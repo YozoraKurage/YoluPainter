@@ -133,6 +133,31 @@ fn the_six_repeat_methods_pick_three_tips_for_ten_dabs() {
 }
 
 #[test]
+fn one_tip_in_the_list_stops_after_the_first_dab_for_the_single_pass_methods() {
+    // 並び（`images`）が 1 枚でも、一巡のみ・ランダムに一巡は最初のダブで止まり、繰り返す方法は同じ筆先で続く
+    for selection in [TipSelection::Once, TipSelection::Shuffle] {
+        let mut b = base(1.5);
+        (b.tip.images, b.tip.selection) = (vec![whole()], selection);
+        let mut expected = some(&[0]);
+        expected.extend([None; 9]);
+        assert_eq!(codes(&ten_dabs(&b), 10), expected, "{selection:?}");
+    }
+    for selection in [
+        TipSelection::Sequential,
+        TipSelection::PingPong,
+        TipSelection::Hold,
+    ] {
+        let mut b = base(1.5);
+        (b.tip.images, b.tip.selection) = (vec![whole()], selection);
+        assert_eq!(codes(&ten_dabs(&b), 10), some(&[0; 10]), "{selection:?}");
+    }
+    // 1 枚の筆先（`image`）は、並びを持たないので繰り返し方法を読まず、いつも置く
+    let mut b = base(1.5);
+    (b.tip.image, b.tip.selection) = (Some(whole()), TipSelection::Once);
+    assert_eq!(codes(&ten_dabs(&b), 10), some(&[0; 10]));
+}
+
+#[test]
 fn a_shuffled_single_pass_uses_every_tip_once_in_an_order_the_seed_decides() {
     let order = |seed: i32| {
         let mut b = selecting(TipSelection::Shuffle);
@@ -447,4 +472,19 @@ fn a_turned_texture_paints_the_same_bytes_every_time() {
     let a = bytes(&textured(waves(), 143.0));
     assert_eq!(a, bytes(&textured(waves(), 143.0)));
     assert_ne!(a, bytes(&textured(waves(), 0.0)));
+}
+
+#[test]
+fn a_huge_finite_texture_angle_turns_like_its_remainder_of_a_full_turn() {
+    // 度からラジアンへの掛け算で溢れる大きさの角度（有限なので受けられる）も、360 度で割った余りの角度と同じバイトで描く
+    let reference = bytes(&textured(waves(), 143.0));
+    assert_ne!(reference, bytes(&textured(waves(), 0.0)));
+    for angle in [360.0 * 5.0 + 143.0, -360.0 * 3.0 + 143.0] {
+        assert_eq!(bytes(&textured(waves(), angle)), reference, "{angle}");
+    }
+    for angle in [f64::MAX, -f64::MAX, 1e300, f64::MAX / 3.0] {
+        let turned = bytes(&textured(waves(), angle));
+        assert_eq!(turned, bytes(&textured(waves(), angle % 360.0)), "{angle}");
+        assert!(turned.chunks_exact(4).any(|p| p[3] > 0), "{angle}");
+    }
 }

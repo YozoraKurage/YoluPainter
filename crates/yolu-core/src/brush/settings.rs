@@ -244,14 +244,22 @@ impl PaperTexture {
     /// キャンバスの座標 (x, y)（画素の中心は i + 0.5）の質感（0〜1）。角度の分だけ回して、並べた画像を読む（f64。行の核の 1 画素ずつの
     /// 式とは丸めが違うので、対称の写しの画素ごとの式だけが使う）。
     pub(crate) fn grain_at(&self, x: f64, y: f64) -> f64 {
-        if self.angle == 0.0 {
+        let Some((cos, sin)) = self.turn() else {
             return self.image.sample_tiled(x / self.scale, y / self.scale);
-        }
-        let (sin, cos) = (self.angle * std::f64::consts::PI / 180.0).sin_cos();
+        };
         self.image.sample_tiled(
             (cos * x + sin * y) / self.scale,
             (cos * y - sin * x) / self.scale,
         )
+    }
+
+    /// 回した読みの (cos, sin)。0 度は回さない（None）。大きな有限の角度（`f64::MAX` など）はラジアンへの掛け算で溢れるので、
+    /// 360 度で割った余り（符号は保つ。360 度未満の角度は値が変わらない）にしてから変換する。
+    pub(crate) fn turn(&self) -> Option<(f64, f64)> {
+        (self.angle != 0.0).then(|| {
+            let (sin, cos) = ((self.angle % 360.0) * std::f64::consts::PI / 180.0).sin_cos();
+            (cos, sin)
+        })
     }
 
     /// 乗算・大きさ 1 の質感。

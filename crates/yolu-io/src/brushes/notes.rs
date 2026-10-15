@@ -510,16 +510,9 @@ pub enum SutNote {
 }
 
 impl SutNote {
-    fn texts(&self) -> (String, String) {
+    /// 筆先と質感の素材・繰り返し方法・反転・明るさとコントラストの知らせの文。
+    fn tip_and_texture_texts(&self) -> (String, String) {
         match self {
-            Self::PreviewImage => (
-                "筆先・質感の画像は素材のプレビューから取った（元の大きさの画像は独自の入れ物の中にあり、読まない。解像度はプレビューまで）".into(),
-                "Tip and texture images come from the material's preview; the full-size image is in a proprietary container and is not read, so resolution is limited to the preview.".into(),
-            ),
-            Self::ProprietaryImage => (
-                "筆先・質感の画像が CLIP STUDIO 独自の形式でしか入っていないため、読めない（設定だけを取り込んだ）".into(),
-                "The tip and texture images are stored only in CLIP STUDIO's own format and cannot be read; only the settings were imported.".into(),
-            ),
             Self::TipMissing => (
                 "筆先にできない素材がある（特定できない・画像を取り出せない・筆先の数の上限を超えた）ので、その筆先は使わず、1 枚も無ければ丸い筆先にした".into(),
                 "Some tip materials could not be used (not identified, image not extracted, or over the limit on tips); they are left out, and a round tip is used if none remain.".into(),
@@ -552,6 +545,28 @@ impl SutNote {
                 "質感の画像は、素材の名前では決められず、素材の並びで当てた（別の画像かもしれない）".into(),
                 "The texture image could not be identified by name and was matched by the order of the materials; it may be a different image.".into(),
             ),
+            _ => unreachable!("筆先と質感の知らせだけがここへ来る"),
+        }
+    }
+
+    fn texts(&self) -> (String, String) {
+        match self {
+            Self::PreviewImage => (
+                "筆先・質感の画像は素材のプレビューから取った（元の大きさの画像は独自の入れ物の中にあり、読まない。解像度はプレビューまで）".into(),
+                "Tip and texture images come from the material's preview; the full-size image is in a proprietary container and is not read, so resolution is limited to the preview.".into(),
+            ),
+            Self::ProprietaryImage => (
+                "筆先・質感の画像が CLIP STUDIO 独自の形式でしか入っていないため、読めない（設定だけを取り込んだ）".into(),
+                "The tip and texture images are stored only in CLIP STUDIO's own format and cannot be read; only the settings were imported.".into(),
+            ),
+            Self::TipMissing
+            | Self::TipGuessed
+            | Self::TipOrderApprox
+            | Self::TextureToneApprox
+            | Self::TipFlip
+            | Self::TipOrder
+            | Self::TextureMissing
+            | Self::TextureGuessed => self.tip_and_texture_texts(),
             Self::TextureRotation => ("質感の回転は未対応".into(), "Texture rotation is not supported.".into()),
             Self::TextureBrightness => ("質感の明るさは未対応".into(), "Texture brightness is not supported.".into()),
             Self::TextureContrast => ("質感のコントラストは未対応".into(), "Texture contrast is not supported.".into()),

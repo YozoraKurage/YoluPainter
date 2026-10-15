@@ -72,6 +72,40 @@ struct Case {
     seed: u64,
 }
 
+/// 最後に引く項目（前の項目の乱数の列を変えない）: アンチエイリアスの段、比較暗・質感の回転・筆先の並びの繰り返し方法と反転のしかた。
+fn draw_late_options(case: &mut Case, r: &mut Rng) {
+    case.brush.base.anti_alias = r.pick(&AntiAlias::ALL);
+    case.brush.tip.darken_overlap = r.chance(0.3);
+    if let Some(t) = case.brush.texture.as_mut() {
+        if r.chance(0.4) {
+            t.angle = r.pick(&[30.0, 90.0, 143.0, -20.0]);
+        }
+    }
+    if r.chance(0.25) {
+        case.brush.tip.images = ["grain", "dots", "rim"]
+            .iter()
+            .filter_map(|n| builtin_tip(n))
+            .collect();
+        case.brush.tip.selection = r.pick(&[
+            crate::TipSelection::Random,
+            crate::TipSelection::Sequential,
+            crate::TipSelection::PingPong,
+            crate::TipSelection::Hold,
+            crate::TipSelection::Once,
+            crate::TipSelection::Shuffle,
+        ]);
+        let rule = |r: &mut Rng| {
+            r.pick(&[
+                crate::FlipRule::Fixed,
+                crate::FlipRule::Random,
+                crate::FlipRule::OnFold,
+            ])
+        };
+        case.brush.tip.flip_x_rule = rule(r);
+        case.brush.tip.flip_y_rule = rule(r);
+    }
+}
+
 fn random_case(seed: u64) -> Case {
     let mut r = Rng(seed.wrapping_mul(0x2545F4914F6CDD1D) | 1);
     // 300 は行が STACK_ROW（256）より長いタイル（置き場がヒープの道）
@@ -225,38 +259,7 @@ fn random_case(seed: u64) -> Case {
         tight_budget: r.chance(0.1),
         seed,
     };
-    // アンチエイリアスの段は最後に引く（前の項目の乱数の列を変えない）
-    case.brush.base.anti_alias = r.pick(&AntiAlias::ALL);
-    // 比較暗・質感の回転・筆先の並びの繰り返し方法と反転のしかたも、最後に引く（同じ理由）
-    case.brush.tip.darken_overlap = r.chance(0.3);
-    if let Some(t) = case.brush.texture.as_mut() {
-        if r.chance(0.4) {
-            t.angle = r.pick(&[30.0, 90.0, 143.0, -20.0]);
-        }
-    }
-    if r.chance(0.25) {
-        case.brush.tip.images = ["grain", "dots", "rim"]
-            .iter()
-            .filter_map(|n| builtin_tip(n))
-            .collect();
-        case.brush.tip.selection = r.pick(&[
-            crate::TipSelection::Random,
-            crate::TipSelection::Sequential,
-            crate::TipSelection::PingPong,
-            crate::TipSelection::Hold,
-            crate::TipSelection::Once,
-            crate::TipSelection::Shuffle,
-        ]);
-        let rule = |r: &mut Rng| {
-            r.pick(&[
-                crate::FlipRule::Fixed,
-                crate::FlipRule::Random,
-                crate::FlipRule::OnFold,
-            ])
-        };
-        case.brush.tip.flip_x_rule = rule(&mut r);
-        case.brush.tip.flip_y_rule = rule(&mut r);
-    }
+    draw_late_options(&mut case, &mut r);
     case
 }
 
@@ -612,4 +615,29 @@ fn to_i32_follows_the_truncating_conversion_on_every_level() {
         }
     }
     on_each_level32!(check);
+}
+
+/// 大きな有限の角度（`f64::MAX` など）は、360 度で割った余りの角度と同じ読みになり、NaN を返さない（行の核の `Grain` も、画素ごとの `grain_at` も）。
+#[test]
+fn a_huge_finite_texture_angle_reads_like_its_remainder_of_a_full_turn() {
+    let image = builtin_tip("grain").expect("grain");
+    for angle in [f64::MAX, -f64::MAX, 1e300, 360.0 * 7.0 + 143.0] {
+        let remainder = angle % 360.0;
+        let (mut huge, mut small) = (
+            PaperTexture::new(image.clone(), 1.0),
+            PaperTexture::new(image.clone(), 1.0),
+        );
+        (huge.angle, small.angle) = (angle, remainder);
+        for (x, y) in [(3.5, 4.5), (40.5, 17.5), (100.5, 99.5)] {
+            let got = huge.grain_at(x, y);
+            assert!(got.is_finite(), "{angle}: {got}");
+            assert_eq!(got, small.grain_at(x, y), "{angle}");
+        }
+        let (a, b) = (Grain::new(&huge, 5), Grain::new(&small, 5));
+        for px in [0, 7, 63, 200] {
+            let got = grain_one(&a, px);
+            assert!(got.is_finite(), "{angle}: {got}");
+            assert_eq!(got.to_bits(), grain_one(&b, px).to_bits(), "{angle}: {px}");
+        }
+    }
 }

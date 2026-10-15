@@ -1116,6 +1116,41 @@ fn flip_method(value: f64) -> Option<(bool, FlipRule)> {
     }
 }
 
+/// 筆先の繰り返し方法を写す。2 枚以上のときは並びの選び方になる。列が無い・知らない値は、乱数にして知らせる。
+/// 1 枚のときは、止まる設定（一巡のみ・ランダムに一巡）だけが効く（ほかは何枚目を選んでも同じ筆先）。
+/// 止まる設定は、1 枚を並び（`images`）へ移して、最初のダブのあとを置かないようにする。
+fn tip_order(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    let single = brush.tip.images.is_empty() && brush.tip.image.is_some();
+    if !single && brush.tip.images.len() < 2 {
+        return;
+    }
+    let method = row.first_number(PATTERN_ORDER).and_then(repeat_method);
+    if single {
+        // 1 枚の一巡のみ・ランダムに一巡は同じ動き（最初のダブだけ）なので、近い動きの知らせは要らない
+        if let Some((selection @ (TipSelection::Once | TipSelection::Shuffle), _)) = method {
+            brush.tip.images = brush.tip.image.take().into_iter().collect();
+            brush.tip.selection = selection;
+            mapped.push(SutMapped::TipOrder);
+        }
+        return;
+    }
+    match method {
+        Some((selection, approximate)) => {
+            brush.tip.selection = selection;
+            mapped.push(SutMapped::TipOrder);
+            if approximate {
+                notes.push(Unrepresented::ClipStudio(SutNote::TipOrderApprox));
+            }
+        }
+        None => notes.push(Unrepresented::ClipStudio(SutNote::TipOrder)),
+    }
+}
+
 /// 筆先の繰り返し方法・左右上下の反転・先端同士の比較暗を写す。
 fn tip_rules(
     row: &Row,
@@ -1123,20 +1158,7 @@ fn tip_rules(
     notes: &mut Vec<Unrepresented>,
     mapped: &mut Vec<SutMapped>,
 ) {
-    // 繰り返し方法は筆先が 2 枚以上のときだけ効く。列が無い・知らない値は、乱数にして知らせる
-    if brush.tip.images.len() > 1 {
-        let method = row.first_number(PATTERN_ORDER).and_then(repeat_method);
-        match method {
-            Some((selection, approximate)) => {
-                brush.tip.selection = selection;
-                mapped.push(SutMapped::TipOrder);
-                if approximate {
-                    notes.push(Unrepresented::ClipStudio(SutNote::TipOrderApprox));
-                }
-            }
-            None => notes.push(Unrepresented::ClipStudio(SutNote::TipOrder)),
-        }
-    }
+    tip_order(row, brush, notes, mapped);
     // 反転は筆先の画像にだけ効く（丸い筆先は反転しても同じ）
     if brush.tip.image.is_some() || !brush.tip.images.is_empty() {
         for (columns, vertical) in [(PATTERN_REVERSE_H, false), (PATTERN_REVERSE_V, true)] {

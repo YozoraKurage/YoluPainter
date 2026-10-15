@@ -83,15 +83,6 @@ fn busiest_row(a: &[u8]) -> usize {
         .unwrap()
 }
 
-/// その行で、塗れた画素の連なりの数。
-fn runs(a: &[u8], row: usize) -> usize {
-    let w = W as usize;
-    let r = &a[row * w..(row + 1) * w];
-    (0..w)
-        .filter(|&x| r[x] > 0 && (x == 0 || r[x - 1] == 0))
-        .count()
-}
-
 /// k 番目のダブの中心（x = X0 + STEP × k）の左右の半分の塗れ方。
 fn halves(a: &[u8], row: usize, k: usize) -> (bool, bool) {
     let w = W as usize;
@@ -99,35 +90,75 @@ fn halves(a: &[u8], row: usize, k: usize) -> (bool, bool) {
     (a[row * w + x - 2] > 0, a[row * w + x + 2] > 0)
 }
 
+/// 10 ダブを四角の幅（96）に収める置き方: 直径 6 の筆先を 8 画素おき（間隔 8 / 6）に置く。
+const TEN_STEP: f64 = 8.0;
+const TEN_X0: f64 = 8.0;
+
+/// 見分けのつく 3 枚（番号 0 = 全部・1 = 左半分・2 = 右半分）で、`selection` の選び方のブラシ。
 fn with(selection: TipSelection) -> Brush {
-    let mut b = base(1.5);
+    let mut b = base(TEN_STEP / 6.0);
+    b.base.radius = 3.0;
     b.tip.images = vec![
-        tip("a", |_, _| true),
-        tip("b", |_, _| true),
-        tip("c", |_, _| true),
+        tip("whole", |_, _| true),
+        tip("left half", |x, _| x < 8),
+        tip("right half", |x, _| x >= 8),
     ];
     b.tip.selection = selection;
     b
 }
 
+/// 10 個のダブを置いた線で、k 番目のダブが（左の半分・右の半分とも塗れていれば 0、左だけなら 1、右だけなら 2、どちらも無ければ None）
+/// 3 枚のどれかを調べる。
+fn ten_codes(b: &Brush) -> Vec<Option<u8>> {
+    let a = draw(b, &[(TEN_X0, Y), (TEN_X0 + TEN_STEP * 9.0, Y)]);
+    let row = busiest_row(&a);
+    let w = W as usize;
+    (0..10)
+        .map(|k| {
+            let x = (TEN_X0 + TEN_STEP * k as f64) as usize;
+            match (a[row * w + x - 2] > 0, a[row * w + x + 2] > 0) {
+                (true, true) => Some(0),
+                (true, false) => Some(1),
+                (false, true) => Some(2),
+                (false, false) => None,
+            }
+        })
+        .collect()
+}
+
+fn some(v: &[u8]) -> Vec<Option<u8>> {
+    v.iter().map(|&c| Some(c)).collect()
+}
+
 #[test]
-fn the_repeat_methods_that_stop_leave_only_the_tips_they_use_on_the_surface() {
-    // 7 つのダブ。全部の筆先を埋めた四角にして、置かれたダブの数を連なりの数で数える
-    let count = |selection: TipSelection| {
-        let a = line(&with(selection), 7);
-        runs(&a, busiest_row(&a))
-    };
-    for selection in [
-        TipSelection::Random,
-        TipSelection::Sequential,
-        TipSelection::PingPong,
-        TipSelection::Hold,
-    ] {
-        assert_eq!(count(selection), 7, "{selection:?}");
-    }
-    for selection in [TipSelection::Once, TipSelection::Shuffle] {
-        assert_eq!(count(selection), 3, "{selection:?}: 一巡で止まる");
-    }
+fn the_repeat_methods_pick_the_three_tips_in_the_same_order_as_in_2d_on_the_surface() {
+    // 10 ダブ。3 枚が見分けられるので、並びの誤り（番号の順・折り返し・最後で止まる・使い切って止まる）がそのまま見える
+    assert_eq!(
+        ten_codes(&with(TipSelection::Sequential)),
+        some(&[0, 1, 2, 0, 1, 2, 0, 1, 2, 0])
+    );
+    assert_eq!(
+        ten_codes(&with(TipSelection::PingPong)),
+        some(&[0, 1, 2, 1, 0, 1, 2, 1, 0, 1])
+    );
+    assert_eq!(
+        ten_codes(&with(TipSelection::Hold)),
+        some(&[0, 1, 2, 2, 2, 2, 2, 2, 2, 2])
+    );
+    let mut once = some(&[0, 1, 2]);
+    once.extend([None; 7]);
+    assert_eq!(ten_codes(&with(TipSelection::Once)), once);
+    // ランダムに一巡: 3 枚を 1 回ずつ使う並べ替えで止まる。種で決まる
+    let shuffled = ten_codes(&with(TipSelection::Shuffle));
+    let mut used: Vec<u8> = shuffled[..3].iter().map(|c| c.unwrap()).collect();
+    used.sort_unstable();
+    assert_eq!(used, [0, 1, 2]);
+    assert!(shuffled[3..].iter().all(Option::is_none));
+    assert_eq!(shuffled, ten_codes(&with(TipSelection::Shuffle)));
+    // ランダム: 3 枚のどれかが 10 回置かれ、種で決まる
+    let random = ten_codes(&with(TipSelection::Random));
+    assert!(random.iter().all(Option::is_some));
+    assert_eq!(random, ten_codes(&with(TipSelection::Random)));
 }
 
 /// 左半分の筆先 2 枚。反転すると、ダブの中心の右側が塗れる。

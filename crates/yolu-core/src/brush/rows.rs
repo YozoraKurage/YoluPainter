@@ -1383,18 +1383,10 @@ impl GrainTurn<'_> {
     }
 }
 
-/// 質感の角度（度）から、回した読みの cos・sin。0 度は回さない（None）。
-fn grain_turn(tex: &PaperTexture) -> Option<(f64, f64)> {
-    (tex.angle != 0.0).then(|| {
-        let (sin, cos) = (tex.angle * std::f64::consts::PI / 180.0).sin_cos();
-        (cos, sin)
-    })
-}
-
 impl<'a> Grain<'a> {
     pub(super) fn new(tex: &'a PaperTexture, py: i64) -> Self {
         let r = tex.image.tiled_row((py as f64 + 0.5) / tex.scale);
-        let turn = grain_turn(tex).map(|(cos, sin)| GrainTurn {
+        let turn = tex.turn().map(|(cos, sin)| GrainTurn {
             image: &tex.image,
             cos,
             sin,

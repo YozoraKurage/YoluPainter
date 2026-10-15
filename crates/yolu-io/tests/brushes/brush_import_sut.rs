@@ -898,6 +898,73 @@ fn the_six_repeat_methods_are_carried_and_the_close_ones_are_said_so() {
     }
 }
 
+/// 筆先 1 枚のブラシに、列を足した 1 本。
+fn single_tipped(columns: &[(&'static str, i64)]) -> ImportedBrush {
+    let a = png_gray(2, 1, &[0, 0]);
+    let mut cells = vec![
+        ("BrushUsePatternImage", int(1)),
+        (
+            "BrushPatternImageArray",
+            blob(refs(&[["x/tip_a.png", "c/a", "tip_a"]])),
+        ),
+    ];
+    cells.extend(columns.iter().map(|&(name, v)| (name, int(v))));
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), material_with_thumbnail(&a))
+        .brush("Single", 1, &cells)
+        .build();
+    ok(&file).brushes[0].clone()
+}
+
+/// 12 画素おきの 10 ダブの線を描いて、k 番目のダブの中心が塗れているかを並べる。
+fn dabs_painted(brush: &yolu_core::Brush) -> Vec<bool> {
+    use yolu_core::glam::DVec2;
+    let mut b = brush.clone();
+    (b.base.radius, b.base.hardness, b.base.spacing) = (4.0, 1.0, 1.5);
+    b.base.color = yolu_core::Rgba8::new(0, 0, 0, 255);
+    let mut d = yolu_core::Document::with_tile_size(160, 32, 32).unwrap();
+    let l = d.add_layer("L").unwrap();
+    let mut s = d.begin_brush_stroke(l, &b).unwrap();
+    s.add_point(&mut d, 10.0, 16.0, 1.0, DVec2::ZERO).unwrap();
+    s.add_point(&mut d, 118.0, 16.0, 1.0, DVec2::ZERO).unwrap();
+    d.end_stroke(s).unwrap();
+    (0..10)
+        .map(|k| {
+            let x = 10 + 12 * k;
+            d.composite_pixel(yolu_core::Channel::Color, x, 16)
+                .unwrap()
+                .a
+                > 0
+        })
+        .collect()
+}
+
+#[test]
+fn a_single_tip_stops_after_the_first_dab_when_the_repeat_method_says_so() {
+    use yolu_core::TipSelection as T;
+    // 一巡のみ・ランダムに一巡は、1 枚でも使い切ったら置かない。1 枚の並びとして持ち、最初のダブだけが描かれる
+    for (value, expected) in [(4, T::Once), (5, T::Shuffle)] {
+        let b = single_tipped(&[("BrushPatternOrderType", value)]);
+        assert!(b.brush.tip.image.is_none(), "{value}");
+        assert_eq!(b.brush.tip.images.len(), 1, "{value}");
+        assert_eq!(b.brush.tip.selection, expected, "{value}");
+        assert!(mapped(&b, SutMapped::TipOrder), "{value}");
+        assert!(!has(&b, SutNote::TipOrder), "{value}");
+        assert!(!has(&b, SutNote::TipOrderApprox), "{value}");
+        assert!(b.brush.validate().is_ok(), "{value}");
+        let painted = dabs_painted(&b.brush);
+        assert!(painted[0], "{value}");
+        assert!(painted[1..].iter().all(|p| !p), "{value}: {painted:?}");
+    }
+    // 止まらない方法は、これまでどおり 1 枚の筆先（`image`）のまま描き続ける
+    for value in 0..=3 {
+        let b = single_tipped(&[("BrushPatternOrderType", value)]);
+        assert!(b.brush.tip.image.is_some() && b.brush.tip.images.is_empty());
+        assert!(!mapped(&b, SutMapped::TipOrder) && !has(&b, SutNote::TipOrder));
+        assert!(dabs_painted(&b.brush).iter().all(|p| *p), "{value}");
+    }
+}
+
 #[test]
 fn the_four_flip_methods_are_carried_for_each_axis() {
     use yolu_core::FlipRule as R;
