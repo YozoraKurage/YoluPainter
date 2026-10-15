@@ -1135,6 +1135,101 @@ fn directional_blur_morphology_and_glow_keep_their_bytes_at_the_ends_of_radius_a
     );
 }
 
+/// 暗い地に明るい点を散らし、ところどころ透明を混ぜた画像（スカラー用）。点の明るさを点ごとに変えるので、大きい半径でも出力が 1 つの値に飽和しない。
+fn scalar_with_sparse_dots(w: u32, h: u32, invert: bool) -> Vec<u8> {
+    let mut v = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let ground = 20 + (x * 7 + y * 13) % 23;
+            let dot = (x % 53 == 11 && y % 47 == 5) || (x % 61 == 40 && y % 59 == 30);
+            let g = if dot {
+                90 + (x * 3 + y * 5) % 160
+            } else {
+                ground
+            } as u8;
+            let g = if invert { 255 - g } else { g };
+            let a = if (x * 5 + y * 3) % 11 == 0 { 0 } else { 255 };
+            v.extend_from_slice(&[g, g, g, a]);
+        }
+    }
+    v
+}
+
+/// 大きい半径（17 以上）のモルフォロジーを、出力が飽和しない画像で確かめる。画像の端で止まる区間・段の引きが半径ごとに違う値を出すことを、
+/// 速くする前の実装で得た FNV-1a（`GOLDEN_SPARSE`）との一致で見る。ブロックの分け方（既定と 8 画素）で変わらないことも見る。
+#[test]
+fn morphology_with_large_radius_keeps_its_bytes_on_images_that_do_not_saturate() {
+    let mut got: Vec<(String, u64)> = Vec::new();
+    for (w, h) in [(211u32, 173u32), (320, 41)] {
+        for (invert, mode) in [
+            (false, MorphologyMode::Dilate),
+            (true, MorphologyMode::Erode),
+        ] {
+            let data = scalar_with_sparse_dots(w, h, invert);
+            let src = Image::new(&data, w, h).unwrap();
+            for radius in [17, 23, 40, 64] {
+                let eval = |block_size: u32| {
+                    evaluate(
+                        &src,
+                        ValueType::Scalar,
+                        &[Stage::new(Settings::Morphology { mode, radius })],
+                        full(w, h),
+                        &Options {
+                            block_size,
+                            ..Options::default()
+                        },
+                    )
+                    .unwrap()
+                };
+                let whole = eval(Options::default().block_size);
+                let label = format!("morphology {w}x{h} r={radius} {mode:?}");
+                assert_eq!(eval(8), whole, "{label}: ブロックの分け方で変わった");
+                let mut values: Vec<u8> = whole.chunks_exact(4).map(|p| p[0]).collect();
+                values.sort_unstable();
+                values.dedup();
+                assert!(
+                    values.len() >= 3,
+                    "{label}: 出力が飽和している（値が {} 種）",
+                    values.len()
+                );
+                got.push((label, fnv(&whole)));
+            }
+        }
+    }
+    let lines: Vec<String> = got
+        .iter()
+        .map(|(l, h)| format!("    (\"{l}\", 0x{h:016x}),"))
+        .collect();
+    assert!(
+        got.len() == GOLDEN_SPARSE.len()
+            && got
+                .iter()
+                .zip(GOLDEN_SPARSE)
+                .all(|(g, e)| g.0 == e.0 && g.1 == e.1),
+        "出力のバイトが変わった。得た値:\n{}",
+        lines.join("\n")
+    );
+}
+
+const GOLDEN_SPARSE: &[(&str, u64)] = &[
+    ("morphology 211x173 r=17 Dilate", 0xc66b2ec33e71df2d),
+    ("morphology 211x173 r=23 Dilate", 0xb6d9ff73ebdeaa95),
+    ("morphology 211x173 r=40 Dilate", 0x186eef7ba53393fc),
+    ("morphology 211x173 r=64 Dilate", 0x4402dc956924e396),
+    ("morphology 211x173 r=17 Erode", 0x01fb10e6ea491854),
+    ("morphology 211x173 r=23 Erode", 0x462088ce747bb4cc),
+    ("morphology 211x173 r=40 Erode", 0x0855c4f20c84f295),
+    ("morphology 211x173 r=64 Erode", 0x904dfb3f2bbf885b),
+    ("morphology 320x41 r=17 Dilate", 0xb06c781b9dc75686),
+    ("morphology 320x41 r=23 Dilate", 0xa13ab1e4ca03e327),
+    ("morphology 320x41 r=40 Dilate", 0x044938c1d3b91e91),
+    ("morphology 320x41 r=64 Dilate", 0x25c63e0241b2ab08),
+    ("morphology 320x41 r=17 Erode", 0x123875d8f1e29936),
+    ("morphology 320x41 r=23 Erode", 0x2ca08fab25b921cf),
+    ("morphology 320x41 r=40 Erode", 0x190143ca74ddb941),
+    ("morphology 320x41 r=64 Erode", 0xbbb021874e934e00),
+];
+
 const GOLDEN: &[(&str, u64)] = &[
     ("directional 37x29 d=0 a=0", 0xa70a7cd6bbde2ec4),
     ("directional 37x29 d=0 a=33.5", 0xa70a7cd6bbde2ec4),
