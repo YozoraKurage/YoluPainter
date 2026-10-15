@@ -2,6 +2,7 @@
 //! 保存と開き直し、読むだけのセット・描いている間の断り、チャンネルのパネルの節の操作と日英。
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, Rect};
@@ -36,7 +37,7 @@ impl Drop for TempDir {
 }
 
 fn set(s: &mut AppState, settings: NormalSettings, coalesce: bool) {
-    s.apply(Action::M2(Edit::NormalSettings { settings, coalesce }));
+    s.act(Action::M2(Edit::NormalSettings { settings, coalesce }));
 }
 
 fn custom() -> NormalSettings {
@@ -46,63 +47,63 @@ fn custom() -> NormalSettings {
 #[test]
 fn headless_every_change_is_one_undo_and_a_drag_is_one_undo() {
     let mut s = AppState::new(64, 64);
-    assert_eq!(s.doc.normal_settings(), NormalSettings::DEFAULT);
-    let base = s.doc.undo_count();
+    assert_eq!(s.doc().normal_settings(), NormalSettings::DEFAULT);
+    let base = s.doc().undo_count();
     set(&mut s, NormalSettings::DEFAULT.with_derive(true), false);
-    let next = s.doc.normal_settings().with_edges(HeightEdgeMode::Wrap);
+    let next = s.doc().normal_settings().with_edges(HeightEdgeMode::Wrap);
     set(&mut s, next, false);
     let next = s
-        .doc
+        .doc()
         .normal_settings()
         .with_file_direction(NormalYDirection::DirectX);
     set(&mut s, next, false);
-    assert_eq!(s.doc.undo_count(), base + 3);
-    assert_eq!(s.message, "ノーマルのファイル: DirectX (Y−)");
-    assert!(s.modified);
+    assert_eq!(s.doc().undo_count(), base + 3);
+    assert_eq!(s.message(), "ノーマルのファイル: DirectX (Y−)");
+    assert!(s.modified());
     // 同じ設定は何もしない（Undo の段を作らない）
-    let settings = s.doc.normal_settings();
+    let settings = s.doc().normal_settings();
     set(&mut s, settings, false);
-    assert_eq!(s.doc.undo_count(), base + 3);
+    assert_eq!(s.doc().undo_count(), base + 3);
     // 強さのドラッグ（まとめる）は離したとき 1 回
     for v in [5.0, 6.0, 7.5, 40.0] {
-        let next = s.doc.normal_settings().with_strength(v).unwrap();
+        let next = s.doc().normal_settings().with_strength(v).unwrap();
         set(&mut s, next, true);
     }
-    assert_eq!(s.doc.normal_settings().strength(), 40.0);
+    assert_eq!(s.doc().normal_settings().strength(), 40.0);
     s.m2_end_drag();
-    assert_eq!(s.doc.undo_count(), base + 4, "ドラッグ全体で 1 回");
-    s.apply(Action::Undo);
+    assert_eq!(s.doc().undo_count(), base + 4, "ドラッグ全体で 1 回");
+    s.act(Action::Undo);
     assert_eq!(
-        s.doc.normal_settings().strength(),
+        s.doc().normal_settings().strength(),
         4.0,
         "ドラッグの前に戻る"
     );
     assert_eq!(
-        s.doc.normal_settings().file_direction(),
+        s.doc().normal_settings().file_direction(),
         NormalYDirection::DirectX
     );
-    s.apply(Action::Redo);
-    assert_eq!(s.doc.normal_settings().strength(), 40.0);
+    s.act(Action::Redo);
+    assert_eq!(s.doc().normal_settings().strength(), 40.0);
     // 1 つずつ戻る
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(
-        s.doc.normal_settings().file_direction(),
+        s.doc().normal_settings().file_direction(),
         NormalYDirection::OpenGL
     );
-    assert_eq!(s.doc.normal_settings().edges(), HeightEdgeMode::Wrap);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
-    assert_eq!(s.doc.normal_settings(), NormalSettings::DEFAULT);
+    assert_eq!(s.doc().normal_settings().edges(), HeightEdgeMode::Wrap);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
+    assert_eq!(s.doc().normal_settings(), NormalSettings::DEFAULT);
     // 英語のメッセージ
-    s.apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    s.act(Action::M2Ui(UiOp::Language(Lang::En)));
     set(&mut s, NormalSettings::DEFAULT.with_derive(true), false);
-    assert_eq!(s.message, "Height → Normal on.");
+    assert_eq!(s.message(), "Height → Normal on.");
     set(&mut s, NormalSettings::DEFAULT, false);
-    assert_eq!(s.message, "Height → Normal off.");
-    s.apply(Action::M2Ui(UiOp::Language(Lang::Ja)));
+    assert_eq!(s.message(), "Height → Normal off.");
+    s.act(Action::M2Ui(UiOp::Language(Lang::Ja)));
     set(&mut s, NormalSettings::DEFAULT.with_derive(true), false);
-    assert_eq!(s.message, "ハイト → ノーマルをオンにしました。");
+    assert_eq!(s.message(), "ハイト → ノーマルをオンにしました。");
 }
 
 #[test]
@@ -111,23 +112,28 @@ fn headless_the_settings_survive_save_and_open() {
     let path = dir.0.join("normal.ylp");
     let mut s = AppState::new(64, 64);
     set(&mut s, custom(), false);
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(!s.modified, "{}", s.message);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(!s.modified(), "{}", s.message());
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(path.clone()));
-    assert_eq!(again.doc.normal_settings(), custom(), "{}", again.message);
-    assert_eq!(again.doc.normal_settings().strength(), 12.5);
+    again.act(Action::OpenProject(path.clone()));
+    assert_eq!(
+        again.doc().normal_settings(),
+        custom(),
+        "{}",
+        again.message()
+    );
+    assert_eq!(again.doc().normal_settings().strength(), 12.5);
     // 開き直した設定の変更も 1 回の Undo で戻り、元の設定に戻る
     set(&mut again, custom().with_strength(3.0).unwrap(), false);
-    again.apply(Action::Undo);
-    assert_eq!(again.doc.normal_settings(), custom());
+    again.act(Action::Undo);
+    assert_eq!(again.doc().normal_settings(), custom());
     // 設定のないプロジェクトは既定
     let plain = dir.0.join("plain.ylp");
     let mut p = AppState::new(64, 64);
-    p.apply(Action::SaveProjectAs(plain.clone()));
+    p.act(Action::SaveProjectAs(plain.clone()));
     let mut reopened = AppState::new(64, 64);
-    reopened.apply(Action::OpenProject(plain));
-    assert_eq!(reopened.doc.normal_settings(), NormalSettings::DEFAULT);
+    reopened.act(Action::OpenProject(plain));
+    assert_eq!(reopened.doc().normal_settings(), NormalSettings::DEFAULT);
 }
 
 /// 2 つのマテリアル（0 に部品 A、1 に離れた部品 B）の Live Link のモデル（2 つのテクスチャセットができる）。
@@ -173,8 +179,8 @@ fn headless_each_texture_set_keeps_its_own_normal_settings_through_save_and_open
     let mut s = AppState::new(64, 64);
     let (_, shape) = s.receive_link_model(&two_sets_model());
     shape.expect("3D に読める");
-    assert_eq!(s.sets.len(), 2);
-    let (first, second) = (s.sets.current_index(), 1 - s.sets.current_index());
+    assert_eq!(s.sets().len(), 2);
+    let (first, second) = (s.sets().current_index(), 1 - s.sets().current_index());
     // 1 つ目のセットは custom()、2 つ目は別の設定（DirectX で強さが違う）。もう 1 つのセットの設定は変わらない
     let other =
         NormalSettings::new(true, 33.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL).unwrap();
@@ -188,40 +194,41 @@ fn headless_each_texture_set_keeps_its_own_normal_settings_through_save_and_open
     s.switch_set(second).unwrap();
     set(&mut s, other, false);
     assert_eq!(s.set_doc(first).normal_settings(), custom());
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(!s.modified, "{}", s.message);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(!s.modified(), "{}", s.message());
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(path.clone()));
-    assert_eq!(again.sets.len(), 2, "{}", again.message);
+    again.act(Action::OpenProject(path.clone()));
+    assert_eq!(again.sets().len(), 2, "{}", again.message());
     assert_eq!(again.set_doc(first).normal_settings(), custom());
     assert_eq!(again.set_doc(second).normal_settings(), other);
     // 開き直したあとも、セットごとに 1 回の Undo で戻る（もう片方は変わらない）
     set(&mut again, custom().with_strength(5.0).unwrap(), false);
-    again.apply(Action::Undo);
-    assert_eq!(again.doc.normal_settings(), other);
+    again.act(Action::Undo);
+    assert_eq!(again.doc().normal_settings(), other);
     assert_eq!(again.set_doc(first).normal_settings(), custom());
 }
 
 #[test]
 fn headless_a_read_only_set_and_drawing_refuse_the_change_with_a_reason() {
     let mut s = AppState::new(64, 64);
-    let index = s.sets.current_index();
-    s.sets.get_mut(index).unwrap().read_only = Some("フィルターのあるレイヤーがあります".into());
+    let index = s.sets().current_index();
+    s.sets_mut().get_mut(index).unwrap().read_only =
+        Some("フィルターのあるレイヤーがあります".into());
     set(&mut s, custom(), false);
-    assert_eq!(s.doc.normal_settings(), NormalSettings::DEFAULT);
+    assert_eq!(s.doc().normal_settings(), NormalSettings::DEFAULT);
     assert_eq!(
-        s.message,
+        s.message(),
         "このテクスチャセットは読むだけです（フィルターのあるレイヤーがあります）。"
     );
-    s.sets.get_mut(index).unwrap().read_only = None;
-    let layer = s.selected_layer.unwrap();
+    s.sets_mut().get_mut(index).unwrap().read_only = None;
+    let layer = s.selected_layer().unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     set(&mut s, custom(), false);
-    assert_eq!(s.doc.normal_settings(), NormalSettings::DEFAULT);
-    assert!(s.message.contains("描いている間"), "{}", s.message);
-    s.doc.cancel_stroke(stroke);
+    assert_eq!(s.doc().normal_settings(), NormalSettings::DEFAULT);
+    assert!(s.message().contains("描いている間"), "{}", s.message());
+    s.doc_mut().cancel_stroke(stroke);
     set(&mut s, custom(), false);
-    assert_eq!(s.doc.normal_settings(), custom());
+    assert_eq!(s.doc().normal_settings(), custom());
 }
 
 // ───────── チャンネルのパネルの Normal の節 ─────────
@@ -230,10 +237,10 @@ fn open_channels(h: &mut Harness<'static, YoluApp>) {
     click_tab(h, Tab::Channels);
     h.run();
     // 「ノーマル」の節は初めは閉じている（見出しを押して開く）
-    assert_eq!(h.state().state.ui.sections.get("normal"), Some(&false));
+    assert_eq!(h.ui().sections.get("normal"), Some(&false));
     let header = lowest(h, "ノーマル");
     click(h, header.center());
-    assert_eq!(h.state().state.ui.sections.get("normal"), Some(&true));
+    assert_eq!(h.ui().sections.get("normal"), Some(&true));
 }
 
 /// 右上の組（チャンネル）の中の、同じ名前の部品のうち一番下のもの（チャンネルの行と同じ名前の見出しなど）。
@@ -250,15 +257,15 @@ fn lowest(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
 fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns() {
     let mut h = app(1280.0, 1600.0, 128);
     open_channels(&mut h);
-    let base = h.state().state.doc.undo_count();
+    let base = h.doc().undo_count();
     // 初めは Height → Normal がオフ（強さと端は使えない）
-    assert!(!h.state().state.doc.normal_settings().derive_from_height());
+    assert!(!h.doc().normal_settings().derive_from_height());
     let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
     crate::common::shot::region(&mut h, "channels_normal_off", rect);
     let toggle = lowest(&h, "ハイト → ノーマル");
     click(&mut h, toggle.center());
-    assert!(h.state().state.doc.normal_settings().derive_from_height());
-    assert_eq!(h.state().state.doc.undo_count(), base + 1);
+    assert!(h.doc().normal_settings().derive_from_height());
+    assert_eq!(h.doc().undo_count(), base + 1);
     // 強さのドラッグは 1 回の Undo
     let slider = lowest(&h, "強さ");
     drag(
@@ -269,45 +276,33 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
             pos2(slider.left() + slider.width() * 0.75, slider.center().y),
         ],
     );
-    let strength = h.state().state.doc.normal_settings().strength();
+    let strength = h.doc().normal_settings().strength();
     assert!((60.0..140.0).contains(&strength), "{strength}");
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        base + 2,
-        "ドラッグ全体で 1 回"
-    );
+    assert_eq!(h.doc().undo_count(), base + 2, "ドラッグ全体で 1 回");
     crate::common::shot::region(&mut h, "channels_normal_on", rect);
-    h.state_mut().state.apply(Action::Undo);
-    assert_eq!(h.state().state.doc.normal_settings().strength(), 4.0);
+    h.act(Action::Undo);
+    assert_eq!(h.doc().normal_settings().strength(), 4.0);
     // 端のドロップダウン
     h.run();
     let edges = lowest(&h, "クランプ");
     click(&mut h, edges.center());
     let wrap = popup_item(&h, "ラップ（タイル）").center();
     click(&mut h, wrap);
-    assert_eq!(
-        h.state().state.doc.normal_settings().edges(),
-        HeightEdgeMode::Wrap
-    );
+    assert_eq!(h.doc().normal_settings().edges(), HeightEdgeMode::Wrap);
     // ファイルの Y のドロップダウン
     let direction = lowest(&h, "OpenGL (Y+)");
     click(&mut h, direction.center());
     let directx = popup_item(&h, "DirectX (Y−)").center();
     click(&mut h, directx);
     assert_eq!(
-        h.state().state.doc.normal_settings().file_direction(),
+        h.doc().normal_settings().file_direction(),
         NormalYDirection::DirectX
     );
     // 戻す
-    h.state_mut().state.apply(Action::Undo);
-    h.state_mut().state.apply(Action::Undo);
-    assert_eq!(
-        h.state().state.doc.normal_settings().edges(),
-        HeightEdgeMode::Clamp
-    );
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(Lang::En)));
+    h.act(Action::Undo);
+    h.act(Action::Undo);
+    assert_eq!(h.doc().normal_settings().edges(), HeightEdgeMode::Clamp);
+    h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
     // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
     let _ = lowest(&h, "Height → Normal");
@@ -329,26 +324,23 @@ fn strength_and_edges_wait_for_height_to_normal_and_a_read_only_set_disables_eve
             pos2(slider.right() - 2.0, slider.center().y),
         ],
     );
-    assert_eq!(
-        h.state().state.doc.normal_settings(),
-        NormalSettings::DEFAULT
-    );
+    assert_eq!(h.doc().normal_settings(), NormalSettings::DEFAULT);
     let edges = lowest(&h, "クランプ");
     click(&mut h, edges.center());
-    assert!(h.state().state.popup.is_none(), "オフのあいだ端は開かない");
+    assert!(h.popup().is_none(), "オフのあいだ端は開かない");
     // 読むだけのセットは、何も開かない・変わらない
     {
-        let s = &mut h.state_mut().state;
-        let index = s.sets.current_index();
-        s.sets.get_mut(index).unwrap().read_only = Some("理由".into());
+        let s = h.app_mut();
+        let index = s.sets().current_index();
+        s.sets_mut().get_mut(index).unwrap().read_only = Some("理由".into());
     }
     h.run();
     let toggle = lowest(&h, "ハイト → ノーマル");
     click(&mut h, toggle.center());
-    assert!(!h.state().state.doc.normal_settings().derive_from_height());
+    assert!(!h.doc().normal_settings().derive_from_height());
     let direction = lowest(&h, "OpenGL (Y+)");
     click(&mut h, direction.center());
-    assert!(h.state().state.popup.is_none());
+    assert!(h.popup().is_none());
 }
 
 #[test]
@@ -356,9 +348,9 @@ fn the_channel_list_and_the_normal_section_scroll_together_in_a_short_panel() {
     let mut h = app(1280.0, 500.0, 128);
     click_tab(&mut h, Tab::Channels);
     // 見出しが見える所に無いほど短いので、開いた状態を直に入れる
-    h.state_mut().state.ui.sections.insert("normal", true);
+    h.ui_mut().sections.insert("normal", true);
     h.run();
-    let content = h.state().state.m2.channels_content;
+    let content = h.m2().channels_content;
     assert!(content > 6.0 * 28.0 + 60.0, "一覧の下に節が続く: {content}");
     // ホイールで動かすと、下の節が見える
     let at = h
@@ -367,7 +359,7 @@ fn the_channel_list_and_the_normal_section_scroll_together_in_a_short_panel() {
         .get(&Tab::Channels)
         .unwrap()
         .center_bottom();
-    let before = h.state().state.m2.channel_scroll;
+    let before = h.m2().channel_scroll;
     h.event(egui::Event::PointerMoved(pos2(at.x, at.y + 60.0)));
     h.event(egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
@@ -376,8 +368,8 @@ fn the_channel_list_and_the_normal_section_scroll_together_in_a_short_panel() {
         modifiers: egui::Modifiers::NONE,
     });
     h.run();
-    assert!(h.state().state.m2.channel_scroll > before, "スクロールした");
-    let max = h.state().state.m2.channel_scroll;
+    assert!(h.m2().channel_scroll > before, "スクロールした");
+    let max = h.m2().channel_scroll;
     // 上限を越えて動かない
     h.event(egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
@@ -386,6 +378,6 @@ fn the_channel_list_and_the_normal_section_scroll_together_in_a_short_panel() {
         modifiers: egui::Modifiers::NONE,
     });
     h.run();
-    assert!(h.state().state.m2.channel_scroll >= max);
-    assert!(h.state().state.m2.channel_scroll <= h.state().state.m2.channels_content);
+    assert!(h.m2().channel_scroll >= max);
+    assert!(h.m2().channel_scroll <= h.m2().channels_content);
 }

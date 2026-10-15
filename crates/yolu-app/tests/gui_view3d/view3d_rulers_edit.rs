@@ -1,6 +1,7 @@
 //! 編集のモードの 3D の定規（egui_kittest。試しの立方体を正面に見て、3D ビューの入力の道で）: 印で選ぶ（レイヤーとプロパティの行も選ぶ）、G/R/S（途中は続けて変える
 //! 操作で、決めて 1 回の取り消し、Esc・右クリックで戻す。軸の固定・2 回目の定規の向きの軸・打った値）、Alt+G/R/S の既定、Delete・H・目を閉じる、
 //! ギズモ（移動の矢印・回す輪・端の点の四角。大きさのつまみは無い）のドラッグと端の点が面に乗って動くこと。絵は選んだ定規とギズモ（日英）。
+use crate::common::drive::Drive;
 use crate::common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::Harness;
@@ -17,20 +18,20 @@ use yolu_core::{LayerId, Ruler, RulerId, RulerKind, RulerPlace};
 type H = Harness<'static, YoluApp>;
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 /// 試しの立方体を手前（−Z の側）から正面に見た 3D ビューに、手前の面の上の斜めの直線定規を 1 本置き、編集のモードにする。
 fn edit_view() -> (H, Rect, LayerId) {
     let mut h = app(1280.0, 860.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.state_mut().state.view3d.camera.yaw = 0.0;
-    h.state_mut().state.view3d.camera.pitch = 0.0;
+    h.view3d_mut().camera.yaw = 0.0;
+    h.view3d_mut().camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
-    let layer = st(&h).selected_layer.expect("レイヤー");
+    let layer = st(&h).selected_layer().expect("レイヤー");
     crate::common::rulers::add(
-        &mut h.state_mut().state,
+        h.app_mut(),
         Ruler::model(
             RulerId(1),
             RulerKind::Line,
@@ -42,26 +43,26 @@ fn edit_view() -> (H, Rect, LayerId) {
     h.state_mut()
         .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
     h.run();
-    assert_eq!(st(&h).mode, EditorMode::Edit);
+    assert_eq!(st(&h).mode(), EditorMode::Edit);
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
     (h, rect, layer)
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = st(h).view3d.camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
 fn the_ruler(h: &H) -> Ruler {
-    let layer = st(h).selected_layer.expect("レイヤー");
+    let layer = st(h).selected_layer().expect("レイヤー");
     crate::common::rulers::of(st(h), layer).remove(0)
 }
 
 fn object(h: &H) -> Object {
     let r = the_ruler(h);
     Object::Ruler {
-        layer: st(h).selected_layer.unwrap(),
+        layer: st(h).selected_layer().unwrap(),
         id: r.id,
     }
 }
@@ -85,7 +86,7 @@ fn select(h: &mut H) {
 }
 
 fn undo_count(h: &H) -> usize {
-    st(h).doc.undo_count()
+    st(h).doc().undo_count()
 }
 
 fn transforming(h: &H) -> bool {
@@ -120,7 +121,7 @@ fn the_marker_of_a_3d_ruler_selects_it_with_its_layer_and_its_row_and_2d_or_hidd
 ) {
     let (mut h, rect, layer) = edit_view();
     // 2D の定規と、表示を切った 3D の定規は印を持たない
-    crate::common::rulers::line(&mut h.state_mut().state, (0.0, 3.0), (60.0, 3.0));
+    crate::common::rulers::line(h.app_mut(), (0.0, 3.0), (60.0, 3.0));
     let mut hidden = Ruler::model(
         RulerId(1),
         RulerKind::Concentric,
@@ -129,7 +130,7 @@ fn the_marker_of_a_3d_ruler_selects_it_with_its_layer_and_its_row_and_2d_or_hidd
         DVec3::NEG_Z,
     );
     hidden.visible = false;
-    crate::common::rulers::add(&mut h.state_mut().state, hidden);
+    crate::common::rulers::add(h.app_mut(), hidden);
     let marks: Vec<Object> = objects::markers(st(&h))
         .into_iter()
         .map(|m| m.object)
@@ -141,19 +142,19 @@ fn the_marker_of_a_3d_ruler_selects_it_with_its_layer_and_its_row_and_2d_or_hidd
     let at = marker_at(&h, rect);
     assert!(at.distance(screen_of(&h, rect, center(&first).as_vec3())) < 1e-3);
     // 別のレイヤーを選んでから、印を押す: 定規とそのレイヤーとプロパティの行を選ぶ
-    let other = h.state_mut().state.doc.add_layer("別").unwrap();
-    h.state_mut().state.select_single_layer(other);
+    let other = h.doc_mut().add_layer("別").unwrap();
+    h.app_mut().select_single_layer(other);
     h.run();
     let steps = undo_count(&h);
     click(&mut h, at);
-    assert_eq!(st(&h).objects.selected, Some(marks[0]));
-    assert_eq!(st(&h).selected_layer, Some(layer));
-    assert_eq!(st(&h).rulers.selected, Some((layer, first.id)));
+    assert_eq!(st(&h).objects().selected, Some(marks[0]));
+    assert_eq!(st(&h).selected_layer(), Some(layer));
+    assert_eq!(st(&h).rulers().selected, Some((layer, first.id)));
     assert!(!st(&h).is_stroking());
     assert_eq!(undo_count(&h), steps, "選ぶだけ。文書を変えない");
     // 何も無い所を押すと外れる
     click(&mut h, rect.min + vec2(12.0, 12.0));
-    assert_eq!(st(&h).objects.selected, None);
+    assert_eq!(st(&h).objects().selected, None);
 }
 
 #[test]
@@ -185,7 +186,7 @@ fn g_moves_a_3d_ruler_by_the_mouse_an_axis_and_a_typed_value_and_escape_puts_it_
     h.run();
     assert!(!transforming(&h));
     assert_eq!(undo_count(&h), steps + 1, "1 回の取り消し");
-    assert!(!st(&h).doc.is_coalescing());
+    assert!(!st(&h).doc().is_coalescing());
     // Esc: 戻して履歴に残さない
     let decided = the_ruler(&h);
     let at = marker_at(&h, rect);
@@ -210,7 +211,7 @@ fn g_moves_a_3d_ruler_by_the_mouse_an_axis_and_a_typed_value_and_escape_puts_it_
     assert_eq!(the_ruler(&h), decided);
     assert_eq!(undo_count(&h), steps + 1);
     // 取り消しで始めの値へ
-    h.state_mut().state.apply(Action::Undo);
+    h.act(Action::Undo);
     assert_eq!(the_ruler(&h), before);
 }
 
@@ -239,7 +240,7 @@ fn r_turns_around_the_center_with_the_direction_and_s_scales_the_distance_keepin
         "−Z の向きが X の軸のまわりに 90 度回って Y の向きに: {up1}"
     );
     assert!(up1.x.abs() < 1e-5, "回す軸の成分は動かない");
-    h.state_mut().state.apply(Action::Undo);
+    h.act(Action::Undo);
     assert_eq!(the_ruler(&h), before);
     // S: 倍率 2（軸なし）で中心から a・b の距離が 2 倍、向きは変えない
     let at = marker_at(&h, rect);
@@ -266,7 +267,7 @@ fn the_second_axis_press_is_the_axis_of_the_ruler_where_x_follows_a_to_b() {
     start(&mut h, at, Key::G);
     // X の 1 回目は世界の軸、2 回目は定規の向きの軸（a→b の向き）
     type_keys(&mut h, &[Key::X, Key::X, Key::Num0, Key::Period, Key::Num5]);
-    let t = st(&h).objects.transform.as_ref().expect("途中");
+    let t = st(&h).objects().transform.as_ref().expect("途中");
     let axis = t.axis_direction(0, true);
     assert!((axis.as_dvec3() - along).length() < 1e-5, "{axis} {along}");
     key(&h, Key::Enter, Modifiers::NONE);
@@ -293,17 +294,15 @@ fn delete_h_and_the_eye_act_on_the_selected_ruler_and_undo_brings_it_back() {
     select(&mut h);
     let mut r = the_ruler(&h);
     r.visible = false;
-    h.state_mut()
-        .state
-        .apply(Action::Ruler(yolu_app::rulers::RulerAction::Replace {
-            owner: layer,
-            ruler: r,
-            coalesce: false,
-        }));
+    h.act(Action::Ruler(yolu_app::rulers::RulerAction::Replace {
+        owner: layer,
+        ruler: r,
+        coalesce: false,
+    }));
     h.run();
     assert!(!objects::markers(st(&h)).iter().any(|m| m.object == o));
     assert_eq!(objects::selected(st(&h)), None);
-    h.state_mut().state.apply(Action::Undo);
+    h.act(Action::Undo);
     h.run();
     // Delete で消す（1 回の取り消し）
     select(&mut h);
@@ -312,9 +311,9 @@ fn delete_h_and_the_eye_act_on_the_selected_ruler_and_undo_brings_it_back() {
     h.run();
     assert!(crate::common::rulers::of(st(&h), layer).is_empty());
     assert_eq!(undo_count(&h), steps + 1);
-    assert_eq!(st(&h).objects.selected, None);
-    assert_eq!(st(&h).rulers.selected, None);
-    h.state_mut().state.apply(Action::Undo);
+    assert_eq!(st(&h).objects().selected, None);
+    assert_eq!(st(&h).rulers().selected, None);
+    h.act(Action::Undo);
     assert_eq!(crate::common::rulers::of(st(&h), layer).len(), 1);
     assert_eq!(the_ruler(&h).id, id);
     // 選んでいなければ、Delete は断る
@@ -325,9 +324,9 @@ fn delete_h_and_the_eye_act_on_the_selected_ruler_and_undo_brings_it_back() {
     h.run();
     assert_eq!(crate::common::rulers::of(st(&h), layer).len(), 1);
     assert!(
-        st(&h).message.contains("選んだ物がありません"),
+        st(&h).message().contains("選んだ物がありません"),
         "{}",
-        st(&h).message
+        st(&h).message()
     );
     let _ = rect;
 }
@@ -411,10 +410,10 @@ fn the_gizmo_of_a_3d_ruler_has_arrows_rings_and_end_squares_but_no_size_knobs() 
         DVec3::Y,
     );
     s.lines = 2;
-    crate::common::rulers::add(&mut h.state_mut().state, s);
+    crate::common::rulers::add(h.app_mut(), s);
     let sym = Object::Ruler {
         layer,
-        id: st(&h).rulers.selected.unwrap().1,
+        id: st(&h).rulers().selected.unwrap().1,
     };
     h.state_mut()
         .apply(Action::Object(ObjectAction::Select(Some(sym))));
@@ -508,9 +507,9 @@ fn dragging_an_end_square_puts_the_end_on_the_surface_or_on_the_camera_plane_in_
     assert_eq!(points(&the_ruler(&h)).1, b1, "Esc で戻る");
     assert_eq!(undo_count(&h), steps + 1);
     assert!(
-        st(&h).message.contains("定規の操作をやめました"),
+        st(&h).message().contains("定規の操作をやめました"),
         "形でなく定規の操作とそのまま言う: {}",
-        st(&h).message
+        st(&h).message()
     );
 }
 
@@ -525,7 +524,7 @@ fn an_end_square_grabbed_off_center_moves_by_the_pointer_movement_without_jumpin
     let pressed = center + vec2(4.0, -3.0);
     press(&h, pressed, PointerButton::Primary);
     h.step();
-    assert!(st(&h).fillfx.drag.is_some(), "四角を掴んだ");
+    assert!(st(&h).fillfx().drag.is_some(), "四角を掴んだ");
     // 動かす前の最初の動き: 端は 10 点だけ動く（ポインタの真下へ跳ばない）
     let to = pressed + vec2(10.0, 0.0);
     move_to(&h, to);
@@ -550,13 +549,13 @@ fn an_end_square_grabbed_off_center_moves_by_the_pointer_movement_without_jumpin
 fn s_on_one_axis_stretches_a_and_b_along_it_so_the_direction_changes_and_up_stays() {
     let mut h = app(1280.0, 860.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.state_mut().state.view3d.camera.yaw = 0.0;
-    h.state_mut().state.view3d.camera.pitch = 0.0;
+    h.view3d_mut().camera.yaw = 0.0;
+    h.view3d_mut().camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     // a→b は up（−Z）と直角でない（面の上の点から斜めの面の点へ引いた直線）
     crate::common::rulers::add(
-        &mut h.state_mut().state,
+        h.app_mut(),
         Ruler::model(
             RulerId(1),
             RulerKind::Line,
@@ -604,8 +603,8 @@ fn alt_s_does_nothing_to_a_one_point_perspective_and_resizes_a_two_point_one() {
         DVec3::new(0.2, 0.3, -0.5),
         DVec3::NEG_Z,
     );
-    crate::common::rulers::add(&mut h.state_mut().state, p.clone());
-    let id = st(&h).rulers.selected.unwrap().1;
+    crate::common::rulers::add(h.app_mut(), p.clone());
+    let id = st(&h).rulers().selected.unwrap().1;
     let o = Object::Ruler { layer, id };
     h.state_mut()
         .apply(Action::Object(ObjectAction::Select(Some(o))));
@@ -632,13 +631,11 @@ fn alt_s_does_nothing_to_a_one_point_perspective_and_resizes_a_two_point_one() {
     // 2 点にすると b も使うので、距離を変える
     p = ruler(&h);
     p.two_points = true;
-    h.state_mut()
-        .state
-        .apply(Action::Ruler(yolu_app::rulers::RulerAction::Replace {
-            owner: layer,
-            ruler: p,
-            coalesce: false,
-        }));
+    h.act(Action::Ruler(yolu_app::rulers::RulerAction::Replace {
+        owner: layer,
+        ruler: p,
+        coalesce: false,
+    }));
     h.run();
     let steps = undo_count(&h);
     key(&h, Key::S, Modifiers::ALT);
@@ -651,9 +648,9 @@ fn alt_s_does_nothing_to_a_one_point_perspective_and_resizes_a_two_point_one() {
 #[test]
 fn in_orthographic_a_3d_ruler_moves_by_g_and_by_its_arrow() {
     let (mut h, rect, _) = edit_view();
-    h.state_mut().state.view3d.camera.set_orthographic(true);
+    h.view3d_mut().camera.set_orthographic(true);
     h.run();
-    assert!(st(&h).view3d.camera.is_orthographic());
+    assert!(st(&h).view3d().camera.is_orthographic());
     select(&mut h);
     let before = the_ruler(&h);
     let (a0, b0, _) = points(&before);
@@ -691,23 +688,21 @@ fn replacing_the_project_drops_the_edit_mode_selection_and_hidden_marks() {
     let (mut h, _, layer) = edit_view();
     select(&mut h);
     let o = object(&h);
-    h.state_mut().state.objects.hidden.push(Object::Ruler {
+    h.objects_mut().hidden.push(Object::Ruler {
         layer,
         id: RulerId(0x1234),
     });
     assert_eq!(objects::selected(st(&h)), Some(o));
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    h.state_mut().state.apply(Action::OpenProject(path));
+    h.act(Action::SaveProjectAs(path.clone()));
+    h.act(Action::OpenProject(path));
     h.run();
     assert_eq!(
-        st(&h).objects.selected,
+        st(&h).objects().selected,
         None,
         "前のプロジェクトの選びは外す"
     );
-    assert!(st(&h).objects.hidden.is_empty(), "隠した印も外す");
-    assert_eq!(st(&h).rulers.selected, None);
+    assert!(st(&h).objects().hidden.is_empty(), "隠した印も外す");
+    assert_eq!(st(&h).rulers().selected, None);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -715,7 +710,7 @@ fn replacing_the_project_drops_the_edit_mode_selection_and_hidden_marks() {
 fn a_read_only_set_refuses_to_move_or_delete_a_ruler() {
     let (mut h, rect, layer) = edit_view();
     select(&mut h);
-    h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
+    h.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
     let before = the_ruler(&h);
     let at = marker_at(&h, rect);
     start(&mut h, at, Key::G);
@@ -730,9 +725,9 @@ fn a_read_only_set_refuses_to_move_or_delete_a_ruler() {
 fn snapshots_of_a_selected_ruler_with_its_gizmo_in_both_languages() {
     for lang in Lang::ALL {
         let (mut h, rect, _) = edit_view();
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         select(&mut h);
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.event(Event::PointerGone);
         h.run();
         // 英語の絵は撮らない（3D の絵に文字は無い）

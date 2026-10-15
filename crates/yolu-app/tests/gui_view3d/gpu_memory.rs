@@ -2,6 +2,7 @@
 //! 予算を下げると 3D のほかのセットが減り、今のセットが縮めた段になること（上げると戻る）。設定のファイルの往復・古い設定・壊れた値、
 //! ウィンドウの行（数は「詳しく」の中だけ）と日英。`headless_` で始まる試験は画面を描かない。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,14 +25,12 @@ use yolu_protocol::{
 };
 
 fn set(h: &mut Harness<'_, YoluApp>, choice: GpuMemory) {
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Set(Pref::GpuMemory(choice))));
+    h.act(Action::Prefs(PrefsAction::Set(Pref::GpuMemory(choice))));
 }
 
 /// 今のアダプターは分からないものとして（機械の GPU によらず同じ配りにする）、1 フレーム回す。
 fn unknown_adapter(h: &mut Harness<'_, YoluApp>) {
-    h.state_mut().state.prefs.gpu = Adapter::default();
+    h.prefs_mut().gpu = Adapter::default();
     h.run();
 }
 
@@ -41,7 +40,7 @@ fn applied(h: &Harness<'_, YoluApp>) -> (Budgets, Option<u64>, u64, u64) {
         app.gpu_budgets_applied(),
         app.view3d_paint_budget(),
         app.canvas_gpu_budget(),
-        app.state.shelf.preview_budget,
+        app.shelf().preview_budget,
     )
 }
 
@@ -58,7 +57,7 @@ fn the_default_gives_the_three_budgets_the_old_constants() {
     assert_eq!(paint, Some(yolu_app::view3d::paint::PAINT_BUDGET_BYTES));
     assert_eq!(canvas, yolu_app::canvas::gpu::RESIDENT_BUDGET);
     assert_eq!(shelf, PREVIEW_BUDGET);
-    assert_eq!(h.state().state.prefs.settings.gpu_memory, GpuMemory::Auto);
+    assert_eq!(h.prefs().settings.gpu_memory, GpuMemory::Auto);
 }
 
 #[test]
@@ -106,12 +105,12 @@ fn a_custom_total_is_split_four_four_one_and_kept_inside_the_range() {
     // 範囲の外は範囲へ収める
     set(&mut h, GpuMemory::Mib(1));
     assert_eq!(
-        h.state().state.prefs.settings.gpu_memory,
+        h.prefs().settings.gpu_memory,
         GpuMemory::Mib(gpu_memory::MIN_TOTAL_MIB)
     );
     set(&mut h, GpuMemory::Mib(u32::MAX));
     assert_eq!(
-        h.state().state.prefs.settings.gpu_memory,
+        h.prefs().settings.gpu_memory,
         GpuMemory::Mib(gpu_memory::MAX_TOTAL_MIB)
     );
 }
@@ -122,7 +121,7 @@ fn the_adapter_amount_changes_the_budgets_when_it_becomes_known() {
     unknown_adapter(&mut h);
     let before = h.state().gpu_budgets_applied();
     // 24 GiB の GPU: 標準は量の 1/8（3 GiB）
-    h.state_mut().state.prefs.gpu = Adapter {
+    h.prefs_mut().gpu = Adapter {
         memory_mib: Some(24 * 1024),
     };
     h.run();
@@ -226,8 +225,7 @@ fn scene(n: usize, size: u32) -> Harness<'static, YoluApp> {
     h.state_mut().load_live_link_model(&model(n, size)).unwrap();
     h.run();
     for set in 0..n {
-        h.state_mut()
-            .state
+        h.app_mut()
             .set_doc_mut(set)
             .add_fill_layer(
                 "色",
@@ -240,7 +238,7 @@ fn scene(n: usize, size: u32) -> Harness<'static, YoluApp> {
             .unwrap();
     }
     h.run();
-    assert_eq!(h.state().state.sets.len(), n);
+    assert_eq!(h.sets().len(), n);
     h
 }
 
@@ -252,7 +250,7 @@ fn lowering_the_memory_leaves_out_the_farthest_sets_and_raising_it_brings_them_b
     assert_eq!((s.other_sets, s.other_skipped), (2, 0), "{s:?}");
     // 設定のウィンドウが選べる下限（256 MiB）より小さい合計は、予算の道を通すために設定へ直に入れる（3D の予算 = 合計の 4/9）
     // 合計 2 MiB の 3D = 932,067 B: 今のセット + ほかの 1 枚（残り 582,543 B で 349,524 B を 1 枚）
-    h.state_mut().state.prefs.settings.gpu_memory = GpuMemory::Mib(2);
+    h.prefs_mut().settings.gpu_memory = GpuMemory::Mib(2);
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (1, 1), "{s:?}");
@@ -261,9 +259,9 @@ fn lowering_the_memory_leaves_out_the_farthest_sets_and_raising_it_brings_them_b
         vec![1],
         "今のセット 0 から近い順"
     );
-    assert_eq!(h.state().state.view3d.unpainted, vec![2]);
+    assert_eq!(h.view3d().unpainted, vec![2]);
     // 合計 1 MiB の 3D = 466,033 B: 今のセットだけ（今のセットが先）
-    h.state_mut().state.prefs.settings.gpu_memory = GpuMemory::Mib(1);
+    h.prefs_mut().settings.gpu_memory = GpuMemory::Mib(1);
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (0, 2), "{s:?}");
@@ -273,7 +271,7 @@ fn lowering_the_memory_leaves_out_the_farthest_sets_and_raising_it_brings_them_b
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.other_sets, s.other_skipped), (2, 0), "{s:?}");
-    assert!(h.state().state.view3d.unpainted.is_empty());
+    assert!(h.view3d().unpainted.is_empty());
 }
 
 #[test]
@@ -282,7 +280,7 @@ fn lowering_the_memory_shrinks_the_current_sets_picture_and_raising_it_restores_
     let s = h.state().view3d_stats().unwrap();
     assert_eq!((s.paint_level, s.other_sets), (0, 0), "{s:?}");
     // 512² の Color だけ = 1,398,101 B。合計 2 MiB の 3D（932,067 B）には入らないので、256² に縮める
-    h.state_mut().state.prefs.settings.gpu_memory = GpuMemory::Mib(2);
+    h.prefs_mut().settings.gpu_memory = GpuMemory::Mib(2);
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert_eq!(s.paint_level, 1, "{s:?}");
@@ -417,8 +415,8 @@ fn app_with_settings(path: &Path, size: egui::Vec2) -> Harness<'static, YoluApp>
             YoluApp::for_context_with_settings(&cc.egui_ctx, Some(path), PenInput::detached())
                 .with_render_state(cc.wgpu_render_state.as_ref())
         });
-    h.state_mut().state.prefs.ram_mib = 16384;
-    h.state_mut().state.prefs.cores = 8;
+    h.prefs_mut().ram_mib = 16384;
+    h.prefs_mut().cores = 8;
     // 中央は 1 つの組（`common::app` と同じ並び）
     h.state_mut().dock = common::tabbed_center_dock(size.x);
     h.run();
@@ -431,9 +429,7 @@ fn window_rect(h: &Harness<'_, YoluApp>) -> Rect {
 
 /// 設定のウィンドウを「表示」の区分（GPU のメモリがある所）で開く。
 fn open_settings(h: &mut Harness<'static, YoluApp>) {
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::OpenAt(Category::Display)));
+    h.act(Action::Prefs(PrefsAction::OpenAt(Category::Display)));
     h.run();
 }
 
@@ -455,7 +451,7 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     let dir = settings_dir("window");
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    h.state_mut().state.prefs.gpu = Adapter::default();
+    h.prefs_mut().gpu = Adapter::default();
     open_settings(&mut h);
     h.run();
     let _ = h.get_by_label("GPU のメモリ: 自動");
@@ -464,12 +460,12 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     pick(&mut h, "GPU のメモリ: 自動", "高");
     h.run();
     let _ = h.get_by_label("GPU のメモリ: 高");
-    assert_eq!(h.state().state.prefs.settings.gpu_memory, GpuMemory::High);
+    assert_eq!(h.prefs().settings.gpu_memory, GpuMemory::High);
     assert_eq!(h.state().gpu_budgets_applied(), expect(GpuMemory::High));
     // 詳しく: 合計のスライダーが出る（ウィンドウの中）
     gpu_details(&h, "詳しく").click();
     h.run();
-    assert!(h.state().state.prefs.gpu_details);
+    assert!(h.prefs().gpu_details);
     let open = window_rect(&h);
     assert!(
         open.contains_rect(
@@ -490,19 +486,12 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     // 選び直すと段へ戻る
     pick(&mut h, "GPU のメモリ: 指定", "標準");
     h.run();
-    assert_eq!(
-        h.state().state.prefs.settings.gpu_memory,
-        GpuMemory::Standard
-    );
+    assert_eq!(h.prefs().settings.gpu_memory, GpuMemory::Standard);
     // 英語（言語は「一般」の区分）
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Choose(Category::General)));
+    h.act(Action::Prefs(PrefsAction::Choose(Category::General)));
     h.run();
     pick(&mut h, "言語: 日本語", "English");
-    h.state_mut()
-        .state
-        .apply(Action::Prefs(PrefsAction::Choose(Category::Display)));
+    h.act(Action::Prefs(PrefsAction::Choose(Category::Display)));
     h.run();
     let _ = h.get_by_label("GPU memory: Standard");
     let _ = gpu_details(&h, "Details");
@@ -514,7 +503,7 @@ fn the_window_row_names_the_level_without_numbers_and_the_details_show_the_total
     // 閉じると、次に開いたときは閉じた形
     gpu_details(&h, "Details").click();
     h.run();
-    assert!(!h.state().state.prefs.gpu_details);
+    assert!(!h.prefs().gpu_details);
     assert!(h
         .query_by_role_and_label(egui::accesskit::Role::Slider, "Total")
         .is_none());
@@ -548,17 +537,14 @@ fn the_choice_is_written_to_the_file_and_the_next_start_applies_it() {
     drop(h);
     // 次の起動は、書いた設定で始まり、3 つの予算にも入っている
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert_eq!(
-        h.state().state.prefs.settings.gpu_memory,
-        GpuMemory::Mib(2048)
-    );
-    let adapter = h.state().state.prefs.gpu.clone();
+    assert_eq!(h.prefs().settings.gpu_memory, GpuMemory::Mib(2048));
+    let adapter = h.prefs().gpu.clone();
     let want = gpu_memory::budgets(GpuMemory::Mib(2048), &adapter);
     assert_eq!(h.state().gpu_budgets_applied(), want);
     assert_eq!(h.state().view3d_paint_budget(), Some(want.paint));
     assert_eq!(h.state().canvas_gpu_budget(), want.canvas);
-    assert_eq!(h.state().state.shelf.preview_budget, want.shelf_preview);
-    assert_eq!(h.state().state.message, "");
+    assert_eq!(h.shelf().preview_budget, want.shelf_preview);
+    assert_eq!(h.message(), "");
 }
 
 #[test]
@@ -569,8 +555,8 @@ fn a_settings_file_without_the_key_starts_automatic_and_a_broken_value_says_why_
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "language=ja\nbackups=4\n").unwrap();
     let h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert_eq!(h.state().state.prefs.settings.gpu_memory, GpuMemory::Auto);
-    assert_eq!(h.state().state.message, "");
+    assert_eq!(h.prefs().settings.gpu_memory, GpuMemory::Auto);
+    assert_eq!(h.message(), "");
     drop(h);
     // 壊れた値: その項目だけ自動へ戻し、理由を状態の帯に出す。ほかの項目は生かす
     let dir = settings_dir("broken");
@@ -578,12 +564,9 @@ fn a_settings_file_without_the_key_starts_automatic_and_a_broken_value_says_why_
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, "language=ja\ngpu_memory=たくさん\nbackups=4\n").unwrap();
     let mut h = app_with_settings(&path, vec2(1280.0, 800.0));
-    assert_eq!(h.state().state.prefs.settings.gpu_memory, GpuMemory::Auto);
-    assert_eq!(
-        h.state().state.prefs.settings.backups,
-        yolu_io::BackupKeep::Count(4)
-    );
-    let message = h.state().state.message.clone();
+    assert_eq!(h.prefs().settings.gpu_memory, GpuMemory::Auto);
+    assert_eq!(h.prefs().settings.backups, yolu_io::BackupKeep::Count(4));
+    let message = h.message().to_owned();
     assert!(
         message.contains("GPU のメモリの設定が正しくありません"),
         "{message}"
@@ -638,28 +621,22 @@ fn the_budgets_wait_while_the_total_slider_is_held_and_apply_when_it_is_let_go()
         h.step();
         // 何フレーム回しても入らない（`run` は静まるまで複数フレーム回す）
         h.run();
-        assert!(h.state().state.prefs.dragging);
-        assert!(matches!(
-            h.state().state.prefs.settings.gpu_memory,
-            GpuMemory::Mib(_)
-        ));
+        assert!(h.prefs().dragging);
+        assert!(matches!(h.prefs().settings.gpu_memory, GpuMemory::Mib(_)));
         assert_eq!(
             h.state().gpu_budgets_applied(),
             Budgets::default(),
             "押しているあいだは入れない（キャンバスの合成が毎フレーム資源を手放す）"
         );
     }
-    let GpuMemory::Mib(mib) = h.state().state.prefs.settings.gpu_memory else {
+    let GpuMemory::Mib(mib) = h.prefs().settings.gpu_memory else {
         unreachable!()
     };
     release(&h, at(0.2), primary);
     h.step();
     h.run();
-    assert!(!h.state().state.prefs.dragging);
-    assert_eq!(
-        h.state().state.prefs.settings.gpu_memory,
-        GpuMemory::Mib(mib)
-    );
+    assert!(!h.prefs().dragging);
+    assert_eq!(h.prefs().settings.gpu_memory, GpuMemory::Mib(mib));
     assert_eq!(h.state().gpu_budgets_applied(), expect(GpuMemory::Mib(mib)));
     // 離したときの量を、設定のファイルへ 1 回書く
     assert!(std::fs::read_to_string(&path)
@@ -703,30 +680,22 @@ fn escape_while_dragging_the_total_slider_keeps_the_choice_that_was_there() {
         move_to(&h, at(0.6));
         h.step();
         assert!(
-            matches!(h.state().state.prefs.settings.gpu_memory, GpuMemory::Mib(_)),
+            matches!(h.prefs().settings.gpu_memory, GpuMemory::Mib(_)),
             "{start:?}"
         );
-        assert!(h.state().state.prefs.dragging);
+        assert!(h.prefs().dragging);
         // Esc: 押す前の選びへ戻り、押している印は消える
         key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.step();
-        assert_eq!(
-            h.state().state.prefs.settings.gpu_memory,
-            start,
-            "押す前の選びに戻る"
-        );
-        assert!(!h.state().state.prefs.dragging);
+        assert_eq!(h.prefs().settings.gpu_memory, start, "押す前の選びに戻る");
+        assert!(!h.prefs().dragging);
         // 続けて動かしても、離しても、選びは変わらない。何も書かず、予算も入れ直さない
         move_to(&h, at(0.9));
         h.step();
         release(&h, at(0.9), primary);
         h.step();
         h.run();
-        assert_eq!(
-            h.state().state.prefs.settings.gpu_memory,
-            start,
-            "{start:?}"
-        );
+        assert_eq!(h.prefs().settings.gpu_memory, start, "{start:?}");
         assert_eq!(h.state().gpu_budgets_applied(), applied_before, "{start:?}");
         assert_eq!(
             std::fs::read_to_string(&path).ok(),

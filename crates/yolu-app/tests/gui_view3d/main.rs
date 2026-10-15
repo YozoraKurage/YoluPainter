@@ -7,6 +7,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+use common::drive::Drive;
 use egui::{pos2, Rect};
 use egui_kittest::Harness;
 use yolu_app::{Tab, YoluApp};
@@ -46,7 +47,7 @@ pub fn group_rect(h: &Harness<'_, YoluApp>, first: Tab, below: Option<Tab>) -> R
 
 /// `base` に、開いているポップアップ（入れ子のメニューを含む）の範囲を足して、周りに 8 点の余白をつけた範囲。
 pub fn with_popup(h: &Harness<'_, YoluApp>, base: Rect) -> Rect {
-    match h.state().state.popup.as_ref() {
+    match h.popup().as_ref() {
         Some(popup) => base.union(popup.state.rect).expand(8.0),
         None => base,
     }
@@ -102,3 +103,23 @@ mod view3d_select;
 mod view3d_select_overlay;
 mod view3d_select_pen;
 mod view3d_sets;
+
+/// 画面の外枠（`YoluApp`）を直に持つテストも、AppState の欄を運転の口で読み書きする。
+impl common::drive::Drive for YoluApp {
+    fn app(&self) -> &yolu_app::state::AppState {
+        &self.state
+    }
+    fn app_mut(&mut self) -> &mut yolu_app::state::AppState {
+        &mut self.state
+    }
+}
+
+/// AppState だけを持つ画面のテスト（パネル 1 枚を描く `Harness<AppState>`）の口。
+impl common::drive::Drive for Harness<'_, yolu_app::state::AppState> {
+    fn app(&self) -> &yolu_app::state::AppState {
+        self.state()
+    }
+    fn app_mut(&mut self) -> &mut yolu_app::state::AppState {
+        self.state_mut()
+    }
+}

@@ -3,6 +3,7 @@
 //! 取り消しの行き先（読むだけのセット・別のタブ）、ファイルのウィンドウの頼み、1 フレームに複数のポインタの動き・モデルの入れ替え。
 //! ポーズの欄はドックのタブ（`Tab::Pose`）。欄の中の試験（インスペクター・戻し・面を隠す・日英）は `pose_ui.rs`。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -40,31 +41,26 @@ fn float_pose_tab(h: &mut Harness<'static, YoluApp>) {
 }
 
 fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
 fn bone(h: &Harness<'_, YoluApp>, name: &str) -> usize {
-    let s = h.state().state.view3d.pose.session.as_ref().unwrap();
+    let s = h.view3d().pose.session.as_ref().unwrap();
     s.rig.bones().iter().position(|b| b.name == name).unwrap()
 }
 
 /// 右腕の筒（メッシュ 1）の三角形のうち、x が from..to（休みの形）で、カメラに向いた三角形の真ん中の画面の点と、その三角形の
 /// 通し番号・UV。
 fn arm_point(h: &Harness<'_, YoluApp>, rect: Rect, from: f32, to: f32) -> (Pos2, usize, Vec2) {
-    let app = &h.state().state;
-    let s = app.view3d.pose.session.as_ref().unwrap();
+    let app = h.app();
+    let s = app.view3d().pose.session.as_ref().unwrap();
     let rest = s.rest_geometry();
-    let model = app.view3d.model.as_ref().unwrap();
+    let model = app.view3d().model.as_ref().unwrap();
     let first = s.rig.meshes()[0].mesh.triangle_count();
     let count = s.rig.meshes()[1].mesh.triangle_count();
-    let cam = app.view3d.camera.position();
+    let cam = app.view3d().camera.position();
     for i in first..first + count {
         let r = &rest.triangles()[i];
         let x = (r.a.x + r.b.x + r.c.x) / 3.0;
@@ -82,7 +78,7 @@ fn arm_point(h: &Harness<'_, YoluApp>, rect: Rect, from: f32, to: f32) -> (Pos2,
 
 /// ギズモの輪 axis の、カメラ側で、ほかの輪から離れた点。
 fn ring_point(h: &Harness<'_, YoluApp>, rect: Rect, axis: usize) -> Pos2 {
-    let r = gizmo::current_rings(&h.state().state, rect).expect("輪");
+    let r = gizmo::current_rings(h.app(), rect).expect("輪");
     let others: Vec<Vec2> = r
         .points
         .iter()
@@ -107,27 +103,11 @@ fn ring_point(h: &Harness<'_, YoluApp>, rect: Rect, axis: usize) -> Pos2 {
 }
 
 fn rotation(h: &Harness<'_, YoluApp>, b: usize) -> Quat {
-    h.state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .pose()
-        .locals[b]
-        .rotation
+    h.view3d().pose.session.as_ref().unwrap().pose().locals[b].rotation
 }
 
 fn undo_len(h: &Harness<'_, YoluApp>) -> usize {
-    h.state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .undo_len()
+    h.view3d().pose.session.as_ref().unwrap().undo_len()
 }
 
 fn select_upper_arm(h: &mut Harness<'static, YoluApp>, rect: Rect) -> usize {
@@ -138,14 +118,7 @@ fn select_upper_arm(h: &mut Harness<'static, YoluApp>, rect: Rect) -> usize {
     click(h, at);
     let upper = bone(h, "右上腕");
     assert_eq!(
-        h.state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .selected,
+        h.view3d().pose.session.as_ref().unwrap().selected,
         Some(upper),
         "面を押すと、そこを動かす骨"
     );
@@ -156,13 +129,13 @@ fn select_upper_arm(h: &mut Harness<'static, YoluApp>, rect: Rect) -> usize {
 fn loading_the_figure_shows_the_pose_panel_and_tree() {
     let (mut h, rect) = figure_view(256);
     {
-        let app = &h.state().state;
-        assert!(app.view3d.pose.session.is_some());
-        assert_eq!(app.view3d.model.as_ref().unwrap().name, "試しの人形");
+        let app = h.app();
+        assert!(app.view3d().pose.session.is_some());
+        assert_eq!(app.view3d().model.as_ref().unwrap().name, "試しの人形");
     }
     // 3D の表示域はポーズの欄に削られない（欄はドックのタブ）
     assert!(rect.width() > 500.0, "{rect:?}");
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
     // 木: 根と、その下の 1 段が開いている
     for name in ["腰", "背骨", "右太もも"] {
@@ -183,14 +156,11 @@ fn the_gizmo_rotates_the_selected_bone_with_undo_escape_and_focus_loss() {
     float_pose_tab(&mut h);
     let upper = select_upper_arm(&mut h, rect);
     assert!(h.query_by_label("右上腕").is_some(), "選んだ骨まで木が開く");
-    assert!(
-        !h.state().state.doc.can_undo(),
-        "ポーズのモードでは描かない"
-    );
+    assert!(!h.doc().can_undo(), "ポーズのモードでは描かない");
     let rest = rotation(&h, upper);
     // Z の輪を掴んで、輪に沿って動かす
     let at = ring_point(&h, rect, 2);
-    let r = gizmo::current_rings(&h.state().state, rect).unwrap();
+    let r = gizmo::current_rings(h.app(), rect).unwrap();
     let c = pos2(
         rect.left() + r.center_screen.x,
         rect.top() + r.center_screen.y,
@@ -199,7 +169,7 @@ fn the_gizmo_rotates_the_selected_bone_with_undo_escape_and_focus_loss() {
     let tangent = egui::vec2(-radial.y, radial.x);
     press(&h, at, PointerButton::Primary);
     h.step();
-    assert!(h.state().state.view3d.pose.drag.is_some(), "輪を掴んだ");
+    assert!(h.view3d().pose.drag.is_some(), "輪を掴んだ");
     for k in 1..=4 {
         move_to(&h, at + tangent * (10.0 * k as f32));
         h.step();
@@ -209,8 +179,8 @@ fn the_gizmo_rotates_the_selected_bone_with_undo_escape_and_focus_loss() {
     let turned = rotation(&h, upper);
     assert!(turned.angle_between(rest) > 0.2, "回った: {turned}");
     assert_eq!(undo_len(&h), 1, "ドラッグ 1 回で取り消し 1 つ");
-    assert!(h.state().state.view3d.pose.drag.is_none());
-    assert!(!h.state().state.doc.can_undo(), "画素は変わらない");
+    assert!(h.view3d().pose.drag.is_none());
+    assert!(!h.doc().can_undo(), "画素は変わらない");
     // ポーズのモードでは Ctrl+Z がポーズを戻す
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
@@ -242,58 +212,31 @@ fn the_gizmo_rotates_the_selected_bone_with_undo_escape_and_focus_loss() {
     h.step();
     h.event(Event::WindowFocused(false));
     h.run();
-    assert!(h.state().state.view3d.pose.drag.is_none());
+    assert!(h.view3d().pose.drag.is_none());
     assert_eq!(undo_len(&h), 2);
-    assert!(!h
-        .state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .is_editing());
+    assert!(!h.view3d().pose.session.as_ref().unwrap().is_editing());
     // 戻す
     h.state_mut().apply(Action::Pose(PoseAction::Reset));
     h.run();
-    assert!(!h
-        .state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .is_posed());
+    assert!(!h.view3d().pose.session.as_ref().unwrap().is_posed());
 }
 
 #[test]
 fn painting_lands_on_the_posed_shape_in_the_arm_uvs() {
     let (mut h, rect) = figure_view(512);
-    h.state_mut().state.color.set_main([0.9, 0.1, 0.1, 1.0]);
-    h.state_mut().state.brush.radius = 4.0;
+    h.color_mut().set_main([0.9, 0.1, 0.1, 1.0]);
+    h.brush_mut().radius = 4.0;
     // 右腕を下ろして肘を曲げる
     let (upper, lower) = (bone(&h, "右上腕"), bone(&h, "右前腕"));
-    let mut p = h
-        .state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .pose()
-        .clone();
+    let mut p = h.view3d().pose.session.as_ref().unwrap().pose().clone();
     p.locals[upper].rotation = Quat::from_rotation_z(-1.2);
     p.locals[lower].rotation = Quat::from_rotation_y(0.6);
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
     h.run();
     // 前腕（x = 0.55〜0.7）の、ポーズを付けた後の場所を押して描く
     let (at, tri, uv) = arm_point(&h, rect, 0.55, 0.7);
     let rest = h
-        .state()
-        .state
-        .view3d
+        .view3d()
         .pose
         .session
         .as_ref()
@@ -306,16 +249,16 @@ fn painting_lands_on_the_posed_shape_in_the_arm_uvs() {
         "休みの形とは違う場所"
     );
     click(&mut h, at);
-    let app = &h.state().state;
-    assert!(app.doc.can_undo(), "{}", app.message);
-    let size = app.doc.width() as f32;
-    let px = composite_pixel(&app.doc, (uv.x * size) as u32, (uv.y * size) as u32);
+    let app = h.app();
+    assert!(app.doc().can_undo(), "{}", app.message());
+    let size = app.doc().width() as f32;
+    let px = composite_pixel(app.doc(), (uv.x * size) as u32, (uv.y * size) as u32);
     assert!(
         px[3] > 0 && px[0] > 150,
         "押した三角形の UV に描いた: {px:?}"
     );
     // 描いたのは腕の UV アイランド（u 0.3〜0.47）の中だけ
-    let doc = &app.doc;
+    let doc = app.doc();
     for y in (0..doc.height()).step_by(2) {
         for x in (0..doc.width()).step_by(2) {
             if composite_pixel(doc, x, y)[3] > 0 {
@@ -327,25 +270,17 @@ fn painting_lands_on_the_posed_shape_in_the_arm_uvs() {
     // 画素の取り消しはポーズに触れない（ポーズのモードではない）
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert!(!h.state().state.doc.can_undo());
-    assert!(h
-        .state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .is_posed());
+    assert!(!h.doc().can_undo());
+    assert!(h.view3d().pose.session.as_ref().unwrap().is_posed());
 }
 
 #[test]
 fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
     let (mut h, rect) = figure_view(256);
     // 胴に描き始める
-    let s = h.state().state.view3d.pose.session.as_ref().unwrap();
-    let model = h.state().state.view3d.model.clone().unwrap();
-    let cam = h.state().state.view3d.camera.position();
+    let s = h.view3d().pose.session.as_ref().unwrap();
+    let model = h.view3d().model.clone().unwrap();
+    let cam = h.view3d().camera.position();
     let n = s.rig.meshes()[0].mesh.triangle_count();
     let t = model.geometry.triangles()[..n]
         .iter()
@@ -360,61 +295,49 @@ fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
     h.step();
     move_to(&h, at + egui::vec2(6.0, 0.0));
     h.step();
-    assert!(h.state().state.is_stroking());
-    let revision = h.state().state.view3d.model.as_ref().unwrap().revision();
+    assert!(h.app().is_stroking());
+    let revision = h.view3d().model.as_ref().unwrap().revision();
     for a in [
         PoseAction::ToggleMode,
         PoseAction::Reset,
         PoseAction::LoadFigure,
     ] {
         h.state_mut().apply(Action::Pose(a));
-        assert_eq!(h.state().state.message, "描いている間はできません。");
+        assert_eq!(h.message(), "描いている間はできません。");
     }
-    let p = h
-        .state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .pose()
-        .clone();
-    assert!(pose::set_pose(&mut h.state_mut().state.view3d, p).is_err());
-    assert_eq!(h.state().state.mode, EditorMode::Paint);
+    let p = h.view3d().pose.session.as_ref().unwrap().pose().clone();
+    assert!(pose::set_pose(h.view3d_mut(), p).is_err());
+    assert_eq!(h.mode(), EditorMode::Paint);
     h.step();
-    assert_eq!(
-        h.state().state.view3d.model.as_ref().unwrap().revision(),
-        revision
-    );
+    assert_eq!(h.view3d().model.as_ref().unwrap().revision(), revision);
     // Esc でストロークを捨てる: 取り残さない
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
     release(&h, at, PointerButton::Primary);
     h.run();
-    assert!(!h.state().state.is_stroking());
-    assert!(!h.state().state.doc.has_active_stroke());
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.app().is_stroking());
+    assert!(!h.doc().has_active_stroke());
+    assert!(!h.doc().can_undo());
     // もう一度描いて、フォーカスを失ったら確定する
     press(&h, at, PointerButton::Primary);
     h.step();
     h.event(Event::WindowFocused(false));
     h.run();
-    assert!(!h.state().state.doc.has_active_stroke());
-    assert!(h.state().state.doc.can_undo());
+    assert!(!h.doc().has_active_stroke());
+    assert!(h.doc().can_undo());
     release(&h, at, PointerButton::Primary);
     h.run();
     // 描き終えたらポーズを変えられる
     h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
-    assert_eq!(h.state().state.mode, EditorMode::Pose);
+    assert_eq!(h.mode(), EditorMode::Pose);
 }
 
 #[test]
 fn a_blend_shape_slider_changes_the_shape_as_one_undo_step() {
     let (mut h, _rect) = figure_view(256);
-    h.state_mut().state.ui.sections.insert("pose.hide", false);
+    h.ui_mut().sections.insert("pose.hide", false);
     float_pose_tab(&mut h);
-    let before: Vec<Vec3> = h.state().state.view3d.model.as_ref().unwrap().meshes[0]
+    let before: Vec<Vec3> = h.view3d().model.as_ref().unwrap().meshes[0]
         .positions
         .clone();
     let slider = h.get_by_label("おなか").rect();
@@ -429,12 +352,12 @@ fn a_blend_shape_slider_changes_the_shape_as_one_undo_step() {
         })
         .collect();
     drag(&mut h, &points);
-    let app = &h.state().state;
-    let s = app.view3d.pose.session.as_ref().unwrap();
+    let app = h.app();
+    let s = app.view3d().pose.session.as_ref().unwrap();
     let w = s.pose().blend_weights[0][0];
     assert!((60.0..=90.0).contains(&w), "重み {w}");
     assert_eq!(s.undo_len(), 1, "ドラッグ 1 回で取り消し 1 つ");
-    let after = &app.view3d.model.as_ref().unwrap().meshes[0].positions;
+    let after = &app.view3d().model.as_ref().unwrap().meshes[0].positions;
     assert!(
         before
             .iter()
@@ -442,11 +365,11 @@ fn a_blend_shape_slider_changes_the_shape_as_one_undo_step() {
             .any(|(a, b)| (*a - *b).length() > 0.01),
         "おなかが出た"
     );
-    assert!(!app.doc.can_undo());
+    assert!(!app.doc().can_undo());
     h.state_mut().apply(Action::Pose(PoseAction::Undo));
     h.run();
     assert_eq!(
-        h.state().state.view3d.model.as_ref().unwrap().meshes[0].positions,
+        h.view3d().model.as_ref().unwrap().meshes[0].positions,
         before
     );
 }
@@ -454,29 +377,13 @@ fn a_blend_shape_slider_changes_the_shape_as_one_undo_step() {
 /// 上腕を z まわりに angle 回したポーズにする（取り消しに 1 つ積む）。
 fn bend_upper_arm(h: &mut Harness<'static, YoluApp>, angle: f32) {
     let upper = bone(h, "右上腕");
-    let mut p = h
-        .state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .pose()
-        .clone();
+    let mut p = h.view3d().pose.session.as_ref().unwrap().pose().clone();
     p.locals[upper].rotation = Quat::from_rotation_z(angle);
-    pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+    pose::set_pose(h.view3d_mut(), p).unwrap();
 }
 
 fn is_posed(h: &Harness<'_, YoluApp>) -> bool {
-    h.state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .is_posed()
+    h.view3d().pose.session.as_ref().unwrap().is_posed()
 }
 
 #[test]
@@ -497,23 +404,19 @@ fn pose_undo_works_in_a_read_only_texture_set() {
         )],
         0,
     );
-    h.state_mut().state.replace_sets(sets, doc);
+    h.app_mut().replace_sets(sets, doc);
     h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
     h.run();
-    let app = &h.state().state;
+    let app = h.app();
     assert!(app.read_only_reason().is_some());
-    assert!(app.mode == EditorMode::Pose && app.view3d.visible);
+    assert!(app.mode() == EditorMode::Pose && app.view3d().visible);
     assert_eq!(undo_len(&h), 2);
     // Ctrl+Z・Ctrl+Shift+Z は、読むだけのセットでもポーズを戻す・やり直す
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     assert_eq!(undo_len(&h), 1);
     assert!(rotation(&h, upper).angle_between(Quat::from_rotation_z(-0.5)) < 1e-5);
-    assert!(
-        !h.state().state.message.contains("読むだけ"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(!h.message().contains("読むだけ"), "{}", h.message());
     key(&h, Key::Z, Modifiers::COMMAND | Modifiers::SHIFT);
     h.run();
     assert_eq!(undo_len(&h), 2);
@@ -523,15 +426,11 @@ fn pose_undo_works_in_a_read_only_texture_set() {
     let at = popup_item(&h, "取り消し").center();
     click(&mut h, at);
     assert_eq!(undo_len(&h), 1);
-    assert!(h.state().state.read_only_reason().is_some());
+    assert!(h.app().read_only_reason().is_some());
     // ポーズのモードでなければ、読むだけのセットの文書の取り消しは断られる
     h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
     h.state_mut().apply(Action::Undo);
-    assert!(
-        h.state().state.message.contains("読むだけ"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().contains("読むだけ"), "{}", h.message());
     assert_eq!(undo_len(&h), 1, "ポーズは動かない");
 }
 
@@ -545,13 +444,13 @@ fn undo_goes_to_the_pixels_while_the_3d_tab_is_behind_the_canvas() {
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
     assert!(canvas_pixel(&h, c)[3] > 0, "描けた");
-    assert!(h.state().state.doc.can_undo());
+    assert!(h.doc().can_undo());
     h.state_mut().apply(Action::Pose(PoseAction::ToggleMode));
     h.run();
     // キャンバスのタブが前（ポーズのモードは残る）
     assert!(h.state().view3d_rect().is_none(), "3D ビューは裏");
-    assert!(!h.state().state.view3d.visible);
-    assert_eq!(h.state().state.mode, EditorMode::Pose, "モードは残る");
+    assert!(!h.view3d().visible);
+    assert_eq!(h.mode(), EditorMode::Pose, "モードは残る");
     // Ctrl+Z は見えているキャンバスの画素を戻し、見えていないポーズは戻さない
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
@@ -561,7 +460,7 @@ fn undo_goes_to_the_pixels_while_the_3d_tab_is_behind_the_canvas() {
     // 3D ビューへ戻れば、続きから（Ctrl+Z はポーズ）
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
-    assert!(h.state().state.view3d.visible);
+    assert!(h.view3d().visible);
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
     assert!(!is_posed(&h), "ポーズが戻った");
@@ -575,23 +474,23 @@ fn opening_an_fbx_asks_for_the_file_window_instead_of_opening_one() {
     let at = h.get_by_label("FBX を開く").rect().center();
     click(&mut h, at);
     assert_eq!(
-        h.state().state.dialog_request,
+        *h.dialog_request(),
         Some(DialogRequest::OpenModel),
         "ウィンドウは YoluApp が開く（試験では開かず、頼みが残る）"
     );
-    assert!(!h.state().state.view3d.pose.is_loading());
-    h.state_mut().state.dialog_request = None;
+    assert!(!h.view3d().pose.is_loading());
+    *h.dialog_request_mut() = None;
     // メニュー（ファイル）には無い（モデルは、新規プロジェクト・プロジェクト設定・ドロップ・ポーズの欄で開く）
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     assert!(h.query_by_label("3D ビューに FBX を開く…").is_none());
-    assert!(!h.state().state.view3d.pose.is_loading());
+    assert!(!h.view3d().pose.is_loading());
 }
 
 /// ギズモの輪 2 を掴んで、輪に沿った向き（画面の点の単位の向き）と掴んだ点を返す。
 fn grab_ring(h: &mut Harness<'static, YoluApp>, rect: Rect) -> (Pos2, egui::Vec2) {
     let at = ring_point(h, rect, 2);
-    let r = gizmo::current_rings(&h.state().state, rect).unwrap();
+    let r = gizmo::current_rings(h.app(), rect).unwrap();
     let c = pos2(
         rect.left() + r.center_screen.x,
         rect.top() + r.center_screen.y,
@@ -599,16 +498,16 @@ fn grab_ring(h: &mut Harness<'static, YoluApp>, rect: Rect) -> (Pos2, egui::Vec2
     let radial = (at - c).normalized();
     press(h, at, PointerButton::Primary);
     h.step();
-    assert!(h.state().state.view3d.pose.drag.is_some(), "輪を掴んだ");
+    assert!(h.view3d().pose.drag.is_some(), "輪を掴んだ");
     (at, egui::vec2(-radial.y, radial.x))
 }
 
 fn model_revision(h: &Harness<'_, YoluApp>) -> u32 {
-    h.state().state.view3d.model.as_ref().unwrap().revision()
+    h.view3d().model.as_ref().unwrap().revision()
 }
 
 fn drag_angle(h: &Harness<'_, YoluApp>) -> f32 {
-    h.state().state.view3d.pose.drag.as_ref().unwrap().angle
+    h.view3d().pose.drag.as_ref().unwrap().angle
 }
 
 /// events を 1 フレームに全部入れて回す（`Harness::step` は、待たせたイベントを 1 つずつ別のフレームで流すので、
@@ -650,7 +549,7 @@ fn many_pointer_moves_in_one_frame_rebuild_the_pose_once() {
     });
     one_frame(&mut h, events);
     h.run();
-    assert!(h.state().state.view3d.pose.drag.is_none());
+    assert!(h.view3d().pose.drag.is_none());
     assert_eq!(undo_len(&h), 1);
     assert!(
         rotation(&h, upper).angle_between(turned) > 1e-3,
@@ -707,11 +606,7 @@ fn measure_pose_to_paint_on_the_avatar_figure() {
     use std::time::Instant;
     use yolu_core::skin::{demo_figure, FigureDetail};
     let mut h = app(1280.0, 860.0, 2048);
-    pose::load_rig(
-        &mut h.state_mut().state.view3d,
-        demo_figure(FigureDetail::AVATAR),
-    )
-    .unwrap();
+    pose::load_rig(h.view3d_mut(), demo_figure(FigureDetail::AVATAR)).unwrap();
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().unwrap();
@@ -719,20 +614,11 @@ fn measure_pose_to_paint_on_the_avatar_figure() {
     let lower = bone(&h, "右前腕");
     let (mut cpu, mut frame, mut idle, mut dab) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for k in 0..7 {
-        let mut p = h
-            .state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .pose()
-            .clone();
+        let mut p = h.view3d().pose.session.as_ref().unwrap().pose().clone();
         p.locals[upper].rotation = Quat::from_rotation_z(-0.3 - 0.1 * k as f32);
         p.locals[lower].rotation = Quat::from_rotation_y(0.2 + 0.1 * k as f32);
         let clock = Instant::now();
-        pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
+        pose::set_pose(h.view3d_mut(), p).unwrap();
         cpu.push(clock.elapsed().as_secs_f64() * 1000.0);
         let clock = Instant::now();
         h.step();
@@ -751,18 +637,10 @@ fn measure_pose_to_paint_on_the_avatar_figure() {
         v.sort_by(|a, b| a.total_cmp(b));
         v[v.len() / 2]
     };
-    let t = h
-        .state()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_ref()
-        .unwrap()
-        .timings;
+    let t = h.view3d().pose.session.as_ref().unwrap().timings;
     println!(
         "人形 {} 三角形: ポーズ → CPU {:.2} ms（最後: スキニング {:.2}・写しと refit {:.2}）、次のフレーム {:.1} ms（変わらないフレーム {:.1} ms）、最初のダブを押して離すまでのフレーム {:.1} ms",
-        h.state().state.view3d.model.as_ref().unwrap().triangle_count(),
+        h.view3d().model.as_ref().unwrap().triangle_count(),
         median(cpu),
         t.skin_ms,
         t.refit_ms,

@@ -12,6 +12,7 @@
 //! 環境光の反射の場面（`uniform_env`）は、3D ビューの環境を「なし」（一様な環境光）にし、Unity ではマテリアルのキューブマップの差し替え
 //! （`_ReflectionCubeOverride`）で同じ一様な色を映す（シーンの反射プローブの絵を揃えずに、反射の式だけを比べる）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -1656,9 +1657,9 @@ fn render_as(
         );
     }
     {
-        let state = &mut h.state_mut().state;
-        let revision = state.view3d.next_revision();
-        state.view3d.material = 0;
+        let state = h.app_mut();
+        let revision = state.view3d_mut().next_revision();
+        state.view3d_mut().material = 0;
         let model = ViewModel::new(
             "場面",
             scene.meshes.clone(),
@@ -1667,8 +1668,8 @@ fn render_as(
         )
         .unwrap();
         model.tangents();
-        state.view3d.set_model(model);
-        state.view3d.camera = scene.camera;
+        state.view3d_mut().set_model(model);
+        state.view3d_mut().camera = scene.camera;
     }
     h.run();
     let light = scene_light(scene.name);
@@ -1681,20 +1682,20 @@ fn render_as(
     // Unity の参照の絵は多サンプルなし。縁の比べ（片方だけの画素・平均）が多サンプルでずれないよう、この比べは 1× で描く
     h.state_mut().apply(Action::View3d(Op::Antialias(1)));
     if uniform_env(scene.name) {
-        h.state_mut().state.view3d.display.ambient = [1.0; 3];
+        h.view3d_mut().display.ambient = [1.0; 3];
         h.state_mut().apply(Action::View3d(Op::Env(EnvKind::None)));
     } else {
         h.state_mut().apply(Action::View3d(Op::Env(EnvKind::Sky)));
     }
     {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         (scene.paint)(doc);
         setup(doc);
     }
     // マットキャップの絵は文書の効果の入力の画像として渡す（棚の画像と同じ道）
     if let Some((id, (n, rgba))) = scene_image(scene.name) {
         let image = ImageInput::new(n, n, rgba, ImageColorSpace::Srgb).unwrap();
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         let inputs = doc.effect_inputs().clone().with_image(id, image);
         doc.set_effect_inputs(inputs).unwrap();
     }
@@ -1735,7 +1736,7 @@ fn export_and_render() {
         crop.save(dir.join(format!("ours_{}.png", scene.name)))
             .unwrap();
         // Unity の場面の記述
-        let display = h.state().state.view3d.display;
+        let display = h.view3d().display;
         let to_light = display.light_direction();
         let cam = scene.camera;
         let q = camera_rotation(&cam);
@@ -1769,7 +1770,7 @@ fn export_and_render() {
         let mesh_file = format!("{}.mesh.txt", scene.name);
         write_mesh(&dir.join(&mesh_file), &scene.meshes);
         writeln!(desc, "mesh {mesh_file}").unwrap();
-        let doc = &h.state().state.doc;
+        let doc = h.doc();
         let look = doc.look().clone();
         let standard = look.kind == LookKind::Standard;
         if standard {

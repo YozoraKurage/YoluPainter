@@ -2,6 +2,7 @@
 //! 面を押して引くと選んでいるレイヤーに作る（種類ごとの点・取り消し 1 回・特殊定規の印）、モデルの外で押したら作らない、対称は引いた線と視線で決めた面か
 //! 境界の中心の X の鏡、ストロークの寄せ先が画面に写した線に乗る（直線・平行線・同心円・パース）、保存して開き直して同じ、「スナップする特殊定規の切り替え」が
 //! ポインタのあるビューの空間を回す。絵は 3D の対称定規・直線定規・選んだ定規とギズモ（日英）。編集のモードで動かす試験は `view3d_rulers_edit.rs`。
+use crate::common::drive::Drive;
 use crate::common::*;
 use crate::view3d_brush::{cube_view, press_with, release_with};
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -17,11 +18,11 @@ use yolu_core::{Ruler, RulerKind, RulerPlace};
 type H = Harness<'static, YoluApp>;
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn screen(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = st(h).view3d.camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -31,13 +32,13 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 }
 
 fn hit_at(h: &H, rect: Rect, p: Pos2) -> Option<SurfaceHit> {
-    let model = st(h).view3d.model.clone()?;
-    let view = st(h).view3d.camera.view(rect.width(), rect.height());
+    let model = st(h).view3d().model.clone()?;
+    let view = st(h).view3d().camera.view(rect.width(), rect.height());
     pick(&model.geometry, &view, local(rect, p))
 }
 
 fn tool(h: &mut H, t: Tool) {
-    h.state_mut().state.apply(Action::SelectTool(t));
+    h.act(Action::SelectTool(t));
     h.run();
 }
 
@@ -46,7 +47,7 @@ fn pull(h: &mut H, a: Pos2, b: Pos2) {
 }
 
 fn kind(h: &mut H, k: RulerKind) {
-    h.state_mut().state.rulers.kind = k;
+    h.rulers_mut().kind = k;
 }
 
 /// 手前の面（−Z。カメラから見える）の 2 点。
@@ -59,7 +60,7 @@ fn front(h: &H, rect: Rect) -> (Pos2, Pos2) {
 
 /// 選んでいるレイヤーの定規。
 fn rulers(h: &H) -> Vec<Ruler> {
-    let layer = st(h).selected_layer.expect("選んでいるレイヤー");
+    let layer = st(h).selected_layer().expect("選んでいるレイヤー");
     crate::common::rulers::of(st(h), layer)
 }
 
@@ -87,22 +88,22 @@ fn pulling_on_the_model_makes_a_3d_ruler_of_the_chosen_kind_in_one_undo_step() {
         kind(&mut h, k);
         let (a, b) = front(&h, rect);
         let (pa, pb) = (hit_at(&h, rect, a).unwrap(), hit_at(&h, rect, b).unwrap());
-        let steps = st(&h).doc.undo_count();
+        let steps = st(&h).doc().undo_count();
         pull(&mut h, a, b);
         let made = rulers(&h);
-        assert_eq!(made.len(), 1, "{k:?} {}", st(&h).message);
+        assert_eq!(made.len(), 1, "{k:?} {}", st(&h).message());
         let r = &made[0];
         assert_eq!(r.kind, k);
         let (ra, rb, up) = points(r);
         assert!(near3(ra, pa.position), "{k:?}: a は押した面の点");
         assert!(near3(rb, pb.position), "{k:?}: b は離した面の点");
         assert!(near3(up, pa.normal), "{k:?}: 向きは押した面の法線 {up}");
-        assert_eq!(st(&h).doc.undo_count(), steps + 1, "{k:?}: 取り消し 1 回");
-        let layer = st(&h).selected_layer.unwrap();
-        assert_eq!(st(&h).rulers.selected, Some((layer, r.id)), "{k:?}");
+        assert_eq!(st(&h).doc().undo_count(), steps + 1, "{k:?}: 取り消し 1 回");
+        let layer = st(&h).selected_layer().unwrap();
+        assert_eq!(st(&h).rulers().selected, Some((layer, r.id)), "{k:?}");
         assert_eq!(r.snap, k != RulerKind::Line, "{k:?}: 特殊定規には印");
         // 取り消しで消える
-        h.state_mut().state.apply(Action::Undo);
+        h.act(Action::Undo);
         assert!(rulers(&h).is_empty(), "{k:?}");
     }
 }
@@ -112,13 +113,17 @@ fn a_read_only_set_refuses_to_make_a_3d_ruler_and_changes_nothing() {
     let (mut h, rect) = cube_view();
     tool(&mut h, Tool::Ruler);
     kind(&mut h, RulerKind::Line);
-    h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
-    let steps = st(&h).doc.undo_count();
+    h.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
+    let steps = st(&h).doc().undo_count();
     let (a, b) = front(&h, rect);
     pull(&mut h, a, b);
     assert!(rulers(&h).is_empty());
-    assert_eq!(st(&h).doc.undo_count(), steps);
-    assert!(st(&h).message.contains("読むだけ"), "{}", st(&h).message);
+    assert_eq!(st(&h).doc().undo_count(), steps);
+    assert!(
+        st(&h).message().contains("読むだけ"),
+        "{}",
+        st(&h).message()
+    );
     assert!(!yolu_app::view3d::draft::dragging(st(&h)));
 }
 
@@ -128,7 +133,7 @@ fn a_perspective_ruler_follows_the_one_or_two_points_of_the_tool() {
         let (mut h, rect) = cube_view();
         tool(&mut h, Tool::Ruler);
         kind(&mut h, RulerKind::Perspective);
-        h.state_mut().state.rulers.two_points = two;
+        h.rulers_mut().two_points = two;
         let (a, b) = front(&h, rect);
         pull(&mut h, a, b);
         assert_eq!(rulers(&h)[0].two_points, two);
@@ -151,16 +156,16 @@ fn pressing_outside_the_model_or_pulling_nothing_makes_no_ruler_except_the_click
         // モデルの外で押す（表示域の隅）
         let outside = rect.min + egui::vec2(12.0, 12.0);
         assert!(hit_at(&h, rect, outside).is_none());
-        let steps = st(&h).doc.undo_count();
+        let steps = st(&h).doc().undo_count();
         pull(&mut h, outside, b);
         assert!(rulers(&h).is_empty(), "{k:?}: 外で押したら作らない");
-        assert_eq!(st(&h).doc.undo_count(), steps, "{k:?}");
+        assert_eq!(st(&h).doc().undo_count(), steps, "{k:?}");
         assert!(!yolu_app::view3d::draft::dragging(st(&h)), "{k:?}");
         // 面の上で押して、動かさずに離す: 対称だけは境界の中心の X の鏡
         click(&mut h, a);
         let made = rulers(&h);
         if k == RulerKind::Symmetry {
-            assert_eq!(made.len(), 1, "{}", st(&h).message);
+            assert_eq!(made.len(), 1, "{}", st(&h).message());
         } else {
             assert!(made.is_empty(), "{k:?}: 引かなければ作らない");
         }
@@ -181,7 +186,7 @@ fn a_symmetry_ruler_is_the_plane_of_the_pulled_line_and_the_sight_or_the_x_mirro
     assert!(near3(points(&r).0, pa.position), "鏡は押した面の点を通る");
     assert!(mirror.point.distance(pa.position) < 1e-4);
     // 鏡の面は、画面で引いた線の向きと視線の両方を含む（法線は両方に直交）
-    let view = st(&h).view3d.camera.view(rect.width(), rect.height());
+    let view = st(&h).view3d().camera.view(rect.width(), rect.height());
     let sight = (pa.position - view.position).normalize();
     let drawn = (b - a).normalized();
     let line = view.rotation * Vec3::X * drawn.x - view.rotation * Vec3::Y * drawn.y;
@@ -244,20 +249,24 @@ fn with_on_layer_off_the_ruler_goes_to_a_new_ruler_layer_and_the_selection_stays
     let (mut h, rect) = cube_view();
     tool(&mut h, Tool::Ruler);
     kind(&mut h, RulerKind::Line);
-    h.state_mut().state.rulers.on_layer = false;
-    let layer = st(&h).selected_layer.unwrap();
-    let steps = st(&h).doc.undo_count();
+    h.rulers_mut().on_layer = false;
+    let layer = st(&h).selected_layer().unwrap();
+    let steps = st(&h).doc().undo_count();
     let (a, b) = front(&h, rect);
     pull(&mut h, a, b);
-    assert_eq!(st(&h).selected_layer, Some(layer));
+    assert_eq!(st(&h).selected_layer(), Some(layer));
     assert!(rulers(&h).is_empty(), "選んでいるレイヤーには付けない");
     assert_eq!(crate::common::rulers::total(st(&h)), 1);
-    assert_eq!(st(&h).doc.undo_count(), steps + 1, "レイヤーと定規で 1 回");
+    assert_eq!(
+        st(&h).doc().undo_count(),
+        steps + 1,
+        "レイヤーと定規で 1 回"
+    );
 }
 
 /// 画面の点のうち、最後のストロークの点（凍結した寄せ先を通ったあと）。
 fn last_point(h: &H, rect: Rect) -> DVec2 {
-    let p = st(h).view3d.input.last_point.expect("点");
+    let p = st(h).view3d().input.last_point.expect("点");
     DVec2::new((p.x - rect.left()) as f64, (p.y - rect.top()) as f64)
 }
 
@@ -267,10 +276,10 @@ fn distance_to_line(a: DVec2, b: DVec2, p: DVec2) -> f64 {
 
 /// 3D の定規を置き、ブラシで `from` から `moves` の順に動かしたストロークの点を返す（押した点が最初）。
 fn stroke_points(h: &mut H, rect: Rect, ruler: Ruler, from: Pos2, moves: &[Pos2]) -> Vec<DVec2> {
-    crate::common::rulers::add(&mut h.state_mut().state, ruler);
+    crate::common::rulers::add(h.app_mut(), ruler);
     tool(h, Tool::Brush);
-    h.state_mut().state.rulers.snap_ruler = true;
-    h.state_mut().state.rulers.snap_special = true;
+    h.rulers_mut().snap_ruler = true;
+    h.rulers_mut().snap_special = true;
     press(h, from, PointerButton::Primary);
     h.step();
     let mut out = vec![last_point(h, rect)];
@@ -437,7 +446,7 @@ fn special_3d_rulers_do_not_snap_when_the_press_is_off_the_model_but_a_straight_
     let outside = rect.min + egui::vec2(40.0, 40.0);
     assert!(hit_at(&h, rect, outside).is_none());
     crate::common::rulers::add(
-        &mut h.state_mut().state,
+        h.app_mut(),
         Ruler::model(
             yolu_core::RulerId(1),
             RulerKind::Parallel,
@@ -449,23 +458,27 @@ fn special_3d_rulers_do_not_snap_when_the_press_is_off_the_model_but_a_straight_
     tool(&mut h, Tool::Brush);
     press(&h, outside, PointerButton::Primary);
     h.step();
-    assert!(st(&h).view3d.input.surface.is_some(), "{}", st(&h).message);
     assert!(
-        st(&h).view3d.input.ruler_constraint.is_none(),
+        st(&h).view3d().input.surface.is_some(),
+        "{}",
+        st(&h).message()
+    );
+    assert!(
+        st(&h).view3d().input.ruler_constraint.is_none(),
         "モデルの外で押すと、面の点が無いので平行線は寄せない"
     );
     release(&h, outside, PointerButton::Primary);
     h.run();
     // 同じ所の近く（画面で 10 点）を通る直線定規なら、面の点が無くても寄せる
     let to_world = |h: &H, p: Pos2| {
-        let view = st(h).view3d.camera.view(rect.width(), rect.height());
+        let view = st(h).view3d().camera.view(rect.width(), rect.height());
         let r = view.ray(local(rect, p));
         r.origin() + r.direction() * 2.0
     };
     let a = to_world(&h, outside + egui::vec2(-50.0, 10.0));
     let b = to_world(&h, outside + egui::vec2(50.0, 10.0));
     crate::common::rulers::add(
-        &mut h.state_mut().state,
+        h.app_mut(),
         Ruler::model(
             yolu_core::RulerId(1),
             RulerKind::Line,
@@ -479,7 +492,7 @@ fn special_3d_rulers_do_not_snap_when_the_press_is_off_the_model_but_a_straight_
     h.step();
     assert!(
         matches!(
-            st(&h).view3d.input.ruler_constraint,
+            st(&h).view3d().input.ruler_constraint,
             Some(Constraint::Line { .. })
         ),
         "直線定規は面の点が無くても、近ければ寄せる"
@@ -501,18 +514,16 @@ fn a_saved_3d_ruler_comes_back_the_same_after_reopening() {
     }
     let before = rulers(&h);
     assert_eq!(before.len(), 2);
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    h.state_mut().state.apply(Action::OpenProject(path));
+    h.act(Action::SaveProjectAs(path.clone()));
+    h.act(Action::OpenProject(path));
     h.run();
-    assert_eq!(rulers(&h), before, "{}", st(&h).message);
+    assert_eq!(rulers(&h), before, "{}", st(&h).message());
     let _ = std::fs::remove_dir_all(dir);
 }
 
 /// 印のある特殊定規の種類（空間ごと。2D か 3D）。
 fn marked(h: &H, model: bool) -> Option<RulerKind> {
-    let layer = st(h).selected_layer?;
+    let layer = st(h).selected_layer()?;
     crate::common::rulers::of(st(h), layer)
         .into_iter()
         .find(|r| r.snap && matches!(r.place, RulerPlace::Model { .. }) == model)
@@ -525,7 +536,7 @@ fn ctrl_4_switches_the_special_ruler_of_the_view_under_the_pointer_else_the_last
     h.state_mut().apply(Action::LoadDemoModel);
     h.run();
     {
-        let app = &mut h.state_mut().state;
+        let app = h.app_mut();
         for kind in [RulerKind::Parallel, RulerKind::Concentric] {
             crate::common::rulers::add_canvas(
                 app,
@@ -541,7 +552,7 @@ fn ctrl_4_switches_the_special_ruler_of_the_view_under_the_pointer_else_the_last
     }
     h.run();
     assert!(
-        st(&h).view3d.visible && st(&h).ui.canvas_visible,
+        st(&h).view3d().visible && st(&h).ui().canvas_visible,
         "2D も 3D も出ている"
     );
     // 最後に作った（同心円）に印。2D と 3D は別
@@ -582,7 +593,7 @@ fn ctrl_4_switches_the_special_ruler_of_the_view_under_the_pointer_else_the_last
         (yolu_app::rulers::Place::View3d, true),
         (yolu_app::rulers::Place::Canvas, false),
     ] {
-        h.state_mut().state.rulers.last_drew = Some(drew);
+        h.rulers_mut().last_drew = Some(drew);
         move_to(&h, outside);
         h.run();
         let before = (marked(&h, true), marked(&h, false));
@@ -601,7 +612,7 @@ fn ctrl_4_follows_the_view_where_a_gradient_or_a_shape_was_drawn_when_the_pointe
     h.state_mut().apply(Action::LoadDemoModel);
     h.run();
     {
-        let app = &mut h.state_mut().state;
+        let app = h.app_mut();
         for kind in [RulerKind::Parallel, RulerKind::Concentric] {
             crate::common::rulers::add_canvas(
                 app,
@@ -620,7 +631,7 @@ fn ctrl_4_follows_the_view_where_a_gradient_or_a_shape_was_drawn_when_the_pointe
     let canvas = canvas_rect(&h);
     let outside = pos2(20.0, canvas.center().y);
     assert!(!view3d.contains(outside) && !canvas.contains(outside));
-    assert_eq!(st(&h).rulers.last_drew, None, "まだ何も描いていない");
+    assert_eq!(st(&h).rulers().last_drew, None, "まだ何も描いていない");
     let ctrl_4 = |h: &mut H| {
         move_to(h, outside);
         h.run();
@@ -629,19 +640,19 @@ fn ctrl_4_follows_the_view_where_a_gradient_or_a_shape_was_drawn_when_the_pointe
     };
     // 3D ビューでグラデーションを引く（取り消し 1 回）→ 3D の印だけが回る
     tool(&mut h, Tool::Gradient);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let c = view3d.center();
     drag(
         &mut h,
         &[c + egui::vec2(-40.0, -20.0), c, c + egui::vec2(40.0, 30.0)],
     );
     assert!(
-        st(&h).doc.undo_count() > steps,
+        st(&h).doc().undo_count() > steps,
         "3D のグラデーションを引いた {}",
-        st(&h).message
+        st(&h).message()
     );
     assert_eq!(
-        st(&h).rulers.last_drew,
+        st(&h).rulers().last_drew,
         Some(yolu_app::rulers::Place::View3d)
     );
     let before = (marked(&h, true), marked(&h, false));
@@ -650,19 +661,19 @@ fn ctrl_4_follows_the_view_where_a_gradient_or_a_shape_was_drawn_when_the_pointe
     assert_eq!(marked(&h, false), before.1, "2D は変わらない");
     // 2D のキャンバスで図形を引く → 2D の印だけが回る
     tool(&mut h, Tool::Shape);
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let c = canvas.center();
     drag(
         &mut h,
         &[c + egui::vec2(-40.0, -20.0), c, c + egui::vec2(40.0, 30.0)],
     );
     assert!(
-        st(&h).doc.undo_count() > steps,
+        st(&h).doc().undo_count() > steps,
         "2D の図形を引いた {}",
-        st(&h).message
+        st(&h).message()
     );
     assert_eq!(
-        st(&h).rulers.last_drew,
+        st(&h).rulers().last_drew,
         Some(yolu_app::rulers::Place::Canvas)
     );
     let before = (marked(&h, true), marked(&h, false));
@@ -678,7 +689,7 @@ fn ctrl_4_follows_the_view_where_a_gradient_or_a_shape_was_drawn_when_the_pointe
         &[c + egui::vec2(-40.0, -20.0), c, c + egui::vec2(40.0, 30.0)],
     );
     assert_eq!(
-        st(&h).rulers.last_drew,
+        st(&h).rulers().last_drew,
         Some(yolu_app::rulers::Place::View3d)
     );
 }
@@ -693,7 +704,7 @@ fn shown_3d_rulers_are_drawn_and_a_hidden_one_is_not() {
     pull(&mut h, a, b);
     kind(&mut h, RulerKind::Symmetry);
     pull(&mut h, a, b);
-    crate::common::rulers::line(&mut h.state_mut().state, (0.0, 3.0), (60.0, 3.0));
+    crate::common::rulers::line(h.app_mut(), (0.0, 3.0), (60.0, 3.0));
     let shown = st(&h).rulers_shown(yolu_app::rulers::Place::View3d);
     assert_eq!(shown.len(), 2, "3D の定規だけ（2D の直線定規は出さない）");
     assert_eq!(
@@ -701,12 +712,8 @@ fn shown_3d_rulers_are_drawn_and_a_hidden_one_is_not() {
         2,
         "直線は「定規にスナップ」、対称は印のある 1 つ"
     );
-    let layer = st(&h).selected_layer.unwrap();
-    h.state_mut()
-        .state
-        .doc
-        .set_layer_visible(layer, false)
-        .unwrap();
+    let layer = st(&h).selected_layer().unwrap();
+    h.doc_mut().set_layer_visible(layer, false).unwrap();
     assert!(st(&h)
         .rulers_shown(yolu_app::rulers::Place::View3d)
         .is_empty());
@@ -737,8 +744,8 @@ fn two_materials() -> (H, Rect) {
         }
     };
     {
-        let state = &mut h.state_mut().state;
-        let revision = state.view3d.next_revision();
+        let state = h.app_mut();
+        let revision = state.view3d_mut().next_revision();
         let model = ViewModel::new(
             "二枚",
             vec![plate(-1.1, 0), plate(1.1, 1)],
@@ -746,9 +753,9 @@ fn two_materials() -> (H, Rect) {
             revision,
         )
         .unwrap();
-        state.view3d.set_model(model);
-        state.view3d.material = 0;
-        state.view3d.camera = OrbitCamera {
+        state.view3d_mut().set_model(model);
+        state.view3d_mut().material = 0;
+        state.view3d_mut().camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -770,23 +777,23 @@ fn a_ruler_is_not_made_from_a_face_of_another_texture_set_but_is_from_the_curren
     kind(&mut h, RulerKind::Line);
     let on = |h: &H, x: f32, y: f32| screen(h, rect, Vec3::new(x, y, 0.0));
     // 右の板（マテリアル 1。セットに付いていない）: 作らず、ブラシと同じ知らせ
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let (a, b) = (on(&h, 0.6, -0.3), on(&h, 1.6, 0.4));
     pull(&mut h, a, b);
     assert!(rulers(&h).is_empty());
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
     assert!(
         st(&h)
-            .message
+            .message()
             .contains("ほかのテクスチャセット（b）の面です。"),
         "{}",
-        st(&h).message
+        st(&h).message()
     );
     assert!(!yolu_app::view3d::draft::dragging(st(&h)));
     // 左の板（今のセット）は作る
     let (a, b) = (on(&h, -1.6, -0.3), on(&h, -0.6, 0.4));
     pull(&mut h, a, b);
-    assert_eq!(rulers(&h).len(), 1, "{}", st(&h).message);
+    assert_eq!(rulers(&h).len(), 1, "{}", st(&h).message());
 }
 
 #[test]
@@ -795,7 +802,7 @@ fn a_symmetry_ruler_can_be_a_rotation_symmetry_around_the_pressed_face_normal_ax
     tool(&mut h, Tool::Ruler);
     kind(&mut h, RulerKind::Symmetry);
     {
-        let s = &mut h.state_mut().state.rulers;
+        let s = h.rulers_mut();
         s.set_line_symmetry(false);
         s.set_lines(6);
     }
@@ -811,7 +818,7 @@ fn a_symmetry_ruler_can_be_a_rotation_symmetry_around_the_pressed_face_normal_ax
     // 引かずに離しても、回転対称（境界の中心を通る軸のまわり）
     click(&mut h, a);
     let made = rulers(&h);
-    assert_eq!(made.len(), 2, "{}", st(&h).message);
+    assert_eq!(made.len(), 2, "{}", st(&h).message());
     assert!(!made[1].line_symmetry && made[1].lines == 6);
 }
 
@@ -822,7 +829,7 @@ fn escape_and_losing_the_focus_while_pulling_a_ruler_drop_it_without_making_one(
         tool(&mut h, Tool::Ruler);
         kind(&mut h, RulerKind::Line);
         let (a, b) = front(&h, rect);
-        let steps = st(&h).doc.undo_count();
+        let steps = st(&h).doc().undo_count();
         press(&h, a, PointerButton::Primary);
         h.step();
         move_to(&h, b);
@@ -847,7 +854,7 @@ fn escape_and_losing_the_focus_while_pulling_a_ruler_drop_it_without_making_one(
         release(&h, b, PointerButton::Primary);
         h.run();
         assert!(rulers(&h).is_empty(), "{way}: 離しても作らない");
-        assert_eq!(st(&h).doc.undo_count(), steps, "{way}");
+        assert_eq!(st(&h).doc().undo_count(), steps, "{way}");
     }
 }
 
@@ -869,8 +876,8 @@ fn turning_off_a_snap_stops_the_3d_pulls_of_its_rulers() {
         DVec3::new(1.0, 0.5, -0.5),
         DVec3::NEG_Z,
     );
-    crate::common::rulers::add(&mut h.state_mut().state, line);
-    crate::common::rulers::add(&mut h.state_mut().state, parallel);
+    crate::common::rulers::add(h.app_mut(), line);
+    crate::common::rulers::add(h.app_mut(), parallel);
     tool(&mut h, Tool::Brush);
     // 直線の近く（画面で 8 点）から押す
     let (sa, sb) = (
@@ -885,14 +892,14 @@ fn turning_off_a_snap_stops_the_3d_pulls_of_its_rulers() {
     let pressed = |h: &mut H, at: Pos2| {
         press(h, at, PointerButton::Primary);
         h.step();
-        let c = st(h).view3d.input.ruler_constraint.clone();
+        let c = st(h).view3d().input.ruler_constraint.clone();
         release(h, at, PointerButton::Primary);
         h.run();
         c
     };
     for (snap_ruler, snap_special) in [(true, true), (false, true), (true, false), (false, false)] {
         {
-            let rulers = &mut h.state_mut().state.rulers;
+            let rulers = h.rulers_mut();
             rulers.snap_ruler = snap_ruler;
             rulers.snap_special = snap_special;
         }
@@ -920,10 +927,10 @@ fn turning_off_a_snap_stops_the_3d_pulls_of_its_rulers() {
 #[test]
 fn a_straight_3d_ruler_with_an_end_behind_the_camera_still_snaps_near_its_visible_part() {
     let (mut h, rect) = cube_view();
-    let view = st(&h).view3d.camera.view(rect.width(), rect.height());
+    let view = st(&h).view3d().camera.view(rect.width(), rect.height());
     let right = view.rotation * Vec3::X;
     let behind = view.position - view.forward * 2.0 + right * 0.4;
-    let front = st(&h).view3d.camera.target + right * 0.1;
+    let front = st(&h).view3d().camera.target + right * 0.1;
     assert!(view.depth(behind) < 0.0 && view.depth(front) > 0.0);
     let line = Ruler::model(
         yolu_core::RulerId(1),
@@ -958,9 +965,9 @@ fn a_straight_3d_ruler_with_an_end_behind_the_camera_still_snaps_near_its_visibl
 
 fn orthographic() -> (H, Rect) {
     let (mut h, rect) = cube_view();
-    h.state_mut().state.view3d.camera.set_orthographic(true);
+    h.view3d_mut().camera.set_orthographic(true);
     h.run();
-    assert!(st(&h).view3d.camera.is_orthographic());
+    assert!(st(&h).view3d().camera.is_orthographic());
     (h, rect)
 }
 
@@ -975,7 +982,7 @@ fn in_orthographic_a_3d_ruler_is_made_on_the_faces_pulled_over() {
         let before = rulers(&h).len();
         pull(&mut h, a, b);
         let made = rulers(&h);
-        assert_eq!(made.len(), before + 1, "{k:?} {}", st(&h).message);
+        assert_eq!(made.len(), before + 1, "{k:?} {}", st(&h).message());
         let r = made.last().unwrap();
         let (ra, rb, _) = points(r);
         assert!(near3(ra, pa.position), "{k:?}: a は押した面の点");
@@ -985,7 +992,7 @@ fn in_orthographic_a_3d_ruler_is_made_on_the_faces_pulled_over() {
             // 鏡の面は引いた線と視線（正投影は前の向き）を含む
             let mirror = r.surface_symmetry().unwrap().mirror.unwrap();
             let forward = st(&h)
-                .view3d
+                .view3d()
                 .camera
                 .view(rect.width(), rect.height())
                 .forward;
@@ -1051,7 +1058,7 @@ fn snapshots_of_the_3d_mirror_and_the_straight_ruler_in_both_languages() {
     for lang in Lang::ALL {
         for what in ["symmetry", "line", "dim"] {
             let (mut h, rect) = cube_view();
-            h.state_mut().state.lang = lang;
+            h.set_lang(lang);
             tool(&mut h, Tool::Ruler);
             let (a, b) = front(&h, rect);
             if what == "symmetry" {
@@ -1077,8 +1084,8 @@ fn snapshots_of_the_3d_mirror_and_the_straight_ruler_in_both_languages() {
                 kind(&mut h, RulerKind::Line);
                 pull(&mut h, a, b);
             }
-            h.state_mut().state.rulers.selected = None;
-            h.state_mut().state.message.clear();
+            h.rulers_mut().selected = None;
+            h.message_mut().clear();
             h.event(Event::PointerGone);
             h.run();
             // 英語の絵は撮らない（3D の絵に文字は無い）

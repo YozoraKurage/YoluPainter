@@ -1,5 +1,6 @@
 //! Live Link のファイルの受け渡し（スタンドアロンの側、画面なし）: 試しのフォルダに Unity と同じ手順で頼みを置き、開く・送り直し・断り・
 //! 待つ・書き出しの返事・.ylp への保存と開き直しを確かめる。FBX は yolu-model の試験と同じ ASCII の腕（実のデータは使わない）。
+use crate::common::drive::Drive;
 use crate::common::livelink::{arm_request, fbx_ascii, material_key, slash, Exchange};
 use crate::common::wait::WATCHDOG;
 
@@ -21,25 +22,34 @@ struct Headless {
     ex: Exchange,
 }
 
+impl Drive for Headless {
+    fn app(&self) -> &AppState {
+        &self.state
+    }
+    fn app_mut(&mut self) -> &mut AppState {
+        &mut self.state
+    }
+}
+
 impl Headless {
     fn new(tag: &str) -> Headless {
         let ex = Exchange::new(tag);
         let mut link = LiveLink::new();
         link.set_folder(ex.root.clone()).unwrap();
         let mut state = AppState::new(64, 64);
-        state.prefs.settings.livelink_on_startup = true;
+        state.prefs_mut().settings.livelink_on_startup = true;
         let mut h = Headless { state, link, ex };
         h.frame();
-        assert_eq!(h.state.link.status, LinkStatus::Accepting);
+        assert_eq!(h.app().link().status, LinkStatus::Accepting);
         h
     }
 
     fn frame(&mut self) {
         self.link.poll(&mut self.state);
-        if let Some(files) = self.state.export.take_finished() {
+        if let Some(files) = self.export_mut().take_finished() {
             self.link.exported(&mut self.state, &files);
         }
-        self.state.link = self.link.view(&self.state);
+        *self.link_mut() = self.link.view(&self.state);
     }
 
     fn until(&mut self, what: &str, mut cond: impl FnMut(&mut Headless) -> bool) {
@@ -52,7 +62,7 @@ impl Headless {
             assert!(
                 Instant::now() < deadline,
                 "{what} を待ったが来ない: {}",
-                self.state.message
+                self.message()
             );
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -87,7 +97,14 @@ impl Headless {
     }
 
     fn session_rig(&self) -> Arc<yolu_core::skin::Rig> {
-        self.state.view3d.pose.session.as_ref().unwrap().rig.clone()
+        self.state
+            .view3d()
+            .pose
+            .session
+            .as_ref()
+            .unwrap()
+            .rig
+            .clone()
     }
 
     fn bone(&self, name: &str) -> usize {
@@ -100,7 +117,7 @@ impl Headless {
 
     fn pose(&self) -> yolu_core::skin::Pose {
         self.state
-            .view3d
+            .view3d()
             .pose
             .session
             .as_ref()
@@ -131,7 +148,7 @@ fn headless_a_request_opens_the_fbx_with_its_pose_sets_by_material_and_originals
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.message());
     assert_eq!(reply.request, "r1");
     assert!(reply.problems.is_empty(), "{:?}", reply.problems);
     assert!(
@@ -139,24 +156,24 @@ fn headless_a_request_opens_the_fbx_with_its_pose_sets_by_material_and_originals
         "当てた頼みは消す"
     );
     // モデル: 相手の鍵とマテリアル（Unity のマテリアルの鍵ごと）。3D ビューはまとめた Rig のポーズのセッション
-    let model = h.state.model.clone().unwrap();
+    let model = h.model().clone().unwrap();
     assert_eq!(model.link_key(), Some(KEY));
     assert_eq!(model.name, "Arm");
     assert_eq!(model.materials.len(), 2);
     let rig = h.session_rig();
     assert_eq!(rig.meshes().len(), 2, "腕と帽子");
     assert_eq!(
-        h.state.view3d.full_model().unwrap().triangle_count(),
+        h.view3d().full_model().unwrap().triangle_count(),
         rig.triangle_count()
     );
     // セット: マテリアルの鍵ごとに 1 つ（何も触っていない最初のセットは Skin に付く）
-    assert_eq!(h.state.sets.len(), 2);
-    let names: Vec<&str> = h.state.sets.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(h.sets().len(), 2);
+    let names: Vec<&str> = h.sets().iter().map(|s| s.name.as_str()).collect();
     assert!(
         names.contains(&"Skin") && names.contains(&"Cloth"),
         "{names:?}"
     );
-    for (i, set) in h.state.sets.iter().enumerate() {
+    for (i, set) in h.sets().iter().enumerate() {
         let m = set.bound.expect("付いている") as usize;
         let expect = material_key(m as u32 + 1);
         let guid = &expect["guid:".len()..expect.len() - "/fileid:2100000".len()];
@@ -166,7 +183,7 @@ fn headless_a_request_opens_the_fbx_with_its_pose_sets_by_material_and_originals
             set.material
         );
         // 元の絵: 一番下のレイヤー「元の絵」（Skin は PNG の色、Cloth は絵が無いので白）
-        let doc = h.state.set_doc(i);
+        let doc = h.app().set_doc(i);
         let bottom = &doc.layers()[0];
         assert_eq!(bottom.name(), "元の絵");
         let mut px = [0u8; 4];
@@ -219,13 +236,18 @@ fn headless_a_request_opens_the_fbx_with_its_pose_sets_by_material_and_originals
         .unwrap();
     assert_eq!(pose.blend_weights[arm][thick], 50.0);
     assert!(
-        !h.state.view3d.pose.session.as_ref().unwrap().can_undo(),
+        !h.view3d().pose.session.as_ref().unwrap().can_undo(),
         "初めのポーズは取り消しの段にしない"
     );
     // 入口の様子: 相手の名前と、Unity が送れなかった物
-    assert_eq!(h.state.link.target.as_deref(), Some("Arm"));
-    assert!(h.state.link.problems.iter().any(|p| p.path == "Accessory"));
-    assert!(!h.state.modified, "開いただけでは変更なし");
+    assert_eq!(h.app().link().target.as_deref(), Some("Arm"));
+    assert!(h
+        .state
+        .link()
+        .problems
+        .iter()
+        .any(|p| p.path == "Accessory"));
+    assert!(!h.modified(), "開いただけでは変更なし");
 }
 
 #[test]
@@ -235,7 +257,7 @@ fn headless_a_resend_updates_the_pose_without_reading_the_fbx_again() {
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
     let rig = h.session_rig();
-    let sets = h.state.sets.len();
+    let sets = h.sets().len();
     // ポーズと BlendShape だけを変えた送り直し: 同じ Rig のまま、ポーズが変わる（手で動かした分も上書き）
     let mut again = request.clone();
     again["id"] = "r2".into();
@@ -251,8 +273,8 @@ fn headless_a_resend_updates_the_pose_without_reading_the_fbx_again() {
     let pose = h.pose();
     assert_eq!(pose.locals[h.bone("Lower")].rotation, Quat::IDENTITY);
     assert!(pose.blend_weights.iter().flatten().any(|w| *w == 10.0));
-    assert_eq!(h.state.sets.len(), sets, "セットは増えない");
-    assert!(h.state.modified, "送り直したポーズは保存する変更");
+    assert_eq!(h.sets().len(), sets, "セットは増えない");
+    assert!(h.modified(), "送り直したポーズは保存する変更");
     // FBX のファイルを壊しても、道と guid が同じなら読み直さない（表示の入切が変わって Rig は組み直す）
     std::fs::write(h.ex.dir.join("arm.fbx"), b"broken").unwrap();
     let mut hide = again.clone();
@@ -260,7 +282,7 @@ fn headless_a_resend_updates_the_pose_without_reading_the_fbx_again() {
     hide["renderers"][1]["enabled"] = false.into();
     h.ex.put(&hide);
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.message());
     assert!(reply.problems.is_empty(), "{:?}", reply.problems);
     let shown = h.session_rig();
     assert!(!Arc::ptr_eq(&rig, &shown));
@@ -284,7 +306,7 @@ fn headless_another_target_with_unsaved_changes_asks_before_opening() {
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
-    h.state.modified = true;
+    h.set_modified(true);
     let mut other = request.clone();
     other["id"] = "r2".into();
     other["target"]["key"] = "GlobalObjectId_V1-2-9999-1-0".into();
@@ -296,7 +318,7 @@ fn headless_another_target_with_unsaved_changes_asks_before_opening() {
     let reply = h.reply();
     assert_eq!(reply.kind, ReplyKind::Refused);
     assert_eq!(reply.problems[0].known_reason(), Some(Reason::Declined));
-    assert_eq!(h.state.model.as_ref().unwrap().link_key(), Some(KEY));
+    assert_eq!(h.model().as_ref().unwrap().link_key(), Some(KEY));
     // 捨てる: 新しいプロジェクトに開く
     let mut third = other.clone();
     third["id"] = "r3".into();
@@ -305,11 +327,11 @@ fn headless_another_target_with_unsaved_changes_asks_before_opening() {
     h.link.answer_discard(true);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
     assert_eq!(
-        h.state.model.as_ref().unwrap().link_key(),
+        h.model().as_ref().unwrap().link_key(),
         Some("GlobalObjectId_V1-2-9999-1-0")
     );
-    assert!(!h.state.modified);
-    assert_eq!(h.state.link.target.as_deref(), Some("Other"));
+    assert!(!h.modified());
+    assert_eq!(h.app().link().target.as_deref(), Some("Other"));
 }
 
 #[test]
@@ -318,21 +340,21 @@ fn headless_exporting_the_target_writes_an_exported_reply() {
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
-    let dir = h.state.link_export_dir().expect("Unity が知らせた置き場");
+    let dir = h.app().link_export_dir().expect("Unity が知らせた置き場");
     assert_eq!(slash(&dir), slash(&h.ex.dir.join("export")));
     std::fs::create_dir_all(&dir).unwrap();
     // 書き出しのウィンドウの書き出す先の既定は、Unity が知らせた置き場
     use yolu_app::export::{ExportAction, ExportForm};
-    h.state.apply(Action::Export(ExportAction::OpenWindow));
+    h.act(Action::Export(ExportAction::OpenWindow));
     h.state
-        .apply(Action::Export(ExportAction::SetForm(ExportForm::LilToon)));
-    assert_eq!(h.state.export_destination(), Some(dir.clone()));
-    h.state.apply(Action::Export(ExportAction::Run));
-    assert!(h.state.export.is_exporting(), "{}", h.state.message);
-    h.state.wait_export();
+        .act(Action::Export(ExportAction::SetForm(ExportForm::LilToon)));
+    assert_eq!(h.app().export_destination(), Some(dir.clone()));
+    h.act(Action::Export(ExportAction::Run));
+    assert!(h.export().is_exporting(), "{}", h.message());
+    h.app_mut().wait_export();
     h.frame();
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Exported, "{}", h.state.message);
+    assert_eq!(reply.kind, ReplyKind::Exported, "{}", h.message());
     assert_eq!(reply.request, "r1");
     // 使っているチャンネルは Color だけ: セットごとの Main の PNG が _MainTex に当たる
     assert_eq!(reply.files.len(), 2, "{:?}", reply.files);
@@ -344,11 +366,11 @@ fn headless_exporting_the_target_writes_an_exported_reply() {
     }
     // 利用者が置き場を選び直したら、そちらが既定
     let chosen = h.ex.dir.join("elsewhere");
-    h.state.apply(Action::Export(ExportAction::OpenWindow));
+    h.act(Action::Export(ExportAction::OpenWindow));
     h.state
-        .apply(Action::Export(ExportAction::Destination(chosen.clone())));
-    assert_eq!(h.state.link_export_dir(), Some(chosen.clone()));
-    assert_eq!(h.state.export_destination(), Some(chosen));
+        .act(Action::Export(ExportAction::Destination(chosen.clone())));
+    assert_eq!(h.app().link_export_dir(), Some(chosen.clone()));
+    assert_eq!(h.app().export_destination(), Some(chosen));
 }
 
 #[test]
@@ -365,9 +387,9 @@ fn headless_scene_materials_and_submeshes_without_a_material_get_their_own_sets(
     request["renderers"][1]["materials"] = json!([2]);
     h.ex.put(&request);
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
-    assert_eq!(h.state.sets.len(), 3, "マテリアルの鍵ごと");
-    let refs: Vec<&yolu_io::MaterialRef> = h.state.sets.iter().map(|s| &s.material).collect();
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.message());
+    assert_eq!(h.sets().len(), 3, "マテリアルの鍵ごと");
+    let refs: Vec<&yolu_io::MaterialRef> = h.sets().iter().map(|s| &s.material).collect();
     assert!(refs.iter().any(
         |m| matches!(m, yolu_io::MaterialRef::Material { name, asset: None } if name == "Skin")
     ));
@@ -376,18 +398,18 @@ fn headless_scene_materials_and_submeshes_without_a_material_get_their_own_sets(
         "none はマテリアルなしの組: {refs:?}"
     );
     // 書き出し: マテリアルの無い組の絵は返さない
-    let dir = h.state.link_export_dir().unwrap();
+    let dir = h.app().link_export_dir().unwrap();
     std::fs::create_dir_all(&dir).unwrap();
     h.state
-        .apply(Action::Export(yolu_app::export::ExportAction::TemplateTo {
+        .act(Action::Export(yolu_app::export::ExportAction::TemplateTo {
             id: "liltoon".into(),
             dir,
             sets: None,
         }));
-    h.state.wait_export();
+    h.app_mut().wait_export();
     h.frame();
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Exported, "{}", h.state.message);
+    assert_eq!(reply.kind, ReplyKind::Exported, "{}", h.message());
     let keys: Vec<&str> = reply.files.iter().map(|f| f.material.as_str()).collect();
     assert!(keys.contains(&scene), "{keys:?}");
     assert!(!keys.contains(&"none"), "{keys:?}");
@@ -431,16 +453,16 @@ fn headless_broken_large_and_unknown_requests_are_refused_with_the_reason() {
         .problems
         .iter()
         .all(|p| p.known_reason() == Some(Reason::UnsupportedImport)));
-    assert!(h.state.model.is_none(), "何も開かない");
+    assert!(h.model().is_none(), "何も開かない");
     assert!(h.ex.folder().claimed_files().unwrap().is_empty());
 }
 
 #[test]
 fn headless_a_request_that_comes_while_drawing_is_applied_after_the_stroke() {
     let mut h = Headless::new("stroke");
-    let id = h.state.selected_layer.unwrap();
-    let stroke = h.state.begin_paint_stroke(id, false).unwrap();
-    assert!(h.state.is_stroking());
+    let id = h.selected_layer().unwrap();
+    let stroke = h.app_mut().begin_paint_stroke(id, false).unwrap();
+    assert!(h.app().is_stroking());
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
     h.settle();
@@ -448,16 +470,16 @@ fn headless_a_request_that_comes_while_drawing_is_applied_after_the_stroke() {
         h.ex.take_replies().is_empty(),
         "描いている間は当てない（断らない）"
     );
-    assert!(h.state.model.is_none());
+    assert!(h.model().is_none());
     assert_eq!(
         h.ex.folder().claimed_files().unwrap().len(),
         1,
         "待つ間は claimed に置いたまま"
     );
-    h.state.doc.cancel_stroke(stroke);
-    h.state.canvas.stroke = None;
+    h.doc_mut().cancel_stroke(stroke);
+    h.canvas_mut().stroke = None;
     assert_eq!(h.reply().kind, ReplyKind::Opened);
-    assert!(h.state.model.is_some());
+    assert!(h.model().is_some());
 }
 
 #[test]
@@ -470,14 +492,10 @@ fn headless_saving_and_reopening_gives_the_same_model_and_pose_without_unity() {
     let mut pose = h.pose();
     let upper = h.bone("Upper");
     pose.locals[upper].translation = Vec3::new(0.0, 1.5, 0.0);
-    yolu_app::view3d::pose::set_pose(&mut h.state.view3d, pose.clone()).unwrap();
+    yolu_app::view3d::pose::set_pose(h.view3d_mut(), pose.clone()).unwrap();
     let path = h.ex.dir.join("arm.ylp");
-    h.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(
-        h.state.message.starts_with("保存しました"),
-        "{}",
-        h.state.message
-    );
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     let project = yolu_io::Project::open(&path, &yolu_io::Limits::unbounded()).unwrap();
     let stored = project.livelink().unwrap().expect("livelink.json");
     let text = String::from_utf8(stored).unwrap();
@@ -489,34 +507,34 @@ fn headless_saving_and_reopening_gives_the_same_model_and_pose_without_unity() {
         text.contains("_lilToonVersion"),
         "lilToon の印の値は残す（開き直したときスロットの絵を読むか決める）"
     );
-    let triangles = h.state.view3d.full_model().unwrap().triangle_count();
+    let triangles = h.view3d().full_model().unwrap().triangle_count();
     // Unity なし（受け付けていない）で開き直す
     let mut open = AppState::new(64, 64);
     let mut link = LiveLink::new();
     link.set_folder(h.ex.dir.join("unused")).unwrap();
-    open.prefs.settings.livelink_on_startup = false;
-    open.apply(Action::OpenProject(path.clone()));
-    assert!(open.project.is_some(), "{}", open.message);
+    open.prefs_mut().settings.livelink_on_startup = false;
+    open.act(Action::OpenProject(path.clone()));
+    assert!(open.project().is_some(), "{}", open.message());
     let deadline = Instant::now() + WATCHDOG;
-    while open.view3d.pose.session.is_none() || link.is_working() {
+    while open.view3d().pose.session.is_none() || link.is_working() {
         link.poll(&mut open);
-        assert!(Instant::now() < deadline, "{}", open.message);
+        assert!(Instant::now() < deadline, "{}", open.message());
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(open.model.as_ref().unwrap().link_key(), Some(KEY));
+    assert_eq!(open.model().as_ref().unwrap().link_key(), Some(KEY));
     assert_eq!(
-        open.view3d.full_model().unwrap().triangle_count(),
+        open.view3d().full_model().unwrap().triangle_count(),
         triangles
     );
-    let again = open.view3d.pose.session.as_ref().unwrap().pose().clone();
+    let again = open.view3d().pose.session.as_ref().unwrap().pose().clone();
     for (a, b) in again.locals.iter().zip(&pose.locals) {
         assert!((a.translation - b.translation).length() < 1e-5);
         assert!(a.rotation.dot(b.rotation).abs() > 0.99999);
     }
     assert_eq!(again.blend_weights, pose.blend_weights);
-    assert_eq!(open.sets.len(), 2, "セットは増やさない");
-    assert!(open.sets.iter().all(|s| s.bound.is_some()));
-    assert!(!open.modified);
+    assert_eq!(open.sets().len(), 2, "セットは増やさない");
+    assert!(open.sets().iter().all(|s| s.bound.is_some()));
+    assert!(!open.modified());
     assert!(
         !h.ex.dir.join("unused").exists(),
         "受け付けていなければフォルダも作らない"
@@ -534,12 +552,8 @@ fn headless_the_copy_for_distribution_drops_the_live_link_record_with_the_model_
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
     let path = h.ex.dir.join("arm.ylp");
-    h.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(
-        h.state.message.starts_with("保存しました"),
-        "{}",
-        h.state.message
-    );
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     let saved = std::fs::read(&path).unwrap();
     let project = yolu_io::Project::open(&path, &yolu_io::Limits::unbounded()).unwrap();
     let record = project.livelink().unwrap().expect("livelink.json");
@@ -552,9 +566,9 @@ fn headless_the_copy_for_distribution_drops_the_live_link_record_with_the_model_
         "記録に場所が入る"
     );
     let s = &mut h.state;
-    s.apply(Action::Distribute(DistributeAction::Start));
+    s.act(Action::Distribute(DistributeAction::Start));
     s.wait_distribute();
-    let window = s.distribute.window().expect("ウィンドウがある");
+    let window = s.distribute().window().expect("ウィンドウがある");
     let found = window
         .inventory()
         .get(Removal::ModelReference)
@@ -566,13 +580,13 @@ fn headless_the_copy_for_distribution_drops_the_live_link_record_with_the_model_
     );
     // 既定は全部除く: 記録も、その中の場所も写しに無い
     let dest = h.ex.dir.join("arm-dist.ylp");
-    s.dialog_request = None;
-    s.apply(Action::Distribute(DistributeAction::Save(dest.clone())));
+    *s.dialog_request_mut() = None;
+    s.act(Action::Distribute(DistributeAction::Save(dest.clone())));
     s.wait_distribute();
     assert!(
-        s.message.starts_with("配布用に保存しました"),
+        s.message().starts_with("配布用に保存しました"),
         "{}",
-        s.message
+        s.message()
     );
     let copy = yolu_io::Project::open(&dest, &yolu_io::Limits::unbounded()).unwrap();
     assert_eq!(copy.livelink().unwrap(), None);
@@ -588,14 +602,14 @@ fn headless_the_copy_for_distribution_drops_the_live_link_record_with_the_model_
     // 開いているファイルは変わらない
     assert_eq!(std::fs::read(&path).unwrap(), saved);
     // 残す選び: 記録はバイト列のまま写しに入る
-    s.apply(Action::Distribute(DistributeAction::Start));
+    s.act(Action::Distribute(DistributeAction::Start));
     s.wait_distribute();
-    s.apply(Action::Distribute(DistributeAction::Toggle(
+    s.act(Action::Distribute(DistributeAction::Toggle(
         Removal::ModelReference,
     )));
     let kept = h.ex.dir.join("arm-kept.ylp");
-    s.dialog_request = None;
-    s.apply(Action::Distribute(DistributeAction::Save(kept.clone())));
+    *s.dialog_request_mut() = None;
+    s.act(Action::Distribute(DistributeAction::Save(kept.clone())));
     s.wait_distribute();
     let copy = yolu_io::Project::open(&kept, &yolu_io::Limits::unbounded()).unwrap();
     assert_eq!(copy.livelink().unwrap().as_deref(), Some(&record[..]));
@@ -612,69 +626,65 @@ fn headless_a_reopened_live_link_project_checks_its_baked_maps_again_without_the
     use yolu_core::mesh_maps::MeshMapKind;
     use yolu_core::FilterTarget;
     let mut h = Headless::new("check");
-    h.state.bake.backend = BakeBackend::Cpu;
+    h.bake_mut().backend = BakeBackend::Cpu;
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
-    h.state.bake.settings.maps = vec![MeshMapKind::Position];
-    h.state.bake.settings.padding = 4;
+    h.bake_mut().settings.maps = vec![MeshMapKind::Position];
+    h.bake_mut().settings.padding = 4;
     // 位置のマップを読むノイズ（位置の空間が既定）をマスクに持つセットを焼く
-    h.state.apply(Action::M2(Edit::NewFill));
-    let layer = h.state.selected_layer.unwrap();
-    h.state.apply(Action::M2(Edit::AddMask(layer)));
-    h.state.apply(Action::Fx(FxOp::AddGenerator {
+    h.act(Action::M2(Edit::NewFill));
+    let layer = h.selected_layer().unwrap();
+    h.act(Action::M2(Edit::AddMask(layer)));
+    h.act(Action::Fx(FxOp::AddGenerator {
         target: FilterTarget::Mask,
         kind: Kind::Noise,
     }));
-    let id = h.state.doc.filters_of(layer, FilterTarget::Mask).unwrap()[0].id();
-    h.state.apply(Action::Bake(BakeAction::Start));
-    h.state.wait_bake();
-    h.state.sync_effects();
+    let id = h.doc().filters_of(layer, FilterTarget::Mask).unwrap()[0].id();
+    h.act(Action::Bake(BakeAction::Start));
+    h.app_mut().wait_bake();
+    h.app_mut().sync_effects();
     assert_eq!(
-        h.state.doc.generator_fallback(layer, id).unwrap(),
+        h.doc().generator_fallback(layer, id).unwrap(),
         None,
         "{}",
-        h.state.message
+        h.message()
     );
     let path = h.ex.dir.join("noise.ylp");
-    h.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(
-        h.state.message.starts_with("保存しました"),
-        "{}",
-        h.state.message
-    );
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     // Unity なしで開き直す（起動した直後のアプリ: 3D ビューは試しの立方体）
     let mut open = AppState::new(64, 64);
-    open.bake.backend = BakeBackend::Cpu;
-    open.view3d.load_demo();
+    open.bake_mut().backend = BakeBackend::Cpu;
+    open.view3d_mut().load_demo();
     let mut link = LiveLink::new();
     link.set_folder(h.ex.dir.join("unused")).unwrap();
-    open.prefs.settings.livelink_on_startup = false;
-    open.apply(Action::OpenProject(path));
-    assert!(open.project.is_some(), "{}", open.message);
+    open.prefs_mut().settings.livelink_on_startup = false;
+    open.act(Action::OpenProject(path));
+    assert!(open.project().is_some(), "{}", open.message());
     let deadline = Instant::now() + WATCHDOG;
-    while open.view3d.pose.session.is_none() || link.is_working() {
+    while open.view3d().pose.session.is_none() || link.is_working() {
         link.poll(&mut open);
-        assert!(Instant::now() < deadline, "{}", open.message);
+        assert!(Instant::now() < deadline, "{}", open.message());
         std::thread::sleep(Duration::from_millis(5));
     }
     // 開いた瞬間に立方体と照合した入力のままなので、位置のマップは古い（ノイズは UV に落ちる）
     assert!(
         matches!(
-            open.doc.generator_fallback(layer, id).unwrap(),
+            open.doc().generator_fallback(layer, id).unwrap(),
             Some(generator::Inactive::StaleMap(_))
         ),
         "{:?}",
-        open.doc.generator_fallback(layer, id)
+        open.doc().generator_fallback(layer, id)
     );
     // 毎フレームの同期だけで、モデルの入力ができて照合し直される（ウィンドウは開かない）
-    assert!(open.bake.window.is_none());
+    assert!(open.bake().window.is_none());
     let deadline = Instant::now() + WATCHDOG;
     loop {
         open.sync_effects();
         open.release_idle_bake_input();
         if open
-            .doc
+            .doc()
             .generator_fallback(layer, id)
             .ok()
             .flatten()
@@ -685,11 +695,11 @@ fn headless_a_reopened_live_link_project_checks_its_baked_maps_again_without_the
         assert!(
             Instant::now() < deadline,
             "モデルを読んだのに照合し直せない: {:?}",
-            open.doc.generator_fallback(layer, id)
+            open.doc().generator_fallback(layer, id)
         );
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert!(open.doc.inactive_effect_list().is_empty());
+    assert!(open.doc().inactive_effect_list().is_empty());
 }
 
 #[test]
@@ -716,7 +726,7 @@ fn headless_two_fbx_files_make_one_model_and_a_collapsed_root_is_followed() {
     }));
     h.ex.put(&req);
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.message());
     assert!(reply.problems.is_empty(), "{:?}", reply.problems);
     let rig = h.session_rig();
     assert_eq!(rig.meshes().len(), 4);
@@ -743,7 +753,7 @@ fn headless_two_fbx_files_make_one_model_and_a_collapsed_root_is_followed() {
         "休みの値も倍率 2"
     );
     // 同じマテリアル（Unity のマテリアルの鍵）は同じセット
-    assert_eq!(h.state.sets.len(), 2);
+    assert_eq!(h.sets().len(), 2);
     // preserve_hierarchy なら畳まない: Armature を含む道でないと見つからない
     let mut kept = req.clone();
     kept["id"] = "r2".into();
@@ -763,12 +773,12 @@ fn headless_presence_is_written_while_accepting_and_removed_when_turned_off() {
     let p = folder.read_presence().unwrap().expect("起きている印");
     assert_eq!(p.app, "YoluPainter");
     assert_eq!(p.pid, std::process::id());
-    h.state.apply(Action::ToggleLiveLink);
-    h.link
-        .request(h.state.link_request.take().unwrap(), &mut h.state);
+    h.act(Action::ToggleLiveLink);
+    let request = h.link_request_mut().take().unwrap();
+    h.link.request(request, &mut h.state);
     h.frame();
-    assert_eq!(h.state.link.status, LinkStatus::Off);
-    assert!(!h.state.prefs.settings.livelink_on_startup);
+    assert_eq!(h.app().link().status, LinkStatus::Off);
+    assert!(!h.prefs().settings.livelink_on_startup);
     assert_eq!(folder.read_presence().unwrap(), None);
     // 受けていない間に置いた頼みは拾わない
     let request = h.arm("r1", KEY);
@@ -784,57 +794,54 @@ fn headless_a_job_that_is_running_when_the_project_is_replaced_is_declined_and_e
     let mut h = Headless::new("replaced");
     let other = h.ex.dir.join("other.ylp");
     let mut theirs = AppState::new(64, 64);
-    theirs.apply(Action::SaveProjectAs(other.clone()));
+    theirs.act(Action::SaveProjectAs(other.clone()));
     assert!(
-        theirs.message.starts_with("保存しました"),
+        theirs.message().starts_with("保存しました"),
         "{}",
-        theirs.message
+        theirs.message()
     );
     let request = h.arm("r1", KEY);
     // Rig を組み直す仕事（初めて開く）: 新規にする
     h.start_job(&request);
-    h.state.apply(Action::NewProject);
+    h.act(Action::NewProject);
     let reply = h.reply();
     assert_eq!(reply.kind, ReplyKind::Refused);
     assert_eq!(reply.problems[0].known_reason(), Some(Reason::Declined));
     h.settle();
-    assert!(
-        h.state.model.is_none(),
-        "新しい文書に Unity のモデルを入れない"
-    );
-    assert!(h.state.view3d.pose.session.is_none());
-    assert!(h.state.link_target.is_none() && h.state.link.target.is_none());
-    assert_eq!(h.state.sets.len(), 1);
+    assert!(h.model().is_none(), "新しい文書に Unity のモデルを入れない");
+    assert!(h.view3d().pose.session.is_none());
+    assert!(h.link_target().is_none() && h.app().link().target.is_none());
+    assert_eq!(h.sets().len(), 1);
     assert!(h.ex.folder().claimed_files().unwrap().is_empty());
     assert!(!h.link.is_working());
     // 同じ: .ylp を開く
     let mut again = request.clone();
     again["id"] = "r2".into();
     h.start_job(&again);
-    h.state.apply(Action::OpenProject(other.clone()));
-    assert!(h.state.project.is_some(), "{}", h.state.message);
+    h.act(Action::OpenProject(other.clone()));
+    assert!(h.project().is_some(), "{}", h.message());
     let reply = h.reply();
     assert_eq!(reply.problems[0].known_reason(), Some(Reason::Declined));
     h.settle();
-    assert!(h.state.model.is_none() && h.state.view3d.pose.session.is_none());
-    assert!(h.state.project.is_some(), "開いた .ylp のまま");
-    assert_eq!(h.state.sets.len(), 1);
+    assert!(h.model().is_none() && h.view3d().pose.session.is_none());
+    assert!(h.project().is_some(), "開いた .ylp のまま");
+    assert_eq!(h.sets().len(), 1);
     // 絵だけを読む仕事（送り直し。Rig はそのまま）: 開いたあとで、同じ相手の送り直しを走らせている間に新規にする
     let mut third = request.clone();
     third["id"] = "r3".into();
     h.ex.put(&third);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     let mut resend = request.clone();
     resend["id"] = "r4".into();
     resend["bones"][0]["local"]["r"] = json!([0.0, 0.0, 0.0, 1.0]);
     h.start_job(&resend);
-    h.state.apply(Action::NewProject);
+    h.act(Action::NewProject);
     let reply = h.reply();
     assert_eq!(reply.kind, ReplyKind::Refused);
     assert_eq!(reply.problems[0].known_reason(), Some(Reason::Declined));
     h.settle();
-    assert!(h.state.model.is_none() && h.state.view3d.pose.session.is_none());
-    assert!(h.state.link_target.is_none());
+    assert!(h.model().is_none() && h.view3d().pose.session.is_none());
+    assert!(h.link_target().is_none());
 }
 
 /// 受け付けを切ると、まだ当てていない頼み（待っている物・走っている仕事）は、取り消して `declined` を返す。.ylp の開き直しは Unity を使わないので影響しない。
@@ -844,19 +851,19 @@ fn headless_turning_acceptance_off_declines_the_requests_that_are_not_applied_ye
     let request = h.arm("r1", KEY);
     h.start_job(&request);
     // 描いている間は、走っている仕事も結果を入れずに待つ（2 つ目の頼みも、拾われて待つ）
-    let id = h.state.selected_layer.unwrap();
-    let stroke = h.state.begin_paint_stroke(id, false).unwrap();
+    let id = h.selected_layer().unwrap();
+    let stroke = h.app_mut().begin_paint_stroke(id, false).unwrap();
     let mut waiting = request.clone();
     waiting["id"] = "r2".into();
     h.ex.put(&waiting);
     h.until("2 つ目の頼みを拾う", |h| {
         h.ex.folder().claimed_files().unwrap().len() == 2
     });
-    h.state.apply(Action::ToggleLiveLink);
-    h.link
-        .request(h.state.link_request.take().unwrap(), &mut h.state);
+    h.act(Action::ToggleLiveLink);
+    let request = h.link_request_mut().take().unwrap();
+    h.link.request(request, &mut h.state);
     h.frame();
-    assert_eq!(h.state.link.status, LinkStatus::Off);
+    assert_eq!(h.app().link().status, LinkStatus::Off);
     let mut replies = h.ex.take_replies();
     replies.sort_by(|a, b| a.request.cmp(&b.request));
     let kinds: Vec<(&str, ReplyKind)> = replies
@@ -870,10 +877,10 @@ fn headless_turning_acceptance_off_declines_the_requests_that_are_not_applied_ye
     assert!(replies
         .iter()
         .all(|r| r.problems[0].known_reason() == Some(Reason::Declined)));
-    h.state.doc.cancel_stroke(stroke);
-    h.state.canvas.stroke = None;
+    h.doc_mut().cancel_stroke(stroke);
+    h.canvas_mut().stroke = None;
     h.settle();
-    assert!(h.state.model.is_none(), "切ったあとに当てない");
+    assert!(h.model().is_none(), "切ったあとに当てない");
     assert!(!h.link.is_working());
     assert!(h.ex.folder().claimed_files().unwrap().is_empty());
 }
@@ -882,11 +889,11 @@ fn headless_turning_acceptance_off_declines_the_requests_that_are_not_applied_ye
 #[test]
 fn headless_a_request_that_comes_while_saving_is_applied_after_the_save() {
     let mut h = Headless::new("saving");
-    h.state.save.background = true;
-    let hold = h.state.save.hold_next();
+    h.save_mut().background = true;
+    let hold = h.save_mut().hold_next();
     h.state
-        .apply(Action::SaveProjectAs(h.ex.dir.join("while.ylp")));
-    assert!(h.state.is_saving());
+        .act(Action::SaveProjectAs(h.ex.dir.join("while.ylp")));
+    assert!(h.app().is_saving());
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
     h.settle();
@@ -894,16 +901,16 @@ fn headless_a_request_that_comes_while_saving_is_applied_after_the_save() {
         h.ex.take_replies().is_empty(),
         "保存の間は当てない（断らない）"
     );
-    assert!(h.state.model.is_none());
+    assert!(h.model().is_none());
     assert_eq!(
         h.ex.folder().claimed_files().unwrap().len(),
         1,
         "待つ間は claimed に置いたまま"
     );
     hold.release();
-    h.state.wait_save();
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
-    assert!(h.state.model.is_some());
+    h.app_mut().wait_save();
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    assert!(h.model().is_some());
 }
 
 /// 裏の仕事が走っている間に描き始めたら、仕事が終わっても、ストロークが終わるまで入れない。
@@ -912,16 +919,16 @@ fn headless_a_finished_job_waits_for_the_stroke_that_began_while_it_ran() {
     let mut h = Headless::new("stroke-job");
     let request = h.arm("r1", KEY);
     h.start_job(&request);
-    let id = h.state.selected_layer.unwrap();
-    let stroke = h.state.begin_paint_stroke(id, false).unwrap();
+    let id = h.selected_layer().unwrap();
+    let stroke = h.app_mut().begin_paint_stroke(id, false).unwrap();
     h.settle();
     assert!(h.ex.take_replies().is_empty(), "描いている間は入れない");
-    assert!(h.state.model.is_none());
+    assert!(h.model().is_none());
     assert!(h.link.is_working(), "仕事は結果を持ったまま待つ");
-    h.state.doc.cancel_stroke(stroke);
-    h.state.canvas.stroke = None;
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
-    assert!(h.state.model.is_some());
+    h.doc_mut().cancel_stroke(stroke);
+    h.canvas_mut().stroke = None;
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    assert!(h.model().is_some());
 }
 
 /// 送り直しのポーズは 1 つの取り消しの段で、手で動かしたポーズへ戻せる（Rig を組み直す送り直しでも）。
@@ -934,8 +941,8 @@ fn headless_a_resend_is_one_undo_step_that_brings_back_the_hand_made_pose() {
     let mut moved = h.pose();
     let upper = h.bone("Upper");
     moved.locals[upper].translation = Vec3::new(0.0, 1.5, 0.0);
-    pose::set_pose(&mut h.state.view3d, moved.clone()).unwrap();
-    let steps = h.state.view3d.pose.session.as_ref().unwrap().undo_len();
+    pose::set_pose(h.view3d_mut(), moved.clone()).unwrap();
+    let steps = h.view3d().pose.session.as_ref().unwrap().undo_len();
     // 絵だけを読む送り直し: 手で動かした分は上書きされるが、1 つの段で戻る
     let mut again = request.clone();
     again["id"] = "r2".into();
@@ -944,25 +951,25 @@ fn headless_a_resend_is_one_undo_step_that_brings_back_the_hand_made_pose() {
     assert_eq!(h.reply().kind, ReplyKind::Opened);
     assert_ne!(h.pose(), moved);
     assert_eq!(
-        h.state.view3d.pose.session.as_ref().unwrap().undo_len(),
+        h.view3d().pose.session.as_ref().unwrap().undo_len(),
         steps + 1
     );
-    assert!(pose::undo(&mut h.state.view3d).unwrap());
+    assert!(pose::undo(h.view3d_mut()).unwrap());
     assert_eq!(h.pose(), moved);
     // Rig を組み直す送り直し（表示の入切）: 新しいセッションでも、前のポーズへ 1 つの段で戻る
     let mut hide = again.clone();
     hide["id"] = "r3".into();
     hide["renderers"][1]["enabled"] = false.into();
     h.ex.put(&hide);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     assert_eq!(h.session_rig().meshes().len(), 1, "帽子を入れない");
     assert!(
-        h.state.message.contains("更新しました"),
+        h.message().contains("更新しました"),
         "初めて開いたのではなく送り直し: {}",
-        h.state.message
+        h.message()
     );
-    assert_eq!(h.state.view3d.pose.session.as_ref().unwrap().undo_len(), 1);
-    assert!(pose::undo(&mut h.state.view3d).unwrap());
+    assert_eq!(h.view3d().pose.session.as_ref().unwrap().undo_len(), 1);
+    assert!(pose::undo(h.view3d_mut()).unwrap());
     assert_eq!(h.pose().locals, moved.locals, "手で動かした骨の値");
 }
 
@@ -974,15 +981,15 @@ fn headless_a_resend_that_rebuilds_the_rig_marks_the_saved_project_modified() {
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
     let path = h.ex.dir.join("hide.ylp");
-    h.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(!h.state.modified, "{}", h.state.message);
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(!h.modified(), "{}", h.message());
     let mut hide = request.clone();
     hide["id"] = "r2".into();
     hide["renderers"][1]["enabled"] = false.into();
     h.ex.put(&hide);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
-    assert!(h.state.modified, "入切は保存する変更");
-    h.state.apply(Action::SaveProject);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    assert!(h.modified(), "入切は保存する変更");
+    h.act(Action::SaveProject);
     let project = yolu_io::Project::open(&path, &yolu_io::Limits::unbounded()).unwrap();
     let text = String::from_utf8(project.livelink().unwrap().unwrap()).unwrap();
     let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -997,22 +1004,18 @@ fn headless_reopening_does_not_read_the_original_pictures() {
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
     let path = h.ex.dir.join("moved.ylp");
-    h.state.apply(Action::SaveProjectAs(path.clone()));
-    assert!(
-        h.state.message.starts_with("保存しました"),
-        "{}",
-        h.state.message
-    );
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     std::fs::remove_file(h.ex.dir.join("skin.png")).unwrap();
     let mut open = AppState::new(64, 64);
     let mut link = LiveLink::new();
     link.set_folder(h.ex.dir.join("unused")).unwrap();
-    open.prefs.settings.livelink_on_startup = false;
-    open.apply(Action::OpenProject(path));
+    open.prefs_mut().settings.livelink_on_startup = false;
+    open.act(Action::OpenProject(path));
     let deadline = Instant::now() + WATCHDOG;
-    while open.view3d.pose.session.is_none() || link.is_working() {
+    while open.view3d().pose.session.is_none() || link.is_working() {
         link.poll(&mut open);
-        assert!(Instant::now() < deadline, "{}", open.message);
+        assert!(Instant::now() < deadline, "{}", open.message());
         std::thread::sleep(Duration::from_millis(5));
     }
     link.poll(&mut open);
@@ -1025,22 +1028,22 @@ fn headless_reopening_does_not_read_the_original_pictures() {
         "{:?}",
         view.problems
     );
-    assert!(!open.message.contains("元の絵"), "{}", open.message);
-    assert_eq!(open.sets.len(), 2);
+    assert!(!open.message().contains("元の絵"), "{}", open.message());
+    assert_eq!(open.sets().len(), 2);
 }
 
 /// 新しい文書（何も触っていない）のウィンドウから Live Link のモデルを開くと、前のモデルのファイルの参照は残らない。
 #[test]
 fn headless_opening_into_a_pristine_document_drops_the_previous_model_file() {
     let mut h = Headless::new("model-file");
-    h.state.np.model_file = Some(h.ex.dir.join("previous.fbx"));
-    assert!(h.state.is_pristine());
+    h.np_mut().model_file = Some(h.ex.dir.join("previous.fbx"));
+    assert!(h.app().is_pristine());
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
-    assert_eq!(h.state.np.model_file, None, "前の FBX を指さない");
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    assert_eq!(h.np().model_file, None, "前の FBX を指さない");
     let path = h.ex.dir.join("mf.ylp");
-    h.state.apply(Action::SaveProjectAs(path.clone()));
+    h.act(Action::SaveProjectAs(path.clone()));
     let project = yolu_io::Project::open(&path, &yolu_io::Limits::unbounded()).unwrap();
     assert!(project.pose().unwrap().is_none(), "pose.json は書かない");
     assert!(project.livelink().unwrap().is_some());
@@ -1059,33 +1062,29 @@ fn headless_saving_names_the_bones_that_cannot_be_kept() {
     request["renderers"][1]["node"] = "Upper/Lower/Hat".into();
     request["bones"][0]["node"] = "Upper/Lower".into();
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     assert!(
         h.state
-            .link
+            .link()
             .problems
             .iter()
             .all(|p| p.path != "Upper/Lower"),
         "{:?}",
-        h.state.link.problems
+        h.app().link().problems
     );
     let root = h.bone("single");
     let mut moved = h.pose();
     moved.locals[root].translation = Vec3::new(0.0, 1.0, 0.0);
-    pose::set_pose(&mut h.state.view3d, moved).unwrap();
+    pose::set_pose(h.view3d_mut(), moved).unwrap();
     h.state
-        .apply(Action::SaveProjectAs(h.ex.dir.join("unsaved.ylp")));
-    assert!(
-        h.state.message.starts_with("保存しました"),
-        "{}",
-        h.state.message
-    );
+        .act(Action::SaveProjectAs(h.ex.dir.join("unsaved.ylp")));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     assert!(
         h.state
-            .message
+            .message()
             .contains("保存できない項目があります（single）"),
         "{}",
-        h.state.message
+        h.message()
     );
 }
 
@@ -1101,11 +1100,11 @@ fn headless_a_resend_reuses_the_slot_pictures_of_unchanged_files() {
         .push(json!({ "property": "_BumpMap", "path": slash(&bump),
                       "srgb": false, "normal_map": true }));
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     let bump_of = |h: &Headless| {
         let skin = h
             .state
-            .sets
+            .sets()
             .iter()
             .position(|s| s.name == "Skin")
             .expect("Skin のセット");
@@ -1145,7 +1144,7 @@ fn headless_the_export_dialog_start_is_the_nearest_existing_folder_and_creates_n
     let request = h.arm("r1", KEY);
     h.ex.put(&request);
     assert_eq!(h.reply().kind, ReplyKind::Opened);
-    let wanted = h.state.link_export_dir().expect("Unity が知らせた置き場");
+    let wanted = h.app().link_export_dir().expect("Unity が知らせた置き場");
     assert!(!wanted.exists());
     assert_eq!(
         yolu_app::export::window::nearest_existing_folder(&wanted).as_deref(),
@@ -1243,7 +1242,7 @@ fn layer_list(doc: &yolu_core::Document) -> Vec<(String, yolu_core::LayerKind)> 
 
 fn set_index(h: &Headless, name: &str) -> usize {
     h.state
-        .sets
+        .sets()
         .iter()
         .position(|s| s.name == name)
         .unwrap_or_else(|| panic!("{name} のセット"))
@@ -1261,7 +1260,7 @@ fn headless_a_psd_original_comes_in_as_its_layers() {
     request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
     h.ex.put(&request);
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.message());
     assert!(reply.problems.is_empty(), "{:?}", reply.problems);
     let skin = set_index(&h, "Skin");
     let expect = imported_psd(&bytes);
@@ -1271,7 +1270,7 @@ fn headless_a_psd_original_comes_in_as_its_layers() {
         "レイヤー 3・グループ 1・調整 1: {expected:?}"
     );
     {
-        let doc = h.state.set_doc(skin);
+        let doc = h.app().set_doc(skin);
         assert_eq!(
             (doc.width(), doc.height()),
             (96, 64),
@@ -1305,31 +1304,27 @@ fn headless_a_psd_original_comes_in_as_its_layers() {
     }
     // 取り込みで変わる物（合成モード: ディゾルブ → 通常）は、知らせに名前で出す
     assert!(
-        h.state.message.contains("合成モード: ディゾルブ") && h.state.message.contains("body.psd"),
+        h.message().contains("合成モード: ディゾルブ") && h.message().contains("body.psd"),
         "{}",
-        h.state.message
+        h.message()
     );
     // 絵の無い Cloth は、今までどおり白の「元の絵」
     let cloth = set_index(&h, "Cloth");
-    assert_eq!(h.state.set_doc(cloth).layers()[0].name(), "元の絵");
+    assert_eq!(h.app().set_doc(cloth).layers()[0].name(), "元の絵");
     // 保存しても、元の PSD は変わらない。同じファイルへの PSD の書き出しは、置き換える前に確かめる
     h.state
-        .apply(Action::SaveProjectAs(h.ex.dir.join("layers.ylp")));
-    assert!(
-        h.state.message.starts_with("保存しました"),
-        "{}",
-        h.state.message
-    );
-    h.state.switch_set(skin).unwrap();
+        .act(Action::SaveProjectAs(h.ex.dir.join("layers.ylp")));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
+    h.app_mut().switch_set(skin).unwrap();
     h.state
-        .apply(Action::Psd(yolu_app::psd::PsdAction::Export(psd.clone())));
+        .act(Action::Psd(yolu_app::psd::PsdAction::Export(psd.clone())));
     assert!(
-        h.state.psd.confirm.as_ref().is_some_and(|c| c.imported),
+        h.psd().confirm.as_ref().is_some_and(|c| c.imported),
         "{}",
-        h.state.message
+        h.message()
     );
     h.state
-        .apply(Action::Psd(yolu_app::psd::PsdAction::CancelConfirm));
+        .act(Action::Psd(yolu_app::psd::PsdAction::CancelConfirm));
     assert_eq!(
         std::fs::read(&psd).unwrap(),
         bytes,
@@ -1355,7 +1350,7 @@ fn headless_a_psd_in_another_slot_or_a_linear_one_is_read_flattened() {
     request["materials"][1]["textures"] = json!([{ "property": "_MainTex", "path": slash(&psd),
                                                   "srgb": false, "normal_map": false }]);
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     let (w, _, flat) =
         yolu_io::psd::read_flattened(&bytes, &yolu_io::psd::Limits::default(), None).unwrap();
     let skin = set_index(&h, "Skin");
@@ -1369,7 +1364,7 @@ fn headless_a_psd_in_another_slot_or_a_linear_one_is_read_flattened() {
     // 受けた絵は下の行が先。平らにした PSD の一番下の行の左端と同じ
     let bottom_left = (63 * w as usize) * 4;
     assert_eq!(image.pixels[..4], flat[bottom_left..bottom_left + 4]);
-    assert_eq!(h.state.set_doc(skin).layers()[0].name(), "元の絵");
+    assert_eq!(h.app().set_doc(skin).layers()[0].name(), "元の絵");
     let cloth = set_index(&h, "Cloth");
     let names: Vec<&str> = h
         .state
@@ -1399,7 +1394,7 @@ fn resend(h: &mut Headless, request: &serde_json::Value, id: &str) {
     again["id"] = id.into();
     again["bones"][0]["local"]["r"] = json!([0.0, 0.0, 0.0, 1.0]);
     h.ex.put(&again);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
 }
 
 /// 送り直しで元の絵のファイルが変わっていれば、元の絵を入れた直後のまま（何も触っていない）セットには入れ直す（PSD はレイヤーのまま、
@@ -1412,18 +1407,18 @@ fn headless_a_resend_puts_a_changed_original_into_an_untouched_set() {
     let mut request = h.arm("r1", KEY);
     request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
-    let first = h.state.set_doc(set_index(&h, "Skin")).id();
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    let first = h.app().set_doc(set_index(&h, "Skin")).id();
     // 同じファイルなら入れ直さない
     resend(&mut h, &request, "r2");
-    assert_eq!(h.state.set_doc(set_index(&h, "Skin")).id(), first);
+    assert_eq!(h.app().set_doc(set_index(&h, "Skin")).id(), first);
     // 描き直した PSD は、レイヤーのまま入れ直す（PSD の取り込みと同じ）
     let bytes = layered_psd(true, 90);
     rewrite(&psd, &bytes);
     resend(&mut h, &request, "r3");
     let expect = imported_psd(&bytes);
     {
-        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        let doc = h.app().set_doc(set_index(&h, "Skin"));
         assert_ne!(doc.id(), first, "入れ直した");
         let got = layer_list(doc);
         assert_eq!(got[..got.len() - 1], layer_list(&expect)[..]);
@@ -1436,18 +1431,17 @@ fn headless_a_resend_puts_a_changed_original_into_an_untouched_set() {
         assert!(doc.received_look().is_some(), "受けた見た目は付いたまま");
     }
     assert!(
-        h.state.message.contains("合成モード: ディゾルブ")
-            && !h.state.message.contains("変わりました"),
+        h.message().contains("合成モード: ディゾルブ") && !h.message().contains("変わりました"),
         "{}",
-        h.state.message
+        h.message()
     );
     assert_eq!(std::fs::read(&psd).unwrap(), bytes, "元の PSD は読むだけ");
-    assert!(h.state.modified, "入れ直したセットは保存する変更");
+    assert!(h.modified(), "入れ直したセットは保存する変更");
     // 道が PNG に替われば、平らな「元の絵」（元の絵の大きさに丸めたセット）
     let png = h.ex.dir.join("skin.png");
     request["materials"][0]["textures"][0]["path"] = slash(&png).into();
     resend(&mut h, &request, "r4");
-    let doc = h.state.set_doc(set_index(&h, "Skin"));
+    let doc = h.app().set_doc(set_index(&h, "Skin"));
     let names: Vec<&str> = doc.layers().iter().map(|l| l.name()).collect();
     assert_eq!(names, ["元の絵", "レイヤー 1"]);
     assert_eq!((doc.width(), doc.height()), (256, 256));
@@ -1473,43 +1467,39 @@ fn headless_a_resend_does_not_change_a_touched_psd_set() {
     // Unity が送れなかった物が無い頼み（知らせが注意にならない）
     request["refused"] = json!([]);
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     let skin = set_index(&h, "Skin");
-    h.state.switch_set(skin).unwrap();
-    h.state.doc.add_layer("描いた").unwrap();
-    let id = h.state.doc.id();
-    let layers = layer_list(&h.state.doc);
-    let composite = h.state.doc.composite(h.state.doc.bounds()).unwrap();
+    h.app_mut().switch_set(skin).unwrap();
+    h.doc_mut().add_layer("描いた").unwrap();
+    let id = h.doc().id();
+    let layers = layer_list(h.doc());
+    let composite = h.doc().composite(h.doc().bounds()).unwrap();
     let changed = layered_psd(false, 90);
     rewrite(&psd, &changed);
     resend(&mut h, &request, "r2");
     {
-        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        let doc = h.app().set_doc(set_index(&h, "Skin"));
         assert_eq!(doc.id(), id, "文書を替えない");
         assert_eq!(layer_list(doc), layers);
         assert_eq!(doc.composite(doc.bounds()).unwrap(), composite);
     }
     assert!(
         h.state
-            .message
+            .message()
             .contains("Skin: 元の絵「body.psd」が変わりました。"),
         "{}",
-        h.state.message
+        h.message()
     );
     assert_eq!(
-        h.state.link.notice.as_ref().map(|n| n.0),
+        h.app().link().notice.as_ref().map(|n| n.0),
         Some(yolu_app::livelink::NoticeLevel::Info),
         "変わったことは注意にしない"
     );
     assert_eq!(std::fs::read(&psd).unwrap(), changed, "元の PSD は読むだけ");
     // 同じ変化を送り直しのたびに知らせない
     resend(&mut h, &request, "r3");
-    assert!(
-        !h.state.message.contains("変わりました"),
-        "{}",
-        h.state.message
-    );
-    assert_eq!(h.state.set_doc(set_index(&h, "Skin")).id(), id);
+    assert!(!h.message().contains("変わりました"), "{}", h.message());
+    assert_eq!(h.app().set_doc(set_index(&h, "Skin")).id(), id);
 }
 
 /// 送り直しで、変わった元の PSD を読めなければ、入れた直後のままのセットも変えず（白にしない）、読めないことを知らせる。身元は前のままなので、
@@ -1523,11 +1513,11 @@ fn headless_a_resend_keeps_the_set_when_the_changed_original_cannot_be_read() {
     request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
     request["refused"] = json!([]);
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     let skin = set_index(&h, "Skin");
-    let id = h.state.set_doc(skin).id();
-    let layers = layer_list(h.state.set_doc(skin));
-    let doc = h.state.set_doc(skin);
+    let id = h.app().set_doc(skin).id();
+    let layers = layer_list(h.app().set_doc(skin));
+    let doc = h.app().set_doc(skin);
     let composite = doc.composite(doc.bounds()).unwrap();
     // 先頭の署名を壊す（大きさは同じ）。読めない間は、前のセットのまま
     let good = layered_psd(false, 90);
@@ -1536,17 +1526,17 @@ fn headless_a_resend_keeps_the_set_when_the_changed_original_cannot_be_read() {
     rewrite(&psd, &broken);
     resend(&mut h, &request, "r2");
     {
-        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        let doc = h.app().set_doc(set_index(&h, "Skin"));
         assert_eq!(doc.id(), id, "文書を替えない（白にしない）");
         assert_eq!(layer_list(doc), layers);
         assert_eq!(doc.composite(doc.bounds()).unwrap(), composite);
     }
     assert!(
         h.state
-            .message
+            .message()
             .contains("Skin: 元の絵「body.psd」を読めないので、セットはそのままです"),
         "{}",
-        h.state.message
+        h.message()
     );
     assert_eq!(std::fs::read(&psd).unwrap(), broken, "元の PSD は読むだけ");
     // 更新時刻と大きさを変えずに読めるようにする。身元を覚えていないので、次の送り直しで読み直して入れ直す
@@ -1560,13 +1550,13 @@ fn headless_a_resend_keeps_the_set_when_the_changed_original_cannot_be_read() {
         .unwrap();
     resend(&mut h, &request, "r3");
     let expect = imported_psd(&good);
-    let doc = h.state.set_doc(set_index(&h, "Skin"));
+    let doc = h.app().set_doc(set_index(&h, "Skin"));
     assert_ne!(doc.id(), id, "読めるようになったので入れ直した");
     assert_eq!(
         doc.composite(doc.bounds()).unwrap(),
         expect.composite(expect.bounds()).unwrap()
     );
-    assert!(!h.state.message.contains("読めない"), "{}", h.state.message);
+    assert!(!h.message().contains("読めない"), "{}", h.message());
 }
 
 /// 元の PSD で開いて .ylp に保存し、開き直したセットは、触ったセットとして扱う: 開き直しでは元の絵について何も知らせず、開き直した後に PSD が
@@ -1580,67 +1570,63 @@ fn headless_a_set_reopened_from_a_ylp_counts_as_touched_and_reports_a_later_chan
     request["materials"][0]["textures"][0]["path"] = slash(&psd).into();
     request["refused"] = json!([]);
     h.ex.put(&request);
-    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
     let ylp = h.ex.dir.join("body.ylp");
-    h.state.apply(Action::SaveProjectAs(ylp.clone()));
-    assert!(
-        h.state.message.starts_with("保存しました"),
-        "{}",
-        h.state.message
-    );
+    h.act(Action::SaveProjectAs(ylp.clone()));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     // 開き直す（livelink.json を Unity なしで当て直す。元の絵は読み直さず、セットの中の PSD のレイヤーが残る）
-    h.state.apply(Action::OpenProject(ylp));
+    h.act(Action::OpenProject(ylp));
     h.until("開き直し", |h| {
-        h.state.message.contains("開き直しました") && !h.link.is_working()
+        h.message().contains("開き直しました") && !h.link.is_working()
     });
     assert!(
-        !h.state.message.contains("元の絵"),
+        !h.message().contains("元の絵"),
         "開き直しでは元の絵について知らせない: {}",
-        h.state.message
+        h.message()
     );
     let skin = set_index(&h, "Skin");
-    let id = h.state.set_doc(skin).id();
-    let layers = layer_list(h.state.set_doc(skin));
+    let id = h.app().set_doc(skin).id();
+    let layers = layer_list(h.app().set_doc(skin));
     assert!(
         layers.iter().any(|(name, _)| name == "反転"),
         "PSD のレイヤーのまま: {layers:?}"
     );
-    let doc = h.state.set_doc(skin);
+    let doc = h.app().set_doc(skin);
     let composite = doc.composite(doc.bounds()).unwrap();
     // 開き直した後に PSD が変わって送り直す: 触ったセットとして、セットは変えず 1 度だけ知らせる
     let changed = layered_psd(false, 90);
     rewrite(&psd, &changed);
     resend(&mut h, &request, "r2");
     {
-        let doc = h.state.set_doc(set_index(&h, "Skin"));
+        let doc = h.app().set_doc(set_index(&h, "Skin"));
         assert_eq!(doc.id(), id, "文書を替えない");
         assert_eq!(layer_list(doc), layers);
         assert_eq!(doc.composite(doc.bounds()).unwrap(), composite);
     }
     assert_eq!(
         h.state
-            .message
+            .message()
             .matches("元の絵「body.psd」が変わりました")
             .count(),
         1,
         "{}",
-        h.state.message
+        h.message()
     );
     assert!(
         h.state
-            .message
+            .message()
             .contains("Skin: 元の絵「body.psd」が変わりました。"),
         "{}",
-        h.state.message
+        h.message()
     );
     assert_eq!(std::fs::read(&psd).unwrap(), changed, "元の PSD は読むだけ");
     resend(&mut h, &request, "r3");
     assert!(
-        !h.state.message.contains("変わりました"),
+        !h.message().contains("変わりました"),
         "同じ変化は 1 度だけ: {}",
-        h.state.message
+        h.message()
     );
-    assert_eq!(h.state.set_doc(set_index(&h, "Skin")).id(), id);
+    assert_eq!(h.app().set_doc(set_index(&h, "Skin")).id(), id);
 }
 
 /// FBX を 2 つ並べた相手で、テイクを持つのが 2 つ目だけのとき: テイクの一覧はその FBX のもの、当てるのはその FBX の
@@ -1660,9 +1646,9 @@ fn headless_a_take_moves_only_the_bones_of_the_fbx_that_has_it() {
     }));
     h.ex.put(&req);
     let reply = h.reply();
-    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.state.message);
+    assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.message());
     let rig = h.session_rig();
-    let takes = &h.state.view3d.pose.session.as_ref().unwrap().takes;
+    let takes = &h.view3d().pose.session.as_ref().unwrap().takes;
     assert_eq!(takes.sources.len(), 1, "テイクを持つのは 2 つ目だけ");
     assert_eq!(
         takes.label(0, 1),
@@ -1673,10 +1659,10 @@ fn headless_a_take_moves_only_the_bones_of_the_fbx_that_has_it() {
     assert_eq!(rig.bones()[part.start].name, "7:takes");
     let before = h.pose();
     h.state
-        .apply(Action::Pose(pose::PoseAction::ChooseTake(0, 1)));
-    pose::takes::set_frame(&mut h.state, 50);
-    h.state.apply(Action::Pose(pose::PoseAction::ApplyTake));
-    pose::takes::wait(&mut h.state);
+        .act(Action::Pose(pose::PoseAction::ChooseTake(0, 1)));
+    pose::takes::set_frame(h.app_mut(), 50);
+    h.act(Action::Pose(pose::PoseAction::ApplyTake));
+    pose::takes::wait(h.app_mut());
     let after = h.pose();
     // 1 つ目の FBX の骨は今のまま
     assert_eq!(after.locals[..part.start], before.locals[..part.start]);
@@ -1691,10 +1677,10 @@ fn headless_a_take_moves_only_the_bones_of_the_fbx_that_has_it() {
     );
     // Wave は 2 つ目の腕の BlendShape（Bend）だけを動かす
     h.state
-        .apply(Action::Pose(pose::PoseAction::ChooseTake(0, 0)));
-    pose::takes::set_frame(&mut h.state, 15);
-    h.state.apply(Action::Pose(pose::PoseAction::ApplyTake));
-    pose::takes::wait(&mut h.state);
+        .act(Action::Pose(pose::PoseAction::ChooseTake(0, 0)));
+    pose::takes::set_frame(h.app_mut(), 15);
+    h.act(Action::Pose(pose::PoseAction::ApplyTake));
+    pose::takes::wait(h.app_mut());
     let waved = h.pose();
     let second_arm = rig
         .meshes()

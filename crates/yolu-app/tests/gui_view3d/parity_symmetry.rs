@@ -2,6 +2,7 @@
 //! 3D の対称がどちらのビューのストロークにも効くこと（両方なら写しの数は掛け算）、3D でも予算を超えたらストロークごと取り消すこと。
 //! 実際の入力（3D ビューと 2D のキャンバスのマウスのイベント）を流して確かめる。
 use crate::common;
+use crate::common::drive::Drive;
 use crate::view3d_brush::{cube_view, screen_of};
 
 use common::*;
@@ -19,21 +20,21 @@ type H = Harness<'static, YoluApp>;
 const SIZE: u32 = 256;
 
 fn st(h: &H) -> &yolu_app::state::AppState {
-    &h.state().state
+    h.app()
 }
 
 fn message(h: &H) -> String {
-    st(h).message.clone()
+    st(h).message().to_owned()
 }
 
 /// 文書の全画素の合成（レイヤーの画素が変わっていないかの比較）。
 fn snapshot(h: &H) -> Vec<u8> {
-    let doc = &st(h).doc;
+    let doc = st(h).doc();
     doc.composite(doc.bounds()).unwrap()
 }
 
 fn alpha(h: &H, x: u32, y: u32) -> u8 {
-    composite_pixel(&st(h).doc, x, y)[3]
+    composite_pixel(st(h).doc(), x, y)[3]
 }
 
 fn painted(h: &H) -> Vec<(u32, u32, u8)> {
@@ -51,7 +52,7 @@ fn painted(h: &H) -> Vec<(u32, u32, u8)> {
 
 /// 立方体の面の点（手前の面なら facing は −Z）の、文書の画素の座標（UV × 文書の大きさ）。
 fn texel_of(h: &H, p: Vec3, facing: Vec3) -> (f64, f64) {
-    let model = st(h).view3d.model.as_ref().expect("モデル");
+    let model = st(h).view3d().model.as_ref().expect("モデル");
     let hit = model
         .geometry
         .find_closest_point(p, 0.01, facing, 1 << 20, -1)
@@ -69,18 +70,18 @@ fn ink_near(h: &H, (x, y): (f64, f64), r: u32) -> bool {
 
 fn selected_near(h: &H, (x, y): (f64, f64)) -> u8 {
     st(h)
-        .doc
+        .doc()
         .selection()
         .map_or(0, |m| m.amount(x.floor() as u32, y.floor() as u32))
 }
 
 fn thin_hard_brush(h: &mut H) {
-    let s = &mut h.state_mut().state;
-    s.brush.radius = 4.0;
-    s.brush.hardness = 1.0;
-    s.brush.opacity = 1.0;
-    s.m2.random_seed = false;
-    s.color.set_main([0.9, 0.1, 0.1, 1.0]);
+    let s = h.app_mut();
+    s.brush_mut().radius = 4.0;
+    s.brush_mut().hardness = 1.0;
+    s.brush_mut().opacity = 1.0;
+    s.m2_mut().random_seed = false;
+    s.color_mut().set_main([0.9, 0.1, 0.1, 1.0]);
 }
 
 fn undo(h: &mut H) {
@@ -89,32 +90,30 @@ fn undo(h: &mut H) {
 }
 
 fn quick_on(h: &mut H) {
-    h.state_mut()
-        .state
-        .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
+    h.act(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     h.run();
 }
 
 /// 選んでいるレイヤーの対称定規を全部外す。
 fn clear_rulers(h: &mut H) {
-    let s = &mut h.state_mut().state;
-    let layer = s.selected_layer.unwrap();
+    let s = h.app_mut();
+    let layer = s.selected_layer().unwrap();
     let ids: Vec<_> = common::rulers::of(s, layer).iter().map(|r| r.id).collect();
     if !ids.is_empty() {
-        s.apply(Action::Ruler(RulerAction::Delete { owner: layer, ids }));
+        s.act(Action::Ruler(RulerAction::Delete { owner: layer, ids }));
     }
     h.run();
 }
 
 /// 2D の縦の対称定規（文書の x = 128）。
 fn vertical_2d(h: &mut H) {
-    common::rulers::vertical(&mut h.state_mut().state, SIZE as f64 / 2.0);
+    common::rulers::vertical(h.app_mut(), SIZE as f64 / 2.0);
     h.run();
 }
 
 /// 3D の鏡（X に直交する面、モデルの原点）。
 fn mirror_3d(h: &mut H) {
-    common::rulers::mirror_3d(&mut h.state_mut().state, DVec3::ZERO, DVec3::X);
+    common::rulers::mirror_3d(h.app_mut(), DVec3::ZERO, DVec3::X);
     h.run();
 }
 
@@ -129,8 +128,8 @@ fn drag_3d(h: &mut H, rect: Rect, from: Vec3, to: Vec3) {
 fn canvas_screen(h: &H, (x, y): (f64, f64)) -> Pos2 {
     let r = canvas_rect(h);
     let s = st(h);
-    s.view
-        .view(r, s.doc.width(), s.doc.height())
+    s.view()
+        .view(r, s.doc().width(), s.doc().height())
         .to_screen(x, y)
 }
 
@@ -165,26 +164,26 @@ fn quick_mask_in_3d_paints_the_selection_and_erases_it_and_never_touches_the_lay
         "押した面の UV の画素が選択範囲に"
     );
     assert_eq!(snapshot(&h), layer, "レイヤーの画素は変わらない");
-    assert_eq!(st(&h).doc.undo_count(), 1);
-    assert!(!st(&h).is_stroking() && st(&h).sel.pen.is_none());
+    assert_eq!(st(&h).doc().undo_count(), 1);
+    assert!(!st(&h).is_stroking() && st(&h).sel().pen.is_none());
     // 線を引くと、通った面の画素も
     let other = Vec3::new(-0.25, 0.1, -0.5);
     drag_3d(&mut h, rect, Vec3::new(-0.25, -0.1, -0.5), other);
-    assert_eq!(st(&h).doc.undo_count(), 2);
+    assert_eq!(st(&h).doc().undo_count(), 2);
     assert_eq!(selected_near(&h, texel_of(&h, other, Vec3::NEG_Z)), 255);
     // 消しゴム: 選択消し
-    h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
+    h.act(Action::SelectTool(Tool::Eraser));
     h.run();
     thin_hard_brush(&mut h);
     click_3d(&mut h, rect, front);
     assert_eq!(selected_near(&h, texel), 0, "消した所は外れる");
-    assert_eq!(st(&h).doc.undo_count(), 3);
+    assert_eq!(st(&h).doc().undo_count(), 3);
     assert_eq!(snapshot(&h), layer);
     // 取り消しは文書の取り消し
     undo(&mut h);
     assert_eq!(selected_near(&h, texel), 255);
     // Esc で捨てたストロークは何も残さない
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let at = screen_of(&h, rect, Vec3::new(0.0, -0.3, -0.5));
     press(&h, at, egui::PointerButton::Primary);
     h.step();
@@ -195,20 +194,20 @@ fn quick_mask_in_3d_paints_the_selection_and_erases_it_and_never_touches_the_lay
     h.step();
     release(&h, at, egui::PointerButton::Primary);
     h.run();
-    assert_eq!(st(&h).doc.undo_count(), steps);
-    assert!(!st(&h).is_stroking() && st(&h).sel.pen.is_none());
+    assert_eq!(st(&h).doc().undo_count(), steps);
+    assert!(!st(&h).is_stroking() && st(&h).sel().pen.is_none());
     // 切ると重ねは消え、選択範囲は残る。ブラシは普通に描く
-    let selection = st(&h).doc.selection().cloned();
+    let selection = st(&h).doc().selection().cloned();
     key(&h, Key::Q, Modifiers::SHIFT);
     h.run();
-    assert!(!st(&h).sel.quick);
+    assert!(!st(&h).sel().quick);
     assert_eq!(
-        st(&h).sel.quick_overlay.texture_count(),
+        st(&h).sel().quick_overlay.texture_count(),
         0,
         "重ねの絵は捨てる"
     );
-    assert_eq!(st(&h).doc.selection().cloned(), selection);
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    assert_eq!(st(&h).doc().selection().cloned(), selection);
+    h.act(Action::SelectTool(Tool::Brush));
     h.run();
     thin_hard_brush(&mut h);
     click_3d(&mut h, rect, front);
@@ -233,7 +232,7 @@ fn a_quick_mask_stroke_in_3d_changes_the_red_overlay_of_the_canvas_beside_it() {
     assert_eq!(selected_near(&h, texel_of(&h, front, Vec3::NEG_Z)), 255);
     h.run();
     assert!(
-        st(&h).sel.quick_overlay.texture_count() > 0,
+        st(&h).sel().quick_overlay.texture_count() > 0,
         "キャンバスの赤い重ねが選択範囲を見せる"
     );
 }
@@ -271,7 +270,7 @@ fn pen_dot(h: &mut H, at: Pos2, pressure: f32, eraser: bool) {
 fn quick_mask_in_3d_follows_the_pen_pressure_and_the_pen_eraser_end() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
-    h.state_mut().state.brush.pressure.opacity = true;
+    h.brush_mut().pressure.opacity = true;
     quick_on(&mut h);
     let front = Vec3::new(0.25, 0.0, -0.5);
     let texel = texel_of(&h, front, Vec3::NEG_Z);
@@ -280,15 +279,15 @@ fn quick_mask_in_3d_follows_the_pen_pressure_and_the_pen_eraser_end() {
     pen_dot(&mut h, at, 0.5, false);
     let half = selected_near(&h, texel);
     assert!((120..=135).contains(&half), "{half}");
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
     // 満の筆圧で満量
     pen_dot(&mut h, at, 1.0, false);
     assert_eq!(selected_near(&h, texel), 255);
     // ペンの消しゴムの端は選択消し（ツールはブラシのまま）
     pen_dot(&mut h, at, 1.0, true);
     assert_eq!(selected_near(&h, texel), 0);
-    assert_eq!(st(&h).doc.undo_count(), 3);
-    assert_eq!(st(&h).tool, Tool::Brush);
+    assert_eq!(st(&h).doc().undo_count(), 3);
+    assert_eq!(st(&h).tool(), Tool::Brush);
 }
 
 #[test]
@@ -298,7 +297,7 @@ fn a_3d_quick_mask_stroke_past_the_pen_budget_is_dropped_and_leaves_nothing() {
     quick_on(&mut h);
     let layer = snapshot(&h);
     // 被覆も投影の塗りも入らない作業の予算
-    h.state_mut().state.sel.pen_budget = 1024;
+    h.sel_mut().pen_budget = 1024;
     drag_3d(
         &mut h,
         rect,
@@ -306,13 +305,13 @@ fn a_3d_quick_mask_stroke_past_the_pen_budget_is_dropped_and_leaves_nothing() {
         Vec3::new(0.3, 0.0, -0.5),
     );
     assert_eq!(message(&h), "ストロークが大きすぎます");
-    assert!(st(&h).doc.selection().is_none());
-    assert_eq!(st(&h).doc.undo_count(), 0);
-    assert!(!st(&h).is_stroking() && st(&h).sel.pen.is_none());
-    assert!(st(&h).view3d.input.cover.is_none());
+    assert!(st(&h).doc().selection().is_none());
+    assert_eq!(st(&h).doc().undo_count(), 0);
+    assert!(!st(&h).is_stroking() && st(&h).sel().pen.is_none());
+    assert!(st(&h).view3d().input.cover.is_none());
     assert_eq!(snapshot(&h), layer);
     // 予算を戻せば描ける
-    h.state_mut().state.sel.pen_budget = yolu_app::selection::pen::PEN_BUDGET_BYTES;
+    h.sel_mut().pen_budget = yolu_app::selection::pen::PEN_BUDGET_BYTES;
     let front = Vec3::new(0.25, 0.0, -0.5);
     click_3d(&mut h, rect, front);
     assert_eq!(selected_near(&h, texel_of(&h, front, Vec3::NEG_Z)), 255);
@@ -328,7 +327,7 @@ fn a_quick_mask_stroke_on_the_canvas_is_not_overwritten_by_a_press_in_the_3d_vie
     let front = Vec3::new(0.25, 0.0, -0.5);
     let texel = texel_of(&h, front, Vec3::NEG_Z);
     let began = yolu_app::selection::quick::begin(
-        &mut h.state_mut().state,
+        h.app_mut(),
         yolu_app::state::StrokeSource::Pen(7),
         false,
     );
@@ -337,19 +336,16 @@ fn a_quick_mask_stroke_on_the_canvas_is_not_overwritten_by_a_press_in_the_3d_vie
     assert_eq!(message(&h), "描いている間はできません。");
     assert!(
         st(&h)
-            .sel
+            .sel()
             .pen
             .as_ref()
             .is_some_and(|a| a.source == yolu_app::state::StrokeSource::Pen(7)),
         "キャンバスのストロークのまま"
     );
-    assert!(st(&h).view3d.input.cover.is_none());
-    assert!(yolu_app::selection::quick::finish(
-        &mut h.state_mut().state,
-        true
-    ));
+    assert!(st(&h).view3d().input.cover.is_none());
+    assert!(yolu_app::selection::quick::finish(h.app_mut(), true));
     assert_eq!(selected_near(&h, texel), 0);
-    assert_eq!(st(&h).doc.undo_count(), 0);
+    assert_eq!(st(&h).doc().undo_count(), 0);
 }
 
 /// 3D ビューのクイックマスクのストロークが動いている間は、2D のクイックマスクのストロークも始めない（2D の始めの口を直に呼ぶ）。
@@ -362,23 +358,23 @@ fn a_quick_mask_stroke_in_3d_is_not_overwritten_by_a_canvas_stroke() {
     let at = screen_of(&h, rect, front);
     press(&h, at, egui::PointerButton::Primary);
     h.step();
-    assert!(st(&h).view3d.input.cover.is_some());
+    assert!(st(&h).view3d().input.cover.is_some());
     let began = yolu_app::selection::quick::begin(
-        &mut h.state_mut().state,
+        h.app_mut(),
         yolu_app::state::StrokeSource::Pen(9),
         false,
     );
     assert_eq!(began, Some(false));
     assert_eq!(message(&h), "描いている間はできません。");
     assert!(st(&h)
-        .sel
+        .sel()
         .pen
         .as_ref()
         .is_some_and(|a| a.source == yolu_app::state::StrokeSource::Mouse));
     release(&h, at, egui::PointerButton::Primary);
     h.run();
     assert_eq!(selected_near(&h, texel_of(&h, front, Vec3::NEG_Z)), 255);
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
 }
 
 // ───────── 対称 ─────────
@@ -388,11 +384,11 @@ fn the_2d_symmetry_also_mirrors_a_3d_stroke_in_uv() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
     vertical_2d(&mut h); // 文書の x = 128
-    let base = st(&h).doc.undo_count();
+    let base = st(&h).doc().undo_count();
     let front = Vec3::new(0.25, 0.0, -0.5);
     click_3d(&mut h, rect, front);
     assert!(message(&h).is_empty(), "{}", message(&h));
-    assert_eq!(st(&h).doc.undo_count(), base + 1, "写しも 1 回の取り消し");
+    assert_eq!(st(&h).doc().undo_count(), base + 1, "写しも 1 回の取り消し");
     let dots = painted(&h);
     let (x, y) = texel_of(&h, front, Vec3::NEG_Z);
     assert!(ink_near(&h, (x, y), 2));
@@ -415,7 +411,7 @@ fn the_3d_symmetry_also_mirrors_a_2d_stroke_through_the_model() {
     mirror_3d(&mut h); // X に直交する面、モデルの原点
     click_tab(&mut h, Tab::Canvas);
     h.run();
-    let base = st(&h).doc.undo_count();
+    let base = st(&h).doc().undo_count();
     let a = texel_of(&h, Vec3::new(0.25, 0.1, -0.5), Vec3::NEG_Z);
     let b = texel_of(&h, Vec3::new(-0.25, 0.1, -0.5), Vec3::NEG_Z);
     assert!((a.0 - b.0).abs() > 20.0, "{a:?} {b:?}");
@@ -423,15 +419,11 @@ fn the_3d_symmetry_also_mirrors_a_2d_stroke_through_the_model() {
     assert!(message(&h).is_empty(), "{}", message(&h));
     assert!(ink_near(&h, a, 2));
     assert!(ink_near(&h, b, 2), "モデルの反対側の UV に塗れる");
-    assert_eq!(st(&h).doc.undo_count(), base + 1);
+    assert_eq!(st(&h).doc().undo_count(), base + 1);
     // 写しの面が無いとき（面をモデルの外へずらす）は、その写しだけ飛ばして知らせる
     undo(&mut h);
     clear_rulers(&mut h);
-    common::rulers::mirror_3d(
-        &mut h.state_mut().state,
-        DVec3::new(0.45, 0.0, 0.0),
-        DVec3::X,
-    );
+    common::rulers::mirror_3d(h.app_mut(), DVec3::new(0.45, 0.0, 0.0), DVec3::X);
     h.run();
     click_2d(&mut h, a);
     assert!(ink_near(&h, a, 2));
@@ -474,21 +466,21 @@ fn both_symmetries_multiply_the_copies_in_both_views() {
 #[test]
 fn smudge_refuses_the_2d_symmetry_in_3d_and_the_3d_symmetry_in_2d() {
     let (mut h, rect) = cube_view();
-    h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Smudge { strength: 1.0 };
+    h.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Smudge { strength: 1.0 };
     vertical_2d(&mut h);
-    let base = st(&h).doc.undo_count();
+    let base = st(&h).doc().undo_count();
     let p = Vec3::new(0.25, 0.1, -0.5);
     drag_3d(&mut h, rect, p, Vec3::new(0.3, 0.1, -0.5));
     assert_eq!(message(&h), "指先・クローンでは対称を使えません");
-    assert!(st(&h).doc.undo_count() == base && !st(&h).is_stroking());
+    assert!(st(&h).doc().undo_count() == base && !st(&h).is_stroking());
     clear_rulers(&mut h);
     mirror_3d(&mut h);
-    let base = st(&h).doc.undo_count();
+    let base = st(&h).doc().undo_count();
     click_tab(&mut h, Tab::Canvas);
     h.run();
     let a = texel_of(&h, p, Vec3::NEG_Z);
     click_2d(&mut h, a);
-    assert!(st(&h).doc.undo_count() == base && !st(&h).is_stroking());
+    assert!(st(&h).doc().undo_count() == base && !st(&h).is_stroking());
     assert!(!message(&h).is_empty(), "断った理由を出す");
 }
 
@@ -499,7 +491,7 @@ fn symmetric_strokes_from_both_views_survive_save_and_reopen() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
     mirror_3d(&mut h);
-    common::rulers::horizontal(&mut h.state_mut().state, SIZE as f64 / 2.0);
+    common::rulers::horizontal(h.app_mut(), SIZE as f64 / 2.0);
     h.run();
     click_3d(&mut h, rect, Vec3::new(0.25, 0.1, -0.5));
     click_tab(&mut h, Tab::Canvas);
@@ -508,15 +500,10 @@ fn symmetric_strokes_from_both_views_survive_save_and_reopen() {
     click_2d(&mut h, a);
     let saved = snapshot(&h);
     assert!(painted(&h).len() > 40);
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
+    h.act(Action::SaveProjectAs(path.clone()));
     assert!(message(&h).starts_with("保存しました"), "{}", message(&h));
     let mut again = app(800.0, 600.0, SIZE);
-    again
-        .state_mut()
-        .state
-        .apply(Action::OpenProject(path.clone()));
+    again.act(Action::OpenProject(path.clone()));
     again.run();
     assert_eq!(snapshot(&again), saved, "{}", message(&again));
     let _ = std::fs::remove_dir_all(dir);
@@ -529,11 +516,7 @@ fn a_3d_stroke_over_the_budget_is_cancelled_whole_with_the_same_words_as_2d() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
     let before = snapshot(&h);
-    h.state_mut()
-        .state
-        .doc
-        .set_stroke_budget_bytes(4096)
-        .unwrap();
+    h.doc_mut().set_stroke_budget_bytes(4096).unwrap();
     drag_3d(
         &mut h,
         rect,
@@ -543,12 +526,12 @@ fn a_3d_stroke_over_the_budget_is_cancelled_whole_with_the_same_words_as_2d() {
     let in_3d = message(&h);
     assert!(!in_3d.is_empty());
     assert_eq!(snapshot(&h), before, "文書は前と同じバイト");
-    assert_eq!(st(&h).doc.undo_count(), 0);
-    assert!(!st(&h).is_stroking() && !st(&h).doc.has_active_stroke());
+    assert_eq!(st(&h).doc().undo_count(), 0);
+    assert!(!st(&h).is_stroking() && !st(&h).doc().has_active_stroke());
     // 2D のキャンバスで同じ予算を超えたときと同じ文
     click_tab(&mut h, Tab::Canvas);
     h.run();
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -30.0, 0.0), offset(c, 30.0, 0.0)]);
     assert_eq!(message(&h), in_3d);
@@ -562,7 +545,7 @@ fn a_3d_stroke_over_the_budget_is_cancelled_whole_with_the_same_words_as_2d() {
 fn a_3d_stroke_refused_midway_takes_back_what_it_had_painted() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
-    h.state_mut().state.brush.radius = 10.0;
+    h.brush_mut().radius = 10.0;
     let before = snapshot(&h);
     let front: Vec<Pos2> = (0..=6)
         .map(|i| screen_of(&h, rect, Vec3::new(-0.3 + 0.1 * i as f32, 0.0, -0.5)))
@@ -576,11 +559,11 @@ fn a_3d_stroke_refused_midway_takes_back_what_it_had_painted() {
     }
     let (fixed, largest, rollback) = {
         let s = st(&h);
-        let surface = s.view3d.input.surface.as_ref().expect("3D のストローク");
+        let surface = s.view3d().input.surface.as_ref().expect("3D のストローク");
         (
             surface.projection_fixed_bytes(),
             surface.projection_stats().largest_dab_bytes,
-            s.doc.active_stroke_stats().unwrap().rollback_bytes,
+            s.doc().active_stroke_stats().unwrap().rollback_bytes,
         )
     };
     assert!(rollback > 0);
@@ -589,12 +572,10 @@ fn a_3d_stroke_refused_midway_takes_back_what_it_had_painted() {
     release(&h, front[6], egui::PointerButton::Primary);
     h.run();
     assert_eq!(snapshot(&h), before);
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_stroke_budget_bytes(fixed + largest + rollback)
         .unwrap();
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     // 引く: 手前の面は塗れる
     press(&h, front[0], egui::PointerButton::Primary);
     h.step();
@@ -602,7 +583,7 @@ fn a_3d_stroke_refused_midway_takes_back_what_it_had_painted() {
         move_to(&h, *p);
         h.step();
     }
-    assert!(st(&h).doc.has_active_stroke(), "{}", message(&h));
+    assert!(st(&h).doc().has_active_stroke(), "{}", message(&h));
     assert_ne!(snapshot(&h), before, "途中まで塗っている");
     // 辺をまたいで右の面へ
     for i in 0..=8 {
@@ -626,6 +607,6 @@ fn a_3d_stroke_refused_midway_takes_back_what_it_had_painted() {
         before,
         "途中まで塗った画素も戻り、前と同じバイト"
     );
-    assert_eq!(st(&h).doc.undo_count(), 0);
-    assert!(!st(&h).is_stroking() && !st(&h).doc.has_active_stroke());
+    assert_eq!(st(&h).doc().undo_count(), 0);
+    assert!(!st(&h).is_stroking() && !st(&h).doc().has_active_stroke());
 }

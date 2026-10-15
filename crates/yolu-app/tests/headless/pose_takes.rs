@@ -1,6 +1,7 @@
 //! FBX のテイク（中のアニメ）から、テイクとフレームを選んでポーズにする（画面なし）: 一覧・選び・当てる（取り消しの 1 段・手で直せる）・
 //! BlendShape・描いている間・読み直したファイルが変わっていたとき・`pose.json` に覚える選び。FBX はコードで組んだ ASCII の腕
 //! （`fbx_ascii::arm_takes_scene`。実のデータは使わない）。まとめた Rig（Live Link）は `livelink_files.rs`、欄の画面は `gui_view3d/pose_takes.rs`。
+use crate::common::drive::Drive;
 use crate::common::livelink::fbx_ascii;
 
 use std::path::{Path, PathBuf};
@@ -19,7 +20,7 @@ fn temp(tag: &str) -> PathBuf {
 /// FBX を書いて裏で読み、3D ビューに入れる（プロジェクトのモデルのファイルとして）。
 fn load(s: &mut AppState, path: &Path, scene: &fbx_ascii::Scene) {
     std::fs::write(path, scene.to_ascii()).unwrap();
-    let job = pose::prepare_fbx(&mut s.view3d, path, ModelLimits::default());
+    let job = pose::prepare_fbx(s.view3d_mut(), path, ModelLimits::default());
     let start = Instant::now();
     let prepared = loop {
         if let Some(r) = job.poll() {
@@ -28,12 +29,12 @@ fn load(s: &mut AppState, path: &Path, scene: &fbx_ascii::Scene) {
         assert!(start.elapsed().as_secs() < 120, "読み込みが終わらない");
         std::thread::sleep(std::time::Duration::from_millis(2));
     };
-    pose::install_prepared(&mut s.view3d, prepared);
-    s.np.model_file = Some(path.to_path_buf());
+    pose::install_prepared(s.view3d_mut(), prepared);
+    s.np_mut().model_file = Some(path.to_path_buf());
 }
 
 fn session(s: &AppState) -> &pose::PoseSession {
-    s.view3d.pose.session.as_ref().unwrap()
+    s.view3d().pose.session.as_ref().unwrap()
 }
 
 fn bone(s: &AppState, name: &str) -> usize {
@@ -47,9 +48,9 @@ fn bone(s: &AppState, name: &str) -> usize {
 
 /// 選んで当て、終わるまで待つ。
 fn apply(s: &mut AppState, take: usize, frame: i64) {
-    s.apply(Action::Pose(PoseAction::ChooseTake(0, take)));
+    s.act(Action::Pose(PoseAction::ChooseTake(0, take)));
     takes::set_frame(s, frame);
-    s.apply(Action::Pose(PoseAction::ApplyTake));
+    s.act(Action::Pose(PoseAction::ApplyTake));
     takes::wait(s);
 }
 
@@ -66,7 +67,7 @@ fn headless_the_takes_of_an_fbx_are_listed_and_a_model_without_takes_has_none() 
     assert_eq!(t.frame(), 0, "その始まり");
     load(&mut s, &dir.join("なし.fbx"), &fbx_ascii::arm_scene());
     assert!(session(&s).takes.is_empty());
-    s.apply(Action::Pose(PoseAction::LoadFigure));
+    s.act(Action::Pose(PoseAction::LoadFigure));
     assert!(session(&s).takes.is_empty(), "試しの人形にもテイクは無い");
 }
 
@@ -80,7 +81,11 @@ fn headless_a_take_frame_becomes_the_pose_in_one_undo_step_and_can_be_edited_by_
     let (arm_mesh, thick, bend) = (1, 0, 1);
     // Wave のフレーム 15（0.5 秒）: Lower の z は 45 度（Unity の座標で逆向き）、Bend は 50。Thick（テイクが動かさない）は今のまま
     apply(&mut s, 0, 15);
-    assert!(s.message.contains("「Wave」のフレーム 15"), "{}", s.message);
+    assert!(
+        s.message().contains("「Wave」のフレーム 15"),
+        "{}",
+        s.message()
+    );
     let p = session(&s).pose().clone();
     let want = Quat::from_rotation_z(-45f32.to_radians());
     assert!(p.locals[lower].rotation.dot(want).abs() > 0.99999);
@@ -93,7 +98,7 @@ fn headless_a_take_frame_becomes_the_pose_in_one_undo_step_and_can_be_edited_by_
     // 当てたポーズを手で直せる（ほかの変更と同じ取り消しの段）
     let mut hand = p.clone();
     hand.locals[lower].rotation = Quat::from_rotation_x(0.3);
-    pose::set_pose(&mut s.view3d, hand.clone()).unwrap();
+    pose::set_pose(s.view3d_mut(), hand.clone()).unwrap();
     assert_eq!(session(&s).undo_len(), 2);
     // 別のテイク: テイクが動かさない骨は休みの値へ戻る（Raise は Lower の大きさと Upper の移動だけ）
     apply(&mut s, 1, 50);
@@ -108,10 +113,10 @@ fn headless_a_take_frame_becomes_the_pose_in_one_undo_step_and_can_be_edited_by_
         "Raise は BlendShape を動かさない（前の値のまま）"
     );
     // 取り消すと手で直したポーズ、もう 1 度でテイクのポーズ、もう 1 度で休み
-    s.apply(Action::Pose(PoseAction::Undo));
+    s.act(Action::Pose(PoseAction::Undo));
     assert_eq!(session(&s).pose(), &hand);
-    s.apply(Action::Pose(PoseAction::Undo));
-    s.apply(Action::Pose(PoseAction::Undo));
+    s.act(Action::Pose(PoseAction::Undo));
+    s.act(Action::Pose(PoseAction::Undo));
     assert_eq!(session(&s).pose(), &rest);
 }
 
@@ -120,10 +125,10 @@ fn headless_the_frame_stays_within_the_take_and_the_choice_marks_the_document_mo
     let dir = temp("range");
     let mut s = AppState::new(64, 64);
     load(&mut s, &dir.join("腕.fbx"), &fbx_ascii::arm_takes_scene());
-    s.modified = false;
+    s.set_modified(false);
     takes::set_frame(&mut s, 99);
     assert_eq!(session(&s).takes.frame(), 30, "Wave は 0〜30");
-    s.apply(Action::Pose(PoseAction::ChooseTake(0, 1)));
+    s.act(Action::Pose(PoseAction::ChooseTake(0, 1)));
     assert_eq!(
         session(&s).takes.frame(),
         30,
@@ -132,10 +137,10 @@ fn headless_the_frame_stays_within_the_take_and_the_choice_marks_the_document_mo
     takes::set_frame(&mut s, -5);
     assert_eq!(session(&s).takes.frame(), 15);
     // 範囲の外の番号は選ばない
-    s.apply(Action::Pose(PoseAction::ChooseTake(0, 9)));
+    s.act(Action::Pose(PoseAction::ChooseTake(0, 9)));
     assert_eq!(session(&s).takes.chosen(), Some((0, 1)));
     pose::sync_modified(&mut s);
-    assert!(s.modified, "選びは pose.json に残るので変更あり");
+    assert!(s.modified(), "選びは pose.json に残るので変更あり");
 }
 
 #[test]
@@ -144,19 +149,19 @@ fn headless_applying_waits_for_the_stroke_and_is_refused_while_stroking() {
     let mut s = AppState::new(64, 64);
     load(&mut s, &dir.join("腕.fbx"), &fbx_ascii::arm_takes_scene());
     let rest = session(&s).pose().clone();
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let settings = s.stroke_settings(false);
     // 描いている間は始めない
-    let stroke = s.doc.begin_stroke(layer, &settings).unwrap();
+    let stroke = s.doc_mut().begin_stroke(layer, &settings).unwrap();
     assert!(s.is_stroking());
-    s.apply(Action::Pose(PoseAction::ApplyTake));
+    s.act(Action::Pose(PoseAction::ApplyTake));
     assert!(!session(&s).takes.is_running());
-    s.doc.cancel_stroke(stroke);
+    s.doc_mut().cancel_stroke(stroke);
     // 始めてから描き始めたら、描き終わるまで当てない
     takes::set_frame(&mut s, 30);
-    s.apply(Action::Pose(PoseAction::ApplyTake));
+    s.act(Action::Pose(PoseAction::ApplyTake));
     assert!(session(&s).takes.is_running());
-    let stroke = s.doc.begin_stroke(layer, &settings).unwrap();
+    let stroke = s.doc_mut().begin_stroke(layer, &settings).unwrap();
     let start = Instant::now();
     while start.elapsed().as_millis() < 300 {
         takes::poll(&mut s);
@@ -164,7 +169,7 @@ fn headless_applying_waits_for_the_stroke_and_is_refused_while_stroking() {
     }
     assert_eq!(session(&s).pose(), &rest, "描いている間は当てない");
     assert!(session(&s).takes.is_running());
-    s.doc.cancel_stroke(stroke);
+    s.doc_mut().cancel_stroke(stroke);
     takes::wait(&mut s);
     assert_ne!(session(&s).pose(), &rest, "描き終えたら当てる");
 }
@@ -181,7 +186,7 @@ fn headless_a_file_changed_since_loading_is_refused_with_a_reason_and_the_pose_s
     std::fs::write(&path, renamed.to_ascii()).unwrap();
     apply(&mut s, 0, 10);
     assert_eq!(
-        s.message,
+        s.message(),
         "「Wave」のフレーム 10 をポーズにできません（ファイルが読み込んだときと変わっています）。"
     );
     assert_eq!(session(&s).pose(), &rest);
@@ -190,24 +195,24 @@ fn headless_a_file_changed_since_loading_is_refused_with_a_reason_and_the_pose_s
     std::fs::remove_file(&path).unwrap();
     apply(&mut s, 0, 10);
     assert!(
-        s.message
+        s.message()
             .starts_with("「Wave」のフレーム 10 をポーズにできません（"),
         "{}",
-        s.message
+        s.message()
     );
     // 英語
-    s.lang = yolu_app::lang::Lang::En;
+    s.set_lang(yolu_app::lang::Lang::En);
     std::fs::write(&path, renamed.to_ascii()).unwrap();
     apply(&mut s, 0, 10);
     assert_eq!(
-        s.message,
+        s.message(),
         "Cannot pose from frame 10 of \"Wave\" (The file has changed since it was loaded)."
     );
 }
 
 fn save_as(s: &mut AppState, path: &Path) {
-    s.apply(Action::SaveProjectAs(path.to_path_buf()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(path.to_path_buf()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
 }
 
 #[test]
@@ -236,8 +241,8 @@ fn headless_the_chosen_take_and_frame_are_kept_in_pose_json_and_come_back() {
     );
     // 開き直す: ポーズも選びも戻る（開いた直後は変更なし・取り消しなし）
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(ylp.clone()));
-    assert!(again.project.is_some(), "{}", again.message);
+    again.act(Action::OpenProject(ylp.clone()));
+    assert!(again.project().is_some(), "{}", again.message());
     load(&mut again, &fbx, &fbx_ascii::arm_takes_scene());
     let note = stored::restore_from_project(&mut again);
     assert_eq!(note.as_deref(), Some("ポーズを戻しました。"));
@@ -251,12 +256,12 @@ fn headless_the_chosen_take_and_frame_are_kept_in_pose_json_and_come_back() {
     }
     assert_eq!(session(&again).undo_len(), 0);
     pose::sync_modified(&mut again);
-    assert!(!again.modified);
+    assert!(!again.modified());
     // テイクがモデルに無い: 選びは最初のテイクのまま、理由を残す
     let mut other = fbx_ascii::arm_takes_scene();
     other.takes[1].name = "Lift".into();
     let mut third = AppState::new(64, 64);
-    third.apply(Action::OpenProject(ylp.clone()));
+    third.act(Action::OpenProject(ylp.clone()));
     load(&mut third, &fbx, &other);
     let note = stored::restore_from_project(&mut third);
     assert_eq!(

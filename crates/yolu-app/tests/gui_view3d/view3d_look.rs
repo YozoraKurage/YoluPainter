@@ -3,6 +3,7 @@
 //! 数値は CPU で同じ式を書いた参照（`yolu_app::view3d::brdf`）と照らす。見た目の全体はスナップショット（コンテナの llvmpipe で撮ったもの。
 //! Windows の D3D12 の実機では縁と補間が少し違うので、`kittest.toml` でその OS では緩める）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::Pos2;
@@ -24,9 +25,7 @@ use yolu_core::{Channel, HeightEdgeMode, LayerId, NormalSettings, NormalYDirecti
 fn view(width: f32, height: f32, doc: u32) -> Harness<'static, YoluApp> {
     let mut h = app(width, height, doc);
     // この試験の場面は標準（PBR）の見た目を見る: 新しい文書の既定（lilToon）でなく標準を明示する
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .restore_look(yolu_core::look::MaterialLook::default())
         .unwrap();
     click_tab(&mut h, yolu_app::Tab::View3d);
@@ -67,19 +66,19 @@ fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
 
 /// `warm` なら接線を先に作っておく（描きが出来るのを待たない）。そうでなければ最初に要る所で別のスレッドが作る。
 fn set_model_with(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>, warm: bool) {
-    let state = &mut h.state_mut().state;
-    let revision = state.view3d.next_revision();
-    state.view3d.material = 0;
+    let state = h.app_mut();
+    let revision = state.view3d_mut().next_revision();
+    state.view3d_mut().material = 0;
     let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
     if warm {
         model.tangents();
     }
-    state.view3d.set_model(model);
+    state.view3d_mut().set_model(model);
     h.run();
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, target: Vec3, distance: f32, yaw: f32, pitch: f32) {
-    h.state_mut().state.view3d.camera = OrbitCamera {
+    h.view3d_mut().camera = OrbitCamera {
         target,
         yaw,
         pitch,
@@ -96,7 +95,7 @@ fn op(h: &mut Harness<'_, YoluApp>, op: Op) {
 }
 
 fn first_layer(h: &Harness<'_, YoluApp>) -> LayerId {
-    h.state().state.doc.layers()[0].id()
+    h.doc().layers()[0].id()
 }
 
 /// 文書の全面を覆う塗りつぶしレイヤーを足す（チャンネルごとの値）。
@@ -105,12 +104,7 @@ fn fill(h: &mut Harness<'_, YoluApp>, name: &str, values: &[(Channel, [u8; 4])])
         .iter()
         .map(|(c, v)| (*c, Rgba8::new(v[0], v[1], v[2], v[3])))
         .collect();
-    let id = h
-        .state_mut()
-        .state
-        .doc
-        .add_fill_layer(name, &values, None)
-        .unwrap();
+    let id = h.doc_mut().add_fill_layer(name, &values, None).unwrap();
     h.run();
     id
 }
@@ -211,7 +205,7 @@ fn the_material_view_matches_the_cpu_brdf_head_on() {
         (255, 20),
         (128, 200),
     ] {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         doc.set_fill_value(
             layer,
             Channel::Metallic,
@@ -324,9 +318,7 @@ fn a_painted_normal_map_tilts_toward_u_and_v_like_unity() {
     // U は画面の右（+X）、V は画面の上（+Y）。接空間の法線 (x, y, z) の x が右、y が上へ傾ける（OpenGL の Y+）
     let layer = fill(&mut h, "法線", &[(Channel::Normal, [217, 128, 217, 255])]);
     let set = |h: &mut Harness<'_, YoluApp>, rgb: [u8; 3]| {
-        h.state_mut()
-            .state
-            .doc
+        h.doc_mut()
             .set_fill_value(
                 layer,
                 Channel::Normal,
@@ -370,8 +362,8 @@ fn a_painted_normal_map_tilts_toward_u_and_v_like_unity() {
 /// 文書の全面に高さの傾斜を書く（x か y の向きに 0 → 252）。
 fn height_ramp(h: &mut Harness<'_, YoluApp>, along_x: bool) {
     let layer = first_layer(h);
-    let size = h.state().state.doc.width();
-    let doc = &mut h.state_mut().state.doc;
+    let size = h.doc().width();
+    let doc = h.doc_mut();
     for y in 0..size {
         for x in 0..size {
             let t = if along_x { x } else { y };
@@ -386,9 +378,7 @@ fn height_ramp(h: &mut Harness<'_, YoluApp>, along_x: bool) {
 #[test]
 fn height_to_normal_tilts_away_from_the_rising_side() {
     let mut h = normal_scene();
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_normal_settings(
             NormalSettings::new(true, 40.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL)
                 .unwrap(),
@@ -412,9 +402,7 @@ fn height_to_normal_tilts_away_from_the_rising_side() {
         "V の坂: 下の光 {from_bottom}、上の光 {from_top}"
     );
     // 設定の強さを 0 に戻すと平ら（出力だけが変わる設定でも見た目が追いつく）
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_normal_settings(
             NormalSettings::new(true, 0.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL)
                 .unwrap(),
@@ -444,7 +432,7 @@ fn only_the_changed_channel_and_tiles_are_uploaded() {
     let color_bytes = base.paint_bytes;
     assert!(color_bytes > 0, "Color は使っているので作ってある");
     // Metallic を 1 タイルだけ塗る: Metallic のテクスチャができ、そのタイルだけが上がる（Color は触らない）
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     doc.set_channel_pixel(
         layer,
         Channel::Metallic,
@@ -462,7 +450,7 @@ fn only_the_changed_channel_and_tiles_are_uploaded() {
         "使い始めたチャンネルの分が増える"
     );
     // 別のタイルへ: そのタイルだけ
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     doc.set_channel_pixel(
         layer,
         Channel::Metallic,
@@ -476,7 +464,7 @@ fn only_the_changed_channel_and_tiles_are_uploaded() {
     assert_eq!(s.last_slot_tiles, [0, 1, 0, 0, 0, 0], "{s:?}");
     assert_eq!(s.total_slot_tiles[1], 2);
     // Color を 1 タイル: Color だけ
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     doc.set_channel_pixel(layer, Channel::Color, 400, 20, Rgba8::new(255, 0, 0, 255))
         .unwrap();
     h.run();
@@ -496,9 +484,7 @@ fn height_to_normal_uploads_the_changed_height_tile_with_its_border() {
     set_model(&mut h, vec![quad(1.0)]);
     look_at(&mut h, Vec3::ZERO, 2.5, 0.0, 0.0);
     let layer = first_layer(&h);
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_normal_settings(
             NormalSettings::new(true, 4.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL)
                 .unwrap(),
@@ -506,7 +492,7 @@ fn height_to_normal_uploads_the_changed_height_tile_with_its_border() {
         )
         .unwrap();
     h.run();
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     doc.set_channel_pixel(
         layer,
         Channel::Height,
@@ -521,7 +507,7 @@ fn height_to_normal_uploads_the_changed_height_tile_with_its_border() {
     assert_eq!(s.last_slot_tiles[5], 1, "{s:?}");
     assert_eq!(s.last_slot_tiles[3], 16, "{s:?}");
     // もう 1 回: Height の 1 タイルと、その外 1 画素までの Normal の 1 つの矩形
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     doc.set_channel_pixel(
         layer,
         Channel::Height,
@@ -560,9 +546,7 @@ fn a_document_over_the_byte_budget_is_shown_smaller_and_never_allocated_in_full(
     assert!(h.query_by_label_contains("縮小表示 1/2").is_none());
     // Emission を使い始めると 8 バイト × 512² で予算（2 MiB）を超える: 確保する前に縮めを上げて作り直す
     let layer = first_layer(&h);
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_channel_pixel(
             layer,
             Channel::Emission,
@@ -583,9 +567,7 @@ fn a_document_over_the_byte_budget_is_shown_smaller_and_never_allocated_in_full(
     // 縮めたことを 3D の右上の隅の警告のアイコンで出す（名前と理由はツールチップ）
     h.get_by_label_contains("縮小表示 1/2");
     // 縮めた後も、変わったタイルだけを上げる（Color の 1 タイル）。何も変わらなければ作り直さない・描かない
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_channel_pixel(layer, Channel::Color, 400, 400, Rgba8::new(255, 0, 0, 255))
         .unwrap();
     h.run();
@@ -603,9 +585,7 @@ fn a_document_over_the_byte_budget_is_shown_smaller_and_never_allocated_in_full(
     small.state_mut().view3d_set_paint_budget(BUDGET);
     let layer = first_layer(&small);
     small
-        .state_mut()
-        .state
-        .doc
+        .doc_mut()
         .set_channel_pixel(
             layer,
             Channel::Emission,
@@ -630,9 +610,9 @@ fn a_mesh_map_over_the_budget_is_shown_smaller_and_the_budget_is_not_exceeded() 
     h.state_mut().view3d_set_paint_budget(64 << 10);
     h.run();
     {
-        let state = &mut h.state_mut().state;
-        let index = state.sets.current_index();
-        let maps = &mut state.sets.get_mut(index).unwrap().mesh_maps;
+        let state = h.app_mut();
+        let index = state.sets().current_index();
+        let maps = &mut state.sets_mut().get_mut(index).unwrap().mesh_maps;
         maps.put(vec![synthetic_map_sized(
             MeshMapKind::AmbientOcclusion,
             128,
@@ -671,8 +651,8 @@ fn paint_block(
     (x, y, w, hgt): (u32, u32, u32, u32),
     value: Rgba8,
 ) {
-    let size = h.state().state.doc.width();
-    let doc = &mut h.state_mut().state.doc;
+    let size = h.doc().width();
+    let doc = h.doc_mut();
     for py in y..(y + hgt).min(size) {
         for px in x..(x + w).min(size) {
             doc.set_channel_pixel(layer, channel, px, py, value)
@@ -792,9 +772,7 @@ fn the_channel_textures_hold_the_same_texels_as_the_export() {
     set_model(&mut h, vec![quad(1.0)]);
     let layer = first_layer(&h);
     // Height → Normal を有効に（Normal の出力に Height から作った法線が入る）
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_normal_settings(
             NormalSettings::new(true, 6.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL)
                 .unwrap(),
@@ -825,7 +803,7 @@ fn the_channel_textures_hold_the_same_texels_as_the_export() {
     patch(&mut h, Channel::Height, (10, 130), [220, 220, 220], 90);
     patch(&mut h, Channel::Normal, (100, 10), [217, 128, 217], 160);
     h.run();
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let template = ExportTemplate::unity_standard();
     let export = |name: &str| {
         build(
@@ -912,7 +890,7 @@ fn the_srgb_channels_average_their_mips_in_linear() {
     set_model(&mut h, vec![quad(1.0)]);
     let layer = first_layer(&h);
     {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         for y in 0..64 {
             for x in 0..64 {
                 let v = if (x + y) % 2 == 0 { 255 } else { 0 };
@@ -1117,11 +1095,11 @@ impl Gate {
 
 /// モデルを入れ替える（フレームは回さない。接線の門が閉じているとき、`run` は終わらない）。
 fn swap_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
-    let state = &mut h.state_mut().state;
-    let revision = state.view3d.next_revision();
-    state.view3d.material = 0;
+    let state = h.app_mut();
+    let revision = state.view3d_mut().next_revision();
+    state.view3d_mut().material = 0;
     let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
-    state.view3d.set_model(model);
+    state.view3d_mut().set_model(model);
 }
 
 /// 接線が着くまで 1 フレームずつ回す（別のスレッドが作る）。
@@ -1196,9 +1174,7 @@ fn tangents_in_flight() -> (Harness<'static, YoluApp>, Gate, LayerId) {
     h.state_mut().view3d_set_tangent_hook(Some(gate.hook()));
     swap_model(&mut h, vec![quad(1.0)]);
     let layer = h
-        .state_mut()
-        .state
-        .doc
+        .doc_mut()
         .add_fill_layer(
             "面",
             &[(Channel::Normal, Rgba8::new(217, 128, 217, 255))],
@@ -1236,7 +1212,7 @@ fn the_window_stops_asking_for_frames_when_the_tangents_are_no_longer_read() {
     h.step();
     assert!(h.state().view3d_wants_repaint());
     // 法線マップを使うレイヤーが無くなっても同じ
-    h.state_mut().state.doc.remove_layer(layer).unwrap();
+    h.doc_mut().remove_layer(layer).unwrap();
     h.step();
     assert!(
         !h.state().view3d_wants_repaint(),
@@ -1257,9 +1233,7 @@ fn a_failed_tangent_worker_neither_keeps_the_window_repainting_nor_runs_again() 
             panic!("試験: 接線の作業の失敗");
         })));
     swap_model(&mut h, vec![quad(1.0)]);
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .add_fill_layer(
             "面",
             &[(Channel::Normal, Rgba8::new(217, 128, 217, 255))],
@@ -1495,12 +1469,7 @@ fn ball_over_floor() -> Harness<'static, YoluApp> {
 /// 世界の点が見えている画素（3D の表示域の左上から測った点を、画像の座標へ）。
 fn screen_of(h: &Harness<'_, YoluApp>, world: Vec3) -> Pos2 {
     let area = h.state().view3d_rect().unwrap();
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(area.width(), area.height());
+    let view = h.view3d().camera.view(area.width(), area.height());
     let p = view.to_screen(world).expect("カメラの前");
     area.min + egui::vec2(p.x, p.y)
 }
@@ -1656,20 +1625,13 @@ fn a_softer_shadow_has_a_wider_penumbra() {
 fn the_corner_shading_icon_switches_what_is_shown() {
     use egui_kittest::kittest::Queryable;
     let mut h = view(1100.0, 760.0, 64);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.run();
-    assert_eq!(h.state().state.view3d.display.shading, Shading::Material);
+    assert_eq!(h.view3d().display.shading, Shading::Material);
     // 右上の隅のアイコン（3D の表示: マテリアル (PBR)）を押すと一覧が開き、並びは Unity 版と同じ（マテリアル・中立・チャンネルだけ・メッシュマップ）
     h.get_by_label("3D の表示: マテリアル (PBR)").click();
     h.run();
-    let body = h
-        .state()
-        .state
-        .popup
-        .as_ref()
-        .expect("一覧が開く")
-        .state
-        .rect;
+    let body = h.popup().as_ref().expect("一覧が開く").state.rect;
     for label in [
         "中立",
         "カラー",
@@ -1687,34 +1649,32 @@ fn the_corner_shading_icon_switches_what_is_shown() {
         );
     }
     // メッシュマップは、今のセットに焼いてあるものだけ選べる（焼いていなければ押しても変わらない）
-    let before = h.state().state.view3d.display.shading;
+    let before = h.view3d().display.shading;
     let at = popup_item(&h, "アンビエントオクルージョン").center();
     click(&mut h, at);
     h.run();
-    assert_eq!(h.state().state.view3d.display.shading, before);
-    if h.state().state.popup.is_none() {
+    assert_eq!(h.view3d().display.shading, before);
+    if h.popup().is_none() {
         h.get_by_label("3D の表示: マテリアル (PBR)").click();
         h.run();
     }
     let at = popup_item(&h, "中立").center();
     click(&mut h, at);
     h.run();
-    assert_eq!(h.state().state.view3d.display.shading, Shading::Neutral);
-    assert!(h.state().state.popup.is_none());
+    assert_eq!(h.view3d().display.shading, Shading::Neutral);
+    assert!(h.popup().is_none());
     h.get_by_label("3D の表示: 中立").click();
     h.run();
     let at = popup_item(&h, "ラフネス").center();
     click(&mut h, at);
     h.run();
     assert_eq!(
-        h.state().state.view3d.display.shading,
+        h.view3d().display.shading,
         Shading::Channel(Channel::Roughness)
     );
     // 英語の画面では英語の名前
-    h.state_mut().state.lang = yolu_app::lang::Lang::En;
-    h.state_mut()
-        .state
-        .apply(Action::View3d(Op::Shading(Shading::Material)));
+    h.set_lang(yolu_app::lang::Lang::En);
+    h.act(Action::View3d(Op::Shading(Shading::Material)));
     h.run();
     assert!(h.query_by_label("3D shading: Material (PBR)").is_some());
 }
@@ -1723,55 +1683,55 @@ fn the_corner_shading_icon_switches_what_is_shown() {
 fn the_settings_panel_edits_lighting_and_closes_outside_or_with_escape() {
     use egui_kittest::kittest::Queryable;
     let mut h = view(1100.0, 760.0, 64);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.run();
-    assert!(!h.state().state.view3d.display.settings_open);
+    assert!(!h.view3d().display.settings_open);
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.state().state.view3d.display.settings_open);
+    assert!(h.view3d().display.settings_open);
     // 環境の元・トーンマッピングの曲線は、ボタンを押して選ぶ
     h.get_by_label("スタジオ").click();
     h.run();
-    assert_eq!(h.state().state.view3d.display.env, EnvKind::Studio);
+    assert_eq!(h.view3d().display.env, EnvKind::Studio);
     assert!(h.state().view3d_stats().unwrap().env_bakes >= 1);
     h.get_by_label("ACES").click();
     h.run();
-    assert_eq!(h.state().state.view3d.display.tone_map, Curve::Aces);
+    assert_eq!(h.view3d().display.tone_map, Curve::Aces);
     // 影のオン・オフ
-    assert!(!h.state().state.view3d.display.shadows);
+    assert!(!h.view3d().display.shadows);
     h.get_by_label("影").click();
     h.run();
-    assert!(h.state().state.view3d.display.shadows);
+    assert!(h.view3d().display.shadows);
     // 既定に戻す: 光・環境・影・トーンマッピングだけ（何を見せるかは変えない）
     h.state_mut().apply(Action::View3d(Op::Shading(
         yolu_app::view3d::display::Shading::Neutral,
     )));
     h.get_by_label("既定に戻す").click();
     h.run();
-    let d = h.state().state.view3d.display;
+    let d = h.view3d().display;
     assert_eq!((d.env, d.tone_map), (EnvKind::Sky, Curve::None));
     assert!(!d.shadows, "影も既定に戻る");
     assert_eq!(d.shading, yolu_app::view3d::display::Shading::Neutral);
     // Esc で閉じる
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.run();
-    assert!(!h.state().state.view3d.display.settings_open);
+    assert!(!h.view3d().display.settings_open);
     // 開き直して、パネルの外（3D の絵の上）を押すと閉じる（その押しが 3D で描き始め・回し始めにならないことは、
     // `pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting` が確かめる）
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.state().state.view3d.display.settings_open);
+    assert!(h.view3d().display.settings_open);
     let rect = h.state().view3d_rect().unwrap();
     click(&mut h, rect.left_top() + egui::vec2(60.0, 300.0));
     h.run();
-    assert!(!h.state().state.view3d.display.settings_open);
-    assert!(!h.state().state.doc.can_undo(), "閉じる押しで描かない");
+    assert!(!h.view3d().display.settings_open);
+    assert!(!h.doc().can_undo(), "閉じる押しで描かない");
     // 設定のパネルを開いている間、パネルの上のドラッグで描かない
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
     let panel_point = egui::pos2(rect.right() - 60.0, rect.top() + 60.0);
     drag(&mut h, &[panel_point, panel_point + egui::vec2(20.0, 10.0)]);
-    assert!(!h.state().state.doc.can_undo(), "パネルの上では描かない");
+    assert!(!h.doc().can_undo(), "パネルの上では描かない");
 }
 
 #[test]
@@ -1785,26 +1745,20 @@ fn pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting() 
     let open_panel = |h: &mut Harness<'_, YoluApp>| {
         h.get_by_label("光・環境・トーンマッピング").click();
         h.run();
-        assert!(h.state().state.view3d.display.settings_open);
+        assert!(h.view3d().display.settings_open);
     };
     // 左ボタン: モデルの上を押してパネルを閉じる。その押しは 1 ダブも描かない（Undo の履歴にも入らない）
     open_panel(&mut h);
     press(&h, on_model, egui::PointerButton::Primary);
     h.step();
-    assert!(
-        !h.state().state.view3d.display.settings_open,
-        "外の押しで閉じる"
-    );
-    assert!(
-        !h.state().state.is_stroking(),
-        "閉じる押しでストロークが始まらない"
-    );
+    assert!(!h.view3d().display.settings_open, "外の押しで閉じる");
+    assert!(!h.app().is_stroking(), "閉じる押しでストロークが始まらない");
     release(&h, on_model, egui::PointerButton::Primary);
     h.run();
-    assert!(!h.state().state.doc.can_undo(), "閉じる押しで描かない");
+    assert!(!h.doc().can_undo(), "閉じる押しで描かない");
     // 右ボタン: 閉じる押しで回し始めない
     open_panel(&mut h);
-    let yaw = h.state().state.view3d.camera.yaw;
+    let yaw = h.view3d().camera.yaw;
     press(&h, on_model, egui::PointerButton::Secondary);
     h.step();
     move_to(&h, on_model + egui::vec2(50.0, 0.0));
@@ -1815,15 +1769,11 @@ fn pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting() 
         egui::PointerButton::Secondary,
     );
     h.run();
-    assert!(!h.state().state.view3d.display.settings_open);
-    assert_eq!(
-        h.state().state.view3d.camera.yaw,
-        yaw,
-        "閉じる押しで回さない"
-    );
+    assert!(!h.view3d().display.settings_open);
+    assert_eq!(h.view3d().camera.yaw, yaw, "閉じる押しで回さない");
     // ホイールは、パネルを開いたままでも使える（寄れる）
     open_panel(&mut h);
-    let distance = h.state().state.view3d.camera.distance;
+    let distance = h.view3d().camera.distance;
     move_to(&h, on_model);
     h.event(egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Line,
@@ -1833,22 +1783,16 @@ fn pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting() 
     });
     h.run();
     assert!(
-        h.state().state.view3d.camera.distance != distance,
+        h.view3d().camera.distance != distance,
         "パネルを開いたままホイールで寄れる"
     );
-    assert!(
-        h.state().state.view3d.display.settings_open,
-        "ホイールでは閉じない"
-    );
+    assert!(h.view3d().display.settings_open, "ホイールでは閉じない");
     // パネルを閉じたあとの同じ点の押しは描ける（点がモデルの上にあり、閉じていれば描く対照）
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.run();
-    assert!(!h.state().state.view3d.display.settings_open);
+    assert!(!h.view3d().display.settings_open);
     click(&mut h, on_model);
-    assert!(
-        h.state().state.doc.can_undo(),
-        "パネルが閉じていれば、同じ押しは描く"
-    );
+    assert!(h.doc().can_undo(), "パネルが閉じていれば、同じ押しは描く");
 }
 
 // ───────── メッシュマップだけの表示 ─────────
@@ -1902,9 +1846,9 @@ fn a_baked_mesh_map_is_shown_alone_on_the_model_and_falls_back_when_it_is_gone()
     look_at(&mut h, Vec3::ZERO, 2.5, 0.0, 0.0);
     // 焼いたマップを今のセットへ入れる: AO は U に沿って 0 → 1、曲率は V（文書の y）に沿って 0 → 1
     {
-        let state = &mut h.state_mut().state;
-        let index = state.sets.current_index();
-        let maps = &mut state.sets.get_mut(index).unwrap().mesh_maps;
+        let state = h.app_mut();
+        let index = state.sets().current_index();
+        let maps = &mut state.sets_mut().get_mut(index).unwrap().mesh_maps;
         maps.put(vec![
             synthetic_map(MeshMapKind::AmbientOcclusion, |x, _| x as f32 / 15.0),
             synthetic_map(MeshMapKind::Curvature, |_, y| y as f32 / 15.0),
@@ -1912,12 +1856,7 @@ fn a_baked_mesh_map_is_shown_alone_on_the_model_and_falls_back_when_it_is_gone()
     }
     h.run();
     let rect = h.state().view3d_rect().unwrap();
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().camera.view(rect.width(), rect.height());
     let at = |x: f32, y: f32| {
         let s = view.to_screen(Vec3::new(x, y, 0.0)).unwrap();
         rect.min + egui::vec2(s.x, s.y)
@@ -1956,13 +1895,13 @@ fn a_baked_mesh_map_is_shown_alone_on_the_model_and_falls_back_when_it_is_gone()
     assert_eq!(luma(px(&h.render().unwrap(), at(0.0, 0.25))), high);
     // 今のセットからマップが無くなると、マテリアルの表示へ戻る
     {
-        let state = &mut h.state_mut().state;
-        let index = state.sets.current_index();
-        state.sets.get_mut(index).unwrap().mesh_maps = Default::default();
+        let state = h.app_mut();
+        let index = state.sets().current_index();
+        state.sets_mut().get_mut(index).unwrap().mesh_maps = Default::default();
     }
     h.run();
     assert_eq!(
-        h.state().state.view3d.display.shading,
+        h.view3d().display.shading,
         yolu_app::view3d::display::Shading::Material
     );
 }
@@ -1983,7 +1922,7 @@ fn material_balls(h: &mut Harness<'_, YoluApp>) {
                 0.5,
                 Vec2::new((i as f32 + 0.5) / 32.0, (j as f32 + 0.5) / 32.0),
             ));
-            let doc = &mut h.state_mut().state.doc;
+            let doc = h.doc_mut();
             let (x, y) = (i as u32, j as u32);
             doc.set_channel_pixel(layer, Channel::Color, x, y, Rgba8::new(230, 150, 70, 255))
                 .unwrap();
@@ -2010,12 +1949,7 @@ fn snapshot_material_balls_metal_and_roughness_steps() {
     let image = h.render().unwrap();
     // 並びの検算: 金属が増えるほど拡散の色（橙）は沈み、粗さが増えるほど映り込みのピークは落ちる
     let area = h.state().view3d_rect().unwrap();
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(area.width(), area.height());
+    let view = h.view3d().camera.view(area.width(), area.height());
     let at = |i: i32, j: i32| {
         let c = Vec3::new((i as f32 - 2.0) * 1.1, (1.0 - j as f32) * 1.1, 0.0);
         let s = view.to_screen(c).unwrap();
@@ -2053,9 +1987,7 @@ fn snapshot_normal_map_from_a_height_bump() {
             (Channel::Roughness, gray(110)),
         ],
     );
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_normal_settings(
             NormalSettings::new(true, 30.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL)
                 .unwrap(),
@@ -2075,9 +2007,7 @@ fn snapshot_normal_map_from_a_height_bump() {
             tile[i..i + 4].copy_from_slice(&[v, v, v, 255]);
         }
     }
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .import_tile(
             layer,
             Channel::Height,
@@ -2090,12 +2020,7 @@ fn snapshot_normal_map_from_a_height_bump() {
     crate::common::shot::region(&mut h, "view3d_normal_map", area);
     // 光の来る向きを変えると、盛り上がりの明るい側が反対になる（法線マップが効いている）
     let rect = h.state().view3d_rect().unwrap();
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().camera.view(rect.width(), rect.height());
     let spot = |x: f32| {
         let s = view.to_screen(Vec3::new(x, 0.0, 0.0)).unwrap();
         rect.min + egui::vec2(s.x, s.y)
@@ -2121,7 +2046,7 @@ fn snapshot_ball_shadow_on_a_floor() {
 #[test]
 fn snapshot_settings_panel_and_shading_menu() {
     let mut h = view(1100.0, 760.0, 64);
-    h.state_mut().state.view3d.load_demo();
+    h.view3d_mut().load_demo();
     h.run();
     use egui_kittest::kittest::Queryable;
     h.get_by_label("光・環境・トーンマッピング").click();
@@ -2174,16 +2099,14 @@ fn measure_painting_frames_with_seventy_thousand_triangles_and_six_channels() {
             (Channel::Emission, [20, 10, 5, 255]),
         ],
     );
-    h.state_mut()
-        .state
-        .doc
+    h.doc_mut()
         .set_normal_settings(
             NormalSettings::new(true, 8.0, HeightEdgeMode::Clamp, NormalYDirection::OpenGL)
                 .unwrap(),
             false,
         )
         .unwrap();
-    let doc = &mut h.state_mut().state.doc;
+    let doc = h.doc_mut();
     doc.set_channel_pixel(layer, Channel::Height, 5, 5, Rgba8::new(200, 200, 200, 255))
         .unwrap();
     doc.set_channel_pixel(layer, Channel::Color, 5, 5, Rgba8::new(200, 60, 40, 255))
@@ -2211,7 +2134,7 @@ fn measure_painting_frames_with_seventy_thousand_triangles_and_six_channels() {
         for _ in 0..FRAMES {
             counter += 1;
             let (x, y) = (200 + counter * 37 % 3500, 300 + counter * 53 % 3400);
-            let doc = &mut h.state_mut().state.doc;
+            let doc = h.doc_mut();
             let tiles_per_frame = if all_channels { 2 } else { 1 };
             for k in 0..tiles_per_frame {
                 let (px, py) = (x + k * 130, y);
@@ -2247,7 +2170,7 @@ fn measure_painting_frames_with_seventy_thousand_triangles_and_six_channels() {
     let orbit_frames = |h: &mut Harness<'_, YoluApp>| {
         let (mut wall, mut cpu) = (Vec::new(), Vec::new());
         for frame in 0..FRAMES {
-            let yaw = &mut h.state_mut().state.view3d.camera.yaw;
+            let yaw = &mut h.view3d_mut().camera.yaw;
             *yaw += 3.0 + frame as f32 * 0.01;
             let started = Instant::now();
             h.step();

@@ -2,6 +2,7 @@
 //! 取らない・失敗しても描ける・落ちた体の起動・開く（名称未設定（復旧）で、元の .ylp には書かない）・捨てる・整理。
 //! 復旧のウィンドウの画面は `recovery_ui.rs`。
 
+use crate::common::drive::Drive;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -59,8 +60,8 @@ fn plenty() -> SpaceProbe {
 const GIB: u64 = 1 << 30;
 fn session_with(root: &Path, s: RecoverySettings, lang: Lang) -> AppState {
     let mut state = AppState::new_in(64, 64, lang);
-    state.recovery.set_space_probe(Some(plenty()));
-    state.recovery.enable(root.to_path_buf(), s).unwrap();
+    state.recovery_mut().set_space_probe(Some(plenty()));
+    state.recovery_mut().enable(root.to_path_buf(), s).unwrap();
     state
 }
 fn session(root: &Path) -> AppState {
@@ -73,30 +74,30 @@ fn paint(s: &mut AppState, x: f64) {
     finish(s, stroke);
 }
 fn begin(s: &mut AppState, x: f64) -> yolu_app::engine::Stroke {
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), x, 20.0, 1.0, DVec2::ZERO)
         .unwrap();
     stroke
 }
 fn finish(s: &mut AppState, stroke: yolu_app::engine::Stroke) {
-    s.doc.end_stroke(stroke).unwrap();
-    s.modified = true;
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.set_modified(true);
 }
 
 /// 変更のあと、間隔が経つまで進めて、書き込みが終わるまで待つ（返すのは進めた先の時刻）。
 fn write_after(s: &mut AppState, from: Instant) -> Instant {
     s.recovery_tick_at(from);
-    let due = from + Duration::from_secs(s.recovery.settings().interval_seconds as u64 + 1);
+    let due = from + Duration::from_secs(s.recovery().settings().interval_seconds as u64 + 1);
     s.recovery_tick_at(due);
     s.recovery_wait();
     due
 }
 
 fn generations(s: &AppState) -> usize {
-    GenerationStore::new(s.recovery.session_dir().unwrap())
+    GenerationStore::new(s.recovery().session_dir().unwrap())
         .list()
         .unwrap()
         .len()
@@ -106,7 +107,7 @@ fn pixel_in(doc: &Document, x: u32) -> [u8; 4] {
 }
 /// この実行の置き場の最新の世代の、最初のセットの文書。
 fn newest_doc(s: &AppState) -> Document {
-    let store = GenerationStore::new(s.recovery.session_dir().unwrap());
+    let store = GenerationStore::new(s.recovery().session_dir().unwrap());
     let mut files = store.load().unwrap().files;
     files.remove(INFO_NAME);
     let project = Project::from_entries(files).unwrap();
@@ -127,20 +128,20 @@ fn headless_nothing_is_written_until_the_interval_has_passed_since_the_change() 
     // 変更が無い・保存した .ylp と同じなら、いくら待っても書かない
     s.recovery_tick_at(t0 + Duration::from_secs(3600));
     s.recovery_wait();
-    assert_eq!((s.recovery.checkpoints(), generations(&s)), (0, 0));
+    assert_eq!((s.recovery().checkpoints(), generations(&s)), (0, 0));
     paint(&mut s, 10.0);
     s.recovery_tick_at(t0);
     s.recovery_tick_at(t0 + Duration::from_secs(14));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 0, "14 秒ではまだ");
+    assert_eq!(s.recovery().checkpoints(), 0, "14 秒ではまだ");
     s.recovery_tick_at(t0 + Duration::from_secs(16));
     s.recovery_wait();
-    assert_eq!((s.recovery.checkpoints(), generations(&s)), (1, 1));
+    assert_eq!((s.recovery().checkpoints(), generations(&s)), (1, 1));
     assert!(
-        s.recovery.is_marked_dirty(),
+        s.recovery().is_marked_dirty(),
         "保存していない作業の世代がある印"
     );
-    assert_eq!(pixel_in(&newest_doc(&s), 10), pixel_in(&s.doc, 10));
+    assert_eq!(pixel_in(&newest_doc(&s), 10), pixel_in(s.doc(), 10));
 }
 
 #[test]
@@ -155,10 +156,10 @@ fn headless_continuous_painting_is_written_every_interval_from_the_previous_writ
     s.recovery_tick_at(first + Duration::from_secs(1));
     s.recovery_tick_at(first + Duration::from_secs(10));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
     s.recovery_tick_at(first + Duration::from_secs(16));
     s.recovery_wait();
-    assert_eq!((s.recovery.checkpoints(), generations(&s)), (2, 2));
+    assert_eq!((s.recovery().checkpoints(), generations(&s)), (2, 2));
 }
 
 #[test]
@@ -172,7 +173,7 @@ fn headless_enough_finished_strokes_write_before_the_interval() {
         finish(&mut s, stroke);
         s.recovery_tick_at(t0 + Duration::from_millis(i as u64 + 1));
         s.recovery_wait();
-        assert_eq!(s.recovery.checkpoints(), (i == 2) as u64, "{i} 本目");
+        assert_eq!(s.recovery().checkpoints(), (i == 2) as u64, "{i} 本目");
     }
     assert_eq!(generations(&s), 1);
     // 数を 0 にすれば、数では書かない
@@ -185,7 +186,7 @@ fn headless_enough_finished_strokes_write_before_the_interval() {
         s.recovery_tick_at(t0 + Duration::from_millis(1));
     }
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 0);
+    assert_eq!(s.recovery().checkpoints(), 0);
 }
 
 #[test]
@@ -194,19 +195,19 @@ fn headless_nothing_is_captured_during_a_stroke_and_the_capture_follows_it() {
     let mut s = session(&dir.root());
     let t0 = Instant::now();
     let stroke = begin(&mut s, 10.0);
-    s.modified = true;
+    s.set_modified(true);
     // 描いている最中は、時間が経っても取らない（材料を取る前に帰る。書き手も動かない）
     for secs in [0, 20, 40, 3600] {
         s.recovery_tick_at(t0 + Duration::from_secs(secs));
-        assert!(s.recovery.is_idle(), "{secs} 秒");
+        assert!(s.recovery().is_idle(), "{secs} 秒");
     }
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 0);
+    assert_eq!(s.recovery().checkpoints(), 0);
     finish(&mut s, stroke);
     s.recovery_tick_at(t0 + Duration::from_secs(3601));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 1, "描き終えた次の見張りで書く");
-    assert_eq!(pixel_in(&newest_doc(&s), 10), pixel_in(&s.doc, 10));
+    assert_eq!(s.recovery().checkpoints(), 1, "描き終えた次の見張りで書く");
+    assert_eq!(pixel_in(&newest_doc(&s), 10), pixel_in(s.doc(), 10));
 }
 
 #[test]
@@ -219,14 +220,14 @@ fn headless_an_unchanged_state_is_not_written_again() {
         s.recovery_tick_at(t + Duration::from_secs(100 * i));
         s.recovery_wait();
     }
-    assert_eq!((s.recovery.checkpoints(), generations(&s)), (1, 1));
+    assert_eq!((s.recovery().checkpoints(), generations(&s)), (1, 1));
     // セットの名前だけの変更（文書の版は変わらない）も、別の書き置きになる
-    let uid = s.sets.current().uid;
+    let uid = s.sets().current().uid;
     s.rename_set(uid, "名前だけ変えた").unwrap();
-    s.modified = true;
+    s.set_modified(true);
     let t = write_after(&mut s, t + Duration::from_secs(1000));
     let _ = t;
-    assert_eq!(s.recovery.checkpoints(), 2);
+    assert_eq!(s.recovery().checkpoints(), 2);
 }
 
 #[test]
@@ -236,12 +237,12 @@ fn headless_a_saved_project_is_not_written_and_saving_clears_the_mark() {
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
-    assert!(s.recovery.is_marked_dirty());
-    s.apply(Action::SaveProjectAs(file.clone()));
-    assert!(!s.modified, "{}", s.message);
+    assert!(s.recovery().is_marked_dirty());
+    s.act(Action::SaveProjectAs(file.clone()));
+    assert!(!s.modified(), "{}", s.message());
     s.recovery_tick_at(t + Duration::from_secs(1));
     assert!(
-        !s.recovery.is_marked_dirty(),
+        !s.recovery().is_marked_dirty(),
         "保存したので、落ちても知らせない印へ"
     );
     for i in 1..4 {
@@ -249,15 +250,15 @@ fn headless_a_saved_project_is_not_written_and_saving_clears_the_mark() {
         s.recovery_wait();
     }
     assert_eq!(
-        s.recovery.checkpoints(),
+        s.recovery().checkpoints(),
         1,
         "保存した .ylp と同じなので書かない"
     );
     // 保存した後の変更は、また書く
     paint(&mut s, 30.0);
     write_after(&mut s, t + Duration::from_secs(1000));
-    assert_eq!(s.recovery.checkpoints(), 2);
-    assert!(s.recovery.is_marked_dirty());
+    assert_eq!(s.recovery().checkpoints(), 2);
+    assert!(s.recovery().is_marked_dirty());
 }
 
 #[test]
@@ -271,7 +272,7 @@ fn headless_only_the_latest_waiting_request_is_written_and_one_writer_runs() {
     let active = Arc::new(AtomicUsize::new(0));
     let widest = Arc::new(AtomicUsize::new(0));
     let (c, a, w) = (calls.clone(), active.clone(), widest.clone());
-    s.recovery.set_fault(Some(fault(move |stage| {
+    s.recovery_mut().set_fault(Some(fault(move |stage| {
         if stage == "snapshot" {
             w.fetch_max(a.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
             if c.fetch_add(1, Ordering::SeqCst) == 0 {
@@ -299,7 +300,7 @@ fn headless_only_the_latest_waiting_request_is_written_and_one_writer_runs() {
     paint(&mut s, 20.0);
     s.recovery_request_flush();
     s.recovery_tick_at(t0 + Duration::from_secs(17));
-    assert!(!s.recovery.is_idle());
+    assert!(!s.recovery().is_idle());
     paint(&mut s, 30.0);
     s.recovery_request_flush();
     s.recovery_tick_at(t0 + Duration::from_secs(18));
@@ -318,7 +319,7 @@ fn headless_only_the_latest_waiting_request_is_written_and_one_writer_runs() {
     assert_eq!(generations(&s), 2);
     let newest = newest_doc(&s);
     for x in [10, 20, 30] {
-        assert_eq!(pixel_in(&newest, x), pixel_in(&s.doc, x), "最新の状態");
+        assert_eq!(pixel_in(&newest, x), pixel_in(s.doc(), x), "最新の状態");
     }
 }
 
@@ -329,7 +330,7 @@ fn headless_painting_while_the_write_runs_does_not_change_what_was_captured() {
     let (started_tx, started_rx) = mpsc::channel::<()>();
     let (release_tx, release_rx) = mpsc::channel::<()>();
     let (started_tx, release_rx) = (Mutex::new(started_tx), Mutex::new(release_rx));
-    s.recovery.set_fault(Some(fault(move |stage| {
+    s.recovery_mut().set_fault(Some(fault(move |stage| {
         if stage == "snapshot" {
             started_tx.lock().unwrap().send(()).unwrap();
             release_rx
@@ -341,11 +342,11 @@ fn headless_painting_while_the_write_runs_does_not_change_what_was_captured() {
         Ok(())
     })));
     paint(&mut s, 10.0);
-    let before = pixel_in(&s.doc, 10);
+    let before = pixel_in(s.doc(), 10);
     write_after_no_wait(&mut s, Instant::now());
     started_rx.recv_timeout(Duration::from_secs(20)).unwrap();
     paint(&mut s, 40.0); // 材料を取ったあとの描き込み
-    assert_ne!(pixel_in(&s.doc, 40), [0, 0, 0, 0]);
+    assert_ne!(pixel_in(s.doc(), 40), [0, 0, 0, 0]);
     release_tx.send(()).unwrap();
     s.recovery_wait();
     let saved = newest_doc(&s);
@@ -356,11 +357,11 @@ fn headless_painting_while_the_write_runs_does_not_change_what_was_captured() {
         "取ったあとの描き込みは入らない"
     );
     // 次の見張りで、あとの描き込みも書き置きに入る
-    s.recovery.set_fault(None);
+    s.recovery_mut().set_fault(None);
     s.recovery_tick_at(Instant::now() + Duration::from_secs(200));
     s.recovery_tick_at(Instant::now() + Duration::from_secs(400));
     s.recovery_wait();
-    assert_eq!(pixel_in(&newest_doc(&s), 40), pixel_in(&s.doc, 40));
+    assert_eq!(pixel_in(&newest_doc(&s), 40), pixel_in(s.doc(), 40));
 }
 fn write_after_no_wait(s: &mut AppState, from: Instant) {
     s.recovery_tick_at(from);
@@ -380,7 +381,7 @@ fn headless_a_failed_write_gives_a_short_reason_keeps_painting_and_tries_again()
         let mut s = session(&dir.root());
         let failed = Arc::new(AtomicUsize::new(0));
         let f = failed.clone();
-        s.recovery.set_fault(Some(fault(move |at| {
+        s.recovery_mut().set_fault(Some(fault(move |at| {
             if at.starts_with(stage) && f.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Err(io::Error::other("注入した書き込みの失敗"));
             }
@@ -389,26 +390,26 @@ fn headless_a_failed_write_gives_a_short_reason_keeps_painting_and_tries_again()
         paint(&mut s, 10.0);
         let t = write_after(&mut s, Instant::now());
         assert!(
-            s.message.starts_with("復旧用の書き置きに失敗"),
+            s.message().starts_with("復旧用の書き置きに失敗"),
             "{stage}: {}",
-            s.message
+            s.message()
         );
-        assert_eq!(s.recovery.checkpoints(), 0, "{stage}");
+        assert_eq!(s.recovery().checkpoints(), 0, "{stage}");
         // 描くのは止まらない
         paint(&mut s, 20.0);
-        assert!(s.doc.can_undo());
+        assert!(s.doc().can_undo());
         // 次の頼みでやり直す（確定の後で失敗した after-pointer も、札を合わせて続けられる）
         let t = write_after(&mut s, t + Duration::from_secs(100));
-        assert_eq!(s.message, "復旧用の書き置きが戻りました", "{stage}");
-        assert_eq!(s.recovery.checkpoints(), 1, "{stage}");
+        assert_eq!(s.message(), "復旧用の書き置きが戻りました", "{stage}");
+        assert_eq!(s.recovery().checkpoints(), 1, "{stage}");
         assert_eq!(
             pixel_in(&newest_doc(&s), 20),
-            pixel_in(&s.doc, 20),
+            pixel_in(s.doc(), 20),
             "{stage}"
         );
         paint(&mut s, 30.0);
         write_after(&mut s, t + Duration::from_secs(100));
-        assert_eq!(s.recovery.checkpoints(), 2, "{stage}");
+        assert_eq!(s.recovery().checkpoints(), 2, "{stage}");
     }
 }
 
@@ -416,7 +417,7 @@ fn headless_a_failed_write_gives_a_short_reason_keeps_painting_and_tries_again()
 fn headless_the_failure_reason_is_in_the_language_of_the_screen() {
     let dir = TempDir::new("failure-en");
     let mut s = session_with(&dir.root(), settings(15, 3, 0), Lang::En);
-    s.recovery.set_fault(Some(fault(|at| {
+    s.recovery_mut().set_fault(Some(fault(|at| {
         if at == "before-pointer" {
             return Err(io::Error::from(io::ErrorKind::StorageFull));
         }
@@ -424,10 +425,10 @@ fn headless_the_failure_reason_is_in_the_language_of_the_screen() {
     })));
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
-    assert_eq!(s.message, "Recovery checkpoint failed (Disk full).");
+    assert_eq!(s.message(), "Recovery checkpoint failed (Disk full).");
     let dir = TempDir::new("failure-ja");
     let mut s = session(&dir.root());
-    s.recovery.set_fault(Some(fault(|at| {
+    s.recovery_mut().set_fault(Some(fault(|at| {
         if at == "before-pointer" {
             return Err(io::Error::from(io::ErrorKind::StorageFull));
         }
@@ -436,7 +437,7 @@ fn headless_the_failure_reason_is_in_the_language_of_the_screen() {
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
     assert_eq!(
-        s.message,
+        s.message(),
         "復旧用の書き置きに失敗しました（ディスクの空きがありません）。"
     );
 }
@@ -448,7 +449,7 @@ fn headless_content_that_cannot_be_written_yet_is_reported_not_hidden() {
     // .ylp にまだ書けない中身（塗りつぶしのグラデーションのランプの混色。画面からは作れず、core の口だけで作れる）は、
     // 黙って落とさず理由を出し、世代を書かない
     let fill = s
-        .doc
+        .doc_mut()
         .add_fill_layer(
             "塗り",
             &[(
@@ -483,24 +484,24 @@ fn headless_content_that_cannot_be_written_yet_is_reported_not_hidden() {
             yolu_core::generator::LuminanceCorrection::Low,
         ),
     );
-    s.doc
+    s.doc_mut()
         .set_fill_gradient(fill, yolu_core::Channel::Color, Some(gradient), false)
         .unwrap();
-    s.modified = true;
+    s.set_modified(true);
     write_after(&mut s, Instant::now());
-    assert!(s.message.contains("混色"), "{}", s.message);
-    assert_eq!(s.recovery.checkpoints(), 0);
-    assert!(s.recovery.is_idle());
+    assert!(s.message().contains("混色"), "{}", s.message());
+    assert_eq!(s.recovery().checkpoints(), 0);
+    assert!(s.recovery().is_idle());
     // レイヤーのロックは .ylp に書けるようになったので、ロックのある文書は世代に書ける
     let dir = TempDir::new("locked-ok");
     let mut s = session(&dir.root());
-    let layer = s.selected_layer.unwrap();
-    s.doc
+    let layer = s.selected_layer().unwrap();
+    s.doc_mut()
         .set_layer_locks(layer, yolu_core::LayerLocks::POSITION)
         .unwrap();
-    s.modified = true;
+    s.set_modified(true);
     write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+    assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
 }
 
 /// 手動の ID の色は世代に書かれ、落ちた次の起動で復旧から開くと、色・指紋・並びが同じで、取り消しの履歴は空で戻る。
@@ -513,10 +514,10 @@ fn headless_manual_id_colors_are_written_to_the_generation_and_come_back_from_th
         [(0, 0x123456), (3, 0xabcdef)].into_iter().collect(),
     )
     .unwrap();
-    s.doc.set_id_colors(colors.clone(), false).unwrap();
-    s.modified = true;
+    s.doc_mut().set_id_colors(colors.clone(), false).unwrap();
+    s.set_modified(true);
     write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+    assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
     // 置き場の最新の世代の文書にある（保存し直した .ylp の中身と同じ形）
     let written = newest_doc(&s);
     assert_eq!(written.id_colors().binding(), colors.binding());
@@ -526,10 +527,13 @@ fn headless_manual_id_colors_are_written_to_the_generation_and_come_back_from_th
     // 落ちた次の起動: 復旧から開くと同じ色が戻る
     let mut s2 = session(&dir.root());
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!(s2.project_name, "名称未設定（復旧）");
-    assert_eq!(s2.doc.id_colors().binding(), colors.binding());
-    assert_eq!(s2.doc.id_colors().colors(), colors.colors());
-    assert!(!s2.doc.can_undo(), "復旧は正本を返す。途中の履歴は返さない");
+    assert_eq!(s2.project_name(), "名称未設定（復旧）");
+    assert_eq!(s2.doc().id_colors().binding(), colors.binding());
+    assert_eq!(s2.doc().id_colors().colors(), colors.colors());
+    assert!(
+        !s2.doc().can_undo(),
+        "復旧は正本を返す。途中の履歴は返さない"
+    );
 }
 
 #[test]
@@ -541,14 +545,14 @@ fn headless_the_chosen_number_of_generations_is_kept() {
         paint(&mut s, 10.0 + 5.0 * i as f64);
         t = write_after(&mut s, t + Duration::from_secs(100));
     }
-    assert_eq!(s.recovery.checkpoints(), 5);
+    assert_eq!(s.recovery().checkpoints(), 5);
     assert_eq!(generations(&s), 2);
-    assert_eq!(pixel_in(&newest_doc(&s), 30), pixel_in(&s.doc, 30));
+    assert_eq!(pixel_in(&newest_doc(&s), 30), pixel_in(s.doc(), 30));
 }
 
 /// 落ちた体: `shutdown` を呼ばずに状態を捨てる（ロックは OS が手放し、印のファイルが残る）。
 fn crash(s: AppState) {
-    assert!(s.recovery.is_idle(), "書き込みが終わってから落とす");
+    assert!(s.recovery().is_idle(), "書き込みが終わってから落とす");
     drop(s);
 }
 
@@ -558,12 +562,12 @@ fn headless_a_crash_shows_the_recovery_window_at_the_next_start_and_a_clean_clos
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
-    let expected = pixel_in(&s.doc, 10);
+    let expected = pixel_in(s.doc(), 10);
     crash(s);
     // 次の起動: 落ちていたのでウィンドウが開き、世代の一覧がある（時刻・セットの数・名前）
     let s2 = session(&dir.root());
     let window = s2
-        .recovery
+        .recovery()
         .window
         .as_ref()
         .expect("落ちた体の起動でウィンドウが出る");
@@ -582,10 +586,10 @@ fn headless_a_crash_shows_the_recovery_window_at_the_next_start_and_a_clean_clos
     let mut s2 = s2;
     s2.recovery_shutdown();
     let mut s3 = session(&dir.root());
-    assert!(s3.recovery.window.is_none(), "前の実行は落ちていない");
+    assert!(s3.recovery().window.is_none(), "前の実行は落ちていない");
     s3.recovery_apply(RecoveryAction::OpenWindow);
     assert_eq!(
-        s3.recovery.window.as_ref().unwrap().rows.len(),
+        s3.recovery().window.as_ref().unwrap().rows.len(),
         1,
         "落ちたときの世代は、捨てるまで残る（正しく閉じた実行の世代は設定の数だけ）"
     );
@@ -597,9 +601,9 @@ fn headless_a_crash_shows_the_recovery_window_at_the_next_start_and_a_clean_clos
     write_after(&mut s, Instant::now());
     s.recovery_shutdown();
     let mut next = session(&clean.root());
-    assert!(next.recovery.window.is_none());
+    assert!(next.recovery().window.is_none());
     next.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &next.recovery.window.as_ref().unwrap().rows;
+    let rows = &next.recovery().window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 1);
     assert!(!rows[0].crashed, "正しく閉じたプール");
 }
@@ -614,11 +618,11 @@ fn headless_a_clean_close_writes_the_last_changes_first() {
     s.recovery_shutdown();
     let mut next = session(&dir.root());
     next.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &next.recovery.window.as_ref().unwrap().rows;
+    let rows = &next.recovery().window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 2, "閉じる前の最後の世代も残る");
     next.recovery_apply(RecoveryAction::Select(0));
     next.recovery_apply(RecoveryAction::Open);
-    assert_ne!(pixel_in(&next.doc, 40), [0, 0, 0, 0]);
+    assert_ne!(pixel_in(next.doc(), 40), [0, 0, 0, 0]);
 }
 
 #[test]
@@ -628,16 +632,16 @@ fn headless_a_crash_with_everything_saved_or_nothing_written_is_not_announced() 
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
-    s.apply(Action::SaveProjectAs(dir.0.join("a.ylp")));
+    s.act(Action::SaveProjectAs(dir.0.join("a.ylp")));
     s.recovery_tick_at(t + Duration::from_secs(1));
     crash(s);
     let mut s2 = session(&dir.root());
     assert!(
-        s2.recovery.window.is_none(),
+        s2.recovery().window.is_none(),
         "保存済みなのでウィンドウは出さない"
     );
     s2.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &s2.recovery.window.as_ref().unwrap().rows;
+    let rows = &s2.recovery().window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 1, "でも一覧には残り、手で開ける");
     assert!(rows[0].crashed);
     // 最初の書き置きの前に落ちた
@@ -647,7 +651,7 @@ fn headless_a_crash_with_everything_saved_or_nothing_written_is_not_announced() 
     s.recovery_tick_at(Instant::now());
     crash(s);
     let s2 = session(&early.root());
-    assert!(s2.recovery.window.is_none());
+    assert!(s2.recovery().window.is_none());
     let pools = std::fs::read_dir(early.root()).unwrap().count();
     assert_eq!(pools, 1, "世代の無いプールは片付けて、この実行のものだけ");
 }
@@ -658,38 +662,41 @@ fn headless_opening_a_generation_is_untitled_recovered_and_never_writes_the_orig
     let original = dir.0.join("作品.ylp");
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
-    s.apply(Action::SaveProjectAs(original.clone()));
-    assert!(!s.modified, "{}", s.message);
+    s.act(Action::SaveProjectAs(original.clone()));
+    assert!(!s.modified(), "{}", s.message());
     let before = hash(&original);
     paint(&mut s, 30.0); // 保存していない作業
     write_after(&mut s, Instant::now());
     crash(s);
 
     let mut s2 = session(&dir.root());
-    let row = s2.recovery.window.as_ref().unwrap().rows[0].clone();
+    let row = s2.recovery().window.as_ref().unwrap().rows[0].clone();
     assert_eq!(row.name, "作品.ylp", "元の .ylp の名前");
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!(s2.project_name, "名称未設定（復旧）");
-    assert!(s2.modified, "保存していない");
-    let project = s2.project.as_ref().unwrap();
+    assert_eq!(s2.project_name(), "名称未設定（復旧）");
+    assert!(s2.modified(), "保存していない");
+    let project = s2.project().as_ref().unwrap();
     assert!(!project.is_file(), "元の .ylp にはつながない");
-    assert!(s2.recovery.window.is_none(), "開いたらウィンドウを閉じる");
-    assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
-    assert_ne!(pixel_in(&s2.doc, 10), [0, 0, 0, 0]);
+    assert!(s2.recovery().window.is_none(), "開いたらウィンドウを閉じる");
+    assert!(s2.message().starts_with("復旧しました"), "{}", s2.message());
+    assert_ne!(pixel_in(s2.doc(), 10), [0, 0, 0, 0]);
     assert_ne!(
-        pixel_in(&s2.doc, 30),
+        pixel_in(s2.doc(), 30),
         [0, 0, 0, 0],
         "保存していなかった作業が戻る"
     );
-    assert!(!s2.doc.can_undo(), "復旧は正本を返す。途中の履歴は返さない");
+    assert!(
+        !s2.doc().can_undo(),
+        "復旧は正本を返す。途中の履歴は返さない"
+    );
     // 保存は元の .ylp に行かず、保存先を聞く
-    s2.apply(Action::SaveProject);
-    assert_eq!(s2.dialog_request, Some(DialogRequest::SaveAs));
+    s2.act(Action::SaveProject);
+    assert_eq!(*s2.dialog_request(), Some(DialogRequest::SaveAs));
     assert_eq!(hash(&original), before);
     let saved = dir.0.join("復旧した.ylp");
-    s2.apply(Action::SaveProjectAs(saved.clone()));
-    assert!(s2.message.starts_with("保存しました"), "{}", s2.message);
-    assert!(!s2.modified);
+    s2.act(Action::SaveProjectAs(saved.clone()));
+    assert!(s2.message().starts_with("保存しました"), "{}", s2.message());
+    assert!(!s2.modified());
     assert_eq!(hash(&original), before, "元の .ylp は変わらない");
     assert!(!dir.0.join("作品.ylp-backups~").exists());
     // 保存した .ylp は、正本と合成の PNG（派生）もそろっている
@@ -700,8 +707,8 @@ fn headless_opening_a_generation_is_untitled_recovered_and_never_writes_the_orig
         .entries()
         .contains_key(&format!("sets/{id}/composite/Color.png")));
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(saved));
-    assert_ne!(pixel_in(&again.doc, 30), [0, 0, 0, 0]);
+    again.act(Action::OpenProject(saved));
+    assert_ne!(pixel_in(again.doc(), 30), [0, 0, 0, 0]);
 }
 
 #[test]
@@ -713,18 +720,18 @@ fn headless_opening_asks_before_replacing_unsaved_work_and_a_stroke_blocks_it() 
     crash(s);
     let mut s2 = session(&dir.root());
     paint(&mut s2, 50.0); // 今の作業は保存していない
-    let doc_id = s2.doc.id();
+    let doc_id = s2.doc().id();
     s2.recovery_apply(RecoveryAction::Open);
     // 画面を持つ側が「変更を捨てますか？」と聞いてから開く（まだ開かない）
-    assert_eq!(s2.doc.id(), doc_id);
-    let request = s2.recovery.take_open_request().expect("確かめる頼み");
+    assert_eq!(s2.doc().id(), doc_id);
+    let request = s2.recovery_mut().take_open_request().expect("確かめる頼み");
     let stroke = begin(&mut s2, 5.0);
     s2.recovery_open(request.clone());
-    assert_eq!(s2.doc.id(), doc_id, "描いている間は開かない");
+    assert_eq!(s2.doc().id(), doc_id, "描いている間は開かない");
     finish(&mut s2, stroke);
     s2.recovery_open(request);
-    assert_ne!(s2.doc.id(), doc_id);
-    assert_eq!(s2.project_name, "名称未設定（復旧）");
+    assert_ne!(s2.doc().id(), doc_id);
+    assert_eq!(s2.project_name(), "名称未設定（復旧）");
 }
 
 #[test]
@@ -736,7 +743,7 @@ fn headless_a_damaged_generation_is_listed_with_a_reason_and_refused_without_cha
     let t = write_after(&mut s, Instant::now());
     paint(&mut s, 20.0);
     write_after(&mut s, t + Duration::from_secs(100));
-    let pool = s.recovery.session_dir().unwrap().to_path_buf();
+    let pool = s.recovery().session_dir().unwrap().to_path_buf();
     // 新しい世代の正本の中身を同じ長さで書き換える（ハッシュが合わない）
     let store = GenerationStore::new(&pool);
     let list = store.list().unwrap();
@@ -761,23 +768,27 @@ fn headless_a_damaged_generation_is_listed_with_a_reason_and_refused_without_cha
     crash(s);
 
     let mut s2 = session(&dir.root());
-    let window = s2.recovery.window.as_ref().unwrap();
+    let window = s2.recovery().window.as_ref().unwrap();
     assert_eq!(window.rows.len(), 2);
     assert!(
         window.rows.iter().all(|r| r.problem.is_none()),
         "ハッシュは開くときに確かめる"
     );
     // 新しい世代を開こうとすると断られ、文書は変わらない。古い世代は開ける
-    let doc_id = s2.doc.id();
+    let doc_id = s2.doc().id();
     s2.recovery_apply(RecoveryAction::Select(0));
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!(s2.doc.id(), doc_id);
-    assert!(s2.message.starts_with("復旧を開けません"), "{}", s2.message);
-    assert!(s2.recovery.window.as_ref().unwrap().error.is_some());
+    assert_eq!(s2.doc().id(), doc_id);
+    assert!(
+        s2.message().starts_with("復旧を開けません"),
+        "{}",
+        s2.message()
+    );
+    assert!(s2.recovery().window.as_ref().unwrap().error.is_some());
     s2.recovery_apply(RecoveryAction::Select(1));
     s2.recovery_apply(RecoveryAction::Open);
-    assert_ne!(s2.doc.id(), doc_id);
-    assert_ne!(pixel_in(&s2.doc, 10), [0, 0, 0, 0]);
+    assert_ne!(s2.doc().id(), doc_id);
+    assert_ne!(pixel_in(s2.doc(), 10), [0, 0, 0, 0]);
 }
 
 #[test]
@@ -786,24 +797,24 @@ fn headless_a_generation_missing_its_content_is_listed_as_unreadable_and_can_be_
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
-    let pool = s.recovery.session_dir().unwrap().to_path_buf();
+    let pool = s.recovery().session_dir().unwrap().to_path_buf();
     std::fs::remove_dir_all(pool.join("contents")).unwrap();
     crash(s);
     let mut s2 = session(&dir.root());
     // 落ちた体でも、読める世代が 1 つも無ければウィンドウは出さない…ことはなく、読めない世代を理由つきで見せる
-    let window = s2.recovery.window.as_ref().expect("世代は残っている");
+    let window = s2.recovery().window.as_ref().expect("世代は残っている");
     assert_eq!(window.rows.len(), 1);
     assert!(window.rows[0].problem.is_some());
     assert_eq!(window.selected, None, "読める世代が無ければ何も選ばない");
     s2.recovery_apply(RecoveryAction::Select(0));
     s2.recovery_apply(RecoveryAction::Open);
     assert!(
-        s2.recovery.take_open_request().is_none(),
+        s2.recovery_mut().take_open_request().is_none(),
         "読めない世代は開けない"
     );
     s2.recovery_apply(RecoveryAction::Discard);
     s2.recovery_apply(RecoveryAction::ConfirmDiscard);
-    assert!(s2.recovery.window.as_ref().unwrap().rows.is_empty());
+    assert!(s2.recovery().window.as_ref().unwrap().rows.is_empty());
 }
 
 #[test]
@@ -812,7 +823,7 @@ fn headless_discarding_asks_first_and_removes_only_that_generation() {
     let original = dir.0.join("作品.ylp");
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
-    s.apply(Action::SaveProjectAs(original.clone()));
+    s.act(Action::SaveProjectAs(original.clone()));
     let before = hash(&original);
     paint(&mut s, 20.0);
     let t = write_after(&mut s, Instant::now());
@@ -820,35 +831,35 @@ fn headless_discarding_asks_first_and_removes_only_that_generation() {
     write_after(&mut s, t + Duration::from_secs(100));
     crash(s);
     let mut s2 = session(&dir.root());
-    assert_eq!(s2.recovery.window.as_ref().unwrap().rows.len(), 2);
+    assert_eq!(s2.recovery().window.as_ref().unwrap().rows.len(), 2);
     s2.recovery_apply(RecoveryAction::Select(0));
     s2.recovery_apply(RecoveryAction::Discard);
     assert!(
-        s2.recovery.window.as_ref().unwrap().confirm.is_some(),
+        s2.recovery().window.as_ref().unwrap().confirm.is_some(),
         "確かめる"
     );
     assert_eq!(
-        s2.recovery.window.as_ref().unwrap().rows.len(),
+        s2.recovery().window.as_ref().unwrap().rows.len(),
         2,
         "確かめるまで消さない"
     );
     s2.recovery_apply(RecoveryAction::CancelDiscard);
-    assert!(s2.recovery.window.as_ref().unwrap().confirm.is_none());
-    assert_eq!(s2.recovery.window.as_ref().unwrap().rows.len(), 2);
+    assert!(s2.recovery().window.as_ref().unwrap().confirm.is_none());
+    assert_eq!(s2.recovery().window.as_ref().unwrap().rows.len(), 2);
     s2.recovery_apply(RecoveryAction::Discard);
     s2.recovery_apply(RecoveryAction::ConfirmDiscard);
-    let window = s2.recovery.window.as_ref().unwrap();
+    let window = s2.recovery().window.as_ref().unwrap();
     assert_eq!(window.rows.len(), 1);
     assert_eq!(window.selected, Some(0), "残った世代を選ぶ");
     s2.recovery_apply(RecoveryAction::Discard);
     s2.recovery_apply(RecoveryAction::ConfirmDiscard);
-    assert!(s2.recovery.window.as_ref().unwrap().rows.is_empty());
+    assert!(s2.recovery().window.as_ref().unwrap().rows.is_empty());
     // 置き場には、この実行のプールだけが残る。保存した .ylp はそのまま
     assert_eq!(std::fs::read_dir(dir.root()).unwrap().count(), 1);
     assert_eq!(hash(&original), before);
     // 次の起動は、もう知らせることが無い
     s2.recovery_shutdown();
-    assert!(session(&dir.root()).recovery.window.is_none());
+    assert!(session(&dir.root()).recovery().window.is_none());
 }
 
 #[test]
@@ -860,7 +871,7 @@ fn headless_discarding_this_sessions_own_generation_lets_the_writer_carry_on() {
     paint(&mut s, 20.0);
     let t = write_after(&mut s, t + Duration::from_secs(100));
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = s.recovery.window.as_ref().unwrap().rows.clone();
+    let rows = s.recovery().window.as_ref().unwrap().rows.clone();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|r| r.own));
     s.recovery_apply(RecoveryAction::Select(0)); // 最新（current）
@@ -872,12 +883,12 @@ fn headless_discarding_this_sessions_own_generation_lets_the_writer_carry_on() {
     s.recovery_tick_at(t + Duration::from_secs(200));
     s.recovery_wait();
     assert!(
-        !s.message.starts_with("復旧用の書き置きに失敗"),
+        !s.message().starts_with("復旧用の書き置きに失敗"),
         "{}",
-        s.message
+        s.message()
     );
     assert_eq!(generations(&s), 2);
-    assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(&s.doc, 20));
+    assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(s.doc(), 20));
 }
 
 #[test]
@@ -894,7 +905,7 @@ fn headless_other_folders_in_the_recovery_root_are_never_touched() {
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    assert_eq!(s.recovery.window.as_ref().unwrap().rows.len(), 1);
+    assert_eq!(s.recovery().window.as_ref().unwrap().rows.len(), 1);
     for i in 0..4 {
         paint(&mut s, 20.0 + 5.0 * i as f64);
         write_after(&mut s, t + Duration::from_secs(100 * (i + 1)));
@@ -925,21 +936,21 @@ fn headless_two_running_windows_do_not_touch_each_other_and_a_crash_is_only_foun
     write_after(&mut a, Instant::now());
     // a が動いているあいだに始めた b は、a を「落ちた」とも「閉じた」とも見ない
     let mut b = session(&dir.root());
-    assert!(b.recovery.window.is_none());
+    assert!(b.recovery().window.is_none());
     b.recovery_apply(RecoveryAction::OpenWindow);
     assert!(
-        b.recovery.window.as_ref().unwrap().rows.is_empty(),
+        b.recovery().window.as_ref().unwrap().rows.is_empty(),
         "動いている相手の世代は一覧に出さない"
     );
     b.recovery_shutdown();
     assert_eq!(generations(&a), 1, "a の置き場はそのまま");
     paint(&mut a, 20.0);
     write_after(&mut a, Instant::now() + Duration::from_secs(1000));
-    assert_eq!(a.recovery.checkpoints(), 2);
+    assert_eq!(a.recovery().checkpoints(), 2);
     crash(a);
     let c = session(&dir.root());
     assert_eq!(
-        c.recovery.window.as_ref().unwrap().rows.len(),
+        c.recovery().window.as_ref().unwrap().rows.len(),
         2,
         "a が落ちたのは、a が終わってから分かる"
     );
@@ -965,7 +976,7 @@ fn headless_closed_sessions_keep_the_chosen_number_of_generations_in_total_but_c
     let rows = |root: &Path| {
         let mut s = session_with(root, settings(15, 3, 0), Lang::Ja);
         s.recovery_apply(RecoveryAction::OpenWindow);
-        let rows = s.recovery.window.as_ref().unwrap().rows.clone();
+        let rows = s.recovery().window.as_ref().unwrap().rows.clone();
         s.recovery_shutdown();
         rows
     };
@@ -1001,11 +1012,11 @@ fn headless_the_interval_and_kept_generations_are_chosen_and_saved() {
     let dir = TempDir::new("settings");
     let file = dir.0.join("recovery.conf");
     let mut s = session(&dir.root());
-    s.recovery.set_settings_path(Some(file.clone()));
+    s.recovery_mut().set_settings_path(Some(file.clone()));
     s.recovery_apply(RecoveryAction::SetInterval(30));
     s.recovery_apply(RecoveryAction::SetKeep(5));
-    assert_eq!(s.recovery.settings().interval_seconds, 30);
-    assert_eq!(s.recovery.settings().generations_to_keep, 5);
+    assert_eq!(s.recovery().settings().interval_seconds, 30);
+    assert_eq!(s.recovery().settings().generations_to_keep, 5);
     let (loaded, problems) = RecoverySettings::load(&file).unwrap();
     assert!(problems.is_empty());
     assert_eq!(
@@ -1015,8 +1026,8 @@ fn headless_the_interval_and_kept_generations_are_chosen_and_saved() {
     // 範囲の外は範囲に収める
     s.recovery_apply(RecoveryAction::SetInterval(1));
     s.recovery_apply(RecoveryAction::SetKeep(1));
-    assert_eq!(s.recovery.settings().interval_seconds, 5);
-    assert_eq!(s.recovery.settings().generations_to_keep, 2);
+    assert_eq!(s.recovery().settings().interval_seconds, 5);
+    assert_eq!(s.recovery().settings().generations_to_keep, 2);
     // 新しい間隔で書く頃合いが決まる
     s.recovery_apply(RecoveryAction::SetInterval(60));
     paint(&mut s, 10.0);
@@ -1024,10 +1035,10 @@ fn headless_the_interval_and_kept_generations_are_chosen_and_saved() {
     s.recovery_tick_at(t0);
     s.recovery_tick_at(t0 + Duration::from_secs(30));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 0);
+    assert_eq!(s.recovery().checkpoints(), 0);
     s.recovery_tick_at(t0 + Duration::from_secs(61));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
 }
 
 #[test]
@@ -1038,16 +1049,16 @@ fn headless_losing_focus_writes_without_waiting_for_the_interval() {
     let t0 = Instant::now();
     s.recovery_tick_at(t0);
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 0);
+    assert_eq!(s.recovery().checkpoints(), 0);
     s.recovery_request_flush();
     s.recovery_tick_at(t0 + Duration::from_secs(1));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
     // 変わっていなければ、フォーカスを失っても書かない
     s.recovery_request_flush();
     s.recovery_tick_at(t0 + Duration::from_secs(2));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
 }
 
 #[test]
@@ -1092,24 +1103,28 @@ fn headless_a_project_with_read_only_sets_is_recovered_and_can_be_saved_somewher
     SaveTarget::create(&path).unwrap().save(&project).unwrap();
 
     let mut s = session(&dir.root());
-    s.apply(Action::OpenProject(path.clone()));
-    assert!(s.sets.get(1).unwrap().read_only.is_some(), "{}", s.message);
+    s.act(Action::OpenProject(path.clone()));
+    assert!(
+        s.sets().get(1).unwrap().read_only.is_some(),
+        "{}",
+        s.message()
+    );
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+    assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
     crash(s);
 
     let mut s2 = session(&dir.root());
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!(s2.sets.len(), 2);
+    assert_eq!(s2.sets().len(), 2);
     assert!(
-        s2.sets.get(1).unwrap().read_only.is_some(),
+        s2.sets().get(1).unwrap().read_only.is_some(),
         "読むだけのセットは読むだけのまま"
     );
-    assert_ne!(pixel_in(&s2.doc, 10), [0, 0, 0, 0]);
+    assert_ne!(pixel_in(s2.doc(), 10), [0, 0, 0, 0]);
     let saved = dir.0.join("別の場所.ylp");
-    s2.apply(Action::SaveProjectAs(saved.clone()));
-    assert!(s2.message.starts_with("保存しました"), "{}", s2.message);
+    s2.act(Action::SaveProjectAs(saved.clone()));
+    assert!(s2.message().starts_with("保存しました"), "{}", s2.message());
     let reopened = Project::read(&std::fs::read(&saved).unwrap()).unwrap();
     let kept = reopened
         .sets()
@@ -1131,8 +1146,10 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
     for (size, layers) in [(2048u32, 2usize), (4096, 2), (4096, 6)] {
         let dir = TempDir::new("measure");
         let mut s = AppState::new(size, size);
-        s.recovery.set_space_probe(Some(plenty()));
-        s.recovery.enable(dir.root(), settings(15, 3, 0)).unwrap();
+        s.recovery_mut().set_space_probe(Some(plenty()));
+        s.recovery_mut()
+            .enable(dir.root(), settings(15, 3, 0))
+            .unwrap();
         let (mut doc, _) = yolu_app::state::blank_document(size, size);
         doc.set_source_budget_bytes(2 << 30).unwrap();
         doc.set_stroke_budget_bytes(1 << 30).unwrap();
@@ -1187,24 +1204,24 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
             let (sets, d) = yolu_app::sets::TextureSets::from_parts(parts, 0);
             s.replace_sets(sets, d);
             let file = dir.0.join("big.ylp");
-            s.apply(Action::SaveProjectAs(file.clone()));
-            if !s.message.starts_with("保存しました") {
+            s.act(Action::SaveProjectAs(file.clone()));
+            if !s.message().starts_with("保存しました") {
                 // .ylp の予算（768 MiB）を超える大きさ。基になるファイルが作れないので、この構成は測れない
                 println!(
                     "基の .ylp あり {size}² × {layers} レイヤー × {count} セット: 測れない（{}）",
-                    s.message
+                    s.message()
                 );
                 continue;
             }
-            s.apply(Action::OpenProject(file));
-            let layer = s.selected_layer.unwrap();
+            s.act(Action::OpenProject(file));
+            let layer = s.selected_layer().unwrap();
             let brush = s.stroke_settings(false);
-            let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+            let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
             stroke
-                .add_point(&mut s.doc, 100.0, 100.0, 1.0, DVec2::ZERO)
+                .add_point(s.doc_mut(), 100.0, 100.0, 1.0, DVec2::ZERO)
                 .unwrap();
-            s.doc.end_stroke(stroke).unwrap();
-            s.modified = true;
+            s.doc_mut().end_stroke(stroke).unwrap();
+            s.set_modified(true);
             let t0 = Instant::now();
             s.recovery_tick_at(t0);
             let began = Instant::now();
@@ -1214,7 +1231,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
             println!(
                 "基の .ylp あり {size}² × {layers} レイヤー × {count} セット: 主のスレッド {:.1} ms、別のスレッド {:.0} ms",
                 main.as_secs_f64() * 1000.0,
-                s.recovery.last_write_millis()
+                s.recovery().last_write_millis()
             );
             continue;
         }
@@ -1229,7 +1246,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
             0,
         );
         s.replace_sets(sets, doc);
-        s.modified = true;
+        s.set_modified(true);
         let t0 = Instant::now();
         s.recovery_tick_at(t0);
         let began = Instant::now();
@@ -1238,11 +1255,11 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
         s.recovery_wait();
         println!(
             "{size}² × {layers} レイヤー（{} MiB）: 主のスレッド {:.1} ms、別のスレッド {:.0} ms",
-            s.doc.allocated_bytes() >> 20,
+            s.doc().allocated_bytes() >> 20,
             main.as_secs_f64() * 1000.0,
-            s.recovery.last_write_millis()
+            s.recovery().last_write_millis()
         );
-        assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+        assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
     }
 }
 
@@ -1253,32 +1270,32 @@ fn headless_the_asset_shelf_is_written_and_comes_back_after_a_crash() {
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
     // 絵を変えずに、棚へ素材を足すだけでも書き置きになる
-    let layer = s.selected_layer.unwrap();
-    s.apply(Action::Shelf(ShelfOp::SaveMaterial(layer)));
-    assert_eq!(s.shelf.resources().len(), 1, "{}", s.message);
-    assert!(s.modified && s.shelf.changed);
-    let name = s.shelf.resources()[0].name.clone();
+    let layer = s.selected_layer().unwrap();
+    s.act(Action::Shelf(ShelfOp::SaveMaterial(layer)));
+    assert_eq!(s.shelf().resources().len(), 1, "{}", s.message());
+    assert!(s.modified() && s.shelf().changed);
+    let name = s.shelf().resources()[0].name.clone();
     write_after(&mut s, t + Duration::from_secs(100));
-    assert_eq!(s.recovery.checkpoints(), 2, "棚の変更も書き置きに入る");
+    assert_eq!(s.recovery().checkpoints(), 2, "棚の変更も書き置きに入る");
     crash(s);
 
     let mut s2 = session(&dir.root());
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!(s2.shelf.resources().len(), 1, "{}", s2.message);
-    assert_eq!(s2.shelf.resources()[0].name, name);
+    assert_eq!(s2.shelf().resources().len(), 1, "{}", s2.message());
+    assert_eq!(s2.shelf().resources()[0].name, name);
     assert!(
-        !s2.shelf.changed,
+        !s2.shelf().changed,
         "復旧した棚は、保存でそのまま書く（変えていない）"
     );
     // 別の場所へ保存した .ylp に、棚の素材が入っている
     let saved = dir.0.join("棚つき.ylp");
-    s2.apply(Action::SaveProjectAs(saved.clone()));
-    assert!(s2.message.starts_with("保存しました"), "{}", s2.message);
+    s2.act(Action::SaveProjectAs(saved.clone()));
+    assert!(s2.message().starts_with("保存しました"), "{}", s2.message());
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(saved));
-    assert_eq!(again.shelf.resources().len(), 1, "{}", again.message);
+    again.act(Action::OpenProject(saved));
+    assert_eq!(again.shelf().resources().len(), 1, "{}", again.message());
 }
 
 #[test]
@@ -1287,7 +1304,7 @@ fn headless_a_panic_while_writing_is_a_failure_not_a_stuck_writer() {
     let mut s = session(&dir.root());
     let panicked = Arc::new(AtomicUsize::new(0));
     let p = panicked.clone();
-    s.recovery.set_fault(Some(fault(move |stage| {
+    s.recovery_mut().set_fault(Some(fault(move |stage| {
         if stage == "verified" && p.fetch_add(1, Ordering::SeqCst) == 0 {
             panic!("注入した内部の失敗");
         }
@@ -1296,19 +1313,19 @@ fn headless_a_panic_while_writing_is_a_failure_not_a_stuck_writer() {
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now()); // 待ちが固まらない
     assert_eq!(
-        s.message,
+        s.message(),
         "復旧用の書き置きに失敗しました（書き込みの内部の失敗）。"
     );
-    assert!(s.recovery.is_idle());
+    assert!(s.recovery().is_idle());
     let t = write_after(&mut s, t + Duration::from_secs(100));
     let _ = t;
     assert_eq!(
-        s.recovery.checkpoints(),
+        s.recovery().checkpoints(),
         1,
         "次の頼みでやり直せる: {}",
-        s.message
+        s.message()
     );
-    assert_eq!(pixel_in(&newest_doc(&s), 10), pixel_in(&s.doc, 10));
+    assert_eq!(pixel_in(&newest_doc(&s), 10), pixel_in(s.doc(), 10));
 }
 
 #[test]
@@ -1317,7 +1334,7 @@ fn headless_the_recovered_name_follows_the_document_until_it_is_saved() {
     let original = dir.0.join("作品.ylp");
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
-    s.apply(Action::SaveProjectAs(original));
+    s.act(Action::SaveProjectAs(original));
     paint(&mut s, 30.0);
     let t = write_after(&mut s, Instant::now());
     crash(s);
@@ -1328,7 +1345,7 @@ fn headless_the_recovered_name_follows_the_document_until_it_is_saved() {
     let t = write_after(&mut s2, t + Duration::from_secs(100));
     s2.recovery_apply(RecoveryAction::OpenWindow);
     let mine = s2
-        .recovery
+        .recovery()
         .window
         .as_ref()
         .unwrap()
@@ -1340,12 +1357,12 @@ fn headless_the_recovered_name_follows_the_document_until_it_is_saved() {
         .clone();
     assert_eq!(mine, "作品.ylp");
     // 別の名前で保存したら、そのファイルの名前になる
-    s2.apply(Action::SaveProjectAs(dir.0.join("新しい.ylp")));
+    s2.act(Action::SaveProjectAs(dir.0.join("新しい.ylp")));
     paint(&mut s2, 20.0);
     write_after(&mut s2, t + Duration::from_secs(100));
     s2.recovery_apply(RecoveryAction::OpenWindow);
     let names: Vec<String> = s2
-        .recovery
+        .recovery()
         .window
         .as_ref()
         .unwrap()
@@ -1364,11 +1381,11 @@ fn headless_an_open_window_gains_new_generations_and_its_confirm_blocks_the_keys
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    assert_eq!(s.recovery.window.as_ref().unwrap().rows.len(), 1);
+    assert_eq!(s.recovery().window.as_ref().unwrap().rows.len(), 1);
     s.recovery_apply(RecoveryAction::Select(0));
     paint(&mut s, 20.0);
     write_after(&mut s, t + Duration::from_secs(100));
-    let window = s.recovery.window.as_ref().unwrap();
+    let window = s.recovery().window.as_ref().unwrap();
     assert_eq!(window.rows.len(), 2, "書き置きが増えたら一覧にも出る");
     assert_eq!(
         window.selected_row().map(|r| r.id.clone()),
@@ -1395,13 +1412,13 @@ fn headless_losing_focus_with_nothing_to_write_leaves_no_write_now_request_behin
     s.recovery_tick_at(t0 + Duration::from_secs(1));
     s.recovery_wait();
     assert_eq!(
-        s.recovery.checkpoints(),
+        s.recovery().checkpoints(),
         0,
         "変更が無いときの頼みを持ち越さない"
     );
     s.recovery_tick_at(t0 + Duration::from_secs(601));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
     // 書き置きが同じ（書くものが無い）ときにフォーカスを失い、描く: やはり間隔を待つ
     s.recovery_request_flush();
     s.recovery_tick_at(t0 + Duration::from_secs(602));
@@ -1409,24 +1426,24 @@ fn headless_losing_focus_with_nothing_to_write_leaves_no_write_now_request_behin
     s.recovery_tick_at(t0 + Duration::from_secs(603));
     s.recovery_wait();
     assert_eq!(
-        s.recovery.checkpoints(),
+        s.recovery().checkpoints(),
         1,
         "書き置き済みのときの頼みも持ち越さない"
     );
     s.recovery_tick_at(t0 + Duration::from_secs(603 + 601));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 2);
+    assert_eq!(s.recovery().checkpoints(), 2);
     // 描いている最中に失った: その場では取らず、ストロークの終わりで書く（頼みは、書くものがあるあいだは残る）
     let stroke = begin(&mut s, 30.0);
     s.recovery_request_flush();
     s.recovery_tick_at(t0 + Duration::from_secs(1300));
     s.recovery_wait();
-    assert_eq!(s.recovery.checkpoints(), 2, "描いている最中は取らない");
+    assert_eq!(s.recovery().checkpoints(), 2, "描いている最中は取らない");
     finish(&mut s, stroke);
     s.recovery_tick_at(t0 + Duration::from_secs(1301));
     s.recovery_wait();
     assert_eq!(
-        s.recovery.checkpoints(),
+        s.recovery().checkpoints(),
         3,
         "描き終えた次の見張りで、間隔を待たずに書く"
     );
@@ -1449,8 +1466,8 @@ fn headless_a_write_over_the_budget_gives_a_short_reason_keeps_the_last_generati
         let mut s = session_with(&dir.root(), settings(15, 3, 0), lang);
         paint(&mut s, 10.0);
         let t = write_after(&mut s, Instant::now());
-        assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
-        let pool = s.recovery.session_dir().unwrap().to_path_buf();
+        assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
+        let pool = s.recovery().session_dir().unwrap().to_path_buf();
         let listing = |pool: &Path| {
             let mut names: Vec<String> = std::fs::read_dir(pool)
                 .unwrap()
@@ -1472,19 +1489,19 @@ fn headless_a_write_over_the_budget_gives_a_short_reason_keeps_the_last_generati
                 ),
             ),
         ] {
-            s.recovery.set_budget(Some(budget));
+            s.recovery_mut().set_budget(Some(budget));
             paint(&mut s, 50.0);
             when += Duration::from_secs(1000);
             write_after(&mut s, when);
-            assert_eq!(s.message, expected, "{budget:?}");
+            assert_eq!(s.message(), expected, "{budget:?}");
             assert!(
-                !s.message
+                !s.message()
                     .chars()
                     .any(|c| c.is_ascii_digit() && lang == Lang::En),
                 "開発用の数を出さない: {}",
-                s.message
+                s.message()
             );
-            assert_eq!(s.recovery.checkpoints(), 1);
+            assert_eq!(s.recovery().checkpoints(), 1);
             assert_eq!(generations(&s), 1);
             assert_eq!(listing(&pool), before, "作りかけも残さない");
             assert_eq!(
@@ -1494,15 +1511,15 @@ fn headless_a_write_over_the_budget_gives_a_short_reason_keeps_the_last_generati
             );
             // 描くのは止まらない
             paint(&mut s, 58.0);
-            assert!(s.doc.can_undo());
+            assert!(s.doc().can_undo());
         }
         // 予算が戻れば、次の頼みで書ける
-        s.recovery.set_budget(None);
+        s.recovery_mut().set_budget(None);
         write_after(&mut s, when + Duration::from_secs(1000));
-        assert_eq!(s.message, lang.recovery_working_again());
-        assert_eq!(s.recovery.checkpoints(), 2);
-        assert_eq!(pixel_in(&newest_doc(&s), 50), pixel_in(&s.doc, 50));
-        assert_eq!(pixel_in(&newest_doc(&s), 58), pixel_in(&s.doc, 58));
+        assert_eq!(s.message(), lang.recovery_working_again());
+        assert_eq!(s.recovery().checkpoints(), 2);
+        assert_eq!(pixel_in(&newest_doc(&s), 50), pixel_in(s.doc(), 50));
+        assert_eq!(pixel_in(&newest_doc(&s), 58), pixel_in(s.doc(), 58));
     }
 }
 
@@ -1518,7 +1535,7 @@ fn seed_closed_generations(root: &Path, count: usize) {
 fn listed_generations(root: &Path) -> usize {
     let mut s = session_with(root, settings(15, 1000, 0), Lang::Ja);
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let count = s.recovery.window.as_ref().unwrap().rows.len();
+    let count = s.recovery().window.as_ref().unwrap().rows.len();
     s.recovery_shutdown();
     count
 }
@@ -1535,8 +1552,8 @@ fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generat
         std::fs::write(&conf, vec![b'a'; 5000]).unwrap();
         let bytes_before = std::fs::read(&conf).unwrap();
         let mut s = AppState::new_in(64, 64, lang);
-        s.recovery.set_space_probe(Some(plenty()));
-        let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
+        s.recovery_mut().set_space_probe(Some(plenty()));
+        let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
         assert!(
             matches!(problems.first(), Some(Problem::Unreadable(_))),
             "{problems:?}"
@@ -1550,24 +1567,24 @@ fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generat
             ),
         );
         // 既定の間隔で動く。利用者が選んだ数（20）を知らないので、既定の数（3）に整理して世代を消さない
-        assert_eq!(s.recovery.settings(), &RecoverySettings::default());
-        assert!(s.recovery.is_enabled());
+        assert_eq!(s.recovery().settings(), &RecoverySettings::default());
+        assert!(s.recovery().is_enabled());
         s.recovery_apply(RecoveryAction::OpenWindow);
         assert_eq!(
-            s.recovery.window.as_ref().unwrap().rows.len(),
+            s.recovery().window.as_ref().unwrap().rows.len(),
             5,
             "起動で整理しない"
         );
         // ウィンドウで間隔を選んでも、読めない設定のファイルは既定で上書きしない（書けなかったことを帯に出す）
         s.recovery_apply(RecoveryAction::SetInterval(30));
         assert_eq!(
-            s.recovery.settings().interval_seconds,
+            s.recovery().settings().interval_seconds,
             30,
             "この実行のあいだは選んだ間隔で動く"
         );
         assert_eq!(std::fs::read(&conf).unwrap(), bytes_before);
         assert_eq!(
-            s.message,
+            s.message(),
             lang.pick(
                 "復旧の設定を保存できません。",
                 "Cannot save the recovery settings."
@@ -1598,8 +1615,8 @@ fn headless_a_number_chosen_in_the_window_while_the_settings_are_unreadable_appl
     let conf = dir.0.join("recovery.conf");
     std::fs::write(&conf, [0xff, 0xfe, 0xfd]).unwrap(); // UTF-8 ではない
     let mut s = AppState::new_in(64, 64, Lang::En);
-    s.recovery.set_space_probe(Some(plenty()));
-    let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
+    s.recovery_mut().set_space_probe(Some(plenty()));
+    let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
     assert!(matches!(problems[0], Problem::Unreadable(_)));
     s.recovery_apply(RecoveryAction::SetKeep(2));
     s.recovery_shutdown();
@@ -1625,17 +1642,17 @@ fn headless_readable_settings_choose_the_folder_and_are_saved_beside_it() {
     )
     .unwrap();
     let mut s = AppState::new_in(64, 64, Lang::Ja);
-    s.recovery.set_space_probe(Some(plenty()));
-    let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
+    s.recovery_mut().set_space_probe(Some(plenty()));
+    let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(
         (
-            s.recovery.settings().interval_seconds,
-            s.recovery.settings().generations_to_keep
+            s.recovery().settings().interval_seconds,
+            s.recovery().settings().generations_to_keep
         ),
         (20, 4)
     );
-    assert!(s.recovery.session_dir().unwrap().starts_with(&elsewhere));
+    assert!(s.recovery().session_dir().unwrap().starts_with(&elsewhere));
     s.recovery_apply(RecoveryAction::SetKeep(10));
     let (saved, _) = RecoverySettings::load(&conf).unwrap();
     assert_eq!(
@@ -1645,13 +1662,17 @@ fn headless_readable_settings_choose_the_folder_and_are_saved_beside_it() {
     // 設定のファイルが無ければ、同じフォルダの recovery が置き場（既定）
     let fresh = TempDir::new("conf-none");
     let mut s = AppState::new_in(64, 64, Lang::Ja);
-    s.recovery.set_space_probe(Some(plenty()));
+    s.recovery_mut().set_space_probe(Some(plenty()));
     assert!(s
-        .recovery
+        .recovery_mut()
         .start_from(Some(fresh.0.join("recovery.conf")))
         .unwrap()
         .is_empty());
-    assert!(s.recovery.session_dir().unwrap().starts_with(fresh.root()));
+    assert!(s
+        .recovery()
+        .session_dir()
+        .unwrap()
+        .starts_with(fresh.root()));
 }
 
 #[test]
@@ -1661,14 +1682,17 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
-    let pool = s.recovery.session_dir().unwrap().to_path_buf();
+    let pool = s.recovery().session_dir().unwrap().to_path_buf();
     crash(s);
     // 落ちた実行の印は `session.lock` のまま。`crashed` を書けない（同じ名前のフォルダがある）ので片付けられない
     assert!(pool.join("session.lock").is_file());
     std::fs::create_dir(pool.join("crashed")).unwrap();
     let mut s2 = AppState::new_in(64, 64, Lang::Ja);
-    s2.recovery.set_space_probe(Some(plenty()));
-    let problems = s2.recovery.enable(dir.root(), settings(15, 3, 0)).unwrap();
+    s2.recovery_mut().set_space_probe(Some(plenty()));
+    let problems = s2
+        .recovery_mut()
+        .enable(dir.root(), settings(15, 3, 0))
+        .unwrap();
     assert!(
         matches!(problems.first(), Some(Problem::PreviousRun(_))),
         "{problems:?}"
@@ -1685,13 +1709,13 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
     );
     // 世代を見せない方へは倒さない: ウィンドウが出て、世代を開ける
     let window = s2
-        .recovery
+        .recovery()
         .window
         .as_ref()
         .expect("落ちた実行の世代があるのでウィンドウを出す");
     assert_eq!(window.rows.len(), 1);
     s2.recovery_apply(RecoveryAction::Open);
-    assert_ne!(pixel_in(&s2.doc, 10), [0, 0, 0, 0]);
+    assert_ne!(pixel_in(s2.doc(), 10), [0, 0, 0, 0]);
     // 印は残る（次の起動がやり直す）
     assert!(pool.join("session.lock").is_file());
 }
@@ -1754,17 +1778,17 @@ fn headless_only_the_changed_set_is_rewritten_and_both_sets_selections_and_layer
     let entry = |id: &str, leaf: &str| format!("sets/{id}/{leaf}");
 
     let mut s = session(&dir.root());
-    s.apply(Action::OpenProject(path.clone()));
-    assert!(s.message.starts_with("開きました"), "{}", s.message);
-    assert_eq!(s.sets.len(), 2);
+    s.act(Action::OpenProject(path.clone()));
+    assert!(s.message().starts_with("開きました"), "{}", s.message());
+    assert_eq!(s.sets().len(), 2);
     // 1 つ目のセットだけを変える: 絵と、選択範囲
     paint(&mut s, 10.0);
-    let wider = SelectionMask::rectangle(&s.doc, 0, 0, 50, 50);
-    s.doc.set_selection(Some(wider)).unwrap();
-    s.modified = true;
+    let wider = SelectionMask::rectangle(s.doc(), 0, 0, 50, 50);
+    s.doc_mut().set_selection(Some(wider)).unwrap();
+    s.set_modified(true);
     let t = write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
-    let store = GenerationStore::new(s.recovery.session_dir().unwrap());
+    assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
+    let store = GenerationStore::new(s.recovery().session_dir().unwrap());
     let files = store.load().unwrap().files;
     // 変えていないセットは、開いた時のバイト列のまま（正本も選択範囲も）
     for leaf in ["document.utpaint", "selection.bin"] {
@@ -1780,11 +1804,11 @@ fn headless_only_the_changed_set_is_rewritten_and_both_sets_selections_and_layer
         );
     }
     // 選択範囲だけの変更も、別の書き置きになる（画素は変えていない）
-    let narrower = SelectionMask::rectangle(&s.doc, 0, 0, 45, 45);
-    s.doc.set_selection(Some(narrower)).unwrap();
-    s.modified = true;
+    let narrower = SelectionMask::rectangle(s.doc(), 0, 0, 45, 45);
+    s.doc_mut().set_selection(Some(narrower)).unwrap();
+    s.set_modified(true);
     write_after(&mut s, t + Duration::from_secs(100));
-    assert_eq!(s.recovery.checkpoints(), 2, "選択範囲だけの変更");
+    assert_eq!(s.recovery().checkpoints(), 2, "選択範囲だけの変更");
     let written = Project::from_entries({
         let mut f = store.load().unwrap().files;
         f.remove(INFO_NAME);
@@ -1808,8 +1832,8 @@ fn headless_only_the_changed_set_is_rewritten_and_both_sets_selections_and_layer
 
     let mut s2 = session(&dir.root());
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!(s2.sets.len(), 2, "{}", s2.message);
-    assert_eq!(s2.sets.current().id, id_a);
+    assert_eq!(s2.sets().len(), 2, "{}", s2.message());
+    assert_eq!(s2.sets().current().id, id_a);
     // 1 つ目: 絵・レイヤーの属性・選択範囲
     assert_ne!(pixel_in(s2.set_doc(0), 10), [0, 0, 0, 0]);
     let layer = &s2.set_doc(0).layers()[0];
@@ -1831,8 +1855,8 @@ fn headless_only_the_changed_set_is_rewritten_and_both_sets_selections_and_layer
     assert_eq!((selection.amount(30, 30), selection.amount(5, 5)), (255, 0));
     // 保存した .ylp にも選択範囲が入る
     let saved = dir.0.join("復旧した二つ.ylp");
-    s2.apply(Action::SaveProjectAs(saved.clone()));
-    assert!(s2.message.starts_with("保存しました"), "{}", s2.message);
+    s2.act(Action::SaveProjectAs(saved.clone()));
+    assert!(s2.message().starts_with("保存しました"), "{}", s2.message());
     let reopened = Project::read(&std::fs::read(&saved).unwrap()).unwrap();
     assert_eq!(selection_of(&reopened, &id_b).amount(30, 30), 255);
 }
@@ -1842,20 +1866,20 @@ fn headless_a_selection_is_written_and_comes_back_after_a_crash() {
     let dir = TempDir::new("selection");
     let mut s = session(&dir.root());
     paint(&mut s, 10.0);
-    let mask = SelectionMask::rectangle(&s.doc, 4, 4, 20, 20);
-    s.doc.set_selection(Some(mask)).unwrap();
-    s.modified = true;
+    let mask = SelectionMask::rectangle(s.doc(), 4, 4, 20, 20);
+    s.doc_mut().set_selection(Some(mask)).unwrap();
+    s.set_modified(true);
     write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1, "{}", s.message);
+    assert_eq!(s.recovery().checkpoints(), 1, "{}", s.message());
     crash(s);
     let mut s2 = session(&dir.root());
     s2.recovery_apply(RecoveryAction::Open);
-    let selection = s2.doc.selection().expect("選択範囲が戻る");
+    let selection = s2.doc().selection().expect("選択範囲が戻る");
     assert_eq!(
         (selection.amount(10, 10), selection.amount(40, 40)),
         (255, 0)
     );
-    assert!(!s2.doc.can_undo(), "復旧は選択範囲の履歴を返さない");
+    assert!(!s2.doc().can_undo(), "復旧は選択範囲の履歴を返さない");
 }
 
 #[test]
@@ -1867,23 +1891,24 @@ fn headless_the_recovered_name_follows_the_screen_language_until_it_is_saved() {
     crash(s);
     let mut s2 = session(&dir.root());
     s2.recovery_apply(RecoveryAction::Open);
-    assert_eq!(s2.project_name, "名称未設定（復旧）");
+    assert_eq!(s2.project_name(), "名称未設定（復旧）");
     s2.set_language(Lang::En);
     assert_eq!(
-        s2.project_name, "Untitled (Recovered)",
+        s2.project_name(),
+        "Untitled (Recovered)",
         "保存先が無いあいだは、言語に追従する"
     );
     s2.set_language(Lang::Ja);
-    assert_eq!(s2.project_name, "名称未設定（復旧）");
+    assert_eq!(s2.project_name(), "名称未設定（復旧）");
     // 利用者が付けた名前（保存したファイルの名前）は、言語を替えても変えない
-    s2.apply(Action::SaveProjectAs(dir.0.join("作品.ylp")));
-    assert_eq!(s2.project_name, "作品");
+    s2.act(Action::SaveProjectAs(dir.0.join("作品.ylp")));
+    assert_eq!(s2.project_name(), "作品");
     s2.set_language(Lang::En);
-    assert_eq!(s2.project_name, "作品");
+    assert_eq!(s2.project_name(), "作品");
     // 復旧から開いたのではない新しい文書の既定の名前は、今までどおり
     let mut fresh = AppState::new_in(64, 64, Lang::Ja);
     fresh.set_language(Lang::En);
-    assert_eq!(fresh.project_name, "Untitled");
+    assert_eq!(fresh.project_name(), "Untitled");
 }
 
 // ───────── ディスクの使いすぎを防ぐ（使う量の上限・空きの守り・落ちた実行の最新） ─────────
@@ -1913,7 +1938,7 @@ fn crashed_run(root: &Path, count: usize) {
 fn rows_of(root: &Path) -> Vec<yolu_app::recovery::Row> {
     let mut s = session_with(root, settings(15, 1000, 0), Lang::Ja);
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = s.recovery.window.as_ref().unwrap().rows.clone();
+    let rows = s.recovery().window.as_ref().unwrap().rows.clone();
     s.recovery_shutdown();
     rows
 }
@@ -1925,29 +1950,29 @@ fn headless_a_nearly_full_disk_skips_the_checkpoint_with_a_short_reason_and_it_r
         let dir = TempDir::new("lowdisk");
         let mut s = session_with(&dir.root(), settings(15, 3, 0), lang);
         let free = Arc::new(AtomicU64::new(10 * GIB - 1));
-        s.recovery
+        s.recovery_mut()
             .set_space_probe(Some(disk_with_free(free.clone())));
         paint(&mut s, 10.0);
         let t = write_after(&mut s, Instant::now());
         // 空けておく量（10 GiB）を割っている: 書かず、短い理由を帯に出す（数は出さない）。失敗ではなく見送り
         assert_eq!(
-            (s.recovery.checkpoints(), generations(&s)),
+            (s.recovery().checkpoints(), generations(&s)),
             (0, 0),
             "{}",
-            s.message
+            s.message()
         );
         assert_eq!(
-            s.message,
+            s.message(),
             lang.pick(
                 "復旧用の書き置きを見送りました（ディスクの空きが少ない）。",
                 "Recovery checkpoint skipped (Low disk space)."
             )
         );
         assert!(
-            !s.recovery.is_marked_dirty(),
+            !s.recovery().is_marked_dirty(),
             "書いていないので、保存していない作業の世代の印は立てない"
         );
-        let session = s.recovery.session_dir().unwrap().to_path_buf();
+        let session = s.recovery().session_dir().unwrap().to_path_buf();
         assert_eq!(
             std::fs::read_dir(&session)
                 .unwrap()
@@ -1966,21 +1991,21 @@ fn headless_a_nearly_full_disk_skips_the_checkpoint_with_a_short_reason_and_it_r
         );
         // 描くのは止まらない
         paint(&mut s, 20.0);
-        assert!(s.doc.can_undo());
+        assert!(s.doc().can_undo());
         // 空けておく量は割らないが、新しく書く量を足すと割る: これも書かない（書く量を見ている）
         free.store(10 * GIB + 10, Ordering::SeqCst);
         let t = write_after(&mut s, t + Duration::from_secs(100));
         assert_eq!(
-            s.recovery.checkpoints(),
+            s.recovery().checkpoints(),
             0,
             "10 バイトの余裕では、世代の中身が入らない"
         );
         // 空きが戻れば、次の頼みで書く。戻ったことを知らせる
         free.store(900 * GIB, Ordering::SeqCst);
         write_after(&mut s, t + Duration::from_secs(100));
-        assert_eq!(s.recovery.checkpoints(), 1);
-        assert_eq!(s.message, lang.recovery_working_again());
-        assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(&s.doc, 20));
+        assert_eq!(s.recovery().checkpoints(), 1);
+        assert_eq!(s.message(), lang.recovery_working_again());
+        assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(s.doc(), 20));
     }
 }
 
@@ -1989,21 +2014,21 @@ fn headless_a_checkpoint_refused_for_low_space_does_nothing_but_look_at_the_free
     let dir = TempDir::new("lowdisk-cheap");
     let mut s = session_with(&dir.root(), settings(15, 3, 0), Lang::Ja);
     let free = Arc::new(AtomicU64::new(900 * GIB));
-    s.recovery
+    s.recovery_mut()
         .set_space_probe(Some(disk_with_free(free.clone())));
     paint(&mut s, 10.0);
     let mut t = write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
     // 書き込みの段（組み立ての前の `snapshot` から、確定の前の読み直しの `verified` まで）を数える
     let stages = Arc::new(AtomicUsize::new(0));
     let seen = stages.clone();
-    s.recovery.set_fault(Some(fault(move |_| {
+    s.recovery_mut().set_fault(Some(fault(move |_| {
         seen.fetch_add(1, Ordering::SeqCst);
         Ok(())
     })));
     // 直前の世代の中身が外で変わっていて、読み直せば「外で変わった」になる置き場でも、空きが少ないあいだは、それを読みに行かず
     // 空きの断りを答える（毎回の間隔で来る断るほうの道が、組み立てもハッシュも読み直しもしない）
-    let pool = s.recovery.session_dir().unwrap().to_path_buf();
+    let pool = s.recovery().session_dir().unwrap().to_path_buf();
     let newest = GenerationStore::new(&pool).list().unwrap().remove(0);
     let manifest = std::fs::read_to_string(
         pool.join("generations")
@@ -2027,7 +2052,8 @@ fn headless_a_checkpoint_refused_for_low_space_does_nothing_but_look_at_the_free
         paint(&mut s, 20.0 + 5.0 * round as f64);
         t = write_after(&mut s, t + Duration::from_secs(100));
         assert_eq!(
-            s.message, "復旧用の書き置きを見送りました（ディスクの空きが少ない）。",
+            s.message(),
+            "復旧用の書き置きを見送りました（ディスクの空きが少ない）。",
             "{round}: 外で変わったという失敗ではなく、空きの断り"
         );
         assert_eq!(
@@ -2036,7 +2062,7 @@ fn headless_a_checkpoint_refused_for_low_space_does_nothing_but_look_at_the_free
             "{round}: 断る回は書き込みの段に入らない"
         );
     }
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
     // 空きが戻れば書き込みの段に入る（ここでは、変えた中身が見つかって失敗する）
     free.store(900 * GIB, Ordering::SeqCst);
     paint(&mut s, 50.0);
@@ -2049,11 +2075,11 @@ fn headless_the_disk_guard_also_stops_a_clean_close_from_writing_and_the_last_ge
     let dir = TempDir::new("lowdisk-close");
     let mut s = session_with(&dir.root(), settings(15, 3, 0), Lang::Ja);
     let free = Arc::new(AtomicU64::new(900 * GIB));
-    s.recovery
+    s.recovery_mut()
         .set_space_probe(Some(disk_with_free(free.clone())));
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
-    assert_eq!(s.recovery.checkpoints(), 1);
+    assert_eq!(s.recovery().checkpoints(), 1);
     paint(&mut s, 20.0);
     free.store(GIB, Ordering::SeqCst);
     let _ = t;
@@ -2073,37 +2099,37 @@ fn headless_after_each_checkpoint_the_oldest_generations_beyond_the_disk_limit_g
     let mut t = Instant::now();
     paint(&mut s, 10.0);
     t = write_after(&mut s, t + Duration::from_secs(100));
-    let one = s.recovery.usage().unwrap().own;
+    let one = s.recovery().usage().unwrap().own;
     assert!(one > 0);
     // 世代 2 つぶんの少し上（世代ごとに正本を新しく書くので、3 つ目で超える）
-    s.recovery.set_disk_cap(Some(one * 5 / 2));
+    s.recovery_mut().set_disk_cap(Some(one * 5 / 2));
     for i in 1..6 {
         paint(&mut s, 10.0 + 5.0 * i as f64);
         t = write_after(&mut s, t + Duration::from_secs(100));
         assert!(
-            s.recovery.usage().unwrap().total() <= one * 5 / 2 + one / 4,
+            s.recovery().usage().unwrap().total() <= one * 5 / 2 + one / 4,
             "{i}: 上限のあたりに収まる"
         );
     }
     let kept = generations(&s);
     assert!((1..=2).contains(&kept), "上限に収まるぶんだけ残る: {kept}");
     assert!(
-        s.recovery.trimmed_generations() >= 3,
+        s.recovery().trimmed_generations() >= 3,
         "{}",
-        s.recovery.trimmed_generations()
+        s.recovery().trimmed_generations()
     );
     assert_eq!(
         pixel_in(&newest_doc(&s), 35),
-        pixel_in(&s.doc, 35),
+        pixel_in(s.doc(), 35),
         "最新は読めて、いまの絵と同じ"
     );
     // 上限がどれだけ小さくても、この実行の最新の世代は残る（超えたままだと知らせる）
-    s.recovery.set_disk_cap(Some(1));
+    s.recovery_mut().set_disk_cap(Some(1));
     paint(&mut s, 50.0);
     write_after(&mut s, t + Duration::from_secs(100));
     assert_eq!(generations(&s), 1);
-    assert!(s.recovery.last_trimmed().over);
-    assert_eq!(pixel_in(&newest_doc(&s), 50), pixel_in(&s.doc, 50));
+    assert!(s.recovery().last_trimmed().over);
+    assert_eq!(pixel_in(&newest_doc(&s), 50), pixel_in(s.doc(), 50));
 }
 
 #[test]
@@ -2112,24 +2138,24 @@ fn headless_a_crashed_writes_leftover_is_cleared_before_the_limit_removes_any_ge
     let mut s = session_with(&dir.root(), settings(15, 20, 0), Lang::Ja);
     paint(&mut s, 10.0);
     let mut t = write_after(&mut s, Instant::now());
-    let one = s.recovery.usage().unwrap().own;
+    let one = s.recovery().usage().unwrap().own;
     // 落ちた書き込みの残り（manifest の無い作りかけ。大きい）。世代の整理はこれを数えるが、世代を消しても減らない
-    let pool = s.recovery.session_dir().unwrap().to_path_buf();
+    let pool = s.recovery().session_dir().unwrap().to_path_buf();
     let stale = pool.join(".staging-20200101T000000000-leftover");
     std::fs::create_dir_all(&stale).unwrap();
     std::fs::write(stale.join("y.pending"), vec![9u8; 10 * one as usize]).unwrap();
-    let base = s.recovery.usage().unwrap().own - 10 * one;
+    let base = s.recovery().usage().unwrap().own - 10 * one;
     // 世代 3 つぶんの余裕: 残りを片付ければ、次の世代を足しても収まる
-    s.recovery.set_disk_cap(Some(base + 3 * one));
+    s.recovery_mut().set_disk_cap(Some(base + 3 * one));
     for i in 1..3 {
         paint(&mut s, 10.0 + 5.0 * i as f64);
         t = write_after(&mut s, t + Duration::from_secs(100));
     }
     assert!(!stale.exists(), "残りは片付いた");
     assert_eq!(generations(&s), 3, "世代は 1 つも消さない");
-    assert_eq!(s.recovery.trimmed_generations(), 0);
-    assert!(s.recovery.usage().unwrap().total() <= base + 3 * one + one / 2);
-    assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(&s.doc, 20));
+    assert_eq!(s.recovery().trimmed_generations(), 0);
+    assert!(s.recovery().usage().unwrap().total() <= base + 3 * one + one / 2);
+    assert_eq!(pixel_in(&newest_doc(&s), 20), pixel_in(s.doc(), 20));
     let _ = t;
 }
 
@@ -2168,13 +2194,13 @@ fn headless_choosing_a_smaller_amount_removes_old_generations_everywhere_but_eac
     assert_eq!(crashed_newest.len(), 2);
     let conf = dir.0.join("recovery.conf");
     let mut s = session_with(&root, settings(15, 20, 0), Lang::Ja);
-    s.recovery.set_settings_path(Some(conf.clone()));
+    s.recovery_mut().set_settings_path(Some(conf.clone()));
     s.recovery_apply(RecoveryAction::OpenWindow);
     // 試験では、本当の量（最低 1 GB）ではなく、小さな上限に置き換える
-    s.recovery.set_disk_cap(Some(1));
+    s.recovery_mut().set_disk_cap(Some(1));
     s.recovery_apply(RecoveryAction::SetDisk(DiskBudget::Low));
     let after: Vec<(std::path::PathBuf, String)> = s
-        .recovery
+        .recovery()
         .window
         .as_ref()
         .unwrap()
@@ -2195,20 +2221,20 @@ fn headless_choosing_a_smaller_amount_removes_old_generations_everywhere_but_eac
         RecoverySettings::load(&conf).unwrap().0.disk,
         DiskBudget::Low
     );
-    assert_eq!(s.recovery.window.as_ref().unwrap().cap, 1);
+    assert_eq!(s.recovery().window.as_ref().unwrap().cap, 1);
     assert_eq!(
-        s.recovery.window.as_ref().unwrap().usage.total(),
+        s.recovery().window.as_ref().unwrap().usage.total(),
         used(&root)
     );
     // 残った世代は、共有の中身ごと開ける
     s.recovery_apply(RecoveryAction::Select(0));
     s.recovery_apply(RecoveryAction::Open);
     assert!(
-        s.message.is_empty() || !s.message.contains("開けません"),
+        s.message().is_empty() || !s.message().contains("開けません"),
         "{}",
-        s.message
+        s.message()
     );
-    assert_eq!(s.project_name, "名称未設定（復旧）");
+    assert_eq!(s.project_name(), "名称未設定（復旧）");
 }
 
 #[test]
@@ -2220,12 +2246,12 @@ fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_th
     seed_closed_generations(&root, 4);
     crashed_run(&root, 3);
     let mut s = AppState::new_in(64, 64, Lang::Ja);
-    s.recovery.set_space_probe(Some(plenty()));
-    s.recovery.set_disk_cap(Some(1));
+    s.recovery_mut().set_space_probe(Some(plenty()));
+    s.recovery_mut().set_disk_cap(Some(1));
     let conf = dir.0.join("recovery.conf");
-    assert!(s.recovery.start_from(Some(conf)).unwrap().is_empty());
+    assert!(s.recovery_mut().start_from(Some(conf)).unwrap().is_empty());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &s.recovery.window.as_ref().unwrap().rows;
+    let rows = &s.recovery().window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 1, "落ちた実行の最新だけが残る");
     assert!(rows[0].crashed);
     s.recovery_shutdown();
@@ -2236,13 +2262,13 @@ fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_th
     let conf = dir.0.join("recovery.conf");
     std::fs::write(&conf, vec![b'a'; 5000]).unwrap();
     let mut s = AppState::new_in(64, 64, Lang::Ja);
-    s.recovery.set_space_probe(Some(plenty()));
-    s.recovery.set_disk_cap(Some(1));
-    let problems = s.recovery.start_from(Some(conf.clone())).unwrap();
+    s.recovery_mut().set_space_probe(Some(plenty()));
+    s.recovery_mut().set_disk_cap(Some(1));
+    let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
     assert!(matches!(problems.first(), Some(Problem::Unreadable(_))));
     s.recovery_apply(RecoveryAction::OpenWindow);
     assert_eq!(
-        s.recovery.window.as_ref().unwrap().rows.len(),
+        s.recovery().window.as_ref().unwrap().rows.len(),
         4,
         "起動で消さない"
     );
@@ -2252,14 +2278,14 @@ fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_th
     paint(&mut s, 20.0);
     write_after(&mut s, t + Duration::from_secs(100));
     assert_eq!(
-        s.recovery.trimmed_generations(),
+        s.recovery().trimmed_generations(),
         0,
         "書き置きのあとも消さない"
     );
     assert_eq!(generations(&s), 2);
     s.recovery_apply(RecoveryAction::SetDisk(DiskBudget::Standard));
     assert!(
-        s.recovery.window.as_ref().unwrap().rows.len() <= 2,
+        s.recovery().window.as_ref().unwrap().rows.len() <= 2,
         "選んだ量で、この実行のあいだ整理する"
     );
     assert_eq!(
@@ -2275,8 +2301,8 @@ fn headless_the_disk_amount_is_chosen_saved_clamped_and_read_back() {
     let dir = TempDir::new("disk-settings");
     let file = dir.0.join("recovery.conf");
     let mut s = session(&dir.root());
-    s.recovery.set_settings_path(Some(file.clone()));
-    assert_eq!(s.recovery.settings().disk, DiskBudget::Auto);
+    s.recovery_mut().set_settings_path(Some(file.clone()));
+    assert_eq!(s.recovery().settings().disk, DiskBudget::Auto);
     for (choice, read) in [
         (DiskBudget::High, DiskBudget::High),
         (DiskBudget::Low, DiskBudget::Low),
@@ -2286,7 +2312,7 @@ fn headless_the_disk_amount_is_chosen_saved_clamped_and_read_back() {
         (DiskBudget::Auto, DiskBudget::Auto),
     ] {
         s.recovery_apply(RecoveryAction::SetDisk(choice));
-        assert_eq!(s.recovery.settings().disk, read);
+        assert_eq!(s.recovery().settings().disk, read);
         let (loaded, problems) = RecoverySettings::load(&file).unwrap();
         assert!(problems.is_empty());
         assert_eq!(loaded.disk, read, "書いた量は読み戻せる");
@@ -2299,16 +2325,16 @@ fn headless_the_disk_amount_is_chosen_saved_clamped_and_read_back() {
     // 「詳しく」の開け閉めは設定に書かない（ウィンドウの中だけ）
     s.recovery_apply(RecoveryAction::OpenWindow);
     s.recovery_apply(RecoveryAction::DiskDetails(true));
-    assert!(s.recovery.window.as_ref().unwrap().details);
+    assert!(s.recovery().window.as_ref().unwrap().details);
     let before = std::fs::read(&file).unwrap();
     s.recovery_apply(RecoveryAction::DiskDetails(false));
-    assert!(!s.recovery.window.as_ref().unwrap().details);
+    assert!(!s.recovery().window.as_ref().unwrap().details);
     assert_eq!(std::fs::read(&file).unwrap(), before);
     // 自動の上限は、空きに合わせて小さくなる（空き 4 GiB なら、復旧が使える量の 10%）
     let mut s = session(&dir.root());
-    s.recovery
+    s.recovery_mut()
         .set_space_probe(Some(disk_with_free(Arc::new(AtomicU64::new(4 * GIB)))));
-    let cap = s.recovery.disk_cap().unwrap();
+    let cap = s.recovery().disk_cap().unwrap();
     assert!((GIB / 4..=GIB / 2).contains(&cap), "{cap}");
 }
 
@@ -2322,7 +2348,7 @@ fn headless_the_window_counts_what_recovery_uses_by_the_kind_of_session() {
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let window = s.recovery.window.as_ref().unwrap();
+    let window = s.recovery().window.as_ref().unwrap();
     let usage = window.usage;
     assert!(
         usage.own > 0 && usage.crashed > 0 && usage.closed > 0,
@@ -2339,5 +2365,5 @@ fn headless_the_window_counts_what_recovery_uses_by_the_kind_of_session() {
     let before = usage.total();
     paint(&mut s, 30.0);
     write_after(&mut s, Instant::now() + Duration::from_secs(1000));
-    assert!(s.recovery.window.as_ref().unwrap().usage.total() > before);
+    assert!(s.recovery().window.as_ref().unwrap().usage.total() > before);
 }

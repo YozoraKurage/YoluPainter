@@ -6,6 +6,7 @@
 //! - 命令は画面のスレッドで当たり、1 命令 = 画面の取り消しの 1 段（画面の取り消し・やり直しでそのまま戻る）。1 フレームの数に上限。
 //! - 描いている最中・保存の途中・読むだけのセットは理由つきで断る。`doc.open` は開き替えない。壊す操作は確認が要り、済んだら短く知らせる。
 //! - 保存は裏のスレッドで動かし、返事は保存が終わってから。切ると、待っている要求と返事待ちの保存に「受け付けをやめた」を返す。
+use crate::common::drive::Drive;
 use crate::common::{tmp, wait::WATCHDOG};
 
 use std::io::{Read, Write};
@@ -41,7 +42,7 @@ impl Live {
     /// `on` の、最初の状態を渡せる形。
     fn on_with(state: AppState) -> Live {
         let mut live = Live::off_with(state);
-        live.app.state.prefs.settings.external_ops = true;
+        live.app.prefs_mut().settings.external_ops = true;
         live
     }
 
@@ -52,7 +53,7 @@ impl Live {
     fn off_with(state: AppState) -> Live {
         let ctx = egui::Context::default();
         let mut app = YoluApp::for_context(&ctx, state, PenInput::detached());
-        app.state.prefs.settings.external_ops_port = 0;
+        app.prefs_mut().settings.external_ops_port = 0;
         Live { ctx, app }
     }
 
@@ -71,8 +72,8 @@ impl Live {
             assert!(
                 Instant::now() < deadline,
                 "{what} を待ったが来ない: 状態={:?}, 知らせ={}",
-                self.app.state.ops.status,
-                self.app.state.message
+                self.app.app().ops().status,
+                self.app.message()
             );
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -186,7 +187,7 @@ fn raw_status(port: u16, host: &str, origin: Option<&str>) -> u16 {
 }
 
 fn layer_count(live: &Live) -> usize {
-    live.app.state.doc.layers().len()
+    live.app.doc().layers().len()
 }
 
 fn first_set(reply: Reply) -> yolu_ops::reply::SetInfo {
@@ -209,19 +210,19 @@ fn edited(reply: Reply) -> yolu_ops::reply::Edited {
 fn the_setting_starts_and_stops_listening_on_the_loopback() {
     let mut live = Live::off();
     // 既定は切: 待ち受けない
-    assert!(!live.app.state.prefs.settings.external_ops);
+    assert!(!live.app.prefs().settings.external_ops);
     live.settle();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Off);
+    assert_eq!(live.app.app().ops().status, OpsStatus::Off);
     assert!(live.app.ops().port().is_none());
     // 入れると待ち受ける（127.0.0.1 だけ）
-    live.app.state.prefs.settings.external_ops = true;
+    live.app.prefs_mut().settings.external_ops = true;
     live.frame();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Listening);
-    assert!(live.app.state.ops.is_on());
+    assert_eq!(live.app.app().ops().status, OpsStatus::Listening);
+    assert!(live.app.app().ops().is_on());
     let port = live.port();
-    assert_eq!(live.app.state.ops.port, port);
+    assert_eq!(live.app.app().ops().port, port);
     for lang in [Lang::Ja, Lang::En] {
-        let tip = live.app.state.ops.tooltip(lang);
+        let tip = live.app.app().ops().tooltip(lang);
         assert!(
             tip.contains(&format!("http://127.0.0.1:{port}/mcp")),
             "つなぐ側に渡す URL が印のツールチップにある: {tip}"
@@ -251,15 +252,15 @@ fn the_setting_starts_and_stops_listening_on_the_loopback() {
     assert_eq!(doc.sets.len(), 1);
     assert_eq!(doc.path, "", "まだファイルが無い文書");
     // 切ると、待ち受けをやめる（つなげない。同じ番号はすぐに空く）
-    live.app.state.prefs.settings.external_ops = false;
+    live.app.prefs_mut().settings.external_ops = false;
     live.frame();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Off);
-    assert!(live.app.state.ops.tooltip(Lang::Ja).is_empty());
+    assert_eq!(live.app.app().ops().status, OpsStatus::Off);
+    assert!(live.app.app().ops().tooltip(Lang::Ja).is_empty());
     assert!(TcpStream::connect(("127.0.0.1", port)).is_err());
     // もう一度入れると、また受ける
-    live.app.state.prefs.settings.external_ops = true;
+    live.app.prefs_mut().settings.external_ops = true;
     live.frame();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Listening);
+    assert_eq!(live.app.app().ops().status, OpsStatus::Listening);
     assert!(matches!(
         live.ok(json!({"command": "doc.info"})),
         Reply::Doc(_)
@@ -272,10 +273,10 @@ fn a_port_in_use_is_reported_once_and_not_retried_every_frame() {
     let taken = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = taken.local_addr().unwrap().port();
     let mut live = Live::on();
-    live.app.state.prefs.settings.external_ops_port = port;
+    live.app.prefs_mut().settings.external_ops_port = port;
     live.frame();
-    let OpsStatus::Failed(reason) = live.app.state.ops.status.clone() else {
-        panic!("待ち受けない: {:?}", live.app.state.ops.status)
+    let OpsStatus::Failed(reason) = live.app.app().ops().status.clone() else {
+        panic!("待ち受けない: {:?}", live.app.app().ops().status)
     };
     assert!(reason.contains(&port.to_string()), "{reason}");
     assert!(
@@ -283,24 +284,24 @@ fn a_port_in_use_is_reported_once_and_not_retried_every_frame() {
         "使われている理由: {reason}"
     );
     assert!(
-        live.app.state.ops.tooltip(Lang::Ja).contains(&reason),
+        live.app.app().ops().tooltip(Lang::Ja).contains(&reason),
         "理由が印のツールチップに出る"
     );
-    assert!(!live.app.state.message.is_empty(), "理由を知らせる");
+    assert!(!live.app.message().is_empty(), "理由を知らせる");
     // 毎フレームは試さない（口が空いても、設定を変えるまで失敗のまま）
     drop(taken);
-    live.app.state.message.clear();
+    live.app.message_mut().clear();
     live.settle();
-    assert!(matches!(live.app.state.ops.status, OpsStatus::Failed(_)));
-    assert!(live.app.state.message.is_empty(), "続けて知らせない");
+    assert!(matches!(live.app.app().ops().status, OpsStatus::Failed(_)));
+    assert!(live.app.message().is_empty(), "続けて知らせない");
     // 番号を変えると試し直す
-    live.app.state.prefs.settings.external_ops_port = 0;
+    live.app.prefs_mut().settings.external_ops_port = 0;
     live.frame();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Listening);
+    assert_eq!(live.app.app().ops().status, OpsStatus::Listening);
     // 切って入れ直しても試し直す
-    live.app.state.prefs.settings.external_ops = false;
+    live.app.prefs_mut().settings.external_ops = false;
     live.frame();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Off);
+    assert_eq!(live.app.app().ops().status, OpsStatus::Off);
 }
 
 #[test]
@@ -313,9 +314,9 @@ fn changing_the_port_moves_the_listener() {
         let l = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         l.local_addr().unwrap().port()
     };
-    live.app.state.prefs.settings.external_ops_port = free;
+    live.app.prefs_mut().settings.external_ops_port = free;
     live.frame();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Listening);
+    assert_eq!(live.app.app().ops().status, OpsStatus::Listening);
     assert_eq!(live.port(), free);
     assert!(
         TcpStream::connect(("127.0.0.1", first)).is_err(),
@@ -334,32 +335,28 @@ fn a_foreign_host_or_origin_is_refused_and_said_once() {
     let port = live.port();
     let own = format!("127.0.0.1:{port}");
     assert_eq!(raw_status(port, &own, None), 200);
-    live.app.state.message.clear();
+    live.app.message_mut().clear();
     // DNS rebinding（ほかの名前が 127.0.0.1 を指す）
     assert_eq!(raw_status(port, &format!("evil.example:{port}"), None), 403);
     live.until("断った知らせ", |l| {
-        (!l.app.state.message.is_empty()).then_some(())
+        (!l.app.message().is_empty()).then_some(())
     });
     assert_eq!(
-        live.app.state.message,
+        live.app.message(),
         "外からの操作: 宛先がこの PC でない要求を断りました。"
     );
     // 同じ断りが続いても、知らせは 1 度
-    live.app.state.message.clear();
+    live.app.message_mut().clear();
     assert_eq!(raw_status(port, &format!("evil.example:{port}"), None), 403);
     live.settle();
-    assert!(
-        live.app.state.message.is_empty(),
-        "{}",
-        live.app.state.message
-    );
+    assert!(live.app.message().is_empty(), "{}", live.app.message());
     // ウェブページから（Host は自分でも、Origin が違う）
     assert_eq!(raw_status(port, &own, Some("http://evil.example")), 403);
     live.until("断った知らせ", |l| {
-        (!l.app.state.message.is_empty()).then_some(())
+        (!l.app.message().is_empty()).then_some(())
     });
     assert_eq!(
-        live.app.state.message,
+        live.app.message(),
         "外からの操作: ウェブページからの要求を断りました。"
     );
     assert_eq!(
@@ -376,41 +373,41 @@ fn one_command_is_one_step_of_the_screens_undo_and_redo() {
     let mut live = Live::on();
     live.frame();
     let before = layer_count(&live);
-    let undo_before = live.app.state.doc.undo_count();
+    let undo_before = live.app.doc().undo_count();
     let reply = edited(
         live.ok(json!({"command": "layer.add", "args": {"kind": "paint", "name": "外から"}})),
     );
     assert_eq!(layer_count(&live), before + 1);
-    assert_eq!(live.app.state.doc.undo_count(), undo_before + 1);
+    assert_eq!(live.app.doc().undo_count(), undo_before + 1);
     assert!(reply.can_undo);
-    assert!(live.app.state.modified, "変更ありの印が付く");
-    let undo_mid = live.app.state.doc.undo_count();
+    assert!(live.app.modified(), "変更ありの印が付く");
+    let undo_mid = live.app.doc().undo_count();
     live.ok(
         json!({"command": "layer.set", "args": {"layer": "外から", "opacity": 0.5, "visible": false, "name": "外から 2"}}),
     );
-    assert_eq!(live.app.state.doc.undo_count(), undo_mid + 1);
+    assert_eq!(live.app.doc().undo_count(), undo_mid + 1);
     let layer = live
         .app
         .state
-        .doc
+        .doc()
         .layers()
         .iter()
         .find(|l| l.name() == "外から 2")
         .expect("名前が変わった");
     assert!((layer.opacity() - 0.5).abs() < 1e-9 && !layer.visible());
-    live.app.state.apply(Action::Undo);
+    live.app.act(Action::Undo);
     let layer = live
         .app
         .state
-        .doc
+        .doc()
         .layers()
         .iter()
         .find(|l| l.name() == "外から")
         .expect("名前が戻った");
     assert!((layer.opacity() - 1.0).abs() < 1e-9 && layer.visible());
-    live.app.state.apply(Action::Undo);
+    live.app.act(Action::Undo);
     assert_eq!(layer_count(&live), before);
-    live.app.state.apply(Action::Redo);
+    live.app.act(Action::Redo);
     assert_eq!(layer_count(&live), before + 1);
     let undone = live.ok(json!({"command": "undo"}));
     assert!(matches!(undone, Reply::Undone(_)));
@@ -427,17 +424,17 @@ fn deleting_a_selected_layer_keeps_the_screens_selection_valid() {
     let id = live
         .app
         .state
-        .doc
+        .doc()
         .layers()
         .iter()
         .find(|l| l.name() == "選ぶ")
         .unwrap()
         .id();
-    live.app.state.selected_layer = Some(id);
+    live.app.set_selected_layer(Some(id));
     live.ok(json!({"command": "layer.delete", "args": {"layer": "選ぶ", "confirm": true}}));
-    let selected = live.app.state.selected_layer.expect("選び直される");
+    let selected = live.app.selected_layer().expect("選び直される");
     assert!(
-        live.app.state.doc.layer(selected).is_some(),
+        live.app.doc().layer(selected).is_some(),
         "消したレイヤーを選んだままにしない"
     );
 }
@@ -465,7 +462,7 @@ fn reads_describe_the_open_project_and_the_current_set() {
         (16, 16, 64)
     );
     assert_eq!(&preview.png.0[1..4], b"PNG");
-    assert!(!live.app.state.modified);
+    assert!(!live.app.modified());
 }
 
 // ───────── 断る ─────────
@@ -474,13 +471,13 @@ fn reads_describe_the_open_project_and_the_current_set() {
 fn edits_are_refused_while_drawing_and_reads_still_answer() {
     let mut live = Live::on();
     live.frame();
-    let layer = live.app.state.doc.layers().last().unwrap().id();
-    let brush = live.app.state.stroke_settings(false);
-    let mut stroke = live.app.state.doc.begin_stroke(layer, &brush).unwrap();
+    let layer = live.app.doc().layers().last().unwrap().id();
+    let brush = live.app.app().stroke_settings(false);
+    let mut stroke = live.app.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut live.app.state.doc, 10.0, 10.0, 1.0, DVec2::ZERO)
+        .add_point(live.app.doc_mut(), 10.0, 10.0, 1.0, DVec2::ZERO)
         .unwrap();
-    assert!(live.app.state.is_stroking());
+    assert!(live.app.app().is_stroking());
     let before = layer_count(&live);
     for command in [
         json!({"command": "layer.add", "args": {"kind": "paint"}}),
@@ -496,7 +493,7 @@ fn edits_are_refused_while_drawing_and_reads_still_answer() {
         live.ok(json!({"command": "set.info"})),
         Reply::Set(_)
     ));
-    live.app.state.doc.end_stroke(stroke).unwrap();
+    live.app.doc_mut().end_stroke(stroke).unwrap();
     live.ok(json!({"command": "layer.add", "args": {"kind": "paint"}}));
     assert_eq!(layer_count(&live), before + 1);
 }
@@ -504,7 +501,7 @@ fn edits_are_refused_while_drawing_and_reads_still_answer() {
 #[test]
 fn a_read_only_set_refuses_edits_with_the_screens_reason() {
     let mut live = Live::on();
-    live.app.state.sets.get_mut(0).unwrap().read_only = Some("編集できない中身があります".into());
+    live.app.sets_mut().get_mut(0).unwrap().read_only = Some("編集できない中身があります".into());
     live.frame();
     let e = live.err(json!({"command": "layer.add", "args": {"kind": "paint"}}));
     assert_eq!(e.code, ErrorCode::ReadOnly);
@@ -524,22 +521,18 @@ fn destructive_commands_need_confirmation_and_say_so_briefly_when_done() {
     live.frame();
     live.ok(json!({"command": "layer.add", "args": {"kind": "paint", "name": "消す"}}));
     let before = layer_count(&live);
-    live.app.state.message.clear();
+    live.app.message_mut().clear();
     let e = live.err(json!({"command": "layer.delete", "args": {"layer": "消す"}}));
     assert_eq!(e.code, ErrorCode::ConfirmRequired);
     assert_eq!(layer_count(&live), before);
-    assert!(live.app.state.message.is_empty(), "断ったときは知らせない");
+    assert!(live.app.message().is_empty(), "断ったときは知らせない");
     live.ok(json!({"command": "layer.delete", "args": {"layer": "消す", "confirm": true}}));
     assert_eq!(layer_count(&live), before - 1);
-    assert_eq!(live.app.state.message, "外からの操作: レイヤーを消す");
-    live.app.state.message.clear();
+    assert_eq!(live.app.message(), "外からの操作: レイヤーを消す");
+    live.app.message_mut().clear();
     live.ok(json!({"command": "layer.add", "args": {"kind": "paint"}}));
     live.ok(json!({"command": "set.info"}));
-    assert!(
-        live.app.state.message.is_empty(),
-        "{}",
-        live.app.state.message
-    );
+    assert!(live.app.message().is_empty(), "{}", live.app.message());
 }
 
 #[test]
@@ -547,8 +540,8 @@ fn opening_another_document_is_refused_and_the_same_file_returns_the_current_one
     let dir = tmp::test_dir("mcpserver-open");
     let file = dir.join("work.ylp");
     let mut live = Live::on();
-    live.app.state.apply(Action::SaveProjectAs(file.clone()));
-    live.app.state.wait_save();
+    live.app.act(Action::SaveProjectAs(file.clone()));
+    live.app.app_mut().wait_save();
     live.frame();
     let e = live.err(json!({"command": "doc.open", "args": {"path": dir.join("other.ylp").display().to_string()}}));
     assert_eq!(e.code, ErrorCode::Unsupported);
@@ -609,24 +602,29 @@ fn connections_beyond_eight_are_refused_and_a_closed_ones_place_is_given_back() 
         .map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap())
         .collect();
     live.until("8 つのつながり", |l| {
-        (l.app.state.ops.status == OpsStatus::Connected(8)).then_some(())
+        (l.app.app().ops().status == OpsStatus::Connected(8)).then_some(())
     });
-    assert!(live.app.state.ops.tooltip(Lang::Ja).contains("つながり 8"));
-    live.app.state.message.clear();
+    assert!(live
+        .app
+        .state
+        .ops()
+        .tooltip(Lang::Ja)
+        .contains("つながり 8"));
+    live.app.message_mut().clear();
     // 9 つ目は 503（コマンドラインは Busy の誤り）
     let e = live.err(json!({"command": "doc.info"}));
     assert_eq!(e.code, ErrorCode::Busy, "{e:?}");
     live.until("上限の知らせ", |l| {
-        (!l.app.state.message.is_empty()).then_some(())
+        (!l.app.message().is_empty()).then_some(())
     });
     assert_eq!(
-        live.app.state.message,
+        live.app.message(),
         "外からの操作: つながりの数が上限のため断りました。"
     );
     // 1 つ閉じると、その分が戻る
     drop(held);
     live.until("閉じたつながりを忘れる", |l| {
-        (l.app.state.ops.status == OpsStatus::Listening).then_some(())
+        (l.app.app().ops().status == OpsStatus::Listening).then_some(())
     });
     assert!(matches!(
         live.ok(json!({"command": "doc.info"})),
@@ -641,17 +639,17 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
     let dir = tmp::test_dir("mcpserver-save");
     let file = dir.join("work.ylp");
     let mut live = Live::on();
-    live.app.state.save.background = true;
-    live.app.state.apply(Action::SaveProjectAs(file.clone()));
-    live.app.state.wait_save();
+    live.app.save_mut().background = true;
+    live.app.act(Action::SaveProjectAs(file.clone()));
+    live.app.app_mut().wait_save();
     live.frame();
     live.ok(json!({"command": "layer.add", "args": {"kind": "paint", "name": "保存するレイヤー"}}));
     let e = live.err(json!({"command": "save"}));
     assert_eq!(e.code, ErrorCode::ConfirmRequired);
     // 保存の仕事を止めておき、返事が保存の終わりまで来ないこと・その間の編集と保存が断られることを見る
-    let hold = live.app.state.save.hold_next();
+    let hold = live.app.save_mut().hold_next();
     let rx = live.send(json!({"command": "save", "args": {"confirm": true}}));
-    live.until("保存の開始", |l| l.app.state.is_saving().then_some(()));
+    live.until("保存の開始", |l| l.app.app().is_saving().then_some(()));
     assert!(live.app.ops().save_pending());
     live.settle();
     assert!(rx.try_recv().is_err(), "保存が終わるまで返事は来ない");
@@ -673,7 +671,7 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
     assert_eq!(saved.sets_written.len(), 1);
     assert!(saved.backup.is_some(), "上書きは前の版を退避に残す");
     assert!(!live.app.ops().save_pending());
-    assert!(!live.app.state.modified, "保存したので変更ありの印が消える");
+    assert!(!live.app.modified(), "保存したので変更ありの印が消える");
     let mut host = FileHost::new(PathPolicy::new(&dir).unwrap());
     host.open(&file, true).unwrap();
     let names = host
@@ -685,17 +683,17 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
         })
         .unwrap();
     assert!(names.iter().any(|n| n == "保存するレイヤー"), "{names:?}");
-    assert_eq!(live.app.state.message, "外からの操作: 保存");
-    live.app.state.message.clear();
+    assert_eq!(live.app.message(), "外からの操作: 保存");
+    live.app.message_mut().clear();
     let Reply::Saved(again) = live.ok(json!({"command": "save", "args": {"confirm": true}})) else {
         panic!()
     };
     assert!(!again.written);
     live.settle();
     assert!(
-        live.app.state.message.is_empty(),
+        live.app.message().is_empty(),
         "書かなかった保存は知らせない: {}",
-        live.app.state.message
+        live.app.message()
     );
 }
 
@@ -706,16 +704,16 @@ fn saving_through_the_link_says_which_never_saved_unreadable_set_was_left_out() 
     // タイルの大きさに合う大きさの文書（`fill` はタイルごと画素を入れる）
     let mut live = Live::on_with(AppState::new_in(256, 128, Lang::Ja));
     live.frame();
-    live.app.state.apply(Action::Project(NpAction::AddSet));
-    assert_eq!(live.app.state.sets.len(), 2, "{}", live.app.state.message);
+    live.app.act(Action::Project(NpAction::AddSet));
+    assert_eq!(live.app.sets().len(), 2, "{}", live.app.message());
     for i in 0..2 {
-        crate::disk_cache::fill(live.app.state.set_doc_mut(i), 70 + i as u64);
+        crate::disk_cache::fill(live.app.app_mut().set_doc_mut(i), 70 + i as u64);
     }
-    live.app.state.modified = true;
+    live.app.set_modified(true);
     // 2 つ目のセットだけが読めなくなる（まだ 1 度も保存していない）
-    crate::disk_cache::make_unreadable(&live.app.state, 1, &cache);
-    live.app.state.check_tile_cache();
-    let left = live.app.state.sets.get(1).unwrap().name.clone();
+    crate::disk_cache::make_unreadable(live.app.app(), 1, &cache);
+    live.app.app_mut().check_tile_cache();
+    let left = live.app.sets().get(1).unwrap().name.clone();
     let file = dir.join("left.ylp");
     let Reply::Saved(saved) =
         live.ok(json!({"command": "save_as", "args": {"path": file.display().to_string()}}))
@@ -737,7 +735,7 @@ fn saving_through_the_link_says_which_never_saved_unreadable_set_was_left_out() 
     // 保存したファイルには、読めたセットだけが入っている
     let project = yolu_io::Project::read(&std::fs::read(&file).unwrap()).unwrap();
     assert_eq!(project.sets().len(), 1);
-    assert_eq!(project.sets()[0].id, live.app.state.sets.get(0).unwrap().id);
+    assert_eq!(project.sets()[0].id, live.app.sets().get(0).unwrap().id);
 }
 
 #[test]
@@ -772,10 +770,11 @@ fn saving_a_new_document_needs_a_destination_and_replacing_a_file_needs_confirma
     std::fs::copy(&file, &other).unwrap();
     let e = live.err(json!({"command": "save_as", "args": {"path": other.display().to_string()}}));
     assert_eq!(e.code, ErrorCode::ConfirmRequired);
-    live.app.state.message.clear();
+    live.app.message_mut().clear();
     live.ok(json!({"command": "save_as", "args": {"path": other.display().to_string(), "confirm": true}}));
     assert_eq!(
-        live.app.state.message, "外からの操作: 名前を付けて保存",
+        live.app.message(),
+        "外からの操作: 名前を付けて保存",
         "置き換えたときだけ知らせる"
     );
 }
@@ -818,7 +817,7 @@ fn turning_off_answers_the_waiting_requests_without_running_them() {
         assert!(Instant::now() < deadline, "列に入らない");
         std::thread::sleep(Duration::from_millis(5));
     }
-    live.app.state.prefs.settings.external_ops = false;
+    live.app.prefs_mut().settings.external_ops = false;
     live.frame();
     let reply = live.until("切ったあとの返事", |_| rx.try_recv().ok());
     let e = reply.expect_err("実行せずに断る");
@@ -837,17 +836,17 @@ fn turning_off_while_a_save_is_pending_answers_it_and_the_save_still_finishes() 
     let dir = tmp::test_dir("mcpserver-off");
     let file = dir.join("work.ylp");
     let mut live = Live::on();
-    live.app.state.save.background = true;
-    live.app.state.apply(Action::SaveProjectAs(file.clone()));
-    live.app.state.wait_save();
+    live.app.save_mut().background = true;
+    live.app.act(Action::SaveProjectAs(file.clone()));
+    live.app.app_mut().wait_save();
     live.frame();
     live.ok(json!({"command": "layer.add", "args": {"kind": "paint", "name": "切る前"}}));
-    let hold = live.app.state.save.hold_next();
+    let hold = live.app.save_mut().hold_next();
     let rx = live.send(json!({"command": "save", "args": {"confirm": true}}));
-    live.until("保存の開始", |l| l.app.state.is_saving().then_some(()));
-    live.app.state.prefs.settings.external_ops = false;
+    live.until("保存の開始", |l| l.app.app().is_saving().then_some(()));
+    live.app.prefs_mut().settings.external_ops = false;
     live.frame();
-    assert_eq!(live.app.state.ops.status, OpsStatus::Off);
+    assert_eq!(live.app.app().ops().status, OpsStatus::Off);
     let reply = live.until("切ったあとの客の結果", |_| rx.try_recv().ok());
     let error = reply.expect_err("返事は来ず、受け付けをやめた誤りになる");
     assert!(yolu_cli::live::is_unreachable(&error), "{error:?}");
@@ -857,8 +856,8 @@ fn turning_off_while_a_save_is_pending_answers_it_and_the_save_still_finishes() 
         error.message.ja
     );
     hold.release();
-    live.app.state.wait_save();
-    assert!(!live.app.state.modified, "保存そのものは続いて終わる");
+    live.app.app_mut().wait_save();
+    assert!(!live.app.modified(), "保存そのものは続いて終わる");
 }
 
 // ───────── 起動 ─────────
@@ -879,9 +878,9 @@ fn a_saved_setting_makes_the_app_listen_at_startup_and_an_old_settings_file_does
     let ctx = egui::Context::default();
     let mut app =
         YoluApp::for_context_with_settings(&ctx, Some(settings.clone()), PenInput::detached());
-    assert!(app.state.prefs.settings.external_ops);
+    assert!(app.prefs().settings.external_ops);
     app.tick_hidden(&ctx);
-    assert_eq!(app.state.ops.status, OpsStatus::Listening);
+    assert_eq!(app.app().ops().status, OpsStatus::Listening);
     assert_eq!(app.ops().port(), Some(free));
     drop(app);
     assert!(
@@ -891,13 +890,13 @@ fn a_saved_setting_makes_the_app_listen_at_startup_and_an_old_settings_file_does
     // この項目を知らない古い設定のファイルは切（待ち受けない）
     std::fs::write(&settings, "language=ja\nlivelink_on_startup=off\n").unwrap();
     let mut old = YoluApp::for_context_with_settings(&ctx, Some(settings), PenInput::detached());
-    assert!(!old.state.prefs.settings.external_ops);
+    assert!(!old.prefs().settings.external_ops);
     assert_eq!(
-        old.state.prefs.settings.external_ops_port,
+        old.prefs().settings.external_ops_port,
         yolu_mcp::DEFAULT_PORT
     );
     old.tick_hidden(&ctx);
-    assert_eq!(old.state.ops.status, OpsStatus::Off);
+    assert_eq!(old.app().ops().status, OpsStatus::Off);
 }
 
 // ───────── 相対の指し方 ─────────
@@ -905,17 +904,17 @@ fn a_saved_setting_makes_the_app_listen_at_startup_and_an_old_settings_file_does
 #[test]
 fn selected_points_at_the_screens_selected_layer_and_created_needs_a_run() {
     let mut state = AppState::new(64, 64);
-    state.apply(Action::NewLayer);
-    let first = state.doc.layers()[0].id();
-    state.selected_layer = Some(first);
+    state.act(Action::NewLayer);
+    let first = state.doc().layers()[0].id();
+    state.set_selected_layer(Some(first));
     let mut live = Live::on_with(state);
     live.frame();
     live.ok(json!({"command": "layer.set", "args": {"layer": "$selected", "opacity": 0.25}}));
-    assert_eq!(live.app.state.doc.layer(first).unwrap().opacity(), 0.25);
+    assert_eq!(live.app.doc().layer(first).unwrap().opacity(), 0.25);
     let e = live.err(json!({"command": "mask.add", "args": {"layer": "$created:1"}}));
     assert_eq!(e.code, ErrorCode::InvalidRequest);
     // 選んでいるレイヤーが無ければ断る
-    live.app.state.selected_layer = None;
+    live.app.set_selected_layer(None);
     let e = live.err(json!({"command": "mask.add", "args": {"layer": "$selected"}}));
     assert_eq!(e.code, ErrorCode::NotFound);
 }
@@ -923,11 +922,11 @@ fn selected_points_at_the_screens_selected_layer_and_created_needs_a_run() {
 #[test]
 fn a_live_batch_fixes_selected_when_it_starts() {
     let mut state = AppState::new(64, 64);
-    state.apply(Action::NewLayer);
-    state.apply(Action::NewLayer);
-    let ids: Vec<_> = state.doc.layers().iter().map(|l| l.id()).collect();
+    state.act(Action::NewLayer);
+    state.act(Action::NewLayer);
+    let ids: Vec<_> = state.doc().layers().iter().map(|l| l.id()).collect();
     let (top, below) = (ids[ids.len() - 1], ids[ids.len() - 2]);
-    state.selected_layer = Some(top);
+    state.set_selected_layer(Some(top));
     let mut live = Live::on_with(state);
     live.frame();
     // 消すと選びが隣へ移る。2 つ目の `$selected` は、始めた時の（もう無い）レイヤーを指して断られ、隣のレイヤーを黙って変えない
@@ -945,12 +944,8 @@ fn a_live_batch_fixes_selected_when_it_starts() {
     assert_eq!(error["error"]["data"]["index"], 1, "{error}");
     assert_eq!(error["error"]["data"]["completed"], 1, "{error}");
     assert_eq!(layer_count(&live), before - 1, "1 つ目は当たっている");
-    assert_eq!(
-        live.app.state.selected_layer,
-        Some(below),
-        "選びは隣へ移った"
-    );
-    assert_eq!(live.app.state.doc.layer(below).unwrap().opacity(), 1.0);
+    assert_eq!(live.app.selected_layer(), Some(below), "選びは隣へ移った");
+    assert_eq!(live.app.doc().layer(below).unwrap().opacity(), 1.0);
     // 選びが動かなければ、同じレイヤーに全部当たる
     let lines = [
         r#"{"command": "layer.set", "args": {"layer": "$selected", "opacity": 0.4}}"#,
@@ -960,12 +955,12 @@ fn a_live_batch_fixes_selected_when_it_starts() {
     let rx = cli_batch(live.port(), &lines);
     let out = live.until("batch の結果", |_| rx.try_recv().ok());
     assert_eq!(out.code, 0, "{}{}", out.stdout, out.stderr);
-    let target = live.app.state.doc.layer(below).unwrap();
+    let target = live.app.doc().layer(below).unwrap();
     assert_eq!(target.opacity(), 0.4);
     assert!(target.mask().is_some());
     // 選んでいるレイヤーが無ければ、何も変える前に、使う最初の命令の番号つきで断る
-    live.app.state.selected_layer = None;
-    let undo = live.app.state.doc.undo_count();
+    live.app.set_selected_layer(None);
+    let undo = live.app.doc().undo_count();
     let lines = [
         r#"{"command": "layer.add", "args": {"kind": "paint"}}"#,
         r#"{"command": "layer.set", "args": {"layer": "$selected", "opacity": 0.1}}"#,
@@ -978,7 +973,7 @@ fn a_live_batch_fixes_selected_when_it_starts() {
     assert_eq!(error["error"]["code"], "not_found", "{error}");
     assert_eq!(error["error"]["data"]["index"], 1, "{error}");
     assert_eq!(error["error"]["data"]["completed"], 0, "{error}");
-    assert_eq!(live.app.state.doc.undo_count(), undo, "何も変えない");
+    assert_eq!(live.app.doc().undo_count(), undo, "何も変えない");
 }
 
 // ───────── アクション（命令 action.run） ─────────
@@ -986,13 +981,13 @@ fn a_live_batch_fixes_selected_when_it_starts() {
 #[test]
 fn action_run_is_one_step_of_the_screens_undo_and_a_refusal_rolls_back_everything() {
     let mut state = AppState::new(64, 64);
-    state.apply(Action::NewLayer);
-    let first = state.doc.layers()[0].id();
-    state.selected_layer = Some(first);
+    state.act(Action::NewLayer);
+    let first = state.doc().layers()[0].id();
+    state.set_selected_layer(Some(first));
     let mut live = Live::on_with(state);
     live.frame();
     let before = layer_count(&live);
-    let undo_before = live.app.state.doc.undo_count();
+    let undo_before = live.app.doc().undo_count();
     let Reply::Action(done) = live.ok(json!({"command": "action.run", "args": {"commands": [
         {"command": "layer.add", "args": {"kind": "paint", "name": "外から", "above": "$selected"}},
         {"command": "layer.set", "args": {"layer": "$created:1", "opacity": 0.5}},
@@ -1004,20 +999,20 @@ fn action_run_is_one_step_of_the_screens_undo_and_a_refusal_rolls_back_everythin
     assert_eq!(done.steps.len(), 4);
     assert_eq!(layer_count(&live), before + 1);
     assert_eq!(
-        live.app.state.doc.undo_count(),
+        live.app.doc().undo_count(),
         undo_before + 1,
         "全部で画面の取り消しの 1 段"
     );
-    assert!(live.app.state.doc.layer(first).unwrap().mask().is_some());
-    assert!(live.app.state.modified);
+    assert!(live.app.doc().layer(first).unwrap().mask().is_some());
+    assert!(live.app.modified());
     // 画面の取り消し 1 回で全部戻り、やり直し 1 回で全部また当たる
-    live.app.state.apply(Action::Undo);
+    live.app.act(Action::Undo);
     assert_eq!(layer_count(&live), before);
-    assert!(live.app.state.doc.layer(first).unwrap().mask().is_none());
-    live.app.state.apply(Action::Redo);
+    assert!(live.app.doc().layer(first).unwrap().mask().is_none());
+    live.app.act(Action::Redo);
     assert_eq!(layer_count(&live), before + 1);
     // 途中の命令が断れば、そこまでの分も戻して何番目かを言う
-    let undo_mid = live.app.state.doc.undo_count();
+    let undo_mid = live.app.doc().undo_count();
     let e = live.err(json!({"command": "action.run", "args": {"commands": [
         {"command": "layer.add", "args": {"kind": "paint", "name": "戻る"}},
         {"command": "layer.set", "args": {"layer": "無いレイヤー", "visible": false}},
@@ -1025,14 +1020,14 @@ fn action_run_is_one_step_of_the_screens_undo_and_a_refusal_rolls_back_everythin
     assert_eq!(e.code, ErrorCode::NotFound);
     assert_eq!(e.data.unwrap()["index"], 1);
     assert_eq!(layer_count(&live), before + 1);
-    assert_eq!(live.app.state.doc.undo_count(), undo_mid, "段を残さない");
+    assert_eq!(live.app.doc().undo_count(), undo_mid, "段を残さない");
     // 消す命令を含むアクションは、済んだら短く知らせる
-    live.app.state.message.clear();
+    live.app.message_mut().clear();
     live.ok(json!({"command": "action.run", "args": {"commands": [
         {"command": "layer.delete", "args": {"layer": "外から", "confirm": true}},
     ]}}));
     assert_eq!(layer_count(&live), before);
-    assert_eq!(live.app.state.message, "外からの操作: アクションを実行");
+    assert_eq!(live.app.message(), "外からの操作: アクションを実行");
 }
 
 #[test]
@@ -1053,11 +1048,11 @@ fn action_run_is_refused_while_drawing_and_is_listed_as_a_tool() {
     assert_eq!(tool["annotations"]["destructiveHint"], true);
     assert!(tool["inputSchema"]["properties"]["commands"].is_object());
     // 描いている最中は断り、何も変えない
-    let layer = live.app.state.doc.layers().last().unwrap().id();
-    let brush = live.app.state.stroke_settings(false);
-    let mut stroke = live.app.state.doc.begin_stroke(layer, &brush).unwrap();
+    let layer = live.app.doc().layers().last().unwrap().id();
+    let brush = live.app.app().stroke_settings(false);
+    let mut stroke = live.app.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut live.app.state.doc, 10.0, 10.0, 1.0, DVec2::ZERO)
+        .add_point(live.app.doc_mut(), 10.0, 10.0, 1.0, DVec2::ZERO)
         .unwrap();
     let before = layer_count(&live);
     let e = live.err(json!({"command": "action.run", "args": {"commands": [
@@ -1065,5 +1060,5 @@ fn action_run_is_refused_while_drawing_and_is_listed_as_a_tool() {
     ]}}));
     assert_eq!(e.code, ErrorCode::Busy);
     assert_eq!(layer_count(&live), before);
-    live.app.state.doc.end_stroke(stroke).unwrap();
+    live.app.doc_mut().end_stroke(stroke).unwrap();
 }

@@ -3,6 +3,7 @@
 //! 下の 3D ビュー・設定の欄へ届かない、押したままの G の繰り返しで始め直さない、ハンドルのドラッグの途中は断る、フォーカスを失ったら決める、
 //! 編集の Delete・Q・H、ポーズの R。絵は印と、G の途中（日英）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -29,50 +30,41 @@ type H = Harness<'static, YoluApp>;
 fn edit_view() -> (H, Rect, LayerId) {
     let mut h = app(1280.0, 860.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.state_mut().state.view3d.camera.yaw = 0.0;
-    h.state_mut().state.view3d.camera.pitch = 0.0;
+    h.view3d_mut().camera.yaw = 0.0;
+    h.view3d_mut().camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
-    let app = &mut h.state_mut().state;
-    app.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = app.selected_layer.expect("塗りつぶしレイヤー");
-    app.apply(Action::Fill(FillOp::ProjectionMode {
+    let app = h.app_mut();
+    app.act(Action::M2(yolu_app::m2::Edit::NewFill));
+    let layer = app.selected_layer().expect("塗りつぶしレイヤー");
+    app.act(Action::Fill(FillOp::ProjectionMode {
         layer,
         mode: ProjectionMode::Planar,
     }));
-    app.apply(Action::Fill(FillOp::AddGradient {
+    app.act(Action::Fill(FillOp::AddGradient {
         layer,
         channel: Channel::Color,
     }));
-    app.apply(Action::Fill(FillOp::AddPoints {
+    app.act(Action::Fill(FillOp::AddPoints {
         layer,
         channel: Channel::Roughness,
     }));
     h.state_mut()
         .apply(Action::Mode(ModeAction::Set(EditorMode::Edit)));
     h.run();
-    assert_eq!(h.state().state.mode, EditorMode::Edit);
+    assert_eq!(h.mode(), EditorMode::Edit);
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
     (h, rect, layer)
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
 fn marker_at(h: &H, rect: Rect, o: Object) -> Pos2 {
-    screen_of(
-        h,
-        rect,
-        objects::marker_of(&h.state().state, o).expect("印"),
-    )
+    screen_of(h, rect, objects::marker_of(h.app(), o).expect("印"))
 }
 
 fn the_box(layer: LayerId) -> Object {
@@ -83,16 +75,16 @@ fn shape(h: &H, o: Object) -> Shape {
     let Object::Shape(t) = o else {
         panic!("形");
     };
-    objects::shape_of(&h.state().state, t).expect("形")
+    objects::shape_of(h.app(), t).expect("形")
 }
 
 fn transforming(h: &H) -> bool {
-    let app = &h.state().state;
+    let app = h.app();
     let open = objects::transforming(app);
     assert_eq!(
         open,
         matches!(
-            app.popup.as_ref().map(|p| p.kind),
+            app.popup().as_ref().map(|p| p.kind),
             Some(PopupKind::Transform)
         ),
         "途中とポップアップは一緒"
@@ -101,7 +93,7 @@ fn transforming(h: &H) -> bool {
 }
 
 fn undo_count(h: &H) -> usize {
-    h.state().state.doc.undo_count()
+    h.doc().undo_count()
 }
 
 fn select(h: &mut H, o: Option<Object>) {
@@ -131,17 +123,17 @@ fn near(a: f64, b: f64) -> bool {
 #[test]
 fn pressing_markers_selects_objects_and_their_layer_without_painting() {
     let (mut h, rect, layer) = edit_view();
-    let base = h.state().state.doc.layers()[0].id();
-    h.state_mut().state.select_single_layer(base);
+    let base = h.doc().layers()[0].id();
+    h.app_mut().select_single_layer(base);
     let undo = undo_count(&h);
     // 箱の印を押す: 箱とそのレイヤーを選ぶ
     let at = marker_at(&h, rect, the_box(layer));
     click(&mut h, at);
-    let first = h.state().state.objects.selected.expect("選んだ");
-    assert_eq!(h.state().state.selected_layer, Some(layer));
+    let first = h.objects().selected.expect("選んだ");
+    assert_eq!(h.selected_layer(), Some(layer));
     // 同じ所でもう一度押すと、重なった次の物（グラデーションデカールも外形の中心にある）
     click(&mut h, at);
-    let second = h.state().state.objects.selected.expect("選んだ");
+    let second = h.objects().selected.expect("選んだ");
     assert_ne!(first, second);
     // 乗せた印を覚える（大きく描く）
     let point = Object::Point {
@@ -152,14 +144,14 @@ fn pressing_markers_selects_objects_and_their_layer_without_painting() {
     let p = marker_at(&h, rect, point);
     move_to(&h, p);
     h.run();
-    assert_eq!(h.state().state.objects.hover, Some(point));
+    assert_eq!(h.objects().hover, Some(point));
     click(&mut h, p);
-    assert_eq!(h.state().state.objects.selected, Some(point));
+    assert_eq!(h.objects().selected, Some(point));
     // 何も無い所で外す
     click(&mut h, rect.min + vec2(12.0, 12.0));
-    assert_eq!(h.state().state.objects.selected, None);
+    assert_eq!(h.objects().selected, None);
     // 描かない・文書を変えない
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.app().is_stroking());
     assert_eq!(undo_count(&h), undo);
 }
 
@@ -175,8 +167,8 @@ fn g_follows_the_mouse_then_an_axis_and_a_typed_value_and_ends_by_enter_click_es
     // G: マウスで右へ動かすと +X へ（途中は 1 つのまとめ）。キーで始めても、帯は移動のツールを光らせる
     start(&mut h, at, Key::G);
     assert!(transforming(&h));
-    assert_eq!(EditTool::shown(&h.state().state), EditTool::Move);
-    assert_eq!(h.state().state.edit_tool, EditTool::Select);
+    assert_eq!(EditTool::shown(h.app()), EditTool::Move);
+    assert_eq!(h.edit_tool(), EditTool::Select);
     move_to(&h, at + vec2(60.0, 0.0));
     h.run();
     assert!(shape(&h, o).center[0] - start_shape.center[0] > 0.05);
@@ -199,9 +191,9 @@ fn g_follows_the_mouse_then_an_axis_and_a_typed_value_and_ends_by_enter_click_es
     assert!(!transforming(&h));
     assert!(shape(&h, o).center[1] > moved.center[1] + 0.05);
     assert_eq!(undo_count(&h), undo + 2);
-    let app = &h.state().state;
-    assert_eq!(app.objects.selected, Some(o));
-    assert!(app.fillfx.drag.is_none() && app.view3d.input.nav.is_none());
+    let app = h.app();
+    assert_eq!(app.objects().selected, Some(o));
+    assert!(app.fillfx().drag.is_none() && app.view3d().input.nav.is_none());
     assert!(!app.is_stroking());
     let moved = shape(&h, o);
     // Esc でやめる: 戻して、履歴に残さない
@@ -230,9 +222,9 @@ fn g_follows_the_mouse_then_an_axis_and_a_typed_value_and_ends_by_enter_click_es
     assert!(!transforming(&h));
     assert_eq!(shape(&h, o), moved);
     assert_eq!(undo_count(&h), undo + 2);
-    let app = &h.state().state;
-    assert!(app.popup.is_none(), "右クリックのメニューを開かない");
-    assert!(app.view3d.input.nav.is_none());
+    let app = h.app();
+    assert!(app.popup().is_none(), "右クリックのメニューを開かない");
+    assert!(app.view3d().input.nav.is_none());
 }
 
 #[test]
@@ -242,8 +234,8 @@ fn escape_that_cancels_a_transform_does_not_close_the_3d_settings_or_deselect_pi
     // 選択範囲（Ctrl+A）と、開いた 3D ビューの設定の欄
     key(&h, Key::A, Modifiers::COMMAND);
     h.run();
-    assert!(h.state().state.doc.selection().is_some());
-    h.state_mut().state.view3d.display.settings_open = true;
+    assert!(h.doc().selection().is_some());
+    h.view3d_mut().display.settings_open = true;
     select(&mut h, Some(o));
     let before = shape(&h, o);
     let at = marker_at(&h, rect, o);
@@ -255,16 +247,16 @@ fn escape_that_cancels_a_transform_does_not_close_the_3d_settings_or_deselect_pi
     h.run();
     assert!(!transforming(&h));
     assert_eq!(shape(&h, o), before);
-    let app = &h.state().state;
+    let app = h.app();
     assert!(
-        app.view3d.display.settings_open,
+        app.view3d().display.settings_open,
         "Esc は G/R/S をやめるだけ"
     );
-    assert!(app.doc.selection().is_some(), "選択範囲はそのまま");
+    assert!(app.doc().selection().is_some(), "選択範囲はそのまま");
     // 何も開いていなければ、Esc は今までどおり設定の欄を閉じる
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(!h.state().state.view3d.display.settings_open);
+    assert!(!h.view3d().display.settings_open);
 }
 
 #[test]
@@ -309,24 +301,24 @@ fn a_held_g_does_not_restart_after_confirming_and_g_is_refused_during_a_handle_d
     });
     h.run();
     // ハンドルのドラッグの途中: G は断る（ドラッグはそのまま続く）
-    let handle = gizmo::handle_point(&h.state().state, rect, Handle::MoveX).expect("X のハンドル");
+    let handle = gizmo::handle_point(h.app(), rect, Handle::MoveX).expect("X のハンドル");
     press(&h, handle, PointerButton::Primary);
     h.step();
     move_to(&h, handle + vec2(20.0, 0.0));
     h.step();
-    assert!(h.state().state.fillfx.drag.is_some());
+    assert!(h.fillfx().drag.is_some());
     key(&h, Key::G, Modifiers::NONE);
     h.step();
     assert!(!transforming(&h));
-    assert!(h.state().state.fillfx.drag.is_some());
+    assert!(h.fillfx().drag.is_some());
     assert!(
-        h.state().state.message.contains("ほかの操作の途中です"),
+        h.message().contains("ほかの操作の途中です"),
         "{}",
-        h.state().state.message
+        h.message()
     );
     release(&h, handle + vec2(20.0, 0.0), PointerButton::Primary);
     h.run();
-    assert!(h.state().state.fillfx.drag.is_none());
+    assert!(h.fillfx().drag.is_none());
     // フォーカスを失ったら、そこまでで決める（取り残さない）
     let undo = undo_count(&h);
     let before = shape(&h, o);
@@ -339,7 +331,7 @@ fn a_held_g_does_not_restart_after_confirming_and_g_is_refused_during_a_handle_d
     assert!(!transforming(&h));
     assert_ne!(shape(&h, o), before);
     assert_eq!(undo_count(&h), undo + 1);
-    assert!(!h.state().state.doc.is_coalescing());
+    assert!(!h.doc().is_coalescing());
 }
 
 #[test]
@@ -347,60 +339,48 @@ fn delete_q_and_h_act_on_objects_in_edit_mode_and_delete_does_not_erase_pixels()
     let (mut h, _, layer) = edit_view();
     let decal = Object::Shape(Target::Gradient(layer, Channel::Color));
     // 描けるレイヤーの選択範囲: 編集のモードの Delete は画素を消さない
-    let base = h.state().state.doc.layers()[0].id();
-    h.state_mut().state.select_single_layer(base);
-    h.state_mut()
-        .state
-        .doc
+    let base = h.doc().layers()[0].id();
+    h.app_mut().select_single_layer(base);
+    h.doc_mut()
         .set_pixel(base, 10, 10, yolu_app::engine::Rgba8::new(200, 30, 30, 255))
         .unwrap();
-    let painted = yolu_app::engine::composite_pixel(&h.state().state.doc, 10, 10);
+    let painted = yolu_app::engine::composite_pixel(h.doc(), 10, 10);
     key(&h, Key::A, Modifiers::COMMAND);
     h.run();
-    assert!(h.state().state.doc.selection().is_some());
+    assert!(h.doc().selection().is_some());
     let undo = undo_count(&h);
     key(&h, Key::Delete, Modifiers::NONE);
     h.run();
-    assert_eq!(
-        yolu_app::engine::composite_pixel(&h.state().state.doc, 10, 10),
-        painted
-    );
+    assert_eq!(yolu_app::engine::composite_pixel(h.doc(), 10, 10), painted);
     assert_eq!(undo_count(&h), undo);
     assert!(
-        h.state().state.message.contains("選んだ物がありません"),
+        h.message().contains("選んだ物がありません"),
         "{}",
-        h.state().state.message
+        h.message()
     );
     // 選んだグラデーションデカールを消す
     select(&mut h, Some(decal));
     key(&h, Key::Delete, Modifiers::NONE);
     h.run();
-    assert!(objects::marker_of(&h.state().state, decal).is_none());
+    assert!(objects::marker_of(h.app(), decal).is_none());
     assert_eq!(undo_count(&h), undo + 1);
     // Q で取っ手を隠す・出す
     let o = the_box(layer);
     select(&mut h, Some(o));
-    assert_eq!(
-        gizmo::target(&h.state().state),
-        Some(Target::Projection(layer))
-    );
+    assert_eq!(gizmo::target(h.app()), Some(Target::Projection(layer)));
     key(&h, Key::Q, Modifiers::NONE);
     h.run();
-    assert_eq!(gizmo::target(&h.state().state), None);
+    assert_eq!(gizmo::target(h.app()), None);
     key(&h, Key::Q, Modifiers::NONE);
     h.run();
-    assert!(gizmo::target(&h.state().state).is_some());
+    assert!(gizmo::target(h.app()).is_some());
     // H で選んだ物の印を隠し、Alt+H で出す
     key(&h, Key::H, Modifiers::NONE);
     h.run();
-    assert!(!objects::markers(&h.state().state)
-        .iter()
-        .any(|m| m.object == o));
+    assert!(!objects::markers(h.app()).iter().any(|m| m.object == o));
     key(&h, Key::H, Modifiers::ALT);
     h.run();
-    assert!(objects::markers(&h.state().state)
-        .iter()
-        .any(|m| m.object == o));
+    assert!(objects::markers(h.app()).iter().any(|m| m.object == o));
 }
 
 #[test]
@@ -412,43 +392,17 @@ fn r_turns_the_selected_bone_in_pose_mode_and_escape_leaves_it() {
     h.state_mut()
         .apply(Action::Mode(ModeAction::Set(EditorMode::Pose)));
     let b = {
-        let s = h.state().state.view3d.pose.session.as_ref().unwrap();
+        let s = h.view3d().pose.session.as_ref().unwrap();
         s.rig
             .bones()
             .iter()
             .position(|b| b.name == "右上腕")
             .unwrap()
     };
-    h.state_mut()
-        .state
-        .view3d
-        .pose
-        .session
-        .as_mut()
-        .unwrap()
-        .selected = Some(b);
+    h.view3d_mut().pose.session.as_mut().unwrap().selected = Some(b);
     h.run();
-    let local = |h: &H| {
-        h.state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .pose()
-            .locals[b]
-    };
-    let undo = |h: &H| {
-        h.state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .undo_len()
-    };
+    let local = |h: &H| h.view3d().pose.session.as_ref().unwrap().pose().locals[b];
+    let undo = |h: &H| h.view3d().pose.session.as_ref().unwrap().undo_len();
     let rest = local(&h);
     start(&mut h, rect.center(), Key::R);
     assert!(transforming(&h));
@@ -481,15 +435,15 @@ fn escape_that_cancels_a_transform_does_not_close_the_color_window() {
     use egui_kittest::kittest::Queryable;
     let mut h = app(1280.0, 1400.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.state_mut().state.view3d.camera.yaw = 0.0;
-    h.state_mut().state.view3d.camera.pitch = 0.0;
+    h.view3d_mut().camera.yaw = 0.0;
+    h.view3d_mut().camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブ");
-    let app = &mut h.state_mut().state;
-    app.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-    let layer = app.selected_layer.unwrap();
-    app.apply(Action::Fill(FillOp::ProjectionMode {
+    let app = h.app_mut();
+    app.act(Action::M2(yolu_app::m2::Edit::NewFill));
+    let layer = app.selected_layer().unwrap();
+    app.act(Action::Fill(FillOp::ProjectionMode {
         layer,
         mode: ProjectionMode::Planar,
     }));
@@ -537,9 +491,9 @@ fn pen_sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
 fn a_held_delete_deletes_one_point_and_leaves_nothing_selected() {
     let (mut h, _, layer) = edit_view();
     // 3 つ目の点を加える
-    let app = &mut h.state_mut().state;
+    let app = h.app_mut();
     let mut g = app
-        .doc
+        .doc()
         .layer(layer)
         .unwrap()
         .fill_points(Channel::Roughness)
@@ -548,7 +502,7 @@ fn a_held_delete_deletes_one_point_and_leaves_nothing_selected() {
     let mut third = g.points[0];
     third.position[1] += 0.3;
     g.points.push(third);
-    app.apply(Action::Fill(FillOp::Points {
+    app.act(Action::Fill(FillOp::Points {
         layer,
         channel: Channel::Roughness,
         points: Some(Box::new(g)),
@@ -565,9 +519,7 @@ fn a_held_delete_deletes_one_point_and_leaves_nothing_selected() {
     );
     let undo = undo_count(&h);
     let count = |h: &H| {
-        h.state()
-            .state
-            .doc
+        h.doc()
             .layer(layer)
             .unwrap()
             .fill_points(Channel::Roughness)
@@ -593,7 +545,7 @@ fn a_held_delete_deletes_one_point_and_leaves_nothing_selected() {
     h.run();
     assert_eq!(count(&h), 2, "1 つだけ消す");
     assert_eq!(undo_count(&h), undo + 1);
-    assert_eq!(h.state().state.objects.selected, None);
+    assert_eq!(h.objects().selected, None);
 }
 
 #[test]
@@ -607,12 +559,10 @@ fn dropping_a_shelf_image_on_the_model_in_edit_mode_places_a_decal_and_selects_i
     ]
     .concat();
     let id = h
-        .state_mut()
-        .state
-        .shelf
+        .shelf_mut()
         .add_image(Lang::Ja, "四色", &rgba, 2, 2)
         .expect("棚へ入る");
-    let layers = h.state().state.doc.layers().len();
+    let layers = h.doc().layers().len();
     let at = screen_of(&h, rect, Vec3::new(0.2, 0.1, -0.5));
     egui::DragAndDrop::set_payload(
         &h.ctx,
@@ -626,16 +576,16 @@ fn dropping_a_shelf_image_on_the_model_in_edit_mode_places_a_decal_and_selects_i
     h.step();
     release(&h, at, PointerButton::Primary);
     h.run();
-    let app = &h.state().state;
-    assert_eq!(app.doc.layers().len(), layers + 1, "{}", app.message);
-    let placed = app.selected_layer.expect("置いたレイヤー");
+    let app = h.app();
+    assert_eq!(app.doc().layers().len(), layers + 1, "{}", app.message());
+    let placed = app.selected_layer().expect("置いたレイヤー");
     assert_eq!(
-        app.doc.layer(placed).unwrap().projection().mode,
+        app.doc().layer(placed).unwrap().projection().mode,
         ProjectionMode::Decal
     );
-    assert_eq!(app.mode, EditorMode::Edit);
+    assert_eq!(app.mode(), EditorMode::Edit);
     assert_eq!(
-        app.objects.selected,
+        app.objects().selected,
         Some(Object::Shape(Target::Projection(placed))),
         "置いたデカールを選ぶ"
     );
@@ -669,8 +619,8 @@ fn the_move_tool_drags_the_selected_object_with_the_mouse_or_the_pen_in_one_undo
     assert!(moved.center[0] - start_shape.center[0] > 0.05, "{moved:?}");
     assert!(near(moved.center[1], start_shape.center[1]), "X だけ");
     assert_eq!(undo_count(&h), undo + 1);
-    let app = &h.state().state;
-    assert!(app.fillfx.drag.is_none() && app.view3d.input.nav.is_none() && !app.is_stroking());
+    let app = h.app();
+    assert!(app.fillfx().drag.is_none() && app.view3d().input.nav.is_none() && !app.is_stroking());
     // Esc でやめる（離しても決めない）
     let at = marker_at(&h, rect, o);
     press(&h, at, PointerButton::Primary);
@@ -715,43 +665,17 @@ fn the_rotate_tool_turns_the_bone_under_the_pointer_in_pose_mode() {
     h.state_mut()
         .apply(Action::Mode(ModeAction::Tool(EditTool::Rotate)));
     h.run();
-    let local = |h: &H, b: usize| {
-        h.state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .pose()
-            .locals[b]
-    };
-    let undo = |h: &H| {
-        h.state()
-            .state
-            .view3d
-            .pose
-            .session
-            .as_ref()
-            .unwrap()
-            .undo_len()
-    };
+    let local = |h: &H, b: usize| h.view3d().pose.session.as_ref().unwrap().pose().locals[b];
+    let undo = |h: &H| h.view3d().pose.session.as_ref().unwrap().undo_len();
     // ボーンの面の上で、そのボーンの輪に掛からない点を探し、選んで押す（輪の上なら輪の回転になるので、Esc でやめて次の点へ）
     let mut found = None;
     'search: for dy in (-200..=200).step_by(40) {
         for dx in (-120..=120).step_by(40) {
             let at = rect.center() + vec2(dx as f32, dy as f32);
-            let Some(b) = yolu_app::view3d::gizmo::bone_at(&h.state().state, rect, at) else {
+            let Some(b) = yolu_app::view3d::gizmo::bone_at(h.app(), rect, at) else {
                 continue;
             };
-            h.state_mut()
-                .state
-                .view3d
-                .pose
-                .session
-                .as_mut()
-                .unwrap()
-                .selected = Some(b);
+            h.view3d_mut().pose.session.as_mut().unwrap().selected = Some(b);
             h.run();
             move_to(&h, at);
             h.step();
@@ -761,10 +685,7 @@ fn the_rotate_tool_turns_the_bone_under_the_pointer_in_pose_mode() {
                 found = Some((at, b));
                 break 'search;
             }
-            assert!(
-                h.state().state.view3d.pose.drag.is_some(),
-                "輪の上でなければ G/R/S"
-            );
+            assert!(h.view3d().pose.drag.is_some(), "輪の上でなければ G/R/S");
             key(&h, Key::Escape, Modifiers::NONE);
             h.step();
             release(&h, at, PointerButton::Primary);
@@ -807,7 +728,7 @@ fn snapshot_the_markers_and_a_grab_in_both_languages() {
     crate::common::shot::region(&mut h, "edit_markers", crate::outward(rect));
     for (lang, name) in [(Lang::Ja, "edit_grab_ja"), (Lang::En, "edit_grab_en")] {
         let (mut h, rect, layer) = edit_view();
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         let o = the_box(layer);
         select(&mut h, Some(o));
         let at = marker_at(&h, rect, o);

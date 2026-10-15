@@ -1,6 +1,7 @@
 //! 見た目の設定の保存と書き出し（画面なし）: .ylp に保存して開き直すと戻る、読めない look.json は残して知らせる（見た目を変えて
 //! 保存すると上書きを知らせる）、読むだけのセットも理由を言う、復旧の書き置きに入る、lilToon の詰め方の画像が書き出しに足される、
 //! ひな形の失敗は巻き戻す、描いている間は断る。
+use crate::common::drive::Drive;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
@@ -43,13 +44,13 @@ impl Drop for Dir {
 
 fn lil_state() -> AppState {
     let mut s = AppState::new(32, 32);
-    s.apply(Action::Look(LookOp::Template));
-    s.apply(Action::Look(LookOp::Value {
+    s.act(Action::Look(LookOp::Template));
+    s.act(Action::Look(LookOp::Value {
         name: "_ShadowBorder",
         value: LookValue::Float(0.3),
         drag: false,
     }));
-    s.apply(Action::Look(LookOp::Value {
+    s.act(Action::Look(LookOp::Value {
         name: "_ShadowColor",
         value: LookValue::Color([0.4, 0.3, 0.5, 1.0]),
         drag: false,
@@ -62,34 +63,34 @@ fn the_look_survives_save_and_open_and_is_not_an_unknown_entry() {
     let dir = Dir::new("save");
     let path = dir.0.join("look.ylp");
     let mut s = lil_state();
-    let saved = s.doc.look().clone();
+    let saved = s.doc().look().clone();
     assert_eq!(saved.kind, LookKind::LilToon);
     yolu_app::project::save_from(&mut s, &path);
     assert!(
-        s.message.contains("保存しました") || s.message.contains("Saved"),
+        s.message().contains("保存しました") || s.message().contains("Saved"),
         "{}",
-        s.message
+        s.message()
     );
     let mut t = AppState::new(8, 8);
     yolu_app::project::open_into(&mut t, &path);
-    assert_eq!(t.doc.look(), &saved, "{}", t.message);
-    assert_eq!(t.doc.undo_count(), 0, "開いただけで Undo の段は増えない");
+    assert_eq!(t.doc().look(), &saved, "{}", t.message());
+    assert_eq!(t.doc().undo_count(), 0, "開いただけで Undo の段は増えない");
     assert!(
-        !t.message.contains("look.json"),
+        !t.message().contains("look.json"),
         "知らないエントリとして知らせない: {}",
-        t.message
+        t.message()
     );
     let project = yolu_io::Project::read(&std::fs::read(&path).unwrap()).unwrap();
     let id = project.sets()[0].id.clone();
     assert!(project.look(&id).unwrap().is_some());
     // 標準へ戻して保存すると、エントリを消す
-    t.apply(Action::Look(LookOp::Kind(LookKind::Standard)));
-    t.apply(Action::Look(LookOp::Reset(yolu_app::look::Section::Shadow)));
-    let mut look = t.doc.look().clone();
+    t.act(Action::Look(LookOp::Kind(LookKind::Standard)));
+    t.act(Action::Look(LookOp::Reset(yolu_app::look::Section::Shadow)));
+    let mut look = t.doc().look().clone();
     look.textures.clear();
     look.shader.clear();
     look.properties.clear();
-    t.doc.set_look(look, false).unwrap();
+    t.doc_mut().set_look(look, false).unwrap();
     yolu_app::project::save_from(&mut t, &path);
     let project = yolu_io::Project::read(&std::fs::read(&path).unwrap()).unwrap();
     assert!(
@@ -104,8 +105,8 @@ fn a_file_without_a_look_opens_standard_while_new_sets_start_as_liltoon() {
     let dir = Dir::new("old");
     let path = dir.0.join("old.ylp");
     let mut s = AppState::new(32, 32);
-    assert_eq!(s.doc.look().kind, LookKind::LilToon, "新しい文書の既定");
-    s.doc.restore_look(Default::default()).unwrap();
+    assert_eq!(s.doc().look().kind, LookKind::LilToon, "新しい文書の既定");
+    s.doc_mut().restore_look(Default::default()).unwrap();
     yolu_app::project::save_from(&mut s, &path);
     let project = yolu_io::Project::read(&std::fs::read(&path).unwrap()).unwrap();
     let id = project.sets()[0].id.clone();
@@ -115,13 +116,13 @@ fn a_file_without_a_look_opens_standard_while_new_sets_start_as_liltoon() {
     );
     let mut t = AppState::new(8, 8);
     yolu_app::project::open_into(&mut t, &path);
-    assert_eq!(t.doc.look().kind, LookKind::Standard, "{}", t.message);
-    assert!(t.doc.look().is_default());
-    assert!(!t.modified, "開いただけで変えない");
+    assert_eq!(t.doc().look().kind, LookKind::Standard, "{}", t.message());
+    assert!(t.doc().look().is_default());
+    assert!(!t.modified(), "開いただけで変えない");
     // 開いたプロジェクトに足す新しいセットは lilToon
     t.add_texture_set().unwrap();
-    assert_eq!(t.doc.look().kind, LookKind::LilToon);
-    assert_eq!(t.doc.undo_count(), 0, "既定は Undo に入らない");
+    assert_eq!(t.doc().look().kind, LookKind::LilToon);
+    assert_eq!(t.doc().undo_count(), 0, "既定は Undo に入らない");
 }
 
 #[test]
@@ -155,14 +156,14 @@ fn an_unreadable_look_opens_standard_says_so_and_stays_in_the_file() {
     .unwrap();
     let mut t = AppState::new(8, 8);
     yolu_app::project::open_into(&mut t, &path);
-    assert!(t.doc.look().is_default(), "読めない設定は標準で開く");
+    assert!(t.doc().look().is_default(), "読めない設定は標準で開く");
     assert!(
-        t.message.contains("見た目の設定を読めません"),
+        t.message().contains("見た目の設定を読めません"),
         "{}",
-        t.message
+        t.message()
     );
     // 見た目を変えずに保存しても、読めないエントリは残る
-    t.apply(Action::NewLayer);
+    t.act(Action::NewLayer);
     yolu_app::project::save_from(&mut t, &path);
     let archive = yolu_io::Archive::read(&std::fs::read(&path).unwrap()).unwrap();
     assert_eq!(archive.entries()[&name].to_vec(), newer);
@@ -173,23 +174,23 @@ fn the_liltoon_template_export_adds_the_slot_images() {
     let dir = Dir::new("export");
     let mut s = lil_state();
     // 影の強度のマスク（ひな形が作ったユーザーチャンネル）の左上に 0 を塗る
-    let mask = match s.doc.look().textures["_ShadowStrengthMask"] {
+    let mask = match s.doc().look().textures["_ShadowStrengthMask"] {
         TextureSource::Channel(c) => c,
         _ => unreachable!(),
     };
-    let layer = s.doc.add_layer("マスク").unwrap();
-    s.doc.set_channel_enabled(layer, mask, true).unwrap();
-    s.doc
+    let layer = s.doc_mut().add_layer("マスク").unwrap();
+    s.doc_mut().set_channel_enabled(layer, mask, true).unwrap();
+    s.doc_mut()
         .set_channel_pixel(layer, mask, 0, 0, Rgba8::new(0, 0, 0, 255))
         .unwrap();
-    s.doc
+    s.doc_mut()
         .add_fill_layer(
             "色",
             &[(Channel::Color, Rgba8::new(200, 100, 50, 255))],
             None,
         )
         .unwrap();
-    s.apply(Action::Export(ExportAction::TemplateTo {
+    s.act(Action::Export(ExportAction::TemplateTo {
         id: "liltoon".into(),
         dir: dir.0.clone(),
         sets: None,
@@ -259,17 +260,17 @@ fn changing_the_look_over_an_unreadable_entry_overwrites_it_and_the_save_says_so
     );
     let mut t = AppState::new(8, 8);
     yolu_app::project::open_into(&mut t, &path);
-    assert!(t.doc.look().is_default());
+    assert!(t.doc().look().is_default());
     // 見た目を変えて保存: 今の設定で書き、読めなかったものを上書きしたことを保存の知らせで言う（黙って消さない）
-    t.apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
-    let changed = t.doc.look().clone();
+    t.act(Action::Look(LookOp::Kind(LookKind::LilToon)));
+    let changed = t.doc().look().clone();
     yolu_app::project::save_from(&mut t, &path);
-    assert!(t.message.starts_with("保存しました"), "{}", t.message);
+    assert!(t.message().starts_with("保存しました"), "{}", t.message());
     assert!(
-        t.message
+        t.message()
             .contains("読めなかった見た目の設定を上書きしました"),
         "{}",
-        t.message
+        t.message()
     );
     let archive = yolu_io::Archive::read(&std::fs::read(&path).unwrap()).unwrap();
     let json: serde_json::Value = serde_json::from_slice(&archive.entries()[&name]).unwrap();
@@ -280,11 +281,11 @@ fn changing_the_look_over_an_unreadable_entry_overwrites_it_and_the_save_says_so
     );
     let mut u = AppState::new(8, 8);
     yolu_app::project::open_into(&mut u, &path);
-    assert_eq!(u.doc.look(), &changed, "{}", u.message);
+    assert_eq!(u.doc().look(), &changed, "{}", u.message());
     // 次の保存では、もう上書きの知らせは出ない
-    u.apply(Action::NewLayer);
+    u.act(Action::NewLayer);
     yolu_app::project::save_from(&mut u, &path);
-    assert!(!u.message.contains("上書きしました"), "{}", u.message);
+    assert!(!u.message().contains("上書きしました"), "{}", u.message());
     // 英語
     let mut e = AppState::new_in(8, 8, Lang::En);
     let path2 = dir.0.join("newer-en.ylp");
@@ -292,12 +293,12 @@ fn changing_the_look_over_an_unreadable_entry_overwrites_it_and_the_save_says_so
     yolu_app::project::save_from(&mut w, &path2);
     replace_look_entry(&path2, br#"{"format": 7}"#);
     yolu_app::project::open_into(&mut e, &path2);
-    e.apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
+    e.act(Action::Look(LookOp::Kind(LookKind::LilToon)));
     yolu_app::project::save_from(&mut e, &path2);
     assert!(
-        e.message.contains("Overwrote unreadable look settings"),
+        e.message().contains("Overwrote unreadable look settings"),
         "{}",
-        e.message
+        e.message()
     );
 }
 
@@ -316,15 +317,15 @@ fn the_recovery_checkpoint_carries_the_look_and_opening_it_brings_the_look_back(
     let dir = Dir::new("recovery");
     let root = dir.0.join("recovery");
     let mut s = AppState::new_in(32, 32, Lang::Ja);
-    s.recovery.enable(root.clone(), settings()).unwrap();
-    s.apply(Action::Look(LookOp::Template));
-    s.apply(Action::Look(LookOp::Value {
+    s.recovery_mut().enable(root.clone(), settings()).unwrap();
+    s.act(Action::Look(LookOp::Template));
+    s.act(Action::Look(LookOp::Value {
         name: "_ShadowBorder",
         value: LookValue::Float(0.25),
         drag: false,
     }));
-    assert!(s.modified);
-    let look = s.doc.look().clone();
+    assert!(s.modified());
+    let look = s.doc().look().clone();
     assert_eq!(look.kind, LookKind::LilToon);
     // 間隔が経つまで進めて書き置く
     let from = Instant::now();
@@ -332,25 +333,25 @@ fn the_recovery_checkpoint_carries_the_look_and_opening_it_brings_the_look_back(
     s.recovery_tick_at(from + Duration::from_secs(16));
     s.recovery_wait();
     // 書き置きの世代に look.json がある
-    let store = yolu_io::GenerationStore::new(s.recovery.session_dir().unwrap());
+    let store = yolu_io::GenerationStore::new(s.recovery().session_dir().unwrap());
     let mut files = store.load().unwrap().files;
     files.remove(yolu_io::INFO_NAME);
     let project = yolu_io::Project::from_entries(files).unwrap();
     let id = project.sets()[0].id.clone();
     assert_eq!(project.look(&id).unwrap().as_ref(), Some(&look));
     // 落ちた体で起動して、その世代を開くと見た目も戻る
-    assert!(s.recovery.is_idle());
+    assert!(s.recovery().is_idle());
     drop(s);
     let mut s2 = AppState::new_in(32, 32, Lang::Ja);
-    s2.recovery.enable(root, settings()).unwrap();
+    s2.recovery_mut().enable(root, settings()).unwrap();
     assert!(
-        s2.recovery.window.is_some(),
+        s2.recovery().window.is_some(),
         "落ちた体の起動は復旧のウィンドウを出す"
     );
     s2.recovery_apply(RecoveryAction::Open);
-    assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
-    assert_eq!(s2.doc.look(), &look);
-    assert!(!s2.doc.can_undo(), "復旧は Undo の段を積まない");
+    assert!(s2.message().starts_with("復旧しました"), "{}", s2.message());
+    assert_eq!(s2.doc().look(), &look);
+    assert!(!s2.doc().can_undo(), "復旧は Undo の段を積まない");
 }
 
 /// Live Link で Unity から受けた値（試験が文書へ直に入れる）: 範囲 0.25、マットキャップの絵が届いている。
@@ -399,24 +400,24 @@ fn the_recovery_checkpoint_carries_the_received_values_even_when_saving_them_is_
     let dir = Dir::new("recovery-received");
     let root = dir.0.join("recovery");
     let mut s = AppState::new_in(32, 32, Lang::Ja);
-    s.recovery.enable(root.clone(), settings()).unwrap();
+    s.recovery_mut().enable(root.clone(), settings()).unwrap();
     // 保存の設定は切（.ylp には書かない）。復旧は開いていた時の見た目に戻すので、設定によらず書く
-    s.prefs.settings.livelink_keep_values = false;
-    s.doc
+    s.prefs_mut().settings.livelink_keep_values = false;
+    s.doc_mut()
         .set_received_look(Some(received_from_unity()))
         .unwrap();
-    s.apply(Action::Look(LookOp::Value {
+    s.act(Action::Look(LookOp::Value {
         name: "_ShadowBorder",
         value: LookValue::Float(0.8),
         drag: false,
     }));
-    assert!(s.modified);
+    assert!(s.modified());
     let from = Instant::now();
     s.recovery_tick_at(from);
     s.recovery_tick_at(from + Duration::from_secs(16));
     s.recovery_wait();
     // 書き置きの世代の look.json の received は、値と絵のあったスロットの名前だけ（画素は書かない）
-    let store = yolu_io::GenerationStore::new(s.recovery.session_dir().unwrap());
+    let store = yolu_io::GenerationStore::new(s.recovery().session_dir().unwrap());
     let mut files = store.load().unwrap().files;
     files.remove(yolu_io::INFO_NAME);
     let project = yolu_io::Project::from_entries(files).unwrap();
@@ -428,35 +429,35 @@ fn the_recovery_checkpoint_carries_the_received_values_even_when_saving_them_is_
     assert_eq!(stored, as_stored(&received_from_unity()));
     assert!(stored.images.is_empty());
     // 落ちた体で起動して、その世代を開くと受けた値も戻る（欄で変えた項目が勝つまま。Undo の段は積まない）
-    assert!(s.recovery.is_idle());
+    assert!(s.recovery().is_idle());
     drop(s);
     let mut s2 = AppState::new_in(32, 32, Lang::Ja);
-    s2.recovery.enable(root, settings()).unwrap();
+    s2.recovery_mut().enable(root, settings()).unwrap();
     s2.recovery_apply(RecoveryAction::Open);
-    assert!(s2.message.starts_with("復旧しました"), "{}", s2.message);
-    let r = s2.doc.received_look().expect("受けた値が戻る");
+    assert!(s2.message().starts_with("復旧しました"), "{}", s2.message());
+    let r = s2.doc().received_look().expect("受けた値が戻る");
     assert_eq!(r, &as_stored(&received_from_unity()));
     assert!(
         !r.missing.contains_key("_MatCapTex") && !r.images.contains_key("_MatCapTex"),
         "絵は持たず、理由も付けない（絵のファイルから読み直す）"
     );
-    assert_eq!(s2.doc.drawn_look().float("_ShadowBorder", 0.5), 0.8);
-    assert_eq!(s2.doc.drawn_look().kind, LookKind::LilToon);
-    assert!(!s2.doc.can_undo());
+    assert_eq!(s2.doc().drawn_look().float("_ShadowBorder", 0.5), 0.8);
+    assert_eq!(s2.doc().drawn_look().kind, LookKind::LilToon);
+    assert!(!s2.doc().can_undo());
 }
 
 fn cube() -> AppState {
     let mut s = AppState::new(64, 64);
-    s.bake.backend = BakeBackend::Cpu;
-    s.apply(Action::LoadDemoModel);
-    s.bake.settings.maps = vec![
+    s.bake_mut().backend = BakeBackend::Cpu;
+    s.act(Action::LoadDemoModel);
+    s.bake_mut().settings.maps = vec![
         MeshMapKind::WorldNormal,
         MeshMapKind::Position,
         MeshMapKind::AmbientOcclusion,
         MeshMapKind::Curvature,
     ];
-    s.bake.settings.ao_samples = 8;
-    s.bake.settings.padding = 4;
+    s.bake_mut().settings.ao_samples = 8;
+    s.bake_mut().settings.padding = 4;
     s
 }
 
@@ -488,9 +489,9 @@ fn a_read_only_set_says_why_its_look_cannot_be_read() {
     .unwrap();
     replace_look_entry(&path, br#"{"format": 7, "kind": "lilToon"}"#);
     let mut s = AppState::new(64, 64);
-    s.apply(Action::OpenProject(path));
+    s.act(Action::OpenProject(path));
     let reason = s
-        .sets
+        .sets()
         .get(0)
         .unwrap()
         .read_only
@@ -502,9 +503,9 @@ fn a_read_only_set_says_why_its_look_cannot_be_read() {
         "読むだけの理由にも: {reason}"
     );
     assert!(
-        s.message.contains("見た目の設定を読めません"),
+        s.message().contains("見た目の設定を読めません"),
         "状態の帯にも（通常のセットと同じ）: {}",
-        s.message
+        s.message()
     );
     assert!(s.set_doc(0).look().is_default());
 }
@@ -515,46 +516,50 @@ fn unlocking_a_set_whose_inputs_arrive_says_why_its_look_cannot_be_read() {
     let dir = Dir::new("waiting");
     let path = dir.0.join("waiting.ylp");
     let mut s = cube();
-    s.apply(Action::M2(Edit::NewFill));
-    let layer = s.selected_layer.unwrap();
-    s.apply(Action::M2(Edit::AddMask(layer)));
-    s.apply(Action::Fx(FxOp::AddGenerator {
+    s.act(Action::M2(Edit::NewFill));
+    let layer = s.selected_layer().unwrap();
+    s.act(Action::M2(Edit::AddMask(layer)));
+    s.act(Action::Fx(FxOp::AddGenerator {
         target: FilterTarget::Mask,
         kind: yolu_core::generator::Kind::EdgeWear,
     }));
-    s.apply(Action::Bake(BakeAction::Start));
+    s.act(Action::Bake(BakeAction::Start));
     s.wait_bake();
     s.sync_effects();
-    s.apply(Action::Look(LookOp::Kind(LookKind::LilToon)));
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::Look(LookOp::Kind(LookKind::LilToon)));
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     replace_look_entry(&path, br#"{"format": 7, "kind": "lilToon"}"#);
 
     let mut again = AppState::new(64, 64);
-    again.bake.backend = BakeBackend::Cpu;
-    again.apply(Action::OpenProject(path.clone()));
+    again.bake_mut().backend = BakeBackend::Cpu;
+    again.act(Action::OpenProject(path.clone()));
     assert!(again.read_only_reason().is_some(), "入力がそろわない");
     assert!(
-        again.message.contains("見た目の設定を読めません"),
+        again.message().contains("見た目の設定を読めません"),
         "{}",
-        again.message
+        again.message()
     );
     // 入力がそろって編集できるようになるときも、同じ理由を言う（標準の見た目のまま）
-    again.apply(Action::LoadDemoModel);
+    again.act(Action::LoadDemoModel);
     again.sync_effect_inputs_with(true);
     assert!(
         again.read_only_reason().is_none(),
         "{:?} {}",
         again.read_only_reason(),
-        again.message
+        again.message()
     );
-    assert!(again.message.contains("編集できます"), "{}", again.message);
     assert!(
-        again.message.contains("見た目の設定を読めません"),
+        again.message().contains("編集できます"),
         "{}",
-        again.message
+        again.message()
     );
-    assert!(again.doc.look().is_default());
+    assert!(
+        again.message().contains("見た目の設定を読めません"),
+        "{}",
+        again.message()
+    );
+    assert!(again.doc().look().is_default());
 }
 
 #[test]
@@ -563,40 +568,40 @@ fn unlocking_a_set_whose_inputs_arrive_brings_back_the_received_values() {
     let dir = Dir::new("waiting-received");
     let path = dir.0.join("waiting.ylp");
     let mut s = cube();
-    s.apply(Action::M2(Edit::NewFill));
-    let layer = s.selected_layer.unwrap();
-    s.apply(Action::M2(Edit::AddMask(layer)));
-    s.apply(Action::Fx(FxOp::AddGenerator {
+    s.act(Action::M2(Edit::NewFill));
+    let layer = s.selected_layer().unwrap();
+    s.act(Action::M2(Edit::AddMask(layer)));
+    s.act(Action::Fx(FxOp::AddGenerator {
         target: FilterTarget::Mask,
         kind: yolu_core::generator::Kind::EdgeWear,
     }));
-    s.apply(Action::Bake(BakeAction::Start));
+    s.act(Action::Bake(BakeAction::Start));
     s.wait_bake();
     s.sync_effects();
-    s.doc
+    s.doc_mut()
         .set_received_look(Some(received_from_unity()))
         .unwrap();
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
 
     let mut again = AppState::new(64, 64);
-    again.bake.backend = BakeBackend::Cpu;
-    again.apply(Action::OpenProject(path));
+    again.bake_mut().backend = BakeBackend::Cpu;
+    again.act(Action::OpenProject(path));
     assert!(again.read_only_reason().is_some(), "入力がそろわない");
     // 入力がそろって編集できるようになると、受けた値も戻る（開いたときと同じ）
-    again.apply(Action::LoadDemoModel);
+    again.act(Action::LoadDemoModel);
     again.sync_effect_inputs_with(true);
     assert!(
         again.read_only_reason().is_none(),
         "{:?} {}",
         again.read_only_reason(),
-        again.message
+        again.message()
     );
-    let r = again.doc.received_look().expect("受けた値が戻る");
+    let r = again.doc().received_look().expect("受けた値が戻る");
     assert_eq!(r, &as_stored(&received_from_unity()));
-    assert_eq!(again.doc.drawn_look().kind, LookKind::LilToon);
-    assert_eq!(again.doc.drawn_look().float("_ShadowBorder", 0.5), 0.25);
-    assert!(!again.doc.can_undo(), "戻すのは Undo の段にならない");
+    assert_eq!(again.doc().drawn_look().kind, LookKind::LilToon);
+    assert_eq!(again.doc().drawn_look().float("_ShadowBorder", 0.5), 0.25);
+    assert!(!again.doc().can_undo(), "戻すのは Undo の段にならない");
 }
 
 #[test]
@@ -604,8 +609,8 @@ fn a_template_that_cannot_make_its_channels_changes_nothing() {
     let mut s = AppState::new(16, 16);
     // ユーザーチャンネルの空きを 1 つだけ残す（チャンネルは 64 まで）
     let mut n = 0;
-    while s.doc.channels().len() < 63 {
-        s.doc
+    while s.doc().channels().len() < 63 {
+        s.doc_mut()
             .add_channel(ChannelInfo {
                 name: format!("埋め {n}"),
                 kind: ChannelKind::Scalar,
@@ -616,24 +621,24 @@ fn a_template_that_cannot_make_its_channels_changes_nothing() {
         n += 1;
     }
     // 影とリムを入にしておくと、ひな形はマスクのチャンネルを 2 つ以上作ろうとする
-    let mut look = s.doc.look().clone();
+    let mut look = s.doc().look().clone();
     look.kind = LookKind::LilToon;
     look.properties
         .insert("_UseShadow".into(), LookValue::Float(1.0));
     look.properties
         .insert("_UseRim".into(), LookValue::Float(1.0));
-    s.doc.set_look(look.clone(), false).unwrap();
-    let steps = s.doc.undo_count();
-    let channels = s.doc.channels().len();
-    s.apply(Action::Look(LookOp::Template));
-    assert!(s.message.contains("64"), "{}", s.message);
+    s.doc_mut().set_look(look.clone(), false).unwrap();
+    let steps = s.doc().undo_count();
+    let channels = s.doc().channels().len();
+    s.act(Action::Look(LookOp::Template));
+    assert!(s.message().contains("64"), "{}", s.message());
     assert_eq!(
-        s.doc.channels().len(),
+        s.doc().channels().len(),
         channels,
         "作りかけのチャンネルを残さない"
     );
-    assert_eq!(s.doc.look(), &look, "割り当ても変えない");
-    assert_eq!(s.doc.undo_count(), steps, "段を積まない");
+    assert_eq!(s.doc().look(), &look, "割り当ても変えない");
+    assert_eq!(s.doc().undo_count(), steps, "段を積まない");
 }
 
 #[test]
@@ -642,14 +647,14 @@ fn painting_a_slot_that_cannot_get_its_channel_changes_nothing() {
     for standard in [false, true] {
         let mut s = AppState::new(16, 16);
         if standard {
-            s.doc
+            s.doc_mut()
                 .restore_look(yolu_core::look::MaterialLook::default())
                 .unwrap();
         }
         // チャンネルの空きを無くす（チャンネルは 64 まで）
         let mut n = 0;
-        while s.doc.channels().len() < 64 {
-            s.doc
+        while s.doc().channels().len() < 64 {
+            s.doc_mut()
                 .add_channel(ChannelInfo {
                     name: format!("埋め {n}"),
                     kind: ChannelKind::Scalar,
@@ -659,58 +664,59 @@ fn painting_a_slot_that_cannot_get_its_channel_changes_nothing() {
                 .unwrap();
             n += 1;
         }
-        let look = s.doc.look().clone();
-        let steps = s.doc.undo_count();
-        let paint = s.m2.paint_channel;
-        s.message.clear();
-        s.apply(Action::Look(LookOp::PaintSlot("_RimShadeMask")));
-        assert!(s.message.contains("64"), "{standard}: {}", s.message);
+        let look = s.doc().look().clone();
+        let steps = s.doc().undo_count();
+        let paint = s.m2().paint_channel;
+        s.message_mut().clear();
+        s.act(Action::Look(LookOp::PaintSlot("_RimShadeMask")));
+        assert!(s.message().contains("64"), "{standard}: {}", s.message());
         assert_eq!(
-            s.doc.channels().len(),
+            s.doc().channels().len(),
             64,
             "{standard}: 作りかけのチャンネルを残さない"
         );
         assert_eq!(
-            s.doc.look(),
+            s.doc().look(),
             &look,
             "{standard}: 割り当ても描き方も変えない"
         );
         assert_eq!(
-            s.doc.drawn_look().kind,
+            s.doc().drawn_look().kind,
             if standard {
                 LookKind::Standard
             } else {
                 LookKind::LilToon
             }
         );
-        assert_eq!(s.doc.undo_count(), steps, "{standard}: 段を積まない");
+        assert_eq!(s.doc().undo_count(), steps, "{standard}: 段を積まない");
         assert_eq!(
-            s.m2.paint_channel, paint,
+            s.m2().paint_channel,
+            paint,
             "{standard}: 描くチャンネルも変えない"
         );
-        assert!(!s.modified, "{standard}");
+        assert!(!s.modified(), "{standard}");
     }
     // 描けないスロット（マットキャップの絵はプロジェクトの画像）と知らない名前も、何も変えずに理由を言う
     let mut s = AppState::new(16, 16);
-    let look = s.doc.look().clone();
-    let channels = s.doc.channels().len();
-    let paint = s.m2.paint_channel;
+    let look = s.doc().look().clone();
+    let channels = s.doc().channels().len();
+    let paint = s.m2().paint_channel;
     for slot in ["_MatCapTex", "_NoSuchSlot"] {
-        s.message.clear();
-        s.apply(Action::Look(LookOp::PaintSlot(slot)));
-        assert!(!s.message.is_empty(), "{slot}");
-        assert_eq!(s.doc.look(), &look, "{slot}");
-        assert_eq!(s.doc.channels().len(), channels, "{slot}");
-        assert_eq!(s.doc.undo_count(), 0, "{slot}");
-        assert_eq!(s.m2.paint_channel, paint, "{slot}");
+        s.message_mut().clear();
+        s.act(Action::Look(LookOp::PaintSlot(slot)));
+        assert!(!s.message().is_empty(), "{slot}");
+        assert_eq!(s.doc().look(), &look, "{slot}");
+        assert_eq!(s.doc().channels().len(), channels, "{slot}");
+        assert_eq!(s.doc().undo_count(), 0, "{slot}");
+        assert_eq!(s.m2().paint_channel, paint, "{slot}");
     }
 }
 
 /// チャンネルの空きを無くす（チャンネルは 64 まで）。
 fn fill_channels(s: &mut AppState) {
     let mut n = 0;
-    while s.doc.channels().len() < 64 {
-        s.doc
+    while s.doc().channels().len() < 64 {
+        s.doc_mut()
             .add_channel(ChannelInfo {
                 name: format!("埋め {n}"),
                 kind: ChannelKind::Scalar,
@@ -724,11 +730,11 @@ fn fill_channels(s: &mut AppState) {
 
 /// ひな形のあと、`_ShadowStrengthMask` を成分ごとの詰め合わせ（R はひな形のチャンネル、G・A は 0、B は 1）にする。詰め合わせの元を返す。
 fn pack_shadow_strength(s: &mut AppState) -> [PlaneSource; 4] {
-    s.apply(Action::Look(LookOp::Template));
+    s.act(Action::Look(LookOp::Template));
     let Some(TextureSource::Channel(first)) =
-        s.doc.look().textures.get("_ShadowStrengthMask").copied()
+        s.doc().look().textures.get("_ShadowStrengthMask").copied()
     else {
-        panic!("ひな形が割り当てる: {}", s.message);
+        panic!("ひな形が割り当てる: {}", s.message());
     };
     let planes = [
         PlaneSource::Channel {
@@ -739,15 +745,15 @@ fn pack_shadow_strength(s: &mut AppState) -> [PlaneSource; 4] {
         PlaneSource::One,
         PlaneSource::Zero,
     ];
-    s.apply(Action::Look(LookOp::Texture {
+    s.act(Action::Look(LookOp::Texture {
         slot: "_ShadowStrengthMask",
         source: Some(TextureSource::Packed(planes)),
     }));
     assert_eq!(
-        s.doc.look().textures["_ShadowStrengthMask"],
+        s.doc().look().textures["_ShadowStrengthMask"],
         TextureSource::Packed(planes),
         "{}",
-        s.message
+        s.message()
     );
     planes
 }
@@ -761,20 +767,20 @@ fn a_new_slot_channel_that_cannot_get_its_channel_changes_nothing() {
             pack_shadow_strength(&mut s);
         }
         if standard {
-            s.doc
+            s.doc_mut()
                 .restore_look(yolu_core::look::MaterialLook::default())
                 .unwrap();
         }
         fill_channels(&mut s);
         let what = format!("標準 {standard}・成分 {plane:?}");
-        let look = s.doc.look().clone();
-        let drawn = s.doc.drawn_look().kind;
-        s.doc.clear_history().unwrap();
-        s.modified = false;
-        let steps = s.doc.undo_count();
-        let paint = s.m2.paint_channel;
-        s.message.clear();
-        s.apply(Action::Look(LookOp::NewChannel {
+        let look = s.doc().look().clone();
+        let drawn = s.doc().drawn_look().kind;
+        s.doc_mut().clear_history().unwrap();
+        s.set_modified(false);
+        let steps = s.doc().undo_count();
+        let paint = s.m2().paint_channel;
+        s.message_mut().clear();
+        s.act(Action::Look(LookOp::NewChannel {
             slot: if plane.is_some() {
                 "_ShadowStrengthMask"
             } else {
@@ -782,20 +788,21 @@ fn a_new_slot_channel_that_cannot_get_its_channel_changes_nothing() {
             },
             plane,
         }));
-        assert!(s.message.contains("64"), "{what}: {}", s.message);
+        assert!(s.message().contains("64"), "{what}: {}", s.message());
         assert_eq!(
-            s.doc.channels().len(),
+            s.doc().channels().len(),
             64,
             "{what}: 作りかけのチャンネルを残さない"
         );
-        assert_eq!(s.doc.look(), &look, "{what}: 割り当てを変えない");
-        assert_eq!(s.doc.drawn_look().kind, drawn, "{what}: 描き方も変えない");
-        assert_eq!(s.doc.undo_count(), steps, "{what}: 段を積まない");
+        assert_eq!(s.doc().look(), &look, "{what}: 割り当てを変えない");
+        assert_eq!(s.doc().drawn_look().kind, drawn, "{what}: 描き方も変えない");
+        assert_eq!(s.doc().undo_count(), steps, "{what}: 段を積まない");
         assert_eq!(
-            s.m2.paint_channel, paint,
+            s.m2().paint_channel,
+            paint,
             "{what}: 描くチャンネルも変えない"
         );
-        assert!(!s.modified, "{what}");
+        assert!(!s.modified(), "{what}");
     }
 }
 
@@ -806,12 +813,12 @@ fn new_slot_channels_survive_save_and_open_with_their_assignments_and_pixels() {
     let mut s = AppState::new(32, 32);
     let planes = pack_shadow_strength(&mut s);
     // 成分ごとの新しいチャンネル（G）と、スロット全体の新しいスカラーのチャンネル
-    s.apply(Action::Look(LookOp::NewChannel {
+    s.act(Action::Look(LookOp::NewChannel {
         slot: "_ShadowStrengthMask",
         plane: Some(1),
     }));
-    let TextureSource::Packed(now) = s.doc.look().textures["_ShadowStrengthMask"] else {
-        panic!("成分ごとのまま: {}", s.message);
+    let TextureSource::Packed(now) = s.doc().look().textures["_ShadowStrengthMask"] else {
+        panic!("成分ごとのまま: {}", s.message());
     };
     let PlaneSource::Channel {
         channel: plane_made,
@@ -825,23 +832,23 @@ fn new_slot_channels_survive_save_and_open_with_their_assignments_and_pixels() {
         (planes[0], planes[2], planes[3]),
         "ほかの成分はそのまま"
     );
-    s.apply(Action::Look(LookOp::NewChannel {
+    s.act(Action::Look(LookOp::NewChannel {
         slot: "_RimShadeMask",
         plane: None,
     }));
-    let TextureSource::Channel(slot_made) = s.doc.look().textures["_RimShadeMask"] else {
-        panic!("チャンネルを割り当てる: {}", s.message);
+    let TextureSource::Channel(slot_made) = s.doc().look().textures["_RimShadeMask"] else {
+        panic!("チャンネルを割り当てる: {}", s.message());
     };
     assert_ne!(plane_made, slot_made);
     // 作ったチャンネルへ描いた画素
-    let layer = s.doc.layers()[0].id();
-    s.doc
+    let layer = s.doc().layers()[0].id();
+    s.doc_mut()
         .set_channel_pixel(layer, plane_made, 3, 4, Rgba8::new(200, 200, 200, 255))
         .unwrap();
-    s.doc
+    s.doc_mut()
         .set_channel_pixel(layer, slot_made, 5, 6, Rgba8::new(90, 90, 90, 255))
         .unwrap();
-    let saved = s.doc.look().clone();
+    let saved = s.doc().look().clone();
     let infos = |d: &yolu_app::engine::Document| {
         d.channels()
             .iter()
@@ -851,44 +858,52 @@ fn new_slot_channels_survive_save_and_open_with_their_assignments_and_pixels() {
             })
             .collect::<Vec<_>>()
     };
-    let before = infos(&s.doc);
+    let before = infos(s.doc());
     yolu_app::project::save_from(&mut s, &path);
     assert!(
-        s.message.contains("保存しました") || s.message.contains("Saved"),
+        s.message().contains("保存しました") || s.message().contains("Saved"),
         "{}",
-        s.message
+        s.message()
     );
     let mut t = AppState::new(8, 8);
     yolu_app::project::open_into(&mut t, &path);
-    assert_eq!(t.doc.look(), &saved, "{}", t.message);
+    assert_eq!(t.doc().look(), &saved, "{}", t.message());
     assert_eq!(
-        infos(&t.doc),
+        infos(t.doc()),
         before,
         "チャンネルの名前・種類・色空間・既定"
     );
-    let layer = t.doc.layers()[0].id();
+    let layer = t.doc().layers()[0].id();
     assert_eq!(
-        t.doc.layer(layer).unwrap().pixel(plane_made, 3, 4).unwrap(),
+        t.doc()
+            .layer(layer)
+            .unwrap()
+            .pixel(plane_made, 3, 4)
+            .unwrap(),
         Rgba8::new(200, 200, 200, 255)
     );
     assert_eq!(
-        t.doc.layer(layer).unwrap().pixel(slot_made, 5, 6).unwrap(),
+        t.doc()
+            .layer(layer)
+            .unwrap()
+            .pixel(slot_made, 5, 6)
+            .unwrap(),
         Rgba8::new(90, 90, 90, 255)
     );
-    assert_eq!(t.doc.undo_count(), 0, "開いただけで Undo の段は増えない");
+    assert_eq!(t.doc().undo_count(), 0, "開いただけで Undo の段は増えない");
 }
 
 #[test]
 fn look_changes_are_refused_while_drawing() {
     let mut s = AppState::new(32, 32);
     // 新しいセットの既定は lilToon。描いている間は、どの見た目の操作も設定を変えない
-    let before = s.doc.look().clone();
+    let before = s.doc().look().clone();
     assert_eq!(before.kind, LookKind::LilToon);
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, 10.0, 10.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), 10.0, 10.0, 1.0, DVec2::ZERO)
         .unwrap();
     for op in [
         LookOp::Kind(LookKind::Standard),
@@ -908,22 +923,22 @@ fn look_changes_are_refused_while_drawing() {
             drag: true,
         },
     ] {
-        s.message.clear();
+        s.message_mut().clear();
         let what = format!("{op:?}");
-        s.apply(Action::Look(op));
-        assert_eq!(s.message, "描いている間はできません。", "{what}");
-        assert_eq!(s.doc.look(), &before, "{what}");
+        s.act(Action::Look(op));
+        assert_eq!(s.message(), "描いている間はできません。", "{what}");
+        assert_eq!(s.doc().look(), &before, "{what}");
     }
     assert_eq!(
-        s.doc.channels().len(),
+        s.doc().channels().len(),
         yolu_core::Channel::STANDARD_COUNT,
         "描く口もチャンネルを作らない"
     );
     // core も断る（画面の外からの変更も同じ）
-    let mut look = s.doc.look().clone();
+    let mut look = s.doc().look().clone();
     look.kind = LookKind::Standard;
-    assert!(s.doc.set_look(look, false).is_err());
-    s.doc.end_stroke(stroke).unwrap();
-    s.apply(Action::Look(LookOp::Kind(LookKind::Standard)));
-    assert_eq!(s.doc.look().kind, LookKind::Standard);
+    assert!(s.doc_mut().set_look(look, false).is_err());
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.act(Action::Look(LookOp::Kind(LookKind::Standard)));
+    assert_eq!(s.doc().look().kind, LookKind::Standard);
 }

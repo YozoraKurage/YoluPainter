@@ -1,5 +1,6 @@
 //! 「新規レイヤー」の並び（メニューの「レイヤー」・レイヤーの一覧の右クリック）の入り口が、選んでいるレイヤーのすぐ上（グループの中を選んでいれば
 //! そのグループの中）に新しいレイヤーを作る試験。何も選んでいなければ一番上。取り消し 1 回で戻る。
+use crate::common::drive::Drive;
 use yolu_app::engine::LayerId;
 use yolu_app::lang::Lang;
 use yolu_app::layermenu::Op;
@@ -11,17 +12,17 @@ use yolu_core::generator::Shape;
 /// 下から a・b・c の 3 つ。選んでいるのは a（一番下）。
 fn three() -> (AppState, [LayerId; 3]) {
     let mut s = AppState::new(64, 64);
-    let a = s.selected_layer.expect("最初のレイヤー");
-    s.apply(Action::NewLayer);
-    let b = s.selected_layer.unwrap();
-    s.apply(Action::NewLayer);
-    let c = s.selected_layer.unwrap();
-    s.selected_layer = Some(a);
+    let a = s.selected_layer().expect("最初のレイヤー");
+    s.act(Action::NewLayer);
+    let b = s.selected_layer().unwrap();
+    s.act(Action::NewLayer);
+    let c = s.selected_layer().unwrap();
+    s.set_selected_layer(Some(a));
     (s, [a, b, c])
 }
 
 fn ids(s: &AppState) -> Vec<LayerId> {
-    s.doc.layers().iter().map(|l| l.id()).collect()
+    s.doc().layers().iter().map(|l| l.id()).collect()
 }
 
 fn index(s: &AppState, id: LayerId) -> usize {
@@ -31,7 +32,7 @@ fn index(s: &AppState, id: LayerId) -> usize {
 /// 画像（2 × 2）をアセットへ入れて、レイヤーの画像の ID を返す。
 fn shelf_image(s: &mut AppState) -> yolu_core::ImageId {
     let rid = s
-        .shelf
+        .shelf_mut()
         .add_image(Lang::Ja, "画像", &[255u8; 16], 2, 2)
         .expect("アセットへ入る");
     yolu_app::fillfx::inputs::image_id(&rid).expect("GUID")
@@ -81,8 +82,8 @@ fn every_new_layer_entrance_makes_the_layer_right_above_the_selected_one() {
         let (mut s, [a, b, c]) = three();
         let action = creations(&mut s).swap_remove(i).1;
         let before = ids(&s);
-        s.apply(action);
-        let made = s.selected_layer.expect("作ったレイヤーを選ぶ");
+        s.act(action);
+        let made = s.selected_layer().expect("作ったレイヤーを選ぶ");
         assert!(!before.contains(&made), "{name}: 新しいレイヤーを選ぶ");
         assert_eq!(
             ids(&s)
@@ -95,7 +96,7 @@ fn every_new_layer_entrance_makes_the_layer_right_above_the_selected_one() {
         assert_eq!(index(&s, made), index(&s, a) + 1, "{name}: a のすぐ上");
         assert!(index(&s, made) < index(&s, b) && index(&s, b) < index(&s, c));
         // 取り消し 1 回で戻る
-        s.apply(Action::Undo);
+        s.act(Action::Undo);
         assert_eq!(ids(&s), before, "{name}: 取り消し 1 回");
     }
 }
@@ -107,25 +108,25 @@ fn inside_a_group_every_new_layer_entrance_makes_it_in_the_same_group_above_the_
     for (i, name) in names.iter().enumerate() {
         let (mut s, [a, _b, c]) = three();
         // a を新しいグループの中へ（グループの中に a だけ）
-        s.apply(Action::M2(Edit::NewGroup));
-        let group = s.selected_layer.unwrap();
-        s.apply(Action::M2(Edit::Move {
+        s.act(Action::M2(Edit::NewGroup));
+        let group = s.selected_layer().unwrap();
+        s.act(Action::M2(Edit::Move {
             id: a,
             parent: Some(group),
             position: 0,
         }));
-        s.selected_layer = Some(a);
+        s.set_selected_layer(Some(a));
         let action = creations(&mut s).swap_remove(i).1;
         let before = ids(&s);
-        s.apply(action);
-        let made = s.selected_layer.expect("作ったレイヤーを選ぶ");
+        s.act(action);
+        let made = s.selected_layer().expect("作ったレイヤーを選ぶ");
         assert!(!before.contains(&made), "{name}: 新しいレイヤーを選ぶ");
         assert_eq!(
-            s.doc.layer(made).unwrap().parent(),
+            s.doc().layer(made).unwrap().parent(),
             Some(group),
             "{name}: グループの中"
         );
-        let siblings = s.doc.children_of(Some(group)).unwrap();
+        let siblings = s.doc().children_of(Some(group)).unwrap();
         // children_of は下から。a のすぐ上 = a の 1 つ後
         let at = siblings.iter().position(|x| *x == a).unwrap();
         assert_eq!(
@@ -133,8 +134,8 @@ fn inside_a_group_every_new_layer_entrance_makes_it_in_the_same_group_above_the_
             Some(&made),
             "{name}: a のすぐ上 {siblings:?}"
         );
-        assert_eq!(s.doc.layer(c).unwrap().parent(), None);
-        s.apply(Action::Undo);
+        assert_eq!(s.doc().layer(c).unwrap().parent(), None);
+        s.act(Action::Undo);
         assert_eq!(ids(&s), before, "{name}: 取り消し 1 回");
     }
 }
@@ -144,9 +145,9 @@ fn with_nothing_selected_a_new_layer_goes_on_top() {
     for i in 0..creations(&mut three().0).len() {
         let (mut s, [_, _, c]) = three();
         let action = creations(&mut s).swap_remove(i).1;
-        s.selected_layer = None;
-        s.apply(action);
-        let made = s.selected_layer.expect("作ったレイヤーを選ぶ");
+        s.set_selected_layer(None);
+        s.act(action);
+        let made = s.selected_layer().expect("作ったレイヤーを選ぶ");
         assert_eq!(index(&s, made), ids(&s).len() - 1, "{i}: 一番上");
         assert_eq!(index(&s, c), ids(&s).len() - 2);
     }

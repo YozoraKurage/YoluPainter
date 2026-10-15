@@ -2,6 +2,7 @@
 //! 写ること（隠れた面・裏の面は変わらない）・グラデーションの色はテクセルが写る画面の点で決まること・選択範囲・マスク・マテリアルで塗る・正投影・
 //! 図形の塗り（縁の帯）と線（3D のストロークのブラシ・対称）・定規（文書の 3D の定規を作る）・取り消し 1 回・ロックと読むだけのセットと予算の断り・
 //! Esc とフォーカスの喪失・絵（日英）。面の上の計算は core の `tests/surface/surface_screen.rs` が見る。
+use crate::common::drive::Drive;
 use crate::common::*;
 use crate::view3d_brush::cube_view;
 use egui::{pos2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -68,7 +69,7 @@ fn visible(h: &H, face: usize) -> bool {
     let c = corners(face);
     let center = (c[0] + c[3]) * 0.5;
     let normal = (c[1] - c[0]).cross(c[2] - c[0]).normalize();
-    let eye = h.state().state.view3d.camera.position();
+    let eye = h.view3d().camera.position();
     // 立方体の外向きの法線（巻きによらず、中心から外へ）
     let out = if normal.dot(center) > 0.0 {
         normal
@@ -79,25 +80,25 @@ fn visible(h: &H, face: usize) -> bool {
 }
 
 fn st(h: &H) -> &yolu_app::state::AppState {
-    &h.state().state
+    h.app()
 }
 
 fn alpha(h: &H, x: u32, y: u32) -> u8 {
-    composite_pixel(&st(h).doc, x, y)[3]
+    composite_pixel(st(h).doc(), x, y)[3]
 }
 
 fn snapshot(h: &H) -> Vec<u8> {
-    let doc = &st(h).doc;
+    let doc = st(h).doc();
     doc.composite(doc.bounds()).unwrap()
 }
 
 fn message(h: &H) -> String {
-    st(h).message.clone()
+    st(h).message().to_owned()
 }
 
 /// 世界の点の画面の点（表示域の外の座標系。egui の点）。
 fn screen(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = st(h).view3d.camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -109,8 +110,8 @@ fn local(rect: Rect, p: Pos2) -> DVec2 {
 
 /// 表示域の画面の点の下の面の点。
 fn hit_at(h: &H, rect: Rect, p: Pos2) -> Option<SurfaceHit> {
-    let model = st(h).view3d.model.clone()?;
-    let view = st(h).view3d.camera.view(rect.width(), rect.height());
+    let model = st(h).view3d().model.clone()?;
+    let view = st(h).view3d().camera.view(rect.width(), rect.height());
     pick(
         &model.geometry,
         &view,
@@ -135,7 +136,7 @@ fn pull(h: &mut H, a: Pos2, b: Pos2) {
 }
 
 fn tool(h: &mut H, t: Tool) {
-    h.state_mut().state.apply(Action::SelectTool(t));
+    h.act(Action::SelectTool(t));
     h.run();
 }
 
@@ -149,8 +150,8 @@ fn hidden_untouched(h: &H) -> bool {
 }
 
 fn red(h: &mut H) {
-    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
-    h.state_mut().state.brush.opacity = 1.0;
+    h.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    h.brush_mut().opacity = 1.0;
 }
 
 #[test]
@@ -159,8 +160,8 @@ fn a_linear_gradient_colors_each_visible_texel_by_its_screen_point_and_undoes_on
     red(&mut h);
     tool(&mut h, Tool::Gradient);
     // ブラシの「隠れた所も塗る」「裏の面も塗る」を入れていても、画面の形は見えている面だけ
-    h.state_mut().state.view3d.projection.paint_hidden = true;
-    h.state_mut().state.view3d.projection.paint_backfaces = true;
+    h.view3d_mut().projection.paint_hidden = true;
+    h.view3d_mut().projection.paint_backfaces = true;
     assert!(visible(&h, 0) && visible(&h, 3) && !visible(&h, 1) && !visible(&h, 2));
     let before = snapshot(&h);
     let cube = cube_box(&h, rect);
@@ -170,7 +171,7 @@ fn a_linear_gradient_colors_each_visible_texel_by_its_screen_point_and_undoes_on
     );
     pull(&mut h, a, b);
     assert_eq!(message(&h), "グラデーションを塗りました");
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
     assert!(!st(&h).is_stroking());
     let g = GradientSettings {
         shape: GradientShape::Linear,
@@ -201,15 +202,13 @@ fn a_linear_gradient_colors_each_visible_texel_by_its_screen_point_and_undoes_on
 fn a_radial_gradient_in_orthographic_starts_full_at_the_center() {
     let (mut h, rect) = cube_view();
     red(&mut h);
-    h.state_mut().state.view3d.camera.set_orthographic(true);
+    h.view3d_mut().camera.set_orthographic(true);
     tool(&mut h, Tool::Gradient);
-    h.state_mut()
-        .state
-        .apply(Action::Gradient(GradientOp::Shape(GradientShape::Radial)));
+    h.act(Action::Gradient(GradientOp::Shape(GradientShape::Radial)));
     let center = screen(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     let edge = screen(&h, rect, Vec3::new(0.0, 0.45, -0.5));
     pull(&mut h, center, edge);
-    assert_eq!(st(&h).doc.undo_count(), 1, "{}", message(&h));
+    assert_eq!(st(&h).doc().undo_count(), 1, "{}", message(&h));
     let g = GradientSettings {
         shape: GradientShape::Radial,
         start: local(rect, center),
@@ -241,7 +240,7 @@ fn the_gradient_stays_in_the_selection_and_paints_a_mask_or_the_material_set_in_
     red(&mut h);
     tool(&mut h, Tool::Gradient);
     {
-        let doc = &mut h.state_mut().state.doc;
+        let doc = h.doc_mut();
         let m = SelectionMask::rectangle(doc, 0, 0, 40, SIZE as i64);
         doc.set_selection(Some(m)).unwrap();
         doc.clear_history().unwrap();
@@ -259,13 +258,13 @@ fn the_gradient_stays_in_the_selection_and_paints_a_mask_or_the_material_set_in_
     // マスク: レイヤーの画素は変えず、マスクの見える面だけ
     let (mut h, rect) = cube_view();
     tool(&mut h, Tool::Gradient);
-    let layer = st(&h).selected_layer.unwrap();
-    h.state_mut().state.doc.add_layer_mask(layer).unwrap();
-    h.state_mut().state.doc.clear_history().unwrap();
-    h.state_mut().state.set_edit_mask(true);
+    let layer = st(&h).selected_layer().unwrap();
+    h.doc_mut().add_layer_mask(layer).unwrap();
+    h.doc_mut().clear_history().unwrap();
+    h.app_mut().set_edit_mask(true);
     let mask = |h: &H| {
         st(h)
-            .doc
+            .doc()
             .layer(layer)
             .unwrap()
             .mask()
@@ -290,15 +289,15 @@ fn the_gradient_stays_in_the_selection_and_paints_a_mask_or_the_material_set_in_
     for f in (0..6).filter(|&f| !visible(&h, f)) {
         assert!(texels(f, 0.0).iter().all(|&((x, y), _)| !changed(x, y)));
     }
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
     // マテリアルで塗る: 組の全部のチャンネルを 1 回の取り消しで
     let (mut h, rect) = cube_view();
     red(&mut h);
     tool(&mut h, Tool::Gradient);
     {
-        let s = &mut h.state_mut().state;
-        s.mat.set_enabled(true, Channel::Color);
-        s.mat.set_channel(Channel::Roughness, true);
+        let s = h.app_mut();
+        s.mat_mut().set_enabled(true, Channel::Color);
+        s.mat_mut().set_channel(Channel::Roughness, true);
     }
     let cube = cube_box(&h, rect);
     pull(
@@ -306,10 +305,10 @@ fn the_gradient_stays_in_the_selection_and_paints_a_mask_or_the_material_set_in_
         pos2(cube.left() - 10.0, cube.center().y),
         pos2(cube.right() + 400.0, cube.center().y),
     );
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     for channel in [Channel::Color, Channel::Roughness] {
         let bytes = st(&h)
-            .doc
+            .doc()
             .layer(layer)
             .unwrap()
             .surface(channel)
@@ -318,7 +317,7 @@ fn the_gradient_stays_in_the_selection_and_paints_a_mask_or_the_material_set_in_
         let ((x, y), _) = texels(0, 3.0)[0];
         assert!(bytes[((y * SIZE + x) * 4 + 3) as usize] > 0, "{channel:?}");
     }
-    assert_eq!(st(&h).doc.undo_count(), 1);
+    assert_eq!(st(&h).doc().undo_count(), 1);
 }
 
 /// 手前の面の上の画面の長方形（世界の (−0.3, −0.3)〜(0.3, 0.3) の角を画面へ写した点）。
@@ -348,18 +347,18 @@ fn a_filled_rectangle_counts_four_by_four_points_like_2d_whatever_the_anti_alias
         for anti_alias in [AntiAlias::None, AntiAlias::Strong] {
             let (mut h, rect) = cube_view();
             red(&mut h);
-            h.state_mut().state.view3d.camera.set_orthographic(ortho);
+            h.view3d_mut().camera.set_orthographic(ortho);
             tool(&mut h, Tool::Shape);
             {
-                let s = &mut h.state_mut().state;
-                s.drafting.figure = Figure::Rectangle;
-                s.drafting.fill = true;
-                s.drafting.corner = 0.0;
-                s.brush.anti_alias = anti_alias;
+                let s = h.app_mut();
+                s.drafting_mut().figure = Figure::Rectangle;
+                s.drafting_mut().fill = true;
+                s.drafting_mut().corner = 0.0;
+                s.brush_mut().anti_alias = anti_alias;
             }
             let (a, b) = front_rect(&h, rect);
             pull(&mut h, a, b);
-            assert_eq!(st(&h).doc.undo_count(), 1, "{}", message(&h));
+            assert_eq!(st(&h).doc().undo_count(), 1, "{}", message(&h));
             let (lo, hi) = (
                 local(rect, a).min(local(rect, b)),
                 local(rect, a).max(local(rect, b)),
@@ -391,7 +390,7 @@ fn a_filled_rectangle_counts_four_by_four_points_like_2d_whatever_the_anti_alias
             results.push(snapshot(&h));
             key(&h, Key::Z, Modifiers::COMMAND);
             h.run();
-            assert_eq!(st(&h).doc.undo_count(), 0);
+            assert_eq!(st(&h).doc().undo_count(), 0);
             assert!((0..SIZE).all(|y| (0..SIZE).all(|x| alpha(&h, x, y) == 0)));
         }
         assert!(
@@ -427,9 +426,9 @@ fn two_plates() -> (H, Rect) {
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     {
-        let state = &mut h.state_mut().state;
-        let revision = state.view3d.next_revision();
-        state.view3d.material = 0;
+        let state = h.app_mut();
+        let revision = state.view3d_mut().next_revision();
+        state.view3d_mut().material = 0;
         let model = ViewModel::new(
             "試験",
             vec![plate(0.0, 1.0, (0.0, 0.5)), plate(-0.6, 0.35, (0.5, 1.0))],
@@ -437,8 +436,8 @@ fn two_plates() -> (H, Rect) {
             revision,
         )
         .unwrap();
-        state.view3d.set_model(model);
-        state.view3d.camera = OrbitCamera {
+        state.view3d_mut().set_model(model);
+        state.view3d_mut().camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -447,10 +446,10 @@ fn two_plates() -> (H, Rect) {
             ..OrbitCamera::default()
         };
         // ブラシの「隠れた所も塗る」「裏の面も塗る」を入れておく（画面の形は、それでも見えている面だけ）
-        state.view3d.projection.paint_hidden = true;
-        state.view3d.projection.paint_backfaces = true;
-        state.color.set_main([1.0, 0.0, 0.0, 1.0]);
-        state.brush.opacity = 1.0;
+        state.view3d_mut().projection.paint_hidden = true;
+        state.view3d_mut().projection.paint_backfaces = true;
+        state.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+        state.brush_mut().opacity = 1.0;
     }
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -463,11 +462,11 @@ fn a_front_facing_surface_hidden_behind_another_is_not_painted_by_the_gradient_o
         let (mut h, rect) = two_plates();
         tool(&mut h, t);
         {
-            let s = &mut h.state_mut().state;
-            s.drafting.figure = Figure::Rectangle;
-            s.drafting.fill = true;
-            s.gradient.end = yolu_app::gradient::End::Sub;
-            s.color.sub = [0.0, 0.0, 1.0, 1.0];
+            let s = h.app_mut();
+            s.drafting_mut().figure = Figure::Rectangle;
+            s.drafting_mut().fill = true;
+            s.gradient_mut().end = yolu_app::gradient::End::Sub;
+            s.color_mut().sub = [0.0, 0.0, 1.0, 1.0];
         }
         // 奥の板の全部を覆うドラッグ
         let (a, b) = (
@@ -476,7 +475,7 @@ fn a_front_facing_surface_hidden_behind_another_is_not_painted_by_the_gradient_o
         );
         assert!(rect.contains(a) && rect.contains(b), "{rect:?} {a:?} {b:?}");
         pull(&mut h, a, b);
-        assert_eq!(st(&h).doc.undo_count(), 1, "{t:?} {}", message(&h));
+        assert_eq!(st(&h).doc().undo_count(), 1, "{t:?} {}", message(&h));
         // 手前の板の画面の箱
         let (fa, fb) = (
             local(rect, screen(&h, rect, Vec3::new(-0.35, 0.35, -0.6))),
@@ -499,14 +498,14 @@ fn a_front_facing_surface_hidden_behind_another_is_not_painted_by_the_gradient_o
                     s.x < lo.x - 3.0 || s.x > hi.x + 3.0 || s.y < lo.y - 3.0 || s.y > hi.y + 3.0;
                 if inside(3.0) {
                     assert_eq!(
-                        composite_pixel(&st(&h).doc, x, y)[3],
+                        composite_pixel(st(&h).doc(), x, y)[3],
                         0,
                         "{t:?} 隠れた所 ({x}, {y})"
                     );
                     hidden += 1;
                 } else if outside && x > 1 && x < 30 && y > 1 && y < 62 {
                     assert!(
-                        composite_pixel(&st(&h).doc, x, y)[3] > 0,
+                        composite_pixel(st(&h).doc(), x, y)[3] > 0,
                         "{t:?} 見える所 ({x}, {y})"
                     );
                     seen += 1;
@@ -515,7 +514,7 @@ fn a_front_facing_surface_hidden_behind_another_is_not_painted_by_the_gradient_o
         }
         assert!(hidden > 20 && seen > 200, "{t:?} {hidden} {seen}");
         // 手前の板は塗った
-        assert!(composite_pixel(&st(&h).doc, 48, 32)[3] > 0, "{t:?}");
+        assert!(composite_pixel(st(&h).doc(), 48, 32)[3] > 0, "{t:?}");
     }
 }
 
@@ -525,7 +524,7 @@ fn a_lost_release_paints_the_gradient_at_the_last_point_and_drops_shapes_and_rul
         let (mut h, rect) = cube_view();
         red(&mut h);
         tool(&mut h, t);
-        h.state_mut().state.drafting.fill = true;
+        h.drafting_mut().fill = true;
         let (a, b) = front_rect(&h, rect);
         let kind = match t {
             Tool::Gradient => DraftKind::Gradient,
@@ -533,7 +532,7 @@ fn a_lost_release_paints_the_gradient_at_the_last_point_and_drops_shapes_and_rul
             _ => DraftKind::Ruler,
         };
         // ボタンは押していないのに、ドラッグの途中だけが残った（ウィンドウの外で離したなど）
-        h.state_mut().state.view3d.input.draft = Some(SurfaceDraft {
+        h.view3d_mut().input.draft = Some(SurfaceDraft {
             kind,
             source: StrokeSource::Mouse,
             start: local(rect, a),
@@ -542,13 +541,13 @@ fn a_lost_release_paints_the_gradient_at_the_last_point_and_drops_shapes_and_rul
             alt: false,
             hit: hit_at(&h, rect, a).filter(|_| t == Tool::Ruler),
         });
-        assert!(draft::dragging(&h.state().state));
+        assert!(draft::dragging(h.app()));
         move_to(&h, b);
         h.run();
-        assert!(!draft::dragging(&h.state().state), "{t:?}");
+        assert!(!draft::dragging(h.app()), "{t:?}");
         assert_eq!(crate::common::rulers::total(st(&h)), 0, "{t:?}");
         assert_eq!(
-            st(&h).doc.undo_count(),
+            st(&h).doc().undo_count(),
             usize::from(t == Tool::Gradient),
             "{t:?} {}",
             message(&h)
@@ -575,20 +574,20 @@ fn the_outline_is_a_3d_stroke_with_the_brush_and_the_mirror_but_the_fill_is_not_
         red(&mut h);
         tool(&mut h, Tool::Shape);
         {
-            let s = &mut h.state_mut().state;
-            s.drafting.figure = Figure::Rectangle;
-            s.drafting.fill = false;
-            s.brush.radius = radius;
+            let s = h.app_mut();
+            s.drafting_mut().figure = Figure::Rectangle;
+            s.drafting_mut().fill = false;
+            s.brush_mut().radius = radius;
             if mirror {
                 crate::common::rulers::mirror_3d(s, DVec3::ZERO, DVec3::X);
             }
         }
-        let base = st(&h).doc.undo_count();
+        let base = st(&h).doc().undo_count();
         // 手前の面の右の半分（x が 0.1〜0.4）の長方形
         let a = screen(&h, rect, Vec3::new(0.1, -0.2, -0.5));
         let b = screen(&h, rect, Vec3::new(0.4, 0.2, -0.5));
         pull(&mut h, a, b);
-        assert_eq!(st(&h).doc.undo_count(), base + 1, "{}", message(&h));
+        assert_eq!(st(&h).doc().undo_count(), base + 1, "{}", message(&h));
         assert!(!center_painted(&h), "輪郭だけ");
         let (left, right) = (count(&h, -0.5..0.0), count(&h, 0.0..0.5));
         assert!(right > 20, "{right}");
@@ -606,9 +605,9 @@ fn the_outline_is_a_3d_stroke_with_the_brush_and_the_mirror_but_the_fill_is_not_
     red(&mut h);
     tool(&mut h, Tool::Shape);
     {
-        let s = &mut h.state_mut().state;
-        s.drafting.figure = Figure::Ellipse;
-        s.drafting.fill = true;
+        let s = h.app_mut();
+        s.drafting_mut().figure = Figure::Ellipse;
+        s.drafting_mut().fill = true;
         crate::common::rulers::mirror_3d(s, DVec3::ZERO, DVec3::X);
     }
     let a = screen(&h, rect, Vec3::new(0.1, -0.2, -0.5));
@@ -629,18 +628,14 @@ fn an_outline_over_the_budget_is_cancelled_whole_and_locks_and_read_only_sets_re
         let (mut h, rect) = cube_view();
         red(&mut h);
         tool(&mut h, t);
-        h.state_mut().state.drafting.figure = Figure::Rectangle;
-        h.state_mut().state.drafting.fill = fill;
-        h.state_mut()
-            .state
-            .doc
-            .set_stroke_budget_bytes(4096)
-            .unwrap();
+        h.drafting_mut().figure = Figure::Rectangle;
+        h.drafting_mut().fill = fill;
+        h.doc_mut().set_stroke_budget_bytes(4096).unwrap();
         let (a, b) = front_rect(&h, rect);
         pull(&mut h, a, b);
         assert!(!message(&h).is_empty(), "{t:?} {fill}");
-        assert_eq!(st(&h).doc.undo_count(), 0, "{t:?} {fill}");
-        assert!(!st(&h).is_stroking() && !st(&h).doc.has_active_stroke());
+        assert_eq!(st(&h).doc().undo_count(), 0, "{t:?} {fill}");
+        assert!(!st(&h).is_stroking() && !st(&h).doc().has_active_stroke());
         assert!((0..SIZE).all(|y| (0..SIZE).all(|x| alpha(&h, x, y) == 0)));
     }
     // ロック
@@ -651,25 +646,21 @@ fn an_outline_over_the_budget_is_cancelled_whole_and_locks_and_read_only_sets_re
     ] {
         let (mut h, rect) = cube_view();
         tool(&mut h, t);
-        h.state_mut().state.drafting.fill = fill;
-        let layer = st(&h).selected_layer.unwrap();
-        h.state_mut()
-            .state
-            .doc
-            .set_layer_locks(layer, LayerLocks::ALL)
-            .unwrap();
-        h.state_mut().state.doc.clear_history().unwrap();
+        h.drafting_mut().fill = fill;
+        let layer = st(&h).selected_layer().unwrap();
+        h.doc_mut().set_layer_locks(layer, LayerLocks::ALL).unwrap();
+        h.doc_mut().clear_history().unwrap();
         let (a, b) = front_rect(&h, rect);
         pull(&mut h, a, b);
         assert!(!message(&h).is_empty(), "{t:?} {fill}");
-        assert_eq!(st(&h).doc.undo_count(), 0);
-        assert!(!st(&h).doc.has_active_stroke());
+        assert_eq!(st(&h).doc().undo_count(), 0);
+        assert!(!st(&h).doc().has_active_stroke());
     }
     // 読むだけのセット: 押したところで断る（ドラッグを始めない）
     for t in [Tool::Shape, Tool::Gradient] {
         let (mut h, rect) = cube_view();
         tool(&mut h, t);
-        h.state_mut().state.sets.get_mut(0).unwrap().read_only = Some("読めない中身".into());
+        h.sets_mut().get_mut(0).unwrap().read_only = Some("読めない中身".into());
         let (a, b) = front_rect(&h, rect);
         press(&h, a, PointerButton::Primary);
         h.step();
@@ -678,11 +669,11 @@ fn an_outline_over_the_budget_is_cancelled_whole_and_locks_and_read_only_sets_re
             "{t:?} {}",
             message(&h)
         );
-        assert!(st(&h).view3d.input.draft.is_none());
+        assert!(st(&h).view3d().input.draft.is_none());
         move_to(&h, b);
         release(&h, b, PointerButton::Primary);
         h.run();
-        assert_eq!(st(&h).doc.undo_count(), 0);
+        assert_eq!(st(&h).doc().undo_count(), 0);
     }
 }
 
@@ -700,29 +691,27 @@ fn what_the_3d_tools_paint_and_the_3d_ruler_they_make_survive_save_and_reopen() 
         pos2(cube.right(), cube.bottom()),
     );
     tool(&mut h, Tool::Shape);
-    h.state_mut().state.drafting.figure = Figure::Ellipse;
-    h.state_mut().state.drafting.fill = true;
-    h.state_mut().state.color.set_main([0.0, 0.0, 1.0, 1.0]);
+    h.drafting_mut().figure = Figure::Ellipse;
+    h.drafting_mut().fill = true;
+    h.color_mut().set_main([0.0, 0.0, 1.0, 1.0]);
     let (a, b) = front_rect(&h, rect);
     pull(&mut h, a, b);
-    assert_eq!(st(&h).doc.undo_count(), 2, "{}", message(&h));
+    assert_eq!(st(&h).doc().undo_count(), 2, "{}", message(&h));
     // 3D の同心円の定規（モデルの空間の値で、文書が持つ）
     tool(&mut h, Tool::Ruler);
-    h.state_mut().state.rulers.kind = yolu_core::RulerKind::Concentric;
+    h.rulers_mut().kind = yolu_core::RulerKind::Concentric;
     pull(&mut h, a, b);
-    assert_eq!(st(&h).doc.undo_count(), 3, "{}", message(&h));
-    let layer = st(&h).selected_layer.unwrap();
+    assert_eq!(st(&h).doc().undo_count(), 3, "{}", message(&h));
+    let layer = st(&h).selected_layer().unwrap();
     let placed = crate::common::rulers::of(st(&h), layer);
     assert_eq!(placed.len(), 1);
     let saved = snapshot(&h);
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
+    h.act(Action::SaveProjectAs(path.clone()));
     assert!(message(&h).starts_with("保存しました"), "{}", message(&h));
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     h.run();
     assert_eq!(snapshot(&h), saved, "{}", message(&h));
-    let layer = st(&h).selected_layer.unwrap();
+    let layer = st(&h).selected_layer().unwrap();
     assert_eq!(
         crate::common::rulers::of(st(&h), layer),
         placed,
@@ -771,29 +760,29 @@ fn a_pen_press_taken_by_the_os_paints_the_gradient_at_the_last_point_and_drops_s
         let (mut h, rect) = cube_view();
         red(&mut h);
         tool(&mut h, t);
-        h.state_mut().state.drafting.figure = Figure::Rectangle;
-        h.state_mut().state.drafting.fill = true;
+        h.drafting_mut().figure = Figure::Rectangle;
+        h.drafting_mut().fill = true;
         let (a, b) = front_rect(&h, rect);
         pen_pull_ending(&mut h, a, b, true);
-        assert!(!draft::dragging(&h.state().state), "{t:?}");
-        assert!(st(&h).view3d.input.pen_press.is_none(), "{t:?}");
+        assert!(!draft::dragging(h.app()), "{t:?}");
+        assert!(st(&h).view3d().input.pen_press.is_none(), "{t:?}");
         assert_eq!(
             crate::common::rulers::total(st(&h)),
             0,
             "{t:?}: 補った離しでは定規を置かない"
         );
         assert_eq!(
-            st(&h).doc.undo_count(),
+            st(&h).doc().undo_count(),
             usize::from(t == Tool::Gradient),
             "{t:?}: グラデーションだけ最後の位置で塗る {}",
             message(&h)
         );
         // 次の押しは新しい押しとして始まり、本物の離しで決まる（図形も確定し、定規も置く）
-        let before = st(&h).doc.undo_count();
+        let before = st(&h).doc().undo_count();
         pen_pull(&mut h, a, b);
-        assert!(!draft::dragging(&h.state().state), "{t:?}");
+        assert!(!draft::dragging(h.app()), "{t:?}");
         assert_eq!(
-            st(&h).doc.undo_count(),
+            st(&h).doc().undo_count(),
             before + 1,
             "{t:?}: {}",
             message(&h)
@@ -813,19 +802,19 @@ fn the_pen_draws_the_same_gradient_shape_and_ruler_as_the_mouse() {
             let (mut h, rect) = cube_view();
             red(&mut h);
             tool(&mut h, t);
-            h.state_mut().state.drafting.figure = Figure::Rectangle;
-            h.state_mut().state.drafting.fill = true;
+            h.drafting_mut().figure = Figure::Rectangle;
+            h.drafting_mut().fill = true;
             let (a, b) = front_rect(&h, rect);
             if pen {
                 pen_pull(&mut h, a, b);
             } else {
                 pull(&mut h, a, b);
             }
-            assert!(st(&h).view3d.input.draft.is_none(), "{t:?} {pen}");
-            let layer = st(&h).selected_layer.unwrap();
+            assert!(st(&h).view3d().input.draft.is_none(), "{t:?} {pen}");
+            let layer = st(&h).selected_layer().unwrap();
             (
                 snapshot(&h),
-                st(&h).doc.undo_count(),
+                st(&h).doc().undo_count(),
                 crate::common::rulers::of(st(&h), layer)
                     .into_iter()
                     .map(|mut r| {
@@ -854,14 +843,14 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
                 Tool::Shape
             },
         );
-        h.state_mut().state.drafting.fill = true;
-        h.state_mut().state.drafting.figure = Figure::Rectangle;
+        h.drafting_mut().fill = true;
+        h.drafting_mut().figure = Figure::Rectangle;
         let (a, b) = front_rect(&h, rect);
         press(&h, a, PointerButton::Primary);
         h.step();
         move_to(&h, b);
         h.step();
-        assert!(st(&h).view3d.input.draft.is_some(), "{way}");
+        assert!(st(&h).view3d().input.draft.is_some(), "{way}");
         match way {
             0 => {
                 h.event(Event::Key {
@@ -873,13 +862,13 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
                 });
             }
             1 => h.event(Event::WindowFocused(false)),
-            _ => h.state_mut().state.apply(Action::SelectTool(Tool::Brush)),
+            _ => h.act(Action::SelectTool(Tool::Brush)),
         }
         h.step();
-        assert!(st(&h).view3d.input.draft.is_none(), "{way}");
+        assert!(st(&h).view3d().input.draft.is_none(), "{way}");
         release(&h, b, PointerButton::Primary);
         h.run();
-        assert_eq!(st(&h).doc.undo_count(), 0, "{way}");
+        assert_eq!(st(&h).doc().undo_count(), 0, "{way}");
         assert!(!st(&h).is_stroking());
     }
 }
@@ -888,13 +877,13 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
 fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
     for lang in Lang::ALL {
         let (mut h, rect) = cube_view();
-        h.state_mut().state.lang = lang;
-        h.state_mut().state.color.set_main([0.95, 0.55, 0.1, 1.0]);
-        h.state_mut().state.color.sub = [0.2, 0.35, 0.95, 1.0];
+        h.set_lang(lang);
+        h.color_mut().set_main([0.95, 0.55, 0.1, 1.0]);
+        h.color_mut().sub = [0.2, 0.35, 0.95, 1.0];
         let cube = cube_box(&h, rect);
         // 2 色の線形のグラデーション
         tool(&mut h, Tool::Gradient);
-        h.state_mut().state.apply(Action::Gradient(GradientOp::End(
+        h.act(Action::Gradient(GradientOp::End(
             yolu_app::gradient::End::Sub,
         )));
         pull(
@@ -904,11 +893,11 @@ fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
         );
         // 塗った楕円と、線の長方形
         tool(&mut h, Tool::Shape);
-        h.state_mut().state.color.set_main([1.0, 1.0, 1.0, 1.0]);
+        h.color_mut().set_main([1.0, 1.0, 1.0, 1.0]);
         {
-            let s = &mut h.state_mut().state;
-            s.drafting.figure = Figure::Ellipse;
-            s.drafting.fill = true;
+            let s = h.app_mut();
+            s.drafting_mut().figure = Figure::Ellipse;
+            s.drafting_mut().fill = true;
         }
         let (a, b) = (
             screen(&h, rect, Vec3::new(-0.35, -0.1, -0.5)),
@@ -916,12 +905,12 @@ fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
         );
         pull(&mut h, a, b);
         {
-            let s = &mut h.state_mut().state;
-            s.drafting.figure = Figure::Rectangle;
-            s.drafting.fill = false;
-            s.brush.radius = 2.0;
+            let s = h.app_mut();
+            s.drafting_mut().figure = Figure::Rectangle;
+            s.drafting_mut().fill = false;
+            s.brush_mut().radius = 2.0;
         }
-        h.state_mut().state.color.set_main([0.1, 0.1, 0.12, 1.0]);
+        h.color_mut().set_main([0.1, 0.1, 0.12, 1.0]);
         let (a, b) = (
             screen(&h, rect, Vec3::new(0.5, -0.3, -0.35)),
             screen(&h, rect, Vec3::new(0.5, 0.3, 0.3)),
@@ -929,14 +918,14 @@ fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
         pull(&mut h, a, b);
         // 2 点のパースの 3D の定規（定規のツールで引いて作る）
         tool(&mut h, Tool::Ruler);
-        h.state_mut().state.rulers.two_points = true;
-        h.state_mut().state.rulers.kind = yolu_core::RulerKind::Perspective;
+        h.rulers_mut().two_points = true;
+        h.rulers_mut().kind = yolu_core::RulerKind::Perspective;
         let (a, b) = (
             screen(&h, rect, Vec3::new(-0.45, 0.3, -0.5)),
             screen(&h, rect, Vec3::new(0.45, 0.3, -0.5)),
         );
         pull(&mut h, a, b);
-        h.state_mut().state.message.clear();
+        h.message_mut().clear();
         h.event(Event::PointerGone);
         h.run();
         // 英語の絵は撮らない（3D の絵に文字は無い）。グラデーション・図形・定規を 3D に引いた形を見る、ウィンドウ全体の見本

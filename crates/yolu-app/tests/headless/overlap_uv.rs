@@ -2,6 +2,7 @@
 //! 2D のポリゴン塗りつぶしで重なったアイランドを選び替える・右クリックのアイランドのメニュー。画面を描かない（ウィンドウの見た目と日英の絵は
 //! `gui_view3d/overlap_uv_ui.rs`）。
 
+use crate::common::drive::Drive;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -63,11 +64,11 @@ fn mirrored() -> ViewModel {
 
 fn with_model(model: ViewModel) -> (AppState, Rect) {
     let mut s = AppState::new(64, 64);
-    s.bake.backend = BakeBackend::Cpu;
-    s.view3d.set_model(model);
-    s.view3d.material = 0;
-    s.view3d.camera.yaw = 0.0;
-    s.view3d.camera.pitch = 0.0;
+    s.bake_mut().backend = BakeBackend::Cpu;
+    s.view3d_mut().set_model(model);
+    s.view3d_mut().material = 0;
+    s.view3d_mut().camera.yaw = 0.0;
+    s.view3d_mut().camera.pitch = 0.0;
     (
         s,
         Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0)),
@@ -75,15 +76,15 @@ fn with_model(model: ViewModel) -> (AppState, Rect) {
 }
 
 fn at_uv(s: &AppState, rect: Rect, uv: (f32, f32)) -> Pos2 {
-    let view = s.view.view(rect, s.doc.width(), s.doc.height());
+    let view = s.view().view(rect, s.doc().width(), s.doc().height());
     view.to_screen(
-        uv.0 as f64 * s.doc.width() as f64,
-        uv.1 as f64 * s.doc.height() as f64,
+        uv.0 as f64 * s.doc().width() as f64,
+        uv.1 as f64 * s.doc().height() as f64,
     )
 }
 
 fn at_model(s: &AppState, rect: Rect, p: Vec3) -> Pos2 {
-    let view = s.view3d.camera.view(rect.width(), rect.height());
+    let view = s.view3d().camera.view(rect.width(), rect.height());
     let q = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + q.x, rect.top() + q.y)
 }
@@ -92,8 +93,8 @@ fn wait_overlap(s: &mut AppState) -> Arc<Built> {
     let start = Instant::now();
     loop {
         s.poll_uv_overlap();
-        if !s.uv_overlap.is_counting() {
-            if let Some(b) = s.uv_overlap.built() {
+        if !s.uv_overlap().is_counting() {
+            if let Some(b) = s.uv_overlap().built() {
                 return b.clone();
             }
         }
@@ -106,7 +107,7 @@ fn wait_overlap(s: &mut AppState) -> Arc<Built> {
 }
 
 fn bake(s: &mut AppState, a: BakeAction) {
-    s.apply(Action::Bake(a));
+    s.act(Action::Bake(a));
 }
 
 /// アイランドの索引ができるまで待つ（入力も索引も別のスレッドで作る。画面は待たずに毎フレーム求める）。
@@ -156,7 +157,7 @@ fn headless_the_overlap_map_has_the_shared_texels_and_the_edges_of_both_islands(
         .map
         .contains((APART.0 * 64.0) as u32, (APART.1 * 64.0) as u32));
     // 同じモデル・セット・大きさでは数え直さない。位置だけ動かしたモデルでも数え直さない
-    assert_eq!(s.uv_overlap.counts, 1);
+    assert_eq!(s.uv_overlap().counts, 1);
     s.poll_uv_overlap();
     let mut lifted = mirrored();
     let moved: Vec<ModelMesh> = lifted
@@ -168,11 +169,11 @@ fn headless_the_overlap_map_has_the_shared_texels_and_the_edges_of_both_islands(
         })
         .collect();
     lifted = ViewModel::new("鏡", moved, lifted.materials.clone(), 2).unwrap();
-    s.view3d.set_model(lifted);
+    s.view3d_mut().set_model(lifted);
     s.poll_uv_overlap();
-    assert_eq!(s.uv_overlap.counts, 1, "UV が同じなら数え直さない");
+    assert_eq!(s.uv_overlap().counts, 1, "UV が同じなら数え直さない");
     // UV の違うモデルは数え直す（重ならないモデルは空の図）
-    s.view3d.set_model(
+    s.view3d_mut().set_model(
         ViewModel::new(
             "離れ",
             vec![quad("一", [0.0, 1.0], [0.0, 1.0], [0.0, 0.0, 0.4, 0.4])],
@@ -182,7 +183,7 @@ fn headless_the_overlap_map_has_the_shared_texels_and_the_edges_of_both_islands(
         .unwrap(),
     );
     let built = wait_overlap(&mut s);
-    assert_eq!(s.uv_overlap.counts, 2);
+    assert_eq!(s.uv_overlap().counts, 2);
     assert!(built.map.is_empty() && built.edges.is_empty());
 }
 
@@ -190,7 +191,7 @@ fn headless_the_overlap_map_has_the_shared_texels_and_the_edges_of_both_islands(
 fn headless_painting_overlapped_texels_tells_once_per_set_as_info() {
     for lang in Lang::ALL {
         let (mut s, _) = with_model(mirrored());
-        s.lang = lang;
+        s.set_lang(lang);
         wait_overlap(&mut s);
         let text = lang.pick(
             "重なった UV は同じテクセルを使うので、片側だけには描けません。",
@@ -198,43 +199,43 @@ fn headless_painting_overlapped_texels_tells_once_per_set_as_info() {
         );
         // 重ならない所は知らせない
         s.note_overlap_canvas(APART.0 as f64 * 64.0, APART.1 as f64 * 64.0, 1.0);
-        assert_ne!(s.message, text);
+        assert_ne!(s.message(), text);
         // ブラシの半径が届けば知らせる（種類は済んだ知らせ。ログのウィンドウには残らない）
         s.note_overlap_canvas(14.0, 14.0, 4.0);
-        assert_eq!(s.message, text);
+        assert_eq!(s.message(), text);
         let notice = s.current_notice().expect("知らせ");
         assert_eq!(notice.kind, yolu_app::notice::Kind::Info);
         assert_eq!(notice.source, yolu_app::notice::Source::Brush);
-        assert!(s.notice_log.is_empty(), "ログのウィンドウには出さない");
+        assert!(s.notice_log().is_empty(), "ログのウィンドウには出さない");
         // 同じセットでは 2 度目は出さない（2D でも 3D でも）
-        s.message.clear();
+        s.message_mut().clear();
         s.note_overlap_canvas(32.0, 32.0, 1.0);
         s.note_overlap_uv(Vec2::new(0.5, 0.5));
-        assert!(s.message.is_empty(), "{}", s.message);
+        assert!(s.message().is_empty(), "{}", s.message());
     }
     // 3D で描いた面の UV でも知らせる
     let (mut s, _) = with_model(mirrored());
     wait_overlap(&mut s);
     s.note_overlap_uv(Vec2::new(0.5, 0.5));
-    assert!(s.message.contains("重なった UV"), "{}", s.message);
+    assert!(s.message().contains("重なった UV"), "{}", s.message());
 }
 
 #[test]
 fn headless_the_window_changes_the_sets_priority_with_one_undo_and_the_bake_follows_it() {
     let (mut s, _) = with_model(mirrored());
-    s.bake.settings.maps = vec![MeshMapKind::Position];
-    s.bake.settings.padding = 0;
+    s.bake_mut().settings.maps = vec![MeshMapKind::Position];
+    s.bake_mut().settings.padding = 0;
     priority(&mut s, PriorityOp::Rule(MeshOverlapRule::PositiveX));
-    assert_eq!(s.doc.bake_priority().rule, MeshOverlapRule::PositiveX);
-    assert_eq!(s.doc.undo_count(), 1);
-    assert!(s.modified);
+    assert_eq!(s.doc().bake_priority().rule, MeshOverlapRule::PositiveX);
+    assert_eq!(s.doc().undo_count(), 1);
+    assert!(s.modified());
     priority(&mut s, PriorityOp::SkipOutside(true));
-    assert!(s.doc.bake_priority().skip_outside);
-    assert_eq!(s.doc.undo_count(), 2);
+    assert!(s.doc().bake_priority().skip_outside);
+    assert_eq!(s.doc().undo_count(), 2);
     bake(&mut s, BakeAction::Start);
     s.wait_bake();
     let map = s
-        .sets
+        .sets()
         .current()
         .mesh_maps
         .get(MeshMapKind::Position)
@@ -253,8 +254,8 @@ fn headless_the_window_changes_the_sets_priority_with_one_undo_and_the_bake_foll
         s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
         MeshMapState::Stale
     );
-    s.apply(Action::Undo);
-    assert_eq!(s.doc.bake_priority().rule, MeshOverlapRule::PositiveX);
+    s.act(Action::Undo);
+    assert_eq!(s.doc().bake_priority().rule, MeshOverlapRule::PositiveX);
     assert_eq!(
         s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
         MeshMapState::Current
@@ -266,11 +267,11 @@ fn headless_picking_islands_in_2d_cycles_the_overlapped_ones_and_3d_takes_the_fa
     let (mut s, rect) = with_model(mirrored());
     bake(&mut s, BakeAction::OpenWindow);
     priority(&mut s, PriorityOp::Pick(Some(MeshOverlapList::Skip)));
-    assert!(s.bake.pick.is_some());
-    let view = s.view.view(rect, 64, 64);
+    assert!(s.bake().pick.is_some());
+    let view = s.view().view(rect, 64, 64);
     let at = at_uv(&s, rect, OVERLAP);
     // 強調は選ぶアイランド（2 つの三角形）。範囲のツールを選んでいなくても出る（アイランドはモデルの入力を作り終えてから）
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     wait_islands(&mut s);
     assert!(yolu_app::bake::overlap::update_hover(
         &mut s,
@@ -278,18 +279,19 @@ fn headless_picking_islands_in_2d_cycles_the_overlapped_ones_and_3d_takes_the_fa
         Some(at)
     ));
     assert_eq!(s.region_hover_len(), Some(2));
-    let skipped =
-        |s: &AppState| -> Vec<usize> { s.doc.bake_priority().skipped().iter().copied().collect() };
+    let skipped = |s: &AppState| -> Vec<usize> {
+        s.doc().bake_priority().skipped().iter().copied().collect()
+    };
     let press = |s: &mut AppState, w: Where, p: Pos2| {
         assert!(yolu_app::bake::overlap::press(s, w, p));
     };
     press(&mut s, Where::Canvas(&view), at);
     assert_eq!(skipped(&s), vec![0], "番号の小さい −X のアイランド");
-    assert_eq!(s.doc.undo_count(), 1);
+    assert_eq!(s.doc().undo_count(), 1);
     // 同じ所を続けて押すと、前の選びを取り消して重なったもう一方のアイランドへ
     press(&mut s, Where::Canvas(&view), at);
     assert_eq!(skipped(&s), vec![2]);
-    assert_eq!(s.doc.undo_count(), 1, "選び替えは段を増やさない");
+    assert_eq!(s.doc().undo_count(), 1, "選び替えは段を増やさない");
     // 強調も選んでいるアイランド
     yolu_app::bake::overlap::update_hover(&mut s, Where::Canvas(&view), Some(at));
     assert_eq!(s.region_hover_len(), Some(2));
@@ -304,7 +306,7 @@ fn headless_picking_islands_in_2d_cycles_the_overlapped_ones_and_3d_takes_the_fa
     // 3D は当たった面のアイランド（+X の四角）
     let surface = at_model(&s, rect, Vec3::new(2.0, 1.0, 0.0));
     press(&mut s, Where::Surface(rect), surface);
-    assert_eq!(skipped(&s), vec![0, 2], "{}", s.message);
+    assert_eq!(skipped(&s), vec![0, 2], "{}", s.message());
     // 一覧の名前（メッシュの名前とアイランドの何番目か）と、一覧から外す
     let rows = s.overlap_island_rows(MeshOverlapList::Skip);
     assert_eq!(
@@ -315,14 +317,14 @@ fn headless_picking_islands_in_2d_cycles_the_overlapped_ones_and_3d_takes_the_fa
     assert_eq!(skipped(&s), vec![2]);
     // 結び付けたモデルは今のモデル（ベイクの入力の指紋）
     let binding = s.bake_input().unwrap().topology_hash().to_owned();
-    assert_eq!(s.doc.bake_priority().binding(), binding);
+    assert_eq!(s.doc().bake_priority().binding(), binding);
     assert!(!s.overlap_islands_foreign());
     // 同じ一覧の追加をもう一度押す・ウィンドウを閉じると、選ぶのをやめる（押下はツールに戻る）
     priority(&mut s, PriorityOp::Pick(Some(MeshOverlapList::Skip)));
-    assert!(s.bake.pick.is_none());
+    assert!(s.bake().pick.is_none());
     priority(&mut s, PriorityOp::Pick(Some(MeshOverlapList::Prefer)));
     bake(&mut s, BakeAction::CloseWindow);
-    assert!(s.bake.pick.is_none());
+    assert!(s.bake().pick.is_none());
     assert!(!yolu_app::bake::overlap::press(
         &mut s,
         Where::Canvas(&view),
@@ -333,11 +335,11 @@ fn headless_picking_islands_in_2d_cycles_the_overlapped_ones_and_3d_takes_the_fa
 #[test]
 fn headless_the_hand_picked_islands_are_not_baked() {
     let (mut s, rect) = with_model(mirrored());
-    s.bake.settings.maps = vec![MeshMapKind::Position];
-    s.bake.settings.padding = 0;
+    s.bake_mut().settings.maps = vec![MeshMapKind::Position];
+    s.bake_mut().settings.padding = 0;
     bake(&mut s, BakeAction::OpenWindow);
     priority(&mut s, PriorityOp::Pick(Some(MeshOverlapList::Skip)));
-    let view = s.view.view(rect, 64, 64);
+    let view = s.view().view(rect, 64, 64);
     let at = at_uv(&s, rect, OVERLAP);
     assert!(yolu_app::bake::overlap::press(
         &mut s,
@@ -347,7 +349,7 @@ fn headless_the_hand_picked_islands_are_not_baked() {
     bake(&mut s, BakeAction::Start);
     s.wait_bake();
     let map = s
-        .sets
+        .sets()
         .current()
         .mesh_maps
         .get(MeshMapKind::Position)
@@ -383,18 +385,18 @@ fn headless_the_priority_survives_save_and_reopen_as_version_33() {
     let path = dir.0.join("a.ylp");
     let (mut s, _) = with_model(mirrored());
     priority(&mut s, PriorityOp::Rule(MeshOverlapRule::LargerArea));
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     let project = yolu_io::Project::open(&path, &yolu_io::Limits::unbounded()).unwrap();
     assert_eq!(
         project.sets()[0].document.version(),
         yolu_io::BAKE_PRIORITY_VERSION
     );
     let mut t = AppState::new(64, 64);
-    t.apply(Action::OpenProject(path.clone()));
-    assert_eq!(t.doc.bake_priority().rule, MeshOverlapRule::LargerArea);
-    assert_eq!(t.doc.undo_count(), 0);
-    assert!(!t.modified);
+    t.act(Action::OpenProject(path.clone()));
+    assert_eq!(t.doc().bake_priority().rule, MeshOverlapRule::LargerArea);
+    assert_eq!(t.doc().undo_count(), 0);
+    assert!(!t.modified());
 }
 
 /// 一部だけ重なった 2 つのアイランド（P = 三角形 0・1 の UV 0.1〜0.5、Q = 2・3 の UV 0.3〜0.7）。
@@ -414,13 +416,13 @@ fn partly() -> ViewModel {
 #[test]
 fn headless_polygon_fill_in_2d_cycles_the_overlapped_islands_on_the_same_spot() {
     let (mut s, rect) = with_model(partly());
-    s.tool = Tool::PolygonFill;
-    s.region.kind = SurfaceRegionKind::UvIsland;
-    let view = s.view.view(rect, 64, 64);
+    s.set_tool(Tool::PolygonFill);
+    s.region_mut().kind = SurfaceRegionKind::UvIsland;
+    let view = s.view().view(rect, 64, 64);
     let only_p = (0.2, 0.2);
     let only_q = (0.6, 0.6);
     let painted = |s: &AppState, uv: (f32, f32)| {
-        composite_pixel(&s.doc, (uv.0 * 64.0) as u32, (uv.1 * 64.0) as u32)[3] > 0
+        composite_pixel(s.doc(), (uv.0 * 64.0) as u32, (uv.1 * 64.0) as u32)[3] > 0
     };
     let click = |s: &mut AppState, uv: (f32, f32)| {
         let at = at_uv(s, rect, uv);
@@ -430,7 +432,7 @@ fn headless_polygon_fill_in_2d_cycles_the_overlapped_islands_on_the_same_spot() 
     let hover = |s: &mut AppState, uv: (f32, f32)| -> Vec<u32> {
         let at = at_uv(s, rect, uv);
         update_hover(s, Where::Canvas(&view), Some(at));
-        s.region
+        s.region()
             .hover
             .as_ref()
             .map(|h| h.tris.to_vec())
@@ -441,12 +443,12 @@ fn headless_polygon_fill_in_2d_cycles_the_overlapped_islands_on_the_same_spot() 
     assert_eq!(hover(&mut s, both), vec![0, 1]);
     click(&mut s, both);
     assert!(painted(&s, only_p) && !painted(&s, only_q));
-    let steps = s.doc.undo_count();
+    let steps = s.doc().undo_count();
     assert_eq!(hover(&mut s, both), vec![0, 1], "塗ったアイランドを強調");
     // 同じ所をもう一度: P の塗りを取り消して Q を塗る（段は増えない）
     click(&mut s, both);
     assert!(!painted(&s, only_p) && painted(&s, only_q));
-    assert_eq!(s.doc.undo_count(), steps);
+    assert_eq!(s.doc().undo_count(), steps);
     assert_eq!(hover(&mut s, both), vec![2, 3]);
     // さらにもう一度で P に戻る
     click(&mut s, both);
@@ -455,18 +457,18 @@ fn headless_polygon_fill_in_2d_cycles_the_overlapped_islands_on_the_same_spot() 
     click(&mut s, only_q);
     assert!(painted(&s, only_p) && painted(&s, only_q));
     click(&mut s, both);
-    assert_eq!(s.doc.undo_count(), steps + 2);
+    assert_eq!(s.doc().undo_count(), steps + 2);
     // 重なっていない所は続けて押しても選び替えない（同じアイランドをまた塗る）
-    let before = s.doc.undo_count();
+    let before = s.doc().undo_count();
     click(&mut s, only_p);
     click(&mut s, only_p);
-    assert!(s.doc.undo_count() >= before);
+    assert!(s.doc().undo_count() >= before);
     assert!(painted(&s, only_p));
 }
 
 /// 開いているアイランドのメニュー（アイランド・見取り図からか・3D からか）。
 fn island_menu(s: &AppState) -> Option<(usize, bool, bool)> {
-    match s.popup.as_ref().map(|p| p.kind) {
+    match s.popup().as_ref().map(|p| p.kind) {
         Some(yolu_app::state::PopupKind::BakeIsland {
             island,
             map,
@@ -483,7 +485,7 @@ fn headless_the_island_menu_puts_the_island_in_one_list_with_one_undo() {
     use yolu_app::ui::menu::{Check, Entry};
     let (mut s, _) = with_model(mirrored());
     s.bake_input().unwrap();
-    let uid = s.sets.current().uid;
+    let uid = s.sets().current().uid;
     let items = |s: &AppState, map: bool| -> Vec<(String, Check, bool)> {
         menu_entries(s, uid, 0, map)
             .into_iter()
@@ -526,7 +528,7 @@ fn headless_the_island_menu_puts_the_island_in_one_list_with_one_undo() {
         )
     };
     let lists = |s: &AppState| -> (Vec<usize>, Vec<usize>) {
-        let p = s.doc.bake_priority();
+        let p = s.doc().bake_priority();
         (
             p.preferred().iter().copied().collect(),
             p.skipped().iter().copied().collect(),
@@ -534,9 +536,9 @@ fn headless_the_island_menu_puts_the_island_in_one_list_with_one_undo() {
     };
     set(&mut s, Some(MeshOverlapList::Prefer));
     assert_eq!(lists(&s), (vec![0], vec![]));
-    assert_eq!(s.doc.undo_count(), 1);
+    assert_eq!(s.doc().undo_count(), 1);
     assert_eq!(
-        s.message,
+        s.message(),
         "アイランドを「優先するアイランド」に追加しました。"
     );
     assert_eq!(items(&s, true)[0].1, Check::Checked, "今の状態にチェック");
@@ -547,11 +549,11 @@ fn headless_the_island_menu_puts_the_island_in_one_list_with_one_undo() {
     set(&mut s, None);
     assert_eq!(lists(&s), (vec![], vec![]));
     assert_eq!(
-        s.message,
+        s.message(),
         "アイランドを「焼かないアイランド」から外しました。"
     );
-    assert_eq!(s.doc.undo_count(), 3);
-    s.doc.undo().unwrap();
+    assert_eq!(s.doc().undo_count(), 3);
+    s.doc_mut().undo().unwrap();
     assert_eq!(lists(&s), (vec![], vec![0]));
     // 開いた後にセットを替えた・代表でない番号（開いた後にモデルが替わった）は何もしない
     priority(
@@ -578,11 +580,11 @@ fn headless_right_clicking_with_the_polygon_fill_opens_the_island_menu_and_cycle
     use yolu_app::bake::overlap::{menu_press, menu_release};
     let (mut s, rect) = with_model(mirrored());
     let ctx = egui::Context::default();
-    s.tool = Tool::PolygonFill;
-    let view = s.view.view(rect, 64, 64);
+    s.set_tool(Tool::PolygonFill);
+    let view = s.view().view(rect, 64, 64);
     let at = at_uv(&s, rect, OVERLAP);
     let right = |s: &mut AppState, w: Where, from: Pos2, to: Pos2| {
-        s.popup = None;
+        *s.popup_mut() = None;
         menu_press(s, w, from);
         menu_release(s, &ctx, w, to);
         settle_menu(s, &ctx);
@@ -602,7 +604,7 @@ fn headless_right_clicking_with_the_polygon_fill_opens_the_island_menu_and_cycle
         Some((0, false, false))
     );
     // 開いている間は、ツールによらずそのアイランドを強調する（2D の側）
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     assert!(yolu_app::bake::overlap::update_hover(
         &mut s,
         Where::Canvas(&view),
@@ -617,9 +619,9 @@ fn headless_right_clicking_with_the_polygon_fill_opens_the_island_menu_and_cycle
         right(&mut s, Where::Canvas(&view), at, at + vec2(10.0, 0.0)),
         None
     );
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     assert_eq!(right(&mut s, Where::Canvas(&view), at, at), None);
-    s.tool = Tool::PolygonFill;
+    s.set_tool(Tool::PolygonFill);
     let empty = at_uv(&s, rect, (0.9, 0.9));
     assert_eq!(right(&mut s, Where::Canvas(&view), empty, empty), None);
     // 3D: 当たった面のアイランド（+X の四角）
@@ -629,7 +631,7 @@ fn headless_right_clicking_with_the_polygon_fill_opens_the_island_menu_and_cycle
         Some((2, false, true))
     );
     // 2D で押して 3D で離した（別の画面）は開かない
-    s.popup = None;
+    *s.popup_mut() = None;
     menu_press(&mut s, Where::Canvas(&view), at);
     menu_release(&mut s, &ctx, Where::Surface(rect), at);
     assert_eq!(island_menu(&s), None);
@@ -640,8 +642,8 @@ fn headless_the_right_click_menu_does_not_wait_for_the_island_index_and_lets_go_
     use yolu_app::bake::overlap::{menu_pending, menu_press, menu_release, poll_menu};
     let (mut s, rect) = with_model(mirrored());
     let ctx = egui::Context::default();
-    s.tool = Tool::PolygonFill;
-    let view = s.view.view(rect, 64, 64);
+    s.set_tool(Tool::PolygonFill);
+    let view = s.view().view(rect, 64, 64);
     let at = at_uv(&s, rect, OVERLAP);
     let w = Where::Canvas(&view);
     // 入力もアイランドの索引も作っていない最初の右クリック: 離したところでは開かず（UI のスレッドで作らない）、できたフレームで開く
@@ -654,7 +656,7 @@ fn headless_the_right_click_menu_does_not_wait_for_the_island_index_and_lets_go_
     // 開いている間は索引を持つ。閉じて 1 フレーム回すと手放す（次の右クリックは作り直す）
     s.release_idle_bake_input();
     assert!(matches!(s.overlap_islands(false), Some(Ok(_))));
-    s.popup = None;
+    *s.popup_mut() = None;
     s.release_idle_bake_input();
     assert!(
         s.overlap_islands(false).is_none(),
@@ -665,12 +667,12 @@ fn headless_the_right_click_menu_does_not_wait_for_the_island_index_and_lets_go_
     menu_press(&mut s, w, at);
     menu_release(&mut s, &ctx, w, at);
     assert!(menu_pending(&s));
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     poll_menu(&ctx, &mut s);
     assert!(!menu_pending(&s));
     assert_eq!(island_menu(&s), None);
     // 待っている間に新しく押したら、前の頼みは捨てる
-    s.tool = Tool::PolygonFill;
+    s.set_tool(Tool::PolygonFill);
     s.release_idle_bake_input();
     menu_press(&mut s, w, at);
     menu_release(&mut s, &ctx, w, at);
@@ -678,7 +680,7 @@ fn headless_the_right_click_menu_does_not_wait_for_the_island_index_and_lets_go_
     menu_press(&mut s, w, at);
     assert!(!menu_pending(&s));
     // 下に何も無い所は、索引を待たずに終える
-    s.popup = None;
+    *s.popup_mut() = None;
     let empty = at_uv(&s, rect, (0.9, 0.9));
     menu_press(&mut s, w, empty);
     menu_release(&mut s, &ctx, w, empty);

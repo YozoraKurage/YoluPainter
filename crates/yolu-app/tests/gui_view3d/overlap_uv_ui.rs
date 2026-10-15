@@ -2,6 +2,7 @@
 //! ポリゴン塗りつぶしの右クリックのアイランドのメニュー（2D・3D）、2D のキャンバスの重なりの色とアイランドの縁、表示のメニューの入切、設定の色の並び、
 //! 描いたときの知らせ。日本語と英語の絵。操作の中身（焼いた値・保存・選び替え）は `headless/overlap_uv.rs`。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::accesskit::Role;
@@ -55,16 +56,16 @@ fn mirrored() -> ViewModel {
 }
 
 fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
-    h.state_mut().state.apply(action);
+    h.act(action);
     h.run();
 }
 
 fn with_model(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, 860.0, 64);
-    h.state_mut().state.set_language(lang);
+    h.app_mut().set_language(lang);
     {
-        let s = &mut h.state_mut().state;
-        s.view3d.set_model(mirrored());
+        let s = h.app_mut();
+        s.view3d_mut().set_model(mirrored());
     }
     h.run();
     h
@@ -73,7 +74,7 @@ fn with_model(lang: Lang) -> Harness<'static, YoluApp> {
 /// 2D のキャンバスに重なりを出したモデル（表示は既定で切なので入れる）。
 fn shown_model(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = with_model(lang);
-    h.state_mut().state.prefs.settings.uv_overlap = true;
+    h.prefs_mut().settings.uv_overlap = true;
     h.run();
     h
 }
@@ -83,8 +84,8 @@ fn counted(h: &mut Harness<'_, YoluApp>) {
     let start = std::time::Instant::now();
     loop {
         h.step();
-        let s = &h.state().state;
-        if !s.uv_overlap.is_counting() && s.uv_overlap.built().is_some() {
+        let s = h.app();
+        if !s.uv_overlap().is_counting() && s.uv_overlap().built().is_some() {
             break;
         }
         assert!(start.elapsed().as_secs() < 60, "重なりを数え終わらない");
@@ -103,23 +104,20 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
     for lang in Lang::ALL {
         let mut h = shown_model(lang);
         apply(&mut h, Action::Bake(BakeAction::OpenWindow));
-        h.state_mut().state.bake.window.as_mut().unwrap().page = Page::Overlap;
+        h.bake_mut().window.as_mut().unwrap().page = Page::Overlap;
         h.run();
         // 決め方のボタン（押すと文書が変わる。1 回の Undo）
         h.get_by_role_and_label(Role::Button, "+X").click();
         h.run();
-        assert_eq!(
-            h.state().state.doc.bake_priority().rule,
-            MeshOverlapRule::PositiveX
-        );
-        assert_eq!(h.state().state.doc.undo_count(), 1);
+        assert_eq!(h.doc().bake_priority().rule, MeshOverlapRule::PositiveX);
+        assert_eq!(h.doc().undo_count(), 1);
         let outside = lang.pick(
             "0〜1 の外のアイランドを焼かない",
             "Skip islands outside 0–1",
         );
         h.get_by_role_and_label(Role::CheckBox, outside).click();
         h.run();
-        assert!(h.state().state.doc.bake_priority().skip_outside);
+        assert!(h.doc().bake_priority().skip_outside);
         // 手で選ぶ: 「追加」で選び始め、2D・3D で押したアイランドが一覧に入る
         let add = lang.pick(
             "2D か 3D で押したアイランドを「焼かないアイランド」に追加する（入っているアイランドを押すと外す・Esc でやめる）",
@@ -128,20 +126,20 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
         h.get_by_label(add).click();
         h.run();
         assert!(
-            h.state().state.bake.pick.is_some(),
+            h.bake().pick.is_some(),
             "{} {:?}",
-            h.state().state.message,
-            h.state().state.bake.window.as_ref().map(|w| w.page)
+            h.message(),
+            h.bake().window.as_ref().map(|w| w.page)
         );
         let rect = canvas_rect(&h);
         {
-            let s = &mut h.state_mut().state;
+            let s = h.app_mut();
             s.bake_input().unwrap();
-            let view = s.view.view(rect, 64, 64);
+            let view = s.view().view(rect, 64, 64);
             let at = view.to_screen(32.0, 32.0);
             assert!(yolu_app::bake::overlap::press(s, Where::Canvas(&view), at));
             let apart = view.to_screen(6.0, 6.0);
-            s.apply(Action::Bake(BakeAction::Priority(PriorityOp::Pick(Some(
+            s.act(Action::Bake(BakeAction::Priority(PriorityOp::Pick(Some(
                 MeshOverlapList::Prefer,
             )))));
             assert!(yolu_app::bake::overlap::press(
@@ -149,13 +147,10 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
                 Where::Canvas(&view),
                 apart
             ));
-            s.apply(Action::Bake(BakeAction::Priority(PriorityOp::Pick(None))));
+            s.act(Action::Bake(BakeAction::Priority(PriorityOp::Pick(None))));
         }
         h.run();
-        let rows = h
-            .state_mut()
-            .state
-            .overlap_island_rows(MeshOverlapList::Skip);
+        let rows = h.app_mut().overlap_island_rows(MeshOverlapList::Skip);
         assert_eq!(rows.len(), 1);
         shot(
             &mut h,
@@ -168,8 +163,8 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
             .expect("外すボタン")
             .click();
         h.run();
-        assert!(h.state().state.doc.bake_priority().skipped().is_empty());
-        assert_eq!(h.state().state.doc.bake_priority().preferred().len(), 1);
+        assert!(h.doc().bake_priority().skipped().is_empty());
+        assert_eq!(h.doc().bake_priority().preferred().len(), 1);
         // Esc は選ぶのをやめるだけ（ウィンドウは閉じない）
         apply(
             &mut h,
@@ -179,8 +174,8 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
         );
         key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
-        assert!(h.state().state.bake.pick.is_none());
-        assert!(h.state().state.bake.window.is_some());
+        assert!(h.bake().pick.is_none());
+        assert!(h.bake().window.is_some());
     }
 }
 
@@ -189,9 +184,9 @@ fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
     for lang in Lang::ALL {
         let mut h = with_model(lang);
         counted(&mut h);
-        assert!(!h.state().state.prefs.settings.uv_overlap, "既定は切");
+        assert!(!h.prefs().settings.uv_overlap, "既定は切");
         apply(&mut h, Action::ToggleUvOverlap);
-        assert!(h.state().state.prefs.settings.uv_overlap);
+        assert!(h.prefs().settings.uv_overlap);
         if lang == Lang::Ja {
             h.event(egui::Event::PointerGone);
             h.step();
@@ -211,9 +206,9 @@ fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
             rect,
         );
         click(&mut h, item.center());
-        assert!(!h.state().state.prefs.settings.uv_overlap);
+        assert!(!h.prefs().settings.uv_overlap);
         apply(&mut h, Action::ToggleUvOverlap);
-        assert!(h.state().state.prefs.settings.uv_overlap);
+        assert!(h.prefs().settings.uv_overlap);
     }
 }
 
@@ -221,28 +216,28 @@ fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
 fn painting_overlapped_texels_in_the_canvas_tells_once() {
     let mut h = with_model(Lang::Ja);
     counted(&mut h);
-    h.state_mut().state.tool = Tool::Brush;
+    h.set_tool(Tool::Brush);
     h.run();
     let rect = canvas_rect(&h);
     let view = {
-        let s = &h.state().state;
-        s.view.view(rect, 64, 64)
+        let s = h.app();
+        s.view().view(rect, 64, 64)
     };
     let a = view.to_screen(30.0, 30.0);
     let b = view.to_screen(34.0, 34.0);
     drag(&mut h, &[a, b]);
     let text = "重なった UV は同じテクセルを使うので、片側だけには描けません。";
-    assert_eq!(h.state().state.message, text);
-    h.state_mut().state.message.clear();
+    assert_eq!(h.message(), text);
+    h.message_mut().clear();
     drag(&mut h, &[a, b]);
-    assert_ne!(h.state().state.message, text, "セットごとに 1 度だけ");
+    assert_ne!(h.message(), text, "セットごとに 1 度だけ");
 }
 
 #[test]
 fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 860.0, 64);
-        h.state_mut().state.set_language(lang);
+        h.app_mut().set_language(lang);
         apply(
             &mut h,
             Action::Prefs(yolu_app::prefs::PrefsAction::OpenAt(
@@ -291,7 +286,7 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
             &format!("uv_overlap_color_{}", lang.pick("ja", "en")),
         );
         assert_eq!(
-            h.state().state.prefs.settings.uv_overlap_color,
+            h.prefs().settings.uv_overlap_color,
             yolu_app::uv_wireframe::DEFAULT_OVERLAP_COLOR
         );
     }
@@ -314,7 +309,7 @@ fn shot_row_and_color_window(h: &mut Harness<'_, YoluApp>, row: egui::Rect, name
 fn shot_with_popup(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
     let mut rect = yolu_app::windows::window_rect(&h.ctx, window)
         .unwrap_or_else(|| panic!("{window} を描いていない"));
-    if let Some(p) = &h.state().state.popup {
+    if let Some(p) = h.popup() {
         rect = rect.union(p.state.rect);
     }
     // 端は切り捨て（大きさも切り捨て）で、ウィンドウとポップアップを合わせた所を撮る
@@ -333,16 +328,14 @@ fn menu_item(h: &mut Harness<'_, YoluApp>, label: &str) -> egui::Rect {
         h.step();
     }
     let popup = h
-        .state()
-        .state
-        .popup
+        .popup()
         .as_ref()
         .map(|p| format!("{:?} {:?}", p.kind, p.state.rect));
     panic!("{label} が描かれない（メニュー: {popup:?}）");
 }
 
 fn island_menu(h: &Harness<'_, YoluApp>) -> Option<(usize, bool, bool)> {
-    match h.state().state.popup.as_ref().map(|p| p.kind) {
+    match h.popup().as_ref().map(|p| p.kind) {
         Some(yolu_app::state::PopupKind::BakeIsland {
             island,
             map,
@@ -358,24 +351,15 @@ fn overlap_page(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = shown_model(lang);
     counted(&mut h);
     apply(&mut h, Action::Bake(BakeAction::OpenWindow));
-    h.state_mut().state.bake.window.as_mut().unwrap().page = Page::Overlap;
-    h.state_mut().state.bake_input().unwrap();
+    h.bake_mut().window.as_mut().unwrap().page = Page::Overlap;
+    h.app_mut().bake_input().unwrap();
     h.run();
     h
 }
 
 /// 見取り図の上の、UV の点（拡大 1。0〜1 の正方形のまわりに 10 点の余白）。
 fn map_point(h: &Harness<'_, YoluApp>, u: f32, v: f32) -> egui::Pos2 {
-    let r = h
-        .state()
-        .state
-        .bake
-        .window
-        .as_ref()
-        .unwrap()
-        .map
-        .rect
-        .shrink(10.0);
+    let r = h.bake().window.as_ref().unwrap().map.rect.shrink(10.0);
     egui::pos2(r.left() + u * r.width(), r.bottom() - v * r.height())
 }
 
@@ -383,7 +367,7 @@ fn map_point(h: &Harness<'_, YoluApp>, u: f32, v: f32) -> egui::Pos2 {
 fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlapped_islands() {
     for lang in Lang::ALL {
         let mut h = overlap_page(lang);
-        let r = h.state().state.bake.window.as_ref().unwrap().map.rect;
+        let r = h.bake().window.as_ref().unwrap().map.rect;
         assert!(
             r.width() >= 160.0 && (r.width() - r.height()).abs() < 0.5,
             "{r:?}"
@@ -394,8 +378,8 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
         assert_eq!(island_menu(&h), Some((4, true, false)), "離れたアイランド");
         let item = popup_item(&h, lang.pick("優先する", "Prefer")).center();
         click(&mut h, item);
-        assert!(h.state().state.doc.bake_priority().preferred().contains(&4));
-        assert_eq!(h.state().state.doc.undo_count(), 1, "1 回の Undo");
+        assert!(h.doc().bake_priority().preferred().contains(&4));
+        assert_eq!(h.doc().undo_count(), 1, "1 回の Undo");
         // 重なった所: 押すと番号の小さい側のアイランド、続けて押すと次のアイランド
         let at = map_point(&h, 0.5, 0.4);
         click(&mut h, at);
@@ -407,7 +391,7 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
             "続けて押すと次のアイランド"
         );
         // メニューを開いているアイランドは、キャンバスでも強調する（同じアイランドの UV の輪郭）
-        assert!(h.state().state.region_hover_len().is_some());
+        assert!(h.app().region_hover_len().is_some());
         let skip = popup_item(&h, lang.pick("焼かない", "Skip"));
         h.event(egui::Event::PointerMoved(skip.center()));
         h.step();
@@ -417,14 +401,11 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
             &format!("bake_overlap_map_menu_{}", lang.pick("ja", "en")),
         );
         click(&mut h, skip.center());
-        assert!(h.state().state.doc.bake_priority().skipped().contains(&2));
+        assert!(h.doc().bake_priority().skipped().contains(&2));
         // もう一度押すと最初のアイランドへ戻る。「外す」は一覧に無いアイランドでは選べない
         click(&mut h, at);
         assert_eq!(island_menu(&h), Some((0, true, false)));
-        let entries = yolu_app::shell::popup_entries(
-            &h.state().state,
-            h.state().state.popup.as_ref().unwrap().kind,
-        );
+        let entries = yolu_app::shell::popup_entries(h.app(), h.popup().as_ref().unwrap().kind);
         let remove = entries
             .iter()
             .find(|e| e.label() == Some(lang.pick("外す", "Remove")))
@@ -440,11 +421,11 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
         assert_eq!(island_menu(&h), Some((2, true, false)));
         let item = popup_item(&h, lang.pick("外す", "Remove")).center();
         click(&mut h, item);
-        assert!(h.state().state.doc.bake_priority().skipped().is_empty());
+        assert!(h.doc().bake_priority().skipped().is_empty());
         // ポインタを置いたアイランドは、ウィンドウの外でも強調するアイランド
         move_to(&h, apart);
         h.run();
-        assert_eq!(h.state().state.bake.map_hover, Some(4));
+        assert_eq!(h.bake().map_hover, Some(4));
         // ホイールは見取り図の拡大（ポインタの下の UV は動かない）。右の欄は送らない
         h.event(egui::Event::MouseWheel {
             unit: egui::MouseWheelUnit::Line,
@@ -453,16 +434,12 @@ fn the_uv_map_of_the_overlap_page_opens_the_island_menu_and_cycles_the_overlappe
             phase: egui::TouchPhase::Move,
         });
         h.run();
-        let zoom = h.state().state.bake.window.as_ref().unwrap().map.zoom();
+        let zoom = h.bake().window.as_ref().unwrap().map.zoom();
         assert!(zoom > 1.5, "{zoom}");
-        assert_eq!(
-            h.state().state.bake.map_hover,
-            Some(4),
-            "ポインタの下の UV は動かない"
-        );
+        assert_eq!(h.bake().map_hover, Some(4), "ポインタの下の UV は動かない");
         // ウィンドウを閉じると、強調するアイランドも無くなる
         apply(&mut h, Action::Bake(BakeAction::CloseWindow));
-        assert_eq!(h.state().state.bake.map_hover, None);
+        assert_eq!(h.bake().map_hover, None);
     }
 }
 
@@ -471,14 +448,14 @@ fn the_uv_map_shows_the_preferred_and_skipped_islands() {
     for lang in Lang::ALL {
         let mut h = overlap_page(lang);
         {
-            let s = &mut h.state_mut().state;
-            let uid = s.sets.current().uid;
-            s.apply(Action::Bake(BakeAction::Priority(PriorityOp::Set {
+            let s = h.app_mut();
+            let uid = s.sets().current().uid;
+            s.act(Action::Bake(BakeAction::Priority(PriorityOp::Set {
                 set: uid,
                 island: 4,
                 list: Some(MeshOverlapList::Prefer),
             })));
-            s.apply(Action::Bake(BakeAction::Priority(PriorityOp::Set {
+            s.act(Action::Bake(BakeAction::Priority(PriorityOp::Set {
                 set: uid,
                 island: 0,
                 list: Some(MeshOverlapList::Skip),
@@ -489,7 +466,7 @@ fn the_uv_map_shows_the_preferred_and_skipped_islands() {
         let at = map_point(&h, 0.5, 0.4);
         move_to(&h, at);
         h.run();
-        assert_eq!(h.state().state.bake.map_hover, Some(0));
+        assert_eq!(h.bake().map_hover, Some(0));
         let rect = yolu_app::windows::window_rect(&h.ctx, "bake").unwrap();
         crate::common::shot::region(
             &mut h,
@@ -504,11 +481,11 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
     for lang in Lang::ALL {
         let mut h = shown_model(lang);
         counted(&mut h);
-        h.state_mut().state.tool = Tool::PolygonFill;
-        h.state_mut().state.bake_input().unwrap();
+        h.set_tool(Tool::PolygonFill);
+        h.app_mut().bake_input().unwrap();
         h.run();
         let rect = canvas_rect(&h);
-        let view = h.state().state.view.view(rect, 64, 64);
+        let view = h.view().view(rect, 64, 64);
         let at = view.to_screen(32.0, 26.0);
         let right = |h: &mut Harness<'_, YoluApp>, p: egui::Pos2| {
             press(h, p, egui::PointerButton::Secondary);
@@ -533,63 +510,53 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         assert_eq!(island_menu(&h), Some((2, false, false)), "次のアイランド");
         let item = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake")).center();
         click(&mut h, item);
-        assert!(h.state().state.doc.bake_priority().preferred().contains(&2));
-        assert_eq!(h.state().state.doc.undo_count(), 1);
+        assert!(h.doc().bake_priority().preferred().contains(&2));
+        assert_eq!(h.doc().undo_count(), 1);
         // チェックのある項目を選ぶと外す
         right(&mut h, at);
         right(&mut h, at);
         assert_eq!(island_menu(&h), Some((2, false, false)));
         let item = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake")).center();
         click(&mut h, item);
-        assert!(h.state().state.doc.bake_priority().preferred().is_empty());
+        assert!(h.doc().bake_priority().preferred().is_empty());
         // 何も無い所では開かない
         let empty = view.to_screen(60.0, 60.0);
         right(&mut h, empty);
         assert_eq!(island_menu(&h), None);
         // ほかのツールでは開かない（右ボタンはスポイトになり、透明の所を取ろうとした知らせが出る。あとの絵に写らないよう、前の知らせへ戻す）
         let (message, toast) = {
-            let s = &h.state().state;
-            (s.message.clone(), s.toast.clone())
+            let s = h.app();
+            (s.message().to_owned(), s.toast().clone())
         };
-        h.state_mut().state.tool = Tool::Brush;
+        h.set_tool(Tool::Brush);
         h.run();
         right(&mut h, at);
         assert_eq!(island_menu(&h), None);
         {
-            let s = &mut h.state_mut().state;
-            s.message = message;
-            s.toast = toast;
+            let s = h.app_mut();
+            *s.message_mut() = message;
+            *s.toast_mut() = toast;
         }
         // 3D: 動かさずに離した右クリックは当たった面のアイランド（+X の四角）のメニュー、3D の面を強調する。右ドラッグは回すだけ
-        h.state_mut().state.tool = Tool::PolygonFill;
+        h.set_tool(Tool::PolygonFill);
         {
-            let s = &mut h.state_mut().state;
-            s.view3d.camera.yaw = 0.0;
-            s.view3d.camera.pitch = 0.0;
+            let s = h.app_mut();
+            s.view3d_mut().camera.yaw = 0.0;
+            s.view3d_mut().camera.pitch = 0.0;
         }
         click_tab(&mut h, yolu_app::Tab::View3d);
         h.run();
         let rect = h.state().view3d_rect().expect("3D のタブを描いた");
         let at = {
-            let v = h
-                .state()
-                .state
-                .view3d
-                .camera
-                .view(rect.width(), rect.height());
+            let v = h.view3d().camera.view(rect.width(), rect.height());
             let q = v
                 .to_screen(yolu_core::glam::Vec3::new(2.0, 1.0, 0.0))
                 .expect("カメラの前");
             egui::pos2(rect.left() + q.x, rect.top() + q.y)
         };
         right(&mut h, at);
-        assert_eq!(
-            island_menu(&h),
-            Some((2, false, true)),
-            "{}",
-            h.state().state.message
-        );
-        let hover = h.state().state.region.hover.as_ref().expect("強調");
+        assert_eq!(island_menu(&h), Some((2, false, true)), "{}", h.message());
+        let hover = h.region().hover.as_ref().expect("強調");
         assert!(hover.on_surface && hover.tris.len() == 2);
         let prefer = menu_item(&mut h, lang.pick("優先して焼く", "Prefer in Bake"));
         h.event(egui::Event::PointerMoved(prefer.center()));
@@ -604,7 +571,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
         assert_eq!(island_menu(&h), None);
-        let yaw = h.state().state.view3d.camera.yaw;
+        let yaw = h.view3d().camera.yaw;
         press(&h, at, egui::PointerButton::Secondary);
         h.step();
         move_to(&h, at + egui::vec2(60.0, 0.0));
@@ -616,6 +583,6 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         );
         h.run();
         assert_eq!(island_menu(&h), None, "回しただけ");
-        assert_ne!(h.state().state.view3d.camera.yaw, yaw);
+        assert_ne!(h.view3d().camera.yaw, yaw);
     }
 }

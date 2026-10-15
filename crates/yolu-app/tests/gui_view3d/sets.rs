@@ -1,5 +1,6 @@
 //! テクスチャセット（マテリアルごとの文書）のパネル・切り替え・読むだけのセット・.ylp を開く（egui_kittest）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::Key;
@@ -73,12 +74,7 @@ fn give_model(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, materials: V
 }
 
 fn set_names(h: &egui_kittest::Harness<'_, yolu_app::YoluApp>) -> Vec<String> {
-    h.state()
-        .state
-        .sets
-        .iter()
-        .map(|s| s.name.clone())
-        .collect()
+    h.sets().iter().map(|s| s.name.clone()).collect()
 }
 
 #[test]
@@ -96,19 +92,15 @@ fn the_list_switches_the_canvas_and_the_layers_per_material() {
         ],
     );
     assert_eq!(set_names(&h), ["Skin", "Hair", "Unassigned"]);
-    assert_eq!(
-        h.state().state.doc.width(),
-        256,
-        "描いたセットの大きさは変えない"
-    );
+    assert_eq!(h.doc().width(), 256, "描いたセットの大きさは変えない");
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 255]);
 
     // Hair を選ぶと、キャンバスとレイヤーはその文書
     h.get_by_label("Hair").click();
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.sets.current_index(), 1);
-    assert_eq!((s.doc.width(), s.doc.height()), (512, 512));
+    let s = h.app();
+    assert_eq!(s.sets().current_index(), 1);
+    assert_eq!((s.doc().width(), s.doc().height()), (512, 512));
     assert!(h.state().display().stats.last_rebuilt || h.state().display().stats.total_tiles > 0);
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 0], "Hair はまだ透明");
     let c = canvas_rect(&h).center();
@@ -116,22 +108,22 @@ fn the_list_switches_the_canvas_and_the_layers_per_material() {
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 255]);
     h.get_by_label("新規レイヤー").click();
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.doc.layers().len(), 2);
+    let s = h.app();
+    assert_eq!(s.doc().layers().len(), 2);
     assert_eq!(s.set_doc(0).layers().len(), 1, "レイヤーは今のセットに足す");
 
     // Skin へ戻ると、その絵と選んでいたレイヤー
     h.get_by_label("Skin").click();
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.doc.width(), 256);
-    assert_eq!(s.doc.layers().len(), 1);
+    let s = h.app();
+    assert_eq!(s.doc().width(), 256);
+    assert_eq!(s.doc().layers().len(), 1);
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 255]);
     // 取り消しはセットごと（Skin の線だけを戻す）
-    h.state_mut().state.apply(Action::Undo);
+    h.act(Action::Undo);
     h.run();
-    let s = &h.state().state;
-    assert_eq!(composite_pixel(&s.doc, 128, 128), [0, 0, 0, 0]);
+    let s = h.app();
+    assert_eq!(composite_pixel(s.doc(), 128, 128), [0, 0, 0, 0]);
     assert!(
         layer_has_pixels(&s.set_doc(1).layers()[0]),
         "Hair の線は残る"
@@ -157,18 +149,15 @@ fn rename_hide_and_the_header_show_the_set() {
         h.step();
     }
     h.run();
-    assert_eq!(
-        h.state().state.ui.renaming_set,
-        h.state().state.sets.get(1).map(|s| s.uid)
-    );
+    assert_eq!(h.ui().renaming_set, h.sets().get(1).map(|s| s.uid));
     key(&h, Key::A, egui::Modifiers::COMMAND);
     h.event(egui::Event::Text("髪".into()));
     key(&h, Key::Enter, egui::Modifiers::NONE);
     h.run();
-    let hair = h.state().state.sets.get(1).unwrap();
+    let hair = h.sets().get(1).unwrap();
     assert_eq!(hair.name, "髪");
     assert!(!hair.auto_name);
-    assert!(h.state().state.modified);
+    assert!(h.modified());
     // 目
     let uid = hair.uid;
     let eyes: Vec<egui::Rect> = h
@@ -177,7 +166,7 @@ fn rename_hide_and_the_header_show_the_set() {
         .collect();
     assert_eq!(eyes.len(), 2);
     click(&mut h, eyes[1].center());
-    let hair = h.state().state.sets.by_uid(uid).unwrap();
+    let hair = h.sets().by_uid(uid).unwrap();
     assert!(!hair.visible);
     let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
     crate::common::shot::region(&mut h, "texture_sets_renamed_hidden", rect);
@@ -224,7 +213,7 @@ fn every_state_of_a_set_has_its_icon() {
         ],
         0,
     );
-    h.state_mut().state.replace_sets(sets, doc);
+    h.app_mut().replace_sets(sets, doc);
     give_model(
         &mut h,
         vec![
@@ -234,17 +223,17 @@ fn every_state_of_a_set_has_its_icon() {
         ],
     );
     assert_eq!(set_names(&h), ["Body", "Face", "Old", "Hair"]);
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(
-        s.sets.get(2).unwrap().bound,
+        s.sets().get(2).unwrap().bound,
         None,
         "モデルに無い Old は残る"
     );
     assert_eq!(s.set_for_material(2), Some(3));
-    let uid = s.sets.get(0).unwrap().uid;
-    h.state_mut().state.apply(Action::ToggleSetVisible(uid));
+    let uid = s.sets().get(0).unwrap().uid;
+    h.act(Action::ToggleSetVisible(uid));
     h.run();
-    let icons = |i| yolu_app::panels::texture_sets::set_state(&h.state().state, i).map(|s| s.icon);
+    let icons = |i| yolu_app::panels::texture_sets::set_state(h.app(), i).map(|s| s.icon);
     assert_eq!(icons(0), Some("visibility_off"));
     assert_eq!(icons(1), Some("lock"));
     assert_eq!(icons(2), Some("link_off"));
@@ -267,23 +256,23 @@ fn read_only_sets_refuse_painting_and_layer_edits() {
         )],
         0,
     );
-    h.state_mut().state.replace_sets(sets, doc);
+    h.app_mut().replace_sets(sets, doc);
     h.run();
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
-    let s = &h.state().state;
+    let s = h.app();
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 0]);
-    assert!(s.message.contains("読むだけ"), "{}", s.message);
-    assert!(!s.doc.can_undo());
+    assert!(s.message().contains("読むだけ"), "{}", s.message());
+    assert!(!s.doc().can_undo());
     for action in [Action::NewLayer, Action::DeleteLayer, Action::Undo] {
-        h.state_mut().state.apply(action);
-        assert_eq!(h.state().state.doc.layers().len(), 1);
-        assert!(h.state().state.message.contains("フィルター"));
+        h.act(action);
+        assert_eq!(h.doc().layers().len(), 1);
+        assert!(h.message().contains("フィルター"));
     }
-    let uid = h.state().state.sets.current().uid;
-    assert!(h.state_mut().state.rename_set(uid, "x").is_err());
-    h.state_mut().state.apply(Action::StartRenameSet(uid));
-    assert_eq!(h.state().state.ui.renaming_set, None);
+    let uid = h.sets().current().uid;
+    assert!(h.app_mut().rename_set(uid, "x").is_err());
+    h.act(Action::StartRenameSet(uid));
+    assert_eq!(h.ui().renaming_set, None);
     // レイヤーのパネルの操作は押せない
     assert!(h
         .get_by_label("新規レイヤー")
@@ -295,11 +284,11 @@ fn read_only_sets_refuse_painting_and_layer_edits() {
 
 /// 試しの立方体のセットを、位置のマップ 1 枚だけ CPU で焼いた状態にする（ウィンドウの外の、最小のベイク）。
 fn bake_current_set(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>) {
-    let s = &mut h.state_mut().state;
-    s.bake.backend = yolu_app::bake::BakeBackend::Cpu;
-    s.bake.settings.maps = vec![yolu_core::mesh_maps::MeshMapKind::Position];
-    s.bake.settings.padding = 4;
-    s.apply(Action::Bake(yolu_app::bake::BakeAction::Start));
+    let s = h.app_mut();
+    s.bake_mut().backend = yolu_app::bake::BakeBackend::Cpu;
+    s.bake_mut().settings.maps = vec![yolu_core::mesh_maps::MeshMapKind::Position];
+    s.bake_mut().settings.padding = 4;
+    s.act(Action::Bake(yolu_app::bake::BakeAction::Start));
     s.wait_bake();
     h.run();
 }
@@ -308,10 +297,10 @@ fn bake_current_set(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>) {
 fn the_bake_button_sits_in_the_texture_set_bar_next_to_the_configuration_and_opens_the_window() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 256);
-        h.state_mut().state.lang = lang;
+        h.set_lang(lang);
         h.run();
         let name = lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…");
-        let entrance = bake_entrance(&h.state().state);
+        let entrance = bake_entrance(h.app());
         // まだ焼いていないセット: 印と、理由（ツールチップの 2 行目。名前の行の後）
         assert!(entrance.marked, "{lang:?}");
         let lines: Vec<&str> = entrance.tooltip.lines().collect();
@@ -331,16 +320,16 @@ fn the_bake_button_sits_in_the_texture_set_bar_next_to_the_configuration_and_ope
             "{bake:?} {configure:?}"
         );
         // 押すとベイクのウィンドウが開く（メニューの項目と同じ操作）
-        assert!(h.state().state.bake.window.is_none());
+        assert!(h.bake().window.is_none());
         click(&mut h, bake.center());
-        assert!(h.state().state.bake.window.is_some(), "{lang:?}");
+        assert!(h.bake().window.is_some(), "{lang:?}");
     }
 }
 
 /// テクスチャセットのパネルだけを `width` の幅で描く。
 fn set_panel(width: f32, lang: Lang) -> egui_kittest::Harness<'static, yolu_app::state::AppState> {
     let mut state = yolu_app::state::AppState::new(64, 64);
-    state.lang = lang;
+    state.set_lang(lang);
     let mut ready = false;
     let mut h = gpu_thread::builder()
         .with_size(egui::vec2(width, 200.0))
@@ -429,33 +418,28 @@ fn the_bar_buttons_never_overlap_and_the_bake_button_leaves_when_the_panel_is_to
 #[test]
 fn the_bake_mark_follows_the_current_set_and_goes_once_that_set_is_baked() {
     let mut h = app(1280.0, 800.0, 128);
-    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.act(Action::LoadDemoModel);
     h.run();
-    let marked =
-        |h: &egui_kittest::Harness<'_, yolu_app::YoluApp>| bake_entrance(&h.state().state).marked;
+    let marked = |h: &egui_kittest::Harness<'_, yolu_app::YoluApp>| bake_entrance(h.app()).marked;
     assert!(marked(&h), "焼く前");
     bake_current_set(&mut h);
-    let baked = bake_entrance(&h.state().state);
+    let baked = bake_entrance(h.app());
     assert!(!baked.marked, "焼いたセットに印は無い");
     assert_eq!(baked.tooltip, "メッシュマップをベイク…", "理由の行も無い");
     // ボタンは焼いたあともウィンドウを開く
     let at = h.get_by_label(&baked.tooltip).rect().center();
     click(&mut h, at);
-    assert!(h.state().state.bake.window.is_some());
-    h.state_mut()
-        .state
-        .apply(Action::Bake(yolu_app::bake::BakeAction::CloseWindow));
+    assert!(h.bake().window.is_some());
+    h.act(Action::Bake(yolu_app::bake::BakeAction::CloseWindow));
     // 足した空のセットは、ほかのセットが焼けていても印が付く。戻せば消える
-    let first = h.state().state.sets.current().uid;
-    h.state_mut()
-        .state
-        .apply(Action::Project(yolu_app::newproject::NpAction::AddSet));
-    let second = h.state().state.sets.iter().last().unwrap().uid;
+    let first = h.sets().current().uid;
+    h.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    let second = h.sets().iter().last().unwrap().uid;
     assert_ne!(first, second);
-    h.state_mut().state.apply(Action::SelectSet(second));
+    h.act(Action::SelectSet(second));
     h.run();
     assert!(marked(&h), "足したセット");
-    h.state_mut().state.apply(Action::SelectSet(first));
+    h.act(Action::SelectSet(first));
     h.run();
     assert!(!marked(&h), "焼いたセットへ戻る");
 }
@@ -488,11 +472,11 @@ fn snapshot_set_bar(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, lang: 
 fn snapshot_the_bake_button_marked_with_its_reason_and_unmarked_once_baked() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 128);
-        h.state_mut().state.lang = lang;
-        h.state_mut().state.apply(Action::LoadDemoModel);
+        h.set_lang(lang);
+        h.act(Action::LoadDemoModel);
         h.run();
         let at = h
-            .get_by_label(&bake_entrance(&h.state().state).tooltip)
+            .get_by_label(&bake_entrance(h.app()).tooltip)
             .rect()
             .center();
         hover_and_wait(&mut h, at);
@@ -504,7 +488,7 @@ fn snapshot_the_bake_button_marked_with_its_reason_and_unmarked_once_baked() {
     }
     // ポインタを乗せない 2 枚（印の有る・無い）。アイコンと印がポインタに隠れない
     let mut h = app(1280.0, 800.0, 128);
-    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.act(Action::LoadDemoModel);
     h.run();
     snapshot_set_bar(&mut h, Lang::Ja, "texture_sets_bake_button_marked");
     bake_current_set(&mut h);
@@ -514,20 +498,20 @@ fn snapshot_the_bake_button_marked_with_its_reason_and_unmarked_once_baked() {
 #[test]
 fn the_bake_button_cannot_be_pressed_while_drawing() {
     let mut h = app(1280.0, 800.0, 128);
-    let entrance = bake_entrance(&h.state().state);
+    let entrance = bake_entrance(h.app());
     assert!(!h
         .get_by_label(&entrance.tooltip)
         .accesskit_node()
         .is_disabled());
-    let layer = h.state().state.selected_layer.unwrap();
-    let brush = h.state().state.stroke_settings(false);
-    let stroke = h.state_mut().state.doc.begin_stroke(layer, &brush).unwrap();
+    let layer = h.selected_layer().unwrap();
+    let brush = h.app().stroke_settings(false);
+    let stroke = h.doc_mut().begin_stroke(layer, &brush).unwrap();
     h.run();
     assert!(h
         .get_by_label(&entrance.tooltip)
         .accesskit_node()
         .is_disabled());
-    h.state_mut().state.doc.cancel_stroke(stroke);
+    h.doc_mut().cancel_stroke(stroke);
 }
 
 #[test]
@@ -620,18 +604,18 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
     let before = std::fs::read(&path).unwrap();
     let original = read_project(&path);
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     h.run();
     assert_eq!(set_names(&h), ["Skin", "Cloth", "Skin 2"]);
-    let s = &h.state().state;
-    assert_eq!(s.project_name, "format6");
-    assert!(!s.modified);
+    let s = h.app();
+    assert_eq!(s.project_name(), "format6");
+    assert!(!s.modified());
     assert_eq!(
-        s.project.as_ref().unwrap().format(),
+        s.project().as_ref().unwrap().format(),
         6,
         "開いただけでは形式を変えない"
     );
-    for (i, set) in s.sets.iter().enumerate() {
+    for (i, set) in s.sets().iter().enumerate() {
         assert!(set.read_only.is_none(), "core が持つ中身だけなので描ける");
         assert_eq!(
             set.material,
@@ -643,7 +627,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
     // 見せている絵は、保存した合成の PNG と同じ画素（PNG は上の行から、文書は下の行から）
     let png = image::load_from_memory(&zip_entry(
         &path,
-        &format!("sets/{}/composite/Color.png", s.sets.get(0).unwrap().id),
+        &format!("sets/{}/composite/Color.png", s.sets().get(0).unwrap().id),
     ))
     .unwrap()
     .to_rgba8();
@@ -651,21 +635,21 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
         .map(|i| (i % 512, i / 512))
         .find(|&(x, y)| png.get_pixel(x, y)[3] == 255)
         .expect("不透明の画素がある");
-    assert_eq!(composite_pixel(&s.doc, x, 511 - y), png.get_pixel(x, y).0);
+    assert_eq!(composite_pixel(s.doc(), x, 511 - y), png.get_pixel(x, y).0);
 
     // Skin に描いて Ctrl+S
     let c = canvas_rect(&h).center();
-    h.state_mut().state.color.set_main([1.0, 0.0, 1.0, 1.0]);
+    h.color_mut().set_main([1.0, 0.0, 1.0, 1.0]);
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
-    assert!(h.state().state.modified);
-    let painted = composite_pixel(&h.state().state.doc, 256, 256);
+    assert!(h.modified());
+    let painted = composite_pixel(h.doc(), 256, 256);
     assert_eq!(painted, [255, 0, 255, 255]);
     key(&h, Key::S, egui::Modifiers::COMMAND);
     h.run();
-    let s = &h.state().state;
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    assert_eq!(s.rewritten_sets, 1, "{}", s.message);
-    assert!(!s.modified);
+    let s = h.app();
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
+    assert_eq!(s.rewritten_sets(), 1, "{}", s.message());
+    assert!(!s.modified());
     let saved = read_project(&path);
     assert_eq!(saved.info().format, 7);
     assert_eq!(saved.info().saved_by.as_ref().unwrap().app, "YoluPainter");
@@ -676,7 +660,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
             .unwrap(),
         yolu_app::engine::Rgba8::new(255, 0, 255, 255)
     );
-    assert_eq!(doc.id(), s.doc.id(), "文書とレイヤーの ID を保つ");
+    assert_eq!(doc.id(), s.doc().id(), "文書とレイヤーの ID を保つ");
     for set in &original.sets()[1..] {
         let n = format!("sets/{}/document.utpaint", set.id);
         assert_eq!(
@@ -691,23 +675,12 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
 
     // 開き直すと、描いた所がある
     let mut again = app(1280.0, 800.0, 256);
-    again
-        .state_mut()
-        .state
-        .apply(Action::OpenProject(path.clone()));
+    again.act(Action::OpenProject(path.clone()));
     again.run();
-    assert_eq!(
-        composite_pixel(&again.state().state.doc, 256, 256),
-        [255, 0, 255, 255]
-    );
+    assert_eq!(composite_pixel(again.doc(), 256, 256), [255, 0, 255, 255]);
     // 2 回目の保存は描いていなければ正本を書き直さない
-    h.state_mut().state.apply(Action::SaveProject);
-    assert_eq!(
-        h.state().state.rewritten_sets,
-        0,
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProject);
+    assert_eq!(h.rewritten_sets(), 0, "{}", h.message());
 }
 
 #[test]
@@ -729,12 +702,12 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
     .unwrap();
     let original = read_project(&path);
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.sets.len(), 2);
+    let s = h.app();
+    assert_eq!(s.sets().len(), 2);
     let reason = s
-        .sets
+        .sets()
         .get(0)
         .unwrap()
         .read_only
@@ -748,28 +721,24 @@ fn sets_core_cannot_hold_are_read_only_and_kept_byte_for_byte() {
         "フィルターは core が持つ: {reason}"
     );
     assert!(
-        s.sets.get(1).unwrap().read_only.is_none(),
+        s.sets().get(1).unwrap().read_only.is_none(),
         "Trim は core が持つ中身だけ"
     );
     assert!(
-        s.message
+        s.message()
             .contains("読むだけで開いたテクスチャセットがあります"),
         "{}",
-        s.message
+        s.message()
     );
     // 描けない
     let c = canvas_rect(&h).center();
     let was = canvas_pixel(&h, c);
     drag(&mut h, &[offset(c, -20.0, 5.0), offset(c, 20.0, 5.0)]);
     assert_eq!(canvas_pixel(&h, c), was);
-    assert!(h.state().state.message.contains("読むだけ"));
+    assert!(h.message().contains("読むだけ"));
     // 保存しても、正本・ほかのチャンネルの合成・資源はバイト列のまま（形式だけ 7 へ）
-    h.state_mut().state.apply(Action::SaveProject);
-    assert!(
-        h.state().state.message.starts_with("保存しました"),
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProject);
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     let saved = read_project(&path);
     assert_eq!(saved.info().format, 7);
     for (name, bytes) in original.migrated_entries() {
@@ -803,12 +772,12 @@ fn sets_with_effects_that_cannot_work_yet_are_read_only_and_working_ones_are_edi
     let path = dir.0.join("effects.ylp");
     effects_project(&path, "effects-generators", "effects-filters");
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.sets.len(), 2);
+    let s = h.app();
+    assert_eq!(s.sets().len(), 2);
     let reason = s
-        .sets
+        .sets()
         .get(0)
         .unwrap()
         .read_only
@@ -821,22 +790,18 @@ fn sets_with_effects_that_cannot_work_yet_are_read_only_and_working_ones_are_edi
         "理由は状態だけで、手順を言わない: {reason}"
     );
     assert!(
-        s.sets.get(1).unwrap().read_only.is_none(),
+        s.sets().get(1).unwrap().read_only.is_none(),
         "フィルターだけの文書は評価されるので編集できる"
     );
     assert!(
-        s.message.contains("読むだけのテクスチャセットがあります"),
+        s.message().contains("読むだけのテクスチャセットがあります"),
         "{}",
-        s.message
+        s.message()
     );
     // 読むだけのセットは保存しても元の正本のまま、編集できるセットは書き直して効果を合成の PNG に入れる
     let original = read_project(&path);
-    h.state_mut().state.apply(Action::SaveProject);
-    assert!(
-        h.state().state.message.starts_with("保存しました"),
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProject);
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     let saved = read_project(&path);
     let id0 = &original.sets()[0].id;
     for name in ["document.utpaint", "composite/Color.png"] {
@@ -856,13 +821,13 @@ fn saving_names_the_effects_that_are_not_in_the_composite_png() {
     let path = dir.0.join("effects.ylp");
     effects_project(&path, "effects-paths", "effects-filters");
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     h.run();
-    assert!(h.state().state.sets.get(0).unwrap().read_only.is_none());
+    assert!(h.sets().get(0).unwrap().read_only.is_none());
     {
         use yolu_core::generator::{self, Settings};
         use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
-        let doc = h.state_mut().state.set_doc_mut(0);
+        let doc = h.app_mut().set_doc_mut(0);
         let layer = doc.layers()[0].id();
         let mut g = Settings::new(generator::Kind::Thickness);
         g.blend = generator::Blend::Replace;
@@ -873,8 +838,8 @@ fn saving_names_the_effects_that_are_not_in_the_composite_png() {
         )
         .unwrap();
     }
-    h.state_mut().state.apply(Action::SaveProject);
-    let message = h.state().state.message.clone();
+    h.act(Action::SaveProject);
+    let message = h.message().to_owned();
     assert!(message.starts_with("保存しました"), "{message}");
     assert!(
         message.contains("効いていない効果 1 件は合成の PNG に入っていません"),
@@ -886,12 +851,10 @@ fn saving_names_the_effects_that_are_not_in_the_composite_png() {
     );
     // 設定は正本に残る（開き直すと、効かない効果があるので読むだけで、理由に出る）
     let mut again = app(1280.0, 800.0, 256);
-    again.state_mut().state.apply(Action::OpenProject(path));
+    again.act(Action::OpenProject(path));
     again.run();
     let reason = again
-        .state()
-        .state
-        .sets
+        .sets()
         .get(0)
         .unwrap()
         .read_only
@@ -945,23 +908,18 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
     let path = dir.0.join("m2.ylp");
     let natives = m2_project(&path);
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.sets.len(), 2);
-    for set in s.sets.iter() {
+    let s = h.app();
+    assert_eq!(s.sets().len(), 2);
+    for set in s.sets().iter() {
         assert!(set.read_only.is_none(), "{:?}", set.read_only);
     }
     // 描かずに保存しても正本は書き直さない（バイト列のまま）
-    h.state_mut().state.apply(Action::SaveProject);
-    assert_eq!(
-        h.state().state.rewritten_sets,
-        0,
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProject);
+    assert_eq!(h.rewritten_sets(), 0, "{}", h.message());
     // レイヤーの表示を切ると、そのセットだけ正本を書き直す。グループ・マスク・チャンネルごとの合成・調整は残り、もう 1 つのセットはバイト列のまま
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let target = doc
         .layers()
         .iter()
@@ -971,13 +929,13 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
     let mut expected = natives[0].to_core().unwrap();
     let visible = expected.layer(target).unwrap().visible();
     expected.set_layer_visible(target, !visible).unwrap();
-    h.state_mut().state.apply(Action::ToggleVisible(target));
+    h.act(Action::ToggleVisible(target));
     h.run();
-    assert!(h.state().state.modified);
-    h.state_mut().state.apply(Action::SaveProject);
-    let message = h.state().state.message.clone();
+    assert!(h.modified());
+    h.act(Action::SaveProject);
+    let message = h.message().to_owned();
     assert!(message.starts_with("保存しました"), "{message}");
-    assert_eq!(h.state().state.rewritten_sets, 1, "{message}");
+    assert_eq!(h.rewritten_sets(), 1, "{message}");
     let saved = read_project(&path);
     assert_eq!(
         saved.sets()[0].document.to_bytes().unwrap(),
@@ -1011,8 +969,8 @@ fn sets_with_groups_masks_and_channel_blends_open_editable_and_save_back_without
         );
     }
     // 1 回 Undo して保存すると、元の正本に戻る
-    h.state_mut().state.apply(Action::Undo);
-    h.state_mut().state.apply(Action::SaveProject);
+    h.act(Action::Undo);
+    h.act(Action::SaveProject);
     assert_eq!(
         read_project(&path).sets()[0].document.to_bytes().unwrap(),
         natives[0].to_bytes()
@@ -1027,15 +985,13 @@ fn a_new_project_saves_as_and_then_overwrites_with_a_backup() {
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
     // 保存（まだファイルが無い）は別名で保存のウィンドウを頼む
-    h.state_mut().state.apply(Action::SaveProject);
-    assert_eq!(h.state().state.dialog_request, Some(DialogRequest::SaveAs));
-    h.state_mut().state.dialog_request = None;
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    let s = &h.state().state;
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
-    assert_eq!(s.project_name, "新しい");
+    h.act(Action::SaveProject);
+    assert_eq!(*h.dialog_request(), Some(DialogRequest::SaveAs));
+    *h.dialog_request_mut() = None;
+    h.act(Action::SaveProjectAs(path.clone()));
+    let s = h.app();
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
+    assert_eq!(s.project_name(), "新しい");
     let saved = read_project(&path);
     assert_eq!(saved.sets().len(), 1);
     let set = &saved.sets()[0];
@@ -1047,19 +1003,15 @@ fn a_new_project_saves_as_and_then_overwrites_with_a_backup() {
     drag(&mut h, &[offset(c, 0.0, -30.0), offset(c, 0.0, 30.0)]);
     key(&h, Key::S, egui::Modifiers::COMMAND);
     h.run();
-    assert!(
-        h.state().state.message.contains("前の版は"),
-        "{}",
-        h.state().state.message
-    );
+    assert!(h.message().contains("前の版は"), "{}", h.message());
     assert_eq!(backups(&path).len(), 1);
     // 新規プロジェクトで空に戻る
-    h.state_mut().state.apply(Action::NewProject);
-    let s = &h.state().state;
-    assert!(s.project.is_none());
-    assert_eq!(s.project_name, "名称未設定");
-    assert_eq!(s.doc.width(), yolu_app::state::DEFAULT_DOCUMENT_SIZE);
-    assert!(!layer_has_pixels(&s.doc.layers()[0]));
+    h.act(Action::NewProject);
+    let s = h.app();
+    assert!(s.project().is_none());
+    assert_eq!(s.project_name(), "名称未設定");
+    assert_eq!(s.doc().width(), yolu_app::state::DEFAULT_DOCUMENT_SIZE);
+    assert!(!layer_has_pixels(&s.doc().layers()[0]));
 }
 
 #[test]
@@ -1069,28 +1021,18 @@ fn saving_never_clobbers_what_it_cannot_read_or_what_changed_outside() {
     // .ylp でないファイルへの別名で保存は断る（中身はそのまま）
     let other = dir.0.join("notes.ylp");
     std::fs::write(&other, b"not a project").unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(other.clone()));
-    assert!(
-        h.state().state.message.contains("保存できません"),
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProjectAs(other.clone()));
+    assert!(h.message().contains("保存できません"), "{}", h.message());
     assert_eq!(std::fs::read(&other).unwrap(), b"not a project");
-    assert!(h.state().state.project.is_none());
+    assert!(h.project().is_none());
     // 開いた後に外で書き換えられたら断る
     let path = dir.0.join("format6.ylp");
     std::fs::copy(fixture("format6.ylp"), &path).unwrap();
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    h.act(Action::OpenProject(path.clone()));
     let outside = std::fs::read(fixture("format5-shared-materials.ylp")).unwrap();
     std::fs::write(&path, &outside).unwrap();
-    h.state_mut().state.apply(Action::SaveProject);
-    assert!(
-        h.state().state.message.contains("保存できません"),
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProject);
+    assert!(h.message().contains("保存できません"), "{}", h.message());
     assert_eq!(
         std::fs::read(&path).unwrap(),
         outside,
@@ -1109,14 +1051,8 @@ fn sets_made_from_a_model_save_their_material_keys() {
         asset: Some(("0123456789abcdef0123456789abcdef".into(), 2100000)),
     };
     give_model(&mut h, vec![skin, material(None, 256, true)]);
-    h.state_mut()
-        .state
-        .apply(Action::SaveProjectAs(path.clone()));
-    assert!(
-        h.state().state.message.starts_with("保存しました"),
-        "{}",
-        h.state().state.message
-    );
+    h.act(Action::SaveProjectAs(path.clone()));
+    assert!(h.message().starts_with("保存しました"), "{}", h.message());
     let saved = read_project(&path);
     let names: Vec<&str> = saved.sets().iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["Skin", "Unassigned"]);
@@ -1134,18 +1070,15 @@ fn sets_made_from_a_model_save_their_material_keys() {
     assert_eq!(saved.sets()[1].document.width(), 256);
     // 開き直してモデルを受けると、同じセットに付く（新しいセットは作らない）
     let mut again = app(1280.0, 800.0, 256);
-    again
-        .state_mut()
-        .state
-        .apply(Action::OpenProject(path.clone()));
+    again.act(Action::OpenProject(path.clone()));
     let mut skin = material(Some("名前を変えた"), 512, true);
     skin.key = MaterialKey::Material {
         name: "名前を変えた".into(),
         asset: Some(("0123456789abcdef0123456789abcdef".into(), 2100000)),
     };
     give_model(&mut again, vec![material(None, 256, true), skin]);
-    let s = &again.state().state;
-    assert_eq!(s.sets.len(), 2);
+    let s = again.app();
+    assert_eq!(s.sets().len(), 2);
     assert_eq!(s.set_for_material(1), Some(0), "識別子で付く");
     assert_eq!(s.set_for_material(0), Some(1));
 }
@@ -1156,14 +1089,14 @@ fn a_broken_file_changes_nothing_and_says_why() {
     let path = dir.0.join("broken.ylp");
     std::fs::write(&path, b"PK\x03\x04 not really").unwrap();
     let mut h = app(1280.0, 800.0, 256);
-    let doc = h.state().state.doc.id();
-    h.state_mut().state.apply(Action::OpenProject(path.clone()));
+    let doc = h.doc().id();
+    h.act(Action::OpenProject(path.clone()));
     h.run();
-    let s = &h.state().state;
-    assert_eq!(s.doc.id(), doc);
-    assert_eq!(s.sets.len(), 1);
-    assert!(s.project.is_none());
-    assert!(s.message.contains("開けません"), "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.doc().id(), doc);
+    assert_eq!(s.sets().len(), 1);
+    assert!(s.project().is_none());
+    assert!(s.message().contains("開けません"), "{}", s.message());
 }
 
 #[test]
@@ -1171,8 +1104,8 @@ fn open_from_the_menu_and_the_keys_asks_for_a_file() {
     let mut h = app(1280.0, 800.0, 256);
     key(&h, Key::O, egui::Modifiers::COMMAND);
     h.run();
-    assert_eq!(h.state().state.dialog_request, Some(DialogRequest::Open));
-    h.state_mut().state.dialog_request = None;
+    assert_eq!(*h.dialog_request(), Some(DialogRequest::Open));
+    *h.dialog_request_mut() = None;
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     let title = menu_title(&h, "ファイル");
@@ -1180,7 +1113,7 @@ fn open_from_the_menu_and_the_keys_asks_for_a_file() {
     crate::common::shot::region(&mut h, "menu_file", rect);
     let at = popup_item(&h, "開く…").center();
     click(&mut h, at);
-    assert_eq!(h.state().state.dialog_request, Some(DialogRequest::Open));
+    assert_eq!(*h.dialog_request(), Some(DialogRequest::Open));
 }
 
 /// 画面を使わない保存の往復（Windows 向けに組んで wine でも回す。置き換えの rename と前の版の置き場を通す）。
@@ -1192,29 +1125,29 @@ fn headless_open_paint_save_and_reopen() {
     let path = dir.0.join("format6.ylp");
     std::fs::copy(fixture("format6.ylp"), &path).unwrap();
     let mut s = AppState::new(64, 64);
-    s.apply(Action::OpenProject(path.clone()));
-    assert_eq!(s.sets.len(), 3);
-    s.apply(Action::SelectSet(s.sets.get(1).unwrap().uid));
-    s.color.set_main([0.0, 1.0, 0.0, 1.0]);
-    let layer = s.selected_layer.unwrap();
+    s.act(Action::OpenProject(path.clone()));
+    assert_eq!(s.sets().len(), 3);
+    s.act(Action::SelectSet(s.sets().get(1).unwrap().uid));
+    s.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, 100.0, 100.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), 100.0, 100.0, 1.0, DVec2::ZERO)
         .unwrap();
     stroke
-        .add_point(&mut s.doc, 140.0, 100.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), 140.0, 100.0, 1.0, DVec2::ZERO)
         .unwrap();
-    s.doc.end_stroke(stroke).unwrap();
-    s.modified = true;
-    s.apply(Action::SaveProject);
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.set_modified(true);
+    s.act(Action::SaveProject);
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert_eq!(backups(&path).len(), 1);
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(path.clone()));
-    assert_eq!(again.sets.get(1).map(|x| x.name.as_str()), Some("Cloth"));
-    assert_eq!(again.sets.current_index(), 1, "今のセットも保存する");
-    assert_eq!(composite_pixel(&again.doc, 120, 100), [0, 255, 0, 255]);
+    again.act(Action::OpenProject(path.clone()));
+    assert_eq!(again.sets().get(1).map(|x| x.name.as_str()), Some("Cloth"));
+    assert_eq!(again.sets().current_index(), 1, "今のセットも保存する");
+    assert_eq!(composite_pixel(again.doc(), 120, 100), [0, 255, 0, 255]);
 }
 
 // ───────── 退避の保持数・保存先の名前とフォルダー（保存の配線） ─────────
@@ -1222,17 +1155,17 @@ fn headless_open_paint_save_and_reopen() {
 /// 今のレイヤーに短い線を 1 本描いて、変更ありにする（保存のたびに内容が変わる）。
 fn paint_a_stroke(s: &mut yolu_app::state::AppState, x: f64) {
     use yolu_app::engine::DVec2;
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let brush = s.stroke_settings(false);
-    let mut stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let mut stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
     stroke
-        .add_point(&mut s.doc, x, 20.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), x, 20.0, 1.0, DVec2::ZERO)
         .unwrap();
     stroke
-        .add_point(&mut s.doc, x + 6.0, 20.0, 1.0, DVec2::ZERO)
+        .add_point(s.doc_mut(), x + 6.0, 20.0, 1.0, DVec2::ZERO)
         .unwrap();
-    s.doc.end_stroke(stroke).unwrap();
-    s.modified = true;
+    s.doc_mut().end_stroke(stroke).unwrap();
+    s.set_modified(true);
 }
 
 #[test]
@@ -1244,26 +1177,26 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
     let path = dir.0.join("keep.ylp");
     let mut s = AppState::new(64, 64);
     assert_eq!(
-        s.prefs.settings.backups,
+        s.prefs().settings.backups,
         BackupKeep::All,
         "既定はすべて残す"
     );
-    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(2))));
-    s.apply(Action::SaveProjectAs(path.clone()));
-    assert!(s.message.starts_with("保存しました"), "{}", s.message);
+    s.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(2))));
+    s.act(Action::SaveProjectAs(path.clone()));
+    assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert!(
-        !s.message.contains("前の版は"),
+        !s.message().contains("前の版は"),
         "新しく作ったので前の版は無い"
     );
     for i in 0..4 {
         paint_a_stroke(&mut s, 8.0 + 8.0 * i as f64);
-        s.apply(Action::SaveProject);
-        assert!(s.message.starts_with("保存しました"), "{}", s.message);
+        s.act(Action::SaveProject);
+        assert!(s.message().starts_with("保存しました"), "{}", s.message());
         assert!(
-            s.message
+            s.message()
                 .contains("前の版は keep.ylp-backups~ に残しました"),
             "{}",
-            s.message
+            s.message()
         );
     }
     // 4 回の上書きで、残るのは新しい 2 つだけ。今のファイルの 1 つ前の版が必ず入っている
@@ -1276,30 +1209,30 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
         "退避は .ylp として読める"
     );
     // 0: 退避しない（知らせにも出さず、すでにある 2 つは消さない）
-    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
+    s.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
     paint_a_stroke(&mut s, 50.0);
-    s.apply(Action::SaveProject);
+    s.act(Action::SaveProject);
     assert!(
-        s.message.starts_with("保存しました") && !s.message.contains("前の版は"),
+        s.message().starts_with("保存しました") && !s.message().contains("前の版は"),
         "{}",
-        s.message
+        s.message()
     );
     assert_eq!(backups(&path).len(), 2);
     // すべて: 消さずに溜める
-    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::All)));
+    s.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::All)));
     for i in 0..2 {
         paint_a_stroke(&mut s, 20.0 + 8.0 * i as f64);
-        s.apply(Action::SaveProject);
+        s.act(Action::SaveProject);
     }
     assert_eq!(backups(&path).len(), 4);
     // 英語の知らせ
     s.set_language(yolu_app::lang::Lang::En);
     paint_a_stroke(&mut s, 40.0);
-    s.apply(Action::SaveProject);
+    s.act(Action::SaveProject);
     assert!(
-        s.message.contains("Previous version: keep.ylp-backups~."),
+        s.message().contains("Previous version: keep.ylp-backups~."),
         "{}",
-        s.message
+        s.message()
     );
 }
 
@@ -1311,26 +1244,26 @@ fn saving_as_over_another_file_follows_the_setting_too() {
     let dir = TempDir::new("keep-as");
     let (a, b) = (dir.0.join("a.ylp"), dir.0.join("b.ylp"));
     let mut s = AppState::new(64, 64);
-    s.apply(Action::SaveProjectAs(a.clone()));
+    s.act(Action::SaveProjectAs(a.clone()));
     paint_a_stroke(&mut s, 10.0);
-    s.apply(Action::SaveProjectAs(b.clone()));
+    s.act(Action::SaveProjectAs(b.clone()));
     // b は新しい保存先なので退避なし。a に別名で保存し直す（a は上書き）と a の前の版を数に従って残す
-    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
+    s.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(0))));
     paint_a_stroke(&mut s, 20.0);
-    s.apply(Action::SaveProjectAs(a.clone()));
+    s.act(Action::SaveProjectAs(a.clone()));
     assert!(
-        s.message.starts_with("保存しました") && !s.message.contains("前の版は"),
+        s.message().starts_with("保存しました") && !s.message().contains("前の版は"),
         "{}",
-        s.message
+        s.message()
     );
     assert!(backups(&a).is_empty());
-    s.apply(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(1))));
+    s.act(Action::Prefs(PrefsAction::SetBackups(BackupKeep::Count(1))));
     paint_a_stroke(&mut s, 30.0);
-    s.apply(Action::SaveProjectAs(a.clone()));
+    s.act(Action::SaveProjectAs(a.clone()));
     assert!(
-        s.message.contains("前の版は a.ylp-backups~"),
+        s.message().contains("前の版は a.ylp-backups~"),
         "{}",
-        s.message
+        s.message()
     );
     assert_eq!(backups(&a).len(), 1);
 }
@@ -1341,33 +1274,33 @@ fn a_name_without_ylp_is_refused_and_a_missing_folder_is_created() {
     let dir = TempDir::new("names");
     let mut s = AppState::new(64, 64);
     for bad in ["noext", "pic.png", "doc.ylp.bak", "doc.ylp~"] {
-        s.apply(Action::SaveProjectAs(dir.0.join("sub").join(bad)));
+        s.act(Action::SaveProjectAs(dir.0.join("sub").join(bad)));
         assert!(
-            s.message.contains("保存できません") && s.message.contains(".ylp"),
+            s.message().contains("保存できません") && s.message().contains(".ylp"),
             "{bad}: {}",
-            s.message
+            s.message()
         );
-        assert!(s.project.is_none(), "{bad}");
+        assert!(s.project().is_none(), "{bad}");
     }
     assert!(
         !dir.0.join("sub").exists(),
         "断った保存はフォルダーも作らない"
     );
     s.set_language(yolu_app::lang::Lang::En);
-    s.apply(Action::SaveProjectAs(dir.0.join("noext")));
+    s.act(Action::SaveProjectAs(dir.0.join("noext")));
     assert!(
-        s.message.ends_with("(The file name must end with .ylp)."),
+        s.message().ends_with("(The file name must end with .ylp)."),
         "{}",
-        s.message
+        s.message()
     );
     // フォルダーは、なければ保存のときに作る（大文字の拡張子でも保存できる）
     let nested = dir.0.join("a").join("b").join("Deep.YLP");
-    s.apply(Action::SaveProjectAs(nested.clone()));
-    assert!(s.message.starts_with("Saved"), "{}", s.message);
+    s.act(Action::SaveProjectAs(nested.clone()));
+    assert!(s.message().starts_with("Saved"), "{}", s.message());
     assert!(nested.is_file());
-    assert_eq!(s.project_name, "Deep");
+    assert_eq!(s.project_name(), "Deep");
     // 開き直せる
     let mut again = AppState::new(64, 64);
-    again.apply(Action::OpenProject(nested.clone()));
-    assert!(again.project.is_some(), "{}", again.message);
+    again.act(Action::OpenProject(nested.clone()));
+    assert!(again.project().is_some(), "{}", again.message());
 }
