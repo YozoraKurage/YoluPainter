@@ -185,11 +185,14 @@ fn a_merge_beyond_the_tolerance_is_refused_with_the_same_report() {
 
 /// クリッピングされた下のレイヤーへ、クリッピングされていない上のレイヤーを結合すると、上のレイヤーにクリッピングしていた調整レイヤーは
 /// 下のレイヤーの組の下地（結合しないレイヤー）へ移る。その下地の画素は結合したレイヤーのタイルの外にあっても比べ、許容差 0 なら断る。
-#[test]
-fn merging_a_clipping_base_onto_a_clipped_layer_compares_where_its_clipped_layers_move() {
+/// クリッピングされた下のレイヤーへ、クリッピングされていない上のレイヤーを結合すると、上のレイヤーにクリッピングしていた調整レイヤーは
+/// 下のレイヤーの組の下地（base）へ移る。base の出す所（channel の画素）は結合したレイヤーの画素の所ではないので、許容差 0 でも
+/// 見た目の変わる結合を断れること。channel は base の画素と調整の効くチャンネル。
+fn clipping_base_onto_clipped_layer(channel: Channel) {
     let mut d = Document::with_tile_size(64, 64, 16).unwrap();
     let base = d.add_layer("base").unwrap();
-    d.set_pixel(base, 2, 2, Rgba8::new(200, 40, 10, 255))
+    d.set_channel_enabled(base, channel, true).unwrap();
+    d.set_channel_pixel(base, channel, 2, 2, Rgba8::new(200, 40, 10, 255))
         .unwrap();
     let lower = d.add_layer("lower").unwrap();
     d.set_pixel(lower, 50, 50, Rgba8::new(10, 90, 200, 255))
@@ -200,13 +203,13 @@ fn merging_a_clipping_base_onto_a_clipped_layer_compares_where_its_clipped_layer
         .add_adjustment_layer(
             "invert",
             yolu_core::AdjustmentSettings::invert(),
-            None,
+            Some(&[channel]),
             None,
         )
         .unwrap();
     d.set_layer_clipping(invert, true).unwrap();
     d.clear_history().unwrap();
-    let before = d.composite(d.bounds()).unwrap();
+    let before = d.composite_channel(channel, d.bounds()).unwrap();
     let revision = d.revision();
     match d.merge_down(upper, 0) {
         Err(CoreError::MergeAppearance(r)) => assert!(r.max_visible_difference > 0, "{r:?}"),
@@ -214,8 +217,18 @@ fn merging_a_clipping_base_onto_a_clipped_layer_compares_where_its_clipped_layer
     }
     assert_eq!(d.revision(), revision);
     assert_eq!(d.layers().len(), 4);
-    assert_eq!(d.composite(d.bounds()).unwrap(), before);
+    assert_eq!(d.composite_channel(channel, d.bounds()).unwrap(), before);
     // 許容差を問わない結合は通り、見た目の差を報告する
     let r = d.merge_down(upper, 255).unwrap();
     assert!(r.changed_pixels > 0, "{r:?}");
+}
+
+#[test]
+fn merging_a_clipping_base_onto_a_clipped_layer_compares_where_its_clipped_layers_move() {
+    clipping_base_onto_clipped_layer(Channel::Color);
+}
+
+#[test]
+fn merging_a_clipping_base_onto_a_clipped_layer_compares_the_emission_channel_too() {
+    clipping_base_onto_clipped_layer(Channel::Emission);
 }

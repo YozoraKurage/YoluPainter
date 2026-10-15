@@ -2046,15 +2046,16 @@ impl Document {
             Target::Channel(c) if created => Some(c),
             _ => None,
         };
-        if let (Some(c), false) = (created, backwards) {
-            if self.ensure_surface(index, c) {
-                self.mark_layer(index, Some(c));
-            }
-        }
+        // やり直しで作り直した面（断ったら外して、作る前と同じに戻す）
+        let remade = match (created, backwards) {
+            (Some(c), false) => self.ensure_surface(index, c).then_some(c),
+            _ => None,
+        };
         let growth = self.growth_for(index, target);
-        let surface = self
-            .target_surface_mut(index, target)
-            .ok_or(CoreError::Unsupported("面が無い"))?;
+        let Some(surface) = self.target_surface_mut(index, target) else {
+            self.undo_remade_surface(index, remade);
+            return Err(CoreError::Unsupported("面が無い"));
+        };
         let delta: i64 = changes
             .iter()
             .map(|c| {
@@ -2068,7 +2069,10 @@ impl Document {
                 )
             })
             .sum();
-        growth.ensure(surface.allocated_bytes(), delta)?;
+        if let Err(e) = growth.ensure(surface.allocated_bytes(), delta) {
+            self.undo_remade_surface(index, remade);
+            return Err(e);
+        }
         for c in changes {
             surface.restore(
                 c.coord,
@@ -2079,6 +2083,9 @@ impl Document {
                 },
             );
         }
+        if let Some(c) = remade {
+            self.mark_layer(index, Some(c));
+        }
         for c in changes {
             self.mark_target_tile(index, target, c.coord);
         }
@@ -2086,6 +2093,13 @@ impl Document {
             self.drop_empty_created_surface(index, c);
         }
         Ok(())
+    }
+
+    /// restore_tiles がやり直しで作り直した面を、断ったときに外す（面を作ってから予算を確かめるので、断ると面と有効が残る）。
+    fn undo_remade_surface(&mut self, index: usize, remade: Option<Channel>) {
+        if let Some(c) = remade {
+            self.drop_created_surface(index, c, true);
+        }
     }
 
     /// ストロークが作った面が空なら外し、チャンネルを無効に戻す（作る前と同じ合成に）。外したら true。

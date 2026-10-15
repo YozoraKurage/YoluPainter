@@ -222,6 +222,29 @@ fn undoing_a_stroke_that_created_its_surface_restores_the_composite() {
     assert_eq!(metallic(&d), drawn);
 }
 
+/// やり直しが予算に断られたら、やり直しで作り直した面も有効も残さず、段は Redo に残る（断った後は何も変わっていない）。
+#[test]
+fn a_redo_refused_by_the_budget_leaves_no_surface_behind() {
+    let (mut d, clip) = clipped_over_pass_through_group();
+    let before = metallic(&d);
+    assert!(line(&mut d, clip, Rgba8::new(240, 240, 240, 255)));
+    assert!(d.undo().unwrap());
+    // 今の画素の量ちょうどにする: 線のタイルを戻せない
+    d.set_source_budget_bytes(d.allocated_bytes()).unwrap();
+    let revision = d.revision();
+    assert!(d.redo().is_err());
+    let l = d.layer(clip).unwrap();
+    assert!(l.surface(Channel::Metallic).is_none());
+    assert!(!l.is_channel_enabled(Channel::Metallic));
+    assert_eq!((d.undo_count(), d.redo_count()), (0, 1));
+    assert_eq!(d.revision(), revision);
+    assert_eq!(metallic(&d), before);
+    // 予算を戻せば、同じ段をやり直せる
+    d.set_source_budget_bytes(u64::MAX / 2).unwrap();
+    assert!(d.redo().unwrap());
+    assert!(d.layer(clip).unwrap().is_channel_enabled(Channel::Metallic));
+}
+
 /// 面を作ったストロークを取り消して（キャンセル）も、面は残らない。
 #[test]
 fn cancelling_a_stroke_that_created_its_surface_removes_it() {
