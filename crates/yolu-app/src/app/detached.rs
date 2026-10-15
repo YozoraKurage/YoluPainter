@@ -435,6 +435,11 @@ impl YoluApp {
 
     /// 別ウィンドウで開いたポップアップを、そのウィンドウで描く（ほかのウィンドウのポップアップは描かない）。
     fn popup_in(&mut self, ctx: &egui::Context, id: ViewportId) {
+        // 保存していない変更の問いが開いている間は、別ウィンドウのメニューから文書を変えない（開いていたメニューは閉じる）
+        if self.state.discard_ask.is_some() {
+            self.state.popup = None;
+            return;
+        }
         let Some(open) = self.state.popup.take() else {
             return;
         };

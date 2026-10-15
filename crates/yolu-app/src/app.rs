@@ -344,6 +344,11 @@ impl TabViewer for Tabs<'_> {
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
+        // 保存していない変更の問いが開いている間は、別ウィンドウの中身を触れなくする（メインウィンドウは問いの下の覆い（`ui::window`）が受ける。
+        // 別ウィンドウは別の OS のウィンドウなので、そのパスの中で止める）。egui_dock はタブの中身の Ui を親から作り直す（親の無効は引き継がれない）ので、ここで止める
+        if self.app.discard_ask.is_some() && ui.ctx().viewport_id() != egui::ViewportId::ROOT {
+            ui.disable();
+        }
         // 前のタブ（キャンバス・3D ビュー）の押しで描き始めたなら、このタブからは描き始める前の見た目を使う
         w::update_stroke_hold(ui.ctx(), self.app.holds_panel_look());
         // 選んだタブの上に青い線（Unity 版のパネルの見出しと同じ）

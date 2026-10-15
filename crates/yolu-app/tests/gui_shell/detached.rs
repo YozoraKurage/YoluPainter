@@ -1750,3 +1750,80 @@ fn snapshot_the_outside_window_with_the_custom_frame() {
 fn snapshot_the_outside_window_with_the_custom_frame_in_english() {
     snapshot_frame(yolu_app::lang::Lang::En);
 }
+
+// ───────── 保存していない変更の問いが開いている間 ─────────
+
+/// 別ウィンドウの履歴の先頭の行（「開始位置」。押すと文書を最初まで戻す）の点（子ウィンドウの点）。
+fn history_start_row(h: &Harness<'static, YoluApp>) -> Pos2 {
+    let tab = h.state().detached.windows[0].tab_rects[&Tab::History];
+    pos2(tab.left() + 40.0, tab.bottom() + 16.0)
+}
+
+fn click_child(h: &mut Harness<'static, YoluApp>, driver: &Driver, id: ViewportId, at: Pos2) {
+    play_child(
+        h,
+        driver,
+        id,
+        vec![
+            Event::PointerMoved(at),
+            child_button(at, true),
+            child_button(at, false),
+        ],
+    );
+    h.run();
+}
+
+fn ctrl_z() -> Event {
+    Event::Key {
+        key: Key::Z,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::COMMAND,
+    }
+}
+
+#[test]
+fn while_the_unsaved_changes_question_is_open_an_outside_panel_does_not_change_the_document() {
+    let (mut h, driver) = app_with_viewports();
+    h.state_mut().set_discard_window(true);
+    h.state_mut().state.doc.add_layer("after").unwrap();
+    h.state_mut().state.mark_modified();
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::History,
+        Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0)),
+    );
+    let layers = h.state().state.doc.layers().len();
+    let at = history_start_row(&h);
+    // 問いが無ければ、この点のクリックは文書を最初まで戻す（点が当たっていることの確かめ）
+    click_child(&mut h, &driver, id, at);
+    assert_eq!(h.state().state.doc.undo_count(), 0, "問いが無いと戻る");
+    assert_eq!(h.state().state.doc.layers().len(), layers - 1);
+    h.state_mut().state.doc.redo().unwrap();
+    h.run();
+    assert_eq!(h.state().state.doc.layers().len(), layers);
+    driver.child(id, |c| c.events.push(ctrl_z()));
+    h.run();
+    assert_eq!(
+        h.state().state.doc.undo_count(),
+        0,
+        "問いが無いとキーでも戻る"
+    );
+    h.state_mut().state.doc.redo().unwrap();
+    h.run();
+    // 問いが開いている間は、同じクリックで何も変わらない
+    h.state_mut().state.apply(Action::Quit);
+    h.run();
+    assert!(h.state().state.discard_ask.is_some(), "問いが開く");
+    let undo = h.state().state.doc.undo_count();
+    click_child(&mut h, &driver, id, at);
+    assert_eq!(h.state().state.doc.undo_count(), undo, "文書は変わらない");
+    assert_eq!(h.state().state.doc.layers().len(), layers);
+    // 別ウィンドウに打ったキー（元に戻す）も、文書に届かない
+    driver.child(id, |c| c.events.push(ctrl_z()));
+    h.run();
+    assert_eq!(h.state().state.doc.undo_count(), undo, "キーでも変わらない");
+    assert!(h.state().state.discard_ask.is_some(), "問いは開いたまま");
+}

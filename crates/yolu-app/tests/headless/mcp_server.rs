@@ -498,6 +498,48 @@ fn edits_are_refused_while_drawing_and_reads_still_answer() {
     assert_eq!(layer_count(&live), before + 1);
 }
 
+/// 保存していない変更の問いに答える前に外から文書を編集・保存すると、答えで捨てる中身が問いのときと変わる。問いの間は書く・保存する命令を理由つきで
+/// 断り（文書は変えない）、読む命令は通す。答えたあとは通る。
+#[test]
+fn writes_and_saves_are_refused_while_the_unsaved_changes_question_is_open_and_reads_still_answer()
+{
+    let dir = tmp::test_dir("mcpserver-ask");
+    let file = dir.join("ask.ylp");
+    let mut live = Live::on();
+    live.frame();
+    live.app.state.mark_modified();
+    live.app.state.discard_ask = Some(yolu_app::discard::Ask {
+        kind: yolu_app::discard::Kind::Changes,
+        text: "保存していない変更があります。".to_owned(),
+        then: yolu_app::discard::AfterDiscard::New,
+    });
+    let before = layer_count(&live);
+    for command in [
+        json!({"command": "layer.add", "args": {"kind": "paint"}}),
+        json!({"command": "undo"}),
+        json!({"command": "save_as", "args": {"path": file.display().to_string()}}),
+    ] {
+        let e = live.err(command.clone());
+        assert_eq!(e.code, ErrorCode::Busy, "{command}");
+        assert!(
+            e.message.ja.contains("問い") && e.message.en.contains("question"),
+            "理由つき: {} / {}",
+            e.message.ja,
+            e.message.en
+        );
+    }
+    assert_eq!(layer_count(&live), before, "断った命令は何も変えない");
+    assert!(!file.exists(), "断った保存はファイルを書かない");
+    assert!(live.app.state.discard_ask.is_some(), "問いは開いたまま");
+    assert!(
+        matches!(live.ok(json!({"command": "set.info"})), Reply::Set(_)),
+        "読む命令は問いの間も答える"
+    );
+    live.app.state.discard_ask = None;
+    live.ok(json!({"command": "layer.add", "args": {"kind": "paint"}}));
+    assert_eq!(layer_count(&live), before + 1, "答えたあとは通る");
+}
+
 #[test]
 fn a_read_only_set_refuses_edits_with_the_screens_reason() {
     let mut live = Live::on();

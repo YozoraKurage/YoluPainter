@@ -89,10 +89,17 @@ impl<'a> AppHost<'a> {
         self.started.take()
     }
 
-    /// 描いている最中か、保存の途中なら、断る理由。
+    /// 描いている最中か、保存の途中か、保存していない変更の問いに答える前なら、断る理由（書く・保存する操作が見る）。問いの間に文書や保存先を
+    /// 変えると、答えで捨てる中身が問いのときと変わる。
     fn busy(&self) -> Option<OpError> {
         if self.state.is_stroking() {
             return Some(busy("描いている最中です", "A stroke is in progress"));
+        }
+        if self.state.discard_ask.is_some() {
+            return Some(busy(
+                "保存していない変更の問いに答える前です",
+                "The question about unsaved changes is waiting for an answer",
+            ));
         }
         if self.state.is_saving() {
             return Some(busy("保存の途中です", "A save is in progress"));
