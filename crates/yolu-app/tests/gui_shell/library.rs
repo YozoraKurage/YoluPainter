@@ -2783,20 +2783,13 @@ mod ui {
         let at = card(&h, "raster").center();
         click(&mut h, at);
         settle(&mut h);
-        h.snapshot("assets_library");
-        h.state_mut().state.lang = Lang::En;
-        h.state_mut().state.shelf.filter = Some(ItemKind::SmartMaterial);
-        let at = card(&h, "broken").center();
-        click(&mut h, at);
-        settle(&mut h);
-        h.snapshot("assets_library_english");
+        common::shot::window(&mut h, "assets_library");
     }
 
     /// 塗りつぶしレイヤーを「マテリアルとして保存」したあと: ライブラリのマテリアルのカードを選び、そのレイヤーの右クリックのメニューを開いた所。
     /// アセットの画像を使う塗りつぶしでは、項目を押せず、理由がツールチップに出る（日英）。
     #[test]
     fn snapshot_material_menu_and_card() {
-        let mut results = egui_kittest::SnapshotResults::new();
         for lang in Lang::ALL {
             let suffix = lang.pick("ja", "en");
             let dir = Dir::new("ui-material");
@@ -2819,8 +2812,10 @@ mod ui {
             settle(&mut h);
             let save = lang.pick("マテリアルとして保存", "Save as Material");
             assert!(!popup_item(&h, save).is_negative());
-            h.snapshot(format!("assets_material_{suffix}"));
-            results.extend_harness(&mut h);
+            let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
+                .union(crate::shots::group(&h, yolu_app::Tab::Layers))
+                .union(crate::shots::popup(&h).expand(8.0));
+            common::shot::region(&mut h, &format!("assets_material_{suffix}"), panel);
             key(&h, egui::Key::Escape, Modifiers::NONE);
             h.run();
             // アセットの画像を使う塗りつぶし
@@ -2844,8 +2839,10 @@ mod ui {
             settle(&mut h);
             let at = popup_item(&h, save).center();
             hover_and_wait(&mut h, at);
-            h.snapshot(format!("assets_material_images_{suffix}"));
-            results.extend_harness(&mut h);
+            let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
+                .union(crate::shots::group(&h, yolu_app::Tab::Layers))
+                .union(crate::shots::popup(&h).expand(8.0));
+            common::shot::region(&mut h, &format!("assets_material_images_{suffix}"), panel);
         }
     }
 
@@ -2855,10 +2852,12 @@ mod ui {
         let mut h = window(&dir);
         h.state_mut().state.prefs.settings.library_folder = Some(dir.0.join("nothing-here"));
         settle(&mut h);
-        h.snapshot("assets_library_empty");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_library_empty", panel);
         std::fs::write(dir.0.join("file"), b"x").unwrap();
         h.state_mut().state.prefs.settings.library_folder = Some(dir.0.join("file"));
         settle(&mut h);
-        h.snapshot("assets_library_unreadable");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_library_unreadable", panel);
     }
 }

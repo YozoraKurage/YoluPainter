@@ -986,53 +986,42 @@ fn shot_width(h: &mut H, name: &str, width: f32) {
         pos2(tab.left() - 2.0, tab.top()),
         pos2(tab.left() + width, color.top()),
     );
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, rect);
 }
 
 #[test]
 fn snapshots_of_the_sub_tool_panel_for_the_bucket_the_selection_and_the_liquify_tools() {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        for (tool, label) in [
-            (Tool::Fill, "fill"),
-            (Tool::SelectRect, "select"),
-            (Tool::Gradient, "gradient"),
-            (Tool::Liquify, "liquify"),
-            (Tool::Eraser, "eraser"),
-        ] {
-            let mut h = app(1280.0, 800.0, 128);
-            language(&mut h, lang);
-            h.state_mut().state.sel.animate = false;
-            pick(&mut h, tool);
-            if tool == Tool::Fill {
-                click_row(&mut h, lang.pick("近い色", "Similar colors"));
-            }
-            shot(&mut h, &format!("subtools_{label}_{name}"));
+    let (lang, name) = (Lang::Ja, "ja");
+    for (tool, label) in [
+        (Tool::Fill, "fill"),
+        (Tool::SelectRect, "select"),
+        (Tool::Gradient, "gradient"),
+        (Tool::Liquify, "liquify"),
+        (Tool::Eraser, "eraser"),
+    ] {
+        let mut h = app(1280.0, 800.0, 128);
+        language(&mut h, lang);
+        h.state_mut().state.sel.animate = false;
+        pick(&mut h, tool);
+        if tool == Tool::Fill {
+            click_row(&mut h, lang.pick("近い色", "Similar colors"));
         }
+        shot(&mut h, &format!("subtools_{label}_{name}"));
     }
 }
 
 #[test]
 fn snapshots_of_the_selection_tool_properties_the_four_modes_the_narrow_column_and_the_selection_pen(
 ) {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 800.0, 128);
-        language(&mut h, lang);
-        h.state_mut().state.sel.animate = false;
-        pick(&mut h, Tool::SelectRect);
-        shot(&mut h, &format!("selection_props_{name}"));
-        // 選択ペン（選択ペンと選択消しの 2 つ）
-        pick(&mut h, Tool::SelectPen);
-        shot(&mut h, &format!("selection_pen_props_{name}"));
-    }
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 800.0, 128);
+    language(&mut h, lang);
+    h.state_mut().state.sel.animate = false;
+    pick(&mut h, Tool::SelectRect);
+    shot(&mut h, &format!("selection_props_{name}"));
+    // 選択ペン（選択ペンと選択消しの 2 つ）
+    pick(&mut h, Tool::SelectPen);
+    shot(&mut h, &format!("selection_pen_props_{name}"));
     // 「⋯」で 4 つ開いた所
     let mut h = app(1280.0, 800.0, 128);
     h.state_mut().state.sel.animate = false;

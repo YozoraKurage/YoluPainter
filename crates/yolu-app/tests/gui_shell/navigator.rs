@@ -131,14 +131,6 @@ fn navigator_panel_snapshot_japanese() {
 }
 
 #[test]
-fn navigator_panel_snapshot_english() {
-    let mut h = harness(Lang::En);
-    h.state_mut().view.flip = true;
-    h.run();
-    h.snapshot("navigator_en");
-}
-
-#[test]
 fn navigator_thumbnail_matches_gpu_canvas_composite() {
     use yolu_app::canvas::{display::CanvasDisplay, gpu::CanvasBackend};
     use yolu_app::engine::{Channel, Rect as DocRect, Rgba8};

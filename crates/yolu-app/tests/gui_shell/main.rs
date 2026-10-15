@@ -37,6 +37,7 @@ mod scroll;
 mod settings_window;
 mod shelf;
 mod shortcut_editor;
+mod shots;
 mod subtools;
 mod titlebar;
 mod tool_panels;

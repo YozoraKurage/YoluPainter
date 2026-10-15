@@ -498,19 +498,6 @@ fn painted_texts(h: &H) -> Vec<(String, Rect)> {
 
 // ───────── 絵 ─────────
 
-fn crop(h: &mut H, rect: Rect, name: &str) {
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().max(0.0).floor() as u32,
-        rect.top().max(0.0).floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
 #[test]
 fn snapshot_the_shortcut_editor_with_a_conflict_in_both_languages() {
     for (lang, name) in [
@@ -528,7 +515,7 @@ fn snapshot_the_shortcut_editor_with_a_conflict_in_both_languages() {
         click_chip(&mut h, key_chip(("object.snap_toggle", Scope::Edit), 0));
         hover_chip(&mut h, key_chip(reveal, 0));
         let w = window(&h);
-        crop(&mut h, w.expand(8.0), name);
+        common::shot::region(&mut h, name, w.expand(8.0));
     }
 }
 
@@ -549,7 +536,7 @@ fn snapshot_the_pie_menu_editor_in_both_languages() {
         click(&mut h, slot.center());
         move_to(&h, w.right_bottom() - egui::vec2(20.0, 80.0));
         h.run();
-        crop(&mut h, w.expand(8.0), name);
+        common::shot::region(&mut h, name, w.expand(8.0));
     }
 }
 
@@ -696,7 +683,7 @@ fn snapshot_the_tool_key_mode_list_in_both_languages() {
             .as_ref()
             .map(|p| p.state.rect)
             .unwrap_or(Rect::NOTHING);
-        crop(&mut h, w.union(popup.expand(8.0)), name);
+        common::shot::region(&mut h, name, w.union(popup.expand(8.0)));
     }
 }
 

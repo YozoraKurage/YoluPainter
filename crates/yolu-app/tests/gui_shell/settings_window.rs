@@ -1092,16 +1092,7 @@ fn shot(h: &mut H, name: &str) {
     }
     h.event(egui::Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, rect);
 }
 
 /// 開いているメニューの中だけ（四隅と影を除く内側）を撮る。
@@ -1117,16 +1108,7 @@ fn shot_menu(h: &mut H, name: &str) {
         .state
         .rect
         .shrink(6.0);
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        popup.left().floor() as u32,
-        popup.top().floor() as u32,
-        popup.width().ceil() as u32,
-        popup.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, popup);
 }
 
 #[test]

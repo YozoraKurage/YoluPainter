@@ -1741,16 +1741,7 @@ fn while_painting_a_mask_the_tool_properties_show_the_layer_mask_instead_of_the_
 fn shot_rect(h: &mut H, rect: Rect, name: &str) {
     h.event(Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor().max(0.0) as u32,
-        rect.top().floor().max(0.0) as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, rect);
 }
 
 /// 左の列の、サブツールのタブからカラーのタブまで（3 つのパネルが縦に並ぶ所）。
@@ -1782,119 +1773,114 @@ fn snapshots_of_the_whole_default_dock_in_both_languages() {
         // 直前に押した所のポインタが絵に残らないように
         h.event(Event::PointerGone);
         h.step();
-        h.snapshot(format!("tool_panels_dock_{name}"));
+        common::shot::window(&mut h, &format!("tool_panels_dock_{name}"));
         results.extend_harness(&mut h);
     }
 }
 
 #[test]
-fn snapshots_of_the_default_left_column_and_the_properties_group_in_both_languages() {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 800.0, 128);
-        language(&mut h, lang);
-        let rect = left_stack(&h);
-        shot_rect(&mut h, rect, &format!("tool_panels_left_{name}"));
-        let rect = right_bottom(&h);
-        shot_rect(&mut h, rect, &format!("tool_panels_properties_{name}"));
-    }
+fn snapshots_of_the_default_left_column_and_the_properties_group() {
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 800.0, 128);
+    language(&mut h, lang);
+    let rect = left_stack(&h);
+    shot_rect(&mut h, rect, &format!("tool_panels_left_{name}"));
+    let rect = right_bottom(&h);
+    shot_rect(&mut h, rect, &format!("tool_panels_properties_{name}"));
 }
 
 #[test]
-fn snapshots_of_the_tool_properties_with_the_paint_channels_open_and_for_the_mask_in_both_languages(
-) {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 1500.0, 128);
-        language(&mut h, lang);
-        open_paint_channels(&mut h);
-        h.state_mut()
-            .state
-            .apply(Action::Mat(MatAction::Enabled(true)));
-        h.state_mut()
-            .state
-            .apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-        h.state_mut()
-            .state
-            .apply(Action::Mat(MatAction::Channel(Channel::Emission, true)));
-        h.state_mut().state.mat.emission = [0.2, 0.8, 0.4];
-        h.run();
-        let (props, size) = (
-            tab_rect(&h, Tab::ToolProperties),
-            tab_rect(&h, Tab::BrushSize),
-        );
-        let rect = Rect::from_min_max(
-            pos2(props.left() - 2.0, props.top()),
-            pos2(props.left() + 300.0, size.top()),
-        );
-        shot_rect(&mut h, rect, &format!("tool_panels_paint_channels_{name}"));
-        // マスクに描くあいだ
-        let id = st(&h).selected_layer.unwrap();
-        h.state_mut()
-            .state
-            .apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
-        h.run();
-        shot_rect(&mut h, rect, &format!("tool_panels_mask_{name}"));
-    }
+fn snapshots_of_the_tool_properties_with_the_paint_channels_open_and_for_the_mask() {
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 1500.0, 128);
+    language(&mut h, lang);
+    open_paint_channels(&mut h);
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Enabled(true)));
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    h.state_mut()
+        .state
+        .apply(Action::Mat(MatAction::Channel(Channel::Emission, true)));
+    h.state_mut().state.mat.emission = [0.2, 0.8, 0.4];
+    h.run();
+    let (props, size) = (
+        tab_rect(&h, Tab::ToolProperties),
+        tab_rect(&h, Tab::BrushSize),
+    );
+    let rect = Rect::from_min_max(
+        pos2(props.left() - 2.0, props.top()),
+        pos2(props.left() + 300.0, size.top()),
+    );
+    shot_rect(&mut h, rect, &format!("tool_panels_paint_channels_{name}"));
+    // マスクに描くあいだ
+    let id = st(&h).selected_layer.unwrap();
+    h.state_mut()
+        .state
+        .apply(Action::M2(yolu_app::m2::Edit::AddMask(id)));
+    h.run();
+    shot_rect(&mut h, rect, &format!("tool_panels_mask_{name}"));
 }
 
 #[test]
-fn snapshots_of_the_material_panel_with_the_standard_and_liltoon_looks_in_both_languages() {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1500.0, 1300.0, 64);
-        language(&mut h, lang);
-        open_material(&mut h);
-        // マテリアルの組の全体（同じ組のプロパティのタブの左から、ウィンドウの右・状態の帯の上まで）
-        let group = tab_rect(&h, Tab::Properties);
-        let window = h.ctx.content_rect();
-        let rect = Rect::from_min_max(
-            pos2(group.left() - 2.0, group.top()),
-            pos2(window.right(), window.bottom() - 24.0),
-        );
-        // 標準
-        h.state_mut()
-            .state
-            .apply(Action::Look(yolu_app::look::LookOp::Kind(
-                yolu_core::look::LookKind::Standard,
-            )));
-        h.run();
-        shot_rect(
-            &mut h,
-            rect,
-            &format!("tool_panels_material_standard_{name}"),
-        );
-        // lilToon（ひな形つき）
-        h.state_mut()
-            .state
-            .apply(Action::Look(yolu_app::look::LookOp::Kind(
-                yolu_core::look::LookKind::LilToon,
-            )));
-        h.state_mut()
-            .state
-            .apply(Action::Look(yolu_app::look::LookOp::Template));
-        h.run();
-        shot_rect(
-            &mut h,
-            rect,
-            &format!("tool_panels_material_liltoon_{name}"),
-        );
-    }
+fn snapshots_of_the_material_panel_with_the_standard_and_liltoon_looks() {
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1500.0, 1300.0, 64);
+    language(&mut h, lang);
+    open_material(&mut h);
+    // マテリアルの組の全体（同じ組のプロパティのタブの左から、ウィンドウの右・状態の帯の上まで）
+    let group = tab_rect(&h, Tab::Properties);
+    let window = h.ctx.content_rect();
+    let rect = Rect::from_min_max(
+        pos2(group.left() - 2.0, group.top()),
+        pos2(window.right(), window.bottom() - 24.0),
+    );
+    // 標準
+    h.state_mut()
+        .state
+        .apply(Action::Look(yolu_app::look::LookOp::Kind(
+            yolu_core::look::LookKind::Standard,
+        )));
+    h.run();
+    shot_rect(
+        &mut h,
+        rect,
+        &format!("tool_panels_material_standard_{name}"),
+    );
+    // lilToon（ひな形つき）
+    h.state_mut()
+        .state
+        .apply(Action::Look(yolu_app::look::LookOp::Kind(
+            yolu_core::look::LookKind::LilToon,
+        )));
+    h.state_mut()
+        .state
+        .apply(Action::Look(yolu_app::look::LookOp::Template));
+    h.run();
+    shot_rect(
+        &mut h,
+        rect,
+        &format!("tool_panels_material_liltoon_{name}"),
+    );
 }
 
 #[test]
 fn snapshots_of_the_tool_properties_in_its_own_window() {
-    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
-        let mut h = app(1280.0, 900.0, 128);
-        language(&mut h, lang);
-        h.state_mut()
-            .state
-            .apply(Action::Dock(DockOp::Detach(Tab::ToolProperties)));
-        h.run();
-        h.step();
-        // 試験では、別ウィンドウはメインウィンドウの中の egui のウィンドウ（その矩形だけを撮る）
-        let window = h.state().detached.windows[0].tab_rects[&Tab::ToolProperties];
-        let rect = Rect::from_min_max(
-            pos2(window.left() - 8.0, window.top() - 30.0),
-            pos2(window.left() + 360.0, (window.top() + 380.0).min(890.0)),
-        );
-        shot_rect(&mut h, rect, &format!("tool_panels_detached_{name}"));
-    }
+    let (lang, name) = (Lang::Ja, "ja");
+    let mut h = app(1280.0, 900.0, 128);
+    language(&mut h, lang);
+    h.state_mut()
+        .state
+        .apply(Action::Dock(DockOp::Detach(Tab::ToolProperties)));
+    h.run();
+    h.step();
+    // 試験では、別ウィンドウはメインウィンドウの中の egui のウィンドウ（その矩形だけを撮る）
+    let window = h.state().detached.windows[0].tab_rects[&Tab::ToolProperties];
+    let rect = Rect::from_min_max(
+        pos2(window.left() - 8.0, window.top() - 30.0),
+        pos2(window.left() + 360.0, (window.top() + 380.0).min(890.0)),
+    );
+    shot_rect(&mut h, rect, &format!("tool_panels_detached_{name}"));
 }

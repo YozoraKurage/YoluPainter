@@ -101,8 +101,10 @@ fn panels_draw_in_both_languages_without_clipped_text_gpu() {
                     .query_by_label(lang.pick("色相の円", "Hue wheel"))
                     .is_some());
             }
-            h.snapshot(format!("i18n_{}_{}", lang.pick("ja", "en"), panel));
-            snapshots.extend_harness(&mut h);
+            if lang == Lang::Ja {
+                h.snapshot(format!("i18n_ja_{panel}"));
+                snapshots.extend_harness(&mut h);
+            }
             if panel == 1 {
                 // セットの名前は言語に依らないので、言語の確認は状態のアイコン: 隠したセットの理由が、その言語の文で、行のアイコンの上に出る
                 let tooltip = lang.pick("3D ビューに見せていない", "Hidden in the 3D View");

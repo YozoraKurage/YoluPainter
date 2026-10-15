@@ -107,16 +107,7 @@ fn shot_popup(h: &mut Harness<'_, YoluApp>, name: &str) {
     let area = body.union(icon).expand(6.0);
     h.event(egui::Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        area.left().max(0.0) as u32,
-        area.top().max(0.0) as u32,
-        area.width() as u32,
-        area.height() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, area);
 }
 
 const KEY: &str = "GlobalObjectId_V1-2-0123-4567-0";

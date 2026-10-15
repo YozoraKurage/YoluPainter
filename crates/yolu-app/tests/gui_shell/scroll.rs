@@ -562,17 +562,7 @@ fn the_handle_looks_right_at_rest_hovered_and_grabbed() {
     h.run();
     let shot = |h: &mut Harness<'_, Pane>, name: &str| {
         let view = h.state().view;
-        let image = h.render().expect("描画");
-        let rect = view.expand(8.0);
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left().floor() as u32,
-            rect.top().floor() as u32,
-            rect.width().ceil() as u32,
-            rect.height().ceil() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(&cropped, name);
+        common::shot::region(h, name, view.expand(8.0));
     };
     shot(&mut h, "scroll_handle_rest");
     let at = on_bar(&h, handle(&h).center().y - h.state().view.top());

@@ -710,12 +710,22 @@ fn snapshot_menus(lang: yolu_app::lang::Lang, suffix: &str) {
     let at = menu_title(&h, title).center();
     click(&mut h, at);
     h.run();
-    h.snapshot(format!("window_menu{suffix}"));
+    // 日本語は画面全体（メニューを開いた形の見本）、英語はメニューと見出しだけ
+    let menu_name = format!("window_menu{suffix}");
+    if lang == yolu_app::lang::Lang::Ja {
+        common::shot::window(&mut h, &menu_name);
+    } else {
+        let menu = crate::shots::popup(&h)
+            .expand(8.0)
+            .union(menu_title(&h, title));
+        common::shot::region(&mut h, &menu_name, menu);
+    }
     h.state_mut().state.popup = None;
     h.run();
     let tab = h.state().tab_rects[&Tab::Layers];
     right_click(&mut h, tab.center());
-    h.snapshot(format!("dock_tab_menu{suffix}"));
+    let menu = crate::shots::popup(&h).expand(8.0).union(tab);
+    common::shot::region(&mut h, &format!("dock_tab_menu{suffix}"), menu);
 }
 
 #[test]
@@ -1708,8 +1718,8 @@ fn after_a_tab_is_torn_off_by_the_pen_its_bar_can_be_dragged_by_the_pen_and_then
     assert_eq!(h.state().detached.windows.len(), 1, "ウィンドウはそのまま");
 }
 
-/// 絵: 自前の枠の別ウィンドウ（試験のウィンドウではメインウィンドウの中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。
-fn snapshot_frame(lang: yolu_app::lang::Lang, suffix: &str) {
+/// 絵（日本語だけ）: 自前の枠の別ウィンドウ（試験のウィンドウではメインウィンドウの中に描く）。タブの行の右端に閉じる（名前は「ドックに戻す」）。
+fn snapshot_frame(lang: yolu_app::lang::Lang) {
     let mut h = app(1280.0, 800.0, 64);
     h.state_mut().state.lang = lang;
     h.state_mut().set_custom_frame(true);
@@ -1732,15 +1742,17 @@ fn snapshot_frame(lang: yolu_app::lang::Lang, suffix: &str) {
     use egui_kittest::kittest::Queryable;
     let name = lang.pick("ドックに戻す", "Return to Dock");
     assert!(h.query_by_label(name).is_some(), "閉じるの名前");
-    h.snapshot(format!("detached_frame{suffix}"));
+    if lang == yolu_app::lang::Lang::Ja {
+        common::shot::window(&mut h, "detached_frame");
+    }
 }
 
 #[test]
 fn snapshot_the_outside_window_with_the_custom_frame() {
-    snapshot_frame(yolu_app::lang::Lang::Ja, "");
+    snapshot_frame(yolu_app::lang::Lang::Ja);
 }
 
 #[test]
 fn snapshot_the_outside_window_with_the_custom_frame_in_english() {
-    snapshot_frame(yolu_app::lang::Lang::En, "_english");
+    snapshot_frame(yolu_app::lang::Lang::En);
 }

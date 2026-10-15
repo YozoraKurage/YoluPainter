@@ -1,6 +1,7 @@
 //! ウィンドウの全体の振る舞いと見た目（egui_kittest。描画は wgpu のソフトの描画）。
 use crate::common;
 
+use super::shots;
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton};
 use yolu_app::engine::{BlendMode, Tilt};
@@ -25,7 +26,7 @@ fn default_layout_snapshot() {
             offset(c.center(), 60.0, -10.0),
         ],
     );
-    h.snapshot("app_default");
+    common::shot::window(&mut h, "app_default");
 }
 
 #[test]
@@ -41,7 +42,7 @@ fn menu_opens_on_press_and_switches_on_hover() {
         Some(PopupKind::MenuBar(1)),
         "開いているあいだはホバーで切り替わる"
     );
-    h.snapshot("menu_edit");
+    common::shot::window(&mut h, "menu_edit");
     // ←→ で隣の見出しへ、Esc で閉じる
     key(&h, Key::ArrowRight, Modifiers::NONE);
     h.run();
@@ -181,7 +182,10 @@ fn view_keys_rotate_and_flip_and_the_corner_icons_reset_them() {
         ],
     );
     // 回転した頁のテクスチャの補間は、GPU のドライバのレイヤーで数画素ゆれる（同じ木で 0〜13 画素）。それ以外の差は落とす
-    h.snapshot_options(
+    let image = h.render().expect("画面を描く");
+    let cropped = common::shot::crop(&image, canvas_rect(&h), h.ctx.pixels_per_point());
+    egui_kittest::image_snapshot_options(
+        &cropped,
         "canvas_rotated_flipped",
         &egui_kittest::SnapshotOptions::new().max_failed_pixels(32),
     );
@@ -387,7 +391,9 @@ fn layer_panel_add_hide_blend_and_opacity() {
     h.get_by_label("通常").click();
     h.run();
     assert_eq!(popup_kind(&h), Some(PopupKind::BlendMode(top)));
-    h.snapshot("layers_blend_dropdown");
+    // ドロップダウンと、それを開いたレイヤーのパネル
+    let panel = shots::group(&h, yolu_app::Tab::Layers).union(shots::popup(&h).expand(8.0));
+    common::shot::region(&mut h, "layers_blend_dropdown", panel);
     let at = popup_item(&h, "乗算").center();
     click(&mut h, at);
     assert_eq!(
@@ -514,7 +520,8 @@ fn color_panel_picks_hex_swap_and_wheel() {
     h.get_by_label("色相の円").click();
     h.run();
     assert!(h.state().state.color.wheel);
-    h.snapshot("color_wheel");
+    let panel = shots::group(&h, yolu_app::Tab::Color);
+    common::shot::region(&mut h, "color_wheel", panel);
 }
 
 #[test]
@@ -544,11 +551,13 @@ fn properties_tabs_and_pen_toggles() {
     });
     click(&mut h, tab.center());
     assert_eq!(h.state().state.ui.property_tab, 1);
-    h.snapshot("properties_layer_tab");
+    let panel = shots::group(&h, yolu_app::Tab::Properties);
+    common::shot::region(&mut h, "properties_layer_tab", panel);
     h.get_by_label("ステンシル").click();
     h.run();
     assert_eq!(h.state().state.ui.property_tab, 0);
-    h.snapshot("properties_stencil_tab");
+    let panel = shots::group(&h, yolu_app::Tab::Properties);
+    common::shot::region(&mut h, "properties_stencil_tab", panel);
 }
 
 #[test]
@@ -576,7 +585,7 @@ fn view3d_host_hears_placement_hidden_and_covered() {
         })
         .expect("placed");
     assert!(placed.rect_px[2] > 100 && placed.rect_px[3] > 100 && !placed.floating);
-    h.snapshot("view3d_placeholder");
+    common::shot::window(&mut h, "view3d_placeholder");
     // メニューが重なったら知らせる
     let at = menu_title(&h, "表示").center();
     click(&mut h, at);

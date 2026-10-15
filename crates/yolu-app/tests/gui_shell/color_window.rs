@@ -6,7 +6,7 @@ use crate::common;
 use common::*;
 use egui::{pos2, vec2, Key, Modifiers, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::engine::{Channel, LayerId, Rgba8};
 use yolu_app::lang::Lang;
 use yolu_app::m2::Edit;
@@ -273,7 +273,6 @@ fn the_window_moves_by_its_title_keeps_its_place_and_does_not_close_on_an_outsid
 /// ウィンドウの絵（日英）: 塗りつぶしレイヤーのカラーの値を押して開いたところ。
 #[test]
 fn snapshot_the_colour_window_on_a_fill_value() {
-    let mut results = SnapshotResults::new();
     for (lang, name, label) in [
         (Lang::Ja, "ja", "カラー の値"),
         (Lang::En, "en", "Value of Color"),
@@ -285,8 +284,8 @@ fn snapshot_the_colour_window_on_a_fill_value() {
         let swatch = h.get_by_label(label).rect();
         click(&mut h, swatch.center());
         assert!(color_window::is_open(&h.ctx));
-        h.snapshot(format!("color_window_fill_{name}"));
-        results.extend_harness(&mut h);
+        let rect = window(&h).expand(8.0);
+        common::shot::region(&mut h, &format!("color_window_fill_{name}"), rect);
     }
 }
 

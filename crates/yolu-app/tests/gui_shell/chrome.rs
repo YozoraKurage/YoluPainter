@@ -559,12 +559,12 @@ fn bottom_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(egui::Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let height = 96u32;
-    let cropped =
-        image::imageops::crop_imm(&image, 0, image.height() - height, image.width(), height)
-            .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    let screen = h.ctx.content_rect();
+    let band = Rect::from_min_max(
+        egui::pos2(screen.left(), screen.bottom() - 96.0),
+        screen.max,
+    );
+    common::shot::region(h, name, band);
 }
 
 /// 絵: 右端の版・ビルド・メモリ・GPU と、左の知らせ（普通・エラー）。日英。

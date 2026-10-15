@@ -527,10 +527,9 @@ fn stopping_jobs_before_quitting_neither_cancels_nor_waits_for_a_save() {
 
 // ───────── 画面（進み具合の札・待つウィンドウ） ─────────
 
-/// 保存の間のウィンドウの全体（右下の札に「保存しています」と進み。取消のボタンは無い。メニューバーの右の名前に、保存の結果が出るまで「•」）。
+/// 保存の間の絵（日本語はウィンドウの全体、英語は札だけ。右下の札に「保存しています」と進み。取消のボタンは無い。メニューバーの右の名前に、保存の結果が出るまで「•」）。
 #[test]
 fn the_job_card_shows_saving_with_the_name_and_no_cancel_button() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in [Lang::Ja, Lang::En] {
         let dir = TempDir::new("card");
         let mut h = window_in(lang);
@@ -552,8 +551,19 @@ fn the_job_card_shows_saving_with_the_name_and_no_cancel_button() {
             cancels.is_empty(),
             "保存は取り消せない（取消のボタンが無い）"
         );
-        h.snapshot(format!("save_card_{}", lang.pick("ja", "en")));
-        snapshots.extend_harness(&mut h);
+        // 日本語は画面全体（右下の札と、メニューバーの右の名前の印）、英語は札だけ
+        if lang == Lang::Ja {
+            common::shot::window(&mut h, "save_card_ja");
+        } else {
+            // 札は右下の隅（状態の帯の上）に出る。文字は描いた物で読み上げの節が無いので、隅の範囲で撮る
+            let screen = h.ctx.content_rect();
+            let bar = yolu_app::ui::theme::STATUS_BAR_HEIGHT;
+            let corner = egui::Rect::from_min_max(
+                egui::pos2(screen.right() - 380.0, screen.bottom() - bar - 80.0),
+                egui::pos2(screen.right(), screen.bottom() - bar),
+            );
+            common::shot::region(&mut h, "save_card_en", corner);
+        }
         hold.release();
         h.state_mut().state.wait_save();
         h.step();
@@ -584,16 +594,11 @@ fn the_waiting_window_before_closing_has_no_cancel_button() {
             .query_all_by_label_contains(lang.pick("取消", "Cancel"))
             .collect();
         assert!(cancels.is_empty());
-        let image = h.render().expect("描画");
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left().floor() as u32,
-            rect.top().floor() as u32,
-            rect.width().ceil() as u32,
-            rect.height().ceil() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(&cropped, format!("save_closing_{}", lang.pick("ja", "en")));
+        common::shot::region(
+            &mut h,
+            &format!("save_closing_{}", lang.pick("ja", "en")),
+            rect,
+        );
         hold.release();
         h.state_mut().state.wait_save();
         h.step();

@@ -595,16 +595,7 @@ fn shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(egui::Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, rect);
 }
 
 #[test]
@@ -1488,17 +1479,15 @@ fn open_settings_in(h: &mut Harness<'static, YoluApp>, lang: Lang) {
 fn status_bar_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     h.event(egui::Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let height = yolu_app::ui::theme::STATUS_BAR_HEIGHT.ceil() as u32;
-    let cropped = image::imageops::crop_imm(
-        &image,
-        image.width() - 120,
-        image.height() - height,
-        120,
-        height,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    let screen = h.ctx.content_rect();
+    let corner = Rect::from_min_max(
+        egui::pos2(
+            screen.right() - 120.0,
+            screen.bottom() - yolu_app::ui::theme::STATUS_BAR_HEIGHT.ceil(),
+        ),
+        screen.max,
+    );
+    common::shot::region(h, name, corner);
 }
 
 /// 「外からの操作を受ける」: 既定は切。欄を押すと 127.0.0.1 の番号で待ち受けて設定のファイルに書かれ、状態の帯の右端に小さな丸（説明は

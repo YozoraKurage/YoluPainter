@@ -2661,16 +2661,7 @@ fn shot(h: &mut H, name: &str) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(egui::Event::PointerGone);
     h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, rect);
 }
 
 /// 開いているドロップダウンの中の項目の矩形。

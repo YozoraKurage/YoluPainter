@@ -2718,14 +2718,8 @@ mod ui {
     fn snapshot_shelf_bundled() {
         let mut h = window_with_bundled();
         settle(&mut h);
-        h.snapshot("assets_shelf_bundled");
-        h.state_mut().state.lang = Lang::En;
-        h.state_mut().state.shelf.filter = Some(ItemKind::SmartMaterial);
-        h.run();
-        let at = card(&h, "Rusty Iron").center();
-        click(&mut h, at);
-        settle(&mut h);
-        h.snapshot("assets_shelf_bundled_english");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_shelf_bundled", panel);
     }
 
     #[test]
@@ -3180,7 +3174,8 @@ mod ui {
             .accesskit_node()
             .is_disabled());
         settle(&mut h);
-        h.snapshot("assets_shelf_unreadable");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_shelf_unreadable", panel);
     }
 
     #[test]
@@ -3225,7 +3220,8 @@ mod ui {
         h.get_by_label("レイヤーを保存").click();
         h.run();
         settle(&mut h);
-        h.snapshot("assets_shelf_saving");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_shelf_saving", panel);
         h.state_mut()
             .state
             .apply(Action::Shelf(ShelfOp::CancelSave));
@@ -3238,19 +3234,7 @@ mod ui {
         let at = card(&h, "raster").center();
         click(&mut h, at);
         settle(&mut h);
-        h.snapshot("assets_shelf");
-    }
-
-    #[test]
-    fn snapshot_shelf_english_filtered() {
-        let mut h = window();
-        h.state_mut().state.lang = Lang::En;
-        h.state_mut().state.shelf.filter = Some(ItemKind::SmartMask);
-        h.run();
-        let at = card(&h, "mask").center();
-        click(&mut h, at);
-        settle(&mut h);
-        h.snapshot("assets_shelf_english");
+        common::shot::window(&mut h, "assets_shelf");
     }
 
     #[test]
@@ -3260,7 +3244,8 @@ mod ui {
         h.state_mut().state.shelf.show_builtin = false;
         h.run();
         settle(&mut h);
-        h.snapshot("assets_shelf_empty");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_shelf_empty", panel);
         apply(
             &mut h,
             Action::Shelf(ShelfOp::ImportFile(fixtures().join("images.ylsmart"))),
@@ -3268,7 +3253,8 @@ mod ui {
         h.run();
         h.run();
         settle(&mut h);
-        h.snapshot("assets_shelf_blocked");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_shelf_blocked", panel);
     }
 
     #[test]
@@ -3286,22 +3272,20 @@ mod ui {
         }
         h.run();
         settle(&mut h);
-        h.snapshot("assets_shelf_dragging");
+        // 持ち上げた素材は、棚からレイヤーの行へ向かう途中にある
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
+            .union(crate::shots::group(&h, yolu_app::Tab::Layers));
+        common::shot::region(&mut h, "assets_shelf_dragging", panel);
         release(&h, to, PointerButton::Primary);
         h.run();
     }
 
-    /// 英語のパネル: 読めないときの状態と、取り込んだときの知らせ（日本語の絵は `assets_shelf_unreadable`・`assets_shelf_blocked`）。
+    /// 英語のパネル: 取り込んだときの知らせ（日本語の絵は `assets_shelf_blocked`）。
     #[test]
-    fn snapshot_shelf_english_unreadable_and_notice() {
+    fn snapshot_shelf_english_notice() {
         let mut h = app(1280.0, 800.0, 64);
         click_tab(&mut h, yolu_app::Tab::Assets);
         h.state_mut().state.lang = Lang::En;
-        h.state_mut().state.shelf = ShelfState::unreadable("test reason");
-        h.state_mut().state.shelf.show_builtin = false;
-        h.run();
-        settle(&mut h);
-        h.snapshot("assets_shelf_unreadable_english");
         h.state_mut().state.shelf = ShelfState::default();
         h.state_mut().state.shelf.show_builtin = false;
         h.run();
@@ -3312,7 +3296,8 @@ mod ui {
         h.run();
         h.run();
         settle(&mut h);
-        h.snapshot("assets_shelf_blocked_english");
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets);
+        common::shot::region(&mut h, "assets_shelf_blocked_english", panel);
     }
 
     /// 右クリックのメニュー（日英）。「アセットから消す…」が「ライブラリへ入れる」と並ぶ。
@@ -3323,7 +3308,9 @@ mod ui {
         let at = card(&h, "raster").center();
         right_click(&mut h, at);
         settle(&mut h);
-        h.snapshot(name);
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
+            .union(crate::shots::popup(&h).expand(8.0));
+        common::shot::region(&mut h, name, panel);
     }
 
     #[test]

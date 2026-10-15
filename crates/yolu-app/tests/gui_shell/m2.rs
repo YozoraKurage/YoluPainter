@@ -3,6 +3,7 @@
 //! `headless_` で始まる試験は画面を描かず、Wine でも回る。
 use crate::common;
 
+use super::shots;
 use common::*;
 use egui::{pos2, Key, Modifiers, PointerButton};
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -817,7 +818,7 @@ fn snapshot_layers_tree() {
     let mut h = app(1280.0, 800.0, 256);
     stroke_across(&mut h, 0.0);
     tree_document(&mut h);
-    h.snapshot("m2_layers_tree");
+    common::shot::window(&mut h, "m2_layers_tree");
 }
 
 #[test]
@@ -832,7 +833,7 @@ fn snapshot_channels_panel() {
         ))),
     );
     apply(&mut h, Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
-    h.snapshot("m2_channels_panel");
+    common::shot::window(&mut h, "m2_channels_panel");
 }
 
 /// 見た目を lilToon にして、影・発光・マットキャップ・リムライト・ラメを入にしてひな形のチャンネルを作り、ラメだけを切る。どのスロットも
@@ -981,7 +982,8 @@ fn liltoon_user_channels_are_grouped_by_the_part_that_reads_them() {
     click(&mut h, at);
     assert!(accent_at(&mut h, "ラメ"));
     assert!(!accent_at(&mut h, "影"));
-    h.snapshot("channels_groups_ja");
+    let panel = shots::group(&h, Tab::Channels);
+    common::shot::region(&mut h, "channels_groups_ja", panel);
     // 英語
     apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
     let names: Vec<String> = channel_groups(&h).into_iter().map(|(l, _)| l).collect();
@@ -996,7 +998,6 @@ fn liltoon_user_channels_are_grouped_by_the_part_that_reads_them() {
             "Other"
         ]
     );
-    h.snapshot("channels_groups_en");
 }
 
 /// 見た目が lilToon でないとき・どのスロットも読まないユーザーチャンネルだけのときは、まとめない（見出しを出さない）。
@@ -1037,27 +1038,29 @@ fn channels_are_not_grouped_without_liltoon_parts() {
 fn snapshot_properties_layer_kinds() {
     let mut h = app(1280.0, 1000.0, 256);
     apply(&mut h, Action::M2(Edit::NewFill));
-    h.snapshot("m2_properties_fill");
+    let panel = shots::group(&h, Tab::Properties);
+    common::shot::region(&mut h, "m2_properties_fill", panel);
     apply(
         &mut h,
         Action::M2(Edit::NewAdjustment(yolu_app::m2::AdjustmentKind::Levels)),
     );
-    h.snapshot("m2_properties_levels");
+    let panel = shots::group(&h, Tab::Properties);
+    common::shot::region(&mut h, "m2_properties_levels", panel);
     apply(&mut h, Action::M2(Edit::NewGroup));
-    h.snapshot("m2_properties_group");
+    let panel = shots::group(&h, Tab::Properties);
+    common::shot::region(&mut h, "m2_properties_group", panel);
 }
 
 #[test]
-fn snapshot_properties_mask_and_english() {
+fn snapshot_properties_mask() {
     let mut h = app(1280.0, 1000.0, 256);
     let id = h.state().state.selected_layer.unwrap();
     apply(&mut h, Action::M2(Edit::AddMask(id)));
     // プロパティのレイヤーのタブ（レイヤーマスクの節はここにもある）
     h.state_mut().state.ui.property_tab = 1;
     h.run();
-    h.snapshot("m2_properties_mask");
-    apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
-    h.snapshot("m2_properties_mask_english");
+    let panel = shots::group(&h, Tab::Properties);
+    common::shot::region(&mut h, "m2_properties_mask", panel);
 }
 
 fn canvas_alpha(h: &Harness<'_, YoluApp>, dx: f32) -> u8 {
@@ -2174,7 +2177,8 @@ fn snapshot_channel_kind_menu_marks_the_row_format() {
             ],
             "{name}"
         );
-        h.snapshot(name);
+        let panel = shots::group(&h, Tab::Channels).union(shots::popup(&h).expand(8.0));
+        common::shot::region(&mut h, name, panel);
         h.state_mut().state.popup = None;
         h.run();
     }

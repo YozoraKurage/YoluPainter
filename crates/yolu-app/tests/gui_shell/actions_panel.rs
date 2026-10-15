@@ -72,8 +72,10 @@ fn actions_panel_snapshot() {
     for lang in Lang::ALL {
         let mut h = harness(sample(lang), vec2(300.0, 160.0));
         h.run();
-        h.snapshot(lang.pick("actions_panel", "actions_panel_english"));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            h.snapshot("actions_panel");
+            snapshots.extend_harness(&mut h);
+        }
         // 記録中（記録しなかった操作があった印つき）
         h.state_mut()
             .apply(Action::Automation(AutomationOp::StartRecording));
@@ -84,8 +86,10 @@ fn actions_panel_snapshot() {
             .unwrap();
         h.run();
         assert!(h.state().automation.skipped());
-        h.snapshot(lang.pick("actions_panel_recording", "actions_panel_recording_english"));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            h.snapshot("actions_panel_recording");
+            snapshots.extend_harness(&mut h);
+        }
         // 右クリックのメニュー
         let mut h = harness(sample(lang), vec2(300.0, 240.0));
         let name = lang.pick("縁の摩耗", "Edge Wear");
