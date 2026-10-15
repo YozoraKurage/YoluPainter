@@ -30,7 +30,8 @@ use yolu_core::Channel;
 
 // ───────── ウィンドウと場面 ─────────
 
-/// 製品と同じ装置の設定（`wgpu_configuration`）で作った、試験どうしで共有する描画の接続。アダプターは kittest の選び（ソフトの描画を優先）。
+/// 製品と同じ装置の設定（`wgpu_configuration` の装置の記述と D3D12 のシェーダーのコンパイラー）で作った、試験どうしで共有する描画の接続。
+/// アダプターの選びと、そのほかの instance の設定は kittest のまま（ソフトの描画を優先）。
 fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
     static CONNECTION: OnceLock<egui_wgpu::RenderState> = OnceLock::new();
     let connection = CONNECTION.get_or_init(|| {
@@ -43,6 +44,15 @@ fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
             unreachable!("製品の設定は新しく作る形")
         };
         setup.device_descriptor = product.device_descriptor;
+        setup
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .shader_compiler = product
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .shader_compiler;
         egui_kittest::wgpu::create_render_state(WgpuSetup::CreateNew(setup), render_options())
     });
     let mut state = connection.clone();

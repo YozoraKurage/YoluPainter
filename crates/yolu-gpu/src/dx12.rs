@@ -1,8 +1,9 @@
 //! D3D12 のシェーダーのコンパイラーの選び。
 //!
-//! wgpu の既定は FXC（古く遅い）。Windows の x86_64 msvc のビルドには DXC を静的に組み込み（`Cargo.toml` の `static-dxc`）、
-//! ここで使えると確かめてから使う。使えなければ FXC に戻る（wgpu の `Auto` は組み込んだ DXC が作れないと D3D12 ごと使えなくなるため）。
-//! 環境変数 `WGPU_DX12_COMPILER` があれば、確かめずにその指定に従う。ほかの OS・ビルドでは wgpu の既定のまま。
+//! wgpu の既定は `Auto`（組み込んだ DXC があればそれ、無ければ PATH の `dxcompiler.dll`、それも無ければ FXC。FXC は古く遅い）。
+//! Windows の x86_64 msvc のビルドには DXC を静的に組み込み（`Cargo.toml` の `static-dxc`）、ここで使えると確かめてから使う。
+//! 使えなければ FXC に戻る（組み込みの DXC がある `Auto` は、それが作れないと FXC に戻らず D3D12 ごと使えなくなるため）。
+//! 環境変数 `WGPU_DX12_COMPILER` があれば、確かめずにその指定に従う。ほかの OS・ビルドでは wgpu の既定（`Auto`）のまま。
 use std::sync::OnceLock;
 
 /// 製品と試験が装置を作るときに使う、D3D12 のシェーダーのコンパイラー（プロセスで 1 度だけ決める）。
@@ -36,14 +37,15 @@ fn choose_without_env() -> wgpu::Dx12Compiler {
     match probe_static_dxc() {
         Ok(()) => wgpu::Dx12Compiler::StaticDxc,
         Err(reason) => {
-            eprintln!("D3D12 のシェーダーのコンパイラー: 組み込みの DXC を使えないため FXC を使う（{reason}）");
+            eprintln!("D3D12 のシェーダーのコンパイラー: FXC を使う（{reason}）");
             wgpu::Dx12Compiler::Fxc
         }
     }
 }
 
 /// 組み込みの DXC で D3D12 の instance を作れ、アダプターが見えるかを確かめる。組み込みの DXC が作れないと、wgpu は D3D12 の
-/// backend ごと作らない（アダプターが 0 個になる）。D3D12 のアダプターがそもそも無い PC でも 0 個になり、そのときは FXC でも同じ。
+/// backend ごと作らない（アダプターが 0 個になる）。wgpu は backend の作成の失敗を `log::debug` に落とすので、原因は取れず、
+/// D3D12 のアダプターがそもそも無い PC でも同じ 0 個になる（そのときは FXC でも同じ結果）。理由の文はその両方を言う。
 #[cfg(all(windows, target_env = "msvc", target_arch = "x86_64"))]
 fn probe_static_dxc() -> Result<(), String> {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
@@ -52,7 +54,10 @@ fn probe_static_dxc() -> Result<(), String> {
     let instance = wgpu::Instance::new(descriptor);
     let adapters = pollster::block_on(instance.enumerate_adapters(wgpu::Backends::DX12));
     if adapters.is_empty() {
-        Err("D3D12 のアダプターが見つからない".to_string())
+        Err(
+            "D3D12 のアダプターが見えない。組み込みの DXC の読み込みに失敗した可能性もある"
+                .to_string(),
+        )
     } else {
         Ok(())
     }

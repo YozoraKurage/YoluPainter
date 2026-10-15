@@ -104,7 +104,8 @@ pub struct GpuBakeOptions {
     /// 既定は入。環境変数 `YOLUPAINTER_BAKE_RAY_QUERY` が `0`・`false`・`off`・`no` なら既定が切になる（アプリは設定で切り替える）。
     /// 実験機能のドライバーが固まったり応答なし（TDR）になったときは、自己照合が同じ道の中で行われるので compute に戻せない:
     /// そのような PC では切にする。Vulkan（RTX 3050 Laptop）と Metal（Apple M4）で動かして確かめた。DX12 は DXC（新しいシェーダー
-    /// コンパイラー）が無いと ray query が出ないので、Windows では Vulkan のアダプターを先に選ぶ。
+    /// コンパイラー）のときだけ ray query が出る（Windows の msvc のビルドは DXC を組み込む。実機での通りは未確認）。
+    /// アダプターは種類（ディスクリートなど）、ray query の有無、backend（Vulkan が先）の順に選ぶので、Vulkan が ray query を持てば Vulkan になる。
     pub ray_query: bool,
     /// 1 回の dispatch の時間の目標（ミリ秒）。
     pub target_dispatch_ms: f64,
