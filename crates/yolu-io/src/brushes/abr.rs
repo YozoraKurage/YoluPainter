@@ -46,6 +46,14 @@ fn clamp_i(value: i16, min: i32, max: i32) -> i32 {
 
 // ---------------- 版 1・2 ----------------
 
+/// 筆圧で不透明度を変えない影響元（大きさは筆圧に従う）。取り込んだ筆先のブラシの始めの形。
+fn pressure_without_opacity() -> Influences {
+    Influences::from_switches(PressureSwitches {
+        opacity: false,
+        ..PressureSwitches::default()
+    })
+}
+
 fn read_old(
     r: &mut Reader,
     version: i16,
@@ -77,10 +85,7 @@ fn read_old(
                         hardness: clamp_i(hardness, 0, 100) as f64 / 100.0,
                         ..BrushSettings::default()
                     },
-                    influences: Influences::from_switches(PressureSwitches {
-                        opacity: false,
-                        ..PressureSwitches::default()
-                    }),
+                    influences: pressure_without_opacity(),
                     ..Brush::default()
                 };
                 b.tip.roundness = (clamp_i(roundness, 1, 100) as f64 / 100.0).max(0.01);
@@ -119,10 +124,7 @@ fn read_old(
                         spacing: clamp_i(spacing, 1, 400) as f64 / 100.0,
                         ..BrushSettings::default()
                     },
-                    influences: Influences::from_switches(PressureSwitches {
-                        opacity: false,
-                        ..PressureSwitches::default()
-                    }),
+                    influences: pressure_without_opacity(),
                     ..Brush::default()
                 };
                 b.tip.image = Some(Arc::new(tip));
@@ -280,10 +282,7 @@ fn read_new(
                 spacing: 0.25,
                 ..BrushSettings::default()
             },
-            influences: Influences::from_switches(PressureSwitches {
-                opacity: false,
-                ..PressureSwitches::default()
-            }),
+            influences: pressure_without_opacity(),
             ..Brush::default()
         };
         b.tip.image = Some(sample.tip.clone());
