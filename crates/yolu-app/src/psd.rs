@@ -37,6 +37,7 @@ use crate::notice::{Kind as NoticeKind, Source};
 use crate::psd_export::blocker_text;
 use crate::sets::{guid_string, unique_name, MaterialRef};
 use crate::state::{Action, AppState, DialogRequest};
+use crate::userfiles::same_file;
 use crate::windows::CloseJob;
 
 /// 取り込み・書き出しの計画・書き込みのスレッドのスタック。グループの入れ子（文書は `MAX_GROUP_DEPTH` 段まで。取り込みは統合画像と
@@ -479,13 +480,6 @@ fn set_name_from(file: &str) -> String {
         "PSD".into()
     } else {
         stem.trim().to_owned()
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
     }
 }
 

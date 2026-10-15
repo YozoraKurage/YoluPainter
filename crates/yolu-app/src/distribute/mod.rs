@@ -29,6 +29,7 @@ use crate::lang::Lang;
 use crate::newproject::relative_model_path;
 use crate::notice::Source;
 use crate::state::{Action, AppState, DialogRequest};
+use crate::userfiles::same_file;
 use crate::windows::CloseJob;
 
 /// 準備・書き込みのスレッドのスタック（正本への詰め直しと合成の再帰に足りる大きさ）。
@@ -235,13 +236,6 @@ pub fn run_dialog(state: &mut AppState) {
         }
         // ウィンドウなしの流れ（除く物が無かった）で選ばなかったら、準備した写しを閉じる（ウィンドウがあるときはウィンドウに戻る）
         None => state.settle_distribute_window(),
-    }
-}
-
-fn same_file(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
     }
 }
 

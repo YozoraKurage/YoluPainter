@@ -691,13 +691,6 @@ pub(crate) fn replaced_sets<'a>(
     .collect()
 }
 
-pub(crate) fn same_file(a: &Path, b: &Path) -> bool {
-    match (a.canonicalize(), b.canonicalize()) {
-        (Ok(a), Ok(b)) => a == b,
-        _ => a == b,
-    }
-}
-
 /// 保存した .ylp が、`limits`（今の「レイヤーのメモリ」の予算から）を超えて開き直せないときの短い知らせ。上限は大きな形（`YLP-4`）だけに
 /// かかる（今の形は今の上限に収まるときだけ書く）。
 pub(crate) fn reopen_note(

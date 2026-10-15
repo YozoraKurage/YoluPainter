@@ -290,7 +290,7 @@ impl OpHost for AppHost<'_> {
 
     fn open(&mut self, path: &Path, _confirm: bool) -> Result<DocInfo, OpError> {
         match self.open_file() {
-            Some(file) if crate::project::same_file(&file, path) => self.doc_info(),
+            Some(file) if crate::userfiles::same_file(&file, path) => self.doc_info(),
             _ => Err(OpError::new(
                 ErrorCode::Unsupported,
                 "起動中のアプリはプロジェクトを開き替えません（アプリで開いているプロジェクトを使います）",
@@ -396,7 +396,7 @@ impl OpHost for AppHost<'_> {
         }
         let same_file = open_file
             .as_ref()
-            .is_some_and(|f| crate::project::same_file(f, &target));
+            .is_some_and(|f| crate::userfiles::same_file(f, &target));
         let exists = std::fs::symlink_metadata(&target).is_ok();
         if exists && !confirm {
             return Err(OpError::replace_confirm_required(&[target

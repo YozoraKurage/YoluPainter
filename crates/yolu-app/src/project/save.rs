@@ -23,11 +23,12 @@ use yolu_io::{BackupKeep, Project, SaveStage, SaveTarget};
 use super::capture::{
     build, capture, left_out_note, BuildError, BuildProgress, Capture, THREAD_STACK,
 };
-use super::{backup_text, reopen_note, same_file, ProjectFile};
+use super::{backup_text, reopen_note, ProjectFile};
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
+use crate::userfiles::same_file;
 
 /// 保存の段の数（合成・組み立て、数える、書く、確かめる、置き換える）。
 const STAGES: usize = 1 + SaveStage::COUNT;
