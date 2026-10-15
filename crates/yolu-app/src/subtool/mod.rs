@@ -264,6 +264,9 @@ pub struct SubToolUi {
     pub props_scroll: [f32; Tool::ALL.len()],
     /// ブラシサイズのパネルのスクロール。
     pub sizes_scroll: f32,
+    /// ブラシサイズのパネルが、最後に見える所へ送った段（今の大きさに近い段）。大きさが変わる（段が変わる）か、
+    /// パネルを初めて描くまで、利用者のスクロールを保つ。
+    pub sizes_followed: Option<usize>,
 }
 
 /// サブツールの状態の全部。

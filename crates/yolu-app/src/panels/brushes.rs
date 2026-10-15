@@ -1063,6 +1063,18 @@ pub(super) fn sizes_height(width: f32) -> f32 {
     rows as f32 * SIZE_ROW + 8.0
 }
 
+/// 段 `index` が全部見える `offset` を返す（もう見えているなら今の `offset` のまま。見えなければ、段が真ん中に来る位置）。
+/// `width` は丸を並べる幅（列の数が決まる）、`view` は見える範囲の高さ。範囲への収めは `Scroll` が行う。
+pub(super) fn size_row_offset(width: f32, index: usize, view: f32, offset: f32) -> f32 {
+    let top = (index / size_columns(width)) as f32 * SIZE_ROW + 4.0;
+    let bottom = top + SIZE_ROW;
+    if top >= offset && bottom <= offset + view {
+        offset
+    } else {
+        top + SIZE_ROW / 2.0 - view / 2.0
+    }
+}
+
 /// ブラシサイズの格子: 決まった大きさの丸（押すと直径を替える。今の直径に近い丸に印）。欄の幅に入るだけ並べ、入りきらなければ段を足す。
 pub(super) fn sizes_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     let editable = !app.is_stroking();

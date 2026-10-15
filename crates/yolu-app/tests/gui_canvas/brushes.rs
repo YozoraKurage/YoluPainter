@@ -3,6 +3,7 @@
 use crate::common;
 use crate::common::drive::Drive;
 
+use common::drive::Drive;
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
@@ -1435,6 +1436,92 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
     );
     click(&mut h, at.center());
     assert_eq!(st(&h).brush().radius, last / 2.0);
+}
+
+/// ブラシサイズのパネル（既定の高さ）の見える範囲と、丸の名前（`30 px` など）で探した丸の範囲。
+fn size_panel(h: &H) -> Rect {
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    let color_tab = h.state().tab_rects[&Tab::Color];
+    Rect::from_min_max(
+        size_tab.left_bottom(),
+        pos2(size_tab.left() + 300.0, color_tab.top()),
+    )
+}
+
+fn size_cell(h: &H, label: &str) -> Rect {
+    rect_of(h, &format!("{label} px"), |r| {
+        r.left() < 400.0 && r.width() < 60.0
+    })
+}
+
+#[test]
+fn the_size_panel_opens_scrolled_to_the_chosen_size_and_follows_it() {
+    let mut h = app(1280.0, 640.0, 128);
+    let panel = size_panel(&h);
+    // 既定の大きさ（直径 32）に近い段は、初めから見える範囲にある（1 段目だけが見えるのではない）
+    assert_eq!(h.brush().radius * 2.0, 32.0);
+    assert!(h.subtools().ui.sizes_scroll > 0.0, "初めから送ってある");
+    let at = size_cell(&h, "30");
+    assert!(
+        panel.contains_rect(at),
+        "30 px の丸が見える {at:?} {panel:?}"
+    );
+    // 大きさが変わると、新しい段が見える所に来る（キー・スライダー・ブラシの切り替えも、同じ半径の欄を変える）
+    h.brush_mut().radius = 100.0;
+    h.run();
+    let at = size_cell(&h, "200");
+    assert!(
+        panel.contains_rect(at),
+        "200 px の丸が見える {at:?} {panel:?}"
+    );
+    h.brush_mut().radius = 0.5;
+    h.run();
+    assert!(panel.contains_rect(size_cell(&h, "1")), "1 px の丸が見える");
+    // 段を押して変えても、押した丸が見える所のまま（見えている段は動かさない）
+    h.brush_mut().radius = 10.0;
+    h.run();
+    let before = h.subtools().ui.sizes_scroll;
+    let at = size_cell(&h, "30");
+    assert!(panel.contains_rect(at), "30 px が見える {at:?}");
+    click(&mut h, at.center());
+    assert_eq!(h.brush().radius, 15.0);
+    assert_eq!(
+        h.subtools().ui.sizes_scroll,
+        before,
+        "見えている段へは動かさない"
+    );
+}
+
+#[test]
+fn the_size_panel_keeps_a_scroll_by_the_user_until_the_size_changes() {
+    let mut h = app(1280.0, 640.0, 128);
+    let panel = size_panel(&h);
+    let followed = h.subtools().ui.sizes_scroll;
+    assert!(followed > 0.0);
+    // ホイールで先頭へ戻す
+    move_to(&h, panel.center());
+    h.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, 100_000.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    h.run();
+    assert_eq!(h.subtools().ui.sizes_scroll, 0.0, "利用者が戻した");
+    // 大きさが変わらないあいだは、何度描いても動かさない
+    for _ in 0..5 {
+        h.run();
+    }
+    assert_eq!(h.subtools().ui.sizes_scroll, 0.0, "大きさが同じなら保つ");
+    // 同じ段のまま半径が少し変わっても（直径 32 → 33）、段は替わらないので保つ
+    h.brush_mut().radius = 16.5;
+    h.run();
+    assert_eq!(h.subtools().ui.sizes_scroll, 0.0);
+    // 段が替わると、また送る
+    h.brush_mut().radius = 100.0;
+    h.run();
+    assert!(h.subtools().ui.sizes_scroll > 0.0, "段が替わった");
+    assert!(panel.contains_rect(size_cell(&h, "200")));
 }
 
 #[test]

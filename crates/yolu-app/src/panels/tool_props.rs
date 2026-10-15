@@ -71,15 +71,24 @@ pub fn show_sizes(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
     if !app.tool.def().sized {
+        app.subtools.ui.sizes_followed = None;
         return;
     }
     // 丸の段の数は幅で決まる。パネルに収まるなら全幅の並び、収まらなければつまみの分を引いた幅の並び
     let wide = brushes::sizes_height(r.width());
-    let content = if wide <= r.height() {
-        wide
+    let fit = if wide <= r.height() {
+        r.width()
     } else {
-        brushes::sizes_height(r.width() - crate::ui::scroll::BAR_WIDTH)
+        r.width() - crate::ui::scroll::BAR_WIDTH
     };
+    let content = brushes::sizes_height(fit);
+    // 選んでいる大きさの段へ送るのは、段が替わったとき（初めに描くときも）だけ。そのあとの利用者のスクロールは保つ
+    let near = brushes::nearest_size(app.brush.radius * 2.0);
+    if app.subtools.ui.sizes_followed != Some(near) {
+        app.subtools.ui.sizes_followed = Some(near);
+        let offset = &mut app.subtools.ui.sizes_scroll;
+        *offset = brushes::size_row_offset(fit, near, r.height(), *offset);
+    }
     let bar = Scroll::begin(ui, r, content, &mut app.subtools.ui.sizes_scroll);
     let scroll = app.subtools.ui.sizes_scroll;
     let area = Rect::from_min_max(

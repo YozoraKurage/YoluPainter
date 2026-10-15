@@ -7,6 +7,7 @@ use crate::common::drive::Drive;
 
 use std::path::{Path, PathBuf};
 
+use common::drive::Drive;
 use common::*;
 use eframe::App as _;
 use egui::{pos2, vec2, Event, Rect};
@@ -303,6 +304,9 @@ fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header(
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 128);
         language(&mut h, lang);
+        // 1 段目の丸を見る（選んでいる大きさの段へ送るので、1 段目の大きさ 1 px を選ぶ）
+        h.brush_mut().radius = 0.5;
+        h.run();
         let (props, size, color) = (
             tab_rect(&h, Tab::ToolProperties),
             tab_rect(&h, Tab::BrushSize),
