@@ -62,10 +62,10 @@ pub fn options_bar(h: &Harness<'_, YoluApp>) -> Rect {
     Rect::from_min_max(pos2(0.0, 24.0), pos2(h.ctx.content_rect().right(), 62.0))
 }
 
-/// 知らせ（トースト）が出る、ウィンドウの左下の範囲。
+/// 知らせ（トースト）が出る、状態の帯の左の範囲。
 pub fn toast_area(h: &Harness<'_, YoluApp>) -> Rect {
     let bottom = h.ctx.content_rect().bottom();
-    Rect::from_min_max(pos2(44.0, bottom - 80.0), pos2(524.0, bottom - 20.0))
+    Rect::from_min_max(pos2(0.0, bottom - 28.0), pos2(640.0, bottom))
 }
 
 /// `base` に、開いているポップアップ（入れ子のメニューを含む）の範囲を足して、周りに 8 点の余白をつけた範囲。

@@ -1,4 +1,4 @@
-//! 小さな知らせ（トースト）。直前の操作の結果と理由（`AppState::message`）は、状態の帯の左には常に出さず、ここで短く出して消える。
+//! 小さな知らせ（トースト）。直前の操作の結果と理由（`AppState::message`）は、状態の帯の左の端に 1 行で、ここで短く出して消える。
 //!
 //! - `message` を書く操作（`AppState::apply`・1 フレーム）の終わりに、`message` が書かれていれば、前と同じ文でも新しい知らせとして出す
 //!   （「保存しました。」を続けて押せば、そのたびに出る）。操作の外で直接書かれた文は、次のフレームの始めに、前に見た文と違えば出す。
@@ -8,11 +8,12 @@
 //! - 文の中身は今のまま（`message` は `notice` の `notify` が書く。試験は `message` と `shell::status_text` を読む。操作の外でも最後の文は読める）。
 //! - 文を空にして（操作の中は `AppState::clear_message`）から同じ文が来たときも、新しい知らせとして出す。
 
-use egui::{pos2, vec2, Align2, Color32, Order, Sense, Stroke};
+use egui::{pos2, vec2, Color32, Order, Rect, Sense};
 
 use crate::notice::Kind;
 use crate::state::AppState;
 use crate::ui::theme as t;
+use crate::ui::widgets as w;
 
 /// 済んだ知らせを出している秒数。
 pub const INFO_SECONDS: f64 = 4.0;
@@ -22,9 +23,6 @@ pub const LONG_SECONDS: f64 = 12.0;
 pub const HOLD_LIMIT: f64 = 3.0;
 /// 消える前にうすくなる秒数。
 pub const FADE_SECONDS: f64 = 0.4;
-/// 知らせの最大の幅（文字の部分）。
-const MAX_WIDTH: f32 = 520.0;
-const PADDING: egui::Vec2 = vec2(12.0, 7.0);
 
 /// 今出している知らせ。
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -176,7 +174,27 @@ impl Toast {
     }
 }
 
-/// 知らせを描く（毎フレーム。ビューの左下、状態の帯のすぐ上）。消える時刻に描き直しを頼む。
+/// 知らせの文字の左の余白（帯の左の端から、種類の色の印を引いた後）。
+const TEXT_INSET: f32 = 12.0;
+/// 種類の色の印の幅。
+const MARK_WIDTH: f32 = 3.0;
+
+/// 知らせの置き場（状態の帯の左の端から、右の項目の手前まで）。
+pub fn strip_rect(ctx: &egui::Context, app: &AppState) -> Rect {
+    let screen = ctx.content_rect();
+    let bar = Rect::from_min_max(
+        pos2(screen.left(), screen.bottom() - t::STATUS_BAR_HEIGHT),
+        screen.max,
+    );
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        Order::Foreground,
+        egui::Id::new("yolu.toast.measure"),
+    ));
+    let right = crate::shell::status_layout(&painter, app, bar).free_right;
+    Rect::from_min_max(bar.min, pos2(right.max(bar.left()), bar.bottom()))
+}
+
+/// 知らせを描く（毎フレーム。状態の帯の左の端から 1 行。右の項目に重ならない幅で切り、切ったときは全文をツールチップに出す）。消える時刻に描き直しを頼む。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let now = ctx.input(|i| i.time);
     // フレームの中で、ここまでに書かれた文（`apply` の外の書き込みも）をすぐ出す
@@ -185,56 +203,45 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.toast.is_visible(now) {
         return;
     }
-    let text = app.toast.text().to_owned();
+    // 1 行で出す（文の中の改行は空白にする）
+    let text = app.toast.text().replace(['\r', '\n'], " ");
     let kind = app.toast.kind();
     let opacity = app.toast.opacity(now);
-    let screen = ctx.content_rect();
-    let wrap =
-        (screen.width() - t::TOOL_STRIP_WIDTH - 48.0 - PADDING.x * 2.0).clamp(120.0, MAX_WIDTH);
+    let strip = strip_rect(ctx, app);
+    if strip.width() < TEXT_INSET + 8.0 {
+        return;
+    }
     let mut dismissed = false;
     let mut hovered = false;
     egui::Area::new(egui::Id::new("yolu.toast"))
         .order(Order::Foreground)
-        .anchor(
-            Align2::LEFT_BOTTOM,
-            vec2(t::TOOL_STRIP_WIDTH + 12.0, -(t::STATUS_BAR_HEIGHT + 12.0)),
-        )
+        .fixed_pos(strip.min)
         .constrain(false)
         .interactable(true)
         .show(ctx, |ui| {
             let fade = |c: Color32| c.gamma_multiply(opacity);
-            let galley = ui
-                .painter()
-                .layout(text.clone(), t::LABEL.font(), fade(t::TEXT), wrap);
-            let size = galley.size() + PADDING * 2.0 + vec2(4.0, 0.0);
-            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-            let p = ui.painter();
-            p.rect_filled(rect.expand(1.0), 6.0, fade(Color32::from_black_alpha(60)));
-            p.rect_filled(rect, 5.0, fade(t::PANEL_HEADER));
-            p.rect_stroke(
-                rect,
-                5.0,
-                Stroke::new(1.0, fade(t::SEPARATOR)),
-                egui::StrokeKind::Inside,
-            );
-            // 左の帯: 失敗と断りは赤、注意は黄、済んだ知らせは青
+            let (rect, response) = ui.allocate_exact_size(strip.size(), Sense::click());
+            let p = ui.painter().clone();
+            // 左の印: 失敗と断りは赤、注意は黄、済んだ知らせは青
             p.rect_filled(
-                egui::Rect::from_min_size(
-                    rect.min + vec2(0.0, 3.0),
-                    vec2(3.0, rect.height() - 6.0),
+                Rect::from_min_size(
+                    rect.min + vec2(0.0, 4.0),
+                    vec2(MARK_WIDTH, rect.height() - 6.0),
                 ),
                 1.5,
                 fade(band_color(kind)),
             );
-            p.galley(
-                rect.min + pos2(PADDING.x + 4.0, PADDING.y).to_vec2(),
-                galley,
-                t::TEXT,
-            );
+            let at = Rect::from_min_max(pos2(rect.left() + TEXT_INSET, rect.top() + 1.0), rect.max);
+            let style = t::LABEL.with_color(fade(t::TEXT));
+            let shown = w::fit(&p, &text, at.width(), style);
+            w::text(&p, at, &shown, style, w::Align::Left);
             response
                 .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &text));
             dismissed = response.clicked();
             hovered = response.hovered();
+            if hovered && shown != text {
+                response.on_hover_text(&text);
+            }
         });
     if dismissed {
         app.toast.dismiss();

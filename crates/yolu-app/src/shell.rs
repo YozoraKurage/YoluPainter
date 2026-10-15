@@ -804,34 +804,64 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
     }
 }
 
-/// 直前の操作の結果と理由（`message`）。状態の帯の左には出さず、小さな知らせ（`toast`）が短く出して消す。試験が読む口はここ。
+/// 直前の操作の結果と理由（`message`）。状態の帯の左に、知らせ（`toast`）が短く出して消す。試験が読む口はここ。
 pub fn status_text(app: &AppState) -> &str {
     &app.message
 }
 
-/// 状態の帯: 左は何も出さない。右端に、版とビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。実際のウィンドウだけで、測れない値は出さない）。
+/// 状態の帯の右端の項目の置き場（右から左へ。幅は文字で決まる）。
+pub struct StatusLayout {
+    /// 外からの操作の印（丸）。
+    pub dot: Option<Rect>,
+    /// 使っているメモリなどの項目と、その文字の矩形。
+    pub items: Vec<(crate::usage::Item, Rect)>,
+    /// 右の項目の左の端（これより左は空き。知らせ `toast` が使う）。項目の間と同じ 16 の間をあけてある。
+    pub free_right: f32,
+}
+
+/// 状態の帯 `r` の右端の項目の置き場。
+pub fn status_layout(p: &egui::Painter, app: &AppState, r: Rect) -> StatusLayout {
+    let mut right = r.right() - 10.0;
+    let mut dot = None;
+    if app.ops.indicator().is_some() {
+        let d = Rect::from_center_size(
+            pos2(right - OPS_DOT / 2.0, r.center().y),
+            vec2(OPS_DOT, OPS_DOT),
+        );
+        right = d.left() - 16.0;
+        dot = Some(d);
+    }
+    let mut items = Vec::new();
+    for item in app.usage.items(app.lang) {
+        let width = w::text_width(p, &item.text, t::LABEL_DIM);
+        let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
+        right = at.left() - 16.0;
+        items.push((item, at));
+    }
+    StatusLayout {
+        dot,
+        items,
+        free_right: right,
+    }
+}
+
+/// 状態の帯: 左は、直前の操作の知らせ（`toast`。出ているあいだだけ）。右端に、版とビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。
+/// 実際のウィンドウだけで、測れない値は出さない）。
 pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
-    let mut right = r.right() - 10.0;
+    let layout = status_layout(&p, app, r);
     // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
-    if let Some(indicator) = app.ops.indicator() {
+    if let (Some(indicator), Some(dot)) = (app.ops.indicator(), layout.dot) {
         let tip = app.ops.tooltip(app.lang);
-        let dot = Rect::from_center_size(
-            pos2(right - OPS_DOT / 2.0, r.center().y),
-            vec2(OPS_DOT, OPS_DOT),
-        );
         p.circle_filled(dot.center(), OPS_DOT / 2.0, ops_indicator_color(indicator));
         let response = ui.interact(dot.expand(4.0), ui.id().with("status.ops"), Sense::hover());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &tip));
         response.on_hover_text(&tip);
-        right = dot.left() - 16.0;
     }
-    for item in app.usage.items(app.lang) {
-        let width = w::text_width(&p, &item.text, t::LABEL_DIM);
-        let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
-        w::text(&p, at, &item.text, t::LABEL_DIM, Align::Right);
+    for (item, at) in &layout.items {
+        w::text(&p, *at, &item.text, t::LABEL_DIM, Align::Right);
         let response = ui.interact(
             at.expand2(vec2(4.0, 0.0)),
             ui.id().with(("status", item.key)),
@@ -840,7 +870,6 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &item.text));
         response.on_hover_text(&item.tip);
-        right = at.left() - 16.0;
     }
 }
 

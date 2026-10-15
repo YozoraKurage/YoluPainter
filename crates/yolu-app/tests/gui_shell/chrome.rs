@@ -92,10 +92,10 @@ fn assert_status_bar_left_is_empty(h: &mut Harness<'_, YoluApp>, what: &str) {
     }
 }
 
-/// 状態の帯の左には、知らせの文を常に出さない（開発用の数も）。直前の操作の結果と理由（message）は、小さな知らせとして状態の帯の上に
+/// 状態の帯の左は、知らせが無いあいだは空（開発用の数も出さない）。直前の操作の結果と理由（message）は、小さな知らせとして状態の帯の左の端に
 /// 短く出て、数秒で消える。message の中身と、`shell::status_text`・`state.message` を読む口は今のまま。
 #[test]
-fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goes_away() {
+fn the_status_bar_left_is_empty_and_the_message_shows_as_a_small_toast_in_it_that_goes_away() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 512);
         h.set_lang(lang);
@@ -118,7 +118,7 @@ fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goe
         assert_status_bar_left_is_empty(&mut h, &format!("{lang:?} 知らせなし"));
         let bar_top = 800.0 - t::STATUS_BAR_HEIGHT;
 
-        // message があっても、状態の帯には出さない。小さな知らせが、状態の帯のすぐ上に出る
+        // message があれば、小さな知らせが状態の帯の左の端に出る
         *h.message_mut() = "試験の知らせ".into();
         h.run();
         assert_eq!(
@@ -126,16 +126,12 @@ fn the_status_bar_never_shows_the_message_and_it_shows_as_a_small_toast_that_goe
             "試験の知らせ",
             "message の読み口は今のまま"
         );
-        assert_status_bar_left_is_empty(&mut h, &format!("{lang:?} 知らせあり"));
         let toast = text_rect(&h, "試験の知らせ").expect("知らせが出ている");
         assert!(
-            toast.bottom() <= bar_top,
-            "{lang:?}: 知らせ {toast:?} は状態の帯 {bar_top} の上"
+            toast.top() >= bar_top && toast.bottom() <= 800.0,
+            "{lang:?}: 知らせ {toast:?} は状態の帯 {bar_top} の中"
         );
-        assert!(
-            bar_top - toast.bottom() < 40.0,
-            "状態の帯のすぐ上: {toast:?}"
-        );
+        assert!(toast.left() < 40.0, "帯の左の端から: {toast:?}");
 
         // 数秒で消える。message は残る（試験が読む）
         for _ in 0..(((toast::INFO_SECONDS + 1.0) * 60.0) as usize) {

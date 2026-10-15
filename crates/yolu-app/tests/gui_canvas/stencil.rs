@@ -750,7 +750,8 @@ fn open_stencil_tab(h: &mut Harness<'_, YoluApp>) {
 #[test]
 fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
     let dir = temp_dir("tab");
-    let mut h = app(1280.0, 1000.0, 128);
+    // （「置き場を戻す」の行が、状態の帯に出る知らせと重ならない高さで）
+    let mut h = app(1280.0, 1100.0, 128);
     open_stencil_tab(&mut h);
     assert!(h.query_by_label("画像: なし").is_some());
     // 画像の箱 → 「画像を読む…」: ファイルのウィンドウの頼みが出る（試験ではウィンドウは開かない）
