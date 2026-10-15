@@ -42,13 +42,13 @@ use yolu_io::shelf::Shelf;
 use self::cache::Cache;
 use self::probe::{Limits, Target};
 use self::service::{Service, Work};
+use crate::jobs::CloseJob;
 use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::shelf::{
     Attempt, Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
 };
 use crate::state::AppState;
-use crate::windows::CloseJob;
 
 /// ライブラリのファイルの項目の ID の前置き（プロジェクトの棚の ID は UUID、組み込みは `builtin:` なので重ならない）。
 pub const LIBRARY_PREFIX: &str = "library:";

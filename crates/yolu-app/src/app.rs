@@ -1414,7 +1414,7 @@ impl YoluApp {
             return true;
         }
         // 閉じると取り消される仕事（利用者が結果を待っている書き出しなど）も、保存していない変更と一緒に知らせる
-        let jobs = crate::windows::close_jobs(&self.state);
+        let jobs = crate::jobs::close_jobs(&self.state);
         if !self.state.modified && jobs.is_empty() {
             return true;
         }

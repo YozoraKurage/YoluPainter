@@ -18,12 +18,12 @@ use super::store::{BrushStore, StoreError};
 use super::{
     clean_name, gaps, BrushAction, BrushKey, Entry, Group, IdSource, ImportMeta, UserBrush,
 };
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::Tool;
 use crate::state::{Action, AppState, DialogRequest, MAX_RADIUS};
-use crate::windows::CloseJob;
 
 /// 仕事の途中経過（進み具合の札が読む）。
 #[derive(Clone, Debug, PartialEq, Eq)]

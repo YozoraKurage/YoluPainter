@@ -5,6 +5,7 @@ use egui::{pos2, vec2, Id, Key, Order, Rect, Sense, UiBuilder, Vec2};
 
 use crate::bake;
 use crate::export::{self, ExportAction};
+use crate::jobs::CloseJob;
 use crate::lang::Lang;
 use crate::psd::PsdAction;
 use crate::state::{Action, AppState};
@@ -733,50 +734,6 @@ pub fn park_until_canceled(cancel: &std::sync::atomic::AtomicBool) {
     while !cancel.load(std::sync::atomic::Ordering::Relaxed) {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
-}
-
-/// 閉じる前に知らせる仕事（走っていて、利用者が結果を待っている物）。閉じると取り消される。
-/// 保存は含まない（保存は閉じる流れが終わるまで待つ。`YoluApp::close_flow`）。画面に出ない裏の仕事（サムネイル・一覧の読み込み・
-/// 更新の確かめ）は、結果を待っていないので含まない。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CloseJob {
-    Bake,
-    Export,
-    PsdImport,
-    PsdExport,
-    Distribute,
-    UpdateDownload,
-    BrushImport,
-    /// ライブラリのフォルダへの書き込み（ライブラリへ入れる・ファイルを足す）。
-    LibraryWrite,
-    /// レイヤーの素材（スマートマテリアル・マスク）の保存。
-    ShelfSave,
-    /// 個人のライブラリのファイルのプロジェクトへの取り込み。
-    ShelfImport,
-}
-
-impl CloseJob {
-    /// 確かめの文に出す名前（仕事の札・メニューの名前と同じ言い方）。
-    pub fn label(self, lang: Lang) -> &'static str {
-        match self {
-            CloseJob::Bake => lang.pick("ベイク", "Bake"),
-            CloseJob::Export => lang.pick("書き出し", "Export"),
-            CloseJob::PsdImport => lang.pick("PSD の取り込み", "PSD import"),
-            CloseJob::PsdExport => lang.pick("PSD の書き出し", "PSD export"),
-            CloseJob::Distribute => lang.pick("配布用に保存", "Save for distribution"),
-            CloseJob::UpdateDownload => lang.pick("更新のダウンロード", "Update download"),
-            CloseJob::BrushImport => lang.pick("ブラシの取り込み", "Brush import"),
-            CloseJob::LibraryWrite => lang.pick("ライブラリへの書き込み", "Writing to the library"),
-            CloseJob::ShelfSave => lang.pick("素材の保存", "Saving a material"),
-            CloseJob::ShelfImport => lang.pick("素材の取り込み", "Importing a material"),
-        }
-    }
-}
-
-/// 閉じると取り消される、走っている仕事（仕事の表 `jobs::JOBS` の順）。保存は含まない。更新のために終わるとき（更新のダウンロードは
-/// 済んでいる）も、走っている物は挙げる（呼び手が、更新の流れでは聞かない）。
-pub fn close_jobs(app: &AppState) -> Vec<CloseJob> {
-    crate::jobs::close_jobs(app)
 }
 
 /// 閉じる前の確かめの文。保存していない変更（`modified`）と、閉じると取り消される仕事（`jobs`）を、1 つの問いにまとめる。

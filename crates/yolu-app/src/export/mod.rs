@@ -42,10 +42,10 @@ use yolu_io::export::{
 };
 
 use crate::bake::Occlusion;
+use crate::jobs::CloseJob;
 use crate::jobs::{Cancel, JobCard, JobSpec, Polled, Worker};
 use crate::notice::Source;
 use crate::state::{Action, AppState};
-use crate::windows::CloseJob;
 
 /// 書き出しの操作（`Action::Export`）。
 #[derive(Clone, Debug, PartialEq)]

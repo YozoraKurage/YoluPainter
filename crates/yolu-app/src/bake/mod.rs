@@ -45,12 +45,12 @@ use yolu_core::mesh_maps::{
     MeshMapState,
 };
 
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::view3d::model::ViewModel;
-use crate::windows::CloseJob;
 
 /// ベイクの操作（`Action::Bake`）。
 #[derive(Clone, Debug, PartialEq)]

@@ -37,13 +37,13 @@ use yolu_io::smart::{SmartFile, REFUSAL_GENERATORS, REFUSAL_IMAGES};
 use yolu_io::{NativeValue, Project, Resource};
 
 use crate::engine::{Channel, CoreError, Document, LayerId};
+use crate::jobs::CloseJob;
 use crate::jobs::JobSpec;
 use crate::lang::Lang;
 use crate::library::cache::{Cache, Cached};
 use crate::library::service::{Cancel, Service, Work};
 use crate::notice::{Kind as NoticeKind, Source};
 use crate::state::{AppState, DialogRequest};
-use crate::windows::CloseJob;
 
 /// 棚の素材のメモリの予算（Unity 版の既定は RAM の 1/16 を 256〜4096 MiB に収めた値。ここでは固定）。
 pub const SHELF_BUDGET: u64 = 512 * 1024 * 1024;

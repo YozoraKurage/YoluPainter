@@ -1,5 +1,5 @@
 //! 閉じる前の確かめ: 走っている仕事（利用者が結果を待っている書き出しなど）は、保存していない変更が無くても知らせる。
-//! 閉じると取り消される仕事の一覧（`windows::close_jobs`）・確かめの文（`close_question`）・取り消して止まるのを待つ後始末（`stop_jobs`）。
+//! 閉じると取り消される仕事の一覧（`jobs::close_jobs`）・確かめの文（`close_question`）・取り消して止まるのを待つ後始末（`stop_jobs`）。
 //! 保存の仕事は一覧に入らない（保存は閉じる流れが待つ。`save_close.rs`）。
 use crate::common;
 
@@ -12,12 +12,13 @@ use std::time::{Duration, Instant};
 use common::*;
 use egui::vec2;
 use egui_kittest::Harness;
+use yolu_app::jobs::{close_jobs, CloseJob};
 use yolu_app::lang::Lang;
 use yolu_app::pen::PenInput;
 use yolu_app::psd::PsdAction;
 use yolu_app::shelf::ShelfOp;
 use yolu_app::state::{Action, AppState};
-use yolu_app::windows::{close_jobs, close_question, stop_jobs, CloseJob};
+use yolu_app::windows::{close_question, stop_jobs};
 use yolu_app::YoluApp;
 
 type H = Harness<'static, YoluApp>;

@@ -31,6 +31,7 @@ use yolu_io::psd::{
     ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
 };
 
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
 use crate::notice::{Kind as NoticeKind, Source};
@@ -38,7 +39,6 @@ use crate::psd_export::blocker_text;
 use crate::sets::{guid_string, unique_name, MaterialRef};
 use crate::state::{Action, AppState, DialogRequest};
 use crate::userfiles::same_file;
-use crate::windows::CloseJob;
 
 /// 取り込み・書き出しの計画・書き込みのスレッドのスタック。グループの入れ子（文書は `MAX_GROUP_DEPTH` 段まで。取り込みは統合画像と
 /// 照らすために合成し、書き出しは計画で再帰する）の再帰に足りる大きさ（合成の実測は `MAX_GROUP_DEPTH` の説明: 64 段は Linux で 320KB。

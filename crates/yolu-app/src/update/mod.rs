@@ -37,11 +37,11 @@ use yolu_update::{
     WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
+use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
-use crate::windows::CloseJob;
 pub use config::Preference;
 use http::{HttpTransport, Link};
 
