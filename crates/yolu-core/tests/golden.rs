@@ -1021,8 +1021,10 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
                 "layer" => {
                     let ch = t.get(3).map_or(Channel::Color, |s| channel(s));
                     let layer = &doc.layers()[layer_index(doc, t[2])];
+                    // 面の無いチャンネル（ストロークで作った面を Undo で外した後など）は、全部透明の画素として書き出す
+                    let empty = || vec![0; doc.width() as usize * doc.height() as usize * 4];
                     (
-                        surface_bytes(layer.surface(ch).expect("面")),
+                        layer.surface(ch).map_or_else(empty, surface_bytes),
                         format!("layer {} {}{size}", t[2], channel_word(ch)),
                     )
                 }
