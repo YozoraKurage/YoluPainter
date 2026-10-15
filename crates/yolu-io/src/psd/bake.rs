@@ -106,7 +106,7 @@ impl ExportControl<'_> {
 pub struct FillSources {
     /// 画像を読む。
     pub image: bool,
-    /// グラデーション（ワールドスペースなど。ランプ付きの形のグラデーション）。
+    /// グラデーション（ワールドスペースなど。ランプ付きの形のグラデーションと、点のグラデーション）。
     pub gradient: bool,
     /// デカール。
     pub decal: bool,
@@ -119,7 +119,7 @@ impl FillSources {
         let decal = l.is_decal() && l.fill_value(c).is_some();
         Self {
             image,
-            gradient: l.fill_gradient(c).is_some(),
+            gradient: l.fill_gradient(c).is_some() || l.fill_points(c).is_some(),
             decal,
             projection: (image || decal).then(|| l.projection().mode),
         }

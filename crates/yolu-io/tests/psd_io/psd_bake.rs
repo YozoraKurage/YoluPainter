@@ -6,6 +6,7 @@ use attach_support::*;
 use std::sync::atomic::AtomicBool;
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::fill_image::{Projection, ProjectionMode};
+use yolu_core::fill_points::{GradientPoint, PointGradient, PointSpace};
 use yolu_core::generator::{self, anchor::ReadMode, ColorStop, OpacityStop, Ramp, Settings};
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, AnchorId, AnchorPlacement, BalanceRange,
@@ -637,6 +638,63 @@ fn fills_that_read_an_image_a_projection_or_a_gradient_are_baked_per_channel() {
         find(&rough.document.layers, "塗り").kind,
         LayerKind::SolidColor([90, 90, 90])
     ));
+    assert_eq!(state(&d), before);
+}
+
+#[test]
+fn a_point_gradient_fill_is_baked_as_pixels_and_told_like_the_other_gradients() {
+    let (mut d, l) = world();
+    let fill = l[3];
+    // UV の空間の点（位置のマップが要らない）。Color は 2 点の間で色も不透明度も変わる
+    let gradient = PointGradient {
+        space: PointSpace::Uv,
+        spread: 0.5,
+        points: vec![
+            GradientPoint {
+                position: [0.0, 0.0, 0.0],
+                color: Rgba8::new(10, 200, 30, 214),
+            },
+            GradientPoint {
+                position: [1.0, 1.0, 0.0],
+                color: Rgba8::new(240, 20, 90, 255),
+            },
+        ],
+    };
+    d.set_fill_points(fill, Channel::Color, Some(gradient), false)
+        .unwrap();
+    let before = state(&d);
+
+    let (color, back) = round_trip(&d, Channel::Color);
+    let note = color.notes.iter().find(|n| n.layer == "塗り").unwrap();
+    match &note.action {
+        NoteAction::BakedFill(s) => assert!(s.gradient && !s.image && !s.decal, "{s:?}"),
+        other => panic!("{other:?}"),
+    }
+    let baked = find(&color.document.layers, "塗り");
+    assert!(matches!(baked.kind, LayerKind::Raster));
+    // 焼いた画素は単色の値でなく、点のグラデーションの評価と全バイト一致する
+    let evaluated = d.layer_output(fill, Channel::Color, d.bounds()).unwrap();
+    assert_eq!(quiet(expand(baked, W, H)), quiet(evaluated.clone()));
+    assert!(
+        evaluated
+            .chunks_exact(4)
+            .any(|p| p != &evaluated[..4]),
+        "画素が場所で変わる"
+    );
+    assert_eq!(
+        back.layers()
+            .iter()
+            .filter(|l| l.kind() == CoreKind::Fill)
+            .count(),
+        0
+    );
+    // 点のグラデーションを持たないチャンネルは、これまでどおり単色の塗りつぶしのまま（注記なし）
+    let (height, _) = round_trip(&d, Channel::Height);
+    assert!(
+        !height.notes.iter().any(|n| matches!(n.action, NoteAction::BakedFill(_))),
+        "{:?}",
+        height.notes
+    );
     assert_eq!(state(&d), before);
 }
 
