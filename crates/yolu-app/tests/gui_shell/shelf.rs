@@ -3272,7 +3272,7 @@ mod ui {
         }
         h.run();
         settle(&mut h);
-        // 持ち上げた素材は、棚からレイヤーの行へ向かう途中にある
+        // 持ち上げた素材は、アセットのパネルからレイヤーの行へ向かう途中にある
         let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
             .union(crate::shots::group(&h, yolu_app::Tab::Layers));
         common::shot::region(&mut h, "assets_shelf_dragging", panel);
