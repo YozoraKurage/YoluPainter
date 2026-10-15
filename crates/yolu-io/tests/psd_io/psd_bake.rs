@@ -676,7 +676,11 @@ fn a_point_gradient_fill_is_baked_as_pixels_and_told_like_the_other_gradients() 
     let evaluated = d.layer_output(fill, Channel::Color, d.bounds()).unwrap();
     assert_eq!(quiet(expand(baked, W, H)), quiet(evaluated.clone()));
     assert!(
-        evaluated.chunks_exact(4).any(|p| p != &evaluated[..4]),
+        evaluated
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|p| p != &evaluated[..4]),
         "画素が場所で変わる"
     );
     assert_eq!(
