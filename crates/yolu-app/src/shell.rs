@@ -49,6 +49,11 @@ pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     ]
 }
 
+/// 操作の名前とキーの文字で作るメニューの項目（名前は `commands` の表のもの）。
+fn command_item(lang: Lang, id: &str, action: Action) -> Entry<Action> {
+    Entry::item(crate::commands::label_of(id, lang), action).command_key(id)
+}
+
 /// ファイルメニューのインポート（入れ子のメニュー。PSD を新しいテクスチャセットに・今のテクスチャセットに）と書き出し（テクスチャを書き出す・PSD）。
 /// 見出しは置かず、インポートと書き出しは同じ組に並べる。
 fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
@@ -77,8 +82,7 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
             ],
         )
         .enabled(free),
-        crate::commands::item(l, "file.export", Action::Export(ExportAction::OpenWindow))
-            .enabled(free),
+        command_item(l, "file.export", Action::Export(ExportAction::OpenWindow)).enabled(free),
         Entry::item(
             l.pick("PSD を書き出す…", "Export PSD…"),
             Action::Psd(PsdAction::ExportDialog),
@@ -103,22 +107,16 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     match index {
         0 => {
             let mut entries = vec![
-                why(
-                    crate::commands::item(l, "file.new_project", Action::NewProjectDialog)
-                        .enabled(idle),
-                ),
-                why(crate::commands::item(l, "file.open", Action::OpenProjectDialog).enabled(idle)),
+                why(command_item(l, "file.new_project", Action::NewProjectDialog).enabled(idle)),
+                why(command_item(l, "file.open", Action::OpenProjectDialog).enabled(idle)),
                 why(Entry::item(
                     l.pick("復旧…", "Recovery…"),
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
                 )
                 .enabled(idle && app.recovery.is_enabled())),
                 Entry::Separator,
-                why(crate::commands::item(l, "file.save", Action::SaveProject).enabled(idle)),
-                why(
-                    crate::commands::item(l, "file.save_as", Action::SaveProjectAsDialog)
-                        .enabled(idle),
-                ),
+                why(command_item(l, "file.save", Action::SaveProject).enabled(idle)),
+                why(command_item(l, "file.save_as", Action::SaveProjectAsDialog).enabled(idle)),
                 why(Entry::item(
                     l.pick("配布用に保存…", "Save for Distribution…"),
                     Action::Distribute(crate::distribute::DistributeAction::Start),
@@ -138,14 +136,14 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::Separator,
                 Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
                 Entry::Separator,
-                crate::commands::item(l, "app.quit", Action::Quit),
+                command_item(l, "app.quit", Action::Quit),
             ]);
             entries
         }
         1 => {
             let mut entries = vec![
-                crate::commands::item(l, "edit.undo", Action::Undo).enabled(free && app.can_undo()),
-                crate::commands::item(l, "edit.redo", Action::Redo).enabled(free && app.can_redo()),
+                command_item(l, "edit.undo", Action::Undo).enabled(free && app.can_undo()),
+                command_item(l, "edit.redo", Action::Redo).enabled(free && app.can_redo()),
                 Entry::Separator,
             ];
             entries.extend(crate::clipboard::menu_entries(app));
@@ -175,11 +173,11 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 tool_entry(Tool::Path),
                 tool_entry(Tool::Text),
                 Entry::Separator,
-                crate::commands::item(l, "color.swap", Action::SwapColors),
-                crate::commands::item(l, "color.default", Action::DefaultColors),
+                command_item(l, "color.swap", Action::SwapColors),
+                command_item(l, "color.default", Action::DefaultColors),
                 // 設定は、Unity の Edit ▸ Preferences と同じく編集のメニューの一番下（区切りの後）
                 Entry::Separator,
-                crate::commands::item(
+                command_item(
                     l,
                     "app.settings",
                     Action::Prefs(crate::prefs::PrefsAction::Open),
@@ -194,33 +192,33 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         5 => vec![
             crate::uv_wireframe::menu_entry(app),
             crate::uv_wireframe::overlap::menu_entry(app),
-            crate::commands::item(l, "view.zoom_in", Action::ZoomIn),
-            crate::commands::item(l, "view.zoom_out", Action::ZoomOut),
-            crate::commands::item(l, "view.fit", Action::FitView).enabled(free),
+            command_item(l, "view.zoom_in", Action::ZoomIn),
+            command_item(l, "view.zoom_out", Action::ZoomOut),
+            command_item(l, "view.fit", Action::FitView).enabled(free),
             Entry::Separator,
-            crate::commands::item(l, "view.rotate_left", Action::RotateLeft).enabled(free),
-            crate::commands::item(l, "view.rotate_right", Action::RotateRight).enabled(free),
-            crate::commands::item(l, "view.reset_rotation", Action::ResetRotation)
+            command_item(l, "view.rotate_left", Action::RotateLeft).enabled(free),
+            command_item(l, "view.rotate_right", Action::RotateRight).enabled(free),
+            command_item(l, "view.reset_rotation", Action::ResetRotation)
                 .enabled(free && app.view.angle != 0.0),
-            crate::commands::item(l, "view.flip", Action::FlipView)
+            command_item(l, "view.flip", Action::FlipView)
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
-            crate::commands::item(
+            command_item(
                 l,
                 "view.ruler_snap",
                 Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler),
             )
             .checked(app.rulers.snap_ruler)
             .enabled(free),
-            crate::commands::item(
+            command_item(
                 l,
                 "view.special_ruler_snap",
                 Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial),
             )
             .checked(app.rulers.snap_special)
             .enabled(free),
-            crate::commands::item(
+            command_item(
                 l,
                 "view.switch_special_ruler",
                 Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
@@ -450,7 +448,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         });
     } else {
         v.push(
-            crate::commands::item(lang, "layer.group", Action::M2(Edit::GroupSelected))
+            command_item(lang, "layer.group", Action::M2(Edit::GroupSelected))
                 .enabled(free && app.selected_layer == Some(id)),
         );
     }
@@ -475,10 +473,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         .command_key("layer.merge_down")
         .enabled(free && app.selected_layer == Some(id)),
     );
-    v.push(
-        crate::commands::item(lang, "layer.merge_visible", Action::M2(Edit::MergeVisible))
-            .enabled(free),
-    );
+    v.push(command_item(lang, "layer.merge_visible", Action::M2(Edit::MergeVisible)).enabled(free));
     if layer.is_some_and(|l| l.path().is_some()) {
         // 塗りつぶしレイヤーのパスは画素にできない（パスの欄のボタンと同じ条件）
         let can = app.path_can_rasterize(id);

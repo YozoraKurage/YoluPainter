@@ -3,8 +3,14 @@
 
 use super::saved::SavedOp;
 use super::{ModifyKind, SelAction, SelEdit, SelUiOp};
+use crate::lang::Lang;
 use crate::state::{Action, AppState, Tool};
 use crate::ui::menu::Entry;
+
+/// 操作の名前とキーの文字で作るメニューの項目（名前は `commands` の表のもの）。
+fn command_item(lang: Lang, id: &str, action: Action) -> Entry<Action> {
+    Entry::item(crate::commands::label_of(id, lang), action).command_key(id)
+}
 
 /// 選択のツール（メニューとツールの帯の順）。
 pub const SELECT_TOOLS: [Tool; 6] = [
@@ -23,9 +29,9 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     let any = app.doc.selection().is_some();
     let edit = |e: SelEdit| Action::Sel(SelAction::Edit(e));
     let mut v = vec![
-        crate::commands::item(l, "selection.all", edit(SelEdit::All)).enabled(free),
-        crate::commands::item(l, "selection.deselect", edit(SelEdit::Clear)).enabled(free && any),
-        crate::commands::item(l, "selection.invert", edit(SelEdit::Invert)).enabled(free && any),
+        command_item(l, "selection.all", edit(SelEdit::All)).enabled(free),
+        command_item(l, "selection.deselect", edit(SelEdit::Clear)).enabled(free && any),
+        command_item(l, "selection.invert", edit(SelEdit::Invert)).enabled(free && any),
         Entry::Separator,
     ];
     for kind in ModifyKind::ALL {
@@ -68,11 +74,8 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(paintable),
     );
-    v.push(crate::commands::item(l, "selection.erase", edit(SelEdit::Erase)).enabled(paintable));
-    v.push(
-        crate::commands::item(l, "selection.to_new_layer", edit(SelEdit::ToNewLayer))
-            .enabled(copyable),
-    );
+    v.push(command_item(l, "selection.erase", edit(SelEdit::Erase)).enabled(paintable));
+    v.push(command_item(l, "selection.to_new_layer", edit(SelEdit::ToNewLayer)).enabled(copyable));
     v.push(
         Entry::item(
             l.pick(
@@ -84,7 +87,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         .enabled(free && any && app.selected_layer.is_some()),
     );
     v.push(
-        crate::commands::item(
+        command_item(
             l,
             "selection.quick_mask",
             Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),

@@ -139,11 +139,6 @@ pub fn label_of(id: &str, lang: Lang) -> &'static str {
     name(id, lang).unwrap_or_else(|| panic!("{id}: 言語だけで決まる名前を持つ操作"))
 }
 
-/// 操作の名前で作るメニューの項目（キーの文字も添える。名前は表のもの）。
-pub fn item(lang: Lang, id: &str, action: Action) -> crate::ui::menu::Entry<Action> {
-    crate::ui::menu::Entry::item(label_of(id, lang), action).command_key(id)
-}
-
 /// 「複製」の名前（レイヤーを選んでいるときの言い方。選んでいなければ「レイヤーを複製」）。
 pub fn duplicate_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
     if layer.is_some_and(|id| app.doc.layer(id).is_some()) {

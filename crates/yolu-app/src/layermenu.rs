@@ -43,7 +43,12 @@ pub fn creation_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     vec![
-        crate::commands::item(lang, "layer.new", Action::NewLayer).enabled(free),
+        Entry::item(
+            crate::commands::label_of("layer.new", lang),
+            Action::NewLayer,
+        )
+        .command_key("layer.new")
+        .enabled(free),
         Entry::submenu(
             lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
             fill_entries(app),

@@ -368,7 +368,9 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         .is_some_and(|(mask, kind)| mask || matches!(kind, LayerKind::Raster | LayerKind::Fill));
     let cuttable = layer.is_some_and(|(mask, kind)| mask || kind == LayerKind::Raster);
     let item = |command: &str, action, on: bool| {
-        crate::commands::item(l, command, Action::Clip(action)).enabled(on)
+        Entry::item(crate::commands::label_of(command, l), Action::Clip(action))
+            .command_key(command)
+            .enabled(on)
     };
     vec![
         item("clip.cut", ClipAction::Cut, free && cuttable),
