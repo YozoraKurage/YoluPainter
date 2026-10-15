@@ -413,27 +413,38 @@ pub(super) fn tab_events(
 }
 
 impl YoluApp {
+    /// パイと G/R/S（変形）のポップアップは、自分で描いて入力を受ける（選んだ項目は閉じてから実行し、別のパイなら開き直す）。
+    /// ここで描いたら None（続けて開いたままにするものは戻してある）。ほかの種類は描かずにそのまま返す。
+    pub(super) fn show_self_drawn_popup(
+        &mut self,
+        ctx: &egui::Context,
+        mut open: OpenPopup,
+    ) -> Option<OpenPopup> {
+        let keep = match open.kind {
+            PopupKind::Pie => crate::pie::show(ctx, &mut self.state, &mut open.state),
+            PopupKind::Transform => {
+                crate::objects::transform::show(ctx, &mut self.state, &mut open.state)
+            }
+            _ => return Some(open),
+        };
+        if keep {
+            self.state.popup.get_or_insert(open);
+        }
+        None
+    }
+
     /// 別ウィンドウで開いたポップアップを、そのウィンドウで描く（ほかのウィンドウのポップアップは描かない）。
     fn popup_in(&mut self, ctx: &egui::Context, id: ViewportId) {
-        let Some(mut open) = self.state.popup.take() else {
+        let Some(open) = self.state.popup.take() else {
             return;
         };
         if open.state.viewport != id {
             self.state.popup = Some(open);
             return;
         }
-        if open.kind == PopupKind::Pie {
-            if crate::pie::show(ctx, &mut self.state, &mut open.state) {
-                self.state.popup.get_or_insert(open);
-            }
+        let Some(mut open) = self.show_self_drawn_popup(ctx, open) else {
             return;
-        }
-        if open.kind == PopupKind::Transform {
-            if crate::objects::transform::show(ctx, &mut self.state, &mut open.state) {
-                self.state.popup.get_or_insert(open);
-            }
-            return;
-        }
+        };
         let entries = crate::shell::popup_entries(&self.state, open.kind);
         match menu::show(ctx, Id::new("yolu.popup"), &mut open.state, &entries, &[]) {
             PopupOutcome::Open | PopupOutcome::Step(_) => self.state.popup = Some(open),

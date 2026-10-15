@@ -2495,7 +2495,7 @@ impl YoluApp {
                 });
             }
         }
-        let Some(mut open) = self.state.popup.take() else {
+        let Some(open) = self.state.popup.take() else {
             return;
         };
         // 別ウィンドウで開いたポップアップは、そのウィンドウのパスが描く
@@ -2503,19 +2503,9 @@ impl YoluApp {
             self.state.popup = Some(open);
             return;
         }
-        // パイは自分で描いて入力を受ける（選んだ項目は閉じてから実行し、別のパイなら開き直す）
-        if open.kind == PopupKind::Pie {
-            if crate::pie::show(ctx, &mut self.state, &mut open.state) {
-                self.state.popup.get_or_insert(open);
-            }
+        let Some(mut open) = self.show_self_drawn_popup(ctx, open) else {
             return;
-        }
-        if open.kind == PopupKind::Transform {
-            if crate::objects::transform::show(ctx, &mut self.state, &mut open.state) {
-                self.state.popup.get_or_insert(open);
-            }
-            return;
-        }
+        };
         // キーを待っている間の受け皿は、設定のウィンドウの「ショートカット」の区分が受けて閉じる
         if open.kind == PopupKind::KeyCapture {
             self.state.popup = Some(open);
