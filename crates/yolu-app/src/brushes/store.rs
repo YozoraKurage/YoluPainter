@@ -351,7 +351,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         w.line("assist.stabilizer", a.stabilizer);
         w.line("assist.taper_in", a.taper_in);
         w.line("assist.taper_out", a.taper_out);
-        // 入り抜きを掛ける項目と最小値（版 8。既定の大きさだけ・最小値 0 は書かない）
+        // 入り抜きを掛ける項目と最小値（バージョン 8。既定の大きさだけ・最小値 0 は書かない）
         if v8 && !a.taper_targets.is_default() {
             write_taper_targets(&mut w, &a.taper_targets);
         }
@@ -1120,7 +1120,7 @@ fn read_influences(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。入り抜きの影響先（`assist.taper.*`）は版 8 の項目（版 7 までに
+/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。入り抜きの影響先（`assist.taper.*`）はバージョン 8 の項目（バージョン 7 までに
 /// あれば、知らない項目として断る）。
 fn read_assist(r: &mut Reader, version: u32) -> Result<Option<StrokeAssist>, StoreError> {
     let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
@@ -3338,7 +3338,7 @@ mod tests {
         }
         assert!(
             t.contains("influence.size.pressure.on=1"),
-            "版 8 は版 7 の影響元の鍵で書く: {t}"
+            "バージョン 8 はバージョン 7 の影響元の鍵で書く: {t}"
         );
         assert!(!t.contains("pressure_size="), "{t}");
         let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
@@ -3380,7 +3380,7 @@ mod tests {
             t.starts_with("yolupainter-brush 4\n") && !t.contains("assist.taper."),
             "{t}"
         );
-        // 影響元で版 7 になるブラシも、入り抜きの影響先が既定なら版 7 のまま
+        // 影響元でバージョン 7 になるブラシも、入り抜きの影響先が既定ならバージョン 7 のまま
         let mut b = Brush::default();
         b.influences.size.random = InputUse::STRAIGHT;
         let t = text(&UserBrush {
@@ -3400,7 +3400,7 @@ mod tests {
             ..user(1, Brush::default())
         });
         let decode = |t: &str| decode_user(t, &mut |_| unreachable!());
-        // 版 7 までのファイルにあれば、知らない項目として断る
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
         for old in 4..=7 {
             let as_old = v8.replacen(
                 "yolupainter-brush 8",
@@ -3409,13 +3409,13 @@ mod tests {
             );
             assert!(
                 matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(_)),
-                "版 {old}"
+                "バージョン {old}"
             );
         }
         let as_v7 = v8.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
         assert!(
             matches!(decode(&as_v7).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("assist.taper.")),
-            "版 7"
+            "バージョン 7"
         );
         // 8 項目のどれかが無い・値が読めない・範囲の外は、そのファイルを断る
         let without = v8.replace("assist.taper.mix_paint=off\n", "");
@@ -3434,7 +3434,7 @@ mod tests {
             decode(&format!("{v8}assist.taper.size=off\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
-        // 版 8 でも影響先の鍵が 1 つも無ければ既定（大きさだけ）
+        // バージョン 8 でも影響先の鍵が 1 つも無ければ既定（大きさだけ）
         let none: String = v8
             .lines()
             .filter(|l| !l.starts_with("assist.taper."))

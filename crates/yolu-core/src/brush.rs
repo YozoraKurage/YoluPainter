@@ -87,9 +87,9 @@ pub use mix::{ColorMix, MixGround, MixMode};
 pub(crate) use plan::{DabPlan, StampControls, TipRun};
 pub use presets::{builtin_presets, BrushPreset};
 pub use settings::{
-    Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, FlipRule, Jitter, PaperTexture,
-    StrokeAssist, TaperTargets, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
-    MIN_ONE_PIXEL_RADIUS,
+    Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, FlipRule, Jitter,
+    PaperTexture, StrokeAssist, TaperTargets, TextureMode, TipSelection, TipShape, MAX_FADE,
+    MAX_STROKE_ASSIST, MIN_ONE_PIXEL_RADIUS,
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};

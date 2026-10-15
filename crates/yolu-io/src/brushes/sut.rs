@@ -533,7 +533,7 @@ const TAPER_ITEMS: [(u32, Item); 6] = [
 
 /// `BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、項目ごとに「項目の番号・オン・最小値（%）」）で、オンの項目の
 /// 「番号・最小値（0〜1）」。オンの項目が無ければ空（既定: 大きさだけ。実物の .sut は項目 21 個で、旗はどれも 0 だった）。影響先の列が無い
-/// 版も空。読めない・形が違う・旗が 0 か 1 でない・最小値が 0〜100 でない・同じ番号の項目が重なるものは None。
+/// バージョンも空。読めない・形が違う・旗が 0 か 1 でない・最小値が 0〜100 でない・同じ番号の項目が重なるものは None。
 fn start_end_targets(row: &Row) -> Option<Vec<(u32, f64)>> {
     let Some(blob) = row.first_blob(IN_OUT_TARGET) else {
         return (!row.is_oversized(IN_OUT_TARGET)).then(Vec::new);

@@ -73,8 +73,8 @@ use crate::brush::profile;
 use crate::brush::random::NetRandom;
 use crate::brush::{
     combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, Input,
-    InputResponse, Item, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric, TipRun,
-    DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
+    InputResponse, Item, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric,
+    TipRun, DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
