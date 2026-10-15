@@ -233,10 +233,37 @@ impl Plan {
             .ok_or(Unsupported::UnknownChannel)?
             .kind;
         let layers = doc.layers();
-        // 合成するのは、チャンネルの出力の割り当てのレイヤーセットのレイヤーだけ（割り当てが無ければ何も重ねない）
+        // 合成するのは、チャンネルの出力の割り当てのレイヤーセットのレイヤーだけ
         let output = doc
             .channel_output(channel)
             .map_err(|_| Unsupported::UnknownChannel)?;
+        // 割り当てが無いチャンネルの最終の結果は、そのチャンネルの既定値で塗った画素（CPU の `Document::composite_into` と同じ）。
+        // 面を持たない塗りつぶしの命令を 1 つだけ置く（既存の命令で足り、シェーダーも CPU への回しも要らない）
+        if output.is_none() {
+            let default = doc
+                .channel_info(channel)
+                .ok_or(Unsupported::UnknownChannel)?
+                .default;
+            let entries = vec![LayerData {
+                kind: op::LAYER,
+                opacity: 1.0,
+                mode: BlendMode::Normal as u32,
+                slot: NONE,
+                mask: NONE,
+                fill: u32::from_le_bytes(default.to_array()),
+                ..bytemuck::Zeroable::zeroed()
+            }];
+            return Ok(Plan {
+                entries,
+                slots: Vec::new(),
+                tables: Vec::new(),
+                table_words: 0,
+                variant: Variant {
+                    normal: kind == ChannelKind::Normal,
+                    ..Variant::FLAT
+                },
+            });
+        }
         let mut children: HashMap<Option<LayerId>, Vec<usize>> = HashMap::new();
         for (i, l) in layers.iter().enumerate() {
             if Some(l.layer_set()) == output {

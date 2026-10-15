@@ -454,3 +454,33 @@ fn composite_tiles_handles_isolated_groups_adjustments_effects_and_normals() {
     let out = fallback.composite_tiles(&d, Channel::Color, &all).unwrap();
     assert_eq!(out.tiles[0].pixels, d.composite(out.tiles[0].rect).unwrap());
 }
+#[test]
+fn unassigned_channel_output_composites_to_the_channel_default_like_cpu() {
+    let Some(mut g) = gpu() else { return };
+    let mut d = Document::with_tile_size(37, 21, 16).unwrap();
+    let a = d.add_layer("下地").unwrap();
+    d.set_pixel(a, 3, 3, Rgba8::new(200, 40, 90, 255)).unwrap();
+    d.add_layer_set("2").unwrap();
+    let all = coords(&d);
+    for channel in [Channel::Color, Channel::Roughness, Channel::Normal] {
+        d.set_channel_output(channel, None).unwrap();
+        assert_eq!(d.channel_output(channel).unwrap(), None);
+        let r = g.composite_tiles(&d, channel, &all).unwrap();
+        for t in r.tiles {
+            let mut expected = vec![0; t.pixels.len()];
+            d.composite_into(
+                channel,
+                t.rect,
+                &mut expected,
+                yolu_core::RowOrder::BottomUp,
+            )
+            .unwrap();
+            let default = d.channel_info(channel).unwrap().default.to_array();
+            assert_eq!(&expected[..4], &default, "CPU は既定値");
+            assert!(
+                diff(&expected, &t.pixels) <= 1,
+                "{channel:?}: 割り当てが無いチャンネルの GPU の結果が CPU の既定値と違う"
+            );
+        }
+    }
+}
