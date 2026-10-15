@@ -297,7 +297,7 @@ fn the_default_window_gives_every_panel_the_room_it_needs_at_the_three_sizes_in_
     }
 }
 
-/// 左の列: 1280×800 でブラシサイズの 1 段目の数字が見え、「塗るチャンネル」の見出しが切れない。1280×1000 ではブラシサイズの丸が 2 段とも見える。
+/// 左の列: 1280×800 でブラシサイズの 1 段目（7 つ）の数字が見え、「塗るチャンネル」の見出しが切れない。1280×1600 ではブラシサイズの丸が 4 段とも見える。
 #[test]
 fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header() {
     for lang in Lang::ALL {
@@ -321,7 +321,8 @@ fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header(
         );
         let size_body =
             Rect::from_min_max(size.left_bottom(), pos2(size.left() + 300.0, color.top()));
-        for px in [1u32, 2, 3, 4] {
+        // 1 段目の 7 つ（小数の 1.5・2.5 を含む）
+        for px in [1.0f32, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0] {
             let cell = rect_of(&h, &format!("{px} px"), |r| size_body.contains(r.center()));
             assert!(
                 size_body.contains_rect(cell),
