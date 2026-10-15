@@ -5,6 +5,7 @@
 
 pub use yolu_core::glam::DVec2;
 pub use yolu_core::selection::{DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS};
+pub use yolu_core::unit_f32_to_byte;
 pub use yolu_core::DEFAULT_SOURCE_BUDGET_BYTES;
 pub use yolu_core::{
     AdjustmentSettings, AdjustmentType, BalanceRange, BlendMode, BrightnessContrast, Brush,

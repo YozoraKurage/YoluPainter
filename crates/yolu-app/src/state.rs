@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
+use crate::engine::unit_f32_to_byte;
 use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
 use crate::lang::Lang;
 use crate::livelink::{LinkRequest, LinkView};
@@ -142,10 +143,10 @@ impl BrushState {
             opacity: self.opacity as f64,
             flow: self.flow as f64,
             color: Rgba8::new(
-                to_byte(color[0]),
-                to_byte(color[1]),
-                to_byte(color[2]),
-                to_byte(color[3]),
+                unit_f32_to_byte(color[0]),
+                unit_f32_to_byte(color[1]),
+                unit_f32_to_byte(color[2]),
+                unit_f32_to_byte(color[3]),
             ),
             pressure_size: self.pressure_size,
             pressure_opacity: self.pressure_opacity,
@@ -154,10 +155,6 @@ impl BrushState {
             anti_alias: self.anti_alias,
         }
     }
-}
-
-pub fn to_byte(v: f32) -> u8 {
-    (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// Unity の `Color.RGBToHSV`（色相は 0〜1）。
@@ -209,9 +206,9 @@ pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
 pub fn to_hex(c: Rgba) -> String {
     format!(
         "{:02X}{:02X}{:02X}",
-        to_byte(c[0]),
-        to_byte(c[1]),
-        to_byte(c[2])
+        unit_f32_to_byte(c[0]),
+        unit_f32_to_byte(c[1]),
+        unit_f32_to_byte(c[2])
     )
 }
 

@@ -218,7 +218,7 @@ fn the_paint_colour_and_the_colour_set_each_make_one_undo_and_another_field_take
         .find(|r| placed.contains_rect(*r))
         .expect("ウィンドウの中のカラーセットの色");
     click(&mut h, cell.center());
-    let c = first.rgba.map(yolu_app::ui::widgets::to_byte);
+    let c = first.rgba.map(yolu_app::engine::unit_f32_to_byte);
     assert_eq!(
         value(&h, id, Channel::Color),
         Some(Rgba8::new(c[0], c[1], c[2], 255))

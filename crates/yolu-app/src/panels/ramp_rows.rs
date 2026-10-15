@@ -22,6 +22,7 @@ use super::properties::{
 };
 use crate::eyedrop::EyedropState;
 use crate::lang::Lang;
+use crate::rampsets::builtin::opaque_rgba8;
 use crate::rampsets::{RampSets, MAX_USER};
 use crate::ui::curve::{self, CurveStyle};
 use crate::ui::ramp::{self, ops, Selection};
@@ -188,10 +189,6 @@ impl Links {
         self.list = list;
         Some(next)
     }
-}
-
-fn rgb8(c: [f32; 4]) -> Rgba8 {
-    Rgba8::new(w::to_byte(c[0]), w::to_byte(c[1]), w::to_byte(c[2]), 255)
 }
 
 fn bytes(c: Rgba8) -> [u8; 3] {
@@ -698,7 +695,7 @@ pub fn rows(ui: &mut Ui, rows: &mut Rows, p: &mut Params<'_>, source: &Ramp) -> 
         }
     }
     // メイン・サブに付いていく分岐点（選んでいるかどうかに関わらず、全部）
-    if let Some(next) = links.follow_colors(&ramp, rgb8(p.main), rgb8(p.sub)) {
+    if let Some(next) = links.follow_colors(&ramp, opaque_rgba8(p.main), opaque_rgba8(p.sub)) {
         ramp = next;
         put(&mut result, &ramp, false);
     }
@@ -945,9 +942,9 @@ fn color_rows(
             Source::Fixed => links.unfollow(selection.index),
             _ => {
                 let color = if chosen == Source::Main {
-                    rgb8(p.main)
+                    opaque_rgba8(p.main)
                 } else {
-                    rgb8(p.sub)
+                    opaque_rgba8(p.sub)
                 };
                 if let Some(next) = replace_color(ramp, selection.index, color) {
                     *ramp = next;

@@ -11,6 +11,7 @@ use egui::{
 
 use super::icons;
 use super::theme::{self as t, TextStyle};
+use crate::engine::unit_f32_to_byte;
 
 // ───────── 描くだけの部品 ─────────
 
@@ -1672,10 +1673,10 @@ pub fn color_swatch(
     let p = ui.painter();
     let c = |a: f32| {
         Color32::from_rgba_unmultiplied(
-            to_byte(color[0]),
-            to_byte(color[1]),
-            to_byte(color[2]),
-            to_byte(a),
+            unit_f32_to_byte(color[0]),
+            unit_f32_to_byte(color[1]),
+            unit_f32_to_byte(color[2]),
+            unit_f32_to_byte(a),
         )
     };
     rounded(p, r, Color32::WHITE, 3.0);
@@ -1713,10 +1714,6 @@ pub fn color_swatch(
     outline(p, r, if hover { t::ACCENT } else { t::BORDER }, 1.0, 3.0);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ColorButton, enabled, tooltip));
     with_tooltip(response, Some(tooltip))
-}
-
-pub fn to_byte(v: f32) -> u8 {
-    (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 /// 縦に行を積むだけの配置の補助（Unity 版の `UiRows`）。

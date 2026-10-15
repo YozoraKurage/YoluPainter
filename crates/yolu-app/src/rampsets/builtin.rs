@@ -51,14 +51,14 @@ fn shade(
     item(ja, en, ramp(&[(0.0, shadow), (0.5, mid), (1.0, light)]))
 }
 
-fn rgb8(c: [f32; 4]) -> Rgba8 {
-    let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-    Rgba8::new(byte(c[0]), byte(c[1]), byte(c[2]), 255)
+/// f32 の色(straight の RGBA 0〜1)を、アルファを 255 にした 8 ビットの色にする（RGB だけを見る）。
+pub(crate) fn opaque_rgba8(c: [f32; 4]) -> Rgba8 {
+    Rgba8::from_unit_f32([c[0], c[1], c[2], 1.0])
 }
 
 /// 全部の組み込みの組。`main`・`sub` はメインの色とサブの色（straight の RGBA 0〜1）で、「基本」の見本に使う。
 pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
-    let (main, sub) = (rgb8(main), rgb8(sub));
+    let (main, sub) = (opaque_rgba8(main), opaque_rgba8(sub));
     vec![
         BuiltinGroup {
             ja: "基本",

@@ -1,5 +1,6 @@
 //! カラーセット・履歴・中間色の専用タブ。
 use crate::dialog::places::Place;
+use crate::engine::unit_f32_to_byte;
 use crate::notice::Source;
 use crate::{
     colorsets::{self, Edit, Error, Palette, Swatch},
@@ -28,7 +29,7 @@ fn swatch(ui: &mut Ui, color: &Swatch, size: f32, selected: bool) -> Response {
         0.0,
         Color32::from_gray(160),
     );
-    let [red, green, blue, alpha] = color.rgba.map(w::to_byte);
+    let [red, green, blue, alpha] = color.rgba.map(unit_f32_to_byte);
     p.rect_filled(
         r,
         0.0,

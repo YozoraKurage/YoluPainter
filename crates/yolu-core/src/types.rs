@@ -38,6 +38,23 @@ impl Rgba8 {
     pub fn to_array(self) -> [u8; 4] {
         [self.r, self.g, self.b, self.a]
     }
+    /// 0〜1 の f32 の straight RGBA から（各成分を `unit_f32_to_byte` で 8 ビットにする）。
+    #[inline]
+    pub fn from_unit_f32(c: [f32; 4]) -> Self {
+        Rgba8::new(
+            unit_f32_to_byte(c[0]),
+            unit_f32_to_byte(c[1]),
+            unit_f32_to_byte(c[2]),
+            unit_f32_to_byte(c[3]),
+        )
+    }
+}
+
+/// 0〜1 の f32 の値を 8 ビットにする（範囲外は 0〜1 に丸め、四捨五入）。画面の色（f32）を保存する 8 ビットの色にする式。
+/// f64 の `math::to_byte` とは丸め方が違うので、一緒にしない。
+#[inline]
+pub fn unit_f32_to_byte(v: f32) -> u8 {
+    (v.clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
 impl fmt::Debug for Rgba8 {
@@ -410,6 +427,22 @@ pub enum LayerKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unit_floats_become_bytes_by_clamping_and_rounding() {
+        assert_eq!(unit_f32_to_byte(-0.5), 0);
+        assert_eq!(unit_f32_to_byte(0.0), 0);
+        assert_eq!(unit_f32_to_byte(0.5), 128);
+        assert_eq!(unit_f32_to_byte(1.0), 255);
+        assert_eq!(unit_f32_to_byte(2.0), 255);
+        assert_eq!(unit_f32_to_byte(f32::NAN), 0);
+        assert_eq!(unit_f32_to_byte(0.4 / 255.0), 0);
+        assert_eq!(unit_f32_to_byte(0.6 / 255.0), 1);
+        assert_eq!(
+            Rgba8::from_unit_f32([0.0, 0.5, 1.0, 2.0]),
+            Rgba8::new(0, 128, 255, 255)
+        );
+    }
 
     /// 列挙だったときの書き方（定数の型の match・matches!・既定値・並び）がそのまま使える。
     #[test]

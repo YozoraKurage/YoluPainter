@@ -80,7 +80,7 @@ pub fn write_gpl(p: &Palette) -> Result<Vec<u8>, Error> {
     }
     let mut s = format!("GIMP Palette\nName: {}\nColumns: 0\n#\n", p.name);
     for c in &p.colors {
-        let [r, g, b, _] = c.rgba.map(crate::ui::widgets::to_byte);
+        let [r, g, b, _] = c.rgba.map(crate::engine::unit_f32_to_byte);
         s += &format!("{r} {g} {b}\t{}\n", c.name);
     }
     bounded(s.as_bytes())?;

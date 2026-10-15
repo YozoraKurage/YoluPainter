@@ -13,6 +13,7 @@ use super::color_window::{self, Pick};
 use super::properties::{
     choice_buttons, percent_row, section, slider_row, toggle_row, ChoiceButton,
 };
+use crate::engine::unit_f32_to_byte;
 use crate::fillfx::{inputs, FillOp};
 use crate::fx::names::{shape_tooltip, SHAPES};
 use crate::lang::Lang;
@@ -1931,7 +1932,12 @@ fn ramp_preset_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<
         return Vec::new();
     };
     let rgb = |c: crate::state::Rgba| {
-        Rgba8::new(w::to_byte(c[0]), w::to_byte(c[1]), w::to_byte(c[2]), 255)
+        Rgba8::new(
+            unit_f32_to_byte(c[0]),
+            unit_f32_to_byte(c[1]),
+            unit_f32_to_byte(c[2]),
+            255,
+        )
     };
     PRESETS
         .iter()

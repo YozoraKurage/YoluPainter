@@ -25,6 +25,7 @@ use egui::{pos2, vec2, Color32, Context, Id, Order, Pos2, Rect, Sense, Ui, Vec2}
 
 use super::color::{hue_at, in_ring, wheel_square, ColorTextures, RING_THICKNESS};
 use crate::colorsets::Palette;
+use crate::engine::unit_f32_to_byte;
 use crate::lang::Lang;
 use crate::state::{hsv_to_rgb, parse_hex, rgb_to_hsv, to_hex, AppState};
 use crate::ui::scroll::Scroll;
@@ -69,8 +70,12 @@ impl Pick {
     /// 0〜1 の RGBA から。`alpha` が false ならアルファを持たない。
     pub fn from_floats(c: [f32; 4], alpha: bool) -> Pick {
         Pick {
-            rgb: [w::to_byte(c[0]), w::to_byte(c[1]), w::to_byte(c[2])],
-            alpha: alpha.then(|| w::to_byte(c[3])),
+            rgb: [
+                unit_f32_to_byte(c[0]),
+                unit_f32_to_byte(c[1]),
+                unit_f32_to_byte(c[2]),
+            ],
+            alpha: alpha.then(|| unit_f32_to_byte(c[3])),
         }
     }
 
@@ -178,7 +183,11 @@ fn hsv(rgb: [u8; 3]) -> (f32, f32, f32) {
 }
 
 fn bytes(rgb: (f32, f32, f32)) -> [u8; 3] {
-    [w::to_byte(rgb.0), w::to_byte(rgb.1), w::to_byte(rgb.2)]
+    [
+        unit_f32_to_byte(rgb.0),
+        unit_f32_to_byte(rgb.1),
+        unit_f32_to_byte(rgb.2),
+    ]
 }
 
 fn textures(ctx: &Context) -> Arc<Mutex<ColorTextures>> {
@@ -768,7 +777,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 if out.changed {
                     let next = Pick {
                         rgb: state.shown.rgb,
-                        alpha: Some(w::to_byte(out.value / 100.0)),
+                        alpha: Some(unit_f32_to_byte(out.value / 100.0)),
                     };
                     if next != state.shown {
                         state.shown = next;
@@ -789,9 +798,9 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
             let paint = paint_of(window);
             let main = Pick {
                 rgb: [
-                    w::to_byte(sources.main[0]),
-                    w::to_byte(sources.main[1]),
-                    w::to_byte(sources.main[2]),
+                    unit_f32_to_byte(sources.main[0]),
+                    unit_f32_to_byte(sources.main[1]),
+                    unit_f32_to_byte(sources.main[2]),
                 ],
                 alpha: state.shown.alpha,
             };
@@ -991,7 +1000,7 @@ fn set_grid(ui: &mut Ui, view: Rect, set: &Palette) -> Option<[u8; 3]> {
         }
         let hit = cell.intersect(view);
         let response = ui.interact(hit, offset_id.with(i), Sense::click());
-        let [r, g, b, a] = swatch.rgba.map(w::to_byte);
+        let [r, g, b, a] = swatch.rgba.map(unit_f32_to_byte);
         w::checker(&p, cell, CELL * 0.5);
         p.rect_filled(cell, 1.0, Color32::from_rgba_unmultiplied(r, g, b, a));
         w::outline(

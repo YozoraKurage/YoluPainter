@@ -7,6 +7,7 @@ use egui::{
     WidgetInfo, WidgetType,
 };
 
+use crate::engine::unit_f32_to_byte;
 use crate::notice::Source;
 use crate::state::{hsv_to_rgb, parse_hex, to_hex, Action, AppState};
 use crate::ui::theme as t;
@@ -24,7 +25,11 @@ pub struct ColorTextures {
 }
 
 fn rgb32(r: f32, g: f32, b: f32) -> Color32 {
-    Color32::from_rgb(w::to_byte(r), w::to_byte(g), w::to_byte(b))
+    Color32::from_rgb(
+        unit_f32_to_byte(r),
+        unit_f32_to_byte(g),
+        unit_f32_to_byte(b),
+    )
 }
 
 impl ColorTextures {
@@ -100,10 +105,10 @@ impl ColorTextures {
                         }
                         let (r, g, b) = hsv_to_rgb(hue, 1.0, 1.0);
                         pixels.push(Color32::from_rgba_unmultiplied(
-                            w::to_byte(r),
-                            w::to_byte(g),
-                            w::to_byte(b),
-                            w::to_byte(alpha),
+                            unit_f32_to_byte(r),
+                            unit_f32_to_byte(g),
+                            unit_f32_to_byte(b),
+                            unit_f32_to_byte(alpha),
                         ));
                     }
                 }
@@ -553,7 +558,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             1.0,
             2.0,
         );
-        let label = format!("#{}{:02X}", to_hex(*c), w::to_byte(c[3]));
+        let label = format!("#{}{:02X}", to_hex(*c), unit_f32_to_byte(c[3]));
         if response.clicked() {
             app.color.set_main(*c);
         }

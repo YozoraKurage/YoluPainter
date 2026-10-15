@@ -7,6 +7,7 @@ use std::sync::OnceLock;
 
 use yolu_core::LayerLocks;
 
+use crate::engine::unit_f32_to_byte;
 use crate::engine::{
     AdjustmentSettings, AntiAlias, BlendMode, Brush, BrushEffect, BrushPreset, Channel,
     ChannelBlend, ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush,
@@ -1318,7 +1319,7 @@ impl AppState {
     pub fn stroke_brush(&mut self, eraser: bool) -> Brush {
         let mut brush = self.m2.brush.clone();
         brush.base = self.stroke_settings(eraser);
-        let sub = self.color.sub.map(crate::state::to_byte);
+        let sub = self.color.sub.map(unit_f32_to_byte);
         brush.color.secondary = Rgba8::new(sub[0], sub[1], sub[2], 255);
         brush.seed = if self.m2.random_seed {
             self.m2.next_seed()

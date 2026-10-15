@@ -113,8 +113,8 @@ pub use selection::{SelectionCombine, SelectionMask};
 pub use surface::Surface;
 pub use symmetry::{CanvasSymmetry, SymmetryMode, SymmetryTransform};
 pub use types::{
-    BlendMode, Channel, ChannelInfo, ChannelKind, ColorSpace, LayerKind, Rect, Rgba8, RowOrder,
-    TileCoord,
+    unit_f32_to_byte, BlendMode, Channel, ChannelInfo, ChannelKind, ColorSpace, LayerKind, Rect,
+    Rgba8, RowOrder, TileCoord,
 };
 
 pub use composite::MemoStats;

@@ -14,7 +14,7 @@ use yolu_core::{LayerKind, Rgba8};
 use crate::matpaint::single_value;
 use crate::matpaint::MaterialPaint;
 use crate::notice::Source;
-use crate::state::{to_byte, AppState, Rgba, StrokeSource};
+use crate::state::{AppState, Rgba, StrokeSource};
 
 /// 終点の色。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -95,10 +95,6 @@ impl GradientOp {
     }
 }
 
-fn rgba8(c: Rgba) -> Rgba8 {
-    Rgba8::new(to_byte(c[0]), to_byte(c[1]), to_byte(c[2]), to_byte(c[3]))
-}
-
 impl AppState {
     /// これ以内（キャンバスの画素）しか動かさなければ、ドラッグでなくクリックで、何も塗らない。
     pub const GRADIENT_CLICK: f64 = 1.5;
@@ -108,7 +104,7 @@ impl AppState {
         let from = single_value(self.color.main);
         let to = match self.gradient.end {
             End::Transparent => Rgba8::TRANSPARENT,
-            End::Sub => rgba8(self.color.sub),
+            End::Sub => Rgba8::from_unit_f32(self.color.sub),
         };
         (from, to)
     }

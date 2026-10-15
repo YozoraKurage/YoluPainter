@@ -65,7 +65,7 @@ impl Swatch {
         }
     }
     pub fn label(&self) -> String {
-        let c = self.rgba.map(crate::ui::widgets::to_byte);
+        let c = self.rgba.map(crate::engine::unit_f32_to_byte);
         format!(
             "{} #{:02X}{:02X}{:02X}{:02X}",
             self.name, c[0], c[1], c[2], c[3]
