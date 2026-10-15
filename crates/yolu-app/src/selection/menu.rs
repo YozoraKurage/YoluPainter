@@ -23,18 +23,9 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     let any = app.doc.selection().is_some();
     let edit = |e: SelEdit| Action::Sel(SelAction::Edit(e));
     let mut v = vec![
-        Entry::item(l.pick("すべてを選択", "Select All"), edit(SelEdit::All))
-            .command_key("selection.all")
-            .enabled(free),
-        Entry::item(l.pick("選択を解除", "Deselect"), edit(SelEdit::Clear))
-            .command_key("selection.deselect")
-            .enabled(free && any),
-        Entry::item(
-            l.pick("選択範囲を反転", "Invert Selection"),
-            edit(SelEdit::Invert),
-        )
-        .command_key("selection.invert")
-        .enabled(free && any),
+        crate::commands::item(l, "selection.all", edit(SelEdit::All)).enabled(free),
+        crate::commands::item(l, "selection.deselect", edit(SelEdit::Clear)).enabled(free && any),
+        crate::commands::item(l, "selection.invert", edit(SelEdit::Invert)).enabled(free && any),
         Entry::Separator,
     ];
     for kind in ModifyKind::ALL {
@@ -77,21 +68,10 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(paintable),
     );
+    v.push(crate::commands::item(l, "selection.erase", edit(SelEdit::Erase)).enabled(paintable));
     v.push(
-        Entry::item(
-            l.pick("選択範囲を消去", "Erase Selection"),
-            edit(SelEdit::Erase),
-        )
-        .command_key("selection.erase")
-        .enabled(paintable),
-    );
-    v.push(
-        Entry::item(
-            l.pick("コピーして新しいレイヤーに", "Copy to a New Layer"),
-            edit(SelEdit::ToNewLayer),
-        )
-        .command_key("selection.to_new_layer")
-        .enabled(copyable),
+        crate::commands::item(l, "selection.to_new_layer", edit(SelEdit::ToNewLayer))
+            .enabled(copyable),
     );
     v.push(
         Entry::item(
@@ -104,11 +84,11 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
         .enabled(free && any && app.selected_layer.is_some()),
     );
     v.push(
-        Entry::item(
-            l.pick("クイックマスク", "Quick Mask"),
+        crate::commands::item(
+            l,
+            "selection.quick_mask",
             Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
         )
-        .command_key("selection.quick_mask")
         .checked(app.sel.quick)
         .enabled(app.sel.quick || !app.is_stroking()),
     );

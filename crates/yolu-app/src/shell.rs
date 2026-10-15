@@ -77,12 +77,8 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
             ],
         )
         .enabled(free),
-        Entry::item(
-            l.pick("テクスチャを書き出す…", "Export Textures…"),
-            Action::Export(ExportAction::OpenWindow),
-        )
-        .command_key("file.export")
-        .enabled(free),
+        crate::commands::item(l, "file.export", Action::Export(ExportAction::OpenWindow))
+            .enabled(free),
         Entry::item(
             l.pick("PSD を書き出す…", "Export PSD…"),
             Action::Psd(PsdAction::ExportDialog),
@@ -107,32 +103,22 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
     match index {
         0 => {
             let mut entries = vec![
-                why(Entry::item(
-                    l.pick("新規プロジェクト…", "New Project…"),
-                    Action::NewProjectDialog,
-                )
-                .command_key("file.new_project")
-                .enabled(idle)),
                 why(
-                    Entry::item(l.pick("開く…", "Open…"), Action::OpenProjectDialog)
-                        .command_key("file.open")
+                    crate::commands::item(l, "file.new_project", Action::NewProjectDialog)
                         .enabled(idle),
                 ),
+                why(crate::commands::item(l, "file.open", Action::OpenProjectDialog).enabled(idle)),
                 why(Entry::item(
                     l.pick("復旧…", "Recovery…"),
                     Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
                 )
                 .enabled(idle && app.recovery.is_enabled())),
                 Entry::Separator,
-                why(Entry::item(l.pick("保存", "Save"), Action::SaveProject)
-                    .command_key("file.save")
-                    .enabled(idle)),
-                why(Entry::item(
-                    l.pick("別名で保存…", "Save As…"),
-                    Action::SaveProjectAsDialog,
-                )
-                .command_key("file.save_as")
-                .enabled(idle)),
+                why(crate::commands::item(l, "file.save", Action::SaveProject).enabled(idle)),
+                why(
+                    crate::commands::item(l, "file.save_as", Action::SaveProjectAsDialog)
+                        .enabled(idle),
+                ),
                 why(Entry::item(
                     l.pick("配布用に保存…", "Save for Distribution…"),
                     Action::Distribute(crate::distribute::DistributeAction::Start),
@@ -152,18 +138,14 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 Entry::Separator,
                 Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
                 Entry::Separator,
-                Entry::item(l.pick("終了", "Quit"), Action::Quit).command_key("app.quit"),
+                crate::commands::item(l, "app.quit", Action::Quit),
             ]);
             entries
         }
         1 => {
             let mut entries = vec![
-                Entry::item(l.pick("取り消し", "Undo"), Action::Undo)
-                    .command_key("edit.undo")
-                    .enabled(free && app.can_undo()),
-                Entry::item(l.pick("やり直し", "Redo"), Action::Redo)
-                    .command_key("edit.redo")
-                    .enabled(free && app.can_redo()),
+                crate::commands::item(l, "edit.undo", Action::Undo).enabled(free && app.can_undo()),
+                crate::commands::item(l, "edit.redo", Action::Redo).enabled(free && app.can_redo()),
                 Entry::Separator,
             ];
             entries.extend(crate::clipboard::menu_entries(app));
@@ -193,23 +175,15 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 tool_entry(Tool::Path),
                 tool_entry(Tool::Text),
                 Entry::Separator,
-                Entry::item(
-                    l.pick("メインとサブの色を入れ替え", "Swap Main and Sub Colors"),
-                    Action::SwapColors,
-                )
-                .command_key("color.swap"),
-                Entry::item(
-                    l.pick("初期設定の色", "Default Colors"),
-                    Action::DefaultColors,
-                )
-                .command_key("color.default"),
+                crate::commands::item(l, "color.swap", Action::SwapColors),
+                crate::commands::item(l, "color.default", Action::DefaultColors),
                 // 設定は、Unity の Edit ▸ Preferences と同じく編集のメニューの一番下（区切りの後）
                 Entry::Separator,
-                Entry::item(
-                    l.pick("設定…", "Settings…"),
+                crate::commands::item(
+                    l,
+                    "app.settings",
                     Action::Prefs(crate::prefs::PrefsAction::Open),
-                )
-                .command_key("app.settings"),
+                ),
             ]);
             entries
         }
@@ -220,59 +194,37 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
         5 => vec![
             crate::uv_wireframe::menu_entry(app),
             crate::uv_wireframe::overlap::menu_entry(app),
-            Entry::item(l.pick("ズームイン", "Zoom In"), Action::ZoomIn)
-                .command_key("view.zoom_in"),
-            Entry::item(l.pick("ズームアウト", "Zoom Out"), Action::ZoomOut)
-                .command_key("view.zoom_out"),
-            Entry::item(l.pick("画面に合わせる", "Fit to Screen"), Action::FitView)
-                .command_key("view.fit")
-                .enabled(free),
+            crate::commands::item(l, "view.zoom_in", Action::ZoomIn),
+            crate::commands::item(l, "view.zoom_out", Action::ZoomOut),
+            crate::commands::item(l, "view.fit", Action::FitView).enabled(free),
             Entry::Separator,
-            Entry::item(
-                l.pick("表示を左に回す", "Rotate View Left"),
-                Action::RotateLeft,
-            )
-            .command_key("view.rotate_left")
-            .enabled(free),
-            Entry::item(
-                l.pick("表示を右に回す", "Rotate View Right"),
-                Action::RotateRight,
-            )
-            .command_key("view.rotate_right")
-            .enabled(free),
-            Entry::item(
-                l.pick("回転を戻す", "Reset Rotation"),
-                Action::ResetRotation,
-            )
-            .command_key("view.reset_rotation")
-            .enabled(free && app.view.angle != 0.0),
-            Entry::item(l.pick("表示を左右反転", "Flip View"), Action::FlipView)
-                .command_key("view.flip")
+            crate::commands::item(l, "view.rotate_left", Action::RotateLeft).enabled(free),
+            crate::commands::item(l, "view.rotate_right", Action::RotateRight).enabled(free),
+            crate::commands::item(l, "view.reset_rotation", Action::ResetRotation)
+                .enabled(free && app.view.angle != 0.0),
+            crate::commands::item(l, "view.flip", Action::FlipView)
                 .checked(app.view.flip)
                 .enabled(free),
             Entry::Separator,
-            Entry::item(
-                l.pick("定規にスナップ", "Snap to Ruler"),
+            crate::commands::item(
+                l,
+                "view.ruler_snap",
                 Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler),
             )
-            .command_key("view.ruler_snap")
             .checked(app.rulers.snap_ruler)
             .enabled(free),
-            Entry::item(
-                l.pick("特殊定規にスナップ", "Snap to Special Ruler"),
+            crate::commands::item(
+                l,
+                "view.special_ruler_snap",
                 Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial),
             )
-            .command_key("view.special_ruler_snap")
             .checked(app.rulers.snap_special)
             .enabled(free),
-            Entry::item(
-                l.pick(
-                    "スナップする特殊定規の切り替え",
-                    "Switch the Snapping Special Ruler",
-                ),
+            crate::commands::item(
+                l,
+                "view.switch_special_ruler",
                 Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
             )
-            .command_key("view.switch_special_ruler")
             .enabled(free),
             Entry::Separator,
             crate::mode::view_menu_entry(app),
@@ -486,7 +438,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(new_group);
     if group && !multi {
         let ungroup = Entry::item(
-            lang.pick("グループ解除", "Ungroup"),
+            crate::commands::label_of("layer.ungroup", lang),
             Action::M2(Edit::Ungroup(id)),
         )
         .enabled(free);
@@ -498,17 +450,13 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         });
     } else {
         v.push(
-            Entry::item(
-                lang.pick("レイヤーをグループ化", "Group Layers"),
-                Action::M2(Edit::GroupSelected),
-            )
-            .command_key("layer.group")
-            .enabled(free && app.selected_layer == Some(id)),
+            crate::commands::item(lang, "layer.group", Action::M2(Edit::GroupSelected))
+                .enabled(free && app.selected_layer == Some(id)),
         );
     }
     v.push(Entry::Separator);
     let duplicate = Entry::item(
-        lang.pick("複製", "Duplicate"),
+        crate::commands::duplicate_name(app, Some(id)),
         Action::M2(Edit::DuplicateSelected),
     )
     .enabled(free);
@@ -519,25 +467,17 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         duplicate.command_key("layer.duplicate")
     });
     // 結合（できない理由は、押したあとに短い文で言う。複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと）
-    let merge_label = if members.len() > 1 {
-        lang.pick("レイヤーを結合", "Merge Layers")
-    } else if group {
-        lang.pick("グループを結合", "Merge Group")
-    } else {
-        lang.pick("下のレイヤーと結合", "Merge Down")
-    };
-    v.push(
-        Entry::item(merge_label, Action::M2(Edit::MergeDown))
-            .command_key("layer.merge_down")
-            .enabled(free && app.selected_layer == Some(id)),
-    );
     v.push(
         Entry::item(
-            lang.pick("表示レイヤーを結合", "Merge Visible"),
-            Action::M2(Edit::MergeVisible),
+            crate::commands::merge_down_name(app, Some(id)),
+            Action::M2(Edit::MergeDown),
         )
-        .command_key("layer.merge_visible")
-        .enabled(free),
+        .command_key("layer.merge_down")
+        .enabled(free && app.selected_layer == Some(id)),
+    );
+    v.push(
+        crate::commands::item(lang, "layer.merge_visible", Action::M2(Edit::MergeVisible))
+            .enabled(free),
     );
     if layer.is_some_and(|l| l.path().is_some()) {
         // 塗りつぶしレイヤーのパスは画素にできない（パスの欄のボタンと同じ条件）

@@ -367,36 +367,14 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     let copyable = layer
         .is_some_and(|(mask, kind)| mask || matches!(kind, LayerKind::Raster | LayerKind::Fill));
     let cuttable = layer.is_some_and(|(mask, kind)| mask || kind == LayerKind::Raster);
-    let item = |name, action, command: &str, on: bool| {
-        Entry::item(name, Action::Clip(action))
-            .command_key(command)
-            .enabled(on)
+    let item = |command: &str, action, on: bool| {
+        crate::commands::item(l, command, Action::Clip(action)).enabled(on)
     };
     vec![
-        item(
-            l.pick("カット", "Cut"),
-            ClipAction::Cut,
-            "clip.cut",
-            free && cuttable,
-        ),
-        item(
-            l.pick("コピー", "Copy"),
-            ClipAction::Copy,
-            "clip.copy",
-            free && copyable,
-        ),
-        item(
-            l.pick("結合してコピー", "Copy Merged"),
-            ClipAction::CopyMerged,
-            "clip.copy_merged",
-            free,
-        ),
-        item(
-            l.pick("ペースト", "Paste"),
-            ClipAction::Paste,
-            "clip.paste",
-            free,
-        ),
+        item("clip.cut", ClipAction::Cut, free && cuttable),
+        item("clip.copy", ClipAction::Copy, free && copyable),
+        item("clip.copy_merged", ClipAction::CopyMerged, free),
+        item("clip.paste", ClipAction::Paste, free),
     ]
 }
 

@@ -1363,7 +1363,8 @@ fn ctrl_comma_opens_the_settings_and_the_shortcut_list_names_it() {
     for lang in Lang::ALL {
         h.state_mut().state.lang = lang;
         assert_eq!(
-            yolu_app::shortcuts::action_label(&h.state().state, &binding.action().unwrap())
+            yolu_app::commands::for_action(&binding.action().unwrap())
+                .and_then(|c| c.label(&h.state().state))
                 .as_deref(),
             Some(lang.pick("設定…", "Settings…"))
         );

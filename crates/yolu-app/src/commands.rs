@@ -16,6 +16,7 @@ use egui::Key;
 use yolu_core::geometry::AxisView;
 
 use crate::clipboard::ClipAction;
+use crate::engine::LayerId;
 use crate::keymap::Operation;
 use crate::lang::Lang;
 use crate::m2::Edit;
@@ -44,8 +45,10 @@ pub enum Kind {
 /// 名前（日本語と英語）の引き方。
 #[derive(Clone, Copy, Debug)]
 pub enum Name {
-    /// 実行する `Action` の名前（メニューの項目・ツールの名前。`shortcuts::action_label`）。
+    /// 実行する `Action` が自分の表で持つ名前（ツールの選びはツールの表、画面の色の取り方はその名前）。
     OfAction,
+    /// 選んでいるレイヤーで言い方が変わる名前（レイヤーのメニューの項目も同じ関数で名前を付ける。引数は、メニューを出すレイヤー）。
+    ByLayer(fn(&AppState, Option<LayerId>) -> &'static str),
     /// マウスの組み合わせの名前（`Operation::label`）。
     Mouse(Operation),
     /// 日本語と英語の名前。
@@ -78,12 +81,14 @@ impl Command {
         !self.locked
     }
 
-    /// 名前（`Action` を持つものは、メニューと同じ名前。`app` は言語とメニューの引き当てに使う）。
+    /// 名前（メニューにある操作は、メニューと同じ名前。`app` は言語と、選んでいるレイヤーで変わる名前に使う）。
     pub fn label(&self, app: &AppState) -> Option<String> {
         match self.name {
             Name::OfAction => self
                 .action
-                .and_then(|make| crate::shortcuts::action_label(app, &make())),
+                .and_then(|make| action_name(app.lang, &make()))
+                .map(Into::into),
+            Name::ByLayer(name) => Some(name(app, app.selected_layer).into()),
             Name::Mouse(operation) => Some(operation.label(app.lang).into()),
             Name::Text(ja, en) => Some(app.lang.pick(ja, en).into()),
         }
@@ -104,13 +109,66 @@ impl Command {
         self.unavailable.map(|(ja, en)| lang.pick(ja, en))
     }
 
-    /// 言語だけで引ける名前（`Action` の名前はメニューの引き当てに `AppState` が要るので、`OfAction` は None）。
+    /// 言語だけで引ける名前（選んでいるレイヤーで変わる名前は `AppState` が要るので None）。
     pub fn static_label(&self, lang: Lang) -> Option<&'static str> {
         match self.name {
-            Name::OfAction => None,
+            Name::OfAction => self.action.and_then(|make| action_name(lang, &make())),
+            Name::ByLayer(_) => None,
             Name::Mouse(operation) => Some(operation.label(lang)),
             Name::Text(ja, en) => Some(lang.pick(ja, en)),
         }
+    }
+}
+
+/// `Action` が自分の表で持つ名前（ツールの選び・画面の色の取り方）。
+fn action_name(lang: Lang, action: &Action) -> Option<&'static str> {
+    match action {
+        Action::SelectTool(tool) => Some(tool.name_in(lang)),
+        Action::ScreenPick(mode) => Some(mode.label(lang)),
+        _ => None,
+    }
+}
+
+/// 操作（`Press`）の名前（メニューの項目はこの名前を使う）。言語だけで決まる名前を持たない操作は None。
+pub fn name(id: &str, lang: Lang) -> Option<&'static str> {
+    find(id)?.static_label(lang)
+}
+
+/// 言語だけで決まる名前を持つ操作の名前（表に無い・選んでいるレイヤーで変わる名前の ID は、書き間違いなのでここで落とす）。
+pub fn label_of(id: &str, lang: Lang) -> &'static str {
+    name(id, lang).unwrap_or_else(|| panic!("{id}: 言語だけで決まる名前を持つ操作"))
+}
+
+/// 操作の名前で作るメニューの項目（キーの文字も添える。名前は表のもの）。
+pub fn item(lang: Lang, id: &str, action: Action) -> crate::ui::menu::Entry<Action> {
+    crate::ui::menu::Entry::item(label_of(id, lang), action).command_key(id)
+}
+
+/// 「複製」の名前（レイヤーを選んでいるときの言い方。選んでいなければ「レイヤーを複製」）。
+pub fn duplicate_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
+    if layer.is_some_and(|id| app.doc.layer(id).is_some()) {
+        app.lang.pick("複製", "Duplicate")
+    } else {
+        app.lang.pick("レイヤーを複製", "Duplicate Layer")
+    }
+}
+
+/// 結合の名前（複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと。レイヤーを選んでいなければ「レイヤーを結合」）。
+pub fn merge_down_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
+    let l = app.lang;
+    let Some(layer) = layer.and_then(|id| app.doc.layer(id)) else {
+        return l.pick("レイヤーを結合", "Merge Layers");
+    };
+    let members = app
+        .doc
+        .topmost_of(&app.selected_layers())
+        .unwrap_or_default();
+    if members.len() > 1 {
+        l.pick("レイヤーを結合", "Merge Layers")
+    } else if layer.is_group() {
+        l.pick("グループを結合", "Merge Group")
+    } else {
+        l.pick("下のレイヤーと結合", "Merge Down")
     }
 }
 
@@ -128,7 +186,7 @@ const fn press(id: &'static str, make: fn() -> Action) -> Command {
     }
 }
 
-/// 名前を自分で持つ `Press`（メニューに同じ `Action` の項目が無いもの）。
+/// 名前を表で持つ `Press`（メニューに同じ `Action` の項目があれば、その項目もこの名前を使う）。
 const fn press_named(
     id: &'static str,
     ja: &'static str,
@@ -155,9 +213,26 @@ const fn press_short(
 }
 
 /// 割り当てを替えさせない `Press`（キーの受け口が決まっているもの）。
-const fn press_locked(id: &'static str, make: fn() -> Action) -> Command {
+const fn press_locked(
+    id: &'static str,
+    ja: &'static str,
+    en: &'static str,
+    make: fn() -> Action,
+) -> Command {
     Command {
         locked: true,
+        ..press_named(id, ja, en, make)
+    }
+}
+
+/// 選んでいるレイヤーで言い方が変わる名前を持つ `Press`（レイヤーのメニューの項目も同じ関数で名前を付ける）。
+const fn by_layer(
+    id: &'static str,
+    name: fn(&AppState, Option<LayerId>) -> &'static str,
+    make: fn() -> Action,
+) -> Command {
+    Command {
+        name: Name::ByLayer(name),
         ..press(id, make)
     }
 }
@@ -231,16 +306,30 @@ fn edit(e: SelEdit) -> Action {
 /// 操作の全部（ID の重複・形・名前・表の行の指す先は試験が見る）。
 pub static COMMANDS: &[Command] = &[
     // ファイル
-    press("file.new_project", || Action::NewProjectDialog),
-    press("file.open", || Action::OpenProjectDialog),
-    press("file.save", || Action::SaveProject),
-    press("file.save_as", || Action::SaveProjectAsDialog),
-    // 書き出しのウィンドウ。既定のキーは無い（Ctrl+Shift+E は表示レイヤーの結合が使っている）。設定の画面で割り当てられる
-    press("file.export", || {
-        Action::Export(crate::export::ExportAction::OpenWindow)
+    press_named(
+        "file.new_project",
+        "新規プロジェクト…",
+        "New Project…",
+        || Action::NewProjectDialog,
+    ),
+    press_named("file.open", "開く…", "Open…", || {
+        Action::OpenProjectDialog
     }),
-    press("app.quit", || Action::Quit),
-    press("app.settings", || Action::Prefs(PrefsAction::Open)),
+    press_named("file.save", "保存", "Save", || Action::SaveProject),
+    press_named("file.save_as", "別名で保存…", "Save As…", || {
+        Action::SaveProjectAsDialog
+    }),
+    // 書き出しのウィンドウ。既定のキーは無い（Ctrl+Shift+E は表示レイヤーの結合が使っている）。設定の画面で割り当てられる
+    press_named(
+        "file.export",
+        "テクスチャを書き出す…",
+        "Export Textures…",
+        || Action::Export(crate::export::ExportAction::OpenWindow),
+    ),
+    press_named("app.quit", "終了", "Quit", || Action::Quit),
+    press_named("app.settings", "設定…", "Settings…", || {
+        Action::Prefs(PrefsAction::Open)
+    }),
     // メッシュマップをベイクするウィンドウ（既定のキーは無い。割り当てると、パイメニューからも呼べる。入口は、テクスチャセットの帯のボタンと、セットの右クリック）
     no_repeat(press_named(
         "bake.open",
@@ -249,68 +338,185 @@ pub static COMMANDS: &[Command] = &[
         || Action::Bake(crate::bake::BakeAction::OpenWindow),
     )),
     // 編集
-    press("edit.undo", || Action::Undo),
-    press("edit.redo", || Action::Redo),
+    press_named("edit.undo", "取り消し", "Undo", || Action::Undo),
+    press_named("edit.redo", "やり直し", "Redo", || Action::Redo),
     // レイヤー
-    press("layer.new", || Action::NewLayer),
-    press("layer.duplicate", || Action::M2(Edit::DuplicateSelected)),
-    press("layer.group", || Action::M2(Edit::GroupSelected)),
-    press("layer.ungroup", || Action::M2(Edit::UngroupSelected)),
-    press("layer.merge_down", || Action::M2(Edit::MergeDown)),
-    press("layer.merge_visible", || Action::M2(Edit::MergeVisible)),
+    press_named("layer.new", "新規レイヤー", "New Layer", || {
+        Action::NewLayer
+    }),
+    by_layer("layer.duplicate", duplicate_name, || {
+        Action::M2(Edit::DuplicateSelected)
+    }),
+    press_named(
+        "layer.group",
+        "レイヤーをグループ化",
+        "Group Layers",
+        || Action::M2(Edit::GroupSelected),
+    ),
+    press_named("layer.ungroup", "グループ解除", "Ungroup", || {
+        Action::M2(Edit::UngroupSelected)
+    }),
+    by_layer("layer.merge_down", merge_down_name, || {
+        Action::M2(Edit::MergeDown)
+    }),
+    press_named(
+        "layer.merge_visible",
+        "表示レイヤーを結合",
+        "Merge Visible",
+        || Action::M2(Edit::MergeVisible),
+    ),
     // 選択範囲
-    press("selection.all", || edit(SelEdit::All)),
-    press("selection.deselect", || edit(SelEdit::Clear)),
-    press("selection.invert", || edit(SelEdit::Invert)),
-    press("selection.erase", || edit(SelEdit::Erase)),
-    press("selection.to_new_layer", || edit(SelEdit::ToNewLayer)),
-    press("selection.quick_mask", || {
-        Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None)))
+    press_named("selection.all", "すべてを選択", "Select All", || {
+        edit(SelEdit::All)
     }),
+    press_named("selection.deselect", "選択を解除", "Deselect", || {
+        edit(SelEdit::Clear)
+    }),
+    press_named(
+        "selection.invert",
+        "選択範囲を反転",
+        "Invert Selection",
+        || edit(SelEdit::Invert),
+    ),
+    press_named(
+        "selection.erase",
+        "選択範囲を消去",
+        "Erase Selection",
+        || edit(SelEdit::Erase),
+    ),
+    press_named(
+        "selection.to_new_layer",
+        "コピーして新しいレイヤーに",
+        "Copy to a New Layer",
+        || edit(SelEdit::ToNewLayer),
+    ),
+    press_named(
+        "selection.quick_mask",
+        "クイックマスク",
+        "Quick Mask",
+        || Action::Sel(SelAction::Ui(SelUiOp::QuickMask(None))),
+    ),
     // クリップボード（キーの受け口は `clipboard::keys`。割り当てを替えさせない）
-    press_locked("clip.copy_merged", || Action::Clip(ClipAction::CopyMerged)),
-    press_locked("clip.copy", || Action::Clip(ClipAction::Copy)),
-    press_locked("clip.cut", || Action::Clip(ClipAction::Cut)),
-    press_locked("clip.paste", || Action::Clip(ClipAction::Paste)),
+    press_locked(
+        "clip.copy_merged",
+        "結合してコピー",
+        "Copy Merged",
+        || Action::Clip(ClipAction::CopyMerged),
+    ),
+    press_locked("clip.copy", "コピー", "Copy", || {
+        Action::Clip(ClipAction::Copy)
+    }),
+    press_locked("clip.cut", "カット", "Cut", || {
+        Action::Clip(ClipAction::Cut)
+    }),
+    press_locked("clip.paste", "ペースト", "Paste", || {
+        Action::Clip(ClipAction::Paste)
+    }),
     // 表示
-    press("view.fit", || Action::FitView),
-    press("view.zoom_in", || Action::ZoomIn),
-    press("view.zoom_out", || Action::ZoomOut),
-    press("view.rotate_left", || Action::RotateLeft),
-    press("view.rotate_right", || Action::RotateRight),
-    press("view.reset_rotation", || Action::ResetRotation),
-    press("view.flip", || Action::FlipView),
-    press("view.ruler_snap", || {
-        Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler)
+    press_named("view.fit", "画面に合わせる", "Fit to Screen", || {
+        Action::FitView
     }),
-    press("view.special_ruler_snap", || {
-        Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial)
+    press_named("view.zoom_in", "ズームイン", "Zoom In", || {
+        Action::ZoomIn
     }),
-    press("view.switch_special_ruler", || {
-        Action::Ruler(crate::rulers::RulerAction::SwitchSpecial)
+    press_named("view.zoom_out", "ズームアウト", "Zoom Out", || {
+        Action::ZoomOut
     }),
+    press_named(
+        "view.rotate_left",
+        "表示を左に回す",
+        "Rotate View Left",
+        || Action::RotateLeft,
+    ),
+    press_named(
+        "view.rotate_right",
+        "表示を右に回す",
+        "Rotate View Right",
+        || Action::RotateRight,
+    ),
+    press_named(
+        "view.reset_rotation",
+        "回転を戻す",
+        "Reset Rotation",
+        || Action::ResetRotation,
+    ),
+    press_named("view.flip", "表示を左右反転", "Flip View", || {
+        Action::FlipView
+    }),
+    press_named(
+        "view.ruler_snap",
+        "定規にスナップ",
+        "Snap to Ruler",
+        || Action::Ruler(crate::rulers::RulerAction::ToggleSnapRuler),
+    ),
+    press_named(
+        "view.special_ruler_snap",
+        "特殊定規にスナップ",
+        "Snap to Special Ruler",
+        || Action::Ruler(crate::rulers::RulerAction::ToggleSnapSpecial),
+    ),
+    press_named(
+        "view.switch_special_ruler",
+        "スナップする特殊定規の切り替え",
+        "Switch the Snapping Special Ruler",
+        || Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
+    ),
     // 色・ブラシ・塗りつぶし・パス
-    press("color.swap", || Action::SwapColors),
-    press("color.default", || Action::DefaultColors),
+    press_named(
+        "color.swap",
+        "メインとサブの色を入れ替え",
+        "Swap Main and Sub Colors",
+        || Action::SwapColors,
+    ),
+    press_named(
+        "color.default",
+        "初期設定の色",
+        "Default Colors",
+        || Action::DefaultColors,
+    ),
     press("color.pick_screen", || {
         Action::ScreenPick(crate::screen_pick::Mode::Visible)
     }),
     press("color.pick_screen_hidden", || {
         Action::ScreenPick(crate::screen_pick::Mode::HideWindow)
     }),
-    press("brush.smaller", || Action::BrushSmaller),
-    press("brush.larger", || Action::BrushLarger),
+    press_named(
+        "brush.smaller",
+        "ブラシを小さく",
+        "Smaller Brush",
+        || Action::BrushSmaller,
+    ),
+    press_named(
+        "brush.larger",
+        "ブラシを大きく",
+        "Larger Brush",
+        || Action::BrushLarger,
+    ),
     // 切り替えは、押したままの繰り返しで出たり消えたりしない
-    no_repeat(press("fill.toggle_handles", || {
-        Action::Fill(crate::fillfx::FillOp::ToggleHandles)
-    })),
-    press("fill.delete_point", || {
-        Action::Fill(crate::fillfx::FillOp::DeletePoint)
-    }),
-    press("path.delete_point", || {
-        Action::Path(PathAction::DeleteSelected)
-    }),
-    press("path.finish", || Action::Path(PathAction::SelectPath(None))),
+    no_repeat(press_named(
+        "fill.toggle_handles",
+        "投影のハンドル",
+        "Projection Handles",
+        || Action::Fill(crate::fillfx::FillOp::ToggleHandles),
+    )),
+    press_named(
+        "fill.delete_point",
+        "グラデーションの点を削除",
+        "Delete Gradient Point",
+        || Action::Fill(crate::fillfx::FillOp::DeletePoint),
+    ),
+    press_named(
+        "path.delete_point",
+        "パスの点を削除",
+        "Delete Path Point",
+        || Action::Path(PathAction::DeleteSelected),
+    ),
+    press_named(
+        "path.finish",
+        "パスの編集を終える",
+        "Finish Path",
+        || Action::Path(PathAction::SelectPath(None)),
+    ),
     // ツール（`tool.<ツールの id>`。ツールのキーはツールの表のとおり）
     press("tool.brush", || Action::SelectTool(Tool::Brush)),
     press("tool.eraser", || Action::SelectTool(Tool::Eraser)),
