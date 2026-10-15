@@ -370,6 +370,7 @@ pub(crate) fn no_sets_message(lang: crate::lang::Lang) -> &'static str {
 /// 書き出しのファイル名の元（開いたプロジェクトのファイル名。無ければ Texture）。
 pub fn stem(state: &AppState) -> String {
     state
+        .session
         .project
         .as_ref()
         .and_then(|p| p.path().file_stem())
@@ -415,9 +416,9 @@ pub fn channel_suffix(doc: &Document, channel: Channel) -> String {
 
 /// 描くチャンネルの PNG の、既定のファイル名（全チャンネルの書き出しと同じ決まり）。
 pub fn default_channel_file_name(state: &AppState) -> String {
-    let doc = &state.doc;
+    let doc = &state.session.doc;
     let image = channel_image_spec(doc, state.m2.paint_channel);
-    let set = (state.sets.len() > 1).then(|| state.sets.current().name.as_str());
+    let set = (state.session.sets.len() > 1).then(|| state.session.sets.current().name.as_str());
     file_name(&stem(state), set, &image).unwrap_or_else(|_| "Texture.png".into())
 }
 
@@ -462,8 +463,8 @@ impl AppState {
     /// 書き出すセット（`selected` の uid のセットだけ。None は全部。読むだけのセットは除く）の番号。読むだけで除いたセットは注意に積む。
     fn exportable_sets(&self, notes: &mut Vec<Note>, selected: Option<&[u32]>) -> Vec<usize> {
         let mut indices = Vec::new();
-        for i in 0..self.sets.len() {
-            let set = self.sets.get(i).expect("範囲内");
+        for i in 0..self.session.sets.len() {
+            let set = self.session.sets.get(i).expect("範囲内");
             if selected.is_some_and(|uids| !uids.contains(&set.uid)) {
                 continue;
             }
@@ -499,7 +500,7 @@ impl AppState {
                 let d = self.set_doc(index);
                 (d.width(), d.height())
             };
-            let name = self.sets.get(index).expect("範囲内").name.clone();
+            let name = self.session.sets.get(index).expect("範囲内").name.clone();
             let snapshot = self.set_doc(index).capture_snapshot().map_err(|e| {
                 lang.with_reason(
                     lang.pick(
@@ -538,7 +539,7 @@ impl AppState {
                 }
             };
             sets.push(SetInput {
-                uid: self.sets.get(index).expect("範囲内").uid,
+                uid: self.session.sets.get(index).expect("範囲内").uid,
                 doc: snapshot,
                 occlusion: occlusions[p].clone(),
                 uv,
@@ -561,13 +562,13 @@ impl AppState {
         has_occlusion: &[bool],
     ) -> Result<TemplateNames, String> {
         let lang = self.lang;
-        let several = self.sets.len() > 1;
+        let several = self.session.sets.len() > 1;
         let mut planned = {
             let plan_sets: Vec<PlanSet<'_>> = indices
                 .iter()
                 .zip(has_occlusion)
                 .map(|(&i, &has_occlusion)| PlanSet {
-                    name: several.then(|| self.sets.get(i).expect("範囲内").name.as_str()),
+                    name: several.then(|| self.session.sets.get(i).expect("範囲内").name.as_str()),
                     document: self.set_doc(i),
                     has_occlusion,
                 })
@@ -580,7 +581,8 @@ impl AppState {
         if template.id == "liltoon" {
             for (p, &i) in indices.iter().enumerate() {
                 for (slot, image) in crate::look::export::extra_images(self.set_doc(i)) {
-                    let name = several.then(|| self.sets.get(i).expect("範囲内").name.as_str());
+                    let name =
+                        several.then(|| self.session.sets.get(i).expect("範囲内").name.as_str());
                     let file_name = file_name(stem, name, &image).map_err(|e| e.to_string())?;
                     template.images.push(image);
                     planned.push(yolu_io::export::PlannedFile {
@@ -635,7 +637,7 @@ impl AppState {
             let occlusion = self.occlusion_for_export(i);
             if let Occlusion::Stale(why) = &occlusion {
                 notes.push(Note::StaleOcclusion(
-                    self.sets.get(i).expect("範囲内").name.clone(),
+                    self.session.sets.get(i).expect("範囲内").name.clone(),
                     why.clone(),
                 ));
             }
@@ -704,7 +706,7 @@ impl AppState {
     /// 書き出しの道と、ウィンドウの書くファイルの一覧が同じ名前を出すための 1 か所。
     fn channel_names(&self, which: &Which<'_>, indices: &[usize]) -> Result<ChannelNames, String> {
         let lang = self.lang;
-        let several = self.sets.len() > 1;
+        let several = self.session.sets.len() > 1;
         // (indices の位置, チャンネル, ファイル名)
         let mut wanted: Vec<(usize, Channel, String)> = Vec::new();
         let mut images: Vec<ExportImage> = Vec::new();
@@ -724,7 +726,8 @@ impl AppState {
                 let name = match which {
                     Which::All { stem, .. } => file_name(
                         stem,
-                        several.then(|| self.sets.get(index).expect("範囲内").name.as_str()),
+                        several
+                            .then(|| self.session.sets.get(index).expect("範囲内").name.as_str()),
                         &image,
                     )
                     .map_err(|e| e.to_string())?,
@@ -768,7 +771,12 @@ impl AppState {
                 indices
             }
             Which::One { set, .. } => {
-                if let Some(reason) = self.sets.get(*set).and_then(|s| s.read_only.clone()) {
+                if let Some(reason) = self
+                    .session
+                    .sets
+                    .get(*set)
+                    .and_then(|s| s.read_only.clone())
+                {
                     return Err(crate::lang::refusals::read_only_set(lang, &reason));
                 }
                 vec![*set]
@@ -1004,7 +1012,7 @@ impl AppState {
             Some(d) if !d.as_os_str().is_empty() => d.to_path_buf(),
             _ => PathBuf::from("."),
         };
-        let set = self.sets.current_index();
+        let set = self.session.sets.current_index();
         let channel = self.m2.paint_channel;
         let plan = match self.plan_channels(Which::One {
             set,

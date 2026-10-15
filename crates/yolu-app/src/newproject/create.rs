@@ -108,7 +108,7 @@ fn install(
 ) -> (crate::notice::Kind, String) {
     let lang = app.lang;
     app.np_project_replaced();
-    app.doc.end_coalescing();
+    app.session.doc.end_coalescing();
     let mut model_name = model.as_ref().map(|(_, m)| m.rig().name().to_owned());
     let has_model = model.is_some();
     match model {
@@ -116,7 +116,7 @@ fn install(
             pose::install_prepared(&mut app.view3d, *prepared);
             pose::request_focus(&mut app.view3d);
             if let Some(session) = app.view3d.pose.session.as_ref() {
-                app.model = Some(SceneModel::from_rig(&session.rig));
+                app.session.model = Some(SceneModel::from_rig(&session.rig));
             }
             app.np.model_file = Some(path);
         }
@@ -125,6 +125,7 @@ fn install(
     // モデルを選ばなかったとき、Live Link のモデルが付いていれば、それが今のプロジェクトのモデル（そのマテリアルにセットを付ける）
     if model_name.is_none() {
         model_name = app
+            .session
             .model
             .as_ref()
             .filter(|m| m.is_link())
@@ -133,7 +134,7 @@ fn install(
     let (sets, doc) = TextureSets::from_new_parts(parts);
     app.replace_sets_with(sets, doc, false);
     // ウィンドウで選んだ解像度（Live Link の元の絵が、最初のセットの大きさを黙って替えない）
-    app.resolution_chosen = true;
+    app.session.resolution_chosen = true;
     app.reset_project_identity(
         lang.pick("名称未設定", "Untitled").into(),
         ShelfState::default(),

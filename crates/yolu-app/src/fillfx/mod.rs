@@ -208,7 +208,8 @@ fn inactive_reason(
     layer: LayerId,
     target: InactiveTarget,
 ) -> Option<InactiveReason> {
-    app.doc
+    app.session
+        .doc
         .inactive_effect_list()
         .into_iter()
         .find(|e| e.layer == layer && e.target == target)
@@ -239,7 +240,7 @@ impl AppState {
 
     /// 塗りつぶしレイヤーの id（塗りつぶしでなければ理由を出して `None`）。
     fn fill_layer(&mut self, layer: LayerId) -> Option<LayerId> {
-        match self.doc.layer(layer).map(|l| l.kind()) {
+        match self.session.doc.layer(layer).map(|l| l.kind()) {
             Some(LayerKind::Fill) => Some(layer),
             _ => {
                 self.refuse(
@@ -262,7 +263,7 @@ impl AppState {
             );
             return;
         }
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         match op {
             FillOp::Image {
                 layer,
@@ -278,8 +279,8 @@ impl AppState {
                         return;
                     }
                 }
-                self.doc.end_coalescing();
-                match self.doc.set_fill_image(layer, channel, image) {
+                self.session.doc.end_coalescing();
+                match self.session.doc.set_fill_image(layer, channel, image) {
                     Ok(()) => {
                         self.info(
                             Source::FillLayer,
@@ -306,8 +307,8 @@ impl AppState {
                 let Some(layer) = self.fill_layer(layer) else {
                     return;
                 };
-                self.doc.end_coalescing();
-                if let Err(e) = self.doc.set_fill_anisotropic(layer, channel, on) {
+                self.session.doc.end_coalescing();
+                if let Err(e) = self.session.doc.set_fill_anisotropic(layer, channel, on) {
                     self.fill_refusal(&e);
                 }
             }
@@ -324,7 +325,11 @@ impl AppState {
                     self.fail(Source::FillLayer, lang.fill_error(&e));
                     return;
                 }
-                if let Err(e) = self.doc.set_fill_projection(layer, projection, coalesce) {
+                if let Err(e) = self
+                    .session
+                    .doc
+                    .set_fill_projection(layer, projection, coalesce)
+                {
                     self.fill_refusal(&e);
                 }
             }
@@ -338,15 +343,15 @@ impl AppState {
                 let Some(layer) = self.fill_layer(layer) else {
                     return;
                 };
-                let Some(l) = self.doc.layer(layer) else {
+                let Some(l) = self.session.doc.layer(layer) else {
                     return;
                 };
                 let mut p = *l.projection();
                 match self.fitted_placement(layer, p.mode) {
                     Some(placement) => {
                         p.placement = placement;
-                        self.doc.end_coalescing();
-                        if let Err(e) = self.doc.set_fill_projection(layer, p, false) {
+                        self.session.doc.end_coalescing();
+                        if let Err(e) = self.session.doc.set_fill_projection(layer, p, false) {
                             self.fill_refusal(&e);
                         }
                     }
@@ -368,11 +373,12 @@ impl AppState {
                     return;
                 };
                 if !coalesce {
-                    self.doc.end_coalescing();
+                    self.session.doc.end_coalescing();
                 }
                 let gradient = gradient.map(|g| *g);
                 let clear = gradient.is_none();
                 if let Err(e) = self
+                    .session
                     .doc
                     .set_fill_gradient(layer, channel, gradient, coalesce)
                 {
@@ -386,8 +392,9 @@ impl AppState {
                     return;
                 };
                 let settings = placement::new_shape_gradient(self.model_bounds().as_ref());
-                self.doc.end_coalescing();
+                self.session.doc.end_coalescing();
                 match self
+                    .session
                     .doc
                     .set_fill_gradient(layer, channel, Some(settings), false)
                 {
@@ -403,8 +410,12 @@ impl AppState {
                     return;
                 };
                 let g = points::new_gradient(self, channel);
-                self.doc.end_coalescing();
-                match self.doc.set_fill_points(layer, channel, Some(g), false) {
+                self.session.doc.end_coalescing();
+                match self
+                    .session
+                    .doc
+                    .set_fill_points(layer, channel, Some(g), false)
+                {
                     Ok(()) => {
                         self.fillfx.edit_points = Some((layer, channel));
                         self.fillfx.point_selected = None;
@@ -422,10 +433,11 @@ impl AppState {
                     return;
                 };
                 if !coalesce {
-                    self.doc.end_coalescing();
+                    self.session.doc.end_coalescing();
                 }
                 let removed = g.is_none();
                 match self
+                    .session
                     .doc
                     .set_fill_points(layer, channel, g.map(|g| *g), coalesce)
                 {
@@ -470,7 +482,7 @@ impl AppState {
                 };
                 match self.shelf.set_image_color_space(lang, &id, text) {
                     Ok(true) => {
-                        self.mark_modified();
+                        self.session.mark_modified();
                         // 読み方を読み替えるのは、復号している画像だけ（使っていない画像を復号して、予算に残さない）
                         if self.fx.inputs.has_decoded_image(image) {
                             if let Err(why) = self.use_shelf_image(&id) {
@@ -518,7 +530,7 @@ impl AppState {
                 self.fillfx.edit_gradient = target;
                 if let Some((layer, channel)) = target {
                     self.fillfx.edit_filter = None; // ギズモは 1 つ
-                    self.selected_layer = Some(layer);
+                    self.session.selected_layer = Some(layer);
                     self.set_edit_mask(false);
                     self.fillfx.handles_hidden = false;
                     // 編集のモードでは、その形を選ぶ（取っ手は選んだ物に出る）
@@ -535,7 +547,7 @@ impl AppState {
                 self.fillfx.edit_filter = target;
                 if let Some((layer, filter)) = target {
                     self.fillfx.edit_gradient = None;
-                    self.selected_layer = Some(layer);
+                    self.session.selected_layer = Some(layer);
                     crate::objects::select_when_editing(
                         self,
                         crate::objects::Object::Shape(gizmo::Target::Filter(layer, filter)),
@@ -564,13 +576,13 @@ impl AppState {
                 self.fillfx.point_selected = index;
             }
         }
-        self.mark_modified_if_changed(revision);
+        self.session.mark_modified_if_changed(revision);
     }
 
     /// 投影の種類を替える（C# の `SetProjectionMode`）。デカールは画像を 1 回（繰り返さない）、UV から型の上の投影に替えたとき置き場が
     /// 初めのままならモデルの外形に合わせる。置き場のハンドルをすぐ動かせるように出す。
     fn set_projection_mode(&mut self, layer: LayerId, mode: ProjectionMode) {
-        let Some(l) = self.doc.layer(layer) else {
+        let Some(l) = self.session.doc.layer(layer) else {
             return;
         };
         let p = *l.projection();
@@ -594,8 +606,8 @@ impl AppState {
             next.backface_angle = d.backface_angle;
             next.backface_hardness = d.backface_hardness;
         }
-        self.doc.end_coalescing();
-        match self.doc.set_fill_projection(layer, next, false) {
+        self.session.doc.end_coalescing();
+        match self.session.doc.set_fill_projection(layer, next, false) {
             Ok(()) => {
                 if mode != ProjectionMode::Uv {
                     self.fillfx.handles_hidden = false;
@@ -611,9 +623,10 @@ impl AppState {
         layer: LayerId,
         mode: ProjectionMode,
     ) -> Option<yolu_core::fill_image::Placement> {
-        let image = self.doc.layer(layer).and_then(|l| {
+        let image = self.session.doc.layer(layer).and_then(|l| {
             l.fill_images().find_map(|(_, id)| {
-                self.doc
+                self.session
+                    .doc
                     .effect_inputs()
                     .image(id)
                     .map(|i| (i.width, i.height))
@@ -659,6 +672,7 @@ impl AppState {
         };
         self.use_shelf_image(&rid)?;
         match self
+            .session
             .doc
             .effect_inputs()
             .image(image)
@@ -712,16 +726,18 @@ impl AppState {
         };
         let channel = self.m2.paint_channel;
         let kind = self
+            .session
             .doc
             .channel_info(channel)
             .map_or(ChannelKind::Color, |c| c.kind);
         let placed = placement::decal_at(&hit, &view, gui, size);
         let projection = placement::new_projection(ProjectionMode::Decal, Some(placed));
         let above = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some());
-        self.doc.end_coalescing();
-        let result = self.doc.batch(|d| {
+            .filter(|id| self.session.doc.layer(*id).is_some());
+        self.session.doc.end_coalescing();
+        let result = self.session.doc.batch(|d| {
             let id = d.add_fill_layer(&name, &[(channel, default_fallback(kind))], above)?;
             d.set_fill_image(id, channel, Some(image))?;
             d.set_fill_projection(id, projection, false)?;
@@ -729,7 +745,7 @@ impl AppState {
         });
         match result {
             Ok(id) => {
-                self.selected_layer = Some(id);
+                self.session.selected_layer = Some(id);
                 self.set_edit_mask(false);
                 self.fillfx.handles_hidden = false;
                 self.fillfx.edit_gradient = None;
@@ -795,7 +811,7 @@ impl AppState {
                 let added = self.shelf.resources().len() > before;
                 self.shelf.selected = Some(id);
                 if added {
-                    self.mark_modified();
+                    self.session.mark_modified();
                 }
                 self.info(
                     Source::FillLayer,
@@ -880,9 +896,9 @@ pub fn image_users(app: &AppState, resource_id: &str) -> Vec<String> {
     let Some(image) = inputs::image_id(resource_id) else {
         return Vec::new();
     };
-    let named = app.sets.len() > 1;
+    let named = app.session.sets.len() > 1;
     let mut users = Vec::new();
-    for (i, set) in app.sets.iter().enumerate() {
+    for (i, set) in app.session.sets.iter().enumerate() {
         for layer in app.set_doc(i).layers() {
             if layer.image_ids().any(|id| id == image)
                 || yolu_core::paths::list_images(layer.paths()).contains(&image)

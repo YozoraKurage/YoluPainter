@@ -137,7 +137,7 @@ pub fn pose_from_stored(rig: &Rig, stored: &StoredPose, label: &str) -> Built {
 /// 文にして返す（何も無ければ None）。ファイルに無いとき・ポーズのセッションが無いときは何もしない。
 pub fn restore_from_project(app: &mut AppState) -> Option<String> {
     let lang = app.lang;
-    let stored = match app.project.as_ref()?.project().pose() {
+    let stored = match app.session.project.as_ref()?.project().pose() {
         Ok(Some(p)) => p,
         Ok(None) => return None,
         Err(e) => {

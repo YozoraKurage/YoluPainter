@@ -218,9 +218,9 @@ pub(super) fn cover(
         },
         shape,
         positions,
-        room: app.doc.stroke_budget_bytes(),
+        room: app.session.doc.stroke_budget_bytes(),
     };
-    match cover_screen(&app.doc, model.geometry.clone(), &view, &settings) {
+    match cover_screen(&app.session.doc, model.geometry.clone(), &view, &settings) {
         Ok(c) => Some(c),
         Err(e) => {
             app.fail(source, app.lang.surface_error(&e));
@@ -273,8 +273,8 @@ fn figure(app: &mut AppState, rect: Rect, a: DVec2, b: DVec2) {
     };
     let figure = app.drafting.figure;
     let corner = app.drafting.corner as f64;
-    let before = app.doc.revision();
-    app.doc.end_coalescing();
+    let before = app.session.doc.revision();
+    app.session.doc.end_coalescing();
     if app.drafting.fill && figure != Figure::Line {
         let shape = match figure {
             Figure::Rectangle => ScreenShape::Rectangle { a, b, corner },
@@ -322,7 +322,7 @@ fn outline_stroke(
         let n = ((p - last).length() / OUTLINE_STEP).ceil().max(1.0) as usize;
         for i in 1..=n {
             let q = last + (p - last) * (i as f64 / n as f64);
-            if let Err(e) = surface.add_input(&mut app.doc, &mut stroke, input(q)) {
+            if let Err(e) = surface.add_input(&mut app.session.doc, &mut stroke, input(q)) {
                 result = Err(e);
                 break 'points;
             }
@@ -330,11 +330,11 @@ fn outline_stroke(
         last = p;
     }
     if result.is_ok() {
-        result = surface.finish(&mut app.doc, &mut stroke);
+        result = surface.finish(&mut app.session.doc, &mut stroke);
     }
     let ended = match result {
         Err(e) => {
-            app.doc.cancel_stroke(stroke);
+            app.session.doc.cancel_stroke(stroke);
             app.fail(Source::Ruler, app.lang.surface_error(&e));
             Ok(())
         }
@@ -342,7 +342,7 @@ fn outline_stroke(
             if let Some(outcome) = surface.symmetry_note() {
                 app.warn(Source::View3d, app.lang.mirror_note(outcome));
             }
-            app.doc.end_stroke(stroke).map(|_| ())
+            app.session.doc.end_stroke(stroke).map(|_| ())
         }
     };
     finish_paint(app, ended, before);

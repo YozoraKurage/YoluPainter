@@ -560,21 +560,21 @@ impl AppState {
             );
             return;
         }
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         match self.sel_apply(edit) {
             Ok(text) => self.info(Source::Selection, text),
             Err(e) => self.refuse(Source::Selection, e),
         }
-        self.mark_modified_if_changed(revision);
+        self.session.mark_modified_if_changed(revision);
     }
 
     /// 選択範囲を `next` にする。今と同じ中身なら Undo の段を積まず、false を返す。
     fn set_selection_if_changed(&mut self, next: Option<SelectionMask>) -> Result<bool, CoreError> {
         let next = next.filter(|m| !m.is_empty());
-        if next.as_ref() == self.doc.selection() {
+        if next.as_ref() == self.session.doc.selection() {
             return Ok(false);
         }
-        self.doc.set_selection(next)?;
+        self.session.doc.set_selection(next)?;
         Ok(true)
     }
 
@@ -585,7 +585,7 @@ impl AppState {
         mode: SelectionCombine,
     ) -> Result<String, String> {
         let lang = self.lang;
-        let next = match self.doc.selection() {
+        let next = match self.session.doc.selection() {
             Some(current) if mode != SelectionCombine::Replace => Some(
                 current
                     .combine(&shape, mode)
@@ -596,7 +596,7 @@ impl AppState {
         let changed = self
             .set_selection_if_changed(next)
             .map_err(|e| lang.core_error(&e))?;
-        Ok(if self.doc.selection().is_none() {
+        Ok(if self.session.doc.selection().is_none() {
             lang.pick("何も選ばれていません。", "Nothing is selected.")
                 .into()
         } else if !changed {
@@ -625,8 +625,8 @@ impl AppState {
         if self.sel.all_layers {
             return None;
         }
-        let id = self.selected_layer?;
-        let layer = self.doc.layer(id)?;
+        let id = self.session.selected_layer?;
+        let layer = self.session.doc.layer(id)?;
         (layer.kind() == LayerKind::Raster).then_some(id)
     }
 
@@ -636,7 +636,7 @@ impl AppState {
             || -> String { lang.pick("選択範囲がありません。", "No selection.").into() };
         match edit {
             SelEdit::All => {
-                let all = SelectionMask::all(&self.doc);
+                let all = SelectionMask::all(&self.session.doc);
                 let changed = self
                     .set_selection_if_changed(Some(all))
                     .map_err(|e| lang.core_error(&e))?;
@@ -648,21 +648,22 @@ impl AppState {
                 })
             }
             SelEdit::Clear => {
-                if self.doc.selection().is_none() {
+                if self.session.doc.selection().is_none() {
                     return Ok(none());
                 }
-                self.doc
+                self.session
+                    .doc
                     .clear_selection()
                     .map_err(|e| lang.core_error(&e))?;
                 Ok(lang.pick("選択を解除しました。", "Deselected.").into())
             }
             SelEdit::Invert => {
-                let Some(current) = self.doc.selection().cloned() else {
+                let Some(current) = self.session.doc.selection().cloned() else {
                     return Ok(none());
                 };
                 self.set_selection_if_changed(Some(current.invert()))
                     .map_err(|e| lang.core_error(&e))?;
-                Ok(if self.doc.selection().is_none() {
+                Ok(if self.session.doc.selection().is_none() {
                     lang.pick("反転して、何も残りません。", "Nothing is left selected.")
                         .into()
                 } else {
@@ -675,7 +676,7 @@ impl AppState {
                 radius,
                 edge_lock,
             } => {
-                let Some(current) = self.doc.selection().cloned() else {
+                let Some(current) = self.session.doc.selection().cloned() else {
                     return Ok(none());
                 };
                 let r = radius.min(MAX_MODIFY_RADIUS);
@@ -692,7 +693,7 @@ impl AppState {
                     .set_selection_if_changed(Some(next))
                     .map_err(|e| lang.core_error(&e))?;
                 let name = kind.name(lang);
-                Ok(if self.doc.selection().is_none() {
+                Ok(if self.session.doc.selection().is_none() {
                     format!(
                         "{name}: {}",
                         lang.pick("何も残りません。", "nothing is left selected.")
@@ -712,7 +713,7 @@ impl AppState {
                 y1,
                 mode,
             } => {
-                let shape = SelectionMask::rectangle(&self.doc, x0, y0, x1, y1);
+                let shape = SelectionMask::rectangle(&self.session.doc, x0, y0, x1, y1);
                 self.combine_shape(shape, mode)
             }
             SelEdit::Ellipse {
@@ -722,7 +723,7 @@ impl AppState {
                 ry,
                 mode,
             } => {
-                let shape = SelectionMask::ellipse(&self.doc, cx, cy, rx, ry)
+                let shape = SelectionMask::ellipse(&self.session.doc, cx, cy, rx, ry)
                     .map_err(|e| lang.core_error(&e))?;
                 let shape = self.edge_of(shape);
                 self.combine_shape(shape, mode)
@@ -736,13 +737,13 @@ impl AppState {
                 mode,
             } => {
                 let points = shape::rounded_rect_points(x0, y0, x1, y1, radius);
-                let shape =
-                    SelectionMask::polygon(&self.doc, &points).map_err(|e| lang.core_error(&e))?;
+                let shape = SelectionMask::polygon(&self.session.doc, &points)
+                    .map_err(|e| lang.core_error(&e))?;
                 let shape = self.edge_of(shape);
                 self.combine_shape(shape, mode)
             }
             SelEdit::Polygon { points, mode } => {
-                let shape = SelectionMask::polygon(&self.doc, &dvec(&points))
+                let shape = SelectionMask::polygon(&self.session.doc, &dvec(&points))
                     .map_err(|e| lang.core_error(&e))?;
                 let shape = self.edge_of(shape);
                 self.combine_shape(shape, mode)
@@ -761,7 +762,7 @@ impl AppState {
                 let mut shape: Option<SelectionMask> = None;
                 for (x, y) in seeds {
                     let part = SelectionMask::magic_wand(
-                        &self.doc,
+                        &self.session.doc,
                         layer,
                         self.m2.paint_channel,
                         x,
@@ -796,7 +797,7 @@ impl AppState {
                         Source::Selection,
                         crate::lang::refusals::during_stroke(self.lang),
                     );
-                } else if self.doc.selection().is_none() {
+                } else if self.session.doc.selection().is_none() {
                     self.refuse(
                         Source::Selection,
                         self.lang.pick("選択範囲がありません。", "No selection."),
@@ -871,7 +872,7 @@ impl AppState {
     /// 選んでいるレイヤーで描くときの 2D の対称（効いている 2D の対称定規の写し。無ければ切）。2D のキャンバスのストロークにも、3D ビューの
     /// 面のストローク（UV の平面で、3D の写しの後に）にも渡す。
     pub fn canvas_symmetry(&self) -> CanvasSymmetry {
-        self.canvas_symmetry_for(self.selected_layer)
+        self.canvas_symmetry_for(self.session.selected_layer)
     }
 
     /// `drawing` で描くときの 2D の対称。
@@ -886,7 +887,7 @@ impl AppState {
     pub fn canvas_model_symmetry(
         &mut self,
     ) -> Option<std::sync::Arc<yolu_core::geometry::ModelSymmetry>> {
-        self.canvas_model_symmetry_for(self.selected_layer)
+        self.canvas_model_symmetry_for(self.session.selected_layer)
     }
 
     fn canvas_model_symmetry_for(

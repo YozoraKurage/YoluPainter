@@ -1150,7 +1150,7 @@ impl YoluApp {
             }
             Some(DialogRequest::SaveAs) => {
                 let lang = self.state.lang;
-                let name = format!("{}.ylp", self.state.project_name);
+                let name = format!("{}.ylp", self.state.session.project_name);
                 let dialog = crate::dialog::file_for_save(&self.state, Place::Project)
                     .set_title(lang.pick("別名で保存", "Save As"))
                     .add_filter(
@@ -1423,7 +1423,7 @@ impl YoluApp {
         }
         // 閉じると取り消される仕事（利用者が結果を待っている書き出しなど）も、保存していない変更と一緒に知らせる
         let jobs = crate::jobs::close_jobs(&self.state);
-        if !self.state.modified && jobs.is_empty() {
+        if !self.state.session.is_modified() && jobs.is_empty() {
             return true;
         }
         if self.close_discarded {
@@ -1439,12 +1439,16 @@ impl YoluApp {
         // 閉じる頼みは止めて（`close_flow`）、アプリの中のウィンドウで聞く。答えが「変更を破棄」・「終わる」なら、もう一度閉じる流れを回して閉じる
         if self.state.discard_ask.is_none() {
             self.state.discard_ask = Some(crate::discard::Ask {
-                kind: if self.state.modified {
+                kind: if self.state.session.is_modified() {
                     crate::discard::Kind::Changes
                 } else {
                     crate::discard::Kind::JobsOnly
                 },
-                text: crate::windows::close_question(self.state.lang, self.state.modified, &jobs),
+                text: crate::windows::close_question(
+                    self.state.lang,
+                    self.state.session.is_modified(),
+                    &jobs,
+                ),
                 then: crate::discard::AfterDiscard::Close,
             });
         }
@@ -2259,7 +2263,7 @@ impl YoluApp {
                 let marker_width = w::text_width(ui.painter(), " •", style);
                 let shown = w::fit(
                     ui.painter(),
-                    &self.state.project_name,
+                    &self.state.session.project_name,
                     (room - marker_width).max(0.0),
                     style,
                 );
@@ -2277,10 +2281,10 @@ impl YoluApp {
                     }
                 );
                 w::text(ui.painter(), title, &name, style, w::Align::Right);
-                if shown != self.state.project_name {
+                if shown != self.state.session.project_name {
                     // 詰めたときだけ、全体の名前をツールチップに
                     ui.interact(title, ui.id().with("menubar.title"), Sense::hover())
-                        .on_hover_text(&self.state.project_name);
+                        .on_hover_text(&self.state.session.project_name);
                 }
                 let link_open = matches!(
                     self.state.popup.as_ref().map(|p| p.kind),
@@ -2770,7 +2774,7 @@ impl eframe::App for YoluApp {
 
     /// 正しく終わった: 変更があれば最後の世代を書き、復旧の印を消す（世代は設定の数だけ残す）。
     fn on_exit(&mut self) {
-        if self.gpu_lost.is_some() && (self.state.modified || self.state.is_saving()) {
+        if self.gpu_lost.is_some() && (self.state.session.is_modified() || self.state.is_saving()) {
             // GPU を失って終わる: 書き置きの「保存していない作業」の印を消さず（落ちたときと同じ。保存が終わらないまま終えるときも）、
             // 書き込み中の分だけ、期限まで待つ。
             // 遅いディスクで間に合わなくても固まらない（置換は最後の 1 回なので、前の世代が残る）。次の起動の復旧のウィンドウから開ける
@@ -2918,10 +2922,14 @@ mod tests {
         let project = dir.join("Opened.ylp");
         let mut source = crate::state::AppState::new(64, 64);
         source.apply(Action::SaveProjectAs(project.clone()));
-        assert!(!source.modified, "{}", source.message);
+        assert!(!source.session.is_modified(), "{}", source.message);
         let app = startup_app(&[&project]);
         assert_eq!(
-            app.state.project.as_ref().map(|p| p.path().to_path_buf()),
+            app.state
+                .session
+                .project
+                .as_ref()
+                .map(|p| p.path().to_path_buf()),
             Some(project.clone())
         );
         assert!(
@@ -2934,7 +2942,7 @@ mod tests {
         std::fs::write(&broken, b"not a project").unwrap();
         for bad in [broken, dir.join("missing.ylp")] {
             let app = startup_app(&[&bad]);
-            assert!(app.state.project.is_none(), "{}", bad.display());
+            assert!(app.state.session.project.is_none(), "{}", bad.display());
             assert!(
                 app.state.message.contains("を開けません（"),
                 "{}: {}",
@@ -2947,7 +2955,7 @@ mod tests {
         std::fs::write(&other, b"x").unwrap();
         for args in [vec![other.as_path()], Vec::new()] {
             let app = startup_app(&args);
-            assert!(app.state.project.is_none() && app.state.message.is_empty());
+            assert!(app.state.session.project.is_none() && app.state.message.is_empty());
         }
         std::fs::remove_dir_all(dir).unwrap();
     }

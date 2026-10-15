@@ -147,7 +147,7 @@ pub fn transforming(app: &AppState) -> bool {
 /// 物の今の形（形のギズモの対象。投影は UV のときは無い）。
 pub fn shape_of(app: &AppState, t: Target) -> Option<sg::Shape> {
     if let Target::Projection(layer) = t {
-        let l = app.doc.layer(layer)?;
+        let l = app.session.doc.layer(layer)?;
         if l.kind() != LayerKind::Fill || l.projection().mode == ProjectionMode::Uv {
             return None;
         }
@@ -169,6 +169,7 @@ pub fn path_points_with_normals(
     let model = app.view3d.full_model()?;
     let fingerprint = app.path_fingerprint(&model.geometry);
     let entry = app
+        .session
         .doc
         .layer(layer)?
         .paths()
@@ -213,7 +214,7 @@ pub fn marker_of(app: &AppState, object: Object) -> Option<Vec3> {
             channel,
             index,
         } => {
-            let g = app.doc.layer(layer)?.fill_points(channel)?;
+            let g = app.session.doc.layer(layer)?.fill_points(channel)?;
             if g.space != PointSpace::Model {
                 return None;
             }
@@ -230,7 +231,8 @@ pub fn marker_of(app: &AppState, object: Object) -> Option<Vec3> {
 
 /// 編集のモードで選べる 3D の定規（モデルの空間で、表示が入っているもの）。
 pub fn ruler_of(app: &AppState, layer: LayerId, id: RulerId) -> Option<yolu_core::Ruler> {
-    app.doc
+    app.session
+        .doc
         .layer(layer)?
         .rulers()
         .iter()
@@ -243,7 +245,7 @@ pub fn shown(app: &AppState, layer: LayerId) -> bool {
     let mut at = Some(layer);
     let mut hops = 0;
     while let Some(id) = at {
-        let Some(l) = app.doc.layer(id) else {
+        let Some(l) = app.session.doc.layer(id) else {
             return false;
         };
         if !l.visible() {
@@ -251,7 +253,7 @@ pub fn shown(app: &AppState, layer: LayerId) -> bool {
         }
         at = l.parent();
         hops += 1;
-        if hops > app.doc.layers().len() {
+        if hops > app.session.doc.layers().len() {
             return false;
         }
     }
@@ -278,7 +280,7 @@ pub fn markers(app: &AppState) -> Vec<Marker> {
         return Vec::new();
     }
     let mut objects = Vec::new();
-    for layer in app.doc.layers() {
+    for layer in app.session.doc.layers() {
         if !shown(app, layer.id()) {
             continue;
         }
@@ -299,7 +301,7 @@ pub fn markers(app: &AppState) -> Vec<Marker> {
             }
         }
         for stack in [FilterTarget::Content, FilterTarget::Mask] {
-            for f in app.doc.filters_of(id, stack).unwrap_or(&[]) {
+            for f in app.session.doc.filters_of(id, stack).unwrap_or(&[]) {
                 objects.push(Object::Shape(Target::Filter(id, f.id())));
             }
         }
@@ -369,7 +371,7 @@ fn hits(app: &AppState, rect: Rect, at: Pos2) -> Vec<Object> {
 pub fn select(app: &mut AppState, object: Option<Object>) {
     app.objects.selected = object;
     if let Some(o) = object {
-        if app.selected_layer != Some(o.layer()) {
+        if app.session.selected_layer != Some(o.layer()) {
             app.select_single_layer(o.layer());
         }
         // 定規を選んだら、プロパティの「定規」の行も同じ定規を選ぶ
@@ -653,11 +655,11 @@ fn delete(app: &mut AppState, o: Object) {
                 app.refuse(Source::Path, text);
                 return;
             }
-            let Some(entries) = app.doc.layer(layer).map(|l| l.paths().to_vec()) else {
+            let Some(entries) = app.session.doc.layer(layer).map(|l| l.paths().to_vec()) else {
                 return;
             };
             let kept: Vec<_> = entries.into_iter().filter(|e| e.path.id() != id).collect();
-            app.doc.end_coalescing();
+            app.session.doc.end_coalescing();
             // パスの一覧の口（編集中のパス・選んだ点を外し、面から外れた標本を知らせる）
             if app.path_commit_list(layer, kept, None) {
                 app.objects.selected = None;

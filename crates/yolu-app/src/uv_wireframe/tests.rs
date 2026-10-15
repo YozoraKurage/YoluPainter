@@ -55,7 +55,9 @@ fn frame(ctx: &egui::Context, app: &mut AppState) -> usize {
     let color = Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]);
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-        let view = app.view.view(rect, app.doc.width(), app.doc.height());
+        let view = app
+            .view
+            .view(rect, app.session.doc.width(), app.session.doc.height());
         show(&mut child, app, &view);
     });
     output.textures_delta.clear();
@@ -323,17 +325,17 @@ fn the_overlay_uses_the_surface_three_d_paints_even_when_the_link_is_stale() {
         app.lang = lang;
         app.receive_link_model(&link_model()).1.unwrap();
         app.sync_view3d();
-        let bound = app.sets.current().bound;
+        let bound = app.session.sets.current().bound;
         assert!(bound.is_some());
         assert_eq!(app.view3d.material, bound.unwrap() as i32);
         assert!(frame(&ctx, &mut app) > 0, "つながっているモデルの面");
         // 記録の世代が 3D の世代と合わなくなる（古い世代）。3D は描かない（-1）ので、UV も重ねない。
-        app.model.as_mut().unwrap().generation += 1;
+        app.session.model.as_mut().unwrap().generation += 1;
         app.sync_view3d();
         assert_eq!(app.view3d.material, -1);
         assert!(app.region_model().is_none());
         assert_eq!(
-            app.sets.current().bound,
+            app.session.sets.current().bound,
             bound,
             "セットの結び付けは残っている（以前はこれを読んでいた）"
         );
@@ -341,7 +343,7 @@ fn the_overlay_uses_the_surface_three_d_paints_even_when_the_link_is_stale() {
         assert_eq!(tip(&app), app.region_missing_reason());
         assert!(app.uv_wireframe.edges.is_empty());
         // 世代が戻れば、また同じ面を重ねる。
-        app.model.as_mut().unwrap().generation -= 1;
+        app.session.model.as_mut().unwrap().generation -= 1;
         app.sync_view3d();
         assert!(frame(&ctx, &mut app) > 0);
         assert!(!app.can_undo());
@@ -351,7 +353,7 @@ fn the_overlay_uses_the_surface_three_d_paints_even_when_the_link_is_stale() {
 #[test]
 fn settings_restore_color_alpha_and_visibility_without_document_changes() {
     let mut app = AppState::new(64, 64);
-    let epoch = app.doc_epoch;
+    let epoch = app.session.doc_epoch();
     let undo = app.can_undo();
     app.apply(Action::ToggleUvWireframe);
     app.prefs.settings.uv_wireframe_color = [12, 34, 56, 78];
@@ -364,7 +366,7 @@ fn settings_restore_color_alpha_and_visibility_without_document_changes() {
     assert_eq!(parse_color("12,34,56,78"), Some([12, 34, 56, 78]));
     assert_eq!(parse_color("256,0,0,255"), None);
     assert_eq!(parse_color("0,0,0"), None);
-    assert_eq!(app.doc_epoch, epoch);
+    assert_eq!(app.session.doc_epoch(), epoch);
     assert_eq!(app.can_undo(), undo);
     assert!(!app.prefs.settings.uv_wireframe);
 }

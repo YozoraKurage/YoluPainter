@@ -343,7 +343,9 @@ impl AppState {
     /// モデルが違っても返し、新しく作り始めない（`release_idle_bake_input` が毎フレーム捨てるので、作ってもできない）。
     /// 焼いたマップを 1 枚も持たなければ要らないので、入力無しとして Some(None)。
     fn effect_bake_input(&mut self, wait: bool) -> Option<Option<Arc<MeshBakeInput>>> {
-        if self.sets.iter().all(|s| s.mesh_maps.is_empty()) || self.view3d.full_model().is_none() {
+        if self.session.sets.iter().all(|s| s.mesh_maps.is_empty())
+            || self.view3d.full_model().is_none()
+        {
             return Some(None); // マップが無い・モデルが無い（照合できない）
         }
         if wait {
@@ -363,8 +365,13 @@ impl AppState {
     /// （済んでいて中身が同じなら何もしない）。持っている画素の合計が上限を超える画像は、理由つきで断る。
     fn refresh_effect_images(&mut self) {
         let mut pointed: HashSet<ImageId> = HashSet::new();
-        for i in 0..self.sets.len() {
-            if self.sets.get(i).is_some_and(|s| s.read_only.is_some()) {
+        for i in 0..self.session.sets.len() {
+            if self
+                .session
+                .sets
+                .get(i)
+                .is_some_and(|s| s.read_only.is_some())
+            {
                 continue;
             }
             for layer in self.set_doc(i).layers() {
@@ -375,6 +382,7 @@ impl AppState {
             pointed.extend(crate::look::image_ids(self.set_doc(i)));
         }
         let waiting_sets: HashSet<u32> = self
+            .session
             .sets
             .iter()
             .filter(|s| s.waiting_inputs)
@@ -500,7 +508,7 @@ impl AppState {
             self.fx.inputs.topologies.clear();
             return;
         };
-        let materials: HashSet<i32> = (0..self.sets.len())
+        let materials: HashSet<i32> = (0..self.session.sets.len())
             .filter_map(|i| self.set_material(i))
             .collect();
         let held = &mut self.fx.inputs.topologies;
@@ -531,7 +539,7 @@ impl AppState {
             .set_material(index)
             .and_then(|m| self.fx.inputs.topologies.get(&m))
             .map_or(0, |(_, t)| Arc::as_ptr(t) as usize);
-        let Some(set) = self.sets.get(index) else {
+        let Some(set) = self.session.sets.get(index) else {
             return SetKey {
                 frame,
                 topology,
@@ -588,7 +596,7 @@ impl AppState {
         let mut inputs = EffectInputs::new()
             .with_frame(frame.then(ModelFrame::default))
             .with_topology(topology);
-        let Some(set) = self.sets.get(index) else {
+        let Some(set) = self.session.sets.get(index) else {
             return inputs;
         };
         let uid = set.uid;
@@ -642,12 +650,12 @@ impl AppState {
             return; // モデルの入力を作っている最中（前の入力のまま）
         };
         let frame = self.view3d.full_model().is_some();
-        let live: HashSet<u32> = self.sets.iter().map(|s| s.uid).collect();
+        let live: HashSet<u32> = self.session.sets.iter().map(|s| s.uid).collect();
         self.fx.inputs.keys.retain(|u, _| live.contains(u));
         self.fx.inputs.attempts.retain(|u, _| live.contains(u));
         self.fx.inputs.maps.retain(|(u, _), _| live.contains(u));
-        for index in 0..self.sets.len() {
-            let Some(set) = self.sets.get(index) else {
+        for index in 0..self.session.sets.len() {
+            let Some(set) = self.session.sets.get(index) else {
                 continue;
             };
             let (uid, waiting, read_only) = (set.uid, set.waiting_inputs, set.read_only.is_some());
@@ -656,7 +664,8 @@ impl AppState {
             }
             // 読むだけのセットの文書は保存した合成の 1 枚のレイヤー（効果が無い）なので、読むマップは持っている全部で見る
             let needed = if waiting {
-                self.sets
+                self.session
+                    .sets
                     .get(index)
                     .map(|s| s.mesh_maps.iter().map(|m| m.kind()).collect())
                     .unwrap_or_default()
@@ -715,10 +724,10 @@ impl AppState {
         frame: bool,
         budget: u64,
     ) -> bool {
-        let Some(set) = self.sets.get(index) else {
+        let Some(set) = self.session.sets.get(index) else {
             return false;
         };
-        let Some(project) = &self.project else {
+        let Some(project) = &self.session.project else {
             return false;
         };
         let Some(native) = project.project().sets().iter().find(|s| s.id == set.id) else {
@@ -742,7 +751,7 @@ impl AppState {
                         &reason,
                     ),
                 );
-                if let Some(set) = self.sets.get_mut(index) {
+                if let Some(set) = self.session.sets.get_mut(index) {
                     set.read_only = Some(reason);
                 }
                 return false;
@@ -765,12 +774,12 @@ impl AppState {
         };
         let saved = Some((doc.id(), doc.revision()));
         self.put_set_doc(index, doc);
-        if let Some(set) = self.sets.get_mut(index) {
+        if let Some(set) = self.session.sets.get_mut(index) {
             set.read_only = None;
             set.waiting_inputs = false;
             set.saved = saved;
         }
-        let name = self.sets.get(index).map_or("", |s| s.name.as_str());
+        let name = self.session.sets.get(index).map_or("", |s| s.name.as_str());
         let mut text = self.lang.pick(
             format!("入力がそろったので、テクスチャセット「{name}」を編集できます。"),
             format!("Texture set \"{name}\" is editable now that its inputs are in place."),
@@ -791,7 +800,7 @@ impl AppState {
     /// セットの文書を入れ替える（今のセットなら画面の文書。選んでいるレイヤー・選択の状態は新しい文書に合わせる）。
     fn put_set_doc(&mut self, index: usize, doc: Document) {
         self.eyedrop.sample_cache = None;
-        if index == self.sets.current_index() {
+        if index == self.session.sets.current_index() {
             // 同じ文書を編集できるようにするだけで大きさは変わらないので、表示は今のまま
             self.install_document(
                 doc,
@@ -802,7 +811,7 @@ impl AppState {
                 },
             );
         } else {
-            self.sets.replace_stashed_doc(index, doc);
+            self.session.sets.replace_stashed_doc(index, doc);
             self.sync_view3d();
         }
     }
@@ -812,8 +821,8 @@ impl AppState {
     pub fn lock_sets_missing_inputs(&mut self) -> Vec<String> {
         self.sync_effect_inputs_with(true);
         let mut locked = Vec::new();
-        for index in 0..self.sets.len() {
-            let Some(set) = self.sets.get(index) else {
+        for index in 0..self.session.sets.len() {
+            let Some(set) = self.session.sets.get(index) else {
                 continue;
             };
             if set.read_only.is_some() {
@@ -837,6 +846,7 @@ impl AppState {
                 missing_text(lang, &missing, &names, &failure)
             };
             let png = self
+                .session
                 .project
                 .as_ref()
                 .and_then(|p| {
@@ -868,17 +878,17 @@ impl AppState {
                         .collect::<Vec<_>>()
                 })
                 .collect();
-            let uid = self.sets.get(index).map_or(0, |s| s.uid);
+            let uid = self.session.sets.get(index).map_or(0, |s| s.uid);
             self.fx.inputs.waiting.insert(uid, wanted);
             self.put_set_doc(index, preview);
-            if let Some(set) = self.sets.get_mut(index) {
+            if let Some(set) = self.session.sets.get_mut(index) {
                 set.read_only = Some(reason);
                 set.waiting_inputs = true;
             }
             self.fx
                 .inputs
                 .keys
-                .remove(&self.sets.get(index).map_or(0, |s| s.uid));
+                .remove(&self.session.sets.get(index).map_or(0, |s| s.uid));
             locked.push(name);
         }
         locked
@@ -921,16 +931,18 @@ mod tests {
         let path = dir.join("waiting.ylp");
         // 256 × 256 の 4 タイルに画素のあるレイヤーと、プロジェクトにまだ無い画像を指す塗りつぶしレイヤー
         let mut source = AppState::new(256, 256);
-        let base = source.selected_layer.unwrap();
+        let base = source.session.selected_layer.unwrap();
         for (x, y) in [(0, 0), (128, 0), (0, 128), (128, 128)] {
             source
+                .session
                 .doc
                 .set_pixel(base, x, y, Rgba8::new(1, 2, 3, 255))
                 .unwrap();
         }
         source.apply(Action::M2(Edit::NewFill));
-        let fill = source.selected_layer.unwrap();
+        let fill = source.session.selected_layer.unwrap();
         source
+            .session
             .doc
             .set_fill_images_for_load(
                 fill,
@@ -939,8 +951,8 @@ mod tests {
             )
             .unwrap();
         source.apply(Action::SaveProjectAs(path.clone()));
-        assert!(!source.modified, "{}", source.message);
-        let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
+        assert!(!source.session.is_modified(), "{}", source.message);
+        let native = yolu_io::NativeDocument::from_core(&source.session.doc).unwrap();
         let bytes = crate::project::to_core(
             &yolu_io::SetDocument::in_memory(native.clone()),
             Lang::Ja,
@@ -953,7 +965,7 @@ mod tests {
         // 開く（予算にちょうど収まる）: 画像が無いので、入力待ちの読むだけ
         let mut a = AppState::new(64, 64);
         open_within(&mut a, &path, bytes);
-        assert!(a.sets.current().waiting_inputs, "{}", a.message);
+        assert!(a.session.sets.current().waiting_inputs, "{}", a.message);
         assert!(a
             .read_only_reason()
             .is_some_and(|r| r.contains("効果の入力がそろっていない")));
@@ -993,16 +1005,19 @@ mod tests {
             "{}",
             a.message
         );
-        assert!(a.sets.current().waiting_inputs, "予算を上げれば試せる");
+        assert!(
+            a.session.sets.current().waiting_inputs,
+            "予算を上げれば試せる"
+        );
 
         // ちょうどの予算なら、開く経路と同じく変換できて、入力もそろっているので編集できる
         assert!(a.unlock_set(0, None, false, bytes), "{}", a.message);
         assert!(a.read_only_reason().is_none());
-        assert!(!a.sets.current().waiting_inputs);
+        assert!(!a.session.sets.current().waiting_inputs);
         assert!(
-            a.doc.inactive_effect_list().is_empty(),
+            a.session.doc.inactive_effect_list().is_empty(),
             "{:?}",
-            a.doc.inactive_effect_list()
+            a.session.doc.inactive_effect_list()
         );
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -1073,10 +1088,10 @@ mod tests {
         let view = zoom(&mut s);
         stir(&mut s);
         let (doc, _) = crate::state::blank_document(32, 32);
-        s.put_set_doc(s.sets.current_index(), doc);
+        s.put_set_doc(s.session.sets.current_index(), doc);
         assert_settled(&s, "put_set_doc");
         assert_eq!(s.view, view, "表示は今のまま");
         assert_eq!(s.ui.layer_scroll, 0.0);
-        assert!(s.selected_layer.is_some());
+        assert!(s.session.selected_layer.is_some());
     }
 }

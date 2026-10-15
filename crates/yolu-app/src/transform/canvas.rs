@@ -14,7 +14,7 @@ impl AppState {
     /// 動かすものの範囲（文書の版・動かすレイヤーが変わるまで覚える）。
     pub fn transform_bounds_cached(&mut self) -> Option<Bounds> {
         let ids = self.transform_targets();
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         if let Some((r, cached, bounds)) = &self.transform.cache {
             if *r == revision && *cached == ids {
                 return *bounds;
@@ -63,7 +63,7 @@ pub fn press(
                     "動かす画素のあるレイヤーがありません。",
                     "No layer with pixels to move.",
                 )
-            } else if app.doc.selection().is_some() {
+            } else if app.session.doc.selection().is_some() {
                 app.lang.pick(
                     "選択範囲の中に動かす画素がありません。",
                     "No pixels to move inside the selection.",
@@ -198,7 +198,9 @@ pub fn arrow(app: &mut AppState, screen: (f64, f64), shift: bool) {
     let Some(rect) = app.ui.canvas_rect else {
         return;
     };
-    let view = app.view.view(rect, app.doc.width(), app.doc.height());
+    let view = app
+        .view
+        .view(rect, app.session.doc.width(), app.session.doc.height());
     let (dx, dy) = arrow_to_canvas(&view, screen);
     let step = if shift { 10 } else { 1 };
     app.apply(Action::M2(Edit::Transform(Xform::Move {

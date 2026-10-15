@@ -462,16 +462,16 @@ mod tests {
     }
 
     fn begin_stroke(app: &mut AppState) {
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
     }
 
     fn end_stroke(app: &mut AppState) {
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.canvas.stroke = None;
     }
 

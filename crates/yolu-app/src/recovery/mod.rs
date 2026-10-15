@@ -419,7 +419,7 @@ impl AppState {
         if self.is_saving() {
             return self.recovery.wakeup(now);
         }
-        let modified = self.modified;
+        let modified = self.session.is_modified();
         let stroking = self.is_stroking();
         let fingerprint = capture::fingerprint(self);
         {
@@ -527,7 +527,7 @@ impl AppState {
                 Ok(_) => {
                     if outcome.epoch == a.epoch {
                         a.recorded = Some(outcome.fingerprint);
-                        if self.modified {
+                        if self.session.is_modified() {
                             let _ = a.session.mark(true);
                         }
                     }
@@ -625,7 +625,7 @@ impl AppState {
         let Some(a) = self.recovery.active.as_ref() else {
             return true;
         };
-        !self.modified || a.recorded.as_ref() == Some(&capture::fingerprint(self))
+        !self.session.is_modified() || a.recorded.as_ref() == Some(&capture::fingerprint(self))
     }
 
     /// 正しく閉じる: 変更があれば最後の世代を書いて待ち、印を消す（世代は設定の数だけ残す）。
@@ -689,7 +689,7 @@ impl AppState {
                     pool: row.pool,
                     id: row.id,
                 };
-                if self.modified {
+                if self.session.is_modified() {
                     // 今の変更を捨ててよいかは、ウィンドウを持つ側（YoluApp）が聞いてから `recovery_open` する
                     self.recovery.open_request = Some(request);
                 } else {

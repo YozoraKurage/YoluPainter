@@ -134,10 +134,10 @@ impl AppState {
             return false;
         }
         let (mut layers, mut history) = (0u64, 0u64);
-        let current = self.sets.current_index();
-        for i in 0..self.sets.len() {
+        let current = self.session.sets.current_index();
+        for i in 0..self.session.sets.len() {
             let doc = if i == current {
-                &self.doc
+                &self.session.doc
             } else {
                 self.set_doc(i)
             };

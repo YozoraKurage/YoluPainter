@@ -217,7 +217,7 @@ pub fn press(ctx: &egui::Context, app: &mut AppState, fired: Fired) {
         to: ToolPoint::of(app),
         epoch: app.tool_epoch,
         started: now,
-        revision: app.doc.revision(),
+        revision: app.session.doc.revision(),
         drew: false,
         held: None,
     });
@@ -356,7 +356,7 @@ fn drawing(app: &AppState) -> bool {
 /// 押している間に、ツールで描いた・ドラッグしたか（描いている最中・描き終えて文書が変わった・ツールの押しが始まった）。
 fn used(app: &AppState, revision: u64) -> bool {
     drawing(app)
-        || app.doc.revision() != revision
+        || app.session.doc.revision() != revision
         || app.canvas.tool_button.is_some()
         || app.canvas.pen_press.is_some()
         || app.view3d.input.pen_press.is_some()

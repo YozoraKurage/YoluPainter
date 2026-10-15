@@ -498,7 +498,7 @@ fn merge_confirm(ctx: &egui::Context, app: &mut AppState) {
         .channels
         .iter()
         .map(|(channel, pixels)| Row {
-            left: crate::m2::channel_name(lang, &app.doc, *channel),
+            left: crate::m2::channel_name(lang, &app.session.doc, *channel),
             middle: String::new(),
             right: lang.pick(format!("{pixels} 画素"), format!("{pixels} px")),
             warning: false,

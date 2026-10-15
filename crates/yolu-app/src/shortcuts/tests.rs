@@ -144,7 +144,7 @@ fn every_binding_has_a_localized_name_and_every_context_key_a_label() {
     let mut app = AppState::new(32, 32);
     for lang in Lang::ALL {
         app.lang = lang;
-        app.selected_layer = None;
+        app.session.selected_layer = None;
         for binding in bindings() {
             let action = binding.action().expect("一覧の行は Action を持つ");
             let label = binding_label(&app, &binding)
@@ -196,7 +196,7 @@ fn state_for(binding: &Binding) -> AppState {
     }
     if binding.when == When::PointSelected {
         app.apply(Action::M2(Edit::NewFill));
-        let layer = app.selected_layer.expect("足したレイヤー");
+        let layer = app.session.selected_layer.expect("足したレイヤー");
         app.apply(Action::Fill(crate::fillfx::FillOp::AddPoints {
             layer,
             channel: yolu_core::Channel::Color,
@@ -288,7 +288,7 @@ fn a_selected_gradient_point_takes_delete_and_backspace_before_the_selection_and
     // 選択範囲があっても、Delete は点を消す（選択範囲の消去に取られない）
     let mut app = with_point_selected();
     app.apply(Action::Sel(SelAction::Edit(SelEdit::All)));
-    assert!(app.doc.selection().is_some());
+    assert!(app.session.doc.selection().is_some());
     assert_eq!(dispatched(&app, Key::Delete), vec![point.clone()]);
     assert_eq!(dispatched(&app, Key::Backspace), vec![point.clone()]);
     // パスのツールでも、点を選んでいる間は点を消す（パスの点の削除に取られない）
@@ -544,12 +544,12 @@ fn opening_the_shortcuts_does_not_change_the_document_and_is_not_in_the_help_men
                 }
             )));
     }
-    let epoch = app.doc_epoch;
+    let epoch = app.session.doc_epoch();
     assert!(!app.prefs.open);
     app.apply(Action::ShowShortcuts);
     assert!(app.prefs.open);
     assert!(app.prefs.shows(crate::prefs::Category::Shortcuts));
-    assert_eq!(epoch, app.doc_epoch);
+    assert_eq!(epoch, app.session.doc_epoch());
     assert!(!app.can_undo());
 }
 
@@ -731,7 +731,7 @@ fn all_menu_items(app: &AppState) -> Vec<(String, Action, Option<String>)> {
         .map(|i| crate::shell::menu_entries(app, i))
         .collect();
     menus.push(crate::selection::menu::select_menu(app));
-    menus.push(crate::shell::layer_menu(app, app.selected_layer));
+    menus.push(crate::shell::layer_menu(app, app.session.selected_layer));
     for entries in &menus {
         for entry in crate::ui::menu::leaves(entries) {
             if let Entry::Item {
@@ -945,8 +945,8 @@ fn the_menu_key_text_is_the_primary_row_of_the_operations_own_command() {
 fn ungroup_shows_its_key_only_for_the_layer_that_is_selected() {
     let mut app = AppState::new(32, 32);
     app.apply(Action::M2(Edit::GroupSelected));
-    let group = app.selected_layer.expect("グループ");
-    assert!(app.doc.layer(group).is_some_and(|l| l.is_group()));
+    let group = app.session.selected_layer.expect("グループ");
+    assert!(app.session.doc.layer(group).is_some_and(|l| l.is_group()));
     let ungroup = |app: &AppState, id| {
         crate::shell::layer_menu(app, Some(id))
             .into_iter()
@@ -965,7 +965,7 @@ fn ungroup_shows_its_key_only_for_the_layer_that_is_selected() {
     assert!(ungroup(&app, group).is_some());
     // 別のレイヤーを選んでいるときは出さない（キーを押すと選んだレイヤーのほうが動くため）
     app.apply(Action::NewLayer);
-    assert_ne!(app.selected_layer, Some(group));
+    assert_ne!(app.session.selected_layer, Some(group));
     assert_eq!(ungroup(&app, group), None);
 }
 
@@ -974,7 +974,7 @@ fn naming_states(lang: Lang) -> Vec<(&'static str, AppState)> {
     let mk = || AppState::new_in(32, 32, lang);
     let mut states = vec![("既定", mk())];
     let mut a = mk();
-    a.selected_layer = None;
+    a.session.selected_layer = None;
     states.push(("レイヤーを選んでいない", a));
     let mut a = mk();
     a.apply(Action::NewLayer);
@@ -990,7 +990,7 @@ fn naming_states(lang: Lang) -> Vec<(&'static str, AppState)> {
     let mut a = mk();
     a.apply(Action::NewLayer);
     a.apply(Action::NewLayer);
-    let ids: Vec<_> = a.doc.layers().iter().map(|l| l.id()).collect();
+    let ids: Vec<_> = a.session.doc.layers().iter().map(|l| l.id()).collect();
     a.select_layers(ids.clone(), ids[0]);
     states.push(("レイヤーを複数選んでいる", a));
     let mut a = mk();
@@ -1016,7 +1016,7 @@ fn the_menu_names_are_the_names_in_the_command_table() {
         for (state, app) in naming_states(lang) {
             let mut items = all_menu_items(&app);
             // 選んでいるレイヤー以外のレイヤーを右クリックしたときのメニュー
-            for layer in app.doc.layers() {
+            for layer in app.session.doc.layers() {
                 for entry in
                     crate::ui::menu::leaves(&crate::shell::layer_menu(&app, Some(layer.id())))
                 {
@@ -1089,7 +1089,10 @@ fn the_layer_dependent_names_follow_the_selected_layer_in_both_the_menu_and_the_
                 {
                     Some((label, _)) => assert_eq!(*label, listed, "{lang:?} {state}: {id}"),
                     // レイヤーを選んでいないときはメニューに項目が無く、一覧は「レイヤーを…」の言い方
-                    None => assert!(app.selected_layer.is_none(), "{lang:?} {state}: {id}"),
+                    None => assert!(
+                        app.session.selected_layer.is_none(),
+                        "{lang:?} {state}: {id}"
+                    ),
                 }
             }
         }

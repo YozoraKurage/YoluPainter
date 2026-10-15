@@ -517,10 +517,10 @@ mod tests {
         assert_eq!(app.view3d.camera, before);
         // 描いている間: カメラを動かさない（区画の投影の画素を覚えて使うので）
         app.view3d.load_demo();
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
         let before = app.view3d.camera;
         app.apply(Action::View3dNav(NavOp::ToggleOrthographic));
@@ -528,9 +528,9 @@ mod tests {
         assert_eq!(app.view3d.camera, before);
         assert!(!app.view3d.auto_orthographic);
         // 描き終えたら効く（軸の視点は軸の向きで正投影）
-        let stroke = app.stroke.take().unwrap();
+        let stroke = app.session.stroke.take().unwrap();
         app.canvas.stroke = None;
-        app.doc.end_stroke(stroke).unwrap();
+        app.session.doc.end_stroke(stroke).unwrap();
         app.apply(Action::View3dNav(NavOp::Axis(AxisView::Top)));
         assert!(app.view3d.camera.is_orthographic());
         assert!(app.view3d.auto_orthographic);

@@ -889,7 +889,7 @@ impl AppState {
             );
             return;
         }
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         match self.m2_apply(edit) {
             Ok(()) => {}
             // ロックで断られたときは、どのロックか（と、親のグループのロックか）を言う短い文（ブラシ・バケツと同じ）
@@ -904,18 +904,20 @@ impl AppState {
                 self.lang.core_error(&e),
             ),
         }
-        self.mark_modified_if_changed(revision);
+        self.session.mark_modified_if_changed(revision);
         self.ensure_selection();
     }
 
     /// 選んでいるレイヤーの上に足すときの基準（無ければ一番上）。
     fn above_selected(&self) -> Option<LayerId> {
-        self.selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
+        self.session
+            .selected_layer
+            .filter(|id| self.session.doc.layer(*id).is_some())
     }
 
     pub(crate) fn new_layer_name(&self, kind: LayerKind) -> String {
         let n = self
+            .session
             .doc
             .layers()
             .iter()
@@ -926,7 +928,7 @@ impl AppState {
     }
 
     pub(crate) fn select_new(&mut self, id: LayerId) {
-        self.selected_layer = Some(id);
+        self.session.selected_layer = Some(id);
         self.set_edit_mask(false);
     }
 
@@ -938,7 +940,7 @@ impl AppState {
         self.m2.edit_mask = on;
         if on {
             self.fx.selected = None; // マスクの欄へ移る（選んだ効果の欄は閉じる）
-        } else if self.fx.in_mask(&self.doc) {
+        } else if self.fx.in_mask(&self.session.doc) {
             self.fx.selected = None;
         }
     }
@@ -948,32 +950,35 @@ impl AppState {
         match edit {
             Edit::NewGroup => {
                 let name = self.new_layer_name(LayerKind::Group);
-                let id = self.doc.add_group(&name, above)?;
+                let id = self.session.doc.add_group(&name, above)?;
                 self.select_new(id);
             }
             Edit::NewFill => {
                 let name = self.new_layer_name(LayerKind::Fill);
                 let value = fill_from_color(self.color.main);
-                let id =
-                    self.doc
-                        .add_fill_layer(&name, &[(self.m2.paint_channel, value)], above)?;
+                let id = self.session.doc.add_fill_layer(
+                    &name,
+                    &[(self.m2.paint_channel, value)],
+                    above,
+                )?;
                 self.select_new(id);
             }
             Edit::NewAdjustment(kind) => {
                 let name = kind.name(self.lang).to_owned();
-                let id = self
-                    .doc
-                    .add_adjustment_layer(&name, kind.settings(), None, above)?;
+                let id =
+                    self.session
+                        .doc
+                        .add_adjustment_layer(&name, kind.settings(), None, above)?;
                 self.select_new(id);
             }
             Edit::GroupSelected => self.group_selected_layers()?,
             Edit::Ungroup(id) => {
-                let first = self.doc.children_of(Some(id))?.last().copied();
+                let first = self.session.doc.children_of(Some(id))?.last().copied();
                 // グループの定規は、グループの中でだけ意味を持つので、グループと一緒に外れる（取り消しで戻る）。黙って捨てずに知らせる
-                let rulers = self.doc.layer(id).map_or(0, |l| l.rulers().len());
-                self.doc.ungroup(id)?;
+                let rulers = self.session.doc.layer(id).map_or(0, |l| l.rulers().len());
+                self.session.doc.ungroup(id)?;
                 self.m2.collapsed.remove(&id);
-                self.selected_layer = first;
+                self.session.selected_layer = first;
                 self.set_edit_mask(false);
                 if rulers > 0 {
                     self.info(
@@ -986,7 +991,7 @@ impl AppState {
                 }
             }
             Edit::Duplicate(id) => {
-                let copy = self.doc.duplicate_layer(id, None)?;
+                let copy = self.session.doc.duplicate_layer(id, None)?;
                 self.select_new(copy);
             }
             Edit::Move {
@@ -994,68 +999,78 @@ impl AppState {
                 parent,
                 position,
             } => {
-                self.doc.move_layer_to(id, parent, position)?;
+                self.session.doc.move_layer_to(id, parent, position)?;
                 // 閉じたグループへ入れたレイヤーが見えなくならないよう、入れた先を開く
                 if let Some(p) = parent {
                     self.m2.collapsed.remove(&p);
                 }
             }
-            Edit::Clipping(id, v) => self.doc.set_layer_clipping(id, v)?,
+            Edit::Clipping(id, v) => self.session.doc.set_layer_clipping(id, v)?,
             Edit::Opacity { id, channel, value } => match channel {
-                None => self.doc.set_layer_opacity(id, value, true)?,
-                Some(c) => self.doc.set_channel_opacity(id, c, Some(value), true)?,
+                None => self.session.doc.set_layer_opacity(id, value, true)?,
+                Some(c) => self
+                    .session
+                    .doc
+                    .set_channel_opacity(id, c, Some(value), true)?,
             },
             Edit::BlendMode { id, channel, mode } => match channel {
-                None => self.doc.set_layer_blend_mode(id, mode)?,
-                Some(c) => self.doc.set_channel_blend_mode(id, c, Some(mode))?,
+                None => self.session.doc.set_layer_blend_mode(id, mode)?,
+                Some(c) => self.session.doc.set_channel_blend_mode(id, c, Some(mode))?,
             },
             Edit::OwnBlend { id, channel, own } => {
-                let layer = self.doc.layer(id).ok_or(CoreError::LayerNotFound)?;
+                let layer = self.session.doc.layer(id).ok_or(CoreError::LayerNotFound)?;
                 let blend = if own {
                     ChannelBlend::new(Some(layer.blend_mode()), Some(layer.opacity()))
                 } else {
                     ChannelBlend::default()
                 };
-                self.doc.set_channel_blend(id, channel, blend, false)?;
+                self.session
+                    .doc
+                    .set_channel_blend(id, channel, blend, false)?;
             }
             Edit::ChannelEnabled {
                 id,
                 channel,
                 enabled,
-            } => self.doc.set_channel_enabled(id, channel, enabled)?,
+            } => self.session.doc.set_channel_enabled(id, channel, enabled)?,
             Edit::AddMask(id) => {
-                self.doc.add_layer_mask(id)?;
-                self.selected_layer = Some(id);
+                self.session.doc.add_layer_mask(id)?;
+                self.session.selected_layer = Some(id);
                 self.set_edit_mask(true);
             }
             Edit::RemoveMask(id) => {
-                self.doc.remove_layer_mask(id)?;
-                if self.selected_layer == Some(id) {
+                self.session.doc.remove_layer_mask(id)?;
+                if self.session.selected_layer == Some(id) {
                     self.set_edit_mask(false);
                 }
             }
-            Edit::MaskEnabled(id, v) => self.doc.set_layer_mask_enabled(id, v)?,
-            Edit::MaskInverted(id, v) => self.doc.set_layer_mask_inverted(id, v)?,
-            Edit::MaskDensity(id, v) => self.doc.set_layer_mask_density(id, v, true)?,
+            Edit::MaskEnabled(id, v) => self.session.doc.set_layer_mask_enabled(id, v)?,
+            Edit::MaskInverted(id, v) => self.session.doc.set_layer_mask_inverted(id, v)?,
+            Edit::MaskDensity(id, v) => self.session.doc.set_layer_mask_density(id, v, true)?,
             Edit::FillValue { id, channel, value } => {
-                self.doc.set_fill_value(id, channel, value, true)?
+                self.session.doc.set_fill_value(id, channel, value, true)?
             }
-            Edit::Adjust { id, settings } => self.doc.set_adjustment(id, settings, true)?,
+            Edit::Adjust { id, settings } => self.session.doc.set_adjustment(id, settings, true)?,
             Edit::AddChannel(info) => {
-                let channel = self.doc.add_channel(info)?;
+                let channel = self.session.doc.add_channel(info)?;
                 self.m2.paint_channel = channel;
                 self.m2.display_channel = channel;
             }
-            Edit::SetChannel { channel, info } => self.doc.set_channel_info(channel, info)?,
-            Edit::RemoveChannel(channel) => crate::look::remove_channel(&mut self.doc, channel)?,
+            Edit::SetChannel { channel, info } => {
+                self.session.doc.set_channel_info(channel, info)?
+            }
+            Edit::RemoveChannel(channel) => {
+                crate::look::remove_channel(&mut self.session.doc, channel)?
+            }
             Edit::MergeDown => self.merge_down_selected()?,
             Edit::MergeVisible => self.merge_visible_layers()?,
             Edit::ConfirmMerge => self.confirm_merge()?,
             Edit::CancelMerge => self.cancel_merge(),
             Edit::UngroupSelected => {
                 let id = self
+                    .session
                     .selected_layer
-                    .filter(|id| self.doc.layer(*id).is_some_and(|l| l.is_group()))
+                    .filter(|id| self.session.doc.layer(*id).is_some_and(|l| l.is_group()))
                     .ok_or(CoreError::Unsupported(Reason::NotGroup))?;
                 return self.m2_apply(Edit::Ungroup(id));
             }
@@ -1071,8 +1086,8 @@ impl AppState {
                 self.apply_xform(x)?;
             }
             Edit::NormalSettings { settings, coalesce } => {
-                let old = self.doc.normal_settings();
-                self.doc.set_normal_settings(settings, coalesce)?;
+                let old = self.session.doc.normal_settings();
+                self.session.doc.set_normal_settings(settings, coalesce)?;
                 let lang = self.lang;
                 if settings.derive_from_height() != old.derive_from_height() {
                     self.info(
@@ -1112,7 +1127,7 @@ impl AppState {
         if self.text.editing.is_some() {
             return;
         }
-        self.doc.end_coalescing();
+        self.session.doc.end_coalescing();
     }
 
     /// スライダーのドラッグを押したまま Esc で止める: まとめていた変更を戻して、その段ごと捨てる（Undo の段を残さない）。
@@ -1121,8 +1136,8 @@ impl AppState {
         if self.is_stroking() {
             return;
         }
-        let revision = self.doc.revision();
-        match self.doc.cancel_coalescing() {
+        let revision = self.session.doc.revision();
+        match self.session.doc.cancel_coalescing() {
             Ok(true) => {
                 crate::automation::record::drag_cancelled(self, revision);
                 self.info(
@@ -1150,7 +1165,7 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.doc.channel_info(channel).is_some() {
+                if self.session.doc.channel_info(channel).is_some() {
                     if self.m2.display_channel == self.m2.paint_channel {
                         self.m2.display_channel = channel;
                     }
@@ -1158,7 +1173,7 @@ impl AppState {
                 }
             }
             UiOp::DisplayChannel(channel) => {
-                if self.doc.channel_info(channel).is_some() {
+                if self.session.doc.channel_info(channel).is_some() {
                     self.m2.display_channel = channel;
                 }
             }
@@ -1166,9 +1181,9 @@ impl AppState {
                 if !self.m2.collapsed.remove(&id) {
                     self.m2.collapsed.insert(id);
                     // 選んでいるレイヤーが閉じたグループの中なら、グループを選ぶ（見えない物を選んだままにしない）
-                    if let Some(sel) = self.selected_layer {
-                        if is_inside(&self.doc, sel, id) {
-                            self.selected_layer = Some(id);
+                    if let Some(sel) = self.session.selected_layer {
+                        if is_inside(&self.session.doc, sel, id) {
+                            self.session.selected_layer = Some(id);
                             self.set_edit_mask(false);
                         }
                     }
@@ -1185,8 +1200,9 @@ impl AppState {
                     return refuse(self);
                 }
                 let has_mask = self
+                    .session
                     .selected_layer
-                    .and_then(|id| self.doc.layer(id))
+                    .and_then(|id| self.session.doc.layer(id))
                     .is_some_and(|l| l.mask().is_some());
                 self.set_edit_mask(on && has_mask); // マスクを描くと決めたら、マスクの設定が見えるように
             }
@@ -1356,19 +1372,22 @@ impl AppState {
     /// ここへ来る（`begin_canvas_stroke`）。
     pub fn begin_stroke_with(&mut self, id: LayerId, brush: &Brush) -> Result<Stroke, CoreError> {
         if self.m2.edit_mask {
-            return self.doc.begin_brush_mask_stroke(id, brush);
+            return self.session.doc.begin_brush_mask_stroke(id, brush);
         }
         let mut stroke = if self.paints_material() {
             // マテリアルで塗る: 組の全部のチャンネルを同じダブで 1 回のストロークに（レイヤーで無効のチャンネルは有効にする）
             let channels = self.paint_channels();
-            self.doc.begin_material_brush_stroke(id, &channels, brush)?
+            self.session
+                .doc
+                .begin_material_brush_stroke(id, &channels, brush)?
         } else {
-            self.doc
+            self.session
+                .doc
                 .begin_brush_stroke_in(id, self.m2.paint_channel, brush)?
         };
         // クローンが、描くレイヤーだけでなく見えているレイヤーの重なり（チャンネルごと）を読む（最初のダブの前に凍結する。マスクには使えない）
         if self.clone.all_layers && matches!(brush.effect, BrushEffect::Clone { .. }) {
-            stroke.use_composite_clone_source(&mut self.doc)?;
+            stroke.use_composite_clone_source(&mut self.session.doc)?;
         }
         // 色の混ぜが「全レイヤーから」拾うブラシも、同じ参照元（見えているレイヤーの重なり）を最初のダブの前に凍結する
         // （色のチャンネルを塗らない間は、混ぜが効かないので凍結しない）
@@ -1376,35 +1395,47 @@ impl AppState {
             && brush.effect.is_paint()
             && !brush.base.erase
             && self.paint_channels().iter().any(|p| {
-                self.doc
+                self.session
+                    .doc
                     .channel_info(p.channel)
                     .is_some_and(|i| yolu_core::brush::carries_color(i.kind))
             })
         {
-            stroke.use_composite_clone_source(&mut self.doc)?;
+            stroke.use_composite_clone_source(&mut self.session.doc)?;
         }
         Ok(stroke)
     }
 
     /// 選んでいるレイヤー・チャンネルが消えていれば選び直す。
     pub fn ensure_m2_selection(&mut self) {
-        if self.doc.channel_info(self.m2.paint_channel).is_none() {
+        if self
+            .session
+            .doc
+            .channel_info(self.m2.paint_channel)
+            .is_none()
+        {
             self.m2.paint_channel = Channel::Color;
         }
-        if self.doc.channel_info(self.m2.display_channel).is_none() {
+        if self
+            .session
+            .doc
+            .channel_info(self.m2.display_channel)
+            .is_none()
+        {
             self.m2.display_channel = Channel::Color;
         }
         let masked = self
+            .session
             .selected_layer
-            .and_then(|id| self.doc.layer(id))
+            .and_then(|id| self.session.doc.layer(id))
             .is_some_and(|l| l.mask().is_some());
         if !masked {
             self.set_edit_mask(false);
         }
-        let alive = |id: &LayerId| self.doc.layer(*id).is_some();
+        let alive = |id: &LayerId| self.session.doc.layer(*id).is_some();
         self.m2.collapsed.retain(alive);
         if let Some(c) = self.m2.renaming_channel {
-            if self.doc.channel_info(c).is_none() {
+            if self.session.doc.channel_info(c).is_none() {
                 self.m2.renaming_channel = None;
             }
         }
@@ -1412,8 +1443,8 @@ impl AppState {
 
     /// 描くレイヤーが描ける状態か（描けないときの短い理由）。
     pub fn paint_blocker(&self) -> Option<String> {
-        let id = self.selected_layer?;
-        let layer = self.doc.layer(id)?;
+        let id = self.session.selected_layer?;
+        let layer = self.session.doc.layer(id)?;
         let lang = self.lang;
         if self.m2.edit_mask {
             return None;
@@ -1430,7 +1461,7 @@ impl AppState {
             && layer.surface(channel).is_some()
             && !layer.is_channel_enabled(channel)
         {
-            let channel = channel_name(lang, &self.doc, channel);
+            let channel = channel_name(lang, &self.session.doc, channel);
             return Some(lang.pick(
                 format!(
                     "このレイヤーは{}チャンネルが無効です。",
@@ -1455,7 +1486,11 @@ pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
     if let Some(message) = read_only_message(app) {
         return Err(message);
     }
-    let Some(layer) = app.selected_layer.filter(|id| app.doc.layer(*id).is_some()) else {
+    let Some(layer) = app
+        .session
+        .selected_layer
+        .filter(|id| app.session.doc.layer(*id).is_some())
+    else {
         return Err(lang
             .pick("塗るレイヤーがありません", "No layer to paint")
             .into());
@@ -1469,6 +1504,7 @@ pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
 /// マスクの「塗る」は白（見せる）、「消す」は黒（隠す）。白・黒はマスクのサムネイルの色なので、反転したマスクでは書く値を逆にする。
 pub(crate) fn mask_reveals(app: &AppState, layer: LayerId, erase: bool) -> bool {
     let inverted = app
+        .session
         .doc
         .layer(layer)
         .and_then(|l| l.mask())
@@ -1486,7 +1522,12 @@ mod tests {
     }
 
     fn names(s: &AppState) -> Vec<String> {
-        s.doc.layers().iter().map(|l| l.name().to_owned()).collect()
+        s.session
+            .doc
+            .layers()
+            .iter()
+            .map(|l| l.name().to_owned())
+            .collect()
     }
 
     /// チャンネルの種類の表記は形式の名前だけ（色空間と 1 成分のビット数から作る）。標準の 6 つと新しいチャンネルの既定の作り、
@@ -1530,52 +1571,60 @@ mod tests {
     #[test]
     fn group_edits_are_one_undo_each() {
         let mut s = app();
-        let first = s.selected_layer.unwrap();
+        let first = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::NewGroup));
-        let group = s.selected_layer.unwrap();
-        assert_eq!(s.doc.layers().len(), 2);
-        assert!(s.doc.layer(group).unwrap().is_group());
+        let group = s.session.selected_layer.unwrap();
+        assert_eq!(s.session.doc.layers().len(), 2);
+        assert!(s.session.doc.layer(group).unwrap().is_group());
         // レイヤーをグループへ入れる
         s.apply(Action::M2(Edit::Move {
             id: first,
             parent: Some(group),
             position: 0,
         }));
-        assert_eq!(s.doc.layer(first).unwrap().parent(), Some(group));
+        assert_eq!(s.session.doc.layer(first).unwrap().parent(), Some(group));
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layer(first).unwrap().parent(), None);
+        assert_eq!(s.session.doc.layer(first).unwrap().parent(), None);
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layers().len(), 1, "グループを足したのも 1 回で戻る");
+        assert_eq!(
+            s.session.doc.layers().len(),
+            1,
+            "グループを足したのも 1 回で戻る"
+        );
         s.apply(Action::Redo);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_eq!(s.session.doc.layers().len(), 2);
     }
 
     #[test]
     fn mask_clipping_fill_and_adjustment_edits_undo() {
         let mut s = app();
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::AddMask(id)));
-        assert!(s.doc.layer(id).unwrap().mask().is_some());
+        assert!(s.session.doc.layer(id).unwrap().mask().is_some());
         assert!(s.m2.edit_mask, "足したら描く先をマスクにする");
         s.apply(Action::M2(Edit::MaskInverted(id, true)));
         s.apply(Action::M2(Edit::MaskEnabled(id, false)));
         s.apply(Action::M2(Edit::MaskDensity(id, 0.25)));
         s.m2_end_drag();
-        let mask = s.doc.layer(id).unwrap().mask().unwrap();
+        let mask = s.session.doc.layer(id).unwrap().mask().unwrap();
         assert!(mask.inverted() && !mask.enabled() && mask.density() == 0.25);
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layer(id).unwrap().mask().unwrap().density(), 1.0);
+        assert_eq!(
+            s.session.doc.layer(id).unwrap().mask().unwrap().density(),
+            1.0
+        );
         s.apply(Action::M2(Edit::RemoveMask(id)));
-        assert!(!s.m2.edit_mask && s.doc.layer(id).unwrap().mask().is_none());
+        assert!(!s.m2.edit_mask && s.session.doc.layer(id).unwrap().mask().is_none());
         s.apply(Action::Undo);
-        assert!(s.doc.layer(id).unwrap().mask().is_some());
+        assert!(s.session.doc.layer(id).unwrap().mask().is_some());
 
         s.apply(Action::M2(Edit::Clipping(id, true)));
-        assert!(s.doc.layer(id).unwrap().clipping());
+        assert!(s.session.doc.layer(id).unwrap().clipping());
         s.apply(Action::M2(Edit::NewFill));
-        let fill = s.selected_layer.unwrap();
-        assert_eq!(s.doc.layer(fill).unwrap().kind(), LayerKind::Fill);
+        let fill = s.session.selected_layer.unwrap();
+        assert_eq!(s.session.doc.layer(fill).unwrap().kind(), LayerKind::Fill);
         assert!(s
+            .session
             .doc
             .layer(fill)
             .unwrap()
@@ -1588,19 +1637,29 @@ mod tests {
         }));
         s.m2_end_drag();
         assert_eq!(
-            s.doc.layer(fill).unwrap().fill_value(Channel::Color),
+            s.session
+                .doc
+                .layer(fill)
+                .unwrap()
+                .fill_value(Channel::Color),
             Some(Rgba8::new(10, 20, 30, 255))
         );
         s.apply(Action::M2(Edit::NewAdjustment(AdjustmentKind::Levels)));
-        let adj = s.selected_layer.unwrap();
-        assert_eq!(s.doc.layer(adj).unwrap().kind(), LayerKind::Adjustment);
+        let adj = s.session.selected_layer.unwrap();
+        assert_eq!(
+            s.session.doc.layer(adj).unwrap().kind(),
+            LayerKind::Adjustment
+        );
         let levels = AdjustmentSettings::levels(0.1, 0.9, 1.5, 0.0, 1.0).unwrap();
         s.apply(Action::M2(Edit::Adjust {
             id: adj,
             settings: levels.clone(),
         }));
         s.m2_end_drag();
-        assert_eq!(s.doc.layer(adj).unwrap().adjustment(), Some(&levels));
+        assert_eq!(
+            s.session.doc.layer(adj).unwrap().adjustment(),
+            Some(&levels)
+        );
         // 色以外のチャンネルが有効なレイヤーは、色相・彩度へ替えられない（断って、理由が出る）
         s.message.clear();
         let hue = AdjustmentSettings::hue_saturation(30.0, 0.0, 0.0).unwrap();
@@ -1608,15 +1667,24 @@ mod tests {
             id: adj,
             settings: hue.clone(),
         }));
-        assert_eq!(s.doc.layer(adj).unwrap().adjustment(), Some(&levels));
+        assert_eq!(
+            s.session.doc.layer(adj).unwrap().adjustment(),
+            Some(&levels)
+        );
         assert!(!s.message.is_empty());
         // 色相・彩度は色のチャンネルだけに足したレイヤーなら使える
         s.apply(Action::M2(Edit::NewAdjustment(
             AdjustmentKind::HueSaturation,
         )));
-        let hs = s.selected_layer.unwrap();
-        assert!(s.doc.layer(hs).unwrap().is_channel_enabled(Channel::Color));
+        let hs = s.session.selected_layer.unwrap();
+        assert!(s
+            .session
+            .doc
+            .layer(hs)
+            .unwrap()
+            .is_channel_enabled(Channel::Color));
         assert!(!s
+            .session
             .doc
             .layer(hs)
             .unwrap()
@@ -1625,71 +1693,71 @@ mod tests {
             id: hs,
             settings: hue.clone(),
         }));
-        assert_eq!(s.doc.layer(hs).unwrap().adjustment(), Some(&hue));
+        assert_eq!(s.session.doc.layer(hs).unwrap().adjustment(), Some(&hue));
     }
 
     #[test]
     fn refused_edits_change_nothing_and_say_why() {
         let mut s = app();
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::AddMask(id)));
-        let revision = s.doc.revision();
-        s.modified = false;
+        let revision = s.session.doc.revision();
+        s.session.clear_modified();
         s.apply(Action::M2(Edit::AddMask(id))); // 2 つ目は断る
-        assert_eq!(s.doc.revision(), revision);
-        assert!(!s.modified);
+        assert_eq!(s.session.doc.revision(), revision);
+        assert!(!s.session.is_modified());
         assert!(!s.message.is_empty());
         // 描いている間の編集は断る
         s.message.clear();
         let brush = s.stroke_brush(false);
-        let stroke = s.doc.begin_brush_stroke(id, &brush).unwrap();
-        s.stroke = Some(stroke);
+        let stroke = s.session.doc.begin_brush_stroke(id, &brush).unwrap();
+        s.session.stroke = Some(stroke);
         s.apply(Action::M2(Edit::NewGroup));
-        assert_eq!(s.doc.layers().len(), 1);
+        assert_eq!(s.session.doc.layers().len(), 1);
         assert_eq!(s.message, "描いている間はできません。");
     }
 
     #[test]
     fn duplicate_ungroup_and_group_selected() {
         let mut s = app();
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::GroupSelected));
-        let group = s.selected_layer.unwrap();
-        assert_eq!(s.doc.layer(id).unwrap().parent(), Some(group));
+        let group = s.session.selected_layer.unwrap();
+        assert_eq!(s.session.doc.layer(id).unwrap().parent(), Some(group));
         s.apply(Action::M2(Edit::Duplicate(group)));
-        assert_eq!(s.doc.layers().len(), 4, "グループは中身ごと写す");
+        assert_eq!(s.session.doc.layers().len(), 4, "グループは中身ごと写す");
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_eq!(s.session.doc.layers().len(), 2);
         s.apply(Action::M2(Edit::Ungroup(group)));
-        assert_eq!(s.doc.layers().len(), 1);
-        assert_eq!(s.doc.layer(id).unwrap().parent(), None);
-        assert_eq!(s.selected_layer, Some(id));
+        assert_eq!(s.session.doc.layers().len(), 1);
+        assert_eq!(s.session.doc.layer(id).unwrap().parent(), None);
+        assert_eq!(s.session.selected_layer, Some(id));
     }
 
     #[test]
     fn ungrouping_a_group_with_rulers_deletes_them_with_it_says_so_and_undo_brings_them_back() {
         let mut s = app();
         s.apply(Action::M2(Edit::GroupSelected));
-        let group = s.selected_layer.unwrap();
+        let group = s.session.selected_layer.unwrap();
         let ruler = yolu_core::Ruler::canvas(
-            s.doc.new_ruler_id(),
+            s.session.doc.new_ruler_id(),
             yolu_core::RulerKind::Line,
             yolu_core::glam::DVec2::new(0.0, 5.0),
             yolu_core::glam::DVec2::new(10.0, 5.0),
         );
-        s.doc.set_rulers(group, vec![ruler], false).unwrap();
+        s.session.doc.set_rulers(group, vec![ruler], false).unwrap();
         s.message.clear();
         s.apply(Action::M2(Edit::Ungroup(group)));
-        assert!(s.doc.layer(group).is_none());
+        assert!(s.session.doc.layer(group).is_none());
         assert!(
             s.message.contains("定規 1 個"),
             "黙って捨てない: {}",
             s.message
         );
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layer(group).unwrap().rulers().len(), 1);
+        assert_eq!(s.session.doc.layer(group).unwrap().rulers().len(), 1);
         // 定規の無いグループでは、定規の知らせを出さない
-        let plain = s.doc.add_group("plain", None).unwrap();
+        let plain = s.session.doc.add_group("plain", None).unwrap();
         s.message.clear();
         s.apply(Action::M2(Edit::Ungroup(plain)));
         assert!(!s.message.contains("定規"), "{}", s.message);
@@ -1698,24 +1766,24 @@ mod tests {
     #[test]
     fn rows_hide_collapsed_children_and_drops_resolve() {
         let mut s = app();
-        let first = s.selected_layer.unwrap();
+        let first = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::GroupSelected));
-        let group = s.selected_layer.unwrap();
+        let group = s.session.selected_layer.unwrap();
         s.apply(Action::NewLayer);
-        let top = s.selected_layer.unwrap();
-        let rows = visible_rows(&s.doc, &s.m2.collapsed);
+        let top = s.session.selected_layer.unwrap();
+        let rows = visible_rows(&s.session.doc, &s.m2.collapsed);
         assert_eq!(
             rows.iter().map(|r| r.id).collect::<Vec<_>>(),
             [top, group, first]
         );
         assert_eq!(rows[2].depth, 1);
         s.m2_ui(UiOp::ToggleCollapsed(group));
-        let rows = visible_rows(&s.doc, &s.m2.collapsed);
+        let rows = visible_rows(&s.session.doc, &s.m2.collapsed);
         assert_eq!(rows.len(), 2, "閉じたグループの中身は出ない");
         s.m2_ui(UiOp::ToggleCollapsed(group));
-        let rows = visible_rows(&s.doc, &s.m2.collapsed);
+        let rows = visible_rows(&s.session.doc, &s.m2.collapsed);
         // 一番上のレイヤーを、グループの行の中ほどへ → グループの一番上
-        let edit = drop_edit(&s.doc, &rows, top, DropTarget::Into(group)).unwrap();
+        let edit = drop_edit(&s.session.doc, &rows, top, DropTarget::Into(group)).unwrap();
         assert_eq!(
             edit,
             Edit::Move {
@@ -1725,7 +1793,7 @@ mod tests {
             }
         );
         // 子の行の上へ → グループの中の、その子のすぐ上
-        let edit = drop_edit(&s.doc, &rows, top, DropTarget::Gap(2)).unwrap();
+        let edit = drop_edit(&s.session.doc, &rows, top, DropTarget::Gap(2)).unwrap();
         assert_eq!(
             edit,
             Edit::Move {
@@ -1736,13 +1804,16 @@ mod tests {
         );
         // グループを自分の中へは動かせない
         assert_eq!(
-            drop_edit(&s.doc, &rows, group, DropTarget::Into(group)),
+            drop_edit(&s.session.doc, &rows, group, DropTarget::Into(group)),
             None
         );
-        assert_eq!(drop_edit(&s.doc, &rows, group, DropTarget::Gap(2)), None);
+        assert_eq!(
+            drop_edit(&s.session.doc, &rows, group, DropTarget::Gap(2)),
+            None
+        );
         // 一番下の下へ → 一番上の段の一番下
         assert_eq!(
-            drop_edit(&s.doc, &rows, top, DropTarget::Gap(3)),
+            drop_edit(&s.session.doc, &rows, top, DropTarget::Gap(3)),
             Some(Edit::Move {
                 id: top,
                 parent: None,
@@ -1756,12 +1827,12 @@ mod tests {
     #[test]
     fn collapsing_moves_the_selection_to_the_group() {
         let mut s = app();
-        let first = s.selected_layer.unwrap();
+        let first = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::GroupSelected));
-        let group = s.selected_layer.unwrap();
-        s.selected_layer = Some(first);
+        let group = s.session.selected_layer.unwrap();
+        s.session.selected_layer = Some(first);
         s.m2_ui(UiOp::ToggleCollapsed(group));
-        assert_eq!(s.selected_layer, Some(group));
+        assert_eq!(s.session.selected_layer, Some(group));
     }
 
     #[test]
@@ -1772,7 +1843,7 @@ mod tests {
         let ao = s.m2.paint_channel;
         assert!(!ao.is_standard());
         assert_eq!(s.m2.display_channel, ao);
-        assert_eq!(channel_name(Lang::Ja, &s.doc, ao), "AO");
+        assert_eq!(channel_name(Lang::Ja, &s.session.doc, ao), "AO");
         s.apply(Action::M2(Edit::SetChannel {
             channel: ao,
             info: ChannelInfo {
@@ -1780,7 +1851,7 @@ mod tests {
                 ..info
             },
         }));
-        assert_eq!(s.doc.channel_info(ao).unwrap().name, "Cavity");
+        assert_eq!(s.session.doc.channel_info(ao).unwrap().name, "Cavity");
         // 標準のチャンネルは変えられない（断って、理由が出る）
         s.message.clear();
         s.apply(Action::M2(Edit::RemoveChannel(Channel::Color)));
@@ -1792,7 +1863,7 @@ mod tests {
             "消えたチャンネルは選び直す"
         );
         s.apply(Action::Undo);
-        assert!(s.doc.channel_info(ao).is_some());
+        assert!(s.session.doc.channel_info(ao).is_some());
         // 描くチャンネルを替えると、表示が同じだったときは表示も付いてくる
         s.m2_ui(UiOp::PaintChannel(Channel::Roughness));
         assert_eq!(s.m2.display_channel, Channel::Roughness);
@@ -1804,7 +1875,7 @@ mod tests {
     #[test]
     fn per_channel_blend_follows_the_layer_until_it_gets_its_own() {
         let mut s = app();
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::BlendMode {
             id,
             channel: None,
@@ -1815,7 +1886,7 @@ mod tests {
             channel: Channel::Roughness,
             own: true,
         }));
-        let l = s.doc.layer(id).unwrap();
+        let l = s.session.doc.layer(id).unwrap();
         assert_eq!(l.blend_mode_in(Channel::Roughness), BlendMode::Multiply);
         s.apply(Action::M2(Edit::BlendMode {
             id,
@@ -1828,7 +1899,7 @@ mod tests {
             value: 0.5,
         }));
         s.m2_end_drag();
-        let l = s.doc.layer(id).unwrap();
+        let l = s.session.doc.layer(id).unwrap();
         assert_eq!(
             l.blend_mode(),
             BlendMode::Multiply,
@@ -1843,6 +1914,7 @@ mod tests {
             own: false,
         }));
         assert!(s
+            .session
             .doc
             .layer(id)
             .unwrap()
@@ -1853,26 +1925,27 @@ mod tests {
     #[test]
     fn painting_goes_to_the_selected_channel_or_the_mask() {
         let mut s = app();
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         s.m2_ui(UiOp::PaintChannel(Channel::Roughness));
         let stroke = s.begin_paint_stroke(id, false).unwrap();
         let mut stroke = stroke;
         stroke
-            .add_point(&mut s.doc, 20.0, 20.0, 1.0, Default::default())
+            .add_point(&mut s.session.doc, 20.0, 20.0, 1.0, Default::default())
             .unwrap();
-        s.doc.end_stroke(stroke).unwrap();
-        let layer = s.doc.layer(id).unwrap();
+        s.session.doc.end_stroke(stroke).unwrap();
+        let layer = s.session.doc.layer(id).unwrap();
         assert!(layer.surface(Channel::Roughness).unwrap().tile_count() > 0);
         assert_eq!(layer.surface(Channel::Color).unwrap().tile_count(), 0);
         // マスク
         s.apply(Action::M2(Edit::AddMask(id)));
         let mut stroke = s.begin_paint_stroke(id, false).unwrap();
         stroke
-            .add_point(&mut s.doc, 30.0, 30.0, 1.0, Default::default())
+            .add_point(&mut s.session.doc, 30.0, 30.0, 1.0, Default::default())
             .unwrap();
-        s.doc.end_stroke(stroke).unwrap();
+        s.session.doc.end_stroke(stroke).unwrap();
         assert!(
-            s.doc
+            s.session
+                .doc
                 .layer(id)
                 .unwrap()
                 .mask()
@@ -1891,7 +1964,7 @@ mod tests {
         s.lang = Lang::En;
         assert!(s.paint_blocker().unwrap().contains("Group"));
         s.apply(Action::NewLayer);
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         s.apply(Action::M2(Edit::ChannelEnabled {
             id,
             channel: Channel::Color,
@@ -1921,10 +1994,10 @@ mod tests {
         // どのプリセットも、そのままストロークを始められる（検証を通る）
         for i in 0..presets().len() {
             s.m2_ui(UiOp::Preset(i));
-            let id = s.selected_layer.unwrap();
+            let id = s.session.selected_layer.unwrap();
             let eraser = s.tool == crate::state::Tool::Eraser;
             let stroke = s.begin_paint_stroke(id, eraser).unwrap();
-            s.doc.cancel_stroke(stroke);
+            s.session.doc.cancel_stroke(stroke);
         }
     }
 
@@ -1954,16 +2027,16 @@ mod tests {
         );
         for kind in EffectKind::ALL {
             s.m2_ui(UiOp::Brush(BrushOp::Effect(kind)));
-            let id = s.selected_layer.unwrap();
+            let id = s.session.selected_layer.unwrap();
             let stroke = s.begin_paint_stroke(id, false).unwrap();
-            s.doc.cancel_stroke(stroke);
+            s.session.doc.cancel_stroke(stroke);
         }
         // 効果のブラシで消しゴムは使えない: ツールを戻し、消しゴムのストロークは効果を外す
         s.m2_ui(UiOp::Brush(BrushOp::Effect(EffectKind::Blur)));
         s.tool = crate::state::Tool::Eraser;
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         let stroke = s.begin_paint_stroke(id, false).unwrap();
-        s.doc.cancel_stroke(stroke);
+        s.session.doc.cancel_stroke(stroke);
         s.m2_ui(UiOp::Brush(BrushOp::Effect(EffectKind::Smudge)));
         assert_eq!(s.tool, crate::state::Tool::Brush);
     }

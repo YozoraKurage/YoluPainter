@@ -578,17 +578,17 @@ mod tests {
 
     /// 描き始める（ドキュメントのストロークと 3D ビューの入力の両方を立てる）。
     fn begin_stroke(app: &mut AppState) {
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
     }
 
     /// 描き終える（取り消して、3D ビューへ終わりを知らせる）。
     fn end_stroke(app: &mut AppState) {
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.view3d.stroke_ended();
     }
 

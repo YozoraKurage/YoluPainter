@@ -188,6 +188,7 @@ pub fn sections(
 ) {
     let channel = app.m2.paint_channel;
     let problems: Vec<InactiveEffect> = app
+        .session
         .doc
         .inactive_effect_list()
         .into_iter()
@@ -217,7 +218,7 @@ fn image_section(
     enabled: bool,
     lang: Lang,
 ) {
-    let name = m2::channel_name(lang, &app.doc, channel);
+    let name = m2::channel_name(lang, &app.session.doc, channel);
     let (open_section, _) = section(
         ui,
         app,
@@ -230,7 +231,11 @@ fn image_section(
     if !open_section {
         return;
     }
-    let image = app.doc.layer(id).and_then(|l| l.fill_image(channel));
+    let image = app
+        .session
+        .doc
+        .layer(id)
+        .and_then(|l| l.fill_image(channel));
     image_row(
         ui,
         app,
@@ -257,6 +262,7 @@ fn image_section(
     if image.is_some() {
         // 異方性のフィルター（斜めから当てた画像を、画素の細長い足跡に沿って読む）
         let anisotropic = app
+            .session
             .doc
             .layer(id)
             .is_some_and(|l| l.fill_anisotropic(channel));
@@ -544,7 +550,11 @@ fn space_entries(app: &AppState, image: ImageId) -> Vec<Entry<Action>> {
 
 /// 画像の一覧のポップアップ（棚の画像・ファイルから取り込む・外す）。
 fn image_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<Action>> {
-    let current = app.doc.layer(layer).and_then(|l| l.fill_image(channel));
+    let current = app
+        .session
+        .doc
+        .layer(layer)
+        .and_then(|l| l.fill_image(channel));
     image_list(app, current, |image| {
         Action::Fill(FillOp::Image {
             layer,
@@ -669,7 +679,7 @@ fn projection_section(
     if !open_section {
         return;
     }
-    let Some(p) = app.doc.layer(id).map(|l| *l.projection()) else {
+    let Some(p) = app.session.doc.layer(id).map(|l| *l.projection()) else {
         return;
     };
     let popups = ProjectionPopups {
@@ -698,7 +708,7 @@ fn projection_section(
         // 画像のチャンネルが投影できない理由（UV は画像がなければ何も出ない）
         for e in problems {
             if let InactiveTarget::FillImage(c) = e.target {
-                let name = m2::channel_name(lang, &app.doc, c);
+                let name = m2::channel_name(lang, &app.session.doc, c);
                 warn_row(
                     ui,
                     rows,
@@ -1117,6 +1127,7 @@ fn gradient_section(
         return;
     }
     let Some(g) = app
+        .session
         .doc
         .layer(id)
         .and_then(|l| l.fill_gradient(channel))
@@ -1332,6 +1343,7 @@ fn gradient_section(
     }
     // 色と値の階調
     let scalar = app
+        .session
         .doc
         .channel_info(channel)
         .is_some_and(|c| c.kind == ChannelKind::Scalar);
@@ -1443,7 +1455,7 @@ fn convert_space(
             }
         }
     };
-    let (w, h) = (app.doc.width(), app.doc.height());
+    let (w, h) = (app.session.doc.width(), app.session.doc.height());
     let model = app.region_model();
     let points = g
         .points
@@ -1473,7 +1485,7 @@ fn convert_space(
                     let x = (p.position[0] * w as f64).floor();
                     let y = (p.position[1] * h as f64).floor();
                     (x >= 0.0 && y >= 0.0 && x < w as f64 && y < h as f64)
-                        .then(|| app.doc.model_position_at(x as u32, y as u32))
+                        .then(|| app.session.doc.model_position_at(x as u32, y as u32))
                         .flatten()
                 }
             };
@@ -1514,6 +1526,7 @@ fn points_section(
         return;
     }
     let Some(g) = app
+        .session
         .doc
         .layer(id)
         .and_then(|l| l.fill_points(channel))
@@ -1805,7 +1818,7 @@ fn point_color(
 ) -> Option<color_window::Update> {
     let lang = app.lang;
     let ctx = ui.ctx().clone();
-    let doc = app.doc.id();
+    let doc = app.session.doc.id();
     let target_of =
         |i: usize| egui::Id::new(("fill.points.color", doc, layer.0, channel.index(), i));
     let target = target_of(index);
@@ -1835,7 +1848,7 @@ fn point_color(
 
 fn mode_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
     let lang = app.lang;
-    let current = app.doc.layer(layer).map(|l| l.projection().mode);
+    let current = app.session.doc.layer(layer).map(|l| l.projection().mode);
     let free = !app.is_stroking();
     MODES
         .iter()
@@ -1852,7 +1865,7 @@ fn mode_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
 
 fn wrap_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
     let lang = app.lang;
-    let Some(p) = app.doc.layer(layer).map(|l| *l.projection()) else {
+    let Some(p) = app.session.doc.layer(layer).map(|l| *l.projection()) else {
         return Vec::new();
     };
     WRAPS
@@ -1875,6 +1888,7 @@ fn wrap_entries(app: &AppState, layer: LayerId) -> Vec<Entry<Action>> {
 fn shape_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let Some(g) = app
+        .session
         .doc
         .layer(layer)
         .and_then(|l| l.fill_gradient(channel))
@@ -1924,6 +1938,7 @@ const PRESETS: [Preset; 5] = [
 fn ramp_preset_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let Some(g) = app
+        .session
         .doc
         .layer(layer)
         .and_then(|l| l.fill_gradient(channel))
@@ -1966,6 +1981,7 @@ fn ramp_preset_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<
 fn curve_preset_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let Some(g) = app
+        .session
         .doc
         .layer(layer)
         .and_then(|l| l.fill_gradient(channel))

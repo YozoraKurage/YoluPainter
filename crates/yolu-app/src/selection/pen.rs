@@ -401,15 +401,22 @@ pub fn begin(app: &mut AppState, source: StrokeSource, erase: bool, quick: bool)
     let params = PenParams::from_brush(&app.brush);
     let overlay_base = if quick {
         Some(
-            app.doc
+            app.session
+                .doc
                 .selection()
                 .cloned()
-                .unwrap_or_else(|| SelectionMask::none(&app.doc)),
+                .unwrap_or_else(|| SelectionMask::none(&app.session.doc)),
         )
     } else {
         None
     };
-    match PenStroke::new(&app.doc, erase, overlay_base, params, app.sel.pen_budget) {
+    match PenStroke::new(
+        &app.session.doc,
+        erase,
+        overlay_base,
+        params,
+        app.sel.pen_budget,
+    ) {
         Ok(stroke) => {
             app.sel.pen = Some(ActivePen {
                 stroke,

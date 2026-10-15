@@ -143,7 +143,7 @@ impl View3dSlot {
         let p = ui.painter().clone();
         // 焼いたメッシュマップだけを見せているのに、今のセットにそのマップが無ければ（セットを替えた・焼き直して消えた）マテリアルへ戻す
         if let Shading::MeshMap(kind) = app.view3d.display.shading {
-            if app.sets.current().mesh_maps.get(kind).is_none() {
+            if app.session.sets.current().mesh_maps.get(kind).is_none() {
                 app.apply(Action::View3d(Op::Shading(Shading::Material)));
             }
         }
@@ -159,7 +159,7 @@ impl View3dSlot {
                     (content.width() * ppp).round().max(1.0) as u32,
                     (content.height() * ppp).round().max(1.0) as u32,
                 ];
-                let set = app.sets.current();
+                let set = app.session.sets.current();
                 let map = match app.view3d.display.shading {
                     Shading::MeshMap(kind) => set.mesh_maps.get(kind).map(|map| MeshMapSource {
                         key: ((set.uid as u64) << 40)
@@ -171,7 +171,7 @@ impl View3dSlot {
                 };
                 let others = crate::view3d::other_sets::collect(app);
                 let id = renderer.prepare_sets(
-                    &app.doc,
+                    &app.session.doc,
                     &model,
                     app.view3d.material,
                     &app.view3d.camera,

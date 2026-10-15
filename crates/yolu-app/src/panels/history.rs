@@ -45,17 +45,17 @@ pub fn go_to(app: &mut AppState, target: usize) {
         app.refuse(Source::Edit, text);
         return;
     }
-    if target > app.doc.undo_count() + app.doc.redo_count() {
+    if target > app.session.doc.undo_count() + app.session.doc.redo_count() {
         return;
     }
-    while target != app.doc.undo_count() {
-        let result = if target < app.doc.undo_count() {
-            app.doc.undo()
+    while target != app.session.doc.undo_count() {
+        let result = if target < app.session.doc.undo_count() {
+            app.session.doc.undo()
         } else {
-            app.doc.redo()
+            app.session.doc.redo()
         };
         match result {
-            Ok(true) => app.mark_modified(),
+            Ok(true) => app.session.mark_modified(),
             Ok(false) => break,
             Err(e) => {
                 app.notify(Kind::of_core(&e), Source::Edit, app.lang.core_error(&e));
@@ -67,8 +67,8 @@ pub fn go_to(app: &mut AppState, target: usize) {
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
-    let current = app.doc.undo_count();
-    let count = current + app.doc.redo_count();
+    let current = app.session.doc.undo_count();
+    let count = current + app.session.doc.redo_count();
     // 空の履歴には案内文や初期状態の行を置かない。
     if count == 0 {
         return;
@@ -82,7 +82,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             crate::ui::widgets::look_enabled(ui, ui.make_persistent_id("history.rows"), can_edit);
         ui.add_enabled_ui(shown, |ui| {
             // スライスのイテレーターで先頭を飛ばし、可視範囲だけ読む。全段のコピーは作らない。
-            let mut kinds = app.doc.history().skip(rows.start.saturating_sub(1));
+            let mut kinds = app.session.doc.history().skip(rows.start.saturating_sub(1));
             for position in rows {
                 let label = if position == 0 {
                     app.lang.pick("開始位置", "Starting point")

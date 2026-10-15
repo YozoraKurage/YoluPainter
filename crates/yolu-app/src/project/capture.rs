@@ -73,11 +73,11 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
     if state.is_stroking() {
         return Err(crate::lang::refusals::during_stroke(lang).into());
     }
-    let base = state.project.as_ref().map(|p| p.project_shared());
-    let mut sets = Vec::with_capacity(state.sets.len());
+    let base = state.session.project.as_ref().map(|p| p.project_shared());
+    let mut sets = Vec::with_capacity(state.session.sets.len());
     let mut left_out = Vec::new();
     let mut maps = Vec::new();
-    for (i, set) in state.sets.iter().enumerate() {
+    for (i, set) in state.session.sets.iter().enumerate() {
         let doc = state.set_doc(i);
         let in_base = base
             .as_ref()
@@ -119,7 +119,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         });
     }
     // 今のセットを除いたときは、並びで最初の残るセットを今のセットにする。残るセットが無ければ書くものが無いので断る
-    let current = state.sets.current().id.clone();
+    let current = state.session.sets.current().id.clone();
     let current = match sets.iter().find(|s| s.id == current).or(sets.first()) {
         Some(set) => set.id.clone(),
         None => {
@@ -138,6 +138,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         base.as_deref(),
         // 読むだけのセットの文書は見せるだけの写し（保存の正本は開いたときのバイト列のまま）なので数えない
         state
+            .session
             .sets
             .iter()
             .enumerate()

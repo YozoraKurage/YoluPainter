@@ -26,7 +26,7 @@ pub const SELECT_TOOLS: [Tool; 6] = [
 pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
     let free = !app.is_stroking() && app.read_only_reason().is_none();
-    let any = app.doc.selection().is_some();
+    let any = app.session.doc.selection().is_some();
     let edit = |e: SelEdit| Action::Sel(SelAction::Edit(e));
     let mut v = vec![
         command_item(l, "selection.all", edit(SelEdit::All)).enabled(free),
@@ -58,8 +58,9 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     let copyable = free
         && any
         && app
+            .session
             .selected_layer
-            .and_then(|id| app.doc.layer(id))
+            .and_then(|id| app.session.doc.layer(id))
             .is_some_and(|layer| {
                 (app.m2.edit_mask && layer.mask().is_some())
                     || matches!(
@@ -84,7 +85,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             ),
             edit(SelEdit::ToMask),
         )
-        .enabled(free && any && app.selected_layer.is_some()),
+        .enabled(free && any && app.session.selected_layer.is_some()),
     );
     v.push(
         command_item(

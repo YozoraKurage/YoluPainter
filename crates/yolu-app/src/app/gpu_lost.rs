@@ -131,7 +131,7 @@ impl YoluApp {
         // 変更があれば、復旧の書き置きを今すぐ取る（文書そのものは触らない）。保存が期限に間に合わなかったときは、書き置きを取れない
         let saved = if save_late {
             Saved::No
-        } else if !self.state.modified {
+        } else if !self.state.session.is_modified() {
             Saved::NothingToSave
         } else if self.state.recovery.is_enabled()
             && self.state.recovery_flush_within(self.gpu_lost_wait)
@@ -280,14 +280,14 @@ mod tests {
                 .unwrap();
         }
         if mode != "nothing" {
-            let layer = state.selected_layer.unwrap();
+            let layer = state.session.selected_layer.unwrap();
             let brush = state.stroke_settings(false);
-            let mut stroke = state.doc.begin_stroke(layer, &brush).unwrap();
+            let mut stroke = state.session.doc.begin_stroke(layer, &brush).unwrap();
             stroke
-                .add_point(&mut state.doc, 20.0, 20.0, 1.0, DVec2::ZERO)
+                .add_point(&mut state.session.doc, 20.0, 20.0, 1.0, DVec2::ZERO)
                 .unwrap();
-            state.doc.end_stroke(stroke).unwrap();
-            state.mark_modified();
+            state.session.doc.end_stroke(stroke).unwrap();
+            state.session.mark_modified();
         }
         let ctx = egui::Context::default();
         let mut app = YoluApp::for_context(&ctx, state, PenInput::detached());

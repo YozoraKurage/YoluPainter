@@ -45,7 +45,7 @@ impl When {
     pub fn holds(self, app: &AppState) -> bool {
         match self {
             When::Always => true,
-            When::HasSelection => app.doc.selection().is_some(),
+            When::HasSelection => app.session.doc.selection().is_some(),
             When::Tool(tool) => app.tool == tool,
             When::Windows => cfg!(windows) && !app.is_stroking(),
             When::PointSelected => {

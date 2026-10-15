@@ -163,7 +163,7 @@ impl AppState {
     /// グラデーションを塗るレイヤーとマスクを描くか（塗れなければ理由を知らせて None）。
     pub(crate) fn gradient_target(&mut self) -> Option<(yolu_core::LayerId, bool)> {
         let lang = self.lang;
-        let Some(id) = self.selected_layer else {
+        let Some(id) = self.session.selected_layer else {
             self.refuse(
                 Source::Gradient,
                 lang.pick("描くレイヤーがありません。", "No layer to paint on."),
@@ -171,7 +171,7 @@ impl AppState {
             return None;
         };
         let masked = self.m2.edit_mask;
-        let kind = self.doc.layer(id).map(|l| l.kind());
+        let kind = self.session.doc.layer(id).map(|l| l.kind());
         if !masked && kind != Some(LayerKind::Raster) {
             self.refuse(
                 Source::Gradient,
@@ -206,13 +206,14 @@ impl AppState {
             opacity: f64::from(self.brush.opacity),
         };
         let erase = self.gradient.erase;
-        let revision = self.doc.revision();
-        self.doc.end_coalescing();
+        let revision = self.session.doc.revision();
+        self.session.doc.end_coalescing();
         let result = if masked {
             // マスクは、始点の黒（隠す量 1）から透明へ。消す（reveal）なら見せる向き
             settings.from = Rgba8::new(0, 0, 0, 255);
             settings.to = Rgba8::TRANSPARENT;
-            self.doc
+            self.session
+                .doc
                 .gradient_mask_at(id, &settings, region, erase, place)
         } else if self.paints_material() {
             let channels = self.paint_channels();
@@ -226,7 +227,7 @@ impl AppState {
             } else {
                 None
             };
-            self.doc.gradient_material_at(
+            self.session.doc.gradient_material_at(
                 id,
                 &channels,
                 end_paints.as_deref(),
@@ -238,7 +239,7 @@ impl AppState {
         } else {
             // 描くチャンネル 1 つ。無効のチャンネルは有効にして、1 回の Undo で塗る
             let channel = self.m2.paint_channel;
-            self.doc.gradient_material_at(
+            self.session.doc.gradient_material_at(
                 id,
                 &[ChannelPaint::new(channel, from)],
                 Some(&[ChannelPaint::new(channel, to)]),
@@ -263,7 +264,7 @@ impl AppState {
                 lang.core_error(&e),
             ),
         }
-        self.mark_modified_if_changed(revision);
+        self.session.mark_modified_if_changed(revision);
     }
 
     /// ドラッグの途中の形を捨てる（Esc・ツールの切り替え・フォーカスを失ったとき。2D のキャンバスと 3D ビューの両方）。何かあったか。

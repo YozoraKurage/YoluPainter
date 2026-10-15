@@ -207,7 +207,7 @@ impl AppState {
     /// 「変更あり」の印。保存の間は、保存の結果が出るまで、頼む前の印のまま見せる（保存の頼みは `modified` を下ろして、その後の編集を
     /// 見分けるので、見せる側はこちらを読む）。
     pub fn shows_modified(&self) -> bool {
-        self.modified || self.save.job.as_ref().is_some_and(|j| j.was_modified)
+        self.session.is_modified() || self.save.job.as_ref().is_some_and(|j| j.was_modified)
     }
 
     /// 保存の進み具合（仕事の札・閉じるのを待つウィンドウ）。
@@ -292,6 +292,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
     let capture = capture(state, path.to_path_buf())?;
     // 開いている .ylp と同じファイルへの保存なら、その保存先の印を引き継ぐ（複製を渡し、結果の印で置き換える）
     let reuse = state
+        .session
         .project
         .as_ref()
         .filter(|p| p.is_file() && same_file(&p.path, path))
@@ -331,7 +332,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    let was_modified = state.modified;
+    let was_modified = state.session.is_modified();
     let shelf_was_changed = state.shelf.changed;
     let job = |rx| Job {
         path: path.to_path_buf(),
@@ -356,7 +357,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
             })
             .map_err(|e| e.to_string())?;
         // 保存の間の編集を見分けるために下ろす（失敗したら戻す）。復旧の見張りは、保存の間は印を読まない
-        state.modified = false;
+        state.session.clear_modified();
         state.shelf.changed = false;
         state.save.job = Some(job(rx));
     } else {
@@ -366,7 +367,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
             hold: None,
             ..request
         }));
-        state.modified = false;
+        state.session.clear_modified();
         state.shelf.changed = false;
         let job = job(rx);
         let finished = job.rx.try_recv().unwrap_or_else(|_| stopped(lang));
@@ -562,14 +563,14 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                     None,
                 );
             };
-            match state.project.as_mut().filter(|_| job.reuse) {
+            match state.session.project.as_mut().filter(|_| job.reuse) {
                 Some(file) => {
                     file.target = Some(target);
                     file.original = done.project;
                     file.path = job.path.clone();
                 }
                 None => {
-                    state.project = Some(ProjectFile {
+                    state.session.project = Some(ProjectFile {
                         path: job.path.clone(),
                         target: Some(target),
                         original: done.project,
@@ -579,36 +580,38 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
             // 保存済みの印は、写しを取った時点の文書（保存の間に描いた分は「変更あり」のまま）
             for (id, doc_id, revision) in &job.written {
                 if let Some(set) = state
+                    .session
                     .sets
                     .iter()
                     .position(|s| s.id == *id)
-                    .and_then(|i| state.sets.get_mut(i))
+                    .and_then(|i| state.session.sets.get_mut(i))
                 {
                     set.saved = Some((*doc_id, *revision));
                 }
             }
             for (id, maps) in &job.maps {
                 if let Some(set) = state
+                    .session
                     .sets
                     .iter()
                     .position(|s| s.id == *id)
-                    .and_then(|i| state.sets.get_mut(i))
+                    .and_then(|i| state.session.sets.get_mut(i))
                 {
                     set.mesh_maps.mark_saved(maps);
                 }
             }
-            state.save_folder = None;
+            state.session.save_folder = None;
             state.recent_projects.add(&job.path);
-            state.project_name = job
+            state.session.project_name = job
                 .path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| lang.pick("名称未設定", "Untitled").into());
-            state.rewritten_sets = job.written.len();
+            state.session.rewritten_sets = job.written.len();
             // 入れなかったセットは、画面にあってファイルに無い。「保存していない変更」のままにして、閉じる・開き直す・捨てるときに聞く
             // （次の保存でも同じ。知らせは保存の時点の 1 回だけで、あとの知らせに上書きされうるので、注意としてログにも残す）
             if !job.left_out.is_empty() {
-                state.mark_modified();
+                state.session.mark_modified();
             }
             if done.caveat {
                 state.warn(Source::Save, done.text);
@@ -632,11 +635,11 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
 
 /// 保存が済まなかった: 開いているファイルの保存先の印は更新があれば持ち帰り、保存の前の「変更あり」を戻して、理由を出す。
 fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget>) {
-    if let (Some(file), Some(target), true) = (state.project.as_mut(), target, job.reuse) {
+    if let (Some(file), Some(target), true) = (state.session.project.as_mut(), target, job.reuse) {
         file.target = Some(target);
     }
     if job.was_modified {
-        state.mark_modified();
+        state.session.mark_modified();
     }
     state.shelf.changed |= job.shelf_was_changed;
     if job.report {

@@ -94,8 +94,8 @@ fn view(app: &AppState, win: &NpWindow) -> View {
         model_tip,
         can_reload: win.configure
             && app.np.model_file.is_some()
-            && !app.model.as_ref().is_some_and(|m| m.is_link()),
-        link: win.configure && app.model.as_ref().is_some_and(|m| m.is_link()),
+            && !app.session.model.as_ref().is_some_and(|m| m.is_link()),
+        link: win.configure && app.session.model.as_ref().is_some_and(|m| m.is_link()),
         unused: if win.configure {
             unused_groups(app, win)
         } else {
@@ -104,7 +104,7 @@ fn view(app: &AppState, win: &NpWindow) -> View {
         missing,
         notes: win.notes().to_vec(),
         sizes_changing: win.drafts.iter().any(SetDraft::resizes),
-        template_tip: win.template.tooltip(lang, &app.doc),
+        template_tip: win.template.tooltip(lang, &app.session.doc),
         groups,
     }
 }
@@ -1366,8 +1366,8 @@ fn remove_confirm(ctx: &egui::Context, app: &mut AppState) {
     let rows: Vec<crate::windows::Row> = uids
         .iter()
         .filter_map(|uid| {
-            let i = app.sets.index_of(*uid)?;
-            let set = app.sets.get(i)?;
+            let i = app.session.sets.index_of(*uid)?;
+            let set = app.session.sets.get(i)?;
             let doc = app.set_doc(i);
             Some(crate::windows::Row {
                 left: set.name.clone(),

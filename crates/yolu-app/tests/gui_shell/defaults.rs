@@ -566,7 +566,7 @@ fn recent_app(
     let files = ["a", "b"].map(|name| dir.join(format!("{name}.ylp")));
     for (file, layer) in files.iter().zip(["from-a", "from-b"]) {
         let mut s = AppState::new(32, 32);
-        s.doc.add_layer(layer).unwrap();
+        s.doc_mut().add_layer(layer).unwrap();
         s.apply(Action::SaveProjectAs(file.clone()));
         s.wait_save();
         assert!(file.is_file());

@@ -217,7 +217,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
 
 /// 保存先を選ぶウィンドウに出す初めのファイル名（今の名前に短い接尾辞を付けて、開いている作業用のファイルと区別する）。
 pub fn default_name(state: &AppState) -> String {
-    format!("{}-dist.ylp", state.project_name)
+    format!("{}-dist.ylp", state.session.project_name)
 }
 
 /// 保存先を選ぶウィンドウ（`DialogRequest::DistributeSave`）を出す。選ばなければ何もしない（ウィンドウは開いたまま）。
@@ -445,7 +445,7 @@ impl AppState {
         );
         self.distribute.job = Some(Job {
             kind: Kind::Prepare,
-            file: self.project_name.clone(),
+            file: self.session.project_name.clone(),
             worker,
         });
     }
@@ -457,6 +457,7 @@ impl AppState {
             return;
         }
         if self
+            .session
             .project
             .as_ref()
             .is_some_and(|p| p.is_file() && same_file(p.path(), &path))
@@ -631,6 +632,7 @@ impl AppState {
 /// 基準にして組み、書くときに選んだ保存先に合わせて付け直す。
 fn capture(state: &AppState) -> Result<crate::project::capture::Capture, String> {
     let anchor = state
+        .session
         .project
         .as_ref()
         .filter(|p| p.is_file())

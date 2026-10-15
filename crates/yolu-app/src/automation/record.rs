@@ -81,11 +81,14 @@ impl Recorder {
         Recorder {
             entries: Vec::new(),
             undone: Vec::new(),
-            doc_id: app.doc.id(),
-            start_selected: app.selected_layer.filter(|id| app.doc.layer(*id).is_some()),
+            doc_id: app.session.doc.id(),
+            start_selected: app
+                .session
+                .selected_layer
+                .filter(|id| app.session.doc.layer(*id).is_some()),
             top: None,
             redo_top: None,
-            seen: app.doc.revision(),
+            seen: app.session.doc.revision(),
             skipped: false,
             nested: false,
         }
@@ -139,7 +142,7 @@ impl Recorder {
 
 /// 記録の外で文書が変わったか（記録のウィンドウが毎フレーム見る）。
 pub fn sync(app: &mut AppState) {
-    let doc_rev = (app.doc.id(), app.doc.revision());
+    let doc_rev = (app.session.doc.id(), app.session.doc.revision());
     if let Some(rec) = app.automation.recorder.as_mut() {
         if doc_rev.0 == rec.doc_id && doc_rev.1 != rec.seen {
             rec.skipped = true;
@@ -182,7 +185,7 @@ pub fn before(app: &mut AppState, action: &Action) -> Option<Pending> {
         if rec.nested {
             return None;
         }
-        if app.doc.id() == rec.doc_id {
+        if app.session.doc.id() == rec.doc_id {
             plan(app, rec, action)
         } else {
             Plan::Skip
@@ -195,7 +198,7 @@ pub fn before(app: &mut AppState, action: &Action) -> Option<Pending> {
 pub fn before_rename(app: &mut AppState, id: LayerId, name: &str) -> Option<Pending> {
     let plan = {
         let rec = app.automation.recorder.as_ref()?;
-        if rec.nested || app.doc.id() != rec.doc_id {
+        if rec.nested || app.session.doc.id() != rec.doc_id {
             Plan::Skip
         } else {
             match layer_ref(app, rec, id) {
@@ -214,7 +217,7 @@ pub fn before_rename(app: &mut AppState, id: LayerId, name: &str) -> Option<Pend
 }
 
 fn begin(app: &mut AppState, plan: Plan) -> Option<Pending> {
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let before_ids = matches!(
         plan,
         Plan::Record {
@@ -232,7 +235,7 @@ fn begin(app: &mut AppState, plan: Plan) -> Option<Pending> {
         before_ids,
     };
     let rec = app.automation.recorder.as_mut()?;
-    rec.sync(&app.doc);
+    rec.sync(&app.session.doc);
     rec.nested = true;
     Some(pending)
 }
@@ -240,7 +243,7 @@ fn begin(app: &mut AppState, plan: Plan) -> Option<Pending> {
 /// 操作の後に呼ぶ。
 pub fn after(app: &mut AppState, pending: Option<Pending>) {
     let Some(p) = pending else { return };
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let Some(rec) = app.automation.recorder.as_mut() else {
         return;
     };
@@ -344,8 +347,8 @@ pub fn after(app: &mut AppState, pending: Option<Pending>) {
 
 /// スライダーのドラッグを Esc で止めた（core がまとめた段を捨てた）: 最後の段がそのドラッグなら外す。
 pub fn drag_cancelled(app: &mut AppState, rev_before: u64) {
-    let now = app.doc.revision();
-    let doc_id = app.doc.id();
+    let now = app.session.doc.revision();
+    let doc_id = app.session.doc.id();
     let Some(rec) = app.automation.recorder.as_mut() else {
         return;
     };
@@ -388,8 +391,15 @@ fn layer_ref(app: &AppState, rec: &Recorder, id: LayerId) -> Option<String> {
     if let Some(n) = rec.created_number(Made::Layer, id.0) {
         return Some(format!("{CREATED_PREFIX}{n}"));
     }
-    let name = app.doc.layer(id)?.name();
-    let unique = app.doc.layers().iter().filter(|l| l.name() == name).count() == 1;
+    let name = app.session.doc.layer(id)?.name();
+    let unique = app
+        .session
+        .doc
+        .layers()
+        .iter()
+        .filter(|l| l.name() == name)
+        .count()
+        == 1;
     // 相対の指し方・ID と読める名前は、名前として引かれないので使わない
     let plain = parse_relative(name).is_ok_and(|r| r.is_none()) && parse_id(name).is_none();
     (unique && plain).then(|| name.to_owned())
@@ -523,7 +533,9 @@ fn adjustment_spec(settings: &AdjustmentSettings) -> Option<EffectSpec> {
 
 /// 選んでいるレイヤー（まだある物）。
 fn selected(app: &AppState) -> Option<LayerId> {
-    app.selected_layer.filter(|id| app.doc.layer(*id).is_some())
+    app.session
+        .selected_layer
+        .filter(|id| app.session.doc.layer(*id).is_some())
 }
 
 /// 選んでいるレイヤーの上に足す、の `above`（選んでいなければ一番上で None）。指せなければ Err。
@@ -545,7 +557,7 @@ fn creating(command: Command, made: Made) -> Plan {
 /// 操作を、同じ結果になる命令へ写す（写せる操作の表）。
 fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
     let lref = |id: LayerId| layer_ref(app, rec, id);
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let one = |command: Option<Command>, merge: Option<MergeKey>| match command {
         Some(c) => record(vec![c], merge),
         None => Plan::Skip,
@@ -657,7 +669,7 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
 
 fn plan_edit(app: &AppState, rec: &Recorder, edit: &Edit) -> Plan {
     let lref = |id: LayerId| layer_ref(app, rec, id);
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let set = |id: LayerId, f: &dyn Fn(LayerSetArgs) -> LayerSetArgs, merge: Option<MergeKey>| {
         match lref(id) {
             Some(layer) => record(vec![Command::LayerSet(f(layer_set(layer)))], merge),
@@ -918,7 +930,7 @@ fn locks_patch(flag: LayerLocks, on: bool) -> LocksPatch {
 
 fn plan_fx(app: &AppState, rec: &Recorder, op: &FxOp) -> Plan {
     let lref = |id: LayerId| layer_ref(app, rec, id);
-    let doc = &app.doc;
+    let doc = &app.session.doc;
     let target_of = |t: FilterTarget| match t {
         FilterTarget::Content => EffectTarget::Content,
         FilterTarget::Mask => EffectTarget::Mask,

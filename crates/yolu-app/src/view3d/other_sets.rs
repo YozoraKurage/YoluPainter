@@ -22,16 +22,17 @@ pub struct OtherSet<'a> {
 /// 見せるほかのセット（マテリアルに付いていて、目を開いている、今のセットでないもの）。文書の ID が今のセットや先のセットと重なるものは
 /// 渡さない（絵の持ち物を文書の ID で見分けるので、同じ ID の 2 つの文書が 1 つの持ち物を取り合わないように）。
 pub fn collect(app: &AppState) -> Vec<OtherSet<'_>> {
-    let current = app.sets.current_index();
-    let mut seen = vec![app.doc.id()];
-    app.sets
+    let current = app.session.sets.current_index();
+    let mut seen = vec![app.session.doc.id()];
+    app.session
+        .sets
         .iter()
         .enumerate()
         .filter_map(|(i, set)| {
             if i == current || !set.visible {
                 return None;
             }
-            let doc = app.sets.stashed_doc(i)?;
+            let doc = app.session.sets.stashed_doc(i)?;
             if seen.contains(&doc.id()) {
                 return None;
             }

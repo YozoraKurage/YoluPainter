@@ -234,7 +234,7 @@ impl AppState {
     /// 今のセットの手で選んだアイランドの一覧（`list` の、代表の昇順）。入力を作り終えていなければ名前は仮（アイランドの番号だけ）。
     pub fn overlap_island_rows(&mut self, list: MeshOverlapList) -> Vec<IslandRow> {
         let lang = self.lang;
-        let priority = self.doc.bake_priority().clone();
+        let priority = self.session.doc.bake_priority().clone();
         let chosen = match list {
             MeshOverlapList::Skip => priority.skipped(),
             MeshOverlapList::Prefer => priority.preferred(),
@@ -285,7 +285,7 @@ impl AppState {
 
     /// 手で選んだアイランドの一覧が今のモデルのものでないか（一覧があり、入力を作り終えていて、指紋が違う）。
     pub fn overlap_islands_foreign(&mut self) -> bool {
-        let priority = self.doc.bake_priority();
+        let priority = self.session.doc.bake_priority();
         if priority.skipped().is_empty() && priority.preferred().is_empty() {
             return false;
         }
@@ -303,10 +303,10 @@ impl AppState {
             self.refuse(Source::Bake, crate::lang::refusals::during_stroke(lang));
             return;
         }
-        let current = self.doc.bake_priority().clone();
+        let current = self.session.doc.bake_priority().clone();
         let next = match op {
             PriorityOp::Pick(list) => {
-                let set = self.sets.current().uid;
+                let set = self.session.sets.current().uid;
                 self.bake.pick = match (list, self.bake.pick) {
                     (Some(l), Some(p)) if p.list == l && p.set == set => None,
                     (Some(l), _) => Some(Picking { list: l, set }),
@@ -329,7 +329,7 @@ impl AppState {
             PriorityOp::Remove(island) => current.with_island("", island, None),
             PriorityOp::Set { set, island, list } => {
                 // メニューを開いた後にセットを替えた: 今のセットのアイランドではない
-                if set != self.sets.current().uid {
+                if set != self.session.sets.current().uid {
                     return;
                 }
                 self.set_island(island, list);
@@ -349,7 +349,7 @@ impl AppState {
     /// アイランド（代表の三角形）を一覧 `list` に入れる（もう一方からは外す）か、None なら外す。変えたら true。
     fn set_island(&mut self, island: usize, list: Option<MeshOverlapList>) -> bool {
         let lang = self.lang;
-        let current = self.doc.bake_priority().clone();
+        let current = self.session.doc.bake_priority().clone();
         let was = if current.preferred().contains(&island) {
             Some(MeshOverlapList::Prefer)
         } else if current.skipped().contains(&island) {
@@ -413,12 +413,12 @@ impl AppState {
             self.refuse(Source::Bake, text);
             return false;
         }
-        if *self.doc.bake_priority() == next {
+        if *self.session.doc.bake_priority() == next {
             return false;
         }
-        match self.doc.set_bake_priority(next) {
+        match self.session.doc.set_bake_priority(next) {
             Ok(()) => {
-                self.mark_modified();
+                self.session.mark_modified();
                 self.info(
                     Source::Bake,
                     done.unwrap_or_else(|| {
@@ -485,7 +485,7 @@ fn candidates(app: &mut AppState, islands: &Islands, w: Where, at: Pos2) -> Vec<
 /// 手で選んでいるか（今のセットで）。違うセットに移っていたらやめる（ウィンドウを閉じたときは `CloseWindow` がやめる）。
 pub fn picking(app: &mut AppState) -> Option<MeshOverlapList> {
     let p = app.bake.pick?;
-    if p.set != app.sets.current().uid {
+    if p.set != app.session.sets.current().uid {
         app.bake.pick = None;
         return None;
     }
@@ -543,8 +543,8 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
         }
     };
     if undo {
-        match app.doc.undo() {
-            Ok(_) => app.mark_modified(),
+        match app.session.doc.undo() {
+            Ok(_) => app.session.mark_modified(),
             Err(e) => {
                 app.region.cycle = None;
                 app.notify(
@@ -557,7 +557,7 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
         }
     }
     let island = found[index].1;
-    let current = app.doc.bake_priority();
+    let current = app.session.doc.bake_priority();
     let has = match list {
         MeshOverlapList::Skip => current.skipped().contains(&island),
         MeshOverlapList::Prefer => current.preferred().contains(&island),
@@ -580,7 +580,7 @@ fn pinned(app: &mut AppState) -> Option<(usize, bool)> {
         surface,
     }) = app.popup.as_ref().map(|p| p.kind)
     {
-        if set == app.sets.current().uid {
+        if set == app.session.sets.current().uid {
             return Some((island, if map { shown_side } else { surface }));
         }
     }
@@ -695,11 +695,12 @@ fn show_island(app: &mut AppState, w: Where, representative: usize) {
 /// 「外す」も。読むだけのセット・描いている間・開いた後にセットを替えたときは選べない。
 pub fn menu_entries(app: &AppState, set: u32, island: usize, map: bool) -> Vec<Entry<Action>> {
     let lang = app.lang;
-    let priority = app.doc.bake_priority();
+    let priority = app.session.doc.bake_priority();
     let preferred = priority.preferred().contains(&island);
     let skipped = priority.skipped().contains(&island);
-    let enabled =
-        set == app.sets.current().uid && !app.is_stroking() && app.read_only_reason().is_none();
+    let enabled = set == app.session.sets.current().uid
+        && !app.is_stroking()
+        && app.read_only_reason().is_none();
     let op = |list: Option<MeshOverlapList>| {
         Action::Bake(BakeAction::Priority(PriorityOp::Set { set, island, list }))
     };
@@ -758,7 +759,7 @@ pub fn open_menu(
 ) {
     app.popup = Some(OpenPopup {
         kind: PopupKind::BakeIsland {
-            set: app.sets.current().uid,
+            set: app.session.sets.current().uid,
             island,
             map,
             surface,

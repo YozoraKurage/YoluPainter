@@ -192,7 +192,7 @@ pub fn start(
     }
     let path = resolve_model_path(stored, ylp);
     app.np.model_file = Some(path.clone());
-    if app.model.as_ref().is_some_and(|m| m.is_link()) {
+    if app.session.model.as_ref().is_some_and(|m| m.is_link()) {
         // Unity のシーンのモデルが付いている間は、そちらを使う（参照だけ残す）
         return None;
     }
@@ -260,7 +260,7 @@ pub(super) fn poll(app: &mut AppState) {
         Some(Ok(prepared)) => {
             pose::install_prepared(&mut app.view3d, prepared);
             if let Some(session) = app.view3d.pose.session.as_ref() {
-                app.model = Some(SceneModel::from_rig(&session.rig));
+                app.session.model = Some(SceneModel::from_rig(&session.rig));
             }
             let report = app.bind_model_only();
             let mut text = lang.pick(format!("モデル: {name}。"), format!("Model: {name}."));

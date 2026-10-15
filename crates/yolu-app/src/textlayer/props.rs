@@ -366,7 +366,7 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
         (Some(ColorSource::PaintColor), _) => egui::Id::new("text.color.paint"),
         (Some(ColorSource::ToolColor), _) => egui::Id::new("text.color.tool"),
         (None, Target::Layer(id)) => egui::Id::new(("text.color", id.0)),
-        (None, Target::Editing) => egui::Id::new(("text.color.editing", app.doc.id())),
+        (None, Target::Editing) => egui::Id::new(("text.color.editing", app.session.doc.id())),
         (None, Target::Defaults) => egui::Id::new("text.color.defaults"),
     };
     let tip = match source {
@@ -472,7 +472,7 @@ pub fn fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, enabled: bool, t
         set(app, Field::Align(names[i]));
     }
     let at = rows.slider_row();
-    let width = app.doc.width().max(1) as f32;
+    let width = app.session.doc.width().max(1) as f32;
     let spec = SliderSpec::new(
         lang.pick("折り返しの幅", "Wrap Width"),
         0.0,

@@ -171,7 +171,10 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Contex
         }
         group_label(ui, rows, lang.pick("数値", "Numeric"));
         let n = app.transform.numeric;
-        let (w_px, h_px) = (app.doc.width() as f32, app.doc.height() as f32);
+        let (w_px, h_px) = (
+            app.session.doc.width() as f32,
+            app.session.doc.height() as f32,
+        );
         let px = |suffix: &'static str| NumberFormat {
             decimals: 1,
             trim: true,

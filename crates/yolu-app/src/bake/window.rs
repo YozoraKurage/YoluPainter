@@ -115,9 +115,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         .as_ref()
         .and_then(|r| r.as_ref().ok())
         .map(|a| a.as_ref());
-    let sets: Vec<SetRow> = (0..app.sets.len())
+    let sets: Vec<SetRow> = (0..app.session.sets.len())
         .map(|i| {
-            let set = app.sets.get(i).expect("範囲内");
+            let set = app.session.sets.get(i).expect("範囲内");
             let doc = app.set_doc(i);
             let slots = app.set_slots(i);
             SetRow {
@@ -129,11 +129,12 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         })
         .collect();
-    let current = app.sets.current_index();
+    let current = app.session.sets.current_index();
     let maps: Vec<MapRow> = MeshMapKind::ALL
         .iter()
         .map(|&kind| {
             let baked = app
+                .session
                 .sets
                 .get(current)
                 .and_then(|s| s.mesh_maps.get(kind))
@@ -162,6 +163,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let baking = app.bake.is_baking();
     let progress = app.bake.progress();
     let report = app
+        .session
         .sets
         .get(current)
         .and_then(|s| s.mesh_maps.report())
@@ -171,15 +173,16 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         backend: app.bake.backend,
         probe: probe_line(lang, app.bake.backend, &app.bake.gpu_probe()),
         last: app
+            .session
             .sets
             .get(current)
             .and_then(|s| s.mesh_maps.run())
             .map(|r| run_line(lang, r)),
     };
 
-    let priority = app.doc.bake_priority().clone();
+    let priority = app.session.doc.bake_priority().clone();
     let overlap = Overlap {
-        set: app.sets.current().name.clone(),
+        set: app.session.sets.current().name.clone(),
         rule: priority.rule,
         skip_outside: priority.skip_outside,
         rows: [
@@ -213,7 +216,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 island,
                 map: true,
                 ..
-            }) if set == app.sets.current().uid => Some(island),
+            }) if set == app.session.sets.current().uid => Some(island),
             _ => None,
         },
     });

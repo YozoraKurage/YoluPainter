@@ -83,7 +83,7 @@ pub fn creation_icon(mode: SelectionCombine) -> &'static str {
 impl AppState {
     /// 今の文書に残した選択範囲。
     pub fn saved_selections(&self) -> &[SavedSelection] {
-        self.doc.saved_selections()
+        self.session.doc.saved_selections()
     }
 
     /// 残した選択範囲を呼び出すための札（今の文書と大きさが合うときだけ。大きさを変える操作は残した選択範囲も作り直すので、
@@ -96,9 +96,9 @@ impl AppState {
                 .into());
         };
         let m = &saved.mask;
-        if m.width() != self.doc.width()
-            || m.height() != self.doc.height()
-            || m.tile_size() != self.doc.tile_size()
+        if m.width() != self.session.doc.width()
+            || m.height() != self.session.doc.height()
+            || m.tile_size() != self.session.doc.tile_size()
         {
             return Err(lang
                 .pick(
@@ -127,7 +127,7 @@ impl AppState {
                 if self.refuse_while_stroking() {
                     return;
                 }
-                let Some(mask) = self.doc.selection().cloned() else {
+                let Some(mask) = self.session.doc.selection().cloned() else {
                     self.refuse(
                         Source::Selection,
                         lang.pick("選択範囲がありません。", "No selection."),
@@ -160,8 +160,8 @@ impl AppState {
                     );
                     return;
                 }
-                let revision = self.doc.revision();
-                match self.doc.save_selection(&name) {
+                let revision = self.session.doc.revision();
+                match self.session.doc.save_selection(&name) {
                     Ok(_) => {
                         self.info(
                             Source::Selection,
@@ -170,7 +170,7 @@ impl AppState {
                                 lang.pick("選択範囲を覚えました", "Remembered")
                             ),
                         );
-                        self.mark_modified_if_changed(revision);
+                        self.session.mark_modified_if_changed(revision);
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),
@@ -190,13 +190,13 @@ impl AppState {
                 let Some(gone) = self.saved_selections().get(index).map(|s| s.name.clone()) else {
                     return;
                 };
-                match self.doc.delete_saved_selection(index) {
+                match self.session.doc.delete_saved_selection(index) {
                     Ok(()) => {
                         self.info(
                             Source::Selection,
                             format!("{}: {gone}", lang.pick("削除", "Removed")),
                         );
-                        self.mark_modified();
+                        self.session.mark_modified();
                         if let Some(win) = self.sel.saved_window.as_mut() {
                             // 消した行より後ろの名前の変更は、番号が 1 つずれる
                             match win.rename {
@@ -225,13 +225,13 @@ impl AppState {
                 if name == current {
                     return;
                 }
-                match self.doc.rename_saved_selection(index, &name) {
+                match self.session.doc.rename_saved_selection(index, &name) {
                     Ok(()) => {
                         self.info(
                             Source::Selection,
                             format!("{}: {name}", lang.pick("名前を変えました", "Renamed")),
                         );
-                        self.mark_modified();
+                        self.session.mark_modified();
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),
@@ -257,10 +257,10 @@ impl AppState {
 
     /// 残した選択範囲のバイト数の合計（プロジェクト全体）から、今のセットの `skip` 番目（入れ替える選択範囲）を除いたもの。
     fn saved_bytes_without(&self, skip: Option<usize>) -> u64 {
-        let current = self.sets.current().uid;
-        (0..self.sets.len())
+        let current = self.session.sets.current().uid;
+        (0..self.session.sets.len())
             .flat_map(|i| {
-                let uid = self.sets.get(i).map(|s| s.uid);
+                let uid = self.session.sets.get(i).map(|s| s.uid);
                 let skip = (uid == Some(current)).then_some(skip).flatten();
                 self.set_doc(i)
                     .saved_selections()
@@ -309,7 +309,7 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let lang = app.lang;
-    let any_selection = app.doc.selection().is_some();
+    let any_selection = app.session.doc.selection().is_some();
     let can_edit = app.can_edit();
     let rows = app.saved_selections().len();
     let shown = rows.clamp(1, VISIBLE_ROWS);
@@ -334,9 +334,9 @@ pub fn show_window(ctx: &egui::Context, app: &mut AppState) {
         .saved_selections()
         .iter()
         .map(|s| {
-            let fits = s.mask.width() == app.doc.width()
-                && s.mask.height() == app.doc.height()
-                && s.mask.tile_size() == app.doc.tile_size();
+            let fits = s.mask.width() == app.session.doc.width()
+                && s.mask.height() == app.session.doc.height()
+                && s.mask.tile_size() == app.session.doc.tile_size();
             (s.name.clone(), fits)
         })
         .collect();

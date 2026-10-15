@@ -846,10 +846,10 @@ mod tests {
         );
         pose::end_edit(&mut app.view3d, false);
         // 描いている最中
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
         let undo = session(&app).undo_len();
         assert!(!apply_preset(&mut app, id, false));
@@ -857,8 +857,8 @@ mod tests {
         assert!(!session(&app).is_posed());
         assert_eq!(session(&app).undo_len(), undo);
         assert!(!apply_preset(&mut app, id, true));
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.view3d.stroke_ended();
         assert!(apply_preset(&mut app, id, false));
     }

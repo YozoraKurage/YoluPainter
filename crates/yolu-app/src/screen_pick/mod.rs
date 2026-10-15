@@ -180,6 +180,7 @@ pub fn deliver(app: &mut AppState, rgb: [u8; 3]) {
 fn apply_color(app: &mut AppState, rgb: [u8; 3]) {
     let scalar = app.m2.edit_mask
         || app
+            .session
             .doc
             .channel_info(app.m2.paint_channel)
             .is_some_and(|i| i.kind == ChannelKind::Scalar);

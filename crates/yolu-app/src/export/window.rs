@@ -125,7 +125,7 @@ pub struct WindowState {
     files_scroll: f32,
     /// 書くファイルがもうあるかの調べ（`list`）。
     pub(super) exists: super::list::ExistsCache,
-    /// 選んだ先とチェックがどのプロジェクトのものか（`AppState::project_epoch`）。替わったら忘れる。
+    /// 選んだ先とチェックがどのプロジェクトのものか（`Session::project_epoch`）。替わったら忘れる。
     epoch: u64,
 }
 
@@ -139,7 +139,7 @@ impl AppState {
     pub(super) fn export_no_set_reason(&self) -> String {
         let lang = self.lang;
         if self.export_form().writes_file() {
-            if let Some(reason) = self.sets.current().read_only.as_deref() {
+            if let Some(reason) = self.session.sets.current().read_only.as_deref() {
                 return crate::lang::refusals::read_only_set(lang, reason);
             }
         }
@@ -148,7 +148,8 @@ impl AppState {
 
     /// 開いたプロジェクトのフォルダ（保存していなければ、またフォルダが無ければ None）。
     fn project_folder(&self) -> Option<PathBuf> {
-        self.project
+        self.session
+            .project
             .as_ref()
             .and_then(|p| p.path().parent())
             .filter(|d| d.is_dir())
@@ -158,12 +159,12 @@ impl AppState {
     /// 選んだ出力先とチェック。別のプロジェクトで選んだものは、ウィンドウを開いたままプロジェクトを替えられても（新規・開く・Live Link・外からの操作）
     /// 今のプロジェクトのものではないので、無いものとして扱う。
     pub(super) fn export_chosen(&self) -> Option<&WindowState> {
-        (self.export.window.epoch == self.project_epoch).then_some(&self.export.window)
+        (self.export.window.epoch == self.session.project_epoch()).then_some(&self.export.window)
     }
 
     /// 選んだ先が今のプロジェクトのものでなければ忘れて、今のプロジェクトのものにする。
     fn sync_export_window(&mut self) {
-        let epoch = self.project_epoch;
+        let epoch = self.session.project_epoch();
         let window = &mut self.export.window;
         if window.epoch != epoch {
             window.file = None;
@@ -267,7 +268,7 @@ impl AppState {
         let lang = self.lang;
         let form = self.export_form();
         // 選ぶウィンドウの確かめは、選んだ 1 回の書き出しだけに効く（受け取って使い切る）。2 回目からは、ファイルがあれば確かめる
-        let confirmed = (self.export.window.epoch == self.project_epoch)
+        let confirmed = (self.export.window.epoch == self.session.project_epoch())
             .then(|| self.export.window.confirmed.take())
             .flatten();
         let Some(destination) = self.export_destination() else {

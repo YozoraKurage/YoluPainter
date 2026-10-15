@@ -968,7 +968,7 @@ pub fn sync_modified(app: &mut AppState) {
     if edits != app.view3d.pose.seen_edits {
         app.view3d.pose.seen_edits = edits;
         if app.np.model_file.is_some() || app.link_target.is_some() {
-            app.mark_modified();
+            app.session.mark_modified();
         }
     }
 }
@@ -1166,10 +1166,10 @@ mod tests {
     #[test]
     fn pose_changes_are_refused_while_stroking() {
         let mut app = app();
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
         let before = app.view3d.model.clone().unwrap().revision();
         assert!({
@@ -1190,8 +1190,8 @@ mod tests {
         open_file(&mut app, Path::new("読まれない.fbx"));
         assert!(!app.view3d.pose.is_loading(), "描いている間は読み始めない");
         assert_eq!(app.view3d.model.clone().unwrap().revision(), before);
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.view3d.stroke_ended();
         assert!({
             let p = bent(&app, -1.0);
@@ -1204,19 +1204,25 @@ mod tests {
     fn undo_goes_to_the_pose_only_in_pose_mode() {
         let mut app = app();
         // 画素を 1 つ変える（文書の取り消しに 1 つ）
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let mut stroke = app.doc.begin_stroke(layer, &settings).unwrap();
+        let mut stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
         stroke
-            .add_point(&mut app.doc, 10.0, 10.0, 1.0, yolu_core::glam::DVec2::ZERO)
+            .add_point(
+                &mut app.session.doc,
+                10.0,
+                10.0,
+                1.0,
+                yolu_core::glam::DVec2::ZERO,
+            )
             .unwrap();
-        app.doc.end_stroke(stroke).unwrap();
+        app.session.doc.end_stroke(stroke).unwrap();
         {
             let p = bent(&app, -1.0);
             set_pose(&mut app.view3d, p)
         }
         .unwrap();
-        assert!(app.doc.can_undo());
+        assert!(app.session.doc.can_undo());
         // ポーズのモード: Ctrl+Z はポーズ（3D ビューが見えているあいだ）
         app.apply(Action::Pose(PoseAction::ToggleMode));
         assert_eq!(app.mode, EditorMode::Pose);
@@ -1229,14 +1235,14 @@ mod tests {
         assert!(app.can_undo());
         app.apply(Action::Undo);
         assert!(!app.view3d.pose.session.as_ref().unwrap().is_posed());
-        assert!(app.doc.can_undo(), "画素はそのまま");
+        assert!(app.session.doc.can_undo(), "画素はそのまま");
         assert!(!app.can_undo(), "ポーズの取り消しはもう無い");
         app.apply(Action::Redo);
         assert!(app.view3d.pose.session.as_ref().unwrap().is_posed());
         // モードを切ると画素
         app.apply(Action::Pose(PoseAction::ToggleMode));
         app.apply(Action::Undo);
-        assert!(!app.doc.can_undo());
+        assert!(!app.session.doc.can_undo());
         assert!(
             app.view3d.pose.session.as_ref().unwrap().is_posed(),
             "ポーズはそのまま"

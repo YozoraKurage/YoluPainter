@@ -158,10 +158,11 @@ pub fn new_channel_name(app: &AppState, kind: ChannelKind) -> String {
     (1..)
         .map(|n| format!("{base} {n}"))
         .find(|name| {
-            !app.doc
+            !app.session
+                .doc
                 .channels()
                 .iter()
-                .any(|c| m2::channel_name(app.lang, &app.doc, *c) == *name)
+                .any(|c| m2::channel_name(app.lang, &app.session.doc, *c) == *name)
         })
         .expect("名前は尽きない")
 }
@@ -216,7 +217,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::Take => crate::panels::pose::take_entries(app),
         Popup::TextFont => crate::textlayer::props::font_entries(app),
         Popup::NormalEdges => {
-            let current = app.doc.normal_settings();
+            let current = app.session.doc.normal_settings();
             [HeightEdgeMode::Clamp, HeightEdgeMode::Wrap]
                 .into_iter()
                 .map(|mode| {
@@ -233,7 +234,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 .collect()
         }
         Popup::NormalDirection => {
-            let current = app.doc.normal_settings();
+            let current = app.session.doc.normal_settings();
             [NormalYDirection::OpenGL, NormalYDirection::DirectX]
                 .into_iter()
                 .map(|direction| {
@@ -376,7 +377,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
                 Entry::item(channel_format(&info), Action::M2(Edit::AddChannel(info))).enabled(free)
             })
             .collect(),
-        Popup::ChannelKind(channel) => match app.doc.channel_info(channel) {
+        Popup::ChannelKind(channel) => match app.session.doc.channel_info(channel) {
             Some(info) => channel_kind_entries(channel, info, free),
             None => Vec::new(),
         },
@@ -572,23 +573,23 @@ mod tests {
                     _ => None,
                 })
                 .unwrap_or_else(|| panic!("{tag}: 印の項目がない"));
-            let revision = s.doc.revision();
-            let steps = s.doc.undo_count();
+            let revision = s.session.doc.revision();
+            let steps = s.session.doc.undo_count();
             let message = s.message.clone();
-            s.modified = false;
+            s.session.clear_modified();
             s.apply(marked);
-            assert_eq!(s.doc.channel_info(channel), Some(&info), "{tag}");
-            assert_eq!(s.doc.revision(), revision, "{tag}: 文書の版");
-            assert_eq!(s.doc.undo_count(), steps, "{tag}: Undo の段");
+            assert_eq!(s.session.doc.channel_info(channel), Some(&info), "{tag}");
+            assert_eq!(s.session.doc.revision(), revision, "{tag}: 文書の版");
+            assert_eq!(s.session.doc.undo_count(), steps, "{tag}: Undo の段");
             assert_eq!(s.message, message, "{tag}: 知らせ");
-            assert!(!s.modified, "{tag}: 変更の印");
+            assert!(!s.session.is_modified(), "{tag}: 変更の印");
             // 今の種類と色空間のまま、印の位置も変わらない
             let now = rows(&kind_entries(&s, channel));
             assert_eq!(now.iter().filter(|r| r.1).count(), 1, "{tag}");
             // 最後の段はチャンネルを追加した編集のまま
             s.apply(Action::Undo);
             assert_eq!(
-                s.doc.channel_info(channel),
+                s.session.doc.channel_info(channel),
                 None,
                 "{tag}: Undo 1 回で追加する前"
             );
@@ -603,16 +604,16 @@ mod tests {
             ..info_with(ChannelKind::Color, ColorSpace::Srgb)
         };
         let (mut s, channel) = app_with(info.clone(), Lang::Ja);
-        let steps = s.doc.undo_count();
+        let steps = s.session.doc.undo_count();
         let marked = action_of(kind_entries(&s, channel), "sRGB8").unwrap();
         s.apply(marked);
-        assert_eq!(s.doc.channel_info(channel), Some(&info));
-        assert_eq!(s.doc.undo_count(), steps);
+        assert_eq!(s.session.doc.channel_info(channel), Some(&info));
+        assert_eq!(s.session.doc.undo_count(), steps);
         let other = action_of(kind_entries(&s, channel), "L8").unwrap();
         s.apply(other);
-        let after = s.doc.channel_info(channel).unwrap();
+        let after = s.session.doc.channel_info(channel).unwrap();
         assert_eq!(*after, new_channel_info("x".into(), ChannelKind::Scalar));
-        assert_eq!(s.doc.undo_count(), steps + 1);
+        assert_eq!(s.session.doc.undo_count(), steps + 1);
     }
 
     /// 描いている間は 3 つとも押せなくなるが、印は変わらない。
@@ -654,10 +655,10 @@ mod tests {
             let tag = format!("{} -> {pick}", channel_format(&info));
             let chosen = action_of(kind_entries(&s, channel), pick)
                 .unwrap_or_else(|| panic!("{tag}: 項目がない"));
-            let steps = s.doc.undo_count();
+            let steps = s.session.doc.undo_count();
             s.apply(chosen);
-            let after = s.doc.channel_info(channel).unwrap().clone();
-            assert_eq!(s.doc.undo_count(), steps + 1, "{tag}: 1 回の編集");
+            let after = s.session.doc.channel_info(channel).unwrap().clone();
+            assert_eq!(s.session.doc.undo_count(), steps + 1, "{tag}: 1 回の編集");
             assert_eq!(channel_format(&after), pick, "{tag}");
             assert_eq!(after.name, info.name, "{tag}");
             // 選んだ後は、選んだ項目だけに印が付く
@@ -667,7 +668,11 @@ mod tests {
             assert_eq!(marked.len(), 1, "{tag}");
             assert_eq!(marked[0].0, pick, "{tag}");
             s.apply(Action::Undo);
-            assert_eq!(s.doc.channel_info(channel), Some(&info), "{tag}: Undo 1 回");
+            assert_eq!(
+                s.session.doc.channel_info(channel),
+                Some(&info),
+                "{tag}: Undo 1 回"
+            );
         }
     }
 }

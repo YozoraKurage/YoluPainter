@@ -191,7 +191,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView) {
     if let (Some((model, material)), true) = (&target, app.prefs.settings.uv_wireframe) {
         app.uv_wireframe.sync(&model.geometry, *material);
         app.uv_wireframe
-            .project(view, app.doc.width(), app.doc.height());
+            .project(view, app.session.doc.width(), app.session.doc.height());
         let c = app.prefs.settings.uv_wireframe_color;
         let stroke = Stroke::new(1.0, Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]));
         let painter = ui.painter_at(ui.max_rect());

@@ -117,7 +117,7 @@ fn with_positions(to: &LayerPath, from: &LayerPath) -> Option<LayerPath> {
 impl AppState {
     /// 一覧のパスを選ぶ（None ならパスの編集を抜ける）。選んだ点は外す。
     pub(super) fn path_select_path(&mut self, id: Option<u128>) {
-        let Some(layer) = self.selected_layer else {
+        let Some(layer) = self.session.selected_layer else {
             return;
         };
         self.path.selected = None;
@@ -151,6 +151,7 @@ impl AppState {
             return;
         };
         let mut entries = self
+            .session
             .doc
             .layer(layer)
             .map(|l| l.paths().to_vec())
@@ -174,12 +175,13 @@ impl AppState {
                 }
                 // 名前は画素を変えないので、描き直さずに名前だけを替える（3D のパスでもモデルを読んでいなくてよい）
                 match self
+                    .session
                     .doc
                     .rename_path(layer, id, &name)
                     .map_err(|e| lang.core_error(&e))
                 {
                     Ok(()) => {
-                        self.mark_modified();
+                        self.session.mark_modified();
                         self.path.selected = None;
                         self.path.active = Some(ActivePath { layer, path: id });
                         self.path.fresh = None;
@@ -290,7 +292,7 @@ impl AppState {
             .is_some_and(|a| a.layer == layer && !next.iter().any(|e| e.id() == a.path));
         match self.path_write_list(layer, next) {
             Ok(gaps) => {
-                self.mark_modified();
+                self.session.mark_modified();
                 self.path.selected = None;
                 if let Some(id) = select {
                     self.path.active = Some(ActivePath { layer, path: id });

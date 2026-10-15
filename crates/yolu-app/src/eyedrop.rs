@@ -148,13 +148,16 @@ pub fn right_end(
 /// 2D キャンバスの `at`（画面の点）の値を取る。取れたら true（理由はステータスバー）。キャンバスの外は何もしない。
 pub fn pick_canvas(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
     let (x, y) = view.to_canvas(at);
-    let (w, h) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (w, h) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
         return false;
     }
     pick_texel(
         app,
-        app.sets.current_index(),
+        app.session.sets.current_index(),
         x.floor() as u32,
         y.floor() as u32,
     )
@@ -178,7 +181,9 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
         );
         return false;
     };
-    let Some(set) = (0..app.sets.len()).find(|&i| app.set_material(i) == Some(hit.material)) else {
+    let Some(set) =
+        (0..app.session.sets.len()).find(|&i| app.set_material(i) == Some(hit.material))
+    else {
         app.refuse(
             Source::Eyedropper,
             lang.pick(
@@ -207,10 +212,11 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
 
 /// 取る元のレイヤー（選んでいるレイヤーだけ。全レイヤーを対象にしているとき・選んでいるのがグループ・レイヤーが無いとき・今のセットでないセットは合成から = None）。
 fn source_layer(app: &AppState, set: usize) -> Option<LayerId> {
-    let current = set == app.sets.current_index();
+    let current = set == app.session.sets.current_index();
     if current && !app.eyedrop.all_layers {
-        app.selected_layer
-            .and_then(|id| app.doc.layer(id))
+        app.session
+            .selected_layer
+            .and_then(|id| app.session.doc.layer(id))
             .filter(|l| l.kind() != LayerKind::Group)
             .map(|l| l.id())
     } else {
@@ -234,6 +240,7 @@ pub fn current_swatch(app: &AppState) -> Color32 {
         .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
     let scalar = !app.paints_material()
         && app
+            .session
             .doc
             .channel_info(app.m2.paint_channel)
             .is_some_and(|c| c.kind == ChannelKind::Scalar);
@@ -278,11 +285,14 @@ pub fn sample_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> Option<Co
 /// 2D キャンバスの `at`（画面の点）の、印に出す色。キャンバスの外は None。
 pub fn sample_canvas(app: &mut AppState, view: &CanvasView, at: Pos2) -> Option<Color32> {
     let (x, y) = view.to_canvas(at);
-    let (w, h) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (w, h) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
         return None;
     }
-    let set = app.sets.current_index();
+    let set = app.session.sets.current_index();
     sample_texel(app, set, x.floor() as u32, y.floor() as u32)
 }
 
@@ -295,7 +305,7 @@ pub fn sample_surface(app: &mut AppState, rect: Rect, at: Pos2) -> Option<Color3
         &view,
         Vec2::new(at.x - rect.left(), at.y - rect.top()),
     )?;
-    let set = (0..app.sets.len()).find(|&i| app.set_material(i) == Some(hit.material))?;
+    let set = (0..app.session.sets.len()).find(|&i| app.set_material(i) == Some(hit.material))?;
     let (w, h) = {
         let doc = app.set_doc(set);
         (doc.width(), doc.height())
@@ -373,7 +383,7 @@ fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reade
                 Channel::Normal => app.mat.set_normal(v(px.r) * 2.0 - 1.0, v(px.g) * 2.0 - 1.0),
                 other => app.mat.set_scalar(other, v(px.r)),
             }
-            names.push(channel_name(lang, &app.doc, *channel));
+            names.push(channel_name(lang, &app.session.doc, *channel));
         }
         let joined = names.join(lang.pick("・", ", "));
         app.info(
@@ -483,9 +493,10 @@ mod tests {
     fn state() -> AppState {
         let mut s = AppState::new(32, 32);
         s.tool = Tool::Eyedropper;
-        let id = s.selected_layer.unwrap();
+        let id = s.session.selected_layer.unwrap();
         for channel in [Channel::Color, Channel::Roughness] {
-            s.doc
+            s.session
+                .doc
                 .set_channel_pixel(id, channel, 3, 3, Rgba8::new(90, 80, 70, 255))
                 .unwrap();
         }
@@ -583,7 +594,7 @@ mod tests {
     #[test]
     fn a_missing_channel_is_not_a_refusal() {
         let s = state();
-        let doc = &s.doc;
+        let doc = &s.session.doc;
         let gone = Channel::from_index(42).unwrap();
         assert_eq!(read_pixel(doc, None, gone, 3, 3), Ok(None));
         assert_eq!(

@@ -88,7 +88,7 @@ impl Command {
                 .action
                 .and_then(|make| action_name(app.lang, &make()))
                 .map(Into::into),
-            Name::ByLayer(name) => Some(name(app, app.selected_layer).into()),
+            Name::ByLayer(name) => Some(name(app, app.session.selected_layer).into()),
             Name::Mouse(operation) => Some(operation.label(app.lang).into()),
             Name::Text(ja, en) => Some(app.lang.pick(ja, en).into()),
         }
@@ -141,7 +141,7 @@ pub fn label_of(id: &str, lang: Lang) -> &'static str {
 
 /// 「複製」の名前（レイヤーを選んでいるときの言い方。選んでいなければ「レイヤーを複製」）。
 pub fn duplicate_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
-    if layer.is_some_and(|id| app.doc.layer(id).is_some()) {
+    if layer.is_some_and(|id| app.session.doc.layer(id).is_some()) {
         app.lang.pick("複製", "Duplicate")
     } else {
         app.lang.pick("レイヤーを複製", "Duplicate Layer")
@@ -151,10 +151,11 @@ pub fn duplicate_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
 /// 結合の名前（複数選んでいればそのレイヤーを、グループならグループを、そうでなければ下のレイヤーと。レイヤーを選んでいなければ「レイヤーを結合」）。
 pub fn merge_down_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
     let l = app.lang;
-    let Some(layer) = layer.and_then(|id| app.doc.layer(id)) else {
+    let Some(layer) = layer.and_then(|id| app.session.doc.layer(id)) else {
         return l.pick("レイヤーを結合", "Merge Layers");
     };
     let members = app
+        .session
         .doc
         .topmost_of(&app.selected_layers())
         .unwrap_or_default();
@@ -1008,7 +1009,7 @@ mod tests {
         let mut app = AppState::new(32, 32);
         for lang in Lang::ALL {
             app.lang = lang;
-            app.selected_layer = None;
+            app.session.selected_layer = None;
             for c in COMMANDS {
                 let label = c
                     .label(&app)

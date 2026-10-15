@@ -299,7 +299,7 @@ fn commit(app: &mut AppState, rect: Rect, drag: Drag) {
     );
     if click {
         // 動かさずに離したら解除（新規のとき。追加・削除・共通では何もしない）
-        if mode == SelectionCombine::Replace && app.doc.selection().is_some() {
+        if mode == SelectionCombine::Replace && app.session.doc.selection().is_some() {
             app.apply(Action::Sel(SelAction::Edit(SelEdit::Clear)));
         }
         return;

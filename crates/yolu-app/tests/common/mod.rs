@@ -269,16 +269,10 @@ pub fn offset(p: Pos2, dx: f32, dy: f32) -> Pos2 {
 pub fn canvas_pixel(h: &Harness<'_, YoluApp>, p: Pos2) -> [u8; 4] {
     let app = h.state();
     let r = canvas_rect(h);
-    let v = app
-        .state
-        .view
-        .view(r, app.state.doc.width(), app.state.doc.height());
+    let doc = &app.state.session.doc;
+    let v = app.state.view.view(r, doc.width(), doc.height());
     let (x, y) = v.to_canvas(p);
-    yolu_app::engine::composite_pixel(
-        &app.state.doc,
-        x.floor().max(0.0) as u32,
-        y.floor().max(0.0) as u32,
-    )
+    yolu_app::engine::composite_pixel(doc, x.floor().max(0.0) as u32, y.floor().max(0.0) as u32)
 }
 
 /// 3D ビューの右上の軸の印の矩形（描いていなければ None）。絵の画素を数える試験は、この中を数えない（3D の絵の上に重ねた印）。

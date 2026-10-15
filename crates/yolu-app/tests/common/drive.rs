@@ -68,22 +68,22 @@ pub trait Drive {
         &mut self.app_mut().ramp_sets
     }
     fn doc(&self) -> &yolu_app::engine::Document {
-        &self.app().doc
+        &self.app().session.doc
     }
     fn doc_mut(&mut self) -> &mut yolu_app::engine::Document {
-        &mut self.app_mut().doc
+        &mut self.app_mut().session.doc
     }
     fn stroke(&self) -> &Option<yolu_app::engine::Stroke> {
-        &self.app().stroke
+        &self.app().session.stroke
     }
     fn stroke_mut(&mut self) -> &mut Option<yolu_app::engine::Stroke> {
-        &mut self.app_mut().stroke
+        &mut self.app_mut().session.stroke
     }
     fn selected_layer(&self) -> Option<yolu_app::engine::LayerId> {
-        self.app().selected_layer
+        self.app().session.selected_layer
     }
     fn set_selected_layer(&mut self, value: Option<yolu_app::engine::LayerId>) {
-        self.app_mut().selected_layer = value;
+        self.app_mut().session.selected_layer = value;
     }
     fn tool(&self) -> yolu_app::state::Tool {
         self.app().tool
@@ -164,16 +164,16 @@ pub trait Drive {
         &mut self.app_mut().popup
     }
     fn project_name(&self) -> &String {
-        &self.app().project_name
+        &self.app().session.project_name
     }
     fn project_name_mut(&mut self) -> &mut String {
-        &mut self.app_mut().project_name
+        &mut self.app_mut().session.project_name
     }
     fn save_folder(&self) -> &Option<std::path::PathBuf> {
-        &self.app().save_folder
+        &self.app().session.save_folder
     }
     fn save_folder_mut(&mut self) -> &mut Option<std::path::PathBuf> {
-        &mut self.app_mut().save_folder
+        &mut self.app_mut().session.save_folder
     }
     fn places(&self) -> &yolu_app::dialog::places::Places {
         &self.app().places
@@ -182,16 +182,20 @@ pub trait Drive {
         &mut self.app_mut().places
     }
     fn modified(&self) -> bool {
-        self.app().modified
+        self.app().session.is_modified()
     }
     fn set_modified(&mut self, value: bool) {
-        self.app_mut().modified = value;
+        if value {
+            self.app_mut().session.mark_modified();
+        } else {
+            self.app_mut().session.clear_modified();
+        }
     }
     fn rewritten_sets(&self) -> usize {
-        self.app().rewritten_sets
+        self.app().session.rewritten_sets
     }
     fn set_rewritten_sets(&mut self, value: usize) {
-        self.app_mut().rewritten_sets = value;
+        self.app_mut().session.rewritten_sets = value;
     }
     fn reset_layout(&self) -> bool {
         self.app().reset_layout
@@ -206,16 +210,16 @@ pub trait Drive {
         self.app_mut().quit = value;
     }
     fn sets(&self) -> &yolu_app::sets::TextureSets {
-        &self.app().sets
+        &self.app().session.sets
     }
     fn sets_mut(&mut self) -> &mut yolu_app::sets::TextureSets {
-        &mut self.app_mut().sets
+        &mut self.app_mut().session.sets
     }
     fn model(&self) -> &Option<yolu_app::model::SceneModel> {
-        &self.app().model
+        &self.app().session.model
     }
     fn model_mut(&mut self) -> &mut Option<yolu_app::model::SceneModel> {
-        &mut self.app_mut().model
+        &mut self.app_mut().session.model
     }
     fn link(&self) -> &yolu_app::livelink::LinkView {
         &self.app().link
@@ -242,10 +246,7 @@ pub trait Drive {
         &mut self.app_mut().link_reopen
     }
     fn project_epoch(&self) -> u64 {
-        self.app().project_epoch
-    }
-    fn set_project_epoch(&mut self, value: u64) {
-        self.app_mut().project_epoch = value;
+        self.app().session.project_epoch()
     }
     fn ops(&self) -> &yolu_app::mcp_server::OpsView {
         &self.app().ops
@@ -260,16 +261,16 @@ pub trait Drive {
         &mut self.app_mut().link_originals
     }
     fn resolution_chosen(&self) -> bool {
-        self.app().resolution_chosen
+        self.app().session.resolution_chosen
     }
     fn set_resolution_chosen(&mut self, value: bool) {
-        self.app_mut().resolution_chosen = value;
+        self.app_mut().session.resolution_chosen = value;
     }
     fn project(&self) -> &Option<yolu_app::project::ProjectFile> {
-        &self.app().project
+        &self.app().session.project
     }
     fn project_mut(&mut self) -> &mut Option<yolu_app::project::ProjectFile> {
-        &mut self.app_mut().project
+        &mut self.app_mut().session.project
     }
     fn dialog_request(&self) -> &Option<yolu_app::state::DialogRequest> {
         &self.app().dialog_request

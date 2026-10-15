@@ -194,14 +194,14 @@ fn can_drop(app: &AppState, from: LayerId, to: LayerId) -> bool {
     if !app.can_edit() {
         return false;
     }
-    let count = |id: LayerId| app.doc.layer(id).map_or(0, |l| l.rulers().len());
+    let count = |id: LayerId| app.session.doc.layer(id).map_or(0, |l| l.rulers().len());
     count(from) + count(to) <= yolu_core::MAX_RULERS_PER_LAYER
 }
 
 /// アイコンの右クリックのメニュー（表示・表示の範囲・定規を削除）。
 pub fn menu_entries(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
     let l = app.lang;
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return Vec::new();
     };
     let rulers = layer.rulers();

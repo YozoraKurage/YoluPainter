@@ -217,9 +217,14 @@ pub fn pen_driven(app: &AppState) -> bool {
 
 /// 押した点（画面の点）の下の文書の点を、クローンの元にする（キャンバスの外は断る）。
 fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
-    let view = app.view.view(rect, app.doc.width(), app.doc.height());
+    let view = app
+        .view
+        .view(rect, app.session.doc.width(), app.session.doc.height());
     let (x, y) = view.to_canvas(at);
-    let (w, h) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (w, h) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
         app.refuse(
             Source::Canvas,
@@ -227,7 +232,7 @@ fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
         );
         return;
     }
-    app.clone.set_canvas_source(app.doc.id(), (x, y));
+    app.clone.set_canvas_source(app.session.doc.id(), (x, y));
     app.info(
         Source::Canvas,
         app.lang

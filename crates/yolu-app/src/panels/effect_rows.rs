@@ -275,29 +275,35 @@ fn effect_row(
     count: usize,
 ) {
     let lang = app.lang;
-    let Some((_, effect, _)) = app.doc.find_filter(id) else {
+    let Some((_, effect, _)) = app.session.doc.find_filter(id) else {
         return;
     };
     let (enabled_stage, active) = (effect.enabled(), effect.is_active());
     let is_generator = effect.settings().is_generator();
     let icon = names::effect_icon(effect.settings());
     let label = names::effect_label(lang, effect, target, app.m2.paint_channel, |c| {
-        crate::m2::channel_name(lang, &app.doc, c)
+        crate::m2::channel_name(lang, &app.session.doc, c)
     });
     let reason = if is_generator && active {
-        app.doc
+        app.session
+            .doc
             .generator_inactive(layer, id)
             .ok()
             .flatten()
             .map(|r| lang.inactive_reason(&r))
             .or_else(|| {
-                let reason = app.doc.generator_fallback(layer, id).ok().flatten()?;
+                let reason = app
+                    .session
+                    .doc
+                    .generator_fallback(layer, id)
+                    .ok()
+                    .flatten()?;
                 let EffectSettings::Generator(g) = effect.settings() else {
                     return None;
                 };
                 Some(lang.fallback_effect(&yolu_core::FallbackEffect {
                     layer,
-                    layer_name: app.doc.layer(layer)?.name().to_owned(),
+                    layer_name: app.session.doc.layer(layer)?.name().to_owned(),
                     mask: target == FilterTarget::Mask,
                     kind: g.kind,
                     reason: yolu_core::InactiveReason::Generator(reason),
@@ -524,11 +530,11 @@ fn anchor_row(
     id: AnchorId,
 ) {
     let lang = app.lang;
-    let Some(info) = app.doc.find_anchor(id) else {
+    let Some(info) = app.session.doc.find_anchor(id) else {
         return;
     };
     let name = names::anchor_label(lang, info.anchor, placement);
-    let readers = anchor_readers(&app.doc, id).len();
+    let readers = anchor_readers(&app.session.doc, id).len();
     let selected = app.fx.selected == Some(Selected::Anchor { id });
     let can_edit = app.can_edit();
     let hit = row.intersect(list);
@@ -649,18 +655,20 @@ mod tests {
     use crate::fx::FilterKind;
 
     fn rows(app: &AppState) -> Vec<Row> {
-        crate::m2::visible_rows(&app.doc, &app.m2.collapsed)
+        crate::m2::visible_rows(&app.session.doc, &app.m2.collapsed)
     }
 
     /// レイヤーの効果（アンカー・ぼかし・反転）とマスクの効果（アンカー・ぼかし）を両方持つレイヤー。
     fn both_stacks(app: &mut AppState) -> (LayerId, AnchorId, AnchorId) {
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         app.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
         let layer_anchor = app
+            .session
             .doc
             .add_anchor(layer, AnchorPlacement::Layer, Some("A"), None)
             .unwrap();
         let mask_anchor = app
+            .session
             .doc
             .add_anchor(layer, AnchorPlacement::Mask, Some("M"), None)
             .unwrap();
@@ -684,7 +692,7 @@ mod tests {
         let (layer, layer_anchor, mask_anchor) = both_stacks(&mut app);
         let rows = rows(&app);
         // レイヤーの画素が対象（マスクは対象でない）: レイヤーのアンカーと画素の段だけ。上（後に掛かる）から反転（index 1）、ぼかし（index 0）
-        let l = layout(&app.doc, &rows, 30.0, None);
+        let l = layout(&app.session.doc, &rows, 30.0, None);
         let kinds: Vec<Kind> = l.entries.iter().map(|e| e.kind).collect();
         assert_eq!(kinds.len(), 1 + 1 + 2);
         assert!(matches!(
@@ -712,7 +720,7 @@ mod tests {
         assert!(l.entries[3].last_child && !l.entries[2].last_child);
         assert_eq!(l.height, 30.0 + 3.0 * EFFECT_ROW_HEIGHT);
         // マスクが対象: マスクのアンカーとマスクの段だけ
-        let l = layout(&app.doc, &rows, 30.0, Some(layer));
+        let l = layout(&app.session.doc, &rows, 30.0, Some(layer));
         let kinds: Vec<Kind> = l.entries.iter().map(|e| e.kind).collect();
         assert_eq!(kinds.len(), 1 + 1 + 1);
         assert!(matches!(
@@ -738,7 +746,7 @@ mod tests {
         let (layer, _, _) = both_stacks(&mut app);
         // 上のレイヤー（選んでいない。マスクの効果も持つ）の下には、マスクが対象のレイヤーがあってもレイヤーの効果を出す
         app.apply(Action::NewLayer);
-        let upper = app.selected_layer.unwrap();
+        let upper = app.session.selected_layer.unwrap();
         assert_ne!(upper, layer);
         app.apply(Action::M2(crate::m2::Edit::AddMask(upper)));
         app.apply(Action::Fx(FxOp::AddFilter {
@@ -762,7 +770,7 @@ mod tests {
                 .collect()
         };
         for mask in [Some(layer), Some(upper), None] {
-            let l = layout(&app.doc, &rows, 30.0, mask);
+            let l = layout(&app.session.doc, &rows, 30.0, mask);
             for (row, id) in [(upper_row, upper), (layer_row, layer)] {
                 let targets: Vec<FilterTarget> = children_of_row(&l, row)
                     .into_iter()
@@ -792,9 +800,9 @@ mod tests {
             target: FilterTarget::Content,
             kind: FilterKind::Blur,
         }));
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let rows = rows(&app);
-        let l = layout(&app.doc, &rows, 30.0, Some(layer));
+        let l = layout(&app.session.doc, &rows, 30.0, Some(layer));
         assert_eq!(
             l.entries.len(),
             2,
@@ -813,7 +821,7 @@ mod tests {
     fn positions_map_back_to_layer_rows() {
         let mut app = AppState::new(32, 32);
         app.apply(Action::NewLayer);
-        let bottom = app.doc.layers()[0].id();
+        let bottom = app.session.doc.layers()[0].id();
         app.apply(Action::Fx(FxOp::AddAnchor {
             layer: bottom,
             placement: AnchorPlacement::Layer,
@@ -821,7 +829,7 @@ mod tests {
         let rows = rows(&app);
         assert_eq!(rows.len(), 2);
         // 上の行: 新しいレイヤー（効果なし）、下の行: 下のレイヤー（アンカーの行が続く）
-        let l = layout(&app.doc, &rows, 30.0, None);
+        let l = layout(&app.session.doc, &rows, 30.0, None);
         assert_eq!(l.layer_y(0), 0.0);
         assert_eq!(l.layer_y(1), 30.0);
         assert_eq!(l.gap_y(2), 30.0 + 30.0 + EFFECT_ROW_HEIGHT);

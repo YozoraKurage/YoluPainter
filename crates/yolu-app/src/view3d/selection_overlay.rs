@@ -842,9 +842,12 @@ pub fn input(app: &mut crate::state::AppState, ctx: &egui::Context) -> Option<Ov
             .as_ref()
             .filter(|a| a.quick)
             .and_then(|a| a.stroke.preview().cloned());
-        (Style::Red, preview.or_else(|| app.doc.selection().cloned()))
+        (
+            Style::Red,
+            preview.or_else(|| app.session.doc.selection().cloned()),
+        )
     } else {
-        (Style::Ants, app.doc.selection().cloned())
+        (Style::Ants, app.session.doc.selection().cloned())
     };
     let cover = app.sel.pen.as_ref().filter(|a| !a.quick).map(|a| Cover {
         mask: a.stroke.cover().clone(),

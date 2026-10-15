@@ -100,8 +100,8 @@ pub fn paint(painter: &Painter, view: &CanvasView, app: &mut AppState) {
     let live = app.sel.pen.as_ref().filter(|a| a.quick);
     let mask = live
         .and_then(|a| a.stroke.preview().cloned())
-        .or_else(|| app.doc.selection().cloned())
-        .unwrap_or_else(|| SelectionMask::none(&app.doc));
+        .or_else(|| app.session.doc.selection().cloned())
+        .unwrap_or_else(|| SelectionMask::none(&app.session.doc));
     // 変わったタイルは、ここで受け取って空にする（3D ビューも `sync` を呼ぶので、先に呼んだほうの分も溜まっている）
     let hint = app
         .sel

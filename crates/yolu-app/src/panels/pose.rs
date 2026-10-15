@@ -306,7 +306,7 @@ fn content(
         Align::Left,
     );
     // Live Link の相手のモデル: 送り直すと、ここで動かした分も Unity のポーズで上書きする
-    if app.link_target.is_some() && app.model.as_ref().is_some_and(|m| m.is_live_link()) {
+    if app.link_target.is_some() && app.session.model.as_ref().is_some_and(|m| m.is_live_link()) {
         ui.interact(at, ui.id().with("pose.livelink"), egui::Sense::hover())
             .on_hover_text(lang.pick(
                 "Unity から送り直すと、ポーズは Unity の値で上書きされます（ここで動かした分も）",

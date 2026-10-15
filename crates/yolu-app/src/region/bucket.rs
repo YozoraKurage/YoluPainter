@@ -52,11 +52,12 @@ pub fn request(app: &AppState, layer: LayerId, points: Vec<(f64, f64)>) -> Reque
             .region
             .references
             .iter()
-            .filter_map(|&(doc, id)| (doc == app.doc.id()).then_some(id))
+            .filter_map(|&(doc, id)| (doc == app.session.doc.id()).then_some(id))
             .collect(),
         points,
         radius: app.brush.radius as f64,
         budget: app
+            .session
             .doc
             .source_budget_bytes()
             .min(yolu_core::selection::DEFAULT_WORKING_BUDGET_BYTES),
@@ -89,10 +90,11 @@ fn apply(
 ) {
     let result = result.and_then(|mask| {
         if style.mask {
-            app.doc
+            app.session
+                .doc
                 .fill_mask(layer, style.opacity, Some(&mask), style.reveal)
         } else {
-            app.doc.fill_material(
+            app.session.doc.fill_material(
                 layer,
                 &style.channels,
                 style.opacity,
@@ -104,7 +106,7 @@ fn apply(
     match result {
         Ok(changed) => {
             if changed {
-                app.mark_modified();
+                app.session.mark_modified();
                 if !style.erase && !style.mask {
                     app.color.remember();
                 }
@@ -150,7 +152,10 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
     let style = Style::capture(app, layer);
     let req = request(app, layer, points);
     if req.options.reference == Reference::Marked
-        && !req.marked.iter().any(|id| app.doc.layer(*id).is_some())
+        && !req
+            .marked
+            .iter()
+            .any(|id| app.session.doc.layer(*id).is_some())
     {
         app.refuse(
             Source::Fill,
@@ -159,14 +164,14 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
         );
         return;
     }
-    if app.doc.width() as u64 * app.doc.height() as u64
+    if app.session.doc.width() as u64 * app.session.doc.height() as u64
         <= if req.options.leftovers { 1024 } else { 65536 }
     {
-        let result = color::compute(&app.doc, &req, &AtomicBool::new(false));
+        let result = color::compute(&app.session.doc, &req, &AtomicBool::new(false));
         apply(app, layer, style, result);
         return;
     }
-    let snapshot = match app.doc.capture_snapshot() {
+    let snapshot = match app.session.doc.capture_snapshot() {
         Ok(d) => d,
         Err(e) => {
             app.notify(
@@ -190,8 +195,8 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
     };
     app.region.job = Some(Job {
         worker: worker.cancel_on_drop(),
-        document: app.doc.id(),
-        revision: app.doc.revision(),
+        document: app.session.doc.id(),
+        revision: app.session.doc.revision(),
         layer,
         style,
     });
@@ -214,7 +219,7 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
         return;
     }
     let job = app.region.job.as_ref().unwrap();
-    if job.document != app.doc.id() || job.revision != app.doc.revision() {
+    if job.document != app.session.doc.id() || job.revision != app.session.doc.revision() {
         app.region.job = None;
         return;
     }
@@ -252,13 +257,17 @@ pub fn begin(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
         return false;
     }
     let p = view.to_canvas(at);
-    if p.0 < 0.0 || p.1 < 0.0 || p.0 >= app.doc.width() as f64 || p.1 >= app.doc.height() as f64 {
+    if p.0 < 0.0
+        || p.1 < 0.0
+        || p.0 >= app.session.doc.width() as f64
+        || p.1 >= app.session.doc.height() as f64
+    {
         return false;
     }
     app.region.leftover_drag = Some(Drag {
         points: vec![p],
-        document: app.doc.id(),
-        revision: app.doc.revision(),
+        document: app.session.doc.id(),
+        revision: app.session.doc.revision(),
         last: None,
     });
     true
@@ -282,8 +291,8 @@ pub fn begin_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
     };
     app.region.leftover_drag = Some(Drag {
         points: vec![p],
-        document: app.doc.id(),
-        revision: app.doc.revision(),
+        document: app.session.doc.id(),
+        revision: app.session.doc.revision(),
         last: Some(at),
     });
     true
@@ -462,7 +471,10 @@ pub fn finish(app: &mut AppState, cancel: bool) -> bool {
     let Some(drag) = app.region.leftover_drag.take() else {
         return false;
     };
-    if !cancel && drag.document == app.doc.id() && drag.revision == app.doc.revision() {
+    if !cancel
+        && drag.document == app.session.doc.id()
+        && drag.revision == app.session.doc.revision()
+    {
         start(app, drag.points);
     }
     true

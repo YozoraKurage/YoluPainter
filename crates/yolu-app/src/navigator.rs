@@ -20,9 +20,9 @@ struct Navigator {
 impl Navigator {
     fn sync(&mut self, ctx: &egui::Context, app: &AppState) {
         let key = (
-            app.doc.id(),
-            app.doc_epoch,
-            app.doc.revision(),
+            app.session.doc.id(),
+            app.session.doc_epoch(),
+            app.session.doc.revision(),
             app.m2.display_channel,
         );
         if self.key == Some(key) {
@@ -30,7 +30,7 @@ impl Navigator {
         }
         self.key = Some(key);
         self.drag_offset = None;
-        self.texture = CanvasDisplay::thumbnail(&app.doc, app.m2.display_channel)
+        self.texture = CanvasDisplay::thumbnail(&app.session.doc, app.m2.display_channel)
             .ok()
             .map(|image| ctx.load_texture("navigator-image", image, TextureOptions::LINEAR));
     }
@@ -75,7 +75,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             app.lang.pick("ナビゲーター", "Navigator"),
         )
     });
-    let size = (app.doc.width(), app.doc.height());
+    let size = (app.session.doc.width(), app.session.doc.height());
     let miniature = ViewState::default().view(area.shrink(4.0), size.0, size.1);
     let image = miniature.image;
     let painter = ui.painter_at(area);
@@ -294,11 +294,11 @@ mod tests {
         app.view.zoom = 3.0;
         nav.sync(&ctx, &app);
         assert_eq!(nav.texture.as_ref().unwrap().id(), first);
-        app.doc.add_layer("test").unwrap();
+        app.session.doc.add_layer("test").unwrap();
         nav.sync(&ctx, &app);
         let revised = nav.texture.as_ref().unwrap().id();
         assert_ne!(first, revised);
-        app.doc_epoch += 1;
+        app.session.advance_doc_epoch();
         nav.sync(&ctx, &app);
         assert_ne!(nav.texture.as_ref().unwrap().id(), revised);
         app.m2.display_channel = Channel::Normal;
@@ -350,8 +350,9 @@ mod tests {
             pixel
         };
         assert_eq!(read(&mut nav, &app), Color32::TRANSPARENT);
-        let layer = app.doc.layers()[0].id();
-        app.doc
+        let layer = app.session.doc.layers()[0].id();
+        app.session
+            .doc
             .fill(
                 layer,
                 Channel::Color,
@@ -362,22 +363,23 @@ mod tests {
             )
             .unwrap();
         assert_eq!(read(&mut nav, &app), Color32::RED);
-        assert!(app.doc.undo().unwrap());
+        assert!(app.session.doc.undo().unwrap());
         assert_eq!(read(&mut nav, &app), Color32::TRANSPARENT);
-        assert!(app.doc.redo().unwrap());
+        assert!(app.session.doc.redo().unwrap());
         assert_eq!(read(&mut nav, &app), Color32::RED);
-        let undo = app.doc.undo_count();
-        app.doc.set_layer_opacity(layer, 0.0, true).unwrap();
+        let undo = app.session.doc.undo_count();
+        app.session.doc.set_layer_opacity(layer, 0.0, true).unwrap();
         assert_eq!(read(&mut nav, &app), Color32::TRANSPARENT);
-        assert!(app.doc.cancel_coalescing().unwrap());
+        assert!(app.session.doc.cancel_coalescing().unwrap());
         assert_eq!(read(&mut nav, &app), Color32::RED);
-        assert_eq!(app.doc.undo_count(), undo);
-        let dir = std::env::temp_dir().join(format!("navigator-review-{}", app.doc.id()));
+        assert_eq!(app.session.doc.undo_count(), undo);
+        let dir = std::env::temp_dir().join(format!("navigator-review-{}", app.session.doc.id()));
         std::fs::create_dir(&dir).unwrap();
         let path = dir.join("navigator.ylp");
         crate::project::save_from(&mut app, &path);
         assert!(path.is_file(), "{}", app.message);
-        app.doc
+        app.session
+            .doc
             .fill(
                 layer,
                 Channel::Color,
@@ -388,14 +390,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(read(&mut nav, &app), Color32::BLUE);
-        let epoch = app.doc_epoch;
+        let epoch = app.session.doc_epoch();
         crate::project::open_into(&mut app, &path);
         std::fs::remove_file(&path).unwrap();
         std::fs::remove_dir(&dir).unwrap();
-        assert!(app.doc_epoch > epoch);
+        assert!(app.session.doc_epoch() > epoch);
         assert_eq!(read(&mut nav, &app), Color32::RED);
-        assert_eq!(app.doc.undo_count(), 0);
-        assert_eq!(app.doc.redo_count(), 0);
+        assert_eq!(app.session.doc.undo_count(), 0);
+        assert_eq!(app.session.doc.redo_count(), 0);
         app.view.rotate_by(30.0);
         app.view.flip_horizontally();
         app.view
@@ -404,8 +406,8 @@ mod tests {
         let mut delta = ctx.tex_manager().write().take_delta();
         assert!(delta.set.is_empty());
         delta.clear();
-        assert_eq!(app.doc.undo_count(), 0);
-        assert_eq!(app.doc.redo_count(), 0);
+        assert_eq!(app.session.doc.undo_count(), 0);
+        assert_eq!(app.session.doc.redo_count(), 0);
     }
 
     #[test]

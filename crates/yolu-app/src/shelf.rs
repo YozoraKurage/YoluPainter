@@ -1812,7 +1812,7 @@ impl AppState {
                 crate::lang::refusals::shelf_full(lang),
             );
         }
-        let Some(layer_name) = self.doc.layer(id).map(|l| l.name().to_owned()) else {
+        let Some(layer_name) = self.session.doc.layer(id).map(|l| l.name().to_owned()) else {
             return self.cannot(
                 NoticeKind::Refusal,
                 Source::Assets,
@@ -1827,9 +1827,9 @@ impl AppState {
             layer_name
         };
         let captured = if mask {
-            self.doc.capture_smart_mask(id, &name)
+            self.session.doc.capture_smart_mask(id, &name)
         } else {
-            self.doc.capture_smart_material(&[id], &name)
+            self.session.doc.capture_smart_material(&[id], &name)
         };
         let material = match captured {
             Ok(m) => m,
@@ -1961,7 +1961,7 @@ impl AppState {
                 self.shelf.inspected.insert(staged.id.clone(), info);
             }
             self.shelf.changed = true;
-            self.mark_modified();
+            self.session.mark_modified();
         }
         self.shelf_reveal(&staged.id, kind, name);
         if staged.added {
@@ -1980,7 +1980,7 @@ impl AppState {
                 self.shelf.inspected.insert(staged.id.clone(), info);
             }
             self.shelf.changed = true;
-            self.mark_modified();
+            self.session.mark_modified();
         }
         self.shelf.selected = Some(staged.id);
         if staged.added {
@@ -2139,9 +2139,9 @@ impl AppState {
         if material.kind() == SmartKind::Mask {
             let layer = match target {
                 PlaceTarget::Mask(layer) => Some(layer),
-                _ => self.selected_layer,
+                _ => self.session.selected_layer,
             };
-            let Some(layer) = layer.filter(|l| self.doc.layer(*l).is_some()) else {
+            let Some(layer) = layer.filter(|l| self.session.doc.layer(*l).is_some()) else {
                 return self.cannot(
                     NoticeKind::Refusal,
                     Source::Assets,
@@ -2150,12 +2150,16 @@ impl AppState {
                     lang.pick("選んだレイヤーがありません", "No layer selected"),
                 );
             };
-            let had_mask = self.doc.layer(layer).is_some_and(|l| l.mask().is_some());
-            match self.doc.apply_smart_mask(&material, layer, None) {
+            let had_mask = self
+                .session
+                .doc
+                .layer(layer)
+                .is_some_and(|l| l.mask().is_some());
+            match self.session.doc.apply_smart_mask(&material, layer, None) {
                 Ok(result) => {
-                    self.selected_layer = Some(layer);
+                    self.session.selected_layer = Some(layer);
                     self.set_edit_mask(true);
-                    self.mark_modified();
+                    self.session.mark_modified();
                     let mut text = format!(
                         "{}: {name}",
                         if had_mask {
@@ -2187,14 +2191,14 @@ impl AppState {
             position,
             ..SmartPlacement::default()
         };
-        match self.doc.place_smart_material(&material, &placement) {
+        match self.session.doc.place_smart_material(&material, &placement) {
             Ok(result) => {
-                self.selected_layer = Some(result.layer_id);
+                self.session.selected_layer = Some(result.layer_id);
                 self.set_edit_mask(false);
                 if let Some(p) = parent {
                     self.m2.collapsed.remove(&p);
                 }
-                self.mark_modified();
+                self.session.mark_modified();
                 let n = result.layers.len();
                 let mut text = format!(
                     "{}: {name}（{n} {}",
@@ -2220,12 +2224,13 @@ impl AppState {
     /// 選んでいるレイヤーのすぐ上の置き場所（親と、その子の中の位置。選んだレイヤーが無ければ一番上）。
     fn above_selected_slot(&self) -> (Option<LayerId>, Option<usize>) {
         let Some((id, parent)) = self
+            .session
             .selected_layer
-            .and_then(|id| self.doc.layer(id).map(|l| (id, l.parent())))
+            .and_then(|id| self.session.doc.layer(id).map(|l| (id, l.parent())))
         else {
             return (None, None);
         };
-        let siblings = self.doc.children_of(parent).unwrap_or_default();
+        let siblings = self.session.doc.children_of(parent).unwrap_or_default();
         (
             parent,
             siblings.iter().position(|c| *c == id).map(|i| i + 1),
@@ -2238,7 +2243,7 @@ impl AppState {
     fn shelf_image_in_use(&self, id: &str) -> Option<String> {
         let res = self.shelf.get(id).filter(|r| r.kind == "image")?;
         let lang = self.lang;
-        let project = self.project.as_ref().map(|p| p.project());
+        let project = self.session.project.as_ref().map(|p| p.project());
         let users = crate::fillfx::image_users(self, id);
         if users.is_empty() && !self.shelf.used_by(project, id) {
             return None;
@@ -2277,7 +2282,7 @@ impl AppState {
                     self.shelf.selected = None;
                 }
                 self.shelf.changed = true;
-                self.mark_modified();
+                self.session.mark_modified();
                 self.info(
                     Source::Assets,
                     format!(

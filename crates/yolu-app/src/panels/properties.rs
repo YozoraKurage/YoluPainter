@@ -40,8 +40,9 @@ pub fn context(app: &AppState) -> Context {
         return Context::Effect;
     }
     let kind = app
+        .session
         .selected_layer
-        .and_then(|id| app.doc.layer(id))
+        .and_then(|id| app.session.doc.layer(id))
         .map(|l| l.kind());
     match kind {
         Some(LayerKind::Raster) | None => Context::Paint,

@@ -525,7 +525,9 @@ impl AppState {
         let Some(frame) = st.frame_in(rect) else {
             return Ok(None);
         };
-        let view = self.view.view(rect, self.doc.width(), self.doc.height());
+        let view = self
+            .view
+            .view(rect, self.session.doc.width(), self.session.doc.height());
         let [a, b, c, d, e, g] = view.screen_affine();
         let [p, q, r, s, t, u] = frame.image_affine();
         let mapping = StencilMapping::new(

@@ -77,8 +77,8 @@ pub(super) fn interaction_bounds(app: &mut AppState) -> Option<Bounds> {
         (!app.transform_targets().is_empty()).then_some((
             0,
             0,
-            app.doc.width() as i64,
-            app.doc.height() as i64,
+            app.session.doc.width() as i64,
+            app.session.doc.height() as i64,
         ))
     } else {
         app.transform_bounds_cached()
@@ -89,17 +89,21 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, b: Bounds, modifi
     if app.tool == Tool::Liquify {
         let targets = app.transform_targets();
         if app.transform.advanced.session.as_ref().is_none_or(|s| {
-            s.source.id() != app.doc.id()
-                || s.revision != app.doc.revision()
+            s.source.id() != app.session.doc.id()
+                || s.revision != app.session.doc.revision()
                 || s.targets != targets
         }) {
             app.transform.advanced.session =
-                app.doc.capture_snapshot().ok().map(|source| Session {
-                    source,
-                    dabs: Vec::new(),
-                    revision: app.doc.revision(),
-                    targets,
-                });
+                app.session
+                    .doc
+                    .capture_snapshot()
+                    .ok()
+                    .map(|source| Session {
+                        source,
+                        dabs: Vec::new(),
+                        revision: app.session.doc.revision(),
+                        targets,
+                    });
         }
     } else {
         app.transform.advanced.session = None;
@@ -166,7 +170,7 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, b: Bounds, modifi
         handle,
         kind,
         last: p,
-        revision: app.doc.revision(),
+        revision: app.session.doc.revision(),
         targets: app.transform_targets(),
     });
 }
@@ -253,7 +257,10 @@ pub fn commit(app: &mut AppState) -> bool {
         );
         return true;
     }
-    if app.doc.revision() != d.revision || app.transform_targets() != d.targets || !app.can_edit() {
+    if app.session.doc.revision() != d.revision
+        || app.transform_targets() != d.targets
+        || !app.can_edit()
+    {
         return true;
     }
     let mut next_dabs = None;
@@ -261,7 +268,7 @@ pub fn commit(app: &mut AppState) -> bool {
         if let (Warp::Liquify(dabs), Some(session)) = (&d.warp, &app.transform.advanced.session) {
             let mut all = session.dabs.clone();
             all.extend_from_slice(dabs);
-            let result = app.doc.liquify_from_snapshot_cancellable(
+            let result = app.session.doc.liquify_from_snapshot_cancellable(
                 &d.targets,
                 &all,
                 &session.source,
@@ -272,17 +279,18 @@ pub fn commit(app: &mut AppState) -> bool {
             }
             result
         } else {
-            app.doc
+            app.session
+                .doc
                 .warp_layers_cancellable(&d.targets, &d.warp, &mut || false)
         };
     if let (Some(dabs), Some(session)) = (next_dabs, &mut app.transform.advanced.session) {
         session.dabs = dabs;
-        session.revision = app.doc.revision();
+        session.revision = app.session.doc.revision();
     }
     match result {
         Ok(changed) => {
             if changed {
-                app.mark_modified();
+                app.session.mark_modified();
             }
             app.transform.forget_bounds();
         }

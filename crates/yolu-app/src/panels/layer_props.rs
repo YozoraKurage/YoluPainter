@@ -31,10 +31,10 @@ fn edit(app: &mut AppState, edit: Edit) {
 /// レイヤーの欄の全部（選んでいるレイヤーの種類に合わせて）。
 pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Context) {
     let lang = app.lang;
-    let Some(id) = app.selected_layer else {
+    let Some(id) = app.session.selected_layer else {
         return;
     };
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return;
     };
     let (kind, name) = (layer.kind(), layer.name().to_owned());
@@ -51,7 +51,12 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
     }
     lock_section(ui, app, rows);
     crate::rulers::props::section_for_layer(ui, app, rows);
-    if app.doc.layer(id).is_some_and(|l| l.text().is_some()) {
+    if app
+        .session
+        .doc
+        .layer(id)
+        .is_some_and(|l| l.text().is_some())
+    {
         crate::textlayer::props::layer_section(ui, app, rows, enabled);
     }
     match kind {
@@ -71,7 +76,7 @@ pub fn layer_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui:
 /// マスクに描くときのタブ（レイヤーマスクの設定だけ）。
 pub fn mask_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let Some(id) = app.selected_layer else {
+    let Some(id) = app.session.selected_layer else {
         return;
     };
     let enabled = app.can_edit();
@@ -86,7 +91,7 @@ fn layer_section(
     enabled: bool,
     lang: Lang,
 ) {
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return;
     };
     let (group, blend) = (layer.is_group(), layer.blend_mode());
@@ -121,7 +126,7 @@ fn layer_section(
     super::effect_props::anchor_row(ui, app, rows, id, yolu_core::AnchorPlacement::Layer);
     // 画素へのフィルター（調整・グループのレイヤーには画素が無い）
     if matches!(
-        app.doc.layer(id).map(|l| l.kind()),
+        app.session.doc.layer(id).map(|l| l.kind()),
         Some(LayerKind::Raster | LayerKind::Fill)
     ) {
         super::effect_props::add_effect_row(ui, app, rows, yolu_core::FilterTarget::Content);
@@ -151,11 +156,15 @@ pub fn lock_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     }
     let enabled = app.can_edit();
     for flag in LOCK_FLAGS {
-        let own = ids
-            .iter()
-            .all(|id| app.doc.layer(*id).is_some_and(|l| l.locks().contains(flag)));
+        let own = ids.iter().all(|id| {
+            app.session
+                .doc
+                .layer(*id)
+                .is_some_and(|l| l.locks().contains(flag))
+        });
         let effective = ids.iter().all(|id| {
-            app.doc
+            app.session
+                .doc
                 .effective_locks(*id)
                 .is_ok_and(|locks| locks.contains(flag))
         });
@@ -233,13 +242,17 @@ fn fill_section(
     if !open {
         return;
     }
-    let channels = app.doc.channels();
+    let channels = app.session.doc.channels();
     for channel in channels {
-        let Some(info) = app.doc.channel_info(channel).cloned() else {
+        let Some(info) = app.session.doc.channel_info(channel).cloned() else {
             continue;
         };
-        let name = m2::channel_name(lang, &app.doc, channel);
-        let value = app.doc.layer(id).and_then(|l| l.fill_value(channel));
+        let name = m2::channel_name(lang, &app.session.doc, channel);
+        let value = app
+            .session
+            .doc
+            .layer(id)
+            .and_then(|l| l.fill_value(channel));
         let row = rows.row(t::ROW_HEIGHT, 3.0);
         let main = Rect::from_min_max(row.min, pos2(row.right() - 26.0, row.bottom()));
         let side = Rect::from_min_size(
@@ -374,7 +387,12 @@ fn adjustment_section(
     enabled: bool,
     lang: Lang,
 ) {
-    let Some(a) = app.doc.layer(id).and_then(|l| l.adjustment().cloned()) else {
+    let Some(a) = app
+        .session
+        .doc
+        .layer(id)
+        .and_then(|l| l.adjustment().cloned())
+    else {
         return;
     };
     let kind = AdjustmentKind::of(&a);
@@ -398,11 +416,12 @@ fn adjustment_section(
     // 出力には今も効くので、直すためにチャンネルを替えさせない
     let paint = app.m2.paint_channel;
     let reason = app
+        .session
         .doc
         .channel_info(paint)
         .filter(|info| !a.applies_to(info.kind))
         .map(|_| {
-            let name = m2::channel_name(lang, &app.doc, paint);
+            let name = m2::channel_name(lang, &app.session.doc, paint);
             lang.pick(
                 format!("{name} には効きません"),
                 format!("No effect on {name}"),
@@ -422,7 +441,7 @@ fn adjustment_section(
         | AdjustmentType::Posterize => {
             if let Some(value) = a.color_adjust() {
                 let histogram = (a.kind() == AdjustmentType::ToneCurve)
-                    .then(|| super::color_adjust::cached_histogram(ui, &app.doc, id, paint))
+                    .then(|| super::color_adjust::cached_histogram(ui, &app.session.doc, id, paint))
                     .flatten();
                 let mut failure = None;
                 let mut params = super::color_adjust::Params {
@@ -637,9 +656,9 @@ fn channels_section(
     if !open {
         return;
     }
-    for channel in app.doc.channels() {
-        let name = m2::channel_name(lang, &app.doc, channel);
-        let Some(layer) = app.doc.layer(id) else {
+    for channel in app.session.doc.channels() {
+        let name = m2::channel_name(lang, &app.session.doc, channel);
+        let Some(layer) = app.session.doc.layer(id) else {
             return;
         };
         let on = layer.is_channel_enabled(channel);
@@ -739,6 +758,7 @@ fn mask_section(
         return;
     }
     let mask = app
+        .session
         .doc
         .layer(id)
         .and_then(|l| l.mask())
@@ -764,7 +784,7 @@ fn mask_section(
         }
         return;
     };
-    let editing = app.m2.edit_mask && app.selected_layer == Some(id);
+    let editing = app.m2.edit_mask && app.session.selected_layer == Some(id);
     let r = rows.row(24.0, 4.0);
     if w::button(
         ui,

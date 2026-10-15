@@ -73,16 +73,16 @@ impl Rig {
 
     /// ブラシのストロークが始まった状態にする（実際のドラッグは gui_canvas の試験）。
     fn begin_stroke(&mut self) {
-        let layer = self.app.selected_layer.unwrap();
+        let layer = self.app.session.selected_layer.unwrap();
         let settings = self.app.stroke_settings(false);
-        let stroke = self.app.doc.begin_stroke(layer, &settings).unwrap();
-        self.app.stroke = Some(stroke);
+        let stroke = self.app.session.doc.begin_stroke(layer, &settings).unwrap();
+        self.app.session.stroke = Some(stroke);
         self.app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
     }
 
     fn end_stroke(&mut self) {
-        let stroke = self.app.stroke.take().unwrap();
-        self.app.doc.cancel_stroke(stroke);
+        let stroke = self.app.session.stroke.take().unwrap();
+        self.app.session.doc.cancel_stroke(stroke);
         self.app.canvas.stroke = None;
     }
 }
@@ -723,7 +723,7 @@ fn every_canvas_tool_drag_and_press_makes_the_release_wait() {
     );
     waits_for(
         |app| {
-            let layer = app.selected_layer.unwrap();
+            let layer = app.session.selected_layer.unwrap();
             app.text.move_press = Some((layer, a, Mouse));
         },
         |app| app.text.move_press = None,

@@ -44,15 +44,15 @@ pub fn target(app: &AppState) -> Option<(LayerId, Channel)> {
         return None;
     }
     let (layer, channel) = app.fillfx.edit_points?;
-    if app.selected_layer != Some(layer) || app.m2.edit_mask {
+    if app.session.selected_layer != Some(layer) || app.m2.edit_mask {
         return None;
     }
-    let l = app.doc.layer(layer)?;
+    let l = app.session.doc.layer(layer)?;
     (l.kind() == LayerKind::Fill && l.fill_points(channel).is_some()).then_some((layer, channel))
 }
 
 fn gradient(app: &AppState, layer: LayerId, channel: Channel) -> Option<PointGradient> {
-    app.doc.layer(layer)?.fill_points(channel).cloned()
+    app.session.doc.layer(layer)?.fill_points(channel).cloned()
 }
 
 /// 点の新しい色: メインの色（スカラーのチャンネルは、その明るさの灰色）。
@@ -63,6 +63,7 @@ fn main_color(app: &AppState, channel: Channel) -> Rgba8 {
 fn color_of(app: &AppState, channel: Channel, c: [f32; 4]) -> Rgba8 {
     let byte = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     let scalar = app
+        .session
         .doc
         .channel_info(channel)
         .is_some_and(|i| i.kind == ChannelKind::Scalar);
@@ -109,10 +110,14 @@ fn put(
     g: PointGradient,
     coalesce: bool,
 ) -> bool {
-    let revision = app.doc.revision();
-    match app.doc.set_fill_points(layer, channel, Some(g), coalesce) {
+    let revision = app.session.doc.revision();
+    match app
+        .session
+        .doc
+        .set_fill_points(layer, channel, Some(g), coalesce)
+    {
         Ok(()) => {
-            app.mark_modified_if_changed(revision);
+            app.session.mark_modified_if_changed(revision);
             true
         }
         Err(e) => {
@@ -152,13 +157,13 @@ fn world_of(app: &AppState, g: &PointGradient, p: &GradientPoint) -> Option<Vec3
     let v = match g.space {
         PointSpace::Model => p.position,
         PointSpace::Uv => {
-            let (w, h) = (app.doc.width(), app.doc.height());
+            let (w, h) = (app.session.doc.width(), app.session.doc.height());
             let x = (p.position[0] * w as f64).floor();
             let y = (p.position[1] * h as f64).floor();
             if x < 0.0 || y < 0.0 || x >= w as f64 || y >= h as f64 {
                 return None;
             }
-            app.doc.model_position_at(x as u32, y as u32)?
+            app.session.doc.model_position_at(x as u32, y as u32)?
         }
     };
     Some(Vec3::new(v[0] as f32, v[1] as f32, v[2] as f32))
@@ -231,7 +236,7 @@ fn begin(
         );
         return true;
     }
-    app.doc.end_coalescing(); // 前の欄のドラッグにまとめない
+    app.session.doc.end_coalescing(); // 前の欄のドラッグにまとめない
     let (index, added) = match (grabbed, surface) {
         (Some(i), _) => (i, false),
         (None, Some(position)) => {
@@ -266,7 +271,7 @@ fn begin(
         channel,
         index,
         source,
-        doc_id: app.doc.id(),
+        doc_id: app.session.doc.id(),
         in_3d,
         added,
     });
@@ -278,11 +283,11 @@ fn move_to(app: &mut AppState, position: Option<[f64; 3]>) {
     let Some(d) = app.fillfx.point_drag.clone() else {
         return;
     };
-    if app.doc.id() != d.doc_id {
+    if app.session.doc.id() != d.doc_id {
         app.fillfx.point_drag = None;
         return;
     }
-    if app.selected_layer != Some(d.layer) {
+    if app.session.selected_layer != Some(d.layer) {
         release(app, true);
         return;
     }
@@ -319,14 +324,14 @@ pub fn release(app: &mut AppState, commit: bool) {
     let Some(d) = app.fillfx.point_drag.take() else {
         return;
     };
-    if d.doc_id != app.doc.id() {
+    if d.doc_id != app.session.doc.id() {
         return;
     }
     if commit {
-        app.doc.end_coalescing();
+        app.session.doc.end_coalescing();
         return;
     }
-    match app.doc.cancel_coalescing() {
+    match app.session.doc.cancel_coalescing() {
         Ok(_) => {
             if d.added {
                 app.fillfx.point_selected = None;
@@ -338,7 +343,7 @@ pub fn release(app: &mut AppState, commit: bool) {
                 NoticeSource::FillLayer,
                 app.lang.core_error(&e),
             );
-            app.doc.end_coalescing();
+            app.session.doc.end_coalescing();
         }
     }
 }
@@ -384,7 +389,7 @@ pub fn delete_point(app: &mut AppState, layer: LayerId, channel: Channel, index:
         return false;
     }
     g.points.remove(index);
-    app.doc.end_coalescing();
+    app.session.doc.end_coalescing();
     if !put(app, layer, channel, g, false) {
         return false;
     }
@@ -450,19 +455,22 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
 
 /// キャンバスの画素の座標（左下が原点）の、その空間での位置（モデルの空間は位置のマップのその画素。覆っていなければ None）。
 fn canvas_position(app: &AppState, x: f64, y: f64, space: PointSpace) -> Option<[f64; 3]> {
-    let (w, h) = (app.doc.width(), app.doc.height());
+    let (w, h) = (app.session.doc.width(), app.session.doc.height());
     if x < 0.0 || y < 0.0 || x >= w as f64 || y >= h as f64 {
         return None;
     }
     match space {
         PointSpace::Uv => Some([x / w as f64, y / h as f64, 0.0]),
-        PointSpace::Model => app.doc.model_position_at(x as u32, y as u32),
+        PointSpace::Model => app.session.doc.model_position_at(x as u32, y as u32),
     }
 }
 
 /// 点の印のキャンバスの画面の位置（モデルの空間の点は、面の上のいちばん近い点の UV。モデルが無ければ None）。
 fn screen_points_2d(app: &AppState, view: &CanvasView, g: &PointGradient) -> Vec<Option<Pos2>> {
-    let (w, h) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (w, h) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     let model = app.region_model();
     g.points
         .iter()

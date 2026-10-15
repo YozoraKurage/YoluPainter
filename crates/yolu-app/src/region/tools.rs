@@ -133,7 +133,7 @@ pub(crate) fn cycle_index(
         }
         return (0, false);
     }
-    let stamp = (app.doc.id(), app.doc.revision());
+    let stamp = (app.session.doc.id(), app.session.doc.revision());
     let previous = app
         .region
         .cycle
@@ -158,7 +158,7 @@ pub(crate) fn cycle_index(
 
 /// 選び替えの候補を当て終えた（`changed` なら文書に段が積まれた）。次に同じ所を押したとき、文書が変わっていなければこの段を取り消す。
 pub(crate) fn cycle_applied(app: &mut AppState, kind: CycleKind, changed: bool) {
-    let stamp = (app.doc.id(), app.doc.revision());
+    let stamp = (app.session.doc.id(), app.session.doc.revision());
     if let Some(c) = app.region.cycle.as_mut().filter(|c| c.kind == kind) {
         c.stamp = changed.then_some(stamp);
     }
@@ -167,7 +167,10 @@ pub(crate) fn cycle_applied(app: &mut AppState, kind: CycleKind, changed: bool) 
 /// 2D の点の下の今のセットの三角形（見せる形の番号の昇順。重なった UV では 2 つ以上）。
 pub(crate) fn canvas_triangles(app: &mut AppState, view: &CanvasView, at: Pos2) -> Vec<u32> {
     let (x, y) = view.to_canvas(at);
-    let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (cw, ch) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
         return Vec::new();
     }
@@ -237,7 +240,10 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
 
 /// 2D のキャンバスの点（キャンバスの座標）の下の三角形。
 fn under_canvas(app: &mut AppState, x: f64, y: f64) -> Under {
-    let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (cw, ch) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     if !(0.0..cw).contains(&x) || !(0.0..ch).contains(&y) {
         return Under::Nothing;
     }
@@ -275,7 +281,7 @@ pub(crate) fn surface_point(app: &mut AppState, rect: Rect, at: Pos2) -> Result<
             model.material_name(hit.material as usize, app.lang),
         ));
     }
-    let (w, h) = (app.doc.width(), app.doc.height());
+    let (w, h) = (app.session.doc.width(), app.session.doc.height());
     crate::eyedrop::texel_of(hit.uv, w, h).ok_or(Miss::OutsideUv)?;
     // 最後の列・行（u = 1・v = 1）は、画素の中へ収める
     let inside = |v: f32, n: u32| (v as f64 * n as f64).min(n as f64 - 1e-6);
@@ -314,10 +320,14 @@ fn fill_with(app: &mut AppState, layer: LayerId, mask: &SelectionMask) -> Result
     let erase = app.region.erase;
     if app.m2.edit_mask {
         let reveal = mask_reveals(app, layer, erase);
-        return app.doc.fill_mask(layer, opacity, Some(mask), reveal);
+        return app
+            .session
+            .doc
+            .fill_mask(layer, opacity, Some(mask), reveal);
     }
     let channels = app.paint_channels();
-    app.doc
+    app.session
+        .doc
         .fill_material(layer, &channels, opacity, Some(mask), erase)
 }
 
@@ -355,7 +365,10 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let canvas_seeds = match w {
         Where::Canvas(view) => {
             let p = view.to_canvas(at);
-            let (cw, ch) = (app.doc.width() as f64, app.doc.height() as f64);
+            let (cw, ch) = (
+                app.session.doc.width() as f64,
+                app.session.doc.height() as f64,
+            );
             if (0.0..cw).contains(&p.0) && (0.0..ch).contains(&p.1) {
                 Some(app.symmetry_seeds(p, app.region.snap_symmetry))
             } else {
@@ -421,15 +434,15 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             .collect();
         region.sort_unstable();
         region.dedup();
-        let triangles = pixel_triangles(&app.doc, &model.geometry, &region);
+        let triangles = pixel_triangles(&app.session.doc, &model.geometry, &region);
         (
-            SelectionMask::from_triangles(&app.doc, &triangles),
+            SelectionMask::from_triangles(&app.session.doc, &triangles),
             kind_name(lang, kind),
         )
     };
     let mask = mask.and_then(|mask| {
         let margin = app.region.color.margin;
-        let budget = app.doc.source_budget_bytes();
+        let budget = app.session.doc.source_budget_bytes();
         if margin > 0 {
             mask.grow(margin as u32, budget)
         } else if margin < 0 {
@@ -452,7 +465,7 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let erase = app.region.erase;
     match fill_with(app, layer, &mask) {
         Ok(true) => {
-            app.mark_modified();
+            app.session.mark_modified();
             if !erase && !app.m2.edit_mask {
                 app.color.remember();
             }
@@ -518,8 +531,8 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
         let keys: Vec<u64> = candidates.iter().map(|(k, _)| *k).collect();
         let (index, undo) = cycle_index(app, CycleKind::Fill, at, &keys, true);
         if undo {
-            match app.doc.undo() {
-                Ok(_) => app.mark_modified(),
+            match app.session.doc.undo() {
+                Ok(_) => app.session.mark_modified(),
                 Err(e) => {
                     app.region.cycle = None;
                     app.notify(
@@ -538,10 +551,13 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
     let (opacity, erase, mask) = (app.brush.opacity as f64, app.region.erase, app.m2.edit_mask);
     let fill = if mask {
         let reveal = mask_reveals(app, layer, erase);
-        app.doc.begin_mask_triangle_fill(layer, opacity, reveal)
+        app.session
+            .doc
+            .begin_mask_triangle_fill(layer, opacity, reveal)
     } else {
         let channels = app.paint_channels();
-        app.doc
+        app.session
+            .doc
             .begin_material_triangle_fill(layer, &channels, opacity, erase)
     };
     let fill = match fill {
@@ -593,8 +609,8 @@ fn add_region(app: &mut AppState, t: u32) {
     if !drag.keys.insert(index.key(t, kind)) {
         return;
     }
-    let triangles = pixel_triangles(&app.doc, &model.geometry, index.region(t, kind));
-    if let Err(e) = drag.fill.add(&mut app.doc, &triangles) {
+    let triangles = pixel_triangles(&app.session.doc, &model.geometry, index.region(t, kind));
+    if let Err(e) = drag.fill.add(&mut app.session.doc, &triangles) {
         // core は失敗した塗りを取り消してから返す（予算を超えたなど）。札を手放して知らせる
         app.region.drag = None;
         app.canvas.stroke = None;
@@ -647,7 +663,7 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
     let regions = drag.keys.len();
     let what = kind_name(lang, app.region.kind);
     if cancel {
-        drag.fill.cancel(&mut app.doc);
+        drag.fill.cancel(&mut app.session.doc);
         app.region.cycle = None;
         app.info(
             Source::Fill,
@@ -655,7 +671,7 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
         );
         return true;
     }
-    match drag.fill.commit(&mut app.doc) {
+    match drag.fill.commit(&mut app.session.doc) {
         Ok(result) => {
             if regions == 1 && !drag.on_surface {
                 cycle_applied(app, CycleKind::Fill, result.changed);
@@ -663,7 +679,7 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
                 app.region.cycle = None;
             }
             if result.changed {
-                app.mark_modified();
+                app.session.mark_modified();
                 let text = if drag.erase {
                     format!(
                         "{what} × {regions} {}",

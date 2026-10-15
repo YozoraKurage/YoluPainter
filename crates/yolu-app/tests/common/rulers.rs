@@ -93,19 +93,26 @@ pub fn mirror_3d(app: &mut AppState, a: DVec3, normal: DVec3) -> RulerId {
 
 /// 選んでいるレイヤーが持つ定規の数。
 pub fn count(app: &AppState) -> usize {
-    app.selected_layer
-        .and_then(|id| app.doc.layer(id))
+    app.session
+        .selected_layer
+        .and_then(|id| app.session.doc.layer(id))
         .map_or(0, |l| l.rulers().len())
 }
 
 /// 文書の全部のレイヤーの定規の数。
 pub fn total(app: &AppState) -> usize {
-    app.doc.layers().iter().map(|l| l.rulers().len()).sum()
+    app.session
+        .doc
+        .layers()
+        .iter()
+        .map(|l| l.rulers().len())
+        .sum()
 }
 
 /// レイヤーの定規。
 pub fn of(app: &AppState, layer: LayerId) -> Vec<Ruler> {
-    app.doc
+    app.session
+        .doc
         .layer(layer)
         .map(|l| l.rulers().to_vec())
         .unwrap_or_default()

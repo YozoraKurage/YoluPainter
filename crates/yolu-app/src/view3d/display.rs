@@ -428,7 +428,7 @@ pub fn shading_label(app: &AppState, shading: Shading) -> String {
             .pick("マテリアル (PBR)", "Material (PBR)")
             .to_owned(),
         Shading::Neutral => app.lang.pick("中立", "Neutral").to_owned(),
-        Shading::Channel(c) => crate::m2::channel_name(app.lang, &app.doc, c),
+        Shading::Channel(c) => crate::m2::channel_name(app.lang, &app.session.doc, c),
         Shading::MeshMap(k) => format!(
             "{}: {}",
             app.lang.pick("メッシュマップ", "Mesh Map"),
@@ -479,7 +479,7 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
     v.push(Entry::Heading(
         lang.pick("メッシュマップだけ", "Mesh Map Only").to_owned(),
     ));
-    let maps = &app.sets.current().mesh_maps;
+    let maps = &app.session.sets.current().mesh_maps;
     for kind in MeshMapKind::ALL {
         v.push(
             Entry::item(

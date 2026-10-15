@@ -295,9 +295,9 @@ impl NpWindow {
     /// いないときの Live Link のモデル（Unity のシーンのもの。ここでは替えないが、そのマテリアルにセットを作れる）。
     fn app_model<'a>(&self, app: &'a AppState) -> Option<&'a SceneModel> {
         if self.configure {
-            app.model.as_ref()
+            app.session.model.as_ref()
         } else if self.model.is_none() {
-            app.model.as_ref().filter(|m| m.is_link())
+            app.session.model.as_ref().filter(|m| m.is_link())
         } else {
             None
         }
@@ -596,7 +596,7 @@ impl AppState {
     fn np_window_step(&mut self, win: &mut NpWindow, action: NpAction) -> bool {
         match action {
             NpAction::ChooseModel(path) => {
-                if win.configure && self.model.as_ref().is_some_and(|m| m.is_link()) {
+                if win.configure && self.session.model.as_ref().is_some_and(|m| m.is_link()) {
                     // Live Link のモデルは Unity のシーンのもの（ここでは替えない）
                 } else {
                     // モデルが替わると、見せた確かめの一覧（計画）は古い。落としたファイルは確かめが出ている間にも届く
@@ -754,13 +754,18 @@ impl AppState {
     /// 構成のウィンドウを開く。`model` があればそのモデルに替える下書きで開く。
     fn np_open_configure(&mut self, model: Option<PathBuf>) {
         let mut win = NpWindow::blank(true);
-        win.normal = self.doc.normal_settings().file_direction();
+        win.normal = self.session.doc.normal_settings().file_direction();
         win.normal_opened = win.normal;
-        win.resolution = nearest_resolution(self.doc.width());
-        win.sets_seen = self.sets.iter().map(|s| s.uid).collect();
-        let groups = self.model.as_ref().map(groups_of).unwrap_or_default();
-        for i in 0..self.sets.len() {
-            let set = self.sets.get(i).expect("範囲内");
+        win.resolution = nearest_resolution(self.session.doc.width());
+        win.sets_seen = self.session.sets.iter().map(|s| s.uid).collect();
+        let groups = self
+            .session
+            .model
+            .as_ref()
+            .map(groups_of)
+            .unwrap_or_default();
+        for i in 0..self.session.sets.len() {
+            let set = self.session.sets.get(i).expect("範囲内");
             let doc = self.set_doc(i);
             win.drafts.push(SetDraft {
                 uid: Some(set.uid),
@@ -786,7 +791,7 @@ impl AppState {
             self.np_window_action(NpAction::ChooseModel(path));
             return;
         }
-        if self.is_pristine() || self.model.as_ref().is_some_and(|m| m.is_link()) {
+        if self.is_pristine() || self.session.model.as_ref().is_some_and(|m| m.is_link()) {
             self.np_open_new_with(Some(path));
         } else {
             self.np_open_configure(Some(path));
@@ -795,12 +800,13 @@ impl AppState {
 
     /// 開いた・保存したファイルが無く、描いていない・変えていない（最初のままの）プロジェクトか。
     pub fn is_pristine(&self) -> bool {
-        self.project.is_none()
-            && !self.modified
-            && self.sets.len() == 1
-            && !self.doc.can_undo()
-            && self.sets.current().read_only.is_none()
+        self.session.project.is_none()
+            && !self.session.is_modified()
+            && self.session.sets.len() == 1
+            && !self.session.doc.can_undo()
+            && self.session.sets.current().read_only.is_none()
             && !self
+                .session
                 .doc
                 .layers()
                 .iter()
@@ -816,7 +822,7 @@ impl AppState {
                     .sets_seen
                     .iter()
                     .copied()
-                    .eq(self.sets.iter().map(|s| s.uid))
+                    .eq(self.session.sets.iter().map(|s| s.uid))
         }) {
             self.np.window = None;
             self.warn(
@@ -862,12 +868,12 @@ impl AppState {
         let lang = self.lang;
         let uids: Vec<u32> = uids
             .into_iter()
-            .filter(|u| self.sets.index_of(*u).is_some())
+            .filter(|u| self.session.sets.index_of(*u).is_some())
             .collect();
         if uids.is_empty() {
             return;
         }
-        if uids.len() >= self.sets.len() {
+        if uids.len() >= self.session.sets.len() {
             self.refuse(
                 Source::Project,
                 lang.pick(
@@ -887,7 +893,7 @@ impl AppState {
     /// 今のプロジェクトを替えるとき（新規・開く・作る）: 前のプロジェクトのモデルの読み込みを止め、世代を進める。Live Link の裏の仕事は、
     /// `project_epoch` の違いで見分けて止める（`LiveLink::poll`）。
     pub fn np_project_replaced(&mut self) {
-        self.project_epoch += 1;
+        self.session.bump_project_epoch();
         self.np.generation += 1;
         self.np.reopening = None;
         self.np.window = None;
@@ -899,11 +905,12 @@ impl AppState {
     pub fn drop_project_model(&mut self) {
         self.np.model_file = None;
         let rig_model = self
+            .session
             .model
             .as_ref()
             .is_some_and(|m| matches!(m.source, crate::model::ModelSource::Rig { .. }));
         if rig_model || self.view3d.pose.session.is_some() {
-            self.model = None;
+            self.session.model = None;
             self.view3d.load_demo();
             self.view3d.pose.session = None;
             self.view3d.pose.drag = None;

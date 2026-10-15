@@ -42,7 +42,7 @@ fn look(icon: &'static str, color: Color32, tooltip: String) -> Option<SetLook> 
 
 /// セットの見え方（無ければ普通）。
 pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
-    let set = app.sets.get(index)?;
+    let set = app.session.sets.get(index)?;
     if let Some(reason) = &set.read_only {
         return look(
             "lock",
@@ -50,7 +50,7 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
             format!("{}: {reason}", app.lang.pick("読むだけ", "Read-only")),
         );
     }
-    let model = app.model.as_ref()?;
+    let model = app.session.model.as_ref()?;
     let Some(material) = set.bound else {
         // 薄い切れた鎖。理由はツールチップ（マテリアルに付いていないセットと、今のモデルに無いマテリアルのセット）
         let tooltip = match &set.material {
@@ -102,7 +102,7 @@ pub struct BakeEntrance {
 pub fn bake_entrance(app: &AppState) -> BakeEntrance {
     let lang = app.lang;
     let name = lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…");
-    let marked = app.sets.current().mesh_maps.is_empty();
+    let marked = app.session.sets.current().mesh_maps.is_empty();
     let reason = if app.bake.is_baking() {
         Some(lang.pick("ベイク中", "Baking"))
     } else if marked {
@@ -132,7 +132,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     );
     let list = Rect::from_min_max(r.min, pos2(r.right(), toolbar.top()));
     w::fill(ui.painter(), list, t::CONTROL_BG);
-    let n = app.sets.len();
+    let n = app.session.sets.len();
     let content = n as f32 * ROW_HEIGHT;
     let bar = Scroll::begin(ui, list, content, &mut app.ui.set_scroll);
     let row_width = list.width() - bar.reserved();
@@ -176,14 +176,14 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
             "Add an empty texture set (same size and channels as this one)",
         ),
         false,
-        free && app.sets.len() < crate::newproject::MAX_SETS,
+        free && app.session.sets.len() < crate::newproject::MAX_SETS,
         16.0,
     )
     .clicked()
     {
         action = Some(crate::newproject::NpAction::AddSet);
     }
-    let only = app.sets.len() <= 1;
+    let only = app.session.sets.len() <= 1;
     if w::icon_button(
         ui,
         button(bar.left() + 34.0),
@@ -207,7 +207,7 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     .clicked()
     {
         action = Some(crate::newproject::NpAction::RemoveSets(vec![
-            app.sets.current().uid,
+            app.session.sets.current().uid,
         ]));
     }
     // 足す・消す・ベイク・設定の 4 つが重ならない幅があるときだけ（狭いときのベイクは、セットの右クリックのメニューと、操作 `bake.open` のキー・パイから）
@@ -267,12 +267,12 @@ fn set_row(
     row: Rect,
     index: usize,
 ) {
-    let Some(set) = app.sets.get(index) else {
+    let Some(set) = app.session.sets.get(index) else {
         return;
     };
     let (uid, name, visible) = (set.uid, set.name.clone(), set.visible);
     let material_ref = set.material.clone();
-    let selected = index == app.sets.current_index();
+    let selected = index == app.session.sets.current_index();
     let free = !app.is_stroking();
     let doc = app.set_doc(index);
     let resolution = if doc.width() == doc.height() {

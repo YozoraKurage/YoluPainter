@@ -8,13 +8,11 @@ use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
 use crate::engine::unit_f32_to_byte;
-use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8, Stroke};
+use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8};
 use crate::lang::Lang;
 use crate::livelink::{LinkRequest, LinkView};
 use crate::m2::{Edit, LayerDrag, M2State, UiOp};
-use crate::model::SceneModel;
 use crate::notice::Source;
-use crate::project::ProjectFile;
 use crate::sets::TextureSets;
 use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
@@ -794,14 +792,8 @@ pub struct AppState {
     pub subtools: crate::subtool::SubToolState,
     /// グラデーションセット（グラデーションマップ・塗りつぶしのグラデーションのランプの見本の一覧。利用者の組は設定のフォルダに保存。.ylp には入れない）。
     pub ramp_sets: crate::rampsets::RampSets,
-    pub doc: Document,
-    /// 文書を別のものに替えた回数（開く・新しく作る・PSD を読み込む・テクスチャセットを切り替える）。キャンバスの表示は、文書 ID が
-    /// 同じでも（.ylp や PSD を読み直すと保存した ID が戻る）これが変わったら、前の文書の合成を捨てて作り直す。文書を丸ごと
-    /// 置き換える口は [`AppState::document_replaced`] を呼ぶこと。
-    pub(crate) doc_epoch: u64,
-    /// 描いているストロークの札（core の `Stroke`。文書を借りないのでフレームをまたいで持つ）。
-    pub stroke: Option<Stroke>,
-    pub selected_layer: Option<LayerId>,
+    /// 開いているプロジェクトの状態（今の文書・テクスチャセット・モデル・ファイルとの結び付き・変更の印）。
+    pub session: crate::project::Session,
     pub tool: Tool,
     pub brush: BrushState,
     pub color: ColorState,
@@ -824,27 +816,15 @@ pub struct AppState {
     pub ui: UiTemp,
     pub canvas: CanvasInput,
     pub popup: Option<OpenPopup>,
-    pub project_name: String,
-    /// 次に名前を付けて保存のウィンドウを開く場所（退避を開いたときの、元の .ylp のフォルダー。保存したら外す。無ければ OS の既定）。
-    pub save_folder: Option<std::path::PathBuf>,
     /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
     pub places: crate::dialog::places::Places,
     /// 最近開いたプロジェクト（ファイルのメニュー。実際のウィンドウは起動で `recent.conf` から読む）。
     pub recent_projects: crate::recent::Recent,
-    /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
-    pub modified: bool,
-    /// 直前の保存で書き直したテクスチャセット（正本）の数。画面には出さない（試験が、変えていないセットを書き直さないことを確かめる）。
-    #[doc(hidden)]
-    pub rewritten_sets: usize,
     pub reset_layout: bool,
     pub quit: bool,
     /// 保存していない変更の問い（アプリの中のウィンドウ。聞いている間だけ Some。`discard`）。開いている間は、キーの割り当て・キャンバスの入力を止める
     /// （`windows::modal_open`）ので、後ろの文書は変わらない。
     pub discard_ask: Option<crate::discard::Ask>,
-    /// テクスチャセット（今のセットの文書は `doc`）。
-    pub sets: TextureSets,
-    /// 読み込んだモデル（Live Link で受けたもの。3D ビューが読む）。
-    pub model: Option<SceneModel>,
     /// Live Link の様子（毎フレーム `LiveLink` から写す。状態の帯とメニューが読む）。
     pub link: LinkView,
     /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
@@ -853,17 +833,10 @@ pub struct AppState {
     pub link_target: Option<crate::livelink::LinkTarget>,
     /// 開いた .ylp に残っていた Live Link の相手（`livelink.json`）。`LiveLink` が次のフレームで開き直す。
     pub link_reopen: Option<yolu_protocol::files::Request>,
-    /// プロジェクトを替えた回数（新規・開く・作る。`np_project_replaced` が進める）。Live Link の裏の仕事が、始めた時のプロジェクトへだけ入るための目印。
-    pub project_epoch: u64,
     /// 外からの操作（MCP のクライアント・コマンドライン）を受けている様子（毎フレーム `McpServer` から写す。状態の帯の印が読む）。
     pub ops: crate::mcp_server::OpsView,
     /// Live Link で入れた「元の絵」のレイヤーの印（レイヤーの欄が読む。保存しない）。
     pub link_originals: crate::livelink::OriginalMarks,
-    /// 新規プロジェクトのウィンドウで、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
-    /// 決める。選んだ大きさは元の絵で上書きしない）。起動時の既定・ファイルの「新規」・開いたプロジェクトでは false。
-    pub resolution_chosen: bool,
-    /// 開いた .ylp（保存先と、保存で残す元の中身）。
-    pub project: Option<ProjectFile>,
     /// ファイルのウィンドウを開く頼み（`YoluApp` が開く。試験では開かない）。
     pub dialog_request: Option<DialogRequest>,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
@@ -1027,18 +1000,6 @@ pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Opti
 pub const DEFAULT_DOCUMENT_SIZE: u32 = 2048;
 
 impl AppState {
-    /// 保存していない変更がある印を立てる（`modified = true` を直に書かない。下ろす側は保存・開くが `modified = false` で行う）。
-    pub fn mark_modified(&mut self) {
-        self.modified = true;
-    }
-
-    /// 今の文書の版が `before`（編集の前に控えた `doc.revision()`）と違えば、保存していない変更の印を立てる。
-    pub fn mark_modified_if_changed(&mut self, before: u64) {
-        if self.doc.revision() != before {
-            self.mark_modified();
-        }
-    }
-
     /// 表示の言語を替える。既定の名前のまま（利用者が付けていない。復旧から開いて、まだ保存していない名前を含む）のプロジェクト名・最初のテクスチャセット・
     /// まだ編集していない文書の最初のレイヤーは、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
     pub fn set_language(&mut self, lang: Lang) {
@@ -1048,24 +1009,32 @@ impl AppState {
         }
         self.lang = lang;
         let untitled = |l: Lang| l.pick("名称未設定", "Untitled");
-        if self.project.is_none() && self.project_name == untitled(old) {
-            self.project_name = untitled(lang).into();
+        if self.session.project.is_none() && self.session.project_name == untitled(old) {
+            self.session.project_name = untitled(lang).into();
         }
         // 復旧から開いた文書（保存先がまだ無い）の既定の名前も、言語に追従する
-        if self.project.as_ref().is_some_and(|p| !p.is_file())
-            && self.project_name == crate::recovery::recovered_name(old)
+        if self.session.project.as_ref().is_some_and(|p| !p.is_file())
+            && self.session.project_name == crate::recovery::recovered_name(old)
         {
-            self.project_name = crate::recovery::recovered_name(lang).into();
+            self.session.project_name = crate::recovery::recovered_name(lang).into();
         }
-        self.sets.retitle_defaults(old, lang);
+        self.session.sets.retitle_defaults(old, lang);
         let first_layer = |l: Lang| format!("{} 1", l.pick("レイヤー", "Layer"));
-        if self.project.is_none() && !self.doc.can_undo() && self.doc.layers().len() == 1 {
-            let layer = &self.doc.layers()[0];
+        if self.session.project.is_none()
+            && !self.session.doc.can_undo()
+            && self.session.doc.layers().len() == 1
+        {
+            let layer = &self.session.doc.layers()[0];
             if layer.name() == first_layer(old) {
                 let id = layer.id();
                 // 最初のレイヤーを足したことと同じく、名前の付け直しも取り消せない履歴にしない
-                if self.doc.set_layer_name(id, &first_layer(lang)).is_ok() {
-                    let _ = self.doc.clear_history();
+                if self
+                    .session
+                    .doc
+                    .set_layer_name(id, &first_layer(lang))
+                    .is_ok()
+                {
+                    let _ = self.session.doc.clear_history();
                 }
             }
         }
@@ -1086,10 +1055,12 @@ impl AppState {
             region: Default::default(),
             subtools: Default::default(),
             ramp_sets: Default::default(),
-            doc,
-            doc_epoch: 0,
-            stroke: None,
-            selected_layer: first,
+            session: crate::project::Session::new(
+                doc,
+                first,
+                sets,
+                lang.pick("名称未設定", "Untitled").into(),
+            ),
             tool: Tool::Brush,
             brush: BrushState::default(),
             color: ColorState::default(),
@@ -1107,26 +1078,17 @@ impl AppState {
             },
             canvas: CanvasInput::default(),
             popup: None,
-            project_name: lang.pick("名称未設定", "Untitled").into(),
-            save_folder: None,
             places: Default::default(),
             recent_projects: Default::default(),
-            modified: false,
-            rewritten_sets: 0,
             reset_layout: false,
             quit: false,
             discard_ask: None,
-            sets,
-            model: None,
             link: LinkView::default(),
             link_request: None,
             link_target: None,
             link_reopen: None,
-            project_epoch: 0,
             ops: Default::default(),
             link_originals: Default::default(),
-            resolution_chosen: false,
-            project: None,
             dialog_request: None,
             view3d: View3dState::default(),
             clone: Default::default(),
@@ -1223,7 +1185,7 @@ impl AppState {
 
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
     pub fn is_stroking(&self) -> bool {
-        self.doc.has_active_stroke() || crate::features::stroking(self)
+        self.session.doc.has_active_stroke() || crate::features::stroking(self)
     }
 
     /// パネルの部品の見た目を描き始める前のまま保つ間か（描いている間と、3D ビューでポーズのギズモをドラッグしている間）。
@@ -1289,14 +1251,14 @@ impl AppState {
         }
         match &self.view3d.pose.session {
             Some(s) if crate::view3d::pose::owns_undo(self) => s.can_undo(),
-            _ => self.doc.can_undo(),
+            _ => self.session.doc.can_undo(),
         }
     }
 
     pub fn can_redo(&self) -> bool {
         match &self.view3d.pose.session {
             Some(s) if crate::view3d::pose::owns_undo(self) => s.can_redo(),
-            _ => self.doc.can_redo(),
+            _ => self.session.doc.can_redo(),
         }
     }
 
@@ -1308,10 +1270,11 @@ impl AppState {
     pub fn ensure_selection(&mut self) {
         self.ensure_m2_selection();
         let alive = self
+            .session
             .selected_layer
-            .is_some_and(|id| self.doc.layer(id).is_some());
+            .is_some_and(|id| self.session.doc.layer(id).is_some());
         if !alive {
-            self.selected_layer = self.doc.layers().last().map(|l| l.id());
+            self.session.selected_layer = self.session.doc.layers().last().map(|l| l.id());
         }
     }
 
@@ -1319,7 +1282,7 @@ impl AppState {
         format!(
             "{} {}",
             self.lang.pick("レイヤー", "Layer"),
-            self.doc.layers().len() + 1
+            self.session.doc.layers().len() + 1
         )
     }
 
@@ -1407,10 +1370,10 @@ impl AppState {
                 if crate::view3d::pose::owns_undo(self) {
                     return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Undo));
                 }
-                match self.doc.undo() {
+                match self.session.doc.undo() {
                     Ok(true) => {
                         self.info(Source::Edit, self.lang.pick("取り消しました。", "Undone."));
-                        self.mark_modified();
+                        self.session.mark_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1429,10 +1392,10 @@ impl AppState {
                 if crate::view3d::pose::owns_undo(self) {
                     return self.apply(Action::Pose(crate::view3d::pose::PoseAction::Redo));
                 }
-                match self.doc.redo() {
+                match self.session.doc.redo() {
                     Ok(true) => {
                         self.info(Source::Edit, self.lang.pick("やり直しました。", "Redone."));
-                        self.mark_modified();
+                        self.session.mark_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1448,9 +1411,13 @@ impl AppState {
                     return refuse(self);
                 }
                 let name = self.layer_name_for_new();
-                if let Ok(id) = self.doc.add_layer_above(&name, self.selected_layer) {
-                    self.selected_layer = Some(id);
-                    self.mark_modified();
+                if let Ok(id) = self
+                    .session
+                    .doc
+                    .add_layer_above(&name, self.session.selected_layer)
+                {
+                    self.session.selected_layer = Some(id);
+                    self.session.mark_modified();
                 }
             }
             Action::DeleteLayer => {
@@ -1458,7 +1425,7 @@ impl AppState {
                     return refuse(self);
                 }
                 if self.has_multiple_layers_selected() {
-                    let revision = self.doc.revision();
+                    let revision = self.session.doc.revision();
                     if let Err(e) = self.delete_selected_layers() {
                         self.notify(
                             crate::notice::Kind::of_core(&e),
@@ -1466,14 +1433,14 @@ impl AppState {
                             self.lang.core_error(&e),
                         );
                     }
-                    self.mark_modified_if_changed(revision);
+                    self.session.mark_modified_if_changed(revision);
                     self.ensure_selection();
                     return;
                 }
-                if let Some(id) = self.selected_layer {
+                if let Some(id) = self.session.selected_layer {
                     // グループは中身ごと消える。何も残らなくなる削除は断る
-                    let size = crate::m2::subtree_len(&self.doc, id);
-                    if self.doc.layers().len() <= size {
+                    let size = crate::m2::subtree_len(&self.session.doc, id);
+                    if self.session.doc.layers().len() <= size {
                         self.refuse(
                             Source::Layer,
                             self.lang.pick(
@@ -1484,16 +1451,17 @@ impl AppState {
                         return;
                     }
                     let start = self
+                        .session
                         .doc
                         .layer_index(id)
                         .map(|i| (i + 1).saturating_sub(size));
-                    match self.doc.remove_layer(id) {
+                    match self.session.doc.remove_layer(id) {
                         Ok(()) => {
-                            let layers = self.doc.layers();
-                            self.selected_layer = start
+                            let layers = self.session.doc.layers();
+                            self.session.selected_layer = start
                                 .map(|i| layers[i.saturating_sub(1).min(layers.len() - 1)].id());
                             self.set_edit_mask(false);
-                            self.mark_modified();
+                            self.session.mark_modified();
                         }
                         Err(e) => self.notify(
                             crate::notice::Kind::of_core(&e),
@@ -1510,21 +1478,25 @@ impl AppState {
                 if self.has_multiple_layers_selected() {
                     // 選んだレイヤーをまとめて 1 段（それぞれの兄弟の中で。選んだレイヤーどうしは追い越さない）
                     let ids = self.selected_layers();
-                    if let Ok(true) = self.doc.step_layers(&ids, action == Action::LayerUp) {
-                        self.mark_modified();
+                    if let Ok(true) = self
+                        .session
+                        .doc
+                        .step_layers(&ids, action == Action::LayerUp)
+                    {
+                        self.session.mark_modified();
                     }
                     return;
                 }
-                if let Some(id) = self.selected_layer {
+                if let Some(id) = self.session.selected_layer {
                     // 同じグループの兄弟の中で動かす（グループの外へは出さない）
-                    let parent = self.doc.layer(id).and_then(|l| l.parent());
-                    let siblings = self.doc.children_of(parent).unwrap_or_default();
+                    let parent = self.session.doc.layer(id).and_then(|l| l.parent());
+                    let siblings = self.session.doc.children_of(parent).unwrap_or_default();
                     if let Some(i) = siblings.iter().position(|v| *v == id) {
                         let up = action == Action::LayerUp;
                         let to = if up { i + 1 } else { i.wrapping_sub(1) };
                         if to < siblings.len() {
-                            let _ = self.doc.move_layer(id, to);
-                            self.mark_modified();
+                            let _ = self.session.doc.move_layer(id, to);
+                            self.session.mark_modified();
                         }
                     }
                 }
@@ -1533,16 +1505,16 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if let Some(visible) = self.doc.layer(id).map(|l| l.visible()) {
-                    let _ = self.doc.set_layer_visible(id, !visible);
-                    self.mark_modified();
+                if let Some(visible) = self.session.doc.layer(id).map(|l| l.visible()) {
+                    let _ = self.session.doc.set_layer_visible(id, !visible);
+                    self.session.mark_modified();
                 }
             }
             Action::SetBlend(id, mode) => {
                 if stroking {
                     return refuse(self);
                 }
-                if let Err(e) = self.doc.set_layer_blend_mode(id, mode) {
+                if let Err(e) = self.session.doc.set_layer_blend_mode(id, mode) {
                     self.notify(
                         crate::notice::Kind::of_core(&e),
                         Source::Layer,
@@ -1550,7 +1522,7 @@ impl AppState {
                     );
                     return;
                 }
-                self.mark_modified();
+                self.session.mark_modified();
             }
             Action::StartRename(id) => {
                 self.ui.renaming = Some(id);
@@ -1623,14 +1595,14 @@ impl AppState {
                 );
             }
             Action::SelectSet(uid) => {
-                if let Some(i) = self.sets.index_of(uid) {
+                if let Some(i) = self.session.sets.index_of(uid) {
                     if let Err(e) = self.switch_set(i) {
                         self.refuse(Source::TextureSet, e);
                     }
                 }
             }
             Action::ToggleSetVisible(uid) => self.toggle_set_visible(uid),
-            Action::StartRenameSet(uid) => match self.sets.by_uid(uid) {
+            Action::StartRenameSet(uid) => match self.session.sets.by_uid(uid) {
                 Some(set) if set.read_only.is_some() => {
                     let reason = set.read_only.as_deref().unwrap_or_default();
                     let text = crate::lang::refusals::read_only_set(self.lang, reason);
@@ -1707,6 +1679,7 @@ impl AppState {
                     return;
                 }
                 match self
+                    .session
                     .project
                     .as_ref()
                     .filter(|p| p.is_file())
@@ -1863,20 +1836,20 @@ mod tests {
     #[test]
     fn layer_actions() {
         let mut s = AppState::new(64, 64);
-        let first = s.selected_layer.unwrap();
+        let first = s.session.selected_layer.unwrap();
         s.apply(Action::NewLayer);
-        let second = s.selected_layer.unwrap();
+        let second = s.session.selected_layer.unwrap();
         assert_ne!(first, second);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_eq!(s.session.doc.layers().len(), 2);
         s.apply(Action::LayerDown);
-        assert_eq!(s.doc.layers()[0].id(), second);
+        assert_eq!(s.session.doc.layers()[0].id(), second);
         s.apply(Action::DeleteLayer);
-        assert_eq!(s.doc.layers().len(), 1);
-        assert_eq!(s.selected_layer, Some(first));
+        assert_eq!(s.session.doc.layers().len(), 1);
+        assert_eq!(s.session.selected_layer, Some(first));
         s.apply(Action::DeleteLayer);
-        assert_eq!(s.doc.layers().len(), 1, "最後のレイヤーは消さない");
+        assert_eq!(s.session.doc.layers().len(), 1, "最後のレイヤーは消さない");
         s.apply(Action::Undo);
-        assert_eq!(s.doc.layers().len(), 2);
+        assert_eq!(s.session.doc.layers().len(), 2);
     }
 
     #[test]

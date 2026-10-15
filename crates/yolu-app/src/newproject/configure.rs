@@ -252,7 +252,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         }
         seen_names.push(upper);
         if let Some(uid) = d.uid {
-            if app.sets.index_of(uid).is_none() {
+            if app.session.sets.index_of(uid).is_none() {
                 return Err(lang
                     .pick(
                         "このプロジェクトに無いセットです",
@@ -297,6 +297,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         }
     }
     let removed: Vec<u32> = app
+        .session
         .sets
         .iter()
         .map(|s| s.uid)
@@ -334,6 +335,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         kinds.push(ConfirmKind::Removal);
         for uid in &removed {
             let name = app
+                .session
                 .sets
                 .by_uid(*uid)
                 .map(|s| s.name.clone())
@@ -364,7 +366,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     if let Some(name) = &model {
         kinds.push(ConfirmKind::Model);
         // 前のモデルが無いときは、前の名前を出さず新しいモデルの名前だけ（「追加」）
-        let was = app.model.as_ref().map(|m| m.name.clone());
+        let was = app.session.model.as_ref().map(|m| m.name.clone());
         rows.push(PlanRow {
             left: match (&was, win.reload) {
                 (Some(was), false) => format!("{was} → {name}"),
@@ -387,7 +389,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             let print = yolu_core::paths::fingerprint(model.geometry());
             let unbound = drafts
                 .iter()
-                .filter_map(|d| d.uid.and_then(|uid| app.sets.index_of(uid)))
+                .filter_map(|d| d.uid.and_then(|uid| app.session.sets.index_of(uid)))
                 .flat_map(|i| app.set_doc(i).layers())
                 .filter(|l| {
                     matches!(l.path(), Some(yolu_core::LayerPath::Surface(p)) if p.model_fingerprint != print)
@@ -442,16 +444,19 @@ pub(super) fn apply(
     // ── 失敗しうる所（まだ何も変えない）──
     // 足すセットの文書: 今のセット（消すなら残るセットの先頭）と同じチャンネルと Normal の設定で、下書きの大きさ
     let like_index = {
-        let current = app.sets.current_index();
+        let current = app.session.sets.current_index();
         let kept = |i: usize| {
-            app.sets
+            app.session
+                .sets
                 .get(i)
                 .is_some_and(|s| !plan.removed.contains(&s.uid))
         };
         if kept(current) {
             current
         } else {
-            (0..app.sets.len()).find(|i| kept(*i)).unwrap_or(current)
+            (0..app.session.sets.len())
+                .find(|i| kept(*i))
+                .unwrap_or(current)
         }
     };
     let (channels, normal, tile) = {
@@ -474,7 +479,7 @@ pub(super) fn apply(
     // 大きさを変える（途中で断られたら、先に変えたセットを元へ戻す）
     let resized = resample(app, &plan)?;
     // ── ここから失敗しない ──
-    app.doc.end_coalescing();
+    app.session.doc.end_coalescing();
     // モデル
     let mut model_note = None;
     let mut pose_note = None;
@@ -485,7 +490,7 @@ pub(super) fn apply(
             if let Some(session) = app.view3d.pose.session.as_ref() {
                 let record = SceneModel::from_rig(&session.rig);
                 model_note = Some(record.name.clone());
-                app.model = Some(record);
+                app.session.model = Some(record);
             }
             app.np.model_file = Some(path);
             win.model = None;
@@ -495,7 +500,12 @@ pub(super) fn apply(
             pose_note = crate::view3d::pose::stored::restore_from_project(app);
         }
     }
-    let groups = app.model.as_ref().map(groups_of).unwrap_or_default();
+    let groups = app
+        .session
+        .model
+        .as_ref()
+        .map(groups_of)
+        .unwrap_or_default();
     // 足す・消す・並べる・名前とマテリアル
     let mut order: Vec<u32> = Vec::with_capacity(win.drafts.len());
     let mut added: Vec<u32> = Vec::new();
@@ -504,8 +514,8 @@ pub(super) fn apply(
         match (d.uid, doc) {
             (Some(uid), _) => {
                 order.push(uid);
-                if let Some(i) = app.sets.index_of(uid) {
-                    if let Some(set) = app.sets.get_mut(i) {
+                if let Some(i) = app.session.sets.index_of(uid) {
+                    if let Some(set) = app.session.sets.get_mut(i) {
                         if set.name != name && set.read_only.is_none() {
                             set.name = name;
                             set.auto_name = false;
@@ -523,9 +533,10 @@ pub(super) fn apply(
             (None, Some(doc)) => {
                 let key = d.key.clone();
                 let i = app
+                    .session
                     .sets
                     .push(guid_string(doc.id()), name, false, key, None, doc);
-                if let Some(set) = app.sets.get_mut(i) {
+                if let Some(set) = app.session.sets.get_mut(i) {
                     set.bound = d
                         .material
                         .and_then(|g| groups.get(g))
@@ -539,12 +550,12 @@ pub(super) fn apply(
     }
     // 消す（足したあとなので、全部を入れ替えるときも、消す途中でセットが 0 にならない）
     let removed_names = app.remove_sets(&plan.removed).unwrap_or_default();
-    app.sets.reorder(&order);
+    app.session.sets.reorder(&order);
     app.dedupe_set_keys();
     // 法線の形式（利用者がウィンドウで変えたときだけ、全部のセットへ。足したセットは作るときに入れてある）。セットごとに持てるので、
     // 触っていないときは、形式が混在したプロジェクトの別のセットを黙って書き換えない
     if win.normal != win.normal_opened {
-        for i in 0..app.sets.len() {
+        for i in 0..app.session.sets.len() {
             let doc = app.set_doc_mut(i);
             let settings = doc.normal_settings();
             if settings.file_direction() != win.normal {
@@ -554,9 +565,9 @@ pub(super) fn apply(
     }
     // 大きさを変えたセットは、履歴を消す（元の大きさへ戻せないので、段が残ると壊れた状態へ戻せてしまう）
     for uid in resized.iter().map(|r| r.uid) {
-        if let Some(i) = app.sets.index_of(uid) {
+        if let Some(i) = app.session.sets.index_of(uid) {
             let _ = app.set_doc_mut(i).clear_history();
-            if i == app.sets.current_index() {
+            if i == app.session.sets.current_index() {
                 app.view.fit();
             }
         }
@@ -567,18 +578,26 @@ pub(super) fn apply(
     app.ui.set_scroll = 0.0;
     app.sync_mesh_map_view();
     app.sync_view3d();
-    app.mark_modified();
+    app.session.mark_modified();
     app.np.generation += 1;
     app.np.reopening = None;
     // 知らせ
-    let missing = app.sets.iter().filter(|s| s.bound.is_none()).count();
+    let missing = app
+        .session
+        .sets
+        .iter()
+        .filter(|s| s.bound.is_none())
+        .count();
     // 縮小で外れた覚えた選択範囲（履歴を消すので取り消しでも戻らない）。名前の変更を済ませたあとのセットの名前と数
     let dropped: Vec<(String, usize)> = resized
         .iter()
         .filter(|r| r.dropped_saved_selections > 0)
         .filter_map(|r| {
-            let i = app.sets.index_of(r.uid)?;
-            Some((app.sets.get(i)?.name.clone(), r.dropped_saved_selections))
+            let i = app.session.sets.index_of(r.uid)?;
+            Some((
+                app.session.sets.get(i)?.name.clone(),
+                r.dropped_saved_selections,
+            ))
         })
         .collect();
     let mut text = lang
@@ -626,7 +645,7 @@ pub(super) fn apply(
             ),
         );
     }
-    let not_in_model = app.model.is_some() && missing > 0;
+    let not_in_model = app.session.model.is_some() && missing > 0;
     if not_in_model {
         text += &lang.pick(
             format!(" モデルに無いセット {missing}。"),
@@ -654,7 +673,7 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
     let lang = app.lang;
     let mut prepared: Vec<(u32, usize, PreparedResize)> = Vec::new();
     for (uid, size, method) in &plan.resizes {
-        let Some(index) = app.sets.index_of(*uid) else {
+        let Some(index) = app.session.sets.index_of(*uid) else {
             continue;
         };
         app.set_doc_mut(index).end_coalescing();
@@ -666,6 +685,7 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
             Ok(None) => {}
             Err(e) => {
                 let name = app
+                    .session
                     .sets
                     .get(index)
                     .map(|s| s.name.clone())

@@ -213,8 +213,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let enabled = app.can_edit();
     let lang = app.lang;
     let channel = app.m2.paint_channel;
-    let selected = app.selected_layer.and_then(|id| {
-        app.doc.layer(id).map(|l| {
+    let selected = app.session.selected_layer.and_then(|id| {
+        app.session.doc.layer(id).map(|l| {
             (
                 id,
                 l.blend_mode_in(channel),
@@ -247,7 +247,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     }
     let list_top = if stacked { STACKED_LIST_TOP } else { LIST_TOP };
     if let Some((id, blend, opacity, own)) = selected {
-        let name = m2::channel_name(lang, &app.doc, channel);
+        let name = m2::channel_name(lang, &app.session.doc, channel);
         let (blend_tip, opacity_tip) = if own {
             (
                 lang.pick(
@@ -304,7 +304,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     }
 
     // 一覧
-    thumbs.retain(&app.doc);
+    thumbs.retain(&app.session.doc);
     let list = Rect::from_min_max(
         pos2(r.left(), r.top() + list_top),
         pos2(
@@ -313,10 +313,15 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         ),
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);
-    let rows = m2::visible_rows(&app.doc, &app.m2.collapsed);
+    let rows = m2::visible_rows(&app.session.doc, &app.m2.collapsed);
     // レイヤーの行の下に効果の行（高さが違う。マスクが対象のレイヤーはマスクの効果、それ以外はレイヤーの効果）が続くので、行の位置は配置を数えて決める。
     // ドラッグの落とす先の数え方も、このフレームで描いた配置と同じ物を使う（途中で対象が替わっても、見えている行とずれない）
-    let layout = effect_rows::layout(&app.doc, &rows, ROW_HEIGHT, crate::fx::mask_target(app));
+    let layout = effect_rows::layout(
+        &app.session.doc,
+        &rows,
+        ROW_HEIGHT,
+        crate::fx::mask_target(app),
+    );
     let content = layout.height;
     let bar = Scroll::begin(ui, list, content, &mut app.ui.layer_scroll);
     let row_width = list.width() - bar.reserved();
@@ -438,17 +443,21 @@ pub fn clipping_tooltip(lang: crate::lang::Lang, reason: Option<&str>) -> String
 /// 何にもクリッピングできない）。すでに入っているレイヤーは、下が無くても外せる。レイヤーが選ばれていなければ (切, None)。
 pub fn clipping_state(app: &AppState) -> (bool, Option<&'static str>) {
     let lang = app.lang;
-    let Some(layer) = app.selected_layer.and_then(|id| app.doc.layer(id)) else {
+    let Some(layer) = app
+        .session
+        .selected_layer
+        .and_then(|id| app.session.doc.layer(id))
+    else {
         return (false, None);
     };
     if layer.clipping() {
         return (true, None);
     }
-    let Some(index) = app.doc.layer_index(layer.id()) else {
+    let Some(index) = app.session.doc.layer_index(layer.id()) else {
         return (false, None);
     };
     let parent = layer.parent();
-    if app.doc.layers()[..index]
+    if app.session.doc.layers()[..index]
         .iter()
         .any(|l| l.parent() == parent)
     {
@@ -490,18 +499,23 @@ fn toolbar(
     let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(pitch - 1.0, 24.0));
     // 狭いパネルでは、ボタンの幅に合わせてアイコンも小さくする（隣のアイコンに触れない）
     let icon = |base: f32| base.min((pitch - 2.0).max(10.0));
-    let selected = app.selected_layer.and_then(|id| app.doc.layer(id));
+    let selected = app
+        .session
+        .selected_layer
+        .and_then(|id| app.session.doc.layer(id));
     let has = selected.is_some() && enabled;
     let has_mask = selected.is_some_and(|l| l.mask().is_some());
     let editing = app.m2.edit_mask && has_mask;
     let removed: usize = app
+        .session
         .doc
         .topmost_of(&app.selected_layers())
         .unwrap_or_default()
         .iter()
-        .map(|id| m2::subtree_len(&app.doc, *id))
+        .map(|id| m2::subtree_len(&app.session.doc, *id))
         .sum();
-    let can_delete = app.selected_layer.is_some() && app.doc.layers().len() > removed;
+    let can_delete =
+        app.session.selected_layer.is_some() && app.session.doc.layers().len() > removed;
     let mut x = bar.left() + 4.0;
     let mut next = || {
         let b = button(x);
@@ -615,7 +629,7 @@ fn toolbar(
     )
     .clicked()
     {
-        if let Some(id) = app.selected_layer {
+        if let Some(id) = app.session.selected_layer {
             if has_mask {
                 app.apply(Action::M2Ui(UiOp::EditMask(!editing)));
             } else {
@@ -638,7 +652,7 @@ fn toolbar(
     )
     .clicked()
     {
-        if let Some(id) = app.selected_layer {
+        if let Some(id) = app.session.selected_layer {
             app.apply(Action::M2(Edit::Clipping(id, !clipping)));
         }
     }
@@ -699,7 +713,7 @@ fn kind_thumb(
     id: LayerId,
     expanded: bool,
 ) {
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return;
     };
     let painter = ui.painter_at(list);
@@ -708,9 +722,13 @@ fn kind_thumb(
         LayerKind::Raster => {
             w::checker(&painter, thumb, 3.0);
             let max_px = (thumb.width() * ctx.pixels_per_point()).round().max(8.0) as u32;
-            if let Some(handle) =
-                thumbs.get(ctx, &app.doc, id, max_px, ThumbSource::Channel(channel))
-            {
+            if let Some(handle) = thumbs.get(
+                ctx,
+                &app.session.doc,
+                id,
+                max_px,
+                ThumbSource::Channel(channel),
+            ) {
                 let [tw, th] = handle.size();
                 let k = (thumb.width() / tw as f32).min(thumb.height() / th as f32);
                 let at = Rect::from_center_size(thumb.center(), vec2(tw as f32 * k, th as f32 * k));
@@ -787,7 +805,8 @@ fn update_drag(
 ) {
     if let Some(p) = ui.input(|i| i.pointer.hover_pos()) {
         let position = layout.position_at(p.y - list.top() + app.ui.layer_scroll);
-        let target = m2::drop_target_for(&app.doc, rows, &dragged_layers(app, id), position);
+        let target =
+            m2::drop_target_for(&app.session.doc, rows, &dragged_layers(app, id), position);
         app.ui.layer_drag = Some(LayerDrag { id, target });
     }
 }
@@ -800,7 +819,7 @@ fn drop_drag(app: &mut AppState, rows: &[Row]) {
     }) = app.ui.layer_drag.take()
     {
         let ids = dragged_layers(app, dragged);
-        if let Some(edit) = m2::drop_edit_for(&app.doc, rows, &ids, target) {
+        if let Some(edit) = m2::drop_edit_for(&app.session.doc, rows, &ids, target) {
             app.apply(Action::M2(edit));
         }
     }
@@ -874,7 +893,7 @@ fn click_thumb(ui: &Ui, app: &mut AppState, id: LayerId, rows: &[Row], mask: boo
         click_row(ui, app, id, rows);
         return;
     }
-    if app.selected_layer != Some(id) {
+    if app.session.selected_layer != Some(id) {
         app.select_single_layer(id);
     }
     app.fx.selected = None;
@@ -928,6 +947,7 @@ fn lock_mark(
     use yolu_core::LayerLocks;
     let lang = app.lang;
     let own = app
+        .session
         .doc
         .layer(id)
         .map(|l| l.locks())
@@ -1000,7 +1020,7 @@ fn layer_row(
     chosen: &[LayerId],
 ) {
     let id = info.id;
-    let Some(layer) = app.doc.layer(id) else {
+    let Some(layer) = app.session.doc.layer(id) else {
         return;
     };
     let (name, visible, kind) = (layer.name().to_owned(), layer.visible(), layer.kind());
@@ -1011,10 +1031,11 @@ fn layer_row(
     let channel = app.m2.paint_channel;
     let no_pixels = kind == LayerKind::Raster && !layer.is_channel_enabled(channel);
     let clipped = app
+        .session
         .doc
         .layer_index(id)
-        .is_some_and(|i| app.doc.is_effectively_clipped(i));
-    let selected = app.selected_layer == Some(id);
+        .is_some_and(|i| app.session.doc.is_effectively_clipped(i));
+    let selected = app.session.selected_layer == Some(id);
     let in_selection = selected || (chosen.len() > 1 && chosen.contains(&id));
     let editing_mask = crate::fx::mask_target(app) == Some(id);
     let enabled = app.can_edit();
@@ -1078,14 +1099,14 @@ fn layer_row(
         x += crate::rulers::layer_icon::ADVANCE;
         at
     });
-    let effective_locks = app.doc.effective_locks(id).unwrap_or_default();
+    let effective_locks = app.session.doc.effective_locks(id).unwrap_or_default();
     let locked = effective_locks != yolu_core::LayerLocks::NONE;
     // Live Link で入れた「元の絵」が、GPU を通した・圧縮から読んだ・直した・拡大縮小した絵のとき、理由を出す印
     let original_note = app
         .link_originals
-        .get(app.doc.id(), id)
+        .get(app.session.doc.id(), id)
         .filter(|m| m.is_noted())
-        .map(|m| m.tooltip(lang, (app.doc.width(), app.doc.height())));
+        .map(|m| m.tooltip(lang, (app.session.doc.width(), app.session.doc.height())));
     let name_rect = Rect::from_min_max(
         pos2(x + 2.0, row.top() + 4.0),
         pos2(
@@ -1228,7 +1249,7 @@ fn layer_row(
         let painter = ui.painter_at(list);
         w::checker(&painter, mask_box, 3.0);
         let max_px = (mask_box.width() * ctx.pixels_per_point()).round().max(8.0) as u32;
-        if let Some(handle) = thumbs.get(ctx, &app.doc, id, max_px, ThumbSource::Mask) {
+        if let Some(handle) = thumbs.get(ctx, &app.session.doc, id, max_px, ThumbSource::Mask) {
             let [tw, th] = handle.size();
             let k = (mask_box.width() / tw as f32).min(mask_box.height() / th as f32);
             let at = Rect::from_center_size(mask_box.center(), vec2(tw as f32 * k, th as f32 * k));
@@ -1248,7 +1269,8 @@ fn layer_row(
         let hidden_effects = if editing_mask {
             0
         } else {
-            app.doc
+            app.session
+                .doc
                 .filters_of(id, FilterTarget::Mask)
                 .map_or(0, <[_]>::len)
         };
@@ -1332,7 +1354,7 @@ fn layer_row(
             if !next.is_empty() {
                 // 記録中なら、名前の変更も記録する（レイヤーの欄は文書へ直に当てるので、ここで前後を渡す）
                 let pending = crate::automation::record::before_rename(app, id, &next);
-                if let Err(e) = app.doc.set_layer_name(id, &next) {
+                if let Err(e) = app.session.doc.set_layer_name(id, &next) {
                     app.notify(
                         crate::notice::Kind::of_core(&e),
                         Source::Layer,
@@ -1340,7 +1362,7 @@ fn layer_row(
                     );
                 }
                 crate::automation::record::after(app, pending);
-                app.mark_modified();
+                app.session.mark_modified();
             }
         }
         if !first && !out.focused {
@@ -1450,21 +1472,33 @@ mod tests {
     #[test]
     fn thumbnails_follow_the_channel_and_forget_dead_layers() {
         let mut app = AppState::new(32, 32);
-        let id = app.selected_layer.unwrap();
+        let id = app.session.selected_layer.unwrap();
         let ctx = egui::Context::default();
         let mut thumbs = Thumbnails::default();
         assert!(thumbs
-            .get(&ctx, &app.doc, id, 16, ThumbSource::Channel(Channel::Color))
+            .get(
+                &ctx,
+                &app.session.doc,
+                id,
+                16,
+                ThumbSource::Channel(Channel::Color)
+            )
             .is_some());
         let built = thumbs.rebuilt;
         assert!(thumbs
-            .get(&ctx, &app.doc, id, 16, ThumbSource::Channel(Channel::Color))
+            .get(
+                &ctx,
+                &app.session.doc,
+                id,
+                16,
+                ThumbSource::Channel(Channel::Color)
+            )
             .is_some());
         assert_eq!(thumbs.rebuilt, built, "文書が変わらなければ作り直さない");
         thumbs
             .get(
                 &ctx,
-                &app.doc,
+                &app.session.doc,
                 id,
                 16,
                 ThumbSource::Channel(Channel::Roughness),
@@ -1473,10 +1507,10 @@ mod tests {
         assert_eq!(thumbs.rebuilt, built + 1, "チャンネルごとに作る");
         app.apply(Action::M2(Edit::AddMask(id)));
         thumbs
-            .get(&ctx, &app.doc, id, 16, ThumbSource::Mask)
+            .get(&ctx, &app.session.doc, id, 16, ThumbSource::Mask)
             .unwrap();
         app.apply(Action::M2(Edit::RemoveMask(id)));
-        thumbs.retain(&app.doc);
+        thumbs.retain(&app.session.doc);
         assert!(thumbs.map.keys().all(|(_, s)| *s != ThumbSource::Mask));
     }
 }

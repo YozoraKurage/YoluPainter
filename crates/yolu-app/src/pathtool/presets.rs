@@ -430,8 +430,8 @@ impl AppState {
     fn path_world_unit(&self) -> Option<f64> {
         let m = self.view3d.full_model()?;
         Some(
-            yolu_core::geometry::world_radius(m.rest_geometry(), 1.0, self.doc.width()).max(1e-12)
-                as f64,
+            yolu_core::geometry::world_radius(m.rest_geometry(), 1.0, self.session.doc.width())
+                .max(1e-12) as f64,
         )
     }
 
@@ -611,7 +611,12 @@ impl AppState {
         }
         // 組は、パスの基準のチャンネルとプリセットの組が合うときだけ（合わなければパスの今の組）
         let material = match data.material {
-            Some(m) if m.iter().all(|p| self.doc.channel_info(p.channel).is_some()) => Some(m),
+            Some(m)
+                if m.iter()
+                    .all(|p| self.session.doc.channel_info(p.channel).is_some()) =>
+            {
+                Some(m)
+            }
             _ => path.material().map(<[_]>::to_vec),
         };
         let mut style = path.style().clone();

@@ -352,8 +352,16 @@ impl AppState {
         if self.text.editing.is_some() {
             return Target::Editing;
         }
-        match self.selected_layer {
-            Some(id) if self.doc.layer(id).is_some_and(|l| l.text().is_some()) => Target::Layer(id),
+        match self.session.selected_layer {
+            Some(id)
+                if self
+                    .session
+                    .doc
+                    .layer(id)
+                    .is_some_and(|l| l.text().is_some()) =>
+            {
+                Target::Layer(id)
+            }
             _ => Target::Defaults,
         }
     }
@@ -369,6 +377,7 @@ impl AppState {
                 .value
                 .clone(),
             Target::Layer(id) => self
+                .session
                 .doc
                 .layer(id)
                 .and_then(|l| l.text())
@@ -424,6 +433,7 @@ impl AppState {
     /// 開いた文書のテキストレイヤーのフォントを探し、違う・無いフォントを 1 度だけ知らせる（一覧が要るなら、できるまで待つ）。
     fn text_check_fonts(&mut self) {
         let layers: Vec<(String, TextFont)> = self
+            .session
             .doc
             .layers()
             .iter()
@@ -534,6 +544,7 @@ impl AppState {
     /// テキストレイヤーのフォントの様子。
     pub fn text_font_status(&mut self, id: LayerId) -> FontStatus {
         let Some(font) = self
+            .session
             .doc
             .layer(id)
             .and_then(|l| l.text())
@@ -642,7 +653,7 @@ impl AppState {
         if self.text_refused() {
             return;
         }
-        let Some(mut value) = self.doc.layer(id).and_then(|l| l.text()).cloned() else {
+        let Some(mut value) = self.session.doc.layer(id).and_then(|l| l.text()).cloned() else {
             return;
         };
         // 違うフォントしか無ければ、打ったときに見つけたフォントで描き直す
@@ -653,7 +664,7 @@ impl AppState {
                 return;
             }
         }
-        self.selected_layer = Some(id);
+        self.session.selected_layer = Some(id);
         self.tool = Tool::Text;
         let mut editing = Editing::new(Some(id), false, value);
         let end = editing.buffer.chars().count();
@@ -701,6 +712,7 @@ impl AppState {
         };
         let result = match layer {
             Some(id) => self
+                .session
                 .doc
                 .set_text(id, value.clone(), &font, true)
                 .map(|_| id),
@@ -713,21 +725,23 @@ impl AppState {
             None => {
                 let name = self.text_layer_name();
                 let above = self
+                    .session
                     .selected_layer
-                    .filter(|id| self.doc.layer(*id).is_some());
-                self.doc
+                    .filter(|id| self.session.doc.layer(*id).is_some());
+                self.session
+                    .doc
                     .add_text_layer(&name, value.clone(), &font, above, true)
             }
         };
         match result {
             Ok(id) => {
-                self.mark_modified();
+                self.session.mark_modified();
                 if let Some(e) = self.text.editing.as_mut() {
                     e.created |= e.layer.is_none();
                     e.layer = Some(id);
                     e.value = value;
                 }
-                if self.selected_layer != Some(id) {
+                if self.session.selected_layer != Some(id) {
                     self.select_new(id);
                 }
             }
@@ -742,6 +756,7 @@ impl AppState {
 
     fn text_layer_name(&self) -> String {
         let n = self
+            .session
             .doc
             .layers()
             .iter()
@@ -756,11 +771,11 @@ impl AppState {
         let Some(editing) = self.text.editing.take() else {
             return;
         };
-        self.doc.end_coalescing();
+        self.session.doc.end_coalescing();
         if editing.created && editing.buffer.is_empty() {
             // 作ったレイヤーを追加した段へまとめているので、1 回の取り消しでレイヤーごと消える
-            if self.doc.undo().is_ok() && self.selected_layer == editing.layer {
-                self.selected_layer = self.doc.layers().last().map(|l| l.id());
+            if self.session.doc.undo().is_ok() && self.session.selected_layer == editing.layer {
+                self.session.selected_layer = self.session.doc.layers().last().map(|l| l.id());
             }
         }
     }
@@ -789,7 +804,7 @@ impl AppState {
     /// 描画色のまとめを切る（まとめていなければ何もしない）。打っている最中は、打ち終わりまで 1 回の取り消しなので切らない。
     fn text_end_follow(&mut self) {
         if std::mem::take(&mut self.text.following) && self.text.editing.is_none() {
-            self.doc.end_coalescing();
+            self.session.doc.end_coalescing();
         }
     }
 
@@ -818,10 +833,11 @@ impl AppState {
             Target::Layer(id) => {
                 // 描いている間・読むだけのセット・ロック（すべて・画素・透明部分。親のグループのものも）は、黙って変えない
                 // （毎フレーム断りを出さない。値の欄からの変更は、これまでどおり理由を出して断る）
-                if !self.can_edit() || self.doc.ensure_pixels_editable(id, true).is_err() {
+                if !self.can_edit() || self.session.doc.ensure_pixels_editable(id, true).is_err() {
                     return;
                 }
-                let Some(mut value) = self.doc.layer(id).and_then(|l| l.text()).cloned() else {
+                let Some(mut value) = self.session.doc.layer(id).and_then(|l| l.text()).cloned()
+                else {
                     return;
                 };
                 if value.color == color {
@@ -833,7 +849,7 @@ impl AppState {
                 }
                 if !self.text.following {
                     // 前に開いたままのまとめ（別の欄のドラッグ）に混ぜない
-                    self.doc.end_coalescing();
+                    self.session.doc.end_coalescing();
                 }
                 self.text.following = true;
                 self.text_set_layer(id, value, true);
@@ -866,7 +882,8 @@ impl AppState {
                 if self.text_refused() {
                     return;
                 }
-                let Some(mut value) = self.doc.layer(id).and_then(|l| l.text()).cloned() else {
+                let Some(mut value) = self.session.doc.layer(id).and_then(|l| l.text()).cloned()
+                else {
                     return;
                 };
                 field.apply(&mut value);
@@ -887,8 +904,8 @@ impl AppState {
                 return;
             }
         };
-        match self.doc.set_text(id, value, &font, coalesce) {
-            Ok(()) => self.mark_modified(),
+        match self.session.doc.set_text(id, value, &font, coalesce) {
+            Ok(()) => self.session.mark_modified(),
             Err(e) => self.notify(Kind::of_core(&e), Source::Text, self.lang.core_error(&e)),
         }
     }
@@ -931,12 +948,18 @@ impl AppState {
         {
             self.text_commit();
         }
-        if self.text_refused() || self.doc.layer(id).is_none_or(|l| l.text().is_none()) {
+        if self.text_refused()
+            || self
+                .session
+                .doc
+                .layer(id)
+                .is_none_or(|l| l.text().is_none())
+        {
             return;
         }
-        match self.doc.rasterize(id) {
+        match self.session.doc.rasterize(id) {
             Ok(()) => {
-                self.mark_modified();
+                self.session.mark_modified();
                 self.info(
                     Source::Text,
                     lang.pick("ラスタライズしました。", "Rasterized."),
@@ -964,7 +987,7 @@ impl AppState {
 
     /// テキストレイヤーの並べ（箱の当たりと外枠。フォントが読めなければ None）。
     pub fn text_layer_layout(&mut self, id: LayerId) -> Option<(TextSettings, TextLayout)> {
-        let value = self.doc.layer(id)?.text()?.clone();
+        let value = self.session.doc.layer(id)?.text()?.clone();
         let (found, font) = self.text_font(&value.font).ok()?;
         let layout = text::layout(&value, &font, found.index()).ok()?;
         Some((value, layout))

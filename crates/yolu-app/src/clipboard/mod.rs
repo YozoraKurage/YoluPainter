@@ -149,7 +149,7 @@ impl AppState {
             );
             return;
         }
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         let result = match action {
             ClipAction::Copy => self.clip_copy(),
             ClipAction::Cut => self.clip_cut(),
@@ -161,7 +161,7 @@ impl AppState {
             Ok(text) => self.info(Source::Clipboard, text),
             Err(text) => self.refuse(Source::Clipboard, text),
         }
-        self.mark_modified_if_changed(revision);
+        self.session.mark_modified_if_changed(revision);
     }
 
     /// OS への書き込みの失敗を受ける（フレームの初めに）。
@@ -185,24 +185,31 @@ impl AppState {
     /// 写す先のレイヤーとチャンネル、マスクを写すか。
     pub(crate) fn clip_target(&self) -> Result<(crate::engine::LayerId, Channel, bool), String> {
         let id = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
+            .filter(|id| self.session.doc.layer(*id).is_some())
             .ok_or_else(|| {
                 self.lang
                     .pick("レイヤーが選ばれていません。", "No layer is selected.")
                     .to_string()
             })?;
-        let mask = self.m2.edit_mask && self.doc.layer(id).is_some_and(|l| l.mask().is_some());
+        let mask = self.m2.edit_mask
+            && self
+                .session
+                .doc
+                .layer(id)
+                .is_some_and(|l| l.mask().is_some());
         Ok((id, self.m2.paint_channel, mask))
     }
 
     fn clip_limit(&self) -> u64 {
-        self.doc.stroke_budget_bytes()
+        self.session.doc.stroke_budget_bytes()
     }
 
     fn clip_copy(&mut self) -> Result<String, String> {
         let (id, channel, mask) = self.clip_target()?;
         let clip = self
+            .session
             .doc
             .copy_pixels(id, channel, mask, self.clip_limit())
             .map_err(|e| self.lang.core_error(&e))?;
@@ -213,6 +220,7 @@ impl AppState {
 
     fn clip_copy_merged(&mut self) -> Result<String, String> {
         let clip = self
+            .session
             .doc
             .copy_merged(self.m2.paint_channel, self.clip_limit())
             .map_err(|e| self.lang.core_error(&e))?;
@@ -224,6 +232,7 @@ impl AppState {
     fn clip_cut(&mut self) -> Result<String, String> {
         let (id, channel, mask) = self.clip_target()?;
         let clip = self
+            .session
             .doc
             .cut_pixels(id, channel, mask, self.clip_limit())
             .map_err(|e| self.lang.core_error(&e))?;
@@ -250,7 +259,7 @@ impl AppState {
                         os_error: None,
                     });
                 }
-                let (doc_w, doc_h) = (self.doc.width(), self.doc.height());
+                let (doc_w, doc_h) = (self.session.doc.width(), self.session.doc.height());
                 if image.width > doc_w || image.height > doc_h {
                     return Err(lang.pick(
                         format!(
@@ -288,14 +297,16 @@ impl AppState {
         let PasteSource { clip, os_error } = self.clip_source()?;
         let name = self.layer_name_for_new();
         let above = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some());
+            .filter(|id| self.session.doc.layer(*id).is_some());
         // 大きさの上限は core の予算（0 でないタイルの実際の大きさ）に任せる。矩形の大きさで先に断ると、まばらな画像まで断る
         let result = self
+            .session
             .doc
             .paste_as_layer(&clip, self.m2.paint_channel, Some(&name), above)
             .map_err(|e| lang.core_error(&e))?;
-        self.selected_layer = Some(result.layer);
+        self.session.selected_layer = Some(result.layer);
         self.set_edit_mask(false);
         self.ensure_selection();
         let mut notes = Vec::new();
@@ -359,8 +370,9 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
     let free = app.can_edit();
     let layer = app
+        .session
         .selected_layer
-        .and_then(|id| app.doc.layer(id))
+        .and_then(|id| app.session.doc.layer(id))
         .map(|layer| {
             let mask = app.m2.edit_mask && layer.mask().is_some();
             (mask, layer.kind())

@@ -244,7 +244,7 @@ struct Taken {
     request: Result<Arc<Request>, Refusal>,
 }
 
-/// 裏の仕事。`epoch` は始めた時のプロジェクト（`AppState::project_epoch`）。替わっていたら、結果は入れずに捨てる。
+/// 裏の仕事。`epoch` は始めた時のプロジェクト（`Session::project_epoch`）。替わっていたら、結果は入れずに捨てる。
 enum Running {
     /// Rig を組み直す（FBX を読む・並べる・絵を読む）。
     Rig {
@@ -610,7 +610,7 @@ impl LiveLink {
         if self
             .job
             .as_ref()
-            .is_none_or(|j| j.epoch() == state.project_epoch)
+            .is_none_or(|j| j.epoch() == state.session.project_epoch())
         {
             return;
         }
@@ -773,6 +773,7 @@ impl LiveLink {
             let set = same
                 .then(|| {
                     state
+                        .session
                         .sets
                         .iter()
                         .position(|s| s.bound.is_some() && s.material == key)
@@ -783,6 +784,7 @@ impl LiveLink {
                 continue;
             };
             let record = state
+                .session
                 .sets
                 .get(index)
                 .and_then(|s| self.set_originals.get(&s.uid));
@@ -802,7 +804,7 @@ impl LiveLink {
             keep_rig,
             psd_budget: state.load_source_bytes(),
         };
-        let epoch = state.project_epoch;
+        let epoch = state.session.project_epoch();
         if keep_rig {
             let (tx, rx) = channel();
             let cancel = Arc::new(AtomicBool::new(false));
@@ -958,7 +960,7 @@ impl LiveLink {
         let (rig, layout, fresh, pristine_first) = match prepared {
             Some(prepared) => {
                 let pristine_first = (first_install && !reopening && state.is_pristine())
-                    .then(|| state.sets.current().uid);
+                    .then(|| state.session.sets.current().uid);
                 if first_install && !reopening {
                     // 前のモデルのファイルの参照を引きずらない（保存すると view.json・pose.json が、前の FBX と Unity の Rig のポーズを指してしまう）
                     state.np.model_file = None;
@@ -972,7 +974,7 @@ impl LiveLink {
                     .expect("入れたセッション")
                     .rig
                     .clone();
-                state.model = Some(SceneModel::from_live_link(
+                state.session.model = Some(SceneModel::from_live_link(
                     &rig,
                     &request.target.key,
                     &request.target.name,
@@ -983,8 +985,8 @@ impl LiveLink {
                 } else {
                     state.bind_model()
                 };
-                if state.sets.current().bound.is_none() {
-                    if let Some(i) = state.sets.iter().position(|s| s.bound.is_some()) {
+                if state.session.sets.current().bound.is_none() {
+                    if let Some(i) = state.session.sets.iter().position(|s| s.bound.is_some()) {
                         let _ = state.switch_set(i);
                     }
                 }
@@ -1000,7 +1002,7 @@ impl LiveLink {
                     self.decline_replaced(&taken, state);
                     return;
                 };
-                if let Some(m) = state.model.as_mut() {
+                if let Some(m) = state.session.model.as_mut() {
                     m.materials = opened.materials.clone();
                 }
                 let report = state.bind_model();
@@ -1017,15 +1019,15 @@ impl LiveLink {
         let fresh_uids: Vec<u32> = fresh.clone();
         let mut installed: Vec<Installed> = Vec::new();
         for uid in fresh {
-            let Some(index) = state.sets.index_of(uid) else {
+            let Some(index) = state.session.sets.index_of(uid) else {
                 continue;
             };
-            let Some(m) = state.sets.get(index).and_then(|s| s.bound) else {
+            let Some(m) = state.session.sets.get(index).and_then(|s| s.bound) else {
                 continue;
             };
             let m = m as usize;
-            let refit = pristine_first == Some(uid) && !state.resolution_chosen;
-            let keep_size = pristine_first == Some(uid) && state.resolution_chosen;
+            let refit = pristine_first == Some(uid) && !state.session.resolution_chosen;
+            let keep_size = pristine_first == Some(uid) && state.session.resolution_chosen;
             if let Some(original) = opened.originals.remove(&m) {
                 put_original(
                     state, index, &request, m, original, &opened, refit, &mut notes,
@@ -1035,8 +1037,9 @@ impl LiveLink {
         }
         // 送り直し: 元の絵のファイルが変わったセット。入れた直後のままなら入れ直し、触ったセットは変えずに知らせる
         let mut changed: Vec<String> = Vec::new();
-        for index in 0..state.sets.len() {
+        for index in 0..state.session.sets.len() {
             let Some((uid, m, name)) = state
+                .session
                 .sets
                 .get(index)
                 .and_then(|s| s.bound.map(|m| (s.uid, m as usize, s.name.clone())))
@@ -1092,7 +1095,7 @@ impl LiveLink {
                     );
                     installed.push((uid, m, keep_size));
                     // 保存したプロジェクトの中身が変わった
-                    state.mark_modified();
+                    state.session.mark_modified();
                 }
                 None => {
                     record.source = source.clone();
@@ -1106,8 +1109,8 @@ impl LiveLink {
             }
         }
         // 受けた見た目（lilToon の値と、スロットの絵）
-        for index in 0..state.sets.len() {
-            let Some(m) = state.sets.get(index).and_then(|s| s.bound) else {
+        for index in 0..state.session.sets.len() {
+            let Some(m) = state.session.sets.get(index).and_then(|s| s.bound) else {
                 continue;
             };
             let Some(material) = request.materials.get(m as usize) else {
@@ -1167,12 +1170,12 @@ impl LiveLink {
         if !first_install {
             pose::sync_modified(state);
             if rebuilt {
-                state.mark_modified();
+                state.session.mark_modified();
             }
         }
         // 入れた元の絵を覚える（入れた直後の文書の ID と版。受けた見た目とポーズは文書の版を進めない）。無くなったセットの覚えは捨てる
         for (uid, m, keep_size) in installed {
-            let Some(index) = state.sets.index_of(uid) else {
+            let Some(index) = state.session.sets.index_of(uid) else {
                 continue;
             };
             let doc = state.set_doc(index);
@@ -1186,7 +1189,7 @@ impl LiveLink {
             );
         }
         self.set_originals
-            .retain(|uid, _| state.sets.index_of(*uid).is_some());
+            .retain(|uid, _| state.session.sets.index_of(*uid).is_some());
         problems.splice(0..0, opened.problems.iter().cloned());
         problems.dedup();
         state.link_target = Some(LinkTarget {
@@ -1282,7 +1285,7 @@ impl LiveLink {
         let mut reply = Reply::new(&target.request.id, ReplyKind::Exported, VERSION);
         for (image, uid, property) in files {
             let Some(property) = property else { continue };
-            let Some(m) = state.sets.by_uid(*uid).and_then(|s| s.bound) else {
+            let Some(m) = state.session.sets.by_uid(*uid).and_then(|s| s.bound) else {
                 continue;
             };
             let Some(material) = target
@@ -1337,6 +1340,7 @@ fn put_original(
         })
         .is_some_and(|t| !t.srgb && t.path.is_some());
     let name = state
+        .session
         .sets
         .get(index)
         .map(|s| s.name.clone())
@@ -1384,6 +1388,7 @@ fn linked(state: &AppState) -> bool {
         return false;
     };
     let record = state
+        .session
         .model
         .as_ref()
         .and_then(|m| m.link_key().map(|k| (k, m.source.rig())));

@@ -130,7 +130,7 @@ impl AppState {
 
     /// 手動の ID の色が別のモデルのものか（色があって、今のモデルの指紋と違う）。モデルが無い・入力を作り終えるまでは false。
     pub fn id_colors_foreign(&mut self) -> bool {
-        let colors = self.doc.id_colors().clone();
+        let colors = self.session.doc.id_colors().clone();
         if colors.colors().is_empty() {
             return false;
         }
@@ -153,8 +153,15 @@ impl AppState {
 
     fn id_map(&mut self, wait: bool) -> Result<Arc<BakedMeshMap>, String> {
         let lang = self.lang;
-        let index = self.sets.current_index();
-        let Some(map) = self.sets.current().mesh_maps.get(MeshMapKind::Id).cloned() else {
+        let index = self.session.sets.current_index();
+        let Some(map) = self
+            .session
+            .sets
+            .current()
+            .mesh_maps
+            .get(MeshMapKind::Id)
+            .cloned()
+        else {
             return Err(lang.pick("ID マップがありません", "No ID map").into());
         };
         let input = if wait {
@@ -199,10 +206,10 @@ impl AppState {
         let drag = matches!(op, IdColorOp::Drag { .. });
         let next = match op {
             IdColorOp::EndDrag => {
-                self.doc.end_coalescing();
+                self.session.doc.end_coalescing();
                 // まとめていた段が、押したままの Esc などで捨てられていれば（そのあとウィンドウの戻しが次のフレームに届く）、変わっていないので
                 // 知らせない（直前の「取り消しました。」を上書きしない）。段を捨てると履歴の段の数が減るので、ドラッグで入れたときの数と比べる
-                let kept = self.region.id.dragged.take() == Some(self.doc.undo_count());
+                let kept = self.region.id.dragged.take() == Some(self.session.doc.undo_count());
                 if kept {
                     self.info(Source::Bake, changed(lang));
                 }
@@ -215,12 +222,12 @@ impl AppState {
         let Some(next) = next else {
             return;
         };
-        match self.doc.set_id_colors(next, drag) {
+        match self.session.doc.set_id_colors(next, drag) {
             Ok(()) => {
-                self.mark_modified();
+                self.session.mark_modified();
                 self.region.hover = None;
                 if drag {
-                    self.region.id.dragged = Some(self.doc.undo_count());
+                    self.region.id.dragged = Some(self.session.doc.undo_count());
                 } else {
                     self.region.id.dragged = None;
                     self.info(Source::Bake, changed(lang));
@@ -237,7 +244,7 @@ impl AppState {
     /// 部品の色を `rgb`（None は自動）にした手動の ID の色。断るときは理由を出して None。
     fn id_color_next(&mut self, part: usize, rgb: Option<u32>) -> Option<IdColorAssignments> {
         let lang = self.lang;
-        let colors = self.doc.id_colors().clone();
+        let colors = self.session.doc.id_colors().clone();
         // 押して直すときは、入力を作り終えるまで待つ
         let parts = match self.id_parts(true)? {
             Ok(p) => p,
@@ -319,7 +326,11 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
         }
         Where::Canvas(view) => {
             let (x, y) = view.to_canvas(at);
-            if x < 0.0 || y < 0.0 || x >= app.doc.width() as f64 || y >= app.doc.height() as f64 {
+            if x < 0.0
+                || y < 0.0
+                || x >= app.session.doc.width() as f64
+                || y >= app.session.doc.height() as f64
+            {
                 return Err(none("キャンバスの外です", "Outside the canvas"));
             }
             match try_get(map, x.floor() as i64, y.floor() as i64) {
@@ -363,7 +374,7 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
         egui::PointerButton::Primary,
         app.region.modifiers,
     );
-    let mask = match SelectionMask::from_id_colors(&app.doc, &map, &[rgb], tolerance) {
+    let mask = match SelectionMask::from_id_colors(&app.session.doc, &map, &[rgb], tolerance) {
         Ok(m) => m,
         Err(e) => {
             app.notify(
@@ -374,7 +385,7 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
             return;
         }
     };
-    if let Err(e) = app.doc.combine_selection(&mask, mode) {
+    if let Err(e) = app.session.doc.combine_selection(&mask, mode) {
         app.notify(
             crate::notice::Kind::of_core(&e),
             Source::Selection,
@@ -382,10 +393,10 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
         );
         return;
     }
-    app.mark_modified();
+    app.session.mark_modified();
     app.info(
         Source::Selection,
-        if app.doc.selection().is_none() {
+        if app.session.doc.selection().is_none() {
             lang.pick("何も選択されていません。", "Nothing selected.")
                 .into()
         } else {
@@ -465,7 +476,7 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Pos2) {
 
 /// 手動の ID の色の見本と一覧の見出しに使う、部品の色（手動があればそれ、無ければ None）。
 pub fn manual_color(app: &AppState, part: usize) -> Option<u32> {
-    app.doc.id_colors().colors().get(&part).copied()
+    app.session.doc.id_colors().colors().get(&part).copied()
 }
 
 /// 色の 16 進（#RRGGBB）。

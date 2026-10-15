@@ -662,10 +662,10 @@ mod tests {
         app.apply(Action::Pie(PieAction::Open("nothing".into())));
         assert!(app.pie.request.is_none());
         assert_eq!(app.message, "パイメニュー「nothing」がありません。");
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.canvas.stroke = Some(crate::state::StrokeSource::Mouse);
         app.apply(Action::Pie(PieAction::Open("mode".into())));
         assert!(app.pie.request.is_none());
@@ -691,7 +691,7 @@ mod tests {
         assert_eq!(app.pie.request.as_deref(), Some("view"));
         app.pie.request = None;
         // yolu-ops の命令: 全部を 1 回の取り消しで
-        let layers = app.doc.layers().len();
+        let layers = app.session.doc.layers().len();
         let json = json!([
             {"command": "layer.add", "args": {"kind": "paint", "name": "A"}},
             {"command": "layer.add", "args": {"kind": "paint", "name": "B"}},
@@ -702,9 +702,18 @@ mod tests {
             "layer.add +1"
         );
         run(&mut app, &PieItem::Ops(json));
-        assert_eq!(app.doc.layers().len(), layers + 2, "{}", app.message);
+        assert_eq!(
+            app.session.doc.layers().len(),
+            layers + 2,
+            "{}",
+            app.message
+        );
         app.apply(Action::Undo);
-        assert_eq!(app.doc.layers().len(), layers, "1 回の取り消しで両方");
+        assert_eq!(
+            app.session.doc.layers().len(),
+            layers,
+            "1 回の取り消しで両方"
+        );
         // 記録の間は断る
         app.apply(Action::Automation(
             crate::automation::AutomationOp::StartRecording,
@@ -712,7 +721,7 @@ mod tests {
         let json1 = json!({"command": "layer.add", "args": {"kind": "paint"}}).to_string();
         run(&mut app, &PieItem::Ops(json1));
         assert_eq!(app.message, "命令を実行できません（記録中です）。");
-        assert_eq!(app.doc.layers().len(), layers);
+        assert_eq!(app.session.doc.layers().len(), layers);
         app.automation.recorder = None;
         // 読めない JSON・知らない命令は断る（文書は変えない）
         run(&mut app, &PieItem::Ops("{".into()));
@@ -726,7 +735,7 @@ mod tests {
             "{}",
             app.message
         );
-        assert_eq!(app.doc.layers().len(), layers);
+        assert_eq!(app.session.doc.layers().len(), layers);
         // 記録したアクション: 名前で探す（無ければ断る）
         let missing = PieItem::Recorded("無い".into());
         assert!(!slot_of(&app, &missing).enabled);
@@ -748,9 +757,14 @@ mod tests {
         let item = PieItem::Recorded("塗る".into());
         let slot = slot_of(&app, &item);
         assert!(slot.enabled && slot.label == "塗る" && slot.icon == Some("play"));
-        let layers = app.doc.layers().len();
+        let layers = app.session.doc.layers().len();
         run(&mut app, &item);
-        assert_eq!(app.doc.layers().len(), layers + 1, "{}", app.message);
+        assert_eq!(
+            app.session.doc.layers().len(),
+            layers + 1,
+            "{}",
+            app.message
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

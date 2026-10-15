@@ -293,8 +293,9 @@ fn save_buttons(ui: &mut Ui, app: &mut AppState, row: Rect) {
     let lang = app.lang;
     let halves = w::Rows::split(row, 2, 6.0);
     let layer = app
+        .session
         .selected_layer
-        .and_then(|id| app.doc.layer(id).map(|l| (id, l.mask().is_some())));
+        .and_then(|id| app.session.doc.layer(id).map(|l| (id, l.mask().is_some())));
     let can_save = layer.is_some() && app.can_edit() && app.shelf.unavailable.is_none();
     if w::button(
         ui,
@@ -1356,7 +1357,7 @@ pub fn layer_list_drop(
                     }
                 }
             }
-            Some(placement_for(&app.doc, rows, target))
+            Some(placement_for(&app.session.doc, rows, target))
         }
         // 置けない種類は印を出さず、離したときに理由を出す
         _ => Some(PlaceTarget::Selected),

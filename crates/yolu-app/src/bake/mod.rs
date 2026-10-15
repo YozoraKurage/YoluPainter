@@ -739,8 +739,8 @@ impl AppState {
     /// セットが付いているモデルのマテリアルの番号（モデルの記録の無い立方体は、今のセットがマテリアル 0）。
     pub(crate) fn set_material(&self, index: usize) -> Option<i32> {
         let model = self.view3d.full_model()?;
-        let set = self.sets.get(index)?;
-        match &self.model {
+        let set = self.session.sets.get(index)?;
+        match &self.session.model {
             Some(record) => {
                 // 3D が指しているモデルが記録と同じものか（形ごと渡されたメッシュの世代）
                 if record.is_mesh() && self.view3d.link_generation() != Some(record.generation) {
@@ -749,7 +749,7 @@ impl AppState {
                 let _ = model;
                 set.bound.map(|m| m as i32)
             }
-            None => (index == self.sets.current_index()).then_some(0),
+            None => (index == self.session.sets.current_index()).then_some(0),
         }
     }
 
@@ -869,6 +869,7 @@ impl AppState {
     fn bake_target(&self, index: usize) -> Result<(MeshBakeSettings, Vec<i32>), String> {
         let lang = self.lang;
         let set = self
+            .session
             .sets
             .get(index)
             .ok_or_else(|| lang.pick("テクスチャセットがありません", "No such texture set"))?;
@@ -933,7 +934,7 @@ impl AppState {
 
     /// セットのマップ 1 枚の今の状態（焼いていなければ None）。入力を作る必要があればここで作る。
     pub fn mesh_map_check(&mut self, index: usize, kind: MeshMapKind) -> Option<MeshMapCheck> {
-        self.sets.get(index)?.mesh_maps.get(kind)?;
+        self.session.sets.get(index)?.mesh_maps.get(kind)?;
         let input = self.bake_input().ok();
         self.mesh_map_check_with(index, kind, input.as_deref())
     }
@@ -945,16 +946,17 @@ impl AppState {
         kind: MeshMapKind,
         input: Option<&MeshBakeInput>,
     ) -> Option<MeshMapCheck> {
-        let map = self.sets.get(index)?.mesh_maps.get(kind)?;
+        let map = self.session.sets.get(index)?.mesh_maps.get(kind)?;
         let expected = self.mesh_map_expectation(index, input);
         Some(map.provenance().check(&expected))
     }
 
     /// 焼けるテクスチャセット（チェックしていて、モデルにマテリアルがあるもの。並びの順）。
     pub fn bakeable_sets(&self) -> Vec<usize> {
-        (0..self.sets.len())
+        (0..self.session.sets.len())
             .filter(|&i| {
-                self.sets
+                self.session
+                    .sets
                     .get(i)
                     .is_some_and(|s| !self.bake.skipped.contains(&s.uid))
                     && self.set_slots(i).is_some()
@@ -997,7 +999,7 @@ impl AppState {
             );
         }
         if self.bakeable_sets().is_empty() {
-            let any_in_model = (0..self.sets.len()).any(|i| self.set_slots(i).is_some());
+            let any_in_model = (0..self.session.sets.len()).any(|i| self.set_slots(i).is_some());
             return Some(
                 if any_in_model {
                     lang.pick(
@@ -1026,7 +1028,8 @@ impl AppState {
 
     /// セットに AO のマップが焼いてあるか（今の条件のものかは [`AppState::occlusion_state`]）。
     pub fn has_baked_occlusion(&self, index: usize) -> bool {
-        self.sets
+        self.session
+            .sets
             .get(index)
             .is_some_and(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion).is_some())
     }
@@ -1035,6 +1038,7 @@ impl AppState {
     pub fn occlusion_state(&self, index: usize, input: Option<&MeshBakeInput>) -> OcclusionState {
         let lang = self.lang;
         let Some(map) = self
+            .session
             .sets
             .get(index)
             .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
@@ -1071,6 +1075,7 @@ impl AppState {
             OcclusionState::Stale(why) => Occlusion::Stale(why),
             OcclusionState::Current => {
                 let map = self
+                    .session
                     .sets
                     .get(index)
                     .and_then(|s| s.mesh_maps.get(MeshMapKind::AmbientOcclusion))
@@ -1114,10 +1119,11 @@ impl AppState {
         self.bake.window.is_some()
             || self.tool == crate::state::Tool::IdSelect
             || self.island_menu_open()
-            || self.sets.iter().any(|s| s.waiting_inputs)
+            || self.session.sets.iter().any(|s| s.waiting_inputs)
             || self.reopen_check_waiting()
             || self.export_window_follows_input()
-            || (self.bake.input.is_none() && self.sets.iter().any(|s| !s.mesh_maps.is_empty()))
+            || (self.bake.input.is_none()
+                && self.session.sets.iter().any(|s| !s.mesh_maps.is_empty()))
     }
 
     /// アイランドのメニュー（ポリゴン塗りつぶしの右クリック）を開いている間も、アイランドの強調と選んだ項目が入力を使う
@@ -1136,7 +1142,7 @@ impl AppState {
         let Some(check) = self.bake.reopen_check.as_ref() else {
             return false;
         };
-        let maps = self.sets.iter().any(|s| !s.mesh_maps.is_empty());
+        let maps = self.session.sets.iter().any(|s| !s.mesh_maps.is_empty());
         // 照合するモデル（描いている最中なら、入れ替わりを待っているモデル）のままで、その入力がまだできていない。できた入力は、焼いたマップが
         // あるあいだ手放さず、毎フレームの同期が効果の入力へ渡す
         let waiting = check.generation == self.np.generation
@@ -1163,7 +1169,7 @@ impl AppState {
             && self.bake.window.is_none()
             && !island_menu
             && self.bake.job.is_none()
-            && self.sets.iter().all(|s| s.mesh_maps.is_empty())
+            && self.session.sets.iter().all(|s| s.mesh_maps.is_empty())
         {
             self.bake.input = None;
         }
@@ -1253,7 +1259,11 @@ impl AppState {
                 } else {
                     let checked = self.bakeable_sets();
                     let last = checked.len() == 1
-                        && self.sets.get(checked[0]).is_some_and(|s| s.uid == uid);
+                        && self
+                            .session
+                            .sets
+                            .get(checked[0])
+                            .is_some_and(|s| s.uid == uid);
                     if last {
                         self.refuse(
                             Source::Bake,
@@ -1276,7 +1286,7 @@ impl AppState {
 
     /// 見ているマップが今のセットに無ければ、重ね表示をやめる。
     pub fn sync_mesh_map_view(&mut self) {
-        let maps = &self.sets.current().mesh_maps;
+        let maps = &self.session.sets.current().mesh_maps;
         let valid = match self.bake.view {
             MeshMapView::None => true,
             MeshMapView::Coverage => !maps.is_empty(),
@@ -1296,7 +1306,7 @@ impl AppState {
         let queue: VecDeque<u32> = self
             .bakeable_sets()
             .into_iter()
-            .filter_map(|i| self.sets.get(i).map(|s| s.uid))
+            .filter_map(|i| self.session.sets.get(i).map(|s| s.uid))
             .collect();
         self.bake.total = queue.len();
         self.bake.finished = 0;
@@ -1310,7 +1320,7 @@ impl AppState {
     fn start_next_bake(&mut self) -> bool {
         let lang = self.lang;
         while let Some(uid) = self.bake.queue.pop_front() {
-            let Some(index) = self.sets.index_of(uid) else {
+            let Some(index) = self.session.sets.index_of(uid) else {
                 self.bake.finished += 1;
                 continue;
             };
@@ -1346,7 +1356,7 @@ impl AppState {
             .full_model()
             .map(ModelId::of)
             .ok_or_else(|| lang.pick("モデルがありません", "No model").to_owned())?;
-        let set = self.sets.get(index).expect("確かめた");
+        let set = self.session.sets.get(index).expect("確かめた");
         let (uid, name) = (set.uid, set.name.clone());
         let doc = self.set_doc(index);
         let (doc_id, size) = (doc.id(), (doc.width(), doc.height()));
@@ -1437,7 +1447,7 @@ impl AppState {
     /// 始めたときから、結果の意味を変えるものが変わったか。変わったものの名前。
     fn bake_changed(&self, job: &Job) -> Option<&'static str> {
         let lang = self.lang;
-        let Some(index) = self.sets.index_of(job.uid) else {
+        let Some(index) = self.session.sets.index_of(job.uid) else {
             return Some(lang.pick("テクスチャセット", "the texture set"));
         };
         let doc = self.set_doc(index);
@@ -1509,7 +1519,7 @@ impl AppState {
                 false,
             );
         }
-        let index = self.sets.index_of(job.uid).expect("上で確かめた");
+        let index = self.session.sets.index_of(job.uid).expect("上で確かめた");
         let kinds = result
             .maps
             .iter()
@@ -1517,15 +1527,15 @@ impl AppState {
             .collect::<Vec<_>>()
             .join(lang.pick("・", ", "));
         let count = result.maps.len();
-        if let Some(set) = self.sets.get_mut(index) {
+        if let Some(set) = self.session.sets.get_mut(index) {
             // 記録と場所は、今のマップを焼いたベイクのもの。取消・時間切れ・捨てた結果では変えない（前のマップが残るので、それを
             // 焼いた記録も残す。準備の途中で止めた GPU を「GPU で焼いた」と見せない）
             set.mesh_maps.set_report(result.report.clone());
             set.mesh_maps.set_run(run.clone());
             set.mesh_maps.put(result.maps);
         }
-        self.mark_modified();
-        if self.bake.view == MeshMapView::None && index == self.sets.current_index() {
+        self.session.mark_modified();
+        if self.bake.view == MeshMapView::None && index == self.session.sets.current_index() {
             self.bake.view = MeshMapView::Coverage;
         }
         let secs = result.report.total_seconds;

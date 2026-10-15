@@ -38,7 +38,7 @@ pub fn capture(state: &AppState) -> (Stored, Vec<String>) {
         }
         return (Stored::Keep, Vec::new());
     }
-    let stored = match &state.model {
+    let stored = match &state.session.model {
         Some(m) if !m.is_live_link() => Stored::Remove,
         _ => Stored::Keep,
     };

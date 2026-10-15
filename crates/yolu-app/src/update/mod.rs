@@ -923,7 +923,7 @@ impl AppState {
         if self.update_blocked_by_another_instance() {
             return;
         }
-        if save && self.modified {
+        if save && self.session.is_modified() {
             // 保存の結果（成功の文・失敗の理由）は保存の側が message に書く。空にしておけば、保存先のウィンドウを取り消した
             // （message が空のまま）のと、保存が失敗した（理由が書かれている）のを、`update_finish_save` が見分けられる。
             self.clear_message();
@@ -943,7 +943,7 @@ impl AppState {
             return;
         }
         self.update.after_save = false;
-        if self.modified {
+        if self.session.is_modified() {
             if self.message.is_empty() {
                 self.refuse(
                     Source::Update,

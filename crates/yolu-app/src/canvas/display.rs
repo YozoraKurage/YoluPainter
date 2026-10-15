@@ -145,7 +145,7 @@ impl CanvasDisplay {
         self.fallback = None;
     }
 
-    /// 文書の入れ替えの回数（`AppState::doc_epoch`）を渡す。変わっていたら、前の文書の合成（CPU の頁・GPU の常駐）を捨てて
+    /// 文書の入れ替えの回数（`Session::doc_epoch`）を渡す。変わっていたら、前の文書の合成（CPU の頁・GPU の常駐）を捨てて
     /// 次の `sync` で作り直す。文書 ID が同じでも（保存した ID が戻る読み直し）変更記録の通し番号で差分を読まないため。
     pub fn set_document_epoch(&mut self, epoch: u64) {
         if epoch != self.epoch {

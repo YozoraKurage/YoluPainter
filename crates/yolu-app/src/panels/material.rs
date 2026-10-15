@@ -113,7 +113,7 @@ fn chips(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang, free: boo
         let cells = Rows::split(row, COLUMNS, 4.0);
         for (cell, channel) in cells.iter().zip(line) {
             let included = app.mat.includes(*channel);
-            let name = channel_name(lang, &app.doc, *channel);
+            let name = channel_name(lang, &app.session.doc, *channel);
             let tip = name.clone();
             let current = *channel == app.m2.paint_channel;
             if chip(ui, *cell, *channel, &name, included, current, free, &tip) {
@@ -212,7 +212,7 @@ fn value_rows(
     lang: Lang,
     free: bool,
 ) {
-    let name = channel_name(lang, &app.doc, channel);
+    let name = channel_name(lang, &app.session.doc, channel);
     match channel {
         Channel::Color => {
             let row = rows.row(t::ROW_HEIGHT, 2.0);

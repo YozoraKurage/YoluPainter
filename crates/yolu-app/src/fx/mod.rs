@@ -194,8 +194,8 @@ impl FxState {
 /// マスクが対象のレイヤー（そのレイヤーを選んでマスクに描いているあいだだけ。マスクの無いレイヤーは対象にならない）。レイヤーの行の下の効果の行・
 /// 効果の追加の先・レイヤーとマスクのサムネイルの青い枠が、同じこの結果を見る。
 pub fn mask_target(app: &AppState) -> Option<LayerId> {
-    let id = app.selected_layer?;
-    let has_mask = app.doc.layer(id)?.mask().is_some();
+    let id = app.session.selected_layer?;
+    let has_mask = app.session.doc.layer(id)?.mask().is_some();
     (app.m2.edit_mask && has_mask).then_some(id)
 }
 
@@ -203,11 +203,12 @@ pub fn mask_target(app: &AppState) -> Option<LayerId> {
 /// マスクが対象になる（`select_effect`）ので、レイヤーの画素が対象のあいだはマスクの効果の行を選んだ状態は残らない。
 pub fn props_visible(app: &AppState) -> bool {
     let mask_side = app.m2.edit_mask;
-    if let Some((layer, _, target)) = app.fx.filter(&app.doc) {
-        return app.selected_layer == Some(layer) && (target == FilterTarget::Mask) == mask_side;
+    if let Some((layer, _, target)) = app.fx.filter(&app.session.doc) {
+        return app.session.selected_layer == Some(layer)
+            && (target == FilterTarget::Mask) == mask_side;
     }
-    if let Some(info) = app.fx.anchor(&app.doc) {
-        return app.selected_layer == Some(info.layer)
+    if let Some(info) = app.fx.anchor(&app.session.doc) {
+        return app.session.selected_layer == Some(info.layer)
             && (info.placement == AnchorPlacement::Mask) == mask_side;
     }
     false
@@ -249,7 +250,7 @@ impl AppState {
             );
             return;
         }
-        let revision = self.doc.revision();
+        let revision = self.session.doc.revision();
         match self.fx_run(op) {
             Ok(Some(text)) => self.info(Source::Effect, text),
             Ok(None) => {}
@@ -259,13 +260,14 @@ impl AppState {
                 self.lang.core_error(&e),
             ),
         }
-        self.mark_modified_if_changed(revision);
+        self.session.mark_modified_if_changed(revision);
         self.ensure_selection();
     }
 
     fn selected_layer_or_refuse(&self) -> Result<LayerId, CoreError> {
-        self.selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
+        self.session
+            .selected_layer
+            .filter(|id| self.session.doc.layer(*id).is_some())
             .ok_or(CoreError::LayerNotFound)
     }
 
@@ -273,18 +275,19 @@ impl AppState {
     /// 一覧に出るので、選んだ行は選んだ直後も見えたまま残る。
     pub fn select_effect(&mut self, layer: LayerId, id: FilterId) {
         let mask = self
+            .session
             .doc
             .find_filter(id)
             .is_some_and(|(_, _, target)| target == FilterTarget::Mask);
-        self.selected_layer = Some(layer);
+        self.session.selected_layer = Some(layer);
         self.set_edit_mask(mask);
         self.fx.selected = Some(Selected::Filter { layer, id });
     }
 
     pub fn select_anchor(&mut self, id: AnchorId) {
-        if let Some(info) = self.doc.find_anchor(id) {
+        if let Some(info) = self.session.doc.find_anchor(id) {
             let (layer, mask) = (info.layer, info.placement == AnchorPlacement::Mask);
-            self.selected_layer = Some(layer);
+            self.session.selected_layer = Some(layer);
             self.set_edit_mask(mask);
             self.fx.selected = Some(Selected::Anchor { id });
         }
@@ -301,7 +304,7 @@ impl AppState {
                     FilterTarget::Content => spec.channels(&[channel]),
                     FilterTarget::Mask => spec,
                 };
-                let id = self.doc.add_filter(layer, target, spec)?;
+                let id = self.session.doc.add_filter(layer, target, spec)?;
                 self.select_effect(layer, id);
                 Ok(Some(self.added_text(kind.name(lang), target)))
             }
@@ -311,7 +314,7 @@ impl AppState {
                 let mut settings = generator::Settings::new(kind);
                 if kind == Kind::Anchor {
                     // すぐ下の Anchor を読む（無ければ選ばないまま）
-                    if let Some(nearest) = self.doc.anchors_readable_from(layer)?.last() {
+                    if let Some(nearest) = self.session.doc.anchors_readable_from(layer)?.last() {
                         settings.anchor.id = nearest.anchor.id().0;
                     }
                 }
@@ -320,13 +323,13 @@ impl AppState {
                     FilterTarget::Content => spec.channels(&[channel]),
                     FilterTarget::Mask => spec,
                 };
-                let id = self.doc.add_filter(layer, target, spec)?;
+                let id = self.session.doc.add_filter(layer, target, spec)?;
                 self.select_effect(layer, id);
                 let mut text = self.added_text(names::generator_name(lang, kind), target);
                 // 読むものが使えないなら、効かない理由を添える。文書へ渡す効果の入力は今の効果が読むマップだけなので、足したジェネレーターが
                 // 読むマップは、毎フレームの同期を待つと渡っておらず「マップがありません」と誤る。先に渡す
                 self.sync_effect_inputs();
-                if let Ok(Some(why)) = self.doc.generator_inactive(layer, id) {
+                if let Ok(Some(why)) = self.session.doc.generator_inactive(layer, id) {
                     text += &format!(
                         " {}",
                         lang.with_reason(
@@ -338,15 +341,15 @@ impl AppState {
                 Ok(Some(text))
             }
             FxOp::SetEnabled { layer, id, enabled } => {
-                self.doc.set_filter_enabled(layer, id, enabled)?;
+                self.session.doc.set_filter_enabled(layer, id, enabled)?;
                 Ok(None)
             }
             FxOp::Move { layer, id, index } => {
-                self.doc.move_filter(layer, id, index)?;
+                self.session.doc.move_filter(layer, id, index)?;
                 Ok(None)
             }
             FxOp::Remove { layer, id } => {
-                self.doc.remove_filter(layer, id)?;
+                self.session.doc.remove_filter(layer, id)?;
                 if self.fx.selected == Some(Selected::Filter { layer, id }) {
                     self.fx.selected = None;
                 }
@@ -358,7 +361,8 @@ impl AppState {
                 settings,
                 coalesce,
             } => {
-                self.doc
+                self.session
+                    .doc
                     .set_filter_settings(layer, id, settings, coalesce)?;
                 Ok(None)
             }
@@ -368,7 +372,8 @@ impl AppState {
                 strength,
                 coalesce,
             } => {
-                self.doc
+                self.session
+                    .doc
                     .set_filter_strength(layer, id, strength, coalesce)?;
                 Ok(None)
             }
@@ -377,11 +382,15 @@ impl AppState {
                 id,
                 channels,
             } => {
-                self.doc.set_filter_channels(layer, id, &channels)?;
+                self.session.doc.set_filter_channels(layer, id, &channels)?;
                 Ok(None)
             }
             FxOp::AddAnchor { layer, placement } => {
-                let l = self.doc.layer(layer).ok_or(CoreError::LayerNotFound)?;
+                let l = self
+                    .session
+                    .doc
+                    .layer(layer)
+                    .ok_or(CoreError::LayerNotFound)?;
                 let base = match placement {
                     AnchorPlacement::Mask => lang.pick(
                         format!("{}（マスク）", l.name()),
@@ -389,8 +398,11 @@ impl AppState {
                     ),
                     AnchorPlacement::Layer => l.name().to_owned(),
                 };
-                let name = unique_anchor_name(&self.doc, &base, lang);
-                let id = self.doc.add_anchor(layer, placement, Some(&name), None)?;
+                let name = unique_anchor_name(&self.session.doc, &base, lang);
+                let id = self
+                    .session
+                    .doc
+                    .add_anchor(layer, placement, Some(&name), None)?;
                 self.select_anchor(id);
                 Ok(Some(lang.pick(
                     format!("アンカー「{name}」を置きました。"),
@@ -399,11 +411,12 @@ impl AppState {
             }
             FxOp::RemoveAnchor(id) => {
                 let name = self
+                    .session
                     .doc
                     .find_anchor(id)
                     .map(|a| a.anchor.name().to_owned())
                     .unwrap_or_default();
-                self.doc.remove_anchor(id)?;
+                self.session.doc.remove_anchor(id)?;
                 if self.fx.selected == Some(Selected::Anchor { id }) {
                     self.fx.selected = None;
                 }
@@ -413,7 +426,7 @@ impl AppState {
                 )))
             }
             FxOp::RenameAnchor { id, name } => {
-                self.doc.rename_anchor(id, name.trim())?;
+                self.session.doc.rename_anchor(id, name.trim())?;
                 Ok(None)
             }
             FxOp::SetAnchorRef {
@@ -423,12 +436,14 @@ impl AppState {
                 channel,
                 read,
             } => {
-                self.doc
+                self.session
+                    .doc
                     .set_generator_anchor(layer, filter, anchor, channel, read, false)?;
                 Ok(None)
             }
             FxOp::SetImage { layer, id, image } => {
                 let Some(mut g) = self
+                    .session
                     .doc
                     .find_filter(id)
                     .filter(|(l, _, _)| *l == layer)
@@ -445,11 +460,13 @@ impl AppState {
                     }
                 }
                 g.image.image = image.map_or(0, |i| i.0);
-                self.doc.end_coalescing();
-                if let Err(e) =
-                    self.doc
-                        .set_filter_settings(layer, id, EffectSettings::generator(g), false)
-                {
+                self.session.doc.end_coalescing();
+                if let Err(e) = self.session.doc.set_filter_settings(
+                    layer,
+                    id,
+                    EffectSettings::generator(g),
+                    false,
+                ) {
                     // 画像は先に復号して文書へ渡してある。差さなかった画像は手放す
                     if let Some(image) = image {
                         self.release_shelf_image(image);
@@ -470,7 +487,12 @@ impl AppState {
                 ))
             }
             FxOp::SelectFilter { layer, id } => {
-                if self.doc.find_filter(id).is_some_and(|(l, _, _)| l == layer) {
+                if self
+                    .session
+                    .doc
+                    .find_filter(id)
+                    .is_some_and(|(l, _, _)| l == layer)
+                {
                     self.select_effect(layer, id);
                 }
                 Ok(None)
@@ -497,16 +519,16 @@ impl AppState {
                 Ok(None)
             }
             FxOp::GoToAnchor(id) => {
-                if let Some(info) = self.doc.find_anchor(id) {
+                if let Some(info) = self.session.doc.find_anchor(id) {
                     let (layer, mask) = (info.layer, info.placement == AnchorPlacement::Mask);
-                    self.selected_layer = Some(layer);
+                    self.session.selected_layer = Some(layer);
                     self.fx.selected = None;
                     self.set_edit_mask(mask);
                 }
                 Ok(None)
             }
             FxOp::SetFilterSeams(on) => {
-                self.doc.set_filter_seams(on)?;
+                self.session.doc.set_filter_seams(on)?;
                 Ok(None)
             }
         }
@@ -520,7 +542,8 @@ impl AppState {
                 format!("Added {name} to the mask."),
             ),
             FilterTarget::Content => {
-                let channel = crate::m2::channel_name(lang, &self.doc, self.m2.paint_channel);
+                let channel =
+                    crate::m2::channel_name(lang, &self.session.doc, self.m2.paint_channel);
                 lang.pick(
                     format!("{channel} の画素に {name} を追加しました。"),
                     format!("Added {name} to the {channel} pixels."),
@@ -537,6 +560,7 @@ impl AppState {
         };
         let lang = self.lang;
         let Some(g) = self
+            .session
             .doc
             .find_filter(id)
             .and_then(|(_, e, _)| e.settings().generator_settings().cloned())
@@ -576,11 +600,13 @@ impl AppState {
                 },
             );
         } else {
-            let revision = self.doc.revision();
-            match self
-                .doc
-                .set_filter_settings(layer, id, EffectSettings::generator(next), false)
-            {
+            let revision = self.session.doc.revision();
+            match self.session.doc.set_filter_settings(
+                layer,
+                id,
+                EffectSettings::generator(next),
+                false,
+            ) {
                 Ok(()) => {
                     self.info(
                         Source::Effect,
@@ -603,7 +629,7 @@ impl AppState {
                     lang.core_error(&e),
                 ),
             }
-            self.mark_modified_if_changed(revision);
+            self.session.mark_modified_if_changed(revision);
         }
         true
     }
@@ -632,12 +658,12 @@ impl AppState {
         if self.is_stroking() {
             return;
         }
-        let key = (self.doc.id(), self.doc.revision());
+        let key = (self.session.doc.id(), self.session.doc.revision());
         if self.fx.issues.doc == Some(key) {
             return;
         }
         let same_doc = self.fx.issues.doc.is_some_and(|(id, _)| id == key.0);
-        let issues = self.doc.anchor_issues();
+        let issues = self.session.doc.anchor_issues();
         let fresh: Vec<_> = if same_doc {
             issues
                 .iter()

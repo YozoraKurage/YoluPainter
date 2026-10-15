@@ -167,8 +167,8 @@ impl AppState {
                 r.sample_all = v == color::Reference::Visible;
             }
             RegionAction::ReferenceLayer(id) => {
-                let key = (self.doc.id(), id);
-                if self.doc.layer(id).is_some() && !r.references.remove(&key) {
+                let key = (self.session.doc.id(), id);
+                if self.session.doc.layer(id).is_some() && !r.references.remove(&key) {
                     r.references.insert(key);
                 }
             }
@@ -199,7 +199,7 @@ impl AppState {
         if self.view3d.model.is_none() {
             return lang.pick("モデルがありません", "No model").into();
         }
-        let name = &self.sets.current().name;
+        let name = &self.session.sets.current().name;
         lang.pick(
             format!("今のテクスチャセット「{name}」はこのモデルにありません。"),
             format!("Texture set “{name}” is not in this model."),

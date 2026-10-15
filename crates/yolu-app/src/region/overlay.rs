@@ -54,7 +54,10 @@ pub fn paint_canvas(
     if h.outline.is_empty() || h.outline.len() > MAX_SEGMENTS {
         return;
     }
-    let (w, ht) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (w, ht) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     let points: Vec<[egui::Pos2; 2]> = h
         .outline
         .iter()

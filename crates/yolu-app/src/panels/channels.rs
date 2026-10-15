@@ -113,13 +113,14 @@ fn entries(app: &AppState, channels: &[Channel]) -> Vec<Entry> {
         .filter(|c| !c.is_standard())
         .copied()
         .collect();
-    let look = app.doc.drawn_look();
+    let look = app.session.doc.drawn_look();
     if look.kind != yolu_core::look::LookKind::LilToon {
         out.extend(user.into_iter().map(Entry::Row));
         return out;
     }
-    let part_of =
-        |c: Channel| crate::look::channel_section(&app.doc, c).map_or(Part::Other, Part::Look);
+    let part_of = |c: Channel| {
+        crate::look::channel_section(&app.session.doc, c).map_or(Part::Other, Part::Look)
+    };
     let parts: Vec<(Channel, Part)> = user.iter().map(|c| (*c, part_of(*c))).collect();
     // どの部位のスロットも読まないチャンネルだけなら、まとめない（見出しが「そのほか」1 つだけにならないように）
     if parts.iter().all(|(_, p)| *p == Part::Other) {
@@ -202,7 +203,7 @@ impl KindColumn {
         let dropdown = channels
             .iter()
             .filter(|c| !c.is_standard())
-            .filter_map(|c| app.doc.channel_info(*c))
+            .filter_map(|c| app.session.doc.channel_info(*c))
             .map(|i| w::text_width(p, &m2::channel_format(i), t::LABEL))
             .fold(0.0, f32::max)
             + KIND_PAD;
@@ -237,7 +238,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         r.min,
         pos2(r.right(), (r.bottom() - TOOLBAR_HEIGHT).max(r.top())),
     );
-    let channels = app.doc.channels();
+    let channels = app.session.doc.channels();
     let entries = entries(app, &channels);
     let list_height: f32 = entries.iter().map(|e| e.height()).sum();
     let bar = Scroll::begin(
@@ -351,7 +352,7 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
     if !open {
         return;
     }
-    let settings = app.doc.normal_settings();
+    let settings = app.session.doc.normal_settings();
     let enabled = app.can_edit();
     let derive = settings.derive_from_height();
     let edit = |app: &mut AppState, settings: NormalSettings, coalesce: bool| {
@@ -443,8 +444,8 @@ fn channel_row(
     kind: KindColumn,
 ) {
     let lang = app.lang;
-    let name = m2::channel_name(lang, &app.doc, channel);
-    let Some(info) = app.doc.channel_info(channel).cloned() else {
+    let name = m2::channel_name(lang, &app.session.doc, channel);
+    let Some(info) = app.session.doc.channel_info(channel).cloned() else {
         return;
     };
     let painting = app.m2.paint_channel == channel;
@@ -497,7 +498,7 @@ fn channel_row(
         pos2(kind_rect.left() - 4.0, row.bottom() - 3.0),
     );
     // このチャンネルを読む lilToon のスロット（見た目が lilToon のとき）: チャンネルの印の右上に小さな点、スロットの名前はツールチップ
-    let reading = crate::look::slots_reading(&app.doc, channel);
+    let reading = crate::look::slots_reading(&app.session.doc, channel);
 
     if response.clicked() {
         app.apply(Action::M2Ui(UiOp::PaintChannel(channel)));

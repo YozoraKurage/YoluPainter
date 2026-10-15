@@ -356,7 +356,7 @@ impl AppState {
     /// 「同じバイト列は書かない」には当たらない。正本への変換と書き込みは別のスレッドで、やめられる。文書とプロジェクトのアセットは変えない。
     pub(crate) fn library_save_material(&mut self, id: LayerId) {
         let lang = self.lang;
-        let Some(layer) = self.doc.layer(id) else {
+        let Some(layer) = self.session.doc.layer(id) else {
             let reason = lang.pick("レイヤーがありません", "Layer not found");
             return self.refuse_material(None, reason);
         };
@@ -370,7 +370,7 @@ impl AppState {
         if let Some(reason) = self.library.busy_reason(lang) {
             return self.refuse_material(Some(&name), reason);
         }
-        let material = match self.doc.capture_material(id, &name) {
+        let material = match self.session.doc.capture_material(id, &name) {
             Ok(m) => m,
             Err(e) => {
                 return self.cannot(
@@ -614,12 +614,12 @@ impl AppState {
         };
         match made {
             Ok(material) => {
-                let steps = self.doc.undo_count();
+                let steps = self.session.doc.undo_count();
                 self.place_material(&name, material, target, false);
                 // 16 ビットの PNG は 8 ビットへ丸めて置く。置けたときだけ知らせる
                 if kind == files::Kind::Image
                     && png::rounds_to_8_bit(&bytes)
-                    && self.doc.undo_count() > steps
+                    && self.session.doc.undo_count() > steps
                 {
                     // 置いた知らせに、8 ビットへ丸めた但し書きを添える（気をつけること）
                     self.amend(

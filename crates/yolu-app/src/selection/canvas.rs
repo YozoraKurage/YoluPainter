@@ -74,8 +74,14 @@ pub fn press(
     match app.tool {
         Tool::SelectPen => pen::press(app, view, pos, source, modifiers),
         Tool::Wand => {
-            let x = canvas.0.floor().clamp(0.0, (app.doc.width() - 1) as f64) as u32;
-            let y = canvas.1.floor().clamp(0.0, (app.doc.height() - 1) as f64) as u32;
+            let x = canvas
+                .0
+                .floor()
+                .clamp(0.0, (app.session.doc.width() - 1) as f64) as u32;
+            let y = canvas
+                .1
+                .floor()
+                .clamp(0.0, (app.session.doc.height() - 1) as f64) as u32;
             // 押した画素（キャンバスの外は端の画素へ寄せる）の中心から、対称定規の写しの種を作る。左右の写しが画素で揃い、外の写しは捨てる
             let seeds = app
                 .symmetry_seeds((x as f64 + 0.5, y as f64 + 0.5), app.sel.snap_symmetry)
@@ -234,7 +240,7 @@ pub fn release(
     let corner_radius = app.sel.corner_radius;
     let edit = match drag.tool {
         _ if click => {
-            if mode == SelectionCombine::Replace && app.doc.selection().is_some() {
+            if mode == SelectionCombine::Replace && app.session.doc.selection().is_some() {
                 Some(SelEdit::Clear)
             } else {
                 None
@@ -522,7 +528,7 @@ fn paint_ants(ctx: &egui::Context, painter: &Painter, view: &CanvasView, app: &m
         app.sel.edge_partial = false;
         return;
     }
-    let Some(mask) = app.doc.selection().cloned() else {
+    let Some(mask) = app.session.doc.selection().cloned() else {
         app.sel.edge_partial = false;
         return;
     };
@@ -758,8 +764,8 @@ pub fn paint_mirrored_cursors(
                 x,
                 y,
                 app.brush.radius as f64,
-                app.doc.width(),
-                app.doc.height(),
+                app.session.doc.width(),
+                app.session.doc.height(),
             )
             .ok()
         })

@@ -456,15 +456,19 @@ impl AppState {
         );
         // 保存したプロジェクトの中にあるセットは、開いたときの中身のまま書ける。無いセット（新しいプロジェクト・前の保存の後に
         // 追加したセット）は元の中身が無いので、そのセットだけ保存と復旧用の書き置きに入らない（保存のたびに知らせる）
-        let base = self.project.as_ref().map(|p| p.project_shared());
+        let base = self.session.project.as_ref().map(|p| p.project_shared());
         let (mut names, mut unsaved) = (Vec::new(), Vec::new());
-        for i in 0..self.sets.len() {
-            if self.sets.get(i).is_some_and(|s| s.read_only.is_some())
+        for i in 0..self.session.sets.len() {
+            if self
+                .session
+                .sets
+                .get(i)
+                .is_some_and(|s| s.read_only.is_some())
                 || !self.set_doc(i).has_unreadable_tiles()
             {
                 continue;
             }
-            if let Some(set) = self.sets.get_mut(i) {
+            if let Some(set) = self.session.sets.get_mut(i) {
                 set.read_only = Some(reason.into());
                 set.waiting_inputs = false;
                 names.push(set.name.clone());
@@ -534,21 +538,21 @@ impl AppState {
         } else {
             wanted.source
         };
-        let current = self.sets.current_index();
+        let current = self.session.sets.current_index();
         let (mut other_source, mut other_history) = (0u64, 0u64);
-        for i in (0..self.sets.len()).filter(|&i| i != current) {
+        for i in (0..self.session.sets.len()).filter(|&i| i != current) {
             let doc = self.set_doc(i);
             other_source = other_source.saturating_add(doc.allocated_bytes());
             other_history = other_history.saturating_add(doc.history_bytes());
         }
         let undo = wanted.undo.saturating_sub(other_history);
         let source = total_source.saturating_sub(other_source);
-        let own = self.doc.allocated_bytes();
+        let own = self.session.doc.allocated_bytes();
         let over = source < own;
-        let id = self.doc.id();
+        let id = self.session.doc.id();
         // 4 つとも core が断らない値（画素の予算は今の画素以上）。同じ値は入れ直さない（履歴の整理を毎フレーム走らせない）
         let source = source.max(own);
-        let doc = &mut self.doc;
+        let doc = &mut self.session.doc;
         if doc.minimum_undo_steps() != wanted.min_undo_steps {
             let _ = doc.set_minimum_undo_steps(wanted.min_undo_steps);
         }

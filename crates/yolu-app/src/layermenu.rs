@@ -205,22 +205,24 @@ impl AppState {
     ) -> Option<yolu_core::LayerId> {
         let channel = self.m2.paint_channel;
         let kind = self
+            .session
             .doc
             .channel_info(channel)
             .map_or(ChannelKind::Color, |c| c.kind);
         let above = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some());
+            .filter(|id| self.session.doc.layer(*id).is_some());
         // 値は、画像・グラデーションが使えないときに出る既定の値（デカールを置くときと同じ）
         let value = default_fallback(kind);
-        match self.doc.batch(|d| {
+        match self.session.doc.batch(|d| {
             let id = d.add_fill_layer(name, &[(channel, value)], above)?;
             fill(d, id, channel)?;
             Ok(id)
         }) {
             Ok(id) => {
                 // 断られて巻き戻したときは変更番号だけが進むので、変更の印は作れたときだけ付ける
-                self.mark_modified();
+                self.session.mark_modified();
                 self.select_new(id);
                 Some(id)
             }
@@ -260,7 +262,7 @@ impl AppState {
             self.fitted_placement_for(mode, Some(size))
         };
         let projection = placement::new_projection(mode, fitted);
-        self.doc.end_coalescing();
+        self.session.doc.end_coalescing();
         let created = self.add_fill_layer_with(&name, |d, id, channel| {
             d.set_fill_image(id, channel, Some(image))?;
             d.set_fill_projection(id, projection, false)
@@ -322,7 +324,7 @@ impl AppState {
         }
         let name = self.new_layer_name(LayerKind::Fill);
         let settings = placement::new_shape_gradient_of(shape, self.model_bounds().as_ref());
-        self.doc.end_coalescing();
+        self.session.doc.end_coalescing();
         let created = self.add_fill_layer_with(&name, |d, id, channel| {
             d.set_fill_gradient(id, channel, Some(settings), false)
         });

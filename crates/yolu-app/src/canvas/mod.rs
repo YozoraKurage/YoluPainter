@@ -46,9 +46,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
         pen,
         gesture::foreign_press(ui.ctx(), &response),
     );
-    let (w_px, h_px) = (app.doc.width(), app.doc.height());
+    let (w_px, h_px) = (app.session.doc.width(), app.session.doc.height());
     let view = app.view.view(rect, w_px, h_px);
-    display.set_document_epoch(app.doc_epoch);
+    display.set_document_epoch(app.session.doc_epoch());
     // 見えている所から上げる（CPU の頁。GPU の道は使わない）
     display.set_viewport(Some(self::cpu::Viewport {
         // 何も見えないとき（表示を画面の外へ動かした）は空の矩形。全部が「見えていない」として、近い順に少しずつ上げる
@@ -57,7 +57,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             .unwrap_or(crate::engine::Rect::new(0, 0, 0, 0)),
         pixel_size: view.pixel_size(),
     }));
-    display.sync_channel(ui.ctx(), &app.doc, app.m2.display_channel);
+    display.sync_channel(ui.ctx(), &app.session.doc, app.m2.display_channel);
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, t::CANVAS_BG);
     display.paint(&painter, &view);
@@ -174,7 +174,7 @@ fn paint_clone_source(painter: &egui::Painter, view: &CanvasView, app: &AppState
             _ => None,
         }
     } else if crate::clone_source::active(app) {
-        app.clone.canvas_source_for(app.doc.id())
+        app.clone.canvas_source_for(app.session.doc.id())
     } else {
         None
     };
@@ -338,7 +338,7 @@ fn begin_any(
     }
     let first = stroke_start(app, view, p, shift);
     let snapped = app
-        .canvas_ruler_constraint(view, app.selected_layer, p)
+        .canvas_ruler_constraint(view, app.session.selected_layer, p)
         .is_some();
     begin_stroke(app, source, eraser, rect, shift || snapped, first)
 }
@@ -352,7 +352,7 @@ fn stroke_start(app: &AppState, view: &CanvasView, p: Pos2, shift: bool) -> (f64
     } else {
         pressed
     };
-    if let Some(mut constraint) = app.canvas_ruler_constraint(view, app.selected_layer, p) {
+    if let Some(mut constraint) = app.canvas_ruler_constraint(view, app.session.selected_layer, p) {
         let at = constraint.project(yolu_core::glam::DVec2::new(first.0, first.1));
         return (at.x, at.y);
     }
@@ -377,7 +377,7 @@ fn begin_stroke(
     if let Some(began) = crate::selection::quick::begin(app, source, eraser) {
         return began;
     }
-    let Some(layer) = app.selected_layer else {
+    let Some(layer) = app.session.selected_layer else {
         app.refuse(
             Source::Canvas,
             app.lang
@@ -410,7 +410,10 @@ fn begin_stroke(
     let cloning = !eraser && crate::clone_source::active(app);
     let restore = cloning.then(|| (app.clone.clone(), app.m2.brush.effect));
     if let (true, BrushEffect::Clone { offset: current }) = (cloning, app.m2.brush.effect) {
-        if let Some(offset) = app.clone.canvas_offset(app.doc.id(), first, current) {
+        if let Some(offset) = app
+            .clone
+            .canvas_offset(app.session.doc.id(), first, current)
+        {
             app.m2.brush.effect = BrushEffect::Clone { offset };
         }
     }
@@ -432,7 +435,7 @@ fn begin_stroke(
                 BrushEffect::Clone { offset } if cloning => Some(offset),
                 _ => None,
             };
-            app.stroke = Some(stroke);
+            app.session.stroke = Some(stroke);
             app.canvas.stroke = Some(source);
             app.canvas.stroke_points = 0;
             app.canvas.stroke_time = None;
@@ -442,7 +445,7 @@ fn begin_stroke(
             if !settings.erase {
                 app.color.remember();
             }
-            app.mark_modified();
+            app.session.mark_modified();
             true
         }
         Err(e) => {
@@ -504,7 +507,7 @@ fn add_point(
         let point = constraint.project(yolu_core::glam::DVec2::new(x, y));
         (x, y) = (point.x, point.y);
     }
-    let Some(stroke) = app.stroke.as_mut() else {
+    let Some(stroke) = app.session.stroke.as_mut() else {
         return;
     };
     let time = time.max(app.canvas.stroke_time.unwrap_or(f64::NEG_INFINITY));
@@ -520,9 +523,9 @@ fn add_point(
         None => Ok(s),
     });
     let result = match sample {
-        Ok(s) => stroke.add_sample(&mut app.doc, s),
+        Ok(s) => stroke.add_sample(&mut app.session.doc, s),
         Err(e) => {
-            app.doc.cancel_active_stroke();
+            app.session.doc.cancel_active_stroke();
             Err(e)
         }
     };
@@ -539,7 +542,7 @@ fn add_point(
         }
         Err(e) => {
             // core は失敗したストロークを取り消してから返す（予算を超えたなど）。札を手放して知らせる
-            app.stroke = None;
+            app.session.stroke = None;
             app.canvas.stroke = None;
             app.notify(
                 crate::notice::Kind::of_core(&e),
@@ -585,20 +588,20 @@ fn finish_stroke_with(app: &mut AppState, cancel: bool, release: Option<&egui::C
     if crate::selection::quick::finish(app, cancel) {
         return;
     }
-    let Some(stroke) = app.stroke.take() else {
+    let Some(stroke) = app.session.stroke.take() else {
         // 札を失っていても、core に進行中のストロークが残っていれば取り消す（取り残さない）
-        app.doc.cancel_active_stroke();
+        app.session.doc.cancel_active_stroke();
         return;
     };
     if cancel {
-        app.doc.cancel_stroke(stroke);
+        app.session.doc.cancel_stroke(stroke);
         app.info(
             Source::Canvas,
             app.lang
                 .pick("ストロークを取り消しました。", "Stroke cancelled."),
         );
     } else {
-        match app.doc.end_stroke(stroke) {
+        match app.session.doc.end_stroke(stroke) {
             Err(e) => app.notify(
                 crate::notice::Kind::of_core(&e),
                 Source::Canvas,
@@ -614,7 +617,7 @@ fn finish_stroke_with(app: &mut AppState, cancel: bool, release: Option<&egui::C
                 }
                 // 揃えるクローンは、画素を変えて確定したストロークの offset で続ける（3D の先の基準と同じ）
                 if let (Some(offset), true) = (cloned, result.changed) {
-                    app.clone.canvas_stroke_kept(app.doc.id(), offset);
+                    app.clone.canvas_stroke_kept(app.session.doc.id(), offset);
                 }
             }
         }
@@ -633,10 +636,11 @@ fn first_point(
     time: f64,
     shift: bool,
 ) {
-    if app.stroke.is_some() {
-        app.canvas.ruler_constraint = app.canvas_ruler_constraint(view, app.selected_layer, p);
+    if app.session.stroke.is_some() {
+        app.canvas.ruler_constraint =
+            app.canvas_ruler_constraint(view, app.session.selected_layer, p);
     }
-    if shift && app.tool.paints() && app.stroke.is_some() {
+    if shift && app.tool.paints() && app.session.stroke.is_some() {
         let has_previous = app.canvas.previous_end.is_some();
         if let Some((x, y)) = app.canvas.previous_end {
             add_point(
@@ -668,7 +672,7 @@ struct Frame {
 fn pen_sample(ui: &Ui, app: &mut AppState, rect: Rect, s: &PenSample, frame: &Frame) {
     crate::selection::canvas::note_pen(app, s.pointer_id, s.pressure, s.eraser);
     let p = s.pos_points(ui.ctx().pixels_per_point());
-    let (w_px, h_px) = (app.doc.width(), app.doc.height());
+    let (w_px, h_px) = (app.session.doc.width(), app.session.doc.height());
     let view = app.view.view(rect, w_px, h_px);
     let source = StrokeSource::Pen(s.pointer_id);
     let press = match app.canvas.pen_press {
@@ -931,7 +935,7 @@ fn typing_id() -> egui::Id {
 /// `note_escape_taken` の印で見る。
 /// 文字の入力中と、描く・形を作る・移動と変形・グラデーション・図形・パスなどの途中は、呼ぶ側が先に見る（やめるものがあればそちらが先）。
 fn escape_is_free(app: &AppState, ctx: &egui::Context) -> bool {
-    app.doc.selection().is_some()
+    app.session.doc.selection().is_some()
         && app.popup.is_none()
         && !app.ui.popup_was_open
         && app.sel.dialog.is_none()
@@ -946,7 +950,7 @@ fn escape_is_free(app: &AppState, ctx: &egui::Context) -> bool {
 }
 
 fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], foreign: bool) {
-    let (w_px, h_px) = (app.doc.width(), app.doc.height());
+    let (w_px, h_px) = (app.session.doc.width(), app.session.doc.height());
     let ctx = ui.ctx().clone();
     let typing = ctx.egui_wants_keyboard_input();
     // 文字の入力欄は Esc を、入力をやめるのに使う。欄がこのフレームのこれより前に Esc で手放したときも、1 つ前のフレームで入力中だったかで分かる
@@ -1474,7 +1478,7 @@ mod tests {
         ));
         first_point(&mut app, &view, a, 0.7, Tilt::default(), None, 1.0, false);
         finish_stroke(&mut app, false);
-        let before = app.doc.revision();
+        let before = app.session.doc.revision();
         assert!(begin_stroke(
             &mut app,
             StrokeSource::Mouse,
@@ -1488,10 +1492,10 @@ mod tests {
         finish_stroke(&mut app, false);
         let end = app.canvas.previous_end.unwrap();
         assert!((end.0 - 40.0).abs() < 1e-4 && (end.1 - 40.0).abs() < 1e-4);
-        assert_ne!(before, app.doc.revision());
-        app.doc.undo().unwrap();
-        app.doc.undo().unwrap();
-        assert!(!app.doc.can_undo());
+        assert_ne!(before, app.session.doc.revision());
+        app.session.doc.undo().unwrap();
+        app.session.doc.undo().unwrap();
+        assert!(!app.session.doc.can_undo());
         app.document_replaced();
         assert_eq!(app.canvas.previous_end, None);
     }
@@ -1565,7 +1569,7 @@ mod tests {
         assert!((end.1 - 100.0).abs() < 1e-3, "{end:?}");
         finish_stroke(&mut app, true);
         assert_eq!(app.canvas.previous_end, None);
-        assert!(!app.doc.can_undo());
+        assert!(!app.session.doc.can_undo());
     }
 
     #[test]
@@ -1615,7 +1619,7 @@ mod tests {
             (end.0 - 100.0).abs() < 1e-3 && (end.1 - 60.0).abs() < 1e-3,
             "{end:?}"
         );
-        assert_eq!(app.doc.undo_count(), 1);
+        assert_eq!(app.session.doc.undo_count(), 1);
         // 保持を超えて動かしたら、続きは向きを固定せずに普通に描く
         assert!(begin_stroke(
             &mut app,
@@ -1665,6 +1669,6 @@ mod tests {
             (kept.0 - 100.0).abs() < 1e-3 && (kept.1 - 60.0).abs() < 1e-3,
             "{kept:?}"
         );
-        assert_eq!(app.doc.undo_count(), 1);
+        assert_eq!(app.session.doc.undo_count(), 1);
     }
 }

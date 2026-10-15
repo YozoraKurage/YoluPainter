@@ -239,7 +239,7 @@ fn begin(
         super::quick::begin(app, &model, rect, at, pressure, source, erase, true);
         return;
     }
-    let Some(layer) = app.selected_layer else {
+    let Some(layer) = app.session.selected_layer else {
         app.refuse(
             Source::View3d,
             app.lang
@@ -284,7 +284,7 @@ fn begin(
     else {
         return;
     };
-    app.stroke = Some(stroke);
+    app.session.stroke = Some(stroke);
     app.view3d.input.stroke = Some(source);
     app.view3d.input.symmetry = symmetry;
     app.view3d.input.ruler_constraint = constraint;
@@ -297,7 +297,7 @@ fn begin(
     if !erase {
         app.color.remember();
     }
-    app.mark_modified();
+    app.session.mark_modified();
     // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
     crate::uv_wireframe::overlap::note_surface(app, rect, at);
     if line {
@@ -443,7 +443,7 @@ pub(super) fn open_stroke(
     };
     let material = app.view3d.material;
     match SurfaceStroke::begin_input(
-        &mut app.doc,
+        &mut app.session.doc,
         &mut stroke,
         model.geometry.clone(),
         view,
@@ -465,7 +465,7 @@ pub(super) fn open_stroke(
             symmetry,
         }),
         Err(e) => {
-            app.doc.cancel_stroke(stroke);
+            app.session.doc.cancel_stroke(stroke);
             app.fail(Source::View3d, app.lang.surface_error(&e));
             None
         }
@@ -548,11 +548,17 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
         .model
         .as_ref()
         .and_then(|m| pick(&m.geometry, &camera_view(app, rect), local(rect, at)));
-    let (Some(stroke), Some(surface)) = (app.stroke.as_mut(), app.view3d.input.surface.as_mut())
-    else {
+    let (Some(stroke), Some(surface)) = (
+        app.session.stroke.as_mut(),
+        app.view3d.input.surface.as_mut(),
+    ) else {
         return;
     };
-    match surface.add_input(&mut app.doc, stroke, pen.input(local(rect, at), pressure)) {
+    match surface.add_input(
+        &mut app.session.doc,
+        stroke,
+        pen.input(local(rect, at), pressure),
+    ) {
         Ok(()) => {
             app.view3d.input.stroke_points += 1;
             app.view3d.input.last_point = Some(at);
@@ -578,8 +584,10 @@ fn paint_queued(app: &mut AppState, ctx: &egui::Context) {
     let released = app.view3d.input.released;
     let fixed_budget = app.view3d.input.paint_budget;
     let mut clock = app.view3d.input.dab_clock;
-    let (Some(stroke), Some(surface)) = (app.stroke.as_mut(), app.view3d.input.surface.as_mut())
-    else {
+    let (Some(stroke), Some(surface)) = (
+        app.session.stroke.as_mut(),
+        app.view3d.input.surface.as_mut(),
+    ) else {
         return;
     };
     if surface.queued() == 0 {
@@ -596,7 +604,7 @@ fn paint_queued(app: &mut AppState, ctx: &egui::Context) {
         ))
     });
     let started = Instant::now();
-    match surface.paint_queued_until(&mut app.doc, stroke, started + budget) {
+    match surface.paint_queued_until(&mut app.session.doc, stroke, started + budget) {
         Ok(painted) => {
             clock.record(painted, started.elapsed());
             app.view3d.input.dab_clock = clock;
@@ -619,8 +627,8 @@ fn paint_queued(app: &mut AppState, ctx: &egui::Context) {
 
 /// 塗れなかった（予算を超えた・ありえない長さの区間など）: 途中まで塗った画素も戻してストロークを取り消す。
 fn abandon(app: &mut AppState, e: &yolu_core::geometry::SurfaceStrokeError) {
-    if let Some(stroke) = app.stroke.take() {
-        app.doc.cancel_stroke(stroke);
+    if let Some(stroke) = app.session.stroke.take() {
+        app.session.doc.cancel_stroke(stroke);
     }
     app.view3d.stroke_ended();
     app.fail(Source::View3d, app.lang.surface_error(e));
@@ -638,7 +646,7 @@ pub fn release(app: &mut AppState, ctx: &egui::Context) {
         .input
         .surface
         .as_mut()
-        .filter(|_| app.stroke.is_some())
+        .filter(|_| app.session.stroke.is_some())
     else {
         finish(app, false);
         return;
@@ -674,13 +682,13 @@ pub fn finish(app: &mut AppState, cancel: bool) {
         return;
     }
     let surface = app.view3d.input.surface.take();
-    let Some(mut stroke) = app.stroke.take() else {
-        app.doc.cancel_active_stroke();
+    let Some(mut stroke) = app.session.stroke.take() else {
+        app.session.doc.cancel_active_stroke();
         app.view3d.stroke_ended();
         return;
     };
     if cancel {
-        app.doc.cancel_stroke(stroke);
+        app.session.doc.cancel_stroke(stroke);
         app.info(
             Source::View3d,
             app.lang
@@ -690,10 +698,10 @@ pub fn finish(app: &mut AppState, cancel: bool) {
         let mut surface = surface;
         let last = surface
             .as_mut()
-            .map(|s| s.finish(&mut app.doc, &mut stroke));
+            .map(|s| s.finish(&mut app.session.doc, &mut stroke));
         match last {
             Some(Err(e)) => {
-                app.doc.cancel_stroke(stroke);
+                app.session.doc.cancel_stroke(stroke);
                 app.fail(Source::View3d, app.lang.surface_error(&e));
             }
             _ => {
@@ -705,7 +713,7 @@ pub fn finish(app: &mut AppState, cancel: bool) {
                 }
                 // 揃えるクローンは、変わったストロークの先の基準を次のストロークへ渡す
                 let destination = surface.as_ref().and_then(|s| s.clone_destination());
-                match app.doc.end_stroke(stroke) {
+                match app.session.doc.end_stroke(stroke) {
                     Ok(result) => {
                         if let (true, Some(d)) = (result.changed, destination) {
                             app.clone.destination = Some(d);
@@ -1223,7 +1231,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     // 間は、札が無くても続ける（被覆と選択ペンのどちらかが先に無くなれば、ここで終える）
     let quick_live = app.view3d.input.cover.is_some() && app.sel.pen.is_some();
     if app.view3d.input.stroke.is_some()
-        && app.stroke.is_none()
+        && app.session.stroke.is_none()
         && app.region.drag.is_none()
         && app.region.leftover_drag.is_none()
         && !quick_live
@@ -1833,7 +1841,11 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
     let Some(hit) = pick(&model.geometry, &view, local(rect, pointer)) else {
         return false;
     };
-    let radius = world_radius(&model.geometry, app.brush.radius as f64, app.doc.width());
+    let radius = world_radius(
+        &model.geometry,
+        app.brush.radius as f64,
+        app.session.doc.width(),
+    );
     let screen_radius = view.world_radius_to_screen(hit.position, radius);
     if !(screen_radius > 0.0 && screen_radius.is_finite()) {
         return false;
@@ -1899,8 +1911,14 @@ fn canvas_copy_rings(
         return;
     }
     let geometry = grid.geometry();
-    let size = DVec2::new(app.doc.width() as f64, app.doc.height() as f64);
-    let (doc_w, doc_h) = (app.doc.width() as i32, app.doc.height() as i32);
+    let size = DVec2::new(
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
+    let (doc_w, doc_h) = (
+        app.session.doc.width() as i32,
+        app.session.doc.height() as i32,
+    );
     let reach = app.brush.radius as f64;
     for h in std::iter::once(hit).chain(copies) {
         let (x, y) = (h.uv.x as f64 * size.x, h.uv.y as f64 * size.y);

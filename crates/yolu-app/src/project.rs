@@ -25,9 +25,11 @@ use yolu_io::{Project, SaveTarget, SetDocument, WriterInfo};
 
 pub(crate) mod capture;
 pub(crate) mod save;
+mod session;
 pub use save::{
     save_for_ops, save_from, SaveHold, SaveOutcome, SaveProgress, SaveState, SavedFacts,
 };
+pub use session::Session;
 
 /// 1 枚のメッシュマップの読み込みの上限（予算。壊れた・大きすぎるものは読まずに知らせる）。
 const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
@@ -466,7 +468,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
             // ファイルのとおりに開いたので、変更は無い
             state.reset_project_identity(name, shelf);
-            state.save_folder = origin
+            state.session.save_folder = origin
                 .as_deref()
                 .and_then(Path::parent)
                 .map(Path::to_path_buf);
@@ -482,9 +484,9 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         Opened::Recovered => {
             state.reset_project_identity(crate::recovery::recovered_name(state.lang).into(), shelf);
             // 書き置きの正本から開いた文書は、保存した .ylp とは別物（保存していない）。合成の PNG も無いので、全セットを書き直す
-            state.mark_modified();
-            for i in 0..state.sets.len() {
-                if let Some(set) = state.sets.get_mut(i) {
+            state.session.mark_modified();
+            for i in 0..state.session.sets.len() {
+                if let Some(set) = state.session.sets.get_mut(i) {
                     set.saved = None;
                 }
             }
@@ -557,7 +559,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         Opened::Backup(path) => (path, PathBuf::new(), None),
         Opened::Recovered => (PathBuf::new(), PathBuf::new(), None),
     };
-    state.project = Some(ProjectFile {
+    state.session.project = Some(ProjectFile {
         path,
         target,
         original: std::sync::Arc::new(project),
@@ -635,10 +637,7 @@ impl AppState {
     /// 動いている棚の仕事は前の棚から引き継ぐ。ファイルとの結び付き（`project`）は空にする（開いたときは後で入れる）。
     pub(crate) fn reset_project_identity(&mut self, name: String, shelf: ShelfState) {
         self.shelf = shelf.inherit_running_from(&self.shelf);
-        self.project = None;
-        self.project_name = name;
-        self.save_folder = None;
-        self.modified = false;
+        self.session.reset_identity(name);
     }
 
     /// `reset_project_identity` に加えて、開いた .ylp を最近開いたプロジェクトの先頭へ入れる。
@@ -767,19 +766,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let mut s = AppState::new(128, 128);
-        let ts = s.doc.tile_size();
+        let ts = s.session.doc.tile_size();
         let flat = [40u8, 80, 120, 255].repeat((ts * ts) as usize);
         for i in 0..8 {
-            let id = s.doc.add_layer(&format!("平ら {i}")).unwrap();
+            let id = s.session.doc.add_layer(&format!("平ら {i}")).unwrap();
             for ty in 0..128 / ts {
                 for tx in 0..128 / ts {
-                    s.doc
+                    s.session
+                        .doc
                         .import_tile(id, Channel::Color, TileCoord::new(tx, ty), &flat)
                         .unwrap();
                 }
             }
         }
-        s.mark_modified();
+        s.session.mark_modified();
         let small = yolu_io::Thresholds {
             classic_total_bytes: 1 << 10,
             ..yolu_io::Thresholds::REAL
@@ -787,7 +787,7 @@ mod tests {
         let path = dir.join("平ら.ylp");
         small.scoped(|| s.apply(crate::state::Action::SaveProjectAs(path.clone())));
         assert!(s.message.starts_with("保存しました"), "{}", s.message);
-        let saved = s.project.as_ref().unwrap().project();
+        let saved = s.session.project.as_ref().unwrap().project();
         assert_eq!(saved.original_archive().manifest_version(), 4);
         let document: u64 = saved
             .original_archive()
@@ -796,7 +796,10 @@ mod tests {
             .filter(|(n, _)| n.contains("document.utpaint"))
             .map(|(_, b)| b.len())
             .sum();
-        assert!(document > 4 * 1000 * s.doc.allocated_bytes(), "{document}");
+        assert!(
+            document > 4 * 1000 * s.session.doc.allocated_bytes(),
+            "{document}"
+        );
         let tight = yolu_io::Limits {
             document_bytes: document - 1,
             other_bytes: yolu_io::Limits::default().other_bytes,
@@ -823,7 +826,7 @@ mod tests {
         // 今の形（今の上限に収まる）には上限の予算はかからない
         let classic = dir.join("今の形.ylp");
         s.apply(crate::state::Action::SaveProjectAs(classic));
-        let saved = s.project.as_ref().unwrap().project();
+        let saved = s.session.project.as_ref().unwrap().project();
         assert!(saved.original_archive().manifest_version() <= 3);
         assert_eq!(reopen_note(Lang::Ja, saved, &tight), None);
         let _ = std::fs::remove_dir_all(&dir);
@@ -891,19 +894,20 @@ mod tests {
         let path = dir.join("budget.ylp");
         // 256 × 256 の 4 タイル（128 × 128 × 4 バイト = 64 KiB ずつ）を塗った文書を保存する
         let mut source = AppState::new(256, 256);
-        let layer = source.selected_layer.unwrap();
+        let layer = source.session.selected_layer.unwrap();
         for (x, y) in [(0, 0), (128, 0), (0, 128), (128, 128)] {
             source
+                .session
                 .doc
                 .set_pixel(layer, x, y, Rgba8::new(1, 2, 3, 255))
                 .unwrap();
         }
-        let bytes = source.doc.allocated_bytes();
+        let bytes = source.session.doc.allocated_bytes();
         assert_eq!(bytes, 4 * 65536);
         source.apply(crate::state::Action::SaveProjectAs(path.clone()));
-        assert!(!source.modified, "{}", source.message);
+        assert!(!source.session.is_modified(), "{}", source.message);
         // ちょうどの予算なら読める
-        let native = yolu_io::NativeDocument::from_core(&source.doc).unwrap();
+        let native = yolu_io::NativeDocument::from_core(&source.session.doc).unwrap();
         assert_eq!(
             to_core(
                 &yolu_io::SetDocument::in_memory(native.clone()),
@@ -935,7 +939,7 @@ mod tests {
         let mut opened = AppState::new(64, 64);
         open_within(&mut opened, &path, bytes);
         assert!(opened.read_only_reason().is_none(), "{}", opened.message);
-        assert_eq!(opened.doc.allocated_bytes(), bytes);
+        assert_eq!(opened.session.doc.allocated_bytes(), bytes);
         let mut refused = AppState::new(64, 64);
         open_within(&mut refused, &path, bytes - 1);
         assert!(

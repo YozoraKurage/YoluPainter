@@ -57,10 +57,10 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
         ),
         Item::Label(lang.pick("チャンネル", "Channels").into()),
     ];
-    for c in app.doc.channels() {
+    for c in app.session.doc.channels() {
         items.push(Item::Channel(
             c,
-            channel_name(lang, &app.doc, c),
+            channel_name(lang, &app.session.doc, c),
             app.psd.export.channels.contains(&c),
         ));
     }

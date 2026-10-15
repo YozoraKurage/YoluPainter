@@ -449,10 +449,10 @@ mod tests {
     fn edits_and_resets_are_refused_while_stroking_and_while_a_drag_is_open() {
         let mut app = app();
         let upper = bone(&app, "右上腕");
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let settings = app.stroke_settings(false);
-        let stroke = app.doc.begin_stroke(layer, &settings).unwrap();
-        app.stroke = Some(stroke);
+        let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
+        app.session.stroke = Some(stroke);
         app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
         set_field(&mut app, upper, Field::Position(Vec3::X));
         assert_eq!(app.message, super::super::ViewError::Stroking.to_string());
@@ -460,8 +460,8 @@ mod tests {
         app.message.clear();
         reset(&mut app, Reset::AllBones);
         assert_eq!(app.message, super::super::ViewError::Stroking.to_string());
-        let stroke = app.stroke.take().unwrap();
-        app.doc.cancel_stroke(stroke);
+        let stroke = app.session.stroke.take().unwrap();
+        app.session.doc.cancel_stroke(stroke);
         app.view3d.stroke_ended();
         // 続けて変えている途中は、戻しで段を割らない
         set_field(&mut app, upper, Field::Position(Vec3::X));

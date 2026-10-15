@@ -596,7 +596,7 @@ impl Transform {
     fn still_valid(&self, app: &AppState) -> bool {
         match self.what {
             What::Object(o) => {
-                app.doc.id() == self.doc_id
+                app.session.doc.id() == self.doc_id
                     && app.mode == EditorMode::Edit
                     && super::selectable(app, o)
             }
@@ -661,6 +661,7 @@ impl Transform {
                     return;
                 };
                 let Some(mut g) = app
+                    .session
                     .doc
                     .layer(layer)
                     .and_then(|l| l.fill_points(channel))
@@ -676,10 +677,14 @@ impl Transform {
                     return;
                 }
                 p.position = next;
-                let revision = app.doc.revision();
-                match app.doc.set_fill_points(layer, channel, Some(g), true) {
+                let revision = app.session.doc.revision();
+                match app
+                    .session
+                    .doc
+                    .set_fill_points(layer, channel, Some(g), true)
+                {
                     Ok(()) => {
-                        app.mark_modified_if_changed(revision);
+                        app.session.mark_modified_if_changed(revision);
                     }
                     Err(e) => app.notify(
                         crate::notice::Kind::of_core(&e),
@@ -762,14 +767,15 @@ impl Transform {
                 if moved.points == path.points {
                     return Ok(());
                 }
-                let Some(mut entries) = app.doc.layer(layer).map(|l| l.paths().to_vec()) else {
+                let Some(mut entries) = app.session.doc.layer(layer).map(|l| l.paths().to_vec())
+                else {
                     return Ok(());
                 };
                 let Some(entry) = entries.iter_mut().find(|e| e.path.id() == id) else {
                     return Ok(());
                 };
                 entry.path = LayerPath::Surface(moved);
-                app.doc.end_coalescing();
+                app.session.doc.end_coalescing();
                 // パスの一覧の口（点の選びを外し、面から外れて描かなかった標本を知らせる）
                 app.path_commit_list(layer, entries, None);
                 Ok(())
@@ -779,8 +785,8 @@ impl Transform {
                 Ok(())
             }
             _ => {
-                if app.doc.id() == self.doc_id {
-                    app.doc.end_coalescing();
+                if app.session.doc.id() == self.doc_id {
+                    app.session.doc.end_coalescing();
                 }
                 Ok(())
             }
@@ -793,8 +799,8 @@ impl Transform {
             What::Bone(_) => pose::end_edit(&mut app.view3d, false),
             What::Object(Object::Path { .. }) => {}
             What::Object(_) => {
-                if app.doc.id() == self.doc_id {
-                    let _ = app.doc.cancel_coalescing();
+                if app.session.doc.id() == self.doc_id {
+                    let _ = app.session.doc.cancel_coalescing();
                 }
             }
         }
@@ -914,6 +920,7 @@ pub fn begin_with(
                     .into_iter()
                     .unzip();
             let path = app
+                .session
                 .doc
                 .layer(layer)
                 .and_then(|l| l.paths().iter().find(|e| e.path.id() == id))
@@ -953,7 +960,7 @@ pub fn begin_with(
     };
     if matches!(what, What::Object(_)) {
         // 前の欄のドラッグにまとめない
-        app.doc.end_coalescing();
+        app.session.doc.end_coalescing();
     }
     let value = match kind {
         Kind::Grab => Value::Move(Vec3::ZERO),
@@ -980,7 +987,7 @@ pub fn begin_with(
         from: pointer,
         last: pointer,
         angle: 0.0,
-        doc_id: app.doc.id(),
+        doc_id: app.session.doc.id(),
         opened_frame: frame,
         value,
         drag,
@@ -1378,7 +1385,7 @@ pub fn reset(app: &mut AppState, kind: Kind) {
             if next == current {
                 return;
             }
-            app.doc.end_coalescing();
+            app.session.doc.end_coalescing();
             if let Some(Err(e)) = gizmo::write_shape(app, target, next, false) {
                 app.notify(
                     crate::notice::Kind::of_core(&e),
@@ -1395,7 +1402,7 @@ fn default_shape(app: &AppState, target: Target) -> Option<sg::Shape> {
     use crate::fillfx::placement::{fit_to_bounds, new_shape_gradient_of};
     let bounds = app.view3d.full_model()?.geometry.bounds();
     let current = shape_of(app, target)?;
-    let layer = app.doc.layer(target.layer())?;
+    let layer = app.session.doc.layer(target.layer())?;
     let from_placement = |p: yolu_core::fill_image::Placement| sg::Shape {
         center: p.center,
         rotation: p.rotation,
@@ -1415,7 +1422,7 @@ fn default_shape(app: &AppState, target: Target) -> Option<sg::Shape> {
             from_volume(new_shape_gradient_of(g.volume.shape, Some(&bounds)).volume)
         }
         Target::Filter(_, filter) => {
-            let (_, effect, _) = app.doc.find_filter(filter)?;
+            let (_, effect, _) = app.session.doc.find_filter(filter)?;
             let g = effect.settings().generator_settings()?;
             if g.kind == yolu_core::generator::Kind::Image {
                 from_placement(fit_to_bounds(&bounds, g.image.projection.mode))

@@ -108,7 +108,7 @@ pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
         }
         return;
     }
-    let set = app.sets.current();
+    let set = app.session.sets.current();
     let map = match which {
         MeshMapView::None => return,
         MeshMapView::Coverage => set.mesh_maps.iter().next(),
@@ -135,7 +135,10 @@ pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
         );
     }
     // 文書の矩形（画素）に、マップを UV の上で合わせる
-    let (doc_w, doc_h) = (app.doc.width() as f64, app.doc.height() as f64);
+    let (doc_w, doc_h) = (
+        app.session.doc.width() as f64,
+        app.session.doc.height() as f64,
+    );
     let overlay = &app.bake.overlay;
     let (mw, mh) = (overlay.size.0 as f64, overlay.size.1 as f64);
     for page in &overlay.pages {

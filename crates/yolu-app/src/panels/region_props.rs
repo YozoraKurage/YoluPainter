@@ -484,7 +484,7 @@ pub fn part_position(lang: crate::lang::Lang, at: usize, count: usize) -> String
 fn manual_colors(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
     group_label(ui, rows, lang.pick("部品の手動の色", "Manual part colors"));
-    let count = app.doc.id_colors().colors().len();
+    let count = app.session.doc.id_colors().colors().len();
     let free = !app.is_stroking();
     if app.id_colors_foreign() {
         status_row(
@@ -639,7 +639,7 @@ fn part_color(
 ) {
     let lang = app.lang;
     let ctx = ui.ctx().clone();
-    let doc = app.doc.id();
+    let doc = app.session.doc.id();
     let target_of = |part: usize| egui::Id::new(("id.part.color", doc, part));
     let target = target_of(part);
     let auto_id = target.with("auto");

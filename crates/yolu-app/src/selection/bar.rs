@@ -167,7 +167,11 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
 /// 塗る・コピー・マスクにするが、今のレイヤーでできない理由（できるなら None）。
 fn reasons(app: &AppState) -> (Option<String>, Option<String>, Option<String>) {
     let lang = app.lang;
-    let Some(layer) = app.selected_layer.and_then(|id| app.doc.layer(id)) else {
+    let Some(layer) = app
+        .session
+        .selected_layer
+        .and_then(|id| app.session.doc.layer(id))
+    else {
         let none = lang
             .pick("レイヤーが選ばれていません", "No layer is selected")
             .to_owned();
@@ -186,7 +190,7 @@ fn reasons(app: &AppState) -> (Option<String>, Option<String>, Option<String>) {
 /// 帯を出すか。描いている間・選択の形を作っている間・表示を動かしている間・量を聞くウィンドウが開いている間・ペンでキャンバスを押している間は隠す。
 pub fn visible(app: &AppState) -> bool {
     app.prefs.settings.selection_bar
-        && app.doc.selection().is_some()
+        && app.session.doc.selection().is_some()
         && app.sel.dialog.is_none()
         && app.read_only_reason().is_none()
         && !app.is_stroking()
@@ -217,7 +221,7 @@ fn bar_size(groups: &[Vec<Item>; 3]) -> Vec2 {
 
 /// 選択範囲の外接矩形（画面の点。表示の回転・反転は 4 隅を写して囲む）。
 fn screen_bounds(app: &mut AppState, view: &CanvasView) -> Option<Rect> {
-    let mask = app.doc.selection().cloned()?;
+    let mask = app.session.doc.selection().cloned()?;
     let (x0, y0, x1, y1) = app.sel.bounds_of(&mask)?;
     let corners =
         [(x0, y0), (x1, y0), (x1, y1), (x0, y1)].map(|(x, y)| view.to_screen(x as f64, y as f64));
@@ -251,7 +255,7 @@ fn clamp_into(p: Pos2, size: Vec2, area: Rect) -> Pos2 {
 
 /// 帯を描いて、押されたボタンの操作を当てる（`area` は表示域）。
 pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView, area: Rect) {
-    if app.doc.selection().is_none() {
+    if app.session.doc.selection().is_none() {
         app.sel.bar_offset = Vec2::ZERO;
         return;
     }

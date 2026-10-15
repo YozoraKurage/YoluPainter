@@ -694,7 +694,7 @@ mod tests {
             }),
             ("shelf", |_| {
                 let mut s = AppState::new(32, 32);
-                let layer = s.selected_layer.unwrap();
+                let layer = s.session.selected_layer.unwrap();
                 s.shelf.async_bytes = 0;
                 s.shelf.hold_saves(true);
                 s.apply(Action::Shelf(ShelfOp::SaveMaterial(layer)));

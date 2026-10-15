@@ -107,11 +107,11 @@ fn two_sets() -> AppState {
     s.bake.backend = crate::bake::BakeBackend::Cpu;
     let (_, shape) = s.receive_link_model(&two_quads());
     assert_eq!(shape, Ok(()));
-    assert_eq!(s.sets.len(), 2);
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [255, 0, 0, 255]);
+    assert_eq!(s.session.sets.len(), 2);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [255, 0, 0, 255]);
     // 作られたセットの文書は 256 以上なので、同じ 64 × 64 の文書に替える
-    let other = 1 - s.sets.current_index();
+    let other = 1 - s.session.sets.current_index();
     let (mut fresh, first) = crate::state::blank_document(64, 64);
     paint_left_half(&mut fresh, first.unwrap(), Channel::Color, [0, 255, 0, 255]);
     *s.set_doc_mut(other) = fresh;
@@ -183,7 +183,7 @@ fn writes_every_set_with_the_unity_names_and_pads_outside_the_uvs() {
         .all(|i| i.srgb && !i.normal_map && !i.replaced));
     assert!(s.message.contains("書き出しました"), "{}", s.message);
     // 文書は変わらない
-    assert!(!s.doc.can_undo());
+    assert!(!s.session.doc.can_undo());
 }
 
 #[test]
@@ -219,10 +219,15 @@ fn a_single_set_has_no_set_name_in_the_file_names() {
     let dir = Dir::new("single");
     let mut s = AppState::new(64, 64);
     s.bake.backend = crate::bake::BakeBackend::Cpu;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [10, 20, 30, 255]);
     // 金属度を塗ると MetallicSmoothness も書く
-    paint_left_half(&mut s.doc, layer, Channel::Metallic, [255, 255, 255, 255]);
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Metallic,
+        [255, 255, 255, 255],
+    );
     export(&mut s, "unity-standard", &dir.0);
     s.wait_export();
     assert_eq!(
@@ -252,7 +257,10 @@ fn a_single_set_has_no_set_name_in_the_file_names() {
 fn names_that_become_the_same_file_write_nothing() {
     let dir = Dir::new("clash");
     let mut s = two_sets();
-    let (a, b) = (s.sets.get(0).unwrap().uid, s.sets.get(1).unwrap().uid);
+    let (a, b) = (
+        s.session.sets.get(0).unwrap().uid,
+        s.session.sets.get(1).unwrap().uid,
+    );
     s.rename_set(a, "a/b").unwrap();
     s.rename_set(b, "a_b").unwrap();
     export(&mut s, "unity-standard", &dir.0);
@@ -269,8 +277,8 @@ fn existing_files_are_asked_about_first_and_cancel_keeps_them() {
     s.wait_export();
     let original = std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap();
     // 絵を変えてもう一度: もうあるファイルを確かめる（まだ何も書かない）
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [0, 0, 255, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [0, 0, 255, 255]);
     export(&mut s, "unity-standard", &dir.0);
     assert!(!s.export.is_exporting());
     let confirm = s.export.confirm.clone().unwrap();
@@ -293,7 +301,7 @@ fn existing_files_are_asked_about_first_and_cancel_keeps_them() {
     assert!(s.export.is_exporting());
     s.wait_export();
     let img = load_png(&dir.0.join("Texture_Skin_Albedo.png"));
-    assert_eq!(s.sets.current().name, "Skin");
+    assert_eq!(s.session.sets.current().name, "Skin");
     assert_eq!(px(&img, 10, 30), [0, 0, 255, 255], "新しい絵に置き換わった");
     assert!(s
         .export
@@ -316,10 +324,15 @@ fn cancel_writes_nothing_and_leaves_no_temp_files() {
     let dir = Dir::new("cancel");
     let mut s = AppState::new(256, 256);
     s.bake.backend = crate::bake::BakeBackend::Cpu;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [1, 2, 3, 255]);
-    paint_left_half(&mut s.doc, layer, Channel::Emission, [9, 9, 9, 255]);
-    paint_left_half(&mut s.doc, layer, Channel::Metallic, [255, 255, 255, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [1, 2, 3, 255]);
+    paint_left_half(&mut s.session.doc, layer, Channel::Emission, [9, 9, 9, 255]);
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Metallic,
+        [255, 255, 255, 255],
+    );
     // 取消が来るまで始めない仕事にする（取消が効いたことを、書き終わる速さに頼らず確かめる）
     s.export.park_next = true;
     export(&mut s, "unity-standard", &dir.0);
@@ -349,7 +362,7 @@ fn an_export_the_working_budget_cannot_hold_is_refused_with_the_reason_and_write
     s.prefs.ram_mib = 8192;
     assert_eq!(s.export_working_bytes(), 512 * 1024 * 1024);
     s.apply(Action::LoadDemoModel);
-    s.modified = false;
+    s.session.clear_modified();
     export(&mut s, "unity-standard", &dir.0);
     assert!(s.export.is_exporting());
     s.wait_export();
@@ -378,7 +391,7 @@ fn the_one_operation_budget_in_the_settings_is_the_exports_working_memory() {
     s.bake.backend = crate::bake::BakeBackend::Cpu;
     s.prefs.ram_mib = 16384;
     s.apply(Action::LoadDemoModel);
-    s.modified = false;
+    s.session.clear_modified();
     s.apply(Action::Prefs(PrefsAction::Set(Pref::Budget(
         BudgetKind::Stroke,
         Budget::Mib(8),
@@ -451,14 +464,19 @@ fn the_baked_ao_fills_the_occlusion_image_and_a_stale_one_is_left_out_with_a_not
     s.bake.backend = crate::bake::BakeBackend::Cpu;
     let (_, shape) = s.receive_link_model(&corner_model(0.0));
     assert_eq!(shape, Ok(()));
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [200, 100, 50, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Color,
+        [200, 100, 50, 255],
+    );
     s.bake.settings.maps = vec![MeshMapKind::AmbientOcclusion];
     s.bake.settings.ao_samples = 32;
     s.bake.settings.padding = 4;
     s.apply(Action::Bake(BakeAction::Start));
     s.wait_bake();
-    assert!(!s.sets.current().mesh_maps.is_empty());
+    assert!(!s.session.sets.current().mesh_maps.is_empty());
     // 書く前の一覧にも、今の条件で焼いた AO の画像が入る
     form(&mut s, ExportForm::UnityStandard);
     assert_eq!(
@@ -513,8 +531,8 @@ fn the_baked_ao_fills_the_occlusion_image_and_a_stale_one_is_left_out_with_a_not
 fn a_read_only_set_is_not_exported_and_nothing_to_write_is_said() {
     let dir = Dir::new("readonly");
     let mut s = two_sets();
-    s.sets.get_mut(1).unwrap().read_only = Some("試験".into());
-    let skip = s.sets.get(1).unwrap().name.clone();
+    s.session.sets.get_mut(1).unwrap().read_only = Some("試験".into());
+    let skip = s.session.sets.get(1).unwrap().name.clone();
     export(&mut s, "unity-standard", &dir.0);
     s.wait_export();
     assert_eq!(dir.files().len(), 1, "{:?}", dir.files());
@@ -526,8 +544,9 @@ fn a_read_only_set_is_not_exported_and_nothing_to_write_is_said() {
     let dir = Dir::new("nothing");
     let mut s = AppState::new(64, 64);
     s.bake.backend = crate::bake::BakeBackend::Cpu;
-    let layer = s.selected_layer.unwrap();
-    s.doc
+    let layer = s.session.selected_layer.unwrap();
+    s.session
+        .doc
         .set_channel_enabled(layer, Channel::Color, false)
         .unwrap();
     export(&mut s, "unity-hdrp", &dir.0);
@@ -544,9 +563,9 @@ fn a_read_only_set_is_not_exported_and_nothing_to_write_is_said() {
 fn it_does_not_start_while_drawing_or_exporting() {
     let dir = Dir::new("busy");
     let mut s = two_sets();
-    let layer = s.selected_layer.unwrap();
+    let layer = s.session.selected_layer.unwrap();
     let brush = s.stroke_settings(false);
-    let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let stroke = s.session.doc.begin_stroke(layer, &brush).unwrap();
     export(&mut s, "unity-standard", &dir.0);
     assert!(!s.export.is_exporting());
     assert_eq!(s.message, "描いている間はできません。");
@@ -554,7 +573,7 @@ fn it_does_not_start_while_drawing_or_exporting() {
     assert_eq!(s.dialog_request, None);
     s.apply(Action::Export(ExportAction::OpenWindow));
     assert!(!s.export.window.open, "描いている間は開かない");
-    s.doc.end_stroke(stroke).unwrap();
+    s.session.doc.end_stroke(stroke).unwrap();
     export(&mut s, "unity-standard", &dir.0);
     assert!(s.export.is_exporting());
     export(&mut s, "unity-hdrp", &dir.0);
@@ -595,7 +614,7 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     s.export.padding = 0; // 塗り広げの覆い（モデルの UV）を使わない
                           // 黒の塗りつぶしレイヤーのマスクへ、焼いた曲率から値を作る Generator（見える所だけを残す）
     s.apply(Action::M2(crate::m2::Edit::NewFill));
-    let layer = s.selected_layer.unwrap();
+    let layer = s.session.selected_layer.unwrap();
     s.apply(Action::M2(crate::m2::Edit::AddMask(layer)));
     s.apply(Action::Fx(FxOp::AddGenerator {
         target: FilterTarget::Mask,
@@ -631,8 +650,8 @@ fn an_exported_image_has_the_generators_the_screen_shows_and_an_inactive_one_is_
     s.apply(Action::Bake(BakeAction::Start));
     s.wait_bake();
     s.sync_effects();
-    assert!(s.doc.inactive_effect_list().is_empty());
-    let screen = s.doc.composite(s.doc.bounds()).unwrap();
+    assert!(s.session.doc.inactive_effect_list().is_empty());
+    let screen = s.session.doc.composite(s.session.doc.bounds()).unwrap();
     let hidden = screen
         .iter()
         .skip(3)
@@ -687,12 +706,12 @@ fn the_window_asks_for_one_destination_whatever_the_form() {
     assert_eq!(s.dialog_request, Some(DialogRequest::ExportDestination));
     // 描いている間は頼まない
     s.dialog_request = None;
-    let layer = s.selected_layer.unwrap();
+    let layer = s.session.selected_layer.unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     s.apply(Action::Export(ExportAction::ChooseDestination));
     assert_eq!(s.dialog_request, None);
     assert!(s.message.contains("描いている間"), "{}", s.message);
-    s.doc.cancel_stroke(stroke);
+    s.session.doc.cancel_stroke(stroke);
 }
 
 #[test]
@@ -710,7 +729,7 @@ fn the_dialog_suggests_the_same_name_the_folder_export_would_write() {
         name == "Texture_Skin_Color.png" || name == "Texture_Hair_Color.png",
         "{name}"
     );
-    assert!(name.contains(&s.sets.current().name), "{name}");
+    assert!(name.contains(&s.session.sets.current().name), "{name}");
 }
 
 #[test]
@@ -718,9 +737,14 @@ fn a_channel_png_is_the_same_bytes_as_the_template_and_the_composite() {
     let dir = Dir::new("png-color");
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [10, 20, 30, 255]);
-    paint_left_half(&mut s.doc, layer, Channel::Roughness, [70, 70, 70, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Roughness,
+        [70, 70, 70, 255],
+    );
     let path = dir.0.join("color.png");
     export_channel(&mut s, &path);
     assert!(s.export.is_exporting(), "別のスレッドで書く");
@@ -734,7 +758,10 @@ fn a_channel_png_is_the_same_bytes_as_the_template_and_the_composite() {
         std::fs::read(&path).unwrap(),
         std::fs::read(template.0.join("Texture_Albedo.png")).unwrap()
     );
-    assert_eq!(png_bytes(&path), s.doc.composite(s.doc.bounds()).unwrap());
+    assert_eq!(
+        png_bytes(&path),
+        s.session.doc.composite(s.session.doc.bounds()).unwrap()
+    );
     // 1 枚の書き出しは結果のウィンドウを出さず、状態の帯に書いた場所を出す
     assert!(s.export.report.is_some(), "テンプレートの結果");
     s.export.report = None;
@@ -753,12 +780,13 @@ fn a_channel_png_is_the_same_bytes_as_the_template_and_the_composite() {
     );
     assert_eq!(
         png_bytes(&rough),
-        s.doc
-            .composite_channel(Channel::Roughness, s.doc.bounds())
+        s.session
+            .doc
+            .composite_channel(Channel::Roughness, s.session.doc.bounds())
             .unwrap()
     );
     // 文書は変わらない
-    assert!(!s.doc.can_undo() && !s.modified);
+    assert!(!s.session.doc.can_undo() && !s.session.is_modified());
     // 英語の知らせ
     s.lang = crate::lang::Lang::En;
     export_channel(&mut s, &dir.0.join("again.png"));
@@ -771,8 +799,13 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
     let dir = Dir::new("png-normal");
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Normal, [200, 90, 220, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Normal,
+        [200, 90, 220, 255],
+    );
     s.apply(Action::M2Ui(crate::m2::UiOp::PaintChannel(Channel::Normal)));
     let opengl = dir.0.join("opengl.png");
     export_channel(&mut s, &opengl);
@@ -787,6 +820,7 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
     );
     // DirectX: 緑だけが 255 − G
     let settings = s
+        .session
         .doc
         .normal_settings()
         .with_file_direction(yolu_core::NormalYDirection::DirectX);
@@ -804,7 +838,10 @@ fn a_normal_png_follows_the_file_direction_and_a_new_png_replaces_a_chosen_one()
     }
     assert_eq!(
         b,
-        s.doc.normal_file_output(s.export_working_bytes()).unwrap()
+        s.session
+            .doc
+            .normal_file_output(s.export_working_bytes())
+            .unwrap()
     );
     // 選ぶウィンドウが置き換えを確かめているので、もうあるファイルは確かめずに置き換える
     export_channel(&mut s, &opengl);
@@ -834,8 +871,8 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     let bare = dir.0.join("foo");
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [10, 20, 30, 255]);
     // 拡張子が無い名前には `.png` を足し、付いている名前（大文字の拡張子も）はそのまま
     s.apply(Action::Export(ExportAction::Destination(bare.clone())));
     assert_eq!(s.export_file(), Some(dir.0.join("foo.png")));
@@ -892,7 +929,7 @@ fn the_dialogs_name_without_an_extension_gets_png_and_is_confirmed_when_that_fil
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     s.apply(Action::Export(ExportAction::Run));
     assert!(s.export.confirm.is_none());
-    s.doc.cancel_stroke(stroke);
+    s.session.doc.cancel_stroke(stroke);
     assert_eq!(std::fs::read(dir.0.join("foo.png")).unwrap(), b"mine");
 }
 
@@ -928,8 +965,9 @@ fn a_channel_png_pads_outside_the_uvs_like_the_templates_do() {
 fn a_read_only_set_and_a_missing_file_name_are_refused_with_a_reason() {
     let dir = Dir::new("png-refuse");
     let mut s = two_sets();
-    let index = s.sets.current_index();
-    s.sets.get_mut(index).unwrap().read_only = Some("フィルターのあるレイヤーがあります".into());
+    let index = s.session.sets.current_index();
+    s.session.sets.get_mut(index).unwrap().read_only =
+        Some("フィルターのあるレイヤーがあります".into());
     export_channel(&mut s, &dir.0.join("x.png"));
     assert!(!s.export.is_exporting());
     assert_eq!(
@@ -956,10 +994,15 @@ fn all_channels_are_written_per_set_with_english_names_and_only_the_used_ones() 
     let dir = Dir::new("all");
     let mut s = two_sets();
     s.export.padding = 0;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Roughness, [60, 60, 60, 255]);
-    paint_left_half(&mut s.doc, layer, Channel::Emission, [5, 6, 7, 128]);
-    let current = s.sets.current().name.clone();
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Roughness,
+        [60, 60, 60, 255],
+    );
+    paint_left_half(&mut s.session.doc, layer, Channel::Emission, [5, 6, 7, 128]);
+    let current = s.session.sets.current().name.clone();
     export_channels(&mut s, &dir.0);
     assert!(s.export.is_exporting());
     s.wait_export();
@@ -976,8 +1019,9 @@ fn all_channels_are_written_per_set_with_english_names_and_only_the_used_ones() 
     let rough = png_bytes(&dir.0.join(format!("Texture_{current}_Roughness.png")));
     assert_eq!(
         rough,
-        s.doc
-            .composite_channel(Channel::Roughness, s.doc.bounds())
+        s.session
+            .doc
+            .composite_channel(Channel::Roughness, s.session.doc.bounds())
             .unwrap()
     );
     let emission = load_png(&dir.0.join(format!("Texture_{current}_Emission.png")));
@@ -994,7 +1038,7 @@ fn all_channels_are_written_per_set_with_english_names_and_only_the_used_ones() 
         assert_eq!(image.srgb, srgb, "{}", image.file_name);
         assert!(!image.normal_map, "{}", image.file_name);
     }
-    assert!(!s.modified, "文書は書き出しで変わらない");
+    assert!(!s.session.is_modified(), "文書は書き出しで変わらない");
 }
 
 #[test]
@@ -1002,10 +1046,16 @@ fn all_channels_write_the_derived_normal_user_channels_and_skip_unused_ones() {
     let dir = Dir::new("all-extra");
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
-    let layer = s.selected_layer.unwrap();
+    let layer = s.session.selected_layer.unwrap();
     // Height だけ使い、Height → Normal を有効にすると、Normal の画像も出る（塗った Normal のレイヤーが無くても）
-    paint_left_half(&mut s.doc, layer, Channel::Height, [200, 200, 200, 255]);
-    s.doc
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Height,
+        [200, 200, 200, 255],
+    );
+    s.session
+        .doc
         .set_channel_enabled(layer, Channel::Color, false)
         .unwrap();
     let settings = yolu_core::NormalSettings::DEFAULT.with_derive(true);
@@ -1020,8 +1070,8 @@ fn all_channels_write_the_derived_normal_user_channels_and_skip_unused_ones() {
         color_space: yolu_core::ColorSpace::Linear,
         default: yolu_core::Rgba8::new(255, 255, 255, 255),
     };
-    let user = s.doc.add_channel(info).unwrap();
-    paint_left_half(&mut s.doc, layer, user, [9, 9, 9, 255]);
+    let user = s.session.doc.add_channel(info).unwrap();
+    paint_left_half(&mut s.session.doc, layer, user, [9, 9, 9, 255]);
     export_channels(&mut s, &dir.0);
     s.wait_export();
     assert_eq!(
@@ -1034,7 +1084,10 @@ fn all_channels_write_the_derived_normal_user_channels_and_skip_unused_ones() {
     );
     assert_eq!(
         png_bytes(&dir.0.join("Texture_Normal.png")),
-        s.doc.normal_file_output(s.export_working_bytes()).unwrap()
+        s.session
+            .doc
+            .normal_file_output(s.export_working_bytes())
+            .unwrap()
     );
     let report = s.export.report.as_ref().unwrap();
     assert!(report
@@ -1044,8 +1097,9 @@ fn all_channels_write_the_derived_normal_user_channels_and_skip_unused_ones() {
     // 何も使っていない文書は書くものが無い
     let empty = Dir::new("all-empty");
     let mut s = AppState::new(64, 64);
-    let layer = s.selected_layer.unwrap();
-    s.doc
+    let layer = s.session.selected_layer.unwrap();
+    s.session
+        .doc
         .set_channel_enabled(layer, Channel::Color, false)
         .unwrap();
     export_channels(&mut s, &empty.0);
@@ -1066,11 +1120,11 @@ fn all_channels_ask_before_replacing_and_names_that_clash_write_nothing() {
     let mut s = two_sets();
     export_channels(&mut s, &dir.0);
     s.wait_export();
-    let name = format!("Texture_{}_Color.png", s.sets.current().name);
+    let name = format!("Texture_{}_Color.png", s.session.sets.current().name);
     let original = std::fs::read(dir.0.join(&name)).unwrap();
     // 絵を変えてもう一度: 確かめる（まだ何も書かない）
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [0, 0, 255, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [0, 0, 255, 255]);
     export_channels(&mut s, &dir.0);
     assert!(!s.export.is_exporting());
     let confirm = s.export.confirm.clone().unwrap();
@@ -1099,7 +1153,10 @@ fn all_channels_ask_before_replacing_and_names_that_clash_write_nothing() {
         .all(|i| i.replaced));
     // セット名が同じファイルになる
     let clash = Dir::new("all-clash");
-    let (a, b) = (s.sets.get(0).unwrap().uid, s.sets.get(1).unwrap().uid);
+    let (a, b) = (
+        s.session.sets.get(0).unwrap().uid,
+        s.session.sets.get(1).unwrap().uid,
+    );
     s.rename_set(a, "a/b").unwrap();
     s.rename_set(b, "a_b").unwrap();
     export_channels(&mut s, &clash.0);
@@ -1112,9 +1169,10 @@ fn all_channels_ask_before_replacing_and_names_that_clash_write_nothing() {
 fn all_channels_skip_a_read_only_set_and_say_so_and_cancel_leaves_nothing() {
     let dir = Dir::new("all-readonly");
     let mut s = two_sets();
-    let other = 1 - s.sets.current_index();
-    s.sets.get_mut(other).unwrap().read_only = Some("フィルターのあるレイヤーがあります".into());
-    let name = s.sets.get(other).unwrap().name.clone();
+    let other = 1 - s.session.sets.current_index();
+    s.session.sets.get_mut(other).unwrap().read_only =
+        Some("フィルターのあるレイヤーがあります".into());
+    let name = s.session.sets.get(other).unwrap().name.clone();
     export_channels(&mut s, &dir.0);
     s.wait_export();
     assert_eq!(dir.files().len(), 1, "{:?}", dir.files());
@@ -1141,24 +1199,25 @@ fn a_document_whose_saved_form_exceeds_512_mib_is_exported() {
     let dir = Dir::new("png-big");
     let mut s = AppState::new(1024, 1024);
     s.export.padding = 0;
-    let ts = s.doc.tile_size();
+    let ts = s.session.doc.tile_size();
     let n = 1024 / ts;
     let layers = (520u64 << 20).div_ceil(u64::from(n * n) * u64::from(ts * ts) * 4) as u32;
     for i in 0..layers {
-        let id = s.doc.add_layer(&format!("平ら {i}")).unwrap();
+        let id = s.session.doc.add_layer(&format!("平ら {i}")).unwrap();
         let flat = [i as u8, 255 - i as u8, 7, 255].repeat((ts * ts) as usize);
         for ty in 0..n {
             for tx in 0..n {
-                s.doc
+                s.session
+                    .doc
                     .import_tile(id, Channel::Color, TileCoord::new(tx, ty), &flat)
                     .unwrap();
             }
         }
     }
-    s.doc.clear_history().unwrap();
+    s.session.doc.clear_history().unwrap();
     // 正本の画素の値だけで 512 MiB を超える（作って確かめると 512 MiB を確保するので、数で見る）。core の画素は小さい
     assert!(u64::from(layers * n * n) * u64::from(ts * ts * 4) > yolu_io::MAX_ONE_ENTRY);
-    assert!(s.doc.allocated_bytes() < 1 << 20);
+    assert!(s.session.doc.allocated_bytes() < 1 << 20);
     let path = dir.0.join("big.png");
     export_channel(&mut s, &path);
     s.wait_export();
@@ -1175,7 +1234,7 @@ fn a_document_whose_saved_form_exceeds_512_mib_is_exported() {
 fn saved_as(s: &mut AppState, path: &Path) {
     s.apply(Action::SaveProjectAs(path.to_path_buf()));
     s.wait_save();
-    assert!(s.project.is_some(), "{}", s.message);
+    assert!(s.session.project.is_some(), "{}", s.message);
 }
 
 fn choose(s: &mut AppState, path: &Path) {
@@ -1198,8 +1257,8 @@ fn preview_names(s: &mut AppState) -> Vec<String> {
 }
 
 fn set_uids(s: &AppState) -> Vec<u32> {
-    (0..s.sets.len())
-        .map(|i| s.sets.get(i).unwrap().uid)
+    (0..s.session.sets.len())
+        .map(|i| s.session.sets.get(i).unwrap().uid)
         .collect()
 }
 
@@ -1477,8 +1536,8 @@ fn the_window_asks_before_replacing_a_folder_export_and_cancel_leaves_the_files(
     run_window(&mut s, ExportForm::UnityStandard, &dir.0);
     s.wait_export();
     let before = std::fs::read(dir.0.join("Texture_Skin_Albedo.png")).unwrap();
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [0, 0, 255, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [0, 0, 255, 255]);
     run_window(&mut s, ExportForm::UnityStandard, &dir.0);
     assert!(!s.export.is_exporting());
     assert!(s.export.confirm.is_some());
@@ -1506,8 +1565,8 @@ fn a_run_from_the_window_can_be_canceled_and_a_refusal_keeps_the_window_open() {
     let dir = Dir::new("window-cancel");
     let mut s = AppState::new(256, 256);
     s.bake.backend = crate::bake::BakeBackend::Cpu;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [1, 2, 3, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [1, 2, 3, 255]);
     s.export.park_next = true;
     run_window(&mut s, ExportForm::UnityStandard, &dir.0);
     assert!(s.export.is_exporting());
@@ -1526,7 +1585,7 @@ fn a_run_from_the_window_can_be_canceled_and_a_refusal_keeps_the_window_open() {
     assert!(!s.export.is_exporting());
     assert!(s.message.contains("描いている間"), "{}", s.message);
     assert!(s.export.window.open);
-    s.doc.cancel_stroke(stroke);
+    s.session.doc.cancel_stroke(stroke);
     // 断る理由は今のまま: モデルが無いので塗り広げなかった、と書き出したあとの知らせに出る
     s.export.padding = -1;
     s.apply(Action::Export(ExportAction::Run));
@@ -1636,8 +1695,8 @@ fn the_choosers_confirmation_covers_one_export_and_the_second_one_asks() {
     let dir = Dir::new("window-once");
     let mut s = AppState::new(64, 64);
     s.export.padding = 0;
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [10, 20, 30, 255]);
     let path = dir.0.join("foo.png");
     std::fs::write(&path, b"mine").unwrap();
     // 選ぶウィンドウが置き換えを確かめたファイル: 1 回目は確かめずに置き換える
@@ -1668,7 +1727,7 @@ fn the_choosers_confirmation_covers_one_export_and_the_second_one_asks() {
     s.apply(Action::Export(ExportAction::Destination(path.clone())));
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     s.apply(Action::Export(ExportAction::Run));
-    s.doc.cancel_stroke(stroke);
+    s.session.doc.cancel_stroke(stroke);
     s.apply(Action::Export(ExportAction::Run));
     assert!(
         s.export.confirm.is_some(),
@@ -1682,9 +1741,14 @@ fn the_choosers_confirmation_covers_one_export_and_the_second_one_asks() {
 /// Skin に Roughness、Hair に Emission も描いてある 2 つのセット（書くファイルを増やして、色空間の違うファイルも出す）。
 fn two_sets_with_more_channels() -> AppState {
     let mut s = two_sets();
-    let other = 1 - s.sets.current_index();
-    let layer = s.selected_layer.unwrap();
-    paint_left_half(&mut s.doc, layer, Channel::Roughness, [90, 90, 90, 255]);
+    let other = 1 - s.session.sets.current_index();
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(
+        &mut s.session.doc,
+        layer,
+        Channel::Roughness,
+        [90, 90, 90, 255],
+    );
     let doc = s.set_doc_mut(other);
     let hair_layer = doc.layers()[0].id();
     paint_left_half(doc, hair_layer, Channel::Emission, [0, 0, 255, 255]);
@@ -1704,7 +1768,7 @@ fn a_set_taken_out_of_the_list_is_not_written_by_a_template_or_per_channel() {
         s.export.padding = 0;
         let uids = set_uids(&s);
         let names: Vec<String> = (0..2)
-            .map(|i| s.sets.get(i).unwrap().name.clone())
+            .map(|i| s.session.sets.get(i).unwrap().name.clone())
             .collect();
         s.apply(Action::Export(ExportAction::OpenWindow));
         form(&mut s, form_kind);
@@ -1754,7 +1818,7 @@ fn the_template_and_channels_actions_take_the_sets_to_write_and_none_means_all()
     let mut s = two_sets();
     s.export.padding = 0;
     let uids = set_uids(&s);
-    let first = s.sets.get(0).unwrap().name.clone();
+    let first = s.session.sets.get(0).unwrap().name.clone();
     s.apply(Action::Export(ExportAction::TemplateTo {
         id: "unity-standard".into(),
         dir: dir.0.clone(),
@@ -1774,7 +1838,7 @@ fn the_template_and_channels_actions_take_the_sets_to_write_and_none_means_all()
     s.wait_export();
     assert_eq!(dir.files().len(), 2, "None は全部: {:?}", dir.files());
     // 外していても、選びの中に読むだけのセットがあれば、これまでどおり書かず知らせる
-    s.sets.get_mut(1).unwrap().read_only = Some("試験".into());
+    s.session.sets.get_mut(1).unwrap().read_only = Some("試験".into());
     let dir = Dir::new("pick-actions-readonly");
     s.apply(Action::Export(ExportAction::ChannelsTo {
         dir: dir.0.clone(),
@@ -1784,7 +1848,7 @@ fn the_template_and_channels_actions_take_the_sets_to_write_and_none_means_all()
     assert_eq!(dir.files().len(), 1);
     assert_eq!(
         s.export.report.as_ref().unwrap().notes,
-        [Note::ReadOnly(s.sets.get(1).unwrap().name.clone())]
+        [Note::ReadOnly(s.session.sets.get(1).unwrap().name.clone())]
     );
 }
 
@@ -1818,8 +1882,8 @@ fn the_current_channel_png_lists_only_the_current_set_and_it_cannot_be_unchecked
     let dir = Dir::new("pick-current");
     let mut s = two_sets();
     s.export.padding = 0;
-    let current = s.sets.current().uid;
-    let name = s.sets.current().name.clone();
+    let current = s.session.sets.current().uid;
+    let name = s.session.sets.current().name.clone();
     s.apply(Action::Export(ExportAction::OpenWindow));
     assert_eq!(s.export_form(), ExportForm::ChannelPng);
     let rows = s.export_set_rows();
@@ -1837,10 +1901,10 @@ fn the_current_channel_png_lists_only_the_current_set_and_it_cannot_be_unchecked
     assert!(s.export_set_rows()[0].checked, "選べない");
     assert_eq!(s.export_checked_uids(), vec![current]);
     // 別のセットに替えれば、その 1 つだけ
-    let other = 1 - s.sets.current_index();
-    s.apply(Action::SelectSet(s.sets.get(other).unwrap().uid));
+    let other = 1 - s.session.sets.current_index();
+    s.apply(Action::SelectSet(s.session.sets.get(other).unwrap().uid));
     assert_eq!(s.export_set_rows().len(), 1);
-    assert_eq!(s.export_set_rows()[0].uid, s.sets.current().uid);
+    assert_eq!(s.export_set_rows()[0].uid, s.session.sets.current().uid);
     // 別の出力テンプレートでは全部が並び、外した印が効く（プロジェクトの間だけ覚えている）
     form(&mut s, ExportForm::AllChannels);
     assert_eq!(s.export_set_rows().len(), 2);
@@ -1888,7 +1952,7 @@ fn the_set_list_follows_added_removed_and_renamed_sets_and_a_read_only_set_stays
         vec![uids[0], added]
     );
     // 読むだけのセットは、外れたまま触れない
-    s.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+    s.session.sets.get_mut(0).unwrap().read_only = Some("試験".into());
     let rows = s.export_set_rows();
     assert_eq!(
         (rows[0].checked, rows[0].enabled, rows[0].read_only),
@@ -1959,7 +2023,7 @@ fn the_listed_files_show_the_color_space_and_mark_the_files_that_already_exist()
     s.apply(Action::Export(ExportAction::OpenWindow));
     form(&mut s, ExportForm::UnityStandard);
     choose(&mut s, &dir.0);
-    let first = s.sets.get(0).unwrap().name.clone();
+    let first = s.session.sets.get(0).unwrap().name.clone();
     let space = |s: &mut AppState, suffix: &str| {
         s.export_preview()
             .files
@@ -1999,8 +2063,9 @@ fn a_problem_that_stops_the_export_is_shown_in_place_of_the_list() {
     // 書くものが無い
     let dir = Dir::new("list-problem");
     let mut s = AppState::new(64, 64);
-    let layer = s.selected_layer.unwrap();
-    s.doc
+    let layer = s.session.selected_layer.unwrap();
+    s.session
+        .doc
         .set_channel_enabled(layer, Channel::Color, false)
         .unwrap();
     s.apply(Action::Export(ExportAction::OpenWindow));
@@ -2017,7 +2082,11 @@ fn a_problem_that_stops_the_export_is_shown_in_place_of_the_list() {
     );
     // 読むだけのセットは、1 枚の PNG にできない
     let mut s = two_sets();
-    s.sets.get_mut(s.sets.current_index()).unwrap().read_only = Some("試験".into());
+    s.session
+        .sets
+        .get_mut(s.session.sets.current_index())
+        .unwrap()
+        .read_only = Some("試験".into());
     s.apply(Action::Export(ExportAction::OpenWindow));
     let preview = s.export_preview();
     assert!(
@@ -2121,7 +2190,11 @@ fn the_listed_files_are_looked_up_on_disk_only_when_what_they_depend_on_changes(
 fn a_current_channel_png_of_a_read_only_set_refuses_with_the_read_only_reason() {
     let dir = Dir::new("read-only-png");
     let mut s = two_sets();
-    s.sets.get_mut(s.sets.current_index()).unwrap().read_only = Some("試験".into());
+    s.session
+        .sets
+        .get_mut(s.session.sets.current_index())
+        .unwrap()
+        .read_only = Some("試験".into());
     s.apply(Action::Export(ExportAction::OpenWindow));
     choose(&mut s, &dir.0.join("one.png"));
     let why = crate::lang::refusals::read_only_set(s.lang, "試験");
@@ -2158,8 +2231,8 @@ fn a_direct_export_with_no_set_to_write_is_refused_as_having_no_set() {
         assert!(!s.export.is_exporting() && dir.files().is_empty());
     }
     // 全部読むだけのときも同じ
-    for i in 0..s.sets.len() {
-        s.sets.get_mut(i).unwrap().read_only = Some("試験".into());
+    for i in 0..s.session.sets.len() {
+        s.session.sets.get_mut(i).unwrap().read_only = Some("試験".into());
     }
     export(&mut s, "unity-standard", &dir.0);
     assert_eq!(s.message, message);

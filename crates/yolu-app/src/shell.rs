@@ -217,7 +217,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             entries
         }
         // 選んでいるレイヤーの右クリックと同じ項目（選んでいなければ、足す項目とグループだけ）
-        2 => layer_menu(app, app.selected_layer),
+        2 => layer_menu(app, app.session.selected_layer),
         3 => crate::selection::menu::select_menu(app),
         4 => crate::fx::menu::menu_entries(app),
         5 => vec![
@@ -319,12 +319,12 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         PopupKind::BlendMode(id) => {
             // 描くチャンネルが自分の合成を持っていれば、そのチャンネルの値を替える（レイヤーの値は変えない）
             let channel = app.m2.paint_channel;
-            let layer = app.doc.layer(id);
+            let layer = app.session.doc.layer(id);
             let own = layer.is_some_and(|l| !l.channel_blend(channel).is_empty());
             let current = layer.map(|l| l.blend_mode_in(channel));
             let group = layer.is_some_and(|l| l.is_group());
             // 頭: 描くチャンネルだけの合成モードと不透明度にする・レイヤーの値に戻す
-            let name = crate::m2::channel_name(app.lang, &app.doc, channel);
+            let name = crate::m2::channel_name(app.lang, &app.session.doc, channel);
             let lang = app.lang;
             let own_item = Entry::item(
                 lang.pick(format!("{name} だけの値"), format!("{name} only")),
@@ -365,7 +365,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
         }
         PopupKind::M2(popup) => crate::m2_menu::entries(app, popup),
         PopupKind::SetContext(uid) => {
-            let set = app.sets.by_uid(uid);
+            let set = app.session.sets.by_uid(uid);
             let visible = set.is_some_and(|s| s.visible);
             let writable = set.is_some_and(|s| s.read_only.is_none());
             let l = app.lang;
@@ -392,7 +392,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
                     l.pick("消す…", "Remove…"),
                     Action::Project(crate::newproject::NpAction::RemoveSets(vec![uid])),
                 )
-                .enabled(!app.is_stroking() && app.sets.len() > 1),
+                .enabled(!app.is_stroking() && app.session.sets.len() > 1),
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
@@ -445,20 +445,20 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         Action::M2(Edit::NewGroup),
     )
     .enabled(free);
-    let Some(id) = id.filter(|id| app.doc.layer(*id).is_some()) else {
+    let Some(id) = id.filter(|id| app.session.doc.layer(*id).is_some()) else {
         v.push(Entry::Separator);
         v.push(new_group);
         return v;
     };
-    let layer = app.doc.layer(id);
+    let layer = app.session.doc.layer(id);
     let visible = layer.map(|l| l.visible()).unwrap_or(true);
     let group = layer.is_some_and(|l| l.is_group());
     let has_mask = layer.is_some_and(|l| l.mask().is_some());
     let mask = layer.and_then(|l| l.mask());
-    let editing = app.m2.edit_mask && app.selected_layer == Some(id);
+    let editing = app.m2.edit_mask && app.session.selected_layer == Some(id);
     let selected = app.selected_layers();
     let multi = selected.len() > 1 && selected.contains(&id);
-    let members = app.doc.topmost_of(&selected).unwrap_or_default();
+    let members = app.session.doc.topmost_of(&selected).unwrap_or_default();
     // 効果（選んでいるレイヤーに足す。アンカーを置く・外す）
     v.push(Entry::Separator);
     v.extend(crate::fx::menu::layer_entries(app, id));
@@ -472,7 +472,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         )
         .enabled(free);
         // Ctrl+Shift+G は選んでいるレイヤーのグループ解除なので、右クリックしたグループが選んでいるレイヤーと同じときだけ出す
-        v.push(if app.selected_layer == Some(id) {
+        v.push(if app.session.selected_layer == Some(id) {
             ungroup.command_key("layer.ungroup")
         } else {
             ungroup
@@ -480,7 +480,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     } else {
         v.push(
             command_item(lang, "layer.group", Action::M2(Edit::GroupSelected))
-                .enabled(free && app.selected_layer == Some(id)),
+                .enabled(free && app.session.selected_layer == Some(id)),
         );
     }
     v.push(Entry::Separator);
@@ -490,7 +490,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     )
     .enabled(free);
     // 選択範囲があるあいだの Ctrl+J は「コピーして新しいレイヤー」（選択範囲のメニューと帯）。複製のキーは、選択範囲が無いときだけ出す
-    v.push(if app.doc.selection().is_some() {
+    v.push(if app.session.doc.selection().is_some() {
         duplicate
     } else {
         duplicate.command_key("layer.duplicate")
@@ -502,7 +502,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             Action::M2(Edit::MergeDown),
         )
         .command_key("layer.merge_down")
-        .enabled(free && app.selected_layer == Some(id)),
+        .enabled(free && app.session.selected_layer == Some(id)),
     );
     v.push(command_item(lang, "layer.merge_visible", Action::M2(Edit::MergeVisible)).enabled(free));
     if layer.is_some_and(|l| l.path().is_some()) {
@@ -570,7 +570,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             lang.pick("参照レイヤー", "Reference Layer"),
             Action::Region(crate::region::RegionAction::ReferenceLayer(id)),
         )
-        .checked(app.region.references.contains(&(app.doc.id(), id)))
+        .checked(app.region.references.contains(&(app.session.doc.id(), id)))
         .enabled(free),
     );
     v.push(
@@ -627,9 +627,12 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
     for flag in LOCK_FLAGS {
-        let own = targets
-            .iter()
-            .all(|t| app.doc.layer(*t).is_some_and(|l| l.locks().contains(flag)));
+        let own = targets.iter().all(|t| {
+            app.session
+                .doc
+                .layer(*t)
+                .is_some_and(|l| l.locks().contains(flag))
+        });
         v.push(
             Entry::item(
                 menu_lock_name(lang, flag),
@@ -683,15 +686,15 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     );
     let removed: usize = members
         .iter()
-        .map(|m| m2::subtree_len(&app.doc, *m))
+        .map(|m| m2::subtree_len(&app.session.doc, *m))
         .sum::<usize>()
-        .max(m2::subtree_len(&app.doc, id));
+        .max(m2::subtree_len(&app.session.doc, id));
     v.push(
         Entry::item(
             lang.pick("レイヤーを削除", "Delete Layer"),
             Action::DeleteLayer,
         )
-        .enabled(free && app.doc.layers().len() > removed),
+        .enabled(free && app.session.doc.layers().len() > removed),
     );
     v
 }

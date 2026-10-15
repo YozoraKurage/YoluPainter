@@ -1040,6 +1040,7 @@ fn dual_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Con
 
 fn color_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     let kind = app
+        .session
         .doc
         .channel_info(app.m2.paint_channel)
         .map(|i| i.kind)
@@ -1151,6 +1152,7 @@ fn mix_unavailable(app: &AppState, lang: Lang) -> Option<&'static str> {
         return Some(lang.pick("効果のブラシでは効きません", "No effect on effect brushes"));
     }
     let kind = app
+        .session
         .doc
         .channel_info(app.m2.paint_channel)
         .map(|i| i.kind)
@@ -1379,7 +1381,7 @@ fn effect_fields(
     // クローンの「ずれ」の欄: 3D の面だけを出しているときは面の点で決まり、2D の元を決めて揃えないときはストロークごとに元から決め直すので、
     // どちらも欄では決まらない
     let only_3d = app.paints_only_in_3d();
-    let resets_offset = app.clone.canvas_resets_offset(app.doc.id());
+    let resets_offset = app.clone.canvas_resets_offset(app.session.doc.id());
     match &mut app.m2.brush.effect {
         BrushEffect::Paint => {}
         BrushEffect::Blur { radius } => {
@@ -1485,7 +1487,7 @@ fn effect_fields(
                 clone.all_layers = v;
             }
             // 元の有無は文では言わず、揃えるの薄さで示す（元は十字で見える。決めるのは Alt クリック）
-            let has_source = app.clone.canvas_source_for(app.doc.id()).is_some()
+            let has_source = app.clone.canvas_source_for(app.session.doc.id()).is_some()
                 || app
                     .view3d
                     .model

@@ -32,13 +32,15 @@ fn decimals(places: u8) -> NumberFormat<'static> {
 
 /// 効果の欄の全部（選んでいる行が段か Anchor かで）。
 pub fn effect_body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
-    if let Some((layer, effect, target)) =
-        app.fx.filter(&app.doc).map(|(l, e, t)| (l, e.clone(), t))
+    if let Some((layer, effect, target)) = app
+        .fx
+        .filter(&app.session.doc)
+        .map(|(l, e, t)| (l, e.clone(), t))
     {
         filter_body(ui, app, rows, ctx, layer, &effect, target);
     } else if let Some(info) = app
         .fx
-        .anchor(&app.doc)
+        .anchor(&app.session.doc)
         .map(|i| (i.anchor.id(), i.anchor.name().to_owned()))
     {
         anchor_body(ui, app, rows, info.0, &info.1);
@@ -441,13 +443,13 @@ fn filter_body(
         }));
     }
     // 近傍の段は、モデルがあれば UV の継ぎ目をまたげる（文書の設定。どの段の欄からも同じ値）
-    if effect.settings().halo() > 0 && app.doc.effect_inputs().topology().is_some() {
+    if effect.settings().halo() > 0 && app.session.doc.effect_inputs().topology().is_some() {
         if let Some(on) = toggle_row(
             ui,
             rows,
             "fx.seams",
             lang.pick("UV の継ぎ目をまたぐ", "Across UV seams"),
-            app.doc.filter_seams(),
+            app.session.doc.filter_seams(),
             Some(lang.pick(
                 "このテクスチャセットのすべてのフィルターに効く設定。ぼかしなどが、UV アイランドの縁の向こう（3D で隣の面）の画素を読む",
                 "A setting for every filter in this texture set: blurs and the like read the pixels across UV island borders (the neighbouring faces in 3D)",
@@ -460,7 +462,7 @@ fn filter_body(
     // 描くチャンネルに掛からない画素の段は短く知らせる
     let paint = app.m2.paint_channel;
     if target == FilterTarget::Content && !effect.applies_to(paint) {
-        let channel = crate::m2::channel_name(lang, &app.doc, paint);
+        let channel = crate::m2::channel_name(lang, &app.session.doc, paint);
         status_row(
             ui,
             rows,
@@ -600,11 +602,15 @@ fn choices_differ(a: &EffectSettings, b: &EffectSettings) -> bool {
 
 /// 読むマップの今の状態（文書へ渡した入力から。渡していなければ未）。
 fn map_state(app: &AppState, kind: MapKind) -> Option<MeshMapState> {
-    app.doc.effect_inputs().map(kind).map(|m| match m.state {
-        MapState::Current => MeshMapState::Current,
-        MapState::Stale => MeshMapState::Stale,
-        MapState::Unverified => MeshMapState::Unverified,
-    })
+    app.session
+        .doc
+        .effect_inputs()
+        .map(kind)
+        .map(|m| match m.state {
+            MapState::Current => MeshMapState::Current,
+            MapState::Stale => MeshMapState::Stale,
+            MapState::Unverified => MeshMapState::Unverified,
+        })
 }
 
 /// 読むマップの 1 行（印・名前・状態）。ツールチップに焼いたときの大きさとスロット。
@@ -642,6 +648,7 @@ fn map_row(ui: &mut Ui, app: &AppState, rows: &mut Rows, kind: MapKind, pinned: 
         w::Align::Right,
     );
     let tip = app
+        .session
         .sets
         .current()
         .mesh_maps
@@ -706,11 +713,11 @@ fn anchor_reading_rows(
     let lang = app.lang;
     let current = (g.anchor.id != 0).then_some(AnchorId(g.anchor.id));
     let info = current.and_then(|id| {
-        app.doc.find_anchor(id).map(|i| {
+        app.session.doc.find_anchor(id).map(|i| {
             (
                 i.layer,
                 i.placement,
-                app.doc.layer(i.layer).map(|l| l.name().to_owned()),
+                app.session.doc.layer(i.layer).map(|l| l.name().to_owned()),
             )
         })
     });
@@ -741,7 +748,7 @@ fn anchor_reading_rows(
     let mask = info
         .as_ref()
         .is_some_and(|(_, p, _)| *p == AnchorPlacement::Mask);
-    let channel_name = crate::m2::channel_name(lang, &app.doc, g.anchor.channel);
+    let channel_name = crate::m2::channel_name(lang, &app.session.doc, g.anchor.channel);
     if let Some(rect) = choice_row(
         ui,
         rows,
@@ -827,7 +834,8 @@ fn generator_rows(
     let values = g.kind != Kind::Image
         || target == FilterTarget::Mask
         || effect.channels().iter().any(|c| {
-            app.doc
+            app.session
+                .doc
                 .channel_info(*c)
                 .is_some_and(|i| i.kind != yolu_core::ChannelKind::Color)
         });
@@ -847,7 +855,7 @@ fn generator_rows(
     }
     // 効かない理由と、ベイクのウィンドウへ
     let inactive = if effect.is_active() {
-        app.doc.generator_inactive(layer, id).ok().flatten()
+        app.session.doc.generator_inactive(layer, id).ok().flatten()
     } else {
         None
     };
@@ -902,7 +910,7 @@ fn generator_rows(
             next.pins.clear();
             if on {
                 for kind in &used {
-                    if let Some(m) = app.doc.effect_inputs().map(*kind) {
+                    if let Some(m) = app.session.doc.effect_inputs().map(*kind) {
                         next.pins.insert(*kind, m.condition_key.clone());
                     }
                 }
@@ -1545,7 +1553,7 @@ fn anchor_fields(
 ) {
     let lang = app.lang;
     let enabled = app.can_edit();
-    let readers = super::effect_rows::anchor_readers(&app.doc, id);
+    let readers = super::effect_rows::anchor_readers(&app.session.doc, id);
     let count = lang.pick(
         format!("{} 段が読む", readers.len()),
         format!("read by {}", readers.len()),
@@ -1603,7 +1611,7 @@ fn anchor_fields(
         let names: Vec<String> = readers
             .iter()
             .filter_map(|(l, target)| {
-                app.doc.layer(*l).map(|layer| {
+                app.session.doc.layer(*l).map(|layer| {
                     if *target == FilterTarget::Mask {
                         lang.pick(
                             format!("{}（マスク）", layer.name()),
@@ -1722,7 +1730,7 @@ pub fn anchor_row(
 ) {
     let lang: Lang = app.lang;
     let enabled = app.can_edit();
-    let anchor = app.doc.layer(layer).and_then(|l| match placement {
+    let anchor = app.session.doc.layer(layer).and_then(|l| match placement {
         AnchorPlacement::Layer => l.anchor(),
         AnchorPlacement::Mask => l.mask().and_then(|m| m.anchor()),
     });

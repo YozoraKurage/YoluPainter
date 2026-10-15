@@ -159,14 +159,16 @@ impl AppState {
     /// 選んでいるレイヤー（描く先を含む）。下から上の順。描く先が無ければ空。複数選択は描く先が同じあいだだけ有効。
     pub fn selected_layers(&self) -> Vec<LayerId> {
         let Some(active) = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
+            .filter(|id| self.session.doc.layer(*id).is_some())
         else {
             return Vec::new();
         };
         let sel = &self.layer_ops.selection;
         let multi = sel.active == Some(active) && sel.ids.len() > 1;
-        self.doc
+        self.session
+            .doc
             .layers()
             .iter()
             .map(|l| l.id())
@@ -183,23 +185,23 @@ impl AppState {
     pub fn select_layers(&mut self, ids: impl IntoIterator<Item = LayerId>, active: LayerId) {
         let mut set: HashSet<LayerId> = ids
             .into_iter()
-            .filter(|id| self.doc.layer(*id).is_some())
+            .filter(|id| self.session.doc.layer(*id).is_some())
             .collect();
         set.insert(active);
-        if self.selected_layer != Some(active) {
+        if self.session.selected_layer != Some(active) {
             self.set_edit_mask(false);
         }
-        self.selected_layer = Some(active);
+        self.session.selected_layer = Some(active);
         self.layer_ops.selection.ids = set;
         self.layer_ops.selection.active = Some(active);
     }
 
     /// 修飾キー無しのクリック: そのレイヤーだけを選ぶ（起点にもする）。
     pub fn select_single_layer(&mut self, id: LayerId) {
-        if self.selected_layer != Some(id) {
+        if self.session.selected_layer != Some(id) {
             self.set_edit_mask(false);
         }
-        self.selected_layer = Some(id);
+        self.session.selected_layer = Some(id);
         self.layer_ops.selection = LayerSelection {
             ids: HashSet::new(),
             active: None,
@@ -210,7 +212,7 @@ impl AppState {
     /// Ctrl（Mac は Cmd）クリック: 選んでいなければ足して描く先に、選んでいれば外す（最後の 1 つは外さない。描く先を外したら、
     /// 残りのいちばん上が描く先）。
     pub fn toggle_layer_selected(&mut self, id: LayerId) {
-        if self.doc.layer(id).is_none() {
+        if self.session.doc.layer(id).is_none() {
             return;
         }
         self.layer_ops.selection.anchor = Some(id); // 次の Shift クリックの起点（外せなかった最後の 1 つでも）
@@ -220,10 +222,10 @@ impl AppState {
                 return;
             }
             current.retain(|c| *c != id);
-            let active = if Some(id) == self.selected_layer {
+            let active = if Some(id) == self.session.selected_layer {
                 *current.last().expect("残りがある")
             } else {
-                self.selected_layer.expect("描く先")
+                self.session.selected_layer.expect("描く先")
             };
             self.select_layers(current, active);
         } else {
@@ -243,7 +245,7 @@ impl AppState {
             .selection
             .anchor
             .filter(|a| rows.contains(a))
-            .or(self.selected_layer.filter(|a| rows.contains(a)));
+            .or(self.session.selected_layer.filter(|a| rows.contains(a)));
         let a = anchor
             .and_then(|a| rows.iter().position(|r| *r == a))
             .unwrap_or(b);
@@ -262,13 +264,14 @@ impl AppState {
     /// Ctrl+E の結合（複数選んでいれば選んだレイヤーを、グループならグループを、そうでなければ下のレイヤーと）。
     pub(crate) fn merge_down_selected(&mut self) -> Result<(), CoreError> {
         let active = self
+            .session
             .selected_layer
-            .filter(|id| self.doc.layer(*id).is_some())
+            .filter(|id| self.session.doc.layer(*id).is_some())
             .ok_or(CoreError::LayerNotFound)?;
         let ids = self.selected_layers();
-        let op = if self.doc.topmost_of(&ids)?.len() > 1 {
+        let op = if self.session.doc.topmost_of(&ids)?.len() > 1 {
             MergeOp::Layers(ids)
-        } else if self.doc.layer(active).is_some_and(|l| l.is_group()) {
+        } else if self.session.doc.layer(active).is_some_and(|l| l.is_group()) {
             MergeOp::Group(active)
         } else {
             MergeOp::Down(active)
@@ -287,12 +290,12 @@ impl AppState {
     /// 結合する。見た目が許容差を超えて変わるなら、何も変えずに確認のウィンドウを出す（`tolerance` が 255 なら確かめ済みで、そのまま結合）。
     pub(crate) fn run_merge(&mut self, op: MergeOp, tolerance: u8) -> Result<(), CoreError> {
         let result = match &op {
-            MergeOp::Down(id) => self.doc.merge_down(*id, tolerance),
-            MergeOp::Layers(ids) => self.doc.merge_layers(ids, tolerance),
-            MergeOp::Group(id) => self.doc.merge_group(*id, tolerance),
+            MergeOp::Down(id) => self.session.doc.merge_down(*id, tolerance),
+            MergeOp::Layers(ids) => self.session.doc.merge_layers(ids, tolerance),
+            MergeOp::Group(id) => self.session.doc.merge_group(*id, tolerance),
             MergeOp::Visible => {
                 let name = self.lang.pick("結合", "Merged");
-                self.doc.merge_visible(name, tolerance)
+                self.session.doc.merge_visible(name, tolerance)
             }
         };
         match result {
@@ -320,6 +323,7 @@ impl AppState {
         self.select_new(report.result_id);
         let lang = self.lang;
         let name = self
+            .session
             .doc
             .layer(report.result_id)
             .map(|l| l.name().to_owned())
@@ -362,12 +366,12 @@ impl AppState {
     /// 選んでいるレイヤー（複数ならそのまま全部）を新しいグループに入れる（違うグループのレイヤーどうしは core が断る）。
     pub(crate) fn group_selected_layers(&mut self) -> Result<(), CoreError> {
         let ids = self.selected_layers();
-        let members = self.doc.topmost_of(&ids)?;
+        let members = self.session.doc.topmost_of(&ids)?;
         if members.is_empty() {
             return Err(CoreError::LayerNotFound);
         }
         let name = self.new_layer_name(LayerKind::Group);
-        let group = self.doc.group_layers(&members, &name)?;
+        let group = self.session.doc.group_layers(&members, &name)?;
         self.select_new(group);
         Ok(())
     }
@@ -378,7 +382,7 @@ impl AppState {
         if ids.is_empty() {
             return Err(CoreError::LayerNotFound);
         }
-        let copies = self.doc.duplicate_layers(&ids)?;
+        let copies = self.session.doc.duplicate_layers(&ids)?;
         let active = *copies.last().expect("複製がある");
         self.select_layers(copies, active);
         self.set_edit_mask(false);
@@ -393,8 +397,8 @@ impl AppState {
         }
         let show = ids
             .iter()
-            .all(|id| self.doc.layer(*id).is_some_and(|l| !l.visible()));
-        self.doc.set_layers_visibility(&ids, show)
+            .all(|id| self.session.doc.layer(*id).is_some_and(|l| !l.visible()));
+        self.session.doc.set_layers_visibility(&ids, show)
     }
 
     /// 選んでいるレイヤー（複数ならまとめて）を消す。何も残らなくなる削除は断る。
@@ -403,12 +407,12 @@ impl AppState {
         if ids.is_empty() {
             return Err(CoreError::LayerNotFound);
         }
-        let members = self.doc.topmost_of(&ids)?;
+        let members = self.session.doc.topmost_of(&ids)?;
         let removed: usize = members
             .iter()
-            .map(|id| m2::subtree_len(&self.doc, *id))
+            .map(|id| m2::subtree_len(&self.session.doc, *id))
             .sum();
-        if removed >= self.doc.layers().len() {
+        if removed >= self.session.doc.layers().len() {
             self.refuse(
                 Source::Layer,
                 self.lang.pick(
@@ -422,15 +426,17 @@ impl AppState {
         let start = members
             .iter()
             .filter_map(|id| {
-                self.doc
+                self.session
+                    .doc
                     .layer_index(*id)
-                    .map(|i| (i + 1).saturating_sub(m2::subtree_len(&self.doc, *id)))
+                    .map(|i| (i + 1).saturating_sub(m2::subtree_len(&self.session.doc, *id)))
             })
             .min()
             .unwrap_or(0);
-        self.doc.remove_layers(&members)?;
-        let layers = self.doc.layers();
-        self.selected_layer = Some(layers[start.saturating_sub(1).min(layers.len() - 1)].id());
+        self.session.doc.remove_layers(&members)?;
+        let layers = self.session.doc.layers();
+        self.session.selected_layer =
+            Some(layers[start.saturating_sub(1).min(layers.len() - 1)].id());
         self.layer_ops.selection = LayerSelection::default();
         self.set_edit_mask(false);
         Ok(())
@@ -443,7 +449,7 @@ impl AppState {
         parent: Option<LayerId>,
         position: usize,
     ) -> Result<(), CoreError> {
-        self.doc.move_layers(ids, parent, position)?;
+        self.session.doc.move_layers(ids, parent, position)?;
         if let Some(p) = parent {
             self.m2.collapsed.remove(&p);
         }
@@ -459,7 +465,7 @@ impl AppState {
         flag: LayerLocks,
         on: bool,
     ) -> Result<(), CoreError> {
-        self.doc.change_layer_locks(ids, flag, on)?;
+        self.session.doc.change_layer_locks(ids, flag, on)?;
         let lang = self.lang;
         let what = if flag.bits() == 15 {
             lang.pick("すべてのロック", "all locks").to_owned()
@@ -488,17 +494,18 @@ impl AppState {
 
     /// 動かすレイヤー: 選んでいるレイヤー（グループなら中身も）のうちラスターレイヤーだけ。塗りつぶし・調整は画素が無いので動かさない。
     pub fn transform_targets(&self) -> Vec<LayerId> {
-        let Ok(members) = self.doc.topmost_of(&self.selected_layers()) else {
+        let Ok(members) = self.session.doc.topmost_of(&self.selected_layers()) else {
             return Vec::new();
         };
-        self.doc
+        self.session
+            .doc
             .layers()
             .iter()
             .filter(|l| {
                 l.kind() == LayerKind::Raster
                     && members
                         .iter()
-                        .any(|m| *m == l.id() || m2::is_inside(&self.doc, l.id(), *m))
+                        .any(|m| *m == l.id() || m2::is_inside(&self.session.doc, l.id(), *m))
             })
             .map(|l| l.id())
             .collect()
@@ -509,7 +516,7 @@ impl AppState {
     pub fn transform_bounds(&self) -> Option<(i64, i64, i64, i64)> {
         let mut all: Option<(i64, i64, i64, i64)> = None;
         for id in self.transform_targets() {
-            let Ok(Some(b)) = self.doc.transform_bounds(id, None) else {
+            let Ok(Some(b)) = self.session.doc.transform_bounds(id, None) else {
                 continue;
             };
             let b = (
@@ -543,7 +550,7 @@ impl AppState {
         let Some(bounds) = self.transform_bounds() else {
             self.refuse(
                 Source::Transform,
-                if self.doc.selection().is_some() {
+                if self.session.doc.selection().is_some() {
                     lang.pick(
                         "選択範囲の中に動かす画素がありません。",
                         "No pixels to move inside the selection.",
@@ -629,13 +636,18 @@ impl AppState {
             ),
         };
         // テキストレイヤーは画素でなく値（基準の点・回転・サイズ）を動かして描き直す。ほかのレイヤーと一緒なら 1 回の Undo にまとめる
-        let (texts, pixels): (Vec<LayerId>, Vec<LayerId>) = targets
-            .iter()
-            .partition(|id| self.doc.layer(**id).is_some_and(|l| l.text().is_some()));
+        let (texts, pixels): (Vec<LayerId>, Vec<LayerId>) = targets.iter().partition(|id| {
+            self.session
+                .doc
+                .layer(**id)
+                .is_some_and(|l| l.text().is_some())
+        });
         let changed = if texts.is_empty() {
-            self.doc.transform_layers(&targets, transform, resampling)?
+            self.session
+                .doc
+                .transform_layers(&targets, transform, resampling)?
         } else {
-            if self.doc.selection().is_some() {
+            if self.session.doc.selection().is_some() {
                 self.refuse(
                     Source::Transform,
                     lang.with_reason(
@@ -651,6 +663,7 @@ impl AppState {
             let mut moved = Vec::new();
             for id in &texts {
                 let value = self
+                    .session
                     .doc
                     .layer(*id)
                     .and_then(|l| l.text())
@@ -685,7 +698,7 @@ impl AppState {
                 };
                 moved.push((*id, next, font));
             }
-            self.doc.batch(|d| {
+            self.session.doc.batch(|d| {
                 let mut changed = false;
                 if !pixels.is_empty() {
                     changed |= d.transform_layers(&pixels, transform, resampling)?;

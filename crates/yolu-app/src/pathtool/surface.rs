@@ -178,7 +178,7 @@ fn scene(
     // 取っ手は休みの形の空間で持つので、点の三角形の変形で見ている形へ写す（ドラッグ中の取っ手も）
     let rest = app.view3d.full_model().map(|m| m.rest_geometry().clone());
     let now: Vec<TangentValue> = path.points.iter().map(Pt::tangent_value).collect();
-    let now = match (app.selected_layer, preview) {
+    let now = match (app.session.selected_layer, preview) {
         (Some(layer), Some(_)) => shown_tangents(app, &now, layer, path.id),
         _ => now,
     };

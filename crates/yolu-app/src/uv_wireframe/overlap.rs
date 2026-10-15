@@ -202,7 +202,7 @@ impl AppState {
             .full_model()
             .map(|m| m.geometry.clone())
             .filter(|_| material >= 0);
-        let (width, height) = (self.doc.width(), self.doc.height());
+        let (width, height) = (self.session.doc.width(), self.session.doc.height());
         let s = &mut self.uv_overlap;
         let Some(geometry) = target else {
             s.clear();
@@ -242,7 +242,7 @@ impl AppState {
 
     /// 塗りの知らせ: 2D の点（画素の座標、左下原点）と半径（画素）の中に重なったテクセルがあれば、テクスチャセットごとに 1 度だけ知らせる。
     pub fn note_overlap_canvas(&mut self, x: f64, y: f64, radius: f64) {
-        let uid = self.sets.current().uid;
+        let uid = self.session.sets.current().uid;
         let Some(built) = self.overlap_for_notice(uid) else {
             return;
         };
@@ -259,7 +259,7 @@ impl AppState {
 
     /// 塗りの知らせ: 3D で描いた面の UV（0〜1）の点のテクセルが重なっていれば、テクスチャセットごとに 1 度だけ知らせる。
     pub fn note_overlap_uv(&mut self, uv: Vec2) {
-        let uid = self.sets.current().uid;
+        let uid = self.session.sets.current().uid;
         let Some(built) = self.overlap_for_notice(uid) else {
             return;
         };
@@ -281,10 +281,9 @@ impl AppState {
         if s.noticed.contains(&uid) {
             return None;
         }
-        s.built
-            .clone()
-            .filter(|b| !b.map.is_empty())
-            .filter(|b| (b.map.width(), b.map.height()) == (self.doc.width(), self.doc.height()))
+        s.built.clone().filter(|b| !b.map.is_empty()).filter(|b| {
+            (b.map.width(), b.map.height()) == (self.session.doc.width(), self.session.doc.height())
+        })
     }
 
     fn notice_overlap(&mut self, uid: u32) {
@@ -301,7 +300,7 @@ impl AppState {
 
 /// 塗りの知らせ（3D）: 描いた点の下の今のセットの面の UV で `note_overlap_uv`。もう知らせたセット・図が無いときは、面を引かない。
 pub fn note_surface(app: &mut AppState, rect: egui::Rect, at: Pos2) {
-    let uid = app.sets.current().uid;
+    let uid = app.session.sets.current().uid;
     if app.overlap_for_notice(uid).is_none() {
         return;
     }
@@ -339,7 +338,7 @@ pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
         return;
     }
     let color = app.prefs.settings.uv_overlap_color;
-    let (doc_w, doc_h) = (app.doc.width(), app.doc.height());
+    let (doc_w, doc_h) = (app.session.doc.width(), app.session.doc.height());
     let nearest = view.pixel_size() >= NEAREST_FROM_PIXEL_SIZE;
     let id = Arc::as_ptr(&built) as usize;
     let s = &mut app.uv_overlap;
@@ -389,7 +388,8 @@ pub fn texture_for_map(
 ) -> Option<(egui::TextureId, [f32; 2])> {
     let built = app.uv_overlap.built.clone()?;
     if built.map.is_empty()
-        || (built.map.width(), built.map.height()) != (app.doc.width(), app.doc.height())
+        || (built.map.width(), built.map.height())
+            != (app.session.doc.width(), app.session.doc.height())
     {
         return None;
     }

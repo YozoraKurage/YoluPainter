@@ -74,10 +74,10 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     };
     let figure = app.drafting.figure;
     let points = outline(figure, a, b, app.drafting.corner as f64);
-    let before = app.doc.revision();
-    app.doc.end_coalescing();
+    let before = app.session.doc.revision();
+    app.session.doc.end_coalescing();
     let result = if app.drafting.fill && figure != Figure::Line {
-        SelectionMask::polygon(&app.doc, &points)
+        SelectionMask::polygon(&app.session.doc, &points)
             .and_then(|mask| fill_region(app, layer, &mask))
             .map(|_| ())
     } else {
@@ -88,12 +88,12 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
                 // 速さの制御（サイズ・不透明度・流量）を入れたブラシでも頂点の間隔で線が細く・薄くならない。
                 for p in &points {
                     let sample = BrushSample::new(p.x, p.y, 1.0, 0.0, DVec2::ZERO)?;
-                    if let Err(e) = stroke.add_sample(&mut app.doc, sample) {
-                        app.doc.cancel_stroke(stroke);
+                    if let Err(e) = stroke.add_sample(&mut app.session.doc, sample) {
+                        app.session.doc.cancel_stroke(stroke);
                         return Err(e);
                     }
                 }
-                app.doc.end_stroke(stroke).map(|_| ())
+                app.session.doc.end_stroke(stroke).map(|_| ())
             })
     };
     finish_paint(app, result, before);
@@ -108,11 +108,12 @@ pub(crate) fn fill_region(
 ) -> Result<bool, yolu_core::CoreError> {
     if app.m2.edit_mask {
         let reveal = crate::m2::mask_reveals(app, layer, false);
-        app.doc
+        app.session
+            .doc
             .fill_mask(layer, app.brush.opacity as f64, Some(mask), reveal)
     } else {
         let channels = app.paint_channels();
-        app.doc.fill_material(
+        app.session.doc.fill_material(
             layer,
             &channels,
             app.brush.opacity as f64,
@@ -129,15 +130,15 @@ pub(crate) fn finish_paint(
     before: u64,
 ) {
     if let Err(e) = result {
-        app.doc.cancel_active_stroke();
+        app.session.doc.cancel_active_stroke();
         app.notify(
             crate::notice::Kind::of_core(&e),
             Source::Ruler,
             app.lang.core_error(&e),
         );
     }
-    if app.doc.revision() != before {
-        app.mark_modified();
+    if app.session.doc.revision() != before {
+        app.session.mark_modified();
         app.color.remember();
     }
 }

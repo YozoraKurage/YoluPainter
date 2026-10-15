@@ -108,10 +108,10 @@ fn with_model(r: &Ruler, a: DVec3, b: DVec3, up: DVec3) -> Ruler {
 /// 「定規」の区分。
 pub fn section_for_layer(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let lang = app.lang;
-    let Some(owner) = app.selected_layer else {
+    let Some(owner) = app.session.selected_layer else {
         return;
     };
-    let list: Vec<Ruler> = match app.doc.layer(owner) {
+    let list: Vec<Ruler> = match app.session.doc.layer(owner) {
         Some(l) if !l.rulers().is_empty() => l.rulers().to_vec(),
         _ => return,
     };
@@ -135,7 +135,7 @@ pub fn section_for_layer(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         reason: reason.as_deref(),
     };
     let effective = {
-        let special = app.doc.snapping_special_rulers(Some(owner));
+        let special = app.session.doc.snapping_special_rulers(Some(owner));
         [special.canvas, special.model]
             .into_iter()
             .flatten()
@@ -421,7 +421,7 @@ fn canvas_fields(
     let Some((a, b)) = canvas_points(r) else {
         return;
     };
-    let size = (app.doc.width(), app.doc.height());
+    let size = (app.session.doc.width(), app.session.doc.height());
     let salt = format!("ruler.{}", r.id);
     match r.kind {
         RulerKind::Line => {

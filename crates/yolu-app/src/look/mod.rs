@@ -668,10 +668,10 @@ impl AppState {
         }
         if let LookOp::PaintSlot(slot) = op {
             let lang = self.lang;
-            let before = self.doc.revision();
-            match paint_slot(&mut self.doc, slot, lang) {
+            let before = self.session.doc.revision();
+            match paint_slot(&mut self.session.doc, slot, lang) {
                 Ok(channel) => {
-                    self.mark_modified_if_changed(before);
+                    self.session.mark_modified_if_changed(before);
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
                 Err(e) => self.notify(
@@ -684,9 +684,9 @@ impl AppState {
         }
         if let LookOp::NewChannel { slot, plane } = op {
             let lang = self.lang;
-            match new_slot_channel(&mut self.doc, slot, plane, lang) {
+            match new_slot_channel(&mut self.session.doc, slot, plane, lang) {
                 Ok(channel) => {
-                    self.mark_modified();
+                    self.session.mark_modified();
                     self.m2_ui(crate::m2::UiOp::PaintChannel(channel));
                 }
                 Err(e) => self.notify(
@@ -699,9 +699,9 @@ impl AppState {
         }
         if op == LookOp::Template {
             let lang = self.lang;
-            match apply_template(&mut self.doc, lang) {
+            match apply_template(&mut self.session.doc, lang) {
                 Ok(made) => {
-                    self.mark_modified();
+                    self.session.mark_modified();
                     self.info(
                         Source::Material,
                         lang.pick(
@@ -718,16 +718,16 @@ impl AppState {
             }
             return;
         }
-        let mut look = self.doc.look().clone();
+        let mut look = self.session.doc.look().clone();
         // 描画モード・輪郭線の今の様子は描く見た目（Unity から受けた値を含む）から読み、変えた値は利用者の設定に書く
-        let drawn = self.doc.drawn_look().clone();
+        let drawn = self.session.doc.drawn_look().clone();
         let mut coalesce = false;
         match op {
             LookOp::Kind(kind) => {
                 look.kind = kind;
                 // Unity から受けた値があるときだけ「選んだ」と覚える（受けた値の描き方より欄の選びが勝つ）。無いときの選びは種類だけで
                 // 足り、標準に戻した設定は既定のまま（保存しない）
-                look.kind_chosen = self.doc.received_look().is_some();
+                look.kind_chosen = self.session.doc.received_look().is_some();
                 if kind == LookKind::LilToon && drawn.textures.is_empty() {
                     default_textures(&mut look);
                 }
@@ -781,6 +781,7 @@ impl AppState {
                 // 戻した名前が受けた値（無ければ既定）と同じなら、利用者の設定から外す
                 if matches!(section, Section::Base | Section::Outline) && !look.shader.is_empty() {
                     let base = self
+                        .session
                         .doc
                         .received_look()
                         .map(|r| liltoon::shader_info(&r.look))
@@ -807,10 +808,10 @@ impl AppState {
                 unreachable!("上で扱った")
             }
         }
-        let before = self.doc.revision();
-        match self.doc.set_look(look, coalesce) {
+        let before = self.session.doc.revision();
+        match self.session.doc.set_look(look, coalesce) {
             Ok(()) => {
-                self.mark_modified_if_changed(before);
+                self.session.mark_modified_if_changed(before);
             }
             Err(e) => self.notify(
                 crate::notice::Kind::of_core(&e),

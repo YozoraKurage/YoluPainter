@@ -71,7 +71,8 @@ fn two_quads(generation: u32, lift: f32) -> Model {
 }
 
 fn kinds(s: &AppState, index: usize) -> Vec<MeshMapKind> {
-    s.sets
+    s.session
+        .sets
         .get(index)
         .unwrap()
         .mesh_maps
@@ -93,14 +94,14 @@ fn refusals_come_in_the_order_the_window_shows_them() {
     assert_eq!(lang_ja(&mut s), "チェックしたマップがありません");
     s.bake.settings.maps = maps;
     // 描いている間
-    let layer = s.selected_layer.unwrap();
+    let layer = s.session.selected_layer.unwrap();
     let brush = s.stroke_settings(false);
-    let stroke = s.doc.begin_stroke(layer, &brush).unwrap();
+    let stroke = s.session.doc.begin_stroke(layer, &brush).unwrap();
     assert_eq!(lang_ja(&mut s), "描いている間はできません。");
     s.apply(bake(BakeAction::Start));
     assert!(!s.bake.is_baking(), "描いている間は始めない");
     assert_eq!(s.message, "描いている間はできません。");
-    s.doc.end_stroke(stroke).unwrap();
+    s.session.doc.end_stroke(stroke).unwrap();
     assert_eq!(s.bake_refusal(), None);
     // 英語
     s.lang = Lang::En;
@@ -111,7 +112,7 @@ fn refusals_come_in_the_order_the_window_shows_them() {
 #[test]
 fn bakes_the_cube_in_another_thread_and_keeps_the_maps_in_the_set() {
     let mut s = cube();
-    assert!(!s.modified);
+    assert!(!s.session.is_modified());
     s.apply(bake(BakeAction::Start));
     assert!(s.bake.is_baking(), "別のスレッドで走っている");
     assert_eq!(
@@ -132,6 +133,7 @@ fn bakes_the_cube_in_another_thread_and_keeps_the_maps_in_the_set() {
         ]
     );
     let map = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -142,7 +144,7 @@ fn bakes_the_cube_in_another_thread_and_keeps_the_maps_in_the_set() {
     assert_eq!(p.target_slots, [0]);
     assert_eq!((p.padding, p.antialiasing), (4, 1));
     assert!(map.coverage().contains(&1), "立方体の面が UV を覆う");
-    assert!(s.modified, "保存していない変更になる");
+    assert!(s.session.is_modified(), "保存していない変更になる");
     assert_eq!(
         s.bake.view,
         MeshMapView::Coverage,
@@ -150,7 +152,7 @@ fn bakes_the_cube_in_another_thread_and_keeps_the_maps_in_the_set() {
     );
     assert!(s.message.contains("焼きました"), "{}", s.message);
     assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| *ok));
-    assert!(s.sets.current().mesh_maps.report().is_some());
+    assert!(s.session.sets.current().mesh_maps.report().is_some());
     // 今の条件で焼いたものなので Current
     for kind in kinds(&s, 0) {
         let check = s.mesh_map_check(0, kind).unwrap();
@@ -162,7 +164,7 @@ fn bakes_the_cube_in_another_thread_and_keeps_the_maps_in_the_set() {
         );
     }
     // 文書は変わらない（描くレイヤーではない）
-    assert!(!s.doc.can_undo());
+    assert!(!s.session.doc.can_undo());
 }
 
 #[test]
@@ -171,6 +173,7 @@ fn rebaking_replaces_the_same_kind_and_leaves_the_others() {
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
     let before = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -183,6 +186,7 @@ fn rebaking_replaces_the_same_kind_and_leaves_the_others() {
     s.wait_bake();
     assert_eq!(kinds(&s, 0).len(), 3, "焼き直した種類だけ置き換える");
     let after = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -209,14 +213,15 @@ fn a_result_is_discarded_when_the_model_changed_while_baking() {
     // 焼いている間に別のモデルへ替える（形が変わるので、結果の意味が変わる）
     s.apply(Action::LoadDemoModel);
     s.wait_bake();
-    assert!(s.sets.current().mesh_maps.is_empty(), "捨てる");
+    assert!(s.session.sets.current().mesh_maps.is_empty(), "捨てる");
     assert!(
-        s.sets.current().mesh_maps.report().is_none() && s.sets.current().mesh_maps.run().is_none(),
+        s.session.sets.current().mesh_maps.report().is_none()
+            && s.session.sets.current().mesh_maps.run().is_none(),
         "捨てた結果の記録と場所は残さない"
     );
     assert!(s.message.contains("捨てました"), "{}", s.message);
     assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
-    assert!(!s.modified);
+    assert!(!s.session.is_modified());
     // 同じ形でもう一度焼けば入る
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
@@ -228,9 +233,9 @@ fn a_result_is_discarded_when_the_document_was_replaced() {
     let mut s = cube();
     s.apply(bake(BakeAction::Start));
     let (doc, _) = crate::state::blank_document(64, 64);
-    s.doc = doc; // 同じ大きさでも別の文書
+    s.session.doc = doc; // 同じ大きさでも別の文書
     s.wait_bake();
-    assert!(s.sets.current().mesh_maps.is_empty());
+    assert!(s.session.sets.current().mesh_maps.is_empty());
     assert!(s.message.contains("キャンバス"), "{}", s.message);
 }
 
@@ -239,7 +244,7 @@ fn cancel_keeps_the_previous_maps_and_the_rest_of_the_queue() {
     let mut s = cube();
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
-    let previous: Vec<_> = s.sets.current().mesh_maps.iter().cloned().collect();
+    let previous: Vec<_> = s.session.sets.current().mesh_maps.iter().cloned().collect();
     // 取消が来るまで始めない仕事にして取り消す（取消が効いたことを、焼き終わる速さに頼らず確かめる）
     s.bake.settings.maps = vec![MeshMapKind::AmbientOcclusion];
     s.bake.park_next = true;
@@ -250,7 +255,7 @@ fn cancel_keeps_the_previous_maps_and_the_rest_of_the_queue() {
     assert!(s.message.contains("取り消しています"), "{}", s.message);
     s.wait_bake();
     assert!(s.message.contains("取り消しました"), "{}", s.message);
-    let now: Vec<_> = s.sets.current().mesh_maps.iter().cloned().collect();
+    let now: Vec<_> = s.session.sets.current().mesh_maps.iter().cloned().collect();
     assert_eq!(now.len(), previous.len());
     assert!(
         now.iter()
@@ -286,7 +291,7 @@ fn checks_keep_one_map_and_one_set() {
         .collect::<Vec<_>>()
     );
     // セット（1 つだけなら外せない）
-    let uid = s.sets.current().uid;
+    let uid = s.session.sets.current().uid;
     s.apply(bake(BakeAction::Set(uid, false)));
     assert!(s.bake.skipped.is_empty());
 }
@@ -301,7 +306,7 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
     quick(&mut s);
     // モデルに無いマテリアルのセット
     let (doc, _) = crate::state::blank_document(32, 32);
-    s.sets.push(
+    s.session.sets.push(
         crate::sets::guid_string(doc.id()),
         "Gone".into(),
         false,
@@ -325,7 +330,8 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
     assert_eq!(kinds(&s, 1).len(), 3, "2 つ目のセットも焼く");
     assert!(kinds(&s, 2).is_empty());
     let slot_of = |i: usize| {
-        s.sets
+        s.session
+            .sets
             .get(i)
             .unwrap()
             .mesh_maps
@@ -345,7 +351,7 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
     // モデルに無いセットの状態を聞くと、マップは無い
     assert!(s.mesh_map_check(2, MeshMapKind::Position).is_none());
     // 外したセットは焼かない
-    let hair = s.sets.get(1).unwrap().uid;
+    let hair = s.session.sets.get(1).unwrap().uid;
     s.apply(bake(BakeAction::Set(hair, false)));
     assert_eq!(s.bakeable_sets(), [0]);
 }
@@ -443,6 +449,7 @@ fn the_ao_for_export_is_one_byte_per_texel_and_white_outside_the_uvs() {
     };
     assert_eq!(bytes.len(), 64 * 64);
     let map = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -459,7 +466,7 @@ fn the_ao_for_export_is_one_byte_per_texel_and_white_outside_the_uvs() {
     assert!(bytes.iter().any(|b| *b < 255), "凹む角に遮蔽が出る");
     // 文書の大きさが変わったら使わない
     let (doc, _) = crate::state::blank_document(32, 32);
-    s.doc = doc;
+    s.session.doc = doc;
     assert!(matches!(s.occlusion_for_export(0), Occlusion::Stale(_)));
 }
 
@@ -513,7 +520,7 @@ fn a_figure_bakes_each_set_and_a_new_pose_makes_the_maps_stale() {
     assert_eq!(s.bake_refusal(), None);
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
-    assert_eq!(s.sets.len(), 2, "肌と顔");
+    assert_eq!(s.session.sets.len(), 2, "肌と顔");
     assert!(
         s.message.contains("2 個のテクスチャセット"),
         "{}",
@@ -565,8 +572,8 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
     assert!(s.message.contains("予算"), "{}", s.message);
-    assert!(s.sets.current().mesh_maps.is_empty());
-    assert!(!s.modified);
+    assert!(s.session.sets.current().mesh_maps.is_empty());
+    assert!(!s.session.is_modified());
     assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
     // UV が 0〜1 の外（繰り返し・UDIM）はベイクできない
     let mut model = two_quads(1, 0.0);
@@ -578,7 +585,7 @@ fn a_bake_the_budget_cannot_hold_or_with_uvs_outside_0_1_is_refused_with_the_rea
     t.apply(bake(BakeAction::Start));
     t.wait_bake();
     assert!(t.message.contains("UV"), "{}", t.message);
-    assert!(t.sets.iter().all(|x| x.mesh_maps.is_empty()));
+    assert!(t.session.sets.iter().all(|x| x.mesh_maps.is_empty()));
     // 英語
     t.lang = Lang::En;
     t.apply(bake(BakeAction::Start));
@@ -601,12 +608,12 @@ fn a_refusal_is_the_same_whichever_place_is_chosen_and_the_cpu_is_not_retried() 
         s.apply(bake(BakeAction::Start));
         s.wait_bake();
         assert!(s.message.contains("予算"), "{backend:?}: {}", s.message);
-        assert!(s.sets.current().mesh_maps.is_empty());
+        assert!(s.session.sets.current().mesh_maps.is_empty());
         assert!(
-            s.sets.current().mesh_maps.run().is_none(),
+            s.session.sets.current().mesh_maps.run().is_none(),
             "断ったので記録は残さない"
         );
-        assert!(!s.modified);
+        assert!(!s.session.is_modified());
         assert!(s.bake.outcome.as_ref().is_some_and(|(_, ok)| !*ok));
         // UV が 0〜1 の外
         let mut model = two_quads(1, 0.0);
@@ -618,7 +625,7 @@ fn a_refusal_is_the_same_whichever_place_is_chosen_and_the_cpu_is_not_retried() 
         t.apply(bake(BakeAction::Start));
         t.wait_bake();
         assert!(t.message.contains("UV"), "{backend:?}: {}", t.message);
-        assert!(t.sets.iter().all(|x| x.mesh_maps.is_empty()));
+        assert!(t.session.sets.iter().all(|x| x.mesh_maps.is_empty()));
     }
 }
 
@@ -813,11 +820,11 @@ fn a_result_is_discarded_when_the_model_was_replaced_twice_while_baking() {
         lift(&mut s, 0.2);
         s.wait_bake();
         assert!(
-            s.sets.iter().all(|x| x.mesh_maps.is_empty()),
+            s.session.sets.iter().all(|x| x.mesh_maps.is_empty()),
             "{round} 回目: 古い形の結果を入れた"
         );
         assert!(s.message.contains("捨てました"), "{}", s.message);
-        assert!(!s.modified);
+        assert!(!s.session.is_modified());
     }
 }
 
@@ -873,7 +880,7 @@ fn reopened_with_maps() -> AppState {
     quick(&mut s);
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
-    assert!(!s.sets.current().mesh_maps.is_empty());
+    assert!(!s.session.sets.current().mesh_maps.is_empty());
     s.release_idle_bake_input();
     assert!(s.bake.input.is_some(), "焼いたマップがあるので入力は残る");
     lift(&mut s, 0.3);
@@ -990,8 +997,9 @@ fn a_failed_input_is_remembered_and_shown_as_the_reason() {
 #[test]
 fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
     use yolu_core::mesh_maps::MeshIdSource;
-    let status =
-        |s: &AppState, kind| window::id_status(s.lang, kind, s.sets.current().mesh_maps.report());
+    let status = |s: &AppState, kind| {
+        window::id_status(s.lang, kind, s.session.sets.current().mesh_maps.report())
+    };
     // 立方体は 1 つのスロット: スロットごとなら 1 色
     let mut s = cube();
     s.bake.settings.maps = vec![MeshMapKind::Id];
@@ -999,7 +1007,16 @@ fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
     assert_eq!(status(&s, MeshMapKind::Id), None, "焼く前は何も言わない");
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
-    assert_eq!(s.sets.current().mesh_maps.report().unwrap().id_parts, 1);
+    assert_eq!(
+        s.session
+            .sets
+            .current()
+            .mesh_maps
+            .report()
+            .unwrap()
+            .id_parts,
+        1
+    );
     let text = status(&s, MeshMapKind::Id).expect("部品が 1 つ");
     assert!(text.contains("1 色"), "{text}");
     assert_eq!(status(&s, MeshMapKind::Position), None, "ID のページだけ");
@@ -1019,7 +1036,13 @@ fn the_id_page_says_one_color_only_when_the_last_bake_had_one_part() {
         t.apply(bake(BakeAction::Start));
         t.wait_bake();
         assert_eq!(
-            t.sets.current().mesh_maps.report().unwrap().id_parts,
+            t.session
+                .sets
+                .current()
+                .mesh_maps
+                .report()
+                .unwrap()
+                .id_parts,
             2,
             "{source:?}"
         );
@@ -1132,6 +1155,7 @@ fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_an
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
     let cpu_run = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -1145,6 +1169,7 @@ fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_an
     );
     assert!(s.message.contains("CPU）"), "{}", s.message);
     let cpu_cover: Vec<_> = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -1152,6 +1177,7 @@ fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_an
         .map(|m| (m.kind(), m.coverage().to_vec()))
         .collect();
     let cpu_values: Vec<_> = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -1170,6 +1196,7 @@ fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_an
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
     let run = s
+        .session
         .sets
         .current()
         .mesh_maps
@@ -1187,7 +1214,7 @@ fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_an
             assert!(line.text.starts_with("GPU ") && !line.warn, "{}", line.text);
             // どこで焼いても、テクセルの由来（UV の覆い）は同じ
             for (kind, cover) in &cpu_cover {
-                let map = s.sets.current().mesh_maps.get(*kind).unwrap();
+                let map = s.session.sets.current().mesh_maps.get(*kind).unwrap();
                 assert_eq!(
                     map.coverage(),
                     cover.as_slice(),
@@ -1197,7 +1224,7 @@ fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_an
             // 値は全バイト一致ではなく許し幅の内（根拠は yolu-gpu の README の「CPU との差」）: 光線を飛ばさないマップは 16 bit の
             // 値で最大 8、AO は光線 8 本なので 1 本の当たり外れで 12.5% 動くため、5% を超えるテクセルの割合と平均で見る
             for (kind, cpu) in &cpu_values {
-                let map = s.sets.current().mesh_maps.get(*kind).unwrap();
+                let map = s.session.sets.current().mesh_maps.get(*kind).unwrap();
                 let diffs: Vec<u32> = cpu
                     .iter()
                     .zip(map.data())
@@ -1243,7 +1270,7 @@ fn a_cpu_bake_says_so_and_a_gpu_bake_covers_the_same_texels_with_close_values_an
             check.reasons
         );
     }
-    assert!(!s.doc.can_undo(), "文書は変わらない");
+    assert!(!s.session.doc.can_undo(), "文書は変わらない");
 }
 
 #[test]
@@ -1257,7 +1284,7 @@ fn a_broken_gpu_falls_back_to_the_cpu_with_the_reason_and_still_bakes() {
     s.bake.gpu.fail_for_test("試験の故障");
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
-    let run = s.sets.current().mesh_maps.run().cloned().unwrap();
+    let run = s.session.sets.current().mesh_maps.run().cloned().unwrap();
     assert!(!run.used_gpu());
     assert_eq!(run.fallback_kind, Some(FallbackKind::Failed));
     assert!(run
@@ -1275,7 +1302,7 @@ fn a_broken_gpu_falls_back_to_the_cpu_with_the_reason_and_still_bakes() {
     // 次のベイクは壊れた GPU を作り直して GPU に戻る
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
-    let run = s.sets.current().mesh_maps.run().cloned().unwrap();
+    let run = s.session.sets.current().mesh_maps.run().cloned().unwrap();
     assert!(
         run.used_gpu(),
         "作り直して GPU に戻る: {:?}",
@@ -1291,7 +1318,7 @@ fn snapshot(
     String,
     String,
 ) {
-    let set = &s.sets.current().mesh_maps;
+    let set = &s.session.sets.current().mesh_maps;
     (
         set.iter().cloned().collect(),
         format!("{:?}", set.report()),
@@ -1335,7 +1362,7 @@ fn cancel_a_gpu_bake_after_a_cpu_bake(park_mid_bake: bool) {
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
     let before = snapshot(&s);
-    let run = s.sets.current().mesh_maps.run().expect("前の場所");
+    let run = s.session.sets.current().mesh_maps.run().expect("前の場所");
     assert!(!run.used_gpu() && run.requested == BakeBackend::Cpu);
     s.apply(bake(BakeAction::Backend(BakeBackend::Gpu)));
     if wait_probe(&s).is_err() {
@@ -1359,7 +1386,7 @@ fn cancel_a_gpu_bake_after_a_cpu_bake(park_mid_bake: bool) {
     assert!(s.message.contains("取り消しました"), "{}", s.message);
     // 取り消した試み（準備の途中でも、GPU が動いている途中でも）は、前のマップ・記録・場所を変えない
     assert_unchanged(&before, &s);
-    assert!(!s.sets.current().mesh_maps.run().unwrap().used_gpu());
+    assert!(!s.session.sets.current().mesh_maps.run().unwrap().used_gpu());
 }
 
 #[test]
@@ -1699,7 +1726,7 @@ fn the_export_window_follows_the_input_for_a_baked_ao_and_builds_it_once() {
     quick(&mut s);
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
-    assert!(!s.sets.current().mesh_maps.is_empty());
+    assert!(!s.session.sets.current().mesh_maps.is_empty());
     s.release_idle_bake_input();
     // 形が変わって（ポーズ）、持っている入力は前の形のもの。ベイクのウィンドウは閉じている
     lift(&mut s, 0.3);
@@ -1743,8 +1770,8 @@ fn the_export_window_follows_the_input_for_a_baked_ao_and_builds_it_once() {
     assert!(!s.export_window_follows_input());
     // チェックしたセットに焼いた AO が無ければ追わない
     s.apply(Action::Export(ExportAction::OpenWindow));
-    for i in 0..s.sets.len() {
-        let uid = s.sets.get(i).unwrap().uid;
+    for i in 0..s.session.sets.len() {
+        let uid = s.session.sets.get(i).unwrap().uid;
         s.apply(Action::Export(ExportAction::SetChecked { uid, on: false }));
     }
     assert!(!s.export_window_follows_input());

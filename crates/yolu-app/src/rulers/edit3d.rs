@@ -361,7 +361,7 @@ pub fn reset(app: &mut AppState, kind: Kind, layer: LayerId, id: RulerId) {
     if next == r || next.validate().is_err() {
         return;
     }
-    app.doc.end_coalescing();
+    app.session.doc.end_coalescing();
     if let Err(e) = app.ruler_put(layer, next, false) {
         app.notify(
             crate::notice::Kind::of_core(&e),
@@ -827,15 +827,15 @@ mod tests {
         let id = app
             .ruler_create(line(DVec3::ZERO, DVec3::X, DVec3::Y))
             .unwrap();
-        let layer = app.selected_layer.unwrap();
+        let layer = app.session.selected_layer.unwrap();
         let current = crate::objects::ruler_of(&app, layer, id).unwrap();
         let mut shape = gizmo_shape(&current).unwrap();
-        let steps = app.doc.undo_count();
+        let steps = app.session.doc.undo_count();
         shape.center[0] = 5e6; // モデルの空間の範囲（±1e6）の外
         let result =
             crate::fillfx::gizmo::write_shape(&mut app, Target::Ruler(layer, id), shape, false);
         assert!(result.is_none());
-        assert_eq!(app.doc.undo_count(), steps);
+        assert_eq!(app.session.doc.undo_count(), steps);
         assert_eq!(crate::objects::ruler_of(&app, layer, id), Some(current));
         assert!(
             app.message.contains("定規の値が範囲外です"),
@@ -857,7 +857,7 @@ mod tests {
         let offset = |handle| {
             let mut app = AppState::new(64, 64);
             let id = app.ruler_create(r.clone()).unwrap();
-            let layer = app.selected_layer.unwrap();
+            let layer = app.session.selected_layer.unwrap();
             grab_offset(&app, &view, Target::Ruler(layer, id), handle, pressed)
         };
         let o = offset(sg::Handle::EndB);
