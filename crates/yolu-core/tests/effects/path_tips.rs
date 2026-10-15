@@ -22,15 +22,16 @@ fn options() -> Options<'static> {
 }
 
 fn brush(radius: f64) -> PathBrush {
-    PathBrush(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.1,
-        color: Rgba8::new(255, 255, 255, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    })
+    PathBrush(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.1,
+            color: Rgba8::new(255, 255, 255, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 
 /// 全部が覆い 255 の w × h の筆先。

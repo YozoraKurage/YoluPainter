@@ -227,7 +227,11 @@ fn draw_surface_one(
     let b = path.brush.0;
     painter.begin(
         paints(path.channel, path.brush, &path.material)?,
-        &super::render::kind_brush(BrushSettings { radius: 1.0, ..b }, &path.style),
+        &super::render::kind_brush(
+            BrushSettings { radius: 1.0, ..b },
+            path.brush.1,
+            &path.style,
+        ),
     )?;
     // 指先: 直前のダブの中心（キャンバスの画素）と、ダブの画素の広がり（継ぎ目をまたいだかを見る）
     let mut previous: Option<glam::DVec2> = None;
@@ -247,11 +251,11 @@ fn draw_surface_one(
     let tip = path.style.tip.clone();
     let mut dab = |hit: SurfaceHit, pressure: f64, direction: Vec3| -> Result<(), Error> {
         o.check()?;
-        if b.pressure_size && pressure <= 0.0 {
+        if path.brush.1.size && pressure <= 0.0 {
             return Ok(());
         }
         let radius = (b.radius
-            * if b.pressure_size {
+            * if path.brush.1.size {
                 pressure.max(0.001)
             } else {
                 1.0

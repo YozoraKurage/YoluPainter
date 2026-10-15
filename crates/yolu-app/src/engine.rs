@@ -14,11 +14,12 @@ pub use yolu_core::{
     ClipboardSource, ColorAdjust, ColorBalance, ColorDynamics, ColorSpace, CompositedTile,
     Controls, CoreError, Document, DualBrush, DualBrushMode, GradientMap, HeightEdgeMode, Jitter,
     Layer, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, PixelClipboard,
-    Posterize, PreparedResize, PressureResponse, PressureResponses, Rect, Rgba8, RowOrder,
-    SelectionCombine, SelectionMask, Stroke, StrokeAssist, SymmetryMode, TextureMode, Threshold,
-    TileCoord, TipShape, ToneChannel, ToneCurves,
+    Posterize, PreparedResize, Rect, Rgba8, RowOrder, SelectionCombine, SelectionMask, Stroke,
+    StrokeAssist, SymmetryMode, TextureMode, Threshold, TileCoord, TipShape, ToneChannel,
+    ToneCurves,
 };
 pub use yolu_core::{AntiAlias, ColorMix, MixGround, MixMode};
+pub use yolu_core::{Influence, Influences, InputResponse, InputUse, PressureSwitches};
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

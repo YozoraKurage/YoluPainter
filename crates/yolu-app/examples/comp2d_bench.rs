@@ -77,13 +77,15 @@ fn synthetic(size: u32) -> (Document, LayerId, LayerId) {
                 opacity: 0.4 + (r % 60) as f64 / 100.0,
                 flow: 1.0,
                 color: Rgba8::new(r as u8, (r >> 8) as u8, (r >> 16) as u8, 255),
-                pressure_size: false,
-                pressure_opacity: false,
-                pressure_flow: false,
                 erase: false,
                 anti_alias: yolu_core::AntiAlias::None,
             };
-            let mut s = d.begin_stroke(id, &brush).unwrap();
+            let mut s = d
+                .begin_brush_stroke(
+                    id,
+                    &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+                )
+                .unwrap();
             let (x, y) = (rng.below(size as u64) as f64, rng.below(size as u64) as f64);
             s.add_point(d, x, y, 1.0, DVec2::ZERO).unwrap();
             s.add_point(d, x + 30.0, y + 10.0, 1.0, DVec2::ZERO)
@@ -183,13 +185,15 @@ fn dense(size: u32, layers: usize) -> (Document, LayerId, LayerId) {
             opacity: 0.35,
             flow: 1.0,
             color: Rgba8::new(rng.next() as u8, rng.next() as u8, rng.next() as u8, 255),
-            pressure_size: false,
-            pressure_opacity: false,
-            pressure_flow: false,
             erase: false,
             anti_alias: yolu_core::AntiAlias::None,
         };
-        let mut s = d.begin_stroke(id, &brush).unwrap();
+        let mut s = d
+            .begin_brush_stroke(
+                id,
+                &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+            )
+            .unwrap();
         let step = 40.0;
         let mut y = 0.0;
         while y < size as f64 + 40.0 {
@@ -530,9 +534,6 @@ fn stroke_once(b: &mut Bench, doc: &mut Document, layer: LayerId, label: &str) {
         opacity: 1.0,
         flow: 1.0,
         color: Rgba8::new(240, 30, 120, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        pressure_flow: false,
         erase: false,
         anti_alias: yolu_core::AntiAlias::None,
     };
@@ -540,7 +541,12 @@ fn stroke_once(b: &mut Bench, doc: &mut Document, layer: LayerId, label: &str) {
     let mut stroke_ms = Vec::new();
     let mut tiles = 0usize;
     let mut first = 0.0;
-    let mut s = doc.begin_stroke(layer, &brush).expect("描けるレイヤー");
+    let mut s = doc
+        .begin_brush_stroke(
+            layer,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+        )
+        .expect("描けるレイヤー");
     let total = Instant::now();
     for i in 0..120 {
         let t = i as f64 / 119.0;
@@ -950,13 +956,15 @@ fn scene_hash(doc: &mut Document, layer: LayerId) {
             opacity: 1.0,
             flow: 1.0,
             color: Rgba8::new(240, 30, 120, 255),
-            pressure_size: false,
-            pressure_opacity: false,
-            pressure_flow: false,
             erase: false,
             anti_alias: yolu_core::AntiAlias::None,
         };
-        let mut s = doc.begin_stroke(layer, &brush).expect("描けるレイヤー");
+        let mut s = doc
+            .begin_brush_stroke(
+                layer,
+                &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+            )
+            .expect("描けるレイヤー");
         for i in 0..60 {
             let t = i as f64 / 59.0;
             let x = w * (0.3 + 0.4 * t);

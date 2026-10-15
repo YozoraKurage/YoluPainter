@@ -525,11 +525,14 @@ impl AppState {
             }
         };
         // 画面の間隔は f32 なので、下限の 1% は core の範囲（0.01 以上）をわずかに下回って渡る
-        PathBrush(yolu_core::BrushSettings {
-            radius,
-            spacing: b.spacing.max(0.01),
-            ..b
-        })
+        PathBrush(
+            yolu_core::BrushSettings {
+                radius,
+                spacing: b.spacing.max(0.01),
+                ..b
+            },
+            self.brush.pressure,
+        )
     }
 
     /// 点の無い 1 本のパスを持つパスレイヤーを、選んでいるレイヤーのすぐ上（グループの中ならその中）に作り、選んで、パスのツールへ替える（1 回の Undo。
@@ -1419,9 +1422,9 @@ impl AppState {
                 BrushEdit::Spacing(v) => b.spacing = v.clamp(0.01, 1.0) as f32,
                 BrushEdit::Opacity(v) => b.opacity = v.clamp(0.0, 1.0) as f32,
                 BrushEdit::Flow(v) => b.flow = v.clamp(0.0, 1.0) as f32,
-                BrushEdit::PressureSize(on) => b.pressure_size = on,
-                BrushEdit::PressureOpacity(on) => b.pressure_opacity = on,
-                BrushEdit::PressureFlow(on) => b.pressure_flow = on,
+                BrushEdit::PressureSize(on) => b.pressure.size = on,
+                BrushEdit::PressureOpacity(on) => b.pressure.opacity = on,
+                BrushEdit::PressureFlow(on) => b.pressure.flow = on,
                 BrushEdit::AntiAlias(level) => b.anti_alias = level,
             }
             return;
@@ -1430,7 +1433,7 @@ impl AppState {
             return;
         };
         let mut brush = path_brush(&path);
-        let b = &mut brush.0;
+        let PathBrush(b, pressure) = &mut brush;
         match e {
             BrushEdit::Diameter(d) => {
                 let radius = match &path {
@@ -1459,9 +1462,9 @@ impl AppState {
             BrushEdit::Spacing(v) => b.spacing = v.clamp(0.01, 4.0),
             BrushEdit::Opacity(v) => b.opacity = v.clamp(0.0, 1.0),
             BrushEdit::Flow(v) => b.flow = v.clamp(0.0, 1.0),
-            BrushEdit::PressureSize(on) => b.pressure_size = on,
-            BrushEdit::PressureOpacity(on) => b.pressure_opacity = on,
-            BrushEdit::PressureFlow(on) => b.pressure_flow = on,
+            BrushEdit::PressureSize(on) => pressure.size = on,
+            BrushEdit::PressureOpacity(on) => pressure.opacity = on,
+            BrushEdit::PressureFlow(on) => pressure.flow = on,
             BrushEdit::AntiAlias(level) => b.anti_alias = level,
         }
         if brush == path_brush(&path) {

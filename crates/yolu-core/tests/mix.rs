@@ -14,8 +14,8 @@ use yolu_core::glam::{DVec2, Vec2, Vec3};
 use yolu_core::material::ChannelPaint;
 use yolu_core::{
     Brush, BrushEffect, BrushMappedPixel, BrushPixel, BrushSample, BrushSettings, CanvasSymmetry,
-    Channel, ColorMix, CoreError, Document, LayerId, LayerLocks, MixGround, MixMode,
-    PressureResponse, Rgba8, SelectionMask, SymmetryMode, TileCoord,
+    Channel, ColorMix, CoreError, Document, InputResponse, LayerId, LayerLocks, MixGround, MixMode,
+    Rgba8, SelectionMask, SymmetryMode, TileCoord,
 };
 
 const BLUE: Rgba8 = Rgba8::new(0, 0, 255, 255);
@@ -75,9 +75,6 @@ fn settings(radius: f64, color: Rgba8) -> BrushSettings {
         opacity: 1.0,
         flow: 1.0,
         color,
-        pressure_size: false,
-        pressure_opacity: false,
-        pressure_flow: false,
         ..BrushSettings::default()
     }
 }
@@ -91,7 +88,7 @@ fn mixing(radius: f64, color: Rgba8, mode: MixMode, paint: f64) -> Brush {
             stretch: 0.0,
             ..ColorMix::default()
         },
-        ..Brush::from(settings(radius, color))
+        ..Brush::simple(settings(radius, color), yolu_core::PressureSwitches::NONE)
     }
 }
 
@@ -149,8 +146,8 @@ fn line(from: (f64, f64), to: (f64, f64), n: usize) -> Vec<(f64, f64, f64)> {
 fn a_brush_with_mixing_off_ignores_every_mix_value() {
     let ground = |x: u32, y: u32| Rgba8::new((x * 4) as u8, (y * 4) as u8, 120, 255);
     let path = line((8.0, 20.0), (56.0, 44.0), 24);
-    let mut plain = Brush::from(settings(9.0, RED));
-    plain.base.pressure_opacity = true;
+    let mut plain = Brush::simple(settings(9.0, RED), yolu_core::PressureSwitches::NONE);
+    plain.influences.opacity.pressure.on = true;
     let mut off = plain.clone();
     off.mix = ColorMix {
         mode: MixMode::Off,
@@ -158,10 +155,14 @@ fn a_brush_with_mixing_off_ignores_every_mix_value() {
         density: 0.2,
         stretch: 0.9,
         ground: MixGround::Composite,
-        pressure_paint: true,
-        pressure_density: true,
-        response_paint: PressureResponse::new(0.3, vec![]).unwrap(),
-        response_density: PressureResponse::new(0.4, vec![]).unwrap(),
+    };
+    off.influences.mix_paint.pressure = yolu_core::InputUse {
+        on: true,
+        response: InputResponse::new(0.3, vec![]).unwrap(),
+    };
+    off.influences.mix_density.pressure = yolu_core::InputUse {
+        on: true,
+        response: InputResponse::new(0.4, vec![]).unwrap(),
     };
     let (mut a, la) = canvas(64, 64, 16, ground);
     let (mut b, lb) = canvas(64, 64, 16, ground);
@@ -200,7 +201,7 @@ fn mixing_blends_the_colour_under_the_brush_by_the_paint_amount() {
     dot(
         &mut plain,
         lp,
-        &Brush::from(settings(10.0, RED)),
+        &Brush::simple(settings(10.0, RED), yolu_core::PressureSwitches::NONE),
         32.0,
         32.0,
         1.0,
@@ -254,7 +255,10 @@ fn a_transparent_ground_gives_the_plain_brush_colour_at_any_paint_amount() {
     draw(
         &mut plain,
         lp,
-        &Brush::from(settings(8.0, Rgba8::new(200, 60, 30, 255))),
+        &Brush::simple(
+            settings(8.0, Rgba8::new(200, 60, 30, 255)),
+            yolu_core::PressureSwitches::NONE,
+        ),
         &path,
     );
     for paint in [0.0, 0.3, 1.0] {
@@ -278,8 +282,8 @@ fn a_transparent_ground_gives_the_plain_brush_colour_at_any_paint_amount() {
 fn the_paint_amount_and_density_follow_the_pen_pressure_when_asked() {
     let ink = |pressure_paint: bool, pressure_density: bool| {
         let mut b = mixing(10.0, RED, MixMode::Mix, 1.0);
-        b.mix.pressure_paint = pressure_paint;
-        b.mix.pressure_density = pressure_density;
+        b.influences.mix_paint.pressure.on = pressure_paint;
+        b.influences.mix_density.pressure.on = pressure_density;
         b
     };
     // 筆圧 0 で量 0（下の色だけ）、筆圧 1 で量 1（赤）
@@ -294,7 +298,7 @@ fn the_paint_amount_and_density_follow_the_pen_pressure_when_asked() {
     assert_eq!(px(&d, l, 32, 32), BLUE);
     let (mut d, l) = canvas(64, 64, 16, |_, _| BLUE);
     let mut b = ink(false, true);
-    b.mix.response_density = PressureResponse::new(0.5, vec![]).unwrap();
+    b.influences.mix_density.pressure.response = InputResponse::new(0.5, vec![]).unwrap();
     dot(&mut d, l, &b, 32.0, 32.0, 0.0);
     assert!(near(px(&d, l, 32, 32), Rgba8::new(128, 0, 128, 255), 1));
     // 切っていれば筆圧は使わない（筆圧 0 でも赤）
@@ -468,9 +472,9 @@ fn fingerprint(d: &Document, l: LayerId) -> (usize, usize, Vec<u8>) {
 fn big_mixing_brushes() -> Vec<(&'static str, Brush)> {
     let mut mix = mixing(60.0, Rgba8::new(220, 90, 40, 255), MixMode::Mix, 0.5);
     mix.base.hardness = 0.5;
-    mix.base.pressure_opacity = true;
+    mix.influences.opacity.pressure.on = true;
     mix.mix.stretch = 0.6;
-    mix.mix.pressure_paint = true;
+    mix.influences.mix_paint.pressure.on = true;
     let mut smear = mixing(60.0, Rgba8::new(30, 160, 220, 255), MixMode::Smear, 0.3);
     smear.mix.stretch = 0.8;
     smear.mix.density = 0.8;
@@ -967,7 +971,7 @@ fn erasers_effects_data_channels_and_masks_do_not_mix() {
             let (mut d, l) = canvas(64, 64, 16, ground);
             let mut b = Brush {
                 effect,
-                ..Brush::from(settings(9.0, RED))
+                ..Brush::simple(settings(9.0, RED), yolu_core::PressureSwitches::NONE)
             };
             if mix {
                 b.mix = ColorMix {
@@ -988,7 +992,10 @@ fn erasers_effects_data_channels_and_masks_do_not_mix() {
         fill(&mut d, l, 16, &ground);
         d.set_channel_pixel(l, Channel::Roughness, 5, 5, Rgba8::new(40, 40, 40, 255))
             .unwrap();
-        let mut b = Brush::from(settings(9.0, Rgba8::new(200, 200, 200, 255)));
+        let mut b = Brush::simple(
+            settings(9.0, Rgba8::new(200, 200, 200, 255)),
+            yolu_core::PressureSwitches::NONE,
+        );
         if mix {
             b.mix = ColorMix {
                 mode: MixMode::Mix,
@@ -1012,7 +1019,7 @@ fn erasers_effects_data_channels_and_masks_do_not_mix() {
     let mask = |mix: bool| {
         let (mut d, l) = canvas(64, 64, 16, ground);
         d.add_layer_mask(l).unwrap();
-        let mut b = Brush::from(settings(9.0, RED));
+        let mut b = Brush::simple(settings(9.0, RED), yolu_core::PressureSwitches::NONE);
         if mix {
             b.mix = ColorMix {
                 mode: MixMode::Mix,
@@ -1118,7 +1125,10 @@ fn surface_dot(brush: &Brush, ground: Rgba8) -> (Document, LayerId) {
 
 #[test]
 fn mixing_works_on_a_3d_surface_dab_too() {
-    let (plain, lp) = surface_dot(&Brush::from(settings(3.0, RED)), BLUE);
+    let (plain, lp) = surface_dot(
+        &Brush::simple(settings(3.0, RED), yolu_core::PressureSwitches::NONE),
+        BLUE,
+    );
     let (mixed, lm) = surface_dot(&mixing(3.0, RED, MixMode::Mix, 0.5), BLUE);
     let centre = (W / 2, H / 2);
     assert_eq!(px(&plain, lp, centre.0, centre.1), RED);
@@ -1138,7 +1148,10 @@ fn mixing_works_on_a_3d_surface_dab_too() {
 
 #[test]
 fn a_transparent_3d_surface_gets_the_plain_colour() {
-    let (plain, lp) = surface_dot(&Brush::from(settings(3.0, RED)), Rgba8::TRANSPARENT);
+    let (plain, lp) = surface_dot(
+        &Brush::simple(settings(3.0, RED), yolu_core::PressureSwitches::NONE),
+        Rgba8::TRANSPARENT,
+    );
     let (mixed, lm) = surface_dot(&mixing(3.0, RED, MixMode::Mix, 0.5), Rgba8::TRANSPARENT);
     assert_eq!(bytes(&plain, lp), bytes(&mixed, lm));
 }

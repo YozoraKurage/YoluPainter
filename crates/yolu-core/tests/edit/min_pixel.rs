@@ -10,19 +10,23 @@ use yolu_core::{
 const SIZE: u32 = 64;
 
 fn brush(level: AntiAlias, radius: f64, spacing: f64, on: bool) -> Brush {
-    let mut b = Brush::from(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing,
-        opacity: 1.0,
-        flow: 1.0,
-        color: Rgba8::new(0, 0, 0, 255),
-        pressure_size: true,
-        pressure_opacity: false,
-        pressure_flow: false,
-        erase: false,
-        anti_alias: level,
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing,
+            opacity: 1.0,
+            flow: 1.0,
+            color: Rgba8::new(0, 0, 0, 255),
+            erase: false,
+            anti_alias: level,
+        },
+        yolu_core::PressureSwitches {
+            size: true,
+            opacity: false,
+            flow: false,
+        },
+    );
     b.controls.min_one_pixel = on;
     b
 }
@@ -144,7 +148,7 @@ fn the_anti_alias_small_dab_rule_applies_to_the_floored_size() {
     for level in [AntiAlias::Weak, AntiAlias::Medium, AntiAlias::Strong] {
         let on = draw(&brush(level, 8.0, 0.125, true), &points(0.0));
         let mut one_pixel = brush(level, 0.5, 2.0, false);
-        one_pixel.base.pressure_size = false;
+        one_pixel.influences.size.pressure.on = false;
         let reference = draw(&one_pixel, &points(1.0));
         assert!(painted(&on) > 0, "{level:?}");
         assert_eq!(on, reference, "{level:?}");

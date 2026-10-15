@@ -138,10 +138,13 @@ fn documents_without_rulers_keep_their_old_version_and_ones_with_rulers_are_vers
     // ほかの機能（アンチエイリアスのパス = 34）と一緒なら 35 で、パスも残る
     let mut w2 = world();
     let mut path = path_with(PathSymmetry::None, 1);
-    path.brush = PathBrush(BrushSettings {
-        anti_alias: yolu_core::AntiAlias::Medium,
-        ..path.brush.0
-    });
+    path.brush = PathBrush(
+        BrushSettings {
+            anti_alias: yolu_core::AntiAlias::Medium,
+            ..path.brush.0
+        },
+        yolu_core::PressureSwitches::default(),
+    );
     w2.doc.set_canvas_path(w2.a, path).unwrap();
     assert_eq!(
         NativeDocument::from_core(&w2.doc).unwrap().version(),
@@ -483,12 +486,15 @@ fn path_with(symmetry: PathSymmetry, id: u128) -> CanvasPath {
         },
         id,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 2.25,
-            hardness: 1.0,
-            color: Rgba8::new(20, 30, 200, 255),
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 2.25,
+                hardness: 1.0,
+                color: Rgba8::new(20, 30, 200, 255),
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             CanvasPoint::new(3.5, 4.0, 1.0).unwrap(),
             CanvasPoint::new(27.25, 21.5, 1.0).unwrap(),

@@ -59,6 +59,7 @@ pub fn nearest_size(diameter: f32) -> usize {
 pub(super) fn live_brush(app: &AppState) -> Brush {
     let mut brush = app.m2.brush.clone();
     brush.base = app.brush.settings([1.0; 4], false);
+    brush.influences.set_pressure_switches(app.brush.pressure);
     brush
 }
 
@@ -816,7 +817,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         .tooltip(size_tip),
         b.radius * 2.0,
         Some((
-            &mut b.pressure_size,
+            &mut b.pressure.size,
             lang.pick("筆圧で直径を変える", "Pen pressure changes the size"),
         )),
         editable,
@@ -835,7 +836,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         ),
         b.opacity * 100.0,
         Some((
-            &mut b.pressure_opacity,
+            &mut b.pressure.opacity,
             lang.pick("筆圧で不透明度を変える", "Pen pressure changes the opacity"),
         )),
         editable,
@@ -858,7 +859,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         ),
         b.hardness * 100.0,
         Some((
-            &mut app.m2.brush.controls.pressure_hardness,
+            &mut app.m2.brush.influences.hardness.pressure.on,
             lang.pick("筆圧で硬さを変える", "Pen pressure changes the hardness"),
         )),
         editable && hardness_applies,
@@ -877,7 +878,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         ),
         b.flow * 100.0,
         Some((
-            &mut b.pressure_flow,
+            &mut b.pressure.flow,
             lang.pick("筆圧で流量を変える", "Pen pressure changes the flow"),
         )),
         editable,

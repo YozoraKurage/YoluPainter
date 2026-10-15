@@ -448,7 +448,7 @@ fn version1_computed_and_sampled_brushes() {
         ),
         (20.0, 0.3, 0.5, -30.0, 0.8)
     );
-    assert!(!c.brush.base.pressure_opacity);
+    assert!(!c.brush.influences.opacity.pressure.on);
     assert_eq!(c.name, "Old 1");
     assert_tip(tip(&set.brushes[1]));
     assert_eq!(set.brushes[1].brush.base.spacing, 0.25);
@@ -541,13 +541,13 @@ fn version6_tips_with_preset_dynamics() {
         (30.0, 45.0, 0.7, 0.35)
     );
     assert_eq!(b.jitter.size, 0.4);
-    assert!(b.base.pressure_size, "大きさを筆圧で制御");
+    assert!(b.influences.size.pressure.on, "大きさを筆圧で制御");
     assert_eq!((b.jitter.angle, b.jitter.roundness), (1.0, 0.2));
     assert_eq!((b.jitter.scatter, b.jitter.count), (1.5, 3));
     assert_eq!(b.jitter.opacity, 0.1);
-    assert!(b.base.pressure_opacity);
+    assert!(b.influences.opacity.pressure.on);
     assert_eq!(b.jitter.flow, 0.3);
-    assert!(!b.base.pressure_flow, "フェードは筆圧ではない");
+    assert!(!b.influences.flow.pressure.on, "フェードは筆圧ではない");
     assert_eq!(
         b.controls.fade_flow, 25,
         "コントロール 1 は fStp 描点のフェード"
@@ -877,7 +877,7 @@ fn abr_colour_dual_texture_and_controls_are_mapped() {
     let b = &set.brushes[0].brush;
     assert_eq!(b.controls.fade_size, 25);
     assert!(b.tip.follow_direction, "角度のコントロール 7 は方向");
-    assert!(b.controls.tilt_opacity);
+    assert!(b.influences.opacity.tilt.on);
     let n = &set.brushes[0].unrepresented;
     assert!(n.contains(&Unrepresented::Control {
         setting: Setting::Roundness,
@@ -1151,19 +1151,38 @@ fn the_minimum_diameter_becomes_the_size_minimum_only_when_pressure_drives_the_s
     let by = |name: &str| set.brushes.iter().find(|b| b.name == name).unwrap();
     // 筆圧で大きさを変える: 最小の直径が応えの最小値になり、表せなかった項目に残らない
     let pressure = by("Pressure");
-    assert!(pressure.brush.base.pressure_size);
-    assert_eq!(pressure.brush.pressure.size.min(), 0.25);
-    assert!(pressure.brush.pressure.size.curve().is_empty());
+    assert!(pressure.brush.influences.size.pressure.on);
+    assert_eq!(pressure.brush.influences.size.pressure.response.min(), 0.25);
+    assert!(pressure
+        .brush
+        .influences
+        .size
+        .pressure
+        .response
+        .curve()
+        .is_empty());
     assert!(!pressure
         .unrepresented
         .iter()
         .any(|n| matches!(n, Unrepresented::MinimumDiameter(_))));
-    assert!(pressure.brush.pressure.opacity.is_identity());
-    assert!(pressure.brush.pressure.flow.is_identity());
+    assert!(pressure
+        .brush
+        .influences
+        .opacity
+        .pressure
+        .response
+        .is_identity());
+    assert!(pressure
+        .brush
+        .influences
+        .flow
+        .pressure
+        .response
+        .is_identity());
     // フェード・切の最小は表せない（今までどおり知らせる）
     for name in ["Fade", "Off"] {
         let b = by(name);
-        assert!(b.brush.pressure.is_identity(), "{name}");
+        assert!(pressure_identity(&b.brush), "{name}");
         assert!(
             b.unrepresented
                 .contains(&Unrepresented::MinimumDiameter(25.0)),
@@ -1171,9 +1190,21 @@ fn the_minimum_diameter_becomes_the_size_minimum_only_when_pressure_drives_the_s
         );
     }
     // 最小 0 は何も変えない・100% は筆圧を無視して 1
-    assert!(by("Zero").brush.pressure.is_identity());
-    assert_eq!(by("Full").brush.pressure.size.min(), 1.0);
-    assert_eq!(by("Full").brush.pressure.size.apply(0.0), 1.0);
+    assert!(pressure_identity(&by("Zero").brush));
+    assert_eq!(
+        by("Full").brush.influences.size.pressure.response.min(),
+        1.0
+    );
+    assert_eq!(
+        by("Full")
+            .brush
+            .influences
+            .size
+            .pressure
+            .response
+            .apply(0.0),
+        1.0
+    );
 }
 
 #[test]
@@ -1991,8 +2022,8 @@ fn paint(brush: &Brush, size: u32, points: &[(f64, f64)]) -> Vec<u8> {
     let layer = doc.add_layer("L").unwrap();
     let mut b = brush.clone();
     b.base.color = Rgba8::new(0, 0, 0, 255);
-    b.base.pressure_size = false;
-    b.base.pressure_opacity = false;
+    b.influences.size.pressure.on = false;
+    b.influences.opacity.pressure.on = false;
     let mut stroke = doc.begin_brush_stroke(layer, &b).unwrap();
     for (i, (x, y)) in points.iter().enumerate() {
         stroke
@@ -2397,4 +2428,11 @@ fn notes_from_a_file_are_short_and_have_no_control_characters() {
         &gbr_gray(1, 1, &[0], "Line1\nLine2\u{7}", 25),
     );
     assert_eq!(named.name, "Line1Line2");
+}
+
+/// どの項目の筆圧の応えも既定（最小値 0・直線）か。
+fn pressure_identity(b: &yolu_core::Brush) -> bool {
+    yolu_core::brush::Item::ALL
+        .into_iter()
+        .all(|i| b.influences.get(i).pressure.response.is_identity())
 }

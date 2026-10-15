@@ -88,8 +88,8 @@ fn plain_settings_are_read_from_the_variant_row() {
     assert_eq!(b.brush.tip.roundness, 0.7);
     assert!(b.brush.tip.image.is_none() && b.brush.tip.images.is_empty());
     assert!(
-        !s.pressure_size && !s.pressure_opacity && !s.pressure_flow,
-        "影響元が無ければ筆圧は使わない"
+        b.brush.influences == yolu_core::Influences::none(),
+        "影響元が無ければ何も使わない"
     );
     assert!(b.brush.texture.is_none());
 }
@@ -756,8 +756,8 @@ fn pressure_becomes_a_minimum_and_a_curve() {
             )
             .build();
         let b = &ok(&file).brushes[0];
-        assert!(b.brush.base.pressure_size && !b.brush.base.pressure_opacity);
-        let r = &b.brush.pressure.size;
+        assert!(b.brush.influences.size.pressure.on && !b.brush.influences.opacity.pressure.on);
+        let r = &b.brush.influences.size.pressure.response;
         assert_eq!(r.min(), 0.3);
         let points: Vec<(f64, f64)> = r.curve().iter().map(|p| (p.x, p.y)).collect();
         assert_eq!(points, curve);
@@ -787,19 +787,28 @@ fn opacity_and_flow_effectors_map_to_their_own_responses() {
         .build();
     let b = &ok(&file).brushes[0];
     assert!(
-        b.brush.base.pressure_opacity && b.brush.base.pressure_flow && !b.brush.base.pressure_size
+        b.brush.influences.opacity.pressure.on
+            && b.brush.influences.flow.pressure.on
+            && !b.brush.influences.size.pressure.on
     );
-    assert_eq!(b.brush.pressure.opacity.min(), 0.1);
+    assert_eq!(b.brush.influences.opacity.pressure.response.min(), 0.1);
     assert!(
-        b.brush.pressure.opacity.curve().is_empty(),
+        b.brush
+            .influences
+            .opacity
+            .pressure
+            .response
+            .curve()
+            .is_empty(),
         "直線は曲線なし"
     );
-    assert_eq!(b.brush.pressure.flow.curve().len(), 3);
-    assert!(b.brush.pressure.size.is_identity());
+    assert_eq!(b.brush.influences.flow.pressure.response.curve().len(), 3);
+    assert!(b.brush.influences.size.pressure.response.is_identity());
 }
 
 #[test]
-fn inputs_other_than_pressure_are_reported_and_left_off() {
+fn every_input_of_an_influence_is_mapped_with_its_minimum() {
+    let rising = [(0.0, 0.0), (1.0, 1.0)];
     let file = SutBuilder::new()
         .brush(
             "Inputs",
@@ -807,47 +816,130 @@ fn inputs_other_than_pressure_are_reported_and_left_off() {
             &[
                 (
                     "BrushSizeEffector",
-                    blob(effector(44, 0x10 | 0x40 | 0x80, 0, &[])),
+                    blob(effector_full(
+                        44,
+                        0x10 | 0x40 | 0x80,
+                        [30, 100, 45, 60],
+                        None,
+                        None,
+                    )),
                 ),
                 (
                     "OpacityEffector",
-                    blob(effector(44, 0x20, 0, &[&pressure_curve()])),
+                    blob(effector_full(48, 0x20, [0, 25, 0, 0], None, Some(&rising))),
                 ),
                 (
                     "BrushFlowEffector",
                     blob(effector(44, 0, 0, &[&pressure_curve()])),
                 ),
-                ("BrushThicknessEffector", blob(effector(44, 0x10, 0, &[]))),
+                ("BrushThicknessEffector", blob(effector(44, 0x10, 40, &[]))),
             ],
         )
         .build();
     let b = &ok(&file).brushes[0];
-    assert!(b.brush.base.pressure_size, "筆圧は使う");
-    assert!(!b.brush.base.pressure_opacity && !b.brush.base.pressure_flow);
-    for n in [
-        SutNote::Influence {
-            target: SutTarget::Size,
-            input: SutInput::Speed,
-        },
-        SutNote::Influence {
-            target: SutTarget::Size,
-            input: SutInput::Random,
-        },
-        SutNote::Influence {
-            target: SutTarget::Opacity,
-            input: SutInput::Tilt,
-        },
-        SutNote::ThicknessPressure,
-    ] {
-        assert!(has(b, n.clone()), "{n:?}");
-    }
+    let i = &b.brush.influences;
+    // 大きさ: 筆圧・速さ・ランダムを使い、最小値はヘッダーの 4・6・7 番目。傾きは旗が無いので使わない
+    assert!(i.size.pressure.on && i.size.speed.on && i.size.random.on && !i.size.tilt.on);
     assert_eq!(
-        b.unrepresented.len(),
-        4,
-        "旗の無い流量・ほかの組は注記しない: {:?}",
-        b.unrepresented
+        [
+            i.size.pressure.response.min(),
+            i.size.speed.response.min(),
+            i.size.random.response.min()
+        ],
+        [0.3, 0.45, 0.6]
     );
+    assert!(
+        i.size.tilt.response.is_identity(),
+        "使わない入力は既定のまま"
+    );
+    // 不透明度: 頭が 48 バイトでも傾きの最小値と曲線を読む。曲線の x は直立が 0 なので、直立 1 の入力へ反転する
+    assert!(i.opacity.tilt.on && !i.opacity.pressure.on);
+    assert_eq!(i.opacity.tilt.response.min(), 0.25);
+    let points: Vec<(f64, f64)> = i
+        .opacity
+        .tilt
+        .response
+        .curve()
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect();
+    assert_eq!(points, [(0.0, 1.0), (1.0, 0.0)]);
+    // 旗の無い流量は使わない。厚さの筆圧は真円率へ
+    assert!(!i.flow.is_on());
+    assert!(i.roundness.pressure.on);
+    assert_eq!(i.roundness.pressure.response.min(), 0.4);
+    for item in [
+        SutMapped::Pressure,
+        SutMapped::Tilt,
+        SutMapped::Speed,
+        SutMapped::Random,
+    ] {
+        assert!(b.mapped.contains(&item), "{item:?}");
+    }
+    // 速さ・ランダムの曲線は読めないので、直線にして知らせる（ほかの組は注記しない）
+    for input in [SutInput::Speed, SutInput::Random] {
+        assert!(has(
+            b,
+            SutNote::InfluenceCurve {
+                target: SutTarget::Size,
+                input,
+            }
+        ));
+    }
+    assert_eq!(b.unrepresented.len(), 2, "{:?}", b.unrepresented);
     assert_eq!(b.brush.tip.roundness, 1.0);
+}
+
+#[test]
+fn texture_density_and_paint_influences_are_mapped_only_where_they_apply() {
+    let fall = falling();
+    let cells = |mixing: i64| {
+        vec![
+            (
+                "TextureImage",
+                blob(refs(&[["g/grain.png", "c/grain", "grain"]])),
+            ),
+            (
+                "TextureDensityEffector",
+                blob(effector_full(44, 0x30, [20, 10, 0, 0], None, Some(&fall))),
+            ),
+            ("BrushUseWaterColor", int(mixing)),
+            ("BrushMixColor", int(60)),
+            ("BrushMixAlpha", int(80)),
+            (
+                "BrushMixColorEffector",
+                blob(effector_full(44, 0x10, [35, 0, 0, 0], None, None)),
+            ),
+            (
+                "BrushMixAlphaEffector",
+                blob(effector_full(44, 0x80, [0, 0, 0, 50], None, None)),
+            ),
+        ]
+    };
+    let file = SutBuilder::new()
+        .material(
+            Some("grain"),
+            material_with_thumbnail(&png_gray(2, 2, &[255, 200, 100, 0])),
+        )
+        .brush("Mixing", 1, &cells(1))
+        .brush("Plain", 2, &cells(0))
+        .build();
+    let set = ok(&file);
+    let mixing = &set.brushes[0].brush;
+    assert!(mixing.texture.is_some() && mixing.mix.is_active());
+    let i = &mixing.influences;
+    assert!(i.texture_density.pressure.on && i.texture_density.tilt.on);
+    assert_eq!(i.texture_density.pressure.response.min(), 0.2);
+    assert_eq!(i.texture_density.tilt.response.min(), 0.1);
+    assert!(i.mix_paint.pressure.on && !i.mix_paint.random.on);
+    assert_eq!(i.mix_paint.pressure.response.min(), 0.35);
+    assert!(i.mix_density.random.on && !i.mix_density.pressure.on);
+    assert_eq!(i.mix_density.random.response.min(), 0.5);
+    // 混ぜないブラシには、絵の具の影響元を写さない（効く所が無い）
+    let plain = &set.brushes[1].brush;
+    assert!(!plain.mix.is_active());
+    assert!(!plain.influences.mix_paint.is_on() && !plain.influences.mix_density.is_on());
+    assert!(plain.influences.texture_density.is_on());
 }
 
 #[test]
@@ -867,14 +959,17 @@ fn a_curve_with_too_many_points_is_resampled_and_unreadable_effectors_are_report
         )
         .build();
     let b = &ok(&file).brushes[0];
-    assert!(has(b, SutNote::CurveSimplified(SutTarget::Size)));
-    assert_eq!(b.brush.pressure.size.curve().len(), 16);
+    assert!(has(
+        b,
+        SutNote::CurveSimplified(SutTarget::Size, SutInput::Pressure)
+    ));
+    assert_eq!(b.brush.influences.size.pressure.response.curve().len(), 16);
     assert!(has(b, SutNote::InfluenceUnreadable(SutTarget::Opacity)));
     assert!(
         has(b, SutNote::InfluenceUnreadable(SutTarget::Flow)),
         "大きすぎる値も黙って捨てない"
     );
-    assert!(!b.brush.base.pressure_opacity && !b.brush.base.pressure_flow);
+    assert!(!b.brush.influences.opacity.pressure.on && !b.brush.influences.flow.pressure.on);
 }
 
 // ---------------- 表せない設定 ----------------
@@ -988,21 +1083,18 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::Stabilizer,
         SutNote::ColorChange,
         SutNote::BlendMode,
-        SutNote::Influence {
-            target: SutTarget::Size,
-            input: SutInput::Tilt,
-        },
-        SutNote::Influence {
+        SutNote::InfluenceCurve {
             target: SutTarget::Thickness,
             input: SutInput::Speed,
         },
-        SutNote::Influence {
-            target: SutTarget::Opacity,
+        SutNote::InfluenceCurve {
+            target: SutTarget::MixPaint,
             input: SutInput::Random,
         },
         SutNote::InfluenceUnreadable(SutTarget::Flow),
-        SutNote::ThicknessPressure,
-        SutNote::CurveSimplified(SutTarget::Opacity),
+        SutNote::InfluenceUnreadable(SutTarget::TextureDensity),
+        SutNote::CurveSimplified(SutTarget::Opacity, SutInput::Pressure),
+        SutNote::CurveSimplified(SutTarget::MixDensity, SutInput::Tilt),
         SutNote::TiltCurve(SutTarget::Flow),
         SutNote::StartEndDetail,
         SutNote::StabilizerStrength,
@@ -1670,8 +1762,22 @@ fn falling() -> [(f64, f64); 2] {
     [(0.0, 1.0), (1.0, 0.0)]
 }
 
+/// 傾きの影響元の曲線の点（x・y）。
+fn tilt_points(b: &ImportedBrush, item: yolu_core::brush::Item) -> Vec<(f64, f64)> {
+    b.brush
+        .influences
+        .get(item)
+        .tilt
+        .response
+        .curve()
+        .iter()
+        .map(|p| (p.x, p.y))
+        .collect()
+}
+
 #[test]
-fn a_tilt_that_shrinks_size_opacity_or_flow_becomes_the_tilt_controls() {
+fn a_tilt_that_falls_from_upright_to_flat_becomes_the_straight_tilt_input() {
+    use yolu_core::brush::Item;
     let fall = falling();
     let press = [(0.0, 0.0), (1.0, 1.0)];
     let b = one(&[
@@ -1681,104 +1787,120 @@ fn a_tilt_that_shrinks_size_opacity_or_flow_becomes_the_tilt_controls() {
         ),
         (
             "OpacityEffector",
-            blob(effector_slots(0x20, 0, None, Some(&fall))),
+            blob(effector_full(44, 0x20, [0, 0, 0, 0], None, Some(&fall))),
         ),
         (
             "BrushFlowEffector",
-            blob(effector_slots(0x20, 0, None, Some(&fall))),
+            blob(effector_full(48, 0x20, [0, 30, 0, 0], None, Some(&fall))),
         ),
     ]);
-    let c = &b.brush.controls;
-    assert!(c.tilt_size && c.tilt_opacity && c.tilt_flow);
+    let i = &b.brush.influences;
+    assert!(i.size.tilt.on && i.opacity.tilt.on && i.flow.tilt.on);
+    // 直立で 1・寝かせきって 0 の直線は、直立 1 の入力をそのまま使う直線（曲線なし）
+    for item in [Item::Size, Item::Opacity, Item::Flow] {
+        assert!(tilt_points(&b, item).is_empty(), "{item:?}");
+    }
+    // 最小値はヘッダーの 5 番目の整数（実物の形の見本は 100 を持つ）
+    assert_eq!(i.size.tilt.response.min(), 1.0);
+    assert_eq!(i.opacity.tilt.response.min(), 0.0);
+    assert_eq!(i.flow.tilt.response.min(), 0.3);
     assert!(mapped(&b, SutMapped::Tilt) && mapped(&b, SutMapped::Pressure));
     assert!(
-        !b.unrepresented.iter().any(|u| matches!(
-            u,
-            Unrepresented::ClipStudio(SutNote::TiltCurve(_) | SutNote::Influence { .. })
-        )),
-        "直線は近似の注記も要らない: {:?}",
+        !b.unrepresented
+            .iter()
+            .any(|u| matches!(u, Unrepresented::ClipStudio(SutNote::TiltCurve(_)))),
+        "曲線を写せたので注記は要らない: {:?}",
         b.unrepresented
     );
     // 傾きだけの設定の曲線を、筆圧の曲線に取り違えない（筆圧の旗が無い）
-    assert!(!b.brush.base.pressure_opacity && !b.brush.base.pressure_flow);
-    assert!(b.brush.base.pressure_size);
-    assert_eq!(b.brush.pressure.size.min(), 0.1);
-    assert!(b.brush.pressure.size.curve().is_empty(), "筆圧の曲線は直線");
+    assert!(!i.opacity.pressure.on && !i.flow.pressure.on);
+    assert!(i.size.pressure.on);
+    assert_eq!(i.size.pressure.response.min(), 0.1);
+    assert!(
+        i.size.pressure.response.curve().is_empty(),
+        "筆圧の曲線は直線"
+    );
 }
 
 #[test]
-fn a_tilt_curve_that_is_not_a_straight_line_is_mapped_and_reported_as_approximate() {
+fn a_tilt_curve_keeps_its_shape_with_the_upright_end_at_one() {
+    use yolu_core::brush::Item;
+    // 直立から途中まで 1 のまま、寝かせると 0 へ落ちる曲線は、x を反転した同じ形
     let plateau = [(0.0, 1.0), (0.364, 1.0), (0.609, 0.0), (1.0, 0.0)];
-    let b = one(&[(
-        "BrushSizeEffector",
-        blob(effector_slots(0x20, 0, None, Some(&plateau))),
-    )]);
-    assert!(b.brush.controls.tilt_size);
-    assert!(mapped(&b, SutMapped::Tilt));
-    assert!(has(&b, SutNote::TiltCurve(SutTarget::Size)));
-    assert!(!has(
-        &b,
-        SutNote::Influence {
-            target: SutTarget::Size,
-            input: SutInput::Tilt
-        }
-    ));
-}
-
-#[test]
-fn a_tilt_that_cannot_be_represented_stays_a_note_and_leaves_the_controls_off() {
     let rising = [(0.0, 0.0), (1.0, 1.0)];
     let half = [(0.0, 1.0), (1.0, 0.5)];
-    let fall = falling();
-    let tilt = |target: SutTarget| SutNote::Influence {
-        target,
-        input: SutInput::Tilt,
-    };
     let b = one(&[
-        // 傾くほど大きくなる・半分までしか下がらない・太さ（真円率）には傾きの影響が無い
         (
             "BrushSizeEffector",
-            blob(effector_slots(0x20, 0, None, Some(&rising))),
+            blob(effector_full(44, 0x20, [0; 4], None, Some(&plateau))),
         ),
+        // 傾けるほど大きくなる・半分までしか下がらない・太さ（真円率）への傾き
         (
             "OpacityEffector",
-            blob(effector_slots(0x20, 0, None, Some(&half))),
+            blob(effector_full(44, 0x20, [0; 4], None, Some(&rising))),
+        ),
+        (
+            "BrushFlowEffector",
+            blob(effector_full(44, 0x20, [0; 4], None, Some(&half))),
         ),
         (
             "BrushThicknessEffector",
-            blob(effector_slots(0x20, 0, None, Some(&fall))),
-        ),
-        // 速さも使う設定は、2 つ目の曲線がどちらのものか決められない
-        (
-            "BrushFlowEffector",
-            blob(effector_slots(0x60, 0, None, Some(&fall))),
+            blob(effector_full(44, 0x20, [0; 4], None, Some(&falling()))),
         ),
     ]);
-    let c = &b.brush.controls;
-    assert!(!c.tilt_size && !c.tilt_opacity && !c.tilt_flow);
-    for target in [
-        SutTarget::Size,
-        SutTarget::Opacity,
-        SutTarget::Thickness,
-        SutTarget::Flow,
+    let flipped = |p: &[(f64, f64)]| {
+        let mut v: Vec<(f64, f64)> = p.iter().map(|&(x, y)| (1.0 - x, y)).collect();
+        v.sort_by(|a, b| a.0.total_cmp(&b.0));
+        v
+    };
+    let near = |a: &[(f64, f64)], b: &[(f64, f64)]| {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(p, q)| (p.0 - q.0).abs() < 1e-12 && (p.1 - q.1).abs() < 1e-12)
+    };
+    for (item, curve) in [
+        (Item::Size, &plateau[..]),
+        (Item::Opacity, &rising[..]),
+        (Item::Flow, &half[..]),
     ] {
-        assert!(has(&b, tilt(target)), "{target:?}");
+        let got = tilt_points(&b, item);
+        assert!(near(&got, &flipped(curve)), "{item:?}: {got:?}");
     }
+    assert!(b.brush.influences.roundness.tilt.on);
+    assert!(tilt_points(&b, Item::Roundness).is_empty());
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+}
+
+#[test]
+fn a_tilt_curve_that_cannot_be_located_is_straight_and_reported() {
+    let fall = falling();
+    let tilt = SutNote::TiltCurve(SutTarget::Size);
+    // 曲線の枠が無い（旧形式のヘッダー）・曲線が枠の長さと合わない設定は、傾きを直線で使って知らせる
+    let b = one(&[("BrushSizeEffector", blob(effector(44, 0x20, 0, &[&fall])))]);
+    assert!(has(&b, tilt.clone()) && b.brush.influences.size.tilt.on);
+    assert!(b.brush.influences.size.tilt.response.is_identity());
+    let mut wrong = effector_slots(0x20, 0, None, Some(&fall));
+    wrong[36..40].copy_from_slice(&999u32.to_be_bytes());
+    let b = one(&[("BrushSizeEffector", blob(wrong))]);
+    assert!(has(&b, tilt) && b.brush.influences.size.tilt.on);
+    assert!(b.brush.influences.size.tilt.response.curve().is_empty());
+    // 速さも使う設定も、傾きの曲線は 2 つ目の枠から読み、速さの曲線は直線にして知らせる
+    let b = one(&[(
+        "BrushFlowEffector",
+        blob(effector_full(44, 0x60, [0, 0, 20, 0], None, Some(&fall))),
+    )]);
+    let flow = &b.brush.influences.flow;
+    assert!(flow.tilt.on && flow.speed.on);
+    assert_eq!(flow.speed.response.min(), 0.2);
     assert!(has(
         &b,
-        SutNote::Influence {
+        SutNote::InfluenceCurve {
             target: SutTarget::Flow,
             input: SutInput::Speed
         }
     ));
-    assert!(!mapped(&b, SutMapped::Tilt));
-    // 曲線の枠が無い（旧形式のヘッダー）・曲線が枠の長さと合わない設定も、傾きは写さない
-    let b = one(&[("BrushSizeEffector", blob(effector(44, 0x20, 0, &[&fall])))]);
-    assert!(has(&b, tilt(SutTarget::Size)) && !b.brush.controls.tilt_size);
-    let mut wrong = effector_slots(0x20, 0, None, Some(&fall));
-    wrong[36..40].copy_from_slice(&999u32.to_be_bytes());
-    let b = one(&[("BrushSizeEffector", blob(wrong))]);
-    assert!(has(&b, tilt(SutTarget::Size)) && !b.brush.controls.tilt_size);
+    assert!(!has(&b, SutNote::TiltCurve(SutTarget::Flow)));
 }
 
 #[test]
@@ -1789,14 +1911,17 @@ fn the_pressure_curve_follows_the_header_slots_not_just_the_first_curve() {
         "BrushSizeEffector",
         blob(effector_slots(0x30, 20, None, Some(&fall))),
     )]);
-    assert!(b.brush.base.pressure_size);
-    assert!(b.brush.pressure.size.curve().is_empty(), "直線のまま");
-    assert_eq!(b.brush.pressure.size.min(), 0.2);
-    assert!(b.brush.controls.tilt_size);
+    assert!(b.brush.influences.size.pressure.on);
+    assert!(
+        b.brush.influences.size.pressure.response.curve().is_empty(),
+        "直線のまま"
+    );
+    assert_eq!(b.brush.influences.size.pressure.response.min(), 0.2);
+    assert!(b.brush.influences.size.tilt.on);
     // 枠を読めない（旧形式の試験用ヘッダー）ときは、従来どおり最初の曲線が筆圧
     let bend = [(0.0, 0.0), (0.5, 0.9), (1.0, 1.0)];
     let b = one(&[("BrushSizeEffector", blob(effector(44, 0x10, 0, &[&bend])))]);
-    assert_eq!(b.brush.pressure.size.curve().len(), 3);
+    assert_eq!(b.brush.influences.size.pressure.response.curve().len(), 3);
 }
 
 #[test]
@@ -1906,9 +2031,9 @@ fn the_direction_settings_agree_with_the_engines_plan_of_the_dab_angle() {
         ("BrushThickness", int(40)),
     ]);
     let mut by_hand = yolu_core::Brush::default();
-    by_hand.base.pressure_size = false;
-    by_hand.base.pressure_opacity = false;
-    by_hand.base.pressure_flow = false;
+    by_hand.influences.size.pressure.on = false;
+    by_hand.influences.opacity.pressure.on = false;
+    by_hand.influences.flow.pressure.on = false;
     by_hand.tip.angle = 20.0;
     by_hand.tip.roundness = 0.4;
     by_hand.tip.follow_direction = true;
@@ -2119,7 +2244,7 @@ fn a_horizontal_thickness_turns_a_round_tip_by_ninety_degrees() {
         let mut brush = yolu_core::Brush::default();
         brush.base.radius = 10.0;
         brush.base.hardness = 1.0;
-        brush.base.pressure_size = false;
+        brush.influences.size.pressure.on = false;
         brush.tip.angle = angle;
         brush.tip.roundness = roundness;
         let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
@@ -2366,7 +2491,7 @@ fn at_least_one_pixel_maps_to_the_floor_of_the_dab_diameter() {
                 )),
             ),
         ]);
-        b.brush.base.pressure_size = true;
+        b.brush.influences.size.pressure.on = true;
         b.brush
     };
     assert_eq!(draw(&pressure(0)), 0, "切: 筆圧 0 は塗らない");

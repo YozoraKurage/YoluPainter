@@ -191,12 +191,17 @@ fn big_brushes() -> Vec<(&'static str, Brush)> {
         ("round", Brush::from(base(70.0, 0.6, 0.1))),
         (
             "soft",
-            Brush::from(BrushSettings {
-                flow: 0.3,
-                opacity: 0.8,
-                pressure_flow: true,
-                ..base(90.0, 0.0, 0.05)
-            }),
+            Brush::simple(
+                BrushSettings {
+                    flow: 0.3,
+                    opacity: 0.8,
+                    ..base(90.0, 0.0, 0.05)
+                },
+                yolu_core::PressureSwitches {
+                    flow: true,
+                    ..yolu_core::PressureSwitches::default()
+                },
+            ),
         ),
     ];
     let mut tip = Brush::from(base(75.0, 0.8, 0.1));
@@ -1004,14 +1009,15 @@ fn surface_strokes_are_the_same_whether_the_projection_gathers_on_workers_or_not
         let hash = with_degree(degree, || {
             let mut doc = Document::new(256, 256).unwrap();
             let layer = doc.add_layer("a").unwrap();
-            let mut brush = Brush::from(BrushSettings {
-                radius: 14.0,
-                hardness: 0.8,
-                color: Rgba8::new(200, 60, 30, 255),
-                pressure_size: false,
-                pressure_opacity: false,
-                ..BrushSettings::default()
-            });
+            let mut brush = Brush::simple(
+                BrushSettings {
+                    radius: 14.0,
+                    hardness: 0.8,
+                    color: Rgba8::new(200, 60, 30, 255),
+                    ..BrushSettings::default()
+                },
+                yolu_core::PressureSwitches::NONE,
+            );
             brush.seed = 7;
             let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
             let c = Vec2::new(320.0, 240.0);

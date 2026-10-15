@@ -885,10 +885,13 @@ fn resizing_redraws_2d_paths_from_the_scaled_path_and_lists_the_3d_ones() {
         style: Default::default(),
         id: 9,
         channel: Channel::Height,
-        brush: yolu_core::paths::PathBrush(yolu_core::BrushSettings {
-            radius: 0.1,
-            ..Default::default()
-        }),
+        brush: yolu_core::paths::PathBrush(
+            yolu_core::BrushSettings {
+                radius: 0.1,
+                ..Default::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             PathPoint::new(0, 0.2, 0.3, 1.0).unwrap(),
             PathPoint::new(1, 0.4, 0.2, 1.0).unwrap(),

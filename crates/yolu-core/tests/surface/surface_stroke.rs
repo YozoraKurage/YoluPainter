@@ -100,8 +100,6 @@ fn base() -> BrushSettings {
         hardness: 1.0,
         opacity: 1.0,
         flow: 1.0,
-        pressure_size: false,
-        pressure_opacity: false,
         color: Rgba8::new(10, 200, 30, 255),
         ..BrushSettings::default()
     }
@@ -109,7 +107,7 @@ fn base() -> BrushSettings {
 fn brush(effect: BrushEffect) -> Brush {
     Brush {
         effect,
-        ..Brush::from(base())
+        ..Brush::simple(base(), yolu_core::PressureSwitches::NONE)
     }
 }
 fn screen(view: &yolu_core::geometry::CameraView, world: Vec3) -> Vec2 {
@@ -1244,26 +1242,26 @@ fn one_dab(brush_value: &Brush, pressure: f32) -> (Vec<u8>, usize) {
 
 #[test]
 fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() {
-    use yolu_core::PressureResponse;
+    use yolu_core::InputResponse;
     let mut b = brush(BrushEffect::Paint);
     b.base.radius = 4.0;
-    b.base.pressure_size = true;
+    b.influences.size.pressure.on = true;
     // 既定の応え: 筆圧 0 は点を置かない（今までと同じ）
     assert_eq!(one_dab(&b, 0.0).1, 0);
     // 最小値: 筆圧 0 でも、最小値の大きさの点が置かれる
-    b.pressure.size = PressureResponse::new(0.5, vec![]).unwrap();
+    b.influences.size.pressure.response = InputResponse::new(0.5, vec![]).unwrap();
     let lifted = one_dab(&b, 0.0);
     let full = one_dab(&b, 1.0);
     assert!(lifted.1 > 0 && lifted.1 < full.1, "{} {}", lifted.1, full.1);
     // 応えは文書のストロークのブラシのもの: 切ると 3D の大きさも筆圧そのものに戻る
-    b.base.pressure_size = false;
+    b.influences.size.pressure.on = false;
     assert_eq!(one_dab(&b, 0.0).0, full.0);
 
     // 硬さ: 筆圧が低いほど縁が柔らかい（縁の画素のアルファが減る）
     let mut soft = brush(BrushEffect::Paint);
     soft.base.radius = 5.0;
-    soft.controls.pressure_hardness = true;
-    soft.pressure.hardness = PressureResponse::new(0.0, vec![]).unwrap();
+    soft.influences.hardness.pressure.on = true;
+    soft.influences.hardness.pressure.response = InputResponse::new(0.0, vec![]).unwrap();
     let light = one_dab(&soft, 0.2).0;
     let firm = one_dab(&soft, 1.0).0;
     let sum = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| u32::from(p[3])).sum::<u32>();
@@ -1271,8 +1269,8 @@ fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() 
 
     // 不透明度: 画素ごとの塗りも、ストロークと同じ応えを通す
     let mut o = brush(BrushEffect::Paint);
-    o.base.pressure_opacity = true;
-    o.pressure.opacity = PressureResponse::new(0.5, vec![]).unwrap();
+    o.influences.opacity.pressure.on = true;
+    o.influences.opacity.pressure.response = InputResponse::new(0.5, vec![]).unwrap();
     let faint = one_dab(&o, 0.0).0;
     let strong = one_dab(&o, 1.0).0;
     let max_alpha = |pixels: &[u8]| pixels.chunks_exact(4).map(|p| p[3]).max().unwrap();
@@ -1282,6 +1280,36 @@ fn the_surface_brush_takes_size_hardness_and_opacity_from_the_shaped_pressure() 
         max_alpha(&faint)
     );
     assert_eq!(max_alpha(&strong), 255);
+}
+
+#[test]
+fn the_surface_brush_takes_the_random_and_roundness_influences_per_dab() {
+    use yolu_core::{InputResponse, InputUse};
+    let used = |min: f64| InputUse {
+        on: true,
+        response: InputResponse::new(min, vec![]).unwrap(),
+    };
+    let mut plain = brush(BrushEffect::Paint);
+    plain.base.radius = 5.0;
+    plain.seed = 3;
+    // 不透明度のランダム: 同じ種なら同じ画素、使わないブラシとは違う画素。種を変えると違う画素
+    let mut r = plain.clone();
+    r.influences.opacity.random = used(0.0);
+    let first = one_dab(&r, 1.0).0;
+    assert_eq!(first, one_dab(&r, 1.0).0);
+    assert_ne!(first, one_dab(&plain, 1.0).0);
+    let mut other = r.clone();
+    other.seed = 4;
+    assert_ne!(one_dab(&other, 1.0).0, first);
+    // 真円率の筆圧: 2D と同じダブの形の式で潰す（筆圧の低いダブほど塗る画素が少ない）
+    let mut squash = plain.clone();
+    squash.influences.roundness.pressure = used(0.0);
+    let (_, thin) = one_dab(&squash, 0.3);
+    let (_, full) = one_dab(&squash, 1.0);
+    assert!(thin > 0 && thin < full, "{thin} {full}");
+    let mut fixed = plain.clone();
+    fixed.tip.roundness = 0.3_f32 as f64;
+    assert_eq!(one_dab(&squash, 0.3).0, one_dab(&fixed, 1.0).0);
 }
 
 /// 速い入力の線: 左のアイランドの左端から右のアイランドの右端まで、1 回の入力で動かす（間隔を細かくして、区間のダブを 1 回の入力で塗る数より

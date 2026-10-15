@@ -52,11 +52,11 @@ pub mod curve;
 mod dynamics;
 pub(crate) mod edge;
 mod effects;
+mod influence;
 mod mix;
 mod mix_stroke;
 mod plan;
 mod presets;
-mod pressure;
 #[doc(hidden)]
 pub mod profile;
 pub mod random;
@@ -77,11 +77,14 @@ use rayon::prelude::*;
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use edge::AntiAlias;
 pub(crate) use edge::{Edge, TexelMetric};
+pub use influence::{
+    Influence, Influences, Input, InputResponse, InputUse, Item, PressureSwitches,
+    MAX_CURVE_POINTS, STRAIGHT,
+};
+pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
 pub use mix::{ColorMix, MixGround, MixMode};
 pub(crate) use plan::{DabPlan, StampControls};
 pub use presets::{builtin_presets, BrushPreset};
-pub(crate) use pressure::PressureScale;
-pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIGHT};
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
     StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
@@ -107,7 +110,8 @@ use mix::{MixDab, MixRun, MixTally};
 use random::NetRandom;
 
 /// ブラシの基本の設定（M1）。ストロークを始めたときに写して固定する（途中で変えても、そのストロークには効かない）。
-/// 筆先・ゆらぎ・質感などを足すときは [`Brush`]（これを `base` に持つ）で始める。
+/// 筆先・ゆらぎ・質感などを足すときは [`Brush`]（これを `base` に持つ）で始める。筆圧で大きさ・不透明度・流量を変えるかは、簡単なブラシでは
+/// [`PressureSwitches`]（[`Brush::simple`] で作る）、全部入りのブラシでは [`Brush::influences`] が持つ。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrushSettings {
     /// 半径（画素）。0 < r ≤ 65536。
@@ -122,10 +126,6 @@ pub struct BrushSettings {
     pub flow: f64,
     /// 塗る色（straight）。消しゴムではアルファだけを消す強さに使う。
     pub color: Rgba8,
-    /// 筆圧で大きさ・不透明度・流量を変えるか（それぞれ線形）。
-    pub pressure_size: bool,
-    pub pressure_opacity: bool,
-    pub pressure_flow: bool,
     /// 消しゴム（アルファを消す。色のアルファの割合だけ）。
     pub erase: bool,
     /// 拡張（C# に無い）: 丸い筆先の縁のアンチエイリアスと、小さなダブの濃さ（[`AntiAlias`]）。既定は なし（今の式）。
@@ -142,9 +142,6 @@ impl Default for BrushSettings {
             opacity: 1.0,
             flow: 1.0,
             color: Rgba8::new(255, 255, 255, 255),
-            pressure_size: true,
-            pressure_opacity: true,
-            pressure_flow: false,
             erase: false,
             anti_alias: AntiAlias::None,
         }
@@ -360,6 +357,8 @@ pub(crate) struct StrokeState {
     stroke_length: f64,
     pending: VecDeque<PendingDab>,
     random: NetRandom,
+    /// 影響元のランダムの乱数の列（どの項目もランダムを使わなければ None で、1 つも引かない）。
+    influence_random: Option<NetRandom>,
     // 色の変化: ストロークの色（ダブごとでないとき・パスの面のダブ）、今のダブの色、色の乱数の列
     stroke_color: Rgba8,
     dab_color: Rgba8,
@@ -410,11 +409,15 @@ pub(crate) struct StrokeState {
 /// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
 type SurfaceScales = ((f32, f32), Option<(DualBrushMode, f32, f32)>);
 
-/// 3D の面のダブ 1 つの、ゆらぎ・フェード・傾き・速さの不透明度と流量の係数（2D のダブの形の `opacity_scale`・`flow_scale` と同じ）。
+/// 3D の面のダブ 1 つの、ゆらぎ・フェード・傾き・速さの不透明度と流量の係数（2D のダブの形の `opacity_scale`・`flow_scale` と同じ）と、
+/// 影響元の質感の濃さの係数・絵の具の量と濃さの筆圧でない入力の係数（使わなければ 1）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SurfaceDabLook {
     pub opacity: f64,
     pub flow: f64,
+    pub texture_density: f64,
+    pub mix_paint: f64,
+    pub mix_density: f64,
 }
 
 /// これを超える長さの区間（ダブの数）は断る（C# と同じ百万）。
@@ -459,6 +462,10 @@ impl StrokeState {
             .dual
             .as_ref()
             .map(|_| NetRandom::new(brush.seed ^ DUAL_STREAM));
+        let influence_random = brush
+            .influences
+            .uses(Input::Random)
+            .then(|| NetRandom::new(brush.seed ^ INFLUENCE_STREAM));
         // ステンシルの色: 色のモードで、ステンシルが名指すチャンネルを塗る面だけ（消す・マスク・効果は量だけ）
         let stencil_kind = brush
             .stencil
@@ -478,6 +485,7 @@ impl StrokeState {
             layer_index,
             channel,
             random: NetRandom::new(brush.seed),
+            influence_random,
             budgets,
             width: size.0 as i64,
             height: size.1 as i64,
@@ -945,7 +953,7 @@ impl StrokeState {
         if brush.dual.is_some() {
             self.stamp_dual(dab.arc)?;
         }
-        let c = brush.stamp_controls(&dab, index);
+        let c = brush.stamp_controls(&dab, index, self.influence_random.as_mut());
         let s = &brush.base;
         let mut any = false;
         for _ in 0..brush.jitter.count {
@@ -1468,13 +1476,26 @@ impl StrokeState {
 
     /// 画素ごとに筆圧を渡す呼び出し用: 筆圧を応えに通した係数。同じ筆圧が続く間（1 つのダブの画素）は直前の結果を使う。
     fn shaped_pressure(&mut self, brush: &Brush, pressure: f64) -> PressureScale {
-        match self.pressure_memo {
+        let scale = match self.pressure_memo {
             Some((raw, scale)) if raw == pressure => scale,
             _ => {
                 let scale = brush.pressure_scale(pressure);
                 self.pressure_memo = Some((pressure, scale));
                 scale
             }
+        };
+        self.surface_pressure(scale)
+    }
+
+    /// 3D の面のダブの筆圧の係数に、今のダブの絵の具の量・濃さの、筆圧でない入力の係数を掛ける（面のダブを始めていない・使っていなければそのまま）。
+    pub(crate) fn surface_pressure(&self, scale: PressureScale) -> PressureScale {
+        match self.surface_look {
+            Some(look) if look.mix_paint != 1.0 || look.mix_density != 1.0 => PressureScale {
+                mix_paint: scale.mix_paint * look.mix_paint,
+                mix_density: scale.mix_density * look.mix_density,
+                ..scale
+            },
+            _ => scale,
         }
     }
 
@@ -1503,7 +1524,7 @@ impl StrokeState {
             return Some(((opacity, flow), None));
         };
         let grain = rows::Grain::new(tex, y);
-        let depth = tex.depth as f32;
+        let depth = texture_depth(tex, look.texture_density) as f32;
         match tex.mode.as_blend() {
             None => {
                 let ceiling = rows::texture_scale_one(&grain, depth, opacity, x);
@@ -1621,7 +1642,7 @@ impl StrokeState {
             return Ok(false);
         }
         let brush = self.brush.clone();
-        let pressure = brush.pressure_scale(pressure);
+        let pressure = self.surface_pressure(brush.pressure_scale(pressure));
         if self.mix_on {
             // 色の混ぜ: ダブの画素を、下地を読む範囲が離れた塊へ分け、塊ごとに枠を凍結して塗る
             return self.apply_mix_dab(surface, &brush, pixels, pressure, points, changed);
@@ -1937,9 +1958,21 @@ pub(crate) struct DabShape<'a> {
     pub flip_x: bool,
     pub flip_y: bool,
     pub texture: Option<&'a PaperTexture>,
+    /// 質感の濃さの影響元の係数（紙の質感の深さに掛ける。使わなければ 1）。
+    pub texture_density: f64,
     pub dual: Option<DualBrushMode>,
     /// 縁のアンチエイリアス（帯の幅はダブの座標の単位。[`DabShape::with_edge`]。既定は今の式）。
     pub edge: Edge,
+}
+
+/// 紙の質感の深さに、質感の濃さの影響元の係数を掛けたもの（係数 1 は深さそのもの。演算を挟まない）。
+#[inline]
+pub(crate) fn texture_depth(tex: &PaperTexture, density: f64) -> f64 {
+    if density == 1.0 {
+        tex.depth
+    } else {
+        tex.depth * density
+    }
 }
 
 /// ダブの覆いを、中心からのずれ（y は上向き）ごとに 1 つずつ測る形（[`DabShape::coverage_fn`]。2D の行の核と同じ f32 の式・同じ値を
@@ -2270,7 +2303,7 @@ fn dab_tile_with<const SIMPLE: bool>(
             if let Some((tex, g)) = &grain {
                 // 紙の質感は流量ではなく天井に効かせる（Photoshop の「描点ごとに適用」オフと同じ）。流量に効かせると、
                 // 間隔の細かいブラシでは重なったダブが溜まって質感が消えてしまう
-                let depth = tex.depth as f32;
+                let depth = texture_depth(tex, s.texture_density) as f32;
                 match tex.mode.as_blend() {
                     None => {
                         ceiling_scale = rows::texture_scale_one(g, depth, opacity_scale, px);

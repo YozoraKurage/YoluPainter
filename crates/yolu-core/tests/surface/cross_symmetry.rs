@@ -447,8 +447,11 @@ fn the_3d_selection_pen_returns_the_projected_amounts_and_refuses_when_out_of_me
         radius: 6.0,
         hardness: 0.6,
         opacity: 1.0,
-        pressure_size: false,
-        pressure_opacity: true,
+        pressure: yolu_core::PressureSwitches {
+            size: false,
+            opacity: true,
+            flow: false,
+        },
     };
     let (mut s, first) = SurfaceCoverStroke::begin(
         g.clone(),

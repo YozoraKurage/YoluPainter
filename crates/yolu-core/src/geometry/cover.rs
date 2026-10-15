@@ -32,9 +32,8 @@ pub struct CoverParams {
     pub hardness: f64,
     /// 0〜1。ダブの最大の量。
     pub opacity: f64,
-    /// 筆圧で半径を変える・量を変える。
-    pub pressure_size: bool,
-    pub pressure_opacity: bool,
+    /// 筆圧で半径を変える・量を変える（流量は使わない）。
+    pub pressure: crate::PressureSwitches,
 }
 
 /// 選択ペンの間隔（直径に対する割合。2D の選択ペンと同じ 5%）。
@@ -146,12 +145,12 @@ impl SurfaceCoverStroke {
         out: &mut Vec<CoverPixel>,
     ) -> Result<(), SurfaceStrokeError> {
         let p = pressure.clamp(0.0, 1.0) as f64;
-        let size = if self.params.pressure_size {
+        let size = if self.params.pressure.size {
             p.max(0.05)
         } else {
             1.0
         };
-        let opacity = if self.params.pressure_opacity {
+        let opacity = if self.params.pressure.opacity {
             self.params.opacity * p
         } else {
             self.params.opacity

@@ -20,12 +20,15 @@ fn options() -> Options<'static> {
 }
 
 fn brush(radius: f64) -> PathBrush {
-    PathBrush(BrushSettings {
-        radius,
-        spacing: 0.17,
-        color: Rgba8::new(201, 37, 89, 219),
-        ..BrushSettings::default()
-    })
+    PathBrush(
+        BrushSettings {
+            radius,
+            spacing: 0.17,
+            color: Rgba8::new(201, 37, 89, 219),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::default(),
+    )
 }
 
 fn canvas(material: Option<Vec<ChannelPaint>>) -> CanvasPath {

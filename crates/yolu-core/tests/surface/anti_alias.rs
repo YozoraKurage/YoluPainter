@@ -83,16 +83,17 @@ pub(crate) fn bytes(d: &Document, l: LayerId) -> Vec<u8> {
 }
 
 fn brush(level: AntiAlias, radius: f64, hardness: f64) -> Brush {
-    Brush::from(BrushSettings {
-        radius,
-        hardness,
-        spacing: 0.0625,
-        color: Rgba8::new(20, 40, 160, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        anti_alias: level,
-        ..BrushSettings::default()
-    })
+    Brush::simple(
+        BrushSettings {
+            radius,
+            hardness,
+            spacing: 0.0625,
+            color: Rgba8::new(20, 40, 160, 255),
+            anti_alias: level,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 
 /// 2D: 世界の点の列（文書の画素では × scale）、半径も世界の単位（× scale）。

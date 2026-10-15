@@ -36,9 +36,8 @@ pub struct PenParams {
     pub hardness: f64,
     /// 0〜1。ダブの最大の量。
     pub opacity: f64,
-    /// 筆圧で半径を変える・量を変える。
-    pub pressure_size: bool,
-    pub pressure_opacity: bool,
+    /// 筆圧で半径を変える・量を変える（流量は使わない）。
+    pub pressure: crate::engine::PressureSwitches,
 }
 
 impl PenParams {
@@ -48,8 +47,7 @@ impl PenParams {
             radius: self.radius,
             hardness: self.hardness,
             opacity: self.opacity,
-            pressure_size: self.pressure_size,
-            pressure_opacity: self.pressure_opacity,
+            pressure: self.pressure,
         }
     }
 
@@ -59,8 +57,10 @@ impl PenParams {
             radius: b.radius as f64,
             hardness: (b.hardness as f64).clamp(0.0, 1.0),
             opacity: (b.opacity as f64).clamp(0.0, 1.0),
-            pressure_size: b.pressure_size,
-            pressure_opacity: b.pressure_opacity,
+            pressure: crate::engine::PressureSwitches {
+                flow: false,
+                ..b.pressure
+            },
         }
     }
 }
@@ -205,12 +205,12 @@ impl PenStroke {
     /// ダブの半径と最大の量（筆圧を入れたもの）。
     fn dab_params(&self, pressure: f64) -> (f64, f64) {
         let p = pressure.clamp(0.0, 1.0);
-        let radius = if self.params.pressure_size {
+        let radius = if self.params.pressure.size {
             self.params.radius * p.max(0.05)
         } else {
             self.params.radius
         };
-        let opacity = if self.params.pressure_opacity {
+        let opacity = if self.params.pressure.opacity {
             self.params.opacity * p
         } else {
             self.params.opacity

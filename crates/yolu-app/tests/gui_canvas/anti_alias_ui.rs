@@ -93,8 +93,8 @@ fn choosing_a_level_changes_the_edge_of_a_stroke_drawn_on_the_canvas() {
         let b = &mut h.state_mut().state.brush;
         b.radius = 7.0;
         b.hardness = 1.0;
-        b.pressure_size = false;
-        b.pressure_opacity = false;
+        b.pressure.size = false;
+        b.pressure.opacity = false;
     }
     h.run();
     let mut results = Vec::new();

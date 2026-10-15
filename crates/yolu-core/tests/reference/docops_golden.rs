@@ -456,11 +456,9 @@ fn run(op: &str, n: u32, seed: u32) -> Vec<u8> {
                 color: Rgba8::new(200, 90, 30, 255),
                 opacity: 0.7,
                 flow: 0.6,
-                pressure_size: false,
-                pressure_opacity: false,
                 ..Default::default()
             };
-            let mut brush = Brush::from(base);
+            let mut brush = Brush::simple(base, yolu_core::PressureSwitches::NONE);
             brush.effect = match n {
                 0 => BrushEffect::Blur { radius: 2 },
                 1 => BrushEffect::Smudge { strength: 0.6 },
@@ -485,11 +483,14 @@ fn run(op: &str, n: u32, seed: u32) -> Vec<u8> {
                 color: Rgba8::new(220, 30, 80, 128),
                 opacity: 0.7,
                 flow: 0.8,
-                pressure_size: false,
-                pressure_opacity: false,
                 ..Default::default()
             };
-            let mut s = d.begin_stroke(a, &brush).unwrap();
+            let mut s = d
+                .begin_brush_stroke(
+                    a,
+                    &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+                )
+                .unwrap();
             s.add_point(&mut d, 8., 6., 1., glam::DVec2::ZERO).unwrap();
             s.add_point(&mut d, 9., 6., 1., glam::DVec2::ZERO).unwrap();
             d.end_stroke(s).unwrap();

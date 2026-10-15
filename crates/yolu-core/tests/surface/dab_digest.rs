@@ -43,15 +43,16 @@ fn camera() -> CameraView {
 }
 
 fn brush() -> Brush {
-    let mut b = Brush::from(BrushSettings {
-        radius: 14.0,
-        hardness: 0.8,
-        spacing: 0.15,
-        color: Rgba8::new(200, 60, 30, 255),
-        pressure_size: true,
-        pressure_opacity: true,
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius: 14.0,
+            hardness: 0.8,
+            spacing: 0.15,
+            color: Rgba8::new(200, 60, 30, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::default(),
+    );
     b.seed = 7;
     b
 }

@@ -551,7 +551,7 @@ fn headless_user_brushes_are_saved_and_come_back_with_their_order_and_registered
 
 #[test]
 fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_settings() {
-    use yolu_app::engine::PressureResponse;
+    use yolu_app::engine::InputResponse;
     use yolu_core::generator::CurvePoint;
     let dir = temp_dir("pressure");
     let mut s = AppState::new(64, 64);
@@ -559,8 +559,8 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
     select(&mut s, b("chalk"));
     // 応えは画面のスライダーと同じ場所（`m2.brush.pressure`）で変える。ドキュメントではないので Undo の段は作らない
     let steps = s.doc.undo_count();
-    s.m2.brush.pressure.size = PressureResponse::new(0.25, vec![]).unwrap();
-    s.m2.brush.pressure.opacity = PressureResponse::new(
+    s.m2.brush.influences.size.pressure.response = InputResponse::new(0.25, vec![]).unwrap();
+    s.m2.brush.influences.opacity.pressure.response = InputResponse::new(
         0.0,
         vec![
             CurvePoint { x: 0.0, y: 0.0 },
@@ -569,7 +569,7 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
         ],
     )
     .unwrap();
-    s.m2.brush.controls.pressure_hardness = true;
+    s.m2.brush.influences.hardness.pressure.on = true;
     s.brush_sync();
     assert!(s.brush_is_modified(b("chalk")), "応えを変えたら変更あり");
     assert_eq!(s.doc.undo_count(), steps);
@@ -593,30 +593,40 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
         back.brushes.problems.len()
     );
     select(&mut back, key);
-    assert_eq!(back.m2.brush.pressure.size.min(), 0.25);
-    assert_eq!(back.m2.brush.pressure.opacity.curve().len(), 3);
-    assert!(back.m2.brush.controls.pressure_hardness);
+    assert_eq!(back.m2.brush.influences.size.pressure.response.min(), 0.25);
+    assert_eq!(
+        back.m2
+            .brush
+            .influences
+            .opacity
+            .pressure
+            .response
+            .curve()
+            .len(),
+        3
+    );
+    assert!(back.m2.brush.influences.hardness.pressure.on);
     assert!(!back.brush_is_modified(key));
     select(&mut back, plain);
-    assert!(back.m2.brush.pressure.is_identity());
-    assert!(!back.m2.brush.controls.pressure_hardness);
+    assert!(pressure_identity(&back.m2.brush));
+    assert!(!back.m2.brush.influences.hardness.pressure.on);
     // 元の設定へ戻す: 応えも戻る
     select(&mut back, key);
-    back.m2.brush.pressure.size = PressureResponse::new(0.9, vec![]).unwrap();
+    back.m2.brush.influences.size.pressure.response = InputResponse::new(0.9, vec![]).unwrap();
     back.brush_sync();
     assert!(back.brush_is_modified(key));
     back.apply(Action::Brush(BrushAction::Revert(key)));
-    assert_eq!(back.m2.brush.pressure.size.min(), 0.25);
+    assert_eq!(back.m2.brush.influences.size.pressure.response.min(), 0.25);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
 fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_knows_version_one() {
-    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無い版 6 を同じ形で確かめる）
+    // 版 1 しか読めない古いアプリは、版 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無い版 8 を同じ形で確かめる）
     let dir = temp_dir("future-version");
     std::fs::write(
         dir.join("brush-00000001.ylbrush"),
-        "yolupainter-brush 7\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 8\nname=future\ngroup=pen\npressure.size.min=0.5\n",
     )
     .unwrap();
     let mut s = AppState::new(64, 64);
@@ -628,7 +638,7 @@ fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_k
     ));
     assert_eq!(
         std::fs::read_to_string(dir.join("brush-00000001.ylbrush")).unwrap(),
-        "yolupainter-brush 7\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 8\nname=future\ngroup=pen\npressure.size.min=0.5\n",
         "触らない"
     );
     std::fs::remove_dir_all(dir).unwrap();
@@ -1317,4 +1327,12 @@ mod row_menu {
             "並びが読めない間は無い"
         );
     }
+}
+
+/// 大きさ・不透明度・流量・硬さの筆圧の応えが、どれも既定（最小値 0・直線）か。
+fn pressure_identity(b: &yolu_core::Brush) -> bool {
+    use yolu_core::brush::Item;
+    [Item::Size, Item::Opacity, Item::Flow, Item::Hardness]
+        .into_iter()
+        .all(|i| b.influences.get(i).pressure.response.is_identity())
 }

@@ -78,24 +78,28 @@ fn random_case(seed: u64) -> Case {
     let tile = r.pick(&[8u32, 16, 24, 32, 37, 64, 300]);
     let size = (r.pick(&[40u32, 77, 96, 330]), r.pick(&[33u32, 64, 90]));
     let radius = r.pick(&[0.6, 1.0, 2.5, 5.0, 9.0, 17.0, 31.0]);
-    let mut b = Brush::from(BrushSettings {
-        radius,
-        hardness: r.pick(&[0.0, 0.25, 0.8, 1.0]),
-        spacing: r.pick(&[0.05, 0.15, 0.5, 1.0]),
-        opacity: r.pick(&[1.0, 0.6, 0.3]),
-        flow: r.pick(&[1.0, 0.5, 0.1]),
-        color: Rgba8::new(
-            r.channel(),
-            r.channel(),
-            r.channel(),
-            r.pick(&[255, 255, 200, 90]),
-        ),
-        pressure_size: r.chance(0.5),
-        pressure_opacity: r.chance(0.5),
-        pressure_flow: r.chance(0.5),
-        erase: r.chance(0.2),
-        anti_alias: AntiAlias::None,
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: r.pick(&[0.0, 0.25, 0.8, 1.0]),
+            spacing: r.pick(&[0.05, 0.15, 0.5, 1.0]),
+            opacity: r.pick(&[1.0, 0.6, 0.3]),
+            flow: r.pick(&[1.0, 0.5, 0.1]),
+            color: Rgba8::new(
+                r.channel(),
+                r.channel(),
+                r.channel(),
+                r.pick(&[255, 255, 200, 90]),
+            ),
+            erase: r.chance(0.2),
+            anti_alias: AntiAlias::None,
+        },
+        crate::PressureSwitches {
+            size: r.chance(0.5),
+            opacity: r.chance(0.5),
+            flow: r.chance(0.5),
+        },
+    );
     b.seed = r.next() as i32;
     if r.chance(0.4) {
         b.tip.angle = r.pick(&[0.0, 30.0, 90.0, 200.0]);

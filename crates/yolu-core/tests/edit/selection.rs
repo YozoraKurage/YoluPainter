@@ -42,8 +42,6 @@ fn thick(radius: f64, erase: bool) -> BrushSettings {
         hardness: 1.0,
         spacing: 0.1,
         color: red(),
-        pressure_size: false,
-        pressure_opacity: false,
         erase,
         ..BrushSettings::default()
     }
@@ -634,7 +632,12 @@ fn the_selection_is_refused_while_a_stroke_runs_or_for_another_canvas() {
     let a = d.add_layer("a").unwrap();
     d.clear_history().unwrap();
     let m = SelectionMask::rectangle(&d, 0, 0, 8, 8);
-    let s = d.begin_stroke(a, &thick(2.0, false)).unwrap();
+    let s = d
+        .begin_brush_stroke(
+            a,
+            &yolu_core::Brush::simple(thick(2.0, false), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     assert!(matches!(
         d.set_selection(Some(m.clone())),
         Err(CoreError::StrokeActive)
@@ -717,7 +720,7 @@ fn a_loaded_selection_is_restored_only_before_any_history() {
 fn a_stroke_only_changes_the_selected_pixels_in_proportion_to_their_amount() {
     let mut d = doc(64, 32, 16);
     let a = d.add_layer("a").unwrap();
-    let brush = Brush::from(thick(6.0, false));
+    let brush = Brush::simple(thick(6.0, false), yolu_core::PressureSwitches::NONE);
     // 幅 20〜40 だけを選ぶ。縁の列 20 は半分の量（128）
     let hard = SelectionMask::rectangle(&d, 21, 0, 40, 32);
     let half_column = SelectionMask::from_amount_tiles(
@@ -768,7 +771,7 @@ fn a_half_selected_pixel_moves_halfway_from_what_was_there() {
     line(
         &mut d,
         a,
-        &Brush::from(thick(20.0, false)),
+        &Brush::simple(thick(20.0, false), yolu_core::PressureSwitches::NONE),
         (8.0, 8.0),
         (8.5, 8.0),
     );
@@ -787,7 +790,7 @@ fn the_eraser_only_erases_inside_the_selection() {
     line(
         &mut d,
         a,
-        &Brush::from(thick(8.0, true)),
+        &Brush::simple(thick(8.0, true), yolu_core::PressureSwitches::NONE),
         (2.0, 16.0),
         (62.0, 16.0),
     );
@@ -810,7 +813,10 @@ fn a_stroke_outside_the_selection_changes_nothing_and_leaves_no_history() {
         .unwrap();
     d.clear_history().unwrap();
     let mut s = d
-        .begin_brush_stroke(a, &Brush::from(thick(5.0, false)))
+        .begin_brush_stroke(
+            a,
+            &Brush::simple(thick(5.0, false), yolu_core::PressureSwitches::NONE),
+        )
         .unwrap();
     s.add_point(&mut d, 10.0, 10.0, 1.0, DVec2::ZERO).unwrap();
     s.add_point(&mut d, 20.0, 12.0, 1.0, DVec2::ZERO).unwrap();
@@ -835,7 +841,12 @@ fn a_mask_stroke_is_cut_by_the_selection_too() {
     d.add_layer_mask(a).unwrap();
     d.set_selection(Some(SelectionMask::rectangle(&d, 24, 0, 40, 32)))
         .unwrap();
-    let mut s = d.begin_mask_stroke(a, &thick(5.0, false)).unwrap();
+    let mut s = d
+        .begin_brush_mask_stroke(
+            a,
+            &yolu_core::Brush::simple(thick(5.0, false), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.add_point(&mut d, 2.0, 16.0, 1.0, DVec2::ZERO).unwrap();
     s.add_point(&mut d, 62.0, 16.0, 1.0, DVec2::ZERO).unwrap();
     d.end_stroke(s).unwrap();
@@ -860,7 +871,10 @@ fn a_stroke_keeps_the_selection_it_started_with() {
     let left = SelectionMask::rectangle(&d, 0, 0, 32, 32);
     d.set_selection(Some(left)).unwrap();
     let mut s = d
-        .begin_brush_stroke(a, &Brush::from(thick(4.0, false)))
+        .begin_brush_stroke(
+            a,
+            &Brush::simple(thick(4.0, false), yolu_core::PressureSwitches::NONE),
+        )
         .unwrap();
     s.add_point(&mut d, 2.0, 16.0, 1.0, DVec2::ZERO).unwrap();
     // ストロークの途中で選択範囲は変えられない（変わらないので、右へ描いても切られたまま）
@@ -871,7 +885,10 @@ fn a_stroke_keeps_the_selection_it_started_with() {
     assert!(blank(&d, a, 50, 16));
     // 取り消したストロークの後も選択範囲はそのまま
     let s = d
-        .begin_brush_stroke(a, &Brush::from(thick(4.0, false)))
+        .begin_brush_stroke(
+            a,
+            &Brush::simple(thick(4.0, false), yolu_core::PressureSwitches::NONE),
+        )
         .unwrap();
     d.cancel_stroke(s);
     assert!(d.selection().is_some());
@@ -1092,7 +1109,7 @@ fn fill_mask_hides_or_reveals_inside_the_range() {
 // ───────── 2D の対称 ─────────
 
 fn symmetric(mode: SymmetryMode, center: (f64, f64), count: u32) -> Brush {
-    let mut b = Brush::from(thick(5.0, false));
+    let mut b = Brush::simple(thick(5.0, false), yolu_core::PressureSwitches::NONE);
     b.symmetry = CanvasSymmetry::new(mode, DVec2::new(center.0, center.1), count).unwrap();
     b
 }
@@ -1263,14 +1280,15 @@ fn symmetry_refuses_bad_settings_smudge_and_too_much_work() {
 
 /// C# の CanvasSymmetryTests.Brush: 半径 4・硬さ 0.6・流量 0.5・筆圧の割り当てなし、中心 (32, 32)。
 fn sym_brush(mode: SymmetryMode, count: u32) -> Brush {
-    let mut b = Brush::from(BrushSettings {
-        radius: 4.0,
-        hardness: 0.6,
-        flow: 0.5,
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius: 4.0,
+            hardness: 0.6,
+            flow: 0.5,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    );
     b.symmetry = CanvasSymmetry::new(mode, DVec2::new(32.0, 32.0), count).unwrap();
     b
 }
@@ -1970,7 +1988,10 @@ fn per_pixel_painting_for_the_3d_view_does_not_mirror_in_uv_space() {
     d.set_selection(Some(SelectionMask::rectangle(&d, 0, 0, 32, 64)))
         .unwrap();
     let mut s = d
-        .begin_brush_stroke(a, &Brush::from(thick(1.0, false)))
+        .begin_brush_stroke(
+            a,
+            &Brush::simple(thick(1.0, false), yolu_core::PressureSwitches::NONE),
+        )
         .unwrap();
     s.apply_pixel(&mut d, 5, 5, 1.0, 1.0).unwrap();
     s.apply_pixel(&mut d, 50, 5, 1.0, 1.0).unwrap();

@@ -414,8 +414,6 @@ fn fill_all(s: &mut S, index: usize, color: Rgba8) {
         radius: 1000.0,
         hardness: 1.0,
         color,
-        pressure_opacity: false,
-        pressure_size: false,
         ..Default::default()
     };
     let (cx, cy) = (doc.width() as f64 / 2.0, doc.height() as f64 / 2.0);

@@ -108,9 +108,8 @@ pub struct BrushState {
     pub spacing: f32,
     pub opacity: f32,
     pub flow: f32,
-    pub pressure_size: bool,
-    pub pressure_opacity: bool,
-    pub pressure_flow: bool,
+    /// 筆圧で大きさ・不透明度・流量を変えるか（全部入りのブラシでは影響元の筆圧の切り替え）。
+    pub pressure: crate::engine::PressureSwitches,
     /// 丸い筆先の縁のアンチエイリアス（core の既定は なし。アプリの既定は 中）。
     pub anti_alias: AntiAlias,
 }
@@ -123,9 +122,7 @@ impl Default for BrushState {
             spacing: 0.15,
             opacity: 1.0,
             flow: 1.0,
-            pressure_size: true,
-            pressure_opacity: true,
-            pressure_flow: false,
+            pressure: crate::engine::PressureSwitches::default(),
             anti_alias: AntiAlias::Medium,
         }
     }
@@ -148,9 +145,6 @@ impl BrushState {
                 unit_f32_to_byte(color[2]),
                 unit_f32_to_byte(color[3]),
             ),
-            pressure_size: self.pressure_size,
-            pressure_opacity: self.pressure_opacity,
-            pressure_flow: self.pressure_flow,
             erase,
             anti_alias: self.anti_alias,
         }

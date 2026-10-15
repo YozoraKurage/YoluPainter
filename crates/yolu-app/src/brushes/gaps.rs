@@ -7,7 +7,7 @@
 //! ファイルから写せた項目（`SutMapped`）も、同じく ID の文字でブラシのファイルに残す（`import.mapped`）。取り込みの結果をそのまま残すので、
 //! 取り込んだあとに利用者が傾きや筆圧を入れても、ファイルから写した項目には並ばない。
 
-use yolu_io::brushes::{DualNote, SutMapped, SutNote, TextureNote, Unrepresented};
+use yolu_io::brushes::{DualNote, SutInput, SutMapped, SutNote, TextureNote, Unrepresented};
 
 use crate::lang::Lang;
 
@@ -312,10 +312,9 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::Stabilizer => Gap::Stabilizer,
             SutNote::ColorChange => Gap::ColorChange,
             SutNote::BlendMode => Gap::BlendMode,
-            SutNote::Influence { .. }
-            | SutNote::InfluenceUnreadable(_)
-            | SutNote::ThicknessPressure => Gap::Controls,
-            SutNote::CurveSimplified(_) => Gap::PressureCurve,
+            SutNote::InfluenceCurve { .. } | SutNote::InfluenceUnreadable(_) => Gap::Controls,
+            SutNote::CurveSimplified(_, SutInput::Tilt) => Gap::TiltCurve,
+            SutNote::CurveSimplified(..) => Gap::PressureCurve,
             SutNote::TiltCurve(_) => Gap::TiltCurve,
             SutNote::StartEndDetail => Gap::StartEndDetail,
             SutNote::StabilizerStrength => Gap::StabilizerStrength,
@@ -335,7 +334,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 13] = [
+pub const MAPPED_ALL: [SutMapped; 15] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -349,6 +348,8 @@ pub const MAPPED_ALL: [SutMapped; 13] = [
     SutMapped::MinOnePixel,
     SutMapped::ColorMixing,
     SutMapped::AntiAliasing,
+    SutMapped::Speed,
+    SutMapped::Random,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -367,6 +368,8 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::MinOnePixel => "min-one-pixel",
         SutMapped::ColorMixing => "color-mixing",
         SutMapped::AntiAliasing => "anti-aliasing",
+        SutMapped::Speed => "speed",
+        SutMapped::Random => "random",
     }
 }
 

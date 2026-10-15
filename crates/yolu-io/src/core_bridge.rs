@@ -1347,26 +1347,30 @@ fn read_path(f: &Fields<'_>, p: &str, surface: bool, version: i32) -> Result<Lay
     let b = |name: &str| f.float(&format!("{p}.brush.{name}"));
     let flag = |name: &str| f.boolean(&format!("{p}.brush.{name}"));
     let color = f.rgba(&format!("{p}.brush.rgba"))?;
-    let brush = paths::PathBrush(BrushSettings {
-        radius: b("radius")?,
-        hardness: b("hardness")?,
-        spacing: b("spacing")?,
-        opacity: b("opacity")?,
-        flow: b("flow")?,
-        color,
-        erase: flag("erase")?,
-        pressure_size: flag("pressure_size")?,
-        pressure_opacity: flag("pressure_opacity")?,
-        pressure_flow: flag("pressure_flow")?,
-        // 版 34 から。前の版は なし（今の式）
-        anti_alias: if version >= ANTI_ALIAS_VERSION {
-            AntiAlias::from_index(f.byte(&format!("{p}.brush.anti_alias"))?).ok_or_else(|| {
-                Error::InvalidData("パスのブラシのアンチエイリアスの段が不正です".into())
-            })?
-        } else {
-            AntiAlias::None
+    let brush = paths::PathBrush(
+        BrushSettings {
+            radius: b("radius")?,
+            hardness: b("hardness")?,
+            spacing: b("spacing")?,
+            opacity: b("opacity")?,
+            flow: b("flow")?,
+            color,
+            erase: flag("erase")?,
+            // 版 34 から。前の版は なし（今の式）
+            anti_alias: if version >= ANTI_ALIAS_VERSION {
+                AntiAlias::from_index(f.byte(&format!("{p}.brush.anti_alias"))?).ok_or_else(
+                    || Error::InvalidData("パスのブラシのアンチエイリアスの段が不正です".into()),
+                )?
+            } else {
+                AntiAlias::None
+            },
         },
-    });
+        yolu_core::PressureSwitches {
+            size: flag("pressure_size")?,
+            opacity: flag("pressure_opacity")?,
+            flow: flag("pressure_flow")?,
+        },
+    );
     let count = f.int(&format!("{p}.point_count"))?;
     let material = if version >= 18 {
         let n = f.byte(&format!("{p}.material_count"))?;
@@ -1718,12 +1722,12 @@ fn write_path(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
     w.int(paths::ALGORITHM_VERSION as i32)?;
     w.raw(&native_id(path.id()))?;
     w.int(path.channel().index() as i32)?;
-    let (mut brush, material, kind) = match path {
+    let (paths::PathBrush(mut brush, pressure), material, kind) = match path {
         LayerPath::Surface(p) => {
             w.text(&p.model_fingerprint)?;
-            (p.brush.0, p.material.as_deref(), p.style.kind)
+            (p.brush, p.material.as_deref(), p.style.kind)
         }
-        LayerPath::Canvas(p) => (p.brush.0, p.material.as_deref(), p.style.kind),
+        LayerPath::Canvas(p) => (p.brush, p.material.as_deref(), p.style.kind),
     };
     // 消しゴムの種類は、1 本の欄（Unity 版と同じ並び）ではブラシの消しゴムの印で表す
     brush.erase |= kind == paths::PathKind::Erase;
@@ -1737,12 +1741,7 @@ fn write_path(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
         w.float(v)?;
     }
     w.value(&brush.color.to_array())?;
-    for v in [
-        brush.erase,
-        brush.pressure_size,
-        brush.pressure_opacity,
-        brush.pressure_flow,
-    ] {
+    for v in [brush.erase, pressure.size, pressure.opacity, pressure.flow] {
         w.boolean(v)?;
     }
     if w.anti_alias {

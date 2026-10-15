@@ -794,9 +794,9 @@ fn mouse_speed_in_3d_does_not_depend_on_how_many_events_arrive_per_frame() {
         s.m2.random_seed = false;
         s.brush.hardness = 1.0;
         s.brush.radius = 8.0;
-        s.m2.brush.controls.speed_size = true;
+        s.m2.brush.influences.size.speed.on = true;
         // 3D の速さは画面の点 / 秒（1 フレーム 8 点・60 フレーム毎秒で 480）
-        s.m2.brush.controls.speed_max = 2000.0;
+        s.m2.brush.influences.speed_max = 2000.0;
     }
     let ink = |h: &Harness<'_, YoluApp>| {
         let bounds = h.state().state.doc.bounds();

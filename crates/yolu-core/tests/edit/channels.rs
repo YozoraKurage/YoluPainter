@@ -994,12 +994,16 @@ fn fill_and_strokes_reach_user_channels() {
         radius: 2.0,
         hardness: 1.0,
         color: Rgba8::new(255, 255, 255, 255),
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     };
     let since = d.change_serial();
-    let mut s = d.begin_stroke_in(l, u, &brush).unwrap();
+    let mut s = d
+        .begin_brush_stroke_in(
+            l,
+            u,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.add_point(&mut d, 4.5, 4.5, 1.0, Default::default())
         .unwrap();
     d.end_stroke(s).unwrap();

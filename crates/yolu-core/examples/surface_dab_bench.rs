@@ -44,8 +44,6 @@ fn settings(size: f64) -> BrushSettings {
     BrushSettings {
         radius: size / 2.0,
         color: Rgba8::new(200, 60, 30, 255),
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     }
 }
@@ -116,7 +114,7 @@ struct Outcome {
 
 fn run_3d(case: &Case) -> Outcome {
     let (mut doc, layer) = document(case.side);
-    let brush = Brush::from(settings(case.size));
+    let brush = Brush::simple(settings(case.size), yolu_core::PressureSwitches::NONE);
     let points = chords(
         &case.view,
         case.sphere_radius_px,
@@ -201,7 +199,7 @@ fn run_3d(case: &Case) -> Outcome {
 /// 同じ文書・同じブラシの 2D のダブ（間隔ちょうどに点を足し、足し 1 回を 1 ダブとする）の時間（ミリ秒）。
 fn run_2d(side: u32, size: f64, dabs: usize) -> Vec<f64> {
     let (mut doc, layer) = document(side);
-    let brush = Brush::from(settings(size));
+    let brush = Brush::simple(settings(size), yolu_core::PressureSwitches::NONE);
     let gap = size * brush.base.spacing;
     let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
     let margin = size;

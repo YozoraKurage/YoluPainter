@@ -375,9 +375,9 @@ fn touched(force: Option<f32>, adjust: PressureAdjust) -> H {
     {
         let s = &mut h.state_mut().state;
         s.prefs.settings.pressure = adjust;
-        s.brush.pressure_size = false;
-        s.brush.pressure_opacity = true;
-        s.brush.pressure_flow = false;
+        s.brush.pressure.size = false;
+        s.brush.pressure.opacity = true;
+        s.brush.pressure.flow = false;
         s.m2.random_seed = false;
     }
     let (from, to) = (world(&h, rect, -0.2, 0.0), world(&h, rect, 0.2, 0.0));

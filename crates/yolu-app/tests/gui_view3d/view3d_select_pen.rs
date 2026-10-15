@@ -28,8 +28,8 @@ pub(crate) fn brush(h: &mut H, radius: f32, three_d: bool) {
     s.brush.radius = radius;
     s.brush.hardness = 0.6;
     s.brush.opacity = 1.0;
-    s.brush.pressure_size = false;
-    s.brush.pressure_opacity = false;
+    s.brush.pressure.size = false;
+    s.brush.pressure.opacity = false;
 }
 
 /// 板の上の文書の点の列を、画面の点に。
@@ -197,7 +197,7 @@ fn the_pen_pressure_scales_the_amount_and_the_3d_symmetry_is_not_used() {
     let (mut h, rect) = plate_view(true);
     tool(&mut h, Tool::SelectPen);
     brush(&mut h, 4.0, true);
-    h.state_mut().state.brush.pressure_opacity = true;
+    h.state_mut().state.brush.pressure.opacity = true;
     // 3D の対称は選択ペンに使わない（2D の選択ペンと同じ）
     crate::common::rulers::mirror_3d(
         &mut h.state_mut().state,
@@ -223,7 +223,7 @@ fn the_pen_pressure_scales_the_amount_and_the_3d_symmetry_is_not_used() {
     let (mut h2, rect2) = plate_view(true);
     tool(&mut h2, Tool::SelectPen);
     brush(&mut h2, 4.0, true);
-    h2.state_mut().state.brush.pressure_opacity = true;
+    h2.state_mut().state.brush.pressure.opacity = true;
     let pts2 = on_plate(&h2, rect2, &LINE);
     for (i, p) in pts2.iter().enumerate() {
         h2.state().pen().push(pen_sample(*p, true, i as u32 * 10));

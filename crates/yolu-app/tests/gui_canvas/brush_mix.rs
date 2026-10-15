@@ -270,31 +270,48 @@ fn the_mix_pressure_items_follow_their_switch_and_edit_the_response() {
     open_detail(&mut h, Category::Mix);
     // 筆圧を使わない間は、最小と曲線は触れない
     assert!(disabled(&h, "最小"));
-    assert!(!st(&h).m2.brush.mix.pressure_paint);
+    assert!(!st(&h).m2.brush.influences.mix_paint.pressure.on);
     let toggles = pane_nodes(&h, "筆圧を使う");
     assert!(
         !toggles.is_empty(),
         "量の筆圧（濃さは下にスクロールして出る）"
     );
     click(&mut h, toggles[0].center());
-    assert!(st(&h).m2.brush.mix.pressure_paint);
-    assert!(!st(&h).m2.brush.mix.pressure_density);
+    assert!(st(&h).m2.brush.influences.mix_paint.pressure.on);
+    assert!(!st(&h).m2.brush.influences.mix_density.pressure.on);
     assert!(!pane_nodes(&h, "最小").is_empty());
     let minimum = pane_nodes(&h, "最小")[0];
     click(
         &mut h,
         pos2(minimum.left() + minimum.width() * 0.4, minimum.center().y),
     );
-    let response = st(&h).m2.brush.mix.response_paint.clone();
+    let response = st(&h)
+        .m2
+        .brush
+        .influences
+        .mix_paint
+        .pressure
+        .response
+        .clone();
     assert!((0.3..0.5).contains(&response.min()), "{}", response.min());
     assert!(
-        st(&h).m2.brush.mix.response_density.is_identity(),
+        st(&h)
+            .m2
+            .brush
+            .influences
+            .mix_density
+            .pressure
+            .response
+            .is_identity(),
         "濃さの応えは変わらない"
     );
     // 切ると、切り替えだけが戻る（応えは残る）
     click(&mut h, toggles[0].center());
-    assert!(!st(&h).m2.brush.mix.pressure_paint);
-    assert_eq!(st(&h).m2.brush.mix.response_paint, response);
+    assert!(!st(&h).m2.brush.influences.mix_paint.pressure.on);
+    assert_eq!(
+        st(&h).m2.brush.influences.mix_paint.pressure.response,
+        response
+    );
 }
 
 #[test]
@@ -654,8 +671,8 @@ fn a_canvas_stroke_with_a_mixing_brush_blends_with_the_picture_and_undoes() {
         .unwrap();
     h.state_mut().state.doc.clear_history().unwrap();
     h.state_mut().state.brush.radius = 12.0;
-    h.state_mut().state.brush.pressure_size = false;
-    h.state_mut().state.brush.pressure_opacity = false;
+    h.state_mut().state.brush.pressure.size = false;
+    h.state_mut().state.brush.pressure.opacity = false;
     h.run();
     let c = canvas_rect(&h).center();
     let path = [

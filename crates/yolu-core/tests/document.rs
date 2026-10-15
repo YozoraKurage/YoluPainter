@@ -19,15 +19,18 @@ fn opaque(c: Rgba8) -> BrushSettings {
         hardness: 1.0,
         spacing: 0.5,
         color: c,
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     }
 }
 
 /// C# の試験の Pixel: ApplyPixel(x, y, 1) を 1 回のストロークで確定する。
 fn pixel(doc: &mut Document, layer: LayerId, x: i64, y: i64, c: Rgba8) {
-    let mut s = doc.begin_stroke(layer, &opaque(c)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            layer,
+            &yolu_core::Brush::simple(opaque(c), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(doc, x, y, 1.0, 1.0).unwrap();
     doc.end_stroke(s).unwrap();
 }
@@ -73,12 +76,15 @@ fn pixel_erase_and_undo() {
     let surface = doc.layer(l).unwrap().surface(Channel::Color).unwrap();
     assert_eq!((surface.tile_count(), doc.allocated_bytes()), (1, 64));
     let mut s = doc
-        .begin_stroke(
+        .begin_brush_stroke(
             l,
-            &BrushSettings {
-                erase: true,
-                ..opaque(RED)
-            },
+            &yolu_core::Brush::simple(
+                BrushSettings {
+                    erase: true,
+                    ..opaque(RED)
+                },
+                yolu_core::PressureSwitches::NONE,
+            ),
         )
         .unwrap();
     s.apply_pixel(&mut doc, 5, 9, 1.0, 1.0).unwrap();
@@ -140,7 +146,12 @@ fn a_dropped_stroke_changes_nothing() {
     pixel(&mut doc, l, 3, 3, Rgba8::new(5, 19, 82, 79));
     doc.clear_history().unwrap();
     let before = all(&doc);
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.add_point(&mut doc, 3.5, 3.5, 1.0, DVec2::ZERO).unwrap();
     assert_ne!(all(&doc), before); // 描いている途中も合成で見える
     let _ = s; // 札を落とした: 文書は進行中のまま。app はフォーカス喪失などで取り消す
@@ -156,7 +167,15 @@ fn a_commit_without_change_keeps_redo() {
     let (mut doc, l) = small();
     pixel(&mut doc, l, 1, 1, RED);
     doc.undo().unwrap();
-    let mut s = doc.begin_stroke(l, &opaque(Rgba8::TRANSPARENT)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(
+                opaque(Rgba8::TRANSPARENT),
+                yolu_core::PressureSwitches::NONE,
+            ),
+        )
+        .unwrap();
     s.apply_pixel(&mut doc, 1, 1, 1.0, 1.0).unwrap();
     assert!(!doc.end_stroke(s).unwrap().changed);
     assert!(doc.can_redo());
@@ -167,12 +186,20 @@ fn a_commit_without_change_keeps_redo() {
 #[test]
 fn pressure_opacity_and_flow_keep_straight_alpha() {
     let (mut doc, l) = small();
-    let brush = BrushSettings {
-        pressure_opacity: true,
-        pressure_flow: true,
-        ..opaque(RED)
-    };
-    let mut s = doc.begin_stroke(l, &brush).unwrap();
+    let brush = opaque(RED);
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(
+                brush,
+                yolu_core::PressureSwitches {
+                    size: false,
+                    opacity: true,
+                    flow: true,
+                },
+            ),
+        )
+        .unwrap();
     s.apply_pixel(&mut doc, 4, 4, 1.0, 0.5).unwrap();
     doc.end_stroke(s).unwrap();
     let c = comp(&doc, 4, 4);
@@ -185,7 +212,6 @@ fn soft_brush_falloff_and_zero_pressure() {
     let brush = BrushSettings {
         radius: 4.0,
         hardness: 0.0,
-        pressure_size: true,
         ..BrushSettings::default()
     };
     let mut s = doc.begin_stroke(l, &brush).unwrap();
@@ -212,8 +238,6 @@ fn collinear_packets_give_the_same_pixels() {
         hardness: 0.3,
         spacing: 0.2,
         color: Rgba8::new(91, 23, 188, 71),
-        pressure_opacity: true,
-        pressure_size: true,
         ..BrushSettings::default()
     };
     let draw = |samples: &[(f64, f64, f64, f64)]| {
@@ -241,7 +265,13 @@ fn collinear_packets_give_the_same_pixels() {
 fn duplicate_positions_make_no_extra_dab() {
     let (mut doc, l) = small();
     let mut s = doc
-        .begin_stroke(l, &opaque(Rgba8::new(255, 0, 0, 128)))
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(
+                opaque(Rgba8::new(255, 0, 0, 128)),
+                yolu_core::PressureSwitches::NONE,
+            ),
+        )
         .unwrap();
     s.add_sample(
         &mut doc,
@@ -262,7 +292,12 @@ fn duplicate_positions_make_no_extra_dab() {
 fn settings_are_frozen_and_edits_wait_for_the_stroke() {
     let (mut doc, l) = small();
     let mut brush = opaque(RED);
-    let mut s = doc.begin_stroke(l, &brush).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     brush.color = Rgba8::new(0, 0, 255, 255);
     let _ = brush;
     s.apply_pixel(&mut doc, 1, 1, 1.0, 1.0).unwrap();
@@ -274,7 +309,10 @@ fn settings_are_frozen_and_edits_wait_for_the_stroke() {
         Err(CoreError::StrokeActive)
     );
     assert!(matches!(
-        doc.begin_stroke(l, &brush),
+        doc.begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE)
+        ),
         Err(CoreError::StrokeActive)
     ));
     doc.end_stroke(s).unwrap();
@@ -284,7 +322,12 @@ fn settings_are_frozen_and_edits_wait_for_the_stroke() {
 #[test]
 fn time_must_not_go_back_and_a_failure_cancels() {
     let (mut doc, l) = small();
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.add_sample(
         &mut doc,
         BrushSample::new(4.0, 4.0, 1.0, 10.0, DVec2::ZERO).unwrap(),
@@ -300,40 +343,59 @@ fn time_must_not_go_back_and_a_failure_cancels() {
     assert_eq!(doc.allocated_bytes(), 0);
     assert_eq!(doc.end_stroke(s), Err(CoreError::NoActiveStroke));
     // 範囲外の座標・有限でない値も取り消す
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     assert!(s.add_point(&mut doc, 2e7, 0.0, 1.0, DVec2::ZERO).is_err());
     assert!(!doc.has_active_stroke());
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     assert!(s
         .add_point(&mut doc, f64::NAN, 0.0, 1.0, DVec2::ZERO)
         .is_err());
     assert!(!doc.has_active_stroke());
     // 間違った設定は始める前に断る
     assert!(doc
-        .begin_stroke(
+        .begin_brush_stroke(
             l,
-            &BrushSettings {
-                spacing: 0.0,
-                ..opaque(RED)
-            }
+            &yolu_core::Brush::simple(
+                BrushSettings {
+                    spacing: 0.0,
+                    ..opaque(RED)
+                },
+                yolu_core::PressureSwitches::NONE
+            )
         )
         .is_err());
     assert!(doc
-        .begin_stroke(
+        .begin_brush_stroke(
             l,
-            &BrushSettings {
-                radius: f64::INFINITY,
-                ..opaque(RED)
-            }
+            &yolu_core::Brush::simple(
+                BrushSettings {
+                    radius: f64::INFINITY,
+                    ..opaque(RED)
+                },
+                yolu_core::PressureSwitches::NONE
+            )
         )
         .is_err());
     assert!(doc
-        .begin_stroke(
+        .begin_brush_stroke(
             l,
-            &BrushSettings {
-                hardness: 1.5,
-                ..opaque(RED)
-            }
+            &yolu_core::Brush::simple(
+                BrushSettings {
+                    hardness: 1.5,
+                    ..opaque(RED)
+                },
+                yolu_core::PressureSwitches::NONE
+            )
         )
         .is_err());
 }
@@ -484,7 +546,12 @@ fn budgets_refuse_and_cancel_exactly() {
     // 画素の予算: 2 枚目のタイルで断り、ストロークごと取り消す
     let (mut doc, l) = small();
     doc.set_source_budget_bytes(64).unwrap();
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(&mut doc, 0, 0, 1.0, 1.0).unwrap();
     assert_eq!(
         s.apply_pixel(&mut doc, 8, 8, 1.0, 1.0),
@@ -499,7 +566,12 @@ fn budgets_refuse_and_cancel_exactly() {
     doc.clear_history().unwrap();
     let before = all(&doc);
     doc.set_stroke_budget_bytes(192).unwrap();
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(&mut doc, 2, 2, 1.0, 1.0).unwrap();
     assert_eq!(doc.active_stroke_stats().unwrap().rollback_bytes, 192);
     assert_eq!(
@@ -514,7 +586,12 @@ fn budgets_refuse_and_cancel_exactly() {
         .unwrap();
     assert_eq!(doc.allocated_bytes(), 4);
     doc.set_source_budget_bytes(4).unwrap();
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     assert_eq!(
         s.apply_pixel(&mut doc, 1, 1, 1.0, 1.0),
         Err(CoreError::SourceBudgetExceeded)
@@ -531,12 +608,15 @@ fn a_reduced_source_budget_refuses_a_stroke_undo_atomically_until_it_is_restored
     let (mut doc, l) = small();
     pixel(&mut doc, l, 1, 1, Rgba8::new(10, 20, 30, 255));
     let mut s = doc
-        .begin_stroke(
+        .begin_brush_stroke(
             l,
-            &BrushSettings {
-                erase: true,
-                ..opaque(RED)
-            },
+            &yolu_core::Brush::simple(
+                BrushSettings {
+                    erase: true,
+                    ..opaque(RED)
+                },
+                yolu_core::PressureSwitches::NONE,
+            ),
         )
         .unwrap();
     s.apply_pixel(&mut doc, 1, 1, 1.0, 1.0).unwrap();
@@ -670,11 +750,14 @@ fn dot(doc: &mut Document, layer: LayerId, x: i64, y: i64) {
         radius: 2.0,
         hardness: 1.0,
         color: Rgba8::new(9, 80, 200, 255),
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     };
-    let mut s = doc.begin_stroke(layer, &brush).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            layer,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(doc, x, y, 1.0, 1.0).unwrap();
     doc.end_stroke(s).unwrap();
 }
@@ -709,7 +792,12 @@ fn strokes_undo_redo_and_cancel_report_their_tiles() {
         tiles(&[(2, 3)])
     );
     let now = doc.change_serial();
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     s.apply_pixel(&mut doc, 20, 20, 1.0, 1.0).unwrap();
     doc.cancel_stroke(s);
     assert_eq!(
@@ -1036,11 +1124,22 @@ fn big_dabs_give_the_same_bytes_with_any_thread_count() {
             spacing: 0.05,
             flow: 0.3,
             color: Rgba8::new(30, 200, 120, 220),
-            pressure_flow: true,
             ..BrushSettings::default()
         };
         let since = doc.change_serial();
-        let mut s = doc.begin_stroke(l, &brush).unwrap();
+        let mut s = doc
+            .begin_brush_stroke(
+                l,
+                &yolu_core::Brush::simple(
+                    brush,
+                    yolu_core::PressureSwitches {
+                        size: true,
+                        opacity: true,
+                        flow: true,
+                    },
+                ),
+            )
+            .unwrap();
         for k in 0..25 {
             let k = k as f64;
             s.add_point(
@@ -1055,13 +1154,20 @@ fn big_dabs_give_the_same_bytes_with_any_thread_count() {
         let stats = doc.active_stroke_stats().unwrap();
         doc.end_stroke(s).unwrap();
         let mut e = doc
-            .begin_stroke(
+            .begin_brush_stroke(
                 l,
-                &BrushSettings {
-                    erase: true,
-                    radius: 70.0,
-                    ..brush
-                },
+                &yolu_core::Brush::simple(
+                    BrushSettings {
+                        erase: true,
+                        radius: 70.0,
+                        ..brush
+                    },
+                    yolu_core::PressureSwitches {
+                        size: true,
+                        opacity: true,
+                        flow: true,
+                    },
+                ),
             )
             .unwrap();
         e.add_point(&mut doc, 380.0, 20.0, 1.0, DVec2::ZERO)
@@ -1123,7 +1229,12 @@ fn dabs_are_reported_while_the_stroke_is_still_open() {
     // 画面は描いている途中も変わったタイルだけを描き直す（C# の SurfaceRevisionTests: 確定の前のダブもタイルの変化に入る）
     let mut doc = Document::with_tile_size(64, 64, 16).unwrap();
     let l = doc.add_layer("L").unwrap();
-    let mut s = doc.begin_stroke(l, &opaque(RED)).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            l,
+            &yolu_core::Brush::simple(opaque(RED), yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     let since = doc.change_serial();
     let revision = doc.revision();
     s.add_point(&mut doc, 8.0, 8.0, 1.0, DVec2::ZERO).unwrap();
@@ -1150,12 +1261,15 @@ fn changed_tiles_can_be_recomposited_one_by_one() {
     let mut screen = all(&doc);
     let since = doc.change_serial();
     let mut s = doc
-        .begin_stroke(
+        .begin_brush_stroke(
             l,
-            &BrushSettings {
-                radius: 12.0,
-                ..opaque(RED)
-            },
+            &yolu_core::Brush::simple(
+                BrushSettings {
+                    radius: 12.0,
+                    ..opaque(RED)
+                },
+                yolu_core::PressureSwitches::NONE,
+            ),
         )
         .unwrap();
     s.add_point(&mut doc, 5.0, 60.0, 1.0, DVec2::ZERO).unwrap();

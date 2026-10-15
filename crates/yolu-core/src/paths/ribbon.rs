@@ -241,7 +241,7 @@ pub(super) fn draw_canvas(
                 continue;
             }
             let nrm = DVec2::new(-dir.y, dir.x);
-            let scale = if b.pressure_size {
+            let scale = if path.brush.1.size {
                 pressure.max(0.001)
             } else {
                 1.0
@@ -367,7 +367,7 @@ pub(super) fn draw_surface(
             }
             let dir = normalized(along_plane);
             let side = cross(n, dir);
-            let scale = if b.pressure_size {
+            let scale = if path.brush.1.size {
                 q.pressure.max(0.001)
             } else {
                 1.0

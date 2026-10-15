@@ -53,11 +53,14 @@ fn document(size: u32) -> (Document, LayerId) {
         spacing: 0.2,
         opacity: 0.7,
         color: Rgba8::new(90, 140, 190, 255),
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     };
-    let mut s = doc.begin_stroke(paint, &brush).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            paint,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     for i in 0..40 {
         let t = i as f64 / 39.0;
         s.add_point(
@@ -77,11 +80,14 @@ fn document(size: u32) -> (Document, LayerId) {
         hardness: 0.6,
         spacing: 0.3,
         color: Rgba8::new(200, 90, 60, 255),
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     };
-    let mut s = doc.begin_stroke(target, &texture).unwrap();
+    let mut s = doc
+        .begin_brush_stroke(
+            target,
+            &yolu_core::Brush::simple(texture, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     for i in 0..60 {
         let t = i as f64 / 59.0;
         s.add_point(
@@ -100,15 +106,16 @@ fn document(size: u32) -> (Document, LayerId) {
 
 fn brush_for(kind: &str, size: f64, spacing: f64) -> Option<Brush> {
     let radius = size / 2.0;
-    let mut b = Brush::from(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing,
-        color: Rgba8::new(30, 30, 60, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing,
+            color: Rgba8::new(30, 30, 60, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    );
     b.seed = 7;
     match kind {
         "hard" => {}

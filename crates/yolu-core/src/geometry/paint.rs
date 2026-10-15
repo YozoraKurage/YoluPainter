@@ -72,12 +72,13 @@ use super::{SurfaceGeometry, SurfaceHit};
 use crate::brush::profile;
 use crate::brush::random::NetRandom;
 use crate::brush::{
-    combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, PendingDab,
-    ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric, DUAL_STREAM, MIN_ONE_PIXEL_RADIUS,
+    combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, Input,
+    InputResponse, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric,
+    DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
-    PressureResponse, StencilPoint, Stroke, SymmetryTransform,
+    StencilPoint, Stroke, SymmetryTransform,
 };
 
 /// 3D のストロークを止めた理由（どれもストロークを取り消す）。
@@ -371,11 +372,11 @@ pub struct SurfaceStroke {
     anti_alias: AntiAlias,
     last_metric: Option<TexelMetric>,
     spacing: f32,
+    /// 大きさを筆圧で変えるか（ストロークのブラシの影響元の筆圧）。
     pressure_size: bool,
-    /// 筆圧の応え（ストロークのブラシと同じもの）。大きさは、切っていない・応えが既定（筆圧そのもの）のとき None。硬さは切っているとき
-    /// だけ持つ（既定の応えでも、硬さ × 筆圧になる）。
-    size_response: Option<PressureResponse>,
-    hardness_response: Option<PressureResponse>,
+    /// 大きさの筆圧の応え（ストロークのブラシと同じもの）。筆圧を使っていない・応えが既定（筆圧そのもの）のとき None。硬さの影響元は描点ごとの
+    /// 係数（[`StampControls::hardness_factor`]）で掛ける。
+    size_response: Option<InputResponse>,
     /// 色の混ぜるブラシ（ストロークのブラシが混ぜ、色を塗る）: ダブの画素をまとめて渡し、下地を凍結して塗る（画素ごとには塗れない）。
     mixes: bool,
     /// 色の混ぜの伸ばす（対称なし）: 指先と同じく、直前のダブの面の点から今の点へ、展開の図で UV の継ぎ目をまたいで下地を読む。
@@ -403,6 +404,8 @@ pub struct SurfaceStroke {
     brush: Arc<Brush>,
     /// ゆらぎ・散布・筆先の選びの乱数の列（2D のストロークと同じ種で、同じ順に引く）と、順に使う筆先の番号。
     random: NetRandom,
+    /// 影響元のランダムの乱数の列（2D のストロークと同じ。どの項目もランダムを使わなければ None）。
+    influence_random: Option<NetRandom>,
     tip_index: u64,
     /// 置いた描点の数（フェード）。
     stamps: u64,
@@ -539,14 +542,16 @@ impl SurfaceStroke {
             _ => None,
         };
         let world_radius = world_radius(&geometry, brush.radius, doc.width());
-        // 筆圧の応えは、文書のストロークのブラシ（始めたときに固定したもの）から取る。切り替えは渡された設定のもの
+        // 影響元は、文書のストロークのブラシ（始めたときに固定したもの）から取る
         let stroke_brush = stroke.brush(doc)?;
-        let size_response = (brush.pressure_size && !stroke_brush.pressure.size.is_identity())
-            .then(|| stroke_brush.pressure.size.clone());
-        let hardness_response = stroke_brush
-            .controls
-            .pressure_hardness
-            .then(|| stroke_brush.pressure.hardness.clone());
+        let size_pressure = &stroke_brush.influences.size.pressure;
+        let pressure_size = size_pressure.on;
+        let size_response = (pressure_size && !size_pressure.response.is_identity())
+            .then(|| size_pressure.response.clone());
+        let influence_random = stroke_brush
+            .influences
+            .uses(Input::Random)
+            .then(|| NetRandom::new(stroke_brush.seed ^ INFLUENCE_STREAM));
         let mixes = stroke_brush.mix.is_active()
             && stroke_brush.effect.is_paint()
             && !stroke_brush.base.erase;
@@ -587,9 +592,8 @@ impl SurfaceStroke {
             anti_alias: brush.anti_alias,
             last_metric: None,
             spacing: brush.spacing as f32,
-            pressure_size: brush.pressure_size,
+            pressure_size,
             size_response,
-            hardness_response,
             mixes,
             smears,
             stretch: stroke_brush.mix.stretch as f32,
@@ -608,6 +612,7 @@ impl SurfaceStroke {
             clone_destination,
             symmetry_note: None,
             random: NetRandom::new(stroke_brush.seed),
+            influence_random,
             tip_index: 0,
             stamps: 0,
             pen: first,
@@ -1002,7 +1007,7 @@ impl SurfaceStroke {
             rotation: dab.rotation,
             speed: dab.speed,
         };
-        let controls = brush.stamp_controls(&pending, index);
+        let controls = brush.stamp_controls(&pending, index, self.influence_random.as_mut());
         // 大きさの係数（入り抜き）。筆圧の大きさとモデルの単位の半径は塗るときに掛ける（今までの 3D の式のまま）
         let factor = if dab.skip {
             0.0
@@ -1040,6 +1045,9 @@ impl SurfaceStroke {
                 plan.as_ref().map(|p| SurfaceDabLook {
                     opacity: p.opacity_scale,
                     flow: p.flow_scale,
+                    texture_density: controls.texture_density,
+                    mix_paint: controls.mix_others.0,
+                    mix_density: controls.mix_others.1,
                 }),
             )?;
             let Some(plan) = plan else {
@@ -1103,8 +1111,8 @@ impl SurfaceStroke {
                 radius = fmax(radius, MIN_ONE_PIXEL_RADIUS as f32 * texel);
             }
         }
-        let hardness = match &self.hardness_response {
-            Some(r) => (self.hardness as f64 * r.apply(pressure as f64)) as f32,
+        let hardness = match controls.hardness_factor {
+            Some(f) => (self.hardness as f64 * f) as f32,
             None => self.hardness,
         };
         // 丸い筆先（画像なし・真円率 1。角度は形を変えない）は今までの式、そのほかは 2D と同じ形の式

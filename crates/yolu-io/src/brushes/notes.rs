@@ -246,6 +246,12 @@ pub enum SutTarget {
     Flow,
     /// 太さ（真円率）。
     Thickness,
+    /// 紙質濃度（質感の濃さ）。
+    TextureDensity,
+    /// 絵の具量。
+    MixPaint,
+    /// 絵の具濃度。
+    MixDensity,
 }
 
 impl SutTarget {
@@ -255,13 +261,31 @@ impl SutTarget {
             Self::Opacity => ("不透明度", "opacity"),
             Self::Flow => ("流量", "flow"),
             Self::Thickness => ("太さ", "thickness"),
+            Self::TextureDensity => ("質感の濃さ", "texture density"),
+            Self::MixPaint => ("絵の具の量", "paint amount"),
+            Self::MixDensity => ("絵の具の濃さ", "paint density"),
+        }
+    }
+
+    /// 写す先の影響元の項目。
+    pub fn item(self) -> yolu_core::brush::Item {
+        use yolu_core::brush::Item;
+        match self {
+            Self::Size => Item::Size,
+            Self::Opacity => Item::Opacity,
+            Self::Flow => Item::Flow,
+            Self::Thickness => Item::Roundness,
+            Self::TextureDensity => Item::TextureDensity,
+            Self::MixPaint => Item::MixPaint,
+            Self::MixDensity => Item::MixDensity,
         }
     }
 }
 
-/// CLIP STUDIO の「影響元設定」の入力のうち、このアプリで同じ式で使えないもの（筆圧は最小値と曲線で写す）。
+/// CLIP STUDIO の「影響元設定」の入力（注記で、どの入力の曲線かを言う）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SutInput {
+    Pressure,
     Tilt,
     Speed,
     Random,
@@ -270,6 +294,7 @@ pub enum SutInput {
 impl SutInput {
     fn texts(self) -> (&'static str, &'static str) {
         match self {
+            Self::Pressure => ("筆圧", "pen pressure"),
             Self::Tilt => ("ペンの傾き", "pen tilt"),
             Self::Speed => ("速さ", "speed"),
             Self::Random => ("ランダム", "random"),
@@ -285,9 +310,9 @@ pub enum SutMapped {
     TipImage,
     /// 質感。
     Texture,
-    /// 大きさ・不透明度・流量への筆圧の影響（最小値と曲線）。
+    /// 項目への筆圧の影響（最小値と曲線）。
     Pressure,
-    /// 大きさ・不透明度・流量へのペンの傾きの影響。
+    /// 項目へのペンの傾きの影響（最小値と曲線）。
     Tilt,
     /// 入り抜き（大きさへ。長さは画素）。
     StartEnd,
@@ -307,6 +332,10 @@ pub enum SutMapped {
     ColorMixing,
     /// アンチエイリアス。
     AntiAliasing,
+    /// 項目への速さの影響（最小値。曲線は直線）。
+    Speed,
+    /// 項目へのランダムの影響（最小値。曲線は直線）。
+    Random,
 }
 
 impl SutMapped {
@@ -326,6 +355,8 @@ impl SutMapped {
             Self::MinOnePixel => ("最低 1 ピクセル", "at least 1 pixel"),
             Self::ColorMixing => ("色の混ぜ", "color mixing"),
             Self::AntiAliasing => ("アンチエイリアス", "anti-aliasing"),
+            Self::Speed => ("速さ", "speed"),
+            Self::Random => ("ランダム", "random"),
         }
     }
 }
@@ -388,18 +419,16 @@ pub enum SutNote {
     ColorChange,
     /// 合成モード。
     BlendMode,
-    /// 影響元設定の筆圧以外の入力。
-    Influence {
+    /// 影響元設定の入力（速さ・ランダム）の曲線は読めず、直線にした。
+    InfluenceCurve {
         target: SutTarget,
         input: SutInput,
     },
     /// 影響元設定の中身を読めなかった（この版の形が分からない）ので、外した。
     InfluenceUnreadable(SutTarget),
-    /// 太さの筆圧は無い。
-    ThicknessPressure,
-    /// 筆圧の曲線の点が 16 を超え、16 点に取り直した。
-    CurveSimplified(SutTarget),
-    /// 傾きの影響を、直立で 1・寝かせきって 0 の直線に近似した（このアプリの傾きの影響は曲線を持たない）。
+    /// 筆圧か傾きの曲線の点が 16 を超え、16 点に取り直した。
+    CurveSimplified(SutTarget, SutInput),
+    /// 傾きの曲線を決められず（影響元の頭の枠が読めない・曲線と合わない）、直立で 1・寝かせきって 0 の直線にした。
     TiltCurve(SutTarget),
     /// 入り抜きの長さだけを写した。速さに応じた長さ・割合（`BrushInOutBySpeed`・`BrushInRatio`・`BrushOutRatio`）は読まない。
     StartEndDetail,
@@ -510,12 +539,12 @@ impl SutNote {
             ),
             Self::ColorChange => ("色の変化は未対応".into(), "Color change is not supported.".into()),
             Self::BlendMode => ("合成モードは未対応".into(), "The blend mode is not supported.".into()),
-            Self::Influence { target, input } => {
+            Self::InfluenceCurve { target, input } => {
                 let (tja, ten) = target.texts();
                 let (ija, ien) = input.texts();
                 (
-                    format!("{tja}の影響元「{ija}」は未対応で、外した"),
-                    format!("The {ien} influence on {ten} is not supported; it is left off."),
+                    format!("{tja}の影響元「{ija}」の曲線は読めず、直線にした（最小値は写した）"),
+                    format!("The {ien} curve for {ten} could not be read; a straight line is used (the minimum is kept)."),
                 )
             }
             Self::InfluenceUnreadable(target) => {
@@ -525,22 +554,19 @@ impl SutNote {
                     format!("The influence settings for {ten} could not be read (unknown layout in this version); they are left off."),
                 )
             }
-            Self::ThicknessPressure => (
-                "太さの筆圧の影響は未対応で、外した".into(),
-                "The pen pressure influence on thickness is not supported; it is left off.".into(),
-            ),
-            Self::CurveSimplified(target) => {
+            Self::CurveSimplified(target, input) => {
                 let (tja, ten) = target.texts();
+                let (ija, ien) = input.texts();
                 (
-                    format!("{tja}の筆圧の曲線は 16 点に取り直した（点が 16 を超える）"),
-                    format!("The pen pressure curve for {ten} was resampled to 16 points (it had more)."),
+                    format!("{tja}の{ija}の曲線は 16 点に取り直した（点が 16 を超える）"),
+                    format!("The {ien} curve for {ten} was resampled to 16 points (it had more)."),
                 )
             }
             Self::TiltCurve(target) => {
                 let (tja, ten) = target.texts();
                 (
-                    format!("{tja}の傾きの影響は、直立で 1・寝かせきって 0 の直線に近似した（曲線の形は写せない）"),
-                    format!("The pen tilt influence on {ten} is approximated by a straight line from 1 (upright) to 0 (flat); the curve's shape is not kept."),
+                    format!("{tja}の傾きの曲線を決められず、直立で 1・寝かせきって 0 の直線にした"),
+                    format!("The pen tilt curve for {ten} could not be determined; a straight line from 1 (upright) to 0 (flat) is used."),
                 )
             }
             Self::StartEndDetail => (

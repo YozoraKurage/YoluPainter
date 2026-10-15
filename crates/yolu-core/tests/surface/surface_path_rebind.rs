@@ -92,11 +92,14 @@ fn path_on(g: &SurfaceGeometry) -> SurfacePath {
         style: Default::default(),
         id: 0x1234_5678_9abc_def0,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 0.005,
-            color: Rgba8::new(1, 2, 3, 255),
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.005,
+                color: Rgba8::new(1, 2, 3, 255),
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![at(g, 0.2, 0.3), at(g, 0.7, 0.6)],
         model_fingerprint: fingerprint(g),
         material: None,

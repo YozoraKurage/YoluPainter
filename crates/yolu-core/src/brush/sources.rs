@@ -286,7 +286,7 @@ impl StrokeState {
         }
         self.effect.scratch = bytes;
         if smears {
-            self.begin_mapped_mix_dab(self.brush.pressure_scale(pressure));
+            self.begin_mapped_mix_dab(self.surface_pressure(self.brush.pressure_scale(pressure)));
         }
         let result = self.apply_mapped(surface, pixels, pressure, points, changed);
         self.effect.scratch = 0;
@@ -339,7 +339,7 @@ impl StrokeState {
             mapped.colors.push(self.sample_mapped(surface, p)?);
         }
         let brush = self.brush.clone();
-        let pressure = brush.pressure_scale(pressure);
+        let pressure = self.surface_pressure(brush.pressure_scale(pressure));
         let mut paint = self.paint(&brush, None);
         paint.mapped = Some(&mapped);
         let ts = surface.tile_size() as i64;

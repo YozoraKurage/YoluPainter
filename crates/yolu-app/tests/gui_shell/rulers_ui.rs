@@ -448,7 +448,7 @@ fn a_symmetry_ruler_is_placed_by_dragging_mirrors_strokes_follows_the_layer_and_
         let s = &mut h.state_mut().state;
         s.brush.radius = 1.5;
         s.brush.hardness = 1.0;
-        s.brush.pressure_size = false;
+        s.brush.pressure.size = false;
         s.m2.random_seed = false;
         let l1 = s.selected_layer.unwrap();
         s.doc.set_layer_name(l1, "L1").unwrap();

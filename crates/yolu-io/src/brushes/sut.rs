@@ -7,8 +7,8 @@
 //!   プレビューの PNG。どの素材を使うかは `Variant` の参照の BLOB の名前から決める。名前で当たらない参照は、残った素材（素材の種類が
 //!   分かるときは種類ごと）と参照の数がちょうど合うときだけ並びで当て、そのときは推定として [`SutNote`] で知らせる。決められない・
 //!   取り出せない筆先は使わず、欠けたことを知らせる（黙って別の画像を使わない）。
-//! - 影響元設定（`*Effector`）は筆圧（最小値と曲線）と、傾き（大きさ・不透明度・流量へ。曲線は直線に近似）。速さ・ランダムは表せない
-//!   ので注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正（`FlickerReduction`。後補正は表せない）・間隔（種類ごと）・
+//! - 影響元設定（`*Effector`。大きさ・不透明度・流量・厚さ（真円率へ）・紙質濃度・絵の具量・絵の具濃度）は、筆圧・傾き・速さ・ランダムの
+//!   切り替えと最小値、筆圧と傾きの曲線を影響元へ写す。速さ・ランダムの曲線は読めないので直線にして注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正（`FlickerReduction`。後補正は表せない）・間隔（種類ごと）・
 //!   筆先の角度・角度の影響元（ペンの向き・ペン軸の回転・線の方向・ランダム）・厚さの適用方向・最低 1 ピクセルも写す。写せたものは
 //!   [`SutMapped`]、近似したものは [`SutNote`] にも載せる。
 //! - 表せない設定（色の混ぜの旗だけのもの・吹き付け・デュアルブラシ・色の変化・合成モードなど）は、旗が立っているものだけ
@@ -26,9 +26,12 @@ mod tar;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use yolu_core::brush::MAX_STROKE_ASSIST;
+use yolu_core::brush::{Input, MAX_STROKE_ASSIST};
 use yolu_core::curve::{Curve, CurvePoint};
-use yolu_core::{AntiAlias, Brush, BrushTip, PaperTexture, PressureResponse, TipSelection};
+use yolu_core::{
+    AntiAlias, Brush, BrushTip, Influence, Influences, InputResponse, InputUse, PaperTexture,
+    TipSelection,
+};
 
 use super::error::{BrushImportError, Fault};
 use super::notes::{Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented};
@@ -82,6 +85,9 @@ const SIZE_EFFECTOR: &[&str] = &["brushsizeeffector"];
 const OPACITY_EFFECTOR: &[&str] = &["opacityeffector", "brushopacityeffector"];
 const FLOW_EFFECTOR: &[&str] = &["brushfloweffector"];
 const THICKNESS_EFFECTOR: &[&str] = &["brushthicknesseffector"];
+const TEXTURE_DENSITY_EFFECTOR: &[&str] = &["texturedensityeffector"];
+const MIX_PAINT_EFFECTOR: &[&str] = &["brushmixcoloreffector"];
+const MIX_DENSITY_EFFECTOR: &[&str] = &["brushmixalphaeffector"];
 const WATER_COLOR: &[&str] = &["brushusewatercolor", "brushusewatercolor2"];
 // 下地混色の方式（0 色混ぜ・1 にじみ・2 色重ね）
 const WATER_COLOR_KIND: &[&str] = &["brushwatercolor"];
@@ -154,6 +160,9 @@ const KNOWN: &[&[&str]] = &[
     OPACITY_EFFECTOR,
     FLOW_EFFECTOR,
     THICKNESS_EFFECTOR,
+    TEXTURE_DENSITY_EFFECTOR,
+    MIX_PAINT_EFFECTOR,
+    MIX_DENSITY_EFFECTOR,
     WATER_COLOR,
     WATER_COLOR_KIND,
     MIX_PAINT,
@@ -408,83 +417,11 @@ fn curve_points(raw: &[(f64, f64)]) -> (Vec<CurvePoint>, bool) {
     )
 }
 
-/// 傾きの影響の曲線が、直線（直立で 1・寝かせきって 0）から外れてよい最大の幅。これ以内なら近似の注記を付けない。
-const TILT_STRAIGHT: f64 = 0.1;
-
-/// 曲線（点を通る折れ線。x の昇順でなくてもよい）の x での値。点が 2 つに満たない・有限でない点だけなら None。
-fn curve_value(points: &[(f64, f64)], x: f64) -> Option<f64> {
-    let mut pts: Vec<(f64, f64)> = points
-        .iter()
-        .filter(|(px, py)| px.is_finite() && py.is_finite())
-        .map(|&(px, py)| (px.clamp(0.0, 1.0), py.clamp(0.0, 1.0)))
-        .collect();
-    if pts.len() < 2 {
-        return None;
-    }
-    pts.sort_by(|a, b| a.0.total_cmp(&b.0));
-    if x <= pts[0].0 {
-        return Some(pts[0].1);
-    }
-    let last = pts[pts.len() - 1];
-    if x >= last.0 {
-        return Some(last.1);
-    }
-    let i = pts.windows(2).position(|w| x <= w[1].0)?;
-    let (a, b) = (pts[i], pts[i + 1]);
-    let t = if b.0 > a.0 {
-        (x - a.0) / (b.0 - a.0)
-    } else {
-        0.0
-    };
-    Some(a.1 + (b.1 - a.1) * t)
-}
-
-/// 傾きの曲線が「直立で 1・寝かせきって 0 へ下がる」形なら、直線 1 − x からの最大の外れ。そうでなければ（上がる・途中で止まる・
-/// 読めない）None。このアプリの傾きの影響は、大きさ・不透明度・流量へ 1 − 傾き（直立 0〜寝かせきって 1）を掛けるだけで、
-/// 曲線も最小値も持たないので、全幅で下がる曲線だけを近似する。
-fn tilt_fit(points: &[(f64, f64)]) -> Option<f64> {
-    let (top, bottom) = (curve_value(points, 0.0)?, curve_value(points, 1.0)?);
-    if top < 0.9 || bottom > 0.1 {
-        return None;
-    }
-    (0..=20)
-        .map(|i| {
-            let x = i as f64 / 20.0;
-            curve_value(points, x).map(|y| (y - (1.0 - x)).abs())
-        })
-        .try_fold(0.0f64, |worst, d| d.map(|d| worst.max(d)))
-}
-
-/// 傾きの影響を、大きさ・不透明度・流量の傾きの切り替えに写す。写せたら true（写せなければ呼び出し側が「表せない」と知らせる）。
-/// 速さも使う設定は、筆圧でない 2 つ目の曲線がどちらの入力のものか決められないので写さない。太さ（真円率）には傾きの影響が無い。
-fn map_tilt(
-    brush: &mut Brush,
-    e: &Effector,
-    target: SutTarget,
-    notes: &mut Vec<Unrepresented>,
-    mapped: &mut Vec<SutMapped>,
-) -> bool {
-    if e.flags & Effector::SPEED != 0 {
-        return false;
-    }
-    let Some(deviation) = e.tilt_curve().and_then(tilt_fit) else {
-        return false;
-    };
-    let controls = &mut brush.controls;
-    match target {
-        SutTarget::Size => controls.tilt_size = true,
-        SutTarget::Opacity => controls.tilt_opacity = true,
-        SutTarget::Flow => controls.tilt_flow = true,
-        SutTarget::Thickness => return false,
-    }
-    mapped.push(SutMapped::Tilt);
-    if deviation > TILT_STRAIGHT {
-        notes.push(Unrepresented::ClipStudio(SutNote::TiltCurve(target)));
-    }
-    true
-}
-
-/// 影響元の列 1 つを読んで、筆圧は応えに、傾きは傾きの切り替えに、ほかの入力は注記にする。
+/// 影響元の列 1 つを読んで、項目の影響元へ写す: 旗（0x10 筆圧・0x20 傾き・0x40 速さ・0x80 ランダム）を入力ごとの切り替えに、
+/// ヘッダーの最小値を入力ごとの最小値に、1 つ目の曲線を筆圧の曲線に、2 つ目の曲線を傾きの曲線にする。
+/// 傾きの曲線の x は 0 が直立（CLIP STUDIO の曲線の x の向き。こちらの傾きの入力は直立 1 なので、x を 1 − x へ反転して写す）。
+/// 傾きの曲線を決められない（ヘッダーの枠が読めない・曲線と合わない）ときは直線にして知らせる。速さ・ランダムの曲線は読まない
+/// （使うと BLOB が 44 バイト伸びるが、中身の形が分からない）ので直線にして、使っていれば知らせる。
 fn effector(
     brush: &mut Brush,
     row: &Row,
@@ -507,53 +444,69 @@ fn effector(
         )));
         return;
     };
-    for (flag, input) in [
-        (Effector::TILT, SutInput::Tilt),
-        (Effector::SPEED, SutInput::Speed),
-        (Effector::RANDOM, SutInput::Random),
-    ] {
+    let mut influence = Influence::OFF;
+    for (index, (flag, input)) in [
+        (Effector::PRESSURE, Input::Pressure),
+        (Effector::TILT, Input::Tilt),
+        (Effector::SPEED, Input::Speed),
+        (Effector::RANDOM, Input::Random),
+    ]
+    .into_iter()
+    .enumerate()
+    {
         if e.flags & flag == 0 {
             continue;
         }
-        if input == SutInput::Tilt && map_tilt(brush, &e, target, notes, mapped) {
+        let raw: Option<Vec<(f64, f64)>> = match input {
+            Input::Pressure => e.pressure_curve().map(<[_]>::to_vec),
+            Input::Tilt => match e.tilt_curve() {
+                Some(curve) => curve.map(|c| c.iter().map(|&(x, y)| (1.0 - x, y)).collect()),
+                None => {
+                    notes.push(Unrepresented::ClipStudio(SutNote::TiltCurve(target)));
+                    None
+                }
+            },
+            Input::Speed | Input::Random => {
+                notes.push(Unrepresented::ClipStudio(SutNote::InfluenceCurve {
+                    target,
+                    input: if input == Input::Speed {
+                        SutInput::Speed
+                    } else {
+                        SutInput::Random
+                    },
+                }));
+                None
+            }
+        };
+        let (points, simplified) = raw.as_deref().map_or((Vec::new(), false), curve_points);
+        if simplified {
+            let input = if input == Input::Tilt {
+                SutInput::Tilt
+            } else {
+                SutInput::Pressure
+            };
+            notes.push(Unrepresented::ClipStudio(SutNote::CurveSimplified(
+                target, input,
+            )));
+        }
+        let min = e.minimums[index];
+        let response =
+            InputResponse::new(min, points).or_else(|_| InputResponse::new(min, Vec::new()));
+        let Ok(response) = response else {
             continue;
-        }
-        notes.push(Unrepresented::ClipStudio(SutNote::Influence {
-            target,
-            input,
-        }));
-    }
-    if e.flags & Effector::PRESSURE == 0 {
-        return;
-    }
-    let (points, simplified) = e.pressure_curve().map_or((Vec::new(), false), curve_points);
-    if simplified {
-        notes.push(Unrepresented::ClipStudio(SutNote::CurveSimplified(target)));
-    }
-    let response = PressureResponse::new(e.pressure_min, points)
-        .or_else(|_| PressureResponse::new(e.pressure_min, Vec::new()));
-    let Ok(response) = response else {
-        return;
-    };
-    match target {
-        SutTarget::Size => {
-            brush.base.pressure_size = true;
-            brush.pressure.size = response;
-        }
-        SutTarget::Opacity => {
-            brush.base.pressure_opacity = true;
-            brush.pressure.opacity = response;
-        }
-        SutTarget::Flow => {
-            brush.base.pressure_flow = true;
-            brush.pressure.flow = response;
-        }
-        SutTarget::Thickness => {
-            notes.push(Unrepresented::ClipStudio(SutNote::ThicknessPressure));
-            return;
+        };
+        *influence.input_mut(input) = InputUse { on: true, response };
+        let item = match input {
+            Input::Pressure => SutMapped::Pressure,
+            Input::Tilt => SutMapped::Tilt,
+            Input::Speed => SutMapped::Speed,
+            Input::Random => SutMapped::Random,
+        };
+        if !mapped.contains(&item) {
+            mapped.push(item);
         }
     }
-    mapped.push(SutMapped::Pressure);
+    *brush.influences.get_mut(target.item()) = influence;
 }
 
 /// 入り抜きの影響先が既定（大きさだけ）か。`BrushInOutType` が 0 で、`BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、
@@ -1055,10 +1008,10 @@ fn brush_from_row(
 ) -> Result<(Brush, Vec<Unrepresented>, Vec<SutMapped>), Fault> {
     let mut notes: Vec<Unrepresented> = Vec::new();
     let mut mapped: Vec<SutMapped> = Vec::new();
-    let mut brush = Brush::default();
-    brush.base.pressure_size = false;
-    brush.base.pressure_opacity = false;
-    brush.base.pressure_flow = false;
+    let mut brush = Brush {
+        influences: Influences::none(),
+        ..Brush::default()
+    };
 
     let images = tips(row, name, library, budget, &mut notes)?;
     let mut tip_side = None;
@@ -1134,6 +1087,17 @@ fn brush_from_row(
         &mut notes,
         &mut mapped,
     )?;
+    // 質感の濃さの影響元は、質感を写せたブラシだけ（質感の無いブラシには効く所が無い）
+    if brush.texture.is_some() {
+        effector(
+            &mut brush,
+            row,
+            SutTarget::TextureDensity,
+            TEXTURE_DENSITY_EFFECTOR,
+            &mut notes,
+            &mut mapped,
+        );
+    }
     tip_direction(row, &mut brush, &mut notes, &mut mapped);
     thickness_direction(row, &mut brush, &mut notes, &mut mapped);
     if row.on(AT_LEAST_ONE_PIXEL) {
@@ -1164,6 +1128,13 @@ fn brush_from_row(
         brush.mix.density = unit(density);
         brush.mix.stretch = unit(stretch);
         mapped.push(SutMapped::ColorMixing);
+        // 絵の具の量・濃さの影響元は、混ぜを写せたブラシだけ（混ぜないブラシには効く所が無い）
+        for (target, columns) in [
+            (SutTarget::MixPaint, MIX_PAINT_EFFECTOR),
+            (SutTarget::MixDensity, MIX_DENSITY_EFFECTOR),
+        ] {
+            effector(&mut brush, row, target, columns, &mut notes, &mut mapped);
+        }
     } else if mixing {
         notes.push(Unrepresented::ClipStudio(SutNote::ColorMixing {
             paint,
@@ -1298,24 +1269,6 @@ mod tests {
     }
 
     #[test]
-    fn tilt_curves_are_fitted_only_when_they_fall_over_the_full_range() {
-        // 直線 1 − x: 外れ 0
-        let straight = tilt_fit(&[(0.0, 1.0), (1.0, 0.0)]).unwrap();
-        assert!(straight < 1e-9);
-        // 途中まで 1 のまま落ちる曲線は、直線から大きく外れる（近似の注記が付く幅）
-        let plateau = tilt_fit(&[(0.0, 1.0), (0.364, 1.0), (0.609, 0.0), (1.0, 0.0)]).unwrap();
-        assert!(plateau > TILT_STRAIGHT);
-        // 上がる・途中までしか下がらない・点が足りない・有限でない点だけは写さない
-        assert_eq!(tilt_fit(&[(0.0, 0.0), (1.0, 1.0)]), None);
-        assert_eq!(tilt_fit(&[(0.0, 1.0), (1.0, 0.5)]), None);
-        assert_eq!(tilt_fit(&[(0.0, 0.5), (1.0, 0.0)]), None);
-        assert_eq!(tilt_fit(&[(0.0, 1.0)]), None);
-        assert_eq!(tilt_fit(&[(f64::NAN, 1.0), (1.0, f64::INFINITY)]), None);
-        // x の昇順でない点・範囲外の値も読める
-        assert!(tilt_fit(&[(1.0, -3.0), (0.0, 4.0)]).unwrap() < 1e-9);
-    }
-
-    #[test]
     fn curves_become_valid_core_curves() {
         let straight = |p: &[(f64, f64)]| {
             let (points, simplified) = curve_points(p);
@@ -1390,7 +1343,7 @@ mod tests {
             if points.is_empty() {
                 straight += 1;
             }
-            let response = PressureResponse::new((next() % 101) as f64 / 100.0, points);
+            let response = InputResponse::new((next() % 101) as f64 / 100.0, points);
             assert!(response.is_ok(), "round {round}: {pts:?}");
         }
         assert!(straight > 0, "点が足りない・有限でない場合も通る");

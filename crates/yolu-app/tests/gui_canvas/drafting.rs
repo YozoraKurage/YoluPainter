@@ -20,7 +20,7 @@ fn state() -> AppState {
     let mut s = AppState::new(64, 64);
     s.brush.radius = 1.5;
     s.brush.hardness = 1.0;
-    s.brush.pressure_size = false;
+    s.brush.pressure.size = false;
     s.m2.brush.assist.curve = true;
     s.m2.brush.assist.stabilizer = 12.0;
     s
@@ -653,8 +653,8 @@ fn shift_pen_line_uses_endpoint_pressure_instead_of_previous_pressure() {
     {
         let s = &mut h.state_mut().state;
         s.brush.radius = 5.0;
-        s.brush.pressure_size = false;
-        s.brush.pressure_opacity = true;
+        s.brush.pressure.size = false;
+        s.brush.pressure.opacity = true;
         s.brush.hardness = 1.0;
     }
     let a = point(&h, 10.0, 30.0);
@@ -684,7 +684,7 @@ fn shift_eraser_and_effect_brush_use_the_same_atomic_stroke() {
             drafting::canvas::paint(s, DVec2::new(8.0, 8.0), DVec2::new(32.0, 56.0), rect());
             s.doc.clear_history().unwrap();
             s.brush.radius = 4.0;
-            s.brush.pressure_size = false;
+            s.brush.pressure.size = false;
             s.canvas.previous_end = Some((12.0, 30.0));
             if let Some(effect) = effect {
                 s.tool = Tool::Brush;
@@ -864,8 +864,13 @@ fn figure_strokes_ignore_speed_controls_whatever_the_vertex_spacing() {
     ] {
         let plain = figure_with(false, figure, corner);
         let mut fast = state();
-        let c = &mut fast.m2.brush.controls;
-        (c.speed_size, c.speed_opacity, c.speed_flow, c.speed_max) = (true, true, true, 100.0);
+        let i = &mut fast.m2.brush.influences;
+        (
+            i.size.speed.on,
+            i.opacity.speed.on,
+            i.flow.speed.on,
+            i.speed_max,
+        ) = (true, true, true, 100.0);
         fast.drafting.figure = figure;
         fast.drafting.corner = corner;
         drafting::canvas::paint(
@@ -902,7 +907,7 @@ fn app_with_ruler(ruler: Ruler) -> Harness<'static, YoluApp> {
     let s = &mut h.state_mut().state;
     s.brush.radius = 1.5;
     s.brush.hardness = 1.0;
-    s.brush.pressure_size = false;
+    s.brush.pressure.size = false;
     common::rulers::add(s, ruler);
     h
 }
@@ -927,13 +932,13 @@ fn shift_line_end_is_painted_exactly_with_stabilizer_and_curve_on() {
                 let s = &mut h.state_mut().state;
                 s.brush.radius = 1.5;
                 s.brush.hardness = 1.0;
-                s.brush.pressure_size = false;
+                s.brush.pressure.size = false;
                 s.m2.brush.assist.curve = smoothing;
                 s.m2.brush.assist.stabilizer = if smoothing { 12.0 } else { 0.0 };
                 // 速さの制御を入れても、直線の 2 点は同じ時刻なので細く・薄くならない
                 if smoothing {
-                    let c = &mut s.m2.brush.controls;
-                    (c.speed_size, c.speed_opacity, c.speed_max) = (true, true, 100.0);
+                    let i = &mut s.m2.brush.influences;
+                    (i.size.speed.on, i.opacity.speed.on, i.speed_max) = (true, true, 100.0);
                 }
             }
             let a = point(&h, 10.0, 12.0);
@@ -1022,7 +1027,7 @@ fn only_the_nearest_of_several_straight_rulers_pulls_the_stroke() {
         let s = &mut h.state_mut().state;
         s.brush.radius = 1.0;
         s.brush.hardness = 1.0;
-        s.brush.pressure_size = false;
+        s.brush.pressure.size = false;
         common::rulers::line(s, (0.0, 20.0), (64.0, 20.0));
         common::rulers::line(s, (0.0, 22.0), (64.0, 22.0));
     }

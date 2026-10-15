@@ -5,7 +5,8 @@ use yolu_core::generator::{self, anchor::ReadMode, Settings};
 use yolu_core::glam::DVec2;
 use yolu_core::{
     AnchorIssueKind, AnchorPlacement, Brush, BrushEffect, BrushSample, BrushSettings, Channel,
-    CoreError, Document, EffectSettings, FilterSpec, FilterTarget, LayerId, LayerSetId, Rgba8,
+    CoreError, Document, EffectSettings, FilterSpec, FilterTarget, LayerId, LayerSetId,
+    PressureSwitches, Rgba8,
 };
 
 const RED: Rgba8 = Rgba8::new(220, 20, 30, 255);
@@ -443,13 +444,14 @@ fn clone_brush() -> Brush {
         effect: BrushEffect::Clone {
             offset: DVec2::new(-2.0, 0.0),
         },
-        ..Brush::from(BrushSettings {
-            radius: 3.0,
-            hardness: 1.0,
-            pressure_size: false,
-            pressure_opacity: false,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 3.0,
+                hardness: 1.0,
+                ..BrushSettings::default()
+            },
+            PressureSwitches::NONE,
+        )
     }
 }
 

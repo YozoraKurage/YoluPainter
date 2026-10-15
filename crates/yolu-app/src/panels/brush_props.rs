@@ -19,8 +19,8 @@ fn group(ui: &mut Ui, rows: &mut Rows, text: &str) {
 use super::tip_library;
 use crate::brushes::Category;
 use crate::engine::{
-    BrushEffect, ColorDynamics, ColorMix, Controls, DVec2, Jitter, MixGround, MixMode,
-    PressureResponse, PressureResponses, TipShape,
+    BrushEffect, ColorDynamics, ColorMix, Controls, DVec2, Influence, Influences, InputResponse,
+    InputUse, Jitter, MixGround, MixMode, TipShape,
 };
 use crate::lang::Lang;
 use crate::m2::{
@@ -32,6 +32,7 @@ use crate::state::{Action, AppState, BrushState, Tool};
 use crate::ui::curve;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows};
+use yolu_core::brush::Item;
 use yolu_core::curve::Curve;
 
 fn decimals(places: u8) -> NumberFormat<'static> {
@@ -153,6 +154,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             app.brush.hardness = defaults.hardness;
             app.brush.anti_alias = defaults.anti_alias;
             brush.tip = TipShape::default();
+            brush.influences.roundness = Influence::OFF;
         }
         Category::Stroke => {
             app.brush.radius = defaults.radius;
@@ -165,21 +167,27 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             app.view3d.projection = Default::default();
         }
         Category::Pressure => {
-            app.brush.pressure_size = defaults.pressure_size;
-            app.brush.pressure_opacity = defaults.pressure_opacity;
-            app.brush.pressure_flow = defaults.pressure_flow;
-            brush.controls.pressure_hardness = false;
-            brush.pressure = PressureResponses::default();
+            app.brush.pressure = defaults.pressure;
+            // 筆圧の切り替えと応え（大きさ・不透明度・流量・硬さ）。傾き・速度は「動き」の側が持つ（ここでは残す）
+            for item in [Item::Size, Item::Opacity, Item::Flow, Item::Hardness] {
+                brush.influences.get_mut(item).pressure = InputUse::OFF;
+            }
         }
         Category::Dynamics => {
-            // 筆圧で硬さを変える切り替えは「筆圧」の側、最低 1 ピクセルは「ストローク」の側が持つ（ここでは残す）
-            let keep = brush.controls.pressure_hardness;
+            // 最低 1 ピクセルは「ストローク」の側、筆圧の影響元は「筆圧」の側が持つ（ここでは残す）
             let min_one_pixel = brush.controls.min_one_pixel;
             brush.controls = Controls {
-                pressure_hardness: keep,
                 min_one_pixel,
                 ..Controls::default()
             };
+            // 傾き・速度・ランダムの影響元（大きさ・不透明度・流量・硬さ）と速さの上限を既定へ
+            for item in [Item::Size, Item::Opacity, Item::Flow, Item::Hardness] {
+                let i = brush.influences.get_mut(item);
+                i.tilt = InputUse::OFF;
+                i.speed = InputUse::OFF;
+                i.random = InputUse::OFF;
+            }
+            brush.influences.speed_max = Influences::DEFAULT_SPEED_MAX;
             brush.assist.taper_in = 0.0;
             brush.assist.taper_out = 0.0;
         }
@@ -193,7 +201,11 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             app.m2.dual_stash = Default::default();
         }
         Category::Color => brush.color = ColorDynamics::default(),
-        Category::Mix => brush.mix = ColorMix::default(),
+        Category::Mix => {
+            brush.mix = ColorMix::default();
+            brush.influences.mix_paint = Influence::OFF;
+            brush.influences.mix_density = Influence::OFF;
+        }
         Category::Effect => brush.effect = BrushEffect::Paint,
     }
 }
@@ -467,30 +479,31 @@ impl PressureItem {
 
     fn on(self, app: &AppState) -> bool {
         match self {
-            PressureItem::Size => app.brush.pressure_size,
-            PressureItem::Opacity => app.brush.pressure_opacity,
-            PressureItem::Flow => app.brush.pressure_flow,
-            PressureItem::Hardness => app.m2.brush.controls.pressure_hardness,
+            PressureItem::Size => app.brush.pressure.size,
+            PressureItem::Opacity => app.brush.pressure.opacity,
+            PressureItem::Flow => app.brush.pressure.flow,
+            PressureItem::Hardness => app.m2.brush.influences.hardness.pressure.on,
         }
     }
 
     fn set_on(self, app: &mut AppState, on: bool) {
         match self {
-            PressureItem::Size => app.brush.pressure_size = on,
-            PressureItem::Opacity => app.brush.pressure_opacity = on,
-            PressureItem::Flow => app.brush.pressure_flow = on,
-            PressureItem::Hardness => app.m2.brush.controls.pressure_hardness = on,
+            PressureItem::Size => app.brush.pressure.size = on,
+            PressureItem::Opacity => app.brush.pressure.opacity = on,
+            PressureItem::Flow => app.brush.pressure.flow = on,
+            PressureItem::Hardness => app.m2.brush.influences.hardness.pressure.on = on,
         }
     }
 
-    fn response(self, app: &mut AppState) -> &mut PressureResponse {
-        let p = &mut app.m2.brush.pressure;
-        match self {
-            PressureItem::Size => &mut p.size,
-            PressureItem::Opacity => &mut p.opacity,
-            PressureItem::Flow => &mut p.flow,
-            PressureItem::Hardness => &mut p.hardness,
-        }
+    fn response(self, app: &mut AppState) -> &mut InputResponse {
+        let i = &mut app.m2.brush.influences;
+        let item = match self {
+            PressureItem::Size => Item::Size,
+            PressureItem::Opacity => Item::Opacity,
+            PressureItem::Flow => Item::Flow,
+            PressureItem::Hardness => Item::Hardness,
+        };
+        &mut i.get_mut(item).pressure.response
     }
 }
 
@@ -605,6 +618,7 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         assist.taper_out = v as f64;
     }
     let k = &mut app.m2.brush.controls;
+    let inf = &mut app.m2.brush.influences;
     group(ui, rows, lang.pick("フェード（描点の数）", "Fade (dabs)"));
     for (id, label, field) in [
         ("fade.size", lang.pick("サイズ", "Size"), &mut k.fade_size),
@@ -636,25 +650,25 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         rows,
         "tilt.a",
         true,
-        (lang.pick("サイズ", "Size"), pen, k.tilt_size),
-        Some((lang.pick("不透明度", "Opacity"), pen, k.tilt_opacity)),
+        (lang.pick("サイズ", "Size"), pen, inf.size.tilt.on),
+        Some((lang.pick("不透明度", "Opacity"), pen, inf.opacity.tilt.on)),
     );
     if let Some(v) = a {
-        k.tilt_size = v;
+        inf.size.tilt.on = v;
     }
     if let Some(v) = b {
-        k.tilt_opacity = v;
+        inf.opacity.tilt.on = v;
     }
     let (a, b) = toggle_pair(
         ui,
         rows,
         "tilt.b",
         true,
-        (lang.pick("流量", "Flow"), pen, k.tilt_flow),
+        (lang.pick("流量", "Flow"), pen, inf.flow.tilt.on),
         Some((lang.pick("角度", "Angle"), "", k.tilt_angle)),
     );
     if let Some(v) = a {
-        k.tilt_flow = v;
+        inf.flow.tilt.on = v;
     }
     if let Some(v) = b {
         k.tilt_angle = v;
@@ -678,38 +692,42 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
         rows,
         "speed.a",
         true,
-        (lang.pick("サイズ", "Size"), speed, k.speed_size),
-        Some((lang.pick("不透明度", "Opacity"), speed, k.speed_opacity)),
+        (lang.pick("サイズ", "Size"), speed, inf.size.speed.on),
+        Some((
+            lang.pick("不透明度", "Opacity"),
+            speed,
+            inf.opacity.speed.on,
+        )),
     );
     if let Some(v) = a {
-        k.speed_size = v;
+        inf.size.speed.on = v;
     }
     if let Some(v) = b {
-        k.speed_opacity = v;
+        inf.opacity.speed.on = v;
     }
     let (a, _) = toggle_pair(
         ui,
         rows,
         "speed.b",
         true,
-        (lang.pick("流量", "Flow"), speed, k.speed_flow),
+        (lang.pick("流量", "Flow"), speed, inf.flow.speed.on),
         None,
     );
     if let Some(v) = a {
-        k.speed_flow = v;
+        inf.flow.speed.on = v;
     }
     if let Some(v) = slider_row(
         ui,
         rows,
         "speed.max",
         lang.pick("効きが最大の速さ", "Full-effect speed"),
-        k.speed_max as f32,
+        inf.speed_max as f32,
         (100.0, 10000.0),
         NumberFormat::int(" px/s"),
         None,
         true,
     ) {
-        k.speed_max = v as f64;
+        inf.speed_max = v as f64;
     }
 }
 
@@ -1143,25 +1161,24 @@ impl MixItem {
         }
     }
 
-    fn on(self, mix: &ColorMix) -> bool {
+    /// 影響元の項目。
+    fn item(self) -> Item {
         match self {
-            MixItem::Paint => mix.pressure_paint,
-            MixItem::Density => mix.pressure_density,
+            MixItem::Paint => Item::MixPaint,
+            MixItem::Density => Item::MixDensity,
         }
     }
 
-    fn set_on(self, mix: &mut ColorMix, on: bool) {
-        match self {
-            MixItem::Paint => mix.pressure_paint = on,
-            MixItem::Density => mix.pressure_density = on,
-        }
+    fn on(self, influences: &Influences) -> bool {
+        influences.get(self.item()).pressure.on
     }
 
-    fn response(self, mix: &mut ColorMix) -> &mut PressureResponse {
-        match self {
-            MixItem::Paint => &mut mix.response_paint,
-            MixItem::Density => &mut mix.response_density,
-        }
+    fn set_on(self, influences: &mut Influences, on: bool) {
+        influences.get_mut(self.item()).pressure.on = on;
+    }
+
+    fn response(self, influences: &mut Influences) -> &mut InputResponse {
+        &mut influences.get_mut(self.item()).pressure.response
     }
 }
 
@@ -1253,8 +1270,8 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     // 筆圧（量・濃さ）: 筆圧のカテゴリと同じ形（切り替え・最小値・曲線）
     for item in [MixItem::Paint, MixItem::Density] {
         let key = item.key();
-        let response = item.response(&mut app.m2.brush.mix).clone();
-        let on = item.on(&app.m2.brush.mix);
+        let response = item.response(&mut app.m2.brush.influences).clone();
+        let on = item.on(&app.m2.brush.influences);
         group(
             ui,
             rows,
@@ -1272,7 +1289,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             off_reason,
             active,
         ) {
-            item.set_on(&mut app.m2.brush.mix, v);
+            item.set_on(&mut app.m2.brush.influences, v);
         }
         let used = active && on;
         let pressure_off = off_reason
@@ -1288,7 +1305,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             used,
         ) {
             if let Ok(next) = response.with_min(v) {
-                *item.response(&mut app.m2.brush.mix) = next;
+                *item.response(&mut app.m2.brush.influences) = next;
             }
         }
         let curve_tip = if used {
@@ -1305,7 +1322,7 @@ fn mix_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
             used,
         ) {
             if let Ok(next) = response.with_curve_shape(next) {
-                *item.response(&mut app.m2.brush.mix) = next;
+                *item.response(&mut app.m2.brush.influences) = next;
             }
         }
     }

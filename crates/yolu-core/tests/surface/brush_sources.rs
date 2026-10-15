@@ -21,14 +21,15 @@ fn clone_brush() -> Brush {
 fn effect_brush(effect: BrushEffect) -> Brush {
     Brush {
         effect,
-        ..Brush::from(BrushSettings {
-            radius: 0.5,
-            hardness: 1.0,
-            spacing: 1.0,
-            pressure_size: false,
-            pressure_opacity: false,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 0.5,
+                hardness: 1.0,
+                spacing: 1.0,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::NONE,
+        )
     }
 }
 fn smudge() -> BrushEffect {

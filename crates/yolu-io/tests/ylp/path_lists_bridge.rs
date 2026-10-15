@@ -27,11 +27,14 @@ fn canvas(id: u128, y: f64, color: Rgba8) -> CanvasPath {
         style: Default::default(),
         id,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 2.5,
-            color,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 2.5,
+                color,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             CanvasPoint::new(3.5, y, 0.7).unwrap(),
             CanvasPoint::new(28.5, y + 3.0, 1.0).unwrap(),
@@ -141,10 +144,13 @@ fn a_list_of_3d_paths_round_trips() {
         style: Default::default(),
         id,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 0.06,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.06,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             PathPoint::new(0, 0.2, v, 1.0).unwrap(),
             PathPoint::new(1, 0.4, v, 0.5).unwrap(),
@@ -317,10 +323,13 @@ fn surface_handles_round_trip_exactly() {
         style: Default::default(),
         id: 9,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 0.06,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.06,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             PathPoint::new(0, 0.2, 0.1, 1.0)
                 .unwrap()
@@ -654,10 +663,13 @@ fn a_fill_layer_3d_path_is_dropped_with_its_surface_before_it_is_put_on_the_shel
         style: Default::default(),
         id: 5,
         channel: Channel::Roughness,
-        brush: PathBrush(BrushSettings {
-            radius: 0.2,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.2,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![PathPoint::new(0, 0.3, 0.2, 1.0).unwrap()],
         model_fingerprint: fingerprint(&g),
         material: None,

@@ -16,14 +16,14 @@
 //! - 打点の後、荷は「混ぜた色の平均」になる: 打点の下地の（被覆 × アルファで重みを付けた）平均色 `Ū` と `mix_colors(Ū, C, A)`。下地が
 //!   透明で何も拾えなければ荷は変わらない。
 //! - 絵の具の濃さ `D`: ストロークの不透明度の天井（今までの不透明度 × 筆圧 × ゆらぎ…）へ掛ける倍率。置く量。
-//! - 絵の具の量と濃さは、筆圧の応え（最小値と曲線。[`super::PressureResponse`]）で変えられる: `A × 応え(筆圧)`、`D × 応え(筆圧)`。
+//! - 絵の具の量と濃さは、影響元（筆圧・傾き・速度・ランダムと、その最小値と曲線。[`super::Influences`] の `mix_paint`・`mix_density`）で
+//!   変えられる: `A × 係数`、`D × 係数`。
 //! - 混ぜるのは色のチャンネルだけ（データのチャンネル・ノーマル・マスクは値が壊れるので混ぜない）。消しゴムと効果のブラシ
 //!   （ぼかし・指先・クローン）では使わない（設定は残るが効かない）。
 //! - 並列に描くダブも順に描くダブも同じ画素になる: 読む枠は打点の前に凍結し、荷の更新に使う平均はタイルごとの合計を
 //!   タイルの順に足したもの（どの経路も同じ足し算の列）。
 
 use super::effects::EffectFrame;
-use super::pressure::PressureResponse;
 use crate::error::CoreError;
 use crate::math::require_finite;
 use crate::types::Rgba8;
@@ -75,12 +75,6 @@ pub struct ColorMix {
     /// ので、量が多いほど引きずりが長く続く。伸ばすでは、読む位置の遅れの長さにも効く（1 + 2 × 色延び）。
     pub stretch: f64,
     pub ground: MixGround,
-    /// 筆圧で絵の具の量・濃さを変えるか（切っている項目は筆圧を使わない）。
-    pub pressure_paint: bool,
-    pub pressure_density: bool,
-    /// 筆圧の応え（最小値と曲線）。切り替えが真のときだけ使う。
-    pub response_paint: PressureResponse,
-    pub response_density: PressureResponse,
 }
 
 impl Default for ColorMix {
@@ -91,10 +85,6 @@ impl Default for ColorMix {
             density: 1.0,
             stretch: 0.5,
             ground: MixGround::Layer,
-            pressure_paint: false,
-            pressure_density: false,
-            response_paint: PressureResponse::default(),
-            response_density: PressureResponse::default(),
         }
     }
 }
@@ -132,8 +122,6 @@ impl ColorMix {
             paint: f(self.paint),
             density: f(self.density),
             stretch: f(self.stretch),
-            response_paint: self.response_paint.rounded_to_f32(),
-            response_density: self.response_density.rounded_to_f32(),
             ..self.clone()
         }
     }
@@ -141,22 +129,6 @@ impl ColorMix {
     /// 使っている項目（混ぜ方が切のブラシは、ほかの項目が既定のままでも使っていない）。保存の版を決める。
     pub fn is_default(&self) -> bool {
         *self == ColorMix::default()
-    }
-
-    /// 筆圧 p のときの、絵の具の量・濃さの係数（切っている項目は 1。応えが既定なら筆圧そのもの）。
-    pub(crate) fn pressure_factors(&self, pressure: f64) -> (f64, f64) {
-        (
-            if self.pressure_paint {
-                self.response_paint.apply(pressure)
-            } else {
-                1.0
-            },
-            if self.pressure_density {
-                self.response_density.apply(pressure)
-            } else {
-                1.0
-            },
-        )
     }
 }
 
@@ -299,7 +271,6 @@ mod tests {
         assert!(m.is_default());
         assert!(m.validate().is_ok());
         assert!(!m.wants_composite());
-        assert_eq!(m.pressure_factors(0.3), (1.0, 1.0));
     }
 
     #[test]
@@ -322,21 +293,6 @@ mod tests {
             ..ColorMix::default()
         };
         assert!(edge.validate().is_ok());
-    }
-
-    #[test]
-    fn pressure_factors_use_the_responses_only_when_switched_on() {
-        let mut m = ColorMix {
-            response_paint: PressureResponse::new(0.25, vec![]).unwrap(),
-            response_density: PressureResponse::new(0.5, vec![]).unwrap(),
-            ..ColorMix::default()
-        };
-        assert_eq!(m.pressure_factors(0.0), (1.0, 1.0));
-        m.pressure_paint = true;
-        assert_eq!(m.pressure_factors(0.0), (0.25, 1.0));
-        m.pressure_density = true;
-        assert_eq!(m.pressure_factors(0.0), (0.25, 0.5));
-        assert_eq!(m.pressure_factors(1.0), (1.0, 1.0));
     }
 
     #[test]

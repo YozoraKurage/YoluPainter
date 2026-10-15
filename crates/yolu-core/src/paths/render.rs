@@ -262,8 +262,12 @@ pub fn render_canvas(path: &CanvasPath, options: &Options<'_>) -> Result<Rendere
     painter.finish(samples, 0, 0)
 }
 /// 種類に合わせたストロークのブラシ（消しゴムは `erase`、指先は指先の効果）と、筆先の画像・角度・向き。
-pub(super) fn kind_brush(base: BrushSettings, style: &PathStyle) -> Brush {
-    let mut brush = Brush::from(base);
+pub(super) fn kind_brush(
+    base: BrushSettings,
+    pressure: PressureSwitches,
+    style: &PathStyle,
+) -> Brush {
+    let mut brush = Brush::simple(base, pressure);
     brush.tip.image = style.tip.clone();
     brush.tip.angle = style.angle;
     brush.tip.follow_direction = style.follow;
@@ -337,7 +341,7 @@ fn draw_canvas_one(painter: &mut Painter<'_, '_>, path: &CanvasPath) -> Result<u
     }
     painter.begin(
         paints(path.channel, path.brush, &path.material)?,
-        &kind_brush(path.brush.0, &path.style),
+        &kind_brush(path.brush.0, path.brush.1, &path.style),
     )?;
     let step = (path.brush.0.radius * 2.0 * path.brush.0.spacing).max(0.01) / 4.0;
     let samples = canvas_curve(path, step, &mut |x, y, pressure| {

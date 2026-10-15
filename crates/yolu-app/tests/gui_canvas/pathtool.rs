@@ -854,7 +854,7 @@ fn headless_brush_edits_redraw_the_path_and_without_a_path_they_set_the_next_bru
     let Some(LayerPath::Canvas(c)) = path(&s) else {
         panic!()
     };
-    assert!(!c.brush.0.pressure_size);
+    assert!(!c.brush.1.size);
     s.apply(Action::Undo);
     s.apply(Action::Undo);
     let Some(LayerPath::Canvas(c)) = path(&s) else {

@@ -23,7 +23,8 @@ use std::sync::Arc;
 use egui::{Rect, Vec2};
 
 use crate::engine::{
-    Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, StrokeAssist,
+    Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, Influence,
+    StrokeAssist,
 };
 use crate::lang::Lang;
 use crate::m2;
@@ -184,8 +185,15 @@ pub fn canonical(brush: &Brush) -> Brush {
             ..base
         },
         seed: 0,
-        pressure: brush.pressure.rounded_to_f32(),
-        // 混ぜ方が切のブラシは、混ぜの値を持たない（書かないので、読み戻しても同じ形）
+        // 混ぜ方が切のブラシは、混ぜの値と絵の具の量・濃さの影響元を持たない（書かないので、読み戻しても同じ形）
+        influences: {
+            let mut i = brush.influences.rounded_to_f32();
+            if !brush.mix.is_active() {
+                i.mix_paint = Influence::OFF;
+                i.mix_density = Influence::OFF;
+            }
+            i
+        },
         mix: if brush.mix.is_active() {
             brush.mix.rounded_to_f32()
         } else {
@@ -715,6 +723,7 @@ impl AppState {
     pub fn brush_live(&self) -> Brush {
         let mut brush = self.m2.brush.clone();
         brush.base = self.brush.settings([1.0; 4], false);
+        brush.influences.set_pressure_switches(self.brush.pressure);
         // クローンの元から決めた offset は、ブラシの設定でなく、作業の位置: 比べる・覚えるときは、入れる前のブラシの offset と見なす
         // （「変えた」の印を付けない。変えたままの設定にも登録にも入れない）
         if let BrushEffect::Clone { offset } = &mut brush.effect {
@@ -734,9 +743,7 @@ impl AppState {
             spacing: base.spacing as f32,
             opacity: base.opacity as f32,
             flow: base.flow as f32,
-            pressure_size: base.pressure_size,
-            pressure_opacity: base.pressure_opacity,
-            pressure_flow: base.pressure_flow,
+            pressure: brush.influences.pressure_switches(),
             anti_alias: base.anti_alias,
         };
         let assist = self.m2.brush.assist;

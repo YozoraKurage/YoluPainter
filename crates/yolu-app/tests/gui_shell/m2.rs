@@ -1307,8 +1307,8 @@ fn the_pens_rotation_and_time_reach_the_brush() {
         s.brush.radius = 10.0;
         s.m2.brush.tip.roundness = 0.25;
         s.m2.brush.controls.rotation_angle = true;
-        s.m2.brush.controls.speed_size = true;
-        s.m2.brush.controls.speed_max = 400.0;
+        s.m2.brush.influences.size.speed.on = true;
+        s.m2.brush.influences.speed_max = 400.0;
     }
     let brush = h.state_mut().state.stroke_brush(false);
     let r = canvas_rect(&h);
@@ -1464,8 +1464,8 @@ fn mouse_speed_does_not_depend_on_how_many_events_arrive_per_frame() {
         s.m2.random_seed = false;
         s.brush.hardness = 1.0;
         s.brush.radius = 8.0;
-        s.m2.brush.controls.speed_size = true;
-        s.m2.brush.controls.speed_max = 150.0;
+        s.m2.brush.influences.size.speed.on = true;
+        s.m2.brush.influences.speed_max = 150.0;
     }
     let r = canvas_rect(&h);
     let c = r.center();

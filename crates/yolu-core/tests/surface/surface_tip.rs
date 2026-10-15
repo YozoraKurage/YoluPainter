@@ -411,11 +411,11 @@ fn pen_tilt_rotation_and_speed_shape_3d_dabs_like_2d() {
         ..BrushSettings::default()
     });
     b.tip.image = Some(tip("bristles"));
-    b.controls.tilt_size = true;
+    b.influences.size.tilt.on = true;
     b.controls.tilt_angle = true;
     b.controls.rotation_angle = true;
-    b.controls.speed_opacity = true;
-    b.controls.speed_max = 2000.0;
+    b.influences.opacity.speed.on = true;
+    b.influences.speed_max = 2000.0;
     // 区間は間隔の倍数（9・6・12・15 個）。傾き・回転・時刻を点ごとに変える
     let points = line((50.0, 40.0), (0.6, 0.8), 3.0, &[9, 6, 12, 15]);
     let pens: Vec<(DVec2, f64, f64)> = (0..points.len())
@@ -535,7 +535,7 @@ fn queue_independence(curve: bool) {
         ..Jitter::default()
     };
     b.controls.fade_size = 300;
-    b.controls.tilt_opacity = true;
+    b.influences.opacity.tilt.on = true;
     b.assist.taper_out = 40.0;
     b.assist.curve = curve;
     b.color = ColorDynamics {
@@ -572,16 +572,21 @@ fn queue_independence(curve: bool) {
 /// 紙の質感は、塗るテクセルの文書の画素の座標で読む: カメラを動かして描いても、2D で描いても、硬い丸で覆い切った所の値は同じ。
 #[test]
 fn paper_texture_follows_document_pixels_whatever_the_camera() {
-    let mut b = Brush::from(BrushSettings {
-        radius: 14.0,
-        hardness: 1.0,
-        spacing: 0.0625,
-        opacity: 1.0,
-        flow: 1.0,
-        pressure_opacity: false,
-        color: Rgba8::new(0, 0, 0, 255),
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius: 14.0,
+            hardness: 1.0,
+            spacing: 0.0625,
+            opacity: 1.0,
+            flow: 1.0,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches {
+            opacity: false,
+            ..yolu_core::PressureSwitches::default()
+        },
+    );
     b.texture = Some(PaperTexture::new(tip("grain"), 1.0));
     let points = [(70.0, 60.0), (100.0, 64.0), (120.0, 66.0)];
     let flat = draw_2d(&b, &points);

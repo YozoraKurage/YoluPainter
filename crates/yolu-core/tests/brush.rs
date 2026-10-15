@@ -92,15 +92,16 @@ fn a(d: &Document, x: u32, y: u32) -> u8 {
 }
 /// C# の BrushTests.Fixed: 半径 8・硬さ 1・黒・筆圧の割り当てなし・間隔 0.1。
 fn fixed() -> Brush {
-    Brush::from(BrushSettings {
-        radius: 8.0,
-        hardness: 1.0,
-        color: BLACK,
-        pressure_size: false,
-        pressure_opacity: false,
-        spacing: 0.1,
-        ..BrushSettings::default()
-    })
+    Brush::simple(
+        BrushSettings {
+            radius: 8.0,
+            hardness: 1.0,
+            color: BLACK,
+            spacing: 0.1,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 /// 時刻 0.01 ずつの点で描いて確定する（C# の BrushTests.Stroke）。
 fn stroke(d: &mut Document, l: LayerId, brush: &Brush, points: &[(f64, f64)]) {
@@ -356,15 +357,16 @@ fn every_builtin_brush_paints_deterministically() {
 
 /// C# の BrushDynamicsTests.Hard: 硬さ 1・間隔 0.25・INK・筆圧の割り当てなし。
 fn hard(radius: f64) -> Brush {
-    Brush::from(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.25,
-        color: INK,
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    })
+    Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.25,
+            color: INK,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 /// 96×64・タイル 32 の文書にストローク 1 本を描いた合成（C# の BrushDynamicsTests.Draw）。
 fn draw_in(brush: &Brush, channel: Channel, samples: &[BrushSample]) -> Vec<u8> {
@@ -387,14 +389,14 @@ fn default_brush_has_no_dynamics_and_paints_like_the_m1_settings() {
     assert!(b.color.per_tip);
     let c = b.controls;
     assert_eq!([c.fade_size, c.fade_opacity, c.fade_flow], [0, 0, 0]);
-    assert!(!(c.tilt_size || c.tilt_opacity || c.tilt_flow || c.tilt_angle));
+    assert!(!c.tilt_angle);
+    assert_eq!(b.influences, yolu_core::Influences::default());
     // M1 の口（BrushSettings）と全部入りの口（Brush::from）は同じ画素
     let s = BrushSettings {
         radius: 9.0,
         hardness: 0.3,
         spacing: 0.1,
         flow: 0.5,
-        pressure_flow: true,
         color: INK,
         ..BrushSettings::default()
     };
@@ -409,12 +411,37 @@ fn default_brush_has_no_dynamics_and_paints_like_the_m1_settings() {
         })
         .collect();
     let (mut d1, l1) = doc(96, 64, 32);
-    let mut s1 = d1.begin_stroke(l1, &s).unwrap();
+    let mut s1 = d1
+        .begin_brush_stroke(
+            l1,
+            &yolu_core::Brush::simple(
+                s,
+                yolu_core::PressureSwitches {
+                    size: true,
+                    opacity: true,
+                    flow: true,
+                },
+            ),
+        )
+        .unwrap();
     for p in &path {
         s1.add_sample(&mut d1, *p).unwrap();
     }
     d1.end_stroke(s1).unwrap();
-    assert_eq!(all(&d1), draw(&Brush::from(s), &path));
+    assert_eq!(
+        all(&d1),
+        draw(
+            &Brush::simple(
+                s,
+                yolu_core::PressureSwitches {
+                    size: true,
+                    opacity: true,
+                    flow: true
+                }
+            ),
+            &path
+        )
+    );
 }
 
 #[test]
@@ -713,7 +740,7 @@ fn pen_tilt_is_measured_from_upright_and_samples_are_clamped() {
 #[test]
 fn tilt_scales_size_and_opacity_and_turns_the_tip() {
     let mut t = hard(8.0);
-    t.controls.tilt_size = true;
+    t.influences.size.tilt.on = true;
     assert_eq!(
         draw(&t, &[tilted(20.0, 20.0, PI / 4.0, 0.0)]),
         draw(&hard(4.0), &[sample(20.0, 20.0)]),
@@ -725,7 +752,7 @@ fn tilt_scales_size_and_opacity_and_turns_the_tip() {
         "傾きの無い入力（マウス）は何も変えない"
     );
     let mut flat = hard(8.0);
-    flat.controls.tilt_opacity = true;
+    flat.influences.opacity.tilt.on = true;
     assert!(
         alphas(&draw(&flat, &[tilted(20.0, 20.0, PI / 2.0, 0.0)]))
             .iter()
@@ -750,7 +777,7 @@ fn every_dynamic() -> Brush {
     s.color.hue = 1.0;
     s.color.foreground_background = 0.5;
     s.controls.fade_opacity = 30;
-    s.controls.tilt_size = true;
+    s.influences.size.tilt.on = true;
     s.dual = Some(DualBrush {
         radius: 3.0,
         hardness: 0.5,
@@ -923,15 +950,16 @@ fn the_stroke_freezes_its_brush() {
 // ───────── StrokeAssistTests ─────────
 
 fn assist_hard(radius: f64) -> Brush {
-    Brush::from(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.1,
-        color: Rgba8::new(0, 0, 0, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    })
+    Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.1,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    )
 }
 fn assist_draw(b: &Brush, points: &[(f64, f64)]) -> Vec<u8> {
     let (mut d, l) = doc(128, 64, 16);
@@ -1075,15 +1103,16 @@ const CY: f64 = 63.7;
 const R: f64 = 40.0;
 
 fn soft(curve: bool) -> Brush {
-    let mut b = Brush::from(BrushSettings {
-        radius: 4.0,
-        hardness: 0.0,
-        spacing: 0.05,
-        color: Rgba8::new(0, 0, 0, 255),
-        pressure_size: false,
-        pressure_opacity: false,
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius: 4.0,
+            hardness: 0.0,
+            spacing: 0.05,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::NONE,
+    );
     b.assist.curve = curve;
     b
 }
@@ -1420,17 +1449,21 @@ fn read(d: &Document, l: LayerId) -> Vec<Rgba8> {
 fn effect_brush(effect: BrushEffect) -> Brush {
     Brush {
         effect,
-        ..Brush::from(BrushSettings {
-            radius: 3.0,
-            hardness: 0.6,
-            spacing: 0.2,
-            opacity: 0.7,
-            flow: 0.6,
-            pressure_size: false,
-            pressure_opacity: true,
-            pressure_flow: true,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 3.0,
+                hardness: 0.6,
+                spacing: 0.2,
+                opacity: 0.7,
+                flow: 0.6,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches {
+                size: false,
+                opacity: true,
+                flow: true,
+            },
+        )
     }
 }
 const BLUR: BrushEffect = BrushEffect::Blur { radius: 2 };
@@ -1777,14 +1810,15 @@ fn clone_reads_the_stroke_start_when_source_and_destination_overlap() {
         effect: BrushEffect::Clone {
             offset: DVec2::new(-1.0, 0.0),
         },
-        ..Brush::from(BrushSettings {
-            radius: 0.5,
-            hardness: 1.0,
-            spacing: 1.0,
-            pressure_size: false,
-            pressure_opacity: false,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                radius: 0.5,
+                hardness: 1.0,
+                spacing: 1.0,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::NONE,
+        )
     };
     paint(
         &mut d,
@@ -2158,8 +2192,8 @@ fn pen_rotation_is_interpolated_the_short_way_round() {
 fn speed_thins_fast_segments_and_needs_time() {
     let mut b = hard(6.0);
     b.base.spacing = 0.1;
-    b.controls.speed_size = true;
-    b.controls.speed_max = 1000.0;
+    b.influences.size.speed.on = true;
+    b.influences.speed_max = 1000.0;
     let column = |c: &[u8], x: usize| (0..64).filter(|&y| a96(c, x, y) > 0).count();
     // 左の区間は 40 px を 0.4 秒（100 px/s）、右の区間は 40 px を 0.05 秒（800 px/s）
     let timed = [
@@ -2177,19 +2211,19 @@ fn speed_thins_fast_segments_and_needs_time() {
     // 時刻が進まない入力では速さは 0 のまま（何も変えない）
     let untimed = [sample(8.0, 32.0), sample(48.0, 32.0), sample(88.0, 32.0)];
     let mut plain = b.clone();
-    plain.controls.speed_size = false;
+    plain.influences.size.speed.on = false;
     assert_eq!(draw(&b, &untimed), draw(&plain, &untimed));
     // 切っていれば時刻があっても同じ
     assert_eq!(draw(&plain, &timed), draw(&plain, &untimed));
     // 速さの上限は 0 より大きい
     let mut bad = b.clone();
-    bad.controls.speed_max = 0.0;
+    bad.influences.speed_max = 0.0;
     assert!(bad.validate().is_err());
     // 不透明度と流量も（速い区間ほど薄い）
     let mut op = hard(6.0);
     op.base.spacing = 0.1;
-    op.controls.speed_opacity = true;
-    op.controls.speed_max = 1000.0;
+    op.influences.opacity.speed.on = true;
+    op.influences.speed_max = 1000.0;
     let c = draw(&op, &timed);
     assert!(a96(&c, 70, 32) < a96(&c, 30, 32));
 }

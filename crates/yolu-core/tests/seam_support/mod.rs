@@ -13,12 +13,15 @@ pub fn path_points(shift: f64) -> CanvasPath {
         style: Default::default(),
         id: 0x77,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 3.0,
-            spacing: 0.17,
-            color: Rgba8::new(201, 37, 89, 219),
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 3.0,
+                spacing: 0.17,
+                color: Rgba8::new(201, 37, 89, 219),
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             CanvasPoint::new(4.5 + shift, 7.25, 0.3).unwrap(),
             CanvasPoint::new(29.5, 21.5 - shift, 0.9).unwrap(),

@@ -132,7 +132,7 @@ fn hand_painting_paths_and_disabling_color_are_refused() {
     let path = yolu_core::paths::CanvasPath {
         id: 1,
         channel: Channel::Color,
-        brush: yolu_core::paths::PathBrush(BrushSettings::default()),
+        brush: yolu_core::paths::PathBrush(BrushSettings::default(), Default::default()),
         points: vec![yolu_core::paths::CanvasPoint::new(10.0, 10.0, 1.0).unwrap()],
         material: None,
         style: Default::default(),

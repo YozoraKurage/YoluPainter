@@ -11,14 +11,15 @@ fn line(y: f64, color: Rgba8) -> LayerPathEntry {
     LayerPathEntry::new(LayerPath::Canvas(CanvasPath {
         id: (y * 10.0) as u128 + 1,
         channel: Channel::Color,
-        brush: PathBrush(BrushSettings {
-            radius: 3.0,
-            hardness: 1.0,
-            color,
-            pressure_size: false,
-            pressure_opacity: false,
-            ..BrushSettings::default()
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 3.0,
+                hardness: 1.0,
+                color,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::NONE,
+        ),
         points: vec![
             CanvasPoint::new(4.0, y, 1.0).unwrap(),
             CanvasPoint::new(60.0, y, 1.0).unwrap(),

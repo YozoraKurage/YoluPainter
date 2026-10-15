@@ -1319,6 +1319,7 @@ impl AppState {
     pub fn stroke_brush(&mut self, eraser: bool) -> Brush {
         let mut brush = self.m2.brush.clone();
         brush.base = self.stroke_settings(eraser);
+        brush.influences.set_pressure_switches(self.brush.pressure);
         let sub = self.color.sub.map(unit_f32_to_byte);
         brush.color.secondary = Rgba8::new(sub[0], sub[1], sub[2], 255);
         brush.seed = if self.m2.random_seed {

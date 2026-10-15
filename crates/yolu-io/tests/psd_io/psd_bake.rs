@@ -791,12 +791,15 @@ fn a_path_layer_keeps_its_rasterized_pixels_and_says_the_path_is_not_carried() {
             style: Default::default(),
             id: 0x77,
             channel: Channel::Color,
-            brush: PathBrush(yolu_core::BrushSettings {
-                radius: 3.0,
-                spacing: 0.17,
-                color: Rgba8::new(201, 37, 89, 219),
-                ..yolu_core::BrushSettings::default()
-            }),
+            brush: PathBrush(
+                yolu_core::BrushSettings {
+                    radius: 3.0,
+                    spacing: 0.17,
+                    color: Rgba8::new(201, 37, 89, 219),
+                    ..yolu_core::BrushSettings::default()
+                },
+                yolu_core::PressureSwitches::default(),
+            ),
             points: vec![
                 CanvasPoint::new(4.5, 7.25, 0.3).unwrap(),
                 CanvasPoint::new(29.5, 21.5, 0.9).unwrap(),

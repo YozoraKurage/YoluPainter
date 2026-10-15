@@ -2,7 +2,8 @@
 //! 消しゴム）に、筆先の形・ゆらぎ・紙の質感・デュアルブラシ・色の変化・フェードと傾き・手ぶれ補正と入り抜き・曲線・効果を足したもの。
 //! 部分の分け方は Photoshop のブラシのウィンドウの節に合わせた（画面の節にそのまま当てられる）。
 //!
-//! 既定値はどれも C# の既定値と同じで、`Brush::from(settings)` は M1 の丸いブラシとバイト単位で同じストロークになる。
+//! 既定値はどれも C# の既定値と同じで、`Brush::simple(settings, switches)`（`Brush::from(settings)` は既定の切り替え）は M1 の丸いブラシと
+//! バイト単位で同じストロークになる。
 //! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]）と、紙の質感のモード（[`TextureMode`] の
 //! 乗算以外）。どれも既定では C# と同じ。
 
@@ -10,8 +11,8 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
+use super::influence::{Influences, PressureSwitches};
 use super::mix::ColorMix;
-use super::pressure::PressureResponses;
 use super::stencil::BrushStencil;
 use super::tip::BrushTip;
 use super::BrushSettings;
@@ -24,7 +25,7 @@ use crate::types::Rgba8;
 /// 全部入りのブラシ。ストロークを始めたときに写して固定する（筆先の画像は共有する。画像は変わらない）。
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Brush {
-    /// 大きさ・硬さ・間隔・不透明度・流量・色・筆圧・消しゴム（M1 の設定）。
+    /// 大きさ・硬さ・間隔・不透明度・流量・色・消しゴム（M1 の設定）。
     pub base: BrushSettings,
     /// ゆらぎ・色の変化・デュアルブラシの乱数の種（同じ種なら同じストローク）。C# の Seed。
     pub seed: i32,
@@ -36,9 +37,9 @@ pub struct Brush {
     pub dual: Option<DualBrush>,
     pub color: ColorDynamics,
     pub controls: Controls,
-    /// 筆圧の応え（項目ごとの最小値と曲線。拡張: C# に無い）。切り替えは [`BrushSettings`] の `pressure_*` と
-    /// [`Controls::pressure_hardness`]。既定（最小値 0・直線）は、切り替えが真なら筆圧をそのまま使う（C# と同じ）。
-    pub pressure: PressureResponses,
+    /// 影響元（項目ごとの筆圧・傾き・速度・ランダムと、その最小値と曲線。[`Influences`]）。項目を入力で変えるかの唯一の正本。
+    /// 既定は筆圧で大きさと不透明度を変える（応えは直線。C# の既定と同じ）。
+    pub influences: Influences,
     /// 色の混ぜ（厚塗り。拡張: C# に無い。既定は混ぜない）。色のチャンネルを色で塗るブラシだけに効く（[`ColorMix`]）。
     pub mix: ColorMix,
     pub assist: StrokeAssist,
@@ -54,9 +55,18 @@ pub struct Brush {
 }
 
 impl From<BrushSettings> for Brush {
+    /// 既定の筆圧の切り替え（大きさと不透明度。[`PressureSwitches::default`]）の簡単なブラシ。
     fn from(base: BrushSettings) -> Brush {
+        Brush::simple(base, PressureSwitches::default())
+    }
+}
+
+impl Brush {
+    /// 簡単な丸いブラシ（設定と筆圧の切り替え）から。切り替えは影響元の筆圧（応えは直線）になり、ほかは既定。
+    pub fn simple(base: BrushSettings, pressure: PressureSwitches) -> Brush {
         Brush {
             base,
+            influences: Influences::from_switches(pressure),
             ..Brush::default()
         }
     }
@@ -307,58 +317,23 @@ impl Default for ColorDynamics {
     }
 }
 
-/// 筆圧のほかの操作: フェード（ストロークの何番目の描点か）とペンの傾き（Photoshop の「コントロール」）。
-/// 拡張（C# に無い）: ペンの軸の回転を角度へ、筆の速さを大きさ・不透明度・流量へ、筆圧を硬さへ。
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// 影響元のほかの操作: フェード（ストロークの何番目の描点か）とペンの傾きの向き（Photoshop の「コントロール」）。
+/// 拡張（C# に無い）: ペンの軸の回転を角度へ。項目を傾き・速度・筆圧で変える影響元は [`Brush::influences`]。
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct Controls {
     /// 大きさ・不透明度・流量が、この数の描点（間隔の刻み）にわたって 1 から 0 へ下がる（0 は切、1〜10000）。
     pub fade_size: u32,
     pub fade_opacity: u32,
     pub fade_flow: u32,
-    /// 大きさ・不透明度・流量に 1 − 傾き（直立 0〜寝かせきって 1）を掛ける。傾きの無い入力（マウス）は直立。
-    pub tilt_size: bool,
-    pub tilt_opacity: bool,
-    pub tilt_flow: bool,
     /// ペンが倒れている向きを筆先の角度に足す。
     pub tilt_angle: bool,
     /// 拡張: ペンの軸の回転（[`super::BrushSample::rotation`]）を筆先の角度に足す。回転の情報の無い入力は 0。
     pub rotation_angle: bool,
-    /// 拡張: 大きさ・不透明度・流量に 1 − min(1, 速さ ÷ speed_max) を掛ける（速いほど小さく・薄く）。速さは手ぶれ補正の後の
-    /// 筆の点の間の距離 ÷ 時刻の差で、点の間は線形に補間する。時刻が進まない入力（時刻を渡さない）では最初の 0 のまま。
-    pub speed_size: bool,
-    pub speed_opacity: bool,
-    pub speed_flow: bool,
-    /// 効きが一杯になる速さ（画素 / 時刻の単位。秒なら画素毎秒）。0 より大きい。
-    pub speed_max: f64,
-    /// 拡張: 筆圧で硬さを変える（硬さ × 筆圧の応え [`Brush::pressure`] の硬さ）。大きさ・不透明度・流量の切り替えは
-    /// [`BrushSettings`] が持つ（C# と同じ）。
-    pub pressure_hardness: bool,
     /// 拡張: 最低 1 ピクセル。筆圧・フェード・傾き・速さ・入り抜き・大きさのゆらぎで細くなった後のダブの直径に、下限 1 画素（半径 0.5）を
     /// 掛ける（直径 0 になるダブも 1 画素で残る）。1 画素は文書の画素（3D の面の塗りも、ブラシの大きさと同じ換算の文書の画素）。
     /// 間隔は公称の大きさで決まるので変わらない。縁のアンチエイリアスの小さなダブの広げと濃さは、この下限の後の大きさに掛かる。切（既定）は
     /// 今までと同じストローク。
     pub min_one_pixel: bool,
-}
-
-impl Default for Controls {
-    fn default() -> Self {
-        Controls {
-            fade_size: 0,
-            fade_opacity: 0,
-            fade_flow: 0,
-            tilt_size: false,
-            tilt_opacity: false,
-            tilt_flow: false,
-            tilt_angle: false,
-            rotation_angle: false,
-            speed_size: false,
-            speed_opacity: false,
-            speed_flow: false,
-            speed_max: 3000.0,
-            pressure_hardness: false,
-            min_one_pixel: false,
-        }
-    }
 }
 
 /// 線の補助（画素。0 は切）。
@@ -477,10 +452,7 @@ impl Brush {
                 return Err(CoreError::InvalidArgument("フェード（0〜10000）"));
             }
         }
-        require_finite(k.speed_max, "speed_max")?;
-        if k.speed_max <= 0.0 {
-            return Err(CoreError::InvalidArgument("速さの上限（0 より大きい）"));
-        }
+        self.influences.validate()?;
         if let Some(d) = &self.dual {
             d.validate()?;
         }
@@ -539,22 +511,16 @@ impl Brush {
         b
     }
 
-    /// 筆圧を、不透明度・流量の応え（最小値と曲線）に通した係数。切っている項目は 1。応えが既定なら筆圧そのもの（C# と同じ値）。
+    /// 筆圧を、不透明度・流量・絵の具の量と濃さの影響元の筆圧の応え（最小値と曲線）に通した係数。筆圧を使っていない項目は 1。
+    /// 応えが既定なら筆圧そのもの（C# と同じ値）。
     pub(crate) fn pressure_scale(&self, pressure: f64) -> super::PressureScale {
-        let (mix_paint, mix_density) = self.mix.pressure_factors(pressure);
+        let inf = &self.influences;
+        let f = |i: &super::Influence| i.pressure_factor(pressure).unwrap_or(1.0);
         super::PressureScale {
-            opacity: if self.base.pressure_opacity {
-                self.pressure.opacity.apply(pressure)
-            } else {
-                1.0
-            },
-            flow: if self.base.pressure_flow {
-                self.pressure.flow.apply(pressure)
-            } else {
-                1.0
-            },
-            mix_paint,
-            mix_density,
+            opacity: f(&inf.opacity),
+            flow: f(&inf.flow),
+            mix_paint: f(&inf.mix_paint),
+            mix_density: f(&inf.mix_density),
         }
     }
 

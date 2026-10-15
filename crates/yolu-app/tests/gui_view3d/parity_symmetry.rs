@@ -271,7 +271,7 @@ fn pen_dot(h: &mut H, at: Pos2, pressure: f32, eraser: bool) {
 fn quick_mask_in_3d_follows_the_pen_pressure_and_the_pen_eraser_end() {
     let (mut h, rect) = cube_view();
     thin_hard_brush(&mut h);
-    h.state_mut().state.brush.pressure_opacity = true;
+    h.state_mut().state.brush.pressure.opacity = true;
     quick_on(&mut h);
     let front = Vec3::new(0.25, 0.0, -0.5);
     let texel = texel_of(&h, front, Vec3::NEG_Z);

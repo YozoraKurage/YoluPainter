@@ -18,6 +18,7 @@ mod docops;
 mod export;
 mod history;
 mod import_tiles;
+mod influences;
 mod layer_sets;
 mod layers;
 mod merge_compare;

@@ -9,7 +9,7 @@ mod render;
 mod ribbon;
 mod surface;
 use crate::geometry::DabRefusal;
-use crate::{BrushSettings, Channel, CoreError, Rgba8};
+use crate::{BrushSettings, Channel, CoreError, PressureSwitches, Rgba8};
 pub use list::{
     list_channels, list_images, render_list, validate_list, LayerPathEntry, MAX_LAYER_PATHS,
     MAX_PATH_NAME,
@@ -214,15 +214,19 @@ impl SurfacePath {
         }
     }
 }
-/// 半径は 2D では画素、3D ではモデルの空間。ほかの欄は通常の丸いブラシと共通。
+/// 半径は 2D では画素、3D ではモデルの空間。ほかの欄は通常の丸いブラシと共通。2 つ目は筆圧で大きさ・不透明度・流量を変えるか
+/// （応えは直線）。
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PathBrush(pub BrushSettings);
+pub struct PathBrush(pub BrushSettings, pub PressureSwitches);
 impl Default for PathBrush {
     fn default() -> Self {
-        Self(BrushSettings {
-            radius: 0.01,
-            ..Default::default()
-        })
+        Self(
+            BrushSettings {
+                radius: 0.01,
+                ..Default::default()
+            },
+            PressureSwitches::default(),
+        )
     }
 }
 impl PathBrush {

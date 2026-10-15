@@ -3,7 +3,7 @@
 use bytemuck::{Pod, Zeroable};
 use std::{fmt, sync::mpsc, time::Duration};
 use wgpu::util::DeviceExt;
-use yolu_core::{BrushSettings, Channel, Document, Rect, TileCoord};
+use yolu_core::{BrushSettings, Channel, Document, PressureSwitches, Rect, TileCoord};
 
 mod dx12;
 mod plan;
@@ -415,14 +415,15 @@ impl GpuPainter {
         })
     }
 
-    /// 同じストロークの判子を順番に適用する。start はストローク開始前の矩形。
-    /// 戻り値はプレビューのみ。取消は戻り値を捨て、正本への描画は core の Stroke で行う。
+    /// 同じストロークの判子を順番に適用する。start はストローク開始前の矩形。`pressure` は筆圧で大きさ・不透明度・流量を変えるか
+    /// （それぞれ直線）。戻り値はプレビューのみ。取消は戻り値を捨て、正本への描画は core の Stroke で行う。
     pub fn brush_dabs(
         &mut self,
         width: u32,
         height: u32,
         start: &[u8],
         settings: &BrushSettings,
+        pressure: PressureSwitches,
         dabs: &[Dab],
     ) -> Result<Vec<u8>, GpuError> {
         settings.validate()?;
@@ -454,25 +455,11 @@ impl GpuPainter {
             data.push(DabData {
                 x: d.x as f32,
                 y: d.y as f32,
-                radius: (settings.radius
-                    * if settings.pressure_size {
-                        d.pressure
-                    } else {
-                        1.0
-                    }) as f32,
+                radius: (settings.radius * if pressure.size { d.pressure } else { 1.0 }) as f32,
                 hardness: settings.hardness as f32,
-                ceiling: (settings.opacity
-                    * if settings.pressure_opacity {
-                        d.pressure
-                    } else {
-                        1.0
-                    }) as f32,
-                flow: (settings.flow
-                    * if settings.pressure_flow {
-                        d.pressure
-                    } else {
-                        1.0
-                    }) as f32,
+                ceiling: (settings.opacity * if pressure.opacity { d.pressure } else { 1.0 })
+                    as f32,
+                flow: (settings.flow * if pressure.flow { d.pressure } else { 1.0 }) as f32,
                 color: u32::from_le_bytes(settings.color.to_array()),
                 erase: u32::from(settings.erase),
             });

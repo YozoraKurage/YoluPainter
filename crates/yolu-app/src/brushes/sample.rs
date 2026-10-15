@@ -165,7 +165,7 @@ fn preview_brush(brush: &Brush, spec: SampleSpec) -> Brush {
     if let Some(d) = &mut b.dual {
         d.radius = (d.radius * f).clamp(0.5, 65536.0);
     }
-    b.controls.speed_max = (b.controls.speed_max * f).max(1.0);
+    b.influences.speed_max = (b.influences.speed_max * f).max(1.0);
     b.effect = match b.effect {
         BrushEffect::Blur { radius } => BrushEffect::Blur {
             radius: ((radius as f64 * f).round() as u32).clamp(1, 64),
@@ -293,8 +293,6 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
             radius: (h * 0.07).max(2.0),
             hardness: 1.0,
             spacing: 0.1,
-            pressure_size: false,
-            pressure_opacity: false,
             ..BrushSettings::default()
         };
         for (i, color) in [
@@ -307,7 +305,10 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
         .enumerate()
         {
             let x = w * (0.18 + 0.215 * i as f64);
-            let line = Brush::from(BrushSettings { color, ..bar });
+            let line = Brush::simple(
+                BrushSettings { color, ..bar },
+                crate::engine::PressureSwitches::NONE,
+            );
             stroke_line(
                 &mut doc,
                 layer,
@@ -335,7 +336,7 @@ pub fn render(brush: &Brush, spec: SampleSpec) -> Result<SampleImage, CoreError>
         })
         .collect();
     // 速さは効きの上限の 35% ほどで進める（筆の速さの設定が見本でも見える）
-    let speed = 0.35 * b.controls.speed_max;
+    let speed = 0.35 * b.influences.speed_max;
     stroke_line(&mut doc, layer, &b, &points, h, speed)?;
     let mut rgba = vec![0u8; spec.width as usize * spec.height as usize * 4];
     doc.composite_into(Channel::Color, doc.bounds(), &mut rgba, RowOrder::TopDown)?;
@@ -660,7 +661,7 @@ mod tests {
         // 筆圧で直径が変わるブラシは、両端が細く真ん中が太い
         let mut b = Brush::default();
         b.base.radius = 10.0;
-        b.base.pressure_size = true;
+        b.influences.size.pressure.on = true;
         let image = render(&b, SampleSpec::row(false)).unwrap();
         let column = |x: usize| {
             (0..60usize)
@@ -670,8 +671,8 @@ mod tests {
         let (left, middle, right) = (column(40), column(170), column(300));
         assert!(middle > left && middle > right, "{left} {middle} {right}");
         // 筆圧に従わなければ同じ太さ
-        b.base.pressure_size = false;
-        b.base.pressure_opacity = false;
+        b.influences.size.pressure.on = false;
+        b.influences.opacity.pressure.on = false;
         let flat = render(&b, SampleSpec::row(false)).unwrap();
         let flat_column = |x: usize| {
             (0..60usize)
@@ -716,7 +717,10 @@ mod tests {
             ("spacing", Box::new(|b| b.base.spacing = 0.5)),
             ("opacity", Box::new(|b| b.base.opacity = 0.5)),
             ("flow", Box::new(|b| b.base.flow = 0.2)),
-            ("pressure", Box::new(|b| b.base.pressure_size = false)),
+            (
+                "pressure",
+                Box::new(|b| b.influences.size.pressure.on = false),
+            ),
             ("tip angle", Box::new(|b| b.tip.angle = 30.0)),
             (
                 "tip image",

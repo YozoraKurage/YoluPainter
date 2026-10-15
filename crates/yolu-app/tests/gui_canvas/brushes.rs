@@ -472,12 +472,12 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
     for (label, get) in [
         (
             "筆圧で直径を変える",
-            (|s: &AppState| s.brush.pressure_size) as fn(&AppState) -> bool,
+            (|s: &AppState| s.brush.pressure.size) as fn(&AppState) -> bool,
         ),
         ("筆圧で不透明度を変える", |s| {
-            s.brush.pressure_opacity
+            s.brush.pressure.opacity
         }),
-        ("筆圧で流量を変える", |s| s.brush.pressure_flow),
+        ("筆圧で流量を変える", |s| s.brush.pressure.flow),
     ] {
         let was = get(st(&h));
         let at = rect_of(&h, label, in_panel).center();
@@ -607,7 +607,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     let g = frame.shrink(6.0);
     let at = |x: f32, y: f32| pos2(g.left() + x * g.width(), g.bottom() - y * g.height());
     let primary = PointerButton::Primary;
-    let size = |h: &H| st(h).m2.brush.pressure.size.clone();
+    let size = |h: &H| st(h).m2.brush.influences.size.pressure.response.clone();
     assert!(size(&h).is_identity());
     assert!(window.contains_rect(frame), "{window:?} {frame:?}");
 
@@ -633,9 +633,30 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert!((size(&h).apply(0.5) - 0.8).abs() < 0.03);
     assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     // ほかの項目は変わらない
-    assert!(st(&h).m2.brush.pressure.opacity.is_identity());
-    assert!(st(&h).m2.brush.pressure.flow.is_identity());
-    assert!(st(&h).m2.brush.pressure.hardness.is_identity());
+    assert!(st(&h)
+        .m2
+        .brush
+        .influences
+        .opacity
+        .pressure
+        .response
+        .is_identity());
+    assert!(st(&h)
+        .m2
+        .brush
+        .influences
+        .flow
+        .pressure
+        .response
+        .is_identity());
+    assert!(st(&h)
+        .m2
+        .brush
+        .influences
+        .hardness
+        .pressure
+        .response
+        .is_identity());
     // 最小値は曲線の後に効く: 最小 0 のままの曲線を保ち、最小だけ変わる
     let min_at = pos2(minimum.left() + minimum.width() * 0.4, minimum.center().y);
     click(&mut h, min_at);
@@ -674,7 +695,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     // 筆圧を使わない項目では、曲線は触れない
     let toggle = first(&h, "筆圧を使う");
     click(&mut h, toggle.center());
-    assert!(!st(&h).brush.pressure_size);
+    assert!(!st(&h).brush.pressure.size);
     let off = size(&h);
     move_to(&h, at(0.5, 0.5));
     h.step();
@@ -687,7 +708,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     h.run();
     assert_eq!(size(&h), off);
     click(&mut h, toggle.center());
-    assert!(st(&h).brush.pressure_size);
+    assert!(st(&h).brush.pressure.size);
 
     // 項目ごと: 2 番目（不透明度）の最小と曲線を直しても、サイズは今のまま。不透明度の側だけが変わる
     // （不透明度の曲線の枠はウィンドウの下の端にかかるので、少し送ってから触る）
@@ -718,7 +739,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
             opacity_min.center().y,
         ),
     );
-    let opacity = |h: &H| st(h).m2.brush.pressure.opacity.clone();
+    let opacity = |h: &H| st(h).m2.brush.influences.opacity.pressure.response.clone();
     assert!(
         (0.5..0.7).contains(&opacity(&h).min()),
         "{}",
@@ -736,8 +757,22 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert_eq!(bent.curve().len(), 3, "{bent:?}");
     assert!((bent.curve_shape().points()[1].y - 0.8).abs() < 0.02);
     assert_eq!(size(&h), size_now, "サイズの応えは変わらない");
-    assert!(st(&h).m2.brush.pressure.flow.is_identity());
-    assert!(st(&h).m2.brush.pressure.hardness.is_identity());
+    assert!(st(&h)
+        .m2
+        .brush
+        .influences
+        .flow
+        .pressure
+        .response
+        .is_identity());
+    assert!(st(&h)
+        .m2
+        .brush
+        .influences
+        .hardness
+        .pressure
+        .response
+        .is_identity());
     // 不透明度の点を右クリックで消すと直線へ戻る（サイズは触れない）
     let on = pos2(
         og.left() + 0.5 * og.width(),
@@ -760,7 +795,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert_eq!(size(&h).curve().len(), 3);
     h.get_by_label("筆圧を既定に戻す").click();
     h.run();
-    assert!(st(&h).m2.brush.pressure.is_identity());
+    assert!(pressure_identity(&st(&h).m2.brush));
 }
 
 #[test]
@@ -844,32 +879,39 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
         nodes[0]
     };
     // 先頭の項目（サイズ）の切り替えを切ると、最小値は使えなくなる
-    assert!(st(&h).brush.pressure_size);
+    assert!(st(&h).brush.pressure.size);
     let toggle = first(&h, "筆圧を使う");
     click(&mut h, toggle.center());
-    assert!(!st(&h).brush.pressure_size);
+    assert!(!st(&h).brush.pressure.size);
     assert!(h
         .query_all_by_label("最小")
         .find(|n| window.contains(n.rect().center()))
         .is_some_and(|n| n.accesskit_node().is_disabled()));
     click(&mut h, toggle.center());
-    assert!(st(&h).brush.pressure_size);
+    assert!(st(&h).brush.pressure.size);
     // 最小のスライダーを 40% あたりまで
     let minimum = first(&h, "最小");
     click(
         &mut h,
         pos2(minimum.left() + minimum.width() * 0.4, minimum.center().y),
     );
-    let min = st(&h).m2.brush.pressure.size.min();
+    let min = st(&h).m2.brush.influences.size.pressure.response.min();
     assert!((0.3..0.5).contains(&min), "{min}");
     assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     // ほかの項目は変わらない
-    assert!(st(&h).m2.brush.pressure.opacity.is_identity());
+    assert!(st(&h)
+        .m2
+        .brush
+        .influences
+        .opacity
+        .pressure
+        .response
+        .is_identity());
     h.get_by_label("筆圧を既定に戻す").click();
     h.run();
-    assert!(st(&h).m2.brush.pressure.is_identity());
+    assert!(pressure_identity(&st(&h).m2.brush));
     assert!(
-        st(&h).brush.pressure_size && st(&h).brush.pressure_opacity && !st(&h).brush.pressure_flow
+        st(&h).brush.pressure.size && st(&h).brush.pressure.opacity && !st(&h).brush.pressure.flow
     );
     assert!(!st(&h).brush_is_modified(b("standard")));
     // 入り抜きとペン: 入り・抜き（筆圧の切り替えは持たない）
@@ -883,12 +925,12 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
     );
     assert!(st(&h).m2.brush.assist.taper_in > 100.0);
     // 筆圧で硬さを変える切り替えは「筆圧」の側のもの: 入り抜きとペンを既定に戻しても残る
-    h.state_mut().state.m2.brush.controls.pressure_hardness = true;
+    h.state_mut().state.m2.brush.influences.hardness.pressure.on = true;
     h.get_by_label("入り抜きとペンを既定に戻す").click();
     h.run();
     assert_eq!(st(&h).m2.brush.assist.taper_in, 0.0);
-    assert!(st(&h).m2.brush.controls.pressure_hardness);
-    h.state_mut().state.m2.brush.controls.pressure_hardness = false;
+    assert!(st(&h).m2.brush.influences.hardness.pressure.on);
+    h.state_mut().state.m2.brush.influences.hardness.pressure.on = false;
     // デュアルブラシ: 使う → 欄が出る → 既定に戻すで外れる
     let at = rect_of(&h, "デュアルブラシ", |r| {
         window.contains(r.center()) && r.left() < window.left() + 168.0
@@ -1485,7 +1527,7 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
 fn the_pen_button_beside_the_tool_hardness_toggles_the_pressure_and_is_off_for_an_image_tip() {
     let mut h = app(1600.0, 900.0, 128);
     let label = "筆圧で硬さを変える";
-    let pressure = |h: &H| st(h).m2.brush.controls.pressure_hardness;
+    let pressure = |h: &H| st(h).m2.brush.influences.hardness.pressure.on;
     let disabled = |h: &H| {
         h.query_all_by_label(label)
             .find(|n| in_panel(n.rect()))
@@ -1513,7 +1555,7 @@ fn the_pen_button_beside_the_tool_hardness_toggles_the_pressure_and_is_off_for_a
     assert!(disabled(&h));
     press_it(&mut h);
     assert!(!pressure(&h), "押せない所では何も起きない");
-    h.state_mut().state.m2.brush.controls.pressure_hardness = true;
+    h.state_mut().state.m2.brush.influences.hardness.pressure.on = true;
     h.run();
     press_it(&mut h);
     assert!(pressure(&h), "押せない所では何も起きない");
@@ -1554,9 +1596,9 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     assert!(hardness_min.1);
     // 硬さの切り替えを入れると、硬さの最小が使える。ほかの項目は変わらない
     click(&mut h, hardness.0.center());
-    assert!(st(&h).m2.brush.controls.pressure_hardness);
+    assert!(st(&h).m2.brush.influences.hardness.pressure.on);
     assert!(
-        st(&h).brush.pressure_size && st(&h).brush.pressure_opacity && !st(&h).brush.pressure_flow
+        st(&h).brush.pressure.size && st(&h).brush.pressure.opacity && !st(&h).brush.pressure.flow
     );
     assert!(!last_two(&h, "最小")[1].1);
     assert!(st(&h).brush_is_modified(b("standard")));
@@ -1570,14 +1612,21 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     assert!(last_two(&h, "最小")[1].1);
     click(&mut h, hardness.0.center());
     assert!(
-        st(&h).m2.brush.controls.pressure_hardness,
+        st(&h).m2.brush.influences.hardness.pressure.on,
         "押せない所では何も起きない"
     );
-    let before = st(&h).m2.brush.pressure.hardness.clone();
+    let before = st(&h)
+        .m2
+        .brush
+        .influences
+        .hardness
+        .pressure
+        .response
+        .clone();
     let min = last_two(&h, "最小")[1].0;
     click(&mut h, pos2(min.left() + min.width() * 0.5, min.center().y));
     assert_eq!(
-        st(&h).m2.brush.pressure.hardness,
+        st(&h).m2.brush.influences.hardness.pressure.response,
         before,
         "押せない所では何も起きない"
     );
@@ -1589,11 +1638,18 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     // 「筆圧を既定に戻す」は、硬さの切り替えも切る（最小値・曲線と一緒に）
     let min = last_two(&h, "最小")[1].0;
     click(&mut h, pos2(min.left() + min.width() * 0.4, min.center().y));
-    assert!(!st(&h).m2.brush.pressure.hardness.is_identity());
+    assert!(!st(&h)
+        .m2
+        .brush
+        .influences
+        .hardness
+        .pressure
+        .response
+        .is_identity());
     h.get_by_label("筆圧を既定に戻す").click();
     h.run();
-    assert!(!st(&h).m2.brush.controls.pressure_hardness);
-    assert!(st(&h).m2.brush.pressure.is_identity());
+    assert!(!st(&h).m2.brush.influences.hardness.pressure.on);
+    assert!(pressure_identity(&st(&h).m2.brush));
     assert!(!st(&h).brush_is_modified(b("standard")));
 }
 
@@ -1652,4 +1708,12 @@ fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
     );
     wait(&mut h, new);
     assert!(!drawn(&mut h, old), "新しい見本ができたら替わる");
+}
+
+/// 大きさ・不透明度・流量・硬さの筆圧の応えが、どれも既定（最小値 0・直線）か。
+fn pressure_identity(b: &yolu_core::Brush) -> bool {
+    use yolu_core::brush::Item;
+    [Item::Size, Item::Opacity, Item::Flow, Item::Hardness]
+        .into_iter()
+        .all(|i| b.influences.get(i).pressure.response.is_identity())
 }

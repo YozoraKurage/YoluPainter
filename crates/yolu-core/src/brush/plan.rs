@@ -8,18 +8,26 @@ use super::*;
 /// 描点 1 つの、ダブの組（数）で共通の値。
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct StampControls {
-    /// フェード・傾き・速さの、大きさ・不透明度・流量への係数（使わなければ 1）。
+    /// フェードと、影響元の傾き・速度・ランダムの、大きさ・不透明度・流量への係数（使わなければ 1）。
     pub size: f64,
     pub opacity: f64,
     pub flow: f64,
     /// ペンの倒れた向き（角度に足す。使わなければ 0）。
     pub tilt_turn: f64,
-    /// 筆圧の応えを通した大きさの係数（切っていれば 1）。
+    /// 筆圧の応えを通した大きさの係数（筆圧を使っていなければ 1）。
     pub size_pressure: f64,
-    /// 筆圧の応えを通した不透明度・流量などの係数。
+    /// 筆圧の応えを通した不透明度・流量の係数と、絵の具の量・濃さの係数（筆圧でない入力も掛けたもの）。
     pub pressure: PressureScale,
-    /// 硬さ（筆圧で変えるなら × 応え）。
+    /// 硬さ（影響元を使うなら × 係数）。
     pub hardness: f64,
+    /// 硬さの影響元の係数（3D の丸い筆先が自分の精度の硬さに掛ける。使わなければ None）。
+    pub hardness_factor: Option<f64>,
+    /// 真円率の影響元の係数（使わなければ None）。
+    pub roundness: Option<f64>,
+    /// 質感の濃さの影響元の係数（使わなければ 1）。
+    pub texture_density: f64,
+    /// 絵の具の量・濃さの、筆圧でない入力の係数（使わなければ 1。3D の面のダブが画素の筆圧の係数に掛ける）。
+    pub mix_others: (f64, f64),
 }
 
 /// ダブ 1 つの置き方。
@@ -39,58 +47,80 @@ pub(crate) struct DabPlan<'a> {
 }
 
 impl Brush {
-    /// 描点 1 つ（ストロークの index 番目）の係数（C# の Stamp の前半）。フェード（何番目の描点か）と傾きは、筆圧と掛け合わせる。
-    pub(crate) fn stamp_controls(&self, dab: &PendingDab, index: u64) -> StampControls {
+    /// 描点 1 つ（ストロークの index 番目）の係数（C# の Stamp の前半）。フェード（何番目の描点か）と影響元（[`Influences`]）を
+    /// 項目ごとに掛け合わせる。`random` は影響元の乱数の列（どの項目もランダムを使わなければ None。使う項目ごとに、項目の並びの順に 1 つ引く）。
+    pub(crate) fn stamp_controls(
+        &self,
+        dab: &PendingDab,
+        index: u64,
+        random: Option<&mut NetRandom>,
+    ) -> StampControls {
         let c = &self.controls;
-        let tilt = if c.tilt_size || c.tilt_opacity || c.tilt_flow || c.tilt_angle {
+        let inf = &self.influences;
+        let tilt = if inf.uses(Input::Tilt) || c.tilt_angle {
             pen_tilt::amount(dab.tilt_x, dab.tilt_y)
         } else {
             0.0
         };
-        let mut size_control =
-            dynamics::fade(c.fade_size, index) * (if c.tilt_size { 1.0 - tilt } else { 1.0 });
-        let mut opacity_control =
-            dynamics::fade(c.fade_opacity, index) * (if c.tilt_opacity { 1.0 - tilt } else { 1.0 });
-        let mut flow_control =
-            dynamics::fade(c.fade_flow, index) * (if c.tilt_flow { 1.0 - tilt } else { 1.0 });
-        // 拡張: 速いほど小さく・薄く（速さの上限で 0）。切っていれば掛けない（C# と同じ値のまま）
-        if c.speed_size || c.speed_opacity || c.speed_flow {
-            let slow = 1.0 - clamp01(dab.speed / c.speed_max);
-            if c.speed_size {
-                size_control *= slow;
-            }
-            if c.speed_opacity {
-                opacity_control *= slow;
-            }
-            if c.speed_flow {
-                flow_control *= slow;
-            }
-        }
+        // 速いほど小さく・薄く（速さの上限で 0）。使っていなければ求めない
+        let slow = if inf.uses(Input::Speed) {
+            1.0 - clamp01(dab.speed / inf.speed_max)
+        } else {
+            1.0
+        };
+        let x = InputValues {
+            pressure: dab.pressure,
+            upright: 1.0 - tilt,
+            slow,
+        };
+        let [r_size, r_opacity, r_flow, r_hardness, r_roundness, r_texture, r_paint, r_density] =
+            inf.draw_random(random);
+        // フェードの後に、傾き・速度・ランダムをこの順で掛ける（使っていない入力は掛けない）
+        let size_control = inf
+            .size
+            .times_others(dynamics::fade(c.fade_size, index), &x, r_size);
+        let opacity_control =
+            inf.opacity
+                .times_others(dynamics::fade(c.fade_opacity, index), &x, r_opacity);
+        let flow_control = inf
+            .flow
+            .times_others(dynamics::fade(c.fade_flow, index), &x, r_flow);
         let tilt_turn = if c.tilt_angle && tilt > 0.0 {
             pen_tilt::azimuth(dab.tilt_x, dab.tilt_y)
         } else {
             0.0
         };
         let s = &self.base;
-        // 筆圧は項目ごとの応え（最小値と曲線）を通す。既定の応えは筆圧をそのまま返し、切っている項目は掛けない
-        let size_pressure = if s.pressure_size {
-            self.pressure.size.apply(dab.pressure)
-        } else {
-            1.0
+        // 筆圧は項目ごとの応え（最小値と曲線）を通す。既定の応えは筆圧をそのまま返し、使っていない項目は掛けない
+        let size_pressure = inf.size.pressure_factor(dab.pressure).unwrap_or(1.0);
+        let hardness_factor = inf.hardness.factor(&x, r_hardness);
+        let hardness = match hardness_factor {
+            Some(f) => s.hardness * f,
+            None => s.hardness,
         };
-        let hardness = if c.pressure_hardness {
-            s.hardness * self.pressure.hardness.apply(dab.pressure)
-        } else {
-            s.hardness
-        };
+        let mut pressure = self.pressure_scale(dab.pressure);
+        let mix_others = (
+            inf.mix_paint.times_others(1.0, &x, r_paint),
+            inf.mix_density.times_others(1.0, &x, r_density),
+        );
+        if mix_others.0 != 1.0 {
+            pressure.mix_paint *= mix_others.0;
+        }
+        if mix_others.1 != 1.0 {
+            pressure.mix_density *= mix_others.1;
+        }
         StampControls {
             size: size_control,
             opacity: opacity_control,
             flow: flow_control,
             tilt_turn,
             size_pressure,
-            pressure: self.pressure_scale(dab.pressure),
+            pressure,
             hardness,
+            hardness_factor,
+            roundness: inf.roundness.factor(&x, r_roundness),
+            texture_density: inf.texture_density.factor(&x, r_texture).unwrap_or(1.0),
+            mix_others,
         }
     }
 
@@ -145,7 +175,11 @@ impl Brush {
         if j.angle > 0.0 {
             angle += (random.next_double() * 2.0 - 1.0) * std::f64::consts::PI * j.angle;
         }
-        let mut roundness = self.tip.roundness;
+        // 真円率の影響元は、ゆらぎの前に掛ける（下限はゆらぎと同じ 0.01）
+        let mut roundness = match c.roundness {
+            Some(f) => f64_max(0.01, self.tip.roundness * f),
+            None => self.tip.roundness,
+        };
         if j.roundness > 0.0 {
             roundness = f64_max(0.01, roundness * (1.0 - j.roundness * random.next_double()));
         }
@@ -212,6 +246,7 @@ impl Brush {
             flip_x: self.tip.flip_x,
             flip_y: self.tip.flip_y,
             texture: self.texture.as_ref().filter(|t| t.depth > 0.0),
+            texture_density: c.texture_density,
             dual: self.dual.as_ref().map(|d| d.mode),
             edge: Edge::OFF,
         }
@@ -300,8 +335,8 @@ mod tests {
     #[test]
     fn speed_flow_multiplies_the_flow_control() {
         let mut brush = Brush::default();
-        brush.controls.speed_flow = true;
-        brush.controls.speed_max = 3000.0;
+        brush.influences.flow.speed.on = true;
+        brush.influences.speed_max = 3000.0;
         let dab = PendingDab {
             x: 0.0,
             y: 0.0,
@@ -313,7 +348,7 @@ mod tests {
             rotation: 0.0,
             speed: 1500.0,
         };
-        let c = brush.stamp_controls(&dab, 0);
+        let c = brush.stamp_controls(&dab, 0, None);
         // 速さ 1500 / 上限 3000 → 1 − clamp01(0.5) = 0.5 を流量の係数に掛ける（足さない）
         assert!((c.flow - 0.5).abs() < 1e-12, "{}", c.flow);
     }
@@ -334,7 +369,7 @@ mod tests {
 
     /// ブラシの最初の描点の計画（大きさ 4）。
     fn first_plan<'a>(brush: &'a Brush, dab: &PendingDab) -> (StampControls, DabPlan<'a>) {
-        let c = brush.stamp_controls(dab, 0);
+        let c = brush.stamp_controls(dab, 0, None);
         let mut random = NetRandom::new(0);
         let mut tip_index = 0u64;
         let plan = brush
@@ -380,11 +415,11 @@ mod tests {
             ..still_dab()
         };
         let mut brush = Brush::default();
-        brush.controls.tilt_size = true;
-        assert_eq!(brush.stamp_controls(&dab, 0).tilt_turn, 0.0);
+        brush.influences.size.tilt.on = true;
+        assert_eq!(brush.stamp_controls(&dab, 0, None).tilt_turn, 0.0);
         // 角度を傾きに沿わせると、倒した向きだけ回す
         brush.controls.tilt_angle = true;
-        let turn = brush.stamp_controls(&dab, 0).tilt_turn;
+        let turn = brush.stamp_controls(&dab, 0, None).tilt_turn;
         assert!((turn - pen_tilt::azimuth(0.3, 0.4)).abs() < 1e-15, "{turn}");
     }
 }

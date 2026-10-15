@@ -840,7 +840,8 @@ unsafe fn rows<V: Slice32>(
         }
         let with_texture = s.texture.is_some();
         if let Some(tex) = s.texture {
-            unsafe { texture_row::<V>(tex, opacity_scale, py, xs.0, cov, scale, lo, hi) };
+            let depth = super::texture_depth(tex, s.texture_density) as f32;
+            unsafe { texture_row::<V>(tex, depth, opacity_scale, py, xs.0, cov, scale, lo, hi) };
         }
         let scale = if with_texture {
             Scale::Row(&scale[..])
@@ -1415,6 +1416,7 @@ pub(super) fn texture_scale_one(g: &Grain<'_>, depth: f32, base: f32, px: i64) -
 #[allow(clippy::too_many_arguments)]
 pub(super) unsafe fn texture_row<V: Slice32>(
     tex: &PaperTexture,
+    depth: f32,
     opacity_scale: f32,
     py: i64,
     x_first: i64,
@@ -1424,7 +1426,6 @@ pub(super) unsafe fn texture_row<V: Slice32>(
     hi: usize,
 ) {
     let g = Grain::new(tex, py);
-    let depth = tex.depth as f32;
     let mut i = lo;
     // 1 本のレーンの道もこのループ（余りの 1 画素ずつの式は SIMD の道の短い行だけ）
     {
@@ -1772,6 +1773,7 @@ pub(super) fn dual_cover_shape<'a>(shape: &DualShape<'a>) -> DabShape<'a> {
         flip_x: false,
         flip_y: false,
         texture: None,
+        texture_density: 1.0,
         dual: None,
         edge: shape.edge,
     }

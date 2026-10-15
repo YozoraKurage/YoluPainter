@@ -352,9 +352,10 @@ impl StrokeState {
                             (px as f64 + 0.5) / tex.scale,
                             (py as f64 + 0.5) / tex.scale,
                         );
+                        let depth = super::texture_depth(tex, s.texture_density);
                         match tex.mode.as_blend() {
-                            None => ceiling *= 1.0 - tex.depth * (1.0 - grain),
-                            Some(m) => paper = Some((m, grain, tex.depth)),
+                            None => ceiling *= 1.0 - depth * (1.0 - grain),
+                            Some(m) => paper = Some((m, grain, depth)),
                         }
                     }
                     if coverage > 0.0 && ceiling > 0.0 {

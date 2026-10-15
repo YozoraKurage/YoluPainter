@@ -20,14 +20,19 @@ fn options() -> Options<'static> {
 }
 
 fn brush(radius: f64) -> PathBrush {
-    PathBrush(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.1,
-        color: Rgba8::new(255, 255, 255, 255),
-        pressure_size: false,
-        ..BrushSettings::default()
-    })
+    PathBrush(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.1,
+            color: Rgba8::new(255, 255, 255, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches {
+            size: false,
+            ..yolu_core::PressureSwitches::default()
+        },
+    )
 }
 
 fn canvas(points: Vec<CanvasPoint>) -> CanvasPath {

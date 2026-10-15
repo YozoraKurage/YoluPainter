@@ -241,19 +241,23 @@ fn new_doc() -> Document {
     doc
 }
 fn path_brush() -> PathBrush {
-    PathBrush(BrushSettings {
-        radius: 3.0,
-        hardness: 0.7,
-        spacing: 0.17,
-        opacity: 0.83,
-        flow: 0.42,
-        color: Rgba8::new(201, 37, 89, 219),
-        pressure_size: true,
-        pressure_opacity: false,
-        pressure_flow: false,
-        erase: false,
-        anti_alias: yolu_core::AntiAlias::None,
-    })
+    PathBrush(
+        BrushSettings {
+            radius: 3.0,
+            hardness: 0.7,
+            spacing: 0.17,
+            opacity: 0.83,
+            flow: 0.42,
+            color: Rgba8::new(201, 37, 89, 219),
+            erase: false,
+            anti_alias: yolu_core::AntiAlias::None,
+        },
+        yolu_core::PressureSwitches {
+            size: true,
+            opacity: false,
+            flow: false,
+        },
+    )
 }
 fn canvas_path(shift: f64) -> yolu_core::paths::CanvasPath {
     let mut p = path_points(shift);
@@ -909,10 +913,13 @@ fn with_surface_path() -> Document {
         style: Default::default(),
         id: 9,
         channel: Channel::Height,
-        brush: PathBrush(BrushSettings {
-            radius: 0.1,
-            ..path_brush().0
-        }),
+        brush: PathBrush(
+            BrushSettings {
+                radius: 0.1,
+                ..path_brush().0
+            },
+            yolu_core::PressureSwitches::default(),
+        ),
         points: vec![
             PathPoint::new(0, 0.2, 0.3, 1.0).unwrap(),
             PathPoint::new(1, 0.4, 0.2, 1.0).unwrap(),

@@ -11,16 +11,21 @@ use yolu_core::{AntiAlias, Brush, BrushSettings, CoreError, Document, LayerId, L
 use crate::anti_alias::{bytes, document, front, quad, screen};
 
 fn brush(radius: f64, spacing: f64, pressure_size: bool, on: bool, level: AntiAlias) -> Brush {
-    let mut b = Brush::from(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing,
-        color: Rgba8::new(20, 40, 160, 255),
-        pressure_size,
-        pressure_opacity: false,
-        anti_alias: level,
-        ..BrushSettings::default()
-    });
+    let mut b = Brush::simple(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing,
+            color: Rgba8::new(20, 40, 160, 255),
+            anti_alias: level,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches {
+            size: pressure_size,
+            opacity: false,
+            flow: false,
+        },
+    );
     b.controls.min_one_pixel = on;
     b
 }

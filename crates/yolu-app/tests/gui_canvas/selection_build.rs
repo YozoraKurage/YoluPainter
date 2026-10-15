@@ -222,8 +222,8 @@ fn set_brush(h: &mut H, diameter: f32, hardness: f32, opacity: f32) {
     b.radius = diameter / 2.0;
     b.hardness = hardness;
     b.opacity = opacity;
-    b.pressure_size = false;
-    b.pressure_opacity = false;
+    b.pressure.size = false;
+    b.pressure.opacity = false;
 }
 
 // ───────── 作成方法のアイコンの組 ─────────
@@ -990,7 +990,7 @@ fn the_selection_pen_works_with_the_pen_pressure_and_the_eraser_end() {
     pick_tool(&mut h, Tool::SelectPen);
     h.state_mut().state.sel.animate = false;
     set_brush(&mut h, 60.0, 1.0, 1.0);
-    h.state_mut().state.brush.pressure_size = true;
+    h.state_mut().state.brush.pressure.size = true;
     let line = |h: &H, y: f32| -> Vec<Pos2> {
         (0..=8)
             .map(|i| at(h, -100.0 + 25.0 * i as f32, y))
@@ -1014,11 +1014,11 @@ fn the_selection_pen_works_with_the_pen_pressure_and_the_eraser_end() {
     );
     undo(&mut h);
     // 筆圧で変えない設定なら同じ太さ
-    h.state_mut().state.brush.pressure_size = false;
+    h.state_mut().state.brush.pressure.size = false;
     pen_stroke(&mut h, &full, 0.5, false);
     assert!((height_of(&h) - full_height).abs() <= 2);
     undo(&mut h);
-    h.state_mut().state.brush.pressure_size = true;
+    h.state_mut().state.brush.pressure.size = true;
     pen_stroke(&mut h, &full, 1.0, false);
     assert_eq!(steps(&h), 1);
     // ペンの消しゴムの端: 消す
@@ -1143,8 +1143,7 @@ fn headless_a_stroke_past_the_budget_is_refused_and_a_normal_stroke_is_not() {
         radius: 30.0,
         hardness: 1.0,
         opacity: 1.0,
-        pressure_size: false,
-        pressure_opacity: false,
+        pressure: yolu_app::engine::PressureSwitches::NONE,
     };
     // 予算が小さいと、タイルが増えたところで断る
     let tile_bytes = (doc.tile_size() as u64).pow(2) * 3;
@@ -1195,8 +1194,7 @@ fn headless_the_dab_profile_matches_the_brush_edge_and_the_preview_matches_the_c
             radius: 25.0,
             hardness: 0.3,
             opacity: 0.8,
-            pressure_size: false,
-            pressure_opacity: false,
+            pressure: yolu_app::engine::PressureSwitches::NONE,
         };
         let mut stroke =
             PenStroke::new(&s.doc, erase, Some(base.clone()), params, 1 << 28).unwrap();
@@ -1827,7 +1825,7 @@ fn quick_mask_follows_the_pen_pressure_and_the_pen_eraser_end() {
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     pick_tool(&mut h, Tool::Brush);
     set_brush(&mut h, 60.0, 1.0, 1.0);
-    h.state_mut().state.brush.pressure_size = true;
+    h.state_mut().state.brush.pressure.size = true;
     let line: Vec<Pos2> = (0..=8)
         .map(|i| at(&h, -100.0 + 25.0 * i as f32, 0.0))
         .collect();
@@ -2312,8 +2310,7 @@ fn headless_the_stroke_amount_does_not_depend_on_the_dab_spacing_or_the_overlap(
             radius: 8.0,
             hardness,
             opacity: 0.5,
-            pressure_size: false,
-            pressure_opacity: false,
+            pressure: yolu_app::engine::PressureSwitches::NONE,
         };
         let mut st = PenStroke::new(&doc, false, None, params, PEN_BUDGET_BYTES).unwrap();
         for &(x, y) in points {

@@ -296,9 +296,9 @@ fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
         "fadesize" => br.controls.fade_size = int(v) as u32,
         "fadeop" => br.controls.fade_opacity = int(v) as u32,
         "fadeflow" => br.controls.fade_flow = int(v) as u32,
-        "tiltsize" => br.controls.tilt_size = flag(v),
-        "tiltop" => br.controls.tilt_opacity = flag(v),
-        "tiltflow" => br.controls.tilt_flow = flag(v),
+        "tiltsize" => br.influences.size.tilt.on = flag(v),
+        "tiltop" => br.influences.opacity.tilt.on = flag(v),
+        "tiltflow" => br.influences.flow.tilt.on = flag(v),
         "tiltangle" => br.controls.tilt_angle = flag(v),
         "effect" => {
             b.effect = Some(match v {
@@ -782,9 +782,9 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
                     "opacity" => s.opacity = num(c, v),
                     "flow" => s.flow = num(c, v),
                     "color" => s.color = color(v),
-                    "psize" => s.pressure_size = v == "1",
-                    "popacity" => s.pressure_opacity = v == "1",
-                    "pflow" => s.pressure_flow = v == "1",
+                    "psize" => b.brush.influences.size.pressure.on = v == "1",
+                    "popacity" => b.brush.influences.opacity.pressure.on = v == "1",
+                    "pflow" => b.brush.influences.flow.pressure.on = v == "1",
                     "erase" => s.erase = v == "1",
                     "channel" => ch = channel(v),
                     _ => {

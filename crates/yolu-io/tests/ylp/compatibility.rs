@@ -234,11 +234,14 @@ fn fill_layers_with_a_disabled_channel_and_a_mask_survive_save_and_restore() {
     let brush = BrushSettings {
         radius: 1.0,
         hardness: 1.0,
-        pressure_size: false,
-        pressure_opacity: false,
         ..BrushSettings::default()
     };
-    let mut stroke = d.begin_mask_stroke(fill, &brush).unwrap();
+    let mut stroke = d
+        .begin_brush_mask_stroke(
+            fill,
+            &yolu_core::Brush::simple(brush, yolu_core::PressureSwitches::NONE),
+        )
+        .unwrap();
     stroke.apply_pixel(&mut d, 3, 3, 1.0, 1.0).unwrap();
     d.end_stroke(stroke).unwrap();
     let paint = d.add_layer("Paint").unwrap();

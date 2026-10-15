@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 use yolu_core::paths::{ChannelPaint, PathKind, Ribbon, RibbonMode};
-use yolu_core::{AntiAlias, BrushSettings, BrushTip, Channel, ImageId, Rgba8};
+use yolu_core::{AntiAlias, BrushSettings, BrushTip, Channel, ImageId, PressureSwitches, Rgba8};
 
 use super::{with_brush, with_material, with_style, PathAction};
 use crate::lang::Lang;
@@ -39,6 +39,8 @@ pub struct PresetData {
     pub kind: PathKind,
     /// ブラシ（半径は画素。3D のパスへ当てるときはモデルの大きさに換算する）。
     pub brush: BrushSettings,
+    /// 筆圧で大きさ・不透明度・流量を変えるか。
+    pub pressure: PressureSwitches,
     pub material: Option<Vec<ChannelPaint>>,
     pub tip: Option<Arc<BrushTip>>,
     pub angle: f64,
@@ -117,9 +119,9 @@ pub fn encode(name: &str, d: &PresetData) -> String {
         "opacity": b.opacity,
         "flow": b.flow,
         "color": rgba(b.color),
-        "pressure_size": b.pressure_size,
-        "pressure_opacity": b.pressure_opacity,
-        "pressure_flow": b.pressure_flow,
+        "pressure_size": d.pressure.size,
+        "pressure_opacity": d.pressure.opacity,
+        "pressure_flow": d.pressure.flow,
         "material": d.material.as_ref().map(|m| {
             m.iter()
                 .map(|p| json!([p.channel.index(), p.color.r, p.color.g, p.color.b, p.color.a]))
@@ -202,9 +204,6 @@ pub fn decode(text: &str) -> Result<(String, PresetData), String> {
         opacity: num("opacity", 0.0, 1.0)?,
         flow: num("flow", 0.0, 1.0)?,
         color: rgba(&v["color"]).ok_or("color")?,
-        pressure_size: flag("pressure_size")?,
-        pressure_opacity: flag("pressure_opacity")?,
-        pressure_flow: flag("pressure_flow")?,
         erase: false,
         anti_alias: match &v["anti_alias"] {
             Value::Null => AntiAlias::None,
@@ -213,6 +212,11 @@ pub fn decode(text: &str) -> Result<(String, PresetData), String> {
                 .and_then(AntiAlias::from_id)
                 .ok_or("anti_alias")?,
         },
+    };
+    let pressure = PressureSwitches {
+        size: flag("pressure_size")?,
+        opacity: flag("pressure_opacity")?,
+        flow: flag("pressure_flow")?,
     };
     let material = match &v["material"] {
         Value::Null => None,
@@ -252,6 +256,7 @@ pub fn decode(text: &str) -> Result<(String, PresetData), String> {
         PresetData {
             kind,
             brush,
+            pressure,
             material,
             tip,
             angle: num("angle", -360.0, 360.0)?,
@@ -434,7 +439,7 @@ impl AppState {
     fn path_preset_data(&self) -> Option<PresetData> {
         match self.path_layer() {
             Some((_, path)) => {
-                let mut brush = super::path_brush(path).0;
+                let PathBrush(mut brush, pressure) = super::path_brush(path);
                 if !path.is_canvas() {
                     brush.radius /= self.path_world_unit()?;
                 }
@@ -442,6 +447,7 @@ impl AppState {
                 Some(PresetData {
                     kind: style.kind,
                     brush,
+                    pressure,
                     material: path.material().map(<[_]>::to_vec),
                     tip: style.tip.clone(),
                     angle: style.angle,
@@ -455,6 +461,7 @@ impl AppState {
                 Some(PresetData {
                     kind: style.kind,
                     brush: self.brush.settings(self.color.main, false),
+                    pressure: self.brush.pressure,
                     material: None,
                     tip: style.tip.clone(),
                     angle: style.angle,
@@ -586,9 +593,7 @@ impl AppState {
             b.spacing = data.brush.spacing as f32;
             b.opacity = data.brush.opacity as f32;
             b.flow = data.brush.flow as f32;
-            b.pressure_size = data.brush.pressure_size;
-            b.pressure_opacity = data.brush.pressure_opacity;
-            b.pressure_flow = data.brush.pressure_flow;
+            b.pressure = data.pressure;
             b.anti_alias = data.brush.anti_alias;
             return;
         };
@@ -616,7 +621,10 @@ impl AppState {
         style.follow = data.follow;
         style.depth = if path.is_canvas() { None } else { data.depth };
         let next = with_style(
-            &with_material(&with_brush(&path, PathBrush(brush)), material),
+            &with_material(
+                &with_brush(&path, PathBrush(brush, data.pressure)),
+                material,
+            ),
             style,
         );
         let Some((layer, _)) = self.path_target(None) else {
@@ -645,6 +653,11 @@ mod tests {
                 color: Rgba8::new(1, 2, 3, 4),
                 anti_alias: AntiAlias::Strong,
                 ..BrushSettings::default()
+            },
+            pressure: PressureSwitches {
+                size: false,
+                opacity: true,
+                flow: true,
             },
             material: Some(vec![ChannelPaint {
                 channel: Channel::Roughness,

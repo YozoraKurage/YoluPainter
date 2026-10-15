@@ -143,13 +143,14 @@ fn plan(
 fn brush(effect: BrushEffect) -> Brush {
     Brush {
         effect,
-        ..Brush::from(BrushSettings {
-            flow: 1.0,
-            opacity: 1.0,
-            pressure_size: false,
-            pressure_opacity: false,
-            ..BrushSettings::default()
-        })
+        ..Brush::simple(
+            BrushSettings {
+                flow: 1.0,
+                opacity: 1.0,
+                ..BrushSettings::default()
+            },
+            yolu_core::PressureSwitches::NONE,
+        )
     }
 }
 fn document(tile: u32) -> (Document, LayerId) {

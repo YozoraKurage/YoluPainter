@@ -1393,7 +1393,7 @@ fn brush_view(app: &AppState) -> BrushView {
     let free = app.can_edit();
     match app.path_layer() {
         Some((_, path)) => {
-            let PathBrush(b) = path_brush(path);
+            let PathBrush(b, p) = path_brush(path);
             let diameter = match path {
                 LayerPath::Canvas(_) => Some((b.radius * 2.0) as f32),
                 LayerPath::Surface(_) => app.view3d.full_model().map(|m| {
@@ -1416,7 +1416,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 spacing: b.spacing as f32,
                 opacity: b.opacity as f32,
                 flow: b.flow as f32,
-                pressure: [b.pressure_size, b.pressure_opacity, b.pressure_flow],
+                pressure: [p.size, p.opacity, p.flow],
                 kind: path.style().kind,
                 style: path.style().clone(),
                 surface: !path.is_canvas(),
@@ -1433,7 +1433,7 @@ fn brush_view(app: &AppState) -> BrushView {
                 spacing: b.spacing,
                 opacity: b.opacity,
                 flow: b.flow,
-                pressure: [b.pressure_size, b.pressure_opacity, b.pressure_flow],
+                pressure: [b.pressure.size, b.pressure.opacity, b.pressure.flow],
                 kind: app.path.next_style.kind,
                 style: app.path.next_style.clone(),
                 surface: false,

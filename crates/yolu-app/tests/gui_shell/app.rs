@@ -532,10 +532,10 @@ fn properties_tabs_and_pen_toggles() {
     let in_panel = |r: egui::Rect| r.left() < 390.0 && r.top() > 80.0;
     let pen = rect_of(&h, "筆圧で直径を変える", in_panel);
     click(&mut h, pen.center());
-    assert!(!h.state().state.brush.pressure_size);
+    assert!(!h.state().state.brush.pressure.size);
     let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
     click(&mut h, flow.center());
-    assert!(h.state().state.brush.pressure_flow);
+    assert!(h.state().state.brush.pressure.flow);
     // 右のプロパティはステンシルのタブから始まる。タブはステンシルとレイヤーの 2 つだけ（ブラシのタブも、マテリアルのタブも、筆先の形のアルファの
     // タブも無い。マテリアルは別のパネル、筆先の形は詳細のウィンドウの「形状」）
     assert_eq!(h.state().state.ui.property_tab, 0);

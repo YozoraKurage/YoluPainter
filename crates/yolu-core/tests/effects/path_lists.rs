@@ -21,13 +21,16 @@ fn options() -> Options<'static> {
 }
 
 fn brush(radius: f64, color: Rgba8) -> PathBrush {
-    PathBrush(BrushSettings {
-        radius,
-        hardness: 1.0,
-        spacing: 0.17,
-        color,
-        ..BrushSettings::default()
-    })
+    PathBrush(
+        BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.17,
+            color,
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::default(),
+    )
 }
 
 fn canvas(id: u128, points: &[(f64, f64)], color: Rgba8) -> CanvasPath {

@@ -338,21 +338,22 @@ fn headless_a_sut_is_imported_with_its_tip_pressure_and_the_item_names_it_could_
     let tip = e.baseline.tip.image.as_ref().expect("画像の筆先");
     assert_eq!(tip.alpha(), [0, 255, 255, 0]);
     assert_eq!(e.baseline.base.radius, 20.0);
-    assert!(e.baseline.base.pressure_size);
+    assert!(e.baseline.influences.size.pressure.on);
+    assert!(e.baseline.influences.size.tilt.on, "傾きも影響元へ写す");
     assert!(
-        (e.baseline.pressure.size.min() - 0.2).abs() < 1e-6,
+        (e.baseline.influences.size.pressure.response.min() - 0.2).abs() < 1e-6,
         "保存の精度（f32）に丸まる"
     );
-    // 表せなかった項目は名前の一覧（並びは項目の順）。傾き・吹き付け・プレビューの解像度
+    // 表せなかった項目は名前の一覧（並びは項目の順）。プレビューの解像度・吹き付け・傾きの曲線（枠の無い頭なので直線にした）
     let meta = e.import.as_ref().expect("出どころ");
     assert_eq!(meta.source, "CLIP STUDIO SUT");
-    assert_eq!(meta.gaps, [Gap::Controls, Gap::ImageResolution, Gap::Spray]);
-    let names = |lang| -> Vec<&'static str> { meta.gaps.iter().map(|g| g.name(lang)).collect() };
     assert_eq!(
-        names(Lang::Ja),
-        ["コントロール", "画像の解像度", "吹き付け"]
+        meta.gaps,
+        [Gap::ImageResolution, Gap::Spray, Gap::TiltCurve]
     );
-    assert_eq!(names(Lang::En), ["Controls", "Image resolution", "Spray"]);
+    let names = |lang| -> Vec<&'static str> { meta.gaps.iter().map(|g| g.name(lang)).collect() };
+    assert_eq!(names(Lang::Ja), ["画像の解像度", "吹き付け", "傾きの曲線"]);
+    assert_eq!(names(Lang::En), ["Image resolution", "Spray", "Tilt curve"]);
     // 保存して読み戻しても同じ（筆先の画像は置き場に 1 枚）
     assert_eq!((brush_files(&dir), image_files(&dir)), (1, 1));
     let back = state(&dir);
@@ -1285,14 +1286,14 @@ fn headless_the_carried_over_list_is_what_the_file_gave_not_what_the_brush_has_n
     assert_eq!(imported(&s)[0].import.as_ref().unwrap().mapped, from_file);
     // 取り込んだあとに利用者が傾き・筆圧・筆先の角度を入れて、ブラシとして登録する
     s.apply(Action::Brush(BrushAction::Select(key)));
-    s.m2.brush.controls.tilt_size = true;
-    s.brush.pressure_flow = true;
+    s.m2.brush.influences.size.tilt.on = true;
+    s.brush.pressure.flow = true;
     s.m2.brush.tip.angle = 30.0;
     s.apply(Action::Brush(BrushAction::Register(key)));
     let e = s.brushes.lib.entry(key).unwrap().clone();
     assert!(
-        e.baseline.controls.tilt_size
-            && e.baseline.base.pressure_flow
+        e.baseline.influences.size.tilt.on
+            && e.baseline.influences.flow.pressure.on
             && e.baseline.tip.angle == 30.0
     );
     // ファイルから写していない項目は、写した項目に並ばない（ブラシの今の設定から導かない）
