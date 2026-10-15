@@ -577,14 +577,13 @@ fn recent_app(
     for file in &files {
         h.recent_projects_mut().add(file);
     }
-    h.app_mut().doc.add_layer("here").unwrap();
+    h.doc_mut().add_layer("here").unwrap();
     h.run();
     (h, files)
 }
 
 fn layer_names(h: &impl Drive) -> Vec<String> {
-    h.app()
-        .doc
+    h.doc()
         .layers()
         .iter()
         .map(|l| l.name().to_owned())

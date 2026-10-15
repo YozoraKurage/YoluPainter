@@ -10,6 +10,7 @@ use crate::common::drive::Drive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use common::drive::Drive;
 use common::viewports::Driver;
 use common::*;
 use egui::{
@@ -1787,43 +1788,39 @@ fn ctrl_z() -> Event {
 fn while_the_unsaved_changes_question_is_open_an_outside_panel_does_not_change_the_document() {
     let (mut h, driver) = app_with_viewports();
     h.state_mut().set_discard_window(true);
-    h.state_mut().state.doc.add_layer("after").unwrap();
-    h.state_mut().state.mark_modified();
+    h.doc_mut().add_layer("after").unwrap();
+    h.set_modified(true);
     let id = detach_to(
         &mut h,
         &driver,
         Tab::History,
         Rect::from_min_size(pos2(1400.0, 100.0), vec2(360.0, 480.0)),
     );
-    let layers = h.state().state.doc.layers().len();
+    let layers = h.doc().layers().len();
     let at = history_start_row(&h);
     // 問いが無ければ、この点のクリックは文書を最初まで戻す（点が当たっていることの確かめ）
     click_child(&mut h, &driver, id, at);
-    assert_eq!(h.state().state.doc.undo_count(), 0, "問いが無いと戻る");
-    assert_eq!(h.state().state.doc.layers().len(), layers - 1);
-    h.state_mut().state.doc.redo().unwrap();
+    assert_eq!(h.doc().undo_count(), 0, "問いが無いと戻る");
+    assert_eq!(h.doc().layers().len(), layers - 1);
+    h.doc_mut().redo().unwrap();
     h.run();
-    assert_eq!(h.state().state.doc.layers().len(), layers);
+    assert_eq!(h.doc().layers().len(), layers);
     driver.child(id, |c| c.events.push(ctrl_z()));
     h.run();
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        0,
-        "問いが無いとキーでも戻る"
-    );
-    h.state_mut().state.doc.redo().unwrap();
+    assert_eq!(h.doc().undo_count(), 0, "問いが無いとキーでも戻る");
+    h.doc_mut().redo().unwrap();
     h.run();
     // 問いが開いている間は、同じクリックで何も変わらない
-    h.state_mut().state.apply(Action::Quit);
+    h.act(Action::Quit);
     h.run();
-    assert!(h.state().state.discard_ask.is_some(), "問いが開く");
-    let undo = h.state().state.doc.undo_count();
+    assert!(h.discard_ask().is_some(), "問いが開く");
+    let undo = h.doc().undo_count();
     click_child(&mut h, &driver, id, at);
-    assert_eq!(h.state().state.doc.undo_count(), undo, "文書は変わらない");
-    assert_eq!(h.state().state.doc.layers().len(), layers);
+    assert_eq!(h.doc().undo_count(), undo, "文書は変わらない");
+    assert_eq!(h.doc().layers().len(), layers);
     // 別ウィンドウに打ったキー（元に戻す）も、文書に届かない
     driver.child(id, |c| c.events.push(ctrl_z()));
     h.run();
-    assert_eq!(h.state().state.doc.undo_count(), undo, "キーでも変わらない");
-    assert!(h.state().state.discard_ask.is_some(), "問いは開いたまま");
+    assert_eq!(h.doc().undo_count(), undo, "キーでも変わらない");
+    assert!(h.discard_ask().is_some(), "問いは開いたまま");
 }
