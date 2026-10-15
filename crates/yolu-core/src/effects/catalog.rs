@@ -8,6 +8,7 @@
 //!   強さ・有効・適用するチャンネルは変えられ、値の変更は断る（その部分を黙って作り直さない）。
 //! - 欄の名前と選択肢の綴りは外へ出す名前（保存形式ではない）。変えるときは版の扱いに気を付ける。
 
+use crate::Reason;
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -1309,7 +1310,7 @@ fn build_generator(
     }
     g.validate().map_err(|e| match e {
         generator::Error::Invalid(why) => refused(CoreError::InvalidArgument(why)),
-        _ => refused(CoreError::InvalidArgument("ジェネレーターの設定")),
+        _ => refused(CoreError::InvalidArgument(Reason::GeneratorSettings)),
     })?;
     Ok(EffectSettings::generator(g))
 }
@@ -1436,7 +1437,7 @@ fn build_stack(
     match &settings {
         EffectSettings::Filter(f) => f
             .validate_values()
-            .map_err(|_| refused(CoreError::InvalidArgument("フィルターの設定")))?,
+            .map_err(|_| refused(CoreError::InvalidArgument(Reason::FilterSettings)))?,
         EffectSettings::Generator(_) => {}
     }
     Ok(settings)

@@ -5,6 +5,7 @@ use super::Document;
 use crate::composite::{self, Stack};
 use crate::effects::EffectSettings;
 use crate::surface::{Readers, Tile};
+use crate::Reason;
 use crate::{
     BlendMode, Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind, LayerLocks, LayerSetId,
     Rgba8, Surface, TileCoord,
@@ -780,7 +781,9 @@ impl Document {
         self.ensure_no_stroke()?;
         let members = self.topmost_of(ids)?;
         if members.len() < 2 {
-            return Err(CoreError::InvalidArgument("結合は 2 レイヤー以上"));
+            return Err(CoreError::InvalidArgument(
+                Reason::MergingRequiresAtLeastTwoLayers,
+            ));
         }
         let parent = self.layer(members[0]).expect("対象").parent;
         let set = self.layer(members[0]).expect("対象").set;
@@ -788,9 +791,7 @@ impl Document {
             .iter()
             .any(|&id| self.layer(id).expect("対象").set != set)
         {
-            return Err(CoreError::InvalidArgument(
-                "別のレイヤーセットのレイヤーは結合できない",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::MergeAcrossLayerSets));
         }
         if members
             .iter()

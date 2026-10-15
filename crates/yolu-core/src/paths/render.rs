@@ -1,5 +1,6 @@
 use super::*;
 use crate::geometry::SurfaceBrushBudget;
+use crate::Reason;
 use crate::{Brush, Document, LayerId, Stroke, Surface};
 use glam::DVec2;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -291,7 +292,7 @@ pub(super) fn draw_canvas(
     if let PathSymmetry::Canvas(sym) = path.style.symmetry {
         let transforms = sym
             .transforms()
-            .map_err(|_| Error::Invalid("パスの対称の種類・中心・数が範囲外です"))?;
+            .map_err(|_| Error::Invalid(Reason::PathSymmetryRange))?;
         for t in transforms.iter().skip(1) {
             if let Some(copy) = mirrored_canvas(path, t) {
                 samples += draw_canvas_one(painter, &copy)?;

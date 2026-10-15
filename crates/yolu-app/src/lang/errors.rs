@@ -5,7 +5,9 @@ use crate::view3d::model::ViewError;
 use yolu_core::generator::{self, anchor};
 use yolu_core::geometry::GeometryError;
 use yolu_core::skin::RigError;
-use yolu_core::{CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget};
+use yolu_core::{
+    CoreError, FallbackEffect, InactiveEffect, InactiveReason, InactiveTarget, Reason,
+};
 use yolu_model::ModelError;
 
 use crate::library::{REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
@@ -77,8 +79,7 @@ impl Lang {
             CoreError::NoActiveStroke => self
                 .pick("ストロークは終わっています", "Stroke already ended")
                 .into(),
-            CoreError::LayerNotFound
-            | CoreError::InvalidArgument("保存するレイヤーがありません") => {
+            CoreError::LayerNotFound | CoreError::InvalidArgument(Reason::NoLayersToSave) => {
                 self.pick("レイヤーがありません", "Layer not found").into()
             }
             CoreError::ChannelNotFound => self
@@ -103,23 +104,22 @@ impl Lang {
                     "Working memory budget exceeded",
                 )
                 .into(),
-            CoreError::Unsupported("ユーザーチャンネルの対応が一致しません") => {
-                self.pick("チャンネルが合いません", "Channels do not match")
-                    .into()
-            }
-            CoreError::InvalidArgument("レイヤーは2048個までです") => {
+            CoreError::Unsupported(Reason::UserChannelMappingDoesNotMatch) => self
+                .pick("チャンネルが合いません", "Channels do not match")
+                .into(),
+            CoreError::InvalidArgument(Reason::TooManyLayers) => {
                 self.pick("レイヤーが多すぎます", "Too many layers").into()
             }
-            CoreError::InvalidArgument("保存するマスクがありません") => {
+            CoreError::InvalidArgument(Reason::NoMaskToSave) => {
                 self.pick("マスクがありません", "No mask").into()
             }
-            CoreError::InvalidArgument("スマート素材の名前") => {
+            CoreError::InvalidArgument(Reason::SmartMaterialName) => {
                 self.pick("名前が使えません", "Name not allowed").into()
             }
-            CoreError::InvalidArgument("配置先がグループではありません") => self
+            CoreError::InvalidArgument(Reason::TargetNotGroup) => self
                 .pick("置き先がグループではありません", "Target is not a group")
                 .into(),
-            CoreError::InvalidArgument("選択範囲の名前が長すぎる") => self.pick(
+            CoreError::InvalidArgument(Reason::SelectionNameTooLong) => self.pick(
                 format!(
                     "名前が長すぎます（{} 文字まで）。",
                     yolu_core::MAX_SAVED_NAME_CHARS
@@ -129,7 +129,7 @@ impl Lang {
                     yolu_core::MAX_SAVED_NAME_CHARS
                 ),
             ),
-            CoreError::InvalidArgument("同じ名前の選択範囲がある") => self
+            CoreError::InvalidArgument(Reason::SavedSelectionNameExists) => self
                 .pick(
                     "同じ名前の選択範囲があります。",
                     "A saved selection with that name exists.",
@@ -156,10 +156,10 @@ impl Lang {
             ),
             CoreError::InvalidArgument(what) => self.with_reason(
                 self.pick("値が範囲外です", "Invalid value"),
-                self.pick(*what, core_reason(what)),
+                self.pick(what.ja(), core_reason(*what)),
             ),
             CoreError::Unsupported(what) => {
-                self.with_reason(self.pick(*what, core_reason(what)), "")
+                self.with_reason(self.pick(what.ja(), core_reason(*what)), "")
             }
             _ if self == Self::Ja => error.to_string(),
             CoreError::Clipboard(reason) => clipboard_refusal(*reason).into(),
@@ -282,9 +282,21 @@ impl Lang {
         }
     }
 
-    /// メッシュマップの誤りの文（core は日本語の文だけを持つので、英語は知っている理由の英語か、一般の文）。
+    /// メッシュマップの誤りの文（英語は理由の種類から引く。スレッドの束の失敗は OS・rayon の文）。
     pub fn mesh_map_error(self, error: &yolu_core::mesh_maps::MeshMapError) -> String {
-        crate::crash::problem(self.pick(error.0.clone(), core_reason(&error.0).to_owned()))
+        use yolu_core::mesh_maps::MeshMapError;
+        crate::crash::problem(match error {
+            MeshMapError::Refused(why) => self.pick(why.ja(), core_reason(*why)).into(),
+            // スレッドの束の失敗は OS・rayon の文（英語ならそのまま）
+            MeshMapError::Threads(why) => self.pick(
+                why.clone(),
+                if why.is_ascii() {
+                    why.clone()
+                } else {
+                    GENERIC_REASON.into()
+                },
+            ),
+        })
     }
 
     /// 別のスレッドを起こせなかった理由（OS の英語の文をそのまま出さず、種類で言い分けて、OS のエラー番号を添える）。
@@ -567,556 +579,415 @@ fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
     }
 }
 
-/// core の理由の文（`&'static str`）の英語。無ければ、英語の文はそのまま、日本語の文は一般の文に落とす。
-fn core_reason(reason: &str) -> &str {
-    known_core_reason(reason).unwrap_or(if reason.is_ascii() {
-        reason
-    } else {
-        "Unsupported value or operation"
-    })
-}
+/// 英語の文がまだ無い理由の、一般の英語の文。
+const GENERIC_REASON: &str = "Unsupported value or operation";
 
-fn known_core_reason(reason: &str) -> Option<&'static str> {
-    Some(match reason {
-        "手動ID色の数・番号・色が範囲外です" => "Manual ID colors are out of range",
-        "リボンの画像が無い" => "The ribbon image is missing",
-        "パスレイヤーにはパスが 1 本以上要る" => "A path layer needs at least one path",
-        "パスで描けるのはラスターと塗りつぶしレイヤーだけ" => {
-            "Paths draw only on raster and fill layers"
-        }
-        "パスを付けられるのはパスの無いラスターか塗りつぶしレイヤーだけ" => {
-            "Paths can be attached only to a raster or fill layer without paths"
-        }
-        "塗りつぶしレイヤーのパスは画素にできない" => {
-            "The paths of a fill layer cannot be rasterized"
-        }
-        "塗りつぶしレイヤーのパスの画素は塗りつぶしレイヤーだけ" => {
-            "Fill-layer path pixels belong to a fill layer"
-        }
-        "3D のパスは呼び手が形で描いて set_paths へ渡す" => {
-            "Paths on a model are drawn with the model and set with set_paths"
-        }
-        "塗りのパスが 1 つの UV アイランドに収まらない" => {
-            "The fill path does not stay on one UV island"
-        }
-        "手動ID色のモデル指紋が不正です" => {
-            "The model fingerprint of the manual ID colors is invalid"
-        }
-        "手動ID色が別のモデルに属しています" => {
-            "The manual ID colors belong to another model"
-        }
-        "手で選んだアイランドが別のモデルに属しています" => {
-            "The chosen islands belong to another model"
-        }
-        "手で選んだアイランドの番号がモデルにありません" => {
-            "A chosen island is not in the model"
-        }
-        "手で選んだアイランドの数か番号が範囲外です" => {
-            "Too many chosen islands, or an island out of range"
-        }
-        "同じアイランドが「焼かない」と「優先する」の両方にあります" => {
-            "The same island is both not baked and preferred"
-        }
-        "手で選んだアイランドのモデル指紋が不正です" => {
-            "The model fingerprint of the chosen islands is invalid"
-        }
-        "ベイクの優先の値が範囲外です" => {
-            "The overlapping UV priority is out of range"
-        }
-        "UVが0〜1の外です。繰り返し・UDIMのUVはベイクできません" => {
-            "UVs outside 0–1 (tiled or UDIM UVs) cannot be baked"
-        }
-        "マスクへのストロークはチャンネルの合成を読めない" => {
-            "A mask stroke cannot read the channel composite"
-        }
-        "合成の参照元はクローンか色の混ぜの最初のダブの前にだけ決められる" => {
-            "The composite source can only be set before the first dab of a clone or color mixing"
-        }
-        "写像されたダブはクローンか指先だけ" => "Mapped dabs need clone or smudge",
-        "写像されたダブはクローン・指先・ぼかし・色の混ぜの伸ばすだけ" => {
-            "Mapped dabs need clone, smudge, blur or the smear of color mixing"
-        }
-        "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）" => {
-            "A mixing brush cannot paint pixel by pixel"
-        }
-        "絵の具の量（0〜1）" => "Paint amount (0–1)",
-        "絵の具の濃さ（0〜1）" => "Paint density (0–1)",
-        "色延び（0〜1）" => "Color stretch (0–1)",
-        "写像されたダブの画素" => "Mapped dab pixel",
-        "写像されたダブの参照" => "Mapped dab source",
-        "写像された画素に参照が無い" => "A mapped pixel needs a source",
-        "写像されたダブの画素が重複" => "Duplicate mapped dab pixel",
-        "1 区間のダブが百万を超える" => "More than one million dabs per segment",
-        "1 区間のデュアルブラシのダブが百万を超える" => {
-            "More than one million dual brush dabs per segment"
-        }
-        "Height → Normal が読むのは Height のチャンネルだけ" => {
-            "Height to Normal requires the Height channel"
-        }
-        "Height → Normal の強さ（±256）" => "Height to Normal strength (±256)",
-        "Height の合成は幅 × 高さ × 4 バイト" => {
-            "Height buffer size must be width × height × 4 bytes"
-        }
-        "Normal の合成は幅 × 高さ × 4 バイト" => {
-            "Normal buffer size must be width × height × 4 bytes"
-        }
-        "PassThrough はグループだけ" => "Pass Through requires a group",
-        "jitter（0〜1）" => "Jitter (0–1)",
-        "purity（−1〜1）" => "Purity (−1–1)",
-        "texture depth（0〜1）" => "Texture depth (0–1)",
-        "texture scale（0.05〜64）" => "Texture scale (0.05–64)",
-        "その番号のチャンネルはもうある" => "Channel ID already exists",
-        "ぼかしの半径（1〜64）" => "Blur radius (1–64)",
-        "ラスターと塗りつぶし以外には、レイヤーの出力の画素が無い" => {
-            "Only raster and fill layers have layer output pixels"
-        }
-        "グループ以外には、グループの出力が無い" => {
-            "Only groups have a group output"
-        }
-        "調整レイヤーではない" => "Not an adjustment layer",
-        "入力の曲線（点 2〜16・両端は 0 と 1・間隔 0.02 以上・値 0〜1）" => {
-            "Input curve (2–16 points, ends at 0 and 1, at least 0.02 apart, values 0–1)"
-        }
-        "入力の最小値（0〜1）" => "Input minimum (0–1)",
-        "まとめるレイヤーが無い" => "No layers to merge",
-        "ガンマ（0.1〜9.99）" => "Gamma (0.1–9.99)",
-        "クローンの位置（±1e7）" => "Clone position (±1e7)",
-        "グループでないレイヤーの中に入っている" => "Parent is not a group",
-        "グループではない" => "Not a group",
-        "グループにだけ入れられる" => "Parent must be a group",
-        "グループには描けない" => "Cannot paint a group",
-        "グループの中身が続いていない" => "Group children are not contiguous",
-        "グループの入れ子が輪になっている" => "Cyclic group hierarchy",
-        "グループの入れ子が深すぎる" => "Group nesting is too deep",
-        "グループを自分の中へは入れられない" => "Cannot move a group into itself",
-        "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない" => {
-            "Missing canvas-to-stencil transform for 2D dabs"
-        }
-        "ステンシルにキャンバスからの写しが無い（画素ごとにステンシルの上の点を渡す）" => {
-            "Missing canvas-to-stencil transform"
-        }
-        "ステンシルの footprint" => "Stencil footprint",
-        "ステンシルのミップマップが予算を超える（小さい画像にする）" => {
-            "Stencil mipmap budget exceeded"
-        }
-        "ステンシルの点は画素ごとに 1 つ" => {
-            "Stencil point count must match pixel count"
-        }
-        "ステンシルの画像の画素 / 点" => "Stencil image pixels / points",
-        "大きさの変更の準備のあとにプロジェクトが変わった" => {
-            "The project changed after the resize was prepared"
-        }
-        "ステンシルの点（±1e9）" => "Stencil point (±1e9)",
-        "ステンシルの画像のバイト数が幅 × 高さ × 4 でない" => {
-            "Stencil buffer size must be width × height × 4 bytes"
-        }
-        "ステンシルの画像の大きさ（1〜8192）" => "Stencil image size (1–8192)",
-        "タイルがキャンバスの外" => "Tile outside canvas",
-        "タイルのバイト数が違う" => "Invalid tile byte count",
-        "歩幅がタイルの一辺の約数でない" => "The step does not divide the tile edge",
-        "タイルの座標がキャンバスの外" => "Tile coordinates outside canvas",
-        "タイルの長さ" => "Tile length",
-        "チャンネルの名前" => "Channel name",
-        "チャンネルは 64 まで" => "Maximum 64 channels",
-        "デュアルブラシの半径（0.5〜65536）" => "Dual brush radius (0.5–65536)",
-        "デュアルブラシの散布" => "Dual brush scatter",
-        "デュアルブラシの数" => "Dual brush count",
-        "デュアルブラシの真円率" => "Dual brush roundness",
-        "デュアルブラシの硬さ" => "Dual brush hardness",
-        "デュアルブラシの間隔" => "Dual brush spacing",
-        "フェード（0〜10000）" => "Fade (0–10000)",
-        "マスクの画素の RGB は 0" => "Mask RGB must be zero",
-        "レベル補正の入力の範囲" => "Levels input range",
-        "レベル補正の出力の範囲" => "Levels output range",
-        "予算が今の画素より小さい" => "Budget is smaller than existing pixels",
-        "写した画素のバイト数が幅 × 高さ × 4 でない" => {
-            "Copied pixels must be width × height × 4 bytes"
-        }
-        "写したキャンバスの大きさ" => "Size of the source canvas",
-        "写した矩形がキャンバスの外" => "Copied rectangle lies outside the canvas",
-        "写した矩形が空" => "Copied rectangle is empty",
-        "画素が矩形の外" => "Pixel outside the rectangle",
-        "画素を置き換えられるのはラスターレイヤーだけ" => {
-            "Only paint layers have pixels to replace"
-        }
-        "画像の大きさがキャンバスと違う" => "Image size differs from the canvas",
-        "無効のチャンネルは切り取れない" => "Cannot cut a disabled channel",
-        "無効のチャンネルは置き換えられない" => {
-            "Cannot replace a disabled channel"
-        }
-        "入れ子が輪になっている" => "Cyclic hierarchy",
-        "入力の座標が範囲外" => "Input coordinates out of range",
-        "入力の時刻が戻った" => "Input time moved backwards",
-        "出力の大きさが矩形と違う" => "Output size does not match rectangle",
-        "効果のブラシは消しゴムにできない" => "Effect brushes cannot erase",
-        "効果のブラシは画素ごとには塗れない（apply_dab で読み元を凍結する）" => {
-            "Effect brushes require dab painting"
-        }
-        "半径（0〜200）" => "Radius (0–200)",
-        "同じグループの中のレイヤーだけをまとめられる" => {
-            "Merge requires layers in the same group"
-        }
-        "同じ名前のチャンネルがある" => "Channel name already exists",
-        "塗りつぶしレイヤーだけが値を持つ" => "Values require a fill layer",
-        "塗りつぶしレイヤーではありません" => "Not a fill layer",
-        "塗りつぶしレイヤーには描けない" => "Cannot paint a fill layer",
-        "塗りつぶしはラスターレイヤーだけ" => "Fill requires a raster layer",
-        "多角形の点が多すぎる（100000 まで）" => {
-            "Too many polygon points (maximum 100000)"
-        }
-        "大きさ" => "Size",
-        "対称の中心（±1e7）" => "Symmetry center (±1e7)",
-        "レイヤーにマスクが無い" => "Layer has no mask",
-        "レイヤーはもうマスクを持っている" => "Layer already has a mask",
-        "レイヤーはグループの下に並ぶ" => "Layers must follow their group",
-        "手ぶれ補正・入り抜き（0〜10000）" => "Stabilizer and taper (0–10000)",
-        "入り抜きの最小値（0〜1）" => "Taper minimum (0–1)",
-        "指先の強さ（0〜1）" => "Smudge strength (0–1)",
-        "指先・クローンは対称と組めない（写しごとに読み元と動きが要る）" => {
-            "Smudge and clone do not support symmetry"
-        }
-        "放射状の写しの数（2〜16）" => "Radial symmetry count (2–16)",
-        "有効なチャンネルに使えない調整" => {
-            "Adjustment not supported by enabled channels"
-        }
-        "標準のチャンネルは変えられない" => "Cannot change a built-in channel",
-        "標準のチャンネルは消せない" => "Cannot remove a built-in channel",
-        "無いグループに入っている" => "Parent group not found",
-        "無効のチャンネルには塗れない" => "Cannot fill a disabled channel",
-        "無効のチャンネルには描けない" => "Cannot paint a disabled channel",
-        "キャンバスの外の余白は 0 でなければならない" => {
-            "Padding outside canvas must be zero"
-        }
-        "画素がキャンバスの外" => "Pixel outside canvas",
-        "矩形がキャンバスの外" => "Rectangle outside canvas",
-        "種がキャンバスの外" => "Seed outside canvas",
-        "筆先の並び（1〜256 枚）" => "Brush tip sequence (1–256)",
-        "筆先の大きさ（1〜2048）" => "Brush tip size (1–2048)",
-        "筆先の覆いの長さが幅 × 高さでない" => {
-            "Brush tip coverage size must be width × height"
-        }
-        "範囲の大きさがキャンバスと違う" => "Region size does not match canvas",
-        "色のゆらぎ（0〜1）" => "Color dynamics (0–1)",
-        "色相/彩度のレイヤーが有効" => "Hue/Saturation layer enabled",
-        "色相/彩度は色のチャンネルだけ" => "Hue/Saturation requires a color channel",
-        "色相・彩度・明度" => "Hue, saturation and value",
-        "この種類は 8 つの値では組み立てられない（種類ごとの組み立てを使う）" => {
-            "This adjustment kind cannot be built from the eight values"
-        }
-        "調整の種類と値が合わない" => "The adjustment kind and its values do not match",
-        "カラーバランス（−100〜100）" => "Color balance (−100–100)",
-        "明るさ（−150〜150）・コントラスト（−50〜100）" => {
-            "Brightness (−150–150) and contrast (−50–100)"
-        }
-        "しきい値（1〜255）" => "Threshold (1–255)",
-        "階調（2〜255）" => "Posterize levels (2–255)",
-        "グラデーションマップとカラーバランスは色のチャンネルだけに適用できます" => {
-            "Gradient Map and Color Balance apply only to color channels"
-        }
-        "接空間法線には再正規化するぼかしだけを適用できます" => {
-            "Only the renormalizing blur applies to tangent-space normals"
-        }
-        "値の切り出し・値の幅・太らせる・細らせる・輪郭の検出はスカラーとマスクだけに適用できます" => {
-            "Histogram Scan, Histogram Range, Dilate / Erode and Edge Detect apply only to scalar channels and masks"
-        }
-        "グローは色のチャンネルだけに適用できます" => {
-            "Glow applies only to color channels"
-        }
-        "親の数がレイヤーの数と違う" => "Parent count does not match layer count",
-        "調整レイヤーだけが調整の設定を持つ" => {
-            "Adjustment settings require an adjustment layer"
-        }
-        "調整レイヤーには描けない" => "Cannot paint an adjustment layer",
-        "速さの上限（0 より大きい）" => "Maximum speed (greater than zero)",
-        "選択範囲のタイルがキャンバスの外" => "Selection tile outside canvas",
-        "選択範囲のタイルが空" => "Empty selection tile",
-        "選択範囲のタイルが重なっている" => "Overlapping selection tiles",
-        "選択範囲のタイルの余白が 0 でない" => "Selection tile padding must be zero",
-        "選択範囲のタイルの大きさ" => "Selection tile size",
-        "選択範囲のタイルの長さ" => "Selection tile length",
-        "選択範囲の大きさ" => "Selection size",
-        "選択範囲の大きさがキャンバスと違う" => "Selection size does not match canvas",
-        "選択範囲の名前が空" => "The selection name is empty",
-        "選択範囲の名前が長すぎる" => "The selection name is too long",
-        "選択範囲の名前に制御文字がある" => {
-            "The selection name has control characters"
-        }
-        "選択範囲の名前が整っていない" => {
-            "The selection name has leading or trailing spaces"
-        }
-        "選択範囲が無い" => "There is no selection",
-        "残せる選択範囲の数の上限" => "Too many saved selections",
-        "残した選択範囲の番号" => "No such saved selection",
-        "同じ名前の選択範囲がある" => "A saved selection with that name exists",
-        "残した選択範囲を戻せるのは読み込みの直後だけ" => {
-            "Saved selections can only be restored right after loading"
-        }
-        "選択範囲の大きさが違う" => "Selection size mismatch",
-        "選択範囲を戻せるのは読み込みの直後だけ" => {
-            "Selection restore requires a freshly loaded project"
-        }
-        "面が無い" => "Surface not found",
-        "UV 比較の解像度" => "UV comparison resolution",
-        "グラデーション" => "Gradient",
-        "三角形の座標" => "Triangle coordinates",
-        "三角形番号" => "Triangle index",
-        "空のマテリアル" => "Empty material",
-        "重複したチャンネル" => "Duplicate channel",
-        "ID 色の復元は読み込み直後だけ" => {
-            "ID colors can only be restored right after loading"
-        }
-        "グラデーション両端のチャンネル" => "Channels at both ends of the gradient",
-        "保存するレイヤーがありません" => "No layers to save",
-        "保存するマスクがありません" => "No mask to save",
-        "空のスマート素材" => "Empty smart material",
-        "スマートマスクの断片が不正" => "Invalid smart mask fragment",
-        "スマートマスクはレイヤーに置けません" => {
-            "A smart mask cannot be placed on a layer"
-        }
-        "配置先がグループではありません" => "The target is not a group",
-        "レイヤーは2048個までです" => "Maximum 2048 layers",
-        "スマートマテリアルはマスクに置けません" => {
-            "A smart material cannot be placed on a mask"
-        }
-        "ユーザーチャンネルの対応が一致しません" => {
-            "User channel mapping does not match"
-        }
-        "ID マップが必要" => "An ID map is required",
-        "ID マップの大きさ" => "ID map size",
-        "ID の色" => "ID color",
-        "スマート素材の名前" => "Smart material name",
-        "変形は有限値" => "Transform must be finite",
-        "変形が潰れる、または範囲外" => "Transform is degenerate or out of range",
-        "動かすラスターレイヤーが無い" => "No raster layer to move",
-        "画像の辺は 1〜8192" => "Image side (1–8192)",
-        "移動先のグループ" => "Destination group",
-        "未知のロック" => "Unknown lock",
-        "結合は 2 レイヤー以上" => "Merging requires at least two layers",
-        "1 つのスタックの段は 32 まで" => "Maximum 32 effects per stack",
-        "Anchor のジェネレーターではない" => "Not an anchor generator",
-        "Anchor の ID が空" => "Anchor ID is empty",
-        "Anchor の ID が空か重なっている" => "Anchor ID is empty or duplicated",
-        "Anchor の ID が重なっている" => "Anchor ID is duplicated",
-        "Anchor の名前が空" => "Anchor name is empty",
-        "Anchor の名前が長すぎる" => "Anchor name is too long",
-        "Anchor は Normal を読めない" => "An anchor cannot read Normal",
-        "ジェネレーターではない" => "Not a generator",
-        "ジェネレーターの設定" => "Generator settings",
-        "ジェネレーターは 1 画素に 1 つの値を作るので、接空間の法線には置けない" => {
-            "A generator makes one value per pixel and cannot be placed on a tangent-space normal"
-        }
-        "ジェネレーターはジェネレーターの設定で置く" => {
-            "A generator is placed with generator settings"
-        }
-        "グラデーションの設定" => "Gradient settings",
-        "グループの合成へのフィルターは無い" => {
-            "Groups have no filters on their composite"
-        }
-        "このマスクにはもう Anchor がある" => "This mask already has an anchor",
-        "このレイヤーにはもう Anchor がある" => "This layer already has an anchor",
-        "スタックの到達半径の合計が 512 画素を超える" => {
-            "Total reach of the stack exceeds 512 pixels"
-        }
-        "その Anchor が無い" => "Anchor not found",
-        "そのチャンネルにグラデーションが無い" => "The channel has no gradient",
-        "そのレイヤーにそのフィルターが無い" => "The layer has no such filter",
-        "パスが参照する三角形が無い" => "The path refers to a missing triangle",
-        "パスで描かれたチャンネルは無効にできない" => {
-            "Cannot disable a channel drawn by a path"
-        }
-        "パスで描かれたレイヤーには手で描けない" => {
-            "Cannot paint by hand on a path layer"
-        }
-        "パスのチャンネルがレイヤーで有効でない" => {
-            "The path channel is not enabled on the layer"
-        }
-        "パスのチャンネルの面がレイヤーに無い" => {
-            "The layer has no surface for the path channel"
-        }
-        "フィルターの ID" => "Filter ID",
-        "フィルターの ID が空" => "Filter ID is empty",
-        "フィルターの ID が空か重なっている" => "Filter ID is empty or duplicated",
-        "フィルターの ID が重なっている" => "Filter ID is duplicated",
-        "フィルターのチャンネル" => "Filter channels",
-        "フィルターのチャンネルが選ばれていない" => "No filter channel selected",
-        "フィルターのチャンネルが重なっている" => {
-            "Filter channels are duplicated"
-        }
-        "フィルターの設定" => "Filter settings",
-        "ブラシの間隔に対してパスが長すぎる" => {
-            "The path is too long for the brush spacing"
-        }
-        "プロジェクトにその画像が無い" => "The project has no such image",
-        "マスクが無い" => "No mask",
-        "マスクのフィルターのチャンネル" => "Mask filter channels",
-        "マスクのフィルターはチャンネルを持たない" => {
-            "Mask filters have no channels"
-        }
-        "マスクのフィルターはチャンネルを持たない（マスクは全チャンネルで共有）" => {
-            "Mask filters have no channels (a mask is shared by all channels)"
-        }
-        "マスクの無いレイヤーのマスクには Anchor を置けない" => {
-            "Cannot place a mask anchor on a layer without a mask"
-        }
-        "マップの境界箱" => "Map bounding box",
-        "マップの大きさと長さが合わない" => "Map size and length do not match",
-        "マップの幅" => "Map width",
-        "マップの条件の鍵" => "Map condition key",
-        "マップの高さ" => "Map height",
-        "メッシュマップの種類" => "Mesh map kind",
-        "モデルの位置・回転" => "Model position and rotation",
-        "モデルの指紋がパスを作ったときと違う" => {
-            "The model fingerprint differs from when the path was made"
-        }
-        "予算が今のフィルターの要る量より小さい" => {
-            "Budget is smaller than the current filters need"
-        }
-        "効果（フィルター・画像・グラデーション）は標準のチャンネルだけに置ける" => {
-            "Effects (filters, images, gradients) can only be placed on standard channels"
-        }
-        "塗りつぶしのグラデーションのチャンネル" => "Fill gradient channel",
-        "ベイクの優先の復元は読み込み直後だけ" => {
-            "Bake priority can only be restored right after loading"
-        }
-        "画像の無いチャンネル" => "Channel without an image",
-        "異方性を切る塗りつぶしの画像のチャンネル" => {
-            "Fill image channel for turning anisotropic filtering off"
-        }
-        "塗りつぶしの点のグラデーションのチャンネル" => "Fill point gradient channel",
-        "そのチャンネルに点のグラデーションが無い" => "The channel has no point gradient",
-        "点のグラデーションは色かスカラーで、法線ではない" => {
-            "A point gradient is for colour or scalar channels, not the normal"
-        }
-        "塗りつぶしのグラデーションはランプ付きの形のグラデーション" => {
-            "A fill gradient is a shape gradient with a ramp"
-        }
-        "塗りつぶしのグラデーションは置き換え" => "A fill gradient replaces",
-        "塗りつぶしの入力" => "Fill input",
-        "塗りつぶしレイヤーだけが持つ" => "Only fill layers have this",
-        "塗りつぶしの画像のチャンネルか ID" => "Fill image channel or ID",
-        "レイヤーのパスはチャンネルを変えない" => {
-            "A layer path does not change its channel"
-        }
-        "レイヤーのパスは種類（モデルの上かキャンバスの上か）を変えない" => {
-            "A layer path does not change its kind (model or canvas)"
-        }
-        "名前を替えるパスがレイヤーに無い" => "The layer has no such path to rename",
-        "形のグラデーションは色かスカラーで、法線ではない" => {
-            "A shape gradient is a color or scalar, not a normal"
-        }
-        "投影の値" => "Projection values",
-        "描いた面のチャンネルが重なっている" => {
-            "Painted surface channels are duplicated"
-        }
-        "描いた面は、パスのチャンネルごとに、キャンバスと同じ大きさで 1 つ" => {
-            "One painted surface per path channel, at the canvas size"
-        }
-        "画像の ID が空" => "Image ID is empty",
-        "画像の大きさ" => "Image size",
-        "画像の大きさと画素の長さ" => "Image size and pixel length do not match",
-        "自分のレイヤーの Anchor を読むジェネレーター（値が自分に戻る）" => {
-            "A generator reading an anchor on its own layer (the value would feed back)"
-        }
-        "調整レイヤーには画素が無い" => "Adjustment layers have no pixels",
-        "面のダブを拒否した" => "The surface dab was refused",
-        "見た目の設定の復元は読み込み直後だけ" => {
-            "Look settings can only be restored right after loading"
-        }
-        "見た目のシェーダーの名前" => "Look shader name",
-        "見た目のシェーダーの身元" => "Look shader identity",
-        "見た目のプロパティの数" => "Number of look properties",
-        "見た目のテクスチャの数" => "Number of look textures",
-        "見た目のキーワードの数" => "Number of look keywords",
-        "受けた見た目の出どころ" => "Source of the received look",
-        "受けた見た目の絵の数" => "Number of received look textures",
-        "受けた見た目の絵" => "Received look texture",
-        "受けた見た目のスロットの名前" => "Received look slot name",
-        "見た目のプロパティの名前" => "Look property name",
-        "見た目のプロパティの値" => "Look property value",
-        "見た目のテクスチャの名前" => "Look texture name",
-        "見た目の詰め合わせの成分" => "Look packed texture component",
-        "見た目の画像の ID" => "Look image ID",
-        "見た目のキーワード" => "Look keyword",
-        "テキストを塗る面は空であること" => "The text surface must be empty",
-        "フォントのファイルを読めない" => "Cannot read the font file",
-        "フォントに輪郭が無い" => "The font has no outlines",
-        "同梱のフォントの名前" => "Bundled font name",
-        "フォントのファイルの道" => "Font file path",
-        "フォントの名前" => "Font name",
-        "文の長さ" => "Text length",
-        "文の制御文字" => "Control characters in the text",
-        "文字のサイズ" => "Text size",
-        "行間" => "Line spacing",
-        "字間" => "Tracking",
-        "文字の位置" => "Text position",
-        "文字の回転" => "Text rotation",
-        "折り返しの幅" => "Wrap width",
-        "テキストレイヤーではない" => "Not a text layer",
-        "テキストレイヤーには手で描けない" => "Cannot paint by hand on a text layer",
-        "テキストレイヤーにはパスを付けられない" => "A text layer cannot have a path",
-        "テキストレイヤーの Color は無効にできない" => "Cannot disable Color on a text layer",
-        "テキストの値を付けられるのはパスとテキストの無いラスターのレイヤーだけ" => {
-            "Text needs a raster layer without a path or text"
-        }
-        "テキストレイヤーの Color が無い" => "The text layer has no Color",
-        "まとめるテキストの段が無い" => "No text step to merge into",
-        "線対称の線の本数（偶数）" => "Line symmetry needs an even number of lines",
-        "対称の角度（±360 度）" => "The symmetry angle must be within ±360 degrees",
-        "レイヤーに付けられる定規は 64 個まで" => "A layer can have at most 64 rulers",
-        "定規の ID が重なっている" => "Ruler IDs overlap",
-        "定規の ID がほかのレイヤーの定規と重なっている" => {
-            "A ruler ID overlaps a ruler on another layer"
-        }
-        "移し先が同じレイヤー" => "The target layer is the same layer",
-        "移す定規がそのレイヤーに無い" => "The ruler to move is not on that layer",
-        "その定規がそのレイヤーに無い" => "That ruler is not on that layer",
-        "直線定規はスナップする特殊定規にならない" => {
-            "A straight ruler cannot be the snapping special ruler"
-        }
-        "定規の ID（0 は使わない）" => "A ruler ID cannot be 0",
-        "定規の点（有限・±1e7）" => "Ruler points must be finite and within ±1e7",
-        "定規の 2 点が近すぎる（0.01 画素以上）" => {
-            "The two ruler points are too close (at least 0.01 px apart)"
-        }
-        "見えない面にも写すのは 3D の対称だけ" => {
-            "Mirroring onto hidden faces is for 3D symmetry only"
-        }
-        "定規の点（有限・±1e6）" => "Ruler points must be finite and within ±1e6",
-        "定規の 2 点が近すぎる（1e-6）" => "The two ruler points are too close (at least 1e-6 apart)",
-        "定規の向きが 0" => "The ruler direction is zero",
-        "対称定規の最初の線が回転の軸と平行" => {
-            "The first line of a symmetry ruler is parallel to its rotation axis"
-        }
-        "2 点はパースだけ" => "Two points are for a perspective ruler only",
-        "対称定規の線の本数（2〜16）" => "A symmetry ruler has 2 to 16 lines",
-        "線の本数と線対称は対称定規だけ" => "Line count and line symmetry are for symmetry rulers only",
-        "別のレイヤーセットのグループへは入れられない" => {
-            "A layer cannot go into a group of another layer set"
-        }
-        "別のレイヤーセットのレイヤーはまとめられない" => {
-            "Layers of different layer sets cannot be grouped"
-        }
-        "グループの子が親と違うレイヤーセットにある" => {
-            "A layer in a group is in a different layer set from the group"
-        }
-        "別のレイヤーセットのレイヤーは一緒に動かせない" => {
-            "Layers of different layer sets cannot be moved together"
-        }
-        "別のレイヤーセットのレイヤーは結合できない" => {
-            "Layers of different layer sets cannot be merged"
-        }
-        "レイヤーセットの名前" => "The layer set name",
-        "レイヤーセットが無い" => "The layer set does not exist",
-        "レイヤーセットの数の上限" => "Too many layer sets",
-        "レイヤーセットの位置" => "The layer set position",
-        "最後のレイヤーセットは消せない" => "The last layer set cannot be removed",
-        "レイヤーセットの名前・表示の数" => "The layer set names and visibility do not match the sets",
-        "レイヤーセットの数" => "The number of layer sets",
-        "レイヤーセットの ID が空か重なっている" => "A layer set ID is empty or repeated",
-        "レイヤーの所属のレイヤーセット" => "The layer set of a layer",
-        "出力の割り当て" => "The output assignment",
-        _ => return None,
-    })
+/// core の断りの理由の英語（英語の文が無い理由は一般の文）。
+fn core_reason(reason: Reason) -> &'static str {
+    match reason {
+        Reason::ColorBalanceRange => "Color balance (−100–100)",
+        Reason::BrightnessContrastRange => "Brightness (−150–150) and contrast (−50–100)",
+        Reason::ThresholdRange => "Threshold (1–255)",
+        Reason::PosterizeLevelsRange => "Posterize levels (2–255)",
+        Reason::AdjustmentNotFromEightValues => "This adjustment kind cannot be built from the eight values",
+        Reason::Adjustment => "adjustment",
+        Reason::LevelsInputRange => "Levels input range",
+        Reason::LevelsOutputRange => "Levels output range",
+        Reason::GammaRange => "Gamma (0.1–9.99)",
+        Reason::HueSaturationAndValue => "Hue, saturation and value",
+        Reason::AdjustmentKindAndValuesDoNotMatch => "The adjustment kind and its values do not match",
+        Reason::InputCurveRange => "Input curve (2–16 points, ends at 0 and 1, at least 0.02 apart, values 0–1)",
+        Reason::InputMinimum => "input minimum",
+        Reason::InputMinimumRange => "Input minimum (0–1)",
+        Reason::SpeedMax => "speed_max",
+        Reason::MaximumSpeedGreaterThanZero => "Maximum speed (greater than zero)",
+        Reason::ColorMix => "color mix",
+        Reason::StrokeAssistance => "stroke assistance",
+        Reason::StabilizerAndTaperRange => "Stabilizer and taper (0–10000)",
+        Reason::TaperMinimum => "taper minimum",
+        Reason::TaperMinimumRange => "Taper minimum (0–1)",
+        Reason::Roundness => "roundness",
+        Reason::JitterRange => "Jitter (0–1)",
+        Reason::Scatter => "scatter",
+        Reason::Count => "count",
+        Reason::TextureDepth => "texture depth",
+        Reason::TextureScale => "texture scale",
+        Reason::TextureDepthRange => "Texture depth (0–1)",
+        Reason::TextureScaleRange => "Texture scale (0.05–64)",
+        Reason::BrushTipSequenceRange => "Brush tip sequence (1–256)",
+        Reason::ColourDynamics => "colour dynamics",
+        Reason::ColorDynamicsRange => "Color dynamics (0–1)",
+        Reason::Purity => "purity",
+        Reason::PurityRange => "Purity (−1–1)",
+        Reason::FadeRange => "Fade (0–10000)",
+        Reason::BlurRadiusRange => "Blur radius (1–64)",
+        Reason::SmudgeStrength => "smudge strength",
+        Reason::SmudgeStrengthRange => "Smudge strength (0–1)",
+        Reason::CloneOffset => "clone offset",
+        Reason::ClonePositionRange => "Clone position (±1e7)",
+        Reason::EffectBrushesCannotErase => "Effect brushes cannot erase",
+        Reason::SmudgeAndCloneWithoutSymmetry => "Smudge and clone do not support symmetry",
+        Reason::DualBrush => "dual brush",
+        Reason::DualBrushRadiusRange => "Dual brush radius (0.5–65536)",
+        Reason::DualBrushHardness => "Dual brush hardness",
+        Reason::DualBrushSpacing => "Dual brush spacing",
+        Reason::DualBrushRoundness => "Dual brush roundness",
+        Reason::DualBrushScatter => "Dual brush scatter",
+        Reason::DualBrushCount => "Dual brush count",
+        Reason::MappedDabsNeedSamplingBrush => "Mapped dabs need clone, smudge, blur or the smear of color mixing",
+        Reason::StencilPointCountMismatch => "Stencil point count must match pixel count",
+        Reason::Pressure => "pressure",
+        Reason::Coverage => "coverage",
+        Reason::MappedDabPixel => "Mapped dab pixel",
+        Reason::MappedDabSource => "Mapped dab source",
+        Reason::MappedPixelNeedsSource => "A mapped pixel needs a source",
+        Reason::DuplicateMappedDabPixel => "Duplicate mapped dab pixel",
+        Reason::StencilImageSizeRange => "Stencil image size (1–8192)",
+        Reason::StencilBufferSizeMismatch => "Stencil buffer size must be width × height × 4 bytes",
+        Reason::StencilMipmapBudgetExceeded => "Stencil mipmap budget exceeded",
+        Reason::StencilMapping => "stencil mapping",
+        Reason::StencilPoint => "stencil point",
+        Reason::StencilFootprint => "stencil footprint",
+        Reason::StencilPointRange => "Stencil point (±1e9)",
+        Reason::StencilFootprintRange => "Stencil footprint",
+        Reason::BrushTipSizeRange => "Brush tip size (1–2048)",
+        Reason::BrushTipCoverageSizeMismatch => "Brush tip coverage size must be width × height",
+        Reason::Radius => "radius",
+        Reason::Hardness => "hardness",
+        Reason::Spacing => "spacing",
+        Reason::Opacity => "opacity",
+        Reason::Flow => "flow",
+        Reason::X => "x",
+        Reason::Y => "y",
+        Reason::Time => "time",
+        Reason::Tilt => "tilt",
+        Reason::Rotation => "rotation",
+        Reason::InputTimeMovedBackwards => "Input time moved backwards",
+        Reason::InputCoordinatesOutOfRange => "Input coordinates out of range",
+        Reason::TooManyDabsPerSegment => "More than one million dabs per segment",
+        Reason::TooManyDualBrushDabsPerSegment => "More than one million dual brush dabs per segment",
+        Reason::StencilTransformMissingFor2DDabs => "Missing canvas-to-stencil transform for 2D dabs",
+        Reason::CoveragePressure => "coverage/pressure",
+        Reason::EffectBrushesNeedDabs => "Effect brushes require dab painting",
+        Reason::MixingBrushNeedsDabs => "A mixing brush cannot paint pixel by pixel",
+        Reason::Center => "center",
+        Reason::Dab => "dab",
+        Reason::StencilTransformMissing => "Missing canvas-to-stencil transform",
+        Reason::SourceCanvasSize => "Size of the source canvas",
+        Reason::CopiedRectangleEmpty => "Copied rectangle is empty",
+        Reason::CopiedRectangleOutsideCanvas => "Copied rectangle lies outside the canvas",
+        Reason::CopiedPixelsSizeMismatch => "Copied pixels must be width × height × 4 bytes",
+        Reason::PixelOutsideRectangle => "Pixel outside the rectangle",
+        Reason::LayerHasNoMask => "Layer has no mask",
+        Reason::TileOutsideCanvas => "Tile outside canvas",
+        Reason::CannotCutDisabledChannel => "Cannot cut a disabled channel",
+        Reason::ImageSizeDiffersFromCanvas => "Image size differs from the canvas",
+        Reason::ReplacePixelsNeedsPaintLayer => "Only paint layers have pixels to replace",
+        Reason::CannotReplaceDisabledChannel => "Cannot replace a disabled channel",
+        Reason::MaskStrokeCannotReadChannelComposite => "A mask stroke cannot read the channel composite",
+        Reason::CompositeSourceOnlyBeforeFirstDab => "The composite source can only be set before the first dab of a clone or color mixing",
+        Reason::LayerAlreadyHasMask => "Layer already has a mask",
+        Reason::Density => "density",
+        Reason::ValuesNeedFillLayer => "Values require a fill layer",
+        Reason::AdjustmentSettingsNeedAdjustmentLayer => "Adjustment settings require an adjustment layer",
+        Reason::AdjustmentNotForEnabledChannels => "Adjustment not supported by enabled channels",
+        Reason::HueSaturationNeedsColorChannel => "Hue/Saturation requires a color channel",
+        Reason::CannotDisableChannelDrawnByPath => "Cannot disable a channel drawn by a path",
+        Reason::CannotDisableColorOnTextLayer => "Cannot disable Color on a text layer",
+        Reason::PassThroughNeedsGroup => "Pass Through requires a group",
+        Reason::FilterIdEmptyOrDuplicated => "Filter ID is empty or duplicated",
+        Reason::AdjustmentLayersHaveNoPixels => "Adjustment layers have no pixels",
+        Reason::GroupsHaveNoCompositeFilters => "Groups have no filters on their composite",
+        Reason::Strength => "strength",
+        Reason::FilterChannelsDuplicated => "Filter channels are duplicated",
+        Reason::NoFilterChannelSelected => "No filter channel selected",
+        Reason::MaskFiltersSharedByAllChannels => "Mask filters have no channels (a mask is shared by all channels)",
+        Reason::FilterIdEmpty => "Filter ID is empty",
+        Reason::FilterIdDuplicated => "Filter ID is duplicated",
+        Reason::Index => "index",
+        Reason::MaskFiltersHaveNoChannels => "Mask filters have no channels",
+        Reason::LayerHasNoSuchFilter => "The layer has no such filter",
+        Reason::TooManyStackEffects => "Maximum 32 effects per stack",
+        Reason::StackReachTooLarge => "Total reach of the stack exceeds 512 pixels",
+        Reason::MaskAnchorNeedsMask => "Cannot place a mask anchor on a layer without a mask",
+        Reason::ThisMaskAlreadyHasAnchor => "This mask already has an anchor",
+        Reason::ThisLayerAlreadyHasAnchor => "This layer already has an anchor",
+        Reason::AnchorIdEmpty => "Anchor ID is empty",
+        Reason::AnchorIdDuplicated => "Anchor ID is duplicated",
+        Reason::AnchorNotFound => "Anchor not found",
+        Reason::NotAnchorGenerator => "Not an anchor generator",
+        Reason::AnchorCannotReadNormal => "An anchor cannot read Normal",
+        Reason::AnchorIdEmptyOrDuplicated => "Anchor ID is empty or duplicated",
+        Reason::NoMask => "No mask",
+        Reason::GeneratorReadsOwnLayerAnchor => "A generator reading an anchor on its own layer (the value would feed back)",
+        Reason::OnlyFillLayersHaveThis => "Only fill layers have this",
+        Reason::ImageIdEmpty => "Image ID is empty",
+        Reason::ProjectHasNoSuchImage => "The project has no such image",
+        Reason::ImageSize => "Image size",
+        Reason::ChannelWithoutImage => "Channel without an image",
+        Reason::FillImageAnisotropyChannel => "Fill image channel for turning anisotropic filtering off",
+        Reason::ProjectionValues => "Projection values",
+        Reason::FillPointGradientChannel => "Fill point gradient channel",
+        Reason::ChannelHasNoPointGradient => "The channel has no point gradient",
+        Reason::FillImageChannelOrId => "Fill image channel or ID",
+        Reason::FillGradientChannel => "Fill gradient channel",
+        Reason::FilterId => "Filter ID",
+        Reason::FilterChannels => "Filter channels",
+        Reason::MaskFilterChannels => "Mask filter channels",
+        Reason::BudgetBelowFilterNeed => "Budget is smaller than the current filters need",
+        Reason::BlockPixels => "block_pixels",
+        Reason::NotGenerator => "Not a generator",
+        Reason::ChannelHasNoGradient => "The channel has no gradient",
+        Reason::PointGradientNotForNormal => "A point gradient is for colour or scalar channels, not the normal",
+        Reason::ShapeGradientNotForNormal => "A shape gradient is a color or scalar, not a normal",
+        Reason::FillGradientShapeGradientWithRamp => "A fill gradient is a shape gradient with a ramp",
+        Reason::FillGradientReplaces => "A fill gradient replaces",
+        Reason::GradientSettings => "Gradient settings",
+        Reason::FillInput => "Fill input",
+        Reason::PixelOutsideCanvas => "Pixel outside canvas",
+        Reason::CannotPaintByHandOnPathLayer => "Cannot paint by hand on a path layer",
+        Reason::CannotPaintByHandOnTextLayer => "Cannot paint by hand on a text layer",
+        Reason::PathsOnlyOnRasterOrFill => "Paths draw only on raster and fill layers",
+        Reason::TextLayerCannotHavePath => "A text layer cannot have a path",
+        Reason::PathChannelNotEnabled => "The path channel is not enabled on the layer",
+        Reason::LayerPathKeepsChannel => "A layer path does not change its channel",
+        Reason::LayerPathKeepsKind => "A layer path does not change its kind (model or canvas)",
+        Reason::PaintedSurfaceChannelsDuplicated => "Painted surface channels are duplicated",
+        Reason::OnePaintedSurfacePerPathChannel => "One painted surface per path channel, at the canvas size",
+        Reason::PathLayerNeedsAtLeastOnePath => "A path layer needs at least one path",
+        Reason::ModelPathsSetWithSetPaths => "Paths on a model are drawn with the model and set with set_paths",
+        Reason::FillLayerPathsCannotBeRasterized => "The paths of a fill layer cannot be rasterized",
+        Reason::PathToRenameMissing => "The layer has no such path to rename",
+        Reason::FillPathPixelsNeedFillLayer => "Fill-layer path pixels belong to a fill layer",
+        Reason::PathsAttachOnlyToLayerWithoutPaths => "Paths can be attached only to a raster or fill layer without paths",
+        Reason::PathChannelSurfaceMissing => "The layer has no surface for the path channel",
+        Reason::LayerSetName => "The layer set name",
+        Reason::LayerSetDoesNotExist => "The layer set does not exist",
+        Reason::TooManyLayerSets => "Too many layer sets",
+        Reason::LayerSetPosition => "The layer set position",
+        Reason::LastLayerSetCannotBeRemoved => "The last layer set cannot be removed",
+        Reason::LayerSetNamesAndVisibilityMismatch => "The layer set names and visibility do not match the sets",
+        Reason::LayerSetCount => "The number of layer sets",
+        Reason::LayerSetIdEmptyOrRepeated => "A layer set ID is empty or repeated",
+        Reason::LayerSetOfLayer => "The layer set of a layer",
+        Reason::GroupChildInOtherLayerSet => "A layer in a group is in a different layer set from the group",
+        Reason::OutputAssignment => "The output assignment",
+        Reason::NotTextLayer => "Not a text layer",
+        Reason::NoTextStepToMergeInto => "No text step to merge into",
+        Reason::TextNeedsPlainRasterLayer => "Text needs a raster layer without a path or text",
+        Reason::TextLayerHasNoColor => "The text layer has no Color",
+        Reason::UnknownLock => "Unknown lock",
+        Reason::LookRestoreOnlyAfterLoading => "Look settings can only be restored right after loading",
+        Reason::IdColorsRestoreOnlyAfterLoading => "ID colors can only be restored right after loading",
+        Reason::BakePriorityOutOfRange => "The overlapping UV priority is out of range",
+        Reason::BakePriorityRestoreOnlyAfterLoading => "Bake priority can only be restored right after loading",
+        Reason::EmptyMaterial => "Empty material",
+        Reason::DuplicateChannel => "Duplicate channel",
+        Reason::MergingRequiresAtLeastTwoLayers => "Merging requires at least two layers",
+        Reason::MergeAcrossLayerSets => "Layers of different layer sets cannot be merged",
+        Reason::MoveAcrossLayerSets => "Layers of different layer sets cannot be moved together",
+        Reason::DestinationGroup => "Destination group",
+        Reason::IntoGroupOfOtherLayerSet => "A layer cannot go into a group of another layer set",
+        Reason::Position => "position",
+        Reason::OutputSizeDoesNotMatchRectangle => "Output size does not match rectangle",
+        Reason::LayerOutputOnlyRasterOrFill => "Only raster and fill layers have layer output pixels",
+        Reason::GroupOutputOnlyGroups => "Only groups have a group output",
+        Reason::NotAdjustmentLayer => "Not an adjustment layer",
+        Reason::ChannelsAtBothEndsGradient => "Channels at both ends of the gradient",
+        Reason::CannotFillDisabledChannel => "Cannot fill a disabled channel",
+        Reason::ProjectChangedSinceResizePrepared => "The project changed after the resize was prepared",
+        Reason::ImageSideRange => "Image side (1–8192)",
+        Reason::TooManyRulers => "A layer can have at most 64 rulers",
+        Reason::RulerIdsOverlap => "Ruler IDs overlap",
+        Reason::RulerIdUsedOnOtherLayer => "A ruler ID overlaps a ruler on another layer",
+        Reason::TargetIsSameLayer => "The target layer is the same layer",
+        Reason::RulerToMoveNotOnLayer => "The ruler to move is not on that layer",
+        Reason::RulerNotOnLayer => "That ruler is not on that layer",
+        Reason::StraightRulerCannotSnap => "A straight ruler cannot be the snapping special ruler",
+        Reason::TransformNotFinite => "Transform must be finite",
+        Reason::TransformDegenerateOrOutOfRange => "Transform is degenerate or out of range",
+        Reason::NoRasterLayerToMove => "No raster layer to move",
+        Reason::SelectionNameEmpty => "The selection name is empty",
+        Reason::SelectionNameTooLong => "The selection name is too long",
+        Reason::SelectionNameHasControlCharacters => "The selection name has control characters",
+        Reason::NoSelection => "There is no selection",
+        Reason::TooManySavedSelections => "Too many saved selections",
+        Reason::NoSuchSavedSelection => "No such saved selection",
+        Reason::SavedSelectionNameExists => "A saved selection with that name exists",
+        Reason::SelectionSizeDoesNotMatchCanvas => "Selection size does not match canvas",
+        Reason::SavedSelectionsRestoreOnlyAfterLoading => "Saved selections can only be restored right after loading",
+        Reason::SelectionNameHasOuterSpaces => "The selection name has leading or trailing spaces",
+        Reason::SelectionRestoreOnlyAfterLoading => "Selection restore requires a freshly loaded project",
+        Reason::FillNeedsRasterLayer => "Fill requires a raster layer",
+        Reason::Amount => "amount",
+        Reason::RegionSizeDoesNotMatchCanvas => "Region size does not match canvas",
+        Reason::NoLayersToSave => "No layers to save",
+        Reason::NotFillLayer => "Not a fill layer",
+        Reason::NoMaskToSave => "No mask to save",
+        Reason::EmptySmartMaterial => "Empty smart material",
+        Reason::InvalidSmartMaskFragment => "Invalid smart mask fragment",
+        Reason::SmartMaskCannotBePlacedOnLayer => "A smart mask cannot be placed on a layer",
+        Reason::TargetNotGroup => "The target is not a group",
+        Reason::TooManyLayers => "Maximum 2048 layers",
+        Reason::UserChannelMappingDoesNotMatch => "User channel mapping does not match",
+        Reason::SmartMaterialCannotBePlacedOnMask => "A smart material cannot be placed on a mask",
+        Reason::ParentNotAGroup => "Parent must be a group",
+        Reason::CannotMoveGroupIntoItself => "Cannot move a group into itself",
+        Reason::NewIndex => "new_index",
+        Reason::NoLayersToMerge => "No layers to merge",
+        Reason::GroupAcrossLayerSets => "Layers of different layer sets cannot be grouped",
+        Reason::MergeRequiresLayersInSameGroup => "Merge requires layers in the same group",
+        Reason::NotGroup => "Not a group",
+        Reason::CyclicHierarchy => "Cyclic hierarchy",
+        Reason::ParentGroupNotFound => "Parent group not found",
+        Reason::ParentNotGroup => "Parent is not a group",
+        Reason::CyclicGroupHierarchy => "Cyclic group hierarchy",
+        Reason::LayersMustFollowTheirGroup => "Layers must follow their group",
+        Reason::GroupChildrenNotContiguous => "Group children are not contiguous",
+        Reason::GroupNestingTooDeep => "Group nesting is too deep",
+        Reason::ParentCountDoesNotMatchLayerCount => "Parent count does not match layer count",
+        Reason::ChannelNameExists => "Channel name already exists",
+        Reason::TooManyChannels => "Maximum 64 channels",
+        Reason::ChannelIdExists => "Channel ID already exists",
+        Reason::CannotChangeBuiltInChannel => "Cannot change a built-in channel",
+        Reason::HueSaturationLayerEnabled => "Hue/Saturation layer enabled",
+        Reason::CannotRemoveBuiltInChannel => "Cannot remove a built-in channel",
+        Reason::Width => "width",
+        Reason::Height => "height",
+        Reason::TileSize => "tile_size",
+        Reason::PersistentIds => "persistent_ids",
+        Reason::MaskRgbNotZero => "Mask RGB must be zero",
+        Reason::CannotPaintFillLayer => "Cannot paint a fill layer",
+        Reason::CannotPaintAdjustmentLayer => "Cannot paint an adjustment layer",
+        Reason::CannotPaintGroup => "Cannot paint a group",
+        Reason::BudgetBelowExistingPixels => "Budget is smaller than existing pixels",
+        Reason::SurfaceNotFound => "Surface not found",
+        Reason::CannotPaintDisabledChannel => "Cannot paint a disabled channel",
+        Reason::StepDoesNotDivideTileEdge => "The step does not divide the tile edge",
+        Reason::RectangleOutsideCanvas => "Rectangle outside canvas",
+        Reason::GeneratorSettings => "Generator settings",
+        Reason::FilterSettings => "Filter settings",
+        Reason::MeshMapKind => "Mesh map kind",
+        Reason::MapWidth => "Map width",
+        Reason::MapHeight => "Map height",
+        Reason::MapSizeAndLengthDoNotMatch => "Map size and length do not match",
+        Reason::MapConditionKey => "Map condition key",
+        Reason::MapBoundingBox => "Map bounding box",
+        Reason::ModelPositionAndRotation => "Model position and rotation",
+        Reason::ImageSizeAndPixelLengthDoNotMatch => "Image size and pixel length do not match",
+        Reason::GeneratorNeedsGeneratorSettings => "A generator is placed with generator settings",
+        Reason::GeneratorNotOnTangentNormal => "A generator makes one value per pixel and cannot be placed on a tangent-space normal",
+        Reason::AnchorNameEmpty => "Anchor name is empty",
+        Reason::AnchorNameTooLong => "Anchor name is too long",
+        Reason::EffectsOnlyOnStandardChannels => "Effects (filters, images, gradients) can only be placed on standard channels",
+        Reason::PathModelFingerprintChanged => "The model fingerprint differs from when the path was made",
+        Reason::PathRefersToMissingTriangle => "The path refers to a missing triangle",
+        Reason::PathTooLongForBrushSpacing => "The path is too long for the brush spacing",
+        Reason::SurfaceDabWasRefused => "The surface dab was refused",
+        Reason::RibbonImageMissing => "The ribbon image is missing",
+        Reason::FillPathLeavesUvIsland => "The fill path does not stay on one UV island",
+        Reason::TangentNormalOnlyRenormalizingBlur => "Only the renormalizing blur applies to tangent-space normals",
+        Reason::ColorFiltersOnlyOnColorChannels => "Gradient Map and Color Balance apply only to color channels",
+        Reason::ScalarFiltersOnlyOnScalarsAndMasks => "Histogram Scan, Histogram Range, Dilate / Erode and Edge Detect apply only to scalar channels and masks",
+        Reason::GlowOnlyOnColorChannels => "Glow applies only to color channels",
+        Reason::StencilImagePixelsPoints => "Stencil image pixels / points",
+        Reason::IdMapRequired => "An ID map is required",
+        Reason::IdMapSize => "ID map size",
+        Reason::IdColor => "ID color",
+        Reason::LookShaderName => "Look shader name",
+        Reason::LookShaderIdentity => "Look shader identity",
+        Reason::LookPropertyCount => "Number of look properties",
+        Reason::LookTextureCount => "Number of look textures",
+        Reason::LookKeywordCount => "Number of look keywords",
+        Reason::LookPropertyName => "Look property name",
+        Reason::LookPropertyValue => "Look property value",
+        Reason::LookTextureName => "Look texture name",
+        Reason::LookPackedTextureComponent => "Look packed texture component",
+        Reason::LookImageId => "Look image ID",
+        Reason::LookKeyword => "Look keyword",
+        Reason::ReceivedLookSource => "Source of the received look",
+        Reason::ReceivedLookTextureCount => "Number of received look textures",
+        Reason::ReceivedLookTexture => "Received look texture",
+        Reason::ReceivedLookSlotName => "Received look slot name",
+        Reason::Gradient => "Gradient",
+        Reason::TriangleCoordinates => "Triangle coordinates",
+        Reason::TriangleIndex => "Triangle index",
+        Reason::ManualIdColorsOutOfRange => "Manual ID colors are out of range",
+        Reason::ManualIdColorsFingerprintInvalid => "The model fingerprint of the manual ID colors is invalid",
+        Reason::ManualIdColorsOtherModel => "The manual ID colors belong to another model",
+        Reason::ChosenIslandsOutOfRange => "Too many chosen islands, or an island out of range",
+        Reason::IslandBothSkippedAndPreferred => "The same island is both not baked and preferred",
+        Reason::ChosenIslandsFingerprintInvalid => "The model fingerprint of the chosen islands is invalid",
+        Reason::ChosenIslandsOtherModel => "The chosen islands belong to another model",
+        Reason::ChosenIslandNotInModel => "A chosen island is not in the model",
+        Reason::UvOutsideUnitSquare => "UVs outside 0–1 (tiled or UDIM UVs) cannot be baked",
+        Reason::HeightToNormalStrengthRange => "Height to Normal strength (±256)",
+        Reason::Size => "Size",
+        Reason::NormalBufferSizeMismatch => "Normal buffer size must be width × height × 4 bytes",
+        Reason::HeightBufferSizeMismatch => "Height buffer size must be width × height × 4 bytes",
+        Reason::HeightToNormalNeedsHeight => "Height to Normal requires the Height channel",
+        Reason::RulerIdZero => "A ruler ID cannot be 0",
+        Reason::CanvasRulerPointsRange => "Ruler points must be finite and within ±1e7",
+        Reason::CanvasRulerPointsTooClose => "The two ruler points are too close (at least 0.01 px apart)",
+        Reason::HiddenFacesOnlyFor3DSymmetry => "Mirroring onto hidden faces is for 3D symmetry only",
+        Reason::ModelRulerPointsRange => "Ruler points must be finite and within ±1e6",
+        Reason::ModelRulerPointsTooClose => "The two ruler points are too close (at least 1e-6 apart)",
+        Reason::RulerDirectionZero => "The ruler direction is zero",
+        Reason::SymmetryRulerLineParallelToAxis => "The first line of a symmetry ruler is parallel to its rotation axis",
+        Reason::TwoPointsOnlyForPerspective => "Two points are for a perspective ruler only",
+        Reason::SymmetryRulerLineCountRange => "A symmetry ruler has 2 to 16 lines",
+        Reason::LineSymmetryNeedsEvenLines => "Line symmetry needs an even number of lines",
+        Reason::LineCountOnlyForSymmetryRulers => "Line count and line symmetry are for symmetry rulers only",
+        Reason::RadiusRange => "Radius (0–200)",
+        Reason::Cx => "cx",
+        Reason::Cy => "cy",
+        Reason::Rx => "rx",
+        Reason::Ry => "ry",
+        Reason::TooManyPolygonPoints => "Too many polygon points (maximum 100000)",
+        Reason::SeedOutsideCanvas => "Seed outside canvas",
+        Reason::SelectionSize => "Selection size",
+        Reason::SelectionTileSize => "Selection tile size",
+        Reason::EmptySelectionTile => "Empty selection tile",
+        Reason::OverlappingSelectionTiles => "Overlapping selection tiles",
+        Reason::SelectionTileOutsideCanvas => "Selection tile outside canvas",
+        Reason::SelectionTileLength => "Selection tile length",
+        Reason::SelectionTilePaddingNotZero => "Selection tile padding must be zero",
+        Reason::TileLength => "Tile length",
+        Reason::SelectionSizeMismatch => "Selection size mismatch",
+        Reason::SmartMaterialName => "Smart material name",
+        Reason::InvalidTileByteCount => "Invalid tile byte count",
+        Reason::TileCoordinatesOutsideCanvas => "Tile coordinates outside canvas",
+        Reason::PaddingOutsideCanvasNotZero => "Padding outside canvas must be zero",
+        Reason::SymmetryCenter => "symmetry center",
+        Reason::SymmetryCenterRange => "Symmetry center (±1e7)",
+        Reason::RadialSymmetryCountRange => "Radial symmetry count (2–16)",
+        Reason::SymmetryAngle => "symmetry angle",
+        Reason::SymmetryAngleRange => "The symmetry angle must be within ±360 degrees",
+        Reason::CannotReadFontFile => "Cannot read the font file",
+        Reason::FontHasNoOutlines => "The font has no outlines",
+        Reason::TextSurfaceNotEmpty => "The text surface must be empty",
+        Reason::BundledFontName => "Bundled font name",
+        Reason::FontFilePath => "Font file path",
+        Reason::FontName => "Font name",
+        Reason::TextLength => "Text length",
+        Reason::ControlCharactersInText => "Control characters in the text",
+        Reason::TextSize => "Text size",
+        Reason::LineSpacing => "Line spacing",
+        Reason::Tracking => "Tracking",
+        Reason::TextPosition => "Text position",
+        Reason::TextRotation => "Text rotation",
+        Reason::WrapWidth => "Wrap width",
+        Reason::ChannelName => "Channel name",
+        Reason::UvComparisonResolution => "UV comparison resolution",
+        Reason::PaintAmountRange => "Paint amount (0–1)",
+        Reason::PaintDensityRange => "Paint density (0–1)",
+        Reason::ColorStretchRange => "Color stretch (0–1)",
+        Reason::Angle => "angle",
+        Reason::Jitter => "jitter",
+        Reason::ColorBalance | Reason::Brightness | Reason::Contrast | Reason::AnchorNotBelowLayer | Reason::FilterSettingsOutOfRange | Reason::ColorNoiseNotForScalars | Reason::FilterImageSizeMismatch | Reason::FilterImageOrBlockSizeRange | Reason::FilterHaloTooLarge | Reason::FilterStackReachTooLarge | Reason::FilterRegionSizeRange | Reason::FilterStackTooDeep | Reason::FilterStatisticsCountMismatch | Reason::FilterStrengthRange | Reason::FilterGeneratorResolverMissing | Reason::FilterStatisticsInvalid | Reason::FilterSeamBandSizeMismatch | Reason::FilterGeneratorValueRange | Reason::AnchorPointsInvalid | Reason::AnchorCannotReadNormalChannel | Reason::AnchorMaskInvalid | Reason::AnchorLayerInvalid | Reason::AnchorLayerSettingsInvalid | Reason::AnchorImageSizeMismatch | Reason::AnchorGroupCycleOrTooDeep | Reason::GeneratorSizeNotPositive | Reason::GeneratorMapKindDuplicated | Reason::GeneratorAnchorSizeMismatch | Reason::GeneratorPositionBoundsTooLarge | Reason::GeneratorShapeTransformNotFinite | Reason::GeneratorRegionOutsideImage | Reason::GeneratorImageTooLarge | Reason::GeneratorStrengthOrSizeInvalid | Reason::PatternSettingsRange | Reason::LightSettingsRange | Reason::MaskBuilderSettingsRange | Reason::IslandVariationRange | Reason::PreviewOnlyNoiseOrGrunge | Reason::NoiseScaleRange | Reason::NoiseRotationRange | Reason::NoiseSoftnessRange | Reason::NoiseFractalRange | Reason::FractalSettingsOnlyForNoise | Reason::PresetOnlyForGrunge | Reason::CellOutputOnlyForWorley | Reason::RampPointsRange | Reason::RampCurveCountMismatch | Reason::RampCurveRange | Reason::RampInputNotFinite | Reason::ShapeSettingsRange | Reason::ShapeInputNotFinite | Reason::ModelFrameInvalid | Reason::GeneratorMapInvalid | Reason::GeneratorLevelsRange | Reason::GeneratorRatioOrAxisInvalid | Reason::GeneratorDirectionInvalid | Reason::ShapeAndRampOnlyForShapeGradient | Reason::GeneratorIdColorsInvalid | Reason::AnchorReadsHeightNotNormal | Reason::AnchorReferenceOnlyForAnchor | Reason::ImageStepProjectionInvalid | Reason::ImageStepHasNoNoise | Reason::ImageSettingsOnlyForImageStep | Reason::NoiseStepHasNoExtraNoise | Reason::NoiseSettingsOnlyForNoise | Reason::PatternStepHasNoExtraNoise | Reason::PatternSettingsOnlyForKind | Reason::MapPinInvalid | Reason::MeshMapKindUnknown | Reason::MeshMapSizeRange | Reason::MeshMapProvenanceRange | Reason::MeshMapSlotsInvalid | Reason::MeshMapBoundsInvalid | Reason::MeshMapTextTooLong | Reason::MeshMapLengthMismatch | Reason::MeshMapTexelSourceUnknown | Reason::MeshMapChannelRange | Reason::MeshTriangleCountRange | Reason::MeshUvOrSlotCountMismatch | Reason::MeshVertexAttributesInvalid | Reason::MeshValuesNotFinite | Reason::MeshSlotOrUvChannelRange | Reason::MeshRendererIndexInvalid | Reason::MeshMaterialIdsInvalid | Reason::MeshSizeRange | Reason::MeshBvhFaceRange | Reason::BakeSizeRange | Reason::BakeTargetSlotInvalid | Reason::BakePaddingOrAntialiasRange | Reason::BakeMapKindsInvalid | Reason::BakeRaySamplesRange | Reason::BakeDistanceRange | Reason::BakeRaySpreadRange | Reason::BakeCurvatureRadiusRange | Reason::BakeTooManyIdParts | Reason::ManualIdColorsOtherModelOrSplit | Reason::NormalRebuildInputInvalid | Reason::UvOverlapMapSizeRange | Reason::UvOverlapTriangleRange | Reason::BakeTargetSlotHasNoUv | Reason::BakeEstimateOverBudget | Reason::BakeCurvatureOverBudget | Reason::BakeResultMismatch | Reason::BakeUvRowsOverBudget | Reason::PathNameInvalid | Reason::TooManyPathsOnLayer | Reason::LayerPathsMixKinds | Reason::LayerPathsMixChannels | Reason::LayerPathsMixModels | Reason::LayerPathIdsDuplicated | Reason::PathGeometryMissing | Reason::PathSymmetryRange | Reason::CanvasPathPointRange | Reason::PathHandleRange | Reason::SurfacePathPointRange | Reason::PathBrushRadiusRange | Reason::PathTipAngleRange | Reason::PathProjectionDepthRange | Reason::PathMirrorPlaneInvalid | Reason::PathRibbonInvalid | Reason::PathSmudgeStrengthRange | Reason::PathNeedsStandardChannels | Reason::PathChannelCountRange | Reason::PathChannelsInvalid | Reason::CanvasPathNeedsCanvasSymmetry | Reason::TooManyPathPoints | Reason::SurfacePathNeedsMirrorSymmetry | Reason::PathModelFingerprintLength | Reason::PathBarycentricNotNormalized | Reason::FillPointCountRange | Reason::FillPointSpreadRange | Reason::FillPointPositionRange | Reason::FillPointUvDepthNotZero | Reason::ChannelNotInProject | Reason::SlotCannotBePainted | Reason::SlotUnknown | Reason::SlotNotPacked | Reason::PackedComponentRange | Reason::PenPressureRange | Reason::NoPointToFill | Reason::PathPointValueRange => {
+            GENERIC_REASON
+        }
+    }
 }
 
 impl Lang {
@@ -1557,7 +1428,7 @@ pub fn path_error(lang: Lang, error: &paths::Error) -> String {
     use paths::Error;
     match error {
         // 点の検査の理由は、そのまま短い理由（「値が範囲外です（…）」で包まない）
-        Error::Invalid(why) => crate::crash::problem(lang.pick(*why, core_reason(why))).into(),
+        Error::Invalid(why) => crate::crash::problem(lang.pick(why.ja(), core_reason(*why))).into(),
         Error::ModelMismatch => lang
             .pick(
                 "モデルが、パスを描いたときと違います",
@@ -2065,7 +1936,7 @@ mod tests {
             CoreError::SourceBudgetExceeded,
             CoreError::StrokeBudgetExceeded,
             CoreError::WorkingBudgetExceeded,
-            CoreError::Unsupported("塗りつぶしレイヤーには描けない"),
+            CoreError::Unsupported(Reason::CannotPaintFillLayer),
         ] {
             assert!(!Lang::Ja.core_error(&error).is_empty());
             assert!(Lang::En.core_error(&error).is_ascii());
@@ -2087,17 +1958,17 @@ mod tests {
         }
         // できない操作は、core の理由の文をそのまま 1 文に（「できない: 理由」のコロンでつないだ形にしない）
         assert_eq!(
-            Lang::Ja.core_error(&CoreError::Unsupported("塗りつぶしレイヤーには描けない")),
+            Lang::Ja.core_error(&CoreError::Unsupported(Reason::CannotPaintFillLayer)),
             "塗りつぶしレイヤーには描けない。"
         );
-        let error = CoreError::Unsupported("塗りつぶしレイヤーには描けない");
+        let error = CoreError::Unsupported(Reason::CannotPaintFillLayer);
         assert_eq!(Lang::En.core_error(&error), "Cannot paint a fill layer.");
         assert_eq!(
-            Lang::Ja.core_error(&CoreError::InvalidArgument("絵の具の量（0〜1）")),
+            Lang::Ja.core_error(&CoreError::InvalidArgument(Reason::PaintAmountRange)),
             "値が範囲外です（絵の具の量（0〜1））。"
         );
         assert_eq!(
-            Lang::En.core_error(&CoreError::InvalidArgument("絵の具の量（0〜1）")),
+            Lang::En.core_error(&CoreError::InvalidArgument(Reason::PaintAmountRange)),
             "Invalid value (Paint amount (0–1))."
         );
     }
@@ -2132,49 +2003,6 @@ mod tests {
             assert!(!en.chars().any(|c| c.is_ascii_digit()), "{en}");
         }
     }
-    #[test]
-    fn every_core_reason_has_an_english_text() {
-        // core が CoreError に渡す理由の文は全部、英語の文を持つ（新しい理由を足したらここで落ちる。core_reason に足す）
-        fn sources(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.is_dir() {
-                    sources(&path, out);
-                } else if path.extension().is_some_and(|e| e == "rs") {
-                    out.push(path);
-                }
-            }
-        }
-        let mut files = Vec::new();
-        sources(
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../yolu-core/src"),
-            &mut files,
-        );
-        assert!(files.len() > 10);
-        let (mut found, mut missing) = (0, Vec::new());
-        for file in files {
-            let text = std::fs::read_to_string(&file).unwrap();
-            for head in ["CoreError::InvalidArgument(", "CoreError::Unsupported("] {
-                for (at, _) in text.match_indices(head) {
-                    let rest = text[at + head.len()..].trim_start();
-                    let Some(rest) = rest.strip_prefix('"') else {
-                        continue;
-                    };
-                    let reason = &rest[..rest.find('"').unwrap()];
-                    found += 1;
-                    if known_core_reason(reason).is_none() && !reason.is_ascii() {
-                        missing.push(format!(
-                            "{}: {reason}",
-                            file.file_name().unwrap().to_string_lossy()
-                        ));
-                    }
-                }
-            }
-        }
-        assert!(found > 100, "{found}");
-        assert!(missing.is_empty(), "英語の文が無い理由: {missing:#?}");
-    }
-
     #[test]
     fn view_and_surface_errors_are_translated_by_kind() {
         use yolu_core::geometry::SurfaceStrokeError;

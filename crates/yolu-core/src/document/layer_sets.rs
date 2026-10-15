@@ -8,6 +8,7 @@
 //! - 新しい文書・前の版の文書は、名前の空のレイヤーセット 1 つに全部のチャンネルを割り当てた形で、合成も保存のバイトもレイヤーセットの無かった
 //!   ときと同じ。
 
+use crate::Reason;
 use std::collections::HashMap;
 
 use super::{Command, Document, Entry, HistoryKind, Order};
@@ -54,7 +55,7 @@ pub(crate) enum SetCommand {
 
 fn check_name(name: &str) -> Result<(), CoreError> {
     if name.len() > MAX_NAME_BYTES || name.chars().any(char::is_control) {
-        return Err(CoreError::InvalidArgument("レイヤーセットの名前"));
+        return Err(CoreError::InvalidArgument(Reason::LayerSetName));
     }
     Ok(())
 }
@@ -101,7 +102,7 @@ impl Document {
         self.layer_sets
             .iter()
             .position(|s| s.id == set)
-            .ok_or(CoreError::InvalidArgument("レイヤーセットが無い"))
+            .ok_or(CoreError::InvalidArgument(Reason::LayerSetDoesNotExist))
     }
 
     /// 新しいレイヤーを入れる所: above のすぐ上（above と同じグループ・レイヤーセットの中）、無ければ最初のレイヤーセットの一番上。
@@ -167,7 +168,7 @@ impl Document {
         self.ensure_no_stroke()?;
         check_name(name)?;
         if self.layer_sets.len() >= MAX_LAYER_SETS {
-            return Err(CoreError::InvalidArgument("レイヤーセットの数の上限"));
+            return Err(CoreError::InvalidArgument(Reason::TooManyLayerSets));
         }
         let id = self.new_layer_set_id();
         let mut table = self.table();
@@ -192,7 +193,7 @@ impl Document {
         let name = name.unwrap_or(&self.layer_sets[at].name).to_owned();
         check_name(&name)?;
         if self.layer_sets.len() >= MAX_LAYER_SETS {
-            return Err(CoreError::InvalidArgument("レイヤーセットの数の上限"));
+            return Err(CoreError::InvalidArgument(Reason::TooManyLayerSets));
         }
         let mut copies: Vec<Layer> = self
             .layers
@@ -250,7 +251,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let at = self.require_layer_set(set)?;
         if index >= self.layer_sets.len() {
-            return Err(CoreError::InvalidArgument("レイヤーセットの位置"));
+            return Err(CoreError::InvalidArgument(Reason::LayerSetPosition));
         }
         if index == at {
             return Ok(());
@@ -267,7 +268,9 @@ impl Document {
         self.ensure_no_stroke()?;
         let at = self.require_layer_set(set)?;
         if self.layer_sets.len() == 1 {
-            return Err(CoreError::InvalidArgument("最後のレイヤーセットは消せない"));
+            return Err(CoreError::InvalidArgument(
+                Reason::LastLayerSetCannotBeRemoved,
+            ));
         }
         let mut table = self.table();
         table.sets.remove(at);
@@ -382,7 +385,9 @@ impl Document {
         visible: &[bool],
     ) -> Result<Document, CoreError> {
         if names.len() != self.layer_sets.len() || visible.len() != self.layer_sets.len() {
-            return Err(CoreError::InvalidArgument("レイヤーセットの名前・表示の数"));
+            return Err(CoreError::InvalidArgument(
+                Reason::LayerSetNamesAndVisibilityMismatch,
+            ));
         }
         let mut copy = self.capture_snapshot()?;
         let only = copy.layer_sets[0].id;
@@ -444,19 +449,19 @@ impl Document {
     ) -> Result<(), CoreError> {
         self.ensure_loadable()?;
         if sets.is_empty() || sets.len() > MAX_LAYER_SETS {
-            return Err(CoreError::InvalidArgument("レイヤーセットの数"));
+            return Err(CoreError::InvalidArgument(Reason::LayerSetCount));
         }
         for (i, s) in sets.iter().enumerate() {
             check_name(&s.name)?;
             if s.id.0 == 0 || sets[..i].iter().any(|t| t.id == s.id) {
                 return Err(CoreError::InvalidArgument(
-                    "レイヤーセットの ID が空か重なっている",
+                    Reason::LayerSetIdEmptyOrRepeated,
                 ));
             }
         }
         let known = |id: LayerSetId| sets.iter().any(|s| s.id == id);
         if members.len() != self.layers.len() || !members.iter().all(|m| known(*m)) {
-            return Err(CoreError::InvalidArgument("レイヤーの所属のレイヤーセット"));
+            return Err(CoreError::InvalidArgument(Reason::LayerSetOfLayer));
         }
         let position: HashMap<LayerId, usize> = self
             .layers
@@ -469,7 +474,7 @@ impl Document {
                 let pi = position[&p];
                 if members[pi] != members[i] {
                     return Err(CoreError::InvalidArgument(
-                        "グループの子が親と違うレイヤーセットにある",
+                        Reason::GroupChildInOtherLayerSet,
                     ));
                 }
             }
@@ -479,7 +484,7 @@ impl Document {
         for &(c, s) in route {
             self.require_channel(c)?;
             if seen & c.bit() != 0 || s.is_some_and(|s| !known(s)) {
-                return Err(CoreError::InvalidArgument("出力の割り当て"));
+                return Err(CoreError::InvalidArgument(Reason::OutputAssignment));
             }
             seen |= c.bit();
             table[c.index()] = s;

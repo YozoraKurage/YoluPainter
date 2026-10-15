@@ -10,6 +10,7 @@ use super::{
     input::hash_text,
     MeshBakeInput, Result,
 };
+use crate::Reason;
 use std::collections::{BTreeSet, HashMap};
 
 /// 手で選んだアイランドの数の上限（それぞれの一覧で）。
@@ -99,11 +100,11 @@ impl MeshOverlapPriority {
             self.skip.len() <= MAX_OVERLAP_ISLANDS
                 && self.prefer.len() <= MAX_OVERLAP_ISLANDS
                 && self.skip.iter().chain(&self.prefer).all(|t| *t < 4_000_000),
-            "手で選んだアイランドの数か番号が範囲外です",
+            Reason::ChosenIslandsOutOfRange,
         )?;
         check(
             self.skip.is_disjoint(&self.prefer),
-            "同じアイランドが「焼かない」と「優先する」の両方にあります",
+            Reason::IslandBothSkippedAndPreferred,
         )?;
         check(
             (self.skip.is_empty() && self.prefer.is_empty() && self.binding.is_empty())
@@ -112,7 +113,7 @@ impl MeshOverlapPriority {
                         .binding
                         .bytes()
                         .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-            "手で選んだアイランドのモデル指紋が不正です",
+            Reason::ChosenIslandsFingerprintInvalid,
         )
     }
     /// 今までと同じ（番号の小さい方・外さない・手で選んだアイランドなし）か。
@@ -148,7 +149,7 @@ impl MeshOverlapPriority {
             Some(list) => {
                 check(
                     (self.skip.is_empty() && self.prefer.is_empty()) || self.binding == binding,
-                    "手で選んだアイランドが別のモデルに属しています",
+                    Reason::ChosenIslandsOtherModel,
                 )?;
                 match list {
                     MeshOverlapList::Skip => skip.insert(island),
@@ -270,14 +271,14 @@ pub(crate) fn arrange(
     if manual {
         check(
             p.binding == input.topology_hash,
-            "手で選んだアイランドが別のモデルに属しています",
+            Reason::ChosenIslandsOtherModel,
         )?;
         check(
             p.skip
                 .iter()
                 .chain(&p.prefer)
                 .all(|t| *t < input.triangle_count()),
-            "手で選んだアイランドの番号がモデルにありません",
+            Reason::ChosenIslandNotInModel,
         )?;
     }
     let needs_islands = manual || p.skip_outside || p.rule != MeshOverlapRule::LowestIndex;
@@ -367,6 +368,6 @@ fn check_unit(input: &MeshBakeInput, t: usize) -> Result<()> {
         input.uvs[t * 6..t * 6 + 6]
             .iter()
             .all(|v| *v >= -1e-6f32 && *v <= 1. + 1e-6f32),
-        "UVが0〜1の外です。繰り返し・UDIMのUVはベイクできません",
+        Reason::UvOutsideUnitSquare,
     )
 }

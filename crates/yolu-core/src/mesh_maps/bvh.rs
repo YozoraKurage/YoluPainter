@@ -1,4 +1,5 @@
 use super::input::{cross, dot, sub};
+use crate::Reason;
 #[derive(Clone, Copy, Default, Debug)]
 struct Node {
     bounds: [f32; 6],
@@ -72,7 +73,7 @@ impl MeshRayBvh {
     pub fn new(input: &super::MeshBakeInput, triangles: &[usize]) -> super::Result<Self> {
         super::check(
             triangles.iter().all(|t| *t < input.triangle_count()),
-            "BVH の面番号が範囲外です",
+            Reason::MeshBvhFaceRange,
         )?;
         Ok(Self::build(&input.corners, triangles))
     }

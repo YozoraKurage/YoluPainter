@@ -2,6 +2,7 @@
 //! ABR/PAT、BrushLibraryTests の拡張子の読み分け・PNG の約束に当たる試験。試験のファイルは試験の中で一から組む。
 
 use crate::brush_files;
+use yolu_core::Reason;
 
 use brush_files::*;
 use std::sync::Arc;
@@ -2222,7 +2223,7 @@ fn every_message_exists_in_both_languages() {
             .collect(),
     ));
     errors.push(BrushImportError::Core(
-        yolu_core::CoreError::InvalidArgument("x"),
+        yolu_core::CoreError::InvalidArgument(Reason::X),
     ));
     for e in &errors {
         let (ja, en) = (e.to_string(), e.english());

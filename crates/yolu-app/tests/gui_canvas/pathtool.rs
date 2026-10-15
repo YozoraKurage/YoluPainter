@@ -2123,7 +2123,7 @@ fn headless_every_evaluation_failure_has_a_short_reason_in_both_languages() {
     use yolu_core::geometry::DabRefusal;
     use yolu_core::CoreError;
     let errors = [
-        core_paths::Error::Invalid("2D の点は有限の ±1000000 画素、筆圧は 0..1 です"),
+        core_paths::Error::Invalid(yolu_core::Reason::CanvasPathPointRange),
         core_paths::Error::ModelMismatch,
         core_paths::Error::MissingTriangle,
         core_paths::Error::TooManySamples,

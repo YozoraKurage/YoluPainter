@@ -10,6 +10,7 @@ use super::{unit, Error};
 use crate::curve::{Curve, CurvePoint};
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 use crate::math::simd::{self, Lanes};
+use crate::Reason;
 use crate::{
     math::{clamp01, to_byte},
     Rgba8,
@@ -105,7 +106,7 @@ impl Ramp {
             }
             true
         }
-        let invalid = Error::Invalid("ランプの点・中点・カーブが範囲外です");
+        let invalid = Error::Invalid(Reason::RampPointsRange);
         let Ok(curve) = curve else {
             return Err(invalid);
         };
@@ -191,7 +192,7 @@ impl Ramp {
     /// 混合率曲線を全部差し替えた新しいランプ。数が 0 か色の分岐点の数 − 1 でなければエラー。全部なしなら空にそろえる。
     pub fn with_segment_curves(&self, segments: Vec<Option<Curve>>) -> Result<Self, Error> {
         if !segments.is_empty() && segments.len() != self.colors.len() - 1 {
-            return Err(Error::Invalid("混合率曲線の数が区間の数と合いません"));
+            return Err(Error::Invalid(Reason::RampCurveCountMismatch));
         }
         Ok(Self {
             segments: if segments.iter().all(Option::is_none) {
@@ -205,7 +206,7 @@ impl Ramp {
     /// 区間 `k` の混合率曲線を差し替える（`None` で外す）。区間が無ければエラー。
     pub fn with_segment_curve(&self, k: usize, curve: Option<Curve>) -> Result<Self, Error> {
         if k + 1 >= self.colors.len() {
-            return Err(Error::Invalid("混合率曲線の区間が範囲外です"));
+            return Err(Error::Invalid(Reason::RampCurveRange));
         }
         let mut list = if self.segments.is_empty() {
             vec![None; self.colors.len() - 1]
@@ -257,7 +258,7 @@ impl Ramp {
     }
     pub fn curve_value(&self, input: f64) -> Result<f64, Error> {
         if !input.is_finite() {
-            return Err(Error::Invalid("ランプの入力は有限値が必要です"));
+            return Err(Error::Invalid(Reason::RampInputNotFinite));
         }
         Ok(self.curve_value_unchecked(input))
     }
@@ -272,7 +273,7 @@ impl Ramp {
     }
     pub fn sample_stops(&self, x: f64, scalar: bool) -> Result<Rgba8, Error> {
         if !x.is_finite() {
-            return Err(Error::Invalid("ランプの入力は有限値が必要です"));
+            return Err(Error::Invalid(Reason::RampInputNotFinite));
         }
         Ok(self.sample_unchecked(x, scalar))
     }

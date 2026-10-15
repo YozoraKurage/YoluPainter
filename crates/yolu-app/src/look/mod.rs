@@ -2,6 +2,7 @@
 //! 値の表（`liltoon`）、操作（`LookOp`。`Action::Look`）、lilToon のひな形（要るユーザーチャンネルを作って割り当てる）、欄（`panel`）、
 //! .ylp との受け渡し（`io`）。値は文書（`Document::look`）が持ち、変更は 1 回の Undo（スライダーのドラッグは 1 段にまとめる）。
 
+use yolu_core::Reason;
 pub mod export;
 pub mod fields;
 pub mod io;
@@ -404,7 +405,7 @@ pub fn paint_slot(doc: &mut Document, slot: &str, lang: Lang) -> Result<Channel,
         }
     }
     let Some(spec) = liltoon::slot(slot).and_then(|s| paint_channel_spec(s, lang)) else {
-        return Err(CoreError::InvalidArgument("描けないスロット"));
+        return Err(CoreError::InvalidArgument(Reason::SlotCannotBePainted));
     };
     doc.batch(|d| {
         let mut look = d.look().clone();
@@ -453,19 +454,18 @@ pub fn new_slot_channel(
     lang: Lang,
 ) -> Result<Channel, CoreError> {
     let Some(info) = liltoon::slot(slot) else {
-        return Err(CoreError::InvalidArgument("知らないスロット"));
+        return Err(CoreError::InvalidArgument(Reason::SlotUnknown));
     };
     let planes = match plane {
         None => None,
         Some(_) => match doc.drawn_look().textures.get(slot) {
             Some(TextureSource::Packed(p)) => Some(*p),
-            _ => return Err(CoreError::InvalidArgument("成分ごとの割り当てではない")),
+            _ => return Err(CoreError::InvalidArgument(Reason::SlotNotPacked)),
         },
     };
     let spec = match (plane, planes) {
-        (None, _) => {
-            paint_channel_spec(info, lang).ok_or(CoreError::InvalidArgument("描けないスロット"))?
-        }
+        (None, _) => paint_channel_spec(info, lang)
+            .ok_or(CoreError::InvalidArgument(Reason::SlotCannotBePainted))?,
         (Some(k), Some(planes)) if k < 4 => {
             // 何も描いていない所は、置き換える成分が定数ならその値（見た目を変えない）、チャンネルならスロットの既定のその成分
             let white = match planes[k as usize] {
@@ -486,7 +486,7 @@ pub fn new_slot_channel(
                 },
             }
         }
-        _ => return Err(CoreError::InvalidArgument("成分は 0〜3")),
+        _ => return Err(CoreError::InvalidArgument(Reason::PackedComponentRange)),
     };
     doc.batch(|d| {
         let mut look = d.look().clone();

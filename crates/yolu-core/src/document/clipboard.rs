@@ -10,6 +10,7 @@
 //!   違う大きさへは中央で、はみ出す分は切って数を返す。
 //! - 予算（バイト）を超えるなら何も変えずに断る。コピーは `max_bytes`（矩形の大きさ）、ペーストは一操作の予算（`stroke_budget`）。
 
+use crate::Reason;
 use std::sync::Arc;
 
 use rayon::prelude::*;
@@ -111,20 +112,20 @@ impl PixelClipboard {
         channel: Channel,
     ) -> Result<PixelClipboard, CoreError> {
         if document_width == 0 || document_height == 0 {
-            return Err(CoreError::InvalidArgument("写したキャンバスの大きさ"));
+            return Err(CoreError::InvalidArgument(Reason::SourceCanvasSize));
         }
         if width == 0 || height == 0 {
-            return Err(CoreError::InvalidArgument("写した矩形が空"));
+            return Err(CoreError::InvalidArgument(Reason::CopiedRectangleEmpty));
         }
         if x as u64 + width as u64 > document_width as u64
             || y as u64 + height as u64 > document_height as u64
         {
-            return Err(CoreError::InvalidArgument("写した矩形がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(
+                Reason::CopiedRectangleOutsideCanvas,
+            ));
         }
         if rgba.len() as u64 != width as u64 * height as u64 * 4 {
-            return Err(CoreError::InvalidArgument(
-                "写した画素のバイト数が幅 × 高さ × 4 でない",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::CopiedPixelsSizeMismatch));
         }
         Ok(PixelClipboard {
             pixels: Arc::new(rgba),
@@ -188,7 +189,7 @@ impl PixelClipboard {
     /// 長方形の中の (x, y) の画素。
     pub fn pixel(&self, x: u32, y: u32) -> Result<Rgba8, CoreError> {
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素が矩形の外"));
+            return Err(CoreError::InvalidArgument(Reason::PixelOutsideRectangle));
         }
         let o = (y as usize * self.width as usize + x as usize) * 4;
         Ok(Rgba8::from_slice(&self.pixels[o..o + 4]))
@@ -269,7 +270,7 @@ impl Document {
             let mask = l
                 .mask
                 .as_ref()
-                .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))?;
+                .ok_or(CoreError::Unsupported(Reason::LayerHasNoMask))?;
             return self.copy_region(ClipboardSource::Mask, Channel::Color, max_bytes, |chunk| {
                 chunk
                     .iter()
@@ -317,7 +318,7 @@ impl Document {
                 .map(|&coord| {
                     let rect = self
                         .tile_rect(coord)
-                        .ok_or(CoreError::InvalidArgument("タイルがキャンバスの外"))?;
+                        .ok_or(CoreError::InvalidArgument(Reason::TileOutsideCanvas))?;
                     let mut rows = vec![0u8; rect.width as usize * rect.height as usize * 4];
                     self.composite_into(channel, rect, &mut rows, RowOrder::BottomUp)?;
                     // タイルの大きさの領域へ（キャンバスの外の余白は 0）
@@ -357,7 +358,7 @@ impl Document {
                 };
                 let rect = self
                     .tile_rect(coord)
-                    .ok_or(CoreError::InvalidArgument("タイルがキャンバスの外"))?;
+                    .ok_or(CoreError::InvalidArgument(Reason::TileOutsideCanvas))?;
                 let ts = self.tile_size as usize;
                 for y in 0..rect.height as usize {
                     for x in 0..rect.width as usize {
@@ -514,7 +515,7 @@ impl Document {
                 _ => return Err(CoreError::Clipboard(ClipboardRefusal::NoPixels)),
             }
             if !self.layers[index].is_channel_enabled(channel) {
-                return Err(CoreError::Unsupported("無効のチャンネルは切り取れない"));
+                return Err(CoreError::Unsupported(Reason::CannotCutDisabledChannel));
             }
         }
         // 写す前に断る（クリップボードも変えない）
@@ -662,18 +663,18 @@ impl Document {
         within_selection: bool,
     ) -> Result<bool, CoreError> {
         if rgba.len() as u64 != self.width as u64 * self.height as u64 * 4 {
-            return Err(CoreError::InvalidArgument("画像の大きさがキャンバスと違う"));
+            return Err(CoreError::InvalidArgument(
+                Reason::ImageSizeDiffersFromCanvas,
+            ));
         }
         self.ensure_no_stroke()?;
         self.require_channel(channel)?;
         let index = self.index_of(layer)?;
         if self.layers[index].kind != LayerKind::Raster {
-            return Err(CoreError::Unsupported(
-                "画素を置き換えられるのはラスターレイヤーだけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::ReplacePixelsNeedsPaintLayer));
         }
         if !self.layers[index].is_channel_enabled(channel) {
-            return Err(CoreError::Unsupported("無効のチャンネルは置き換えられない"));
+            return Err(CoreError::Unsupported(Reason::CannotReplaceDisabledChannel));
         }
         let keep_alpha = self.pixel_write_guard(layer, false)?;
         let created = self.ensure_surface(index, channel);

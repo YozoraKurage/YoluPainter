@@ -1,5 +1,6 @@
 //! Anchor は「そこまで」のスナップショット。入力の段は既にフィルター評価済みでなければならない。
 use super::{evaluate::allocate, unit, Error, Kind, Options, Source};
+use crate::Reason;
 use crate::{blend, math::UNIT, AdjustmentSettings, BlendMode, Channel, ChannelKind, Rect, Rgba8};
 use rayon::prelude::*;
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,9 +47,7 @@ pub fn validate_points(points: &[Point], layer_count: usize) -> Result<(), Error
                 .iter()
                 .any(|q| p.id == q.id || (p.host == q.host && p.placement == q.placement))
         {
-            return Err(Error::Invalid(
-                "Anchor の ID・レイヤー・配置が不正または重複しています",
-            ));
+            return Err(Error::Invalid(Reason::AnchorPointsInvalid));
         }
     }
     Ok(())
@@ -115,9 +114,7 @@ impl Reference {
     /// Normal は 1 画素 1 値でないので断る。
     pub fn read_for(&self, kind: ChannelKind) -> Result<Read, Error> {
         match (self.read, kind) {
-            (_, ChannelKind::Normal) => {
-                Err(Error::Invalid("Normal チャンネルは Anchor で読めません"))
-            }
+            (_, ChannelKind::Normal) => Err(Error::Invalid(Reason::AnchorCannotReadNormalChannel)),
             (ReadMode::Coverage, _) => Ok(Read::Coverage),
             (ReadMode::Value, ChannelKind::Color) => Ok(Read::Color),
             (ReadMode::Value, ChannelKind::Scalar) => Ok(Read::Scalar),
@@ -183,7 +180,7 @@ pub struct Mask<'a> {
 impl Mask<'_> {
     fn validate(&self, d: (u32, u32)) -> Result<(), Error> {
         if !unit(self.density) || self.source.dimensions() != d {
-            Err(Error::Invalid("マスクの濃度・大きさが不正です"))
+            Err(Error::Invalid(Reason::AnchorMaskInvalid))
         } else {
             Ok(())
         }
@@ -308,9 +305,7 @@ impl<'a> Plan<'a> {
             || dimensions.1 == 0
             || kind == ChannelKind::Normal
         {
-            return Err(Error::Invalid(
-                "Anchor のレイヤー・大きさ・チャンネルが不正です",
-            ));
+            return Err(Error::Invalid(Reason::AnchorLayerInvalid));
         }
         for (i, l) in layers.iter().enumerate() {
             if !unit(l.opacity)
@@ -319,11 +314,11 @@ impl<'a> Plan<'a> {
                 })
                 || (!matches!(l.content, Content::Group) && l.blend == BlendMode::PassThrough)
             {
-                return Err(Error::Invalid("Anchor のレイヤーの設定が不正です"));
+                return Err(Error::Invalid(Reason::AnchorLayerSettingsInvalid));
             }
             if let Content::Pixels(s) = l.content {
                 if s.dimensions() != dimensions {
-                    return Err(Error::Invalid("Anchor の画像サイズが違います"));
+                    return Err(Error::Invalid(Reason::AnchorImageSizeMismatch));
                 }
             }
             if let Some(m) = l.mask {
@@ -334,7 +329,7 @@ impl<'a> Plan<'a> {
             while let Some(p) = cur {
                 depth += 1;
                 if depth > 256 || p == i || p >= layers.len() {
-                    return Err(Error::Invalid("グループの循環または深さ超過です"));
+                    return Err(Error::Invalid(Reason::AnchorGroupCycleOrTooDeep));
                 }
                 cur = layers[p].parent;
             }

@@ -48,6 +48,7 @@
 //! assert!(doc.end_stroke(stroke).unwrap().changed); // 確定で、待たせた曲線の最後の区間も描く
 //! ```
 
+use crate::Reason;
 pub mod curve;
 mod dynamics;
 pub(crate) mod edge;
@@ -151,25 +152,25 @@ impl Default for BrushSettings {
 impl BrushSettings {
     /// C# の BrushSettings.Validate の M1 の部分。
     pub fn validate(&self) -> Result<(), CoreError> {
-        require_finite(self.radius, "radius")?;
-        require_finite(self.hardness, "hardness")?;
-        require_finite(self.spacing, "spacing")?;
-        require_finite(self.opacity, "opacity")?;
-        require_finite(self.flow, "flow")?;
+        require_finite(self.radius, Reason::Radius)?;
+        require_finite(self.hardness, Reason::Hardness)?;
+        require_finite(self.spacing, Reason::Spacing)?;
+        require_finite(self.opacity, Reason::Opacity)?;
+        require_finite(self.flow, Reason::Flow)?;
         if self.radius <= 0.0 || self.radius > 65536.0 {
-            return Err(CoreError::InvalidArgument("radius"));
+            return Err(CoreError::InvalidArgument(Reason::Radius));
         }
         if !(0.0..=1.0).contains(&self.hardness) {
-            return Err(CoreError::InvalidArgument("hardness"));
+            return Err(CoreError::InvalidArgument(Reason::Hardness));
         }
         if !(0.01..=4.0).contains(&self.spacing) {
-            return Err(CoreError::InvalidArgument("spacing"));
+            return Err(CoreError::InvalidArgument(Reason::Spacing));
         }
         if !(0.0..=1.0).contains(&self.opacity) {
-            return Err(CoreError::InvalidArgument("opacity"));
+            return Err(CoreError::InvalidArgument(Reason::Opacity));
         }
         if !(0.0..=1.0).contains(&self.flow) {
-            return Err(CoreError::InvalidArgument("flow"));
+            return Err(CoreError::InvalidArgument(Reason::Flow));
         }
         Ok(())
     }
@@ -194,12 +195,12 @@ pub struct BrushSample {
 impl BrushSample {
     /// 有限でない値は断る。筆圧は 0〜1、傾きは ±π/2 に収める（C# の BrushSample と同じ）。
     pub fn new(x: f64, y: f64, pressure: f64, time: f64, tilt: DVec2) -> Result<Self, CoreError> {
-        require_finite(x, "x")?;
-        require_finite(y, "y")?;
-        require_finite(pressure, "pressure")?;
-        require_finite(time, "time")?;
-        require_finite(tilt.x, "tilt")?;
-        require_finite(tilt.y, "tilt")?;
+        require_finite(x, Reason::X)?;
+        require_finite(y, Reason::Y)?;
+        require_finite(pressure, Reason::Pressure)?;
+        require_finite(time, Reason::Time)?;
+        require_finite(tilt.x, Reason::Tilt)?;
+        require_finite(tilt.y, Reason::Tilt)?;
         let max = std::f64::consts::FRAC_PI_2;
         Ok(BrushSample {
             x,
@@ -213,7 +214,7 @@ impl BrushSample {
     }
     /// ペンの軸の回転（ラジアン、キャンバスで反時計回り）を付けた写し。有限でない値は断る。
     pub fn with_rotation(self, rotation: f64) -> Result<Self, CoreError> {
-        require_finite(rotation, "rotation")?;
+        require_finite(rotation, Reason::Rotation)?;
         Ok(BrushSample { rotation, ..self })
     }
     const ZERO: BrushSample = BrushSample {
@@ -604,10 +605,12 @@ impl StrokeState {
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
         if self.has_pen && sample.time < self.last_input.time {
-            return Err(CoreError::InvalidArgument("入力の時刻が戻った"));
+            return Err(CoreError::InvalidArgument(Reason::InputTimeMovedBackwards));
         }
         if sample.x.abs() > MAX_COORDINATE || sample.y.abs() > MAX_COORDINATE {
-            return Err(CoreError::InvalidArgument("入力の座標が範囲外"));
+            return Err(CoreError::InvalidArgument(
+                Reason::InputCoordinatesOutOfRange,
+            ));
         }
         self.last_input = sample;
         let stabilizer = self.brush.assist.stabilizer;
@@ -734,12 +737,12 @@ impl StrokeState {
         let s = &self.brush.base;
         let spacing = f64_max(0.01, s.radius * 2.0 * s.spacing);
         if length / spacing > MAX_STAMPS_PER_SEGMENT {
-            return Err(CoreError::InvalidArgument("1 区間のダブが百万を超える"));
+            return Err(CoreError::InvalidArgument(Reason::TooManyDabsPerSegment));
         }
         if let Some(d) = &self.brush.dual {
             if length / f64_max(0.01, d.radius * 2.0 * d.spacing) > MAX_STAMPS_PER_SEGMENT {
                 return Err(CoreError::InvalidArgument(
-                    "1 区間のデュアルブラシのダブが百万を超える",
+                    Reason::TooManyDualBrushDabsPerSegment,
                 ));
             }
         }
@@ -800,7 +803,7 @@ impl StrokeState {
             let s = &brush.base;
             let spacing = f64_max(0.01, s.radius * 2.0 * s.spacing);
             if length / spacing > MAX_STAMPS_PER_SEGMENT {
-                return Err(CoreError::InvalidArgument("1 区間のダブが百万を超える"));
+                return Err(CoreError::InvalidArgument(Reason::TooManyDabsPerSegment));
             }
             if length > 0.0 {
                 if let Some(d) = &brush.dual {
@@ -808,7 +811,7 @@ impl StrokeState {
                     let dual_spacing = f64_max(0.01, d.radius * 2.0 * d.spacing);
                     if length / dual_spacing > MAX_STAMPS_PER_SEGMENT {
                         return Err(CoreError::InvalidArgument(
-                            "1 区間のデュアルブラシのダブが百万を超える",
+                            Reason::TooManyDualBrushDabsPerSegment,
                         ));
                     }
                     let mut at = dual_spacing - self.dual_since_stamp;
@@ -1107,7 +1110,7 @@ impl StrokeState {
             .is_some_and(|st| st.canvas_to_image().is_none())
         {
             return Err(CoreError::Unsupported(
-                "ステンシルにキャンバスからの写しが無いので、2D のダブは読めない",
+                Reason::StencilTransformMissingFor2DDabs,
             ));
         }
         let prepared = {
@@ -1552,23 +1555,19 @@ impl StrokeState {
         at: Option<StencilPoint>,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        require_finite(coverage, "coverage")?;
-        require_finite(pressure, "pressure")?;
+        require_finite(coverage, Reason::Coverage)?;
+        require_finite(pressure, Reason::Pressure)?;
         if !(0.0..=1.0).contains(&coverage) || !(0.0..=1.0).contains(&pressure) {
-            return Err(CoreError::InvalidArgument("coverage/pressure"));
+            return Err(CoreError::InvalidArgument(Reason::CoveragePressure));
         }
         if x < 0 || y < 0 || x >= self.width || y >= self.height {
             return Ok(false);
         }
         if !self.brush.effect.is_paint() {
-            return Err(CoreError::Unsupported(
-                "効果のブラシは画素ごとには塗れない（apply_dab で読み元を凍結する）",
-            ));
+            return Err(CoreError::Unsupported(Reason::EffectBrushesNeedDabs));
         }
         if self.mix_on {
-            return Err(CoreError::Unsupported(
-                "混ぜるブラシは画素ごとには塗れない（apply_dab で下地を凍結する）",
-            ));
+            return Err(CoreError::Unsupported(Reason::MixingBrushNeedsDabs));
         }
         let Some((scales, paper)) = self.surface_scales(x, y) else {
             return Ok(false);
@@ -1613,23 +1612,23 @@ impl StrokeState {
     ) -> Result<bool, CoreError> {
         if points.is_some_and(|p| p.len() != pixels.len()) {
             return Err(CoreError::InvalidArgument(
-                "ステンシルの点は画素ごとに 1 つ",
+                Reason::StencilPointCountMismatch,
             ));
         }
-        require_finite(center.x, "center")?;
-        require_finite(center.y, "center")?;
-        require_finite(pressure, "pressure")?;
+        require_finite(center.x, Reason::Center)?;
+        require_finite(center.y, Reason::Center)?;
+        require_finite(pressure, Reason::Pressure)?;
         if center.x.abs() > MAX_COORDINATE
             || center.y.abs() > MAX_COORDINATE
             || !(0.0..=1.0).contains(&pressure)
         {
-            return Err(CoreError::InvalidArgument("dab"));
+            return Err(CoreError::InvalidArgument(Reason::Dab));
         }
         let (mut x0, mut y0, mut x1, mut y1) = (self.width, self.height, -1i64, -1i64);
         for p in pixels {
-            require_finite(p.coverage, "coverage")?;
+            require_finite(p.coverage, Reason::Coverage)?;
             if !(0.0..=1.0).contains(&p.coverage) {
-                return Err(CoreError::InvalidArgument("coverage"));
+                return Err(CoreError::InvalidArgument(Reason::Coverage));
             }
             if p.x < 0 || p.y < 0 || p.x >= self.width || p.y >= self.height {
                 continue;
@@ -2428,9 +2427,9 @@ fn apply_at<const SIMPLE: bool>(
                         None => {
                             let px = coord.x as i64 * ts as i64 + (local % ts) as i64;
                             let py = coord.y as i64 * ts as i64 + (local / ts) as i64;
-                            stencil.sample_canvas(px, py).ok_or(CoreError::Unsupported(
-                                "ステンシルにキャンバスからの写しが無い（画素ごとにステンシルの上の点を渡す）",
-                            ))?
+                            stencil
+                                .sample_canvas(px, py)
+                                .ok_or(CoreError::Unsupported(Reason::StencilTransformMissing))?
                         }
                     };
                     stencil_read = true;

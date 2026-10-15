@@ -21,6 +21,7 @@
 use crate::curve::{Curve, CurvePoint};
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite};
+use crate::Reason;
 
 use super::random::NetRandom;
 
@@ -58,20 +59,16 @@ impl InputResponse {
         let curve = if curve.is_empty() {
             Curve::identity()
         } else {
-            Curve::new(curve).map_err(|_| {
-                CoreError::InvalidArgument(
-                    "入力の曲線（点 2〜16・両端は 0 と 1・間隔 0.02 以上・値 0〜1）",
-                )
-            })?
+            Curve::new(curve).map_err(|_| CoreError::InvalidArgument(Reason::InputCurveRange))?
         };
         InputResponse::from_curve(min, curve)
     }
 
     /// 最小値（0〜1）と、検査済みの曲線から作る（編集の部品が返した曲線をそのまま入れる口。直線は直線として扱う）。
     pub fn from_curve(min: f64, curve: Curve) -> Result<InputResponse, CoreError> {
-        require_finite(min, "input minimum")?;
+        require_finite(min, Reason::InputMinimum)?;
         if !(0.0..=1.0).contains(&min) {
-            return Err(CoreError::InvalidArgument("入力の最小値（0〜1）"));
+            return Err(CoreError::InvalidArgument(Reason::InputMinimumRange));
         }
         Ok(InputResponse {
             min,
@@ -465,9 +462,11 @@ impl Influences {
                 self.get(item).input(input).response.validate()?;
             }
         }
-        require_finite(self.speed_max, "speed_max")?;
+        require_finite(self.speed_max, Reason::SpeedMax)?;
         if self.speed_max <= 0.0 {
-            return Err(CoreError::InvalidArgument("速さの上限（0 より大きい）"));
+            return Err(CoreError::InvalidArgument(
+                Reason::MaximumSpeedGreaterThanZero,
+            ));
         }
         Ok(())
     }

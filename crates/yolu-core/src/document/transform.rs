@@ -3,6 +3,7 @@ use super::operations::Dirty;
 use super::{Document, LayerLocks, Target};
 use crate::math::to_byte;
 use crate::surface::{Growth, PixelReader, Tile};
+use crate::Reason;
 use crate::{CoreError, LayerId, LayerKind, Rgba8, SelectionMask, Surface, TileCoord};
 use rayon::prelude::*;
 use std::collections::BTreeSet;
@@ -47,7 +48,7 @@ impl Affine2D {
             .iter()
             .all(|v| v.is_finite())
         {
-            return Err(CoreError::InvalidArgument("変形は有限値"));
+            return Err(CoreError::InvalidArgument(Reason::TransformNotFinite));
         }
         let r = degrees * std::f64::consts::PI / 180.;
         let cos = r.cos();
@@ -72,7 +73,9 @@ impl Affine2D {
         self.validate()?;
         let det = self.a * self.d - self.b * self.c;
         if !det.is_finite() || det.abs() < 1e-9 {
-            return Err(CoreError::InvalidArgument("変形が潰れる、または範囲外"));
+            return Err(CoreError::InvalidArgument(
+                Reason::TransformDegenerateOrOutOfRange,
+            ));
         }
         let (a, b, c, d) = (self.d / det, -self.b / det, -self.c / det, self.a / det);
         let inverse = Self {
@@ -93,7 +96,7 @@ impl Affine2D {
         {
             Ok(())
         } else {
-            Err(CoreError::InvalidArgument("変形は有限値"))
+            Err(CoreError::InvalidArgument(Reason::TransformNotFinite))
         }
     }
     fn integer_move(self) -> bool {
@@ -331,7 +334,7 @@ impl Document {
         self.ensure_no_stroke()?;
         transform.validate()?;
         if ids.is_empty() {
-            return Err(CoreError::Unsupported("動かすラスターレイヤーが無い"));
+            return Err(CoreError::Unsupported(Reason::NoRasterLayerToMove));
         }
         for &id in ids {
             let index = self.index_of(id)?;

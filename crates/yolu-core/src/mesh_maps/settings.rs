@@ -1,4 +1,5 @@
 use super::{check, input::hash_text, MeshMapKind, Result};
+use crate::Reason;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MeshIdSource {
     MaterialSlot,
@@ -80,7 +81,7 @@ impl MeshBakeSettings {
     pub fn validate(&self) -> Result<()> {
         check(
             (1..=8192).contains(&self.width) && (1..=8192).contains(&self.height),
-            "ベイクの大きさが範囲外です",
+            Reason::BakeSizeRange,
         )?;
         check(
             self.target_slot >= -1
@@ -90,11 +91,11 @@ impl MeshBakeSettings {
                     .target_slots
                     .first()
                     .is_none_or(|s| *s == self.target_slot),
-            "対象スロットが不正です",
+            Reason::BakeTargetSlotInvalid,
         )?;
         check(
             (0..=64).contains(&self.padding) && (1..=4).contains(&self.antialiasing),
-            "余白またはアンチエイリアスが範囲外です",
+            Reason::BakePaddingOrAntialiasRange,
         )?;
         check(
             !self.maps.is_empty()
@@ -103,13 +104,13 @@ impl MeshBakeSettings {
                     .iter()
                     .enumerate()
                     .all(|(i, k)| !self.maps[..i].contains(k)),
-            "マップの種類が空または重複しています",
+            Reason::BakeMapKindsInvalid,
         )?;
         check(
             [self.ao_samples, self.thickness_samples]
                 .iter()
                 .all(|v| (1..=1024).contains(v)),
-            "レイのサンプル数が範囲外です",
+            Reason::BakeRaySamplesRange,
         )?;
         check(
             [
@@ -120,17 +121,17 @@ impl MeshBakeSettings {
             ]
             .iter()
             .all(|v| *v > 0. && *v <= 4.),
-            "距離は対角線比で0より大きく4以下が必要です",
+            Reason::BakeDistanceRange,
         )?;
         check(
             [self.ao_spread_degrees, self.thickness_spread_degrees]
                 .iter()
                 .all(|v| (1. ..=180.).contains(v)),
-            "レイの広がりは1〜180度が必要です",
+            Reason::BakeRaySpreadRange,
         )?;
         check(
             (0.001..=0.5).contains(&self.curvature_radius),
-            "曲率半径が範囲外です",
+            Reason::BakeCurvatureRadiusRange,
         )?;
         self.overlap.validate()
     }

@@ -18,6 +18,7 @@
 //! 描く見た目（[`crate::Document::drawn_look`]）は、受けた値の上に利用者の設定を重ねたもの（[`MaterialLook::over`]）: 利用者が欄で
 //! 変えた項目だけが受けた値に勝つ。
 
+use crate::Reason;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -271,45 +272,47 @@ impl MaterialLook {
             n >= 1 && n <= max && !s.chars().any(|c| c.is_control())
         };
         if !self.shader.is_empty() && !name_ok(&self.shader, MAX_SHADER_NAME) {
-            return Err(CoreError::InvalidArgument("見た目のシェーダーの名前"));
+            return Err(CoreError::InvalidArgument(Reason::LookShaderName));
         }
         if [&self.shader_guid, &self.shader_version]
             .iter()
             .any(|s| !s.is_empty() && !name_ok(s, MAX_NAME))
         {
-            return Err(CoreError::InvalidArgument("見た目のシェーダーの身元"));
+            return Err(CoreError::InvalidArgument(Reason::LookShaderIdentity));
         }
         if self.properties.len() > MAX_PROPERTIES {
-            return Err(CoreError::InvalidArgument("見た目のプロパティの数"));
+            return Err(CoreError::InvalidArgument(Reason::LookPropertyCount));
         }
         if self.textures.len() > MAX_TEXTURES {
-            return Err(CoreError::InvalidArgument("見た目のテクスチャの数"));
+            return Err(CoreError::InvalidArgument(Reason::LookTextureCount));
         }
         if self.keywords.len() > MAX_KEYWORDS {
-            return Err(CoreError::InvalidArgument("見た目のキーワードの数"));
+            return Err(CoreError::InvalidArgument(Reason::LookKeywordCount));
         }
         for (name, value) in &self.properties {
             if !name_ok(name, MAX_NAME) {
-                return Err(CoreError::InvalidArgument("見た目のプロパティの名前"));
+                return Err(CoreError::InvalidArgument(Reason::LookPropertyName));
             }
             if !value.is_finite() {
-                return Err(CoreError::InvalidArgument("見た目のプロパティの値"));
+                return Err(CoreError::InvalidArgument(Reason::LookPropertyValue));
             }
         }
         for (name, source) in &self.textures {
             if !name_ok(name, MAX_NAME) {
-                return Err(CoreError::InvalidArgument("見た目のテクスチャの名前"));
+                return Err(CoreError::InvalidArgument(Reason::LookTextureName));
             }
             match source {
                 TextureSource::Packed(planes) => {
                     if planes.iter().any(
                         |p| matches!(p, PlaneSource::Channel { component, .. } if *component > 3),
                     ) {
-                        return Err(CoreError::InvalidArgument("見た目の詰め合わせの成分"));
+                        return Err(CoreError::InvalidArgument(
+                            Reason::LookPackedTextureComponent,
+                        ));
                     }
                 }
                 TextureSource::Image(id) if id.0 == 0 => {
-                    return Err(CoreError::InvalidArgument("見た目の画像の ID"));
+                    return Err(CoreError::InvalidArgument(Reason::LookImageId));
                 }
                 _ => {}
             }
@@ -317,7 +320,7 @@ impl MaterialLook {
         let mut seen = std::collections::HashSet::new();
         for k in &self.keywords {
             if !name_ok(k, MAX_NAME) || k.contains(' ') || !seen.insert(k.as_str()) {
-                return Err(CoreError::InvalidArgument("見た目のキーワード"));
+                return Err(CoreError::InvalidArgument(Reason::LookKeyword));
             }
         }
         Ok(())
@@ -410,10 +413,10 @@ impl ReceivedLook {
         if self.source.encode_utf16().count() > MAX_SHADER_NAME
             || self.source.chars().any(|c| c.is_control())
         {
-            return Err(CoreError::InvalidArgument("受けた見た目の出どころ"));
+            return Err(CoreError::InvalidArgument(Reason::ReceivedLookSource));
         }
         if self.images.len() + self.missing.len() > MAX_TEXTURES {
-            return Err(CoreError::InvalidArgument("受けた見た目の絵の数"));
+            return Err(CoreError::InvalidArgument(Reason::ReceivedLookTextureCount));
         }
         for (name, image) in &self.images {
             let size_ok = (1..=MAX_RECEIVED_IMAGE_SIZE).contains(&image.width)
@@ -422,11 +425,11 @@ impl ReceivedLook {
                 || !size_ok
                 || image.pixels.len() as u64 != image.width as u64 * image.height as u64 * 4
             {
-                return Err(CoreError::InvalidArgument("受けた見た目の絵"));
+                return Err(CoreError::InvalidArgument(Reason::ReceivedLookTexture));
             }
         }
         if self.missing.keys().any(|n| !name_ok(n)) {
-            return Err(CoreError::InvalidArgument("受けた見た目のスロットの名前"));
+            return Err(CoreError::InvalidArgument(Reason::ReceivedLookSlotName));
         }
         Ok(())
     }

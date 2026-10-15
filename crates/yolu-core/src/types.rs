@@ -1,6 +1,7 @@
 //! 画素・タイルの座標・合成モード・チャンネルなど、文書のどこでも使う小さな型。
 //! 値の並び（合成モード・チャンネルの番号）は Unity 版の C# の Core（PaintTypes.cs）と同じで、保存形式に入るので並べ替えない。
 
+use crate::Reason;
 use std::cmp::Ordering;
 use std::fmt;
 
@@ -403,7 +404,7 @@ impl ChannelInfo {
     pub(crate) fn validate(&self) -> Result<(), crate::CoreError> {
         let chars = self.name.chars().count();
         if chars == 0 || chars > 128 || self.name.chars().any(char::is_control) {
-            return Err(crate::CoreError::InvalidArgument("チャンネルの名前"));
+            return Err(crate::CoreError::InvalidArgument(Reason::ChannelName));
         }
         Ok(())
     }

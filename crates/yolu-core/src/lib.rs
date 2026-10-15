@@ -64,6 +64,7 @@ pub mod normal;
 pub mod padding;
 pub mod paths;
 mod ranges;
+mod reason;
 pub mod rulers;
 pub mod selection;
 pub mod skin;
@@ -106,6 +107,7 @@ pub use glam;
 pub use layer::{ChannelBlend, Layer, LayerId, LayerSetId, RasterMask};
 pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
 pub use paths::LayerPathEntry;
+pub use reason::Reason;
 pub use rulers::{
     Ruler, RulerId, RulerKind, RulerPlace, RulerRef, RulerScope, RulerSpace, SpecialRulers,
     MAX_RULERS_PER_LAYER,

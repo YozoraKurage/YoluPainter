@@ -2,6 +2,7 @@ use super::{
     input::{cross, dot, length, sub},
     MeshBakeInput,
 };
+use crate::Reason;
 use std::collections::HashMap;
 pub(crate) fn interpolate(values: &[f32], t: usize, u: f64, v: f64) -> [f64; 3] {
     let k = t * 9;
@@ -45,7 +46,7 @@ pub fn reconstruct_normals(corners: &[f32], crease_degrees: f64) -> super::Resul
         corners.len().is_multiple_of(9)
             && corners.iter().all(|v| v.is_finite())
             && (0. ..=180.).contains(&crease_degrees),
-        "法線再構築の入力が不正です",
+        Reason::NormalRebuildInputInvalid,
     )?;
     if corners.is_empty() {
         return Ok(vec![]);

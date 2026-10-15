@@ -1,5 +1,6 @@
 //! 見た目の設定（[`crate::look::MaterialLook`]）の読み書きと Undo。画素も合成も変えないので、変化の記録（タイル）は付けない。
 
+use crate::Reason;
 use std::sync::Arc;
 
 use super::{CoalesceKey, Command, Document};
@@ -75,9 +76,7 @@ impl Document {
     pub fn restore_look(&mut self, look: MaterialLook) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if !self.undo.is_empty() || !self.redo.is_empty() {
-            return Err(CoreError::Unsupported(
-                "見た目の設定の復元は読み込み直後だけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::LookRestoreOnlyAfterLoading));
         }
         look.validate()?;
         self.look = Arc::new(look);

@@ -15,6 +15,7 @@
 
 use crate::engine::{CoreError, InputResponse};
 use yolu_core::curve::{Curve, CurvePoint};
+use yolu_core::Reason;
 
 /// 上限 − 下限の最小。これより狭いと、わずかな筆圧の違いで 0 と 1 を行き来する。
 pub const MIN_SPAN: f32 = 0.1;
@@ -53,7 +54,7 @@ impl PressureAdjust {
             || high > 1.0
             || high - low < MIN_SPAN - 1e-6
         {
-            return Err(CoreError::InvalidArgument("筆圧の下限・上限"));
+            return Err(CoreError::InvalidArgument(Reason::PenPressureRange));
         }
         Ok(PressureAdjust {
             low,

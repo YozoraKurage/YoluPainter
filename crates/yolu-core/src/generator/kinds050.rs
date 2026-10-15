@@ -14,6 +14,7 @@ use super::noisefn::{cell_hash, sin_cos_deg};
 use super::{unit, Error, MapKind};
 use crate::math::clamp01;
 use crate::ranges;
+use crate::Reason;
 
 /// 模様の形。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,9 +75,7 @@ impl Pattern {
             || !unit(self.softness)
             || !self.offset.iter().all(|v| unit(*v))
         {
-            return Err(Error::Invalid(
-                "模様の大きさ・角度・太さ・ぼかし・ずれが範囲外です",
-            ));
+            return Err(Error::Invalid(Reason::PatternSettingsRange));
         }
         Ok(())
     }
@@ -152,7 +151,7 @@ impl Light {
             || !unit(self.softness)
             || !unit(self.ambient)
         {
-            return Err(Error::Invalid("ライトの向き・回り込み・底上げが範囲外です"));
+            return Err(Error::Invalid(Reason::LightSettingsRange));
         }
         Ok(())
     }
@@ -259,9 +258,7 @@ impl MaskBuilder {
             .iter()
             .all(|i| unit(i.weight) && unit(i.level) && unit(i.contrast))
         {
-            return Err(Error::Invalid(
-                "マスクの組み立ての重み・位置・コントラストが範囲外です",
-            ));
+            return Err(Error::Invalid(Reason::MaskBuilderSettingsRange));
         }
         Ok(())
     }
@@ -317,9 +314,7 @@ impl Default for IslandVariation {
 impl IslandVariation {
     pub(super) fn validate(&self) -> Result<(), Error> {
         if !unit(self.min) || !unit(self.max) || self.min > self.max {
-            return Err(Error::Invalid(
-                "アイランドごとのばらつきの最小・最大が範囲外か、最小が最大を超えています",
-            ));
+            return Err(Error::Invalid(Reason::IslandVariationRange));
         }
         Ok(())
     }

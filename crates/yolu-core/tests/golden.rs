@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use yolu_core::Reason;
 
 use std::sync::Arc;
 
@@ -1096,7 +1097,7 @@ fn command_on(c: &mut CaseRun, doc: &mut Document, t: &[&str]) -> Result<(), yol
             let sel = doc
                 .selection()
                 .cloned()
-                .ok_or(CoreError::Unsupported("選択範囲が無い"))?;
+                .ok_or(CoreError::Unsupported(Reason::NoSelection))?;
             let budget = yolu_core::selection::DEFAULT_WORKING_BUDGET_BYTES;
             let next = match t[1] {
                 "grow" => sel.grow(radius(t[2])?, budget)?,
@@ -1174,7 +1175,7 @@ fn combine_mode(s: &str) -> SelectionCombine {
 
 /// 半径（C# は int を受けて負を断る）。
 fn radius(s: &str) -> Result<u32, CoreError> {
-    u32::try_from(int(s)).map_err(|_| CoreError::InvalidArgument("radius"))
+    u32::try_from(int(s)).map_err(|_| CoreError::InvalidArgument(Reason::Radius))
 }
 
 /// 選択範囲の形。
@@ -1200,12 +1201,12 @@ fn shape(c: &mut CaseRun, doc: &Document, t: &[&str]) -> Result<SelectionMask, C
                 Some(layer_at(doc, t[1]))
             };
             // C# は int を受けて範囲の外を断る
-            let seed_x =
-                u32::try_from(int(t[3])).map_err(|_| CoreError::InvalidArgument("seed"))?;
-            let seed_y =
-                u32::try_from(int(t[4])).map_err(|_| CoreError::InvalidArgument("seed"))?;
+            let seed_x = u32::try_from(int(t[3]))
+                .map_err(|_| CoreError::InvalidArgument(Reason::SeedOutsideCanvas))?;
+            let seed_y = u32::try_from(int(t[4]))
+                .map_err(|_| CoreError::InvalidArgument(Reason::SeedOutsideCanvas))?;
             let tolerance =
-                u8::try_from(int(t[5])).map_err(|_| CoreError::InvalidArgument("tolerance"))?;
+                u8::try_from(int(t[5])).map_err(|_| CoreError::InvalidArgument(Reason::Amount))?;
             SelectionMask::magic_wand(
                 doc,
                 layer,

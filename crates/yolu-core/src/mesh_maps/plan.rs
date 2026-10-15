@@ -11,6 +11,7 @@ use super::{
     MeshBakeBudget, MeshBakeInput, MeshBakeRaw, MeshBakeReport, MeshBakeResult, MeshBakeSettings,
     MeshBakeStatus, MeshMapError, MeshMapKind, Result,
 };
+use crate::Reason;
 use std::{sync::atomic::AtomicBool, time::Instant};
 
 /// 準備まで済んだベイク。`scene` が実行場所へ渡す平らな入力、`finish` が後始末。
@@ -260,12 +261,12 @@ impl<'a> MeshBakePlan<'a> {
                     .iter()
                     .zip(&s.maps)
                     .all(|(o, k)| o.len() == texels * k.channels()),
-            "焼いた画素の長さまたは由来が設定と合いません",
+            Reason::BakeResultMismatch,
         )?;
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.prep.threads)
             .build()
-            .map_err(|e| MeshMapError(e.to_string()))?;
+            .map_err(|e| MeshMapError::Threads(e.to_string()))?;
         finish(*self.prep, raw, &self.control, &pool, progress)
     }
 }

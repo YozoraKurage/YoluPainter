@@ -9,6 +9,7 @@
 //!   行末に来ない文字（開き括弧）の後ろでは分けない。
 //! - 1 語が幅を超えて分けられる所が無いときは、その語の中の字の境目で分ける（1 字が幅を超えるときはその字だけの行にする）。
 
+use crate::Reason;
 use harfrust::{Direction, ShaperData, UnicodeBuffer};
 use skrifa::instance::{LocationRef, Size};
 use skrifa::raw::TableProvider;
@@ -27,17 +28,17 @@ pub(crate) struct Face<'a> {
 impl<'a> Face<'a> {
     pub(crate) fn new(bytes: &'a [u8], index: u32) -> Result<Face<'a>, CoreError> {
         let font = skrifa::FontRef::from_index(bytes, index)
-            .map_err(|_| CoreError::InvalidArgument("フォントのファイルを読めない"))?;
+            .map_err(|_| CoreError::InvalidArgument(Reason::CannotReadFontFile))?;
         let units = font
             .head()
-            .map_err(|_| CoreError::InvalidArgument("フォントのファイルを読めない"))?
+            .map_err(|_| CoreError::InvalidArgument(Reason::CannotReadFontFile))?
             .units_per_em();
         if !(16..=16384).contains(&units) {
-            return Err(CoreError::InvalidArgument("フォントのファイルを読めない"));
+            return Err(CoreError::InvalidArgument(Reason::CannotReadFontFile));
         }
         // 輪郭の表が無いフォント（色の絵文字だけのフォントなど）は描けない
         if font.outline_glyphs().format().is_none() {
-            return Err(CoreError::InvalidArgument("フォントに輪郭が無い"));
+            return Err(CoreError::InvalidArgument(Reason::FontHasNoOutlines));
         }
         let shaper = ShaperData::new(&font);
         Ok(Face {

@@ -10,6 +10,7 @@
 //! - 履歴の重さは、入れ替わった選択範囲の大きさ（共有しているものは数えない）。写し（`capture_snapshot`）はそのまま持つ。
 //!   画素の予算には数えない（呼び手が全体の予算を決める）。
 
+use crate::Reason;
 use std::sync::Arc;
 
 use super::{Command, Document};
@@ -35,13 +36,15 @@ pub(crate) type SavedList = Arc<Vec<SavedSelection>>;
 pub fn clean_saved_name(name: &str) -> Result<String, CoreError> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(CoreError::InvalidArgument("選択範囲の名前が空"));
+        return Err(CoreError::InvalidArgument(Reason::SelectionNameEmpty));
     }
     if name.chars().count() > MAX_SAVED_NAME_CHARS {
-        return Err(CoreError::InvalidArgument("選択範囲の名前が長すぎる"));
+        return Err(CoreError::InvalidArgument(Reason::SelectionNameTooLong));
     }
     if name.chars().any(|c| c.is_control()) {
-        return Err(CoreError::InvalidArgument("選択範囲の名前に制御文字がある"));
+        return Err(CoreError::InvalidArgument(
+            Reason::SelectionNameHasControlCharacters,
+        ));
     }
     Ok(name.to_owned())
 }
@@ -95,7 +98,7 @@ impl Document {
         let mask = self
             .selection
             .clone()
-            .ok_or(CoreError::InvalidArgument("選択範囲が無い"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::NoSelection))?;
         let mut next: Vec<SavedSelection> = self.saved_selections.as_ref().clone();
         let at = match next.iter().position(|s| s.name == name) {
             Some(i) => {
@@ -104,7 +107,7 @@ impl Document {
             }
             None => {
                 if next.len() >= MAX_SAVED_SELECTIONS {
-                    return Err(CoreError::InvalidArgument("残せる選択範囲の数の上限"));
+                    return Err(CoreError::InvalidArgument(Reason::TooManySavedSelections));
                 }
                 next.push(SavedSelection { name, mask });
                 next.len() - 1
@@ -119,7 +122,7 @@ impl Document {
         self.ensure_no_stroke()?;
         let mut next: Vec<SavedSelection> = self.saved_selections.as_ref().clone();
         if index >= next.len() {
-            return Err(CoreError::InvalidArgument("残した選択範囲の番号"));
+            return Err(CoreError::InvalidArgument(Reason::NoSuchSavedSelection));
         }
         next.remove(index);
         self.replace_saved(next)
@@ -131,14 +134,14 @@ impl Document {
         let name = clean_saved_name(name)?;
         let mut next: Vec<SavedSelection> = self.saved_selections.as_ref().clone();
         if index >= next.len() {
-            return Err(CoreError::InvalidArgument("残した選択範囲の番号"));
+            return Err(CoreError::InvalidArgument(Reason::NoSuchSavedSelection));
         }
         if next
             .iter()
             .enumerate()
             .any(|(i, s)| i != index && s.name == name)
         {
-            return Err(CoreError::InvalidArgument("同じ名前の選択範囲がある"));
+            return Err(CoreError::InvalidArgument(Reason::SavedSelectionNameExists));
         }
         next[index].name = name;
         self.replace_saved(next)
@@ -155,10 +158,10 @@ impl Document {
         let saved = self
             .saved_selections
             .get(index)
-            .ok_or(CoreError::InvalidArgument("残した選択範囲の番号"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::NoSuchSavedSelection))?;
         if !self.saved_fits(&saved.mask) {
             return Err(CoreError::InvalidArgument(
-                "選択範囲の大きさがキャンバスと違う",
+                Reason::SelectionSizeDoesNotMatchCanvas,
             ));
         }
         let mask = saved.mask.clone();
@@ -171,22 +174,24 @@ impl Document {
         self.ensure_no_stroke()?;
         if !self.undo.is_empty() || !self.redo.is_empty() {
             return Err(CoreError::Unsupported(
-                "残した選択範囲を戻せるのは読み込みの直後だけ",
+                Reason::SavedSelectionsRestoreOnlyAfterLoading,
             ));
         }
         if list.len() > MAX_SAVED_SELECTIONS {
-            return Err(CoreError::InvalidArgument("残せる選択範囲の数の上限"));
+            return Err(CoreError::InvalidArgument(Reason::TooManySavedSelections));
         }
         for (i, s) in list.iter().enumerate() {
             if clean_saved_name(&s.name)? != s.name {
-                return Err(CoreError::InvalidArgument("選択範囲の名前が整っていない"));
+                return Err(CoreError::InvalidArgument(
+                    Reason::SelectionNameHasOuterSpaces,
+                ));
             }
             if list[..i].iter().any(|t| t.name == s.name) {
-                return Err(CoreError::InvalidArgument("同じ名前の選択範囲がある"));
+                return Err(CoreError::InvalidArgument(Reason::SavedSelectionNameExists));
             }
             if !self.saved_fits(&s.mask) {
                 return Err(CoreError::InvalidArgument(
-                    "選択範囲の大きさがキャンバスと違う",
+                    Reason::SelectionSizeDoesNotMatchCanvas,
                 ));
             }
         }

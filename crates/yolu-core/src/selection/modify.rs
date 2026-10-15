@@ -3,6 +3,7 @@
 //! 拡張・縮小は濃淡のあるモルフォロジー（半径の円の中の最大・最小）で、柔らかい縁は柔らかいまま。作業は量のあるタイルの外接の
 //! 矩形を半径だけ広げたウィンドウに限り、行（ぼかしの縦は列）ごとに並列。どの行も独立に計算するので、結果はスレッドの数によらない。
 
+use crate::Reason;
 use rayon::prelude::*;
 
 use super::{ensure_working, SelectionMask, Window};
@@ -14,7 +15,7 @@ pub const MAX_MODIFY_RADIUS: u32 = 200;
 
 fn check_radius(radius: u32) -> Result<(), CoreError> {
     if radius > MAX_MODIFY_RADIUS {
-        Err(CoreError::InvalidArgument("半径（0〜200）"))
+        Err(CoreError::InvalidArgument(Reason::RadiusRange))
     } else {
         Ok(())
     }
@@ -128,9 +129,9 @@ impl SelectionMask {
         edge_lock: bool,
         budget: u64,
     ) -> Result<SelectionMask, CoreError> {
-        require_finite(radius, "radius")?;
+        require_finite(radius, Reason::Radius)?;
         if !(0.0..=MAX_MODIFY_RADIUS as f64).contains(&radius) {
-            return Err(CoreError::InvalidArgument("半径（0〜200）"));
+            return Err(CoreError::InvalidArgument(Reason::RadiusRange));
         }
         let sigma = radius / 3.5;
         if sigma < 0.05 || self.is_empty() {

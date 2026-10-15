@@ -3,6 +3,7 @@ use super::selection::{fill_pixel, mask_fill_pixel};
 use super::*;
 use crate::material::ChannelPaint;
 use crate::material_triangles::{add_samples, coverage, PixelTriangle, Samples};
+use crate::Reason;
 use crate::SelectionMask;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
@@ -102,7 +103,7 @@ impl Document {
             .ok_or(CoreError::LayerNotFound)?
             .is_channel_enabled(channel)
         {
-            return Err(CoreError::Unsupported("無効のチャンネルには塗れない"));
+            return Err(CoreError::Unsupported(Reason::CannotFillDisabledChannel));
         }
         self.begin_material_triangle_fill(
             layer,

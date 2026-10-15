@@ -9,6 +9,7 @@
 //! - 効果を置けるのは標準のチャンネル（0〜5）だけ。正本の読み手（Unity 版も）が標準のチャンネルだけを許すので、保存で失わないようにここで断る。
 //! - メッシュマップ・プロジェクトの画像は文書の外にある。[`EffectInputs`] で渡す（保存も Undo もしない）。
 
+use crate::Reason;
 use std::fmt;
 
 use crate::error::CoreError;
@@ -262,23 +263,21 @@ impl EffectSettings {
             Self::Filter(f) => {
                 if matches!(f, filter::Settings::Generator { .. }) {
                     return Err(CoreError::InvalidArgument(
-                        "ジェネレーターはジェネレーターの設定で置く",
+                        Reason::GeneratorNeedsGeneratorSettings,
                     ));
                 }
                 f.validate(value_type).map_err(|e| match e {
                     filter::Error::Invalid(why) => CoreError::InvalidArgument(why),
-                    _ => CoreError::InvalidArgument("フィルターの設定"),
+                    _ => CoreError::InvalidArgument(Reason::FilterSettings),
                 })
             }
             Self::Generator(g) => {
                 if value_type == ValueType::TangentNormal {
-                    return Err(CoreError::Unsupported(
-                        "ジェネレーターは 1 画素に 1 つの値を作るので、接空間の法線には置けない",
-                    ));
+                    return Err(CoreError::Unsupported(Reason::GeneratorNotOnTangentNormal));
                 }
                 g.validate().map_err(|e| match e {
                     generator::Error::Invalid(why) => CoreError::InvalidArgument(why),
-                    _ => CoreError::InvalidArgument("ジェネレーターの設定"),
+                    _ => CoreError::InvalidArgument(Reason::GeneratorSettings),
                 })
             }
         }
@@ -453,10 +452,10 @@ impl Anchor {
     /// 名前の検査（空・空白だけ・128 を超える長さは断る）。
     pub fn check_name(name: &str) -> Result<(), CoreError> {
         if name.trim().is_empty() {
-            return Err(CoreError::InvalidArgument("Anchor の名前が空"));
+            return Err(CoreError::InvalidArgument(Reason::AnchorNameEmpty));
         }
         if name.encode_utf16().count() > Self::MAX_NAME_UTF16 {
-            return Err(CoreError::InvalidArgument("Anchor の名前が長すぎる"));
+            return Err(CoreError::InvalidArgument(Reason::AnchorNameTooLong));
         }
         Ok(())
     }
@@ -644,7 +643,7 @@ pub(crate) fn require_standard(channel: Channel) -> Result<(), CoreError> {
         Ok(())
     } else {
         Err(CoreError::Unsupported(
-            "効果（フィルター・画像・グラデーション）は標準のチャンネルだけに置ける",
+            Reason::EffectsOnlyOnStandardChannels,
         ))
     }
 }
@@ -726,13 +725,13 @@ pub(crate) fn paths_error(e: crate::paths::Error) -> CoreError {
     use crate::paths::Error as E;
     match e {
         E::Invalid(why) => CoreError::InvalidArgument(why),
-        E::ModelMismatch => CoreError::Unsupported("モデルの指紋がパスを作ったときと違う"),
-        E::MissingTriangle => CoreError::Unsupported("パスが参照する三角形が無い"),
-        E::TooManySamples => CoreError::Unsupported("ブラシの間隔に対してパスが長すぎる"),
+        E::ModelMismatch => CoreError::Unsupported(Reason::PathModelFingerprintChanged),
+        E::MissingTriangle => CoreError::Unsupported(Reason::PathRefersToMissingTriangle),
+        E::TooManySamples => CoreError::Unsupported(Reason::PathTooLongForBrushSpacing),
         E::Canceled => CoreError::Cancelled,
         E::Core(e) => e,
-        E::Dab(_) => CoreError::Unsupported("面のダブを拒否した"),
-        E::MissingImage => CoreError::Unsupported("リボンの画像が無い"),
-        E::FillIslands => CoreError::Unsupported("塗りのパスが 1 つの UV アイランドに収まらない"),
+        E::Dab(_) => CoreError::Unsupported(Reason::SurfaceDabWasRefused),
+        E::MissingImage => CoreError::Unsupported(Reason::RibbonImageMissing),
+        E::FillIslands => CoreError::Unsupported(Reason::FillPathLeavesUvIsland),
     }
 }

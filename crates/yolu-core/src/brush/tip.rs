@@ -3,6 +3,7 @@
 //! 筆先は 1 画素 1 バイトの覆い（0〜255）で、行優先・一番下の行が先（キャンバスと同じ左下原点）。上の行から並ぶ形式（PNG・GIMP・ABR・
 //! CLIP STUDIO）を読む側は行を反転して渡す。組み込みの筆先は決まった雑音から作るので、第三者の絵もライセンスも入らない。
 
+use crate::Reason;
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
@@ -36,11 +37,11 @@ impl BrushTip {
     /// 幅・高さ（1〜2048）と覆い（幅 × 高さ バイト、行は下から）。
     pub fn new(name: &str, width: u32, height: u32, alpha: Vec<u8>) -> Result<BrushTip, CoreError> {
         if width < 1 || height < 1 || width > Self::MAX_SIZE || height > Self::MAX_SIZE {
-            return Err(CoreError::InvalidArgument("筆先の大きさ（1〜2048）"));
+            return Err(CoreError::InvalidArgument(Reason::BrushTipSizeRange));
         }
         if alpha.len() != width as usize * height as usize {
             return Err(CoreError::InvalidArgument(
-                "筆先の覆いの長さが幅 × 高さでない",
+                Reason::BrushTipCoverageSizeMismatch,
             ));
         }
         Ok(BrushTip {

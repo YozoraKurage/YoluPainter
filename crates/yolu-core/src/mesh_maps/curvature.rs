@@ -5,6 +5,7 @@ use super::{
     surface::Surface,
     Result,
 };
+use crate::Reason;
 use std::collections::HashMap;
 #[derive(Clone, Copy)]
 struct Edge {
@@ -149,7 +150,7 @@ impl Curvature {
         }
         check(
             total <= i32::MAX as u64 / 8 && total.saturating_mul(76) <= remaining,
-            "曲率の線分が残りのベイク予算を超えます",
+            Reason::BakeCurvatureOverBudget,
         )?;
         let components: Vec<_> = (0..n).map(|t| find(&mut parent, t)).collect();
         let cell = 1.5 * radius;

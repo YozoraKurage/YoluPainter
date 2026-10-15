@@ -2,6 +2,7 @@ use super::{
     anchor, evaluate, Blend, BoundGenerator, Error, Options, ProceduralSpace, Settings, Source,
     Target,
 };
+use crate::Reason;
 use crate::{Rect, Rgba8};
 
 /// 全面が不透明の白の入力。画素を持たない（入力の白い画像を確保しないので、大きな引数でも使うメモリは出力の分だけで、
@@ -24,7 +25,7 @@ impl Source for White {
 /// 出力は `Options::default()` の予算（`budget_bytes`）までで、超える大きさは何も確保せずに `Error::Budget` で断る。
 pub fn preview(settings: &Settings, width: u32, height: u32) -> Result<Vec<u8>, Error> {
     if !settings.kind.is_procedural() {
-        return Err(Error::Invalid("見本はノイズ・グランジだけです"));
+        return Err(Error::Invalid(Reason::PreviewOnlyNoiseOrGrunge));
     }
     let mut s = settings.clone();
     s.procedural.space = ProceduralSpace::Uv;

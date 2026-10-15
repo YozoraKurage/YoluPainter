@@ -21,7 +21,7 @@ pub enum CoreError {
         reason: Box<crate::InactiveReason>,
     },
     /// 引数が範囲外・有限でない など。中身は何の値か。
-    InvalidArgument(&'static str),
+    InvalidArgument(crate::Reason),
     /// その ID のレイヤーが文書に無い。
     LayerNotFound,
     /// そのチャンネルが文書に無い（消したユーザーチャンネルなど）。
@@ -31,7 +31,7 @@ pub enum CoreError {
     /// 札のストロークはもう終わっている（確定・取消、または途中の失敗で取り消された）。
     NoActiveStroke,
     /// その操作はこのレイヤー・チャンネルにはできない。
-    Unsupported(&'static str),
+    Unsupported(crate::Reason),
     /// 画素の予算（SourceBudgetBytes）を超える。
     SourceBudgetExceeded,
     /// ストロークの巻き戻し用の写しの予算（ActiveStrokeBudgetBytes）を超える。ストロークは取り消した。

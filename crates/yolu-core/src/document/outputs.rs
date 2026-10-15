@@ -9,6 +9,7 @@
 //! - どれも文書を変えない（評価のキャッシュを埋めるだけ）。矩形はキャンバスの中、行の並びは `order`（合成と同じ。`BottomUp` が文書の並び）。
 //!   取消の旗が立てば `Cancelled` で戻り、出力は不定（呼び手が捨てる）。
 
+use crate::Reason;
 use std::sync::atomic::AtomicBool;
 
 use super::eval::{cancelled, SourceKey};
@@ -100,7 +101,9 @@ impl Document {
     ) -> Result<(), CoreError> {
         self.check_rect(rect)?;
         if out_len != rect.width as usize * rect.height as usize * bytes_per_pixel {
-            return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
+            return Err(CoreError::InvalidArgument(
+                Reason::OutputSizeDoesNotMatchRectangle,
+            ));
         }
         Ok(())
     }
@@ -132,9 +135,7 @@ impl Document {
         self.check_output_rect(rect, out.len(), 4)?;
         let l = &self.layers[index];
         if !matches!(l.kind, LayerKind::Raster | LayerKind::Fill) {
-            return Err(CoreError::Unsupported(
-                "ラスターと塗りつぶし以外には、レイヤーの出力の画素が無い",
-            ));
+            return Err(CoreError::Unsupported(Reason::LayerOutputOnlyRasterOrFill));
         }
         cancelled(cancel)?;
         if rect.is_empty() {
@@ -184,7 +185,7 @@ impl Document {
         let index = self.index_of(id)?;
         self.check_output_rect(rect, out.len(), 1)?;
         let Some(mask) = &self.layers[index].mask else {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         };
         cancelled(cancel)?;
         if rect.is_empty() {
@@ -238,9 +239,7 @@ impl Document {
         let kind = self.channel_kind(channel)?;
         self.check_output_rect(rect, out.len(), 4)?;
         if self.layers[index].kind != LayerKind::Group {
-            return Err(CoreError::Unsupported(
-                "グループ以外には、グループの出力が無い",
-            ));
+            return Err(CoreError::Unsupported(Reason::GroupOutputOnlyGroups));
         }
         cancelled(cancel)?;
         if rect.is_empty() {
@@ -269,7 +268,7 @@ impl Document {
             let index = copy.index_of(*id)?;
             let layer = &mut copy.layers[index];
             if layer.adjustment.is_none() {
-                return Err(CoreError::Unsupported("調整レイヤーではない"));
+                return Err(CoreError::Unsupported(Reason::NotAdjustmentLayer));
             }
             layer.adjustment = Some(settings.clone());
         }

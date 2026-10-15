@@ -2,6 +2,7 @@ use super::{Command, Document};
 use crate::smart::{
     check_name, SmartKind, SmartMaterial, SmartPlaceResult, SmartPlacement, SmartResampling,
 };
+use crate::Reason;
 use crate::{Channel, ChannelKind, CoreError, Layer, LayerId, LayerKind};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -32,7 +33,7 @@ impl Document {
         self.ensure_no_stroke()?;
         check_name(name)?;
         if ids.is_empty() {
-            return Err(CoreError::InvalidArgument("保存するレイヤーがありません"));
+            return Err(CoreError::InvalidArgument(Reason::NoLayersToSave));
         }
         for &id in ids {
             self.index_of(id)?;
@@ -97,9 +98,7 @@ impl Document {
     /// 塗りつぶしレイヤーでなければ断る。
     pub fn capture_material(&self, id: LayerId, name: &str) -> Result<SmartMaterial, CoreError> {
         if self.layers[self.index_of(id)?].kind != LayerKind::Fill {
-            return Err(CoreError::InvalidArgument(
-                "塗りつぶしレイヤーではありません",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::NotFillLayer));
         }
         let mut material = self.capture_smart_material(&[id], name)?;
         for l in &mut material.layers {
@@ -120,7 +119,7 @@ impl Document {
         let mask = self.layers[self.index_of(id)?]
             .mask
             .clone()
-            .ok_or(CoreError::InvalidArgument("保存するマスクがありません"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::NoMaskToSave))?;
         let mut holder = Layer::new(id, name, LayerKind::Fill);
         holder.mask = Some(mask);
         Ok(self
@@ -170,7 +169,7 @@ impl Document {
         check_name(name)?;
         self.validate_structure()?;
         if self.layers.is_empty() {
-            return Err(CoreError::InvalidArgument("空のスマート素材"));
+            return Err(CoreError::InvalidArgument(Reason::EmptySmartMaterial));
         }
         if kind == SmartKind::Mask
             && (self.layers.len() != 1
@@ -178,7 +177,7 @@ impl Document {
                 || !self.layers[0].fill.is_empty()
                 || self.layers[0].mask.is_none())
         {
-            return Err(CoreError::InvalidArgument("スマートマスクの断片が不正"));
+            return Err(CoreError::InvalidArgument(Reason::InvalidSmartMaskFragment));
         }
         Ok(self.smart_fragment(kind, name, self.layers.clone()))
     }
@@ -190,7 +189,7 @@ impl Document {
         self.ensure_no_stroke()?;
         if material.kind != SmartKind::Material {
             return Err(CoreError::InvalidArgument(
-                "スマートマスクはレイヤーに置けません",
+                Reason::SmartMaskCannotBePlacedOnLayer,
             ));
         }
         // 置き先のレイヤーセット: 配置先のグループのもの、一番上の段なら最初のレイヤーセット
@@ -198,7 +197,7 @@ impl Document {
             Some(p) => {
                 let l = &self.layers[self.index_of(p)?];
                 if !l.is_group() {
-                    return Err(CoreError::InvalidArgument("配置先がグループではありません"));
+                    return Err(CoreError::InvalidArgument(Reason::TargetNotGroup));
                 }
                 l.set
             }
@@ -212,7 +211,7 @@ impl Document {
             .count()
             > 1;
         if self.layers.len() + material.layers.len() + usize::from(wrap) > 2048 {
-            return Err(CoreError::InvalidArgument("レイヤーは2048個までです"));
+            return Err(CoreError::InvalidArgument(Reason::TooManyLayers));
         }
         self.ensure_nesting_room(
             placement.parent,
@@ -309,7 +308,7 @@ impl Document {
             let info = material.channel_info.get(i).and_then(Option::as_ref);
             if info.is_none() || self.channel_info(channel) != info {
                 return Err(CoreError::Unsupported(
-                    "ユーザーチャンネルの対応が一致しません",
+                    Reason::UserChannelMappingDoesNotMatch,
                 ));
             }
         }
@@ -324,7 +323,7 @@ impl Document {
         self.ensure_no_stroke()?;
         if material.kind != SmartKind::Mask {
             return Err(CoreError::InvalidArgument(
-                "スマートマテリアルはマスクに置けません",
+                Reason::SmartMaterialCannotBePlacedOnMask,
             ));
         }
         let i = self.index_of(id)?;

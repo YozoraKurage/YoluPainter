@@ -8,6 +8,7 @@ use seam_support::*;
 use yolu_core::fill_image::{Projection, ProjectionMode};
 use yolu_core::generator::{self, anchor::ReadMode, Settings};
 use yolu_core::material::{ChannelPaint, GradientSettings};
+use yolu_core::Reason;
 use yolu_core::{
     Affine2D, AnchorPlacement, BrushSettings, Channel, CoreError, Document, EffectSettings,
     FilterSpec, FilterTarget, LayerId, LayerLocks, LayerPath, Resampling, Rgba8,
@@ -488,7 +489,7 @@ fn hard() -> BrushSettings {
 /// 関わらずパスレイヤーとして断る。どれも断ったら何も変えない。
 #[test]
 fn hand_writes_to_a_path_layer_check_the_locks_first_and_transforms_check_the_path_first() {
-    let path_error = CoreError::Unsupported("パスで描かれたレイヤーには手で描けない");
+    let path_error = CoreError::Unsupported(Reason::CannotPaintByHandOnPathLayer);
     let writes: Vec<(&str, bool, bool, Write)> = vec![
         p_entry("begin_stroke", true, false, |d, id| {
             d.begin_stroke(id, &hard()).map(|s| d.cancel_stroke(s))

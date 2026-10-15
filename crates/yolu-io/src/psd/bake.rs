@@ -44,6 +44,7 @@ use std::io::{Seek, Write};
 use std::sync::atomic::AtomicBool;
 use yolu_core::curve::Curve;
 use yolu_core::generator::Ramp;
+use yolu_core::Reason;
 use yolu_core::{
     AdjustmentSettings, AdjustmentType, BalanceRange, Channel, ChannelKind, CoreError,
     Document as CoreDocument, EffectSettings, GradientMap, Layer as CoreLayer, LayerId,
@@ -2030,7 +2031,7 @@ fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<Cor
     if output.is_none() {
         let default = d
             .channel_info(channel)
-            .ok_or(CoreError::InvalidArgument("プロジェクトにないチャンネル"))?
+            .ok_or(CoreError::InvalidArgument(Reason::ChannelNotInProject))?
             .default;
         let fill = wrapped.add_fill_layer("Default", &[(channel, default)], None)?;
         wrapped.move_layer(fill, 0)?;

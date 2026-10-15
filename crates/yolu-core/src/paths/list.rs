@@ -9,6 +9,7 @@ use super::{Error, Options, Rendered};
 use crate::effects::LayerPath;
 use crate::geometry::SurfaceGeometry;
 use crate::Channel;
+use crate::Reason;
 
 /// 1 つのレイヤーのパスの数の上限。
 pub const MAX_LAYER_PATHS: usize = 256;
@@ -42,9 +43,7 @@ impl LayerPathEntry {
         if self.name.encode_utf16().count() > MAX_PATH_NAME
             || self.name.chars().any(char::is_control)
         {
-            return Err(Error::Invalid(
-                "パスの名前は 128 文字（UTF-16）まで、制御文字なしです",
-            ));
+            return Err(Error::Invalid(Reason::PathNameInvalid));
         }
         match &self.path {
             LayerPath::Canvas(p) => p.validate(),
@@ -60,7 +59,7 @@ impl LayerPathEntry {
 /// 一覧を確かめる: 256 本まで、どれも正しい、同じ側・同じ基準のチャンネル・3D は同じモデルの指紋、ID が重ならない。
 pub fn validate_list(entries: &[LayerPathEntry]) -> Result<(), Error> {
     if entries.len() > MAX_LAYER_PATHS {
-        return Err(Error::Invalid("1 つのレイヤーのパスは 256 本までです"));
+        return Err(Error::Invalid(Reason::TooManyPathsOnLayer));
     }
     for e in entries {
         e.validate()?;
@@ -70,24 +69,18 @@ pub fn validate_list(entries: &[LayerPathEntry]) -> Result<(), Error> {
     };
     for (i, e) in entries.iter().enumerate() {
         if e.path.is_canvas() != first.path.is_canvas() {
-            return Err(Error::Invalid(
-                "1 つのレイヤーのパスは、どれもキャンバスの上か、どれもモデルの上です",
-            ));
+            return Err(Error::Invalid(Reason::LayerPathsMixKinds));
         }
         if e.path.channel() != first.path.channel() {
-            return Err(Error::Invalid(
-                "1 つのレイヤーのパスは、同じ基準のチャンネルを使います",
-            ));
+            return Err(Error::Invalid(Reason::LayerPathsMixChannels));
         }
         if let (LayerPath::Surface(a), LayerPath::Surface(b)) = (&e.path, &first.path) {
             if a.model_fingerprint != b.model_fingerprint {
-                return Err(Error::Invalid(
-                    "1 つのレイヤーの 3D のパスは、同じモデルに結び付きます",
-                ));
+                return Err(Error::Invalid(Reason::LayerPathsMixModels));
             }
         }
         if entries[..i].iter().any(|o| o.id() == e.id()) {
-            return Err(Error::Invalid("1 つのレイヤーのパスの ID が重なっています"));
+            return Err(Error::Invalid(Reason::LayerPathIdsDuplicated));
         }
     }
     Ok(())
@@ -141,7 +134,7 @@ pub fn render_list(
                 samples += super::render::draw_canvas(&mut painter, p)?;
             }
             LayerPath::Surface(p) => {
-                let g = geometry.ok_or(Error::Invalid("3D のパスを描く形がありません"))?;
+                let g = geometry.ok_or(Error::Invalid(Reason::PathGeometryMissing))?;
                 super::surface::check_model(p, g)?;
                 let (s, d, k) = super::surface::draw_surface(&mut painter, p, g, options)?;
                 samples += s;

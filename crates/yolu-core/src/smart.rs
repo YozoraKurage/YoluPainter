@@ -1,4 +1,5 @@
 //! 名前を付けたレイヤーの断片。捕捉した時点の写しを保持し、配置しても変わらない。
+use crate::Reason;
 use crate::{Channel, ChannelInfo, CoreError, Layer, LayerId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -76,7 +77,7 @@ pub(crate) fn check_name(name: &str) -> Result<(), CoreError> {
         || name.encode_utf16().count() > 256
         || name.chars().any(|c| c < ' ' || c == '\x7f')
     {
-        return Err(CoreError::InvalidArgument("スマート素材の名前"));
+        return Err(CoreError::InvalidArgument(Reason::SmartMaterialName));
     }
     Ok(())
 }

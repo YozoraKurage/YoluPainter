@@ -8,6 +8,7 @@
 //!   鍵が等しければ出力は等しい。予算を超えたら古いブロックから捨てる。
 //! - 評価の途中で取り消したら、完成したブロックだけがキャッシュに残る（途中の画素は公開しない）。
 
+use crate::Reason;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 
@@ -428,7 +429,7 @@ fn map_generator_error(e: generator::Error) -> CoreError {
 }
 fn map_fill_error(e: fill_image::FillError) -> CoreError {
     match e {
-        fill_image::FillError::Invalid(_) => CoreError::InvalidArgument("塗りつぶしの入力"),
+        fill_image::FillError::Invalid(_) => CoreError::InvalidArgument(Reason::FillInput),
         fill_image::FillError::OverBudget { .. } | fill_image::FillError::Allocation => {
             CoreError::WorkingBudgetExceeded
         }
@@ -1739,7 +1740,7 @@ impl Document {
         let index = self.index_of(id)?;
         self.require_channel(channel)?;
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
         }
         let ts = self.tile_size;
         let coord = TileCoord::new(x / ts, y / ts);
@@ -1761,10 +1762,10 @@ impl Document {
     pub fn mask_output_hide(&self, id: LayerId, x: u32, y: u32) -> Result<u8, CoreError> {
         let index = self.index_of(id)?;
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
         }
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         let ts = self.tile_size;
         self.mask_output_tile(index, TileCoord::new(x / ts, y / ts), None)?
@@ -1997,7 +1998,7 @@ impl Document {
                         }
                         AnchorPlacement::Mask => {
                             let host = self.layer(r.host).and_then(|l| l.mask.as_ref());
-                            let m = host.ok_or(CoreError::Unsupported("マスクが無い"))?;
+                            let m = host.ok_or(CoreError::Unsupported(Reason::NoMask))?;
                             let mask = anchor::Mask {
                                 source: grid,
                                 enabled: m.enabled,

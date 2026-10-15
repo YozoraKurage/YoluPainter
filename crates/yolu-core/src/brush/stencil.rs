@@ -7,6 +7,7 @@
 //! - 色のチャンネルへ色を塗るときの読み方も塗りつぶしの画像と同じ（C# の FillImageColor）: 色のチャンネルではリニアの画像を sRGB に、
 //!   スカラーのチャンネルは輝度、Normal は保存された値のまま。
 
+use crate::Reason;
 use std::sync::{Arc, OnceLock};
 
 use rayon::prelude::*;
@@ -228,18 +229,16 @@ impl StencilImage {
         mip_budget_bytes: u64,
     ) -> Result<StencilImage, CoreError> {
         if width < 1 || height < 1 || width > Self::MAX_SIDE || height > Self::MAX_SIDE {
-            return Err(CoreError::InvalidArgument(
-                "ステンシルの画像の大きさ（1〜8192）",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::StencilImageSizeRange));
         }
         if rgba.len() != width * height * 4 {
             return Err(CoreError::InvalidArgument(
-                "ステンシルの画像のバイト数が幅 × 高さ × 4 でない",
+                Reason::StencilBufferSizeMismatch,
             ));
         }
         if MipChain::extra_bytes(width, height) > mip_budget_bytes {
             return Err(CoreError::InvalidArgument(
-                "ステンシルのミップマップが予算を超える（小さい画像にする）",
+                Reason::StencilMipmapBudgetExceeded,
             ));
         }
         let is_grey = rgba.chunks_exact(4).all(|p| p[0] == p[1] && p[0] == p[2]);
@@ -477,7 +476,7 @@ impl StencilMapping {
     /// 有限でない値は断る。
     pub fn new(xx: f64, xy: f64, x0: f64, yx: f64, yy: f64, y0: f64) -> Result<Self, CoreError> {
         for v in [xx, xy, x0, yx, yy, y0] {
-            require_finite(v, "stencil mapping")?;
+            require_finite(v, Reason::StencilMapping)?;
         }
         Ok(StencilMapping {
             xx,
@@ -534,14 +533,14 @@ pub struct StencilPoint {
 impl StencilPoint {
     /// ±1e9 画像の画素の内、footprint は 0 以上。
     pub fn new(x: f64, y: f64, footprint: f64) -> Result<Self, CoreError> {
-        require_finite(x, "stencil point")?;
-        require_finite(y, "stencil point")?;
-        require_finite(footprint, "stencil footprint")?;
+        require_finite(x, Reason::StencilPoint)?;
+        require_finite(y, Reason::StencilPoint)?;
+        require_finite(footprint, Reason::StencilFootprint)?;
         if x.abs() > 1e9 || y.abs() > 1e9 {
-            return Err(CoreError::InvalidArgument("ステンシルの点（±1e9）"));
+            return Err(CoreError::InvalidArgument(Reason::StencilPointRange));
         }
         if footprint < 0.0 {
-            return Err(CoreError::InvalidArgument("ステンシルの footprint"));
+            return Err(CoreError::InvalidArgument(Reason::StencilFootprintRange));
         }
         Ok(StencilPoint { x, y, footprint })
     }

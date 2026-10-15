@@ -4,6 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
+use yolu_core::Reason;
 
 use yolu_core::LayerLocks;
 
@@ -1054,7 +1055,7 @@ impl AppState {
                 let id = self
                     .selected_layer
                     .filter(|id| self.doc.layer(*id).is_some_and(|l| l.is_group()))
-                    .ok_or(CoreError::Unsupported("グループではない"))?;
+                    .ok_or(CoreError::Unsupported(Reason::NotGroup))?;
                 return self.m2_apply(Edit::Ungroup(id));
             }
             Edit::DuplicateSelected => self.duplicate_selected_layers()?,

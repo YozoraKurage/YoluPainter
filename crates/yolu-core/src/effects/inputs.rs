@@ -3,6 +3,7 @@
 //!
 //! 使えないマップ（無い・古い・条件を照合できない・大きさが違う）は、使う段が入力をそのまま通して理由を出す。黒として読まない。
 
+use crate::Reason;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -84,11 +85,11 @@ impl MapInput {
     pub fn from_baked(map: &BakedMeshMap, state: MapState) -> Result<Self, CoreError> {
         let p = map.provenance();
         let kind = map_kind_from_index(p.kind as i32)
-            .ok_or(CoreError::InvalidArgument("メッシュマップの種類"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::MeshMapKind))?;
         Self::new(
             kind,
-            u32::try_from(p.width).map_err(|_| CoreError::InvalidArgument("マップの幅"))?,
-            u32::try_from(p.height).map_err(|_| CoreError::InvalidArgument("マップの高さ"))?,
+            u32::try_from(p.width).map_err(|_| CoreError::InvalidArgument(Reason::MapWidth))?,
+            u32::try_from(p.height).map_err(|_| CoreError::InvalidArgument(Reason::MapHeight))?,
             map.data().to_vec(),
             map.coverage().to_vec(),
             p.bounds_min,
@@ -107,7 +108,9 @@ impl MapInput {
             || n != self.coverage.len() as u64
             || n * self.kind.channels() as u64 != self.data.len() as u64
         {
-            return Err(CoreError::InvalidArgument("マップの大きさと長さが合わない"));
+            return Err(CoreError::InvalidArgument(
+                Reason::MapSizeAndLengthDoNotMatch,
+            ));
         }
         let key = &self.condition_key;
         if key.len() != 64
@@ -115,7 +118,7 @@ impl MapInput {
                 .bytes()
                 .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c))
         {
-            return Err(CoreError::InvalidArgument("マップの条件の鍵"));
+            return Err(CoreError::InvalidArgument(Reason::MapConditionKey));
         }
         if (0..3).any(|i| {
             !self.bounds_min[i].is_finite()
@@ -123,7 +126,7 @@ impl MapInput {
                 || self.bounds_max[i] < self.bounds_min[i]
                 || !(self.bounds_max[i] - self.bounds_min[i]).is_finite()
         }) {
-            return Err(CoreError::InvalidArgument("マップの境界箱"));
+            return Err(CoreError::InvalidArgument(Reason::MapBoundingBox));
         }
         Ok(())
     }
@@ -175,7 +178,7 @@ impl ModelFrame {
             || !len.is_finite()
             || len <= 1e-9
         {
-            return Err(CoreError::InvalidArgument("モデルの位置・回転"));
+            return Err(CoreError::InvalidArgument(Reason::ModelPositionAndRotation));
         }
         Ok(ModelFrame { position, rotation })
     }
@@ -215,7 +218,9 @@ impl ImageInput {
             || height > 8192
             || pixels.len() as u64 != u64::from(width) * u64::from(height) * 4
         {
-            return Err(CoreError::InvalidArgument("画像の大きさと画素の長さ"));
+            return Err(CoreError::InvalidArgument(
+                Reason::ImageSizeAndPixelLengthDoNotMatch,
+            ));
         }
         let mut sha = Sha256::new();
         sha.update(b"YLPRGBA8");

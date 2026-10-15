@@ -1,5 +1,6 @@
 //! 合成の参照元（クローンが読む元と、色の混ぜの「全レイヤーから」の下地）の組み立て（C# の BrushStroke.UseCompositeCloneSource の、文書を読む部分）。
 
+use crate::Reason;
 use std::collections::{BTreeSet, HashMap};
 
 use super::*;
@@ -42,7 +43,7 @@ impl Document {
     fn build_clone_sources(&self) -> Result<Vec<CloneSource>, CoreError> {
         if self.active_target == Target::Mask {
             return Err(CoreError::Unsupported(
-                "マスクへのストロークはチャンネルの合成を読めない",
+                Reason::MaskStrokeCannotReadChannelComposite,
             ));
         }
         let states: Vec<&StrokeState> = self
@@ -52,7 +53,7 @@ impl Document {
             .collect();
         if states.iter().any(|s| !s.can_take_source()) {
             return Err(CoreError::Unsupported(
-                "合成の参照元はクローンか色の混ぜの最初のダブの前にだけ決められる",
+                Reason::CompositeSourceOnlyBeforeFirstDab,
             ));
         }
         let ts = self.tile_size;

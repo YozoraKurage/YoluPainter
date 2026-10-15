@@ -9,6 +9,7 @@ use crate::math::require_finite;
 use crate::normal::NormalSettings;
 use crate::surface::Surface;
 use crate::types::{BlendMode, Channel, LayerKind, Rgba8};
+use crate::Reason;
 
 impl Document {
     // ───────── マスク ─────────
@@ -19,7 +20,7 @@ impl Document {
         let index = self.index_of(id)?;
         // マスクの有無がロックより先（C# の AddLayerMask）
         if self.layers[index].mask.is_some() {
-            return Err(CoreError::Unsupported("レイヤーはもうマスクを持っている"));
+            return Err(CoreError::Unsupported(Reason::LayerAlreadyHasMask));
         }
         self.refuse_lock(id, super::LayerLocks::ALL)?;
         let mask = RasterMask::new(Surface::new(self.width, self.height, self.tile_size));
@@ -63,9 +64,9 @@ impl Document {
         density: f64,
         coalesce: bool,
     ) -> Result<(), CoreError> {
-        require_finite(density, "density")?;
+        require_finite(density, Reason::Density)?;
         if !(0.0..=1.0).contains(&density) {
-            return Err(CoreError::InvalidArgument("density"));
+            return Err(CoreError::InvalidArgument(Reason::Density));
         }
         self.set_property(
             id,
@@ -89,7 +90,7 @@ impl Document {
         let index = self.index_of(id)?;
         let layer = &self.layers[index];
         if layer.kind != LayerKind::Fill {
-            return Err(CoreError::Unsupported("塗りつぶしレイヤーだけが値を持つ"));
+            return Err(CoreError::Unsupported(Reason::ValuesNeedFillLayer));
         }
         let old = layer.fill_value(channel);
         let was_enabled = layer.is_channel_enabled(channel);
@@ -155,11 +156,15 @@ impl Document {
         let index = self.index_of(id)?;
         let layer = &self.layers[index];
         if layer.kind != LayerKind::Adjustment {
-            return Err(CoreError::Unsupported("調整レイヤーだけが調整の設定を持つ"));
+            return Err(CoreError::Unsupported(
+                Reason::AdjustmentSettingsNeedAdjustmentLayer,
+            ));
         }
         for c in layer.enabled_channels() {
             if !settings.applies_to(self.channel_kind(c)?) {
-                return Err(CoreError::Unsupported("有効なチャンネルに使えない調整"));
+                return Err(CoreError::Unsupported(
+                    Reason::AdjustmentNotForEnabledChannels,
+                ));
             }
         }
         self.set_property(
@@ -194,7 +199,9 @@ impl Document {
                 .as_ref()
                 .is_some_and(|a| a.applies_to(kind));
             if !applies {
-                return Err(CoreError::Unsupported("色相/彩度は色のチャンネルだけ"));
+                return Err(CoreError::Unsupported(
+                    Reason::HueSaturationNeedsColorChannel,
+                ));
             }
         }
         // 組（material）を持たないパスだけ、描くチャンネルを無効にできない（C# の `Path.Material == null`。組を持つパスは基準の
@@ -206,12 +213,12 @@ impl Document {
                 .any(|e| e.path.material().is_none() && e.path.channel() == channel)
         {
             return Err(CoreError::Unsupported(
-                "パスで描かれたチャンネルは無効にできない",
+                Reason::CannotDisableChannelDrawnByPath,
             ));
         }
         if !enabled && channel == Channel::Color && layer.text.is_some() {
             return Err(CoreError::Unsupported(
-                "テキストレイヤーの Color は無効にできない",
+                Reason::CannotDisableColorOnTextLayer,
             ));
         }
         let had_surface = layer.surface(channel).is_some();
@@ -271,13 +278,13 @@ impl Document {
         let index = self.index_of(id)?;
         if let Some(m) = blend.mode {
             if m == BlendMode::PassThrough && !self.layers[index].is_group() {
-                return Err(CoreError::InvalidArgument("PassThrough はグループだけ"));
+                return Err(CoreError::InvalidArgument(Reason::PassThroughNeedsGroup));
             }
         }
         if let Some(o) = blend.opacity {
-            require_finite(o, "opacity")?;
+            require_finite(o, Reason::Opacity)?;
             if !(0.0..=1.0).contains(&o) {
-                return Err(CoreError::InvalidArgument("opacity"));
+                return Err(CoreError::InvalidArgument(Reason::Opacity));
             }
         }
         self.set_property(

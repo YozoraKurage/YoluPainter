@@ -477,7 +477,7 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
         colors.insert(number("part")? as usize, number("rgb")?);
     }
     IdColorAssignments::new(binding, colors)
-        .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {}", e.0)))
+        .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {e}")))
 }
 
 /// 版 36 の頭のレイヤーセットと出力の割り当て（読み手が数・ID・並びを確かめた後）。割り当ての空の ID は既定値（None）。

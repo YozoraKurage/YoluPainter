@@ -1,20 +1,29 @@
 //! メッシュマップの16 bit 正本と由来。座標は左下原点、行優先。
+use crate::Reason;
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MeshMapError(pub String);
+pub enum MeshMapError {
+    /// 入力・設定・焼いた画素を断った理由。
+    Refused(crate::Reason),
+    /// 焼くスレッドの束を作れなかった（OS・rayon の文）。
+    Threads(String),
+}
 impl fmt::Display for MeshMapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        match self {
+            Self::Refused(why) => f.write_str(why.ja()),
+            Self::Threads(why) => f.write_str(why),
+        }
     }
 }
 impl std::error::Error for MeshMapError {}
 pub type Result<T> = std::result::Result<T, MeshMapError>;
-pub(crate) fn check(ok: bool, why: &str) -> Result<()> {
+pub(crate) fn check(ok: bool, why: crate::Reason) -> Result<()> {
     if ok {
         Ok(())
     } else {
-        Err(MeshMapError(why.into()))
+        Err(MeshMapError::Refused(why))
     }
 }
 
@@ -76,7 +85,7 @@ impl TryFrom<i32> for MeshMapKind {
         Self::ALL
             .get(value as usize)
             .copied()
-            .ok_or_else(|| MeshMapError("メッシュマップの種類が不明です".into()))
+            .ok_or(MeshMapError::Refused(Reason::MeshMapKindUnknown))
     }
 }
 #[repr(u8)]
@@ -112,7 +121,7 @@ impl MeshMapProvenance {
     pub fn validate(&self) -> Result<()> {
         check(
             (1..=8192).contains(&self.width) && (1..=8192).contains(&self.height),
-            "メッシュマップの大きさが範囲外です",
+            Reason::MeshMapSizeRange,
         )?;
         check(
             self.engine_version >= 1
@@ -120,14 +129,14 @@ impl MeshMapProvenance {
                 && self.target_slot >= -1
                 && (0..=64).contains(&self.padding)
                 && (1..=4).contains(&self.antialiasing),
-            "メッシュマップの由来が範囲外です",
+            Reason::MeshMapProvenanceRange,
         )?;
         check(
             self.target_slots.len() <= 65536
                 && self.target_slots.iter().all(|s| *s >= 0)
                 && self.target_slots.windows(2).all(|p| p[0] < p[1])
                 && self.target_slots.first().copied().unwrap_or(-1) == self.target_slot,
-            "スロットは昇順で重複せず先頭が対象スロットと一致する必要があります",
+            Reason::MeshMapSlotsInvalid,
         )?;
         check(
             (0..3).all(|a| {
@@ -135,7 +144,7 @@ impl MeshMapProvenance {
                     && self.bounds_max[a].is_finite()
                     && self.bounds_min[a] <= self.bounds_max[a]
             }),
-            "境界箱が不正です",
+            Reason::MeshMapBoundsInvalid,
         )?;
         check(
             [
@@ -148,7 +157,7 @@ impl MeshMapProvenance {
             ]
             .iter()
             .all(|s| s.len() <= 4096),
-            "メッシュマップの文字列が長すぎます",
+            Reason::MeshMapTextTooLong,
         )
     }
 }
@@ -172,9 +181,12 @@ impl BakedMeshMap {
         let texels = provenance.width as usize * provenance.height as usize;
         check(
             coverage.len() == texels && data.len() == texels * provenance.kind.channels(),
-            "正本の長さが大きさと一致しません",
+            Reason::MeshMapLengthMismatch,
         )?;
-        check(coverage.iter().all(|b| *b <= 3), "未知のテクセルの由来です")?;
+        check(
+            coverage.iter().all(|b| *b <= 3),
+            Reason::MeshMapTexelSourceUnknown,
+        )?;
         Ok(Self {
             provenance,
             data,
@@ -203,7 +215,7 @@ impl BakedMeshMap {
         self.kind().channels()
     }
     pub fn raw_value(&self, x: i32, y: i32, channel: usize) -> Result<u16> {
-        check(channel < self.channels(), "チャンネルが範囲外です")?;
+        check(channel < self.channels(), Reason::MeshMapChannelRange)?;
         Ok(
             if x < 0 || y < 0 || x as usize >= self.width() || y as usize >= self.height() {
                 0

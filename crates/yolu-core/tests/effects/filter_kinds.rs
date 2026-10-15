@@ -172,7 +172,7 @@ fn each_kind_is_accepted_or_refused_per_value_type_with_a_reason() {
                 assert!(result.is_ok(), "{name} は {ty:?} に付けられる: {result:?}");
             } else {
                 match result {
-                    Err(Error::Invalid(m)) => assert!(!m.contains("ください"), "{m}"),
+                    Err(Error::Invalid(m)) => assert!(!m.ja().contains("ください"), "{m}"),
                     other => panic!("{name} は {ty:?} に付けられない: {other:?}"),
                 }
             }

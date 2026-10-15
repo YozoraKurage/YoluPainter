@@ -1,6 +1,7 @@
 //! 色から範囲を求める。元の文書は変えず、取消・予算拒否ではマスクも公開しない。
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+use yolu_core::Reason;
 use yolu_core::{
     Channel, CoreError, Document, LayerId, Rect, Rgba8, RowOrder, SelectionMask, TileCoord,
 };
@@ -331,7 +332,7 @@ pub fn compute(
     let &(sx, sy) = r
         .points
         .first()
-        .ok_or(CoreError::InvalidArgument("塗る点がない"))?;
+        .ok_or(CoreError::InvalidArgument(Reason::NoPointToFill))?;
     if !sx.is_finite()
         || !sy.is_finite()
         || sx < 0.0
@@ -339,7 +340,7 @@ pub fn compute(
         || sx >= w as f64
         || sy >= h as f64
     {
-        return Err(CoreError::InvalidArgument("種がキャンバスの外"));
+        return Err(CoreError::InvalidArgument(Reason::SeedOutsideCanvas));
     }
     let mut output = vec![0; n];
     let mut visited = vec![false; n];

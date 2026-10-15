@@ -11,6 +11,7 @@
 //! （Unity 版もウィンドウの状態で、.ylp・ブラシの設定・プリセットには入れない）。1 つの操作は 1 つの `StencilOp` で、文書を変えないので Undo の
 //! 段にはならない（塗ったストロークは 1 回の Undo）。
 
+use yolu_core::Reason;
 mod frame;
 mod input;
 mod overlay;
@@ -179,7 +180,7 @@ impl LoadedStencil {
     ) -> Result<LoadedStencil, CoreError> {
         if width < 1 || height < 1 || rgba.len() != width * height * 4 {
             return Err(CoreError::InvalidArgument(
-                "ステンシルの画像のバイト数が幅 × 高さ × 4 でない",
+                Reason::StencilBufferSizeMismatch,
             ));
         }
         let mut flipped = Vec::with_capacity(rgba.len());

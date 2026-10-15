@@ -7,6 +7,7 @@
 //! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]）と、紙の質感のモード（[`TextureMode`] の
 //! 乗算以外）。どれも既定では C# と同じ。
 
+use crate::Reason;
 use std::sync::Arc;
 
 use glam::DVec2;
@@ -409,9 +410,9 @@ impl TaperTargets {
     }
 
     fn check(min: f64) -> Result<(), CoreError> {
-        require_finite(min, "taper minimum")?;
+        require_finite(min, crate::Reason::TaperMinimum)?;
         if !(0.0..=1.0).contains(&min) {
-            return Err(CoreError::InvalidArgument("入り抜きの最小値（0〜1）"));
+            return Err(CoreError::InvalidArgument(crate::Reason::TaperMinimumRange));
         }
         Ok(())
     }
@@ -460,69 +461,67 @@ impl Brush {
         let t = &self.tip;
         let j = &self.jitter;
         for (v, what) in [
-            (t.angle, "angle"),
-            (t.roundness, "roundness"),
-            (j.size, "jitter"),
-            (j.angle, "jitter"),
-            (j.roundness, "jitter"),
-            (j.opacity, "jitter"),
-            (j.flow, "jitter"),
-            (j.scatter, "scatter"),
+            (t.angle, Reason::Angle),
+            (t.roundness, Reason::Roundness),
+            (j.size, Reason::Jitter),
+            (j.angle, Reason::Jitter),
+            (j.roundness, Reason::Jitter),
+            (j.opacity, Reason::Jitter),
+            (j.flow, Reason::Jitter),
+            (j.scatter, Reason::Scatter),
         ] {
             require_finite(v, what)?;
         }
         let a = &self.assist;
         for v in [a.stabilizer, a.taper_in, a.taper_out] {
-            require_finite(v, "stroke assistance")?;
+            require_finite(v, Reason::StrokeAssistance)?;
             if !(0.0..=MAX_STROKE_ASSIST).contains(&v) {
-                return Err(CoreError::InvalidArgument(
-                    "手ぶれ補正・入り抜き（0〜10000）",
-                ));
+                return Err(CoreError::InvalidArgument(Reason::StabilizerAndTaperRange));
             }
         }
         a.taper_targets.validate()?;
         if !(0.01..=1.0).contains(&t.roundness) {
-            return Err(CoreError::InvalidArgument("roundness"));
+            return Err(CoreError::InvalidArgument(Reason::Roundness));
         }
         for v in [j.size, j.angle, j.roundness, j.opacity, j.flow] {
             if !(0.0..=1.0).contains(&v) {
-                return Err(CoreError::InvalidArgument("jitter（0〜1）"));
+                return Err(CoreError::InvalidArgument(Reason::JitterRange));
             }
         }
         if !(0.0..=10.0).contains(&j.scatter) {
-            return Err(CoreError::InvalidArgument("scatter"));
+            return Err(CoreError::InvalidArgument(Reason::Scatter));
         }
         if !(1..=16).contains(&j.count) {
-            return Err(CoreError::InvalidArgument("count"));
+            return Err(CoreError::InvalidArgument(Reason::Count));
         }
         if let Some(tex) = &self.texture {
-            require_finite(tex.depth, "texture depth")?;
-            require_finite(tex.scale, "texture scale")?;
+            require_finite(tex.depth, Reason::TextureDepth)?;
+            require_finite(tex.scale, Reason::TextureScale)?;
             if !(0.0..=1.0).contains(&tex.depth) {
-                return Err(CoreError::InvalidArgument("texture depth（0〜1）"));
+                return Err(CoreError::InvalidArgument(Reason::TextureDepthRange));
             }
             if !(0.05..=64.0).contains(&tex.scale) {
-                return Err(CoreError::InvalidArgument("texture scale（0.05〜64）"));
+                return Err(CoreError::InvalidArgument(Reason::TextureScaleRange));
             }
         }
         if t.images.len() > 256 {
-            return Err(CoreError::InvalidArgument("筆先の並び（1〜256 枚）"));
+            return Err(CoreError::InvalidArgument(Reason::BrushTipSequenceRange));
         }
         let c = &self.color;
         for v in [c.foreground_background, c.hue, c.saturation, c.brightness] {
-            require_finite(v, "colour dynamics")?;
+            require_finite(v, Reason::ColourDynamics)?;
             if !(0.0..=1.0).contains(&v) {
-                return Err(CoreError::InvalidArgument("色のゆらぎ（0〜1）"));
+                return Err(CoreError::InvalidArgument(Reason::ColorDynamicsRange));
             }
         }
-        require_finite(c.purity, "purity")?;
+        require_finite(c.purity, Reason::Purity)?;
         if !(-1.0..=1.0).contains(&c.purity) {
-            return Err(CoreError::InvalidArgument("purity（−1〜1）"));
+            return Err(CoreError::InvalidArgument(Reason::PurityRange));
         }
         let k = &self.controls;
         for f in [k.fade_size, k.fade_opacity, k.fade_flow] {
             if f > MAX_FADE {
-                return Err(CoreError::InvalidArgument("フェード（0〜10000）"));
+                return Err(CoreError::InvalidArgument(Reason::FadeRange));
             }
         }
         self.influences.validate()?;
@@ -534,28 +533,26 @@ impl Brush {
             BrushEffect::Paint => {}
             BrushEffect::Blur { radius } => {
                 if !(1..=64).contains(&radius) {
-                    return Err(CoreError::InvalidArgument("ぼかしの半径（1〜64）"));
+                    return Err(CoreError::InvalidArgument(Reason::BlurRadiusRange));
                 }
             }
             BrushEffect::Smudge { strength } => {
-                require_finite(strength, "smudge strength")?;
+                require_finite(strength, Reason::SmudgeStrength)?;
                 if !(0.0..=1.0).contains(&strength) {
-                    return Err(CoreError::InvalidArgument("指先の強さ（0〜1）"));
+                    return Err(CoreError::InvalidArgument(Reason::SmudgeStrengthRange));
                 }
             }
             BrushEffect::Clone { offset } => {
                 for v in [offset.x, offset.y] {
-                    require_finite(v, "clone offset")?;
+                    require_finite(v, Reason::CloneOffset)?;
                     if v.abs() > 10_000_000.0 {
-                        return Err(CoreError::InvalidArgument("クローンの位置（±1e7）"));
+                        return Err(CoreError::InvalidArgument(Reason::ClonePositionRange));
                     }
                 }
             }
         }
         if !self.effect.is_paint() && self.base.erase {
-            return Err(CoreError::InvalidArgument(
-                "効果のブラシは消しゴムにできない",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::EffectBrushesCannotErase));
         }
         self.symmetry.validate()?;
         if (self.symmetry.enabled() || self.model_symmetry.is_some())
@@ -565,7 +562,7 @@ impl Brush {
             )
         {
             return Err(CoreError::Unsupported(
-                "指先・クローンは対称と組めない（写しごとに読み元と動きが要る）",
+                Reason::SmudgeAndCloneWithoutSymmetry,
             ));
         }
         Ok(())
@@ -618,27 +615,25 @@ impl DualBrush {
             self.roundness,
             self.scatter,
         ] {
-            require_finite(v, "dual brush")?;
+            require_finite(v, Reason::DualBrush)?;
         }
         if !(0.5..=65536.0).contains(&self.radius) {
-            return Err(CoreError::InvalidArgument(
-                "デュアルブラシの半径（0.5〜65536）",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::DualBrushRadiusRange));
         }
         if !(0.0..=1.0).contains(&self.hardness) {
-            return Err(CoreError::InvalidArgument("デュアルブラシの硬さ"));
+            return Err(CoreError::InvalidArgument(Reason::DualBrushHardness));
         }
         if !(0.01..=4.0).contains(&self.spacing) {
-            return Err(CoreError::InvalidArgument("デュアルブラシの間隔"));
+            return Err(CoreError::InvalidArgument(Reason::DualBrushSpacing));
         }
         if !(0.01..=1.0).contains(&self.roundness) {
-            return Err(CoreError::InvalidArgument("デュアルブラシの真円率"));
+            return Err(CoreError::InvalidArgument(Reason::DualBrushRoundness));
         }
         if !(0.0..=10.0).contains(&self.scatter) {
-            return Err(CoreError::InvalidArgument("デュアルブラシの散布"));
+            return Err(CoreError::InvalidArgument(Reason::DualBrushScatter));
         }
         if !(1..=16).contains(&self.count) {
-            return Err(CoreError::InvalidArgument("デュアルブラシの数"));
+            return Err(CoreError::InvalidArgument(Reason::DualBrushCount));
         }
         Ok(())
     }

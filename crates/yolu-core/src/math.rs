@@ -41,7 +41,7 @@ pub(crate) fn clamp01(value: f64) -> f64 {
     }
 }
 
-pub(crate) fn require_finite(value: f64, what: &'static str) -> Result<(), crate::CoreError> {
+pub(crate) fn require_finite(value: f64, what: crate::Reason) -> Result<(), crate::CoreError> {
     if value.is_finite() {
         Ok(())
     } else {

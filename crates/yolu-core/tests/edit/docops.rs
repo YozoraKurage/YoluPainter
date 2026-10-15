@@ -2093,7 +2093,7 @@ fn non_raster_layers_refuse_by_type_before_the_lock_except_begin_stroke_on_adjus
 /// すべてのロックは、マスクの有無を確かめたあとにだけ効く）。断ったあとは何も変わらない。スマートマスクの適用は、マスクの無いレイヤーへ新しく付けるので対象外。
 #[test]
 fn mask_entries_refuse_a_layer_without_a_mask_before_the_lock() {
-    let no_mask = Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+    let no_mask = Err(CoreError::Unsupported(Reason::LayerHasNoMask));
     type Edit = Box<dyn Fn(&mut Document, LayerId) -> Result<(), CoreError>>;
     let mut edits: Vec<(&str, Edit)> = Vec::new();
     for e in write_entries()
@@ -2153,7 +2153,7 @@ fn mask_entries_refuse_a_layer_without_a_mask_before_the_lock() {
         d.clear_history().unwrap();
         assert_eq!(
             d.add_layer_mask(id),
-            Err(CoreError::Unsupported("レイヤーはもうマスクを持っている")),
+            Err(CoreError::Unsupported(Reason::LayerAlreadyHasMask)),
             "{lock:?}"
         );
     }

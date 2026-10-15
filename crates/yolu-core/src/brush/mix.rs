@@ -27,6 +27,7 @@ use super::effects::EffectFrame;
 use crate::error::CoreError;
 use crate::math::require_finite;
 use crate::types::Rgba8;
+use crate::Reason;
 
 /// 混ぜ方。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -103,11 +104,11 @@ impl ColorMix {
     /// 範囲を確かめる（断ったら何も変えない）。
     pub fn validate(&self) -> Result<(), CoreError> {
         for (v, what) in [
-            (self.paint, "絵の具の量（0〜1）"),
-            (self.density, "絵の具の濃さ（0〜1）"),
-            (self.stretch, "色延び（0〜1）"),
+            (self.paint, Reason::PaintAmountRange),
+            (self.density, Reason::PaintDensityRange),
+            (self.stretch, Reason::ColorStretchRange),
         ] {
-            require_finite(v, "color mix")?;
+            require_finite(v, Reason::ColorMix)?;
             if !(0.0..=1.0).contains(&v) {
                 return Err(CoreError::InvalidArgument(what));
             }

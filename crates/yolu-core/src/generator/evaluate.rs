@@ -1,3 +1,4 @@
+use crate::Reason;
 mod rows;
 use super::*;
 use crate::{
@@ -79,13 +80,13 @@ impl<'a> BoundGenerator<'a> {
         g.validate()?;
         let (width, height) = dimensions;
         if width == 0 || height == 0 {
-            return Err(Error::Invalid("ジェネレーターの大きさは正数が必要です"));
+            return Err(Error::Invalid(Reason::GeneratorSizeNotPositive));
         }
         let mut table = [None; 10];
         for map in maps {
             map.validate()?;
             if table[map.kind as usize].replace(map).is_some() {
-                return Err(Error::Invalid("マップの種類が重複しています"));
+                return Err(Error::Invalid(Reason::GeneratorMapKindDuplicated));
             }
         }
         // 画像の段は、画像を選んでいないことを先に言う（マップより直しやすい）
@@ -148,9 +149,7 @@ impl<'a> BoundGenerator<'a> {
         if g.kind == Kind::Anchor {
             if let Ok(a) = anchor {
                 if a.dimensions() != (width, height) {
-                    return Err(Error::Invalid(
-                        "Anchor とジェネレーターの画像サイズが違います",
-                    ));
+                    return Err(Error::Invalid(Reason::GeneratorAnchorSizeMismatch));
                 }
             }
         }
@@ -193,7 +192,7 @@ impl<'a> BoundGenerator<'a> {
                 return Ok(b);
             }
             if !diag.is_finite() {
-                return Err(Error::Invalid("Position の境界箱が大きすぎます"));
+                return Err(Error::Invalid(Reason::GeneratorPositionBoundsTooLarge));
             }
             b.noise_scale = e.map(|e| e / diag / g.noise_scale / 65535.);
         }
@@ -228,7 +227,7 @@ impl<'a> BoundGenerator<'a> {
                 .chain(b.offset.iter())
                 .any(|v| !v.is_finite())
             {
-                return Err(Error::Invalid("形の座標変換が有限値を超えます"));
+                return Err(Error::Invalid(Reason::GeneratorShapeTransformNotFinite));
             }
         }
         Ok(b)
@@ -523,11 +522,11 @@ pub(super) fn allocate(
             .checked_add(region.height)
             .is_none_or(|v| v > dimensions.1)
     {
-        return Err(Error::Invalid("評価領域が画像の範囲外です"));
+        return Err(Error::Invalid(Reason::GeneratorRegionOutsideImage));
     }
     let needed = (u64::from(region.width) * u64::from(region.height))
         .checked_mul(4)
-        .ok_or(Error::Invalid("評価画像が大きすぎます"))?;
+        .ok_or(Error::Invalid(Reason::GeneratorImageTooLarge))?;
     if needed > options.budget_bytes {
         return Err(Error::Budget {
             needed,
@@ -562,9 +561,7 @@ pub fn evaluate(
     options: &Options<'_>,
 ) -> Result<Output, Error> {
     if !unit(strength) || source.dimensions() != g.dimensions() {
-        return Err(Error::Invalid(
-            "ジェネレーターの強さまたは画像の大きさが不正です",
-        ));
+        return Err(Error::Invalid(Reason::GeneratorStrengthOrSizeInvalid));
     }
     let mut pixels = allocate(region, source.dimensions(), options)?;
     let width = region.width as usize;

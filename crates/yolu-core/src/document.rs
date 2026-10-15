@@ -8,6 +8,7 @@
 //! - 変化の記録（`change_serial` と `changed_tiles`）は、合成が変わり得るタイルをチャンネルごとに数で覚える。履歴や保存とは別。
 //! - チャンネルは文書の一覧（[`ChannelInfo`]）。0〜5 は標準の 6 つで、ユーザーチャンネルは足せる（[`Document::add_channel`]）。
 
+use crate::Reason;
 mod batch;
 mod history;
 pub use history::HistoryKind;
@@ -637,13 +638,13 @@ impl Document {
     /// タイルの大きさ（1〜1024）を選ぶ。画素の結果はタイルの大きさによらない。
     pub fn with_tile_size(width: u32, height: u32, tile_size: u32) -> Result<Document, CoreError> {
         if width == 0 || width > 32768 {
-            return Err(CoreError::InvalidArgument("width"));
+            return Err(CoreError::InvalidArgument(Reason::Width));
         }
         if height == 0 || height > 32768 {
-            return Err(CoreError::InvalidArgument("height"));
+            return Err(CoreError::InvalidArgument(Reason::Height));
         }
         if tile_size == 0 || tile_size > 1024 {
-            return Err(CoreError::InvalidArgument("tile_size"));
+            return Err(CoreError::InvalidArgument(Reason::TileSize));
         }
         let first = LayerSetId(random_id(u64::MAX) | 1);
         Ok(Document {
@@ -708,7 +709,7 @@ impl Document {
             || layer_ids.len() != self.layers.len()
             || layer_ids.iter().any(|id| id.0 == 0 || !seen.insert(*id))
         {
-            return Err(CoreError::InvalidArgument("persistent_ids"));
+            return Err(CoreError::InvalidArgument(Reason::PersistentIds));
         }
         self.id = document_id;
         // グループの中のレイヤーの親も新しい ID へ（並びは同じなので、古い ID → 新しい ID の表で引く）
@@ -902,9 +903,9 @@ impl Document {
         opacity: f64,
         coalesce: bool,
     ) -> Result<(), CoreError> {
-        require_finite(opacity, "opacity")?;
+        require_finite(opacity, Reason::Opacity)?;
         if !(0.0..=1.0).contains(&opacity) {
-            return Err(CoreError::InvalidArgument("opacity"));
+            return Err(CoreError::InvalidArgument(Reason::Opacity));
         }
         self.set_property(
             id,
@@ -917,7 +918,7 @@ impl Document {
     pub fn set_layer_blend_mode(&mut self, id: LayerId, mode: BlendMode) -> Result<(), CoreError> {
         if mode == BlendMode::PassThrough && !self.layer(id).is_some_and(|l| l.is_group()) {
             self.index_of(id)?;
-            return Err(CoreError::InvalidArgument("PassThrough はグループだけ"));
+            return Err(CoreError::InvalidArgument(Reason::PassThroughNeedsGroup));
         }
         self.set_property(id, Property::Mode(mode), None)
     }
@@ -976,7 +977,9 @@ impl Document {
                 layer
                     .adjustment
                     .as_ref()
-                    .ok_or(CoreError::Unsupported("調整レイヤーだけが調整の設定を持つ"))?
+                    .ok_or(CoreError::Unsupported(
+                        Reason::AdjustmentSettingsNeedAdjustmentLayer,
+                    ))?
                     .clone(),
             ),
             Property::ChannelBlend(c, _) => Property::ChannelBlend(*c, layer.channel_blend(*c)),
@@ -997,7 +1000,7 @@ impl Document {
         layer
             .mask
             .as_ref()
-            .ok_or(CoreError::Unsupported("レイヤーにマスクが無い"))
+            .ok_or(CoreError::Unsupported(Reason::LayerHasNoMask))
     }
 
     /// 段を当てて積む。鍵があり、直前の段が同じ鍵のまとめなら、その段の「後」の値だけを新しくする（戻すと最初の変更の前へ）。
@@ -1215,13 +1218,13 @@ impl Document {
         self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         if bytes
             .chunks_exact(4)
             .any(|p| p[0] != 0 || p[1] != 0 || p[2] != 0)
         {
-            return Err(CoreError::InvalidArgument("マスクの画素の RGB は 0"));
+            return Err(CoreError::InvalidArgument(Reason::MaskRgbNotZero));
         }
         let growth = self.growth_for(index, Target::Mask);
         let changed = self.layers[index]
@@ -1294,7 +1297,7 @@ impl Document {
         self.ensure_loadable()?;
         let index = self.index_of(id)?;
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         let growth = self.growth_for(index, Target::Mask);
         let ts = self.tile_size;
@@ -1310,9 +1313,11 @@ impl Document {
     fn ensure_raster(&self, index: usize) -> Result<(), CoreError> {
         match self.layers[index].kind {
             LayerKind::Raster => Ok(()),
-            LayerKind::Fill => Err(CoreError::Unsupported("塗りつぶしレイヤーには描けない")),
-            LayerKind::Adjustment => Err(CoreError::Unsupported("調整レイヤーには描けない")),
-            LayerKind::Group => Err(CoreError::Unsupported("グループには描けない")),
+            LayerKind::Fill => Err(CoreError::Unsupported(Reason::CannotPaintFillLayer)),
+            LayerKind::Adjustment => {
+                Err(CoreError::Unsupported(Reason::CannotPaintAdjustmentLayer))
+            }
+            LayerKind::Group => Err(CoreError::Unsupported(Reason::CannotPaintGroup)),
         }
     }
 
@@ -1397,7 +1402,9 @@ impl Document {
     pub fn set_source_budget_bytes(&mut self, bytes: u64) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         if bytes < self.allocated_bytes() {
-            return Err(CoreError::InvalidArgument("予算が今の画素より小さい"));
+            return Err(CoreError::InvalidArgument(
+                Reason::BudgetBelowExistingPixels,
+            ));
         }
         self.source_budget = bytes;
         Ok(())
@@ -2087,7 +2094,7 @@ impl Document {
         let growth = self.growth_for(index, target);
         let Some(surface) = self.target_surface_mut(index, target) else {
             self.undo_remade_surface(index, remade);
-            return Err(CoreError::Unsupported("面が無い"));
+            return Err(CoreError::Unsupported(Reason::SurfaceNotFound));
         };
         let delta: i64 = changes
             .iter()
@@ -2252,7 +2259,7 @@ impl Document {
         self.refuse_path_layer(index)?;
         let created = self.ensure_surface(index, channel);
         if !self.layers[index].is_channel_enabled(channel) {
-            return Err(CoreError::Unsupported("無効のチャンネルには描けない"));
+            return Err(CoreError::Unsupported(Reason::CannotPaintDisabledChannel));
         }
         let target = Target::Channel(channel);
         let budgets = Budgets {
@@ -2301,7 +2308,7 @@ impl Document {
         let index = self.index_of(layer)?;
         // マスクの有無がロックより先（C# の RequireMask のあとに RefuseLockedAttributes）。マスクの無いレイヤーは、ロックの有無に関わらず同じ理由で断る
         if self.layers[index].mask.is_none() {
-            return Err(CoreError::Unsupported("レイヤーにマスクが無い"));
+            return Err(CoreError::Unsupported(Reason::LayerHasNoMask));
         }
         self.refuse_lock(layer, LayerLocks::ALL)?;
         let mut brush = brush.without_color_dynamics();
@@ -2557,7 +2564,9 @@ impl Document {
                 self.check_rect(rect)?;
                 self.channel_kind(channel)?;
                 if out.len() != rect.width as usize * rect.height as usize * 4 {
-                    return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
+                    return Err(CoreError::InvalidArgument(
+                        Reason::OutputSizeDoesNotMatchRectangle,
+                    ));
                 }
                 self.fill_default(channel, out);
                 Ok(())
@@ -2598,7 +2607,9 @@ impl Document {
         self.check_rect(rect)?;
         let kind = self.channel_kind(channel)?;
         if out.len() != rect.width as usize * rect.height as usize * 4 {
-            return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
+            return Err(CoreError::InvalidArgument(
+                Reason::OutputSizeDoesNotMatchRectangle,
+            ));
         }
         let eval = if rect.is_empty() {
             eval::EvalSet::default()
@@ -2828,7 +2839,9 @@ impl Document {
             Some(set) => self.composite_set_coarse_tiles(set, channel, coords, stride),
             None => {
                 if stride == 0 || !self.tile_size.is_multiple_of(stride) {
-                    return Err(CoreError::InvalidArgument("歩幅がタイルの一辺の約数でない"));
+                    return Err(CoreError::InvalidArgument(
+                        Reason::StepDoesNotDivideTileEdge,
+                    ));
                 }
                 self.channel_kind(channel)?;
                 Ok(self
@@ -2860,7 +2873,9 @@ impl Document {
     ) -> Result<Vec<CompositedTile>, CoreError> {
         self.require_layer_set(set)?;
         if stride == 0 || !self.tile_size.is_multiple_of(stride) {
-            return Err(CoreError::InvalidArgument("歩幅がタイルの一辺の約数でない"));
+            return Err(CoreError::InvalidArgument(
+                Reason::StepDoesNotDivideTileEdge,
+            ));
         }
         let kind = self.channel_kind(channel)?;
         let tiles = self.canvas_tile_rects(coords);
@@ -2918,7 +2933,7 @@ impl Document {
             Some(set) => self.composite_set_pixel(set, channel, x, y),
             None => {
                 if x >= self.width || y >= self.height {
-                    return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+                    return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
                 }
                 self.channel_kind(channel)?;
                 Ok(self
@@ -2938,7 +2953,7 @@ impl Document {
     ) -> Result<Rgba8, CoreError> {
         self.require_layer_set(set)?;
         if x >= self.width || y >= self.height {
-            return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+            return Err(CoreError::InvalidArgument(Reason::PixelOutsideCanvas));
         }
         let kind = self.channel_kind(channel)?;
         let ts = self.tile_size;
@@ -2957,7 +2972,7 @@ impl Document {
         if rect.x as u64 + rect.width as u64 > self.width as u64
             || rect.y as u64 + rect.height as u64 > self.height as u64
         {
-            Err(CoreError::InvalidArgument("矩形がキャンバスの外"))
+            Err(CoreError::InvalidArgument(Reason::RectangleOutsideCanvas))
         } else {
             Ok(())
         }

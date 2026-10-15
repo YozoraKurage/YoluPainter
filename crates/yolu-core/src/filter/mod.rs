@@ -3,6 +3,7 @@
 //! C# FilterEngine のアルゴリズム版 1。カーブ・HSL は調整レイヤーの責務。
 //! Normalize の全域統計は `statistics` で単独に求められ、`Options::statistics` で評価へ渡せる（タイルごとの再走査を避けられる）。
 
+use crate::Reason;
 mod generated;
 mod pixels;
 mod rows;
@@ -349,16 +350,14 @@ impl Settings {
             _ => true,
         };
         if !valid {
-            return Err(Error::Invalid("フィルターの設定が範囲外です"));
+            return Err(Error::Invalid(Reason::FilterSettingsOutOfRange));
         }
         Ok(())
     }
     /// 値の種類（色・スカラー・接空間法線・マスク）に使えるか。
     fn validate_type(&self, value_type: ValueType) -> Result<(), Error> {
         if value_type == ValueType::TangentNormal && !matches!(self, Self::GaussianBlur { .. }) {
-            return Err(Error::Invalid(
-                "接空間法線には再正規化するぼかしだけを適用できます",
-            ));
+            return Err(Error::Invalid(Reason::TangentNormalOnlyRenormalizingBlur));
         }
         if matches!(value_type, ValueType::Scalar | ValueType::Mask)
             && matches!(
@@ -369,14 +368,12 @@ impl Settings {
                 }
             )
         {
-            return Err(Error::Invalid("スカラーとマスクは色ノイズを受け付けません"));
+            return Err(Error::Invalid(Reason::ColorNoiseNotForScalars));
         }
         if matches!(value_type, ValueType::Scalar | ValueType::Mask)
             && matches!(self, Self::GradientMap(_) | Self::ColorBalance(_))
         {
-            return Err(Error::Invalid(
-                "グラデーションマップとカラーバランスは色のチャンネルだけに適用できます",
-            ));
+            return Err(Error::Invalid(Reason::ColorFiltersOnlyOnColorChannels));
         }
         if value_type == ValueType::Color
             && matches!(
@@ -387,12 +384,10 @@ impl Settings {
                     | Self::EdgeDetect { .. }
             )
         {
-            return Err(Error::Invalid(
-                "値の切り出し・値の幅・太らせる・細らせる・輪郭の検出はスカラーとマスクだけに適用できます",
-            ));
+            return Err(Error::Invalid(Reason::ScalarFiltersOnlyOnScalarsAndMasks));
         }
         if value_type != ValueType::Color && matches!(self, Self::Glow { .. }) {
-            return Err(Error::Invalid("グローは色のチャンネルだけに適用できます"));
+            return Err(Error::Invalid(Reason::GlowOnlyOnColorChannels));
         }
         Ok(())
     }
@@ -425,7 +420,7 @@ impl Stage {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    Invalid(&'static str),
+    Invalid(crate::Reason),
     Budget { needed: u64, budget: u64 },
     Cancelled,
     Allocation,
@@ -433,7 +428,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Invalid(s) => f.write_str(s),
+            Self::Invalid(s) => f.write_str(s.ja()),
             Self::Budget { needed, budget } => write!(
                 f,
                 "フィルターの作業メモリが予算を超えます: {needed} > {budget} バイト"
@@ -471,7 +466,7 @@ impl<'a> Image<'a> {
                 .and_then(|n| n.checked_mul(4))
                 != Some(data.len() as u64)
         {
-            return Err(Error::Invalid("画像は幅×高さ×4バイト必要です"));
+            return Err(Error::Invalid(Reason::FilterImageSizeMismatch));
         }
         Ok(Self {
             data,
@@ -563,16 +558,16 @@ pub fn block_working_bytes(
         || width > i32::MAX as u32
         || height > i32::MAX as u32
     {
-        return Err(Error::Invalid("画像・ブロックの寸法が範囲外です"));
+        return Err(Error::Invalid(Reason::FilterImageOrBlockSizeRange));
     }
     let mut halo = 0u32;
     for s in stack.iter().filter(|s| s.active()) {
         halo = halo
             .checked_add(s.settings.halo())
-            .ok_or(Error::Invalid("halo が大きすぎます"))?;
+            .ok_or(Error::Invalid(Reason::FilterHaloTooLarge))?;
     }
     if halo > MAX_HALO {
-        return Err(Error::Invalid("スタックの半径の合計は512画素までです"));
+        return Err(Error::Invalid(Reason::FilterStackReachTooLarge));
     }
     let a = |m: u32| {
         u64::from(width.min(block.saturating_add(2 * m)))
@@ -639,33 +634,31 @@ fn prepare(
         || options.block_size == 0
         || options.block_size > 4096
     {
-        return Err(Error::Invalid("画像・領域・ブロックの寸法が範囲外です"));
+        return Err(Error::Invalid(Reason::FilterRegionSizeRange));
     }
     if stack.len() > MAX_STACK {
-        return Err(Error::Invalid("スタックは32段までです"));
+        return Err(Error::Invalid(Reason::FilterStackTooDeep));
     }
     if options.statistics.is_some_and(|s| s.len() != stack.len()) {
-        return Err(Error::Invalid("統計の数が段の数と合いません"));
+        return Err(Error::Invalid(Reason::FilterStatisticsCountMismatch));
     }
     let mut chain = Vec::new();
     let mut supplied = Vec::new();
     for (i, s) in stack.iter().enumerate() {
         s.settings.validate(value_type)?;
         if !s.strength.is_finite() || !(0.0..=1.0).contains(&s.strength) {
-            return Err(Error::Invalid("強さは有限の0..1です"));
+            return Err(Error::Invalid(Reason::FilterStrengthRange));
         }
         if s.active()
             && matches!(s.settings, Settings::Generator { .. })
             && options.generators.is_none()
         {
-            return Err(Error::Invalid("ジェネレーターの入力解決器がありません"));
+            return Err(Error::Invalid(Reason::FilterGeneratorResolverMissing));
         }
         let given = options.statistics.and_then(|all| all[i]);
         if let Some(st) = given {
             if !s.active() || !matches!(s.settings, Settings::Normalize) || st.min > st.max {
-                return Err(Error::Invalid(
-                    "統計は有効な Normalize の段にだけ、最小 <= 最大で付けられます",
-                ));
+                return Err(Error::Invalid(Reason::FilterStatisticsInvalid));
             }
         }
         if s.active() {
@@ -676,7 +669,7 @@ fn prepare(
     let mut working = block_working_bytes(&chain, options.block_size, w, h)?;
     if let Some(band) = options.seams {
         if (band.width(), band.height()) != (w, h) {
-            return Err(Error::Invalid("継ぎ目の帯の写しの大きさが画像と合いません"));
+            return Err(Error::Invalid(Reason::FilterSeamBandSizeMismatch));
         }
         // 帯の写しがあるので、帯のテクセルの数は分かる（文書が評価の前に見積もる最悪の数以下）
         working = working.saturating_add(seam_working_bytes(
@@ -1023,7 +1016,7 @@ impl<'a> Engine<'a> {
                         };
                         if matches!(g,Generated::Scalar(v) if !v.is_finite() || !(0.0..=1.0).contains(&v))
                         {
-                            return Err(Error::Invalid("ジェネレーターの値は有限の0..1です"));
+                            return Err(Error::Invalid(Reason::FilterGeneratorValueRange));
                         }
                         pixels::generate(
                             p,

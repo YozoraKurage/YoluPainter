@@ -3,6 +3,7 @@
 
 use yolu_core::generator::{self, anchor::ReadMode, Settings};
 use yolu_core::glam::DVec2;
+use yolu_core::Reason;
 use yolu_core::{
     AnchorIssueKind, AnchorPlacement, Brush, BrushEffect, BrushSample, BrushSettings, Channel,
     CoreError, Document, EffectSettings, FilterSpec, FilterTarget, LayerId, LayerSetId,
@@ -232,7 +233,9 @@ fn removing_a_set_clears_its_outputs_to_the_default_and_the_last_cannot_go() {
     assert_eq!(all(&d, Channel::Roughness), rough_before);
     assert_eq!(
         d.remove_layer_set(first),
-        Err(CoreError::InvalidArgument("最後のレイヤーセットは消せない"))
+        Err(CoreError::InvalidArgument(
+            Reason::LastLayerSetCannotBeRemoved
+        ))
     );
     // 1 回の取り消しで、レイヤーセット・中のレイヤー・割り当てが戻る
     d.undo().unwrap();

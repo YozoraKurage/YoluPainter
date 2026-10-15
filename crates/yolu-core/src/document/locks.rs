@@ -1,6 +1,7 @@
 //! レイヤー自身と祖先のロック。番号は C# と保存形式の版 12 に合わせる。
 use super::operations::Dirty;
 use super::{Document, Property};
+use crate::Reason;
 use crate::{CoreError, LayerId, Rgba8};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -13,7 +14,7 @@ impl LayerLocks {
     pub const ALL: Self = Self(8);
     pub fn from_bits(bits: u8) -> Result<Self, CoreError> {
         if bits & !15 != 0 {
-            return Err(CoreError::InvalidArgument("未知のロック"));
+            return Err(CoreError::InvalidArgument(Reason::UnknownLock));
         }
         Ok(Self(bits))
     }

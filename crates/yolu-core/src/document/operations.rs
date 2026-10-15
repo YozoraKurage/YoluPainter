@@ -1,6 +1,7 @@
 //! 複数操作を準備用の文書で実行し、成功した状態だけを 1 段で交換する。
 use super::{Command, Document};
 use crate::surface::{Surface, Tile};
+use crate::Reason;
 use crate::{CoreError, Layer, LayerId, NormalSettings, TileCoord};
 
 /// 交換が合成を変え得る範囲。変化の記録（`changed_tiles`）の印を、交換の前後の両方で付ける範囲を決める。
@@ -428,21 +429,17 @@ impl Document {
             .iter()
             .any(|&m| self.layer(m).expect("対象").set != set)
         {
-            return Err(CoreError::InvalidArgument(
-                "別のレイヤーセットのレイヤーは一緒に動かせない",
-            ));
+            return Err(CoreError::InvalidArgument(Reason::MoveAcrossLayerSets));
         }
         if let Some(p) = parent {
             let i = self.index_of(p)?;
             if !self.layers[i].is_group()
                 || members.iter().any(|&m| m == p || self.is_descendant(i, m))
             {
-                return Err(CoreError::InvalidArgument("移動先のグループ"));
+                return Err(CoreError::InvalidArgument(Reason::DestinationGroup));
             }
             if self.layers[i].set != set {
-                return Err(CoreError::InvalidArgument(
-                    "別のレイヤーセットのグループへは入れられない",
-                ));
+                return Err(CoreError::InvalidArgument(Reason::IntoGroupOfOtherLayerSet));
             }
         }
         let mut tree = self.tree();
@@ -457,7 +454,7 @@ impl Document {
             .map(|i| tree.order[i].0)
             .collect();
         if position > siblings.len() {
-            return Err(CoreError::InvalidArgument("position"));
+            return Err(CoreError::InvalidArgument(Reason::Position));
         }
         let at = if position < siblings.len() {
             tree.subtree_start(tree.index(siblings[position]))

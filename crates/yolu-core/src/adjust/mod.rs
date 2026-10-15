@@ -5,6 +5,7 @@
 //! 計算する（`rows`。f64 の式とは 1 段ずれる値がある）。64 からは Rust 版だけの種類（グラデーションマップ・トーンカーブ・
 //! カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション。値と式は [`ops`]）で、Unity 版は読めない。
 
+use crate::Reason;
 mod ops;
 mod rows;
 
@@ -229,7 +230,7 @@ impl AdjustmentSettings {
     ) -> Result<Self, CoreError> {
         if kind.is_rust_only() {
             return Err(CoreError::InvalidArgument(
-                "この種類は 8 つの値では組み立てられない（種類ごとの組み立てを使う）",
+                Reason::AdjustmentNotFromEightValues,
             ));
         }
         let s = AdjustmentSettings {
@@ -379,27 +380,27 @@ impl AdjustmentSettings {
             self.saturation,
             self.lightness,
         ] {
-            require_finite(v, "adjustment")?;
+            require_finite(v, Reason::Adjustment)?;
         }
         if self.input_black < *ranges::LEVELS_UNIT.start()
             || self.input_white > *ranges::LEVELS_UNIT.end()
             || self.input_white - self.input_black < 1.0 / 255.0
         {
-            return Err(CoreError::InvalidArgument("レベル補正の入力の範囲"));
+            return Err(CoreError::InvalidArgument(Reason::LevelsInputRange));
         }
         if !ranges::LEVELS_UNIT.contains(&self.output_black)
             || !ranges::LEVELS_UNIT.contains(&self.output_white)
         {
-            return Err(CoreError::InvalidArgument("レベル補正の出力の範囲"));
+            return Err(CoreError::InvalidArgument(Reason::LevelsOutputRange));
         }
         if !ranges::GAMMA.contains(&self.gamma) {
-            return Err(CoreError::InvalidArgument("ガンマ（0.1〜9.99）"));
+            return Err(CoreError::InvalidArgument(Reason::GammaRange));
         }
         if !ranges::HUE.contains(&self.hue)
             || !ranges::SATURATION.contains(&self.saturation)
             || !ranges::SATURATION.contains(&self.lightness)
         {
-            return Err(CoreError::InvalidArgument("色相・彩度・明度"));
+            return Err(CoreError::InvalidArgument(Reason::HueSaturationAndValue));
         }
         let matches_kind = matches!(
             (self.kind, &self.more),
@@ -417,7 +418,9 @@ impl AdjustmentSettings {
                 | (AdjustmentType::Posterize, More::Posterize(_))
         );
         if !matches_kind {
-            return Err(CoreError::InvalidArgument("調整の種類と値が合わない"));
+            return Err(CoreError::InvalidArgument(
+                Reason::AdjustmentKindAndValuesDoNotMatch,
+            ));
         }
         Ok(())
     }

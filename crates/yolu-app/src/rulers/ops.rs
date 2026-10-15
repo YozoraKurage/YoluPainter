@@ -1,6 +1,7 @@
 //! 定規を変える操作。文書を変えるものは 1 つが 1 回の取り消し（`Document::set_rulers`・`move_rulers`・`set_snap_ruler`。新しいレイヤーに作るときは
 //! `batch` でレイヤーと定規を 1 回に）。描いている間と読むだけのセットでは `Action::apply` が先に断る。
 
+use yolu_core::Reason;
 use yolu_core::{CoreError, LayerId, Ruler, RulerId, RulerKind, RulerScope, RulerSpace};
 
 use super::{Place, RulerState};
@@ -172,7 +173,7 @@ impl AppState {
         let slot = list
             .iter_mut()
             .find(|r| r.id == ruler.id)
-            .ok_or(CoreError::InvalidArgument("その定規がそのレイヤーに無い"))?;
+            .ok_or(CoreError::InvalidArgument(Reason::RulerNotOnLayer))?;
         *slot = ruler;
         let before = self.doc.revision();
         self.doc.set_rulers(owner, list, coalesce)?;

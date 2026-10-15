@@ -5,6 +5,7 @@
 //! 面へ入れる。予算は入れるたびに見るので、予算を超えるなら、全部の升目・タイルを塗って持つ前に断る（持つのは少しの升目と、
 //! まだ書き足されるタイルだけ）。
 
+use crate::Reason;
 use std::collections::{BTreeMap, HashMap};
 
 use rayon::prelude::*;
@@ -104,7 +105,7 @@ fn paint_batches(
 ) -> Result<(), CoreError> {
     settings.validate()?;
     if surface.tile_count() != 0 {
-        return Err(CoreError::InvalidArgument("テキストを塗る面は空であること"));
+        return Err(CoreError::InvalidArgument(Reason::TextSurfaceNotEmpty));
     }
     let face = Face::new(bytes, index)?;
     let layout = layout_face(settings, &face);

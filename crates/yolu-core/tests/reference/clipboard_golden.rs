@@ -523,7 +523,7 @@ fn batch_case(n: u32, seed: u32, o: &mut Vec<u8>) {
                 false,
             )?;
             d.add_layer("doomed")?;
-            Err(CoreError::Unsupported("boom"))
+            Err(CoreError::Unsupported(Reason::CannotPaintGroup))
         }),
         2 => d.batch(|d| {
             let clip = d.cut_pixels(a, Channel::Color, false, MAX)?;

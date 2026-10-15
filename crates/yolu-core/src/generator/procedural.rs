@@ -24,6 +24,7 @@ use crate::math::simd::Neon;
 use crate::math::simd::{self, Lanes};
 #[cfg(target_arch = "x86_64")]
 use crate::math::simd::{Avx2, Sse41};
+use crate::Reason;
 
 /// 評価する空間。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -255,24 +256,24 @@ impl Procedural {
     pub(super) fn validate(&self, kind: Kind) -> Result<(), Error> {
         let bad = |why| Err(Error::Invalid(why));
         if !self.scale.is_finite() || !crate::ranges::NOISE_SCALE.contains(&self.scale) {
-            return bad("ノイズの大きさが範囲外です");
+            return bad(Reason::NoiseScaleRange);
         }
         if self
             .rotation
             .iter()
             .any(|r| !r.is_finite() || !crate::ranges::PROCEDURAL_ROTATION.contains(r))
         {
-            return bad("ノイズの回転が範囲外です");
+            return bad(Reason::NoiseRotationRange);
         }
         if !unit(self.bleed) || !unit(self.blend_width) {
-            return bad("ノイズのにじみ・境目の幅が範囲外です");
+            return bad(Reason::NoiseSoftnessRange);
         }
         if !(1..=MAX_OCTAVES).contains(&self.octaves)
             || !self.lacunarity.is_finite()
             || !crate::ranges::LACUNARITY.contains(&self.lacunarity)
             || !unit(self.gain)
         {
-            return bad("ノイズのオクターブ・ラクナリティ・ゲインが範囲外です");
+            return bad(Reason::NoiseFractalRange);
         }
         let d = Self::default();
         if kind != Kind::Noise
@@ -283,13 +284,13 @@ impl Procedural {
                 || self.lacunarity != d.lacunarity
                 || self.gain != d.gain)
         {
-            return bad("基底・重ね方・オクターブ・ラクナリティ・ゲインはノイズ専用です");
+            return bad(Reason::FractalSettingsOnlyForNoise);
         }
         if kind == Kind::Noise && self.preset != d.preset {
-            return bad("プリセットはグランジ専用です");
+            return bad(Reason::PresetOnlyForGrunge);
         }
         if self.basis != NoiseBasis::Worley && self.cell_output != d.cell_output {
-            return bad("セルの出力は Worley 専用です");
+            return bad(Reason::CellOutputOnlyForWorley);
         }
         Ok(())
     }
@@ -494,7 +495,7 @@ impl Plan {
                 let e = std::array::from_fn::<_, 3, _>(|i| m.bounds_max[i] - m.bounds_min[i]);
                 let diag = (e[0] * e[0] + e[1] * e[1] + e[2] * e[2]).sqrt();
                 if !diag.is_finite() {
-                    return Err(Error::Invalid("Position の境界箱が大きすぎます"));
+                    return Err(Error::Invalid(Reason::GeneratorPositionBoundsTooLarge));
                 }
                 if diag <= 0. {
                     fallback = Some(Inactive::EmptyBounds);

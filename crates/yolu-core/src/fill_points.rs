@@ -72,22 +72,22 @@ pub const DEFAULT_SPREAD: f64 = 0.1;
 
 impl PointGradient {
     /// 点の数（1〜64）・位置（有限で ±1e6）・広がり（0〜1）を確かめる。UV の空間の点の z は 0。
-    pub fn validate(&self) -> Result<(), &'static str> {
+    pub fn validate(&self) -> Result<(), crate::Reason> {
         if self.points.is_empty() || self.points.len() > MAX_POINTS {
-            return Err("点の数は 1〜64");
+            return Err(crate::Reason::FillPointCountRange);
         }
         if !self.spread.is_finite() || !(0.0..=1.0).contains(&self.spread) {
-            return Err("広がりは 0〜1");
+            return Err(crate::Reason::FillPointSpreadRange);
         }
         for p in &self.points {
             if p.position
                 .iter()
                 .any(|v| !v.is_finite() || v.abs() > MAX_COORDINATE)
             {
-                return Err("点の位置が範囲外");
+                return Err(crate::Reason::FillPointPositionRange);
             }
             if self.space == PointSpace::Uv && p.position[2] != 0.0 {
-                return Err("UV の空間の点の z は 0");
+                return Err(crate::Reason::FillPointUvDepthNotZero);
             }
         }
         Ok(())

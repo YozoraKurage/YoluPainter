@@ -1,4 +1,5 @@
 use super::{check, MeshBakeInput, MeshBakeSettings, Result};
+use crate::Reason;
 pub(crate) struct Raster {
     pub triangles: Vec<RasterTriangle>,
     pub bands: Vec<Vec<usize>>,
@@ -108,7 +109,7 @@ impl Raster {
         check(
             items <= i32::MAX as usize / 2
                 && items.saturating_sub(2 * receivers.len()) as u64 * 4 <= remaining,
-            "UVの行帯参照がベイク予算を超えます",
+            Reason::BakeUvRowsOverBudget,
         )?;
         let mut bands = vec![vec![]; (height as usize).div_ceil(8)];
         for (r, t) in triangles.iter().enumerate() {

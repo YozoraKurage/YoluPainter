@@ -629,7 +629,7 @@ fn a_material_keeps_the_fill_and_drops_what_ties_it_to_its_place() {
     for id in [below, group] {
         let refused = d.capture_material(id, "x").unwrap_err();
         assert!(
-            matches!(refused, CoreError::InvalidArgument(m) if m.contains("塗りつぶし")),
+            matches!(refused, CoreError::InvalidArgument(m) if m.ja().contains("塗りつぶし")),
             "{refused}"
         );
     }

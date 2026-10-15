@@ -8,6 +8,7 @@
 //!   どの画素を書くより前に済ませ、プリマルチプライドで混ぜた色を画素ごとに持つ。同じ画素の重複・範囲外・参照の無い画素は、
 //!   ダブごと取り消す。
 
+use crate::Reason;
 use std::collections::HashMap;
 
 use super::effects::byte255;
@@ -254,18 +255,16 @@ impl StrokeState {
                 BrushEffect::Clone { .. } | BrushEffect::Smudge { .. } | BrushEffect::Blur { .. }
             )
         {
-            return Err(CoreError::Unsupported(
-                "写像されたダブはクローン・指先・ぼかし・色の混ぜの伸ばすだけ",
-            ));
+            return Err(CoreError::Unsupported(Reason::MappedDabsNeedSamplingBrush));
         }
         if points.is_some_and(|p| p.len() != pixels.len()) {
             return Err(CoreError::InvalidArgument(
-                "ステンシルの点は画素ごとに 1 つ",
+                Reason::StencilPointCountMismatch,
             ));
         }
-        require_finite(pressure, "pressure")?;
+        require_finite(pressure, Reason::Pressure)?;
         if !(0.0..=1.0).contains(&pressure) {
-            return Err(CoreError::InvalidArgument("pressure"));
+            return Err(CoreError::InvalidArgument(Reason::Pressure));
         }
         self.effect.scratch = 0;
         self.effect.has_position = true;
@@ -312,29 +311,29 @@ impl StrokeState {
         };
         for (i, p) in pixels.iter().enumerate() {
             let dest = p.pixel;
-            require_finite(dest.coverage, "coverage")?;
+            require_finite(dest.coverage, Reason::Coverage)?;
             if dest.x < 0
                 || dest.x >= self.width
                 || dest.y < 0
                 || dest.y >= self.height
                 || !(0.0..=1.0).contains(&dest.coverage)
             {
-                return Err(CoreError::InvalidArgument("写像されたダブの画素"));
+                return Err(CoreError::InvalidArgument(Reason::MappedDabPixel));
             }
             for t in [&p.a, &p.b, &p.c, &p.d] {
                 if !valid_tap(t, self.width, self.height) {
-                    return Err(CoreError::InvalidArgument("写像されたダブの参照"));
+                    return Err(CoreError::InvalidArgument(Reason::MappedDabSource));
                 }
             }
             if p.a.weight + p.b.weight + p.c.weight + p.d.weight <= 0.0 {
-                return Err(CoreError::InvalidArgument("写像された画素に参照が無い"));
+                return Err(CoreError::InvalidArgument(Reason::MappedPixelNeedsSource));
             }
             if mapped
                 .index
                 .insert(dest.y * self.width + dest.x, i)
                 .is_some()
             {
-                return Err(CoreError::InvalidArgument("写像されたダブの画素が重複"));
+                return Err(CoreError::InvalidArgument(Reason::DuplicateMappedDabPixel));
             }
             mapped.colors.push(self.sample_mapped(surface, p)?);
         }
