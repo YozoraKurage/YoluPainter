@@ -907,12 +907,8 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     if count == 0 {
         return Err(Stop::Refused(CopyRefusal::NoLayers));
     }
-    if count > limits.max_layers {
-        return Err(Stop::Refused(CopyRefusal::TooManyLayers {
-            count,
-            limit: limits.max_layers,
-        }));
-    }
+    // 記録の数が予算から決めた上限を超えるかは、文書のレイヤーの数（.ylp の上限）を確かめたあとで断る（下）。予算を上げても取り込めない数なら、
+    // 予算の上限でなく .ylp の上限で知らせるため。記録は区切りや落とすレイヤーも数えるので、文書のレイヤーの数は読み終えるまで分からない
 
     // レイヤーの記録（付加情報は 1 枚ずつ読んで、知らせだけ残す）
     let mut parsed: Vec<Parsed> = Vec::with_capacity(count);
@@ -1048,6 +1044,12 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         return Err(Stop::Refused(CopyRefusal::LayerCountOverLimit {
             count: items.len(),
             limit: crate::MAX_DOCUMENT_LAYERS,
+        }));
+    }
+    if count > limits.max_layers {
+        return Err(Stop::Refused(CopyRefusal::TooManyLayers {
+            count,
+            limit: limits.max_layers,
         }));
     }
 

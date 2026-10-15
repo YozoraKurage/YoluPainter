@@ -1846,6 +1846,23 @@ fn more_layers_than_a_ylp_holds_are_refused_and_group_dividers_do_not_count() {
         }
     );
     assert!(!why.raised_by_budget());
+    // 予算から決めた上限（4096 MiB なら 4096 枚）も超える数は、予算でなく .ylp の上限で知らせる（予算を上げても取り込めない）
+    let many = Psd::new(2, 2, (0..5000).map(leaf).collect()).build();
+    assert_eq!(
+        refused(&many, 4096 * MIB),
+        CopyRefusal::LayerCountOverLimit {
+            count: 5000,
+            limit: 2048
+        }
+    );
+    // 予算が小さいときも同じ（予算の上限は 256 枚）。.ylp の上限に収まる数だけが、予算の上限で断られる
+    assert_eq!(
+        refused(&many, 256 * MIB),
+        CopyRefusal::LayerCountOverLimit {
+            count: 5000,
+            limit: 2048
+        }
+    );
     // グループはレイヤーに数える。区切りの記録は数えない: 1024 個のグループ（各 1 枚入り）はレイヤー 2048 枚（記録は 3072）で取り込め、
     // 1 枚足すと断る
     let groups = |extra: bool| {
