@@ -1,6 +1,7 @@
 //! ブラシの画面（左のブラシのパネルと、ブラシの詳細のウィンドウ）の操作と見た目（egui_kittest）。一覧の操作そのものの試験（画面を描かない）は
 //! `brush_list.rs`。見た目の試験は、パネルやウィンドウの中だけを撮る（ほかのパネルの変更で壊れない）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Rect};
@@ -16,7 +17,7 @@ use yolu_app::{Tab, YoluApp};
 type H = Harness<'static, YoluApp>;
 
 fn st(h: &H) -> &AppState {
-    &h.state().state
+    h.app()
 }
 
 fn b(id: &'static str) -> BrushKey {
@@ -24,9 +25,7 @@ fn b(id: &'static str) -> BrushKey {
 }
 
 fn language(h: &mut H, lang: Lang) {
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Language(lang)));
+    h.act(Action::M2Ui(UiOp::Language(lang)));
     h.run();
 }
 
@@ -44,7 +43,7 @@ fn row_of(h: &H, name: &str) -> Rect {
 
 /// 一覧を先頭へ戻す（新しいブラシを作ると、一覧はその行へ送られる。組の高さに入りきらない行は、先頭へ戻さないと見えない）。
 fn list_to_top(h: &mut H) {
-    h.state_mut().state.brushes.ui.list_scroll = 0.0;
+    h.brushes_mut().ui.list_scroll = 0.0;
     h.run();
 }
 
@@ -60,7 +59,7 @@ fn group_tab(h: &H, name: &str) -> Rect {
 }
 
 fn open_detail(h: &mut H, category: Category) {
-    let ui = &mut h.state_mut().state.brushes.ui;
+    let ui = &mut h.brushes_mut().ui;
     ui.detail.open = true;
     ui.detail.category = category;
     ui.detail.scroll = 0.0;
@@ -117,7 +116,7 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
         h.query_all_by_label("アルファ").next().is_none(),
         "筆先の形は詳細のウィンドウの「形状」にあり、プロパティにアルファのタブは無い"
     );
-    assert_eq!(st(&h).ui.property_tab, 0);
+    assert_eq!(st(&h).ui().property_tab, 0);
     // 英語
     language(&mut h, Lang::En);
     assert!(h.query_all_by_label("Alpha").next().is_none());
@@ -132,17 +131,17 @@ fn the_brush_panel_is_the_first_tab_of_the_left_dock_and_the_properties_lose_the
 fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     let mut h = app(1600.0, 1200.0, 128);
     click_row(&mut h, "ハード円");
-    assert_eq!(st(&h).brushes.lib.current(), b("hard-round"));
-    assert_eq!(st(&h).brush.hardness, 0.95);
+    assert_eq!(st(&h).brushes().lib.current(), b("hard-round"));
+    assert_eq!(st(&h).brush().hardness, 0.95);
     // グループのタブを押しても、ブラシは替わらない（見ている一覧だけ）
     let tab = group_tab(&h, "筆").center();
     click(&mut h, tab);
     assert_eq!(st(&h).shown_brush_group(), Some(Group::Brush));
-    assert_eq!(st(&h).brushes.lib.current(), b("hard-round"));
-    assert_eq!(st(&h).tool, Tool::Brush);
+    assert_eq!(st(&h).brushes().lib.current(), b("hard-round"));
+    assert_eq!(st(&h).tool(), Tool::Brush);
     click_row(&mut h, "チョーク");
-    assert_eq!(st(&h).brushes.lib.current(), b("chalk"));
-    assert!(st(&h).m2.brush.texture.is_some());
+    assert_eq!(st(&h).brushes().lib.current(), b("chalk"));
+    assert!(st(&h).m2().brush.texture.is_some());
     // ブラシのツールの一覧に、消しゴムのグループのタブも行も無い（消しゴムは消しゴムのツールの一覧）
     assert!(
         h.query_all_by_label("消しゴム")
@@ -151,7 +150,7 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     );
     assert!(h.query_all_by_label("ソフト消しゴム").next().is_none());
     // 消しゴムのツールに替えると、一覧は消しゴムだけになる（グループのタブも無い）。行を押してもツールは消しゴムのまま
-    h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
+    h.act(Action::SelectTool(Tool::Eraser));
     h.run();
     assert!(
         h.query_all_by_label("ハード円").next().is_none(),
@@ -162,17 +161,17 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
         "グループのタブは出ない"
     );
     click_row(&mut h, "ソフト消しゴム");
-    assert_eq!(st(&h).tool, Tool::Eraser);
-    assert_eq!(st(&h).brush.radius, 24.0);
+    assert_eq!(st(&h).tool(), Tool::Eraser);
+    assert_eq!(st(&h).brush().radius, 24.0);
     // ブラシを替えても Undo の段は増えない（ブラシの設定は文書ではない）
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     click_row(&mut h, "ハード消しゴム");
-    assert_eq!(st(&h).brushes.lib.current(), b("hard-eraser"));
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).brushes().lib.current(), b("hard-eraser"));
+    assert_eq!(st(&h).doc().undo_count(), steps);
     // 選んだ行が青く、変更ありの印は無い。キーボードでツールを替えると、ツールごとのブラシに戻る
     key(&h, Key::B, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).brushes.lib.current(), b("chalk"));
+    assert_eq!(st(&h).brushes().lib.current(), b("chalk"));
     assert_eq!(
         st(&h).shown_brush_group(),
         Some(Group::Brush),
@@ -180,14 +179,14 @@ fn clicking_a_row_switches_the_brush_and_the_group_tabs_only_change_the_list() {
     );
     key(&h, Key::E, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).brushes.lib.current(), b("hard-eraser"));
+    assert_eq!(st(&h).brushes().lib.current(), b("hard-eraser"));
 }
 
 #[test]
 fn the_eraser_tool_erases_with_the_eraser_groups_brush() {
     let mut h = app(1600.0, 900.0, 256);
     click_row(&mut h, "ハード円");
-    h.state_mut().state.brush.radius = 30.0;
+    h.brush_mut().radius = 30.0;
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -60.0, 0.0), offset(c, 60.0, 0.0)]);
     let off = offset(c, 0.0, 60.0);
@@ -196,70 +195,70 @@ fn the_eraser_tool_erases_with_the_eraser_groups_brush() {
     // E: 消しゴムのグループの、最後に使ったブラシ（標準の消しゴム）。それを細くして、中ほどを消す
     key(&h, Key::E, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).tool, Tool::Eraser);
-    assert_eq!(st(&h).brushes.lib.current(), b("standard-eraser"));
+    assert_eq!(st(&h).tool(), Tool::Eraser);
+    assert_eq!(st(&h).brushes().lib.current(), b("standard-eraser"));
     assert_eq!(st(&h).shown_brush_group(), Some(Group::Eraser));
     assert_eq!(
-        st(&h).brush.radius,
+        st(&h).brush().radius,
         16.0,
         "描くツールの大きさ（30）ではなく、消しゴムの設定"
     );
-    h.state_mut().state.brush.radius = 4.0;
-    let steps = st(&h).doc.undo_count();
+    h.brush_mut().radius = 4.0;
+    let steps = st(&h).doc().undo_count();
     drag(&mut h, &[offset(c, -40.0, 0.0), offset(c, 40.0, 0.0)]);
-    assert_eq!(st(&h).doc.undo_count(), steps + 1);
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
     assert!(canvas_pixel(&h, c)[3] < 255, "消しゴムで消えた");
     assert_eq!(canvas_pixel(&h, off)[3], 255, "細い消しゴムの外は残る");
     // 消しゴムの一覧のブラシを選び直す: ソフトな消しゴムは縁がなだらか
     click_row(&mut h, "ソフト消しゴム");
-    assert_eq!(st(&h).tool, Tool::Eraser);
+    assert_eq!(st(&h).tool(), Tool::Eraser);
     // B で描くツールへ戻ると、描くツールの最後のブラシ（変えた設定ごと）
     key(&h, Key::B, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).brushes.lib.current(), b("hard-round"));
-    assert_eq!(st(&h).brush.radius, 30.0);
+    assert_eq!(st(&h).brushes().lib.current(), b("hard-round"));
+    assert_eq!(st(&h).brush().radius, 30.0);
 }
 
 #[test]
 fn the_list_footer_adds_duplicates_reverts_and_deletes() {
     let mut h = app(1600.0, 1200.0, 128);
     click_row(&mut h, "ハード円");
-    h.state_mut().state.brush.radius = 30.0;
+    h.brush_mut().radius = 30.0;
     h.run();
     // 変えると、行に変更ありの印（行のツールチップにも）。元に戻すが押せる
     let row = row_of(&h, "ハード円");
     assert!(st(&h).brush_is_modified(b("hard-round")));
     h.get_by_label_contains("元の設定に戻す").click();
     h.run();
-    assert_eq!(st(&h).brush.radius, 12.0);
+    assert_eq!(st(&h).brush().radius, 12.0);
     assert!(!st(&h).brush_is_modified(b("hard-round")));
     let _ = row;
     // 追加
     h.get_by_label("今の設定を新しいブラシに").click();
     h.run();
-    let key = st(&h).brushes.lib.current();
+    let key = st(&h).brushes().lib.current();
     assert!(key.is_user());
-    assert_eq!(st(&h).message, "ブラシを追加しました: ブラシ");
+    assert_eq!(st(&h).message(), "ブラシを追加しました: ブラシ");
     // 新しい行が一覧に出て選ばれている。複製
     row_of(&h, "ブラシ");
     h.get_by_label("ブラシを複製").click();
     h.run();
     row_of(&h, "ブラシ のコピー");
-    assert_ne!(st(&h).brushes.lib.current(), key);
+    assert_ne!(st(&h).brushes().lib.current(), key);
     // 削除（今のブラシ。並びから外すだけで、ファイルは残る）
-    let copy = st(&h).brushes.lib.current();
+    let copy = st(&h).brushes().lib.current();
     h.get_by_label("ブラシを削除").click();
     h.run();
-    assert!(!st(&h).toolset.set.contains(copy));
-    assert!(st(&h).brushes.lib.entry(copy).is_some());
-    assert_eq!(st(&h).brushes.lib.current(), key, "前の行へ");
+    assert!(!st(&h).toolset().set.contains(copy));
+    assert!(st(&h).brushes().lib.entry(copy).is_some());
+    assert_eq!(st(&h).brushes().lib.current(), key, "前の行へ");
     // 組み込みも並びから外せる（「＋」のウィンドウから戻せる）
     list_to_top(&mut h);
     click_row(&mut h, "ハード円");
     h.get_by_label("ブラシを削除").click();
     h.run();
-    assert!(!st(&h).toolset.set.contains(b("hard-round")));
-    assert!(st(&h).brushes.lib.entry(b("hard-round")).is_some());
+    assert!(!st(&h).toolset().set.contains(b("hard-round")));
+    assert!(st(&h).brushes().lib.entry(b("hard-round")).is_some());
 }
 
 #[test]
@@ -267,7 +266,7 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
     let mut h = app(1600.0, 1200.0, 128);
     h.get_by_label("今の設定を新しいブラシに").click();
     h.run();
-    let key = st(&h).brushes.lib.current();
+    let key = st(&h).brushes().lib.current();
     let row = row_of(&h, "ブラシ");
     let at = pos2(row.left() + 30.0, row.center().y);
     for _ in 0..2 {
@@ -276,13 +275,13 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
         h.step();
     }
     h.run();
-    assert_eq!(st(&h).brushes.ui.renaming, Some(key));
+    assert_eq!(st(&h).brushes().ui.renaming, Some(key));
     self::key(&h, Key::A, Modifiers::COMMAND);
     h.event(Event::Text("太い線".into()));
     self::key(&h, Key::Enter, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).brushes.lib.entry(key).unwrap().name, "太い線");
-    assert_eq!(st(&h).brushes.ui.renaming, None);
+    assert_eq!(st(&h).brushes().lib.entry(key).unwrap().name, "太い線");
+    assert_eq!(st(&h).brushes().ui.renaming, None);
     row_of(&h, "太い線");
     // Esc でやめる（名前は変わらない）
     let row = row_of(&h, "太い線");
@@ -296,10 +295,10 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
     h.event(Event::Text("あ".into()));
     self::key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert_eq!(st(&h).brushes.lib.entry(key).unwrap().name, "太い線");
-    assert_eq!(st(&h).brushes.ui.renaming, None);
+    assert_eq!(st(&h).brushes().lib.entry(key).unwrap().name, "太い線");
+    assert_eq!(st(&h).brushes().ui.renaming, None);
     // 組み込みもダブルクリックで名前を変えられる（変えると、同じ場所のファイルの写しになる）。一覧は新しいブラシの所へ送られているので、先頭へ戻す
-    h.state_mut().state.brushes.ui.list_scroll = 0.0;
+    h.brushes_mut().ui.list_scroll = 0.0;
     h.run();
     let row = row_of(&h, "標準");
     let at = pos2(row.left() + 30.0, row.center().y);
@@ -309,15 +308,15 @@ fn double_click_renames_a_user_brush_and_built_in_names_do_not_change() {
         h.step();
     }
     h.run();
-    assert_eq!(st(&h).brushes.ui.renaming, Some(b("standard")));
+    assert_eq!(st(&h).brushes().ui.renaming, Some(b("standard")));
     self::key(&h, Key::A, Modifiers::COMMAND);
     h.event(Event::Text("細い線".into()));
     self::key(&h, Key::Enter, Modifiers::NONE);
     h.run();
-    assert!(!st(&h).toolset.set.contains(b("standard")));
-    let copy = st(&h).brushes.lib.current();
+    assert!(!st(&h).toolset().set.contains(b("standard")));
+    let copy = st(&h).brushes().lib.current();
     assert!(copy.is_user());
-    assert_eq!(st(&h).brushes.lib.entry(copy).unwrap().name, "細い線");
+    assert_eq!(st(&h).brushes().lib.entry(copy).unwrap().name, "細い線");
     row_of(&h, "細い線");
 }
 
@@ -330,25 +329,25 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
     h.step();
     release(&h, row.center(), PointerButton::Secondary);
     h.run();
-    assert!(st(&h).popup.is_some());
+    assert!(st(&h).popup().is_some());
     // 変更が無ければ、登録と元に戻すは押せない（組み込みも、名前の変更・削除・複製はできる）
     for label in ["この設定で登録", "元に戻す"] {
         let item = popup_item(&h, label);
         click(&mut h, item.center());
-        assert!(st(&h).popup.is_some(), "{label}: 押せない項目は閉じない");
-        assert_eq!(st(&h).brushes.ui.renaming, None);
-        assert!(st(&h).brushes.lib.entry(b("pencil")).is_some());
+        assert!(st(&h).popup().is_some(), "{label}: 押せない項目は閉じない");
+        assert_eq!(st(&h).brushes().ui.renaming, None);
+        assert!(st(&h).brushes().lib.entry(b("pencil")).is_some());
     }
     let at = popup_item(&h, "複製").center();
     click(&mut h, at);
-    let copy = st(&h).brushes.lib.current();
+    let copy = st(&h).brushes().lib.current();
     assert!(copy.is_user());
     assert_eq!(
-        st(&h).brushes.lib.entry(copy).unwrap().name,
+        st(&h).brushes().lib.entry(copy).unwrap().name,
         "鉛筆 のコピー"
     );
     // 利用者のブラシ: 変えて、登録（新しい元になる）。名前の変更はメニューから
-    h.state_mut().state.brush.radius = 55.0;
+    h.brush_mut().radius = 55.0;
     h.run();
     let row = row_of(&h, "鉛筆 のコピー");
     press(&h, row.center(), PointerButton::Secondary);
@@ -359,7 +358,14 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
     click(&mut h, at);
     assert!(!st(&h).brush_is_modified(copy));
     assert_eq!(
-        st(&h).brushes.lib.entry(copy).unwrap().baseline.base.radius,
+        st(&h)
+            .brushes()
+            .lib
+            .entry(copy)
+            .unwrap()
+            .baseline
+            .base
+            .radius,
         55.0
     );
     let row = row_of(&h, "鉛筆 のコピー");
@@ -369,7 +375,7 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
     h.run();
     let at = popup_item(&h, "名前を変更").center();
     click(&mut h, at);
-    assert_eq!(st(&h).brushes.ui.renaming, Some(copy));
+    assert_eq!(st(&h).brushes().ui.renaming, Some(copy));
     self::key(&h, Key::Escape, Modifiers::NONE);
     h.run();
     // 削除
@@ -380,8 +386,8 @@ fn the_row_menu_renames_duplicates_registers_reverts_and_deletes() {
     h.run();
     let at = popup_item(&h, "削除").center();
     click(&mut h, at);
-    assert!(!st(&h).toolset.set.contains(copy), "並びから外す");
-    assert!(st(&h).brushes.lib.entry(copy).is_some(), "ファイルは残る");
+    assert!(!st(&h).toolset().set.contains(copy), "並びから外す");
+    assert!(st(&h).brushes().lib.entry(copy).is_some(), "ファイルは残る");
 }
 
 #[test]
@@ -418,8 +424,8 @@ fn dragging_a_row_reorders_the_list_inside_its_group() {
     assert_eq!(after[after.len() - 2], second);
     assert_eq!(after[after.len() - 1], first);
     // 動かしても、今のブラシは替わらない。ドラッグは Undo の段を作らない
-    assert_eq!(st(&h).toolset.ui.drag, None);
-    assert!(!st(&h).doc.can_undo());
+    assert_eq!(st(&h).toolset().ui.drag, None);
+    assert!(!st(&h).doc().can_undo());
     // 一番下の空白へ落とすと、グループの一番後ろ
     list_to_top(&mut h);
     let top = row_of(&h, "標準");
@@ -450,34 +456,34 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
     // 直径（1 行の形のスライダー）: 左の端を押すと最小、右の端で最大
     let size = slider(&h, "直径");
     click(&mut h, pos2(size.left() + 1.0, size.center().y));
-    assert!(st(&h).brush.radius < 1.5, "{}", st(&h).brush.radius);
+    assert!(st(&h).brush().radius < 1.5, "{}", st(&h).brush().radius);
     click(&mut h, pos2(size.right() - 1.0, size.center().y));
-    assert!(st(&h).brush.radius >= 127.0);
+    assert!(st(&h).brush().radius >= 127.0);
     let hardness = slider(&h, "硬さ");
     click(&mut h, pos2(hardness.left() + 1.0, hardness.center().y));
-    assert!(st(&h).brush.hardness < 0.02);
+    assert!(st(&h).brush().hardness < 0.02);
     // 手ぶれ補正は描き手の設定（一覧の変更ありの印にならない）
     let stab = slider(&h, "手ぶれ補正");
-    let before = st(&h).brush_is_modified(st(&h).brushes.lib.current());
+    let before = st(&h).brush_is_modified(st(&h).brushes().lib.current());
     click(
         &mut h,
         pos2(stab.left() + stab.width() * 0.5, stab.center().y),
     );
-    assert!((90.0..110.0).contains(&(st(&h).m2.brush.assist.stabilizer as f32)));
+    assert!((90.0..110.0).contains(&(st(&h).m2().brush.assist.stabilizer as f32)));
     assert_eq!(
-        st(&h).brush_is_modified(st(&h).brushes.lib.current()),
+        st(&h).brush_is_modified(st(&h).brushes().lib.current()),
         before
     );
     // 筆圧のボタン（直径・不透明度・流量）
     for (label, get) in [
         (
             "筆圧で直径を変える",
-            (|s: &AppState| s.brush.pressure.size) as fn(&AppState) -> bool,
+            (|s: &AppState| s.brush().pressure.size) as fn(&AppState) -> bool,
         ),
         ("筆圧で不透明度を変える", |s| {
-            s.brush.pressure.opacity
+            s.brush().pressure.opacity
         }),
-        ("筆圧で流量を変える", |s| s.brush.pressure.flow),
+        ("筆圧で流量を変える", |s| s.brush().pressure.flow),
     ] {
         let was = get(st(&h));
         let at = rect_of(&h, label, in_panel).center();
@@ -492,7 +498,7 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
         &mut h,
         pos2(flow.left() + flow.width() * 0.5, flow.center().y),
     );
-    assert!((0.4..0.6).contains(&st(&h).brush.flow));
+    assert!((0.4..0.6).contains(&st(&h).brush().flow));
     // 値の箱ではなく、行の中をダブルクリックして数を打てる（直前の押下から時間を空ける。直前の別の所の押下と 3 回押しにならないように）
     for _ in 0..40 {
         h.step();
@@ -509,9 +515,9 @@ fn the_tool_properties_change_the_live_brush_and_the_pen_buttons_toggle_pressure
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
     assert!(
-        (st(&h).brush.spacing - 0.4).abs() < 1e-6,
+        (st(&h).brush().spacing - 0.4).abs() < 1e-6,
         "{}",
-        st(&h).brush.spacing
+        st(&h).brush().spacing
     );
 }
 
@@ -528,24 +534,24 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
     for size in [1u32, 3, 8, 24, 64, 128, 256] {
         let at = cell(&h, size).center();
         click(&mut h, at);
-        assert_eq!(st(&h).brush.radius, size as f32 / 2.0, "{size}");
+        assert_eq!(st(&h).brush().radius, size as f32 / 2.0, "{size}");
         let near = yolu_app::panels::brushes::SIZES
-            [yolu_app::panels::brushes::nearest_size(st(&h).brush.radius * 2.0)];
+            [yolu_app::panels::brushes::nearest_size(st(&h).brush().radius * 2.0)];
         assert_eq!(near, size);
     }
     // 間の大きさは、近い丸に印（比で近いほう）
-    h.state_mut().state.brush.radius = 18.0; // 直径 36
+    h.brush_mut().radius = 18.0; // 直径 36
     h.run();
     assert_eq!(
         yolu_app::panels::brushes::SIZES[yolu_app::panels::brushes::nearest_size(36.0)],
         32
     );
     // 大きさを持たないツールでは、パネルは空（丸は出ない）
-    h.state_mut().state.apply(Action::SelectTool(Tool::Fill));
+    h.act(Action::SelectTool(Tool::Fill));
     h.run();
     assert!(h.query_by_label("32 px").is_none());
     // 英語（丸の名前は同じ）
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.act(Action::SelectTool(Tool::Brush));
     language(&mut h, Lang::En);
     assert!(h.query_by_label("32 px").is_some());
 }
@@ -555,10 +561,10 @@ fn the_size_circles_set_the_diameter_and_mark_the_nearest_one() {
 #[test]
 fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
     let mut h = app(1600.0, 900.0, 128);
-    assert!(!st(&h).brushes.ui.detail.open);
+    assert!(!st(&h).brushes().ui.detail.open);
     h.get_by_label("ブラシの詳細").click();
     h.run();
-    assert!(st(&h).brushes.ui.detail.open);
+    assert!(st(&h).brushes().ui.detail.open);
     let window = detail_rect(&h);
     // ウィンドウはキャンバスの真ん中を空けた所に出る
     assert!(window.left() > 340.0 && window.top() > 100.0, "{window:?}");
@@ -574,12 +580,12 @@ fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
     // もう一度押すと閉じる。ウィンドウの閉じるボタンでも閉じる
     h.get_by_label("ブラシの詳細").click();
     h.run();
-    assert!(!st(&h).brushes.ui.detail.open);
+    assert!(!st(&h).brushes().ui.detail.open);
     h.get_by_label("ブラシの詳細").click();
     h.run();
     h.get_by_label("閉じる").click();
     h.run();
-    assert!(!st(&h).brushes.ui.detail.open);
+    assert!(!st(&h).brushes().ui.detail.open);
 }
 
 /// 「筆圧」のカテゴリの曲線の枠（共通の編集の部品）: 項目ごとの曲線を点で直し、ドラッグは離したとき 1 回で入り（Esc でやめられる）、切っている項目では
@@ -607,7 +613,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     let g = frame.shrink(6.0);
     let at = |x: f32, y: f32| pos2(g.left() + x * g.width(), g.bottom() - y * g.height());
     let primary = PointerButton::Primary;
-    let size = |h: &H| st(h).m2.brush.influences.size.pressure.response.clone();
+    let size = |h: &H| st(h).m2().brush.influences.size.pressure.response.clone();
     assert!(size(&h).is_identity());
     assert!(window.contains_rect(frame), "{window:?} {frame:?}");
 
@@ -634,7 +640,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     // ほかの項目は変わらない
     assert!(st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .opacity
@@ -642,7 +648,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
         .response
         .is_identity());
     assert!(st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .flow
@@ -650,7 +656,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
         .response
         .is_identity());
     assert!(st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .hardness
@@ -695,7 +701,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     // 筆圧を使わない項目では、曲線は触れない
     let toggle = first(&h, "筆圧を使う");
     click(&mut h, toggle.center());
-    assert!(!st(&h).brush.pressure.size);
+    assert!(!st(&h).brush().pressure.size);
     let off = size(&h);
     move_to(&h, at(0.5, 0.5));
     h.step();
@@ -708,11 +714,11 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     h.run();
     assert_eq!(size(&h), off);
     click(&mut h, toggle.center());
-    assert!(st(&h).brush.pressure.size);
+    assert!(st(&h).brush().pressure.size);
 
     // 項目ごと: 2 番目（不透明度）の最小と曲線を直しても、サイズは今のまま。不透明度の側だけが変わる
     // （不透明度の曲線の枠はウィンドウの下の端にかかるので、少し送ってから触る）
-    h.state_mut().state.brushes.ui.detail.scroll = 120.0;
+    h.brushes_mut().ui.detail.scroll = 120.0;
     h.run();
     let opacity_min = {
         let mut nodes: Vec<Rect> = h
@@ -739,7 +745,16 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
             opacity_min.center().y,
         ),
     );
-    let opacity = |h: &H| st(h).m2.brush.influences.opacity.pressure.response.clone();
+    let opacity = |h: &H| {
+        st(h)
+            .m2()
+            .brush
+            .influences
+            .opacity
+            .pressure
+            .response
+            .clone()
+    };
     assert!(
         (0.5..0.7).contains(&opacity(&h).min()),
         "{}",
@@ -758,7 +773,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert!((bent.curve_shape().points()[1].y - 0.8).abs() < 0.02);
     assert_eq!(size(&h), size_now, "サイズの応えは変わらない");
     assert!(st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .flow
@@ -766,7 +781,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
         .response
         .is_identity());
     assert!(st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .hardness
@@ -787,7 +802,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     h.run();
     assert!(opacity(&h).curve().is_empty());
     assert_eq!(size(&h), size_now);
-    h.state_mut().state.brushes.ui.detail.scroll = 0.0;
+    h.brushes_mut().ui.detail.scroll = 0.0;
     h.run();
 
     // 曲線を足してから既定に戻す: 直線・最小 0 へ
@@ -795,7 +810,7 @@ fn the_pressure_curve_in_the_detail_window_is_edited_per_item_and_cancels_with_e
     assert_eq!(size(&h).curve().len(), 3);
     h.get_by_label("筆圧を既定に戻す").click();
     h.run();
-    assert!(pressure_identity(&st(&h).m2.brush));
+    assert!(pressure_identity(&st(&h).m2().brush));
 }
 
 #[test]
@@ -811,52 +826,52 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
             pos2(slider.left() + slider.width() * 0.6, slider.center().y),
         ],
     );
-    let size = st(&h).m2.brush.jitter.size;
+    let size = st(&h).m2().brush.jitter.size;
     assert!((0.5..0.7).contains(&size), "{size}");
     assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     // 見出しの右の既定に戻す
     h.get_by_label("ゆらぎを既定に戻す").click();
     h.run();
-    assert_eq!(st(&h).m2.brush.jitter.size, 0.0);
+    assert_eq!(st(&h).m2().brush.jitter.size, 0.0);
     assert!(!st(&h).brush_is_modified(b("standard")));
     // カテゴリを替える（左の一覧を押す）
     let window = detail_rect(&h);
     let at = rect_of(&h, "ストローク", |r| window.contains(r.center())).center();
     click(&mut h, at);
-    assert_eq!(st(&h).brushes.ui.detail.category, Category::Stroke);
+    assert_eq!(st(&h).brushes().ui.detail.category, Category::Stroke);
     // ストローク: 手ぶれ補正と曲線
     let stab = in_pane(&h, "手ぶれ補正");
     click(
         &mut h,
         pos2(stab.left() + stab.width() * 0.5, stab.center().y),
     );
-    assert!(st(&h).m2.brush.assist.stabilizer > 50.0);
+    assert!(st(&h).m2().brush.assist.stabilizer > 50.0);
     h.get_by_label("曲線").click();
     h.run();
-    assert!(st(&h).m2.brush.assist.curve);
+    assert!(st(&h).m2().brush.assist.curve);
     // 最低 1 ピクセル（ストロークの欄のチェック）。入れると変更ありになり、既定に戻すと切に戻る
-    assert!(!st(&h).m2.brush.controls.min_one_pixel);
+    assert!(!st(&h).m2().brush.controls.min_one_pixel);
     h.get_by_label("最低 1 ピクセル").click();
     h.run();
-    assert!(st(&h).m2.brush.controls.min_one_pixel);
+    assert!(st(&h).m2().brush.controls.min_one_pixel);
     assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     h.get_by_label("ストロークを既定に戻す").click();
     h.run();
-    assert_eq!(st(&h).m2.brush.assist.stabilizer, 0.0);
-    assert!(!st(&h).m2.brush.assist.curve);
-    assert!(!st(&h).m2.brush.controls.min_one_pixel);
+    assert_eq!(st(&h).m2().brush.assist.stabilizer, 0.0);
+    assert!(!st(&h).m2().brush.assist.curve);
+    assert!(!st(&h).m2().brush.controls.min_one_pixel);
     // パスのツールの間は、最低 1 ピクセルは押せない（パスは `Controls` を持たない）。ほかのツールでは押せる
     assert!(!h
         .get_by_label("最低 1 ピクセル")
         .accesskit_node()
         .is_disabled());
-    h.state_mut().state.apply(Action::SelectTool(Tool::Path));
+    h.act(Action::SelectTool(Tool::Path));
     h.run();
     assert!(h
         .get_by_label("最低 1 ピクセル")
         .accesskit_node()
         .is_disabled());
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.act(Action::SelectTool(Tool::Brush));
     h.run();
     assert!(!h
         .get_by_label("最低 1 ピクセル")
@@ -868,7 +883,7 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
     })
     .center();
     click(&mut h, at);
-    assert_eq!(st(&h).brushes.ui.detail.category, Category::Pressure);
+    assert_eq!(st(&h).brushes().ui.detail.category, Category::Pressure);
     let first = |h: &H, label: &str| {
         let mut nodes: Vec<Rect> = h
             .query_all_by_label(label)
@@ -879,28 +894,28 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
         nodes[0]
     };
     // 先頭の項目（サイズ）の切り替えを切ると、最小値は使えなくなる
-    assert!(st(&h).brush.pressure.size);
+    assert!(st(&h).brush().pressure.size);
     let toggle = first(&h, "筆圧を使う");
     click(&mut h, toggle.center());
-    assert!(!st(&h).brush.pressure.size);
+    assert!(!st(&h).brush().pressure.size);
     assert!(h
         .query_all_by_label("最小")
         .find(|n| window.contains(n.rect().center()))
         .is_some_and(|n| n.accesskit_node().is_disabled()));
     click(&mut h, toggle.center());
-    assert!(st(&h).brush.pressure.size);
+    assert!(st(&h).brush().pressure.size);
     // 最小のスライダーを 40% あたりまで
     let minimum = first(&h, "最小");
     click(
         &mut h,
         pos2(minimum.left() + minimum.width() * 0.4, minimum.center().y),
     );
-    let min = st(&h).m2.brush.influences.size.pressure.response.min();
+    let min = st(&h).m2().brush.influences.size.pressure.response.min();
     assert!((0.3..0.5).contains(&min), "{min}");
     assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     // ほかの項目は変わらない
     assert!(st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .opacity
@@ -909,28 +924,30 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
         .is_identity());
     h.get_by_label("筆圧を既定に戻す").click();
     h.run();
-    assert!(pressure_identity(&st(&h).m2.brush));
+    assert!(pressure_identity(&st(&h).m2().brush));
     assert!(
-        st(&h).brush.pressure.size && st(&h).brush.pressure.opacity && !st(&h).brush.pressure.flow
+        st(&h).brush().pressure.size
+            && st(&h).brush().pressure.opacity
+            && !st(&h).brush().pressure.flow
     );
     assert!(!st(&h).brush_is_modified(b("standard")));
     // 入り抜きとペン: 入り・抜き（筆圧の切り替えは持たない）
     let at = rect_of(&h, "入り抜きとペン", |r| window.contains(r.center())).center();
     click(&mut h, at);
-    assert_eq!(st(&h).brushes.ui.detail.category, Category::Dynamics);
+    assert_eq!(st(&h).brushes().ui.detail.category, Category::Dynamics);
     let taper = in_pane(&h, "入り");
     click(
         &mut h,
         pos2(taper.left() + taper.width() * 0.4, taper.center().y),
     );
-    assert!(st(&h).m2.brush.assist.taper_in > 100.0);
+    assert!(st(&h).m2().brush.assist.taper_in > 100.0);
     // 筆圧で硬さを変える切り替えは「筆圧」の側のもの: 入り抜きとペンを既定に戻しても残る
-    h.state_mut().state.m2.brush.influences.hardness.pressure.on = true;
+    h.m2_mut().brush.influences.hardness.pressure.on = true;
     h.get_by_label("入り抜きとペンを既定に戻す").click();
     h.run();
-    assert_eq!(st(&h).m2.brush.assist.taper_in, 0.0);
-    assert!(st(&h).m2.brush.influences.hardness.pressure.on);
-    h.state_mut().state.m2.brush.influences.hardness.pressure.on = false;
+    assert_eq!(st(&h).m2().brush.assist.taper_in, 0.0);
+    assert!(st(&h).m2().brush.influences.hardness.pressure.on);
+    h.m2_mut().brush.influences.hardness.pressure.on = false;
     // デュアルブラシ: 使う → 欄が出る → 既定に戻すで外れる
     let at = rect_of(&h, "デュアルブラシ", |r| {
         window.contains(r.center()) && r.left() < window.left() + 168.0
@@ -939,13 +956,13 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
     click(&mut h, at);
     h.get_by_label("デュアルブラシを使う").click();
     h.run();
-    assert!(st(&h).m2.brush.dual.is_some());
+    assert!(st(&h).m2().brush.dual.is_some());
     in_pane(&h, "モード: 乗算");
     h.get_by_label("デュアルブラシを既定に戻す").click();
     h.run();
-    assert!(st(&h).m2.brush.dual.is_none());
+    assert!(st(&h).m2().brush.dual.is_none());
     // どの設定も Undo の段を作らない
-    assert!(!st(&h).doc.can_undo());
+    assert!(!st(&h).doc().can_undo());
 }
 
 #[test]
@@ -957,21 +974,21 @@ fn the_detail_window_picks_tips_textures_and_effects_from_its_menus() {
     let dots = rect_of(&h, "ドット", |r| window.contains(r.center()));
     click(&mut h, dots.center());
     assert_eq!(
-        st(&h).m2.brush.tip.image.as_ref().map(|t| t.name()),
+        st(&h).m2().brush.tip.image.as_ref().map(|t| t.name()),
         Some("dots")
     );
     let round = rect_of(&h, "丸（硬さ）", |r| {
         window.contains(r.center()) && r.width() < 60.0
     });
     click(&mut h, round.center());
-    assert!(st(&h).m2.brush.tip.image.is_none());
+    assert!(st(&h).m2().brush.tip.image.is_none());
     // 角度と線の向き
     let angle = in_pane(&h, "角度");
     click(&mut h, pos2(angle.right() - 1.0, angle.center().y));
-    assert!(st(&h).m2.brush.tip.angle > 170.0);
+    assert!(st(&h).m2().brush.tip.angle > 170.0);
     h.get_by_label("線の向きに従う").click();
     h.run();
-    assert!(st(&h).m2.brush.tip.follow_direction);
+    assert!(st(&h).m2().brush.tip.follow_direction);
     // テクスチャ: 画像の箱から選ぶ
     let at = rect_of(&h, "テクスチャ", |r| {
         window.contains(r.center()) && r.left() < window.left() + 168.0
@@ -983,7 +1000,7 @@ fn the_detail_window_picks_tips_textures_and_effects_from_its_menus() {
     click(&mut h, image.center());
     let at = popup_item(&h, "粒子").center();
     click(&mut h, at);
-    assert!(st(&h).m2.brush.texture.is_some());
+    assert!(st(&h).m2().brush.texture.is_some());
     in_pane(&h, "深さ");
     // 効果: ぼかしを選ぶと描くツールのまま、ストロークは効果のブラシで始まる
     let at = rect_of(&h, "効果", |r| {
@@ -995,29 +1012,29 @@ fn the_detail_window_picks_tips_textures_and_effects_from_its_menus() {
     h.run();
     let at = popup_item(&h, "ぼかし").center();
     click(&mut h, at);
-    assert!(matches!(st(&h).m2.brush.effect, BrushEffect::Blur { .. }));
+    assert!(matches!(st(&h).m2().brush.effect, BrushEffect::Blur { .. }));
     in_pane(&h, "半径");
     // ツールプロパティにもぼかしの半径が出る
     rect_of(&h, "ぼかしの半径", in_panel);
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -20.0, 0.0), offset(c, 20.0, 0.0)]);
-    assert!(st(&h).message.is_empty(), "{}", st(&h).message);
+    assert!(st(&h).message().is_empty(), "{}", st(&h).message());
     // 既定に戻す: ペイントへ
     h.get_by_label("効果を既定に戻す").click();
     h.run();
-    assert_eq!(st(&h).m2.brush.effect, BrushEffect::Paint);
+    assert_eq!(st(&h).m2().brush.effect, BrushEffect::Paint);
 }
 
 #[test]
 fn the_effect_type_is_unavailable_for_the_eraser_with_a_reason() {
     let mut h = app(1600.0, 1000.0, 128);
-    h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
+    h.act(Action::SelectTool(Tool::Eraser));
     open_detail(&mut h, Category::Effect);
     let type_box = h.get_by_label("種類: ペイント");
     assert!(type_box.accesskit_node().is_disabled());
     type_box.click();
     h.run();
-    assert!(st(&h).popup.is_none(), "消しゴムでは効果を選ばせない");
+    assert!(st(&h).popup().is_none(), "消しゴムでは効果を選ばせない");
     // 注記の行は出さない（理由はツールチップ）
     for note in ["消しゴムでは使えません", "3D では使えません"] {
         assert!(h.query_by_label(note).is_none(), "{note}");
@@ -1045,18 +1062,18 @@ fn the_detail_window_moves_with_its_header_and_the_canvas_still_paints_beside_it
     let canvas = canvas_rect(&h);
     let spot = pos2(canvas.right() - 40.0, canvas.bottom() - 40.0);
     assert!(!after.contains(spot));
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     drag(&mut h, &[spot, offset(spot, -20.0, 0.0)]);
-    assert_eq!(st(&h).doc.undo_count(), steps + 1);
-    assert!(st(&h).brushes.ui.detail.open);
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
+    assert!(st(&h).brushes().ui.detail.open);
     // ウィンドウの上の押下はキャンバスへ通さない
     let inside = after.center();
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     drag(
         &mut h,
         &[offset(inside, 0.0, 200.0), offset(inside, 30.0, 200.0)],
     );
-    assert_eq!(st(&h).doc.undo_count(), steps);
+    assert_eq!(st(&h).doc().undo_count(), steps);
 }
 
 #[test]
@@ -1064,9 +1081,9 @@ fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     use yolu_app::engine::Channel;
     let mut h = app(1600.0, 1000.0, 256);
     click_tab(&mut h, Tab::View3d);
-    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.act(Action::LoadDemoModel);
     h.run();
-    assert!(st(&h).view3d.paintable_on_screen());
+    assert!(st(&h).view3d().paintable_on_screen());
     // ツールプロパティ: 手ぶれ補正も 3D の面のダブに効く（直径・不透明度・硬さ・流量・間隔も）
     assert!(!h.get_by_label("手ぶれ補正").accesskit_node().is_disabled());
     for label in ["直径", "不透明度", "硬さ", "流量", "間隔"] {
@@ -1115,16 +1132,12 @@ fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     open_detail(&mut h, Category::Color);
     let hue = in_pane_node(&h, "色相");
     assert!(!hue.accesskit_node().is_disabled());
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
+    h.act(Action::M2Ui(UiOp::PaintChannel(Channel::Roughness)));
     h.run();
     assert!(in_pane_node(&h, "色相").accesskit_node().is_disabled());
     // 効果のブラシ（ぼかし・指先・クローン）は 3D の面でも効く（3D の面のブラシ）
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::PaintChannel(Channel::Color)));
-    h.state_mut().state.m2.brush.effect = BrushEffect::BLUR;
+    h.act(Action::M2Ui(UiOp::PaintChannel(Channel::Color)));
+    h.m2_mut().brush.effect = BrushEffect::BLUR;
     open_detail(&mut h, Category::Effect);
     assert!(!in_pane_node(&h, "半径").accesskit_node().is_disabled());
 }
@@ -1195,9 +1208,9 @@ fn the_brush_panel_and_the_detail_window_speak_both_languages_without_clipped_te
             let mut h = app(width, height, 128);
             language(&mut h, lang);
             // 一覧は全グループ・利用者のブラシ 1 つ
-            h.state_mut().state.apply(Action::Brush(BrushAction::Add));
+            h.act(Action::Brush(BrushAction::Add));
             for group in Group::ALL {
-                h.state_mut().state.show_brush_group(group);
+                h.app_mut().show_brush_group(group);
                 h.run();
                 let clipped = clipped_texts(&h);
                 assert!(
@@ -1229,7 +1242,7 @@ fn the_brush_panel_and_the_detail_window_speak_both_languages_without_clipped_te
     let mut h = app(1600.0, 900.0, 128);
     language(&mut h, Lang::En);
     for group in Group::ALL {
-        h.state_mut().state.show_brush_group(group);
+        h.app_mut().show_brush_group(group);
         h.run();
         let japanese: Vec<String> = drawn_texts(&h)
             .into_iter()
@@ -1253,12 +1266,10 @@ fn snapshot_brush_panel_modified_and_user_brush() {
     // ブラシサイズの格子が 2 段になっても一覧の「鉛筆」まで見える高さ
     let mut h = app(1600.0, 1300.0, 128);
     click_row(&mut h, "鉛筆");
-    h.state_mut().state.brush.radius = 9.0;
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Duplicate(b("pencil"))));
-    h.state_mut().state.brush.hardness = 0.2;
-    h.state_mut().state.m2.brush.tip.angle = 40.0;
+    h.brush_mut().radius = 9.0;
+    h.act(Action::Brush(BrushAction::Duplicate(b("pencil"))));
+    h.brush_mut().hardness = 0.2;
+    h.m2_mut().brush.tip.angle = 40.0;
     h.run();
     h.run();
     let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
@@ -1269,9 +1280,7 @@ fn snapshot_brush_panel_modified_and_user_brush() {
 fn snapshot_brush_panel_effects_and_english() {
     let mut h = app(1600.0, 900.0, 128);
     language(&mut h, Lang::En);
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Select(b("smudge"))));
+    h.act(Action::Brush(BrushAction::Select(b("smudge"))));
     h.run();
     h.run();
     let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
@@ -1281,9 +1290,7 @@ fn snapshot_brush_panel_effects_and_english() {
 #[test]
 fn snapshot_brush_panel_eraser_group() {
     let mut h = app(1600.0, 900.0, 128);
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Select(b("soft-eraser"))));
+    h.act(Action::Brush(BrushAction::Select(b("soft-eraser"))));
     h.run();
     h.run();
     let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
@@ -1293,9 +1300,7 @@ fn snapshot_brush_panel_eraser_group() {
 #[test]
 fn snapshot_brush_detail_window() {
     let mut h = app(1600.0, 1000.0, 128);
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Select(b("chalk"))));
+    h.act(Action::Brush(BrushAction::Select(b("chalk"))));
     for (category, name) in [
         (Category::Shape, "brushes_detail_shape"),
         (Category::Stroke, "brushes_detail_stroke"),
@@ -1313,9 +1318,7 @@ fn snapshot_brush_detail_window() {
 fn snapshot_brush_detail_window_english_effect() {
     let mut h = app(1600.0, 1000.0, 128);
     language(&mut h, Lang::En);
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Select(b("clone"))));
+    h.act(Action::Brush(BrushAction::Select(b("clone"))));
     open_detail(&mut h, Category::Effect);
     let rect = detail_rect(&h);
     crate::clean_region(&mut h, "brushes_detail_effect_english", rect);
@@ -1325,9 +1328,7 @@ fn snapshot_brush_detail_window_english_effect() {
 fn snapshot_brush_detail_window_english_stroke() {
     let mut h = app(1600.0, 1000.0, 128);
     language(&mut h, Lang::En);
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Select(b("chalk"))));
+    h.act(Action::Brush(BrushAction::Select(b("chalk"))));
     open_detail(&mut h, Category::Stroke);
     assert!(h.query_by_label("At least 1 pixel").is_some());
     let rect = detail_rect(&h);
@@ -1346,13 +1347,13 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
         pos2(props_tab.left() + 300.0, size_tab.top()),
     );
     let brush = Tool::Brush as usize;
-    let content = st(&h).subtools.ui.props_content[brush];
+    let content = st(&h).subtools().ui.props_content[brush];
     assert!(
         content > body.height(),
         "中身 {content} はパネルの高さ {} を超える",
         body.height()
     );
-    assert_eq!(st(&h).subtools.ui.props_scroll[brush], 0.0);
+    assert_eq!(st(&h).subtools().ui.props_scroll[brush], 0.0);
     let wheel = |h: &mut H, at: egui::Pos2, dy: f32| {
         move_to(h, at);
         h.event(Event::MouseWheel {
@@ -1364,22 +1365,22 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
         h.run();
     };
     // ツールプロパティの上のホイールは、ツールプロパティだけを送る。一覧は動かない
-    let list_before = st(&h).brushes.ui.list_scroll;
+    let list_before = st(&h).brushes().ui.list_scroll;
     wheel(&mut h, body.center(), -400.0);
-    let scrolled = st(&h).subtools.ui.props_scroll[brush];
+    let scrolled = st(&h).subtools().ui.props_scroll[brush];
     assert!(
         scrolled > 0.0,
         "ツールプロパティがスクロールする: {scrolled}"
     );
     assert!(scrolled < content, "中身の高さまでは送らない: {scrolled}");
     assert_eq!(
-        st(&h).brushes.ui.list_scroll,
+        st(&h).brushes().ui.list_scroll,
         list_before,
         "一覧は動かさない"
     );
     // 逆向きに戻せて、先頭より前には行かない
     wheel(&mut h, body.center(), 100_000.0);
-    assert_eq!(st(&h).subtools.ui.props_scroll[brush], 0.0);
+    assert_eq!(st(&h).subtools().ui.props_scroll[brush], 0.0);
     // 一覧の上のホイールは、一覧だけを送る（ブラシの行が多いとき）
     for _ in 0..30 {
         h.get_by_label("今の設定を新しいブラシに").click();
@@ -1388,9 +1389,12 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
     let sub_tab = h.state().tab_rects[&Tab::SubTools];
     let list_at = pos2(sub_tab.left() + 80.0, sub_tab.bottom() + 70.0);
     wheel(&mut h, list_at, -200.0);
-    assert!(st(&h).brushes.ui.list_scroll > 0.0, "一覧がスクロールする");
+    assert!(
+        st(&h).brushes().ui.list_scroll > 0.0,
+        "一覧がスクロールする"
+    );
     assert_eq!(
-        st(&h).subtools.ui.props_scroll[brush],
+        st(&h).subtools().ui.props_scroll[brush],
         0.0,
         "ツールプロパティは動かさない"
     );
@@ -1402,7 +1406,7 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
         pos2(props_tab.left() + 100.0, props_tab.bottom() + 60.0),
         -400.0,
     );
-    assert_eq!(st(&tall).subtools.ui.props_scroll[brush], 0.0);
+    assert_eq!(st(&tall).subtools().ui.props_scroll[brush], 0.0);
     // ブラシサイズの組も、入りきらなければ自分の中だけをスクロールし、スクロールしても丸は押せる（最後の段の丸が見える所まで送って、押す）
     let size_tab = h.state().tab_rects[&Tab::BrushSize];
     let color_tab = h.state().tab_rects[&Tab::Color];
@@ -1417,9 +1421,9 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
         })
     };
     assert!(!body.contains_rect(cell(&h)), "初めは最後の段が見えない");
-    h.state_mut().state.subtools.ui.sizes_scroll = 100_000.0;
+    h.subtools_mut().ui.sizes_scroll = 100_000.0;
     h.run();
-    let scrolled = st(&h).subtools.ui.sizes_scroll;
+    let scrolled = st(&h).subtools().ui.sizes_scroll;
     assert!(
         scrolled > 0.0 && scrolled < 1_000.0,
         "丸の高さまで: {scrolled}"
@@ -1430,7 +1434,7 @@ fn each_tool_panel_scrolls_on_its_own_when_its_group_is_too_short_and_the_list_s
         "送ると最後の段が見える {at:?} {body:?}"
     );
     click(&mut h, at.center());
-    assert_eq!(st(&h).brush.radius, last as f32 / 2.0);
+    assert_eq!(st(&h).brush().radius, last as f32 / 2.0);
 }
 
 #[test]
@@ -1440,7 +1444,7 @@ fn escape_cancels_a_row_drag_and_nothing_moves() {
         h.get_by_label("今の設定を新しいブラシに").click();
         h.run();
     }
-    let order = st(&h).toolset.set.brushes();
+    let order = st(&h).toolset().set.brushes();
     let a = row_of(&h, "ブラシ");
     let b2 = row_of(&h, "ブラシ 2");
     let from = pos2(b2.left() + 30.0, b2.center().y);
@@ -1450,17 +1454,17 @@ fn escape_cancels_a_row_drag_and_nothing_moves() {
     h.step();
     move_to(&h, pos2(a.left() + 30.0, a.top() + 4.0));
     h.step();
-    assert!(st(&h).toolset.ui.drag.is_some(), "動かしている");
+    assert!(st(&h).toolset().ui.drag.is_some(), "動かしている");
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
-    assert_eq!(st(&h).toolset.ui.drag, None);
+    assert_eq!(st(&h).toolset().ui.drag, None);
     release(
         &h,
         pos2(a.left() + 30.0, a.top() + 4.0),
         PointerButton::Primary,
     );
     h.run();
-    assert_eq!(st(&h).toolset.set.brushes(), order, "落とさない");
+    assert_eq!(st(&h).toolset().set.brushes(), order, "落とさない");
 }
 
 #[test]
@@ -1474,14 +1478,10 @@ fn the_hardness_in_the_tool_properties_follows_the_tip_image() {
             .is_disabled()
     };
     assert!(!hardness_disabled(&h), "丸い先端なら硬さが効く");
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
     h.run();
     assert!(hardness_disabled(&h), "画像の先端は画像の縁のまま");
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
     h.run();
     assert!(!hardness_disabled(&h));
 }
@@ -1496,9 +1496,7 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
     // 2D: 丸い先端なら両方が効き、画像の先端なら両方が効かない（画像の縁のまま）
     assert!(!tool_off(&h) && !shape_off(&h));
     assert!(hardness_applies(st(&h)));
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
     h.run();
     assert!(!hardness_applies(st(&h)));
     assert!(
@@ -1507,18 +1505,16 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
     );
     // 3D: 面のダブも画像の筆先を使うので、2D と同じく画像の先端では両方が効かない
     click_tab(&mut h, Tab::View3d);
-    h.state_mut().state.apply(Action::LoadDemoModel);
+    h.act(Action::LoadDemoModel);
     h.run();
-    assert!(st(&h).view3d.paintable_on_screen());
-    assert!(st(&h).m2.brush.tip.image.is_some());
+    assert!(st(&h).view3d().paintable_on_screen());
+    assert!(st(&h).m2().brush.tip.image.is_some());
     assert!(!hardness_applies(st(&h)));
     assert!(
         tool_off(&h) && shape_off(&h),
         "画像の先端は 3D でも効かない（同じブラシで食い違わない）"
     );
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
     h.run();
     assert!(!tool_off(&h) && !shape_off(&h));
 }
@@ -1527,7 +1523,7 @@ fn the_hardness_is_decided_in_one_place_for_the_tool_properties_and_the_shape_ca
 fn the_pen_button_beside_the_tool_hardness_toggles_the_pressure_and_is_off_for_an_image_tip() {
     let mut h = app(1600.0, 900.0, 128);
     let label = "筆圧で硬さを変える";
-    let pressure = |h: &H| st(h).m2.brush.influences.hardness.pressure.on;
+    let pressure = |h: &H| st(h).m2().brush.influences.hardness.pressure.on;
     let disabled = |h: &H| {
         h.query_all_by_label(label)
             .find(|n| in_panel(n.rect()))
@@ -1548,21 +1544,17 @@ fn the_pen_button_beside_the_tool_hardness_toggles_the_pressure_and_is_off_for_a
     assert!(!pressure(&h));
     assert!(!st(&h).brush_is_modified(b("standard")));
     // 画像の筆先では硬さが効かないので、ボタンも押せない（入っていても切れない）
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
     h.run();
     assert!(disabled(&h));
     press_it(&mut h);
     assert!(!pressure(&h), "押せない所では何も起きない");
-    h.state_mut().state.m2.brush.influences.hardness.pressure.on = true;
+    h.m2_mut().brush.influences.hardness.pressure.on = true;
     h.run();
     press_it(&mut h);
     assert!(pressure(&h), "押せない所では何も起きない");
     // 丸い筆先へ戻すとまた押せる
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
     h.run();
     assert!(!disabled(&h));
     press_it(&mut h);
@@ -1575,7 +1567,7 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     open_detail(&mut h, Category::Pressure);
     // 項目は上から サイズ・不透明度・流量・硬さ。ウィンドウの高さには 4 つ入らないので、いちばん下まで送り、
     // 同じ名前の行を上から並べて、最後が硬さ・その前が流量
-    h.state_mut().state.brushes.ui.detail.scroll = f32::MAX;
+    h.brushes_mut().ui.detail.scroll = f32::MAX;
     h.run();
     let window = detail_rect(&h);
     let last_two = |h: &H, label: &str| -> [(Rect, bool); 2] {
@@ -1596,27 +1588,27 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     assert!(hardness_min.1);
     // 硬さの切り替えを入れると、硬さの最小が使える。ほかの項目は変わらない
     click(&mut h, hardness.0.center());
-    assert!(st(&h).m2.brush.influences.hardness.pressure.on);
+    assert!(st(&h).m2().brush.influences.hardness.pressure.on);
     assert!(
-        st(&h).brush.pressure.size && st(&h).brush.pressure.opacity && !st(&h).brush.pressure.flow
+        st(&h).brush().pressure.size
+            && st(&h).brush().pressure.opacity
+            && !st(&h).brush().pressure.flow
     );
     assert!(!last_two(&h, "最小")[1].1);
     assert!(st(&h).brush_is_modified(b("standard")));
     // 画像の筆先では、硬さの切り替えも最小も押せない（入っていても）。流量は押せたまま
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(Some("dots")))));
     h.run();
     let [flow, hardness] = last_two(&h, "筆圧を使う");
     assert!(!flow.1 && hardness.1, "{flow:?} {hardness:?}");
     assert!(last_two(&h, "最小")[1].1);
     click(&mut h, hardness.0.center());
     assert!(
-        st(&h).m2.brush.influences.hardness.pressure.on,
+        st(&h).m2().brush.influences.hardness.pressure.on,
         "押せない所では何も起きない"
     );
     let before = st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .hardness
@@ -1626,20 +1618,18 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
     let min = last_two(&h, "最小")[1].0;
     click(&mut h, pos2(min.left() + min.width() * 0.5, min.center().y));
     assert_eq!(
-        st(&h).m2.brush.influences.hardness.pressure.response,
+        st(&h).m2().brush.influences.hardness.pressure.response,
         before,
         "押せない所では何も起きない"
     );
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
+    h.act(Action::M2Ui(UiOp::Brush(BrushOp::Tip(None))));
     h.run();
     assert!(!last_two(&h, "筆圧を使う")[1].1);
     // 「筆圧を既定に戻す」は、硬さの切り替えも切る（最小値・曲線と一緒に）
     let min = last_two(&h, "最小")[1].0;
     click(&mut h, pos2(min.left() + min.width() * 0.4, min.center().y));
     assert!(!st(&h)
-        .m2
+        .m2()
         .brush
         .influences
         .hardness
@@ -1648,8 +1638,8 @@ fn the_hardness_item_of_the_pressure_category_follows_the_tip_and_resets_with_th
         .is_identity());
     h.get_by_label("筆圧を既定に戻す").click();
     h.run();
-    assert!(!st(&h).m2.brush.influences.hardness.pressure.on);
-    assert!(pressure_identity(&st(&h).m2.brush));
+    assert!(!st(&h).m2().brush.influences.hardness.pressure.on);
+    assert!(pressure_identity(&st(&h).m2().brush));
     assert!(!st(&h).brush_is_modified(b("standard")));
 }
 
@@ -1662,20 +1652,16 @@ fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
     use yolu_app::brushes::sample::{key_of, SampleSpec};
     let mut h = app(1600.0, 900.0, 128);
     let ctx = h.ctx.clone();
-    h.state_mut()
-        .state
-        .brushes
-        .samples
-        .render_in_background(&ctx);
+    h.brushes_mut().samples.render_in_background(&ctx);
     let key = |h: &H| {
         let s = st(h);
-        let mut brush = s.m2.brush.clone();
-        brush.base = s.brush.settings([1.0; 4], false);
+        let mut brush = s.m2().brush.clone();
+        brush.base = s.brush().settings([1.0; 4], false);
         key_of(&brush, SampleSpec::tool(false))
     };
     // この絵を最後のフレームに描いたか
     let drawn = |h: &mut H, key: u64| {
-        let Some(id) = h.state_mut().state.brushes.samples.texture(&ctx, key) else {
+        let Some(id) = h.brushes_mut().samples.texture(&ctx, key) else {
             return false;
         };
         h.output()
@@ -1697,11 +1683,11 @@ fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
     let old = key(&h);
     wait(&mut h, old);
     // つまみを動かす（半径のつまみと同じく、今の設定を変える）
-    h.state_mut().state.brush.radius = 40.0;
+    h.brush_mut().radius = 40.0;
     h.step();
     let new = key(&h);
     assert_ne!(new, old);
-    let fresh = st(&h).brushes.samples.image(new).is_some() && drawn(&mut h, new);
+    let fresh = st(&h).brushes().samples.image(new).is_some() && drawn(&mut h, new);
     assert!(
         drawn(&mut h, old) || fresh,
         "動かした直後のフレームも、見本は紙だけにならない"

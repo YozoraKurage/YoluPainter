@@ -4,6 +4,7 @@
 //! 見た目のまま、離した後は今の状態の見た目に戻る。部品だけを並べたウィンドウでも、同じ決まりを部品ごとに確かめる。
 //! 絵の差は、差のある矩形を失敗の文に出す。`STROKE_LOOK_DUMP=<フォルダ>` を付けると、比べた 2 枚の絵をそのフォルダへ書く。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Event, PointerButton, Pos2, Rect};
@@ -30,12 +31,12 @@ fn window() -> H {
 fn window_sized(height: f32) -> H {
     let mut h = app(WIDTH, height, 128);
     {
-        let s = &mut h.state_mut().state;
+        let s = h.app_mut();
         // 2 つ目のテクスチャセット（今のセットになる）に、描くレイヤー・塗りつぶしレイヤー・描くレイヤーを重ねる
-        s.apply(Action::Project(NpAction::AddSet));
-        s.apply(Action::NewLayer);
-        s.apply(Action::M2(Edit::NewFill));
-        s.apply(Action::NewLayer);
+        s.act(Action::Project(NpAction::AddSet));
+        s.act(Action::NewLayer);
+        s.act(Action::M2(Edit::NewFill));
+        s.act(Action::NewLayer);
     }
     h.run();
     // 1 本描いておく（描いた色が最近の色に入る。描き始めに増える物を、描いている間の差と取り違えない）
@@ -52,9 +53,9 @@ fn window_sized(height: f32) -> H {
 /// ウィンドウに 3D ビューを開き、試しの立方体を読む。
 fn window_3d() -> (H, Rect) {
     let mut h = window();
-    h.state_mut().state.view3d.load_demo();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
+    h.view3d_mut().load_demo();
+    h.view3d_mut().camera.yaw = -40.0;
+    h.view3d_mut().camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -278,7 +279,7 @@ fn pen_up(h: &mut H, at: Pos2, emulate: bool) {
 }
 
 fn stroking(h: &H) -> bool {
-    h.state().state.is_stroking()
+    h.app().is_stroking()
 }
 
 /// 描く前の絵を撮り、`start` で線を引き始めて（離さない）、もう 1 枚撮る。ビュー `view` の外が同じことを確かめる。
@@ -366,9 +367,7 @@ fn the_panels_keep_their_look_while_the_pen_paints_in_the_3d_view() {
 fn every_dock_tab_keeps_its_look_while_stroking() {
     let mut h = window();
     // ナビゲーターは既定の並びでは閉じているので、「ウィンドウ」のメニューと同じ操作で開く
-    h.state_mut()
-        .state
-        .apply(Action::Dock(yolu_app::detach::DockOp::Show(Tab::Navigator)));
+    h.act(Action::Dock(yolu_app::detach::DockOp::Show(Tab::Navigator)));
     h.run();
     let canvas = canvas_rect(&h);
     for tab in [
@@ -403,18 +402,14 @@ fn every_property_tab_keeps_its_look_while_stroking() {
     for mask in [false, true] {
         let mut h = window();
         if mask {
-            let id = h
-                .state()
-                .state
-                .selected_layer
-                .expect("レイヤーを選んでいる");
-            h.state_mut().state.apply(Action::M2(Edit::AddMask(id)));
-            h.state_mut().state.m2.edit_mask = true;
+            let id = h.selected_layer().expect("レイヤーを選んでいる");
+            h.act(Action::M2(Edit::AddMask(id)));
+            h.m2_mut().edit_mask = true;
             h.run();
         }
         let canvas = canvas_rect(&h);
         for tab in 0..yolu_app::panels::properties::TAB_ICONS.len() {
-            h.state_mut().state.ui.property_tab = tab;
+            h.ui_mut().property_tab = tab;
             h.run();
             let mut end = Pos2::ZERO;
             assert_panels_unchanged(
@@ -437,7 +432,7 @@ fn every_tool_keeps_its_look_while_stroking() {
     let canvas = canvas_rect(&h);
     let mut tried = Vec::new();
     for tool in Tool::ALL {
-        h.state_mut().state.apply(Action::SelectTool(tool));
+        h.act(Action::SelectTool(tool));
         h.run();
         move_to(&h, canvas.center());
         h.run();
@@ -466,18 +461,18 @@ fn every_tools_panels_keep_their_look_while_a_document_stroke_is_active() {
     let mut h = window();
     let canvas = canvas_rect(&h);
     for tool in Tool::ALL {
-        h.state_mut().state.apply(Action::SelectTool(tool));
+        h.act(Action::SelectTool(tool));
         h.run();
         move_to(&h, canvas.center());
         h.run();
         let before = settled_shot(&mut h);
         let holes = live_areas(&h, canvas);
         {
-            let s = &mut h.state_mut().state;
-            let layer = s.selected_layer.expect("レイヤーを選んでいる");
+            let s = h.app_mut();
+            let layer = s.selected_layer().expect("レイヤーを選んでいる");
             let brush = s.stroke_settings(false);
             // 札は捨てても、文書のストロークは進行中のまま（`cancel_active_stroke` で取り消す）
-            let _ = s.doc.begin_stroke(layer, &brush).unwrap();
+            let _ = s.doc_mut().begin_stroke(layer, &brush).unwrap();
         }
         assert!(stroking(&h), "{}: 文書のストロークが進行中", tool.id());
         h.step();
@@ -489,7 +484,7 @@ fn every_tools_panels_keep_their_look_while_a_document_stroke_is_active() {
             &holes,
             &format!("ツールの欄 {}", tool.id()),
         );
-        assert!(h.state_mut().state.doc.cancel_active_stroke());
+        assert!(h.doc_mut().cancel_active_stroke());
         h.run();
         assert!(!stroking(&h));
     }
@@ -515,8 +510,8 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
     // 高いウィンドウ（プロパティの欄の下の方の行まで描く）
     let mut h = window_sized(3200.0);
     {
-        let s = &mut h.state_mut().state;
-        s.apply(Action::Stencil(StencilOp::Load(png)));
+        let s = h.app_mut();
+        s.act(Action::Stencil(StencilOp::Load(png)));
         // lilToon の節を全部開く
         for key in [
             "look.main",
@@ -542,25 +537,21 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
             "look.follow",
             "look.plane",
         ] {
-            s.ui.sections.insert(key, true);
+            s.ui_mut().sections.insert(key, true);
         }
     }
     h.run();
-    let raster = h
-        .state()
-        .state
-        .selected_layer
-        .expect("レイヤーを選んでいる");
+    let raster = h.selected_layer().expect("レイヤーを選んでいる");
     // 描けるレイヤーのほかに、塗りつぶし・調整・グループのレイヤーを足す（足したレイヤーが選ばれる）
     let mut others = Vec::new();
     {
-        let s = &mut h.state_mut().state;
-        s.apply(Action::M2(Edit::NewFill));
-        others.push(("塗りつぶし", s.selected_layer.unwrap()));
-        s.apply(Action::M2(Edit::NewAdjustment(AdjustmentKind::Invert)));
-        others.push(("調整", s.selected_layer.unwrap()));
-        s.apply(Action::M2(Edit::NewGroup));
-        others.push(("グループ", s.selected_layer.unwrap()));
+        let s = h.app_mut();
+        s.act(Action::M2(Edit::NewFill));
+        others.push(("塗りつぶし", s.selected_layer().unwrap()));
+        s.act(Action::M2(Edit::NewAdjustment(AdjustmentKind::Invert)));
+        others.push(("調整", s.selected_layer().unwrap()));
+        s.act(Action::M2(Edit::NewGroup));
+        others.push(("グループ", s.selected_layer().unwrap()));
     }
     h.run();
     let canvas = canvas_rect(&h);
@@ -574,9 +565,9 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
     }
     for (n, (name, id, tab)) in cases.into_iter().enumerate() {
         {
-            let s = &mut h.state_mut().state;
-            s.selected_layer = Some(id);
-            s.ui.property_tab = tab;
+            let s = h.app_mut();
+            s.set_selected_layer(Some(id));
+            s.ui_mut().property_tab = tab;
         }
         h.run();
         move_to(&h, canvas.center());
@@ -584,10 +575,10 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
         let before = settled_shot(&mut h);
         let holes = live_areas(&h, canvas);
         {
-            let s = &mut h.state_mut().state;
+            let s = h.app_mut();
             let brush = s.stroke_settings(false);
             // 札は捨てても、文書のストロークは進行中のまま（`cancel_active_stroke` で取り消す）
-            let _ = s.doc.begin_stroke(raster, &brush).unwrap();
+            let _ = s.doc_mut().begin_stroke(raster, &brush).unwrap();
         }
         assert!(stroking(&h));
         h.step();
@@ -599,7 +590,7 @@ fn every_property_context_keeps_its_look_while_a_document_stroke_is_active() {
             &holes,
             &format!("context{n} {name} tab{tab}"),
         );
-        assert!(h.state_mut().state.doc.cancel_active_stroke());
+        assert!(h.doc_mut().cancel_active_stroke());
         h.run();
         assert!(!stroking(&h));
     }
@@ -611,7 +602,7 @@ fn panel_buttons_do_nothing_while_stroking() {
     let mut h = window();
     let canvas = canvas_rect(&h);
     let c = canvas.center();
-    let layers_before = h.state().state.doc.layers().len();
+    let layers_before = h.doc().layers().len();
     // ペンで描き始め（egui のポインタは使わない）、マウスでレイヤーの追加のボタンを押す
     pen_down(&mut h, c, 0.6, false);
     pen_to(&mut h, c + vec2(30.0, 10.0), 0.8, false);
@@ -622,7 +613,7 @@ fn panel_buttons_do_nothing_while_stroking() {
     click(&mut h, at);
     pen_to(&mut h, c + vec2(40.0, 12.0), 0.8, false);
     assert!(stroking(&h), "押しても描きは止まらない");
-    assert_eq!(h.state().state.doc.layers().len(), layers_before);
+    assert_eq!(h.doc().layers().len(), layers_before);
     pen_up(&mut h, c + vec2(40.0, 12.0), false);
     // 描き終えれば同じボタンが押せる（対照）
     assert!(!h
@@ -631,7 +622,7 @@ fn panel_buttons_do_nothing_while_stroking() {
         .is_disabled());
     let at = h.get_by_label("新規レイヤー").rect().center();
     click(&mut h, at);
-    assert_eq!(h.state().state.doc.layers().len(), layers_before + 1);
+    assert_eq!(h.doc().layers().len(), layers_before + 1);
 }
 
 /// 描いている間に今の状態が変わっても（読むだけのセットになるなど）、レイヤーの操作の帯は描き始める前の見た目のまま。離したあとは、今の状態の見た目になる。
@@ -640,7 +631,7 @@ fn after_the_release_the_layer_buttons_follow_the_state_again() {
     // 読むだけの状態から始めたウィンドウの、削除のボタンの絵（押せない見た目の見本）
     let (reference, button) = {
         let mut h = window();
-        h.state_mut().state.sets.get_mut(1).unwrap().read_only = Some("試験".into());
+        h.sets_mut().get_mut(1).unwrap().read_only = Some("試験".into());
         h.run();
         move_to(&h, canvas_rect(&h).center());
         h.run();
@@ -656,7 +647,7 @@ fn after_the_release_the_layer_buttons_follow_the_state_again() {
     let end = mouse_stroke(&mut h, canvas.center());
     assert!(stroking(&h));
     // 描いている間に読むだけになる
-    h.state_mut().state.sets.get_mut(1).unwrap().read_only = Some("試験".into());
+    h.sets_mut().get_mut(1).unwrap().read_only = Some("試験".into());
     h.step();
     let during = shot(&mut h);
     release(&h, end, PointerButton::Primary);
