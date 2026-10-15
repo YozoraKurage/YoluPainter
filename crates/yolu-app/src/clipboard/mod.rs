@@ -15,6 +15,7 @@ pub mod keys;
 pub mod os;
 
 use crate::engine::{Channel, LayerKind, PixelClipboard};
+use crate::features::{Feature, PollStage};
 use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
@@ -379,6 +380,12 @@ pub fn menu_entries(app: &AppState) -> Vec<Entry<Action>> {
         item("clip.paste", ClipAction::Paste, free),
     ]
 }
+
+/// 機能の表の行（毎フレーム、クリップボードの結果を受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_clipboard)),
+    ..Feature::new("clipboard")
+};
 
 #[cfg(test)]
 mod tests {

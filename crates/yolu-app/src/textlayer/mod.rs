@@ -25,6 +25,7 @@ use yolu_core::text::{self, TextAlign, TextFont, TextLayout, TextSettings};
 use yolu_io::fonts::{self as sysfonts, Lookup, SystemFonts};
 
 use crate::engine::{LayerId, Rgba8};
+use crate::features::{Feature, PollStage};
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::lang::{refusals, Lang};
 use crate::notice::{Kind, Source};
@@ -1081,4 +1082,17 @@ pub fn transformed(
         next.wrap_width = (value.wrap_width * scale).clamp(0.0, text::MAX_COORDINATE);
     }
     Ok(next)
+}
+
+/// 機能の表の行（ツールを替えたとき・ペイントのモードを出るとき、打っている文字を終える。毎フレーム、OS のフォントの一覧ができたら受け、開いた文書のテキストレイヤーのフォントを確かめる）。
+pub(crate) const FEATURE: Feature = Feature {
+    tool_left: Some(leave_tool),
+    paint_left: Some(leave_tool),
+    poll: Some((PollStage::BeforeTextColor, AppState::text_poll)),
+    ..Feature::new("text")
+};
+
+fn leave_tool(app: &mut AppState) {
+    app.text_commit();
+    app.text.press = None;
 }

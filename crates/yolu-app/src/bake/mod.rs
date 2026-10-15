@@ -45,6 +45,7 @@ use yolu_core::mesh_maps::{
     MeshMapState,
 };
 
+use crate::features::{Feature, PollStage};
 use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
@@ -1596,6 +1597,12 @@ impl AppState {
         );
     }
 }
+
+/// 機能の表の行（毎フレーム、ベイクの仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::poll_bake)),
+    ..Feature::new("bake")
+};
 
 #[cfg(test)]
 mod tests;

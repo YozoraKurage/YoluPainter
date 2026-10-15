@@ -38,6 +38,7 @@ use yolu_core::glam::{DVec2, Vec2, Vec3};
 use super::model::ViewModel;
 use super::{gizmo, pacing, Nav};
 use crate::engine::{BrushEffect, Tilt};
+use crate::features::Feature;
 use crate::gesture::{self, ZoomDrag};
 use crate::notice::Source;
 use crate::pen::{PenPress, PenSample, PressKind};
@@ -1958,3 +1959,18 @@ pub fn draw_overlays(ui: &Ui, app: &AppState, rect: Rect) {
         }
     }
 }
+
+/// 機能の表の行（3D ビューの面のストローク・図形のドラッグの最中か。グラデーションのドラッグは描いている最中に数えない。
+/// 文書を替えたら、前の文書の面で覚えた点を捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| {
+        app.view3d.input.cover.is_some()
+            || app
+                .view3d
+                .input
+                .draft
+                .is_some_and(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
+    }),
+    document_replaced: Some(|app| app.view3d.input.previous_end = None),
+    ..Feature::new("view3d.input")
+};

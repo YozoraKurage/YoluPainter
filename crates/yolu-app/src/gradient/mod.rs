@@ -11,6 +11,7 @@ use egui::Pos2;
 use yolu_core::glam::DVec2;
 use yolu_core::material::{ChannelPaint, GradientSettings, GradientShape};
 
+use crate::features::Feature;
 use crate::matpaint::single_value;
 use crate::matpaint::MaterialPaint;
 use crate::notice::Source;
@@ -277,3 +278,14 @@ impl AppState {
         self.gradient.drag.take().is_some() || surface
     }
 }
+
+/// 機能の表の行（ツールを替えたとき・ペイントのモードを出るとき、途中のドラッグを捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    tool_left: Some(|app| {
+        app.gradient_cancel_drag();
+    }),
+    paint_left: Some(|app| {
+        app.gradient_cancel_drag();
+    }),
+    ..Feature::new("gradient")
+};

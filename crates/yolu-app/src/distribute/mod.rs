@@ -24,6 +24,7 @@ use egui::Vec2;
 use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
 use crate::dialog::places::Place;
+use crate::features::{Feature, PollStage};
 use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
@@ -703,3 +704,9 @@ fn write(
     target.save_with(&copy, BackupKeep::Count(0)).map_err(io)?;
     Ok(dest.to_path_buf())
 }
+
+/// 機能の表の行（毎フレーム、配布用に保存の仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeSaving, AppState::poll_distribute)),
+    ..Feature::new("distribute")
+};

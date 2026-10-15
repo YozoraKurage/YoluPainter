@@ -39,6 +39,7 @@ use std::path::PathBuf;
 
 use yolu_io::{BackupKeep, MAX_BACKUPS_TO_KEEP};
 
+use crate::features::{Feature, PollStage};
 use crate::gpu_memory::{self, GpuMemory};
 use crate::lang::Lang;
 use crate::m2::UiOp;
@@ -807,3 +808,15 @@ pub fn entries(app: &AppState, choice: PrefChoice) -> Vec<Entry<Action>> {
         }
     }
 }
+
+/// 機能の表の行（毎フレーム、予算を設定に合わせる）。
+pub(crate) const BUDGETS: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::sync_budgets)),
+    ..Feature::new("budgets")
+};
+
+/// 機能の表の行（毎フレーム、タイルのキャッシュの置き場を確かめる）。
+pub(crate) const TILE_CACHE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::check_tile_cache)),
+    ..Feature::new("tile_cache")
+};

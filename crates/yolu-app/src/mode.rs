@@ -182,12 +182,7 @@ impl AppState {
         crate::fillfx::gizmo::release(self, true);
         crate::fillfx::points::release(self, true);
         if self.mode == EditorMode::Paint {
-            self.sel_tool_changed();
-            self.transform_cancel_drag();
-            self.gradient_cancel_drag();
-            self.drafting_cancel();
-            self.text_commit();
-            self.text.press = None;
+            crate::features::paint_left(self);
         }
         self.mode = mode;
         true

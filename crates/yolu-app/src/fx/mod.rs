@@ -24,6 +24,7 @@ use yolu_core::{
 
 pub use names::FilterKind;
 
+use crate::features::{Feature, PollStage};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
@@ -683,3 +684,9 @@ impl AppState {
         };
     }
 }
+
+/// 機能の表の行（毎フレーム、効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::sync_effects)),
+    ..Feature::new("fx")
+};

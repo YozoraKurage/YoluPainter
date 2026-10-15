@@ -26,6 +26,7 @@ use egui::Vec2;
 pub use reopen::{is_network_path, relative_model_path, resolve_model_path, Reopen};
 
 use crate::engine::{CanvasResampling, Channel, Document, NormalSettings, NormalYDirection};
+use crate::features::{Feature, PollStage};
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
 use crate::model::SceneModel;
@@ -979,6 +980,12 @@ pub(crate) fn unique<'a>(base: &str, taken: impl Iterator<Item = &'a str> + Clon
 pub fn is_open(app: &AppState) -> bool {
     app.np.window.is_some()
 }
+
+/// 機能の表の行（毎フレーム、新規プロジェクトの準備の仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_newproject)),
+    ..Feature::new("newproject")
+};
 
 #[cfg(test)]
 mod tests {

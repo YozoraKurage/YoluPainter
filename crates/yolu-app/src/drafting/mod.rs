@@ -6,6 +6,7 @@ pub mod props;
 
 use std::sync::Arc;
 
+use crate::features::Feature;
 use crate::state::{AppState, StrokeSource};
 use yolu_core::glam::DVec2;
 
@@ -273,6 +274,23 @@ impl AppState {
         self.selected_ruler().is_some()
     }
 }
+
+/// 機能の表の行（図形のドラッグの最中か。ツールを替えたとき・ペイントのモードを出るとき・文書を替えたとき、途中のドラッグをやめる。
+/// 文書を替えたときは、ペンの接触の状態も捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.drafting.drag.is_some()),
+    tool_left: Some(|app| {
+        app.drafting_cancel();
+    }),
+    paint_left: Some(|app| {
+        app.drafting_cancel();
+    }),
+    document_replaced: Some(|app| {
+        app.drafting_cancel();
+        app.drafting.pen_down = None;
+    }),
+    ..Feature::new("drafting")
+};
 
 #[cfg(test)]
 mod tests {

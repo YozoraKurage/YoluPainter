@@ -42,6 +42,7 @@ use yolu_io::export::{
 };
 
 use crate::bake::Occlusion;
+use crate::features::{Feature, PollStage};
 use crate::jobs::CloseJob;
 use crate::jobs::{Cancel, JobCard, JobSpec, Polled, Worker};
 use crate::notice::Source;
@@ -1291,6 +1292,12 @@ fn run(input: WorkerInput, cancel: &Cancel) -> Result<Vec<WrittenImage>, ExportE
         }
     })
 }
+
+/// 機能の表の行（毎フレーム、書き出しの仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::poll_export)),
+    ..Feature::new("export")
+};
 
 #[cfg(test)]
 mod tests;

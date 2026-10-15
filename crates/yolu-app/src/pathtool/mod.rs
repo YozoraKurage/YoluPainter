@@ -29,6 +29,7 @@ use yolu_core::paths::{
 use yolu_core::{CoreError, LayerId, LayerPath};
 
 use self::edit::{Place, PointOp};
+use crate::features::Feature;
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{AppState, StrokeSource};
@@ -1598,3 +1599,10 @@ fn rebind_message(lang: Lang, reports: &[rebind::PathReport]) -> String {
     }
     text
 }
+
+/// 機能の表の行（パスの点のドラッグの最中か。ツールを替えたときだけ途中の物を捨てる。ペイントのモードを出ても残す）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.path.drag.is_some()),
+    tool_left: Some(AppState::path_tool_changed),
+    ..Feature::new("path")
+};

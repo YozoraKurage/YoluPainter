@@ -21,6 +21,7 @@ use yolu_core::glam::Vec2;
 
 use crate::canvas::view::CanvasView;
 use crate::engine::{Channel, ChannelKind, CoreError, Document, LayerId, LayerKind, Rgba8};
+use crate::features::Feature;
 use crate::lang::Lang;
 use crate::m2::channel_name;
 use crate::matpaint::CHANNELS;
@@ -452,6 +453,12 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
 fn all_layers_label(lang: Lang) -> &'static str {
     lang.pick("全レイヤーを対象", "Sample All Layers")
 }
+
+/// 機能の表の行（スポイトの印の見本は前の文書を読んだもの。文書のバージョンは別の文書と同じ値になりうるので、文書を替えたら捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    document_replaced: Some(|app| app.eyedrop.sample_cache = None),
+    ..Feature::new("eyedrop")
+};
 
 #[cfg(test)]
 mod tests {

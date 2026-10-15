@@ -19,6 +19,7 @@ use std::sync::Arc;
 use yolu_core::geometry::SurfaceRegionKind;
 
 use self::index::{RegionIndex, UvGrid};
+use crate::features::Feature;
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::AppState;
@@ -239,3 +240,9 @@ impl AppState {
         r.grid.clone()
     }
 }
+
+/// 機能の表の行（範囲の塗りの仕事・離した後の残りのドラッグの最中か）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.region.job.is_some() || app.region.leftover_drag.is_some()),
+    ..Feature::new("region")
+};

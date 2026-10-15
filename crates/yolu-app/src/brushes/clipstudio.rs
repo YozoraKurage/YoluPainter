@@ -13,6 +13,7 @@ use yolu_io::brushes::clipstudio as io;
 use yolu_io::brushes::clipstudio::{Missing, Peek, Places};
 use yolu_io::brushes::BrushImportError;
 
+use crate::features::{Feature, PollStage};
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::notice::Source as NoticeSource;
 use crate::state::{AppState, DialogRequest};
@@ -318,3 +319,9 @@ impl AppState {
         self.dialog_request = Some(DialogRequest::ClipStudioFolder);
     }
 }
+
+/// 機能の表の行（毎フレーム、ブラシの読み込みの仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_brush_csp)),
+    ..Feature::new("brushes.csp")
+};

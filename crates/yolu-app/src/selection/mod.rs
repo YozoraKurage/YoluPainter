@@ -31,6 +31,7 @@ use crate::engine::{
     CanvasSymmetry, CoreError, DVec2, LayerKind, SelectionCombine, SelectionMask,
     DEFAULT_WORKING_BUDGET_BYTES, MAX_MODIFY_RADIUS,
 };
+use crate::features::Feature;
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
@@ -940,3 +941,10 @@ impl AppState {
         result
     }
 }
+
+/// 機能の表の行（ツールを替えたとき・ペイントのモードを出るとき、途中の選択の形を捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    tool_left: Some(AppState::sel_tool_changed),
+    paint_left: Some(AppState::sel_tool_changed),
+    ..Feature::new("selection")
+};

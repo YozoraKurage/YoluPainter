@@ -28,6 +28,7 @@ use std::ops::RangeInclusive;
 use yolu_core::glam::DVec2;
 use yolu_core::{LayerId, Ruler, RulerId, RulerKind};
 
+use crate::features::Feature;
 use crate::state::StrokeSource;
 
 /// 直線定規へ寄せる距離（画面の点。約 7 mm）。この内で描き始めたときだけ寄せる。
@@ -161,3 +162,14 @@ pub fn fit_lines(lines: u8, line_symmetry: bool) -> u8 {
         lines
     }
 }
+
+/// 機能の表の行（定規のドラッグの最中か。選んでいた定規は前の文書のもの。レイヤーの ID は文書をまたいで同じ値になりうるので、
+/// 文書を替えたら捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.rulers.drag.is_some()),
+    document_replaced: Some(|app| {
+        app.rulers.selected = None;
+        app.rulers.icon_drag = None;
+    }),
+    ..Feature::new("rulers")
+};

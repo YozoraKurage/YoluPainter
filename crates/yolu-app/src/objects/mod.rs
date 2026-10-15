@@ -20,6 +20,7 @@ use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::paths::point_position;
 use yolu_core::{Channel, FilterTarget, LayerId, LayerKind, LayerPath, RulerId, RulerSpace};
 
+use crate::features::Feature;
 use crate::fillfx::gizmo::{self, Target};
 use crate::lang::Lang;
 use crate::mode::EditorMode;
@@ -665,6 +666,16 @@ fn delete(app: &mut AppState, o: Object) {
     }
     sync(app);
 }
+
+/// 機能の表の行（編集のモードで選んだ物・隠した物は前の文書のもの。レイヤーの ID は文書をまたいで同じ値になりうるので、
+/// 文書を替えたら捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    document_replaced: Some(|app| {
+        app.objects.selected = None;
+        app.objects.hidden.clear();
+    }),
+    ..Feature::new("objects")
+};
 
 #[cfg(test)]
 mod tests;

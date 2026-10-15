@@ -15,6 +15,7 @@ use yolu_core::geometry::{SurfaceGeometry, SurfaceHit};
 use yolu_core::glam::DVec2;
 
 use crate::engine::BrushEffect;
+use crate::features::Feature;
 use crate::state::AppState;
 
 /// 2D の元（文書の点）。
@@ -237,6 +238,12 @@ pub fn paint_mark(painter: &Painter, at: Pos2) {
         );
     }
 }
+
+/// 機能の表の行（文書を替えたら、前の文書のクローンの元を捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    document_replaced: Some(AppState::forget_clone_sources),
+    ..Feature::new("clone_source")
+};
 
 #[cfg(test)]
 mod tests {

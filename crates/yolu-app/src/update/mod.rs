@@ -37,6 +37,7 @@ use yolu_update::{
     WINDOWS_ARCHIVE, WINDOWS_INSTALLER,
 };
 
+use crate::features::{Feature, PollStage};
 use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec};
 use crate::lang::Lang;
@@ -1019,6 +1020,12 @@ impl AppState {
         }
     }
 }
+
+/// 機能の表の行（毎フレーム、更新の確かめ・ダウンロードの終わりを受ける。準備のウィンドウは、描いている最中は開かない）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_update)),
+    ..Feature::new("update")
+};
 
 #[cfg(test)]
 mod tests {

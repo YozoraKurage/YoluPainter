@@ -16,6 +16,7 @@ use egui::{
 use self::display::CanvasDisplay;
 use self::view::{angle_label, CanvasView};
 use crate::engine::{BrushEffect, BrushSample, Tilt};
+use crate::features::Feature;
 use crate::gesture;
 use crate::notice::Source;
 use crate::pen::{PenPress, PenSample, PressKind};
@@ -1432,6 +1433,21 @@ pub fn flip_tip(lang: crate::lang::Lang, mode: crate::mode::EditorMode) -> Strin
         &[crate::shortcuts::key_in("view.flip", mode)],
     )
 }
+
+/// 機能の表の行（キャンバスのストロークの最中か。文書を替えたら、前の文書の座標で覚えた点を捨てる）。
+pub(crate) const FEATURE: Feature = Feature {
+    stroking: Some(|app| app.canvas.stroke.is_some()),
+    document_replaced: Some(|app| {
+        let canvas = &mut app.canvas;
+        canvas.previous_end = None;
+        canvas.current_end = None;
+        canvas.shift_hold = None;
+        canvas.ruler_constraint = None;
+        canvas.clone_press = None;
+        canvas.clone_offset = None;
+    }),
+    ..Feature::new("canvas")
+};
 
 #[cfg(test)]
 mod tests {

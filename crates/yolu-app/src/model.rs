@@ -21,6 +21,7 @@ use std::sync::Arc;
 use yolu_core::skin::Rig;
 use yolu_protocol::{MaterialInfo, MaterialKey, MaterialsUpdate, Model, Pose};
 
+use crate::features::{Feature, PollStage};
 use crate::sets::BindReport;
 use crate::state::AppState;
 use crate::view3d::model::ViewError;
@@ -428,6 +429,12 @@ impl AppState {
         }
     }
 }
+
+/// 機能の表の行（毎フレーム、3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::AfterRecovery, AppState::sync_view3d)),
+    ..Feature::new("view3d.sync")
+};
 
 #[cfg(test)]
 mod tests {

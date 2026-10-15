@@ -18,6 +18,7 @@ use super::store::{BrushStore, StoreError};
 use super::{
     clean_name, gaps, BrushAction, BrushKey, Entry, Group, IdSource, ImportMeta, UserBrush,
 };
+use crate::features::{Feature, PollStage};
 use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
@@ -659,6 +660,12 @@ pub fn is_png(path: &Path) -> bool {
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("png"))
 }
+
+/// 機能の表の行（毎フレーム、ブラシの読み込みの仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeTextColor, AppState::poll_brush_import)),
+    ..Feature::new("brushes.import")
+};
 
 #[cfg(test)]
 mod tests {

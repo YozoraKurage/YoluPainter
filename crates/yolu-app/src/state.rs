@@ -1169,20 +1169,7 @@ impl AppState {
 
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
     pub fn is_stroking(&self) -> bool {
-        self.canvas.stroke.is_some()
-            || self.view3d.input.cover.is_some()
-            || self.doc.has_active_stroke()
-            || self.transform.drag.is_some()
-            || self.region.job.is_some()
-            || self.region.leftover_drag.is_some()
-            || self.path.drag.is_some()
-            || self.drafting.drag.is_some()
-            || self.rulers.drag.is_some()
-            || self
-                .view3d
-                .input
-                .draft
-                .is_some_and(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)
+        self.doc.has_active_stroke() || crate::features::stroking(self)
     }
 
     /// パネルの部品の見た目を描き始める前のまま保つ間か（描いている間と、3D ビューでポーズのギズモをドラッグしている間）。
@@ -1222,17 +1209,12 @@ impl AppState {
         if tool != self.tool {
             // 今のツールの設定を覚え、入るツールの今のサブツールの設定を今の設定にする（ブラシと消しゴムは `brush_for_tool` が済ませた）
             self.subtool_leave(self.tool);
-            self.sel_tool_changed();
             if !keep_effect {
                 self.fx.selected = None; // 選んだ効果の欄はツールを替えたら閉じる
                 self.fx.id_pick = None;
             }
-            self.transform_cancel_drag();
-            self.path_tool_changed();
-            self.gradient_cancel_drag();
-            self.drafting_cancel();
-            self.text_commit();
-            self.text.press = None;
+            // 機能ごとの途中の形・ドラッグを捨てる（効果の欄の 2 つは、どの機能の片づけも読み書きしない）
+            crate::features::tool_left(self);
             self.subtool_enter(tool);
         }
         self.tool = tool;

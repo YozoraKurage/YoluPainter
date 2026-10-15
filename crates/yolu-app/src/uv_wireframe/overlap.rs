@@ -15,6 +15,7 @@ use yolu_core::mesh_maps::{islands_of, uv_overlap, UvOverlap};
 
 use crate::canvas::display::{CanvasDisplay, NEAREST_FROM_PIXEL_SIZE, PAGE};
 use crate::canvas::view::CanvasView;
+use crate::features::{Feature, PollStage};
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::notice::Source;
 use crate::state::{Action, AppState};
@@ -462,6 +463,12 @@ fn mask(map: &UvOverlap, limit: u32) -> (u32, u32, u32, Vec<bool>) {
     }
     (w, h, step, marks)
 }
+
+/// 機能の表の行（毎フレーム、重なった UV の図を数え直す）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::AfterRecovery, AppState::poll_uv_overlap)),
+    ..Feature::new("uv.overlap")
+};
 
 #[cfg(test)]
 mod tests {

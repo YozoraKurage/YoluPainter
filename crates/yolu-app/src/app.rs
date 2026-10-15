@@ -9,6 +9,7 @@ use egui_dock::{DockArea, DockState, Node, NodeIndex, TabViewer};
 
 use crate::canvas::{self, display::CanvasDisplay};
 use crate::dialog::places::Place;
+use crate::features::PollStage;
 use crate::livelink::LiveLink;
 use crate::mcp_server::McpServer;
 use crate::panels::{
@@ -2057,27 +2058,14 @@ impl YoluApp {
         if let Some(wake) = self.link.next_wake() {
             ctx.request_repaint_after(wake);
         }
-        // 別のスレッドの仕事（ベイク・書き出し・PSD）の終わりを受ける
-        self.state.poll_bake();
-        self.state.poll_export();
-        self.state.sync_budgets();
-        self.state.check_tile_cache();
-        self.state.poll_psd();
+        // 機能の毎フレームの受け取り（別のスレッドの仕事の終わり・予算の同期・効果の入力など。外枠の仕事の間で、機能の表の順に呼ぶ）
+        crate::features::poll(&mut self.state, PollStage::BeforeDroppedPsds);
         self.note_dropped_psds();
-        self.state.poll_distribute();
+        crate::features::poll(&mut self.state, PollStage::BeforeSaving);
         self.poll_saving();
         // 外からの操作: 設定に合わせて待ち受けを始める・やめ、受けた要求を実行する（保存の結果を受けた後に。返事待ちの保存の返事も返す）
         self.tick_ops(&ctx);
-        self.state.poll_brush_import();
-        self.state.poll_brush_csp();
-        // 効果の入力（焼いたマップ・モデルのルート・画像）を文書へ渡す。入力がそろった読むだけのセットは編集できるようにする
-        self.state.sync_effects();
-        self.state.poll_newproject();
-        // 更新の確かめ・ダウンロードの終わり（準備のウィンドウは、描いている最中は開かない）
-        self.state.poll_update();
-        self.state.poll_clipboard();
-        // OS のフォントの一覧ができたら受け、開いた文書のテキストレイヤーのフォントを確かめる
-        self.state.text_poll();
+        crate::features::poll(&mut self.state, PollStage::BeforeTextColor);
         // 文字の色の元が描画色なら、描画色が変わったとき、選んでいるテキストレイヤーの色も変える（円のドラッグは 1 回の取り消し）
         let pointer_down = self.any_pointer_down(&ctx);
         self.state.text_follow_paint_color(pointer_down);
@@ -2095,10 +2083,8 @@ impl YoluApp {
         if let Some(wait) = self.state.recovery_tick() {
             ctx.request_repaint_after(wait);
         }
-        // 3D ビューで描くマテリアル・隠すマテリアルを今のテクスチャセットに合わせる（ストロークが終わった後のフレームでも）
-        self.state.sync_view3d();
-        // 重なった UV の図（今のモデル・セット・大きさで数え直す。表示と塗りの知らせ）
-        self.state.poll_uv_overlap();
+        // 3D ビューのマテリアルを今のテクスチャセットに合わせ（ストロークが終わった後のフレームでも）、重なった UV の図を数え直す
+        crate::features::poll(&mut self.state, PollStage::AfterRecovery);
         // ポーズ: 読み終わった FBX を入れる（入れたら 3D ビューのタブを前へ）
         if crate::view3d::pose::frame(&mut self.state, &ctx) {
             self.bring_forward(Tab::View3d);

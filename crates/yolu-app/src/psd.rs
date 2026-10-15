@@ -31,6 +31,7 @@ use yolu_io::psd::{
     ExportNote, ExportOptions, ExportPlan, ImportNote, Overrun,
 };
 
+use crate::features::{Feature, PollStage};
 use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
 use crate::lang::Lang;
@@ -1417,6 +1418,12 @@ fn read_failure(e: yolu_io::Error) -> Failure {
         e => Failure::Unreadable(e),
     }
 }
+
+/// 機能の表の行（毎フレーム、PSD の仕事の終わりを受ける）。
+pub(crate) const FEATURE: Feature = Feature {
+    poll: Some((PollStage::BeforeDroppedPsds, AppState::poll_psd)),
+    ..Feature::new("psd")
+};
 
 /// 同じフォルダの一時ファイルへ `fill` で書き、`check` で確かめる（試験用: PSD でない中身で、一時ファイルの後始末と置き換えを確かめる）。
 #[cfg(test)]

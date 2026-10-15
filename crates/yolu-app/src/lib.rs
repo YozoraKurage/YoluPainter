@@ -30,6 +30,7 @@ pub mod engine;
 pub mod export;
 pub mod eyedrop;
 pub mod eyedrop_mark;
+pub mod features;
 pub mod fillfx;
 pub mod fx;
 pub mod gesture;
