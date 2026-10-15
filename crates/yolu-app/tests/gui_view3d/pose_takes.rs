@@ -7,7 +7,7 @@ use common::livelink::fbx_ascii;
 use common::*;
 use egui::{epaint::Shape, pos2, vec2, Rect};
 use egui_kittest::kittest::Queryable;
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::lang::Lang;
 use yolu_app::pen::PenInput;
 use yolu_app::state::{Action, AppState};
@@ -67,14 +67,22 @@ fn load(h: &mut H, scene: &fbx_ascii::Scene, file: &str) -> std::path::PathBuf {
 }
 
 /// ポーズのタブをドックから外して、左の上に浮いたウィンドウにする。
+/// ポーズのタブを外すときに渡す矩形（egui_dock は外したウィンドウの大きさをこの 0.8 倍にする）。
+fn float_rect() -> Rect {
+    Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 760.0))
+}
+
+/// `float_pose_tab` で浮かせたポーズのウィンドウの範囲（余白つき）。
+fn pose_window() -> Rect {
+    let r = float_rect();
+    Rect::from_min_size(r.min, r.size() * 0.8).expand(6.0)
+}
+
 fn float_pose_tab(h: &mut H) {
     {
         let dock = &mut h.state_mut().dock;
         let path = dock.find_tab(&Tab::Pose).expect("ポーズのタブ");
-        dock.detach_tab(
-            path,
-            Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 760.0)),
-        );
+        dock.detach_tab(path, float_rect());
     }
     h.run();
 }
@@ -129,11 +137,7 @@ fn clipped_texts(h: &H) -> Vec<String> {
 /// テイクの節の見え方（ボーンの節を閉じ、テイクの節の下にプリセットの節が続く。Raise のフレーム 40 を当てた 3D ビュー）。日英。
 #[test]
 fn pose_takes_snapshots() {
-    let mut snapshots = SnapshotResults::new();
-    for (lang, name) in [
-        (Lang::Ja, "pose_tab_takes"),
-        (Lang::En, "pose_tab_takes_en"),
-    ] {
+    for lang in Lang::ALL {
         let mut h = app_in(1280.0, 860.0, lang);
         load(&mut h, &fbx_ascii::arm_takes_scene(), "腕.fbx");
         float_pose_tab(&mut h);
@@ -147,12 +151,15 @@ fn pose_takes_snapshots() {
         takes::wait(&mut h.state_mut().state);
         click_tab(&mut h, Tab::View3d);
         h.run();
-        snapshots.add(h.try_snapshot(name));
+        // 浮かせたポーズのタブと、フレーム 40 を当てた 3D ビュー。英語の絵は撮らない（節の並びは文字の長さで変わらない）
+        let shown = pose_window().union(crate::view3d_area(&h));
         if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "pose_tab_takes", shown);
             // テイクを選ぶポップアップ
             h.get_by_label("Raise").click();
             h.run();
-            snapshots.add(h.try_snapshot("pose_tab_takes_menu"));
+            let menu = crate::with_popup(&h, shown);
+            crate::common::shot::region(&mut h, "pose_tab_takes_menu", menu);
         }
     }
 }

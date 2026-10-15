@@ -53,23 +53,9 @@ impl Drop for TempDir {
     }
 }
 
-/// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの中だけを撮る（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
-    let rect = yolu_app::windows::window_rect(&h.ctx, window)
-        .unwrap_or_else(|| panic!("{window} を描いていない"));
-    // 直前に押した所のポインタが絵に残らないように
-    h.event(egui::Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    crate::window_shot(h, window, name);
 }
 
 /// 別のスレッドの仕事（ベイク・書き出し・PSD）が終わるまで、フレームを回しながら待つ。
@@ -173,7 +159,8 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
         h.state().state.popup.as_ref().unwrap().state.open_depth(),
         1
     );
-    h.snapshot("menu_file_import");
+    let rect = crate::with_popup(&h, menu_title(&h, "ファイル"));
+    crate::common::shot::region(&mut h, "menu_file_import", rect);
     click_import_item(&mut h, "インポート", "PSD を今のテクスチャセットに…");
     assert_eq!(
         h.state().state.dialog_request,
@@ -220,13 +207,15 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     let at = menu_title(&h, "File").center();
     click(&mut h, at);
     popup_item(&h, "Export Textures…");
-    h.snapshot("menu_file_english");
+    let rect = crate::with_popup(&h, menu_title(&h, "File"));
+    crate::common::shot::region(&mut h, "menu_file_english", rect);
     hover(&mut h, pos2(640.0, 400.0));
     let row = popup_item(&h, "Import");
     hover(&mut h, row.center());
     popup_item(&h, "PSD as a New Texture Set…");
     popup_item(&h, "PSD into the Current Texture Set…");
-    h.snapshot("menu_file_import_english");
+    let rect = crate::with_popup(&h, menu_title(&h, "File"));
+    crate::common::shot::region(&mut h, "menu_file_import_english", rect);
     let at = popup_item(&h, "Export PSD…").center();
     click(&mut h, at);
     assert!(h.state().state.psd.options_open);

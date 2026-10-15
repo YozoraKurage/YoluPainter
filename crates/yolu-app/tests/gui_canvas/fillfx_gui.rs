@@ -433,7 +433,7 @@ fn q_hides_and_shows_the_handles_and_the_gizmo_shows_move_and_rotate_together() 
     // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
     h.state_mut().state.shelf.wait_inspections();
     h.run();
-    h.snapshot("fillfx_gizmo_3d");
+    common::shot::region(&mut h, "fillfx_gizmo_3d", rect);
 }
 
 #[test]
@@ -478,7 +478,8 @@ fn the_gradient_tool_paints_with_a_real_drag_on_the_canvas_and_shift_g_selects_i
         Action::M2Ui(yolu_app::m2::UiOp::Language(yolu_app::lang::Lang::En)),
     );
     assert!(h.query_by_label("Gradient (Shift+G)").is_some());
-    h.snapshot("fillfx_gradient_tool_options");
+    let rect = crate::tool_panels(&h);
+    common::shot::region(&mut h, "fillfx_gradient_tool_options", rect);
     // 3D ビューでは使わない
     click_tab(&mut h, Tab::View3d);
     st(&h);
@@ -570,7 +571,12 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
             // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
             h.state_mut().state.shelf.wait_inspections();
             h.run();
-            h.snapshot(format!("fillfx_panel_{}_{k}", lang.pick("ja", "en")));
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(
+                &mut h,
+                &format!("fillfx_panel_{}_{k}", lang.pick("ja", "en")),
+                rect,
+            );
         }
         results.extend_harness(&mut h);
     }
@@ -1241,12 +1247,16 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
             }
         }
         assert!(shown > 8, "{lang:?}: 欄の文字を集められていない（{shown}）");
-        let _ = rect;
         h.state_mut().state.shelf.wait_inspections();
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        h.snapshot(format!("fillfx_points_{}", lang.pick("ja", "en")));
+        let props = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+        common::shot::region(
+            &mut h,
+            &format!("fillfx_points_{}", lang.pick("ja", "en")),
+            props,
+        );
         // UV の空間: 立方体の UV の継ぎ目で色が切れる（モデルの空間は切れない）。2D のキャンバスにも印が出る
         let uv = yolu_core::fill_points::PointGradient {
             space: yolu_core::fill_points::PointSpace::Uv,
@@ -1275,14 +1285,23 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        h.snapshot(format!("fillfx_points_uv_{}", lang.pick("ja", "en")));
+        common::shot::region(
+            &mut h,
+            &format!("fillfx_points_uv_{}", lang.pick("ja", "en")),
+            rect,
+        );
         click_tab(&mut h, Tab::Canvas);
         // 焼いたメッシュマップの重ね表示を外して、塗った絵を見せる
         h.state_mut().state.bake.view = yolu_app::bake::MeshMapView::None;
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        h.snapshot(format!("fillfx_points_canvas_{}", lang.pick("ja", "en")));
+        let rect = canvas_rect(&h);
+        common::shot::region(
+            &mut h,
+            &format!("fillfx_points_canvas_{}", lang.pick("ja", "en")),
+            rect,
+        );
         results.extend_harness(&mut h);
     }
 }
@@ -1493,10 +1512,12 @@ fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        h.snapshot(format!(
-            "fillfx_image_anisotropic_{}",
-            lang.pick("ja", "en")
-        ));
+        let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+        common::shot::region(
+            &mut h,
+            &format!("fillfx_image_anisotropic_{}", lang.pick("ja", "en")),
+            rect,
+        );
         let steps = st(&h).doc.undo_count();
         click(&mut h, toggle.center());
         assert!(!on(&h));

@@ -819,19 +819,6 @@ fn clone_sources_the_shift_line_and_the_bucket_do_nothing_outside_paint_mode() {
 
 // ───────── 絵 ─────────
 
-fn crop(h: &mut H, rect: Rect, name: &str) {
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().max(0.0).floor() as u32,
-        rect.top().max(0.0).floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
 #[test]
 fn snapshot_the_mode_dropdown_in_both_languages() {
     for (lang, name, current) in [
@@ -848,7 +835,11 @@ fn snapshot_the_mode_dropdown_in_both_languages() {
         move_to(&h, pos2(700.0, 500.0));
         h.run();
         let popup = h.state().state.popup.as_ref().unwrap().state.rect;
-        crop(&mut h, dropdown.union(popup).expand(4.0), name);
+        crate::common::shot::region(
+            &mut h,
+            name,
+            crate::outward(dropdown.union(popup).expand(4.0)),
+        );
     }
 }
 
@@ -869,6 +860,10 @@ fn snapshot_the_mode_and_view_pies_in_both_languages() {
         h.run();
         assert_eq!(pie_open(&h).as_deref(), Some(menu));
         let c = pie_center(&h);
-        crop(&mut h, Rect::from_center_size(c, vec2(480.0, 300.0)), name);
+        crate::common::shot::region(
+            &mut h,
+            name,
+            crate::outward(Rect::from_center_size(c, vec2(480.0, 300.0))),
+        );
     }
 }

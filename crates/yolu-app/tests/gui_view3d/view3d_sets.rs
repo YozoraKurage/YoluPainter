@@ -1361,7 +1361,6 @@ fn a_budget_mark_does_not_outlive_the_model_or_the_current_set_while_the_3d_view
 
 #[test]
 fn snapshot_sets_in_3d_with_the_farthest_set_left_out_of_the_budget() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let mut h = scene(3, 256);
         h.state_mut().state.lang = lang;
@@ -1370,8 +1369,11 @@ fn snapshot_sets_in_3d_with_the_farthest_set_left_out_of_the_budget() {
         }
         h.state_mut().view3d_set_paint_budget(900_000);
         h.run();
-        h.snapshot(lang.pick("view3d_sets_over_budget_ja", "view3d_sets_over_budget_en"));
-        snapshots.extend_harness(&mut h);
+        // 英語の絵は撮らない（3D の絵に文字は無い）
+        if lang == yolu_app::lang::Lang::Ja {
+            let area = crate::view3d_area(&h);
+            crate::common::shot::region(&mut h, "view3d_sets_over_budget_ja", area);
+        }
     }
 }
 

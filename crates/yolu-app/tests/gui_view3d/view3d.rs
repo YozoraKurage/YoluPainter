@@ -114,7 +114,8 @@ fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
     // 上の面（+Y）も見えている（裏の面を描いていない = 表の向きが合っている）
     let top = pixel(&image, screen_of(&h, rect, Vec3::new(0.0, 0.5, 0.0)));
     assert!(top[0] > 40, "上の面: {top:?}");
-    h.snapshot("view3d_cube_painted");
+    // 3D ビューで塗った立方体を見る、ウィンドウ全体の見本
+    crate::common::shot::window(&mut h, "view3d_cube_painted");
     // 1 回の Undo で両方の面が戻る
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
@@ -871,7 +872,8 @@ fn placeholder_snapshot(lang: yolu_app::lang::Lang, name: &str) {
     h.run();
     move_to(&h, pos2(2.0, 2.0));
     h.run();
-    h.snapshot(name);
+    let area = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, name, area);
 }
 
 #[test]

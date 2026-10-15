@@ -997,7 +997,18 @@ fn edit_menu_lists_the_clipboard_entries_and_runs_them() {
     for label in ["Cut", "Copy", "Copy Merged", "Paste"] {
         popup_item(&h, label);
     }
-    h.snapshot("clipboard_edit_menu");
+    let title = menu_title(&h, "Edit");
+    let popup = st(&h)
+        .popup
+        .as_ref()
+        .expect("メニューが開いている")
+        .state
+        .rect;
+    common::shot::region(
+        &mut h,
+        "clipboard_edit_menu",
+        title.union(popup).expand(8.0),
+    );
 }
 
 // ───────── キー ─────────

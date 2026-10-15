@@ -1048,7 +1048,6 @@ fn in_orthographic_strokes_are_pulled_onto_the_projected_lines() {
 
 #[test]
 fn snapshots_of_the_3d_mirror_and_the_straight_ruler_in_both_languages() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         for what in ["symmetry", "line", "dim"] {
             let (mut h, rect) = cube_view();
@@ -1082,8 +1081,10 @@ fn snapshots_of_the_3d_mirror_and_the_straight_ruler_in_both_languages() {
             h.state_mut().state.message.clear();
             h.event(Event::PointerGone);
             h.run();
-            h.snapshot(format!("view3d_ruler_{what}_{}", lang.pick("ja", "en")));
-            snapshots.extend_harness(&mut h);
+            // 英語の絵は撮らない（3D の絵に文字は無い）
+            if lang == Lang::Ja {
+                crate::common::shot::region(&mut h, &format!("view3d_ruler_{what}_ja"), rect);
+            }
         }
     }
 }

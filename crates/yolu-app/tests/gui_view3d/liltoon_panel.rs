@@ -181,7 +181,6 @@ fn texts(shape: &egui::epaint::Shape, out: &mut Vec<(egui::Pos2, String)>) {
 
 #[test]
 fn the_panel_draws_in_both_languages_with_names_only() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = harness(lang);
         h.state_mut()
@@ -220,8 +219,11 @@ fn the_panel_draws_in_both_languages_with_names_only() {
                 assert!(!has_japanese(text), "{text}");
             }
         }
-        h.snapshot(format!("liltoon_panel_{}", lang.pick("ja", "en")));
-        snapshots.extend_harness(&mut h);
+        // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
+        if lang == Lang::Ja {
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            crate::common::shot::region(&mut h, "liltoon_panel_ja", rect);
+        }
     }
 }
 
@@ -433,7 +435,6 @@ fn received_from_unity() -> yolu_core::look::ReceivedLook {
 
 #[test]
 fn values_from_unity_show_their_row_and_the_changed_items_are_marked() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = harness(lang);
         h.state_mut()
@@ -482,8 +483,10 @@ fn values_from_unity_show_their_row_and_the_changed_items_are_marked() {
                 }
             }
         }
-        h.snapshot(format!("liltoon_panel_unity_{}", lang.pick("ja", "en")));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            crate::common::shot::region(&mut h, "liltoon_panel_unity_ja", rect);
+        }
         // Unity に合わせる: 欄で変えた値が外れ、Unity の値で描く（1 回の Undo）
         let steps = h.state().state.doc.undo_count();
         click_label(&mut h, lang.pick("Unity に合わせる", "Match Unity"));

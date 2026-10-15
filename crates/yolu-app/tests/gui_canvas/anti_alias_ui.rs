@@ -4,7 +4,7 @@
 use crate::common;
 
 use common::*;
-use egui::{Event, Rect};
+use egui::Rect;
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 use yolu_app::brushes::{builtin, BrushAction, BrushKey, Category};
@@ -36,21 +36,6 @@ fn close_detail(h: &mut H) {
 fn detail_rect(h: &H) -> Rect {
     yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
         .expect("ブラシの詳細のウィンドウを描いている")
-}
-
-fn shot(h: &mut H, rect: Rect, name: &str) {
-    h.event(Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
 }
 
 /// 選んでいるレイヤーの、縁の帯の画素（0 と 255 の間のアルファ）の数と、塗った画素の数。
@@ -194,5 +179,5 @@ fn snapshot_brush_detail_shape_english() {
     // 英語の画面に日本語が無い
     h.get_by_label("Anti-aliasing: Medium");
     let rect = detail_rect(&h);
-    shot(&mut h, rect, "brushes_detail_shape_english");
+    crate::clean_region(&mut h, "brushes_detail_shape_english", rect);
 }

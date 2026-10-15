@@ -2005,12 +2005,14 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
     h.event(Event::ModifiersChanged(Modifiers::SHIFT));
     h.step();
     h.run();
-    h.snapshot("selection_build_modes_shift");
+    let rect = crate::tool_panels(&h);
+    common::shot::region(&mut h, "selection_build_modes_shift", rect);
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.step();
     // 選択ペンのオプションバーとプロパティ
     pick_tool(&mut h, Tool::SelectPen);
-    h.snapshot("selection_build_pen");
+    let rect = crate::tool_panels(&h);
+    common::shot::region(&mut h, "selection_build_pen", rect);
     // 選択ペンのストロークの途中（足す: 青の重ね）
     set_brush(&mut h, 36.0, 0.6, 1.0);
     let start = at(&h, -90.0, -130.0);
@@ -2027,7 +2029,8 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
         h.step();
     }
     h.step();
-    h.snapshot("selection_build_pen_stroke");
+    let rect = canvas_rect(&h);
+    common::shot::region(&mut h, "selection_build_pen_stroke", rect);
     release(&h, at(&h, 80.0, -140.0), PointerButton::Primary);
     h.run();
     // クイックマスクの赤い重ね
@@ -2035,7 +2038,8 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
     h.run();
-    h.snapshot("selection_build_quick_mask");
+    let rect = canvas_rect(&h);
+    common::shot::region(&mut h, "selection_build_quick_mask", rect);
     h.state_mut()
         .state
         .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(false)))));
@@ -2046,7 +2050,8 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
         .state
         .apply(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
     h.run();
-    h.snapshot("selection_build_saved_window");
+    let rect = yolu_app::selection::saved::last_rect(&h.ctx).expect("ウィンドウを描いている");
+    common::shot::region(&mut h, "selection_build_saved_window", crate::outward(rect));
 }
 
 // ───────── 予算の断り・途中の切り替え・対称・ダブの量（レビューの指摘への試験） ─────────

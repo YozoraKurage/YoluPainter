@@ -792,19 +792,6 @@ fn the_rotate_tool_turns_the_bone_under_the_pointer_in_pose_mode() {
 
 // ───────── 絵 ─────────
 
-fn crop(h: &mut H, rect: Rect, name: &str) {
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().max(0.0).floor() as u32,
-        rect.top().max(0.0).floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
 #[test]
 fn snapshot_the_markers_and_a_grab_in_both_languages() {
     let (mut h, rect, layer) = edit_view();
@@ -817,7 +804,7 @@ fn snapshot_the_markers_and_a_grab_in_both_languages() {
     select(&mut h, Some(point));
     move_to(&h, marker_at(&h, rect, the_box(layer)));
     h.run();
-    crop(&mut h, rect, "edit_markers");
+    crate::common::shot::region(&mut h, "edit_markers", crate::outward(rect));
     for (lang, name) in [(Lang::Ja, "edit_grab_ja"), (Lang::En, "edit_grab_en")] {
         let (mut h, rect, layer) = edit_view();
         h.state_mut().state.set_language(lang);
@@ -830,6 +817,6 @@ fn snapshot_the_markers_and_a_grab_in_both_languages() {
             &[Key::X, Key::Num0, Key::Period, Key::Num2, Key::Num5],
         );
         assert!(transforming(&h));
-        crop(&mut h, rect, name);
+        crate::common::shot::region(&mut h, name, crate::outward(rect));
     }
 }

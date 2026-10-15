@@ -1205,8 +1205,9 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     for label in ["Quality", "Off", "4×", "Bloom", "Strength", "Threshold"] {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
-    h.snapshot("view3d_quality_panel_en");
+    let rect = crate::settings_corner(&h);
+    crate::common::shot::region(&mut h, "view3d_quality_panel_en", rect);
     h.state_mut().state.lang = yolu_app::lang::Lang::Ja;
     h.run();
-    h.snapshot("view3d_quality_panel");
+    crate::common::shot::region(&mut h, "view3d_quality_panel", rect);
 }

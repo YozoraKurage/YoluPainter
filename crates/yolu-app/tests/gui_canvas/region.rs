@@ -1891,24 +1891,12 @@ fn paint_channels_toggle_chips_and_values_change_the_state() {
 
 /// ツールプロパティのパネルの中だけを撮って、正解の絵と比べる。
 fn paint_channels_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
-    h.event(egui::Event::PointerGone);
-    h.step();
-    let props = h.state().tab_rects[&yolu_app::Tab::ToolProperties];
-    let size = h.state().tab_rects[&yolu_app::Tab::BrushSize];
-    let rect = Rect::from_min_max(
-        pos2(props.left() - 2.0, props.top()),
-        pos2(props.left() + 300.0, size.top()),
+    let rect = crate::group_rect(
+        h,
+        yolu_app::Tab::ToolProperties,
+        Some(yolu_app::Tab::BrushSize),
     );
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left() as u32,
-        rect.top() as u32,
-        rect.width() as u32,
-        rect.height() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    crate::clean_region(h, name, rect);
 }
 
 /// ペンの 1 点（pointer_id は固定。位置はウィンドウの画素 = 点）。
@@ -2006,7 +1994,8 @@ fn bucket_click_in_the_canvas_fills_one_undo() {
     let mut h = app_with_model(1280.0, 800.0, 256);
     key(&h, Key::G, Modifiers::NONE);
     h.run();
-    h.snapshot("region_bucket_options");
+    let rect = crate::tool_panels(&h);
+    common::shot::region(&mut h, "region_bucket_options", rect);
     // A の左のアイランドを押す
     let at = canvas_at(&h, (0.15, 0.25));
     click(&mut h, at);
@@ -2081,9 +2070,8 @@ fn bucket_with_a_six_line_symmetry_ruler_fills_every_copy_and_snapshots_in_both_
     assert!(!green(&h.state().state, decoy), "写しでない四角は塗らない");
     h.state_mut().state.message.clear();
     h.run();
-    h.snapshot("region_bucket_symmetry_lines6");
-    apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    h.snapshot("region_bucket_symmetry_lines6_english");
+    let rect = canvas_rect(&h);
+    common::shot::region(&mut h, "region_bucket_symmetry_lines6", rect);
 }
 
 /// 自動選択でも、線対称 6 本の写しの全部が 1 回で選ばれる（絵は日英）。
@@ -2130,9 +2118,8 @@ fn wand_with_a_six_line_symmetry_ruler_selects_every_copy_and_snapshots_in_both_
     assert_eq!(mask.amount(x as u32, y as u32), 0, "写しでない四角");
     h.state_mut().state.message.clear();
     h.run();
-    h.snapshot("selection_wand_symmetry_lines6");
-    apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    h.snapshot("selection_wand_symmetry_lines6_english");
+    let rect = canvas_rect(&h);
+    common::shot::region(&mut h, "selection_wand_symmetry_lines6", rect);
 }
 
 #[test]
@@ -2562,7 +2549,8 @@ fn a_locked_layer_says_why_the_brush_cannot_start() {
         s.message,
         "描けません（レイヤーの「画素」がロックされています）。"
     );
-    h.snapshot("region_locked_refusal");
+    let rect = crate::toast_area(&h);
+    common::shot::region(&mut h, "region_locked_refusal", rect);
 }
 
 #[test]
@@ -2638,7 +2626,7 @@ fn hover_highlight_in_the_3d_view_and_the_canvas_snapshots() {
     move_to(&h, at);
     h.run();
     assert_eq!(h.state().state.region_hover_len(), Some(2));
-    h.snapshot("region_hover_canvas");
+    common::shot::region(&mut h, "region_hover_canvas", rect);
     // 3D
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
@@ -2647,10 +2635,10 @@ fn hover_highlight_in_the_3d_view_and_the_canvas_snapshots() {
     move_to(&h, at);
     h.run();
     assert_eq!(h.state().state.region_hover_len(), Some(2));
-    h.snapshot("region_hover_3d");
+    common::shot::region(&mut h, "region_hover_3d", rect);
     // 消すなら桃色
     apply(&mut h, Action::Region(RegionAction::Erase(true)));
-    h.snapshot("region_hover_3d_erase");
+    common::shot::region(&mut h, "region_hover_3d_erase", rect);
     // 面でない所では消える
     move_to(&h, rect.min + vec2(5.0, 5.0));
     h.run();
@@ -2690,7 +2678,8 @@ fn id_select_panel_and_the_options_bar_snapshots_in_both_languages() {
     // 部品の欄はモデルの入力を別のスレッドで作り終えるまで「確かめています」なので、撮る前に作り終えさせる（撮る時機に頼らない）
     ready_parts(&mut h.state_mut().state);
     h.run();
-    h.snapshot("region_idselect_no_map");
+    let rect = crate::tool_panels(&h);
+    common::shot::region(&mut h, "region_idselect_no_map", rect);
     {
         let s = &mut h.state_mut().state;
         s.apply(Action::Region(RegionAction::IdColor(IdColorOp::Set {
@@ -2702,15 +2691,11 @@ fn id_select_panel_and_the_options_bar_snapshots_in_both_languages() {
         s.message.clear();
     }
     h.run();
-    h.snapshot("region_idselect_manual");
-    apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    h.snapshot("region_idselect_english");
-    // ポリゴン塗りつぶしの帯とプロパティ（英語）
+    common::shot::region(&mut h, "region_idselect_manual", rect);
+    // ポリゴン塗りつぶしの帯とプロパティ（英語の絵は撮らない。帯の並びは文字の長さで変わらない）
     key(&h, Key::Num4, Modifiers::NONE);
     h.run();
-    h.snapshot("region_polygon_english");
-    apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::Ja)));
-    h.snapshot("region_polygon");
+    common::shot::region(&mut h, "region_polygon", rect);
 }
 
 #[test]
@@ -2916,7 +2901,6 @@ fn escape_while_dragging_the_part_id_color_in_the_window_does_not_report_a_chang
 /// 部品の ID の色から開いた色のウィンドウの絵（日英）。
 #[test]
 fn snapshot_the_colour_window_on_a_part_id_color() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name, label) in [
         (Lang::Ja, "ja", "この部品の ID の色"),
         (Lang::En, "en", "This part's ID color"),
@@ -2927,8 +2911,13 @@ fn snapshot_the_colour_window_on_a_part_id_color() {
         assert!(yolu_app::panels::color_window::is_open(&h.ctx));
         h.state_mut().state.message.clear();
         h.run();
-        h.snapshot(format!("color_window_part_id_{name}"));
-        results.extend_harness(&mut h);
+        let rect =
+            yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウを描いている");
+        common::shot::region(
+            &mut h,
+            &format!("color_window_part_id_{name}"),
+            crate::outward(rect),
+        );
     }
 }
 
@@ -2953,7 +2942,8 @@ fn the_id_panel_shows_the_part_position_of_the_second_texture_set() {
     apply(&mut h, Action::Region(RegionAction::IdPart(1)));
     h.state_mut().state.message.clear();
     h.run();
-    h.snapshot("region_idselect_second_set");
+    let rect = crate::tool_panels(&h);
+    common::shot::region(&mut h, "region_idselect_second_set", rect);
 }
 
 #[test]
@@ -2962,14 +2952,15 @@ fn the_options_bar_of_each_range_tool_fits_a_narrow_window_in_both_languages() {
     key(&h, Key::G, Modifiers::NONE);
     h.run();
     apply(&mut h, Action::Region(RegionAction::ByColor(true)));
-    h.snapshot("region_bucket_by_color_narrow");
+    let bar = crate::options_bar(&h);
+    common::shot::region(&mut h, "region_bucket_by_color_narrow", bar);
     apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    h.snapshot("region_bucket_by_color_narrow_english");
+    common::shot::region(&mut h, "region_bucket_by_color_narrow_english", bar);
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
     ready_parts(&mut h.state_mut().state);
     h.run();
-    h.snapshot("region_idselect_narrow_english");
+    common::shot::region(&mut h, "region_idselect_narrow_english", bar);
 }
 
 #[test]

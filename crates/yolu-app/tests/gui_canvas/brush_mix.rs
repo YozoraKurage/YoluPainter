@@ -4,7 +4,7 @@
 use crate::common;
 
 use common::*;
-use egui::{pos2, Event, Key, Modifiers, Pos2, Rect};
+use egui::{pos2, Key, Modifiers, Pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::brushes::sample::{self, SampleSpec};
@@ -70,21 +70,6 @@ fn disabled(h: &H, label: &str) -> bool {
         .unwrap_or_else(|| panic!("{label}"))
         .accesskit_node()
         .is_disabled()
-}
-
-fn shot(h: &mut H, rect: Rect, name: &str) {
-    h.event(Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
 }
 
 /// 試験ごとの設定のフォルダの中の、ブラシのフォルダ（ツールの並びの `tools.json` は、その隣に置かれる）。
@@ -392,14 +377,14 @@ fn snapshot_brush_detail_mix() {
         .apply(Action::Brush(BrushAction::Select(b("oil"))));
     open_detail(&mut h, Category::Mix);
     let rect = detail_rect(&h);
-    shot(&mut h, rect, "brushes_detail_mix");
+    crate::clean_region(&mut h, "brushes_detail_mix", rect);
     language(&mut h, Lang::En);
     h.state_mut()
         .state
         .apply(Action::Brush(BrushAction::Select(b("mixer"))));
     open_detail(&mut h, Category::Mix);
     let rect = detail_rect(&h);
-    shot(&mut h, rect, "brushes_detail_mix_english");
+    crate::clean_region(&mut h, "brushes_detail_mix_english", rect);
 }
 
 #[test]
@@ -416,7 +401,7 @@ fn snapshot_brush_panel_thick_paint_group() {
         pos2(tab.left() - 2.0, tab.top()),
         pos2(tab.left() + 300.0, color.top()),
     );
-    shot(&mut h, rect, "brushes_panel_thick_paint");
+    crate::clean_region(&mut h, "brushes_panel_thick_paint", rect);
 }
 
 // ───────── アプリの入口から描く ─────────

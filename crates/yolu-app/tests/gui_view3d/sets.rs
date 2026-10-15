@@ -179,7 +179,8 @@ fn rename_hide_and_the_header_show_the_set() {
     click(&mut h, eyes[1].center());
     let hair = h.state().state.sets.by_uid(uid).unwrap();
     assert!(!hair.visible);
-    h.snapshot("texture_sets_renamed_hidden");
+    let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
+    crate::common::shot::region(&mut h, "texture_sets_renamed_hidden", rect);
 }
 
 #[test]
@@ -248,7 +249,8 @@ fn every_state_of_a_set_has_its_icon() {
     assert_eq!(icons(1), Some("lock"));
     assert_eq!(icons(2), Some("link_off"));
     assert_eq!(icons(3), None, "付いて見えているセットに印は無い");
-    h.snapshot("texture_sets_states");
+    let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
+    crate::common::shot::region(&mut h, "texture_sets_states", rect);
 }
 
 #[test]
@@ -469,17 +471,17 @@ fn snapshot_set_bar(h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, lang: 
     let configure = h
         .get_by_label(lang.pick("プロジェクト設定…", "Project Configuration…"))
         .rect();
-    let image = h.render().expect("描画");
     // 左へは、帯の左端より広く（右に寄った帯のボタンのツールチップは左へ伸びる）
     let (left, top) = (
-        (configure.right() - 330.0).max(0.0) as u32,
-        (add.top() - 100.0).max(0.0) as u32,
+        (configure.right() - 330.0).max(0.0).trunc(),
+        (add.top() - 100.0).max(0.0).trunc(),
     );
-    let right = ((configure.right() + 8.0) as u32).min(image.width());
-    let bottom = ((add.bottom() + 70.0) as u32).min(image.height());
-    let cropped =
-        image::imageops::crop_imm(&image, left, top, right - left, bottom - top).to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    let (right, bottom) = (
+        (configure.right() + 8.0).trunc(),
+        (add.bottom() + 70.0).trunc(),
+    );
+    let rect = egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, bottom));
+    crate::common::shot::region(h, name, rect);
 }
 
 #[test]
@@ -1173,7 +1175,9 @@ fn open_from_the_menu_and_the_keys_asks_for_a_file() {
     h.state_mut().state.dialog_request = None;
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
-    h.snapshot("menu_file");
+    let title = menu_title(&h, "ファイル");
+    let rect = crate::with_popup(&h, title);
+    crate::common::shot::region(&mut h, "menu_file", rect);
     let at = popup_item(&h, "開く…").center();
     click(&mut h, at);
     assert_eq!(h.state().state.dialog_request, Some(DialogRequest::Open));

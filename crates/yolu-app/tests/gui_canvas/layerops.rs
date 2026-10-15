@@ -11,7 +11,7 @@ use yolu_app::lang::Lang;
 use yolu_app::layerops::Xform;
 use yolu_app::m2::{self, DropTarget, Edit};
 use yolu_app::state::{Action, AppState, Tool};
-use yolu_app::YoluApp;
+use yolu_app::{Tab, YoluApp};
 use yolu_core::{LayerLocks, Surface};
 
 const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
@@ -2050,10 +2050,13 @@ fn japanese_drawn(h: &Harness<'_, YoluApp>) -> Vec<String> {
 
 #[test]
 fn snapshot_multi_selection_and_lock_marks_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = showcase(lang);
-        h.snapshot(format!("layerops_layers_{}", lang.pick("ja", "en")));
+        // 英語の絵は撮らない（レイヤーの行の並びは文字の長さで変わらない）。英語の画面に日本語が残らないことは下で確かめる
+        if lang == Lang::Ja {
+            let rect = crate::group_rect(&h, Tab::Layers, Some(Tab::Properties));
+            common::shot::region(&mut h, "layerops_layers_ja", rect);
+        }
         // 見張りが働いていること: 日本語の画面には日本語がある。英語の画面には残らない
         assert_eq!(
             japanese_drawn(&h).is_empty(),
@@ -2061,31 +2064,30 @@ fn snapshot_multi_selection_and_lock_marks_in_both_languages() {
             "{:?}",
             japanese_drawn(&h)
         );
-        results.extend_harness(&mut h);
     }
 }
 
 #[test]
 fn snapshot_the_move_tool_with_its_handles_and_properties_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = showcase(lang);
         h.state_mut().state.apply(Action::SelectTool(Tool::Move));
         h.run();
-        h.snapshot(format!("layerops_move_tool_{}", lang.pick("ja", "en")));
+        // 移動ツールの形（ハンドル・オプションバー・ツールプロパティ）を見る、ウィンドウ全体の見本。英語の絵は撮らない
+        if lang == Lang::Ja {
+            common::shot::window(&mut h, "layerops_move_tool_ja");
+        }
         assert_eq!(
             japanese_drawn(&h).is_empty(),
             lang == Lang::En,
             "{:?}",
             japanese_drawn(&h)
         );
-        results.extend_harness(&mut h);
     }
 }
 
 #[test]
 fn snapshot_the_layer_menu_and_the_merge_confirmation() {
-    let mut results = egui_kittest::SnapshotResults::new();
     let mut h = showcase(Lang::Ja);
     // 選んだレイヤーの行を右クリックしたメニュー
     let at = row_center(&h, "レイヤー 3");
@@ -2094,8 +2096,11 @@ fn snapshot_the_layer_menu_and_the_merge_confirmation() {
     release(&h, at, PointerButton::Secondary);
     h.run();
     assert!(h.state().state.popup.is_some());
-    h.snapshot("layerops_layer_menu");
-    results.extend_harness(&mut h);
+    let rect = crate::with_popup(
+        &h,
+        crate::group_rect(&h, Tab::Layers, Some(Tab::Properties)),
+    );
+    common::shot::region(&mut h, "layerops_layer_menu", rect);
     // 英語のメニュー（開いている項目に日本語が残らない）
     let mut h = showcase(Lang::En);
     let at = row_center(&h, "Layer 3");
@@ -2118,8 +2123,9 @@ fn snapshot_the_layer_menu_and_the_merge_confirmation() {
         s.apply(Action::M2(Edit::MergeDown));
     }
     h.run();
-    h.snapshot("layerops_merge_confirm");
-    results.extend_harness(&mut h);
+    let rect =
+        yolu_app::windows::window_rect(&h.ctx, "merge-confirm").expect("結合の確認を描いている");
+    common::shot::region(&mut h, "layerops_merge_confirm", crate::outward(rect));
 }
 
 // ───────── キャンバスの表示が編集に追いつく（CPU と GPU の道の両方） ─────────

@@ -734,19 +734,6 @@ fn alpha_at(h: &H, p: Pos2) -> [u8; 4] {
     canvas_pixel(h, p)
 }
 
-fn crop(h: &mut H, rect: egui::Rect, name: &str) {
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().max(0.0).floor() as u32,
-        rect.top().max(0.0).floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
 #[test]
 fn snapshot_the_toolbar_dot_and_tip_of_the_tool_that_comes_back_in_both_languages() {
     for (lang, name) in [
@@ -770,9 +757,9 @@ fn snapshot_the_toolbar_dot_and_tip_of_the_tool_that_comes_back_in_both_language
         // 点（ポインタをほかへ置いて）
         move_to(&h, c);
         frames(&mut h, 3);
-        crop(&mut h, area, name);
+        common::shot::region(&mut h, name, area);
         // ツールチップ（戻る先のボタンの上で）
         hover_and_wait(&mut h, at);
-        crop(&mut h, area, &format!("{name}_tip"));
+        common::shot::region(&mut h, &format!("{name}_tip"), area);
     }
 }

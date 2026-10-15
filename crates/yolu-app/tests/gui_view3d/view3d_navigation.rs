@@ -524,7 +524,6 @@ fn settings_panels_and_navigation_do_not_take_the_frame_shortcut() {
 
 #[test]
 fn view_settings_persist_through_the_real_window_and_restart() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     use yolu_app::{pen::PenInput, Tab};
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../target/navigation-window-test")
@@ -593,11 +592,15 @@ fn view_settings_persist_through_the_real_window_and_restart() {
         h.run();
         let chosen = prefs(OrbitCenter::Surface, ZoomCenter::Pointer);
         assert_eq!(yolu_app::settings::load(&path).0.navigation, chosen);
-        h.snapshot(lang.pick(
-            "view3d_navigation_settings_ja",
-            "view3d_navigation_settings_en",
-        ));
-        snapshots.extend_harness(&mut h);
+        let corner = crate::settings_corner(&h);
+        crate::common::shot::region(
+            &mut h,
+            lang.pick(
+                "view3d_navigation_settings_ja",
+                "view3d_navigation_settings_en",
+            ),
+            corner,
+        );
         drop(h);
         let h = build();
         assert_eq!(h.state().state.prefs.settings.navigation, chosen);

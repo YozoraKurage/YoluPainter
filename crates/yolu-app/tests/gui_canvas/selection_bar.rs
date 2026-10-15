@@ -122,7 +122,8 @@ fn the_bar_floats_below_the_selection_with_icons_only() {
         .collect();
     assert!(xs.windows(2).all(|w| w[0] < w[1]), "{xs:?}");
     // 文字のラベルは無い: 帯の中の読み上げの名前はボタンのツールチップだけ（描いた文字は無い）
-    h.snapshot("selection_bar");
+    // 選択範囲と、その下に浮かぶ帯
+    common::shot::region(&mut h, "selection_bar", bar.union(bounds).expand(12.0));
 }
 
 #[test]
@@ -1361,7 +1362,7 @@ fn the_bar_speaks_english_and_has_no_japanese_in_it() {
         assert!(h.query_by_label(label).is_some(), "{label}");
     }
     assert!(h.query_by_label(DESELECT).is_none());
-    h.snapshot("selection_bar_english");
+    // 帯は印だけで、英語でも並びは同じなので、英語の絵は撮らない
 }
 
 #[test]

@@ -253,16 +253,7 @@ fn dragging_a_brush_lights_the_group_tabs_it_can_drop_on_and_stops_when_released
     h.run();
     assert_eq!(st(&h).toolset.ui.dragging(), None);
     let after = h.render().expect("描画");
-    let crop = |image: &image::RgbaImage| {
-        image::imageops::crop_imm(
-            image,
-            tabs.left() as u32,
-            tabs.top() as u32,
-            tabs.width() as u32,
-            tabs.height() as u32,
-        )
-        .to_image()
-    };
+    let crop = |image: &image::RgbaImage| common::shot::crop(image, tabs, 1.0);
     assert_ne!(
         crop(&during).as_raw(),
         crop(&after).as_raw(),
@@ -305,17 +296,10 @@ fn snapshots_of_the_row_menu_with_the_group_list_in_both_languages() {
             pos2((body.left() - 30.0).max(0.0), (body.top() - 30.0).max(0.0)),
             pos2(body.right() + 260.0, body.bottom() + 30.0),
         );
+        // 端も大きさも切り捨てて撮る
+        let rect = Rect::from_min_size(rect.min.floor(), rect.size().floor());
         h.event(Event::PointerGone);
         h.step();
-        let image = h.render().expect("描画");
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left() as u32,
-            rect.top() as u32,
-            rect.width() as u32,
-            rect.height() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(&cropped, format!("brush_row_menu_{name}"));
+        common::shot::region(&mut h, &format!("brush_row_menu_{name}"), rect);
     }
 }

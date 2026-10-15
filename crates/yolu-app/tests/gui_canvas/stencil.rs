@@ -890,17 +890,18 @@ fn snapshot_the_stencil_tab() {
     let dir = temp_dir("snap-tab");
     let mut h = app(1280.0, 1000.0, 128);
     open_stencil_tab(&mut h);
-    h.snapshot("stencil_tab_empty");
+    let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+    common::shot::region(&mut h, "stencil_tab_empty", rect);
     load(&mut h, &color_png(&dir, "gradient.png"));
     h.state_mut().state.stencil.angle = 30.0;
     h.run();
-    h.snapshot_options("stencil_tab_color", &rotated_texture());
+    crate::region_with(&mut h, "stencil_tab_color", rect, &rotated_texture());
     load(&mut h, &ring_png(&dir, "ring.png"));
     h.state_mut()
         .state
         .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
-    h.snapshot_options("stencil_tab_mask_english", &rotated_texture());
+    crate::region_with(&mut h, "stencil_tab_mask_english", rect, &rotated_texture());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -916,7 +917,8 @@ fn snapshot_the_overlay_on_the_canvas_with_y_held_and_tiled() {
     line_across(&mut h, -120.0, 120.0); // 通して塗った後
     key_down(&mut h, Key::Y);
     h.run();
-    h.snapshot("stencil_canvas_overlay_held");
+    let rect = canvas_rect(&h);
+    common::shot::region(&mut h, "stencil_canvas_overlay_held", rect);
     key_up(&mut h, Key::Y);
     h.state_mut()
         .state
@@ -928,7 +930,12 @@ fn snapshot_the_overlay_on_the_canvas_with_y_held_and_tiled() {
         .state
         .apply(Action::Stencil(StencilOp::Angle(20.0)));
     h.run();
-    h.snapshot_options("stencil_canvas_overlay_tiled", &rotated_texture());
+    crate::region_with(
+        &mut h,
+        "stencil_canvas_overlay_tiled",
+        rect,
+        &rotated_texture(),
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1448,7 +1455,8 @@ fn snapshot_the_overlay_over_the_3d_view() {
     cube_line(&mut h, rect);
     key_down(&mut h, Key::Y);
     h.run();
-    h.snapshot("stencil_view3d_overlay");
+    // ステンシルの重ね表示を 3D ビューに出した形を見る、ウィンドウ全体の見本
+    common::shot::window(&mut h, "stencil_view3d_overlay");
     let _ = std::fs::remove_dir_all(dir);
 }
 

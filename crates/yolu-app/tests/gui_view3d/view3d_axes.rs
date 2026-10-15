@@ -167,20 +167,11 @@ fn shot(h: &mut H, name: &str) {
     let content = h.state().view3d_rect().unwrap();
     h.event(Event::PointerGone);
     h.run();
-    let image = h.render().expect("描画");
     let r = Rect::from_min_max(
         pos2(content.right() - 140.0, content.top()),
         pos2(content.right(), content.top() + 140.0),
     );
-    let cropped = image::imageops::crop_imm(
-        &image,
-        r.left().floor() as u32,
-        r.top().floor() as u32,
-        r.width().ceil() as u32,
-        r.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    crate::common::shot::region(h, name, crate::outward(r));
 }
 
 #[test]
@@ -234,5 +225,6 @@ fn snapshot_the_cube_in_orthographic_from_above() {
     assert!(((d - a).length() - (cc - b).length()).abs() < 1e-3);
     h.event(Event::PointerGone);
     h.run();
-    h.snapshot("view3d_cube_orthographic");
+    // 正投影の立方体を見る、ウィンドウ全体の見本
+    crate::common::shot::window(&mut h, "view3d_cube_orthographic");
 }

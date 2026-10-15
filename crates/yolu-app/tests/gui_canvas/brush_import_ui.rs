@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use brush_import_files::*;
 use common::*;
-use egui::{pos2, Event, Rect};
+use egui::{pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::brushes::{BrushAction, Category, Group};
@@ -557,33 +557,6 @@ fn the_flip_fields_are_on_for_a_hose_as_well_as_for_a_single_image() {
     assert!(!st(&h).m2.brush.tip.flip_x);
 }
 
-/// 矩形の中だけを撮って、正解の絵と比べる。
-fn shot(h: &mut H, rect: Rect, name: &str) {
-    // 直前に押した所のポインタが絵に残らないように
-    h.event(Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
-/// ブラシのパネルの全体（タブの帯から、下のカラーのパネルの見出しの上まで）。
-fn panel_rect(h: &H) -> Rect {
-    let tab = h.state().tab_rects[&Tab::SubTools];
-    let color = h.state().tab_rects[&Tab::Color];
-    Rect::from_min_max(
-        pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + 300.0, color.top()),
-    )
-}
-
 fn imported_panel(lang: Lang, dir: &Path) -> H {
     let mut h = app(1600.0, 900.0, 128);
     language(&mut h, lang);
@@ -605,8 +578,8 @@ fn imported_panel(lang: Lang, dir: &Path) -> H {
 fn snapshot_the_imported_group_with_the_mark_for_what_was_left_out() {
     let dir = temp_dir("snapshot");
     let mut h = imported_panel(Lang::Ja, &dir);
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel_imported");
+    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
+    crate::clean_region(&mut h, "brushes_panel_imported", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -614,8 +587,8 @@ fn snapshot_the_imported_group_with_the_mark_for_what_was_left_out() {
 fn snapshot_the_imported_group_in_english() {
     let dir = temp_dir("snapshot-en");
     let mut h = imported_panel(Lang::En, &dir);
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel_imported_english");
+    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
+    crate::clean_region(&mut h, "brushes_panel_imported_english", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -825,22 +798,10 @@ fn the_clip_studio_window_says_why_nothing_was_found_in_both_languages() {
     }
 }
 
-/// ウィンドウの中だけを撮って、正解の絵と比べる。
-fn shot_window(h: &mut H, name: &str) {
-    let rect = yolu_app::windows::window_rect(&h.ctx, yolu_app::panels::brush_clipstudio::NAME)
-        .expect("ウィンドウが開いている");
-    h.event(Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+/// 「CLIP STUDIO から」のウィンドウの範囲。
+fn clipstudio_rect(h: &H) -> Rect {
+    yolu_app::windows::window_rect(&h.ctx, yolu_app::panels::brush_clipstudio::NAME)
+        .expect("ウィンドウが開いている")
 }
 
 #[test]
@@ -849,7 +810,8 @@ fn snapshot_the_clip_studio_window() {
     let mut h = csp_window(Lang::Ja, &dir);
     h.get_by_label("Ink").click();
     h.run();
-    shot_window(&mut h, "brush_clipstudio_window");
+    let rect = clipstudio_rect(&h);
+    crate::clean_region(&mut h, "brush_clipstudio_window", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -859,6 +821,7 @@ fn snapshot_the_clip_studio_window_in_english() {
     let mut h = csp_window(Lang::En, &dir);
     h.get_by_label("Ink").click();
     h.run();
-    shot_window(&mut h, "brush_clipstudio_window_english");
+    let rect = clipstudio_rect(&h);
+    crate::clean_region(&mut h, "brush_clipstudio_window_english", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }

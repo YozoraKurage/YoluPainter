@@ -864,21 +864,10 @@ fn the_window_is_in_both_languages_and_its_text_names_things_without_instruction
     }
 }
 
-/// ウィンドウの中だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// ウィンドウの中だけを撮る（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut H, name: &str) {
     let rect = yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウが開いている");
-    h.event(egui::Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    crate::clean_region(h, name, rect);
 }
 
 #[test]

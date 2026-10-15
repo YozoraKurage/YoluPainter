@@ -2032,7 +2032,8 @@ fn snapshot_material_balls_metal_and_roughness_steps() {
         smooth > mid && mid > rough,
         "金属 1 の映り込みのピーク: {smooth} {mid} {rough}"
     );
-    h.snapshot("view3d_material_balls");
+    // 金属と粗さの段を並べた球を見る、ウィンドウ全体の見本
+    crate::common::shot::window(&mut h, "view3d_material_balls");
 }
 
 #[test]
@@ -2085,7 +2086,8 @@ fn snapshot_normal_map_from_a_height_bump() {
         )
         .unwrap();
     h.run();
-    h.snapshot("view3d_normal_map");
+    let area = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, "view3d_normal_map", area);
     // 光の来る向きを変えると、盛り上がりの明るい側が反対になる（法線マップが効いている）
     let rect = h.state().view3d_rect().unwrap();
     let view = h
@@ -2112,7 +2114,8 @@ fn snapshot_ball_shadow_on_a_floor() {
     op(&mut h, Op::Shadows(true));
     // ぼかしの粒（画素ごとに回す標本）が GPU ごとにずれて Windows の許しを超えないよう、縁を細めにして撮る
     op(&mut h, Op::ShadowSoftness(0.1));
-    h.snapshot("view3d_ball_shadow");
+    let area = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, "view3d_ball_shadow", area);
 }
 
 #[test]
@@ -2123,12 +2126,15 @@ fn snapshot_settings_panel_and_shading_menu() {
     use egui_kittest::kittest::Queryable;
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    h.snapshot("view3d_settings_panel");
+    let corner = crate::settings_corner(&h);
+    crate::common::shot::region(&mut h, "view3d_settings_panel", corner);
     h.state_mut().apply(Action::View3d(Op::CloseSettings));
     h.run();
+    let button = h.get_by_label("3D の表示: マテリアル (PBR)").rect();
     h.get_by_label("3D の表示: マテリアル (PBR)").click();
     h.run();
-    h.snapshot("view3d_shading_menu");
+    let shown = crate::with_popup(&h, button);
+    crate::common::shot::region(&mut h, "view3d_shading_menu", shown);
 }
 
 // ───────── 計測（cargo test -p yolu-app --test gui_view3d -- --ignored --nocapture view3d_look::measure） ─────────

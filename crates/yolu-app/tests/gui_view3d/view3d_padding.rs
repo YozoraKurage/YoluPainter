@@ -940,7 +940,8 @@ fn far_away_the_island_borders_no_longer_bleed_the_transparent_outside() {
         },
     );
     h.run();
-    h.snapshot("view3d_padding_far");
+    let area = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, "view3d_padding_far", area);
 }
 
 /// 平らな立方体（面ごとに 3 × 2 のセルの中に、セルの中心のまわりに `scale` 倍の正方形のアイランド）。面の辺が UV の継ぎ目になる。

@@ -80,33 +80,6 @@ fn in_pane(h: &H, label: &str) -> Rect {
     })
 }
 
-/// 矩形の中だけを撮って、正解の絵と比べる。
-fn shot(h: &mut H, rect: Rect, name: &str) {
-    // 直前に押した所のポインタが絵に残らないように
-    h.event(Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
-/// ブラシのパネルの全体（タブの帯から、下のカラーのパネルの見出しの上まで）。
-fn panel_rect(h: &H) -> Rect {
-    let tab = h.state().tab_rects[&Tab::SubTools];
-    let color = h.state().tab_rects[&Tab::Color];
-    Rect::from_min_max(
-        pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + 300.0, color.top()),
-    )
-}
-
 // ───────── パネルの場所 ─────────
 
 #[test]
@@ -450,7 +423,7 @@ fn dragging_a_row_reorders_the_list_inside_its_group() {
     // 一番下の空白へ落とすと、グループの一番後ろ
     list_to_top(&mut h);
     let top = row_of(&h, "標準");
-    let list_bottom = panel_rect(&h).top() + 30.0 + 400.0;
+    let list_bottom = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color)).top() + 30.0 + 400.0;
     let _ = list_bottom;
     drag(
         &mut h,
@@ -1229,8 +1202,8 @@ fn snapshot_brush_panel() {
     let mut h = app(1600.0, 900.0, 128);
     click_row(&mut h, "インクペン");
     h.run();
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel");
+    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
+    crate::clean_region(&mut h, "brushes_panel", rect);
 }
 
 #[test]
@@ -1246,8 +1219,8 @@ fn snapshot_brush_panel_modified_and_user_brush() {
     h.state_mut().state.m2.brush.tip.angle = 40.0;
     h.run();
     h.run();
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel_modified");
+    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
+    crate::clean_region(&mut h, "brushes_panel_modified", rect);
 }
 
 #[test]
@@ -1259,8 +1232,8 @@ fn snapshot_brush_panel_effects_and_english() {
         .apply(Action::Brush(BrushAction::Select(b("smudge"))));
     h.run();
     h.run();
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel_effects_english");
+    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
+    crate::clean_region(&mut h, "brushes_panel_effects_english", rect);
 }
 
 #[test]
@@ -1271,8 +1244,8 @@ fn snapshot_brush_panel_eraser_group() {
         .apply(Action::Brush(BrushAction::Select(b("soft-eraser"))));
     h.run();
     h.run();
-    let rect = panel_rect(&h);
-    shot(&mut h, rect, "brushes_panel_eraser");
+    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
+    crate::clean_region(&mut h, "brushes_panel_eraser", rect);
 }
 
 #[test]
@@ -1290,7 +1263,7 @@ fn snapshot_brush_detail_window() {
     ] {
         open_detail(&mut h, category);
         let rect = detail_rect(&h);
-        shot(&mut h, rect, name);
+        crate::clean_region(&mut h, name, rect);
     }
 }
 
@@ -1303,7 +1276,7 @@ fn snapshot_brush_detail_window_english_effect() {
         .apply(Action::Brush(BrushAction::Select(b("clone"))));
     open_detail(&mut h, Category::Effect);
     let rect = detail_rect(&h);
-    shot(&mut h, rect, "brushes_detail_effect_english");
+    crate::clean_region(&mut h, "brushes_detail_effect_english", rect);
 }
 
 #[test]
@@ -1316,7 +1289,7 @@ fn snapshot_brush_detail_window_english_stroke() {
     open_detail(&mut h, Category::Stroke);
     assert!(h.query_by_label("At least 1 pixel").is_some());
     let rect = detail_rect(&h);
-    shot(&mut h, rect, "brushes_detail_stroke_english");
+    crate::clean_region(&mut h, "brushes_detail_stroke_english", rect);
 }
 
 #[test]

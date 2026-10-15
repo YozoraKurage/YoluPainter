@@ -682,7 +682,6 @@ fn the_edge_stays_white_through_tone_mapping() {
 
 #[test]
 fn snapshot_selection_in_3d_only_in_both_languages() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let (mut h, rect) = still_view();
         h.state_mut().state.lang = lang;
@@ -707,15 +706,18 @@ fn snapshot_selection_in_3d_only_in_both_languages() {
         h.step();
         h.event(Event::PointerGone);
         h.run();
-        h.snapshot(lang.pick("view3d_selection_edge_ja", "view3d_selection_edge_en"));
-        snapshots.extend_harness(&mut h);
+        // 英語の絵は撮らない（3D の絵に文字は無い）
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_selection_edge_ja", rect);
+        }
         // クイックマスク（赤い重ね）
         h.state_mut()
             .state
             .apply(Action::Sel(SelAction::Ui(SelUiOp::QuickMask(Some(true)))));
         h.run();
-        h.snapshot(lang.pick("view3d_selection_quick_ja", "view3d_selection_quick_en"));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_selection_quick_ja", rect);
+        }
     }
 }
 

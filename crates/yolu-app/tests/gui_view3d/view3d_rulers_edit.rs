@@ -728,15 +728,16 @@ fn a_read_only_set_refuses_to_move_or_delete_a_ruler() {
 
 #[test]
 fn snapshots_of_a_selected_ruler_with_its_gizmo_in_both_languages() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
-        let (mut h, _, _) = edit_view();
+        let (mut h, rect, _) = edit_view();
         h.state_mut().state.lang = lang;
         select(&mut h);
         h.state_mut().state.message.clear();
         h.event(Event::PointerGone);
         h.run();
-        h.snapshot(format!("view3d_ruler_selected_{}", lang.pick("ja", "en")));
-        snapshots.extend_harness(&mut h);
+        // 英語の絵は撮らない（3D の絵に文字は無い）
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_ruler_selected_ja", rect);
+        }
     }
 }

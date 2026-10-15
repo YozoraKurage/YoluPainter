@@ -3280,7 +3280,8 @@ fn clicking_the_canvas_adds_points_and_the_overlay_follows() {
         assert!(p.is_canvas());
         assert_eq!(p.point_count(), 3);
     }
-    h.snapshot("path_canvas_points");
+    // パスツールの形（オプションバー・パスの欄・キャンバスの点）を見る、ウィンドウ全体の見本
+    common::shot::window(&mut h, "path_canvas_points");
 }
 
 #[test]
@@ -3465,7 +3466,6 @@ fn the_panel_and_options_bar_show_names_and_values_in_both_languages_without_ins
     // 閉じたパスは終わりに始めの点の複製を持つ（4 点の輪は 5 点）
     assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 5);
     no_instruction_text(&mut h, Lang::En, "panel");
-    h.snapshot("path_panel_english");
 }
 
 #[test]
@@ -3634,7 +3634,8 @@ fn view3d_clicks_add_points_and_the_overlay_marks_them() {
     // 通常の色差の閾値は変えず、この画像だけ 1 画素を許す（基準画像は撮り直さない）。
     let mut options = egui_kittest::SnapshotOptions::new();
     options.max_failed_pixels = options.max_failed_pixels.max(1);
-    h.snapshot_options("path_view3d_points", &options);
+    let rect = h.state().view3d_rect().expect("3D のタブを描いた");
+    crate::region_with(&mut h, "path_view3d_points", rect, &options);
     // 1 回の Undo ずつ戻る
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
@@ -3713,7 +3714,12 @@ fn snapshot_the_narrow_path_panel_puts_the_anti_alias_name_above_its_box() {
     );
     h.event(Event::PointerGone);
     h.step();
-    h.snapshot("path_panel_narrow_english");
+    let rect = crate::group_rect(
+        &h,
+        yolu_app::Tab::ToolProperties,
+        Some(yolu_app::Tab::BrushSize),
+    );
+    common::shot::region(&mut h, "path_panel_narrow_english", rect);
 }
 
 /// 画面に描いた文字（重複なし）。
@@ -3957,11 +3963,14 @@ fn three_paths(h: &mut Harness<'_, YoluApp>) {
 
 #[test]
 fn review_pictures_of_the_list_handles_and_context_menu() {
-    let mut shots = egui_kittest::SnapshotResults::new();
     for (lang, tag) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
         let mut h = review_app(lang);
         three_paths(&mut h);
-        h.snapshot(format!("path_review_list_{tag}"));
+        // 英語の絵は撮らない（一覧の並びは文字の長さで変わらない）
+        if lang == Lang::Ja {
+            let rect = crate::tool_props_and_canvas(&h);
+            common::shot::region(&mut h, &format!("path_review_list_{tag}"), rect);
+        }
         // 一覧の行の右クリック
         let row = rect_of(
             &h,
@@ -3977,16 +3986,22 @@ fn review_pictures_of_the_list_handles_and_context_menu() {
         release(&h, row.center(), egui::PointerButton::Secondary);
         h.run();
         assert!(h.state().state.popup.is_some());
-        h.snapshot(format!("path_review_context_{tag}"));
+        let rect = crate::with_popup(
+            &h,
+            crate::group_rect(
+                &h,
+                yolu_app::Tab::ToolProperties,
+                Some(yolu_app::Tab::BrushSize),
+            ),
+        );
+        common::shot::region(&mut h, &format!("path_review_context_{tag}"), rect);
         no_instruction_text(&mut h, lang, "path review");
-        shots.extend_harness(&mut h);
     }
 }
 
 #[test]
 fn renaming_a_preset_from_its_menu_puts_a_name_field_in_place_of_the_button() {
     use yolu_app::pathtool::presets::PresetOp;
-    let mut shots = egui_kittest::SnapshotResults::new();
     for (lang, tag) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
         let mut h = review_app(lang);
         for (x, y) in [(30.0, 128.0), (226.0, 128.0)] {
@@ -4058,20 +4073,26 @@ fn renaming_a_preset_from_its_menu_puts_a_name_field_in_place_of_the_button() {
         key(&h, Key::A, Modifiers::COMMAND);
         h.event(Event::Text(name.into()));
         h.run();
-        h.snapshot(format!("path_review_preset_rename_{tag}"));
+        // 英語の絵は撮らない（名前の入力欄の並びは文字の長さで変わらない）
+        if lang == Lang::Ja {
+            let rect = crate::group_rect(
+                &h,
+                yolu_app::Tab::ToolProperties,
+                Some(yolu_app::Tab::BrushSize),
+            );
+            common::shot::region(&mut h, &format!("path_review_preset_rename_{tag}"), rect);
+        }
         key(&h, Key::Enter, Modifiers::NONE);
         h.run();
         assert_eq!(h.state().state.path.presets.list()[0].name, name);
         assert_eq!(h.state().state.path.preset_renaming, None);
         rect_of(&h, button_label, |r| r.left() < 320.0);
         no_instruction_text(&mut h, lang, "path preset rename");
-        shots.extend_harness(&mut h);
     }
 }
 
 #[test]
 fn review_pictures_of_the_kinds_tips_and_presets() {
-    let mut shots = egui_kittest::SnapshotResults::new();
     for (lang, tag) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
         let mut h = review_app(lang);
         for (x, y) in [(30.0, 128.0), (128.0, 60.0), (226.0, 128.0)] {
@@ -4095,7 +4116,11 @@ fn review_pictures_of_the_kinds_tips_and_presets() {
             })),
         );
         act(&mut h, PathAction::Brush(BrushEdit::Diameter(40.0)));
-        h.snapshot(format!("path_review_ribbon_{tag}"));
+        // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
+        if lang == Lang::Ja {
+            let rect = crate::tool_props_and_canvas(&h);
+            common::shot::region(&mut h, &format!("path_review_ribbon_{tag}"), rect);
+        }
         // ストローク・画像の筆先・沿う向き
         act(&mut h, PathAction::Kind(PathKind::Stroke));
         act(
@@ -4103,7 +4128,10 @@ fn review_pictures_of_the_kinds_tips_and_presets() {
             PathAction::Style(StyleEdit::Tip(yolu_core::builtin_tip("bristles"))),
         );
         act(&mut h, PathAction::Style(StyleEdit::Follow(true)));
-        h.snapshot(format!("path_review_tip_{tag}"));
+        if lang == Lang::Ja {
+            let rect = crate::tool_props_and_canvas(&h);
+            common::shot::region(&mut h, &format!("path_review_tip_{tag}"), rect);
+        }
         // プリセットの一覧（1 つ保存してから。置き場の無いプリセットは画面の中だけ）
         act(
             &mut h,
@@ -4129,15 +4157,21 @@ fn review_pictures_of_the_kinds_tips_and_presets() {
             },
         );
         hover_and_wait(&mut h, rename.center());
-        h.snapshot(format!("path_review_presets_{tag}"));
+        let rect = crate::with_popup(
+            &h,
+            crate::group_rect(
+                &h,
+                yolu_app::Tab::ToolProperties,
+                Some(yolu_app::Tab::BrushSize),
+            ),
+        );
+        common::shot::region(&mut h, &format!("path_review_presets_{tag}"), rect);
         no_instruction_text(&mut h, lang, "path review kinds");
-        shots.extend_harness(&mut h);
     }
 }
 
 #[test]
 fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
-    let mut shots = egui_kittest::SnapshotResults::new();
     for (lang, tag) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
         let mut h = review_app(lang);
         h.state_mut().state.view3d.load_demo();
@@ -4175,8 +4209,15 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         act(&mut h, PathAction::Select(Some(1)));
         act(&mut h, PathAction::SetHandles(true));
         act(&mut h, PathAction::Style(StyleEdit::Depth(Some(2.0))));
-        h.snapshot(format!("path_review_3d_{tag}"));
-        shots.extend_harness(&mut h);
+        // 英語の絵は撮らない（取っ手と深さの絵に文字は無い）
+        if lang == Lang::Ja {
+            let props = crate::group_rect(
+                &h,
+                yolu_app::Tab::ToolProperties,
+                Some(yolu_app::Tab::BrushSize),
+            );
+            common::shot::region(&mut h, &format!("path_review_3d_{tag}"), props.union(rect));
+        }
         // 塗りつぶしレイヤーの欄のパスの節
         let mut f = review_app(lang);
         f.state_mut().state.color.set_main([0.85, 0.75, 0.4, 1.0]);
@@ -4195,7 +4236,9 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         // 塗りつぶしレイヤーの欄の下（パスの節）まで送る
         f.state_mut().state.m2.props_scroll = 100_000.0;
         f.run();
-        f.snapshot(format!("path_review_fill_layer_{tag}"));
-        shots.extend_harness(&mut f);
+        if lang == Lang::Ja {
+            let rect = crate::group_rect(&f, yolu_app::Tab::Properties, None);
+            common::shot::region(&mut f, &format!("path_review_fill_layer_{tag}"), rect);
+        }
     }
 }

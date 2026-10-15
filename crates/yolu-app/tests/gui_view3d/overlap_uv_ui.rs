@@ -6,7 +6,7 @@ use crate::common;
 use common::*;
 use egui::accesskit::Role;
 use egui_kittest::kittest::Queryable;
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::bake::overlap::PriorityOp;
 use yolu_app::bake::window::Page;
 use yolu_app::bake::BakeAction;
@@ -95,20 +95,7 @@ fn counted(h: &mut Harness<'_, YoluApp>) {
 
 /// ウィンドウの中だけを撮る。
 fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
-    let rect = yolu_app::windows::window_rect(&h.ctx, window)
-        .unwrap_or_else(|| panic!("{window} を描いていない"));
-    h.event(egui::Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    crate::window_shot(h, window, name);
 }
 
 #[test]
@@ -199,7 +186,6 @@ fn the_overlap_page_of_the_bake_window_sets_the_current_sets_priority() {
 
 #[test]
 fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
-    let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = with_model(lang);
         counted(&mut h);
@@ -209,17 +195,21 @@ fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
         if lang == Lang::Ja {
             h.event(egui::Event::PointerGone);
             h.step();
-            h.snapshot("uv_overlap_canvas");
-            results.extend_harness(&mut h);
+            let rect = canvas_rect(&h);
+            crate::common::shot::region(&mut h, "uv_overlap_canvas", rect);
         }
         // 表示のメニューの入切
-        let at = menu_title(&h, lang.pick("表示", "View")).center();
-        click(&mut h, at);
+        let title = menu_title(&h, lang.pick("表示", "View"));
+        click(&mut h, title.center());
         let item = popup_item(&h, lang.pick("重なった UV", "Overlapping UVs"));
         h.event(egui::Event::PointerMoved(item.center()));
         h.step();
-        h.snapshot(format!("uv_overlap_menu_{}", lang.pick("ja", "en")));
-        results.extend_harness(&mut h);
+        let rect = crate::with_popup(&h, title);
+        crate::common::shot::region(
+            &mut h,
+            &format!("uv_overlap_menu_{}", lang.pick("ja", "en")),
+            rect,
+        );
         click(&mut h, item.center());
         assert!(!h.state().state.prefs.settings.uv_overlap);
         apply(&mut h, Action::ToggleUvOverlap);
@@ -311,16 +301,8 @@ fn the_settings_row_has_the_overlap_color_after_the_wireframe_color() {
 fn shot_row_and_color_window(h: &mut Harness<'_, YoluApp>, row: egui::Rect, name: &str) {
     let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウが開いている");
     let image = h.render().expect("描画");
-    let crop = |r: egui::Rect| {
-        image::imageops::crop_imm(
-            &image,
-            r.left().floor() as u32,
-            r.top().floor() as u32,
-            r.width().ceil() as u32,
-            r.height().ceil() as u32,
-        )
-        .to_image()
-    };
+    let ppp = h.ctx.pixels_per_point();
+    let crop = |r: egui::Rect| crate::common::shot::crop(&image, crate::outward(r), ppp);
     let (a, b) = (crop(row), crop(window));
     let mut out = image::RgbaImage::new(a.width().max(b.width()), a.height() + b.height());
     image::imageops::overlay(&mut out, &a, 0, 0);
@@ -335,20 +317,9 @@ fn shot_with_popup(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
     if let Some(p) = &h.state().state.popup {
         rect = rect.union(p.state.rect);
     }
-    let image = h.render().expect("描画");
-    let rect = rect.intersect(egui::Rect::from_min_size(
-        egui::Pos2::ZERO,
-        egui::vec2(image.width() as f32, image.height() as f32),
-    ));
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().floor() as u32,
-        rect.height().floor() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    // 端は切り捨て（大きさも切り捨て）で、ウィンドウとポップアップを合わせた所を撮る
+    let rect = egui::Rect::from_min_size(rect.min.floor(), rect.size().floor());
+    crate::common::shot::region(h, name, rect);
 }
 
 /// 開いているアイランドのメニュー（セット・アイランド・見取り図からか・3D からか）。
@@ -520,25 +491,16 @@ fn the_uv_map_shows_the_preferred_and_skipped_islands() {
         h.run();
         assert_eq!(h.state().state.bake.map_hover, Some(0));
         let rect = yolu_app::windows::window_rect(&h.ctx, "bake").unwrap();
-        let image = h.render().expect("描画");
-        let cropped = image::imageops::crop_imm(
-            &image,
-            rect.left().floor() as u32,
-            rect.top().floor() as u32,
-            rect.width().ceil() as u32,
-            rect.height().ceil() as u32,
-        )
-        .to_image();
-        egui_kittest::image_snapshot(
-            &cropped,
-            format!("bake_overlap_map_{}", lang.pick("ja", "en")),
+        crate::common::shot::region(
+            &mut h,
+            &format!("bake_overlap_map_{}", lang.pick("ja", "en")),
+            crate::outward(rect),
         );
     }
 }
 
 #[test]
 fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
-    let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = shown_model(lang);
         counted(&mut h);
@@ -560,10 +522,12 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         h.event(egui::Event::PointerMoved(prefer.center()));
         // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
         h.run();
-        h.snapshot(format!(
-            "polygon_fill_island_menu_{}",
-            lang.pick("ja", "en")
-        ));
+        let shown = crate::with_popup(&h, canvas_rect(&h));
+        crate::common::shot::region(
+            &mut h,
+            &format!("polygon_fill_island_menu_{}", lang.pick("ja", "en")),
+            shown,
+        );
         // 開いているメニューの外で、同じ所をもう一度右クリックすると次のアイランド（重なった片側）
         right(&mut h, at);
         assert_eq!(island_menu(&h), Some((2, false, false)), "次のアイランド");
@@ -631,10 +595,12 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         h.event(egui::Event::PointerMoved(prefer.center()));
         // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
         h.run();
-        h.snapshot(format!(
-            "polygon_fill_island_menu_3d_{}",
-            lang.pick("ja", "en")
-        ));
+        let shown = crate::with_popup(&h, rect);
+        crate::common::shot::region(
+            &mut h,
+            &format!("polygon_fill_island_menu_3d_{}", lang.pick("ja", "en")),
+            shown,
+        );
         key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
         assert_eq!(island_menu(&h), None);
@@ -651,6 +617,5 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         h.run();
         assert_eq!(island_menu(&h), None, "回しただけ");
         assert_ne!(h.state().state.view3d.camera.yaw, yaw);
-        results.extend_harness(&mut h);
     }
 }

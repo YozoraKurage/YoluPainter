@@ -886,7 +886,6 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
 
 #[test]
 fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let (mut h, rect) = cube_view();
         h.state_mut().state.lang = lang;
@@ -940,7 +939,9 @@ fn snapshot_gradient_shapes_and_ruler_in_3d_in_both_languages() {
         h.state_mut().state.message.clear();
         h.event(Event::PointerGone);
         h.run();
-        h.snapshot(lang.pick("view3d_draft_ja", "view3d_draft_en"));
-        snapshots.extend_harness(&mut h);
+        // 英語の絵は撮らない（3D の絵に文字は無い）。グラデーション・図形・定規を 3D に引いた形を見る、ウィンドウ全体の見本
+        if lang == Lang::Ja {
+            crate::common::shot::window(&mut h, "view3d_draft_ja");
+        }
     }
 }

@@ -75,7 +75,12 @@ fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
         let mut h = app(1280.0, 1400.0, 128);
         h.state_mut().state.set_language(lang);
         effect_document(&mut h);
-        h.snapshot(format!("fx_rows_generator_{}", lang.pick("ja", "en")));
+        let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
+        common::shot::region(
+            &mut h,
+            &format!("fx_rows_generator_{}", lang.pick("ja", "en")),
+            rect,
+        );
         results.extend_harness(&mut h);
     }
 }
@@ -93,7 +98,8 @@ fn snapshot_a_selected_filter_and_a_selected_anchor() {
         .unwrap()[0]
         .id();
     fx(&mut h, FxOp::SelectFilter { layer, id: blur });
-    h.snapshot("fx_rows_blur_selected");
+    let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
+    common::shot::region(&mut h, "fx_rows_blur_selected", rect);
     let anchor = h
         .state()
         .state
@@ -104,7 +110,7 @@ fn snapshot_a_selected_filter_and_a_selected_anchor() {
         .unwrap()
         .id();
     fx(&mut h, FxOp::SelectAnchor(anchor));
-    h.snapshot("fx_rows_anchor_selected");
+    common::shot::region(&mut h, "fx_rows_anchor_selected", rect);
 }
 
 #[test]
@@ -122,7 +128,8 @@ fn snapshot_the_add_menu() {
             FilterTarget::Content
         )))
     ));
-    h.snapshot("fx_add_menu");
+    let rect = crate::with_popup(&h, crate::group_rect(&h, yolu_app::Tab::Properties, None));
+    common::shot::region(&mut h, "fx_add_menu", rect);
 }
 
 // ───────── レイヤーとマスクの対象の選び分け ─────────
@@ -820,12 +827,15 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         h.state_mut().state.ui.property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
         move_to(&h, pos2(640.0, 500.0));
         h.run();
-        h.snapshot(format!("layers_target_pixels_{suffix}"));
+        let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
+        common::shot::region(&mut h, &format!("layers_target_pixels_{suffix}"), rect);
         // 印に乗せるとツールチップに効果の数
         let tip = yolu_app::panels::layers::mask_effects_tip(lang, 2);
         let mark = h.get_by_label(&tip).rect().center();
         hover_and_wait(&mut h, mark);
-        h.snapshot(format!("layers_mask_mark_tooltip_{suffix}"));
+        // ツールチップは行の左へはみ出す
+        let wide = Rect::from_min_max(pos2(rect.left() - 220.0, rect.top()), rect.max);
+        common::shot::region(&mut h, &format!("layers_mask_mark_tooltip_{suffix}"), wide);
         move_to(&h, pos2(640.0, 500.0));
         h.run();
         // 「ジェネレーターを追加」のポップアップ（ジェネレーターだけ）
@@ -837,7 +847,12 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
                 FilterTarget::Content
             )))
         );
-        h.snapshot(format!("fx_add_generator_menu_{suffix}"));
+        let popup_rect = crate::with_popup(&h, rect);
+        common::shot::region(
+            &mut h,
+            &format!("fx_add_generator_menu_{suffix}"),
+            popup_rect,
+        );
         common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
         // マスクが対象（マスクのサムネイルに青い枠）
@@ -845,14 +860,15 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         click(&mut h, at);
         move_to(&h, pos2(640.0, 500.0));
         h.run();
-        h.snapshot(format!("layers_target_mask_{suffix}"));
+        common::shot::region(&mut h, &format!("layers_target_mask_{suffix}"), rect);
         // マスクのサムネイルの右クリック
         let at = mask_thumb(&h).center();
         press(&h, at, PointerButton::Secondary);
         h.step();
         release(&h, at, PointerButton::Secondary);
         h.run();
-        h.snapshot(format!("layers_mask_menu_{suffix}"));
+        let popup_rect = crate::with_popup(&h, rect);
+        common::shot::region(&mut h, &format!("layers_mask_menu_{suffix}"), popup_rect);
         results.extend_harness(&mut h);
     }
 }
@@ -1211,7 +1227,12 @@ fn snapshot_three_new_filter_panels_in_both_languages() {
             let mut h = with_new_filter(lang, kind);
             move_to(&h, pos2(640.0, 500.0));
             h.run();
-            h.snapshot(format!("fx_props_{name}_{}", lang.pick("ja", "en")));
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(
+                &mut h,
+                &format!("fx_props_{name}_{}", lang.pick("ja", "en")),
+                rect,
+            );
             results.extend_harness(&mut h);
         }
     }
@@ -1315,7 +1336,12 @@ fn snapshot_the_pattern_and_mask_builder_panels_in_both_languages() {
             let mut h = with_new_generator(lang, kind, 1000.0);
             move_to(&h, pos2(640.0, 500.0));
             h.run();
-            h.snapshot(format!("fx_props_{name}_{}", lang.pick("ja", "en")));
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(
+                &mut h,
+                &format!("fx_props_{name}_{}", lang.pick("ja", "en")),
+                rect,
+            );
             results.extend_harness(&mut h);
         }
     }
@@ -1405,10 +1431,13 @@ fn snapshot_the_uv_island_variation_panel_and_canvas_in_both_languages() {
         // ブラシの円をアイランドに重ねない（指はキャンバスの外）
         move_to(&h, pos2(1270.0, 990.0));
         h.run();
-        h.snapshot(format!(
-            "fx_props_uv_island_variation_{}",
-            lang.pick("ja", "en")
-        ));
+        // 欄と、アイランドごとに違う値の 2D の絵
+        let rect = canvas_rect(&h).union(crate::group_rect(&h, yolu_app::Tab::Properties, None));
+        common::shot::region(
+            &mut h,
+            &format!("fx_props_uv_island_variation_{}", lang.pick("ja", "en")),
+            rect,
+        );
         results.extend_harness(&mut h);
     }
 }
@@ -1998,10 +2027,15 @@ fn snapshot_procedural_panels_in_both_languages() {
                 }
                 h.run();
             }
-            h.snapshot(format!(
-                "fx_procedural_{name}_{}",
-                if lang == Lang::Ja { "ja" } else { "en" }
-            ));
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(
+                &mut h,
+                &format!(
+                    "fx_procedural_{name}_{}",
+                    if lang == Lang::Ja { "ja" } else { "en" }
+                ),
+                rect,
+            );
             results.extend_harness(&mut h);
         }
     }

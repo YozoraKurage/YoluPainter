@@ -3,7 +3,7 @@
 use crate::common;
 
 use common::*;
-use egui::{pos2, Event, Modifiers, PointerButton, Rect};
+use egui::{pos2, vec2, Event, Modifiers, PointerButton, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::brushes::{BrushAction, BrushKey};
@@ -53,13 +53,6 @@ fn right_click(h: &mut H, at: egui::Pos2) {
     h.step();
     release(h, at, PointerButton::Secondary);
     h.run();
-}
-
-/// ウィンドウの全体を撮る（直前に押した所のポインタが絵に残らないように）。
-fn shot(h: &mut H, name: &str) {
-    h.event(Event::PointerGone);
-    h.step();
-    h.snapshot(name);
 }
 
 /// 試しの並び: インクのツール（ペンのアイコン・前に区切り・2 つのグループ）と、名前を変えたグループ・足したグループ。
@@ -250,7 +243,6 @@ fn in_catalog(h: &H, label: &str) -> Rect {
 
 #[test]
 fn snapshot_tool_strip_menu_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name) in [
         (Lang::Ja, "tool_layout_menu_ja"),
         (Lang::En, "tool_layout_menu_en"),
@@ -265,14 +257,14 @@ fn snapshot_tool_strip_menu_in_both_languages() {
         for _ in 0..10 {
             h.step();
         }
-        h.snapshot(name);
-        results.extend(h.take_snapshot_results());
+        // メニューと、開いている「ツールを追加」の入れ子（ツールの列のボタンの右）
+        let rect = crate::with_popup(&h, button(&h, brush));
+        common::shot::region(&mut h, name, rect);
     }
 }
 
 #[test]
 fn snapshot_a_customized_layout_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name) in [
         (Lang::Ja, "tool_layout_custom_ja"),
         (Lang::En, "tool_layout_custom_en"),
@@ -280,14 +272,16 @@ fn snapshot_a_customized_layout_in_both_languages() {
         let mut h = app(1280.0, 800.0, 128);
         language(&mut h, lang);
         customize(&mut h);
-        shot(&mut h, name);
-        results.extend(h.take_snapshot_results());
+        // 英語の絵は撮らない（並びは文字の長さで変わらない）
+        if lang == Lang::Ja {
+            let rect = crate::tool_panels(&h);
+            crate::clean_region(&mut h, name, rect);
+        }
     }
 }
 
 #[test]
 fn snapshot_the_group_tab_menu_and_rename_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name) in [
         (Lang::Ja, "tool_layout_group_menu_ja"),
         (Lang::En, "tool_layout_group_menu_en"),
@@ -298,14 +292,13 @@ fn snapshot_the_group_tab_menu_and_rename_in_both_languages() {
             r.left() < 340.0 && r.top() < 140.0 && r.width() < 120.0
         });
         right_click(&mut h, tab.center());
-        h.snapshot(name);
-        results.extend(h.take_snapshot_results());
+        let rect = crate::with_popup(&h, tab);
+        common::shot::region(&mut h, name, rect);
     }
 }
 
 #[test]
 fn snapshot_the_icon_grid_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name) in [
         (Lang::Ja, "tool_layout_icons_ja"),
         (Lang::En, "tool_layout_icons_en"),
@@ -314,14 +307,19 @@ fn snapshot_the_icon_grid_in_both_languages() {
         language(&mut h, lang);
         let brush = st(&h).toolset.set.first_of(Tool::Brush).unwrap();
         tools(&mut h, ToolsetAction::PickIcon(Some(brush)));
-        shot(&mut h, name);
-        results.extend(h.take_snapshot_results());
+        // 英語の絵は撮らない（アイコンの格子に文字は無い）
+        if lang == Lang::Ja {
+            // ツールの列のボタンから右へ開く、アイコンの格子
+            let at = button(&h, brush);
+            let rect =
+                Rect::from_min_size(pos2(0.0, at.top() - 24.0), vec2(at.right() + 240.0, 200.0));
+            crate::clean_region(&mut h, name, rect);
+        }
     }
 }
 
 #[test]
 fn snapshot_the_catalog_window_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name, kind) in [
         (Lang::Ja, "tool_layout_catalog_ja", Kind::Builtin),
         (Lang::En, "tool_layout_catalog_en", Kind::Builtin),
@@ -350,14 +348,14 @@ fn snapshot_the_catalog_window_in_both_languages() {
             h.run();
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
-        shot(&mut h, name);
-        results.extend(h.take_snapshot_results());
+        let rect = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_catalog::id())
+            .expect("「＋」のウィンドウ");
+        crate::clean_region(&mut h, name, rect);
     }
 }
 
 #[test]
 fn snapshot_wrapped_group_tabs_and_a_rename_field_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for (lang, name) in [
         (Lang::Ja, "tool_layout_tabs_ja"),
         (Lang::En, "tool_layout_tabs_en"),
@@ -389,7 +387,12 @@ fn snapshot_wrapped_group_tabs_and_a_rename_field_in_both_languages() {
         }
         h.run();
         h.run();
-        shot(&mut h, name);
-        results.extend(h.take_snapshot_results());
+        // サブツールの組（グループのタブが折り返す・名前の入力欄）
+        let rect = crate::group_rect(
+            &h,
+            yolu_app::Tab::SubTools,
+            Some(yolu_app::Tab::ToolProperties),
+        );
+        crate::clean_region(&mut h, name, rect);
     }
 }

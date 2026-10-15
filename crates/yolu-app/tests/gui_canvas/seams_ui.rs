@@ -55,7 +55,12 @@ fn the_seam_switch_needs_a_model_and_turns_the_document_setting() {
         h.run();
         assert!(h.state().state.doc.seams_active());
         let at = rect_of(&h, label(lang), |_| true);
-        h.snapshot(format!("fx_seams_switch_{}", lang.pick("ja", "en")));
+        let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+        common::shot::region(
+            &mut h,
+            &format!("fx_seams_switch_{}", lang.pick("ja", "en")),
+            rect,
+        );
         results.extend_harness(&mut h);
         let count = h.state().state.doc.undo_count();
         click(&mut h, center(at));

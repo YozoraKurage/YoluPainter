@@ -1652,7 +1652,6 @@ fn the_wand_region_follows_the_texture_not_the_surface_so_it_takes_hidden_faces_
 #[test]
 fn snapshot_selection_in_3d_in_both_languages() {
     use egui_dock::{DockState, NodeIndex};
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         let (mut h, rect) = cube_view();
         h.state_mut().state.lang = lang;
@@ -1678,14 +1677,18 @@ fn snapshot_selection_in_3d_in_both_languages() {
         h.step();
         h.state_mut().state.message.clear();
         h.run_steps(2);
-        h.snapshot(lang.pick("view3d_select_drag_ja", "view3d_select_drag_en"));
-        snapshots.extend_harness(&mut h);
+        // キャンバスと 3D ビューを並べた中央の範囲。英語の絵は撮らない（選択範囲の絵に文字は無い）
+        let center = crate::common::canvas_rect(&h).union(crate::view3d_area(&h));
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_select_drag_ja", center);
+        }
         // 離した結果
         release(&h, b, PointerButton::Primary);
         h.step();
         h.event(Event::PointerGone);
         h.run();
-        h.snapshot(lang.pick("view3d_select_result_ja", "view3d_select_result_en"));
-        snapshots.extend_harness(&mut h);
+        if lang == Lang::Ja {
+            crate::common::shot::region(&mut h, "view3d_select_result_ja", center);
+        }
     }
 }

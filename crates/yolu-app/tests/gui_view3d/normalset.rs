@@ -253,7 +253,8 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
     let base = h.state().state.doc.undo_count();
     // 初めは Height → Normal がオフ（強さと端は使えない）
     assert!(!h.state().state.doc.normal_settings().derive_from_height());
-    h.snapshot("channels_normal_off");
+    let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
+    crate::common::shot::region(&mut h, "channels_normal_off", rect);
     let toggle = lowest(&h, "ハイト → ノーマル");
     click(&mut h, toggle.center());
     assert!(h.state().state.doc.normal_settings().derive_from_height());
@@ -275,7 +276,7 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
         base + 2,
         "ドラッグ全体で 1 回"
     );
-    h.snapshot("channels_normal_on");
+    crate::common::shot::region(&mut h, "channels_normal_on", rect);
     h.state_mut().state.apply(Action::Undo);
     assert_eq!(h.state().state.doc.normal_settings().strength(), 4.0);
     // 端のドロップダウン
@@ -308,7 +309,7 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
         .state
         .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
-    h.snapshot("channels_normal_english");
+    crate::common::shot::region(&mut h, "channels_normal_english", rect);
     let _ = lowest(&h, "Height → Normal");
     let _ = lowest(&h, "Strength");
     let _ = lowest(&h, "Clamp");

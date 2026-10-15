@@ -207,7 +207,8 @@ fn the_matcap_reads_by_the_camera_front_in_orthographic_whatever_its_perspective
     matcap_look(&mut h, true);
     h.event(egui::Event::PointerGone);
     h.run();
-    h.snapshot("view3d_liltoon_matcap_orthographic");
+    let rect = crate::view3d_area(&h);
+    crate::common::shot::region(&mut h, "view3d_liltoon_matcap_orthographic", rect);
 }
 
 /// 輪郭線（赤・光なし）の右の縁: 中心の行で、右の端から内へ探した最初の赤の画素の x。
@@ -272,7 +273,7 @@ fn the_outline_z_bias_pushes_toward_the_camera_front_in_orthographic() {
     );
     h.event(egui::Event::PointerGone);
     h.run();
-    h.snapshot("view3d_liltoon_outline_orthographic");
+    crate::common::shot::region(&mut h, "view3d_liltoon_outline_orthographic", rect);
 }
 
 #[test]
@@ -305,5 +306,5 @@ fn the_background_looks_along_the_view_in_orthographic() {
     assert!(ortho.windows(2).all(|w| far(w[0], w[1]) <= 1), "{ortho:?}");
     h.event(egui::Event::PointerGone);
     h.run();
-    h.snapshot("view3d_background_orthographic");
+    crate::common::shot::region(&mut h, "view3d_background_orthographic", rect);
 }

@@ -1425,23 +1425,6 @@ fn apply(h: &mut Harness<'_, YoluApp>, action: Action) {
     h.run();
 }
 
-fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
-    let rect = yolu_app::windows::window_rect(&h.ctx, window)
-        .unwrap_or_else(|| panic!("{window} を描いていない"));
-    h.event(egui::Event::PointerGone);
-    h.step();
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().floor() as u32,
-        rect.top().floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
-}
-
 fn window_texts(h: &Harness<'_, YoluApp>, window: &str) -> Vec<String> {
     use egui::epaint::Shape;
     fn walk(shape: &Shape, area: egui::Rect, out: &mut Vec<String>) {
@@ -1526,7 +1509,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
             "{t}"
         );
     }
-    shot(&mut h, "distribute", "distribute_window");
+    crate::window_shot(&mut h, "distribute", "distribute_window");
     // 切り替え: 外すと残る種類になる（既定は全部）
     let all = Removal::ALL.to_vec();
     assert_eq!(h.state().state.distribute.window().unwrap().selected(), all);
@@ -1578,7 +1561,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
         texts.iter().filter(|t| has_japanese(t)).count() == 0,
         "{texts:?}"
     );
-    shot(&mut h, "distribute", "distribute_window_english");
+    crate::window_shot(&mut h, "distribute", "distribute_window_english");
     // やめる: ウィンドウを閉じて準備した写しを捨てる
     let at = in_window(&h, "distribute", "Cancel");
     click(&mut h, at);

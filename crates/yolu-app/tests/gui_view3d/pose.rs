@@ -695,7 +695,7 @@ fn pose_gizmo_snapshot() {
     // ポインタは輪の外へ（強調しない）
     move_to(&h, pos2(rect.right() - 10.0, rect.bottom() - 10.0));
     h.run();
-    h.snapshot("pose_gizmo");
+    crate::common::shot::region(&mut h, "pose_gizmo", rect);
 }
 
 /// 計測（release で: cargo test --release -p yolu-app --test gui_view3d -- --ignored --nocapture pose::）。7 万三角形の試しの人形で、

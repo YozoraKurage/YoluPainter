@@ -357,7 +357,12 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
             // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
             h.state_mut().state.shelf.wait_inspections();
             h.run();
-            h.snapshot(format!("fx_image_stage_{name}_{}", lang.pick("ja", "en")));
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(
+                &mut h,
+                &format!("fx_image_stage_{name}_{}", lang.pick("ja", "en")),
+                rect,
+            );
             // マスクの段は欄が長いので、下の半分も
             if target == FilterTarget::Mask {
                 h.state_mut().state.m2.props_scroll = 600.0;
@@ -366,10 +371,12 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
                     assert_plain(&format!("{lang:?} {name} 下"), &text);
                     assert!(lang == Lang::Ja || !has_japanese(&text), "{text}");
                 }
-                h.snapshot(format!(
-                    "fx_image_stage_{name}_lower_{}",
-                    lang.pick("ja", "en")
-                ));
+                let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+                common::shot::region(
+                    &mut h,
+                    &format!("fx_image_stage_{name}_lower_{}", lang.pick("ja", "en")),
+                    rect,
+                );
             }
             results.extend_harness(&mut h);
         }

@@ -7,6 +7,95 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+use egui::{pos2, Rect};
+use egui_kittest::Harness;
+use yolu_app::{Tab, YoluApp};
+
+/// 範囲 `rect` を、小数の端を含む整数の点の範囲に広げる（左上は切り捨て・大きさは切り上げ）。
+pub fn outward(rect: Rect) -> Rect {
+    Rect::from_min_size(rect.min.floor(), rect.size().ceil())
+}
+
+/// ポインタを画面の外へ出して 1 フレーム進めてから、範囲 `rect`（論理の点）を撮る（直前に押した所のポインタの印・ホバーが絵に残らないように）。
+pub fn clean_region<State>(h: &mut Harness<'_, State>, name: &str, rect: Rect) {
+    h.event(egui::Event::PointerGone);
+    h.step();
+    common::shot::region(h, name, outward(rect));
+}
+
+/// `common::shot::region` の、比べ方の設定 `options`（許す差の画素数など）を渡す版。
+pub fn region_with<State>(
+    h: &mut Harness<'_, State>,
+    name: &str,
+    rect: Rect,
+    options: &egui_kittest::SnapshotOptions,
+) {
+    let image = h.render().expect("画面を描く");
+    let cropped = common::shot::crop(&image, rect, h.ctx.pixels_per_point());
+    egui_kittest::image_snapshot_options(&cropped, name, options);
+}
+
+/// 名前のウィンドウ `window`（`yolu_app::windows::window_rect`）の中だけを撮る。
+pub fn window_shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
+    let rect = yolu_app::windows::window_rect(&h.ctx, window)
+        .unwrap_or_else(|| panic!("{window} を描いていない"));
+    clean_region(h, name, rect);
+}
+
+/// 組の中身の範囲: 先頭のタブ `first` の帯から、下の組のタブ `below` の上まで（`None` ならウィンドウの下まで）。
+/// 左のドックの組は幅 300 の列の右端まで、右の列の組はウィンドウの右端まで。
+pub fn group_rect(h: &Harness<'_, YoluApp>, first: Tab, below: Option<Tab>) -> Rect {
+    let tabs = &h.state().tab_rects;
+    let tab = tabs[&first];
+    let bottom = below.map_or(h.ctx.content_rect().bottom(), |b| tabs[&b].top());
+    let right = if tab.left() < 100.0 {
+        tab.left() + 300.0
+    } else {
+        h.ctx.content_rect().right()
+    };
+    Rect::from_min_max(pos2(tab.left() - 2.0, tab.top()), pos2(right, bottom))
+}
+
+/// オプションバー（メニューバーの下の帯。ウィンドウの幅いっぱい）の範囲。
+pub fn options_bar(h: &Harness<'_, YoluApp>) -> Rect {
+    Rect::from_min_max(pos2(0.0, 24.0), pos2(h.ctx.content_rect().right(), 62.0))
+}
+
+/// 知らせ（トースト）が出る、ウィンドウの左下の範囲。
+pub fn toast_area(h: &Harness<'_, YoluApp>) -> Rect {
+    let bottom = h.ctx.content_rect().bottom();
+    Rect::from_min_max(pos2(44.0, bottom - 80.0), pos2(524.0, bottom - 20.0))
+}
+
+/// `base` に、開いているポップアップ（入れ子のメニューを含む）の範囲を足して、周りに 8 点の余白をつけた範囲。
+pub fn with_popup(h: &Harness<'_, YoluApp>, base: Rect) -> Rect {
+    match h.state().state.popup.as_ref() {
+        Some(popup) => base.union(popup.state.rect).expand(8.0),
+        None => base,
+    }
+}
+
+/// ツールの帯・オプションバー・サブツールとツールプロパティ（左のドックの上の 2 つの組）の範囲。
+pub fn tool_panels(h: &Harness<'_, YoluApp>) -> Rect {
+    let tabs = &h.state().tab_rects;
+    Rect::from_min_max(
+        pos2(0.0, 24.0),
+        pos2(
+            tabs[&Tab::SubTools].left() + 300.0,
+            tabs[&Tab::BrushSize].top(),
+        ),
+    )
+}
+
+/// ツールプロパティの組と、キャンバスを合わせた範囲（ツールの欄と、その操作の結果の線・印）。
+pub fn tool_props_and_canvas(h: &Harness<'_, YoluApp>) -> Rect {
+    let canvas = h
+        .state()
+        .canvas_view_rect()
+        .expect("キャンバスを描いている");
+    group_rect(h, Tab::ToolProperties, Some(Tab::BrushSize)).union(canvas)
+}
+
 mod anti_alias_ui;
 mod brush_import_ui;
 mod brush_menu;

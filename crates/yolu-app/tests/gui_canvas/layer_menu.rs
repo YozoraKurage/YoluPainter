@@ -1915,10 +1915,12 @@ fn the_color_panel_wraps_hex_and_alpha_to_two_lines_when_narrow() {
 fn the_tool_strip_bottom_snapshot_at_the_minimum_window() {
     let mut h = app(960.0, 640.0, 64);
     h.run();
-    let image = h.render().expect("描画");
     // 左端のツールの帯（幅 44）の全体
-    let cropped = image::imageops::crop_imm(&image, 0, 24 + 36, 48, 640 - 24 - 36 - 22).to_image();
-    egui_kittest::image_snapshot(&cropped, "menus_tool_strip_min");
+    let strip = Rect::from_min_size(
+        pos2(0.0, 24.0 + 36.0),
+        vec2(48.0, 640.0 - 24.0 - 36.0 - 22.0),
+    );
+    common::shot::region(&mut h, "menus_tool_strip_min", strip);
 }
 
 /// 開いているメニュー全体（親と開いている入れ子）を切り抜いて撮る。
@@ -1932,16 +1934,7 @@ fn snapshot_open_menu(h: &mut Harness<'_, YoluApp>, name: &str) {
         .state
         .rect
         .expand(2.0);
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        rect.left().max(0.0).floor() as u32,
-        rect.top().max(0.0).floor() as u32,
-        rect.width().ceil() as u32,
-        rect.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, name);
+    common::shot::region(h, name, crate::outward(rect));
 }
 
 #[test]
@@ -1991,7 +1984,6 @@ fn snapshot_the_layer_menu_with_the_gradient_shapes_open_in_both_languages() {
 
 #[test]
 fn snapshot_the_filter_menu_and_the_layer_menu_generators_in_both_languages() {
-    let mut results = egui_kittest::SnapshotResults::new();
     for lang in Lang::ALL {
         // メニューバーの「フィルター」: フィルターとアンカーだけ
         let mut h = app(1280.0, 800.0, 64);
@@ -2012,8 +2004,10 @@ fn snapshot_the_filter_menu_and_the_layer_menu_generators_in_both_languages() {
         let generators = popup_item(&h, lang.pick("ジェネレーターを追加", "Add Generator"));
         hover(&mut h, generators.center());
         assert_eq!(depth(&h), 1, "{lang:?}");
-        h.snapshot(format!("menus_layer_generators_{}", lang.pick("ja", "en")));
-        results.extend_harness(&mut h);
+        snapshot_open_menu(
+            &mut h,
+            &format!("menus_layer_generators_{}", lang.pick("ja", "en")),
+        );
     }
 }
 
@@ -2066,14 +2060,5 @@ fn snapshot_the_layers_toolbar_at_the_minimum_window() {
         .find(|r| r.top() > 200.0)
         .expect("帯の削除");
     let bar = new_layer.union(delete).expand2(vec2(8.0, 4.0));
-    let image = h.render().expect("描画");
-    let cropped = image::imageops::crop_imm(
-        &image,
-        bar.left().max(0.0).floor() as u32,
-        bar.top().max(0.0).floor() as u32,
-        bar.width().ceil() as u32,
-        bar.height().ceil() as u32,
-    )
-    .to_image();
-    egui_kittest::image_snapshot(&cropped, "menus_layers_toolbar_min");
+    common::shot::region(&mut h, "menus_layers_toolbar_min", crate::outward(bar));
 }

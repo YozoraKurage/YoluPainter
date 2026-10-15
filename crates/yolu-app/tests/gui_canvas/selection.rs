@@ -240,8 +240,7 @@ fn tool_names_and_option_bar_follow_the_language() {
         dock_rect(&h, label);
         assert_eq!(h.query_all_by_label(label).count(), 1, "{label}");
     }
-    h.state_mut().state.sel.animate = false;
-    h.snapshot("selection_english");
+    // 英語の並びの絵は撮らない（欄の並びは文字の長さで変わらない。英語の名前は上で確かめる）
 }
 
 #[test]
@@ -291,7 +290,8 @@ fn rectangle_drag_selects_and_undo_and_redo_follow() {
     assert_eq!(amount_at(&h, at(&h, -130.0, 0.0)), 0);
     assert_eq!(amount_at(&h, at(&h, 0.0, 120.0)), 0);
     assert!(st(&h).modified);
-    h.snapshot("selection_rect_ants");
+    // 選択範囲ツールの形（オプションバー・ツールプロパティ・キャンバスの蟻の行列）を見る、ウィンドウ全体の見本
+    common::shot::window(&mut h, "selection_rect_ants");
     undo(&mut h);
     assert!(st(&h).doc.selection().is_none());
     redo(&mut h);
@@ -343,7 +343,8 @@ fn polygon_clicks_close_by_enter_first_point_or_double_click() {
     }
     assert_eq!(st(&h).sel.polygon.len(), 4);
     assert!(st(&h).doc.selection().is_none(), "閉じるまでは選ばない");
-    h.snapshot("selection_polygon_draft");
+    let rect = canvas_rect(&h);
+    common::shot::region(&mut h, "selection_polygon_draft", rect);
     let before = steps(&h);
     key(&h, Key::Enter, Modifiers::NONE);
     h.run();
@@ -620,9 +621,10 @@ fn select_menu_items_and_keys_run_their_edits() {
     click(&mut h, item);
     assert_eq!(st(&h).tool, Tool::Polygon);
     h.state_mut().state.sel.animate = false;
-    let title = menu_title(&h, "選択範囲").center();
-    click(&mut h, title);
-    h.snapshot("selection_select_menu");
+    let title = menu_title(&h, "選択範囲");
+    click(&mut h, title.center());
+    let rect = crate::with_popup(&h, title);
+    common::shot::region(&mut h, "selection_select_menu", rect);
 }
 
 #[test]
@@ -646,7 +648,8 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
     h.state_mut().state.sel.dialog.as_mut().unwrap().radius = 12;
     h.run();
     h.state_mut().state.sel.animate = false;
-    h.snapshot("selection_amount_dialog");
+    let rect = yolu_app::selection::dialog::last_rect(&h.ctx).expect("ダイアログを描いている");
+    common::shot::region(&mut h, "selection_amount_dialog", crate::outward(rect));
     let before = steps(&h);
     h.get_by_label("OK").click();
     h.run();
@@ -1161,7 +1164,8 @@ fn the_axes_of_a_radial_symmetry_ruler_are_drawn_and_a_hidden_ruler_draws_and_co
     symmetry(&mut h, |s| {
         common::rulers::radial(s, (0.4 * 512.0, 0.55 * 512.0), 6);
     });
-    h.snapshot("rulers_symmetry_radial_axes");
+    // 対称定規の軸を出した、ウィンドウ全体の見本
+    common::shot::window(&mut h, "rulers_symmetry_radial_axes");
     // 隠すと線も消え、写しも効かない
     let layer = st(&h).selected_layer.unwrap();
     h.state_mut()

@@ -8,7 +8,7 @@ use common::*;
 use egui::accesskit::Role;
 use egui::{epaint::Shape, pos2, vec2, Event, Key, Modifiers, Pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::lang::Lang;
 use yolu_app::pen::PenInput;
 use yolu_app::state::{Action, AppState};
@@ -31,15 +31,23 @@ fn figure(doc: u32) -> H {
     h
 }
 
+/// ポーズのタブを外すときに渡す矩形（egui_dock は外したウィンドウの大きさをこの 0.8 倍にする）。
+fn float_rect() -> Rect {
+    Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 980.0))
+}
+
+/// `float_pose_tab` で浮かせたポーズのウィンドウの範囲（余白つき）。
+fn pose_window() -> Rect {
+    let r = float_rect();
+    Rect::from_min_size(r.min, r.size() * 0.8).expand(6.0)
+}
+
 /// ポーズのタブをドックから外して、左の上に浮いたウィンドウにする（egui_dock は外したウィンドウの大きさを渡した矩形の 0.8 倍にする。ドックの隅の狭い場所では節がスクロールになるので、欄が広く見えるように）。
 fn float_pose_tab(h: &mut H) {
     {
         let dock = &mut h.state_mut().dock;
         let path = dock.find_tab(&Tab::Pose).expect("ポーズのタブ");
-        dock.detach_tab(
-            path,
-            Rect::from_min_size(pos2(8.0, 40.0), vec2(400.0, 980.0)),
-        );
+        dock.detach_tab(path, float_rect());
     }
     h.run();
 }
@@ -1707,7 +1715,6 @@ fn the_floating_pose_window_fits_too() {
 
 #[test]
 fn pose_tab_snapshots() {
-    let mut snapshots = SnapshotResults::new();
     let mut h = figure(256);
     h.state_mut().state.ui.sections.insert("pose.shapes", false);
     float_pose_tab(&mut h);
@@ -1717,7 +1724,8 @@ fn pose_tab_snapshots() {
     p.locals[upper].rotation = Quat::from_euler(yolu_core::glam::EulerRot::YXZ, 0.3, 0.2, -0.6);
     pose::set_pose(&mut h.state_mut().state.view3d, p).unwrap();
     h.run();
-    snapshots.add(h.try_snapshot("pose_tab_inspector"));
+    // 浮かせたポーズのタブと、ポーズを当てた人形（ポーズのタブの並びを見る、ウィンドウ全体の見本）
+    crate::common::shot::window(&mut h, "pose_tab_inspector");
     // 隠す: 項目とプリセット
     hide::set_next(&mut h.state_mut().state, 0.5, true);
     hide::hide_bone(&mut h.state_mut().state, upper);
@@ -1725,24 +1733,24 @@ fn pose_tab_snapshots() {
     hide::save_preset(app, "右腕").unwrap();
     h.state_mut().state.ui.sections.insert("pose.bones", false);
     h.run();
-    snapshots.add(h.try_snapshot("pose_tab_hide"));
+    let rect = pose_window();
+    crate::common::shot::region(&mut h, "pose_tab_hide", rect);
 }
 
 /// ドックの隅（右の列の下。既定の置き場）のまま使うときの見え方。
 #[test]
 fn pose_tab_docked_snapshot() {
-    let mut snapshots = SnapshotResults::new();
     let mut h = figure(256);
     click_tab(&mut h, Tab::Pose);
     select(&mut h, "右上腕");
-    snapshots.add(h.try_snapshot("pose_tab_docked"));
+    // ドックの隅に置いたポーズのタブの並びを見る、ウィンドウ全体の見本
+    crate::common::shot::window(&mut h, "pose_tab_docked");
 }
 
 /// ポーズのプリセットの節: 保存した名前の一覧（左右反転・上書き・名前を変える・消すの印）と、飛ばしたボーンの知らせ。
 #[test]
 fn pose_presets_snapshot() {
     use yolu_app::view3d::pose::presets::store::PoseEntry;
-    let mut snapshots = SnapshotResults::new();
     let mut h = figure(256);
     float_pose_tab(&mut h);
     for section in ["pose.bones", "pose.hide", "pose.shapes"] {
@@ -1770,7 +1778,8 @@ fn pose_presets_snapshot() {
         presets::apply_preset(app, other, false);
     }
     h.run();
-    snapshots.add(h.try_snapshot("pose_tab_presets"));
+    let rect = pose_window();
+    crate::common::shot::region(&mut h, "pose_tab_presets", rect);
 }
 
 #[test]
