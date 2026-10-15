@@ -30,24 +30,24 @@ fn rows_move_back_and_forward_in_both_languages() {
         );
         h.get_by_label(title(HistoryKind::AddLayer, lang)).click();
         h.run();
-        assert_eq!(h.state().doc.undo_count(), 1);
+        assert_eq!(h.state().doc().undo_count(), 1);
         assert_eq!(
             h.get_by_label(title(HistoryKind::AddLayer, lang))
                 .accesskit_node()
                 .toggled(),
             Some(egui::accesskit::Toggled::True)
         );
-        assert_eq!(h.state().doc.layer(id).unwrap().opacity(), 1.0);
+        assert_eq!(h.state().doc().layer(id).unwrap().opacity(), 1.0);
         h.get_by_label(title(HistoryKind::LayerProperties, lang))
             .click();
         h.run();
-        assert_eq!(h.state().doc.undo_count(), 2);
-        assert_eq!(h.state().doc.layer(id).unwrap().opacity(), 0.4);
+        assert_eq!(h.state().doc().undo_count(), 2);
+        assert_eq!(h.state().doc().layer(id).unwrap().opacity(), 0.4);
         h.get_by_label(lang.pick("開始位置", "Starting point"))
             .click();
         h.run();
-        assert_eq!(h.state().doc.undo_count(), 0);
-        assert!(h.state().modified);
+        assert_eq!(h.state().doc().undo_count(), 0);
+        assert!(h.state().modified());
         assert!(h.query_by_label("private layer name").is_none());
     }
 }
@@ -120,16 +120,19 @@ fn empty_and_evicted_history_do_not_show_discarded_steps() {
     let mut h = common::gpu_thread::builder().build_ui_state(show, AppState::new(16, 16));
     h.run();
     assert!(h.query_by_label("開始位置").is_none());
-    let id = h.state_mut().doc.add_layer("a").unwrap();
-    h.state_mut().doc.set_layer_opacity(id, 0.5, false).unwrap();
-    let cost = h.state().doc.history_bytes() - 128;
-    h.state_mut().doc.set_undo_budget_bytes(cost).unwrap();
+    let id = h.state_mut().doc_mut().add_layer("a").unwrap();
+    h.state_mut()
+        .doc_mut()
+        .set_layer_opacity(id, 0.5, false)
+        .unwrap();
+    let cost = h.state().doc().history_bytes() - 128;
+    h.state_mut().doc_mut().set_undo_budget_bytes(cost).unwrap();
     h.run();
     assert!(h.query_by_label("レイヤーを追加").is_none());
     h.get_by_label("レイヤーを変える");
     h.get_by_label("開始位置").click();
     h.run();
-    assert_eq!(h.state().doc.layer(id).unwrap().opacity(), 1.0);
+    assert_eq!(h.state().doc().layer(id).unwrap().opacity(), 1.0);
 }
 
 #[test]
@@ -147,7 +150,7 @@ fn history_rows_are_disabled_during_a_stroke() {
         .get_by_label("レイヤーを追加")
         .accesskit_node()
         .is_disabled());
-    h.state_mut().doc.cancel_stroke(s);
+    h.state_mut().doc_mut().cancel_stroke(s);
     h.run();
     assert!(!h.get_by_label("開始位置").accesskit_node().is_disabled());
 }
@@ -206,7 +209,7 @@ fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
     assert!(h.query_all_by_label("Edit layer").count() <= 20);
     h.get_by_label("Add layer").click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 5_001);
+    assert_eq!(h.state().doc().undo_count(), 5_001);
     assert_eq!(
         h.get_by_label("Add layer").accesskit_node().toggled(),
         Some(egui::accesskit::Toggled::True)
@@ -217,12 +220,12 @@ fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
         .unwrap()
         .click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 5_002);
+    assert_eq!(h.state().doc().undo_count(), 5_002);
     scroll(&h, -1_000_000.0);
     h.run();
     h.get_by_label("Remove layer").click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 10_002);
+    assert_eq!(h.state().doc().undo_count(), 10_002);
     assert_eq!(
         h.get_by_label("Remove layer").accesskit_node().toggled(),
         Some(egui::accesskit::Toggled::True)
@@ -231,5 +234,5 @@ fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
     h.run();
     h.get_by_label("Starting point").click();
     h.run();
-    assert_eq!(h.state().doc.undo_count(), 0);
+    assert_eq!(h.state().doc().undo_count(), 0);
 }
