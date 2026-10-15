@@ -1,5 +1,5 @@
 //! PSD の書き出しのレイヤーセット: 2 つ以上なら、レイヤーセットごとに一番上の段のグループ（名前はレイヤーセットの名前、空なら `Set <番号>`）にする。
-//! 表示するのは書き出すチャンネルを出力しているレイヤーセットのグループだけで、読み戻した合成は最終の結果と同じ。1 つなら今と同じ PSD。
+//! 表示するのは書き出すチャンネルを出力しているレイヤーセットのグループだけで、読み戻した合成は最終の結果と同じ。出力の割り当てが無いチャンネルは、グループを全部非表示にして一番下に既定値の `Default` を足す。1 つ（で割り当てがある）なら今と同じ PSD。
 use yolu_core::{Channel, Document, LayerId, Rgba8};
 use yolu_io::psd::{self, ExportControl, ExportMode, ExportOptions, Layer, LayerKind, Limits};
 
@@ -105,6 +105,58 @@ fn an_anchor_in_another_layer_set_is_still_not_read_after_export() {
     let want = d.composite_channel(Channel::Color, d.bounds()).unwrap();
     let out = export(&d, Channel::Color);
     let bytes = psd::write(&out, &Limits::default()).unwrap();
+    let back = psd::read(&bytes, &Limits::default())
+        .unwrap()
+        .to_core()
+        .unwrap();
+    assert_eq!(
+        back.composite_channel(Channel::Color, back.bounds())
+            .unwrap(),
+        want
+    );
+}
+
+#[test]
+fn an_unassigned_channel_is_exported_with_a_default_fill_below_hidden_groups() {
+    let mut d = Document::with_tile_size(32, 16, 8).unwrap();
+    let a = d.add_layer("下地").unwrap();
+    paint(&mut d, a, Rgba8::new(200, 30, 30, 255), 0, 32);
+    let other = d.add_layer_set("影").unwrap();
+    let b = d.add_layer("影のレイヤー").unwrap();
+    paint(&mut d, b, Rgba8::new(10, 10, 10, 160), 8, 24);
+    d.move_layers_to_set(&[b], other).unwrap();
+    d.set_channel_output(Channel::Color, None).unwrap();
+    let want = d.composite_channel(Channel::Color, d.bounds()).unwrap();
+    let default = d.channel_info(Channel::Color).unwrap().default.to_array();
+    assert_eq!(&want[..4], &default, "割り当てが無い最終の結果は既定値");
+    let out = export(&d, Channel::Color);
+    // 一番下に表示の既定値のレイヤー、その上にレイヤーセットのグループ（全部非表示）
+    assert_eq!(out.layers.len(), 3);
+    assert_eq!(names(&out.layers[2..]), [("Default".to_owned(), true)]);
+    assert!(out.layers[..2].iter().all(|g| !g.visible));
+    let bytes = psd::write(&out, &Limits::default()).unwrap();
+    let back = psd::read(&bytes, &Limits::default())
+        .unwrap()
+        .to_core()
+        .unwrap();
+    assert_eq!(
+        back.composite_channel(Channel::Color, back.bounds())
+            .unwrap(),
+        want
+    );
+    // 色以外のチャンネルでも、そのチャンネルの割り当てが無ければ足す
+    d.set_channel_output(Channel::Roughness, None).unwrap();
+    let rough = export(&d, Channel::Roughness);
+    assert_eq!(names(&rough.layers[2..]), [("Default".to_owned(), true)]);
+    // 割り当てがあるチャンネルには足さない
+    d.set_channel_output(Channel::Color, Some(other)).unwrap();
+    assert_eq!(export(&d, Channel::Color).layers.len(), 2);
+    // レイヤーセットが 1 つでも、割り当てが無ければ同じ（最終の結果は既定値）
+    d.remove_layer_set(other).unwrap();
+    d.set_channel_output(Channel::Color, None).unwrap();
+    let want = d.composite_channel(Channel::Color, d.bounds()).unwrap();
+    assert_eq!(&want[..4], &default);
+    let bytes = psd::write(&export(&d, Channel::Color), &Limits::default()).unwrap();
     let back = psd::read(&bytes, &Limits::default())
         .unwrap()
         .to_core()

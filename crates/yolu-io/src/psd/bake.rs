@@ -2006,13 +2006,14 @@ pub(super) fn from_core_strict(d: &CoreDocument, ctl: &ExportControl) -> Result<
 
 /// レイヤーセットが 2 つ以上なら、レイヤーセットごとに一番上の段のグループ（分離）へ包んだ写し。グループの名前はレイヤーセットの名前で、空なら
 /// `Set <並びの番号（1 から）>`。表示するのは、書き出すチャンネルを出力しているレイヤーセットのグループだけ（PSD の合成が最終の結果と同じになる）。
-/// 1 つなら None（今の文書のまま書く。レイヤーセットの無かったときと同じバイト列）。
+/// 書き出すチャンネルの出力の割り当てが無いときは、最終の結果がそのチャンネルの既定値なので、グループは全部非表示にして、一番下に既定値で塗った
+/// 表示のレイヤー（`Default`）を足す。割り当てがあってレイヤーセットが 1 つなら None（今の文書のまま書く。レイヤーセットの無かったときと同じバイト列）。
 fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<CoreDocument>> {
     let sets = d.layer_sets();
-    if sets.len() < 2 {
+    let output = d.channel_output(channel)?;
+    if sets.len() < 2 && output.is_some() {
         return Ok(None);
     }
-    let output = d.channel_output(channel)?;
     let names: Vec<String> = sets
         .iter()
         .enumerate()
@@ -2025,5 +2026,14 @@ fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<Cor
         })
         .collect();
     let visible: Vec<bool> = sets.iter().map(|s| Some(s.id) == output).collect();
-    Ok(Some(d.layer_sets_as_groups(&names, &visible)?))
+    let mut wrapped = d.layer_sets_as_groups(&names, &visible)?;
+    if output.is_none() {
+        let default = d
+            .channel_info(channel)
+            .ok_or(CoreError::InvalidArgument("文書にないチャンネル"))?
+            .default;
+        let fill = wrapped.add_fill_layer("Default", &[(channel, default)], None)?;
+        wrapped.move_layer(fill, 0)?;
+    }
+    Ok(Some(wrapped))
 }
