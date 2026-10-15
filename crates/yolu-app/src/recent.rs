@@ -4,8 +4,8 @@
 //! 1 つの絶対パス。読み書きは `userfiles` の部品を通す（大きさを先に確かめて読む・一時ファイルへ書いて読み戻し、1 回の置換で確定する）。
 //!
 //! 読めない・壊れたファイル（UTF-8 でない・大きすぎる・見出しが違う）は、空の一覧として始める。そのファイルは捨てず、次に一覧を書くとき
-//! （開く・保存した後）に、先に `recent.conf.broken` へ移してから新しく書く（上書きで失わない）。新しい版の見出しのファイルも同じ。
-//! 書けなければ（権限・ディスク）、開いている間だけ覚える。試験の状態（置き場なし）は、ファイルに触れない。
+//! （開く・保存した後）に、先に `recent.conf.broken` へ移してから新しく書く（上書きで失わない）。新しいバージョンの見出しのファイルも同じ。
+//! 書けなければ（権限・ディスク）、開いている間だけ覚える。テストの状態（置き場なし）は、ファイルに触れない。
 
 use std::path::{Path, PathBuf};
 
@@ -13,8 +13,10 @@ use crate::userfiles::{self, FileError};
 
 /// 一覧の最大の件数。
 pub const MAX: usize = 10;
-/// ファイルの見出し（版つき）。
+/// ファイルの見出し（バージョンつき）。
 const HEADER: &str = "yolupainter-recent 1";
+/// 読む行の数の上限（見出しの次から。書くのは `MAX` 行だけなので、余裕を見て）。
+const MAX_LINES: usize = 100;
 /// 読むファイルの大きさの上限（10 件 × パス 1 本に十分）。
 const MAX_FILE_BYTES: u64 = 64 * 1024;
 
@@ -144,20 +146,29 @@ fn encode(items: &[PathBuf]) -> String {
     text
 }
 
-/// 文を読む。見出しが違えば None（読めないファイル）。読めない行（絶対パスでない）は読み飛ばし、同じファイルと `MAX` を超えた分は落とす。
+/// 文を読む。見出しが違えば None（読めないファイル）。読めない行（絶対パスでない）は読み飛ばし、同じファイルは落とす。`MAX` 件がそろったら
+/// 残りの行は読まない（起動を止めないため。同じファイルかを調べるたびにディスクへ尋ねる）。
 fn parse(text: &str) -> Option<Vec<PathBuf>> {
+    parse_with(text, userfiles::same_file)
+}
+
+/// `parse` の本体（同じファイルかの調べ方を受ける）。調べる行は、`MAX` 件がそろうまでと、`MAX_LINES` 行までに限る（このアプリが書くのは
+/// `MAX` 行だけ。同じパスが何千行も続く手編集のファイルでも、調べる数は上限で止まる）。
+fn parse_with(text: &str, mut same: impl FnMut(&Path, &Path) -> bool) -> Option<Vec<PathBuf>> {
     let mut lines = text.lines();
     if lines.next()?.trim_end() != HEADER {
         return None;
     }
     let mut items: Vec<PathBuf> = Vec::new();
-    for line in lines {
+    for line in lines.take(MAX_LINES) {
+        if items.len() >= MAX {
+            break;
+        }
         let path = PathBuf::from(line.trim_end_matches('\r'));
-        if usable(&path) && !items.iter().any(|p| userfiles::same_file(p, &path)) {
+        if usable(&path) && !items.iter().any(|p| same(p, &path)) {
             items.push(path);
         }
     }
-    items.truncate(MAX);
     Some(items)
 }
 
@@ -180,5 +191,45 @@ mod tests {
         assert!(!usable(&std::env::temp_dir().join("a\nb.ylp")));
         assert_eq!(parse("まちがい\nx"), None);
         assert_eq!(parse(&format!("{HEADER}\nrelative.ylp\n")), Some(vec![]));
+    }
+
+    /// 同じファイルかの調べの数を数えながら読む。
+    fn counted(text: &str) -> (Vec<PathBuf>, usize) {
+        let mut calls = 0;
+        let items = parse_with(text, |a, b| {
+            calls += 1;
+            a == b
+        })
+        .unwrap();
+        (items, calls)
+    }
+
+    #[test]
+    fn a_file_with_thousands_of_lines_checks_only_a_bounded_number_of_files() {
+        let dir = std::env::temp_dir();
+        // 違うパスが数千行: 10 件がそろったところで止まる（調べは 0+1+…+9 回）
+        let mut text = format!("{HEADER}\n");
+        for n in 0..5000 {
+            text.push_str(&format!("{}\n", dir.join(format!("p{n}.ylp")).display()));
+        }
+        let (items, calls) = counted(&text);
+        assert_eq!(items.len(), MAX);
+        assert_eq!(items[0], dir.join("p0.ylp"));
+        assert_eq!(items[MAX - 1], dir.join(format!("p{}.ylp", MAX - 1)));
+        assert_eq!(calls, MAX * (MAX - 1) / 2);
+        // 同じパスが数千行: 件数がそろわなくても、読む行の上限で止まる
+        let mut text = format!("{HEADER}\n");
+        for _ in 0..5000 {
+            text.push_str(&format!("{}\n", dir.join("same.ylp").display()));
+        }
+        let (items, calls) = counted(&text);
+        assert_eq!(items, vec![dir.join("same.ylp")]);
+        assert!(calls <= MAX_LINES, "{calls}");
+        // 読めない行が数千行続いても、調べは起きない
+        let mut text = format!("{HEADER}\n");
+        for _ in 0..5000 {
+            text.push_str("relative.ylp\n");
+        }
+        assert_eq!(counted(&text), (vec![], 0));
     }
 }
