@@ -2628,6 +2628,9 @@ mod ui {
     #[test]
     fn the_panel_filters_by_kind_and_searches_by_name() {
         let mut h = window();
+        // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
+        h.ui_mut().property_tab = 0;
+        h.run();
         assert_eq!(st(&h).shelf().visible().len(), 6);
         h.get_by_label("スマートマテリアル").click();
         h.run();

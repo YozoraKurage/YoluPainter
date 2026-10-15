@@ -455,7 +455,7 @@ fn a_missing_recent_file_is_refused_and_dropped_and_clear_empties_the_list_and_t
     h.app_mut().recent_projects = Recent::load(Some(conf.clone()));
     let gone = dir.join("gone.ylp");
     h.app_mut().recent_projects.add(&gone);
-    assert_eq!(paths(&h), [gone.clone()]);
+    assert_eq!(paths(&h), std::slice::from_ref(&gone));
     h.act(Action::OpenRecent(gone.clone()));
     assert!(
         h.message().contains("ファイルがありません"),

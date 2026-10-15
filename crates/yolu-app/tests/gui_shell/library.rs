@@ -2452,6 +2452,9 @@ mod ui {
     fn user_brushes_are_listed_with_their_names_and_made_current_from_the_library() {
         let dir = Dir::new("ui-brush");
         let mut h = window(&dir);
+        // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
+        h.ui_mut().property_tab = 0;
+        h.run();
         h.act(Action::Brush(BrushAction::Add));
         h.run();
         let (key, name) = st(&h)

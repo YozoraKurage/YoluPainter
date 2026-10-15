@@ -328,7 +328,8 @@ fn the_default_left_column_shows_the_size_numbers_and_the_paint_channels_header(
                 "{lang:?}: {px} の丸と数字が見える {cell:?} {size_body:?}"
             );
         }
-        let mut tall = app(1280.0, 1000.0, 128);
+        // （丸が 4 段とも入る高さで）
+        let mut tall = app(1280.0, 1600.0, 128);
         language(&mut tall, lang);
         let (size, color) = (tab_rect(&tall, Tab::BrushSize), tab_rect(&tall, Tab::Color));
         let size_body =

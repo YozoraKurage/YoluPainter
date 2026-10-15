@@ -47,9 +47,10 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
         let file = shell::menu_entries(&app, 0);
         let names = labels(&file);
         let at = |name: &str| names.iter().position(|n| n == name).unwrap_or(usize::MAX);
+        // 「開く…」の次は入れ子の「最近開いたプロジェクト」（ここでは入れ子の中の項目として並ぶ）、そのあとが復旧
         assert_eq!(
             at(lang.pick("復旧…", "Recovery…")),
-            at(lang.pick("開く…", "Open…")) + 1,
+            at(lang.pick("開く…", "Open…")) + 2,
             "{lang:?}: {names:?}"
         );
         // FBX を開く項目はメニューに無い（操作は `Action` として残る。下の試験）

@@ -1999,6 +1999,8 @@ fn showcase(lang: Lang) -> Harness<'static, YoluApp> {
             on: true,
         }));
         s.select_layers([layers[1], layers[2]], layers[2]);
+        // ステンシルのタブ（レイヤーのタブの名前の欄が、レイヤーの行と同じ名前で重ならない）
+        s.ui.property_tab = 0;
         settle(s);
     }
     h.run();

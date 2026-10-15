@@ -62,6 +62,9 @@ fn stroke_across(h: &mut Harness<'_, YoluApp>, dy: f32) {
 #[test]
 fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     let mut h = app(1280.0, 800.0, 128);
+    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
+    h.ui_mut().property_tab = 0;
+    h.run();
     let first = h.selected_layer().unwrap();
     // グループ化: 選んでいるレイヤーが新しいグループに入る
     h.get_by_label("レイヤーをグループ化").click();
@@ -144,6 +147,9 @@ fn layer_tree_collapses_and_drag_moves_a_layer_into_a_group() {
 #[test]
 fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     let mut h = app(1280.0, 800.0, 128);
+    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
+    h.state_mut().state.ui.property_tab = 0;
+    h.run();
     for _ in 0..30 {
         apply(&mut h, Action::NewLayer);
     }
@@ -967,6 +973,9 @@ fn channels_are_not_grouped_without_liltoon_parts() {
     use yolu_core::look::LookKind;
     // lilToon でも、どのスロットも読まないユーザーチャンネルだけ
     let mut h = app(1280.0, 1000.0, 256);
+    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
+    h.ui_mut().property_tab = 0;
+    h.run();
     assert_eq!(h.doc().look().kind, LookKind::LilToon);
     apply(
         &mut h,
@@ -981,6 +990,8 @@ fn channels_are_not_grouped_without_liltoon_parts() {
     assert!(h.query_by_label("AO").is_some());
     // 見た目が標準（PBR）なら、スロットを読むチャンネルがあってもまとめない
     let mut h = liltoon_channels(Lang::Ja);
+    h.state_mut().state.ui.property_tab = 0;
+    h.run();
     assert!(!channel_groups(&h).is_empty());
     {
         let doc = h.doc_mut();
@@ -1033,6 +1044,9 @@ fn canvas_alpha(h: &Harness<'_, YoluApp>, dx: f32) -> u8 {
 fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
     // （マスクの欄は、マスクに描くあいだ、ツールプロパティのブラシの欄の下に出る。入る高さで）
     let mut h = app(1280.0, 1500.0, 128);
+    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
+    h.state_mut().state.ui.property_tab = 0;
+    h.run();
     {
         let b = h.brush_mut();
         b.radius = 3.0;
@@ -1455,6 +1469,9 @@ fn mouse_speed_does_not_depend_on_how_many_events_arrive_per_frame() {
 #[test]
 fn the_two_languages_name_the_panels() {
     let mut h = app(1280.0, 800.0, 128);
+    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
+    h.state_mut().state.ui.property_tab = 0;
+    h.run();
     assert!(h.query_by_label("新規レイヤー").is_some());
     assert!(h.query_by_label("レイヤーをグループ化").is_some());
     apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
