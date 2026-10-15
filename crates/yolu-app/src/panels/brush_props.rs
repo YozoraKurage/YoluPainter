@@ -215,14 +215,17 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     ) {
         b.radius = (v / 2.0).max(0.5);
     }
+    // パスは `BrushSettings` だけを持ち、`Controls`（最低 1 ピクセルを含む）を描きに渡さないので、パスのツールの間は押せない
+    let usable = app.tool != Tool::Path;
+    let reason = (!usable).then(|| lang.pick("パスでは使えません", "Not available with paths"));
     if let Some(v) = toggle_row(
         ui,
         rows,
         "brush.min_pixel",
         lang.pick("最低 1 ピクセル", "At least 1 pixel"),
         app.m2.brush.controls.min_one_pixel,
-        None,
-        true,
+        reason,
+        usable,
     ) {
         app.m2.brush.controls.min_one_pixel = v;
     }

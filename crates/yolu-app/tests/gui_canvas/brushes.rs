@@ -837,6 +837,23 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
     assert_eq!(st(&h).m2.brush.assist.stabilizer, 0.0);
     assert!(!st(&h).m2.brush.assist.curve);
     assert!(!st(&h).m2.brush.controls.min_one_pixel);
+    // パスのツールの間は、最低 1 ピクセルは押せない（パスは `Controls` を持たない）。ほかのツールでは押せる
+    assert!(!h
+        .get_by_label("最低 1 ピクセル")
+        .accesskit_node()
+        .is_disabled());
+    h.state_mut().state.apply(Action::SelectTool(Tool::Path));
+    h.run();
+    assert!(h
+        .get_by_label("最低 1 ピクセル")
+        .accesskit_node()
+        .is_disabled());
+    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.run();
+    assert!(!h
+        .get_by_label("最低 1 ピクセル")
+        .accesskit_node()
+        .is_disabled());
     // 筆圧: 項目ごとの切り替えと最小値
     let at = rect_of(&h, "筆圧", |r| {
         window.contains(r.center()) && r.left() < window.left() + 168.0
