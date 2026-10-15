@@ -4,7 +4,7 @@
 
 ## 試験
 
-`csharp.bin.gz` は前の Unity 版の出力を引き継いだ物で、作り直す道は無い。作り直すときは Rust の出力から作る。
+`csharp.bin.gz` は前の Unity 版の出力を引き継いだ物で、作り直さない。
 
 ```sh
 cargo test -p yolu-io --test psd_io psd::

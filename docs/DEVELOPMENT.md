@@ -14,7 +14,7 @@ GPU・画面の試験には動作する描画バックエンドが必要です�
 
 レイヤーの合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も Unity 版 C# の正解と照らしています。
 
-Unity 版 C# との照合には、リポジトリに収録された人工データを使います。正解（`crates/yolu-core/tests/golden/`・`crates/yolu-io/tests/fixtures/` など）は前の Unity 版 C# の出力を引き継いだ物で、C# の出力と照らし直す道は残していません。作り直すときは Rust の出力から作ります（`YOLU_GOLDEN_UPDATE=1` に対応する試験はそれで）。効果とレイヤーのロック・レイヤーの操作のつなぎ目の照合で食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出します。I/O と PSD のデータ形式・作り直し方は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
+Unity 版 C# との照合には、リポジトリに収録された人工データを使います。正解（`crates/yolu-core/tests/golden/`・`crates/yolu-io/tests/fixtures/` など）は前の Unity 版 C# の出力を引き継いだ物で、C# の出力と照らし直す道は残していません。作り直すときは Rust の出力から作ります（`YOLU_GOLDEN_UPDATE=1` に対応する試験はそれで）。効果とレイヤーのロック・レイヤーの操作のつなぎ目の照合で食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出します。I/O と PSD のデータ形式・作り直し方は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。
 
 ### aarch64（NEON）の試験を x86_64 の Linux で回す
 
