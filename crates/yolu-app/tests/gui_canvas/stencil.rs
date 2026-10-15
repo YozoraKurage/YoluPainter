@@ -747,11 +747,18 @@ fn open_stencil_tab(h: &mut Harness<'_, YoluApp>) {
     h.run();
 }
 
+/// 出ている知らせが消えるまで時間を進める（知らせは状態の帯の左の端に出て、下の端のボタンに重なることがある）。
+fn wait_out_toast(h: &mut Harness<'_, YoluApp>) {
+    let frames = ((yolu_app::toast::LONG_SECONDS + 1.0) * 60.0) as usize;
+    for _ in 0..frames {
+        h.step();
+    }
+}
+
 #[test]
 fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
     let dir = temp_dir("tab");
-    // （「置き場を戻す」の行が、状態の帯に出る知らせと重ならない高さで）
-    let mut h = app(1280.0, 1100.0, 128);
+    let mut h = app(1280.0, 1000.0, 128);
     open_stencil_tab(&mut h);
     assert!(h.query_by_label("画像: なし").is_some());
     // 画像の箱 → 「画像を読む…」: ファイルのウィンドウの頼みが出る（試験ではウィンドウは開かない）
@@ -803,6 +810,8 @@ fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
     );
     let size = st(&h).size;
     assert!((1.5..2.5).contains(&size), "{size}");
+    // 「置き場を戻す」の行は状態の帯に近く、ここまでの知らせ（帯の左の端）と重なる。時間を進めて知らせが消えてから押す
+    wait_out_toast(&mut h);
     h.get_by_label("置き場を戻す").click();
     h.run();
     assert_eq!(st(&h).size, DEFAULT_SIZE);
