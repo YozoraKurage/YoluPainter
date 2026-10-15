@@ -8,6 +8,7 @@ pub mod gpu_thread;
 pub mod livelink;
 pub mod rulers;
 pub mod shared_gpu;
+pub mod shot;
 pub mod tmp;
 pub mod viewports;
 pub mod wait;
