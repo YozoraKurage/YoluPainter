@@ -195,26 +195,40 @@ fn a_duplicate_over_the_pixel_budget_is_refused_and_changes_nothing() {
 }
 
 #[test]
-fn removing_a_set_moves_its_outputs_to_the_first_remaining_one_and_the_last_cannot_go() {
+fn removing_a_set_clears_its_outputs_to_the_default_and_the_last_cannot_go() {
     let (mut d, _, _) = two_layers();
     let first = d.layer_sets()[0].id;
-    let before = all(&d, Channel::Color);
+    let rough_before = all(&d, Channel::Roughness);
     let other = d.add_layer_set("影").unwrap();
     let shadow = d.add_layer("影のレイヤー").unwrap();
     d.move_layers_to_set(&[shadow], other).unwrap();
     d.set_channel_output(Channel::Color, Some(other)).unwrap();
+    d.set_channel_output(Channel::Normal, Some(other)).unwrap();
     d.move_layer_set(other, 0).unwrap();
     assert_eq!(d.layer_sets()[0].id, other);
+    let color_before = all(&d, Channel::Color);
     d.clear_history().unwrap();
-    // 最初のレイヤーセットを消すと、出力は残った最初へ
+    // 消したレイヤーセットから出していたチャンネルは、残ったレイヤーセットへ移さず割り当てが無くなる
     d.remove_layer_set(other).unwrap();
     assert_eq!(d.layer_sets().len(), 1);
     assert!(
         d.layer(shadow).is_none(),
         "消したレイヤーセットのレイヤーも消える"
     );
-    assert_eq!(d.channel_output(Channel::Color).unwrap(), Some(first));
-    assert_eq!(all(&d, Channel::Color), before);
+    assert_eq!(d.channel_output(Channel::Color).unwrap(), None);
+    assert_eq!(d.channel_output(Channel::Normal).unwrap(), None);
+    // 割り当てが無いチャンネルの最終の結果は、そのチャンネルの既定値
+    for c in [Channel::Color, Channel::Normal] {
+        let default = d.channel_info(c).unwrap().default;
+        assert_eq!(
+            all(&d, c),
+            uniform(default, 24 * 16),
+            "{c:?} は既定値で塗った画素"
+        );
+    }
+    // 別のレイヤーセットから出していたチャンネルはそのまま
+    assert_eq!(d.channel_output(Channel::Roughness).unwrap(), Some(first));
+    assert_eq!(all(&d, Channel::Roughness), rough_before);
     assert_eq!(
         d.remove_layer_set(first),
         Err(CoreError::InvalidArgument("最後のレイヤーセットは消せない"))
@@ -224,6 +238,8 @@ fn removing_a_set_moves_its_outputs_to_the_first_remaining_one_and_the_last_cann
     assert_eq!(d.layer_sets()[0].id, other);
     assert_eq!(d.layer_set_of(shadow).unwrap(), other);
     assert_eq!(d.channel_output(Channel::Color).unwrap(), Some(other));
+    assert_eq!(d.channel_output(Channel::Normal).unwrap(), Some(other));
+    assert_eq!(all(&d, Channel::Color), color_before);
     assert!(!d.can_undo());
 }
 

@@ -74,6 +74,7 @@ fn each_layer_set_becomes_a_top_level_group_and_only_the_output_is_shown() {
     assert_eq!(d.layer_sets().len(), 2);
     assert_eq!(d.layer_set_of(a).unwrap(), first);
     // レイヤーセットを 1 つに戻せば、今と同じ PSD
+    d.set_channel_output(Channel::Color, Some(first)).unwrap();
     d.remove_layer_set(named).unwrap();
     assert_eq!(export(&d, Channel::Color), single);
 }

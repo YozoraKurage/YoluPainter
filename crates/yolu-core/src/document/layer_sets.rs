@@ -261,7 +261,8 @@ impl Document {
         self.execute_table(table)
     }
 
-    /// レイヤーセットを中のレイヤーごと消す。最後の 1 つは消せない。そのレイヤーセットへの出力の割り当ては、残った最初のレイヤーセットへ移す。
+    /// レイヤーセットを中のレイヤーごと消す。最後の 1 つは消せない。そのレイヤーセットから出していたチャンネルは、ほかのレイヤーセットへ移さず割り当てを無し（None）にする
+    /// （最終の結果はそのチャンネルの既定値。ほかのレイヤーセットの中身が黙って結果に入らない）。
     pub fn remove_layer_set(&mut self, set: LayerSetId) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
         let at = self.require_layer_set(set)?;
@@ -270,10 +271,9 @@ impl Document {
         }
         let mut table = self.table();
         table.sets.remove(at);
-        let first = table.sets[0].id;
         for r in table.route.iter_mut() {
             if *r == Some(set) {
-                *r = Some(first);
+                *r = None;
             }
         }
         // 一番上の段のまとまり（グループは中身ごと）を、上から抜く（下の番号は変わらない）
