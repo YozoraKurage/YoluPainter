@@ -716,7 +716,6 @@ fn texture_settings_the_engine_cannot_apply_are_reported_only_when_set() {
                     ("TextureRotate", int(on * 45)),
                     ("TextureBrightness", int(on * 10)),
                     ("TextureContrast", int(on * -10)),
-                    ("TextureCompositeMode", int(on * 2)),
                     ("TextureForPlot", int(on)),
                 ],
             )
@@ -727,7 +726,6 @@ fn texture_settings_the_engine_cannot_apply_are_reported_only_when_set() {
         SutNote::TextureRotation,
         SutNote::TextureBrightness,
         SutNote::TextureContrast,
-        SutNote::TextureMode,
         SutNote::TextureEachTip,
     ] {
         assert!(has(on, n.clone()), "{n:?}");
@@ -916,7 +914,7 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
             &[
                 ("BrushThickness", int(50)),
                 ("BrushRotation", real(30.0)),
-                // 向きに筆圧を使う（旗 0x10。下の 2 ビットは読まない）
+                // 向きの影響元にペンの向きを使う（旗 0x10。下の 2 ビットは読まない）。これは写る
                 ("BrushRotationEffector", int(0x13)),
                 ("BrushUseWaterColor", int(1)),
                 ("BrushMixColor", int(30)),
@@ -939,12 +937,13 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
     assert_eq!(mix.mode, yolu_core::brush::MixMode::Mix);
     assert_eq!((mix.paint, mix.density, mix.stretch), (0.3, 0.2, 0.1));
     assert_eq!(b.brush.tip.angle, 30.0, "角度は写る");
+    assert!(b.brush.controls.tilt_angle, "ペンの向きは写る");
+    assert!(!has(b, SutNote::Direction));
     for n in [
-        SutNote::Direction,
         SutNote::Spray,
         SutNote::DualBrush,
         SutNote::StartEnd,
-        SutNote::Stabilizer,
+        SutNote::PostCorrection,
         SutNote::ColorChange,
         SutNote::BlendMode,
     ] {
@@ -954,7 +953,7 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
         b.unrepresented.contains(&Unrepresented::WetEdges),
         "ウェットエッジは ABR と同じ注記"
     );
-    assert_eq!(b.unrepresented.len(), 8);
+    assert_eq!(b.unrepresented.len(), 7);
     // 注記の文は両方の言語で空でなく、制御文字を含まない
     for n in &b.unrepresented {
         let (ja, en) = (n.to_string(), n.english());
@@ -1007,6 +1006,14 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::TiltCurve(SutTarget::Flow),
         SutNote::StartEndDetail,
         SutNote::StabilizerStrength,
+        SutNote::ThicknessDirection,
+        SutNote::ColorMixingMethod(1.0),
+        SutNote::ColorMixingMethod(2.0),
+        SutNote::ColorMixingMethod(7.0),
+        SutNote::PostCorrection,
+        SutNote::VectorTools,
+        SutNote::LengthUnit,
+        SutNote::IntervalType(9.0),
         SutNote::SettingsMissing,
         SutNote::MaterialsUnreadable(3),
         SutNote::BrushesCapped(7),
@@ -1084,11 +1091,23 @@ fn flags_that_are_off_report_nothing() {
                 ("BrushUseRevision", int(0)),
                 ("BrushHueChange", int(0)),
                 ("CompositeMode", int(0)),
+                ("FlickerReduction", int(0)),
+                ("FlickerReductionBySpeed", int(1)),
+                ("BrushRevisionBySpeed", int(1)),
+                ("BrushUseVectorEraser", int(0)),
+                ("BrushUseVectorMagnet", int(0)),
+                ("BrushSizeUnit", int(0)),
+                ("BrushAtLeast1Pixel", int(0)),
+                ("BrushWaterColor", int(0)),
+                ("BrushAutoIntervalType", int(0)),
+                ("BrushVerticalThicknes", int(1)),
+                ("BrushRotationEffector", int(0x03)),
             ],
         )
         .build();
     let b = &ok(&file).brushes[0];
     assert_eq!(b.unrepresented, vec![]);
+    assert!(!b.brush.controls.min_one_pixel);
     assert_eq!(b.mapped, vec![], "旗が切なら、写した項目も無い");
 }
 
@@ -1825,49 +1844,519 @@ fn the_tip_angle_and_its_random_range_are_mapped() {
 }
 
 #[test]
-fn a_direction_driven_by_pressure_tilt_or_speed_is_reported() {
-    for flag in [0x10, 0x20, 0x40] {
-        let b = one(&[("BrushRotationEffector", int(flag | 3))]);
-        assert!(has(&b, SutNote::Direction), "{flag:#x}");
+fn the_angle_sources_map_to_the_engines_direction_settings() {
+    // 下位 0x03 は常に立つので読まない。0x10 ペンの向き・0x20 ペン軸の回転・0x40 線の方向は、それぞれエンジンの設定へ
+    let b = one(&[("BrushRotationEffector", int(0x03))]);
+    assert!(!b.brush.controls.tilt_angle && !b.brush.controls.rotation_angle);
+    assert!(!b.brush.tip.follow_direction);
+    assert!(b.mapped.is_empty() && b.unrepresented.is_empty());
+    for (flag, which) in [(0x10, "tilt"), (0x20, "rotation"), (0x40, "line")] {
+        let b = one(&[("BrushRotationEffector", int(flag | 0x03))]);
+        let (tilt, rotation, line) = (
+            b.brush.controls.tilt_angle,
+            b.brush.controls.rotation_angle,
+            b.brush.tip.follow_direction,
+        );
+        assert_eq!(
+            (tilt, rotation, line),
+            (which == "tilt", which == "rotation", which == "line"),
+            "{flag:#x}"
+        );
+        assert!(mapped(&b, SutMapped::AngleSource), "{flag:#x}");
+        assert!(
+            b.unrepresented.is_empty(),
+            "{flag:#x}: {:?}",
+            b.unrepresented
+        );
     }
-    // 旗の下の 2 ビット・強さの読めるランダムだけなら知らせない
+    // ランダム（0x80）と同時でも、全部が写る
+    let b = one(&[
+        ("BrushRotationEffector", int(0xF3)),
+        ("BrushRotationRandomScale", int(50)),
+    ]);
+    assert!(b.brush.controls.tilt_angle && b.brush.controls.rotation_angle);
+    assert!(b.brush.tip.follow_direction);
+    assert_eq!(b.brush.jitter.angle, 0.5);
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    // 強さの読めるランダムだけなら知らせない。強さの列が無い版は写せないので知らせる（黙って捨てない）
     let b = one(&[
         ("BrushRotationEffector", int(0x83)),
         ("BrushRotationRandomScale", int(50)),
     ]);
     assert!(!has(&b, SutNote::Direction));
-    // ランダムの旗があって強さの列が無い版は、写せないので知らせる（黙って捨てない）
     let b = one(&[("BrushRotationEffector", int(0x83))]);
     assert!(has(&b, SutNote::Direction));
     assert_eq!(b.brush.jitter.angle, 0.0);
+    // 知らない旗（0x04・0x08・0x100 など）は表せないので知らせる。知っている旗は写る
+    for unknown in [0x04, 0x08, 0x100] {
+        let b = one(&[("BrushRotationEffector", int(unknown | 0x13))]);
+        assert!(has(&b, SutNote::Direction), "{unknown:#x}");
+        assert!(b.brush.controls.tilt_angle);
+    }
 }
 
 #[test]
-fn a_stabilizer_level_becomes_the_string_length_and_an_unreadable_level_is_reported() {
-    let b = one(&[("BrushUseRevision", int(1)), ("BrushRevision", int(6))]);
-    assert_eq!(b.brush.assist.stabilizer, 6.0);
+fn the_direction_settings_agree_with_the_engines_plan_of_the_dab_angle() {
+    // 写した設定が、エンジンのダブの角度の計画（筆先の角度 + 線の方向 + ペンの倒れた向き + ペン軸の回転）にそのまま足されること:
+    // 同じ入力の列で、取り込んだブラシが、手で同じ設定にしたブラシと同じストロークを描く
+    use yolu_core::glam::DVec2;
+    let b = one(&[
+        ("BrushRotation", real(20.0)),
+        ("BrushRotationEffector", int(0x73)),
+        ("BrushThickness", int(40)),
+    ]);
+    let mut by_hand = yolu_core::Brush::default();
+    by_hand.base.pressure_size = false;
+    by_hand.base.pressure_opacity = false;
+    by_hand.base.pressure_flow = false;
+    by_hand.tip.angle = 20.0;
+    by_hand.tip.roundness = 0.4;
+    by_hand.tip.follow_direction = true;
+    by_hand.controls.tilt_angle = true;
+    by_hand.controls.rotation_angle = true;
+    let draw = |brush: &yolu_core::Brush| {
+        let mut doc = yolu_core::Document::with_tile_size(64, 64, 32).unwrap();
+        let layer = doc.add_layer("a").unwrap();
+        let mut brush = brush.clone();
+        brush.base.radius = 6.0;
+        brush.base.hardness = 1.0;
+        brush.base.spacing = 0.3;
+        let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
+        for (x, y) in [(10.0, 10.0), (30.0, 22.0), (50.0, 12.0)] {
+            stroke
+                .add_point(&mut doc, x, y, 1.0, DVec2::new(0.3, 0.2))
+                .unwrap();
+        }
+        doc.end_stroke(stroke).unwrap();
+        doc.layers()[0]
+            .surface(yolu_core::Channel::Color)
+            .unwrap()
+            .to_canvas_bytes()
+    };
+    let imported = draw(&b.brush);
+    assert!(imported.iter().any(|&v| v != 0));
+    assert_eq!(imported, draw(&by_hand));
+}
+
+#[test]
+fn a_stabilizer_strength_becomes_the_string_length_and_post_correction_is_reported_apart() {
+    // 手ブレ補正は `FlickerReduction`（画面の値そのまま）。後補正（`BrushUseRevision`・`BrushRevision`）は手ぶれ補正に写さない
+    let b = one(&[("FlickerReduction", int(30))]);
+    assert_eq!(b.brush.assist.stabilizer, 30.0);
     assert!(mapped(&b, SutMapped::Stabilizer));
     assert!(has(&b, SutNote::StabilizerStrength));
-    assert!(!has(&b, SutNote::Stabilizer));
-    let b = one(&[
-        ("BrushUseRevision", int(1)),
-        ("BrushRevision", int(1_000_000)),
-    ]);
+    assert!(!has(&b, SutNote::Stabilizer) && !has(&b, SutNote::PostCorrection));
+    let b = one(&[("FlickerReduction", int(1_000_000))]);
     assert_eq!(
         b.brush.assist.stabilizer,
         yolu_core::brush::MAX_STROKE_ASSIST
     );
+    // 強さ 0（と、無い・負の値）は写すものが無い。速度による手ブレ補正の旗は、強さ 0 の行にも既定で入るので知らせない
     for cells in [
-        vec![("BrushUseRevision", int(1))],
-        vec![("BrushUseRevision", int(1)), ("BrushRevision", int(0))],
+        vec![
+            ("FlickerReduction", int(0)),
+            ("FlickerReductionBySpeed", int(1)),
+        ],
+        vec![("FlickerReductionBySpeed", int(1))],
+        vec![("FlickerReduction", int(-5))],
     ] {
         let b = one(&cells);
         assert_eq!(b.brush.assist.stabilizer, 0.0);
-        assert!(has(&b, SutNote::Stabilizer) && !mapped(&b, SutMapped::Stabilizer));
+        assert!(b.mapped.is_empty() && b.unrepresented.is_empty());
     }
-    let b = one(&[("BrushUseRevision", int(0)), ("BrushRevision", int(30))]);
+    // 速度による手ブレ補正（旗）は、強さがあるときだけ表せないと知らせる。強さは写る
+    let b = one(&[
+        ("FlickerReduction", int(20)),
+        ("FlickerReductionBySpeed", int(1)),
+    ]);
+    assert_eq!(b.brush.assist.stabilizer, 20.0);
+    assert!(has(&b, SutNote::Stabilizer));
+    // 後補正: 旗が立っているときだけ知らせ、強さは手ぶれ補正に入れない（強さ・速度・表示倍率・ベジェの列は読まない）
+    let b = one(&[
+        ("BrushUseRevision", int(1)),
+        ("BrushRevision", int(6)),
+        ("BrushRevisionBySpeed", int(1)),
+        ("BrushRevisionByViewScale", int(1)),
+        ("BrushRevisionBezier", int(1)),
+    ]);
     assert_eq!(b.brush.assist.stabilizer, 0.0);
+    assert!(!mapped(&b, SutMapped::Stabilizer));
+    assert!(has(&b, SutNote::PostCorrection));
+    assert_eq!(b.unrepresented.len(), 1, "{:?}", b.unrepresented);
+    let b = one(&[
+        ("BrushUseRevision", int(0)),
+        ("BrushRevision", int(30)),
+        ("BrushRevisionBySpeed", int(1)),
+        ("BrushRevisionByViewScale", int(1)),
+    ]);
+    assert!(b.unrepresented.is_empty() && b.mapped.is_empty());
+    // 両方あれば、手ぶれ補正は写り、後補正は知らせる
+    let b = one(&[("FlickerReduction", int(5)), ("BrushUseRevision", int(1))]);
+    assert_eq!(b.brush.assist.stabilizer, 5.0);
+    assert!(has(&b, SutNote::PostCorrection) && has(&b, SutNote::StabilizerStrength));
+}
+
+#[test]
+fn the_interval_follows_its_type_and_the_fixed_value_is_a_percent_of_the_diameter() {
+    // 種類 0（固定）は `BrushInterval`（直径に対する %）。整数でも実数でも %（1 は 1%）
+    for (cells, expected) in [
+        (
+            vec![
+                ("BrushAutoIntervalType", int(0)),
+                ("BrushInterval", real(10.0)),
+            ],
+            0.10,
+        ),
+        (
+            vec![
+                ("BrushAutoIntervalType", int(0)),
+                ("BrushInterval", int(37)),
+            ],
+            0.37,
+        ),
+        (
+            vec![
+                ("BrushAutoIntervalType", int(0)),
+                ("BrushInterval", real(1.0)),
+            ],
+            0.01,
+        ),
+        (
+            vec![
+                ("BrushAutoIntervalType", int(0)),
+                ("BrushInterval", real(100.0)),
+            ],
+            1.0,
+        ),
+        // 種類の列が無い版は、固定として読む（今まで通り）
+        (vec![("BrushInterval", real(25.0))], 0.25),
+    ] {
+        let b = one(&cells);
+        assert_eq!(b.brush.base.spacing, expected, "{cells:?}");
+        assert!(b.unrepresented.is_empty());
+    }
+    // 広い・普通・狭いは数値を使わず、測った 12%・8%・4%
+    for (kind, expected) in [(1, 0.12), (2, 0.08), (3, 0.04)] {
+        for value in [10.0, 25.0, 100.0] {
+            let b = one(&[
+                ("BrushAutoIntervalType", int(kind)),
+                ("BrushInterval", real(value)),
+            ]);
+            assert_eq!(b.brush.base.spacing, expected, "{kind} {value}");
+            assert!(b.unrepresented.is_empty());
+        }
+    }
+    // 数値の列が無くても種類で決まる。固定で数値が無ければ既定のまま
+    let b = one(&[("BrushAutoIntervalType", int(2))]);
+    assert_eq!(b.brush.base.spacing, 0.08);
+    let b = one(&[("BrushAutoIntervalType", int(0))]);
+    assert_eq!(
+        b.brush.base.spacing,
+        yolu_core::Brush::default().base.spacing
+    );
+    // 知らない種類は写さず（既定の間隔のまま）、値を添えて知らせる
+    for (cell, value) in [(int(4), 4.0), (int(-1), -1.0), (real(1.5), 1.5)] {
+        let b = one(&[
+            ("BrushAutoIntervalType", cell),
+            ("BrushInterval", real(30.0)),
+        ]);
+        assert_eq!(
+            b.brush.base.spacing,
+            yolu_core::Brush::default().base.spacing,
+            "{value}"
+        );
+        assert!(has(&b, SutNote::IntervalType(value)), "{value}");
+    }
+}
+
+#[test]
+fn a_horizontal_thickness_turns_a_round_tip_by_ninety_degrees() {
+    // 垂直（1。既定）はエンジンの真円率の潰す軸と同じ向きで、何もしない。水平（0）は潰す軸が 90 度違うので、丸い筆先は角度に足す
+    let b = one(&[
+        ("BrushThickness", int(40)),
+        ("BrushVerticalThicknes", int(1)),
+    ]);
+    assert_eq!(b.brush.tip.angle, 0.0);
+    assert!(!mapped(&b, SutMapped::ThicknessDirection));
+    let b = one(&[
+        ("BrushThickness", int(40)),
+        ("BrushVerticalThicknes", int(0)),
+    ]);
+    assert_eq!((b.brush.tip.angle, b.brush.tip.roundness), (90.0, 0.4));
+    assert!(mapped(&b, SutMapped::ThicknessDirection));
     assert!(b.unrepresented.is_empty());
+    // 列が無い版は何もしない。潰していない（厚さ 100）ときは向きの違いが形に出ないので何もしない
+    let b = one(&[("BrushThickness", int(40))]);
+    assert_eq!(b.brush.tip.angle, 0.0);
+    let b = one(&[
+        ("BrushThickness", int(100)),
+        ("BrushVerticalThicknes", int(0)),
+    ]);
+    assert_eq!(b.brush.tip.angle, 0.0);
+    assert!(b.mapped.is_empty());
+    // 筆先の角度に足して、-180〜180 に巻く（ほかの向きの設定と同じ角度に足される）
+    for (given, wrapped) in [(30.0, 120.0), (100.0, -170.0), (-120.0, -30.0)] {
+        let b = one(&[
+            ("BrushThickness", int(50)),
+            ("BrushVerticalThicknes", int(0)),
+            ("BrushRotation", real(given)),
+        ]);
+        assert_eq!(b.brush.tip.angle, wrapped, "{given}");
+        assert!(mapped(&b, SutMapped::TipAngle) && mapped(&b, SutMapped::ThicknessDirection));
+    }
+    // 向きの影響元（線の方向）と組んでも、同じ角度に足されるだけ
+    let b = one(&[
+        ("BrushThickness", int(50)),
+        ("BrushVerticalThicknes", int(0)),
+        ("BrushRotationEffector", int(0x43)),
+    ]);
+    assert!(b.brush.tip.follow_direction && b.brush.tip.angle == 90.0);
+    // 水平が丸い筆先で 90 度回した楕円と同じ形になること: 水平は、縦長の楕円（角度 0 の横長を 90 度回したもの）
+    use yolu_core::glam::DVec2;
+    let draw = |angle: f64, roundness: f64| {
+        let mut doc = yolu_core::Document::with_tile_size(48, 48, 32).unwrap();
+        let layer = doc.add_layer("a").unwrap();
+        let mut brush = yolu_core::Brush::default();
+        brush.base.radius = 10.0;
+        brush.base.hardness = 1.0;
+        brush.base.pressure_size = false;
+        brush.tip.angle = angle;
+        brush.tip.roundness = roundness;
+        let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
+        stroke
+            .add_point(&mut doc, 24.5, 24.5, 1.0, DVec2::ZERO)
+            .unwrap();
+        doc.end_stroke(stroke).unwrap();
+        let bytes = doc.layers()[0]
+            .surface(yolu_core::Channel::Color)
+            .unwrap()
+            .to_canvas_bytes();
+        let alpha = |x: usize, y: usize| bytes[(y * 48 + x) * 4 + 3];
+        // 中心から横へ 8 画素・縦へ 8 画素の覆い
+        (alpha(32, 24), alpha(24, 32))
+    };
+    let (vertical_wide, vertical_tall) = draw(0.0, 0.4);
+    assert!(vertical_wide > 0 && vertical_tall == 0, "垂直は横長");
+    let (horizontal_wide, horizontal_tall) = draw(
+        b_angle(&one(&[
+            ("BrushThickness", int(40)),
+            ("BrushVerticalThicknes", int(0)),
+        ])),
+        0.4,
+    );
+    assert!(horizontal_wide == 0 && horizontal_tall > 0, "水平は縦長");
+}
+
+fn b_angle(b: &ImportedBrush) -> f64 {
+    b.brush.tip.angle
+}
+
+#[test]
+fn a_horizontal_thickness_on_an_image_tip_is_reported_not_mapped() {
+    let build = |direction: i64, thickness: i64| {
+        SutBuilder::new()
+            .material(Some("tip_a"), material_with_thumbnail(&tip_png()))
+            .brush(
+                "T",
+                1,
+                &[
+                    ("BrushUsePatternImage", int(1)),
+                    (
+                        "BrushPatternImageArray",
+                        blob(refs(&[["tip_a.png", "cat/aaaa", "tip_a"]])),
+                    ),
+                    ("BrushThickness", int(thickness)),
+                    ("BrushVerticalThicknes", int(direction)),
+                ],
+            )
+            .build()
+    };
+    let b = &ok(&build(0, 40)).brushes[0];
+    assert!(b.brush.tip.image.is_some());
+    assert_eq!(b.brush.tip.angle, 0.0, "画像は回さない");
+    assert!(has(b, SutNote::ThicknessDirection));
+    assert!(!mapped(b, SutMapped::ThicknessDirection));
+    // 垂直・潰していないときは知らせない
+    for (direction, thickness) in [(1, 40), (0, 100)] {
+        let b = &ok(&build(direction, thickness)).brushes[0];
+        assert!(
+            !has(b, SutNote::ThicknessDirection),
+            "{direction} {thickness}"
+        );
+    }
+}
+
+#[test]
+fn texture_composite_modes_map_by_name_and_the_others_are_reported() {
+    use yolu_core::TextureMode as M;
+    let png = png_gray(1, 1, &[128]);
+    let build = |mode: Option<i64>| {
+        let mut cells = vec![("TextureImage", blob(refs(&[["grain.png", "c/g", "grain"]])))];
+        if let Some(mode) = mode {
+            cells.push(("TextureCompositeMode", int(mode)));
+        }
+        SutBuilder::new()
+            .material(Some("grain"), material_with_thumbnail(&png))
+            .brush("T", 1, &cells)
+            .build()
+    };
+    // 0 通常・1 乗算・2 減算・3 比較(暗)・4 輪郭・5 オーバーレイ・6 覆い焼きカラー・7 焼き込みカラー・8 ハードミックス・9 高さ
+    for (value, mode) in [
+        (1, Some(M::Multiply)),
+        (2, Some(M::Subtract)),
+        (3, Some(M::Darken)),
+        (5, Some(M::Overlay)),
+        (6, Some(M::ColorDodge)),
+        (7, Some(M::ColorBurn)),
+        (8, Some(M::HardMix)),
+        (0, None),
+        (4, None),
+        (9, None),
+        (10, None),
+        (-1, None),
+    ] {
+        let b = &ok(&build(Some(value))).brushes[0];
+        let texture = b.brush.texture.as_ref().expect("質感");
+        match mode {
+            Some(mode) => {
+                assert_eq!(texture.mode, mode, "{value}");
+                assert!(!has(b, SutNote::TextureMode), "{value}");
+            }
+            None => {
+                assert_eq!(texture.mode, M::Multiply, "{value}: 乗算にする");
+                assert!(has(b, SutNote::TextureMode), "{value}: 知らせる");
+            }
+        }
+    }
+    // 列が無い版は乗算（知らせない）
+    let b = &ok(&build(None)).brushes[0];
+    assert_eq!(b.brush.texture.as_ref().unwrap().mode, M::Multiply);
+    assert!(!has(b, SutNote::TextureMode));
+    // 質感が無ければ、合わせ方の列があっても何もしない
+    let b = one(&[("TextureCompositeMode", int(4))]);
+    assert!(b.brush.texture.is_none() && !has(&b, SutNote::TextureMode));
+}
+
+#[test]
+fn the_ink_blend_mode_is_reported_for_every_value_but_normal() {
+    // 0 通常 のほかは、ブラシ単位の合成モードがエンジンに無いので知らせる（27 消去も、消しゴムはツールの切り替えで、取り込んだ設定に入らない）
+    let b = one(&[("CompositeMode", int(0))]);
+    assert!(!has(&b, SutNote::BlendMode));
+    for value in 1..=36 {
+        let b = one(&[("CompositeMode", int(value))]);
+        assert!(has(&b, SutNote::BlendMode), "{value}");
+        assert!(!b.brush.base.erase, "{value}");
+    }
+}
+
+#[test]
+fn only_the_blend_method_of_color_mixing_equal_to_mixing_is_carried() {
+    // 下地混色の方式: 0 色混ぜ はエンジンの「混ぜる」、1 にじみ・2 色重ね は同じ振る舞いと言えないので写さずに知らせる
+    let mixing = |kind: Option<i64>| {
+        let mut cells = vec![
+            ("BrushUseWaterColor", int(1)),
+            ("BrushUseWaterColor2", int(1)),
+            ("BrushMixColor", int(30)),
+            ("BrushMixAlpha", int(20)),
+            ("BrushMixColorExtension", int(10)),
+        ];
+        if let Some(kind) = kind {
+            cells.push(("BrushWaterColor", int(kind)));
+        }
+        one(&cells)
+    };
+    for kind in [None, Some(0)] {
+        let b = mixing(kind);
+        assert_eq!(b.brush.mix.mode, yolu_core::brush::MixMode::Mix, "{kind:?}");
+        assert!(mapped(&b, SutMapped::ColorMixing));
+        assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    }
+    for kind in [1, 2] {
+        let b = mixing(Some(kind));
+        assert_eq!(b.brush.mix.mode, yolu_core::brush::MixMode::Off, "{kind}");
+        assert!(!mapped(&b, SutMapped::ColorMixing));
+        assert!(has(&b, SutNote::ColorMixingMethod(kind as f64)), "{kind}");
+    }
+    // 下地混色が切なら、方式の列があっても知らせない
+    let b = one(&[("BrushUseWaterColor", int(0)), ("BrushWaterColor", int(1))]);
+    assert!(b.unrepresented.is_empty() && b.mapped.is_empty());
+}
+
+#[test]
+fn vector_flags_and_a_size_unit_are_reported_and_never_dropped_silently() {
+    for column in ["BrushUseVectorEraser", "BrushUseVectorMagnet"] {
+        let b = one(&[(column, int(1))]);
+        assert!(has(&b, SutNote::VectorTools), "{column}");
+        assert_eq!(b.unrepresented.len(), 1);
+        let b = one(&[(column, int(0))]);
+        assert!(b.unrepresented.is_empty(), "{column}");
+    }
+    // 単位が 0 でなければ知らせ、値は px として読む
+    let b = one(&[("BrushSize", real(40.0)), ("BrushSizeUnit", int(1))]);
+    assert_eq!(b.brush.base.radius, 20.0);
+    assert!(has(&b, SutNote::LengthUnit));
+    let b = one(&[("BrushSize", real(40.0)), ("BrushSizeUnit", int(0))]);
+    assert!(!has(&b, SutNote::LengthUnit));
+}
+
+#[test]
+fn at_least_one_pixel_maps_to_the_floor_of_the_dab_diameter() {
+    let b = one(&[("BrushAtLeast1Pixel", int(1))]);
+    assert!(b.brush.controls.min_one_pixel);
+    assert!(mapped(&b, SutMapped::MinOnePixel));
+    assert!(b.unrepresented.is_empty());
+    let b = one(&[("BrushAtLeast1Pixel", int(0))]);
+    assert!(!b.brush.controls.min_one_pixel);
+    assert!(!mapped(&b, SutMapped::MinOnePixel));
+    // 列が無い版は切（今まで通り）
+    let b = one(&[("BrushSize", real(10.0))]);
+    assert!(!b.brush.controls.min_one_pixel);
+    // 写した設定はエンジンで効く: 入り抜きの先で太さが 0 になっても、線が 1 画素で続く
+    use yolu_core::glam::DVec2;
+    let draw = |brush: &yolu_core::Brush| {
+        let mut doc = yolu_core::Document::with_tile_size(48, 48, 32).unwrap();
+        let layer = doc.add_layer("a").unwrap();
+        let mut brush = brush.clone();
+        brush.base.hardness = 1.0;
+        brush.base.spacing = 0.0625;
+        let mut stroke = doc.begin_brush_stroke(layer, &brush).unwrap();
+        stroke
+            .add_point(&mut doc, 8.5, 20.5, 0.0, DVec2::ZERO)
+            .unwrap();
+        stroke
+            .add_point(&mut doc, 40.5, 20.5, 0.0, DVec2::ZERO)
+            .unwrap();
+        doc.end_stroke(stroke).unwrap();
+        doc.layers()[0]
+            .surface(yolu_core::Channel::Color)
+            .map_or(0, |s| {
+                s.to_canvas_bytes()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|p| p[3] > 0)
+                    .count()
+            })
+    };
+    let pressure = |on: i64| {
+        let mut b = one(&[
+            ("BrushSize", real(16.0)),
+            ("BrushAtLeast1Pixel", int(on)),
+            (
+                "BrushSizeEffector",
+                blob(effector_slots(
+                    0x10,
+                    0,
+                    Some(&[(0.0, 0.0), (1.0, 1.0)]),
+                    None,
+                )),
+            ),
+        ]);
+        b.brush.base.pressure_size = true;
+        b.brush
+    };
+    assert_eq!(draw(&pressure(0)), 0, "切: 筆圧 0 は塗らない");
+    assert!(draw(&pressure(1)) >= 30, "入: 筆圧 0 でも 1 画素の線が続く");
 }
 
 #[test]
@@ -1911,9 +2400,10 @@ fn what_was_mapped_is_listed_apart_from_what_was_not() {
                 ),
                 ("BrushUseIn", int(1)),
                 ("BrushInLength", real(10.0)),
-                ("BrushUseRevision", int(1)),
-                ("BrushRevision", int(3)),
+                ("FlickerReduction", int(3)),
                 ("BrushRotation", real(15.0)),
+                ("BrushRotationEffector", int(0x73)),
+                ("BrushAtLeast1Pixel", int(1)),
                 ("BrushUseWaterColor", int(1)),
                 ("BrushMixColor", int(40)),
                 ("BrushUseSpray", int(1)),
@@ -1930,13 +2420,29 @@ fn what_was_mapped_is_listed_apart_from_what_was_not() {
             SutMapped::StartEnd,
             SutMapped::Stabilizer,
             SutMapped::TipAngle,
+            SutMapped::AngleSource,
+            SutMapped::MinOnePixel,
             SutMapped::ColorMixing,
         ],
         "SutMapped の並びで、重ならない"
     );
     assert!(has(b, SutNote::Spray), "写せなかったものは別に載る");
-    // 写せたものの名前は両方の言語で作れる
-    for m in &b.mapped {
+    // 写せたものの名前は、どの種類でも両方の言語で作れる（種類を足したらここへも足す）
+    for m in [
+        SutMapped::TipImage,
+        SutMapped::Texture,
+        SutMapped::Pressure,
+        SutMapped::Tilt,
+        SutMapped::StartEnd,
+        SutMapped::Stabilizer,
+        SutMapped::TipAngle,
+        SutMapped::AngleRandom,
+        SutMapped::AngleSource,
+        SutMapped::ThicknessDirection,
+        SutMapped::MinOnePixel,
+        SutMapped::ColorMixing,
+        SutMapped::AntiAliasing,
+    ] {
         let (ja, en) = m.texts();
         assert!(!ja.is_empty() && en.is_ascii() && !ja.is_ascii(), "{m:?}");
     }

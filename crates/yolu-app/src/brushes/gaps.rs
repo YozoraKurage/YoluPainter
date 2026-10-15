@@ -65,10 +65,12 @@ pub enum Gap {
     TiltCurve,
     StartEndDetail,
     StabilizerStrength,
+    PostCorrection,
+    VectorTools,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 49] = [
+    pub const ALL: [Gap; 51] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -118,6 +120,8 @@ impl Gap {
         Gap::TiltCurve,
         Gap::StartEndDetail,
         Gap::StabilizerStrength,
+        Gap::PostCorrection,
+        Gap::VectorTools,
     ];
 
     /// ファイルに書く名前。
@@ -172,6 +176,8 @@ impl Gap {
             Gap::TiltCurve => "tilt-curve",
             Gap::StartEndDetail => "start-end-detail",
             Gap::StabilizerStrength => "stabilizer-strength",
+            Gap::PostCorrection => "post-correction",
+            Gap::VectorTools => "vector-tools",
         }
     }
 
@@ -234,6 +240,8 @@ impl Gap {
             Gap::TiltCurve => lang.pick("傾きの曲線", "Tilt curve"),
             Gap::StartEndDetail => lang.pick("入り抜きの速さ・割合", "Start/end speed and ratio"),
             Gap::StabilizerStrength => lang.pick("手ぶれ補正の強さ", "Stabilization strength"),
+            Gap::PostCorrection => lang.pick("後補正", "Post correction"),
+            Gap::VectorTools => lang.pick("ベクター消去・吸着", "Vector eraser and magnet"),
         }
     }
 }
@@ -294,8 +302,10 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::TextureContrast => Gap::TextureContrast,
             SutNote::TextureMode => Gap::TextureMode,
             SutNote::TextureEachTip => Gap::TextureEachTip,
-            SutNote::Direction => Gap::TipDirection,
-            SutNote::ColorMixing { .. } => Gap::ColorMixing,
+            SutNote::Direction | SutNote::ThicknessDirection => Gap::TipDirection,
+            SutNote::ColorMixing { .. } | SutNote::ColorMixingMethod(_) => Gap::ColorMixing,
+            SutNote::PostCorrection => Gap::PostCorrection,
+            SutNote::VectorTools => Gap::VectorTools,
             SutNote::Spray => Gap::Spray,
             SutNote::DualBrush => Gap::DualBrush,
             SutNote::StartEnd => Gap::StartEnd,
@@ -309,7 +319,10 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::TiltCurve(_) => Gap::TiltCurve,
             SutNote::StartEndDetail => Gap::StartEndDetail,
             SutNote::StabilizerStrength => Gap::StabilizerStrength,
-            SutNote::SettingsMissing | SutNote::AntiAliasing(_) => Gap::PresetSettings,
+            SutNote::SettingsMissing
+            | SutNote::AntiAliasing(_)
+            | SutNote::LengthUnit
+            | SutNote::IntervalType(_) => Gap::PresetSettings,
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
             // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
@@ -322,7 +335,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 10] = [
+pub const MAPPED_ALL: [SutMapped; 13] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -331,6 +344,9 @@ pub const MAPPED_ALL: [SutMapped; 10] = [
     SutMapped::Stabilizer,
     SutMapped::TipAngle,
     SutMapped::AngleRandom,
+    SutMapped::AngleSource,
+    SutMapped::ThicknessDirection,
+    SutMapped::MinOnePixel,
     SutMapped::ColorMixing,
     SutMapped::AntiAliasing,
 ];
@@ -346,6 +362,9 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::Stabilizer => "stabilizer",
         SutMapped::TipAngle => "tip-angle",
         SutMapped::AngleRandom => "angle-random",
+        SutMapped::AngleSource => "angle-source",
+        SutMapped::ThicknessDirection => "thickness-direction",
+        SutMapped::MinOnePixel => "min-one-pixel",
         SutMapped::ColorMixing => "color-mixing",
         SutMapped::AntiAliasing => "anti-aliasing",
     }

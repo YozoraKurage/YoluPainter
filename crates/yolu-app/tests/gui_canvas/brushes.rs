@@ -826,10 +826,17 @@ fn the_detail_window_edits_the_live_brush_by_category_and_resets_each_one() {
     h.get_by_label("曲線").click();
     h.run();
     assert!(st(&h).m2.brush.assist.curve);
+    // 最低 1 ピクセル（ストロークの欄のチェック）。入れると変更ありになり、既定に戻すと切に戻る
+    assert!(!st(&h).m2.brush.controls.min_one_pixel);
+    h.get_by_label("最低 1 ピクセル").click();
+    h.run();
+    assert!(st(&h).m2.brush.controls.min_one_pixel);
+    assert!(st(&h).brush_is_modified(b("standard")), "変えたら変更あり");
     h.get_by_label("ストロークを既定に戻す").click();
     h.run();
     assert_eq!(st(&h).m2.brush.assist.stabilizer, 0.0);
     assert!(!st(&h).m2.brush.assist.curve);
+    assert!(!st(&h).m2.brush.controls.min_one_pixel);
     // 筆圧: 項目ごとの切り替えと最小値
     let at = rect_of(&h, "筆圧", |r| {
         window.contains(r.center()) && r.left() < window.left() + 168.0
@@ -1036,7 +1043,10 @@ fn the_brush_fields_stay_enabled_while_only_the_3d_view_can_be_painted() {
     // 詳細のウィンドウ: 筆先・ストローク（手ぶれ補正・曲線）・入り抜き・筆圧・ゆらぎも 3D で効く。注記の行は出さない
     for (category, enabled) in [
         (Category::Shape, vec!["真円率", "角度"]),
-        (Category::Stroke, vec!["手ぶれ補正", "曲線", "直径", "間隔"]),
+        (
+            Category::Stroke,
+            vec!["手ぶれ補正", "曲線", "直径", "最低 1 ピクセル", "間隔"],
+        ),
         (Category::Dynamics, vec!["入り", "抜き"]),
         (Category::Pressure, vec!["筆圧を使う"]),
         (Category::Jitter, vec!["サイズ", "散布"]),
@@ -1256,6 +1266,7 @@ fn snapshot_brush_detail_window() {
         .apply(Action::Brush(BrushAction::Select(b("chalk"))));
     for (category, name) in [
         (Category::Shape, "brushes_detail_shape"),
+        (Category::Stroke, "brushes_detail_stroke"),
         (Category::Pressure, "brushes_detail_pressure"),
         (Category::Dynamics, "brushes_detail_dynamics"),
         (Category::Texture, "brushes_detail_texture"),
@@ -1276,6 +1287,19 @@ fn snapshot_brush_detail_window_english_effect() {
     open_detail(&mut h, Category::Effect);
     let rect = detail_rect(&h);
     shot(&mut h, rect, "brushes_detail_effect_english");
+}
+
+#[test]
+fn snapshot_brush_detail_window_english_stroke() {
+    let mut h = app(1600.0, 1000.0, 128);
+    language(&mut h, Lang::En);
+    h.state_mut()
+        .state
+        .apply(Action::Brush(BrushAction::Select(b("chalk"))));
+    open_detail(&mut h, Category::Stroke);
+    assert!(h.query_by_label("At least 1 pixel").is_some());
+    let rect = detail_rect(&h);
+    shot(&mut h, rect, "brushes_detail_stroke_english");
 }
 
 #[test]

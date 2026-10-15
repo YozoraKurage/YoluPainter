@@ -73,7 +73,7 @@ use crate::brush::profile;
 use crate::brush::random::NetRandom;
 use crate::brush::{
     combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, PendingDab,
-    ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric, DUAL_STREAM,
+    ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric, DUAL_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
@@ -363,6 +363,8 @@ pub struct SurfaceStroke {
     memory_override: Option<u64>,
     /// 筆圧を掛ける前のモデルの単位の半径。
     world_radius: f32,
+    /// `world_radius` の元になったブラシの半径（文書の画素。最低 1 ピクセルの下限の換算に使う）。
+    radius_px: f64,
     hardness: f32,
     /// 丸い筆先の縁のアンチエイリアス（[`crate::BrushSettings::anti_alias`]）と、直前に面に当たったダブの中心のテクセルの画面の
     /// 大きさ（中心が面に無いダブの見積もりに使う）。
@@ -580,6 +582,7 @@ impl SurfaceStroke {
             screen_scale: None,
             memory_override: options.projection_memory,
             world_radius,
+            radius_px: brush.radius,
             hardness: brush.hardness as f32,
             anti_alias: brush.anti_alias,
             last_metric: None,
@@ -944,7 +947,10 @@ impl SurfaceStroke {
             scale: None,
             skip: false,
         };
-        if self.pressure_size && self.size_pressure(p.pressure) <= 0.0 {
+        if self.pressure_size
+            && self.size_pressure(p.pressure) <= 0.0
+            && !self.brush.controls.min_one_pixel
+        {
             dab.skip = true;
             return dab;
         }
@@ -1007,11 +1013,24 @@ impl SurfaceStroke {
         };
         // 散布の届く長さの元: 筆圧の前の半径を画面へ直したもの
         let nominal = dab.scale.map_or(0.0, |s| (s * self.world_radius) as f64);
+        // 最低 1 ピクセル: 塗るときの半径は world_radius × 筆圧の大きさ × plan.radius で、world_radius はブラシの半径（文書の画素）の換算
+        // なので、plan.radius の下限は、文書の画素で半径 0.5 になる値（筆圧の大きさは塗るときに掛かる値と同じ）
+        let min_radius = if brush.controls.min_one_pixel {
+            let pressure = if self.pressure_size {
+                fmax(0.001, self.size_pressure(dab.pressure)) as f64
+            } else {
+                1.0
+            };
+            MIN_ONE_PIXEL_RADIUS / (self.radius_px * pressure)
+        } else {
+            0.0
+        };
         for _ in 0..brush.jitter.count {
             let plan = brush.next_dab(
                 &controls,
                 &pending,
                 factor,
+                min_radius,
                 nominal,
                 &mut self.random,
                 &mut self.tip_index,

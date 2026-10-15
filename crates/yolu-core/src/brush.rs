@@ -85,6 +85,7 @@ pub use pressure::{PressureResponse, PressureResponses, MAX_CURVE_POINTS, STRAIG
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
     StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
+    MIN_ONE_PIXEL_RADIUS,
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};
@@ -956,6 +957,11 @@ impl StrokeState {
                 &c,
                 &dab,
                 s.radius * c.size_pressure * size_factor,
+                if brush.controls.min_one_pixel {
+                    MIN_ONE_PIXEL_RADIUS
+                } else {
+                    0.0
+                },
                 s.radius,
                 &mut self.random,
                 &mut self.tip_index,

@@ -97,11 +97,15 @@ impl Brush {
     /// 描点の数の分の 1 つのダブ（C# の Stamp のループの中）。`radius` は呼び手の大きさ（2D は半径 × 筆圧 × 入り抜き）、`scatter_radius`
     /// は散布の届く長さの元の半径（公称の半径）。乱数はいつも同じ順に引く: 大きさ → 散布（x・y）→ 角度 → 真円率 → 不透明度 → 流量 →
     /// 筆先（乱数で選ぶとき）。大きさが 0 以下のダブは、大きさのゆらぎを引いた所で None（後の乱数は引かない）。
+    /// `min_radius` は呼び手の単位での大きさの下限（最低 1 ピクセル。0 は下限なし）: フェード・傾き・速さの係数とゆらぎで細くなった後に
+    /// 下から押さえるので、大きさ 0 のダブも残る（下限なしのときは今までと同じ）。
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn next_dab<'a>(
         &'a self,
         c: &StampControls,
         dab: &PendingDab,
         radius: f64,
+        min_radius: f64,
         scatter_radius: f64,
         random: &mut NetRandom,
         tip_index: &mut u64,
@@ -113,6 +117,9 @@ impl Brush {
         }
         if j.size > 0.0 {
             radius *= 1.0 - j.size * random.next_double();
+        }
+        if min_radius > 0.0 {
+            radius = f64_max(radius, min_radius);
         }
         if radius <= 0.0 {
             return None;
@@ -331,7 +338,7 @@ mod tests {
         let mut random = NetRandom::new(0);
         let mut tip_index = 0u64;
         let plan = brush
-            .next_dab(&c, dab, 4.0, 4.0, &mut random, &mut tip_index)
+            .next_dab(&c, dab, 4.0, 0.0, 4.0, &mut random, &mut tip_index)
             .expect("大きさは正");
         (c, plan)
     }

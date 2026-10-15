@@ -297,6 +297,12 @@ pub enum SutMapped {
     TipAngle,
     /// 筆先の角度のランダム。
     AngleRandom,
+    /// 筆先の角度の影響元（ペンの向き・ペン軸の回転・線の方向）。
+    AngleSource,
+    /// 厚さの適用方向（水平）。
+    ThicknessDirection,
+    /// 最低 1 ピクセル。
+    MinOnePixel,
     /// 色の混ぜ。
     ColorMixing,
     /// アンチエイリアス。
@@ -315,6 +321,9 @@ impl SutMapped {
             Self::Stabilizer => ("手ぶれ補正", "stabilization"),
             Self::TipAngle => ("筆先の角度", "tip angle"),
             Self::AngleRandom => ("角度のランダム", "angle jitter"),
+            Self::AngleSource => ("角度の影響元", "angle source"),
+            Self::ThicknessDirection => ("厚さの向き", "thickness direction"),
+            Self::MinOnePixel => ("最低 1 ピクセル", "at least 1 pixel"),
             Self::ColorMixing => ("色の混ぜ", "color mixing"),
             Self::AntiAliasing => ("アンチエイリアス", "anti-aliasing"),
         }
@@ -343,12 +352,24 @@ pub enum SutNote {
     TextureRotation,
     TextureBrightness,
     TextureContrast,
-    /// 質感の合わせ方（乗算にした）。
+    /// 質感の合わせ方のうち、同じものが無い（通常・輪郭・高さ・知らない値）ので、乗算にした。
     TextureMode,
     /// 「描点ごとに質感」は無く、ストロークに 1 回だけ当てる。
     TextureEachTip,
-    /// 筆先の向き（角度の基準と、向きに従う設定）。
+    /// 筆先の向きの影響元のうち、写せなかったもの（強さを読めないランダム・知らない旗）。
     Direction,
+    /// 厚さの適用方向（水平）は、筆先の画像では写せない（画像も回ってしまう）。
+    ThicknessDirection,
+    /// 下地混色の方式（にじみ・色重ね）は、エンジンの「混ぜる」と同じ振る舞いにならないので写さなかった。値は列の番号（1 にじみ・2 色重ね）。
+    ColorMixingMethod(f64),
+    /// 後補正（描いたあとに線を整える）。手ぶれ補正とは別の機能で、エンジンに無い。
+    PostCorrection,
+    /// ベクターレイヤー向けの設定（ベクター消去・ベクター吸着）。
+    VectorTools,
+    /// ブラシサイズの単位の列が 0（px）でない。値は px として読んだ。
+    LengthUnit,
+    /// 間隔の種類（`BrushAutoIntervalType`）が 0〜3 の整数でなく、写さなかった（既定の間隔のまま）。
+    IntervalType(f64),
     /// 色の混ぜ（CLIP STUDIO の「色の混ぜ」: 絵の具量・絵の具濃度・色延び）。値は元の設定のまま（0〜100）。列は `BrushMixColor`
     /// （絵の具量: RGB の混ぜの割合）・`BrushMixAlpha`（絵の具濃度: 透明成分の混ぜの割合）・`BrushMixColorExtension`（色延び）。
     ColorMixing {
@@ -361,7 +382,7 @@ pub enum SutNote {
     DualBrush,
     /// 入り抜き。
     StartEnd,
-    /// 手ぶれ補正。
+    /// 手ぶれ補正のうち、写せなかったもの（速度による手ブレ補正）。
     Stabilizer,
     /// 色の変化。
     ColorChange,
@@ -431,16 +452,47 @@ impl SutNote {
             Self::TextureBrightness => ("質感の明るさは未対応".into(), "Texture brightness is not supported.".into()),
             Self::TextureContrast => ("質感のコントラストは未対応".into(), "Texture contrast is not supported.".into()),
             Self::TextureMode => (
-                "質感の合わせ方は読まず、乗算にした".into(),
-                "The texture blend mode is not read; Multiply is used.".into(),
+                "質感の合わせ方（通常・輪郭・高さ）は未対応で、乗算にした".into(),
+                "The texture blend mode (Normal, Outline, Height) is not supported; Multiply is used.".into(),
             ),
             Self::TextureEachTip => (
                 "質感: 描点ごとの適用は未対応で、ストロークに 1 回だけ当てる".into(),
                 "Texture per dab is not supported; the texture is applied once per stroke.".into(),
             ),
             Self::Direction => (
-                "筆先の向きの影響元（筆圧・傾き・速さ）は未対応".into(),
-                "Tip direction influences (pen pressure, tilt, speed) are not supported.".into(),
+                "筆先の向きの影響元のうち、読めないもの（ランダムの強さ・知らない設定）は写していない".into(),
+                "Some tip direction influences could not be read (random strength, unknown settings) and were not carried over.".into(),
+            ),
+            Self::ThicknessDirection => (
+                "厚さの適用方向（水平）は筆先の画像では未対応で、垂直のまま".into(),
+                "The horizontal thickness direction is not supported for an image tip; vertical is used.".into(),
+            ),
+            Self::ColorMixingMethod(kind) => {
+                let (ja, en) = match *kind as i64 {
+                    1 => ("にじみ", "smear"),
+                    2 => ("色重ね", "layering"),
+                    _ => ("知らない方式", "unknown method"),
+                };
+                (
+                    format!("下地混色の方式（{ja}）は未対応で、色の混ぜは写していない"),
+                    format!("The color mixing method ({en}) is not supported; color mixing is not carried over."),
+                )
+            }
+            Self::PostCorrection => (
+                "後補正（描いたあとに線を整える）は未対応".into(),
+                "Post correction (smoothing the line after drawing) is not supported.".into(),
+            ),
+            Self::VectorTools => (
+                "ベクターレイヤー向けの設定（ベクター消去・ベクター吸着）は未対応".into(),
+                "Settings for vector layers (vector eraser, vector magnet) are not supported.".into(),
+            ),
+            Self::LengthUnit => (
+                "ブラシサイズの単位が px でない設定は、px として読んだ".into(),
+                "A brush size unit other than pixels was read as pixels.".into(),
+            ),
+            Self::IntervalType(v) => (
+                format!("間隔の種類の値 {v} は読めないので、間隔は既定のままにした"),
+                format!("The interval type {v} is not understood; the default spacing is kept."),
             ),
             Self::ColorMixing { paint, density, stretch } => (
                 format!("色の混ぜは未対応（絵の具量 {paint}・絵の具濃度 {density}・色延び {stretch}）"),
@@ -452,7 +504,10 @@ impl SutNote {
                 "入り抜き（大きさ以外への影響・画素以外の長さの単位）は未対応".into(),
                 "Start and end taper is not supported (effects other than size, length units other than pixels).".into(),
             ),
-            Self::Stabilizer => ("手ぶれ補正は未対応".into(), "Stabilization is not supported.".into()),
+            Self::Stabilizer => (
+                "手ぶれ補正の速度による調整は未対応".into(),
+                "Stabilization adjustment by speed is not supported.".into(),
+            ),
             Self::ColorChange => ("色の変化は未対応".into(), "Color change is not supported.".into()),
             Self::BlendMode => ("合成モードは未対応".into(), "The blend mode is not supported.".into()),
             Self::Influence { target, input } => {

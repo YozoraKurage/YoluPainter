@@ -20,6 +20,7 @@ mod history;
 mod import_tiles;
 mod layers;
 mod merge_compare;
+mod min_pixel;
 mod nesting;
 mod ramp_mixing;
 mod rulers;

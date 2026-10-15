@@ -161,6 +161,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             app.brush.opacity = defaults.opacity;
             brush.assist.stabilizer = 0.0;
             brush.assist.curve = false;
+            brush.controls.min_one_pixel = false;
             app.view3d.projection = Default::default();
         }
         Category::Pressure => {
@@ -171,10 +172,12 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             brush.pressure = PressureResponses::default();
         }
         Category::Dynamics => {
-            // 筆圧で硬さを変える切り替えは「筆圧」の側が持つ（ここでは残す）
+            // 筆圧で硬さを変える切り替えは「筆圧」の側、最低 1 ピクセルは「ストローク」の側が持つ（ここでは残す）
             let keep = brush.controls.pressure_hardness;
+            let min_one_pixel = brush.controls.min_one_pixel;
             brush.controls = Controls {
                 pressure_hardness: keep,
+                min_one_pixel,
                 ..Controls::default()
             };
             brush.assist.taper_in = 0.0;
@@ -212,6 +215,18 @@ fn stroke_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     ) {
         b.radius = (v / 2.0).max(0.5);
     }
+    if let Some(v) = toggle_row(
+        ui,
+        rows,
+        "brush.min_pixel",
+        lang.pick("最低 1 ピクセル", "At least 1 pixel"),
+        app.m2.brush.controls.min_one_pixel,
+        None,
+        true,
+    ) {
+        app.m2.brush.controls.min_one_pixel = v;
+    }
+    let b = &mut app.brush;
     if let Some(v) = slider_row(
         ui,
         rows,

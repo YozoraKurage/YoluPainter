@@ -8,8 +8,9 @@
 //!   分かるときは種類ごと）と参照の数がちょうど合うときだけ並びで当て、そのときは推定として [`SutNote`] で知らせる。決められない・
 //!   取り出せない筆先は使わず、欠けたことを知らせる（黙って別の画像を使わない）。
 //! - 影響元設定（`*Effector`）は筆圧（最小値と曲線）と、傾き（大きさ・不透明度・流量へ。曲線は直線に近似）。速さ・ランダムは表せない
-//!   ので注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正・筆先の角度・角度のランダムも写す。写せたものは [`SutMapped`]、
-//!   近似したものは [`SutNote`] にも載せる。
+//!   ので注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正（`FlickerReduction`。後補正は表せない）・間隔（種類ごと）・
+//!   筆先の角度・角度の影響元（ペンの向き・ペン軸の回転・線の方向・ランダム）・厚さの適用方向・最低 1 ピクセルも写す。写せたものは
+//!   [`SutMapped`]、近似したものは [`SutNote`] にも載せる。
 //! - 表せない設定（色の混ぜの旗だけのもの・吹き付け・デュアルブラシ・色の変化・合成モードなど）は、旗が立っているものだけ
 //!   [`SutNote`] で知らせる。列の名前と単位は公開の解析からの推定を含むので、本物のファイルでの確かめは別に要る（確かめた所と
 //!   推測の所は docs/BRUSH_IMPORT.md）。
@@ -50,8 +51,16 @@ const SIZE: &[&str] = &["brushsize"];
 const OPACITY: &[&str] = &["opacity", "brushopacity"];
 const FLOW: &[&str] = &["brushflow"];
 const HARDNESS: &[&str] = &["brushhardness"];
+// 間隔: 種類（0 固定・1 広い・2 普通・3 狭い）と、固定のときの数値（直径に対する %）
+const INTERVAL_TYPE: &[&str] = &["brushautointervaltype"];
 const INTERVAL: &[&str] = &["brushinterval"];
 const THICKNESS: &[&str] = &["brushthickness"];
+// 厚さの適用方向（0 水平・1 垂直。列の名前の綴りは `Thicknes`）。1 が既定で、エンジンの真円率の潰す軸と同じ
+const THICKNESS_DIRECTION: &[&str] = &["brushverticalthicknes", "brushverticalthickness"];
+// 最低 1 ピクセル（1 がオン）
+const AT_LEAST_ONE_PIXEL: &[&str] = &["brushatleast1pixel"];
+// ブラシサイズの単位（0 が px。環境設定の単位を替えても .sut の列は変わらないので、0 以外は来ない見込み）
+const SIZE_UNIT: &[&str] = &["brushsizeunit"];
 const ROTATION: &[&str] = &["brushrotation"];
 const USE_PATTERN: &[&str] = &["brushusepatternimage"];
 const PATTERN_ARRAY: &[&str] = &["brushpatternimagearray"];
@@ -66,6 +75,7 @@ const TEXTURE_REVERSE: &[&str] = &["texturereversedensity"];
 const TEXTURE_ROTATE: &[&str] = &["texturerotate"];
 const TEXTURE_BRIGHTNESS: &[&str] = &["texturebrightness"];
 const TEXTURE_CONTRAST: &[&str] = &["texturecontrast"];
+// 質感の合わせ方（0 通常・1 乗算・2 減算・3 比較(暗)・4 輪郭・5 オーバーレイ・6 覆い焼きカラー・7 焼き込みカラー・8 ハードミックス・9 高さ）
 const TEXTURE_MODE: &[&str] = &["texturecompositemode"];
 const TEXTURE_EACH_TIP: &[&str] = &["textureforplot"];
 const SIZE_EFFECTOR: &[&str] = &["brushsizeeffector"];
@@ -73,6 +83,8 @@ const OPACITY_EFFECTOR: &[&str] = &["opacityeffector", "brushopacityeffector"];
 const FLOW_EFFECTOR: &[&str] = &["brushfloweffector"];
 const THICKNESS_EFFECTOR: &[&str] = &["brushthicknesseffector"];
 const WATER_COLOR: &[&str] = &["brushusewatercolor", "brushusewatercolor2"];
+// 下地混色の方式（0 色混ぜ・1 にじみ・2 色重ね）
+const WATER_COLOR_KIND: &[&str] = &["brushwatercolor"];
 const MIX_PAINT: &[&str] = &["brushmixcolor"];
 const MIX_DENSITY: &[&str] = &["brushmixalpha"];
 const MIX_STRETCH: &[&str] = &["brushmixcolorextension"];
@@ -88,10 +100,15 @@ const IN_UNIT: &[&str] = &["brushinlengthunit"];
 const OUT_UNIT: &[&str] = &["brushoutlengthunit"];
 const IN_OUT_TYPE: &[&str] = &["brushinouttype"];
 const IN_OUT_TARGET: &[&str] = &["brushinouttarget"];
-// 手ぶれ補正の旗と強さ（段階）
-const USE_REVISION: &[&str] = &["brushuserevision"];
-const REVISION: &[&str] = &["brushrevision"];
-// 筆先の向きの影響元（旗の整数。0x80 がランダム。0x10・0x20・0x40 は影響元の旗と同じ並び）と、ランダムの強さ（百分率の整数）
+// 手ブレ補正の強さ（画面の値そのまま。0〜100）と、速度による手ブレ補正の旗
+const FLICKER: &[&str] = &["flickerreduction"];
+const FLICKER_BY_SPEED: &[&str] = &["flickerreductionbyspeed"];
+// 後補正の旗（強さ・速度・表示倍率・ベジェの列は、後補正をエンジンで表せないので読まない）
+const POST_CORRECTION: &[&str] = &["brushuserevision"];
+// ベクターレイヤー向けの旗（ベクター消去・ベクター吸着）
+const VECTOR: &[&str] = &["brushusevectoreraser", "brushusevectormagnet"];
+// 筆先の向きの影響元（旗の整数。下位 0x03 は常に立つ・0x10 ペンの向き・0x20 ペン軸の回転・0x40 線の方向・0x80 ランダム）と、ランダムの強さ
+// （百分率の整数）
 const ROTATION_EFFECTOR: &[&str] = &["brushrotationeffector"];
 const ROTATION_RANDOM: &[&str] = &["brushrotationrandomscale"];
 const COLOR_CHANGE: &[&str] = &[
@@ -101,7 +118,7 @@ const COLOR_CHANGE: &[&str] = &[
     "brushsubcolor",
 ];
 const BLEND_MODE: &[&str] = &["compositemode"];
-// アンチエイリアス（整数。0 なし・1 弱・2 中・3 強と推定: 画面の選びの順。手元の書き出しでは 0・1・2 を見た）。デュアルブラシの
+// アンチエイリアス（整数。0 なし・1 弱・2 中・3 強。1 項目ずつ変えた書き出しの比べで決まった）。デュアルブラシの
 // `DualAntiAlias` はデュアルブラシごと表せないので読まない
 const ANTI_ALIAS: &[&str] = &["antialias"];
 
@@ -111,8 +128,12 @@ const KNOWN: &[&[&str]] = &[
     OPACITY,
     FLOW,
     HARDNESS,
+    INTERVAL_TYPE,
     INTERVAL,
     THICKNESS,
+    THICKNESS_DIRECTION,
+    AT_LEAST_ONE_PIXEL,
+    SIZE_UNIT,
     ROTATION,
     USE_PATTERN,
     PATTERN_ARRAY,
@@ -133,6 +154,7 @@ const KNOWN: &[&[&str]] = &[
     FLOW_EFFECTOR,
     THICKNESS_EFFECTOR,
     WATER_COLOR,
+    WATER_COLOR_KIND,
     MIX_PAINT,
     MIX_DENSITY,
     MIX_STRETCH,
@@ -147,8 +169,10 @@ const KNOWN: &[&[&str]] = &[
     OUT_UNIT,
     IN_OUT_TYPE,
     IN_OUT_TARGET,
-    USE_REVISION,
-    REVISION,
+    FLICKER,
+    FLICKER_BY_SPEED,
+    POST_CORRECTION,
+    VECTOR,
     ROTATION_EFFECTOR,
     ROTATION_RANDOM,
     COLOR_CHANGE,
@@ -606,29 +630,35 @@ fn start_end(
     }
 }
 
-/// 手ぶれ補正: 強さ（段階）を糸の長さ（画素）へ 1 対 1 で写す（換算は推定）。強さが読めなければ写さずに知らせる。
+/// 手ぶれ補正: 画面の「手ブレ補正」（`FlickerReduction`。0〜100）を糸の長さ（画素）へ 1 対 1 で写す（換算は測っていないので推定）。
+/// 強さが 0 なら写すものが無い。速度による手ブレ補正（`FlickerReductionBySpeed`）は、強さが 0 でないときだけ表せないと知らせる
+/// （強さ 0 の行にも旗の既定値は入っている）。後補正（`BrushUseRevision` 系）は手ぶれ補正とは別の機能で、エンジンに無いので写さずに
+/// 知らせる（旗が立っているときだけ。強さ・速度・表示倍率・ベジェの列には、後補正が切でも既定値が入っている）。
 fn stabilizer(
     row: &Row,
     brush: &mut Brush,
     notes: &mut Vec<Unrepresented>,
     mapped: &mut Vec<SutMapped>,
 ) {
-    if !row.on(USE_REVISION) {
-        return;
+    if row.on(POST_CORRECTION) {
+        notes.push(Unrepresented::ClipStudio(SutNote::PostCorrection));
     }
-    match row.first_number(REVISION).filter(|l| *l > 0.0) {
-        Some(level) => {
-            brush.assist.stabilizer = level.min(MAX_STROKE_ASSIST);
-            mapped.push(SutMapped::Stabilizer);
-            notes.push(Unrepresented::ClipStudio(SutNote::StabilizerStrength));
-        }
-        None => notes.push(Unrepresented::ClipStudio(SutNote::Stabilizer)),
+    let Some(level) = row.first_number(FLICKER).filter(|l| *l > 0.0) else {
+        return;
+    };
+    brush.assist.stabilizer = level.min(MAX_STROKE_ASSIST);
+    mapped.push(SutMapped::Stabilizer);
+    notes.push(Unrepresented::ClipStudio(SutNote::StabilizerStrength));
+    if row.on(FLICKER_BY_SPEED) {
+        notes.push(Unrepresented::ClipStudio(SutNote::Stabilizer));
     }
 }
 
-/// 筆先の向き: 角度（度）を `tip.angle` へ（向きの正負は確かめていないので、エンジンと同じ向きとして写す）、向きの影響元のランダム
-/// （旗 0x80 と強さ）を `jitter.angle` へ。筆圧・傾き・速さ（旗 0x10・0x20・0x40）と、読めない強さのランダムは表せないので知らせる。旗の下の 2 ビットは意味を
-/// 確かめられていない（実物ではどのブラシにも立っていた）ので読まない。
+/// 筆先の向き: 角度（度）を `tip.angle` へ（向きの正負は確かめていないので、エンジンと同じ向きとして写す）。向きの影響元（旗）は
+/// エンジンの近い設定へ: 0x10 ペンの向き → `controls.tilt_angle`（ペンが倒れている向きを角度に足す）、0x20 ペン軸の回転 →
+/// `controls.rotation_angle`（回転の情報がある入力の軸の回転を角度に足す）、0x40 線の方向 → `tip.follow_direction`（線の向きを角度に足す）、
+/// 0x80 ランダム → `jitter.angle`（強さは `BrushRotationRandomScale`）。下位 0x03 は常に立つので読まない。強さを読めないランダムと、
+/// 知らない旗は表せないので知らせる。
 fn tip_direction(
     row: &Row,
     brush: &mut Brush,
@@ -640,7 +670,23 @@ fn tip_direction(
         mapped.push(SutMapped::TipAngle);
     }
     let influences = row.first_number(ROTATION_EFFECTOR).map_or(0, |v| v as i64);
-    let mut unmapped = influences & 0x70 != 0;
+    let mut unmapped = influences & !(0x03 | 0x10 | 0x20 | 0x40 | 0x80) != 0;
+    let mut sourced = false;
+    if influences & 0x10 != 0 {
+        brush.controls.tilt_angle = true;
+        sourced = true;
+    }
+    if influences & 0x20 != 0 {
+        brush.controls.rotation_angle = true;
+        sourced = true;
+    }
+    if influences & 0x40 != 0 {
+        brush.tip.follow_direction = true;
+        sourced = true;
+    }
+    if sourced {
+        mapped.push(SutMapped::AngleSource);
+    }
     if influences & 0x80 != 0 {
         // ランダムの強さが読めなければ写せない（強さ 0 は、ゆらがないので写すものが無い）
         match percent(row, ROTATION_RANDOM).map(|r| r.clamp(0.0, 1.0)) {
@@ -654,6 +700,65 @@ fn tip_direction(
     }
     if unmapped {
         notes.push(Unrepresented::ClipStudio(SutNote::Direction));
+    }
+}
+
+/// 厚さの適用方向（`BrushVerticalThicknes`。0 水平・1 垂直）。エンジンの真円率は、角度 0 のとき縦の軸を潰す（横長の楕円）。垂直（既定）は
+/// それと同じ向きなので何もしない。水平は潰す軸が 90 度違うので、丸い筆先は角度に 90 度を足して写す（楕円を回すだけで、ほかの向きの設定と
+/// 同じ角度に足されるので矛盾しない）。画像の筆先は、画像も回ってしまい形が変わるので写さずに知らせる。潰していない（真円率 1）ときは
+/// 向きの違いが形に出ないので何もしない。
+fn thickness_direction(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    let horizontal = row.first_number(THICKNESS_DIRECTION) == Some(0.0);
+    if !horizontal || brush.tip.roundness >= 1.0 {
+        return;
+    }
+    if brush.tip.image.is_some() || !brush.tip.images.is_empty() {
+        notes.push(Unrepresented::ClipStudio(SutNote::ThicknessDirection));
+        return;
+    }
+    brush.tip.angle = (brush.tip.angle + 90.0 + 180.0).rem_euclid(360.0) - 180.0;
+    mapped.push(SutMapped::ThicknessDirection);
+}
+
+/// 間隔: 種類（`BrushAutoIntervalType`）が 0（固定）か列が無ければ、`BrushInterval`（直径に対する %）。広い・普通・狭いは数値を使わず、
+/// 実測した 12%・8%・4% 〔円形の硬い筆先で測った値〕。エンジンの `spacing` は公称の直径に対する割合（`add_path_point` の
+/// `2 × 半径 × spacing`）なので、そのまま写せる。知らない種類は写さずに（既定の間隔のまま）知らせる。
+fn interval(row: &Row, brush: &mut Brush, notes: &mut Vec<Unrepresented>) {
+    let spacing = match row.first_number(INTERVAL_TYPE) {
+        None | Some(0.0) => row.first_number(INTERVAL).map(|v| v / 100.0),
+        Some(1.0) => Some(0.12),
+        Some(2.0) => Some(0.08),
+        Some(3.0) => Some(0.04),
+        Some(other) => {
+            notes.push(Unrepresented::ClipStudio(SutNote::IntervalType(other)));
+            None
+        }
+    };
+    if let Some(v) = spacing {
+        brush.base.spacing = v.clamp(0.01, 4.0);
+    }
+}
+
+/// 質感の合わせ方（`TextureCompositeMode`）をエンジンの同じ名前の合わせ方へ。通常・輪郭・高さ・知らない値は同じものが無い（None）。
+fn texture_mode(value: f64) -> Option<yolu_core::TextureMode> {
+    use yolu_core::TextureMode as M;
+    if value.fract() != 0.0 {
+        return None;
+    }
+    match value as i64 {
+        1 => Some(M::Multiply),
+        2 => Some(M::Subtract),
+        3 => Some(M::Darken),
+        5 => Some(M::Overlay),
+        6 => Some(M::ColorDodge),
+        7 => Some(M::ColorBurn),
+        8 => Some(M::HardMix),
+        _ => None,
     }
 }
 
@@ -908,11 +1013,19 @@ fn texture(
         .filter(|s| *s > 0.0)
         .unwrap_or(1.0)
         .clamp(0.05, 64.0);
+    // 合わせ方: 列が無ければ乗算（今まで通り）。同じ名前のモードがあれば写し、無ければ乗算にして知らせる
+    let mode = match row.first_number(TEXTURE_MODE) {
+        None => yolu_core::TextureMode::Multiply,
+        Some(value) => texture_mode(value).unwrap_or_else(|| {
+            notes.push(Unrepresented::ClipStudio(SutNote::TextureMode));
+            yolu_core::TextureMode::Multiply
+        }),
+    };
     brush.texture = Some(PaperTexture {
         image,
         depth,
         scale,
-        mode: yolu_core::TextureMode::Multiply,
+        mode,
     });
     mapped.push(SutMapped::Texture);
     if preview && !notes.contains(&Unrepresented::ClipStudio(SutNote::PreviewImage)) {
@@ -922,7 +1035,6 @@ fn texture(
         (TEXTURE_ROTATE, SutNote::TextureRotation),
         (TEXTURE_BRIGHTNESS, SutNote::TextureBrightness),
         (TEXTURE_CONTRAST, SutNote::TextureContrast),
-        (TEXTURE_MODE, SutNote::TextureMode),
         (TEXTURE_EACH_TIP, SutNote::TextureEachTip),
     ] {
         if row.on(columns) {
@@ -974,15 +1086,17 @@ fn brush_from_row(
     if let Some(diameter) = row.first_number(SIZE).filter(|v| *v > 0.0).or(tip_side) {
         brush.base.radius = (diameter.min(2000.0) / 2.0).max(0.5);
     }
+    // 単位の列は 0（px）のほかは来ない見込み（環境設定の単位は .sut に入らない）。0 以外は px として読んだと知らせる
+    if row.on(SIZE_UNIT) {
+        notes.push(Unrepresented::ClipStudio(SutNote::LengthUnit));
+    }
     if let Some(v) = percent(row, OPACITY) {
         brush.base.opacity = v.clamp(0.0, 1.0);
     }
     if let Some(v) = percent(row, FLOW) {
         brush.base.flow = v.clamp(0.0, 1.0);
     }
-    if let Some(v) = row.first_number(INTERVAL) {
-        brush.base.spacing = ratio(v).clamp(0.01, 4.0);
-    }
+    interval(row, &mut brush, &mut notes);
     if let Some(v) = percent(row, THICKNESS) {
         brush.tip.roundness = v.clamp(0.0, 1.0).max(0.01);
     }
@@ -1019,6 +1133,11 @@ fn brush_from_row(
         &mut mapped,
     )?;
     tip_direction(row, &mut brush, &mut notes, &mut mapped);
+    thickness_direction(row, &mut brush, &mut notes, &mut mapped);
+    if row.on(AT_LEAST_ONE_PIXEL) {
+        brush.controls.min_one_pixel = true;
+        mapped.push(SutMapped::MinOnePixel);
+    }
     start_end(row, &mut brush, &mut notes, &mut mapped);
     stabilizer(row, &mut brush, &mut notes, &mut mapped);
 
@@ -1032,7 +1151,11 @@ fn brush_from_row(
         row.first_number(MIX_STRETCH).unwrap_or(0.0),
     );
     let mixing = row.on(WATER_COLOR);
-    if mixing && (paint > 0.0 || density > 0.0 || stretch > 0.0) {
+    // 方式は 0 色混ぜ・1 にじみ・2 色重ね。色混ぜだけがエンジンの「混ぜる」に当たる（にじみ・色重ねは同じ振る舞いと言えないので写さない）
+    let kind = row.first_number(WATER_COLOR_KIND).unwrap_or(0.0);
+    if mixing && kind != 0.0 {
+        notes.push(Unrepresented::ClipStudio(SutNote::ColorMixingMethod(kind)));
+    } else if mixing && (paint > 0.0 || density > 0.0 || stretch > 0.0) {
         let unit = |v: f64| (v / 100.0).clamp(0.0, 1.0);
         brush.mix.mode = yolu_core::brush::MixMode::Mix;
         brush.mix.paint = unit(paint);
@@ -1048,6 +1171,9 @@ fn brush_from_row(
     }
     if row.on(WATER_EDGE) {
         notes.push(Unrepresented::WetEdges);
+    }
+    if row.on(VECTOR) {
+        notes.push(Unrepresented::ClipStudio(SutNote::VectorTools));
     }
     for (columns, note) in [
         (SPRAY, SutNote::Spray),

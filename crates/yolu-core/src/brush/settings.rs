@@ -333,6 +333,11 @@ pub struct Controls {
     /// 拡張: 筆圧で硬さを変える（硬さ × 筆圧の応え [`Brush::pressure`] の硬さ）。大きさ・不透明度・流量の切り替えは
     /// [`BrushSettings`] が持つ（C# と同じ）。
     pub pressure_hardness: bool,
+    /// 拡張: 最低 1 ピクセル。筆圧・フェード・傾き・速さ・入り抜き・大きさのゆらぎで細くなった後のダブの直径に、下限 1 画素（半径 0.5）を
+    /// 掛ける（直径 0 になるダブも 1 画素で残る）。1 画素は文書の画素（3D の面の塗りも、ブラシの大きさと同じ換算の文書の画素）。
+    /// 間隔は公称の大きさで決まるので変わらない。縁のアンチエイリアスの小さなダブの広げと濃さは、この下限の後の大きさに掛かる。切（既定）は
+    /// 今までと同じストローク。
+    pub min_one_pixel: bool,
 }
 
 impl Default for Controls {
@@ -351,6 +356,7 @@ impl Default for Controls {
             speed_flow: false,
             speed_max: 3000.0,
             pressure_hardness: false,
+            min_one_pixel: false,
         }
     }
 }
@@ -395,6 +401,8 @@ impl BrushEffect {
 
 /// フェードの長さの上限（C# の MaxFade）。
 pub const MAX_FADE: u32 = 10000;
+/// 最低 1 ピクセル（[`Controls::min_one_pixel`]）の下限の半径（画素。直径 1 画素）。
+pub const MIN_ONE_PIXEL_RADIUS: f64 = 0.5;
 /// 手ぶれ補正・入り抜きの上限（C# の MaxStrokeAssist）。
 pub const MAX_STROKE_ASSIST: f64 = 10000.0;
 

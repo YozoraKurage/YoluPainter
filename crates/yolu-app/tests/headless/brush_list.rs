@@ -616,7 +616,7 @@ fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_k
     let dir = temp_dir("future-version");
     std::fs::write(
         dir.join("brush-00000001.ylbrush"),
-        "yolupainter-brush 6\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 7\nname=future\ngroup=pen\npressure.size.min=0.5\n",
     )
     .unwrap();
     let mut s = AppState::new(64, 64);
@@ -628,7 +628,7 @@ fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_k
     ));
     assert_eq!(
         std::fs::read_to_string(dir.join("brush-00000001.ylbrush")).unwrap(),
-        "yolupainter-brush 6\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 7\nname=future\ngroup=pen\npressure.size.min=0.5\n",
         "触らない"
     );
     std::fs::remove_dir_all(dir).unwrap();

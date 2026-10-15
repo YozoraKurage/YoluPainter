@@ -949,8 +949,7 @@ fn taper_sut(name: &str, taper_in: f64, taper_out: f64, level: i64) -> Vec<u8> {
                 ("BrushInLength", real(taper_in)),
                 ("BrushUseOut", int(1)),
                 ("BrushOutLength", real(taper_out)),
-                ("BrushUseRevision", int(i64::from(level > 0))),
-                ("BrushRevision", int(level)),
+                ("FlickerReduction", int(level)),
             ],
         )
         .build()

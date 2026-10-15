@@ -4,7 +4,8 @@
 //! 色の混ぜ（厚塗り）を使うブラシだけ `yolupainter-brush 3`（筆圧の応えも使えば、その項目も同じファイルに書く）。
 //! 入り抜き・手ぶれ補正を持つブラシ（取り込んだブラシが持つ分）だけ `yolupainter-brush 4`（`assist.*`。ほかの版の項目も同じファイルに書く）。
 //! 縁のアンチエイリアスが なし でないブラシだけ `yolupainter-brush 5`（`anti_alias`。ほかの版の項目も同じファイルに書く）。
-//! 版 2〜5 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
+//! 最低 1 ピクセルを使うブラシだけ `yolupainter-brush 6`（`controls.min_one_pixel`。ほかの版の項目も同じファイルに書く）。
+//! 版 2〜6 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
 //! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
@@ -44,6 +45,9 @@ pub const HEADER_V4: &str = "yolupainter-brush 4";
 /// 縁のアンチエイリアス（`anti_alias`）が なし でないブラシの版。なし のブラシは版 1〜4 のままで、今までと同じバイト（読むときも、
 /// 版 4 までのファイルは なし）。版 4 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V5: &str = "yolupainter-brush 5";
+/// 最低 1 ピクセル（`controls.min_one_pixel`）を使うブラシの版。使わないブラシは版 1〜5 のままで、今までと同じバイト（読むときも、
+/// 版 5 までのファイルは切）。版 5 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
+pub const HEADER_V6: &str = "yolupainter-brush 6";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
 /// 1 ファイルの大きさの上限。
@@ -309,7 +313,9 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
-    let header = if b.base.anti_alias != AntiAlias::None {
+    let header = if b.controls.min_one_pixel {
+        HEADER_V6
+    } else if b.base.anti_alias != AntiAlias::None {
         HEADER_V5
     } else if assist.is_some() {
         HEADER_V4
@@ -407,6 +413,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.bool("controls.speed_opacity", k.speed_opacity);
     w.bool("controls.speed_flow", k.speed_flow);
     w.line("controls.speed_max", k.speed_max);
+    // 最低 1 ピクセル（版 6。切は書かない）
+    if k.min_one_pixel {
+        w.bool("controls.min_one_pixel", true);
+    }
     // 筆圧の応え（版 2。既定の項目は書かない）
     if k.pressure_hardness {
         w.bool("controls.pressure_hardness", true);
@@ -662,6 +672,7 @@ pub fn decode_user(
         Some(HEADER_V3) => 3,
         Some(HEADER_V4) => 4,
         Some(HEADER_V5) => 5,
+        Some(HEADER_V6) => 6,
         Some(first) if first.starts_with("yolupainter-brush ") => {
             return Err(StoreError::NewerVersion(first.to_owned()))
         }
@@ -769,6 +780,10 @@ pub fn decode_user(
     k.speed_opacity = r.bool("controls.speed_opacity", k.speed_opacity)?;
     k.speed_flow = r.bool("controls.speed_flow", k.speed_flow)?;
     k.speed_max = r.float("controls.speed_max", k.speed_max)?;
+    // 最低 1 ピクセルは版 6 の項目（版 5 までのファイルにあれば、知らない項目として断る。無ければ切）
+    if version >= 6 {
+        b.controls.min_one_pixel = r.bool("controls.min_one_pixel", false)?;
+    }
     // 筆圧の応えは版 2 の項目（版 1 のファイルにあれば、知らない項目として断る）
     if version >= 2 {
         b.controls.pressure_hardness = r.bool("controls.pressure_hardness", false)?;
@@ -1731,7 +1746,7 @@ mod tests {
             StoreError::NotABrush
         ));
         assert!(matches!(
-            decode("yolupainter-brush 6\nname=a\n").unwrap_err(),
+            decode("yolupainter-brush 7\nname=a\n").unwrap_err(),
             StoreError::NewerVersion(_)
         ));
         assert!(matches!(
@@ -1873,7 +1888,7 @@ mod tests {
             );
         }
         // 版 6 は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 6", 1);
+        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 7", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
             StoreError::NewerVersion(_)
@@ -1985,7 +2000,89 @@ mod tests {
         let old = "yolupainter-brush 1\nname=a\ngroup=pen\nhardness=1\n";
         assert_eq!(decode(old).unwrap().2.base.anti_alias, AntiAlias::None);
         // 版 6 は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 5", "yolupainter-brush 6", 1);
+        let newer = t.replacen("yolupainter-brush 5", "yolupainter-brush 7", 1);
+        assert!(matches!(
+            decode(&newer).unwrap_err(),
+            StoreError::NewerVersion(_)
+        ));
+    }
+
+    fn min_pixel(mut b: Brush) -> Brush {
+        b.controls.min_one_pixel = true;
+        b
+    }
+
+    #[test]
+    fn a_brush_with_at_least_one_pixel_is_version_six_and_round_trips() {
+        let u = user(1, min_pixel(Brush::default()));
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 6\n"), "{t}");
+        assert!(t.contains("\ncontrols.min_one_pixel=1\n"), "{t}");
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, u.brush);
+        assert!(d.brush.controls.min_one_pixel);
+        // 切のブラシは今までと同じ版・同じ文（項目を書かない）
+        let plain = text(&user(1, Brush::default()));
+        assert!(
+            plain.starts_with("yolupainter-brush 1\n") && !plain.contains("min_one_pixel"),
+            "{plain}"
+        );
+        // 版 6 は、ほかの版の項目（縁のアンチエイリアス・色の混ぜ・入り抜き）も同じファイルに書く
+        let mut both = mixing_brush();
+        both.base.anti_alias = AntiAlias::Medium;
+        both.controls.min_one_pixel = true;
+        let assist = StrokeAssist {
+            stabilizer: 0.0,
+            taper_in: 12.0,
+            taper_out: 0.0,
+            curve: false,
+        };
+        let u = UserBrush {
+            assist: Some(assist),
+            ..user(1, both)
+        };
+        let t = text(&u);
+        assert!(
+            t.starts_with("yolupainter-brush 6\n")
+                && t.contains("anti_alias=medium")
+                && t.contains("mix.mode=")
+                && t.contains("assist."),
+            "{t}"
+        );
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!((d.assist, d.brush), (Some(assist), u.brush.clone()));
+    }
+
+    #[test]
+    fn the_at_least_one_pixel_item_belongs_to_version_six_and_is_checked() {
+        let t = text(&user(1, min_pixel(Brush::default())));
+        // 版 1〜5 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
+        for old in 1..=5 {
+            let as_old = t.replacen(
+                "yolupainter-brush 6",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k == "controls.min_one_pixel"),
+                "{old}"
+            );
+        }
+        // 真偽でない値はそのファイルを断る
+        for bad in ["maybe", "2", ""] {
+            let broken = t.replace("min_one_pixel=1", &format!("min_one_pixel={bad}"));
+            assert!(
+                matches!(decode(&broken).unwrap_err(), StoreError::BadValue(k) if k == "controls.min_one_pixel"),
+                "{bad}"
+            );
+        }
+        // 版 6 でも項目が無ければ切。前の版のファイルも切として読む
+        let none = "yolupainter-brush 6\nname=a\ngroup=pen\n";
+        assert!(!decode(none).unwrap().2.controls.min_one_pixel);
+        let old = "yolupainter-brush 1\nname=a\ngroup=pen\nhardness=1\n";
+        assert!(!decode(old).unwrap().2.controls.min_one_pixel);
+        // 版 7 は新しい形式として断る
+        let newer = t.replacen("yolupainter-brush 6", "yolupainter-brush 7", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
             StoreError::NewerVersion(_)
@@ -2388,7 +2485,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("brush-00000005.ylbrush");
-        std::fs::write(&path, "yolupainter-brush 6\nname=future\n").unwrap();
+        std::fs::write(&path, "yolupainter-brush 7\nname=future\n").unwrap();
         let report = load_all(&dir);
         assert!(report.brushes.is_empty());
         assert!(matches!(
@@ -2397,7 +2494,7 @@ mod tests {
         ));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "yolupainter-brush 6\nname=future\n"
+            "yolupainter-brush 7\nname=future\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }

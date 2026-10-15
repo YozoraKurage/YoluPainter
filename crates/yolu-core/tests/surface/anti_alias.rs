@@ -12,12 +12,12 @@ use yolu_core::geometry::{
 use yolu_core::glam::{DVec2, Quat, Vec2, Vec3};
 use yolu_core::{AntiAlias, Brush, BrushSettings, Channel, Document, LayerId, Rgba8};
 
-const W: u32 = 96;
-const H: u32 = 64;
-const MARGIN: f32 = 16.0;
+pub(crate) const W: u32 = 96;
+pub(crate) const H: u32 = 64;
+pub(crate) const MARGIN: f32 = 16.0;
 
 /// 世界の x 0..W・y 0..H の四角（UV が文書の全体）。
-fn quad() -> Arc<SurfaceGeometry> {
+pub(crate) fn quad() -> Arc<SurfaceGeometry> {
     let (w, h) = (W as f32, H as f32);
     let p = |x: f32, y: f32| Vec3::new(x, y, 0.0);
     let uv = |x: f32, y: f32| Vec2::new(x / w, y / h);
@@ -46,7 +46,7 @@ fn quad() -> Arc<SurfaceGeometry> {
 }
 
 /// 四角を正面に見るカメラ（世界の 1 単位が画面の 1 点）。
-fn front() -> CameraView {
+pub(crate) fn front() -> CameraView {
     let (sw, sh) = (W as f32 + 2.0 * MARGIN, H as f32 + 2.0 * MARGIN);
     let distance = sh / (2.0 * (15.0f32).to_radians().tan());
     OrbitCamera {
@@ -61,20 +61,20 @@ fn front() -> CameraView {
 }
 
 /// 世界の点 (x, y) の画面の点。
-fn screen(x: f64, y: f64) -> Vec2 {
+pub(crate) fn screen(x: f64, y: f64) -> Vec2 {
     Vec2::new(
         (x + MARGIN as f64) as f32,
         (H as f64 + MARGIN as f64 - y) as f32,
     )
 }
 
-fn document(scale: u32) -> (Document, LayerId) {
+pub(crate) fn document(scale: u32) -> (Document, LayerId) {
     let mut d = Document::with_tile_size(W * scale, H * scale, 32).unwrap();
     let l = d.add_layer("paint").unwrap();
     (d, l)
 }
 
-fn bytes(d: &Document, l: LayerId) -> Vec<u8> {
+pub(crate) fn bytes(d: &Document, l: LayerId) -> Vec<u8> {
     let (w, h) = (d.width(), d.height());
     d.layer(l)
         .unwrap()

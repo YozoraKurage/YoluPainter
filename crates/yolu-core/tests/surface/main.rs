@@ -13,6 +13,7 @@ mod cross_symmetry;
 mod dab_digest;
 mod material;
 mod mesh_maps;
+mod min_pixel;
 mod overlap_priority;
 mod stencil;
 mod surface_ortho;
