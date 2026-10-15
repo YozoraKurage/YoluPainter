@@ -676,9 +676,7 @@ fn a_point_gradient_fill_is_baked_as_pixels_and_told_like_the_other_gradients() 
     let evaluated = d.layer_output(fill, Channel::Color, d.bounds()).unwrap();
     assert_eq!(quiet(expand(baked, W, H)), quiet(evaluated.clone()));
     assert!(
-        evaluated
-            .chunks_exact(4)
-            .any(|p| p != &evaluated[..4]),
+        evaluated.chunks_exact(4).any(|p| p != &evaluated[..4]),
         "画素が場所で変わる"
     );
     assert_eq!(
@@ -691,7 +689,10 @@ fn a_point_gradient_fill_is_baked_as_pixels_and_told_like_the_other_gradients() 
     // 点のグラデーションを持たないチャンネルは、これまでどおり単色の塗りつぶしのまま（注記なし）
     let (height, _) = round_trip(&d, Channel::Height);
     assert!(
-        !height.notes.iter().any(|n| matches!(n.action, NoteAction::BakedFill(_))),
+        !height
+            .notes
+            .iter()
+            .any(|n| matches!(n.action, NoteAction::BakedFill(_))),
         "{:?}",
         height.notes
     );
