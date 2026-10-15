@@ -378,7 +378,7 @@ fn layer_panel_add_hide_blend_and_opacity() {
     h.run();
     assert_eq!(popup_kind(&h), Some(PopupKind::BlendMode(top)));
     // ドロップダウンと、それを開いたレイヤーのパネル
-    let panel = shots::group(&h, yolu_app::Tab::Layers).union(shots::popup(&h).expand(8.0));
+    let panel = shots::group(&h, yolu_app::Tab::Layers).union(shots::popup(&h));
     common::shot::region(&mut h, "layers_blend_dropdown", panel);
     let at = popup_item(&h, "乗算").center();
     click(&mut h, at);

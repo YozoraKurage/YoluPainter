@@ -599,7 +599,7 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
             h.run();
             // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
             if lang == yolu_app::lang::Lang::Ja {
-                let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+                let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
                 common::shot::region(&mut h, &format!("fillfx_panel_ja_{k}"), rect);
             }
         }
@@ -1281,7 +1281,7 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
         // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
         let ja = lang == yolu_app::lang::Lang::Ja;
         if ja {
-            let props = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let props = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             common::shot::region(&mut h, "fillfx_points_ja", props);
         }
         // UV の空間: 立方体の UV の継ぎ目で色が切れる（モデルの空間は切れない）。2D のキャンバスにも印が出る
@@ -1542,7 +1542,7 @@ fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
         h.run();
         // 英語の絵は撮らない（行の並びは文字の長さで変わらない）
         if lang == yolu_app::lang::Lang::Ja {
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             common::shot::region(&mut h, "fillfx_image_anisotropic_ja", rect);
         }
         let steps = st(&h).doc().undo_count();

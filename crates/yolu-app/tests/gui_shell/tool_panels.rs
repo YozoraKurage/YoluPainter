@@ -1710,24 +1710,14 @@ fn shot_rect(h: &mut H, rect: Rect, name: &str) {
     common::shot::region(h, name, rect);
 }
 
-/// 左の列の、サブツールのタブからカラーのタブまで（3 つのパネルが縦に並ぶ所）。
+/// 左の列の、サブツールからカラーの手前まで（3 つのパネルが縦に並ぶ所）。
 fn left_stack(h: &H) -> Rect {
-    let (sub, color) = (tab_rect(h, Tab::SubTools), tab_rect(h, Tab::Color));
-    // 左の列の右の端は、キャンバスのタブの左
-    Rect::from_min_max(
-        pos2(sub.left() - 2.0, sub.top()),
-        pos2(tab_rect(h, Tab::Canvas).left() - 2.0, color.top()),
-    )
+    common::shot::group_span(h, Tab::SubTools, Some(Tab::Color))
 }
 
-/// 右の列の、プロパティの組（プロパティのタブから、ウィンドウの右・状態の帯の上まで）。
+/// 右の列の、プロパティの組。
 fn right_bottom(h: &H) -> Rect {
-    let props = tab_rect(h, Tab::Properties);
-    let window = h.ctx.content_rect();
-    Rect::from_min_max(
-        pos2(props.left() - 2.0, props.top()),
-        pos2(window.right(), window.bottom() - 24.0),
-    )
+    common::shot::group(h, Tab::Properties)
 }
 
 #[test]
@@ -1766,14 +1756,7 @@ fn snapshots_of_the_tool_properties_with_the_paint_channels_open_and_for_the_mas
     h.act(Action::Mat(MatAction::Channel(Channel::Emission, true)));
     h.mat_mut().emission = [0.2, 0.8, 0.4];
     h.run();
-    let (props, size) = (
-        tab_rect(&h, Tab::ToolProperties),
-        tab_rect(&h, Tab::BrushSize),
-    );
-    let rect = Rect::from_min_max(
-        pos2(props.left() - 2.0, props.top()),
-        pos2(props.left() + 300.0, size.top()),
-    );
+    let rect = common::shot::group(&h, Tab::ToolProperties);
     shot_rect(&mut h, rect, &format!("tool_panels_paint_channels_{name}"));
     // マスクに描くあいだ
     let id = st(&h).selected_layer().unwrap();
@@ -1788,13 +1771,8 @@ fn snapshots_of_the_material_panel_with_the_standard_and_liltoon_looks() {
     let mut h = app(1500.0, 1300.0, 64);
     language(&mut h, lang);
     open_material(&mut h);
-    // マテリアルの組の全体（同じ組のプロパティのタブの左から、ウィンドウの右・状態の帯の上まで）
-    let group = tab_rect(&h, Tab::Properties);
-    let window = h.ctx.content_rect();
-    let rect = Rect::from_min_max(
-        pos2(group.left() - 2.0, group.top()),
-        pos2(window.right(), window.bottom() - 24.0),
-    );
+    // マテリアルの組の全体（プロパティの組）
+    let rect = common::shot::group(&h, Tab::Properties);
     // 標準
     h.act(Action::Look(yolu_app::look::LookOp::Kind(
         yolu_core::look::LookKind::Standard,

@@ -494,7 +494,7 @@ fn snapshot_the_shortcut_editor_with_a_conflict_in_both_languages() {
         click_chip(&mut h, key_chip(("object.snap_toggle", Scope::Edit), 0));
         hover_chip(&mut h, key_chip(reveal, 0));
         let w = window(&h);
-        common::shot::region(&mut h, name, w.expand(8.0));
+        common::shot::region(&mut h, name, w);
     }
 }
 
@@ -515,7 +515,7 @@ fn snapshot_the_pie_menu_editor_in_both_languages() {
         click(&mut h, slot.center());
         move_to(&h, w.right_bottom() - egui::vec2(20.0, 80.0));
         h.run();
-        common::shot::region(&mut h, name, w.expand(8.0));
+        common::shot::region(&mut h, name, w);
     }
 }
 
@@ -648,13 +648,13 @@ fn snapshot_the_tool_key_mode_list_in_both_languages() {
         (Lang::En, "shortcut_tool_mode_en"),
     ] {
         let mut h = tool_mode_scene(lang, "tool.shape");
-        let w = window(&h).expand(8.0);
+        let w = window(&h);
         let popup = h
             .popup()
             .as_ref()
             .map(|p| p.state.rect)
             .unwrap_or(Rect::NOTHING);
-        common::shot::region(&mut h, name, w.union(popup.expand(8.0)));
+        common::shot::region(&mut h, name, w.union(popup));
     }
 }
 

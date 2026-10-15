@@ -2857,7 +2857,7 @@ mod ui {
             assert!(!popup_item(&h, save).is_negative());
             let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
                 .union(crate::shots::group(&h, yolu_app::Tab::Layers))
-                .union(crate::shots::popup(&h).expand(8.0));
+                .union(crate::shots::popup(&h));
             common::shot::region(&mut h, &format!("assets_material_{suffix}"), panel);
             key(&h, egui::Key::Escape, Modifiers::NONE);
             h.run();
@@ -2884,7 +2884,7 @@ mod ui {
             hover_and_wait(&mut h, at);
             let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
                 .union(crate::shots::group(&h, yolu_app::Tab::Layers))
-                .union(crate::shots::popup(&h).expand(8.0));
+                .union(crate::shots::popup(&h));
             common::shot::region(&mut h, &format!("assets_material_images_{suffix}"), panel);
         }
     }

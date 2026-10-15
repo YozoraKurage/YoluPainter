@@ -358,7 +358,7 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
             h.run();
             // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
             if lang == Lang::Ja {
-                let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+                let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
                 common::shot::region(&mut h, &format!("fx_image_stage_{name}_ja"), rect);
             }
             // マスクの段は欄が長いので、下の半分も
@@ -370,7 +370,7 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
                     assert!(lang == Lang::Ja || !has_japanese(&text), "{text}");
                 }
                 if lang == Lang::Ja {
-                    let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+                    let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
                     common::shot::region(&mut h, &format!("fx_image_stage_{name}_lower_ja"), rect);
                 }
             }

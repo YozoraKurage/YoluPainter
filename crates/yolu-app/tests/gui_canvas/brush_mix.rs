@@ -383,12 +383,12 @@ fn snapshot_brush_detail_mix() {
     h.act(Action::Brush(BrushAction::Select(b("oil"))));
     open_detail(&mut h, Category::Mix);
     let rect = detail_rect(&h);
-    crate::clean_region(&mut h, "brushes_detail_mix", rect);
+    crate::common::shot::clean_region(&mut h, "brushes_detail_mix", rect);
     language(&mut h, Lang::En);
     h.act(Action::Brush(BrushAction::Select(b("mixer"))));
     open_detail(&mut h, Category::Mix);
     let rect = detail_rect(&h);
-    crate::clean_region(&mut h, "brushes_detail_mix_english", rect);
+    crate::common::shot::clean_region(&mut h, "brushes_detail_mix_english", rect);
 }
 
 #[test]
@@ -397,13 +397,9 @@ fn snapshot_brush_panel_thick_paint_group() {
     h.act(Action::Brush(BrushAction::Select(b("oil"))));
     h.run();
     h.run();
-    let tab = h.state().tab_rects[&yolu_app::Tab::SubTools];
-    let color = h.state().tab_rects[&yolu_app::Tab::Color];
-    let rect = Rect::from_min_max(
-        pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + 300.0, color.top()),
-    );
-    crate::clean_region(&mut h, "brushes_panel_thick_paint", rect);
+    let rect =
+        crate::common::shot::group_span(&h, yolu_app::Tab::SubTools, Some(yolu_app::Tab::Color));
+    crate::common::shot::clean_region(&mut h, "brushes_panel_thick_paint", rect);
 }
 
 // ───────── アプリの入口から描く ─────────

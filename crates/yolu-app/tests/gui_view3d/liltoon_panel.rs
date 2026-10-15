@@ -215,7 +215,7 @@ fn the_panel_draws_in_both_languages_with_names_only() {
         }
         // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
         if lang == Lang::Ja {
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             crate::common::shot::region(&mut h, "liltoon_panel_ja", rect);
         }
     }
@@ -476,7 +476,7 @@ fn values_from_unity_show_their_row_and_the_changed_items_are_marked() {
             }
         }
         if lang == Lang::Ja {
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             crate::common::shot::region(&mut h, "liltoon_panel_unity_ja", rect);
         }
         // Unity に合わせる: 欄で変えた値が外れ、Unity の値で描く（1 回の Undo）

@@ -12,7 +12,7 @@ use yolu_app::lang::Lang;
 use yolu_app::layerops::Xform;
 use yolu_app::m2::{self, DropTarget, Edit};
 use yolu_app::state::{Action, AppState, Tool};
-use yolu_app::{Tab, YoluApp};
+use yolu_app::YoluApp;
 use yolu_core::{LayerLocks, Surface};
 
 const RED: Rgba8 = Rgba8::new(255, 0, 0, 255);
@@ -1554,7 +1554,7 @@ fn switching_to_the_move_tool_during_a_pen_brush_stroke_still_ends_the_stroke_wh
 
 /// レイヤーのパネルの行の中心（プロパティのレイヤーのタブにも、同じ名前の欄がある）。
 fn row_center(h: &Harness<'_, YoluApp>, name: &str) -> egui::Pos2 {
-    let panel = crate::group_rect(h, Tab::Layers, Some(Tab::Properties));
+    let panel = crate::common::shot::group(h, yolu_app::Tab::Layers);
     rect_of(h, name, |r| panel.contains_rect(r)).center()
 }
 
@@ -2033,7 +2033,7 @@ fn snapshot_multi_selection_and_lock_marks_in_both_languages() {
         let mut h = showcase(lang);
         // 英語の絵は撮らない（レイヤーの行の並びは文字の長さで変わらない）。英語の画面に日本語が残らないことは下で確かめる
         if lang == Lang::Ja {
-            let rect = crate::group_rect(&h, Tab::Layers, Some(Tab::Properties));
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Layers);
             common::shot::region(&mut h, "layerops_layers_ja", rect);
         }
         // 見張りが働いていること: 日本語の画面には日本語がある。英語の画面には残らない
@@ -2075,10 +2075,8 @@ fn snapshot_the_layer_menu_and_the_merge_confirmation() {
     release(&h, at, PointerButton::Secondary);
     h.run();
     assert!(h.popup().is_some());
-    let rect = crate::with_popup(
-        &h,
-        crate::group_rect(&h, Tab::Layers, Some(Tab::Properties)),
-    );
+    let rect =
+        crate::common::shot::with_popup(&h, crate::common::shot::group(&h, yolu_app::Tab::Layers));
     common::shot::region(&mut h, "layerops_layer_menu", rect);
     // 英語のメニュー（開いている項目に日本語が残らない）
     let mut h = showcase(Lang::En);
@@ -2106,7 +2104,7 @@ fn snapshot_the_layer_menu_and_the_merge_confirmation() {
     h.run();
     let rect =
         yolu_app::windows::window_rect(&h.ctx, "merge-confirm").expect("結合の確認を描いている");
-    common::shot::region(&mut h, "layerops_merge_confirm", crate::outward(rect));
+    common::shot::region(&mut h, "layerops_merge_confirm", rect);
 }
 
 // ───────── キャンバスの表示が編集に追いつく（CPU と GPU の道の両方） ─────────

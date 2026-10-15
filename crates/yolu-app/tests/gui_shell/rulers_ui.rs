@@ -794,7 +794,11 @@ fn snapshot_the_layer_list_with_ruler_icons() {
         }
         h.run();
         let body = layers_body(&h);
-        let rect = Rect::from_min_max(body.min, pos2(body.right(), body.top() + 130.0));
+        let group = common::shot::group(&h, yolu_app::Tab::Layers);
+        let rect = Rect::from_min_max(
+            pos2(group.left(), body.top()),
+            pos2(group.right(), body.top() + 130.0),
+        );
         if lang == Lang::Ja {
             shot(
                 &mut h,
@@ -829,7 +833,11 @@ fn snapshot_the_ruler_section_of_the_properties_for_2d_and_3d() {
                 (true, Lang::En) => "Paint Hidden Surfaces",
             };
             let end = rect_of(&h, last, |r| body.contains(r.center())).bottom() + 8.0;
-            let rect = Rect::from_min_max(body.min, pos2(body.right(), end));
+            let group = common::shot::group(&h, yolu_app::Tab::Properties);
+            let rect = Rect::from_min_max(
+                pos2(group.left(), body.top()),
+                pos2(group.right(), end.min(group.bottom())),
+            );
             if lang == Lang::Ja {
                 shot(
                     &mut h,
@@ -858,18 +866,18 @@ fn snapshot_the_ruler_tool_properties() {
             s.rulers_mut().angle_step = true;
         }
         h.run();
-        // 撮る枠は、ツールプロパティの組の幅（行いっぱいに広がる「削除」の右）と、区分の終わり（最後の「特殊定規にスナップ」の下）に合わせる
+        // 撮る枠は、ツールプロパティの組の範囲のうち、区分の終わり（最後の「特殊定規にスナップ」の下）に合わせる
         let tab = h.state().tab_rects[&yolu_app::Tab::ToolProperties];
         let in_column = |r: Rect| r.center().x < 400.0 && r.top() > tab.bottom();
-        let delete = rect_of(&h, lang.pick("削除", "Delete"), in_column);
         let last = rect_of(
             &h,
             lang.pick("特殊定規にスナップ", "Snap to Special Ruler"),
             in_column,
         );
+        let group = common::shot::group(&h, yolu_app::Tab::ToolProperties);
         let rect = Rect::from_min_max(
-            pos2(tab.left() - 2.0, tab.top()),
-            pos2(delete.right() + 8.0, last.bottom() + 8.0),
+            group.min,
+            pos2(group.right(), (last.bottom() + 8.0).min(group.bottom())),
         );
         if lang == Lang::Ja {
             shot(

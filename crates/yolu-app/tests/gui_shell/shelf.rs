@@ -3409,8 +3409,7 @@ mod ui {
         let at = card(&h, "raster").center();
         right_click(&mut h, at);
         settle(&mut h);
-        let panel = crate::shots::group(&h, yolu_app::Tab::Assets)
-            .union(crate::shots::popup(&h).expand(8.0));
+        let panel = crate::shots::group(&h, yolu_app::Tab::Assets).union(crate::shots::popup(&h));
         common::shot::region(&mut h, name, panel);
     }
 

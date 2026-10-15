@@ -968,22 +968,12 @@ fn switching_tools_with_keys_changes_the_list_and_the_selection_of_each_tool_sta
 
 // ───────── 見た目（パネルの中だけを撮る） ─────────
 
-/// パネルの全体の画像（タブの帯から、下のカラーのパネルの上まで）を撮って、正解の絵と比べる。
+/// パネルの全体の画像（サブツールの組から、下のカラーの組の手前まで）を撮って、正解のスクリーンショットと比べる。
 fn shot(h: &mut H, name: &str) {
-    shot_width(h, name, 300.0);
-}
-
-/// `shot` の、横幅（点）を決める版（狭い列の絵）。
-fn shot_width(h: &mut H, name: &str, width: f32) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(Event::PointerGone);
     h.step();
-    let tab = h.state().tab_rects[&Tab::SubTools];
-    let color = h.state().tab_rects[&Tab::Color];
-    let rect = Rect::from_min_max(
-        pos2(tab.left() - 2.0, tab.top()),
-        pos2(tab.left() + width, color.top()),
-    );
+    let rect = common::shot::group_span(h, Tab::SubTools, Some(Tab::Color));
     common::shot::region(h, name, rect);
 }
 
@@ -1053,8 +1043,8 @@ fn snapshots_of_the_selection_tool_properties_the_four_modes_the_narrow_column_a
         surface.split_below(props, 0.8, vec![Tab::Color]);
         h.state_mut().dock = dock;
         pick(&mut h, Tool::SelectRect);
-        shot_width(&mut h, &format!("selection_props_narrow_{name}"), 172.0);
+        shot(&mut h, &format!("selection_props_narrow_{name}"));
         pick(&mut h, Tool::SelectPen);
-        shot_width(&mut h, &format!("selection_pen_props_narrow_{name}"), 172.0);
+        shot(&mut h, &format!("selection_pen_props_narrow_{name}"));
     }
 }

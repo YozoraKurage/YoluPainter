@@ -436,7 +436,7 @@ fn open_settings(h: &mut Harness<'static, YoluApp>) {
 /// ウィンドウの中だけを撮って、正解の絵と比べる。
 fn shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     let rect = window_rect(h);
-    crate::clean_region(h, name, rect);
+    crate::common::shot::clean_region(h, name, rect);
 }
 
 fn pick(h: &mut Harness<'static, YoluApp>, label: &str, item: &str) {

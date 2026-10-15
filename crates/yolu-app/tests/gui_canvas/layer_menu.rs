@@ -1889,23 +1889,23 @@ fn the_tool_strip_bottom_snapshot_at_the_minimum_window() {
     let mut h = app(960.0, 640.0, 64);
     h.run();
     // 左端のツールの帯（幅 44）の全体
-    let strip = Rect::from_min_size(
-        pos2(0.0, 24.0 + 36.0),
-        vec2(48.0, 640.0 - 24.0 - 36.0 - 22.0),
+    let strip = Rect::from_min_max(
+        pos2(
+            0.0,
+            yolu_app::ui::theme::MENU_BAR_HEIGHT + yolu_app::ui::theme::OPTIONS_BAR_HEIGHT,
+        ),
+        pos2(
+            yolu_app::ui::theme::TOOL_STRIP_WIDTH,
+            640.0 - yolu_app::ui::theme::STATUS_BAR_HEIGHT,
+        ),
     );
     common::shot::region(&mut h, "menus_tool_strip_min", strip);
 }
 
 /// 開いているメニュー全体（親と開いている入れ子）を切り抜いて撮る。
 fn snapshot_open_menu(h: &mut Harness<'_, YoluApp>, name: &str) {
-    let rect = h
-        .popup()
-        .as_ref()
-        .expect("開いている")
-        .state
-        .rect
-        .expand(2.0);
-    common::shot::region(h, name, crate::outward(rect));
+    let rect = common::shot::popup(h);
+    common::shot::region(h, name, rect);
 }
 
 #[test]
@@ -2030,6 +2030,6 @@ fn snapshot_the_layers_toolbar_at_the_minimum_window() {
         .map(|n| n.rect())
         .find(|r| r.top() > 200.0)
         .expect("帯の削除");
-    let bar = new_layer.union(delete).expand2(vec2(8.0, 4.0));
-    common::shot::region(&mut h, "menus_layers_toolbar_min", crate::outward(bar));
+    let bar = new_layer.union(delete);
+    common::shot::region(&mut h, "menus_layers_toolbar_min", bar);
 }

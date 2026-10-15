@@ -561,8 +561,9 @@ fn imported_panel(lang: Lang, dir: &Path) -> H {
 fn snapshot_the_imported_group_with_the_mark_for_what_was_left_out() {
     let dir = temp_dir("snapshot");
     let mut h = imported_panel(Lang::Ja, &dir);
-    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
-    crate::clean_region(&mut h, "brushes_panel_imported", rect);
+    let rect =
+        crate::common::shot::group_span(&h, yolu_app::Tab::SubTools, Some(yolu_app::Tab::Color));
+    crate::common::shot::clean_region(&mut h, "brushes_panel_imported", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -781,7 +782,7 @@ fn snapshot_the_clip_studio_window() {
     h.get_by_label("Ink").click();
     h.run();
     let rect = clipstudio_rect(&h);
-    crate::clean_region(&mut h, "brush_clipstudio_window", rect);
+    crate::common::shot::clean_region(&mut h, "brush_clipstudio_window", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -792,6 +793,6 @@ fn snapshot_the_clip_studio_window_in_english() {
     h.get_by_label("Ink").click();
     h.run();
     let rect = clipstudio_rect(&h);
-    crate::clean_region(&mut h, "brush_clipstudio_window_english", rect);
+    crate::common::shot::clean_region(&mut h, "brush_clipstudio_window_english", rect);
     std::fs::remove_dir_all(dir).unwrap();
 }

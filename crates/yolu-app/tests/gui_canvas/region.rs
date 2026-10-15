@@ -1910,12 +1910,8 @@ fn paint_channels_toggle_chips_and_values_change_the_state() {
 
 /// ツールプロパティのパネルの中だけを撮って、正解の絵と比べる。
 fn paint_channels_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
-    let rect = crate::group_rect(
-        h,
-        yolu_app::Tab::ToolProperties,
-        Some(yolu_app::Tab::BrushSize),
-    );
-    crate::clean_region(h, name, rect);
+    let rect = crate::common::shot::group(h, yolu_app::Tab::ToolProperties);
+    crate::common::shot::clean_region(h, name, rect);
 }
 
 /// ペンの 1 点（pointer_id は固定。位置はウィンドウの画素 = 点）。
@@ -2548,7 +2544,7 @@ fn a_locked_layer_says_why_the_brush_cannot_start() {
         s.message(),
         "描けません（レイヤーの「画素」がロックされています）。"
     );
-    let rect = crate::toast_area(&h);
+    let rect = crate::common::shot::toast_strip(&h);
     common::shot::region(&mut h, "region_locked_refusal", rect);
 }
 
@@ -2902,11 +2898,7 @@ fn snapshot_the_colour_window_on_a_part_id_color() {
         h.run();
         let rect =
             yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウを描いている");
-        common::shot::region(
-            &mut h,
-            &format!("color_window_part_id_{name}"),
-            crate::outward(rect),
-        );
+        common::shot::region(&mut h, &format!("color_window_part_id_{name}"), rect);
     }
 }
 
@@ -2941,7 +2933,7 @@ fn the_options_bar_of_each_range_tool_fits_a_narrow_window_in_both_languages() {
     key(&h, Key::G, Modifiers::NONE);
     h.run();
     apply(&mut h, Action::Region(RegionAction::ByColor(true)));
-    let bar = crate::options_bar(&h);
+    let bar = crate::common::shot::options_bar(&h);
     common::shot::region(&mut h, "region_bucket_by_color_narrow", bar);
     apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
     common::shot::region(&mut h, "region_bucket_by_color_narrow_english", bar);

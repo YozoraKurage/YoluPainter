@@ -2058,7 +2058,7 @@ fn snapshot_settings_panel_and_shading_menu() {
     let button = h.get_by_label("3D の表示: マテリアル (PBR)").rect();
     h.get_by_label("3D の表示: マテリアル (PBR)").click();
     h.run();
-    let shown = crate::with_popup(&h, button);
+    let shown = crate::common::shot::with_popup(&h, button);
     crate::common::shot::region(&mut h, "view3d_shading_menu", shown);
 }
 

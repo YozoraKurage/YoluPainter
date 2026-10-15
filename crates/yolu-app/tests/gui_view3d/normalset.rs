@@ -260,7 +260,7 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
     let base = h.doc().undo_count();
     // 初めは Height → Normal がオフ（強さと端は使えない）
     assert!(!h.doc().normal_settings().derive_from_height());
-    let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::TextureSets);
     crate::common::shot::region(&mut h, "channels_normal_off", rect);
     let toggle = lowest(&h, "ハイト → ノーマル");
     click(&mut h, toggle.center());

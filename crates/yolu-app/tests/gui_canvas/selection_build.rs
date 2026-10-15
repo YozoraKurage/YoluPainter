@@ -2027,7 +2027,7 @@ fn snapshots_of_the_creation_buttons_the_pen_options_the_quick_mask_and_the_save
     h.act(Action::Sel(SelAction::Saved(SavedOp::OpenWindow)));
     h.run();
     let rect = yolu_app::selection::saved::last_rect(&h.ctx).expect("ウィンドウを描いている");
-    common::shot::region(&mut h, "selection_build_saved_window", crate::outward(rect));
+    common::shot::region(&mut h, "selection_build_saved_window", rect);
 }
 
 // ───────── 予算の断り・途中の切り替え・対称・ダブの量（レビューの指摘への試験） ─────────

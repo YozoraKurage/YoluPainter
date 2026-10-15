@@ -96,7 +96,7 @@ fn counted(h: &mut Harness<'_, YoluApp>) {
 
 /// ウィンドウの中だけを撮る。
 fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
-    crate::window_shot(h, window, name);
+    crate::common::shot::window_shot(h, window, name);
 }
 
 #[test]
@@ -199,7 +199,7 @@ fn the_canvas_shows_overlapped_texels_and_the_view_menu_turns_them_off() {
         let item = popup_item(&h, lang.pick("重なった UV", "Overlapping UVs"));
         h.event(egui::Event::PointerMoved(item.center()));
         h.step();
-        let rect = crate::with_popup(&h, title);
+        let rect = crate::common::shot::with_popup(&h, title);
         crate::common::shot::region(
             &mut h,
             &format!("uv_overlap_menu_{}", lang.pick("ja", "en")),
@@ -297,7 +297,7 @@ fn shot_row_and_color_window(h: &mut Harness<'_, YoluApp>, row: egui::Rect, name
     let window = yolu_app::panels::color_window::rect(&h.ctx).expect("色のウィンドウが開いている");
     let image = h.render().expect("描画");
     let ppp = h.ctx.pixels_per_point();
-    let crop = |r: egui::Rect| crate::common::shot::crop(&image, crate::outward(r), ppp);
+    let crop = |r: egui::Rect| crate::common::shot::crop(&image, r, ppp);
     let (a, b) = (crop(row), crop(window));
     let mut out = image::RgbaImage::new(a.width().max(b.width()), a.height() + b.height());
     image::imageops::overlay(&mut out, &a, 0, 0);
@@ -471,7 +471,7 @@ fn the_uv_map_shows_the_preferred_and_skipped_islands() {
         crate::common::shot::region(
             &mut h,
             &format!("bake_overlap_map_{}", lang.pick("ja", "en")),
-            crate::outward(rect),
+            rect,
         );
     }
 }
@@ -499,7 +499,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         h.event(egui::Event::PointerMoved(prefer.center()));
         // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
         h.run();
-        let shown = crate::with_popup(&h, canvas_rect(&h));
+        let shown = crate::common::shot::with_popup(&h, canvas_rect(&h));
         crate::common::shot::region(
             &mut h,
             &format!("polygon_fill_island_menu_{}", lang.pick("ja", "en")),
@@ -562,7 +562,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         h.event(egui::Event::PointerMoved(prefer.center()));
         // 強調は落ち着くまで回してから撮る（1 フレームだけだと、遅い機械で強調の無い絵になった）
         h.run();
-        let shown = crate::with_popup(&h, rect);
+        let shown = crate::common::shot::with_popup(&h, rect);
         crate::common::shot::region(
             &mut h,
             &format!("polygon_fill_island_menu_3d_{}", lang.pick("ja", "en")),

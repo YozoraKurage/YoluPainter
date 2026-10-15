@@ -74,7 +74,7 @@ fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
         let mut h = app(1280.0, 1400.0, 128);
         h.app_mut().set_language(lang);
         effect_document(&mut h);
-        let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
+        let rect = crate::common::shot::group_span(&h, yolu_app::Tab::Layers, None);
         if lang == Lang::Ja {
             common::shot::region(&mut h, "fx_rows_generator_ja", rect);
         }
@@ -88,7 +88,7 @@ fn snapshot_a_selected_filter_and_a_selected_anchor() {
     let layer = h.selected_layer().unwrap();
     let blur = h.doc().filters_of(layer, FilterTarget::Content).unwrap()[0].id();
     fx(&mut h, FxOp::SelectFilter { layer, id: blur });
-    let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
+    let rect = crate::common::shot::group_span(&h, yolu_app::Tab::Layers, None);
     common::shot::region(&mut h, "fx_rows_blur_selected", rect);
     let anchor = h.doc().layer(layer).unwrap().anchor().unwrap().id();
     fx(&mut h, FxOp::SelectAnchor(anchor));
@@ -110,7 +110,10 @@ fn snapshot_the_add_menu() {
             FilterTarget::Content
         )))
     ));
-    let rect = crate::with_popup(&h, crate::group_rect(&h, yolu_app::Tab::Properties, None));
+    let rect = crate::common::shot::with_popup(
+        &h,
+        crate::common::shot::group(&h, yolu_app::Tab::Properties),
+    );
     common::shot::region(&mut h, "fx_add_menu", rect);
 }
 
@@ -747,7 +750,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         h.ui_mut().property_tab = yolu_app::panels::properties::TAB_ICONS.len() - 1;
         move_to(&h, pos2(640.0, 500.0));
         h.run();
-        let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
+        let rect = crate::common::shot::group_span(&h, yolu_app::Tab::Layers, None);
         // 英語の絵は撮らない（レイヤーの行の並びは文字の長さで変わらない。ツールチップとメニューは英語も撮る）
         if lang == Lang::Ja {
             common::shot::region(&mut h, "layers_target_pixels_ja", rect);
@@ -770,7 +773,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
                 FilterTarget::Content
             )))
         );
-        let popup_rect = crate::with_popup(&h, rect);
+        let popup_rect = crate::common::shot::with_popup(&h, rect);
         common::shot::region(
             &mut h,
             &format!("fx_add_generator_menu_{suffix}"),
@@ -792,7 +795,7 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         h.step();
         release(&h, at, PointerButton::Secondary);
         h.run();
-        let popup_rect = crate::with_popup(&h, rect);
+        let popup_rect = crate::common::shot::with_popup(&h, rect);
         common::shot::region(&mut h, &format!("layers_mask_menu_{suffix}"), popup_rect);
     }
 }
@@ -1120,7 +1123,7 @@ fn snapshot_three_new_filter_panels() {
             let mut h = with_new_filter(lang, kind);
             move_to(&h, pos2(640.0, 500.0));
             h.run();
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             if lang == Lang::Ja {
                 common::shot::region(&mut h, &format!("fx_props_{name}_ja"), rect);
             }
@@ -1225,7 +1228,7 @@ fn snapshot_the_pattern_and_mask_builder_panels() {
             let mut h = with_new_generator(lang, kind, 1000.0);
             move_to(&h, pos2(640.0, 500.0));
             h.run();
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             if lang == Lang::Ja {
                 common::shot::region(&mut h, &format!("fx_props_{name}_ja"), rect);
             }
@@ -1317,7 +1320,7 @@ fn snapshot_the_uv_island_variation_panel_and_canvas() {
         move_to(&h, pos2(1270.0, 990.0));
         h.run();
         // 欄と、アイランドごとに違う値の 2D の絵
-        let rect = canvas_rect(&h).union(crate::group_rect(&h, yolu_app::Tab::Properties, None));
+        let rect = canvas_rect(&h).union(crate::common::shot::group(&h, yolu_app::Tab::Properties));
         if lang == Lang::Ja {
             common::shot::region(&mut h, "fx_props_uv_island_variation_ja", rect);
         }
@@ -1889,7 +1892,7 @@ fn snapshot_procedural_panels() {
                 }
                 h.run();
             }
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             if lang == Lang::Ja {
                 common::shot::region(&mut h, &format!("fx_procedural_{name}_ja"), rect);
             }

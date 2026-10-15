@@ -275,7 +275,7 @@ fn snapshot_the_colour_window_on_a_fill_value() {
         let swatch = h.get_by_label(label).rect();
         click(&mut h, swatch.center());
         assert!(color_window::is_open(&h.ctx));
-        let rect = window(&h).expand(8.0);
+        let rect = window(&h);
         common::shot::region(&mut h, &format!("color_window_fill_{name}"), rect);
     }
 }

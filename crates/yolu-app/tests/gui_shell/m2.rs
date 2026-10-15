@@ -2054,7 +2054,7 @@ fn snapshot_channel_kind_menu_marks_the_row_format() {
             ],
             "{name}"
         );
-        let panel = shots::group(&h, Tab::Channels).union(shots::popup(&h).expand(8.0));
+        let panel = shots::group(&h, Tab::Channels).union(shots::popup(&h));
         common::shot::region(&mut h, name, panel);
         *h.popup_mut() = None;
         h.run();

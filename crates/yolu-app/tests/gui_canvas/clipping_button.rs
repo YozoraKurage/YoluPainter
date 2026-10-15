@@ -47,7 +47,7 @@ fn the_button_clips_the_selected_layer_to_the_one_below_and_back_with_one_undo_e
     );
     assert_eq!(doc.undo_count(), steps + 1, "1 回の Undo");
     assert_eq!(clipping_state(h.app()), (true, None));
-    let rect = crate::group_rect(&h, yolu_app::Tab::Layers, Some(yolu_app::Tab::Properties));
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::Layers);
     common::shot::region(&mut h, "layers_clipping_button", rect);
     // もう一度押すと外れる
     h.get_by_label(name()).click();

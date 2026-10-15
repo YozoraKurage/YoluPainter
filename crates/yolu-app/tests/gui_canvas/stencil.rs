@@ -897,16 +897,16 @@ fn snapshot_the_stencil_tab() {
     let dir = temp_dir("snap-tab");
     let mut h = app(1280.0, 1000.0, 128);
     open_stencil_tab(&mut h);
-    let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
     common::shot::region(&mut h, "stencil_tab_empty", rect);
     load(&mut h, &color_png(&dir, "gradient.png"));
     h.stencil_mut().angle = 30.0;
     h.run();
-    crate::region_with(&mut h, "stencil_tab_color", rect, &rotated_texture());
+    crate::common::shot::region_with(&mut h, "stencil_tab_color", rect, &rotated_texture());
     load(&mut h, &ring_png(&dir, "ring.png"));
     h.act(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
-    crate::region_with(&mut h, "stencil_tab_mask_english", rect, &rotated_texture());
+    crate::common::shot::region_with(&mut h, "stencil_tab_mask_english", rect, &rotated_texture());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -929,7 +929,7 @@ fn snapshot_the_overlay_on_the_canvas_with_y_held_and_tiled() {
     h.act(Action::Stencil(StencilOp::Size(0.3)));
     h.act(Action::Stencil(StencilOp::Angle(20.0)));
     h.run();
-    crate::region_with(
+    crate::common::shot::region_with(
         &mut h,
         "stencil_canvas_overlay_tiled",
         rect,

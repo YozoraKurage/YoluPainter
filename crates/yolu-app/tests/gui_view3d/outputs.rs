@@ -56,7 +56,7 @@ impl Drop for TempDir {
 
 /// ウィンドウの中だけを撮る（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut Harness<'_, YoluApp>, window: &str, name: &str) {
-    crate::window_shot(h, window, name);
+    crate::common::shot::window_shot(h, window, name);
 }
 
 /// 別のスレッドの仕事（ベイク・書き出し・PSD）が終わるまで、フレームを回しながら待つ。
@@ -153,7 +153,7 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     let row = popup_item(&h, "インポート");
     hover(&mut h, row.center());
     assert_eq!(h.popup().as_ref().unwrap().state.open_depth(), 1);
-    let rect = crate::with_popup(&h, menu_title(&h, "ファイル"));
+    let rect = crate::common::shot::with_popup(&h, menu_title(&h, "ファイル"));
     crate::common::shot::region(&mut h, "menu_file_import", rect);
     click_import_item(&mut h, "インポート", "PSD を今のテクスチャセットに…");
     assert_eq!(
@@ -201,14 +201,14 @@ fn the_menus_hold_import_export_and_bake_and_only_ask_for_files() {
     let at = menu_title(&h, "File").center();
     click(&mut h, at);
     popup_item(&h, "Export Textures…");
-    let rect = crate::with_popup(&h, menu_title(&h, "File"));
+    let rect = crate::common::shot::with_popup(&h, menu_title(&h, "File"));
     crate::common::shot::region(&mut h, "menu_file_english", rect);
     hover(&mut h, pos2(640.0, 400.0));
     let row = popup_item(&h, "Import");
     hover(&mut h, row.center());
     popup_item(&h, "PSD as a New Texture Set…");
     popup_item(&h, "PSD into the Current Texture Set…");
-    let rect = crate::with_popup(&h, menu_title(&h, "File"));
+    let rect = crate::common::shot::with_popup(&h, menu_title(&h, "File"));
     crate::common::shot::region(&mut h, "menu_file_import_english", rect);
     let at = popup_item(&h, "Export PSD…").center();
     click(&mut h, at);

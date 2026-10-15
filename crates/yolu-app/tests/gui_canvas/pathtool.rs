@@ -3671,7 +3671,7 @@ fn view3d_clicks_add_points_and_the_overlay_marks_them() {
     let mut options = egui_kittest::SnapshotOptions::new();
     options.max_failed_pixels = options.max_failed_pixels.max(1);
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
-    crate::region_with(&mut h, "path_view3d_points", rect, &options);
+    crate::common::shot::region_with(&mut h, "path_view3d_points", rect, &options);
     // 1 回の Undo ずつ戻る
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
@@ -3750,11 +3750,7 @@ fn snapshot_the_narrow_path_panel_puts_the_anti_alias_name_above_its_box() {
     );
     h.event(Event::PointerGone);
     h.step();
-    let rect = crate::group_rect(
-        &h,
-        yolu_app::Tab::ToolProperties,
-        Some(yolu_app::Tab::BrushSize),
-    );
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::ToolProperties);
     common::shot::region(&mut h, "path_panel_narrow_english", rect);
 }
 
@@ -4005,13 +4001,9 @@ fn review_pictures_of_the_list_handles_and_context_menu() {
         release(&h, row.center(), egui::PointerButton::Secondary);
         h.run();
         assert!(h.popup().is_some());
-        let rect = crate::with_popup(
+        let rect = crate::common::shot::with_popup(
             &h,
-            crate::group_rect(
-                &h,
-                yolu_app::Tab::ToolProperties,
-                Some(yolu_app::Tab::BrushSize),
-            ),
+            crate::common::shot::group(&h, yolu_app::Tab::ToolProperties),
         );
         common::shot::region(&mut h, &format!("path_review_context_{tag}"), rect);
         no_instruction_text(&mut h, lang, "path review");
@@ -4091,11 +4083,7 @@ fn renaming_a_preset_from_its_menu_puts_a_name_field_in_place_of_the_button() {
         h.run();
         // 英語の絵は撮らない（名前の入力欄の並びは文字の長さで変わらない）
         if lang == Lang::Ja {
-            let rect = crate::group_rect(
-                &h,
-                yolu_app::Tab::ToolProperties,
-                Some(yolu_app::Tab::BrushSize),
-            );
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::ToolProperties);
             common::shot::region(&mut h, &format!("path_review_preset_rename_{tag}"), rect);
         }
         key(&h, Key::Enter, Modifiers::NONE);
@@ -4171,13 +4159,9 @@ fn review_pictures_of_the_kinds_tips_and_presets() {
             },
         );
         hover_and_wait(&mut h, rename.center());
-        let rect = crate::with_popup(
+        let rect = crate::common::shot::with_popup(
             &h,
-            crate::group_rect(
-                &h,
-                yolu_app::Tab::ToolProperties,
-                Some(yolu_app::Tab::BrushSize),
-            ),
+            crate::common::shot::group(&h, yolu_app::Tab::ToolProperties),
         );
         common::shot::region(&mut h, &format!("path_review_presets_{tag}"), rect);
         no_instruction_text(&mut h, lang, "path review kinds");
@@ -4220,11 +4204,7 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         act(&mut h, PathAction::Style(StyleEdit::Depth(Some(2.0))));
         // 英語の絵は撮らない（取っ手と深さの絵に文字は無い）
         if lang == Lang::Ja {
-            let props = crate::group_rect(
-                &h,
-                yolu_app::Tab::ToolProperties,
-                Some(yolu_app::Tab::BrushSize),
-            );
+            let props = crate::common::shot::group(&h, yolu_app::Tab::ToolProperties);
             common::shot::region(&mut h, &format!("path_review_3d_{tag}"), props.union(rect));
         }
         // 塗りつぶしレイヤーの欄のパスの節
@@ -4244,7 +4224,7 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         f.m2_mut().props_scroll = 100_000.0;
         f.run();
         if lang == Lang::Ja {
-            let rect = crate::group_rect(&f, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&f, yolu_app::Tab::Properties);
             common::shot::region(&mut f, &format!("path_review_fill_layer_{tag}"), rect);
         }
     }

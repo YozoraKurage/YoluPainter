@@ -714,16 +714,14 @@ fn snapshot_menus(lang: yolu_app::lang::Lang, suffix: &str) {
     if lang == yolu_app::lang::Lang::Ja {
         common::shot::window(&mut h, &menu_name);
     } else {
-        let menu = crate::shots::popup(&h)
-            .expand(8.0)
-            .union(menu_title(&h, title));
+        let menu = crate::shots::popup(&h).union(menu_title(&h, title));
         common::shot::region(&mut h, &menu_name, menu);
     }
     *h.popup_mut() = None;
     h.run();
     let tab = h.state().tab_rects[&Tab::Layers];
     right_click(&mut h, tab.center());
-    let menu = crate::shots::popup(&h).expand(8.0).union(tab);
+    let menu = crate::shots::popup(&h).union(tab);
     common::shot::region(&mut h, &format!("dock_tab_menu{suffix}"), menu);
 }
 

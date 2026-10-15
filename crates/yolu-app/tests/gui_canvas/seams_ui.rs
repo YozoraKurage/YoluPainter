@@ -51,7 +51,7 @@ fn the_seam_switch_needs_a_model_and_turns_the_document_setting() {
         let at = rect_of(&h, label(lang), |_| true);
         // 英語の絵は撮らない（行の並びは文字の長さで変わらない）
         if lang == Lang::Ja {
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            let rect = crate::common::shot::group(&h, yolu_app::Tab::Properties);
             common::shot::region(&mut h, "fx_seams_switch_ja", rect);
         }
         let count = h.doc().undo_count();

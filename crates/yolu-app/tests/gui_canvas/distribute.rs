@@ -1535,7 +1535,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
             "{t}"
         );
     }
-    crate::window_shot(&mut h, "distribute", "distribute_window");
+    crate::common::shot::window_shot(&mut h, "distribute", "distribute_window");
     // 切り替え: 外すと残る種類になる（既定は全部）
     let all = Removal::ALL.to_vec();
     assert_eq!(h.distribute().window().unwrap().selected(), all);
@@ -1582,7 +1582,7 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
         texts.iter().filter(|t| has_japanese(t)).count() == 0,
         "{texts:?}"
     );
-    crate::window_shot(&mut h, "distribute", "distribute_window_english");
+    crate::common::shot::window_shot(&mut h, "distribute", "distribute_window_english");
     // やめる: ウィンドウを閉じて準備した写しを捨てる
     let at = in_window(&h, "distribute", "Cancel");
     click(&mut h, at);

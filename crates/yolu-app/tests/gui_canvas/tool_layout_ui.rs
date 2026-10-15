@@ -257,7 +257,7 @@ fn snapshot_tool_strip_menu_in_both_languages() {
             h.step();
         }
         // メニューと、開いている「ツールを追加」の入れ子（ツールの列のボタンの右）
-        let rect = crate::with_popup(&h, button(&h, brush));
+        let rect = crate::common::shot::with_popup(&h, button(&h, brush));
         common::shot::region(&mut h, name, rect);
     }
 }
@@ -274,7 +274,7 @@ fn snapshot_a_customized_layout_in_both_languages() {
         // 英語の絵は撮らない（並びは文字の長さで変わらない）
         if lang == Lang::Ja {
             let rect = crate::tool_panels(&h);
-            crate::clean_region(&mut h, name, rect);
+            crate::common::shot::clean_region(&mut h, name, rect);
         }
     }
 }
@@ -291,7 +291,7 @@ fn snapshot_the_group_tab_menu_and_rename_in_both_languages() {
             r.left() < 340.0 && r.top() < 140.0 && r.width() < 120.0
         });
         right_click(&mut h, tab.center());
-        let rect = crate::with_popup(&h, tab);
+        let rect = crate::common::shot::with_popup(&h, tab);
         common::shot::region(&mut h, name, rect);
     }
 }
@@ -312,7 +312,7 @@ fn snapshot_the_icon_grid_in_both_languages() {
             let at = button(&h, brush);
             let rect =
                 Rect::from_min_size(pos2(0.0, at.top() - 24.0), vec2(at.right() + 240.0, 200.0));
-            crate::clean_region(&mut h, name, rect);
+            crate::common::shot::clean_region(&mut h, name, rect);
         }
     }
 }
@@ -350,7 +350,7 @@ fn snapshot_the_catalog_window_in_both_languages() {
         }
         let rect = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_catalog::id())
             .expect("「＋」のウィンドウ");
-        crate::clean_region(&mut h, name, rect);
+        crate::common::shot::clean_region(&mut h, name, rect);
     }
 }
 
@@ -388,11 +388,7 @@ fn snapshot_wrapped_group_tabs_and_a_rename_field_in_both_languages() {
         h.run();
         h.run();
         // サブツールの組（グループのタブが折り返す・名前の入力欄）
-        let rect = crate::group_rect(
-            &h,
-            yolu_app::Tab::SubTools,
-            Some(yolu_app::Tab::ToolProperties),
-        );
-        crate::clean_region(&mut h, name, rect);
+        let rect = crate::common::shot::group(&h, yolu_app::Tab::SubTools);
+        crate::common::shot::clean_region(&mut h, name, rect);
     }
 }

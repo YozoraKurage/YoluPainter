@@ -1014,11 +1014,7 @@ fn edit_menu_lists_the_clipboard_entries_and_runs_them() {
         .expect("メニューが開いている")
         .state
         .rect;
-    common::shot::region(
-        &mut h,
-        "clipboard_edit_menu",
-        title.union(popup).expand(8.0),
-    );
+    common::shot::region(&mut h, "clipboard_edit_menu", title.union(popup));
 }
 
 // ───────── キー ─────────

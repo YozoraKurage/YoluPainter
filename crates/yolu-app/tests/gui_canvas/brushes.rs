@@ -429,8 +429,6 @@ fn dragging_a_row_reorders_the_list_inside_its_group() {
     // 一番下の空白へ落とすと、グループの一番後ろ
     list_to_top(&mut h);
     let top = row_of(&h, "標準");
-    let list_bottom = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color)).top() + 30.0 + 400.0;
-    let _ = list_bottom;
     drag(
         &mut h,
         &[
@@ -1257,8 +1255,9 @@ fn snapshot_brush_panel() {
     let mut h = app(1600.0, 900.0, 128);
     click_row(&mut h, "インクペン");
     h.run();
-    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
-    crate::clean_region(&mut h, "brushes_panel", rect);
+    let rect =
+        crate::common::shot::group_span(&h, yolu_app::Tab::SubTools, Some(yolu_app::Tab::Color));
+    crate::common::shot::clean_region(&mut h, "brushes_panel", rect);
 }
 
 #[test]
@@ -1272,8 +1271,9 @@ fn snapshot_brush_panel_modified_and_user_brush() {
     h.m2_mut().brush.tip.angle = 40.0;
     h.run();
     h.run();
-    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
-    crate::clean_region(&mut h, "brushes_panel_modified", rect);
+    let rect =
+        crate::common::shot::group_span(&h, yolu_app::Tab::SubTools, Some(yolu_app::Tab::Color));
+    crate::common::shot::clean_region(&mut h, "brushes_panel_modified", rect);
 }
 
 #[test]
@@ -1283,8 +1283,9 @@ fn snapshot_brush_panel_effects_and_english() {
     h.act(Action::Brush(BrushAction::Select(b("smudge"))));
     h.run();
     h.run();
-    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
-    crate::clean_region(&mut h, "brushes_panel_effects_english", rect);
+    let rect =
+        crate::common::shot::group_span(&h, yolu_app::Tab::SubTools, Some(yolu_app::Tab::Color));
+    crate::common::shot::clean_region(&mut h, "brushes_panel_effects_english", rect);
 }
 
 #[test]
@@ -1293,8 +1294,9 @@ fn snapshot_brush_panel_eraser_group() {
     h.act(Action::Brush(BrushAction::Select(b("soft-eraser"))));
     h.run();
     h.run();
-    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
-    crate::clean_region(&mut h, "brushes_panel_eraser", rect);
+    let rect =
+        crate::common::shot::group_span(&h, yolu_app::Tab::SubTools, Some(yolu_app::Tab::Color));
+    crate::common::shot::clean_region(&mut h, "brushes_panel_eraser", rect);
 }
 
 #[test]
@@ -1310,7 +1312,7 @@ fn snapshot_brush_detail_window() {
     ] {
         open_detail(&mut h, category);
         let rect = detail_rect(&h);
-        crate::clean_region(&mut h, name, rect);
+        crate::common::shot::clean_region(&mut h, name, rect);
     }
 }
 
@@ -1321,7 +1323,7 @@ fn snapshot_brush_detail_window_english_effect() {
     h.act(Action::Brush(BrushAction::Select(b("clone"))));
     open_detail(&mut h, Category::Effect);
     let rect = detail_rect(&h);
-    crate::clean_region(&mut h, "brushes_detail_effect_english", rect);
+    crate::common::shot::clean_region(&mut h, "brushes_detail_effect_english", rect);
 }
 
 #[test]
@@ -1332,7 +1334,7 @@ fn snapshot_brush_detail_window_english_stroke() {
     open_detail(&mut h, Category::Stroke);
     assert!(h.query_by_label("At least 1 pixel").is_some());
     let rect = detail_rect(&h);
-    crate::clean_region(&mut h, "brushes_detail_stroke_english", rect);
+    crate::common::shot::clean_region(&mut h, "brushes_detail_stroke_english", rect);
 }
 
 #[test]

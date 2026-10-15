@@ -725,7 +725,7 @@ fn snapshot_the_markers_and_a_grab_in_both_languages() {
     select(&mut h, Some(point));
     move_to(&h, marker_at(&h, rect, the_box(layer)));
     h.run();
-    crate::common::shot::region(&mut h, "edit_markers", crate::outward(rect));
+    crate::common::shot::region(&mut h, "edit_markers", rect);
     for (lang, name) in [(Lang::Ja, "edit_grab_ja"), (Lang::En, "edit_grab_en")] {
         let (mut h, rect, layer) = edit_view();
         h.app_mut().set_language(lang);
@@ -738,6 +738,6 @@ fn snapshot_the_markers_and_a_grab_in_both_languages() {
             &[Key::X, Key::Num0, Key::Period, Key::Num2, Key::Num5],
         );
         assert!(transforming(&h));
-        crate::common::shot::region(&mut h, name, crate::outward(rect));
+        crate::common::shot::region(&mut h, name, rect);
     }
 }

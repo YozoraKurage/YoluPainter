@@ -852,7 +852,7 @@ fn the_window_is_in_both_languages_and_its_text_names_things_without_instruction
 /// ウィンドウの中だけを撮る（ほかのパネルの変更で壊れない）。
 fn shot(h: &mut H, name: &str) {
     let rect = yolu_app::prefs::last_rect(&h.ctx).expect("ウィンドウが開いている");
-    crate::clean_region(h, name, rect);
+    crate::common::shot::clean_region(h, name, rect);
 }
 
 #[test]

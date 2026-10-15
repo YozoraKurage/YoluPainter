@@ -155,7 +155,7 @@ fn pose_takes_snapshots() {
             // テイクを選ぶポップアップ
             h.get_by_label("Raise").click();
             h.run();
-            let menu = crate::with_popup(&h, shown);
+            let menu = crate::common::shot::with_popup(&h, shown);
             crate::common::shot::region(&mut h, "pose_tab_takes_menu", menu);
         }
     }

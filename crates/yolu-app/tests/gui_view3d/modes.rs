@@ -781,11 +781,7 @@ fn snapshot_the_mode_dropdown_in_both_languages() {
         move_to(&h, pos2(700.0, 500.0));
         h.run();
         let popup = h.popup().as_ref().unwrap().state.rect;
-        crate::common::shot::region(
-            &mut h,
-            name,
-            crate::outward(dropdown.union(popup).expand(4.0)),
-        );
+        crate::common::shot::region(&mut h, name, dropdown.union(popup));
     }
 }
 
@@ -806,10 +802,6 @@ fn snapshot_the_mode_and_view_pies_in_both_languages() {
         h.run();
         assert_eq!(pie_open(&h).as_deref(), Some(menu));
         let c = pie_center(&h);
-        crate::common::shot::region(
-            &mut h,
-            name,
-            crate::outward(Rect::from_center_size(c, vec2(480.0, 300.0))),
-        );
+        crate::common::shot::region(&mut h, name, Rect::from_center_size(c, vec2(480.0, 300.0)));
     }
 }

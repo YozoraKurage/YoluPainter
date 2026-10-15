@@ -172,7 +172,7 @@ fn shot(h: &mut H, name: &str) {
         pos2(content.right() - 140.0, content.top()),
         pos2(content.right(), content.top() + 140.0),
     );
-    crate::common::shot::region(h, name, crate::outward(r));
+    crate::common::shot::region(h, name, r);
 }
 
 #[test]

@@ -616,7 +616,7 @@ fn select_menu_items_and_keys_run_their_edits() {
     h.sel_mut().animate = false;
     let title = menu_title(&h, "選択範囲");
     click(&mut h, title.center());
-    let rect = crate::with_popup(&h, title);
+    let rect = crate::common::shot::with_popup(&h, title);
     common::shot::region(&mut h, "selection_select_menu", rect);
 }
 
@@ -642,7 +642,7 @@ fn amount_dialog_applies_with_ok_or_enter_and_cancels_with_escape_or_the_button(
     h.run();
     h.sel_mut().animate = false;
     let rect = yolu_app::selection::dialog::last_rect(&h.ctx).expect("ダイアログを描いている");
-    common::shot::region(&mut h, "selection_amount_dialog", crate::outward(rect));
+    common::shot::region(&mut h, "selection_amount_dialog", rect);
     let before = steps(&h);
     h.get_by_label("OK").click();
     h.run();

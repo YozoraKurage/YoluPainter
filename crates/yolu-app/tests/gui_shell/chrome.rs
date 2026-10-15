@@ -543,14 +543,14 @@ fn the_texts_the_user_named_never_appear_on_screen() {
     }
 }
 
-/// ウィンドウの下の端（状態の帯と、そのすぐ上の知らせ）だけを撮って、正解の絵と比べる（ほかのパネルの変更で壊れない）。
+/// 状態の帯（右の項目と、左の知らせ）だけを撮って、正解のスクリーンショットと比べる（ほかのパネルの変更で壊れない）。
 fn bottom_shot(h: &mut Harness<'_, YoluApp>, name: &str) {
     // 直前に押した所のポインタが絵に残らないように
     h.event(egui::Event::PointerGone);
     h.step();
     let screen = h.ctx.content_rect();
     let band = Rect::from_min_max(
-        egui::pos2(screen.left(), screen.bottom() - 96.0),
+        egui::pos2(screen.left(), screen.bottom() - t::STATUS_BAR_HEIGHT),
         screen.max,
     );
     common::shot::region(h, name, band);

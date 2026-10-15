@@ -200,7 +200,7 @@ fn top_shot(h: &mut Harness<'_, YoluApp>, name: &str, results: &mut SnapshotResu
     // 直前に押した所のポインタが絵に残らないように（乗せた絵は、乗せてから撮る）
     let image = h.render().expect("描画");
     let screen = h.ctx.content_rect();
-    let band = Rect::from_min_size(screen.min, vec2(screen.width(), t::MENU_BAR_HEIGHT + 2.0));
+    let band = Rect::from_min_size(screen.min, vec2(screen.width(), t::MENU_BAR_HEIGHT));
     let cropped = common::shot::crop(&image, band, h.ctx.pixels_per_point());
     results.add(egui_kittest::try_image_snapshot(&cropped, name));
 }

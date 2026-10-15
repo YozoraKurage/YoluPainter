@@ -168,7 +168,7 @@ fn rename_hide_and_the_header_show_the_set() {
     click(&mut h, eyes[1].center());
     let hair = h.sets().by_uid(uid).unwrap();
     assert!(!hair.visible);
-    let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::TextureSets);
     crate::common::shot::region(&mut h, "texture_sets_renamed_hidden", rect);
 }
 
@@ -238,7 +238,7 @@ fn every_state_of_a_set_has_its_icon() {
     assert_eq!(icons(1), Some("lock"));
     assert_eq!(icons(2), Some("link_off"));
     assert_eq!(icons(3), None, "付いて見えているセットに印は無い");
-    let rect = crate::group_rect(&h, yolu_app::Tab::TextureSets, Some(yolu_app::Tab::Layers));
+    let rect = crate::common::shot::group(&h, yolu_app::Tab::TextureSets);
     crate::common::shot::region(&mut h, "texture_sets_states", rect);
 }
 
@@ -1109,7 +1109,7 @@ fn open_from_the_menu_and_the_keys_asks_for_a_file() {
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     let title = menu_title(&h, "ファイル");
-    let rect = crate::with_popup(&h, title);
+    let rect = crate::common::shot::with_popup(&h, title);
     crate::common::shot::region(&mut h, "menu_file", rect);
     let at = popup_item(&h, "開く…").center();
     click(&mut h, at);

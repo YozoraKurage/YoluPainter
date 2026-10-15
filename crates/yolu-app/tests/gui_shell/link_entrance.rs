@@ -98,7 +98,7 @@ fn pixels_near(h: &mut Harness<'_, YoluApp>, rect: Rect, color: Color32) -> usiz
 fn shot_popup(h: &mut Harness<'_, YoluApp>, name: &str) {
     let body = h.popup().as_ref().expect("ウィンドウ").state.rect;
     let icon = icon_rect(h);
-    let area = body.union(icon).expand(6.0);
+    let area = body.union(icon);
     h.event(egui::Event::PointerGone);
     h.step();
     common::shot::region(h, name, area);

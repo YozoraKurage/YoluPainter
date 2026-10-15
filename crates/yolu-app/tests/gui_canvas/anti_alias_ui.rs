@@ -176,5 +176,5 @@ fn snapshot_brush_detail_shape_english() {
     // 英語の画面に日本語が無い
     h.get_by_label("Anti-aliasing: Medium");
     let rect = detail_rect(&h);
-    crate::clean_region(&mut h, "brushes_detail_shape_english", rect);
+    crate::common::shot::clean_region(&mut h, "brushes_detail_shape_english", rect);
 }
