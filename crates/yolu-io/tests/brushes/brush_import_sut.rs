@@ -735,6 +735,123 @@ fn texture_settings_the_engine_cannot_apply_are_reported_only_when_set() {
     assert_eq!(off.unrepresented, vec![note(SutNote::PreviewImage)]);
 }
 
+// ---------------- 筆先の繰り返し方法・反転・比較暗 ----------------
+
+/// 2 枚の筆先を持つブラシに、列を足した 1 本。
+fn tipped(columns: &[(&'static str, i64)]) -> ImportedBrush {
+    let a = png_gray(2, 1, &[0, 0]);
+    let b = png_gray(1, 3, &[0, 0, 0]);
+    let mut cells = vec![
+        ("BrushUsePatternImage", int(1)),
+        (
+            "BrushPatternImageArray",
+            blob(refs(&[
+                ["x/tip_a.png", "c/a", "tip_a"],
+                ["x/tip_b.png", "c/b", "tip_b"],
+            ])),
+        ),
+    ];
+    cells.extend(columns.iter().map(|&(name, v)| (name, int(v))));
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), material_with_thumbnail(&a))
+        .material(Some("tip_b"), material_with_thumbnail(&b))
+        .brush("Multi", 1, &cells)
+        .build();
+    ok(&file).brushes[0].clone()
+}
+
+#[test]
+fn the_six_repeat_methods_are_carried_and_the_close_ones_are_said_so() {
+    use yolu_core::TipSelection as T;
+    for (value, expected, approximate) in [
+        (0, T::Sequential, false),
+        (1, T::PingPong, true),
+        (2, T::Hold, false),
+        (3, T::Random, false),
+        (4, T::Once, false),
+        (5, T::Shuffle, true),
+    ] {
+        // `…Type2` はいつも同じ値で、読むのは 1 つ目だけ
+        let b = tipped(&[
+            ("BrushPatternOrderType", value),
+            ("BrushPatternOrderType2", 3),
+        ]);
+        assert_eq!(b.brush.tip.selection, expected, "{value}");
+        assert!(mapped(&b, SutMapped::TipOrder), "{value}");
+        assert!(!has(&b, SutNote::TipOrder), "{value}");
+        assert_eq!(has(&b, SutNote::TipOrderApprox), approximate, "{value}");
+    }
+    // 列が無い・知らない値は、これまでどおりランダムにして知らせる
+    for columns in [vec![], vec![("BrushPatternOrderType", 9)]] {
+        let b = tipped(&columns);
+        assert_eq!(b.brush.tip.selection, T::Random);
+        assert!(has(&b, SutNote::TipOrder) && !mapped(&b, SutMapped::TipOrder));
+    }
+}
+
+#[test]
+fn the_four_flip_methods_are_carried_for_each_axis() {
+    use yolu_core::FlipRule as R;
+    let tip = |b: &ImportedBrush| {
+        let t = &b.brush.tip;
+        (t.flip_x, t.flip_x_rule, t.flip_y, t.flip_y_rule)
+    };
+    for (value, expected) in [
+        (0, (false, R::Fixed)),
+        (1, (true, R::Fixed)),
+        (2, (false, R::Random)),
+        (3, (false, R::OnFold)),
+    ] {
+        let h = tipped(&[("BrushPatternReverseHorizontal", value)]);
+        assert_eq!(
+            tip(&h),
+            (expected.0, expected.1, false, R::Fixed),
+            "{value}"
+        );
+        let v = tipped(&[("BrushPatternReverseVertical", value)]);
+        assert_eq!(
+            tip(&v),
+            (false, R::Fixed, expected.0, expected.1),
+            "{value}"
+        );
+        assert_eq!(mapped(&h, SutMapped::TipFlip), value != 0, "{value}");
+        assert!(!has(&h, SutNote::TipFlip));
+    }
+    // 知らない値は反転せずに知らせる
+    let odd = tipped(&[("BrushPatternReverseHorizontal", 7)]);
+    assert_eq!(tip(&odd), (false, R::Fixed, false, R::Fixed));
+    assert!(has(&odd, SutNote::TipFlip) && !mapped(&odd, SutMapped::TipFlip));
+    // 1 枚の筆先にも、丸い筆先でない限り効く。丸い筆先には写さない（反転しても同じ）
+    let round = SutBuilder::new()
+        .brush("Round", 1, &[("BrushPatternReverseHorizontal", int(1))])
+        .build();
+    let round = &ok(&round).brushes[0];
+    assert!(!round.brush.tip.flip_x && !mapped(round, SutMapped::TipFlip));
+}
+
+#[test]
+fn blending_tips_with_darken_is_carried_for_round_and_image_tips() {
+    assert!(
+        tipped(&[("BrushBlendPatternByDarken", 1)])
+            .brush
+            .tip
+            .darken_overlap
+    );
+    assert!(
+        !tipped(&[("BrushBlendPatternByDarken", 0)])
+            .brush
+            .tip
+            .darken_overlap
+    );
+    assert!(!tipped(&[]).brush.tip.darken_overlap);
+    let round = SutBuilder::new()
+        .brush("Round", 1, &[("BrushBlendPatternByDarken", int(1))])
+        .build();
+    let round = &ok(&round).brushes[0];
+    assert!(round.brush.tip.darken_overlap && mapped(round, SutMapped::TipDarken));
+    assert!(round.unrepresented.is_empty());
+}
+
 // ---------------- 影響元 ----------------
 
 fn pressure_curve() -> Vec<(f64, f64)> {
@@ -1064,6 +1181,8 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::TipMissing,
         SutNote::TipGuessed,
         SutNote::TipOrder,
+        SutNote::TipOrderApprox,
+        SutNote::TipFlip,
         SutNote::TextureMissing,
         SutNote::TextureGuessed,
         SutNote::TextureRotation,

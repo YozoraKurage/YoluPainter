@@ -31,4 +31,5 @@ mod selection;
 mod simd_document;
 mod taper_targets;
 mod text_layer;
+mod tip_rules;
 mod warp;

@@ -227,6 +227,31 @@ fn random_case(seed: u64) -> Case {
     };
     // アンチエイリアスの段は最後に引く（前の項目の乱数の列を変えない）
     case.brush.base.anti_alias = r.pick(&AntiAlias::ALL);
+    // 比較暗・筆先の並びの繰り返し方法と反転のしかたも、最後に引く（同じ理由）
+    case.brush.tip.darken_overlap = r.chance(0.3);
+    if r.chance(0.25) {
+        case.brush.tip.images = ["grain", "dots", "rim"]
+            .iter()
+            .filter_map(|n| builtin_tip(n))
+            .collect();
+        case.brush.tip.selection = r.pick(&[
+            crate::TipSelection::Random,
+            crate::TipSelection::Sequential,
+            crate::TipSelection::PingPong,
+            crate::TipSelection::Hold,
+            crate::TipSelection::Once,
+            crate::TipSelection::Shuffle,
+        ]);
+        let rule = |r: &mut Rng| {
+            r.pick(&[
+                crate::FlipRule::Fixed,
+                crate::FlipRule::Random,
+                crate::FlipRule::OnFold,
+            ])
+        };
+        case.brush.tip.flip_x_rule = rule(&mut r);
+        case.brush.tip.flip_y_rule = rule(&mut r);
+    }
     case
 }
 

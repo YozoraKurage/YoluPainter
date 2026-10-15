@@ -10,7 +10,10 @@
 //! （`pressure_size` などの切り替え・`controls.tilt_*`・`controls.speed_size` など・`controls.pressure_hardness`・`pressure.*`・
 //! `mix.<項目>.pressure`・`.min`・`.curve`）は書かない（読むときも、版 7 にあれば知らない項目として断る）。ほかの版 2〜6 の項目は、その鍵のまま書く。
 //! 版 1〜6 で書けるブラシは、今までと同じ鍵・同じバイトで書く。
-//! 版 2〜7 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
+//! 版 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗）
+//! を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`。影響元は版 7 と
+//! 同じ鍵で書く）。使わないブラシは版 1〜7 のままで、今までと同じバイト。版 7 までのファイルに版 8 の鍵や値があれば、知らない項目として断る。
+//! 版 2〜8 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
 //! 表せなかった項目の印（`import.*`）が付く。知らない項目・重なった項目・範囲を外れた値は
@@ -33,7 +36,7 @@ use crate::engine::{
     TaperTargets, TextureMode,
 };
 use crate::lang::Lang;
-use yolu_core::brush::{builtin_tip, Input, Item, TipSelection, MAX_CURVE_POINTS};
+use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
 use yolu_core::generator::CurvePoint;
 use yolu_core::BrushTip;
 use yolu_io::brushes::bundled;
@@ -58,9 +61,9 @@ pub const HEADER_V6: &str = "yolupainter-brush 6";
 /// 版 1〜6 のままで、今までと同じバイト。版 6 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V7: &str = "yolupainter-brush 7";
 /// 版 7 までの項目で書けない物を使うブラシの版。版 8 は版 7 の書き方（影響元は `influence.<項目>.<入力>.…`）に、入り抜きを掛ける項目と
-/// 最小値（`assist.taper.<項目>`。既定の大きさだけ・最小値 0 でないとき）を足す。使わないブラシは版 1〜7 のままで、今までと同じバイト。
-/// 版 7 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。版 8 の鍵が版 7 までのファイルにあれば、
-/// 知らない項目として断る。
+/// 最小値（`assist.taper.<項目>`。既定の大きさだけ・最小値 0 でないとき）と、筆先の繰り返し方法・反転のしかた・先端同士の比較暗を足す。
+/// 使わないブラシは版 1〜7 のままで、今までと同じバイト。版 7 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで
+/// 読み飛ばす。版 8 の鍵が版 7 までのファイルにあれば、知らない項目として断る。
 pub const HEADER_V8: &str = "yolupainter-brush 8";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
@@ -327,7 +330,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
-    let v8 = needs_v8(assist);
+    let v8 = needs_v8(&b, assist);
     let v7 = needs_v7(&b) || v8;
     let mut w = Writer(format!("{}\n", header_for(&b, assist.is_some(), v7, v8)));
     write_base(&mut w, user, &b, v7);
@@ -429,18 +432,22 @@ fn write_tip_and_jitter(w: &mut Writer, pending: &mut Pending, b: &Brush) {
     } else {
         w.line("tip.images", pending.list(&t.images));
     }
-    w.line(
-        "tip.selection",
-        match t.selection {
-            TipSelection::Random => "random",
-            TipSelection::Sequential => "sequential",
-        },
-    );
+    w.line("tip.selection", selection_id(t.selection));
     w.line("tip.angle", t.angle);
     w.line("tip.roundness", t.roundness);
     w.bool("tip.follow", t.follow_direction);
     w.bool("tip.flip_x", t.flip_x);
     w.bool("tip.flip_y", t.flip_y);
+    // 版 8 の項目（使うブラシだけ書く）
+    if t.flip_x_rule != FlipRule::Fixed {
+        w.line("tip.flip_x_rule", flip_rule_id(t.flip_x_rule));
+    }
+    if t.flip_y_rule != FlipRule::Fixed {
+        w.line("tip.flip_y_rule", flip_rule_id(t.flip_y_rule));
+    }
+    if t.darken_overlap {
+        w.bool("tip.darken", true);
+    }
     let j = &b.jitter;
     w.line("jitter.size", j.size);
     w.line("jitter.angle", j.angle);
@@ -703,10 +710,48 @@ fn needs_v7(b: &Brush) -> bool {
         || !pressure_only(&i.mix_density)
 }
 
-/// 版 7 までの項目で書けない物を使うか（使えば版 8 で書く）。今は、入り抜きの影響先が既定（大きさだけ・最小値 0）でないブラシ。
-/// 版 8 にする条件は、ここに `||` で足す。
-fn needs_v8(assist: Option<StrokeAssist>) -> bool {
-    assist.is_some_and(|a| !a.taper_targets.is_default())
+/// 版 7 までの項目で書けない物を使うか（使えば版 8 で書く）。入り抜きの影響先が既定（大きさだけ・最小値 0）でないブラシと、
+/// 筆先の繰り返し方法・反転のしかた・先端同士の比較暗を使うブラシ。版 8 にする条件は、ここに `||` で足す。
+fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
+    assist.is_some_and(|a| !a.taper_targets.is_default()) || uses_tip_rules(b)
+}
+
+/// 筆先の繰り返し方法（版 1〜7 が書ける乱数・順だけでない）・反転のしかた・先端同士の比較暗を使うか。
+fn uses_tip_rules(b: &Brush) -> bool {
+    let t = &b.tip;
+    !matches!(t.selection, TipSelection::Random | TipSelection::Sequential)
+        || t.flip_x_rule != FlipRule::Fixed
+        || t.flip_y_rule != FlipRule::Fixed
+        || t.darken_overlap
+}
+
+/// 筆先の繰り返し方法のファイルに書く名前（`random`・`sequential` は版 1〜7 の値）。
+fn selection_id(selection: TipSelection) -> &'static str {
+    match selection {
+        TipSelection::Random => "random",
+        TipSelection::Sequential => "sequential",
+        TipSelection::PingPong => "pingpong",
+        TipSelection::Hold => "hold",
+        TipSelection::Once => "once",
+        TipSelection::Shuffle => "shuffle",
+    }
+}
+
+fn flip_rule_id(rule: FlipRule) -> &'static str {
+    match rule {
+        FlipRule::Fixed => "fixed",
+        FlipRule::Random => "random",
+        FlipRule::OnFold => "fold",
+    }
+}
+
+fn flip_rule(id: &str) -> Option<FlipRule> {
+    match id {
+        "fixed" => Some(FlipRule::Fixed),
+        "random" => Some(FlipRule::Random),
+        "fold" => Some(FlipRule::OnFold),
+        _ => None,
+    }
 }
 
 /// 色の混ぜを使うか（使えば版 3 で書く）。混ぜ方が切なら、ほかの値が既定でなくても使っていない（`canonical` が既定へそろえる）。
@@ -823,7 +868,7 @@ pub fn decode_user(
     }
     let legacy = version <= 6;
     read_base(&mut r, &mut b, version)?;
-    read_tip_and_jitter(&mut r, &mut b, load)?;
+    read_tip_and_jitter(&mut r, &mut b, version, load)?;
     read_texture_and_dual(&mut r, &mut b, load)?;
     read_color_and_controls(&mut r, &mut b, version)?;
     // 筆圧の応えは版 2〜6 の項目（版 1・7 のファイルにあれば、知らない項目として断る）
@@ -920,6 +965,7 @@ fn read_base(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreErr
 fn read_tip_and_jitter(
     r: &mut Reader,
     b: &mut Brush,
+    version: u32,
     load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
 ) -> Result<(), StoreError> {
     b.tip.image = r.tip("tip.image", load)?;
@@ -930,9 +976,14 @@ fn read_tip_and_jitter(
             }
         }
     }
+    // 繰り返し方法の新しい値は版 8 のもの（版 7 までのファイルにあれば、値が読めないものとして断る）
     b.tip.selection = match r.take("tip.selection").as_deref() {
         None | Some("random") => TipSelection::Random,
         Some("sequential") => TipSelection::Sequential,
+        Some("pingpong") if version >= 8 => TipSelection::PingPong,
+        Some("hold") if version >= 8 => TipSelection::Hold,
+        Some("once") if version >= 8 => TipSelection::Once,
+        Some("shuffle") if version >= 8 => TipSelection::Shuffle,
         Some(_) => return Err(StoreError::BadValue("tip.selection".into())),
     };
     b.tip.angle = r.float("tip.angle", b.tip.angle)?;
@@ -940,6 +991,18 @@ fn read_tip_and_jitter(
     b.tip.follow_direction = r.bool("tip.follow", b.tip.follow_direction)?;
     b.tip.flip_x = r.bool("tip.flip_x", b.tip.flip_x)?;
     b.tip.flip_y = r.bool("tip.flip_y", b.tip.flip_y)?;
+    // 反転のしかた・先端同士の比較暗は版 8 の項目（版 7 までのファイルにあれば、知らない項目として断る）
+    if version >= 8 {
+        for (key, rule) in [
+            ("tip.flip_x_rule", &mut b.tip.flip_x_rule),
+            ("tip.flip_y_rule", &mut b.tip.flip_y_rule),
+        ] {
+            if let Some(id) = r.take(key) {
+                *rule = flip_rule(&id).ok_or(StoreError::BadValue(key.into()))?;
+            }
+        }
+        b.tip.darken_overlap = r.bool("tip.darken", false)?;
+    }
     b.jitter.size = r.float("jitter.size", b.jitter.size)?;
     b.jitter.angle = r.float("jitter.angle", b.jitter.angle)?;
     b.jitter.roundness = r.float("jitter.roundness", b.jitter.roundness)?;
@@ -2365,6 +2428,165 @@ mod tests {
         let newer = t.replacen("yolupainter-brush 6", "yolupainter-brush 9", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
+            StoreError::NewerVersion(_)
+        ));
+    }
+
+    /// 版 8 の項目を 1 つずつ使うブラシ（名前・ブラシ）。
+    fn tip_rule_brushes() -> Vec<(&'static str, Brush)> {
+        let grain = || builtin_tip("grain").unwrap();
+        let three = || {
+            vec![
+                grain(),
+                builtin_tip("dots").unwrap(),
+                builtin_tip("rim").unwrap(),
+            ]
+        };
+        let listed = |selection: TipSelection| {
+            let mut b = Brush::default();
+            b.tip.images = three();
+            b.tip.selection = selection;
+            b
+        };
+        let mut out = Vec::new();
+        for (name, selection) in [
+            ("pingpong", TipSelection::PingPong),
+            ("hold", TipSelection::Hold),
+            ("once", TipSelection::Once),
+            ("shuffle", TipSelection::Shuffle),
+        ] {
+            out.push((name, listed(selection)));
+        }
+        let mut b = listed(TipSelection::PingPong);
+        b.tip.flip_x_rule = FlipRule::OnFold;
+        b.tip.flip_y_rule = FlipRule::Random;
+        out.push(("flip rules", b));
+        let mut b = Brush::default();
+        b.tip.darken_overlap = true;
+        out.push(("darken", b));
+        out
+    }
+
+    #[test]
+    fn a_brush_with_tip_rules_is_version_eight_and_round_trips() {
+        for (what, b) in tip_rule_brushes() {
+            let u = user(1, b);
+            let t = text(&u);
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{what}: {t}");
+            let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+            assert_eq!(d.brush, u.brush, "{what}");
+            // 書き戻しても同じ文（鍵の順・値が安定）
+            assert_eq!(text(&user(1, d.brush)), t, "{what}");
+        }
+        let (_, b) = &tip_rule_brushes()[4];
+        let t = text(&user(1, b.clone()));
+        assert!(
+            t.contains("\ntip.flip_x_rule=fold\n") && t.contains("\ntip.flip_y_rule=random\n"),
+            "{t}"
+        );
+        // 今までの設定（乱数・順・反転が固定・足す・回転なし）は版 1〜7 のまま、版 8 の鍵を書かない
+        let mut old = Brush::default();
+        old.tip.images = vec![builtin_tip("grain").unwrap(), builtin_tip("dots").unwrap()];
+        old.tip.selection = TipSelection::Sequential;
+        old.tip.flip_x = true;
+        old.texture = Some(PaperTexture::new(builtin_tip("grain").unwrap(), 0.5));
+        let t = text(&user(1, old.clone()));
+        assert!(t.starts_with("yolupainter-brush 1\n"), "{t}");
+        for key in ["flip_x_rule", "flip_y_rule", "darken"] {
+            assert!(!t.contains(key), "{key}");
+        }
+        assert_eq!(
+            decode_user(&t, &mut |_| unreachable!()).unwrap().brush,
+            canonical(&old)
+        );
+    }
+
+    #[test]
+    fn version_eight_writes_the_influences_in_the_version_seven_keys() {
+        let mut b = influence_brush();
+        b.tip.darken_overlap = true;
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert!(
+            t.contains("influence.size.") && !t.contains("pressure_size="),
+            "{t}"
+        );
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        // 版 8 でも影響元が版 1〜6 で書けるブラシは、版 8 の鍵だけが足される（影響元は版 7 の鍵）
+        let mut plain = Brush::default();
+        plain.tip.darken_overlap = true;
+        let t = text(&user(1, plain));
+        assert!(
+            t.starts_with("yolupainter-brush 8\n") && t.contains("influence."),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_version_eight_items_belong_to_version_eight_and_are_checked() {
+        for (what, b) in tip_rule_brushes() {
+            let t = text(&user(1, b));
+            // 版 7 までのファイルにあれば、知らない項目か読めない値として断る
+            for old in 1..=7 {
+                let as_old = t.replacen(
+                    "yolupainter-brush 8",
+                    &format!("yolupainter-brush {old}"),
+                    1,
+                );
+                let err = decode(&as_old).unwrap_err();
+                assert!(
+                    matches!(
+                        &err,
+                        StoreError::UnknownKey(_)
+                            | StoreError::BadValue(_)
+                            | StoreError::UnknownTip(_)
+                    ),
+                    "{what} を版 {old} として: {err:?}"
+                );
+            }
+        }
+        // 版 8 のファイルの中の読めない値
+        let (_, b) = &tip_rule_brushes()[4];
+        let t = text(&user(1, b.clone()));
+        for (from, to, key) in [
+            (
+                "tip.flip_x_rule=fold",
+                "tip.flip_x_rule=sideways",
+                "tip.flip_x_rule",
+            ),
+            (
+                "tip.flip_y_rule=random",
+                "tip.flip_y_rule=",
+                "tip.flip_y_rule",
+            ),
+            (
+                "tip.selection=pingpong",
+                "tip.selection=circle",
+                "tip.selection",
+            ),
+        ] {
+            let broken = t.replace(from, to);
+            assert!(
+                matches!(decode(&broken).unwrap_err(), StoreError::BadValue(k) if k == key),
+                "{key}"
+            );
+        }
+        let (_, d) = &tip_rule_brushes()[5];
+        let t = text(&user(1, d.clone()));
+        assert!(matches!(
+            decode(&t.replace("tip.darken=1", "tip.darken=2")).unwrap_err(),
+            StoreError::BadValue(k) if k == "tip.darken"
+        ));
+        // 版 8 でも項目が無ければ既定。まだ無い版は新しい形式として断る
+        let none = "yolupainter-brush 8\nname=a\ngroup=pen\n";
+        let b = decode(none).unwrap().2;
+        assert_eq!(
+            (b.tip.flip_x_rule, b.tip.darken_overlap),
+            (FlipRule::Fixed, false)
+        );
+        assert!(matches!(
+            decode(&none.replacen("brush 8", "brush 9", 1)).unwrap_err(),
             StoreError::NewerVersion(_)
         ));
     }

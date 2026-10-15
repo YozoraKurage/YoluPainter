@@ -44,6 +44,98 @@ pub(crate) struct DabPlan<'a> {
     pub opacity_scale: f64,
     pub flow_scale: f64,
     pub tip: Option<&'a BrushTip>,
+    /// 筆先の画像の左右・上下の反転（[`FlipRule`] をこのダブで決めたもの）。
+    pub flip_x: bool,
+    pub flip_y: bool,
+}
+
+/// ランダムな反転の乱数の列と、並べ替えの乱数の列の種へ混ぜる値（ゆらぎ・色・影響元・デュアルの列と重ならない）。
+const FLIP_STREAM: i32 = 0x27D4_EB2F;
+const SHUFFLE_STREAM: i32 = 0x1656_67B1;
+
+/// 筆先の選びと反転の、ストロークごとの進み（2D のストロークと 3D の面のストロークが 1 つずつ持つ）。
+/// 今までの乱数の列（ゆらぎ・色・影響元・デュアル・筆先の乱数選び）は引かない。ランダムな反転と並べ替えは、自分の列だけを引く。
+#[derive(Clone, Debug)]
+pub(crate) struct TipRun {
+    /// 順に選ぶ方法で筆先を選んだダブの数（次のダブが並びの何番目か）。
+    k: u64,
+    seed: i32,
+    /// ランダムな反転の列（左右か上下がランダムのブラシだけ）。
+    flips: Option<NetRandom>,
+    /// 並べ替えた筆先の並び（`Shuffle` で最初に要るとき作る）。
+    order: Option<Vec<usize>>,
+}
+
+impl TipRun {
+    pub(crate) fn new(brush: &Brush) -> TipRun {
+        let random_flip =
+            brush.tip.flip_x_rule == FlipRule::Random || brush.tip.flip_y_rule == FlipRule::Random;
+        TipRun {
+            k: 0,
+            seed: brush.seed,
+            flips: random_flip.then(|| NetRandom::new(brush.seed ^ FLIP_STREAM)),
+            order: None,
+        }
+    }
+
+    /// 並びの長さ n の筆先から、次のダブの番号と、折り返しで戻る向きか（`PingPong` だけ）。置く筆先が無ければ None
+    /// （`Once`・`Shuffle` で並びを使い切った）。`Random` はここを通らない（乱数の列から引く）。
+    fn next_index(&mut self, selection: TipSelection, n: usize) -> Option<(usize, bool)> {
+        let k = self.k;
+        let len = n as u64;
+        let picked = match selection {
+            TipSelection::Random | TipSelection::Sequential => (k % len) as usize,
+            TipSelection::PingPong => {
+                if n == 1 {
+                    0
+                } else {
+                    let period = 2 * (len - 1);
+                    let pos = k % period;
+                    let index = if pos < len { pos } else { period - pos };
+                    let reversed = k > 0 && (pos == 0 || pos >= len);
+                    self.k = k.saturating_add(1);
+                    return Some((index as usize, reversed));
+                }
+            }
+            TipSelection::Hold => k.min(len - 1) as usize,
+            TipSelection::Once => {
+                if k >= len {
+                    return None;
+                }
+                k as usize
+            }
+            TipSelection::Shuffle => {
+                if k >= len {
+                    return None;
+                }
+                let seed = self.seed;
+                let order = self.order.get_or_insert_with(|| {
+                    let mut random = NetRandom::new(seed ^ SHUFFLE_STREAM);
+                    let mut order: Vec<usize> = (0..n).collect();
+                    for i in (1..n).rev() {
+                        let j = random.next_below(i as i32 + 1) as usize;
+                        order.swap(i, j);
+                    }
+                    order
+                });
+                order[k as usize]
+            }
+        };
+        self.k = k.saturating_add(1);
+        Some((picked, false))
+    }
+
+    /// ダブ 1 つの反転（左右・上下）。`reversed` は折り返しで戻る向きか。ランダムは、軸ごとに列から 1 つ引く（左右、上下の順）。
+    fn flips(&mut self, tip: &TipShape, reversed: bool) -> (bool, bool) {
+        let mut one = |rule: FlipRule, fixed: bool| match rule {
+            FlipRule::Fixed => fixed,
+            FlipRule::OnFold => reversed,
+            FlipRule::Random => self.flips.as_mut().map_or(fixed, |r| r.next_double() < 0.5),
+        };
+        let x = one(tip.flip_x_rule, tip.flip_x);
+        let y = one(tip.flip_y_rule, tip.flip_y);
+        (x, y)
+    }
 }
 
 impl Brush {
@@ -158,7 +250,7 @@ impl Brush {
         min_radius: f64,
         scatter_radius: f64,
         random: &mut NetRandom,
-        tip_index: &mut u64,
+        tips: &mut TipRun,
     ) -> Option<DabPlan<'a>> {
         let j = &self.jitter;
         let mut radius = radius;
@@ -219,20 +311,23 @@ impl Brush {
         if c.flow != 1.0 {
             flow_scale *= c.flow;
         }
+        let mut reversed = false;
         let tip: Option<&BrushTip> = match self.tip_list() {
             None => self.tip.image.as_deref(),
             Some(list) => {
                 let i = match self.tip.selection {
-                    TipSelection::Sequential => {
-                        let i = (*tip_index % list.len() as u64) as usize;
-                        *tip_index += 1;
+                    TipSelection::Random => random.next_below(list.len() as i32) as usize,
+                    selection => {
+                        // 並びを使い切った（一巡のみ・ランダムに一巡）あとは、何も置かない
+                        let (i, back) = tips.next_index(selection, list.len())?;
+                        reversed = back;
                         i
                     }
-                    TipSelection::Random => random.next_below(list.len() as i32) as usize,
                 };
                 Some(list[i].as_ref())
             }
         };
+        let (flip_x, flip_y) = tips.flips(&self.tip, reversed);
         Some(DabPlan {
             x,
             y,
@@ -242,6 +337,8 @@ impl Brush {
             opacity_scale,
             flow_scale,
             tip,
+            flip_x,
+            flip_y,
         })
     }
 
@@ -263,8 +360,8 @@ impl Brush {
             flow_scale: plan.flow_scale,
             tip: plan.tip,
             plain: plan.angle == 0.0 && plan.roundness == 1.0,
-            flip_x: self.tip.flip_x,
-            flip_y: self.tip.flip_y,
+            flip_x: plan.flip_x,
+            flip_y: plan.flip_y,
             texture: self.texture.as_ref().filter(|t| t.depth > 0.0),
             texture_density: c.texture_density,
             dual: self.dual.as_ref().map(|d| d.mode),
@@ -420,9 +517,9 @@ mod tests {
     fn first_plan<'a>(brush: &'a Brush, dab: &PendingDab) -> (StampControls, DabPlan<'a>) {
         let c = brush.stamp_controls(dab, 0, 1.0, None);
         let mut random = NetRandom::new(0);
-        let mut tip_index = 0u64;
+        let mut tips = TipRun::new(brush);
         let plan = brush
-            .next_dab(&c, dab, 4.0, 0.0, 4.0, &mut random, &mut tip_index)
+            .next_dab(&c, dab, 4.0, 0.0, 4.0, &mut random, &mut tips)
             .expect("大きさは正");
         (c, plan)
     }

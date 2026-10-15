@@ -67,10 +67,11 @@ pub enum Gap {
     StabilizerStrength,
     PostCorrection,
     VectorTools,
+    TipFlip,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 51] = [
+    pub const ALL: [Gap; 52] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -122,6 +123,7 @@ impl Gap {
         Gap::StabilizerStrength,
         Gap::PostCorrection,
         Gap::VectorTools,
+        Gap::TipFlip,
     ];
 
     /// ファイルに書く名前。
@@ -164,6 +166,7 @@ impl Gap {
             Gap::TipImage => "tip-image",
             Gap::TipOrder => "tip-order",
             Gap::TextureRotation => "texture-rotation",
+            Gap::TipFlip => "tip-flip",
             Gap::TipDirection => "tip-direction",
             Gap::ColorMixing => "color-mixing",
             Gap::Spray => "spray",
@@ -228,6 +231,7 @@ impl Gap {
             Gap::TipImage => lang.pick("筆先の画像", "Tip image"),
             Gap::TipOrder => lang.pick("筆先の順序", "Tip order"),
             Gap::TextureRotation => lang.pick("質感の回転", "Texture rotation"),
+            Gap::TipFlip => lang.pick("筆先の反転", "Tip flip"),
             Gap::TipDirection => lang.pick("筆先の向き", "Tip direction"),
             Gap::ColorMixing => lang.pick("色の混ぜ", "Color mixing"),
             Gap::Spray => lang.pick("吹き付け", "Spray"),
@@ -295,7 +299,8 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
         U::ClipStudio(note) => match note {
             SutNote::PreviewImage => Gap::ImageResolution,
             SutNote::TipMissing | SutNote::TipGuessed | SutNote::ProprietaryImage => Gap::TipImage,
-            SutNote::TipOrder => Gap::TipOrder,
+            SutNote::TipOrder | SutNote::TipOrderApprox => Gap::TipOrder,
+            SutNote::TipFlip => Gap::TipFlip,
             SutNote::TextureMissing | SutNote::TextureGuessed => Gap::TexturePattern,
             SutNote::TextureRotation => Gap::TextureRotation,
             SutNote::TextureBrightness => Gap::TextureBrightness,
@@ -334,7 +339,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 15] = [
+pub const MAPPED_ALL: [SutMapped; 18] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -350,6 +355,9 @@ pub const MAPPED_ALL: [SutMapped; 15] = [
     SutMapped::AntiAliasing,
     SutMapped::Speed,
     SutMapped::Random,
+    SutMapped::TipOrder,
+    SutMapped::TipFlip,
+    SutMapped::TipDarken,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -370,6 +378,9 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::AntiAliasing => "anti-aliasing",
         SutMapped::Speed => "speed",
         SutMapped::Random => "random",
+        SutMapped::TipOrder => "tip-order",
+        SutMapped::TipFlip => "tip-flip",
+        SutMapped::TipDarken => "tip-darken",
     }
 }
 

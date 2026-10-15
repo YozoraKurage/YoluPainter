@@ -113,7 +113,7 @@ unsafe fn color_block<V: Slice32>(
         let accumulated = V::select(
             V::ge(previous, ceiling),
             previous,
-            accumulate::<V>(previous, ceiling, flow),
+            dab.settle::<V>(previous, ceiling, flow),
         );
         V::store_f32(
             &mut st.wash[local..],

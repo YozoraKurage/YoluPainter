@@ -84,7 +84,7 @@ pub use adjust::{
 pub use brush::{
     builtin_presets, builtin_tip, AntiAlias, Brush, BrushEffect, BrushMappedPixel, BrushPixel,
     BrushPreset, BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics,
-    ColorMix, Controls, DualBrush, DualBrushMode, ImageColorSpace, Influence, Influences,
+    ColorMix, Controls, DualBrush, DualBrushMode, FlipRule, ImageColorSpace, Influence, Influences,
     InputResponse, InputUse, Jitter, MixGround, MixMode, PaperTexture, PressureSwitches,
     StencilImage, StencilMapping, StencilMode, StencilPoint, StencilTiling, StrokeAssist,
     TaperTargets, TextureMode, TipSelection, TipShape,

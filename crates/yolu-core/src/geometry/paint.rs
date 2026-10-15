@@ -73,7 +73,7 @@ use crate::brush::profile;
 use crate::brush::random::NetRandom;
 use crate::brush::{
     combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, Input,
-    InputResponse, Item, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric,
+    InputResponse, Item, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric, TipRun,
     DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
 use crate::{
@@ -406,7 +406,7 @@ pub struct SurfaceStroke {
     random: NetRandom,
     /// 影響元のランダムの乱数の列（2D のストロークと同じ。どの項目もランダムを使わなければ None）。
     influence_random: Option<NetRandom>,
-    tip_index: u64,
+    tips: TipRun,
     /// 置いた描点の数（フェード）。
     stamps: u64,
     /// 手ぶれ補正の後の筆の点（速さはその点での筆の速さ）と、その時刻。最後の入力の点。
@@ -613,7 +613,7 @@ impl SurfaceStroke {
             symmetry_note: None,
             random: NetRandom::new(stroke_brush.seed),
             influence_random,
-            tip_index: 0,
+            tips: TipRun::new(&stroke_brush),
             stamps: 0,
             pen: first,
             pen_time: input.time,
@@ -1044,7 +1044,7 @@ impl SurfaceStroke {
                 min_radius,
                 nominal,
                 &mut self.random,
-                &mut self.tip_index,
+                &mut self.tips,
             );
             stroke.begin_surface_dab(
                 doc,

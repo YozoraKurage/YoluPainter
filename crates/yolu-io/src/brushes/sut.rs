@@ -29,8 +29,8 @@ use std::sync::Arc;
 use yolu_core::brush::{Input, Item, TaperTargets, MAX_STROKE_ASSIST};
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::{
-    AntiAlias, Brush, BrushTip, Influence, Influences, InputResponse, InputUse, PaperTexture,
-    TipSelection,
+    AntiAlias, Brush, BrushTip, FlipRule, Influence, Influences, InputResponse, InputUse,
+    PaperTexture, TipSelection,
 };
 
 use super::error::{BrushImportError, Fault};
@@ -125,6 +125,13 @@ const COLOR_CHANGE: &[&str] = &[
     "brushsubcolor",
 ];
 const BLEND_MODE: &[&str] = &["compositemode"];
+// 複数の筆先の繰り返し方法（0 繰り返し・1 折り返し・2 繰り返さない・3 ランダム・4 一巡のみ・5 ランダムに一巡。`…Type2` はいつも同じ値なので読まない）
+const PATTERN_ORDER: &[&str] = &["brushpatternordertype"];
+// 筆先の左右・上下の反転（0 なし・1 反転・2 ランダム・3 折り返し時に反転）
+const PATTERN_REVERSE_H: &[&str] = &["brushpatternreversehorizontal"];
+const PATTERN_REVERSE_V: &[&str] = &["brushpatternreversevertical"];
+// ブラシ先端同士を比較暗で合成（旗。先端が重なるとき濃い方を残す）
+const BLEND_DARKEN: &[&str] = &["brushblendpatternbydarken"];
 // アンチエイリアス（整数。0 なし・1 弱・2 中・3 強。1 項目ずつ変えた書き出しの比べで決まった）。デュアルブラシの
 // `DualAntiAlias` はデュアルブラシごと表せないので読まない
 const ANTI_ALIAS: &[&str] = &["antialias"];
@@ -188,6 +195,10 @@ const KNOWN: &[&[&str]] = &[
     ROTATION_RANDOM,
     COLOR_CHANGE,
     BLEND_MODE,
+    PATTERN_ORDER,
+    PATTERN_REVERSE_H,
+    PATTERN_REVERSE_V,
+    BLEND_DARKEN,
     ANTI_ALIAS,
 ];
 
@@ -1052,6 +1063,90 @@ fn texture(
     Ok(())
 }
 
+/// 繰り返し方法（`BrushPatternOrderType`）の値から、エンジンの選び方と、近い動きか。知らない値は None。
+fn repeat_method(value: f64) -> Option<(TipSelection, bool)> {
+    if value.fract() != 0.0 {
+        return None;
+    }
+    match value as i64 {
+        0 => Some((TipSelection::Sequential, false)),
+        // 折り返しの端の扱い（端の筆先を 2 回使うか）は公式の説明に無いので、端を重ねない動きにして近いと知らせる
+        1 => Some((TipSelection::PingPong, true)),
+        2 => Some((TipSelection::Hold, false)),
+        3 => Some((TipSelection::Random, false)),
+        4 => Some((TipSelection::Once, false)),
+        // 乱数の並べ替えの中身は同じと言えないので、近いと知らせる
+        5 => Some((TipSelection::Shuffle, true)),
+        _ => None,
+    }
+}
+
+/// 反転（`BrushPatternReverseHorizontal`・`…Vertical`）の値から、エンジンの反転のしかた（いつも反転するか、ルールか）。知らない値は None。
+fn flip_method(value: f64) -> Option<(bool, FlipRule)> {
+    if value.fract() != 0.0 {
+        return None;
+    }
+    match value as i64 {
+        0 => Some((false, FlipRule::Fixed)),
+        1 => Some((true, FlipRule::Fixed)),
+        2 => Some((false, FlipRule::Random)),
+        3 => Some((false, FlipRule::OnFold)),
+        _ => None,
+    }
+}
+
+/// 筆先の繰り返し方法・左右上下の反転・先端同士の比較暗を写す。
+fn tip_rules(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    // 繰り返し方法は筆先が 2 枚以上のときだけ効く。列が無い・知らない値は、乱数にして知らせる
+    if brush.tip.images.len() > 1 {
+        let method = row.first_number(PATTERN_ORDER).and_then(repeat_method);
+        match method {
+            Some((selection, approximate)) => {
+                brush.tip.selection = selection;
+                mapped.push(SutMapped::TipOrder);
+                if approximate {
+                    notes.push(Unrepresented::ClipStudio(SutNote::TipOrderApprox));
+                }
+            }
+            None => notes.push(Unrepresented::ClipStudio(SutNote::TipOrder)),
+        }
+    }
+    // 反転は筆先の画像にだけ効く（丸い筆先は反転しても同じ）
+    if brush.tip.image.is_some() || !brush.tip.images.is_empty() {
+        for (columns, vertical) in [(PATTERN_REVERSE_H, false), (PATTERN_REVERSE_V, true)] {
+            let Some(value) = row.first_number(columns) else {
+                continue;
+            };
+            let Some((always, rule)) = flip_method(value) else {
+                notes.push(Unrepresented::ClipStudio(SutNote::TipFlip));
+                continue;
+            };
+            if !always && rule == FlipRule::Fixed {
+                continue;
+            }
+            let tip = &mut brush.tip;
+            if vertical {
+                (tip.flip_y, tip.flip_y_rule) = (always, rule);
+            } else {
+                (tip.flip_x, tip.flip_x_rule) = (always, rule);
+            }
+            if !mapped.contains(&SutMapped::TipFlip) {
+                mapped.push(SutMapped::TipFlip);
+            }
+        }
+    }
+    // 先端同士の比較暗は、丸い筆先でも、重なるダブに効く
+    if row.on(BLEND_DARKEN) {
+        brush.tip.darken_overlap = true;
+        mapped.push(SutMapped::TipDarken);
+    }
+}
+
 /// 色の混ぜを写す（絵の具の量・濃さの影響元も）。
 fn color_mixing(
     row: &Row,
@@ -1153,9 +1248,7 @@ fn brush_from_row(
                 .map(|t| t.width().max(t.height()) as f64)
                 .reduce(f64::max);
             brush.tip.images = images;
-            brush.tip.selection = TipSelection::Random;
             mapped.push(SutMapped::TipImage);
-            notes.push(Unrepresented::ClipStudio(SutNote::TipOrder));
         }
     }
     // 大きさの設定も筆先の画像も無ければ、core の既定の半径のまま
@@ -1221,6 +1314,7 @@ fn brush_from_row(
     }
     tip_direction(row, &mut brush, &mut notes, &mut mapped);
     thickness_direction(row, &mut brush, &mut notes, &mut mapped);
+    tip_rules(row, &mut brush, &mut notes, &mut mapped);
     if row.on(AT_LEAST_ONE_PIXEL) {
         brush.controls.min_one_pixel = true;
         mapped.push(SutMapped::MinOnePixel);

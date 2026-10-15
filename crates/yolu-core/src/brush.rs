@@ -84,10 +84,10 @@ pub use influence::{
 };
 pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
 pub use mix::{ColorMix, MixGround, MixMode};
-pub(crate) use plan::{DabPlan, StampControls};
+pub(crate) use plan::{DabPlan, StampControls, TipRun};
 pub use presets::{builtin_presets, BrushPreset};
 pub use settings::{
-    Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
+    Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, FlipRule, Jitter, PaperTexture,
     StrokeAssist, TaperTargets, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
     MIN_ONE_PIXEL_RADIUS,
 };
@@ -372,8 +372,8 @@ pub(crate) struct StrokeState {
     dual_pending: VecDeque<DualDab>,
     dual_coverage: HashMap<TileCoord, Vec<f32>>,
     dual_since_stamp: f64,
-    /// 次の筆先（順に使うとき）。
-    tip_index: u64,
+    /// 筆先の選びと反転の進み（順に使うときの番号・ランダムな反転の乱数の列）。
+    tips: TipRun,
     // 曲線: 描いた点（curve_from）と、その前の点（curve_before）、まだ描いていない最新の点（curve_to）
     curve_points: u8,
     has_curve_before: bool,
@@ -511,7 +511,7 @@ impl StrokeState {
             dual_pending: VecDeque::new(),
             dual_coverage: HashMap::new(),
             dual_since_stamp: 0.0,
-            tip_index: 0,
+            tips: TipRun::new(&brush),
             curve_points: 0,
             has_curve_before: false,
             curve_before: BrushSample::ZERO,
@@ -976,7 +976,7 @@ impl StrokeState {
                 },
                 s.radius,
                 &mut self.random,
-                &mut self.tip_index,
+                &mut self.tips,
             ) else {
                 continue;
             };
@@ -1231,6 +1231,7 @@ impl StrokeState {
             // 画素ごとの色（ダブごとの色か、色の混ぜ）。天井に届いた画素も、色は寄せ続ける
             tip_colors: self.tip_colors || mix.is_some(),
             stop_at_ceiling: !(self.tip_colors || mix.is_some()) && brush.effect.is_paint(),
+            darken: brush.tip.darken_overlap && brush.effect.is_paint(),
             mix,
             stencil: brush.stencil.as_deref(),
             stencil_kind: self.stencil_kind,
@@ -2140,6 +2141,8 @@ struct Paint<'a> {
     tip_colors: bool,
     /// 天井に届いた画素は何もしない（ダブごとの色・効果では、天井でも色は寄せる）。
     stop_at_ceiling: bool,
+    /// ダブの重なりを比較暗にする（[`TipShape::darken_overlap`]。色を塗る・消すブラシだけ）。
+    darken: bool,
     stencil: Option<&'a BrushStencil>,
     stencil_kind: Option<ChannelKind>,
     frame: Option<&'a EffectFrame>,
@@ -2515,7 +2518,7 @@ fn apply_at<const SIMPLE: bool>(
     let accumulated = if previous >= ceiling {
         previous
     } else {
-        rows::accumulate32(previous, ceiling, flow)
+        rows::settle32(p.darken, previous, ceiling, flow)
     };
     st.wash[local] = accumulated;
     let mut color = p.stroke_color;

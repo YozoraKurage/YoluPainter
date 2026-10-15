@@ -4,7 +4,8 @@
 //!
 //! 既定値はどれも C# の既定値と同じで、`Brush::simple(settings, switches)`（`Brush::from(settings)` は既定の切り替え）は M1 の丸いブラシと
 //! バイト単位で同じストロークになる。
-//! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]）と、紙の質感のモード（[`TextureMode`] の
+//! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]。ダブごとのしかたは [`FlipRule`]）、筆先の繰り返し方法の折り返し・
+//! 繰り返さない・一巡のみ・ランダムに一巡（[`TipSelection`]）、ダブの重なりの比較暗（[`TipShape::darken_overlap`]）、紙の質感のモード（[`TextureMode`] の
 //! 乗算以外）。どれも既定では C# と同じ。
 
 use crate::Reason;
@@ -73,14 +74,34 @@ impl Brush {
     }
 }
 
-/// 複数の筆先から各ダブの筆先を選ぶ方法（C# の TipSelection）。
+/// 複数の筆先から各ダブの筆先を選ぶ方法（C# の TipSelection に、CLIP STUDIO PAINT の「繰り返し方法」の 6 種を加えた）。
+/// 並びの何番目を使うかは、ストロークの最初のダブから数えた順（`k`）で決まる（筆先が 1 枚だけ・`image` に置いたときは選ばない）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TipSelection {
     /// 乱数で選ぶ（ストロークの乱数の列から 1 つ引く）。
     #[default]
     Random,
-    /// 順に使う。
+    /// 順に使い、最後の次は最初へ戻る（0, 1, 2, 0, 1, 2 …）。
     Sequential,
+    /// 順に使い、端で折り返す。端の筆先は重ねて使わない（0, 1, 2, 1, 0, 1, 2 …）。
+    PingPong,
+    /// 順に使い、最後の筆先に着いたら、その筆先のまま続ける（0, 1, 2, 2, 2 …）。
+    Hold,
+    /// 順に 1 回だけ使い、最後の筆先のあとは、そのストロークでは何も置かない（0, 1, 2, 置かない …）。
+    Once,
+    /// 並びをストロークの種から決めた順に並べ替えて 1 回だけ使い、そのあとは何も置かない。
+    Shuffle,
+}
+
+/// 筆先の画像の反転のしかた（1 つの軸ごと）。`Fixed` は [`TipShape::flip_x`]・[`TipShape::flip_y`] の値（なし・いつも反転）に従う。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum FlipRule {
+    #[default]
+    Fixed,
+    /// ダブごとに反転するかを乱数で決める。引く乱数は、ほかの乱数の列（ゆらぎ・色・筆先の選び・影響元・デュアル）と別の列。
+    Random,
+    /// 折り返しで戻る向きのダブだけ反転する（[`TipSelection::PingPong`] のときだけ起こる）。
+    OnFold,
 }
 
 /// 筆先の形（Photoshop の「ブラシ先端のシェイプ」）。
@@ -102,6 +123,11 @@ pub struct TipShape {
     pub flip_x: bool,
     /// 拡張（C# に無い）: 筆先の画像を上下に反転する。
     pub flip_y: bool,
+    /// 拡張: 左右・上下の反転のしかた（`Fixed` は上の `flip_x`・`flip_y` に従う）。
+    pub flip_x_rule: FlipRule,
+    pub flip_y_rule: FlipRule,
+    /// 拡張: 1 本のストロークの中で、ダブが重なる所は足していかずに、覆いの大きい方を残す（CLIP STUDIO PAINT の「ブラシ先端同士を比較暗で合成」）。
+    pub darken_overlap: bool,
 }
 
 impl Default for TipShape {
@@ -115,6 +141,9 @@ impl Default for TipShape {
             follow_direction: false,
             flip_x: false,
             flip_y: false,
+            flip_x_rule: FlipRule::Fixed,
+            flip_y_rule: FlipRule::Fixed,
+            darken_overlap: false,
         }
     }
 }

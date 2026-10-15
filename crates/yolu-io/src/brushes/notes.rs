@@ -370,6 +370,12 @@ pub enum SutMapped {
     Speed,
     /// 項目へのランダムの影響（最小値。曲線は直線）。
     Random,
+    /// 複数の筆先の繰り返し方法。
+    TipOrder,
+    /// 筆先の左右・上下の反転（なし・反転・ランダム・折り返し時に反転）。
+    TipFlip,
+    /// ブラシ先端同士の比較暗の合成。
+    TipDarken,
 }
 
 impl SutMapped {
@@ -391,6 +397,9 @@ impl SutMapped {
             Self::AntiAliasing => ("アンチエイリアス", "anti-aliasing"),
             Self::Speed => ("速さ", "speed"),
             Self::Random => ("ランダム", "random"),
+            Self::TipOrder => ("筆先の繰り返し方法", "tip repeat method"),
+            Self::TipFlip => ("筆先の反転", "tip flip"),
+            Self::TipDarken => ("先端同士の比較暗", "darken between tips"),
         }
     }
 }
@@ -408,8 +417,12 @@ pub enum SutNote {
     TipMissing,
     /// 筆先の素材を名前で決められず、素材の並びで当てた（別の画像かもしれない）。
     TipGuessed,
-    /// 複数の筆先を使う順序の設定は読まず、ランダムにした。
+    /// 複数の筆先を使う順序（繰り返し方法）を読めなかった（列が無い・知らない値）ので、ランダムにした。
     TipOrder,
+    /// 繰り返し方法を写したが、折り返し・ランダムに一巡は近い動き（端の筆先の扱い・並べ替えの中身が、公式の説明で決まらない）。
+    TipOrderApprox,
+    /// 筆先の反転の値が知らない値だったので、反転しない。
+    TipFlip,
     /// 質感の素材を特定できなかった（または画像を取り出せなかった）ので、質感なし。
     TextureMissing,
     /// 質感の素材を名前で決められず、素材の並びで当てた（別の画像かもしれない）。
@@ -502,9 +515,17 @@ impl SutNote {
                 "筆先の画像は、素材の名前では決められず、素材の並びで当てた（別の画像かもしれない）".into(),
                 "The tip image could not be identified by name and was matched by the order of the materials; it may be a different image.".into(),
             ),
+            Self::TipOrderApprox => (
+                "筆先の繰り返し方法（折り返し・ランダムに一巡）は近い動きで写した".into(),
+                "The tip repeat method (Reverse, One random cycle) is carried over with a close behavior.".into(),
+            ),
+            Self::TipFlip => (
+                "筆先の反転が知らない値なので、反転しない".into(),
+                "The tip flip setting has an unknown value; the tip is not flipped.".into(),
+            ),
             Self::TipOrder => (
-                "複数の筆先を使う順序は読まず、ランダムにした".into(),
-                "The order for using several tips is not read; random order is used.".into(),
+                "複数の筆先の繰り返し方法を読めなかった（列が無い・知らない値）ので、ランダムにした".into(),
+                "The repeat method for several tips could not be read (missing or unknown value); random order is used.".into(),
             ),
             Self::TextureMissing => (
                 "質感の素材を特定できなかった（または画像を取り出せなかった）ので、質感なし".into(),

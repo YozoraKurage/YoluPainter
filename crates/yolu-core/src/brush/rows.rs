@@ -190,11 +190,23 @@ unsafe fn accumulate<V: Lanes32>(previous: V::F, ceiling: V::F, flow: V::F) -> V
     }
 }
 
-/// 1 画素の [`accumulate`]。
+/// 比較暗の重ね方: このダブだけで届く値（天井 × min(1, 流量)）と前の値の、大きい方を残す（足していかない）。
 #[inline(always)]
-pub(super) fn accumulate32(previous: f32, ceiling: f32, flow: f32) -> f32 {
+unsafe fn keep_darker<V: Lanes32>(previous: V::F, ceiling: V::F, flow: V::F) -> V::F {
+    unsafe { V::max(previous, V::mul(ceiling, V::min(V::splat(1.0), flow))) }
+}
+
+/// 1 画素の [`accumulate`]（`darken` なら [`keep_darker`]）。
+#[inline(always)]
+pub(super) fn settle32(darken: bool, previous: f32, ceiling: f32, flow: f32) -> f32 {
     // SAFETY: 1 本のレーンは CPU の前提を持たない
-    unsafe { accumulate::<Scalar1>(previous, ceiling, flow) }
+    unsafe {
+        if darken {
+            keep_darker::<Scalar1>(previous, ceiling, flow)
+        } else {
+            accumulate::<Scalar1>(previous, ceiling, flow)
+        }
+    }
 }
 
 /// 下 start に描く色 color を量 amount で Normal で重ねる（`crate::blend` の Normal の N 画素の式。何も変わらなければ start）。
@@ -682,6 +694,8 @@ pub(super) struct Dab32 {
     density: Option<f32>,
     /// 指先の強さ（流量への倍率）
     strength: Option<f32>,
+    /// ダブの重なりを比較暗にする（覆いを足さず、大きい方を残す）。
+    darken: bool,
 }
 
 impl Dab32 {
@@ -697,6 +711,19 @@ impl Dab32 {
                 EffectKind::Smudge(strength) => Some(strength as f32),
                 _ => None,
             },
+            darken: p.darken,
+        }
+    }
+
+    /// ストロークの覆いを、このダブの天井と流量で更新する（普通は天井へ寄せる。比較暗なら大きい方を残す）。
+    #[inline(always)]
+    unsafe fn settle<V: Lanes32>(&self, previous: V::F, ceiling: V::F, flow: V::F) -> V::F {
+        unsafe {
+            if self.darken {
+                keep_darker::<V>(previous, ceiling, flow)
+            } else {
+                accumulate::<V>(previous, ceiling, flow)
+            }
         }
     }
 
@@ -752,6 +779,7 @@ pub(super) fn ceiling_and_flow32(
         pressure_flow: pressure.flow as f32,
         density: density.map(|v| v as f32),
         strength: smudge.map(|v| v as f32),
+        darken: false,
     };
     // SAFETY: 1 本のレーンは CPU の前提を持たない
     unsafe {
@@ -1641,7 +1669,7 @@ unsafe fn paint_blocks<V: Slice32>(
                 *held = Some(new_stroke_tile(cx, live, true)?);
             }
             let st = held.as_mut().expect("直前に作った");
-            let accumulated = accumulate::<V>(previous, ceiling, flow);
+            let accumulated = dab.settle::<V>(previous, ceiling, flow);
             V::store_f32(
                 &mut st.wash[local..],
                 V::select(active, accumulated, previous),
