@@ -933,9 +933,9 @@ fn walk_direct_writes(make: fn() -> (Document, Vec<LayerId>), seeds: u64, steps:
 #[test]
 fn direct_writes_never_show_stale_output_next_to_anchors_and_mask_filters() {
     let deltas = walk_direct_writes(anchor_world, 12, 100);
-    assert!(deltas > 1000, "試験が動かしていない: {deltas}");
+    assert!(deltas > 1000, "テストが動かしていない: {deltas}");
     let deltas = walk_direct_writes(grouped_anchor_world, 8, 100);
-    assert!(deltas > 500, "試験が動かしていない: {deltas}");
+    assert!(deltas > 500, "テストが動かしていない: {deltas}");
 }
 
 /// 近傍のフィルター（ぼかし・方向のぼかし・モルフォロジー・グロー）と全域の段（正規化）を置いた文書: 書いたタイルの届く範囲のブロックが評価し直されて、

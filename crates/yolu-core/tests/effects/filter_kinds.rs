@@ -1033,7 +1033,7 @@ fn in_a_document_the_stages_composite_like_the_whole_image_and_follow_resizes() 
 
 // ───────── 半径・長さの端で同じバイト ─────────
 
-/// FNV-1a（試験の中で出力のバイト列を 1 つの数にする）。
+/// FNV-1a（テストの中で出力のバイト列を 1 つの数にする）。
 fn fnv(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
