@@ -2312,6 +2312,49 @@ fn a_horizontal_thickness_on_an_image_tip_is_reported_not_mapped() {
 }
 
 #[test]
+fn a_horizontal_full_thickness_with_a_thickness_influence_still_turns_the_tip() {
+    // 厚さ 100 でも、厚さの影響元（筆圧）が入っていれば筆圧の弱いところで潰れて楕円になるので、向きの違いが形に出る
+    let influence = || ("BrushThicknessEffector", blob(effector(44, 0x10, 40, &[])));
+    let b = one(&[
+        ("BrushThickness", int(100)),
+        ("BrushVerticalThicknes", int(0)),
+        influence(),
+    ]);
+    assert!(b.brush.influences.roundness.pressure.on);
+    assert_eq!((b.brush.tip.angle, b.brush.tip.roundness), (90.0, 1.0));
+    assert!(mapped(&b, SutMapped::ThicknessDirection));
+    // 垂直なら向きは足さない
+    let b = one(&[
+        ("BrushThickness", int(100)),
+        ("BrushVerticalThicknes", int(1)),
+        influence(),
+    ]);
+    assert_eq!(b.brush.tip.angle, 0.0);
+    // 画像の筆先は回さずに知らせる
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), material_with_thumbnail(&tip_png()))
+        .brush(
+            "T",
+            1,
+            &[
+                ("BrushUsePatternImage", int(1)),
+                (
+                    "BrushPatternImageArray",
+                    blob(refs(&[["tip_a.png", "cat/aaaa", "tip_a"]])),
+                ),
+                ("BrushThickness", int(100)),
+                ("BrushVerticalThicknes", int(0)),
+                influence(),
+            ],
+        )
+        .build();
+    let b = &ok(&file).brushes[0];
+    assert!(b.brush.tip.image.is_some());
+    assert_eq!(b.brush.tip.angle, 0.0, "画像は回さない");
+    assert!(has(b, SutNote::ThicknessDirection));
+}
+
+#[test]
 fn texture_composite_modes_map_by_name_and_the_others_are_reported() {
     use yolu_core::TextureMode as M;
     let png = png_gray(1, 1, &[128]);

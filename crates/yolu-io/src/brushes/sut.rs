@@ -661,7 +661,7 @@ fn tip_direction(
 /// 厚さの適用方向（`BrushVerticalThicknes`。0 水平・1 垂直）。エンジンの真円率は、角度 0 のとき縦の軸を潰す（横長の楕円）。垂直（既定）は
 /// それと同じ向きなので何もしない。水平は潰す軸が 90 度違うので、丸い筆先は角度に 90 度を足して写す（楕円を回すだけで、ほかの向きの設定と
 /// 同じ角度に足されるので矛盾しない）。画像の筆先は、画像も回ってしまい形が変わるので写さずに知らせる。潰していない（真円率 1）ときは
-/// 向きの違いが形に出ないので何もしない。
+/// 向きの違いが形に出ないので何もしないが、真円率の影響元が入っていれば、筆圧などで潰れたときに形に出るので写す（影響元は先に写してある）。
 fn thickness_direction(
     row: &Row,
     brush: &mut Brush,
@@ -669,7 +669,7 @@ fn thickness_direction(
     mapped: &mut Vec<SutMapped>,
 ) {
     let horizontal = row.first_number(THICKNESS_DIRECTION) == Some(0.0);
-    if !horizontal || brush.tip.roundness >= 1.0 {
+    if !horizontal || (brush.tip.roundness >= 1.0 && !brush.influences.roundness.is_on()) {
         return;
     }
     if brush.tip.image.is_some() || !brush.tip.images.is_empty() {
