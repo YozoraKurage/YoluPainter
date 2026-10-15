@@ -194,6 +194,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
         Category::Jitter => brush.jitter = Jitter::default(),
         Category::Texture => {
             brush.texture = None;
+            brush.influences.texture_density = Influence::OFF;
             app.m2.texture_prefs = m2::TexturePrefs::default();
         }
         Category::Dual => {
@@ -1723,4 +1724,94 @@ fn tip_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Cont
 pub fn stencil_tab(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let ctx = ui.ctx().clone();
     super::stencil_props::stencil_tab(ui, app, rows, &ctx);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::brushes::store::{decode_user, encode};
+    use crate::brushes::{canonical, Group, UserBrush};
+
+    fn all_inputs_on(influence: &mut Influence) {
+        influence.pressure = InputUse::STRAIGHT;
+        influence.tilt = InputUse::STRAIGHT;
+        influence.speed = InputUse::STRAIGHT;
+        influence.random = InputUse::STRAIGHT;
+    }
+
+    #[test]
+    fn resetting_the_texture_category_also_drops_the_texture_density_influence() {
+        let mut app = AppState::new(64, 64);
+        all_inputs_on(&mut app.m2.brush.influences.texture_density);
+        app.m2_ui(UiOp::Brush(BrushOp::Texture(Some("grain"))));
+        assert!(app.m2.brush.texture.is_some());
+        reset_category(&mut app, Category::Texture);
+        assert!(app.m2.brush.texture.is_none());
+        assert!(app.m2.brush.influences.texture_density.is_default());
+        // 画像を選び直しても、画面で外せない影響元が効かない
+        app.m2_ui(UiOp::Brush(BrushOp::Texture(Some("dots"))));
+        assert!(app.m2.brush.texture.is_some());
+        assert!(!app.m2.brush.influences.texture_density.is_on());
+        // 保存して読み戻しても同じ
+        let user = UserBrush {
+            id: 1,
+            name: "テスト".into(),
+            group: Group::Pen,
+            brush: canonical(&app.m2.brush),
+            import: None,
+            assist: None,
+        };
+        let encoded = encode(&user).unwrap();
+        assert!(!encoded.text.contains("influence.texture_density"));
+        let back = decode_user(&encoded.text, &mut |_| {
+            unreachable!("画像のファイルを要しない")
+        })
+        .unwrap()
+        .brush;
+        assert_eq!(back, user.brush);
+        assert!(!back.influences.texture_density.is_on());
+    }
+
+    #[test]
+    fn every_influence_item_returns_to_off_with_the_category_that_shows_it() {
+        let mut app = AppState::new(64, 64);
+        for item in [
+            Item::Size,
+            Item::Opacity,
+            Item::Flow,
+            Item::Hardness,
+            Item::Roundness,
+            Item::TextureDensity,
+            Item::MixPaint,
+            Item::MixDensity,
+        ] {
+            all_inputs_on(app.m2.brush.influences.get_mut(item));
+        }
+        // そのカテゴリの項目だけが戻り、ほかのカテゴリの項目は残る
+        let owned = |category: Category| -> &'static [Item] {
+            match category {
+                Category::Shape => &[Item::Roundness],
+                Category::Texture => &[Item::TextureDensity],
+                Category::Mix => &[Item::MixPaint, Item::MixDensity],
+                _ => &[],
+            }
+        };
+        for category in [Category::Shape, Category::Texture, Category::Mix] {
+            reset_category(&mut app, category);
+            for &item in owned(category) {
+                assert!(
+                    app.m2.brush.influences.get(item).is_default(),
+                    "{category:?} {item:?}"
+                );
+            }
+        }
+        // 筆圧と動きのカテゴリが、残る 4 項目（大きさ・不透明度・流量・硬さ）の入力を戻す
+        reset_category(&mut app, Category::Pressure);
+        reset_category(&mut app, Category::Dynamics);
+        for item in [Item::Size, Item::Opacity, Item::Flow, Item::Hardness] {
+            let i = app.m2.brush.influences.get(item);
+            assert!(!i.tilt.on && !i.speed.on && !i.random.on, "{item:?}");
+            assert!(!i.pressure.on, "{item:?}");
+        }
+    }
 }
