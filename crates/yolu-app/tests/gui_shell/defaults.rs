@@ -552,6 +552,107 @@ fn saving_and_opening_a_project_put_it_first_and_choosing_it_opens_it() {
     assert_eq!(Recent::load(Some(conf)).items(), [a, b]);
 }
 
+/// 最近のプロジェクトを選んだあと、フレームを進めた先を確かめる準備: 中身の違う 2 つのプロジェクトのファイル（`a.ylp`・`b.ylp`）を書き、
+/// 問いのウィンドウを許したアプリ（今の文書は「here」のレイヤーを持つ）の一覧に両方を入れる（a が先）。
+fn recent_app(
+    tag: &str,
+) -> (
+    egui_kittest::Harness<'static, yolu_app::YoluApp>,
+    [std::path::PathBuf; 2],
+) {
+    use yolu_app::recent::Recent;
+    use yolu_app::state::Action;
+    let dir = common::tmp::test_dir(tag);
+    let files = ["a", "b"].map(|name| dir.join(format!("{name}.ylp")));
+    for (file, layer) in files.iter().zip(["from-a", "from-b"]) {
+        let mut s = AppState::new(32, 32);
+        s.doc.add_layer(layer).unwrap();
+        s.apply(Action::SaveProjectAs(file.clone()));
+        s.wait_save();
+        assert!(file.is_file());
+    }
+    let mut h = common::app(1000.0, 700.0, 128);
+    h.state_mut().set_discard_window(true);
+    *h.recent_projects_mut() = Recent::load(Some(dir.join("recent.conf")));
+    for file in &files {
+        h.recent_projects_mut().add(file);
+    }
+    h.app_mut().doc.add_layer("here").unwrap();
+    h.run();
+    (h, files)
+}
+
+fn layer_names(h: &impl Drive) -> Vec<String> {
+    h.app()
+        .doc
+        .layers()
+        .iter()
+        .map(|l| l.name().to_owned())
+        .collect()
+}
+
+#[test]
+fn choosing_a_recent_project_without_changes_opens_it_and_moves_it_to_the_front() {
+    use yolu_app::state::Action;
+    let (mut h, [a, b]) = recent_app("recent-pick-clean");
+    assert_eq!(paths(&h), [b.clone(), a.clone()], "後に足した b が先");
+    h.act(Action::OpenRecent(a.clone()));
+    h.run();
+    assert!(h.discard_ask().is_none(), "変更が無ければ聞かない");
+    assert!(h.dialog_request().is_none(), "頼みは当たって消える");
+    assert!(layer_names(&h).contains(&"from-a".into()), "a を開いた");
+    assert!(!layer_names(&h).contains(&"here".into()));
+    assert!(!h.modified());
+    assert!(h.message().contains("開きました"), "{}", h.message());
+    assert_eq!(paths(&h), [a, b], "開いたプロジェクトが一覧の先頭へ");
+}
+
+#[test]
+fn choosing_a_recent_project_over_unsaved_changes_asks_and_each_answer_keeps_or_discards_them() {
+    use yolu_app::state::Action;
+    for answer in ["変更を確認", "キャンセル", "変更を破棄"] {
+        let (mut h, [a, b]) = recent_app("recent-pick-dirty");
+        h.set_modified(true);
+        h.act(Action::OpenRecent(a.clone()));
+        h.run();
+        assert!(h.discard_ask().is_some(), "{answer}: 開く前に聞く");
+        assert!(
+            layer_names(&h).contains(&"here".into()) && !layer_names(&h).contains(&"from-a".into()),
+            "{answer}: 答えるまで開かない: {:?}",
+            layer_names(&h)
+        );
+        assert_eq!(
+            paths(&h),
+            [b.clone(), a.clone()],
+            "{answer}: 一覧もそのまま"
+        );
+        press(&mut h, answer);
+        assert!(h.discard_ask().is_none(), "{answer}: 問いは閉じる");
+        h.run();
+        if answer == "変更を破棄" {
+            assert!(layer_names(&h).contains(&"from-a".into()), "{answer}: 開く");
+            assert!(
+                !layer_names(&h).contains(&"here".into()),
+                "{answer}: 変更は捨てた"
+            );
+            assert!(!h.modified());
+            assert_eq!(paths(&h), [a, b], "{answer}: 一覧の先頭へ");
+        } else {
+            assert!(
+                layer_names(&h).contains(&"here".into()),
+                "{answer}: 変更を保つ"
+            );
+            assert!(
+                !layer_names(&h).contains(&"from-a".into()),
+                "{answer}: 開かない"
+            );
+            assert!(h.modified(), "{answer}");
+            assert_eq!(paths(&h), [b, a], "{answer}: 一覧もそのまま");
+        }
+        assert!(h.dialog_request().is_none(), "{answer}: 頼みは残らない");
+    }
+}
+
 #[test]
 fn the_file_menu_has_a_nested_open_recent_under_open_that_is_off_while_the_list_is_empty() {
     use yolu_app::recent::Recent;
