@@ -3194,6 +3194,33 @@ fn the_color_change_target_and_out_of_range_values_are_read() {
 }
 
 #[test]
+fn a_color_target_without_a_tip_or_stroke_change_is_not_carried() {
+    // 先端もストロークごとも切のブラシは、変化対象が メインとサブ（0）・サブ（2）でもメインのまま。色の変化を使わない
+    for value in [0, 2] {
+        let b = one_color(&[
+            ("BrushChangePatternColor", int(0)),
+            ("BrushChangeStrokeColor", int(0)),
+            ("BrushChangeColorTarget", int(value)),
+        ]);
+        assert_eq!(
+            b.brush.color.target,
+            yolu_core::ColorTarget::Main,
+            "{value}"
+        );
+        assert_eq!(
+            b.brush.color,
+            yolu_core::ColorDynamics::default(),
+            "{value}"
+        );
+        assert!(!mapped(&b, SutMapped::ColorChange), "{value}");
+        assert!(
+            !has(&b, SutNote::ColorApprox(ColorNote::TargetSub)),
+            "{value}"
+        );
+    }
+}
+
+#[test]
 fn the_color_change_influences_are_read_with_a_signed_minimum() {
     let mut cells = color_cells(true, false);
     cells.extend([

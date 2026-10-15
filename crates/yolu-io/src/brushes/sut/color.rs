@@ -69,11 +69,14 @@ pub(super) fn color_change(
     let tip_on = row.on(TIP_FLAG);
     let stroke_on = row.on(STROKE_FLAG);
     let c = &mut brush.color;
-    c.target = match row.first_number(TARGET) {
-        Some(0.0) => ColorTarget::MainAndSub,
-        Some(2.0) => ColorTarget::Sub,
-        _ => ColorTarget::Main,
-    };
+    // 変化対象は、先端かストロークごとの色の変化を写すときだけ写す（使わないブラシはメインのままで、.ylbrush がバージョン 8 にならない）
+    if tip_on || stroke_on {
+        c.target = match row.first_number(TARGET) {
+            Some(0.0) => ColorTarget::MainAndSub,
+            Some(2.0) => ColorTarget::Sub,
+            _ => ColorTarget::Main,
+        };
+    }
     if tip_on {
         c.tip = Some(TipColorChange {
             hue: value(row, HUE, 1.0, -360.0, 360.0),
