@@ -102,7 +102,7 @@ fn centers(pixels: &[u8]) -> Vec<[u8; 4]> {
 fn same_colors_in_2d_and_3d(name: &str, brush: &Brush) {
     let a = centers(&draw_2d(brush));
     let b = centers(&draw_3d(brush));
-    assert_eq!(a.len(), 10, "{name}: 試験の前提: ダブの数 {a:?}");
+    assert_eq!(a.len(), 10, "{name}: テストの前提: ダブの数 {a:?}");
     assert_eq!(a.len(), b.len(), "{name}: ダブの数");
     for (i, (p, q)) in a.iter().zip(&b).enumerate() {
         let d = p.iter().zip(q).map(|(x, y)| x.abs_diff(*y)).max().unwrap();
@@ -124,7 +124,7 @@ fn the_dab_colors_of_a_change_match_between_2d_and_3d() {
     let colors = centers(&draw_2d(&tip));
     assert!(
         colors.windows(2).filter(|w| w[0] != w[1]).count() >= 6,
-        "試験の前提: 色が散る {colors:?}"
+        "テストの前提: 色が散る {colors:?}"
     );
     same_colors_in_2d_and_3d("先端のランダム", &tip);
 

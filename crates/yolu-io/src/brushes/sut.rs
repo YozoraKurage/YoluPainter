@@ -1247,7 +1247,7 @@ fn unrepresented_flags(row: &Row, notes: &mut Vec<Unrepresented>) {
         (DUAL, SutNote::DualBrush),
         (BLEND_MODE, SutNote::BlendMode),
     ] {
-        // 旗の列も、色の変化の値の列も、「0 でない数が 1 つでもある」で知る
+        // 旗の列も、「0 でない数が 1 つでもある」で知る
         if columns
             .iter()
             .any(|c| row.number(c).is_some_and(|v| v != 0.0))

@@ -544,7 +544,7 @@ fn write_color_change(w: &mut Writer, b: &Brush) {
     }
 }
 
-/// 影響元（版 7。使わない入力・既定の最小値と曲線は書かない。色の項目はバージョン 8）。
+/// 影響元（バージョン 7。使わない入力・既定の最小値と曲線は書かない。色の項目はバージョン 8）。
 fn write_influences(w: &mut Writer, b: &Brush) {
     let item_keys = Item::ALL
         .into_iter()
@@ -1194,7 +1194,7 @@ fn read_color_change(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// 版 7 の影響元（項目ごと・入力ごとの `.on`・`.min`・`.curve`）を読む。色の項目はバージョン 8 の項目。
+/// バージョン 7 の影響元（項目ごと・入力ごとの `.on`・`.min`・`.curve`）を読む。色の項目はバージョン 8 の項目。
 fn read_influences(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreError> {
     for item in Item::ALL {
         for input in Input::ALL {

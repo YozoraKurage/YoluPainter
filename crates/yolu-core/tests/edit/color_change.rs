@@ -110,7 +110,7 @@ fn a_random_minimum_of_minus_one_scatters_the_hue_on_both_sides_within_the_value
             b.seed = seed;
             hues.extend(upright(&b).into_iter().map(hue_degrees));
         }
-        assert!(hues.len() > 300, "試験の前提: ダブの数 {}", hues.len());
+        assert!(hues.len() > 300, "テストの前提: ダブの数 {}", hues.len());
         let (lo, hi) = hues
             .iter()
             .fold((f64::MAX, f64::MIN), |(l, h), &v| (l.min(v), h.max(v)));
@@ -326,7 +326,7 @@ fn an_unused_change_leaves_the_photoshop_style_colors_and_the_bytes_alone() {
     assert_eq!(upright(&zero), expected);
     assert!(
         expected.windows(2).any(|w| w[0] != w[1]),
-        "試験の前提: ゆらぐ"
+        "テストの前提: ゆらぐ"
     );
 }
 
@@ -342,7 +342,10 @@ fn a_constant_change_applies_on_top_of_each_photoshop_style_color() {
     };
     b.seed = 3;
     let plain = upright(&b);
-    assert!(plain.windows(2).any(|w| w[0] != w[1]), "試験の前提: ゆらぐ");
+    assert!(
+        plain.windows(2).any(|w| w[0] != w[1]),
+        "テストの前提: ゆらぐ"
+    );
     // 一定のサブ描画色混合率 1: どのダブもサブ描画色（Photoshop の形の色は上書きされる）
     b.color.sub_mix = 1.0;
     assert!(upright(&b).iter().all(|c| *c == WHITE));
@@ -449,4 +452,39 @@ fn the_color_math_matches_the_textbook_conversion() {
             255
         )
     );
+}
+
+#[test]
+fn undo_and_redo_of_a_stroke_with_a_random_color_change_restore_the_exact_bytes() {
+    let mut b = with_tip(dots(BASE), 90.0, 0.4, 0.4);
+    b.color.secondary = WHITE;
+    b.color.sub_mix = 0.6;
+    b.influences.color_hue.random = used(-1.0);
+    b.influences.color_value.random = used(-1.0);
+    b.influences.color_sub_mix.random = used(0.0);
+    b.seed = 7;
+    let mut d = Document::with_tile_size(WIDTH, 8, 16).unwrap();
+    let l = d.add_layer("L").unwrap();
+    d.clear_history().unwrap();
+    let before = d.composite(d.bounds()).unwrap();
+    let mut s = d.begin_brush_stroke(l, &b).unwrap();
+    for i in 0..((WIDTH - 16) / 8) {
+        let x = 8.0 + 8.0 * i as f64;
+        s.add_sample(
+            &mut d,
+            BrushSample::new(x, 4.0, 1.0, 0.0, DVec2::ZERO).unwrap(),
+        )
+        .unwrap();
+    }
+    d.end_stroke(s).unwrap();
+    let drawn = d.composite(d.bounds()).unwrap();
+    assert_ne!(drawn, before, "テストの前提: 描けている");
+    // 色がダブごとにゆらいでいる（元に戻すだけで済む 1 色の線ではない）
+    let colors: std::collections::HashSet<_> =
+        drawn.chunks_exact(4).filter(|p| p[3] != 0).collect();
+    assert!(colors.len() > 20, "テストの前提: 色が散る {}", colors.len());
+    assert!(d.undo().unwrap());
+    assert_eq!(d.composite(d.bounds()).unwrap(), before, "Undo で描く前");
+    assert!(d.redo().unwrap());
+    assert_eq!(d.composite(d.bounds()).unwrap(), drawn, "Redo で描いた後");
 }
