@@ -3,6 +3,7 @@
 
 pub mod canvas_device;
 pub mod core_refused;
+pub mod drive;
 pub mod fbx;
 pub mod gpu_thread;
 pub mod livelink;
