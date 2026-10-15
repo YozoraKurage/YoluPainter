@@ -1021,6 +1021,92 @@ fn check_rows_from(
         }
     }
 }
+/// チャンネルの矩形（幅 × 高さ）の中の窓（x は `x0..x1`、y は `y0..y1`。矩形の左上が原点）。
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Window {
+    pub x0: usize,
+    pub x1: usize,
+    pub y0: usize,
+    pub y1: usize,
+}
+impl Window {
+    pub(super) fn width(&self) -> usize {
+        self.x1 - self.x0
+    }
+    pub(super) fn height(&self) -> usize {
+        self.y1 - self.y0
+    }
+}
+/// `decode` の、矩形の中の窓だけを `out`（窓の幅 × stride のバイトの行が上から並ぶ面）の component へ書く形。矩形全体の面は持たず、1 行ずつ展開して窓を写す
+/// （キャンバスよりずっと大きなレイヤーを、全画素のメモリを取らずに読む）。書く値・誤り・知らせは `decode` と同じ。窓の外に 0 でない値があれば true。
+pub(super) fn decode_window(
+    mut r: Reader,
+    w: u32,
+    h: u32,
+    window: Window,
+    out: &mut [u8],
+    component: usize,
+    stride: usize,
+    s: &mut State,
+) -> Result<bool> {
+    let compression = r.u16()?;
+    let (w, h) = (w as usize, h as usize);
+    let mut outside = false;
+    let mut visit = |y: usize, row: &[u8]| {
+        if (window.y0..window.y1).contains(&y) {
+            let dest = &mut out[(y - window.y0) * window.width() * stride..];
+            for (i, v) in row[window.x0..window.x1].iter().enumerate() {
+                dest[i * stride + component] = *v;
+            }
+            outside |= row[..window.x0].iter().any(|v| *v != 0)
+                || row[window.x1..].iter().any(|v| *v != 0);
+        } else {
+            outside |= row.iter().any(|v| *v != 0);
+        }
+    };
+    match compression {
+        0 => {
+            check(r.remaining() == w * h, "raw チャンネル長が矩形と不一致です")?;
+            for y in 0..h {
+                visit(y, r.take(w)?);
+            }
+        }
+        1 => {
+            let mut table = r.slice(h * 2)?;
+            let mut row = vec![0u8; w];
+            for y in 0..h {
+                let n = table.u16()? as usize;
+                packbits(r.slice(n)?, w, &mut row, 0, 1)?;
+                visit(y, &row);
+            }
+            check(r.remaining() == 0, "RLE チャンネルに余分なデータ")?
+        }
+        2 | 3 if s.copy.is_some() => {
+            if w > 0 && h > 0 {
+                let mut zlib = flate2::read::ZlibDecoder::new(&r.data[r.pos..r.end]);
+                let mut row = vec![0u8; w];
+                for y in 0..h {
+                    zlib.read_exact(&mut row)
+                        .map_err(|_| Error::InvalidData("ZIP チャンネルを展開できません".into()))?;
+                    if compression == 3 {
+                        // 予測: 行の中で、左の画素との差で持っている
+                        for x in 1..w {
+                            row[x] = row[x].wrapping_add(row[x - 1])
+                        }
+                    }
+                    visit(y, &row);
+                }
+            }
+        }
+        _ => s.preserve(
+            "Compression",
+            format!("未対応の圧縮 {compression}"),
+            r.pos - 2,
+            0,
+        ),
+    }
+    Ok(outside)
+}
 /// `decode` の、無圧縮・RLE のチャンネルを行ごとに並べて復号する形（ほかの圧縮は `decode` で 1 本ずつ）。書く値・誤り・知らせは `decode` と同じ。
 pub(super) fn decode_rows(
     r: Reader,

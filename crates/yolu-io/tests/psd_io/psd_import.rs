@@ -444,6 +444,86 @@ impl Psd {
     }
 }
 
+/// 一様な色の大きなレイヤー 1 枚だけの PSD（RLE。画素の面を作らずに行を直に書くので、辺が数万のレイヤーも小さなファイルにできる）。
+/// `rect` は上・左・下・右。統合画像は白（無圧縮）。
+fn uniform_layer_psd(
+    width: u32,
+    height: u32,
+    rect: (i32, i32, i32, i32),
+    rgba: [u8; 4],
+) -> Vec<u8> {
+    let w = (rect.3 - rect.1) as usize;
+    let h = (rect.2 - rect.0) as usize;
+    let rle_row = |v: u8| -> Vec<u8> {
+        let mut row = Vec::new();
+        for _ in 0..w / 128 {
+            row.extend([0x81, v]);
+        }
+        match w % 128 {
+            0 => {}
+            1 => row.extend([0, v]),
+            r => row.extend([(1 - r as i16) as i8 as u8, v]),
+        }
+        row
+    };
+    let planes: Vec<Vec<u8>> = [rgba[0], rgba[1], rgba[2], rgba[3]]
+        .iter()
+        .map(|&v| {
+            let row = rle_row(v);
+            let mut ch = be16(1).to_vec();
+            for _ in 0..h {
+                ch.extend(be16(row.len() as u16));
+            }
+            for _ in 0..h {
+                ch.extend(&row);
+            }
+            ch
+        })
+        .collect();
+    let mut info = be16(1).to_vec();
+    for v in [rect.0, rect.1, rect.2, rect.3] {
+        info.extend(be32(v as u32));
+    }
+    info.extend(be16(4));
+    for (id, plane) in [0i16, 1, 2, -1].iter().zip(&planes) {
+        info.extend(be16(*id as u16));
+        info.extend(be32(plane.len() as u32));
+    }
+    info.extend(b"8BIMnorm");
+    info.extend([255, 0, 0, 0]);
+    let mut extra = Vec::new();
+    extra.extend(be32(0)); // マスクなし
+    extra.extend(be32(0)); // Blend-If なし
+    extra.extend([4, b'b', b'i', b'g', b'0', 0, 0, 0]);
+    tagged(&mut extra, b"lyid", &1i32.to_be_bytes());
+    info.extend(be32(extra.len() as u32));
+    info.extend(extra);
+    for plane in &planes {
+        info.extend(plane);
+    }
+    if info.len() % 2 == 1 {
+        info.push(0)
+    }
+    let mut lm = be32(info.len() as u32).to_vec();
+    lm.extend(info);
+    lm.extend(be32(0)); // 全体マスクなし
+    let mut out = b"8BPS".to_vec();
+    out.extend(be16(1));
+    out.extend([0; 6]);
+    out.extend(be16(3));
+    out.extend(be32(height));
+    out.extend(be32(width));
+    out.extend(be16(8));
+    out.extend(be16(3));
+    out.extend(be32(0)); // 色モードデータ
+    out.extend(be32(0)); // 画像リソース
+    out.extend(be32(lm.len() as u32));
+    out.extend(lm);
+    out.extend(be16(0));
+    out.extend(vec![255u8; width as usize * height as usize * 3]);
+    out
+}
+
 fn run(bytes: &[u8], budget: u64) -> CopyOutcome {
     run_with(bytes, budget, None)
 }
@@ -1927,6 +2007,93 @@ fn a_layer_name_over_the_limit_is_cut_and_told_instead_of_refusing_the_whole_fil
     assert_eq!(kept.encode_utf16().count(), limit - 1);
     assert!(kept.starts_with('a') && kept.chars().skip(1).all(|c| c == '\u{20bb7}'));
     assert!(note(&notes, ImportFeature::LayerNameTruncated).is_some());
+}
+
+#[test]
+fn a_layer_over_the_canvas_edge_keeps_the_same_pixels_in_every_compression() {
+    // 4×4 のキャンバスに、四辺のすべてからはみ出す 9×7 のレイヤー（場所 (-3, -2)）。画素は場所ごとに違う値
+    let shaped = |compression: u16, outside_alpha: u8| {
+        let mut l = red("はみ出す", (-2, -3, 5, 6));
+        l.compression = compression;
+        for y in 0..7usize {
+            for x in 0..9usize {
+                let inside = (3..7).contains(&x) && (2..6).contains(&y);
+                let i = (y * 9 + x) * 4;
+                let alpha = if inside { 255 } else { outside_alpha };
+                l.rgba[i..i + 4].copy_from_slice(&[x as u8 * 10 + 1, y as u8 * 10 + 1, 7, alpha]);
+            }
+        }
+        l
+    };
+    for compression in 0..=3u16 {
+        let (d, notes) = imported(&Psd::new(4, 4, vec![shaped(compression, 0)]).build());
+        for (cx, cy) in [(0u32, 0u32), (3, 0), (0, 3), (3, 3), (1, 2)] {
+            assert_eq!(
+                pixel(&d, "はみ出す", cx, cy),
+                [(cx as u8 + 3) * 10 + 1, (cy as u8 + 2) * 10 + 1, 7, 255],
+                "圧縮 {compression} の ({cx}, {cy})"
+            );
+        }
+        assert!(
+            note(&notes, ImportFeature::OutsideCanvas).is_none(),
+            "圧縮 {compression}: 外が透明なら知らせない"
+        );
+        // 外にも見える画素があれば、切り捨てたものとして知らせる（中の画素は同じ）
+        let (d, notes) = imported(&Psd::new(4, 4, vec![shaped(compression, 9)]).build());
+        assert_eq!(pixel(&d, "はみ出す", 2, 1), [51, 31, 7, 255]);
+        assert!(
+            note(&notes, ImportFeature::OutsideCanvas).is_some(),
+            "圧縮 {compression}"
+        );
+    }
+    // キャンバスにかからないレイヤーも、圧縮によらず取り込める（透明なら知らせず、見える画素があれば知らせる）
+    for compression in 0..=3u16 {
+        for (alpha, told) in [(0u8, false), (200, true)] {
+            let mut l = L::new("外", (10, 10, 13, 13), [1, 2, 3, alpha]);
+            l.compression = compression;
+            let (d, notes) = imported(&Psd::new(4, 4, vec![l]).build());
+            assert_eq!(pixel(&d, "外", 0, 0)[3], 0);
+            assert_eq!(
+                note(&notes, ImportFeature::OutsideCanvas).is_some(),
+                told,
+                "圧縮 {compression}・アルファ {alpha}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_layer_far_bigger_than_the_canvas_is_cut_while_reading_so_it_fits_the_budget() {
+    // 512² のキャンバスに 8192² のレイヤー（全画素が見える赤）。丸ごと持てば 256 MiB だが、取り込みはキャンバスの中だけを持つので、予算 64 MiB に収まる
+    let bytes = uniform_layer_psd(512, 512, (-3000, -3000, 5192, 5192), [255, 0, 0, 255]);
+    assert!(bytes.len() < 8 * MIB as usize, "{} バイト", bytes.len());
+    let (d, notes) = match run(&bytes, 64 * MIB) {
+        CopyOutcome::Imported(i) => (i.document, i.notes),
+        CopyOutcome::Refused(why) => panic!("断られた: {}", why.message()),
+    };
+    assert_eq!((d.width(), d.height(), d.layers().len()), (512, 512, 1));
+    for (x, y) in [(0, 0), (511, 0), (0, 511), (511, 511), (256, 256)] {
+        assert_eq!(pixel(&d, "big0", x, y), [255, 0, 0, 255], "({x}, {y})");
+    }
+    // 外にも見える画素があるので、切り捨てたものとして知らせる
+    let n = note(&notes, ImportFeature::OutsideCanvas).unwrap_or_else(|| panic!("{notes:?}"));
+    assert_eq!(
+        (n.action, n.layers.clone()),
+        (ImportAction::Dropped, vec!["big0".to_string()])
+    );
+    // 読んだ文書の PSD は、元のバイトに触れない（取り込みは読むだけ）
+    let again = bytes.clone();
+    let _ = run(&again, 64 * MIB);
+    assert_eq!(again, bytes);
+    // キャンバスにかからないレイヤーは、画素を持たずに（見える画素があれば知らせて）取り込む
+    let away = uniform_layer_psd(512, 512, (10_000, 10_000, 18_192, 18_192), [0, 255, 0, 255]);
+    let (d, notes) = match run(&away, 64 * MIB) {
+        CopyOutcome::Imported(i) => (i.document, i.notes),
+        CopyOutcome::Refused(why) => panic!("断られた: {}", why.message()),
+    };
+    assert_eq!(d.layers().len(), 1);
+    assert_eq!(pixel(&d, "big0", 0, 0)[3], 0);
+    assert!(note(&notes, ImportFeature::OutsideCanvas).is_some());
 }
 
 /// `n` 個のグループを入れ子にして、一番内側にレイヤー 1 枚を置いた PSD。

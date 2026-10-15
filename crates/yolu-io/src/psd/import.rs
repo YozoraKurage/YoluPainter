@@ -567,6 +567,30 @@ fn read_up_to<R: Read>(r: &mut R, buf: &mut [u8]) -> (usize, Option<std::io::Err
     }
     (filled, None)
 }
+/// レイヤーの矩形がキャンバスからはみ出すとき、キャンバスの中の部分（レイヤーの左上が原点）。はみ出さなければ None。キャンバスにかからなければ空の窓。
+fn canvas_window(l: &Layer, canvas_w: u32, canvas_h: u32) -> Option<read::Window> {
+    let (left, top) = (i64::from(l.left), i64::from(l.top));
+    let (right, bottom) = (left + i64::from(l.width), top + i64::from(l.height));
+    let (x0, x1) = (left.max(0), right.min(i64::from(canvas_w)));
+    let (y0, y1) = (top.max(0), bottom.min(i64::from(canvas_h)));
+    if (x0, x1, y0, y1) == (left, right, top, bottom) {
+        return None;
+    }
+    if x0 >= x1 || y0 >= y1 {
+        return Some(read::Window {
+            x0: 0,
+            x1: 0,
+            y0: 0,
+            y1: 0,
+        });
+    }
+    Some(read::Window {
+        x0: (x0 - left) as usize,
+        x1: (x1 - left) as usize,
+        y0: (y0 - top) as usize,
+        y1: (y1 - top) as usize,
+    })
+}
 fn tell<R: Seek>(r: &mut R) -> Step<u64> {
     Ok(r.stream_position()?)
 }
@@ -1110,7 +1134,18 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         let l = &mut p.rec.layer;
         let raster = kept && matches!(l.kind, LayerKind::Raster);
         let (w, hh) = (l.width, l.height);
-        let layer_bytes = u64::from(w) * u64::from(hh) * 4;
+        // キャンバスからはみ出すレイヤーは、キャンバスの中の窓だけを持つ（外の画素は 1 行ずつ展開して、見える画素があるかだけを見て捨てる）。
+        // 持つ大きさと予算の確かめは窓の大きさで行う
+        let window = if raster && w > 0 && hh > 0 {
+            canvas_window(l, width, height)
+        } else {
+            None
+        };
+        let (kept_w, kept_h) =
+            window.map_or((w, hh), |win| (win.width() as u32, win.height() as u32));
+        let layer_bytes = u64::from(kept_w) * u64::from(kept_h) * 4;
+        // 窓の外に見える画素があったか（アルファのチャンネルを読んだときだけ決まる）
+        let mut alpha_outside: Option<bool> = None;
         if raster && layer_bytes > o.source_budget {
             return Err(Stop::Refused(CopyRefusal::LayerTooLarge {
                 layer: l.name.clone(),
@@ -1146,7 +1181,8 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         for (id, len) in channel_list {
             let wanted = match id {
                 -2 => kept && l.mask.as_ref().is_some_and(|m| m.width > 0 && m.height > 0),
-                -1..=2 => raster && layer_bytes > 0,
+                // 窓が空のレイヤーも、アルファだけは外に見える画素があるかを見るために読む
+                -1..=2 => raster && (layer_bytes > 0 || id == -1 && window.is_some()),
                 _ => false,
             };
             if !wanted {
@@ -1174,6 +1210,23 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             let decoded = if id == -2 {
                 let m = l.mask.as_mut().unwrap();
                 read::decode_rows(Reader::lenient(&buf), cw, ch, &mut m.pixels, 0, 1, &mut s)
+            } else if let Some(win) = window {
+                let component = if id == -1 { 3 } else { id as usize };
+                read::decode_window(
+                    Reader::lenient(&buf),
+                    cw,
+                    ch,
+                    win,
+                    &mut l.pixels_rgba,
+                    component,
+                    4,
+                    &mut s,
+                )
+                .map(|outside| {
+                    if id == -1 {
+                        alpha_outside = Some(outside)
+                    }
+                })
             } else {
                 let component = if id == -1 { 3 } else { id as usize };
                 read::decode_rows(
@@ -1194,6 +1247,17 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         if !kept {
             continue;
         }
+        let mut cut_visible = false;
+        if let Some(win) = window {
+            // 窓の外に見える画素があったか: アルファを読んだならその値で、読まなかった（アルファのない）レイヤーは全面が不透明なので窓の外があれば
+            cut_visible = alpha_outside
+                .unwrap_or(u64::from(kept_w) * u64::from(kept_h) < u64::from(w) * u64::from(hh));
+            // 以降は窓を、そのレイヤーの矩形として扱う（キャンバスの中に収まる）
+            l.left += win.x0 as i32;
+            l.top += win.y0 as i32;
+            l.width = kept_w;
+            l.height = kept_h;
+        }
         let name = l.name.clone();
         let budget_stop = |e: Error| match e {
             Error::Core(yolu_core::CoreError::SourceBudgetExceeded) => {
@@ -1204,6 +1268,9 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             other => Stop::Error(other),
         };
         let mut note = Vec::new();
+        if cut_visible {
+            note.push(ImportFeature::OutsideCanvas)
+        }
         let id = match &l.kind {
             LayerKind::Raster => {
                 let id = d.add_layer(&l.name)?;
