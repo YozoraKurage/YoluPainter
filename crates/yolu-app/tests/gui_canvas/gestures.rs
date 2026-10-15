@@ -3,6 +3,7 @@
 //! 効かないこと、サイドボタンの接触を egui の部品に右ボタンとして届けること。実機のペンは無いので、`PenSample` を差し込む
 //! （Windows Ink のウィンドウが詰める点の代わり）。egui の側の代わりの入力（winit の Touch とポインタ）は、`Emulate::Yes` で同じ形に作る。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -242,17 +243,17 @@ fn m_click(h: &mut H, at: Pos2) {
 }
 
 fn strokes(h: &H) -> usize {
-    h.state().state.doc.undo_count()
+    h.doc().undo_count()
 }
 
 fn nothing_started(h: &H) {
-    let s = &h.state().state;
-    assert!(!s.doc.can_undo(), "何も描かれていない");
-    assert!(!s.doc.has_active_stroke() && s.canvas.stroke.is_none());
+    let s = h.app();
+    assert!(!s.doc().can_undo(), "何も描かれていない");
+    assert!(!s.doc().has_active_stroke() && s.canvas().stroke.is_none());
 }
 
 fn view_of(h: &H) -> yolu_app::canvas::view::ViewState {
-    h.state().state.view
+    *h.view()
 }
 
 fn cursor(h: &H) -> egui::CursorIcon {
@@ -301,10 +302,7 @@ fn dragging_a_dock_tab_over_the_canvas_with_the_pen_paints_nothing() {
         path.push(offset(c, 30.0, 10.0));
         pen.drag(&mut h, &path);
         nothing_started(&h);
-        assert!(
-            h.state().state.canvas.pen_press.is_none(),
-            "離したら押しは終わる"
-        );
+        assert!(h.canvas().pen_press.is_none(), "離したら押しは終わる");
     }
 }
 
@@ -403,15 +401,12 @@ fn the_grab_of_a_dock_tab_blocks_a_stroke_until_the_frame_after_it_ends() {
     let mut h = app(1280.0, 800.0, 256);
     let c = canvas_rect(&h).center();
     // つかんでいる印（前のフレームの結果）が立っている間は、触れても描かない
-    h.state_mut().state.ui.dock_grab = [true, false];
+    h.ui_mut().dock_grab = [true, false];
     Pen::tip().drag(&mut h, &[c, offset(c, 20.0, 0.0)]);
-    assert!(!h.state().state.doc.can_undo(), "つかんでいる間は描かない");
+    assert!(!h.doc().can_undo(), "つかんでいる間は描かない");
     h.run();
     h.run();
-    assert!(
-        !h.state().state.dock_grabbed(),
-        "つかんでいなければ自然に下りる"
-    );
+    assert!(!h.app().dock_grabbed(), "つかんでいなければ自然に下りる");
     Pen::tip().drag(&mut h, &[c, offset(c, 20.0, 0.0)]);
     assert_eq!(strokes(&h), 1);
 }
@@ -468,11 +463,11 @@ fn the_pen_side_button_alt_and_ctrl_never_paint_on_the_canvas() {
             pen.drag(&mut h, &[c, offset(c, 30.0, 0.0), offset(c, 30.0, 30.0)]);
             release_mods(&mut h);
             assert!(
-                !h.state().state.doc.can_undo(),
+                !h.doc().can_undo(),
                 "{name} {}: 描かない",
                 emulate == Emulate::Yes
             );
-            assert!(h.state().state.canvas.stroke.is_none());
+            assert!(h.canvas().stroke.is_none());
         }
     }
 }
@@ -537,7 +532,7 @@ fn the_pen_pans_with_space_and_rotates_with_alt_in_steps_like_the_mouse() {
         );
         nothing_started(&h);
         // 押しの始めに Alt を持っていれば表示の回転（描かない）。15° 刻みが既定
-        h.state_mut().state.view.fit();
+        h.view_mut().fit();
         let before = view_of(&h).angle;
         hold(&mut h, Modifiers::ALT);
         let center = canvas_rect(&h).center();
@@ -557,7 +552,7 @@ fn the_pen_pans_with_space_and_rotates_with_alt_in_steps_like_the_mouse() {
         );
         nothing_started(&h);
         // Shift も押していれば自由
-        h.state_mut().state.view.fit();
+        h.view_mut().fit();
         hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
         pen.drag(&mut h, &path);
         let free = view_of(&h).angle;
@@ -568,7 +563,7 @@ fn the_pen_pans_with_space_and_rotates_with_alt_in_steps_like_the_mouse() {
         release_mods(&mut h);
         nothing_started(&h);
         // R を押しながらは、もう回さない（描く）
-        h.state_mut().state.view.fit();
+        h.view_mut().fit();
         let before = view_of(&h).angle;
         hold_key(&mut h, Key::R);
         pen.drag(&mut h, &path);
@@ -591,12 +586,7 @@ fn the_pen_with_ctrl_and_space_zooms_by_dragging_and_by_clicking() {
         hold_key(&mut h, Key::Space);
         // 右へ動かすと拡大（押した点が中心: そこの画素は動かない）
         let anchor = offset(c, 100.0, 40.0);
-        let (px, py) = h
-            .state()
-            .state
-            .view
-            .view(canvas_rect(&h), 256, 256)
-            .to_canvas(anchor);
+        let (px, py) = h.view().view(canvas_rect(&h), 256, 256).to_canvas(anchor);
         pen.drag(
             &mut h,
             &[
@@ -608,12 +598,7 @@ fn the_pen_with_ctrl_and_space_zooms_by_dragging_and_by_clicking() {
         );
         let zoom = view_of(&h).zoom;
         assert!(zoom > 1.8 && zoom < 3.0, "100 点で約 2.2 倍: {zoom}");
-        let (qx, qy) = h
-            .state()
-            .state
-            .view
-            .view(canvas_rect(&h), 256, 256)
-            .to_canvas(anchor);
+        let (qx, qy) = h.view().view(canvas_rect(&h), 256, 256).to_canvas(anchor);
         assert!(
             (px - qx).abs() < 0.01 && (py - qy).abs() < 0.01,
             "押した点の画素は動かない"
@@ -629,7 +614,7 @@ fn the_pen_with_ctrl_and_space_zooms_by_dragging_and_by_clicking() {
         );
         assert!(view_of(&h).zoom < zoom, "縮んだ");
         // 動かさずに離すとクリック: 拡大
-        h.state_mut().state.view.fit();
+        h.view_mut().fit();
         pen.drag(&mut h, &[anchor, offset(anchor, 1.0, 0.0)]);
         assert_eq!(view_of(&h).zoom, 2.0, "クリックで 2 倍");
         // Alt も押していれば縮小
@@ -639,9 +624,7 @@ fn the_pen_with_ctrl_and_space_zooms_by_dragging_and_by_clicking() {
         release_key(&mut h, Key::Space);
         release_mods(&mut h);
         nothing_started(&h);
-        assert!(
-            h.state().state.canvas.zooming.is_none() && h.state().state.canvas.pen_press.is_none()
-        );
+        assert!(h.canvas().zooming.is_none() && h.canvas().pen_press.is_none());
     }
 }
 
@@ -672,7 +655,7 @@ fn a_taken_pen_press_does_not_zoom_like_a_click_but_a_real_release_does() {
         "補った離しではクリックの拡縮をしない"
     );
     assert!(
-        h.state().state.canvas.zooming.is_none() && h.state().state.canvas.pen_press.is_none(),
+        h.canvas().zooming.is_none() && h.canvas().pen_press.is_none(),
         "押しの途中は残らない"
     );
     // 本物の離しは、同じ操作で 2 倍にする
@@ -701,7 +684,7 @@ fn the_mouse_zooms_with_ctrl_and_space_and_pans_with_space_alone() {
     );
     nothing_started(&h);
     // クリックで拡大、Ctrl+Alt+Space のクリックで縮小
-    h.state_mut().state.view.fit();
+    h.view_mut().fit();
     m_click(&mut h, anchor);
     assert_eq!(view_of(&h).zoom, 2.0);
     hold(&mut h, Modifiers::CTRL | Modifiers::ALT);
@@ -710,7 +693,7 @@ fn the_mouse_zooms_with_ctrl_and_space_and_pans_with_space_alone() {
     release_key(&mut h, Key::Space);
     release_mods(&mut h);
     // Space だけならパン（今のまま）
-    h.state_mut().state.view.fit();
+    h.view_mut().fit();
     hold_key(&mut h, Key::Space);
     m_drag(&mut h, &[c, offset(c, 25.0, 5.0)]);
     release_key(&mut h, Key::Space);
@@ -763,16 +746,14 @@ fn a_pen_press_is_not_acted_on_twice_when_the_pointer_copy_arrives_too() {
         .drag(&mut h, &[c, offset(c, 20.0, 0.0), offset(c, 40.0, 0.0)]);
     assert_eq!(strokes(&h), 1);
     // 選択のツール（矩形）: 1 つの選択範囲を 1 回の Undo で
-    h.state_mut()
-        .state
-        .apply(yolu_app::state::Action::SelectTool(
-            yolu_app::state::Tool::SelectRect,
-        ));
+    h.act(yolu_app::state::Action::SelectTool(
+        yolu_app::state::Tool::SelectRect,
+    ));
     Pen::tip()
         .emulated()
         .drag(&mut h, &[offset(c, -60.0, -60.0), offset(c, 60.0, 60.0)]);
     assert_eq!(strokes(&h), 2, "選択は 1 回の Undo");
-    assert!(h.state().state.doc.selection().is_some());
+    assert!(h.doc().selection().is_some());
 }
 
 #[test]
@@ -794,11 +775,11 @@ fn a_pen_press_is_dropped_when_the_window_loses_focus() {
     let c = canvas_rect(&h).center();
     hold_key(&mut h, Key::Space);
     Pen::tip().down(&mut h, c);
-    assert!(h.state().state.canvas.pen_press.is_some());
+    assert!(h.canvas().pen_press.is_some());
     h.event(Event::WindowFocused(false));
     h.step();
-    assert!(h.state().state.canvas.pen_press.is_none());
-    assert!(!h.state().state.canvas.panning);
+    assert!(h.canvas().pen_press.is_none());
+    assert!(!h.canvas().panning);
     release_key(&mut h, Key::Space);
 }
 
@@ -826,17 +807,15 @@ fn alt_does_not_start_a_stroke_for_the_mouse_either_and_selection_keeps_its_modi
     release_mods(&mut h);
     nothing_started(&h);
     // 選択のツールでは Shift・Ctrl は組み合わせの修飾で、ペンで触れても効く（足す）
-    h.state_mut()
-        .state
-        .apply(yolu_app::state::Action::SelectTool(
-            yolu_app::state::Tool::SelectRect,
-        ));
+    h.act(yolu_app::state::Action::SelectTool(
+        yolu_app::state::Tool::SelectRect,
+    ));
     Pen::tip().drag(&mut h, &[offset(c, -80.0, -40.0), offset(c, -20.0, 20.0)]);
-    let first = h.state().state.doc.selection().cloned().unwrap();
+    let first = h.doc().selection().cloned().unwrap();
     hold(&mut h, Modifiers::SHIFT);
     Pen::tip().drag(&mut h, &[offset(c, 20.0, -40.0), offset(c, 80.0, 20.0)]);
     release_mods(&mut h);
-    let both = h.state().state.doc.selection().cloned().unwrap();
+    let both = h.doc().selection().cloned().unwrap();
     assert!(!both.same_as(&first), "Shift で足した");
 }
 
@@ -847,9 +826,9 @@ fn cube_view() -> (H, Rect) {
 }
 
 fn cube_view_from(mut h: H) -> (H, Rect) {
-    h.state_mut().state.view3d.load_demo();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
+    h.view3d_mut().load_demo();
+    h.view3d_mut().camera.yaw = -40.0;
+    h.view3d_mut().camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -857,18 +836,13 @@ fn cube_view_from(mut h: H) -> (H, Rect) {
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h
-        .state()
-        .state
-        .view3d
-        .camera
-        .view(rect.width(), rect.height());
+    let view = h.view3d().camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
 
 fn painted(h: &H) -> usize {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let mut n = 0;
     for y in 0..doc.height() {
         for x in 0..doc.width() {
@@ -881,7 +855,7 @@ fn painted(h: &H) -> usize {
 }
 
 fn camera(h: &H) -> yolu_core::geometry::OrbitCamera {
-    h.state().state.view3d.camera
+    h.view3d().camera
 }
 
 #[test]
@@ -914,10 +888,7 @@ fn the_pen_tip_paints_the_surface_and_the_side_button_orbits_it() {
             emulate = emulate == Emulate::Yes
         );
         assert!((after.pitch - (before.pitch + d.y * 0.35)).abs() < 1e-3);
-        assert!(
-            h.state().state.view3d.input.nav.is_none()
-                && h.state().state.view3d.input.pen_press.is_none()
-        );
+        assert!(h.view3d().input.nav.is_none() && h.view3d().input.pen_press.is_none());
     }
 }
 
@@ -1050,9 +1021,7 @@ fn ctrl_and_space_dolly_the_3d_view_for_the_pen_and_the_mouse() {
     release_key(&mut h, Key::Space);
     release_mods(&mut h);
     assert_eq!(strokes(&h), 0);
-    assert!(
-        h.state().state.view3d.input.nav.is_none() && h.state().state.view3d.input.zoom.is_none()
-    );
+    assert!(h.view3d().input.nav.is_none() && h.view3d().input.zoom.is_none());
 }
 
 #[test]
@@ -1088,11 +1057,11 @@ fn the_3d_pen_press_goes_when_the_window_loses_focus_and_a_started_orbit_ends() 
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     Pen::barrel().down(&mut h, at);
     Pen::barrel().to(&mut h, offset(at, 20.0, 0.0));
-    assert!(h.state().state.view3d.input.nav.is_some());
+    assert!(h.view3d().input.nav.is_some());
     h.event(Event::WindowFocused(false));
     h.step();
-    assert!(h.state().state.view3d.input.nav.is_none());
-    assert!(h.state().state.view3d.input.pen_press.is_none());
+    assert!(h.view3d().input.nav.is_none());
+    assert!(h.view3d().input.pen_press.is_none());
 }
 
 // ───────── 4. サイドボタンを egui の部品に右ボタンとして届ける ─────────
@@ -1155,7 +1124,7 @@ fn the_side_button_press_reaches_the_ui_as_a_right_click_and_opens_the_layer_men
     h.run();
     assert!(
         matches!(
-            h.state().state.popup.as_ref().map(|p| p.kind),
+            h.popup().as_ref().map(|p| p.kind),
             Some(yolu_app::state::PopupKind::LayerContext(_))
         ),
         "右クリックのメニューが開く"
@@ -1266,29 +1235,26 @@ fn a_pen_press_does_not_outlive_a_canvas_that_was_hidden_and_the_next_touch_pain
         // Space を押してペンで触れる（ビューを動かす押し）。触れたまま 3D のタブへ切り替える（キャンバスは隠れ、ペンの離れを受け取れない）
         hold_key(&mut h, Key::Space);
         pen.down(&mut h, c);
-        assert!(h.state().state.canvas.pen_press.is_some());
-        assert!(h.state().state.canvas.panning, "パンの途中");
+        assert!(h.canvas().pen_press.is_some());
+        assert!(h.canvas().panning, "パンの途中");
         click_tab(&mut h, Tab::View3d);
         h.run();
-        assert!(!h.state().state.ui.canvas_visible, "キャンバスは隠れた");
-        assert!(
-            h.state().state.canvas.pen_press.is_none(),
-            "押しの印を捨てた"
-        );
-        assert!(!h.state().state.canvas.panning, "パンの途中も捨てた");
+        assert!(!h.ui().canvas_visible, "キャンバスは隠れた");
+        assert!(h.canvas().pen_press.is_none(), "押しの印を捨てた");
+        assert!(!h.canvas().panning, "パンの途中も捨てた");
         // 隠れているあいだに離す（キャンバスは見ない）。戻す
         pen.up(&mut h, c);
         release_key(&mut h, Key::Space);
         click_tab(&mut h, Tab::Canvas);
         h.run();
-        assert!(h.state().state.ui.canvas_visible);
-        assert!(h.state().state.canvas.pen_press.is_none());
+        assert!(h.ui().canvas_visible);
+        assert!(h.canvas().pen_press.is_none());
         nothing_started(&h);
         // 次に触れた押しは、前の押しの続きではなく、新しい押しとして描ける
         let c = canvas_rect(&h).center();
         pen.drag(&mut h, &[c, offset(c, 40.0, 0.0)]);
         assert_eq!(strokes(&h), 1, "描けた {}", emulate == Emulate::Yes);
-        assert!(h.state().state.canvas.pen_press.is_none());
+        assert!(h.canvas().pen_press.is_none());
     }
 }
 
@@ -1302,14 +1268,14 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
             ..Pen::tip()
         };
         // クローンのブラシで、Alt を押してペンで触れる（回す押し。動かさずに離せば元を決める印も付く）
-        let normal = h.state().state.m2.brush.effect;
-        h.state_mut().state.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+        let normal = h.m2().brush.effect;
+        h.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
             offset: Default::default(),
         };
         hold(&mut h, Modifiers::ALT);
         pen.down(&mut h, at);
         {
-            let input = &h.state().state.view3d.input;
+            let input = &h.view3d().input;
             assert!(
                 input.pen_press.is_some() && input.nav.is_some(),
                 "回している"
@@ -1319,9 +1285,9 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
         // 触れたまま、キャンバスのタブへ切り替える（3D は隠れ、ペンの離れを受け取れない）
         click_tab(&mut h, Tab::Canvas);
         h.run();
-        assert!(!h.state().state.view3d.visible, "3D は隠れた");
+        assert!(!h.view3d().visible, "3D は隠れた");
         {
-            let input = &h.state().state.view3d.input;
+            let input = &h.view3d().input;
             assert!(input.pen_press.is_none(), "押しの印を捨てた");
             assert!(
                 input.nav.is_none() && input.zoom.is_none(),
@@ -1334,15 +1300,15 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
         // 戻したあと、離れた近くで別の押しを離しても、前の印で元が決まらない
         click_tab(&mut h, Tab::View3d);
         h.run();
-        assert!(h.state().state.view3d.visible);
-        h.state_mut().state.m2.brush.effect = normal;
-        assert!(h.state().state.clone.source.is_none(), "元は決まっていない");
-        assert!(h.state().state.view3d.input.clone_press.is_none());
+        assert!(h.view3d().visible);
+        h.m2_mut().brush.effect = normal;
+        assert!(h.clone().source.is_none(), "元は決まっていない");
+        assert!(h.view3d().input.clone_press.is_none());
         // 次に触れた押しは、新しい押しとして描ける
         pen.drag(&mut h, &[at, offset(at, 6.0, 0.0)]);
         assert!(painted(&h) > 0, "描けた {}", emulate == Emulate::Yes);
         assert_eq!(strokes(&h), 1);
-        assert!(h.state().state.view3d.input.pen_press.is_none());
+        assert!(h.view3d().input.pen_press.is_none());
     }
 }
 
@@ -1350,14 +1316,14 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
 
 /// 2 × 2 の画像を貼り、置き場を初めに戻す（Y で動かすステンシルの試験の用意）。
 fn stencil_ready(h: &mut H) {
-    let s = &mut h.state_mut().state.stencil;
+    let s = h.stencil_mut();
     s.set_image_rgba("a", 2, 2, &[255; 16]).unwrap();
     s.reset_placement();
 }
 
 /// ステンシルの置き場（動いたかを見る）。
 fn placement(h: &H) -> (f32, f32, [f32; 2]) {
-    let s = &h.state().state.stencil;
+    let s = h.stencil();
     (s.size, s.angle, s.center)
 }
 
@@ -1402,7 +1368,7 @@ fn while_y_moves_the_stencil_the_pen_with_alt_or_space_moves_only_the_stencil_in
         let by_pen = placement(&h);
         assert_ne!(by_pen, base, "{name}: ステンシルが動いた");
         // マウスで同じ操作をしたときと同じだけ（二重に効いていない）
-        h.state_mut().state.stencil.reset_placement();
+        h.stencil_mut().reset_placement();
         begin(&mut h);
         m_drag(&mut h, &path);
         end(&mut h);
@@ -1448,7 +1414,7 @@ fn while_y_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
         assert_eq!(after.pitch, before.pitch, "{name}: 回さない");
         assert_eq!(after.target, before.target, "{name}: パンしない");
         assert_eq!(strokes(&h), 0, "{name}: 描かない");
-        let input = &h.state().state.view3d.input;
+        let input = &h.view3d().input;
         assert!(input.nav.is_none() && input.pen_press.is_none(), "{name}");
     }
 }

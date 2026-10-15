@@ -2,6 +2,7 @@
 //! `offset = 元 − 始めの点` を決めて元から写す（揃えるなら以後は同じ offset、揃えないならストロークごとに決め直す）。「ずれ」の欄はそれを表示する欄で、
 //! 元から決めた offset はブラシの「変えた」に数えない。「揃える」「全レイヤーから」は 3D ビューと同じ設定。実際の入力（マウスのイベント）を流して確かめる。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{accesskit::Role, pos2, Event, Modifiers, PointerButton, Pos2};
@@ -22,26 +23,26 @@ const GREEN: (u32, u32) = (120, 50);
 fn clone_app() -> H {
     let mut h = app(1280.0, 800.0, SIZE);
     {
-        let s = &mut h.state_mut().state;
-        s.tool = Tool::Brush;
-        s.m2.random_seed = false;
-        s.brush.radius = 3.0;
-        s.brush.hardness = 1.0;
-        s.m2.brush.effect = BrushEffect::Clone {
+        let s = h.app_mut();
+        s.set_tool(Tool::Brush);
+        s.m2_mut().random_seed = false;
+        s.brush_mut().radius = 3.0;
+        s.brush_mut().hardness = 1.0;
+        s.m2_mut().brush.effect = BrushEffect::Clone {
             offset: DVec2::new(64.0, 0.0),
         };
-        let layer = s.selected_layer.expect("レイヤー");
+        let layer = s.selected_layer().expect("レイヤー");
         for ((x0, y0), color) in [
             (RED, Rgba8::new(255, 0, 0, 255)),
             (GREEN, Rgba8::new(0, 255, 0, 255)),
         ] {
             for y in y0..y0 + 20 {
                 for x in x0..x0 + 20 {
-                    s.doc.set_pixel(layer, x, y, color).unwrap();
+                    s.doc_mut().set_pixel(layer, x, y, color).unwrap();
                 }
             }
         }
-        s.doc.clear_history().unwrap();
+        s.doc_mut().clear_history().unwrap();
     }
     h.run();
     h
@@ -49,14 +50,14 @@ fn clone_app() -> H {
 
 /// 文書の点（y は上が正）の画面の位置。
 fn at(h: &H, x: f64, y: f64) -> Pos2 {
-    let s = &h.state().state;
-    s.view
-        .view(canvas_rect(h), s.doc.width(), s.doc.height())
+    let s = h.app();
+    s.view()
+        .view(canvas_rect(h), s.doc().width(), s.doc().height())
         .to_screen(x, y)
 }
 
 fn pixel(h: &H, x: u32, y: u32) -> [u8; 4] {
-    composite_pixel(&h.state().state.doc, x, y)
+    composite_pixel(h.doc(), x, y)
 }
 
 fn is_red(p: [u8; 4]) -> bool {
@@ -128,15 +129,15 @@ fn stroke(h: &mut H, from: (f64, f64), to: (f64, f64)) {
 }
 
 fn clone_offset(h: &H) -> DVec2 {
-    match h.state().state.m2.brush.effect {
+    match h.m2().brush.effect {
         BrushEffect::Clone { offset } => offset,
         other => panic!("クローンのブラシではない: {other:?}"),
     }
 }
 
 fn source(h: &H) -> Option<(f64, f64)> {
-    let s = &h.state().state;
-    s.clone.canvas_source_for(s.doc.id())
+    let s = h.app();
+    s.clone().canvas_source_for(s.doc().id())
 }
 
 fn near(a: f64, b: f64) -> bool {
@@ -151,9 +152,9 @@ fn an_alt_click_sets_the_source_and_the_next_stroke_copies_from_it() {
     alt_click(&mut h, 60.0, 60.0);
     let (x, y) = source(&h).expect("元を決めた");
     assert!(near(x, 60.0) && near(y, 60.0), "{x} {y}");
-    assert_eq!(h.state().state.view.angle, 0.0);
-    assert!(!h.state().state.doc.can_undo(), "文書は変わらない");
-    assert!(h.state().state.message.contains("クローンの元を決めました"));
+    assert_eq!(h.view().angle, 0.0);
+    assert!(!h.doc().can_undo(), "文書は変わらない");
+    assert!(h.message().contains("クローンの元を決めました"));
     // 次のストロークは、始めの点が元に重なる
     stroke(&mut h, (60.0, 160.0), (70.0, 160.0));
     let offset = clone_offset(&h);
@@ -169,7 +170,7 @@ fn an_alt_click_sets_the_source_and_the_next_stroke_copies_from_it() {
     assert!(is_red(pixel(&h, 60, 60)), "元はそのまま");
     assert!(is_clear(pixel(&h, 90, 160)));
     // 1 本のストロークは 1 回の Undo
-    assert_eq!(h.state().state.doc.undo_count(), 1);
+    assert_eq!(h.doc().undo_count(), 1);
 }
 
 #[test]
@@ -177,7 +178,7 @@ fn without_a_source_the_stroke_copies_with_the_offset_of_the_brush_as_before() {
     let mut h = clone_app();
     // 元を決めていない: ブラシの offset で写す。(60, 160) の (70, −100) 先は緑の四角の中
     let own = DVec2::new(70.0, -100.0);
-    h.state_mut().state.m2.brush.effect = BrushEffect::Clone { offset: own };
+    h.m2_mut().brush.effect = BrushEffect::Clone { offset: own };
     stroke(&mut h, (60.0, 160.0), (66.0, 160.0));
     for x in 58..=64 {
         assert!(
@@ -194,7 +195,7 @@ fn without_a_source_the_stroke_copies_with_the_offset_of_the_brush_as_before() {
 fn aligned_keeps_the_offset_of_the_first_stroke_and_unaligned_starts_every_stroke_on_the_source() {
     for aligned in [true, false] {
         let mut h = clone_app();
-        h.state_mut().state.clone.set_aligned(aligned);
+        h.clone_mut().set_aligned(aligned);
         alt_click(&mut h, 60.0, 60.0);
         stroke(&mut h, (60.0, 160.0), (70.0, 160.0));
         let first = clone_offset(&h);
@@ -215,7 +216,7 @@ fn aligned_keeps_the_offset_of_the_first_stroke_and_unaligned_starts_every_strok
             );
             assert!(is_red(pixel(&h, 132, 160)), "{:?}", pixel(&h, 132, 160));
         }
-        assert_eq!(h.state().state.doc.undo_count(), 2, "aligned = {aligned}");
+        assert_eq!(h.doc().undo_count(), 2, "aligned = {aligned}");
     }
 }
 
@@ -231,15 +232,15 @@ fn an_alt_drag_rotates_the_view_and_leaves_the_source_alone_and_a_small_jitter_i
         c + egui::vec2(150.0, 0.0),
         &[c + egui::vec2(140.0, 55.0), c + egui::vec2(115.0, 96.0)],
     );
-    assert_ne!(h.state().state.view.angle, 0.0, "表示を回した");
+    assert_ne!(h.view().angle, 0.0, "表示を回した");
     assert_eq!(source(&h), Some(before), "元は変わらない");
-    assert!(h.state().state.canvas.clone_press.is_none());
+    assert!(h.canvas().clone_press.is_none());
     // 少しの揺れ（遊びの内）で離しても、表示は回らず、そこが元になる
-    h.state_mut().state.view.set_angle(0.0);
+    h.view_mut().set_angle(0.0);
     h.run();
     let p = at(&h, 90.0, 90.0);
     alt_press(&mut h, p, &[p + egui::vec2(2.0, 1.0)]);
-    assert_eq!(h.state().state.view.angle, 0.0, "揺れでは回らない");
+    assert_eq!(h.view().angle, 0.0, "揺れでは回らない");
     let (x, y) = source(&h).expect("元");
     assert!(
         near(x, 90.0) && near(y, 90.0),
@@ -256,38 +257,36 @@ fn an_alt_drag_rotates_the_view_and_leaves_the_source_alone_and_a_small_jitter_i
 fn the_source_is_only_set_with_the_clone_brush_and_never_outside_the_canvas() {
     let mut h = clone_app();
     // クローンのブラシでなければ、Alt + 左は表示を回すだけで、元を決めない
-    h.state_mut().state.m2.brush.effect = BrushEffect::Paint;
+    h.m2_mut().brush.effect = BrushEffect::Paint;
     alt_click(&mut h, 60.0, 60.0);
     assert_eq!(source(&h), None);
     // 消しゴムでも決めない
-    h.state_mut().state.m2.brush.effect = BrushEffect::Clone {
+    h.m2_mut().brush.effect = BrushEffect::Clone {
         offset: DVec2::new(64.0, 0.0),
     };
-    h.state_mut().state.tool = Tool::Eraser;
+    h.set_tool(Tool::Eraser);
     alt_click(&mut h, 60.0, 60.0);
     assert_eq!(source(&h), None);
-    h.state_mut().state.tool = Tool::Brush;
+    h.set_tool(Tool::Brush);
     // キャンバスの外は断る。表示域の中の、文書の外の点が要るので、少し縮めて余白を作る（表示域の形で、文書が余白なしに収まることがある）
-    h.state_mut().state.view.zoom = 0.9;
+    h.view_mut().zoom = 0.9;
     h.run();
     let outside = (-2.0, 60.0);
     assert!(
         canvas_rect(&h).contains(at(&h, outside.0, outside.1)),
         "表示域の中の、文書の外"
     );
-    h.state_mut().state.message.clear();
+    h.message_mut().clear();
     alt_click(&mut h, outside.0, outside.1);
     assert_eq!(source(&h), None);
-    assert_eq!(h.state().state.message, "キャンバスの外です。");
+    assert_eq!(h.message(), "キャンバスの外です。");
     // 英語でも
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(yolu_app::m2::UiOp::Language(
-            yolu_app::lang::Lang::En,
-        )));
-    h.state_mut().state.message.clear();
+    h.act(Action::M2Ui(yolu_app::m2::UiOp::Language(
+        yolu_app::lang::Lang::En,
+    )));
+    h.message_mut().clear();
     alt_click(&mut h, outside.0, outside.1);
-    assert_eq!(h.state().state.message, "Outside the canvas.");
+    assert_eq!(h.message(), "Outside the canvas.");
 }
 
 #[test]
@@ -314,9 +313,9 @@ fn the_pen_clicks_the_source_the_same_way_and_a_set_switch_forgets_it() {
     release_alt(&mut h);
     let (x, y) = source(&h).expect("ペンでも元を決める");
     assert!(near(x, 70.0) && near(y, 70.0), "{x} {y}");
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
     // テクスチャセットを替えると、前の文書の点は使わない
-    h.state_mut().state.add_texture_set().unwrap();
+    h.app_mut().add_texture_set().unwrap();
     h.run();
     assert_eq!(source(&h), None);
 }
@@ -327,34 +326,32 @@ fn the_source_mark_follows_the_copied_point_while_drawing() {
     alt_click(&mut h, 60.0, 60.0);
     h.run();
     // 描いていないあいだは、決めた元の点
-    assert!(h.state().state.canvas.clone_offset.is_none());
+    assert!(h.canvas().clone_offset.is_none());
     // 描いている間: 押した点と最初の移動で、写している元の点へ動く
     let (a, b) = (at(&h, 60.0, 160.0), at(&h, 66.0, 160.0));
     press(&h, a, PointerButton::Primary);
     h.step();
     move_to(&h, b);
     h.step();
-    let s = &h.state().state;
-    let offset = s.canvas.clone_offset.expect("描いている間の offset");
+    let s = h.app();
+    let offset = s.canvas().clone_offset.expect("描いている間の offset");
     assert!(near(offset.x, 0.0) && near(offset.y, -100.0), "{offset:?}");
-    let (ex, ey) = s.canvas.current_end.expect("今の終点");
+    let (ex, ey) = s.canvas().current_end.expect("今の終点");
     assert!(near(ex + offset.x, 66.0) && near(ey + offset.y, 60.0));
     release(&h, b, PointerButton::Primary);
     h.run();
-    assert!(h.state().state.canvas.clone_offset.is_none());
+    assert!(h.canvas().clone_offset.is_none());
 }
 
 fn select_builtin_clone(h: &mut H) {
-    h.state_mut()
-        .state
-        .apply(Action::Brush(BrushAction::Select(BrushKey::Builtin(
-            "clone",
-        ))));
+    h.act(Action::Brush(BrushAction::Select(BrushKey::Builtin(
+        "clone",
+    ))));
     h.run();
 }
 
 fn open_effect_detail(h: &mut H) {
-    let ui = &mut h.state_mut().state.brushes.ui;
+    let ui = &mut h.brushes_mut().ui;
     ui.detail.open = true;
     ui.detail.category = Category::Effect;
     ui.detail.scroll = 0.0;
@@ -378,33 +375,23 @@ fn disabled(h: &H, role: Role, label: &str) -> bool {
 fn the_offset_fields_show_the_decided_offset_and_the_brush_is_not_marked_as_changed() {
     let mut h = clone_app();
     select_builtin_clone(&mut h);
-    let key = h.state().state.brushes.lib.current();
+    let key = h.brushes().lib.current();
     assert!(
-        !h.state().state.brush_is_modified(key),
+        !h.app().brush_is_modified(key),
         "選んだだけでは変えていない"
     );
     open_effect_detail(&mut h);
     assert!((slider_value(&h, "ずれ X") - 64.0).abs() < 1e-6);
     // 元を決めて描いた: 欄は決まった offset を見せるが、ブラシは「変えた」にならない（一覧の印・元に戻す）
-    h.state_mut().state.brushes.ui.detail.open = false;
+    h.brushes_mut().ui.detail.open = false;
     h.run();
     alt_click(&mut h, 60.0, 60.0);
     stroke(&mut h, (60.0, 160.0), (70.0, 160.0));
     assert!(near(clone_offset(&h).y, -100.0));
+    assert!(!h.app().brush_is_modified(key), "元から決めた offset");
+    h.app_mut().brush_sync();
     assert!(
-        !h.state().state.brush_is_modified(key),
-        "元から決めた offset"
-    );
-    h.state_mut().state.brush_sync();
-    assert!(
-        h.state()
-            .state
-            .brushes
-            .lib
-            .entry(key)
-            .unwrap()
-            .edited
-            .is_none(),
+        h.brushes().lib.entry(key).unwrap().edited.is_none(),
         "変えたままの設定として覚えない"
     );
     open_effect_detail(&mut h);
@@ -419,11 +406,8 @@ fn the_offset_fields_show_the_decided_offset_and_the_brush_is_not_marked_as_chan
     );
     let edited = clone_offset(&h);
     assert!(edited.x > 500.0, "欄で直した: {edited:?}");
-    assert!(
-        h.state().state.brush_is_modified(key),
-        "欄で直した offset は変えた"
-    );
-    h.state_mut().state.brushes.ui.detail.open = false;
+    assert!(h.app().brush_is_modified(key), "欄で直した offset は変えた");
+    h.brushes_mut().ui.detail.open = false;
     h.run();
     stroke(&mut h, (130.0, 160.0), (138.0, 160.0));
     assert_eq!(clone_offset(&h), edited, "直した値のまま次のストロークへ");
@@ -437,7 +421,7 @@ fn the_offset_fields_are_disabled_with_a_reason_when_the_source_decides_every_st
     // 元が無いあいだは、欄で決める。「揃える」は元が無いので薄い
     assert!(!disabled(&h, Role::Slider, "ずれ X"));
     assert!(disabled(&h, Role::CheckBox, "揃える"));
-    h.state_mut().state.brushes.ui.detail.open = false;
+    h.brushes_mut().ui.detail.open = false;
     h.run();
     alt_click(&mut h, 60.0, 60.0);
     open_effect_detail(&mut h);
@@ -447,7 +431,7 @@ fn the_offset_fields_are_disabled_with_a_reason_when_the_source_decides_every_st
     );
     assert!(!disabled(&h, Role::Slider, "ずれ X"));
     // 揃えない: ストロークごとに元から決めるので、欄は無効（理由はツールチップ）
-    h.state_mut().state.clone.set_aligned(false);
+    h.clone_mut().set_aligned(false);
     h.run();
     assert!(disabled(&h, Role::Slider, "ずれ X"));
     assert!(disabled(&h, Role::Slider, "ずれ Y"));
@@ -462,7 +446,7 @@ fn the_offset_fields_are_disabled_with_a_reason_when_the_source_decides_every_st
         "理由のツールチップ"
     );
     // 揃えるに戻せば、また直せる
-    h.state_mut().state.clone.set_aligned(true);
+    h.clone_mut().set_aligned(true);
     move_to(&h, egui::pos2(2.0, 2.0));
     h.run();
     assert!(!disabled(&h, Role::Slider, "ずれ X"));
@@ -478,24 +462,21 @@ fn the_canvas_shows_aligned_and_all_layers_and_the_toggles_reach_the_2d_stroke()
     let all = h
         .get_by_role_and_label(Role::CheckBox, "全レイヤーから")
         .rect();
-    assert!(!h.state().state.clone.all_layers);
+    assert!(!h.clone().all_layers);
     click(&mut h, all.center());
-    assert!(
-        h.state().state.clone.all_layers,
-        "画面の切り替えが共有の設定を変える"
-    );
+    assert!(h.clone().all_layers, "画面の切り替えが共有の設定を変える");
     // 2D のストロークも「全レイヤーから」を使う（合成の参照元を凍結する）
-    h.state_mut().state.brushes.ui.detail.open = false;
+    h.brushes_mut().ui.detail.open = false;
     h.run();
     alt_click(&mut h, 60.0, 60.0);
-    assert_eq!(h.state().state.doc.clone_source_bytes(), 0);
+    assert_eq!(h.doc().clone_source_bytes(), 0);
     let (a, b) = (at(&h, 60.0, 160.0), at(&h, 66.0, 160.0));
     press(&h, a, PointerButton::Primary);
     h.step();
     move_to(&h, b);
     h.step();
     assert!(
-        h.state().state.doc.clone_source_bytes() > 0,
+        h.doc().clone_source_bytes() > 0,
         "描いている間は、全レイヤーの合成を読む"
     );
     release(&h, b, PointerButton::Primary);
@@ -516,7 +497,7 @@ fn a_cancelled_or_unchanged_stroke_does_not_fix_the_aligned_offset() {
     h.step();
     release(&h, b, PointerButton::Primary);
     h.run();
-    assert!(!h.state().state.doc.can_undo(), "取りやめた");
+    assert!(!h.doc().can_undo(), "取りやめた");
     stroke(&mut h, (130.0, 160.0), (138.0, 160.0));
     let offset = clone_offset(&h);
     assert!(
@@ -532,7 +513,7 @@ fn a_cancelled_or_unchanged_stroke_does_not_fix_the_aligned_offset() {
     let mut h = clone_app();
     alt_click(&mut h, 200.0, 200.0);
     stroke(&mut h, (60.0, 160.0), (66.0, 160.0));
-    assert!(!h.state().state.doc.can_undo(), "画素は変わらない");
+    assert!(!h.doc().can_undo(), "画素は変わらない");
     stroke(&mut h, (130.0, 160.0), (138.0, 160.0));
     let offset = clone_offset(&h);
     assert!(
@@ -554,35 +535,35 @@ fn an_esc_during_the_alt_press_does_not_set_the_source() {
     h.step();
     release_alt(&mut h);
     assert_eq!(source(&h), None, "取りやめた押しは元にしない（3D と同じ）");
-    assert!(h.state().state.canvas.clone_press.is_none());
-    assert_eq!(h.state().state.view.angle, 0.0);
+    assert!(h.canvas().clone_press.is_none());
+    assert_eq!(h.view().angle, 0.0);
 }
 
 #[test]
 fn the_decided_offset_never_marks_the_brush_and_a_set_switch_gives_the_brush_its_own_offset_back() {
     let mut h = clone_app();
     select_builtin_clone(&mut h);
-    let key = h.state().state.brushes.lib.current();
+    let key = h.brushes().lib.current();
     let own = clone_offset(&h);
     alt_click(&mut h, 60.0, 60.0);
     stroke(&mut h, (60.0, 160.0), (70.0, 160.0));
     assert_ne!(clone_offset(&h), own);
-    assert!(!h.state().state.brush_is_modified(key));
+    assert!(!h.app().brush_is_modified(key));
     // 揃えるを入れ直しても、元を決め直しても、ブラシは「変えた」にならない
-    h.state_mut().state.clone.set_aligned(false);
-    h.state_mut().state.clone.set_aligned(true);
+    h.clone_mut().set_aligned(false);
+    h.clone_mut().set_aligned(true);
     h.run();
-    assert!(!h.state().state.brush_is_modified(key), "揃えるの入れ直し");
+    assert!(!h.app().brush_is_modified(key), "揃えるの入れ直し");
     alt_click(&mut h, 130.0, 60.0);
-    assert!(!h.state().state.brush_is_modified(key), "元の決め直し");
+    assert!(!h.app().brush_is_modified(key), "元の決め直し");
     stroke(&mut h, (60.0, 200.0), (66.0, 200.0));
-    assert!(!h.state().state.brush_is_modified(key), "決め直した offset");
+    assert!(!h.app().brush_is_modified(key), "決め直した offset");
     // テクスチャセットを替える: 元を忘れ、ブラシの offset に戻る（元の無い 2D は、ブラシの offset で写す）
-    h.state_mut().state.add_texture_set().unwrap();
+    h.app_mut().add_texture_set().unwrap();
     h.run();
     assert_eq!(source(&h), None);
     assert_eq!(clone_offset(&h), own, "ブラシの offset に戻る");
-    assert!(!h.state().state.brush_is_modified(key));
+    assert!(!h.app().brush_is_modified(key));
 }
 
 #[test]
@@ -597,26 +578,26 @@ fn a_focus_loss_forgets_the_touch_force_on_the_canvas() {
         force: Some(0.3),
     });
     h.step();
-    assert!(h.state().state.canvas.touch_pressure.is_some());
+    assert!(h.canvas().touch_pressure.is_some());
     // 終わりを受け取れないまま、フォーカスを失った: 次のマウスの押しは 1 に戻す
     h.event(Event::WindowFocused(false));
     h.step();
-    assert_eq!(h.state().state.canvas.touch_pressure, None);
+    assert_eq!(h.canvas().touch_pressure, None);
 }
 
 /// 組み込みのクローンのブラシで、元を決めて 2 本描く（1 本目と 2 本目の間に `between`）。2 本目の offset と、文書の全画素。
 fn two_strokes_with(between: fn(&mut H)) -> (DVec2, Vec<u8>) {
     let mut h = clone_app();
     select_builtin_clone(&mut h);
-    h.state_mut().state.m2.random_seed = false;
+    h.m2_mut().random_seed = false;
     alt_click(&mut h, 60.0, 60.0);
     stroke(&mut h, (60.0, 160.0), (70.0, 160.0));
     between(&mut h);
     stroke(&mut h, (130.0, 160.0), (138.0, 160.0));
-    let doc = &h.state().state.doc;
-    let key = h.state().state.brushes.lib.current();
+    let doc = h.doc();
+    let key = h.brushes().lib.current();
     assert!(
-        !h.state().state.brush_is_modified(key),
+        !h.app().brush_is_modified(key),
         "元から決めた offset は変えたに数えない"
     );
     (clone_offset(&h), doc.composite(doc.bounds()).unwrap())
@@ -628,18 +609,16 @@ fn the_aligned_offset_survives_reloading_the_brush_like_the_3d_destination() {
     assert!(near(offset.x, 0.0) && near(offset.y, -100.0), "{offset:?}");
     // 消しゴムへ替えて戻る・同じブラシを選び直す・元に戻す: どれも揃える offset は続く（2 本目も同じ所から写す）
     let eraser_round_trip = |h: &mut H| {
-        h.state_mut().state.apply(Action::SelectTool(Tool::Eraser));
+        h.act(Action::SelectTool(Tool::Eraser));
         h.run();
-        h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+        h.act(Action::SelectTool(Tool::Brush));
         h.run();
     };
     let reselect = |h: &mut H| select_builtin_clone(h);
     let revert = |h: &mut H| {
-        h.state_mut()
-            .state
-            .apply(Action::Brush(BrushAction::Revert(BrushKey::Builtin(
-                "clone",
-            ))));
+        h.act(Action::Brush(BrushAction::Revert(BrushKey::Builtin(
+            "clone",
+        ))));
         h.run();
     };
     for (name, between) in [
@@ -657,31 +636,26 @@ fn the_aligned_offset_survives_reloading_the_brush_like_the_3d_destination() {
 fn choosing_the_same_effect_type_again_keeps_the_brush_unmodified_and_its_own_offset() {
     let mut h = clone_app();
     select_builtin_clone(&mut h);
-    let key = h.state().state.brushes.lib.current();
+    let key = h.brushes().lib.current();
     let own = clone_offset(&h);
     alt_click(&mut h, 60.0, 60.0);
     stroke(&mut h, (60.0, 160.0), (70.0, 160.0));
     let decided = clone_offset(&h);
     assert_ne!(decided, own);
     // 種類のメニューで、今と同じ「クローン」を選び直す
-    h.state_mut()
-        .state
-        .apply(Action::M2Ui(yolu_app::m2::UiOp::Brush(
-            yolu_app::m2::BrushOp::Effect(yolu_app::m2::EffectKind::Clone),
-        )));
+    h.act(Action::M2Ui(yolu_app::m2::UiOp::Brush(
+        yolu_app::m2::BrushOp::Effect(yolu_app::m2::EffectKind::Clone),
+    )));
     h.run();
     assert_eq!(clone_offset(&h), decided);
-    assert!(
-        !h.state().state.brush_is_modified(key),
-        "変更ありにならない"
-    );
+    assert!(!h.app().brush_is_modified(key), "変更ありにならない");
     // 元を忘れたら、ブラシの offset に戻る
-    h.state_mut().state.add_texture_set().unwrap();
+    h.app_mut().add_texture_set().unwrap();
     h.run();
     assert_eq!(clone_offset(&h), own);
-    assert!(!h.state().state.brush_is_modified(key));
+    assert!(!h.app().brush_is_modified(key));
     // 種類を替えて戻すと、その種類の既定の offset（揃える offset は、決まっていれば入れ直す）
-    h.state_mut().state.switch_set(0).unwrap();
+    h.app_mut().switch_set(0).unwrap();
     h.run();
     alt_click(&mut h, 60.0, 60.0);
     // 前のストロークの上（もう赤い所）に写しても画素は変わらず、offset は決まらないので、別の所に描く
@@ -695,11 +669,9 @@ fn choosing_the_same_effect_type_again_keeps_the_brush_unmodified_and_its_own_of
         yolu_app::m2::EffectKind::Blur,
         yolu_app::m2::EffectKind::Clone,
     ] {
-        h.state_mut()
-            .state
-            .apply(Action::M2Ui(yolu_app::m2::UiOp::Brush(
-                yolu_app::m2::BrushOp::Effect(kind),
-            )));
+        h.act(Action::M2Ui(yolu_app::m2::UiOp::Brush(
+            yolu_app::m2::BrushOp::Effect(kind),
+        )));
         h.run();
     }
     assert_eq!(clone_offset(&h), decided, "揃える offset は続く");

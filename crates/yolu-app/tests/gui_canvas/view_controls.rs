@@ -2,6 +2,7 @@
 //! ほかのキーの割り当てに渡さない）・2D の Alt + 左ドラッグの回転（15° 刻み、Shift で自由）・押しの始めの Alt は視点で途中の Alt はツールの修飾・
 //! 既定から外した組み合わせ（Shift + 右・Alt + Shift + 左・R + ドラッグ・Shift + 中）・ショートカットの一覧の名前。右ボタンのスポイトは `eyedrop`。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
@@ -52,22 +53,22 @@ fn move_on_circle(h: &mut H, radius: f32, degrees: f32) {
 }
 
 fn camera(h: &H) -> yolu_core::geometry::OrbitCamera {
-    h.state().state.view3d.camera
+    h.view3d().camera
 }
 
 fn tool(h: &H) -> Tool {
-    h.state().state.tool
+    h.tool()
 }
 
 fn nav(h: &H) -> Option<(Nav, PointerButton)> {
-    h.state().state.view3d.input.nav
+    h.view3d().input.nav
 }
 
 fn cube_view() -> (H, Rect) {
     let mut h = app(1100.0, 760.0, 256);
-    h.state_mut().state.view3d.load_demo();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
+    h.view3d_mut().load_demo();
+    h.view3d_mut().camera.yaw = -40.0;
+    h.view3d_mut().camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -81,7 +82,7 @@ fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
 }
 
 fn painted(h: &H) -> usize {
-    let doc = &h.state().state.doc;
+    let doc = h.doc();
     let mut n = 0;
     for y in 0..doc.height() {
         for x in 0..doc.width() {
@@ -94,7 +95,7 @@ fn painted(h: &H) -> usize {
 }
 
 fn strokes(h: &H) -> usize {
-    h.state().state.doc.undo_count()
+    h.doc().undo_count()
 }
 
 // ───────── 3D: Alt + 左ドラッグのスナップ回転 ─────────
@@ -104,7 +105,7 @@ fn alt_drag_in_3d_snaps_to_the_front_and_leaves_it_when_dragged_past_the_angle()
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
-        let c = &mut h.state_mut().state.view3d.camera;
+        let c = &mut h.view3d_mut().camera;
         c.yaw = 210.0;
         c.pitch = 0.0;
     }
@@ -136,11 +137,8 @@ fn alt_drag_in_3d_snaps_to_the_front_and_leaves_it_when_dragged_past_the_angle()
     h.step();
     mods(&mut h, Modifiers::NONE);
     assert!(nav(&h).is_none());
-    assert!(
-        !h.state().state.doc.can_undo(),
-        "回すだけで文書は変わらない"
-    );
-    assert!(!h.state().state.is_stroking());
+    assert!(!h.doc().can_undo(), "回すだけで文書は変わらない");
+    assert!(!h.app().is_stroking());
 }
 
 #[test]
@@ -155,7 +153,7 @@ fn alt_drag_in_3d_snaps_to_the_other_axis_views_too() {
         let at = rect.center();
         {
             // 吸い付く範囲の外から始めて、そこまで回す
-            let c = &mut h.state_mut().state.view3d.camera;
+            let c = &mut h.view3d_mut().camera;
             c.yaw = yaw + 40.0;
             c.pitch = pitch;
         }
@@ -176,7 +174,7 @@ fn snapping_to_the_top_view_keeps_the_view_working_and_the_surface_paintable() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
-        let c = &mut h.state_mut().state.view3d.camera;
+        let c = &mut h.view3d_mut().camera;
         c.yaw = 180.0;
         c.pitch = 70.0;
     }
@@ -223,12 +221,12 @@ fn snapping_to_the_top_view_keeps_the_view_working_and_the_surface_paintable() {
 fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits_instead() {
     let (mut h, rect) = cube_view();
     {
-        let s = &mut h.state_mut().state;
-        s.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+        let s = h.app_mut();
+        s.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
             offset: Default::default(),
         };
-        s.view3d.camera.yaw = 210.0;
-        s.view3d.camera.pitch = 0.0;
+        s.view3d_mut().camera.yaw = 210.0;
+        s.view3d_mut().camera.pitch = 0.0;
     }
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     let alt = Modifiers::ALT;
@@ -237,14 +235,14 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits
     mods(&mut h, alt);
     mouse(&h, at, PointerButton::Primary, true, alt);
     h.step();
-    assert!(h.state().state.view3d.input.clone_press.is_some());
+    assert!(h.view3d().input.clone_press.is_some());
     mouse(&h, at, PointerButton::Primary, false, alt);
     h.step();
     mods(&mut h, Modifiers::NONE);
     assert_eq!(camera(&h), before, "クリックで視点は動かない");
-    assert!(h.state().state.clone.source.is_some(), "元を決めた");
+    assert!(h.clone().source.is_some(), "元を決めた");
     // 動かしたらスナップ回転（元は決めない）
-    h.state_mut().state.clone.source = None;
+    h.clone_mut().source = None;
     mods(&mut h, alt);
     mouse(&h, at, PointerButton::Primary, true, alt);
     h.step();
@@ -259,11 +257,8 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits
     h.step();
     mods(&mut h, Modifiers::NONE);
     assert!(camera(&h).yaw < before.yaw, "回った");
-    assert!(
-        h.state().state.clone.source.is_none(),
-        "動かしたら元は決めない"
-    );
-    assert!(!h.state().state.doc.can_undo());
+    assert!(h.clone().source.is_none(), "動かしたら元は決めない");
+    assert!(!h.doc().can_undo());
 }
 
 // ───────── 3D: 右ボタンを押している間の W/A/S/D/Q/E ─────────
@@ -288,7 +283,7 @@ fn release_right(h: &mut H, at: Pos2) {
 fn w_moves_the_view_forward_while_the_right_button_is_down_and_never_switches_the_tool() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.act(Action::SelectTool(Tool::Brush));
     h.run();
     let before = camera(&h);
     press_right(&mut h, at);
@@ -321,7 +316,7 @@ fn w_moves_the_view_forward_while_the_right_button_is_down_and_never_switches_th
     }
     assert_eq!(camera(&h).target, stopped);
     release_right(&mut h, at);
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
     // 右ボタンを離していれば、W は今までどおり自動選択のツールに替わる
     let still = camera(&h).target;
     key_event(&mut h, Key::W, true, Modifiers::NONE);
@@ -400,8 +395,8 @@ fn s_a_d_q_e_move_the_view_along_the_camera_axes_and_shift_is_three_times_faster
 fn the_keys_are_not_passed_to_the_shortcut_table_while_the_right_button_is_down() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
-    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.act(Action::SelectTool(Tool::Brush));
+    h.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     h.run();
     press_right(&mut h, at);
     // E（消しゴム）・S（選択ペン）・W（自動選択）・D（初期の色）・Q（取っ手）はどれも割り当てへ行かない
@@ -410,20 +405,12 @@ fn the_keys_are_not_passed_to_the_shortcut_table_while_the_right_button_is_down(
         key_event(&mut h, key, false, Modifiers::NONE);
     }
     assert_eq!(tool(&h), Tool::Brush);
-    assert_eq!(
-        h.state().state.color.main,
-        [1.0, 0.0, 0.0, 1.0],
-        "D は色を替えない"
-    );
+    assert_eq!(h.color().main, [1.0, 0.0, 0.0, 1.0], "D は色を替えない");
     release_right(&mut h, at);
     // 右を離せば、同じキーが割り当てどおりに働く
     key_event(&mut h, Key::D, true, Modifiers::NONE);
     key_event(&mut h, Key::D, false, Modifiers::NONE);
-    assert_eq!(
-        h.state().state.color.main,
-        [0.0, 0.0, 0.0, 1.0],
-        "D は初期の色"
-    );
+    assert_eq!(h.color().main, [0.0, 0.0, 0.0, 1.0], "D は初期の色");
     key_event(&mut h, Key::E, true, Modifiers::NONE);
     assert_eq!(tool(&h), Tool::Eraser);
 }
@@ -443,7 +430,7 @@ fn ctrl_keys_still_reach_the_table_while_the_right_button_is_down() {
         h.step();
     }
     assert_eq!(camera(&h).target, before, "Ctrl を押していれば動かさない");
-    assert!(h.state().state.doc.selection().is_some(), "Ctrl+A は効く");
+    assert!(h.doc().selection().is_some(), "Ctrl+A は効く");
 }
 
 #[test]
@@ -497,8 +484,8 @@ fn releasing_the_right_button_first_keeps_the_held_fly_keys_off_the_table_until_
 {
     let (mut h, rect) = cube_view();
     let at = rect.center();
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
-    h.state_mut().state.color.set_main([1.0, 0.0, 0.0, 1.0]);
+    h.act(Action::SelectTool(Tool::Brush));
+    h.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     h.run();
     press_right(&mut h, at);
     // 移動の間に W・D・Shift+Q を押したままにする
@@ -517,32 +504,29 @@ fn releasing_the_right_button_first_keeps_the_held_fly_keys_off_the_table_until_
     }
     assert_eq!(tool(&h), Tool::Brush, "W（自動選択）に替わらない");
     assert_eq!(
-        h.state().state.color.main,
+        h.color().main,
         [1.0, 0.0, 0.0, 1.0],
         "D（初期の色）に戻らない"
     );
-    assert!(
-        !h.state().state.sel.quick,
-        "Shift+Q（クイックマスク）が入らない"
-    );
+    assert!(!h.sel().quick, "Shift+Q（クイックマスク）が入らない");
     assert_eq!(camera(&h).target, before, "右を離したので、もう動かさない");
     // Shift を離し、修飾なしの繰り返しでも同じ
     mods(&mut h, Modifiers::NONE);
     key_repeat(&mut h, Key::W, Modifiers::NONE);
     key_repeat(&mut h, Key::D, Modifiers::NONE);
     assert_eq!(tool(&h), Tool::Brush);
-    assert_eq!(h.state().state.color.main, [1.0, 0.0, 0.0, 1.0]);
+    assert_eq!(h.color().main, [1.0, 0.0, 0.0, 1.0]);
     // 押していなかったキーは、今までどおり表へ届く（X は色の入れ替え）
     key_event(&mut h, Key::X, true, Modifiers::NONE);
     key_event(&mut h, Key::X, false, Modifiers::NONE);
-    assert_eq!(h.state().state.color.sub, [1.0, 0.0, 0.0, 1.0], "X は効く");
+    assert_eq!(h.color().sub, [1.0, 0.0, 0.0, 1.0], "X は効く");
     // W を離して押し直せば、表へ届く（自動選択）。D・Q は押したままなので、まだ届かない
     key_event(&mut h, Key::W, false, Modifiers::NONE);
     key_event(&mut h, Key::W, true, Modifiers::NONE);
     assert_eq!(tool(&h), Tool::Wand, "押し直した W は自動選択");
     key_repeat(&mut h, Key::D, Modifiers::NONE);
     assert_eq!(
-        h.state().state.color.sub,
+        h.color().sub,
         [1.0, 0.0, 0.0, 1.0],
         "押したままの D はまだ届かない"
     );
@@ -550,7 +534,7 @@ fn releasing_the_right_button_first_keeps_the_held_fly_keys_off_the_table_until_
     key_event(&mut h, Key::D, false, Modifiers::NONE);
     key_event(&mut h, Key::D, true, Modifiers::NONE);
     assert_eq!(
-        h.state().state.color.main,
+        h.color().main,
         [0.0, 0.0, 0.0, 1.0],
         "押し直した D は初期の色"
     );
@@ -560,12 +544,12 @@ fn releasing_the_right_button_first_keeps_the_held_fly_keys_off_the_table_until_
 fn a_key_held_before_the_right_button_and_repeating_after_it_is_released_stays_off_the_table() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.act(Action::SelectTool(Tool::Brush));
     h.run();
     // 右ボタンを押す前から W を押している（そのとき W は表へ届く）
     key_event(&mut h, Key::W, true, Modifiers::NONE);
     assert_eq!(tool(&h), Tool::Wand);
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.act(Action::SelectTool(Tool::Brush));
     press_right(&mut h, at);
     key_repeat(&mut h, Key::W, Modifiers::NONE);
     release_right(&mut h, at);
@@ -575,7 +559,7 @@ fn a_key_held_before_the_right_button_and_repeating_after_it_is_released_stays_o
 
 /// 視点の押した所の面の点（押す前のカメラで引く）。
 fn surface_point_at(h: &H, rect: Rect, at: Pos2) -> Vec3 {
-    let model = h.state().state.view3d.model.clone().expect("モデル");
+    let model = h.view3d().model.clone().expect("モデル");
     yolu_core::geometry::pick(
         &model.geometry,
         &camera(h).view(rect.width(), rect.height()),
@@ -591,12 +575,12 @@ fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_mo
     // Alt + クリック（クローンの元）: 軸の近くの向き（正面の 10° 手前）で 4 点以内の揺れ。視点は変わらず、元は押した所の面の点
     let (mut h, rect) = cube_view();
     {
-        let s = &mut h.state_mut().state;
-        s.m2.brush.effect = yolu_app::engine::BrushEffect::Clone {
+        let s = h.app_mut();
+        s.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
             offset: Default::default(),
         };
-        s.view3d.camera.yaw = 190.0;
-        s.view3d.camera.pitch = 0.0;
+        s.view3d_mut().camera.yaw = 190.0;
+        s.view3d_mut().camera.pitch = 0.0;
     }
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, 0.5));
     let expected = surface_point_at(&h, rect, at);
@@ -613,21 +597,21 @@ fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_mo
     h.step();
     mods(&mut h, Modifiers::NONE);
     assert_eq!(camera(&h), before);
-    let source = h.state().state.clone.source.expect("元を決めた");
+    let source = h.clone().source.expect("元を決めた");
     assert!(
         (source.position - expected).length() < 1e-4,
         "元は押した所の面の点: {} / {expected}",
         source.position
     );
     // 右クリック（スポイト）: 揺れでは視点が動かず、スポイトの候補も残る
-    h.state_mut().state.clone.source = None;
-    h.state_mut().state.color.set_main([0.0, 1.0, 0.0, 1.0]);
+    h.clone_mut().source = None;
+    h.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
     mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
     h.step();
     move_mouse(&mut h, at + vec2(3.0, 1.0));
     assert_eq!(camera(&h), before, "右ドラッグも遊びの内は回さない");
     assert!(
-        h.state().state.view3d.input.eyedrop.is_some(),
+        h.view3d().input.eyedrop.is_some(),
         "印と取る点が揃う（まだ候補）"
     );
     mouse(
@@ -639,7 +623,7 @@ fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_mo
     );
     h.step();
     assert_eq!(camera(&h), before);
-    assert!(h.state().state.view3d.input.eyedrop.is_none());
+    assert!(h.view3d().input.eyedrop.is_none());
 }
 
 #[test]
@@ -647,8 +631,8 @@ fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
     // 右ドラッグ: 4 点以内の揺れのあと 60 点動かすと、押した所からの 60 点ぶんの回転（遊びの分を引かない）
     let (mut h, rect) = cube_view();
     let at = rect.center();
-    h.state_mut().state.view3d.camera.yaw = 190.0;
-    h.state_mut().state.view3d.camera.pitch = 0.0;
+    h.view3d_mut().camera.yaw = 190.0;
+    h.view3d_mut().camera.pitch = 0.0;
     mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
     h.step();
     move_mouse(&mut h, at + vec2(2.0, 1.0));
@@ -658,7 +642,7 @@ fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
     assert!((c.yaw - (190.0 + 60.0 * 0.35)).abs() < 1e-3, "{}", c.yaw);
     assert!(c.pitch.abs() < 1e-3);
     assert!(
-        h.state().state.view3d.input.eyedrop.is_none(),
+        h.view3d().input.eyedrop.is_none(),
         "動かしたのでスポイトにしない"
     );
     // そのあとは、動いた分ずつ
@@ -673,7 +657,7 @@ fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
     );
     h.step();
     // Alt + 左ドラッグ（スナップ回転）: 同じ。軸から離れた向きまで動かすと、押した所からの動きが全部当たる
-    h.state_mut().state.view3d.camera.yaw = 190.0;
+    h.view3d_mut().camera.yaw = 190.0;
     let alt = Modifiers::ALT;
     mods(&mut h, alt);
     mouse(&h, at, PointerButton::Primary, true, alt);
@@ -699,7 +683,7 @@ fn right_dragging_from_straight_above_does_not_jump_by_a_degree_first() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
-        let c = &mut h.state_mut().state.view3d.camera;
+        let c = &mut h.view3d_mut().camera;
         c.yaw = 180.0;
         c.pitch = 90.0;
     }
@@ -724,26 +708,22 @@ fn right_dragging_from_straight_above_does_not_jump_by_a_degree_first() {
 fn flying_makes_the_right_button_release_no_longer_a_click() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
-    h.state_mut().state.color.set_main([0.0, 1.0, 0.0, 1.0]);
+    h.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
     press_right(&mut h, at);
     assert!(
-        h.state().state.view3d.input.eyedrop.is_some(),
+        h.view3d().input.eyedrop.is_some(),
         "押しただけならスポイトの候補"
     );
     key_event(&mut h, Key::W, true, Modifiers::NONE);
     h.step();
     assert!(
-        h.state().state.view3d.input.eyedrop.is_none(),
+        h.view3d().input.eyedrop.is_none(),
         "動かしたらスポイトにしない"
     );
     key_event(&mut h, Key::W, false, Modifiers::NONE);
     release_right(&mut h, at);
     h.run();
-    assert_eq!(
-        h.state().state.color.main,
-        [0.0, 1.0, 0.0, 1.0],
-        "色は変わらない"
-    );
+    assert_eq!(h.color().main, [0.0, 1.0, 0.0, 1.0], "色は変わらない");
 }
 
 // ───────── 3D: 外した組み合わせ ─────────
@@ -792,17 +772,17 @@ fn shift_with_the_right_button_and_alt_shift_with_the_left_no_longer_pan_in_3d()
         "Alt + Shift + 左でパンしない"
     );
     assert_ne!(camera(&h).yaw, start.yaw);
-    assert!(!h.state().state.doc.can_undo());
+    assert!(!h.doc().can_undo());
     // Shift + 右を動かさずに離しても、スポイトにはならない（修飾は書いたとおり）
-    h.state_mut().state.color.set_main([0.0, 1.0, 0.0, 1.0]);
+    h.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
     mods(&mut h, Modifiers::SHIFT);
     mouse(&h, at, PointerButton::Secondary, true, Modifiers::SHIFT);
     h.step();
-    assert!(h.state().state.view3d.input.eyedrop.is_none());
+    assert!(h.view3d().input.eyedrop.is_none());
     mouse(&h, at, PointerButton::Secondary, false, Modifiers::SHIFT);
     h.step();
     mods(&mut h, Modifiers::NONE);
-    assert_eq!(h.state().state.color.main, [0.0, 1.0, 0.0, 1.0]);
+    assert_eq!(h.color().main, [0.0, 1.0, 0.0, 1.0]);
 }
 
 // ───────── 2D: Alt + 左ドラッグの回転 ─────────
@@ -815,7 +795,7 @@ fn on_circle(h: &H, radius: f32, degrees: f32) -> Pos2 {
 }
 
 fn angle(h: &H) -> f32 {
-    h.state().state.view.angle
+    h.view().angle
 }
 
 fn near_step(degrees: f32) -> bool {
@@ -836,7 +816,7 @@ fn alt_drag_rotates_the_2d_view_in_15_degree_steps_and_shift_makes_it_free() {
         alt,
     );
     h.step();
-    assert!(h.state().state.canvas.rotating.is_some());
+    assert!(h.canvas().rotating.is_some());
     let mut seen = Vec::new();
     for degrees in [10.0, 22.0, 40.0, 61.0, 78.0] {
         move_on_circle(&mut h, 150.0, degrees);
@@ -853,10 +833,10 @@ fn alt_drag_rotates_the_2d_view_in_15_degree_steps_and_shift_makes_it_free() {
     );
     h.step();
     mods(&mut h, Modifiers::NONE);
-    assert!(h.state().state.canvas.rotating.is_none());
+    assert!(h.canvas().rotating.is_none());
     assert_eq!(strokes(&h), 0, "描かない");
     // Shift も押していれば自由（押している間に切り替わる）
-    h.state_mut().state.view.set_angle(0.0);
+    h.view_mut().set_angle(0.0);
     let both = Modifiers::ALT | Modifiers::SHIFT;
     mods(&mut h, both);
     mouse(
@@ -916,7 +896,7 @@ fn escape_during_the_2d_rotation_returns_to_the_starting_angle() {
 #[test]
 fn r_drag_and_shift_middle_drag_no_longer_rotate_the_2d_view() {
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.act(Action::SelectTool(Tool::Brush));
     let center = canvas_rect(&h).center();
     // R を押しながらの左ドラッグ: 回さない（描く）
     key_event(&mut h, Key::R, true, Modifiers::NONE);
@@ -932,11 +912,11 @@ fn r_drag_and_shift_middle_drag_no_longer_rotate_the_2d_view() {
     assert_eq!(angle(&h), 0.0, "R + ドラッグで回らない");
     assert_eq!(strokes(&h), 1, "R を押していても描く");
     // Shift + 中ボタンのドラッグ: 回さない（パン）
-    let before = h.state().state.view.pan;
+    let before = h.view().pan;
     mods(&mut h, Modifiers::SHIFT);
     mouse(&h, center, PointerButton::Middle, true, Modifiers::SHIFT);
     h.step();
-    assert!(h.state().state.canvas.rotating.is_none() && h.state().state.canvas.panning);
+    assert!(h.canvas().rotating.is_none() && h.canvas().panning);
     move_mouse(&mut h, offset(center, 30.0, 10.0));
     mouse(
         &h,
@@ -948,25 +928,21 @@ fn r_drag_and_shift_middle_drag_no_longer_rotate_the_2d_view() {
     h.step();
     mods(&mut h, Modifiers::NONE);
     assert_eq!(angle(&h), 0.0, "Shift + 中ボタンで回らない");
-    assert_ne!(h.state().state.view.pan, before, "動かすだけ（パン）");
+    assert_ne!(h.view().pan, before, "動かすだけ（パン）");
 }
 
 // ───────── 押しの始めの Alt は視点、途中の Alt はツール ─────────
 
 /// 文書の点 (x, y) の画面の点。
 fn doc_point(h: &H, x: f64, y: f64) -> Pos2 {
-    let s = &h.state().state;
-    s.view
-        .view(canvas_rect(h), s.doc.width(), s.doc.height())
+    let s = h.app();
+    s.view()
+        .view(canvas_rect(h), s.doc().width(), s.doc().height())
         .to_screen(x, y)
 }
 
 fn selected(h: &H, x: u32, y: u32) -> bool {
-    h.state()
-        .state
-        .doc
-        .selection()
-        .is_some_and(|m| m.amount(x, y) > 0)
+    h.doc().selection().is_some_and(|m| m.amount(x, y) > 0)
 }
 
 #[test]
@@ -974,9 +950,7 @@ fn an_alt_held_at_the_start_rotates_the_view_but_one_pressed_during_the_drag_is_
 {
     // 長方形選択: 押したあとに Alt を押すと「中心から」。押した点の反対側にも選択が伸びる
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut()
-        .state
-        .apply(Action::SelectTool(Tool::SelectRect));
+    h.act(Action::SelectTool(Tool::SelectRect));
     h.run();
     let (p0, p1) = (doc_point(&h, 128.0, 128.0), doc_point(&h, 168.0, 158.0));
     mouse(&h, p0, PointerButton::Primary, true, Modifiers::NONE);
@@ -994,11 +968,9 @@ fn an_alt_held_at_the_start_rotates_the_view_but_one_pressed_during_the_drag_is_
     );
     assert_eq!(angle(&h), 0.0, "回さない");
     // Alt を押さずに同じ操作: 反対側には伸びない
-    h.state_mut()
-        .state
-        .apply(Action::Sel(yolu_app::selection::SelAction::Edit(
-            yolu_app::selection::SelEdit::Clear,
-        )));
+    h.act(Action::Sel(yolu_app::selection::SelAction::Edit(
+        yolu_app::selection::SelEdit::Clear,
+    )));
     h.run();
     mouse(&h, p0, PointerButton::Primary, true, Modifiers::NONE);
     h.step();
@@ -1008,30 +980,28 @@ fn an_alt_held_at_the_start_rotates_the_view_but_one_pressed_during_the_drag_is_
     assert!(selected(&h, 150, 140));
     assert!(!selected(&h, 106, 116), "Alt なしは中心からにならない");
     // 押しの始めに Alt を持っていれば、選択を作らず表示を回す
-    h.state_mut()
-        .state
-        .apply(Action::Sel(yolu_app::selection::SelAction::Edit(
-            yolu_app::selection::SelEdit::Clear,
-        )));
+    h.act(Action::Sel(yolu_app::selection::SelAction::Edit(
+        yolu_app::selection::SelEdit::Clear,
+    )));
     h.run();
     mods(&mut h, Modifiers::ALT);
     mouse(&h, p0, PointerButton::Primary, true, Modifiers::ALT);
     h.step();
-    assert!(h.state().state.canvas.rotating.is_some());
+    assert!(h.canvas().rotating.is_some());
     let far = doc_point(&h, 200.0, 40.0);
     move_mouse(&mut h, far);
     mouse(&h, far, PointerButton::Primary, false, Modifiers::ALT);
     h.step();
     mods(&mut h, Modifiers::NONE);
     h.run();
-    assert!(h.state().state.doc.selection().is_none(), "選択は作らない");
+    assert!(h.doc().selection().is_none(), "選択は作らない");
     assert_ne!(angle(&h), 0.0, "表示を回した");
 }
 
 #[test]
 fn an_alt_pressed_after_a_brush_stroke_began_does_not_turn_it_into_a_rotation() {
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    h.act(Action::SelectTool(Tool::Brush));
     h.run();
     let c = canvas_rect(&h).center();
     mouse(&h, c, PointerButton::Primary, true, Modifiers::NONE);
@@ -1039,10 +1009,7 @@ fn an_alt_pressed_after_a_brush_stroke_began_does_not_turn_it_into_a_rotation() 
     mods(&mut h, Modifiers::ALT);
     move_mouse(&mut h, offset(c, 40.0, 0.0));
     move_mouse(&mut h, offset(c, 80.0, 0.0));
-    assert!(
-        h.state().state.canvas.rotating.is_none(),
-        "始まった描画のまま"
-    );
+    assert!(h.canvas().rotating.is_none(), "始まった描画のまま");
     mouse(
         &h,
         offset(c, 80.0, 0.0),

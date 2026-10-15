@@ -2,6 +2,7 @@
 //! 保存して開き直しても同じ、Esc・フォーカス喪失・取りこぼしでドラッグを取り残さない、日本語と英語。`headless_` で始まる試験は画面を描かず、
 //! Wine でも回る。egui_kittest の試験は画面の操作と見た目。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{epaint::Shape, pos2, vec2, Event, Key, Modifiers, Pos2, Rect};
@@ -28,12 +29,12 @@ const RECT: fn() -> Rect = || Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0
 
 fn state(size: u32) -> AppState {
     let mut s = AppState::new(size, size);
-    s.apply(Action::SelectTool(Tool::Path));
+    s.act(Action::SelectTool(Tool::Path));
     s
 }
 
 fn view(s: &AppState) -> yolu_app::canvas::view::CanvasView {
-    s.view.view(RECT(), s.doc.width(), s.doc.height())
+    s.view().view(RECT(), s.doc().width(), s.doc().height())
 }
 
 /// キャンバスの点（画素の座標）が見える画面の点。
@@ -80,28 +81,28 @@ fn canvas_points(s: &AppState) -> Vec<(f64, f64, f64)> {
 }
 
 fn pixel(s: &AppState, x: u32, y: u32) -> [u8; 4] {
-    composite_pixel(&s.doc, x, y)
+    composite_pixel(s.doc(), x, y)
 }
 
 #[test]
 fn headless_clicks_add_points_and_the_first_one_makes_a_path_layer_each_one_undo() {
     let mut s = state(256);
-    let base = s.selected_layer.unwrap();
-    assert_eq!(s.doc.layers().len(), 1);
+    let base = s.selected_layer().unwrap();
+    assert_eq!(s.doc().layers().len(), 1);
     click2d(&mut s, 40.0, 40.0);
     assert_eq!(
-        s.doc.layers().len(),
+        s.doc().layers().len(),
         2,
         "パスの無いレイヤーには、その上に新しいパスレイヤーを作る: {}",
-        s.message
+        s.message()
     );
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     assert_ne!(layer, base);
     assert!(
-        s.doc.layer(base).unwrap().path().is_none(),
+        s.doc().layer(base).unwrap().path().is_none(),
         "元のレイヤーには触れない"
     );
-    assert_eq!(s.doc.undo_count(), 1);
+    assert_eq!(s.doc().undo_count(), 1);
     click2d(&mut s, 120.0, 60.0);
     click2d(&mut s, 200.0, 180.0);
     assert_eq!(
@@ -113,31 +114,31 @@ fn headless_clicks_add_points_and_the_first_one_makes_a_path_layer_each_one_undo
         3
     );
     assert_eq!(
-        s.doc.layers().len(),
+        s.doc().layers().len(),
         2,
         "2 点目からは同じレイヤーのパスを描き直す"
     );
-    assert_eq!(s.doc.undo_count(), 3, "点を足すたびに 1 回の Undo");
+    assert_eq!(s.doc().undo_count(), 3, "点を足すたびに 1 回の Undo");
     // 点と点を結ぶ曲線が、画素になっている（点の所と、点の間）
     assert!(pixel(&s, 40, 40)[3] > 0 && pixel(&s, 200, 180)[3] > 0);
     assert!(pixel(&s, 80, 50)[3] > 0, "点の間も描かれている");
     assert_eq!(pixel(&s, 40, 200)[3], 0, "曲線から離れた所は描かない");
     assert_eq!(s.path_selected_index(), Some(2), "足した点を選ぶ");
     // 1 回ずつ戻る
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(canvas_points(&s).len(), 2);
     assert_eq!(pixel(&s, 200, 180)[3], 0);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(
-        s.doc.layers().len(),
+        s.doc().layers().len(),
         1,
         "最初の点を戻すとレイヤーごと消える"
     );
-    s.apply(Action::Redo);
-    assert_eq!(s.doc.layers().len(), 2);
+    s.act(Action::Redo);
+    assert_eq!(s.doc().layers().len(), 2);
     let redone = s
-        .doc
+        .doc()
         .layers()
         .iter()
         .find(|l| l.path().is_some())
@@ -149,18 +150,18 @@ fn headless_clicks_add_points_and_the_first_one_makes_a_path_layer_each_one_undo
 fn headless_the_canvas_edge_is_the_limit_for_new_and_moved_points() {
     let mut s = state(128);
     click2d(&mut s, -30.0, 50.0);
-    assert_eq!(s.doc.layers().len(), 1, "キャンバスの外には足さない");
-    assert!(s.message.contains("外"), "{}", s.message);
+    assert_eq!(s.doc().layers().len(), 1, "キャンバスの外には足さない");
+    assert!(s.message().contains("外"), "{}", s.message());
     click2d(&mut s, 20.0, 20.0);
     click2d(&mut s, 60.0, 60.0);
     // 外へ動かしても、縁に収まる
     drag2d(&mut s, (60.0, 60.0), (400.0, -90.0));
     assert_eq!(canvas_points(&s)[1].0, 128.0);
     assert_eq!(canvas_points(&s)[1].1, 0.0);
-    s.lang = Lang::En;
-    s.message.clear();
+    s.set_lang(Lang::En);
+    s.message_mut().clear();
     click2d(&mut s, 500.0, 500.0);
-    assert_eq!(s.message, "Outside the canvas");
+    assert_eq!(s.message(), "Outside the canvas");
 }
 
 #[test]
@@ -169,16 +170,16 @@ fn headless_dragging_a_point_moves_it_in_one_undo_and_a_click_only_selects() {
     for (x, y) in [(30.0, 30.0), (120.0, 90.0), (210.0, 30.0)] {
         click2d(&mut s, x, y);
     }
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     // 動かさずに離す: 選ぶだけ。文書は変わらない
-    let revision = s.doc.revision();
+    let revision = s.doc().revision();
     click2d(&mut s, 120.0, 90.0);
-    assert_eq!(s.doc.revision(), revision);
+    assert_eq!(s.doc().revision(), revision);
     assert_eq!(s.path_selected_index(), Some(1));
-    assert_eq!(s.doc.undo_count(), undo);
+    assert_eq!(s.doc().undo_count(), undo);
     // 動かす
     drag2d(&mut s, (120.0, 90.0), (120.0, 200.0));
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     let p = canvas_points(&s);
     assert!(
         (p[1].0 - 120.0).abs() < 1.0 && (p[1].1 - 200.0).abs() < 1.0,
@@ -189,7 +190,7 @@ fn headless_dragging_a_point_moves_it_in_one_undo_and_a_click_only_selects() {
         pixel(&s, 120, 200)[3] > 0 && pixel(&s, 120, 90)[3] == 0,
         "描き直されている"
     );
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     let p = canvas_points(&s);
     assert!((p[1].1 - 90.0).abs() < 1.0, "{p:?}");
     assert!(!s.is_stroking());
@@ -201,20 +202,24 @@ fn headless_a_drag_shows_only_in_the_overlay_until_it_is_released() {
     for (x, y) in [(30.0, 30.0), (120.0, 90.0), (210.0, 30.0)] {
         click2d(&mut s, x, y);
     }
-    let revision = s.doc.revision();
+    let revision = s.doc().revision();
     press2d(&mut s, 120.0, 90.0);
     assert!(
         s.is_stroking(),
         "ドラッグの間は描いている間と同じに、ほかの操作を断る"
     );
     move2d(&mut s, 130.0, 150.0);
-    assert_eq!(s.doc.revision(), revision, "離すまで文書は変えない");
-    s.apply(Action::NewLayer);
-    assert_eq!(s.doc.layers().len(), 2, "ドラッグの間はレイヤーを足せない");
-    s.apply(Action::Undo);
-    assert_eq!(s.doc.revision(), revision, "ドラッグの間は Undo も断る");
+    assert_eq!(s.doc().revision(), revision, "離すまで文書は変えない");
+    s.act(Action::NewLayer);
+    assert_eq!(
+        s.doc().layers().len(),
+        2,
+        "ドラッグの間はレイヤーを足せない"
+    );
+    s.act(Action::Undo);
+    assert_eq!(s.doc().revision(), revision, "ドラッグの間は Undo も断る");
     release2d(&mut s, 130.0, 150.0);
-    assert!(s.doc.revision() > revision);
+    assert!(s.doc().revision() > revision);
     assert!(!s.is_stroking());
 }
 
@@ -223,11 +228,11 @@ fn headless_a_click_on_the_curve_inserts_a_point_between_its_neighbours() {
     let mut s = state(256);
     click2d(&mut s, 30.0, 100.0);
     click2d(&mut s, 200.0, 100.0);
-    s.apply(Action::Path(PathAction::Point(PointOp::Width {
+    s.act(Action::Path(PathAction::Point(PointOp::Width {
         index: 0,
         pressure: 0.2,
     })));
-    s.apply(Action::Path(PathAction::Point(PointOp::Width {
+    s.act(Action::Path(PathAction::Point(PointOp::Width {
         index: 1,
         pressure: 0.8,
     })));
@@ -260,36 +265,36 @@ fn headless_delete_close_open_and_width_are_one_undo_each() {
     ] {
         click2d(&mut s, x, y);
     }
-    let n = s.doc.undo_count();
+    let n = s.doc().undo_count();
     // 閉じる: 始めの点を終わりに足す
-    s.apply(Action::Path(PathAction::Point(PointOp::Close)));
+    s.act(Action::Path(PathAction::Point(PointOp::Close)));
     assert_eq!(canvas_points(&s).len(), 6);
     assert!(pathtool::edit::path_is_closed(&path(&s).unwrap()));
-    assert_eq!(s.doc.undo_count(), n + 1);
+    assert_eq!(s.doc().undo_count(), n + 1);
     assert!(pixel(&s, 40, 120)[3] > 0, "閉じた辺（左）が描かれる");
-    s.apply(Action::Path(PathAction::Point(PointOp::Close)));
-    assert!(s.message.contains("閉じて"), "{}", s.message);
-    assert_eq!(s.doc.undo_count(), n + 1, "もう閉じているので何もしない");
+    s.act(Action::Path(PathAction::Point(PointOp::Close)));
+    assert!(s.message().contains("閉じて"), "{}", s.message());
+    assert_eq!(s.doc().undo_count(), n + 1, "もう閉じているので何もしない");
     // 閉じたパスの始めを動かすと終わりも動く
     drag2d(&mut s, (40.0, 40.0), (20.0, 20.0));
     let p = canvas_points(&s);
     assert_eq!((p[0].0, p[0].1), (p[5].0, p[5].1));
     assert!((p[0].0 - 20.0).abs() < 1.0);
     // 点の太さ（選んでいる点）
-    s.apply(Action::Path(PathAction::Select(Some(1))));
-    s.apply(Action::Path(PathAction::Point(PointOp::Width {
+    s.act(Action::Path(PathAction::Select(Some(1))));
+    s.act(Action::Path(PathAction::Point(PointOp::Width {
         index: 1,
         pressure: 0.25,
     })));
     assert!((canvas_points(&s)[1].2 - 0.25).abs() < 1e-9);
     // 消す: 選んでいる点。閉じたままの輪で消える
-    s.apply(Action::Path(PathAction::DeleteSelected));
+    s.act(Action::Path(PathAction::DeleteSelected));
     assert_eq!(canvas_points(&s).len(), 5);
     assert!(pathtool::edit::path_is_closed(&path(&s).unwrap()));
     // 選んでいる点が無ければ最後の点
-    s.apply(Action::Path(PathAction::Select(None)));
+    s.act(Action::Path(PathAction::Select(None)));
     let last = canvas_points(&s)[3];
-    s.apply(Action::Path(PathAction::DeleteSelected));
+    s.act(Action::Path(PathAction::DeleteSelected));
     let p = canvas_points(&s);
     assert_eq!(p.len(), 4, "終わりの複製でなく最後の点を消し、輪のまま");
     assert!(pathtool::edit::path_is_closed(&path(&s).unwrap()));
@@ -298,13 +303,13 @@ fn headless_delete_close_open_and_width_are_one_undo_each() {
         "最後の点（輪の 4 つ目）が消えた"
     );
     // 3 点の輪から消すと、2 点の開いたパス
-    s.apply(Action::Path(PathAction::Point(PointOp::Open)));
+    s.act(Action::Path(PathAction::Point(PointOp::Open)));
     assert!(!pathtool::edit::path_is_closed(&path(&s).unwrap()));
     assert_eq!(canvas_points(&s).len(), 3);
     // 取り消すと逆順に戻る
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert!(pathtool::edit::path_is_closed(&path(&s).unwrap()));
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(canvas_points(&s).len(), 5);
 }
 
@@ -312,23 +317,23 @@ fn headless_delete_close_open_and_width_are_one_undo_each() {
 fn headless_removing_every_point_clears_the_pixels_and_keeps_the_path_layer() {
     let mut s = state(128);
     click2d(&mut s, 30.0, 30.0);
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     assert!(pixel(&s, 30, 30)[3] > 0);
-    s.apply(Action::Path(PathAction::DeleteSelected));
+    s.act(Action::Path(PathAction::DeleteSelected));
     assert_eq!(canvas_points(&s).len(), 0);
     assert_eq!(pixel(&s, 30, 30)[3], 0, "点が無ければ画素も無い");
-    assert_eq!(s.selected_layer, Some(layer));
+    assert_eq!(s.selected_layer(), Some(layer));
     // 点の無いパスにも足せる（同じレイヤーのまま）
     click2d(&mut s, 60.0, 60.0);
     assert_eq!(canvas_points(&s).len(), 1);
-    assert_eq!(s.doc.layers().len(), 2);
+    assert_eq!(s.doc().layers().len(), 2);
     // 点の無いパスでの削除・閉じるは何も起こさない
-    s.apply(Action::Path(PathAction::DeleteSelected));
-    s.apply(Action::Path(PathAction::DeleteSelected));
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::DeleteSelected));
-    s.apply(Action::Path(PathAction::Point(PointOp::Close)));
-    assert_eq!(s.doc.undo_count(), undo);
+    s.act(Action::Path(PathAction::DeleteSelected));
+    s.act(Action::Path(PathAction::DeleteSelected));
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::DeleteSelected));
+    s.act(Action::Path(PathAction::Point(PointOp::Close)));
+    assert_eq!(s.doc().undo_count(), undo);
 }
 
 #[test]
@@ -338,16 +343,16 @@ fn headless_escape_cancels_a_drag_and_losing_focus_commits_up_to_the_last_positi
         click2d(&mut s, x, y);
     }
     let before = canvas_points(&s);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     // Esc: 点は元の所に残り、ドラッグは残らない
     press2d(&mut s, 120.0, 120.0);
     move2d(&mut s, 150.0, 200.0);
-    assert!(s.path.drag.is_some());
+    assert!(s.path().drag.is_some());
     assert_eq!(s.path_selected_index(), Some(1), "掴んだ点は選んでいる");
     assert!(s.path_cancel(1));
-    assert!(s.path.drag.is_none() && !s.is_stroking());
+    assert!(s.path().drag.is_none() && !s.is_stroking());
     assert_eq!(canvas_points(&s), before);
-    assert_eq!(s.doc.undo_count(), undo);
+    assert_eq!(s.doc().undo_count(), undo);
     assert_eq!(
         s.path_selected_index(),
         Some(1),
@@ -364,26 +369,26 @@ fn headless_escape_cancels_a_drag_and_losing_focus_commits_up_to_the_last_positi
     assert!(s.path_cancel(3));
     assert!(s.path_layer().is_none());
     assert!(!s.path_cancel(4), "何も無ければ、ほかの Esc の扱いへ");
-    s.apply(Action::Path(PathAction::SelectPath(Some(id))));
+    s.act(Action::Path(PathAction::SelectPath(Some(id))));
     assert_eq!(path(&s).unwrap().id(), id);
     // フォーカスを失う: そこまでを確定する
     press2d(&mut s, 120.0, 120.0);
     move2d(&mut s, 150.0, 200.0);
     s.path_finish_drag();
-    assert!(s.path.drag.is_none() && !s.is_stroking());
+    assert!(s.path().drag.is_none() && !s.is_stroking());
     assert!((canvas_points(&s)[1].1 - 200.0).abs() < 1.0);
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     // ドラッグ中にツールを替えると捨てる
     press2d(&mut s, 150.0, 200.0);
     move2d(&mut s, 10.0, 10.0);
-    s.apply(Action::SelectTool(Tool::Brush));
-    assert!(s.path.drag.is_none() && s.path.selected.is_none());
+    s.act(Action::SelectTool(Tool::Brush));
+    assert!(s.path().drag.is_none() && s.path().selected.is_none());
     assert!(
         (canvas_points(&s)[1].0 - 150.0).abs() < 1.0,
         "ツールを替えると動かさない"
     );
     // Esc で、選んだ点も外せる（ドラッグが無いとき）
-    s.apply(Action::SelectTool(Tool::Path));
+    s.act(Action::SelectTool(Tool::Path));
     click2d(&mut s, 40.0, 40.0);
     assert_eq!(s.path_selected_index(), Some(0));
     assert!(s.path_cancel(5));
@@ -404,7 +409,7 @@ fn headless_a_pen_touch_is_a_press_and_a_lift_is_a_release() {
         pathtool::canvas::pen_sample(&mut s, &v, p, 1, false);
     }
     assert_eq!(canvas_points(&s).len(), 3);
-    assert!(s.path.pen_down.is_none());
+    assert!(s.path().pen_down.is_none());
     // ペンで掴んで動かす
     let from = at(&s, 120.0, 120.0);
     let to = at(&s, 120.0, 190.0);
@@ -416,7 +421,7 @@ fn headless_a_pen_touch_is_a_press_and_a_lift_is_a_release() {
     pathtool::canvas::pen_sample(&mut s, &v, from, 3, true);
     pathtool::canvas::pen_sample(&mut s, &v, from, 4, true);
     assert_eq!(
-        s.path.pen_down,
+        s.path().pen_down,
         Some(pathtool::PenDown {
             id: 3,
             surface: false
@@ -429,42 +434,46 @@ fn headless_a_locked_layer_refuses_and_nothing_changes() {
     let mut s = state(256);
     click2d(&mut s, 40.0, 40.0);
     click2d(&mut s, 120.0, 120.0);
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let before = canvas_points(&s);
-    let (undo, revision) = (s.doc.undo_count(), s.doc.revision());
+    let (undo, revision) = (s.doc().undo_count(), s.doc().revision());
     for (locks, why) in [
         (LayerLocks::PIXELS, "画素"),
         (LayerLocks::TRANSPARENCY, "透明部分"),
         (LayerLocks::ALL, "すべて"),
     ] {
-        s.doc.set_layer_locks(layer, locks).unwrap();
-        let (undo, revision) = (s.doc.undo_count(), s.doc.revision());
-        s.message.clear();
+        s.doc_mut().set_layer_locks(layer, locks).unwrap();
+        let (undo, revision) = (s.doc().undo_count(), s.doc().revision());
+        s.message_mut().clear();
         click2d(&mut s, 200.0, 40.0);
-        assert!(s.message.contains(why), "{locks:?}: {}", s.message);
+        assert!(s.message().contains(why), "{locks:?}: {}", s.message());
         assert_eq!(canvas_points(&s), before, "{locks:?}");
-        assert_eq!((s.doc.undo_count(), s.doc.revision()), (undo, revision));
+        assert_eq!((s.doc().undo_count(), s.doc().revision()), (undo, revision));
         // 動かす・消す・太さも断る
         drag2d(&mut s, (120.0, 120.0), (60.0, 200.0));
-        s.apply(Action::Path(PathAction::DeleteSelected));
-        s.apply(Action::Path(PathAction::Point(PointOp::Close)));
+        s.act(Action::Path(PathAction::DeleteSelected));
+        s.act(Action::Path(PathAction::Point(PointOp::Close)));
         assert_eq!(canvas_points(&s), before, "{locks:?}");
-        assert_eq!((s.doc.undo_count(), s.doc.revision()), (undo, revision));
+        assert_eq!((s.doc().undo_count(), s.doc().revision()), (undo, revision));
     }
     // 位置のロックは点の編集（画素を描き直す）を妨げない。画素だけのロックは断られた
-    s.doc.set_layer_locks(layer, LayerLocks::POSITION).unwrap();
+    s.doc_mut()
+        .set_layer_locks(layer, LayerLocks::POSITION)
+        .unwrap();
     click2d(&mut s, 200.0, 40.0);
     assert_eq!(canvas_points(&s).len(), 3);
-    assert!(s.doc.undo_count() > undo || s.doc.revision() > revision);
+    assert!(s.doc().undo_count() > undo || s.doc().revision() > revision);
     // 英語
-    s.doc.set_layer_locks(layer, LayerLocks::PIXELS).unwrap();
-    s.lang = Lang::En;
-    s.message.clear();
+    s.doc_mut()
+        .set_layer_locks(layer, LayerLocks::PIXELS)
+        .unwrap();
+    s.set_lang(Lang::En);
+    s.message_mut().clear();
     click2d(&mut s, 50.0, 200.0);
     assert!(
-        s.message.contains("locked") && s.message.contains("pixels"),
+        s.message().contains("locked") && s.message().contains("pixels"),
         "{}",
-        s.message
+        s.message()
     );
 }
 
@@ -473,59 +482,59 @@ fn headless_rasterize_keeps_the_pixels_and_makes_the_layer_paintable_in_one_undo
     let mut s = state(256);
     click2d(&mut s, 40.0, 40.0);
     click2d(&mut s, 200.0, 180.0);
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     // パスレイヤーには手で描けない
     let err = s.begin_paint_stroke(layer, false).map(|_| ()).unwrap_err();
     assert!(err.to_string().contains("パス"), "{err}");
     let painted = pixel(&s, 100, 100);
     assert!(pixel(&s, 40, 40)[3] > 0);
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Rasterize(layer)));
-    assert!(s.doc.layer(layer).unwrap().path().is_none());
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Rasterize(layer)));
+    assert!(s.doc().layer(layer).unwrap().path().is_none());
+    assert_eq!(s.doc().undo_count(), undo + 1);
     assert_eq!(pixel(&s, 100, 100), painted, "今の画素はそのまま");
     assert_eq!(s.path_selected_index(), None);
     // 普通に塗れる
     let stroke = s
         .begin_paint_stroke(layer, false)
         .expect("パスを外したら塗れる");
-    s.doc.cancel_stroke(stroke);
-    s.apply(Action::Undo);
+    s.doc_mut().cancel_stroke(stroke);
+    s.act(Action::Undo);
     assert!(
-        s.doc.layer(layer).unwrap().path().is_some(),
+        s.doc().layer(layer).unwrap().path().is_some(),
         "戻すとパスも戻る"
     );
     // すべてのロックでは外せない
-    s.doc.set_layer_locks(layer, LayerLocks::ALL).unwrap();
-    s.apply(Action::Path(PathAction::Rasterize(layer)));
-    assert!(s.doc.layer(layer).unwrap().path().is_some());
-    assert!(s.message.contains("すべて"), "{}", s.message);
+    s.doc_mut().set_layer_locks(layer, LayerLocks::ALL).unwrap();
+    s.act(Action::Path(PathAction::Rasterize(layer)));
+    assert!(s.doc().layer(layer).unwrap().path().is_some());
+    assert!(s.message().contains("すべて"), "{}", s.message());
 }
 
 /// 「新規パスレイヤー」を当てる（レイヤーのメニューと同じ操作）。
 fn new_path_layer(s: &mut AppState) {
-    s.apply(Action::LayerMenu(yolu_app::layermenu::Op::PathLayer));
+    s.act(Action::LayerMenu(yolu_app::layermenu::Op::PathLayer));
 }
 
 #[test]
 fn headless_a_new_path_layer_is_empty_above_the_selected_layer_and_the_first_click_fills_it() {
     let mut s = AppState::new(128, 128);
-    assert_ne!(s.tool, Tool::Path);
-    let base = s.selected_layer.unwrap();
-    s.apply(Action::NewLayer);
-    let top = s.selected_layer.unwrap();
-    s.selected_layer = Some(base);
-    let undo = s.doc.undo_count();
+    assert_ne!(s.tool(), Tool::Path);
+    let base = s.selected_layer().unwrap();
+    s.act(Action::NewLayer);
+    let top = s.selected_layer().unwrap();
+    s.set_selected_layer(Some(base));
+    let undo = s.doc().undo_count();
     new_path_layer(&mut s);
     // 選んでいたレイヤーのすぐ上に、点の無い 1 本のパスのレイヤー。選んで、パスのツールへ替える
-    let made = s.selected_layer.unwrap();
-    let order: Vec<_> = s.doc.layers().iter().map(|l| l.id()).collect();
-    assert_eq!(order, vec![base, made, top], "{}", s.message);
-    assert_eq!(s.doc.layers().len(), 3);
-    assert_eq!(s.tool, Tool::Path);
-    assert_eq!(s.doc.undo_count(), undo + 1, "1 回の Undo");
-    assert!(s.modified);
-    let layer = s.doc.layer(made).unwrap();
+    let made = s.selected_layer().unwrap();
+    let order: Vec<_> = s.doc().layers().iter().map(|l| l.id()).collect();
+    assert_eq!(order, vec![base, made, top], "{}", s.message());
+    assert_eq!(s.doc().layers().len(), 3);
+    assert_eq!(s.tool(), Tool::Path);
+    assert_eq!(s.doc().undo_count(), undo + 1, "1 回の Undo");
+    assert!(s.modified());
+    let layer = s.doc().layer(made).unwrap();
     assert_eq!(layer.paths().len(), 1);
     assert!(layer.has_paths());
     assert_eq!(canvas_points(&s).len(), 0, "点は無い");
@@ -535,72 +544,72 @@ fn headless_a_new_path_layer_is_empty_above_the_selected_layer_and_the_first_cli
     );
     // 最初の点は、新しいレイヤーを作らずに、このレイヤーのパスへ入る
     click2d(&mut s, 40.0, 40.0);
-    assert_eq!(s.doc.layers().len(), 3, "{}", s.message);
-    assert_eq!(s.selected_layer, Some(made));
+    assert_eq!(s.doc().layers().len(), 3, "{}", s.message());
+    assert_eq!(s.selected_layer(), Some(made));
     assert_eq!(canvas_points(&s).len(), 1);
     assert!(pixel(&s, 40, 40)[3] > 0);
     // 1 回ずつ戻る: 点 → レイヤー
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(canvas_points(&s).len(), 0);
-    s.apply(Action::Undo);
-    assert_eq!(s.doc.layers().len(), 2);
-    assert!(s.doc.layer(made).is_none());
-    s.apply(Action::Redo);
-    assert_eq!(s.doc.layers().len(), 3);
-    assert!(s.doc.layer(made).unwrap().has_paths());
+    s.act(Action::Undo);
+    assert_eq!(s.doc().layers().len(), 2);
+    assert!(s.doc().layer(made).is_none());
+    s.act(Action::Redo);
+    assert_eq!(s.doc().layers().len(), 3);
+    assert!(s.doc().layer(made).unwrap().has_paths());
 }
 
 #[test]
 fn headless_a_new_path_layer_goes_on_top_without_a_selection_and_inside_the_selected_group() {
     let mut s = AppState::new(64, 64);
-    let base = s.selected_layer.unwrap();
-    s.selected_layer = None;
+    let base = s.selected_layer().unwrap();
+    s.set_selected_layer(None);
     new_path_layer(&mut s);
-    let made = s.selected_layer.unwrap();
-    assert_eq!(s.doc.layers().last().unwrap().id(), made, "一番上");
+    let made = s.selected_layer().unwrap();
+    assert_eq!(s.doc().layers().last().unwrap().id(), made, "一番上");
     // グループの中のレイヤーを選んでいれば、同じグループの中のすぐ上
-    s.apply(Action::M2(yolu_app::m2::Edit::NewGroup));
-    let group = s.selected_layer.unwrap();
-    s.apply(Action::M2(yolu_app::m2::Edit::Move {
+    s.act(Action::M2(yolu_app::m2::Edit::NewGroup));
+    let group = s.selected_layer().unwrap();
+    s.act(Action::M2(yolu_app::m2::Edit::Move {
         id: base,
         parent: Some(group),
         position: 0,
     }));
-    s.selected_layer = Some(base);
+    s.set_selected_layer(Some(base));
     new_path_layer(&mut s);
-    let inside = s.selected_layer.unwrap();
-    assert_eq!(s.doc.layer(inside).unwrap().parent(), Some(group));
-    let siblings = s.doc.children_of(Some(group)).unwrap();
+    let inside = s.selected_layer().unwrap();
+    assert_eq!(s.doc().layer(inside).unwrap().parent(), Some(group));
+    let siblings = s.doc().children_of(Some(group)).unwrap();
     assert_eq!(siblings, vec![base, inside]);
 }
 
 #[test]
 fn headless_the_first_3d_point_turns_a_new_path_layer_into_a_surface_path_in_the_same_layer() {
     let (mut s, rect) = state3d(two_material_plate());
-    s.tool = Tool::Brush;
+    s.set_tool(Tool::Brush);
     new_path_layer(&mut s);
-    let layer = s.selected_layer.unwrap();
-    let id = s.doc.layer(layer).unwrap().paths()[0].id();
-    assert_eq!(s.doc.layers().len(), 2);
+    let layer = s.selected_layer().unwrap();
+    let id = s.doc().layer(layer).unwrap().paths()[0].id();
+    assert_eq!(s.doc().layers().len(), 2);
     assert!(matches!(path(&s), Some(LayerPath::Canvas(_))));
     // 3D の面に最初の点を置くと、同じレイヤー・同じ ID のまま 3D のパスになる（新しいレイヤーは作らない）
     click3d(&mut s, rect, Vec3::new(-0.8, -0.4, 0.0));
-    assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
-    assert_eq!(s.selected_layer, Some(layer));
-    let entries = s.doc.layer(layer).unwrap().paths();
+    assert_eq!(s.doc().layers().len(), 2, "{}", s.message());
+    assert_eq!(s.selected_layer(), Some(layer));
+    let entries = s.doc().layer(layer).unwrap().paths();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].id(), id, "同じパス");
     assert_eq!(surface_path(&s).points.len(), 1);
     assert!(alpha_at(&s, 0.1, 0.30) > 0, "面に投影した画素");
     // 点のあるパスには、別の側の点は足せない（今までどおり）
-    s.message.clear();
+    s.message_mut().clear();
     click2d(&mut s, 30.0, 30.0);
-    assert!(s.message.contains("モデルの上のパス"), "{}", s.message);
+    assert!(s.message().contains("モデルの上のパス"), "{}", s.message());
     assert_eq!(surface_path(&s).points.len(), 1);
     // 1 回ずつ戻ると、点の無い 2D のパスのレイヤーへ戻る
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert!(matches!(path(&s), Some(LayerPath::Canvas(c)) if c.points.is_empty()));
-    assert_eq!(s.doc.layers().len(), 2);
+    assert_eq!(s.doc().layers().len(), 2);
     // 2D の点なら、2D のパスのまま
     click2d(&mut s, 30.0, 30.0);
     assert_eq!(canvas_points(&s).len(), 1);
@@ -616,7 +625,7 @@ fn leave_path_edit(s: &mut AppState, how: &str) {
                 s.path_cancel(FRAME.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
             }
         }
-        _ => s.apply(Action::Path(PathAction::SelectPath(None))),
+        _ => s.act(Action::Path(PathAction::SelectPath(None))),
     }
 }
 
@@ -626,12 +635,12 @@ fn headless_leaving_the_edit_of_a_new_path_layer_keeps_its_one_empty_path_for_th
     for how in ["Esc", "新しいパス"] {
         let mut s = AppState::new(128, 128);
         new_path_layer(&mut s);
-        let layer = s.selected_layer.unwrap();
-        let id = s.doc.layer(layer).unwrap().paths()[0].id();
+        let layer = s.selected_layer().unwrap();
+        let id = s.doc().layer(layer).unwrap().paths()[0].id();
         leave_path_edit(&mut s, how);
         click2d(&mut s, 40.0, 40.0);
-        assert_eq!(s.doc.layers().len(), 2, "{how}: {}", s.message);
-        let entries = s.doc.layer(layer).unwrap().paths();
+        assert_eq!(s.doc().layers().len(), 2, "{how}: {}", s.message());
+        let entries = s.doc().layer(layer).unwrap().paths();
         assert_eq!(
             entries.len(),
             1,
@@ -643,7 +652,7 @@ fn headless_leaving_the_edit_of_a_new_path_layer_keeps_its_one_empty_path_for_th
         // 点のあるパスでは、抜けると次の点は 2 本目を始める（今までどおり）
         leave_path_edit(&mut s, how);
         click2d(&mut s, 90.0, 90.0);
-        assert_eq!(s.doc.layer(layer).unwrap().paths().len(), 2, "{how}");
+        assert_eq!(s.doc().layer(layer).unwrap().paths().len(), 2, "{how}");
     }
 }
 
@@ -653,19 +662,19 @@ fn headless_leaving_the_edit_of_a_new_path_layer_keeps_its_one_empty_path_for_th
     for how in ["Esc", "新しいパス"] {
         let (mut s, rect) = state3d(two_material_plate());
         new_path_layer(&mut s);
-        let layer = s.selected_layer.unwrap();
-        let id = s.doc.layer(layer).unwrap().paths()[0].id();
+        let layer = s.selected_layer().unwrap();
+        let id = s.doc().layer(layer).unwrap().paths()[0].id();
         leave_path_edit(&mut s, how);
-        s.message.clear();
+        s.message_mut().clear();
         click3d(&mut s, rect, Vec3::new(-0.8, -0.4, 0.0));
-        assert_eq!(s.doc.layers().len(), 2, "{how}: {}", s.message);
-        let entries = s.doc.layer(layer).unwrap().paths();
+        assert_eq!(s.doc().layers().len(), 2, "{how}: {}", s.message());
+        let entries = s.doc().layer(layer).unwrap().paths();
         assert_eq!(entries.len(), 1, "{how}: 空のパスを残さない");
         assert_eq!(entries[0].id(), id, "{how}");
         assert_eq!(surface_path(&s).points.len(), 1, "{how}");
         assert!(alpha_at(&s, 0.1, 0.30) > 0, "{how}");
         // 1 回の取り消しで、点の無い 2D のパスへ戻る
-        s.apply(Action::Undo);
+        s.act(Action::Undo);
         assert!(
             matches!(path(&s), Some(LayerPath::Canvas(c)) if c.points.is_empty()),
             "{how}"
@@ -677,12 +686,12 @@ fn headless_leaving_the_edit_of_a_new_path_layer_keeps_its_one_empty_path_for_th
 fn headless_leaving_the_edit_after_removing_every_point_also_keeps_one_path() {
     let mut s = state(128);
     click2d(&mut s, 30.0, 30.0);
-    let layer = s.selected_layer.unwrap();
-    s.apply(Action::Path(PathAction::DeleteSelected));
+    let layer = s.selected_layer().unwrap();
+    s.act(Action::Path(PathAction::DeleteSelected));
     assert!(s.path_cancel(3));
     click2d(&mut s, 60.0, 60.0);
-    let entries = s.doc.layer(layer).unwrap().paths();
-    assert_eq!(entries.len(), 1, "空のパスを残さない: {}", s.message);
+    let entries = s.doc().layer(layer).unwrap().paths();
+    assert_eq!(entries.len(), 1, "空のパスを残さない: {}", s.message());
     assert_eq!(entries[0].path.point_count(), 1);
 }
 
@@ -690,37 +699,37 @@ fn headless_leaving_the_edit_after_removing_every_point_also_keeps_one_path() {
 fn headless_removing_every_point_of_a_surface_path_lets_the_next_click_choose_the_side_again() {
     let (mut s, rect) = state3d(two_material_plate());
     click3d(&mut s, rect, Vec3::new(-0.8, -0.4, 0.0));
-    let layer = s.selected_layer.unwrap();
-    s.apply(Action::Path(PathAction::DeleteSelected));
+    let layer = s.selected_layer().unwrap();
+    s.act(Action::Path(PathAction::DeleteSelected));
     assert!(matches!(path(&s), Some(LayerPath::Surface(p)) if p.points.is_empty()));
     click2d(&mut s, 30.0, 30.0);
-    assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
-    assert_eq!(s.selected_layer, Some(layer));
+    assert_eq!(s.doc().layers().len(), 2, "{}", s.message());
+    assert_eq!(s.selected_layer(), Some(layer));
     assert_eq!(canvas_points(&s).len(), 1);
 }
 
 #[test]
 fn headless_a_new_path_layer_is_refused_while_stroking_and_in_a_read_only_set() {
     let mut s = AppState::new(64, 64);
-    s.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("試験".into());
     new_path_layer(&mut s);
-    assert_eq!(s.doc.layers().len(), 1);
+    assert_eq!(s.doc().layers().len(), 1);
     assert!(
-        s.message.contains("読むだけ") && s.message.contains("試験"),
+        s.message().contains("読むだけ") && s.message().contains("試験"),
         "{}",
-        s.message
+        s.message()
     );
-    s.sets.get_mut(0).unwrap().read_only = None;
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
     // 描いている最中は作らない
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let settings = s.stroke_settings(false);
-    let stroke = s.doc.begin_stroke(layer, &settings).unwrap();
+    let stroke = s.doc_mut().begin_stroke(layer, &settings).unwrap();
     assert!(s.is_stroking());
-    s.message.clear();
+    s.message_mut().clear();
     new_path_layer(&mut s);
-    assert_eq!(s.doc.layers().len(), 1);
-    assert!(!s.message.is_empty());
-    s.doc.cancel_stroke(stroke);
+    assert_eq!(s.doc().layers().len(), 1);
+    assert!(!s.message().is_empty());
+    s.doc_mut().cancel_stroke(stroke);
 }
 
 #[test]
@@ -731,17 +740,17 @@ fn headless_a_new_path_layer_survives_saving_and_opening() {
     std::fs::create_dir_all(&dir).unwrap();
     let mut s = AppState::new(64, 64);
     new_path_layer(&mut s);
-    let layer = s.selected_layer.unwrap();
-    let name = s.doc.layer(layer).unwrap().name().to_owned();
+    let layer = s.selected_layer().unwrap();
+    let name = s.doc().layer(layer).unwrap().name().to_owned();
     let file = dir.join("empty-path.ylp");
-    s.apply(Action::SaveProjectAs(file.clone()));
-    assert!(file.exists(), "{}", s.message);
+    s.act(Action::SaveProjectAs(file.clone()));
+    assert!(file.exists(), "{}", s.message());
     let mut t = AppState::new(32, 32);
-    t.apply(Action::OpenProject(file));
+    t.act(Action::OpenProject(file));
     let opened = t
-        .doc
+        .doc()
         .layer(layer)
-        .unwrap_or_else(|| panic!("{}", t.message));
+        .unwrap_or_else(|| panic!("{}", t.message()));
     assert_eq!(opened.name(), name);
     assert!(opened.has_paths());
     assert_eq!(
@@ -750,10 +759,10 @@ fn headless_a_new_path_layer_survives_saving_and_opening() {
         "点の無いパスのまま"
     );
     // 開いたあとも、パスのツールで点を置ける
-    t.apply(Action::SelectTool(Tool::Path));
-    t.selected_layer = Some(layer);
+    t.act(Action::SelectTool(Tool::Path));
+    t.set_selected_layer(Some(layer));
     click2d(&mut t, 20.0, 20.0);
-    assert_eq!(t.doc.layers().len(), 2, "{}", t.message);
+    assert_eq!(t.doc().layers().len(), 2, "{}", t.message());
     assert_eq!(canvas_points(&t).len(), 1);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -762,27 +771,27 @@ fn headless_a_new_path_layer_survives_saving_and_opening() {
 fn headless_masks_read_only_sets_and_foreign_paths_are_refused_with_a_reason() {
     // マスク
     let mut s = state(128);
-    let layer = s.selected_layer.unwrap();
-    s.apply(Action::M2(yolu_app::m2::Edit::AddMask(layer)));
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::EditMask(true)));
+    let layer = s.selected_layer().unwrap();
+    s.act(Action::M2(yolu_app::m2::Edit::AddMask(layer)));
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::EditMask(true)));
     click2d(&mut s, 30.0, 30.0);
-    assert_eq!(s.doc.layers().len(), 1);
-    assert!(s.message.contains("マスク"), "{}", s.message);
-    s.apply(Action::M2Ui(yolu_app::m2::UiOp::EditMask(false)));
+    assert_eq!(s.doc().layers().len(), 1);
+    assert!(s.message().contains("マスク"), "{}", s.message());
+    s.act(Action::M2Ui(yolu_app::m2::UiOp::EditMask(false)));
     // 読むだけのセット
-    s.sets.get_mut(0).unwrap().read_only = Some("試験".into());
-    s.message.clear();
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("試験".into());
+    s.message_mut().clear();
     click2d(&mut s, 30.0, 30.0);
-    assert_eq!(s.doc.layers().len(), 1);
+    assert_eq!(s.doc().layers().len(), 1);
     assert!(
-        s.message.contains("読むだけ") && s.message.contains("試験"),
+        s.message().contains("読むだけ") && s.message().contains("試験"),
         "{}",
-        s.message
+        s.message()
     );
-    s.sets.get_mut(0).unwrap().read_only = None;
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
     // 2D のパスレイヤーに 3D の点（逆も）は足せない
     click2d(&mut s, 30.0, 30.0);
-    s.apply(Action::Path(PathAction::Point(PointOp::Add(
+    s.act(Action::Path(PathAction::Point(PointOp::Add(
         Place::Surface {
             triangle: 0,
             u: 0.1,
@@ -790,24 +799,24 @@ fn headless_masks_read_only_sets_and_foreign_paths_are_refused_with_a_reason() {
         },
     ))));
     assert_eq!(canvas_points(&s).len(), 1);
-    assert!(s.message.contains("キャンバス"), "{}", s.message);
+    assert!(s.message().contains("キャンバス"), "{}", s.message());
     // 非標準のチャンネルでは描けない（core の理由を日本語・英語で）
     let mut t = state(128);
-    t.lang = Lang::En;
+    t.set_lang(Lang::En);
     let channel = t
-        .doc
+        .doc_mut()
         .add_channel(yolu_app::m2::new_channel_info(
             "AO".into(),
             yolu_app::engine::ChannelKind::Scalar,
         ))
         .unwrap();
-    t.apply(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(channel)));
+    t.act(Action::M2Ui(yolu_app::m2::UiOp::PaintChannel(channel)));
     click2d(&mut t, 30.0, 30.0);
-    assert_eq!(t.doc.layers().len(), 1, "{}", t.message);
+    assert_eq!(t.doc().layers().len(), 1, "{}", t.message());
     assert!(
-        t.message.starts_with("Unsupported value or operation"),
+        t.message().starts_with("Unsupported value or operation"),
         "{}",
-        t.message
+        t.message()
     );
 }
 
@@ -815,13 +824,13 @@ fn headless_masks_read_only_sets_and_foreign_paths_are_refused_with_a_reason() {
 fn headless_brush_edits_redraw_the_path_and_without_a_path_they_set_the_next_brush() {
     let mut s = state(256);
     // パスが無い: 今のブラシを替える
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(40.0))));
-    assert_eq!(s.brush.radius, 20.0);
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Hardness(0.25))));
-    assert_eq!(s.brush.hardness, 0.25);
-    assert_eq!(s.doc.layers().len(), 1);
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(40.0))));
+    assert_eq!(s.brush().radius, 20.0);
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Hardness(0.25))));
+    assert_eq!(s.brush().hardness, 0.25);
+    assert_eq!(s.doc().layers().len(), 1);
     // そのブラシでパスを作る
-    s.color.set_main([0.9, 0.1, 0.1, 1.0]);
+    s.color_mut().set_main([0.9, 0.1, 0.1, 1.0]);
     click2d(&mut s, 60.0, 128.0);
     click2d(&mut s, 200.0, 128.0);
     let Some(LayerPath::Canvas(c)) = path(&s) else {
@@ -831,9 +840,9 @@ fn headless_brush_edits_redraw_the_path_and_without_a_path_they_set_the_next_bru
     assert_eq!(c.brush.0.color.r, 230);
     let thick = (0..256).filter(|y| pixel(&s, 130, *y)[3] > 0).count();
     // パスのブラシを替えると、描き直す（1 回の Undo）
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(10.0))));
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(10.0))));
+    assert_eq!(s.doc().undo_count(), undo + 1);
     let thin = (0..256).filter(|y| pixel(&s, 130, *y)[3] > 0).count();
     assert!(thin < thick, "{thin} < {thick}");
     let Some(LayerPath::Canvas(c)) = path(&s) else {
@@ -841,30 +850,31 @@ fn headless_brush_edits_redraw_the_path_and_without_a_path_they_set_the_next_bru
     };
     assert_eq!(c.brush.0.radius, 5.0);
     assert_eq!(
-        s.brush.radius, 20.0,
+        s.brush().radius,
+        20.0,
         "パスのブラシを替えても、今のブラシは変わらない"
     );
     // 同じ値には描き直さない
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(10.0))));
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(10.0))));
+    assert_eq!(s.doc().undo_count(), undo + 1);
     // 太さの影響の切り替え
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::PressureSize(
+    s.act(Action::Path(PathAction::Brush(BrushEdit::PressureSize(
         false,
     ))));
     let Some(LayerPath::Canvas(c)) = path(&s) else {
         panic!()
     };
     assert!(!c.brush.1.size);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
     let Some(LayerPath::Canvas(c)) = path(&s) else {
         panic!()
     };
     assert_eq!(c.brush.0.radius, 20.0);
     // 「ブラシを使う」: 今のブラシと色をパスに
-    s.brush.radius = 8.0;
-    s.color.set_main([0.1, 0.2, 0.9, 1.0]);
-    s.apply(Action::Path(PathAction::UseBrush));
+    s.brush_mut().radius = 8.0;
+    s.color_mut().set_main([0.1, 0.2, 0.9, 1.0]);
+    s.act(Action::Path(PathAction::UseBrush));
     let Some(LayerPath::Canvas(c)) = path(&s) else {
         panic!()
     };
@@ -875,12 +885,12 @@ fn headless_brush_edits_redraw_the_path_and_without_a_path_they_set_the_next_bru
 #[test]
 fn headless_a_material_path_paints_every_channel_of_the_group_in_one_undo() {
     let mut s = state(128);
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
-    s.mat.set_scalar(Channel::Roughness, 0.8);
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    s.mat_mut().set_scalar(Channel::Roughness, 0.8);
     click2d(&mut s, 30.0, 64.0);
     click2d(&mut s, 100.0, 64.0);
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let Some(LayerPath::Canvas(c)) = path(&s) else {
         panic!()
     };
@@ -894,7 +904,7 @@ fn headless_a_material_path_paints_every_channel_of_the_group_in_one_undo() {
     assert_eq!(channels, vec![Channel::Color, Channel::Roughness]);
     for channel in [Channel::Color, Channel::Roughness] {
         let px = s
-            .doc
+            .doc()
             .layer(layer)
             .unwrap()
             .surface(channel)
@@ -904,7 +914,7 @@ fn headless_a_material_path_paints_every_channel_of_the_group_in_one_undo() {
         assert!(px.a > 0, "{channel:?}");
     }
     let r = s
-        .doc
+        .doc()
         .layer(layer)
         .unwrap()
         .surface(Channel::Roughness)
@@ -912,13 +922,13 @@ fn headless_a_material_path_paints_every_channel_of_the_group_in_one_undo() {
         .pixel(60, 64)
         .unwrap();
     assert!((r.r as i32 - 204).abs() <= 1, "ラフネスの値 {r:?}");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(canvas_points(&s).len(), 1);
     // 組を持つパスに「ブラシを使う」で、今の組の値を当てる
-    s.mat.set_scalar(Channel::Roughness, 0.2);
-    s.apply(Action::Path(PathAction::UseBrush));
+    s.mat_mut().set_scalar(Channel::Roughness, 0.2);
+    s.act(Action::Path(PathAction::UseBrush));
     let r = s
-        .doc
+        .doc()
         .layer(layer)
         .unwrap()
         .surface(Channel::Roughness)
@@ -928,11 +938,11 @@ fn headless_a_material_path_paints_every_channel_of_the_group_in_one_undo() {
     assert!((r.r as i32 - 51).abs() <= 1, "{r:?}");
     assert_eq!(s.path_layer().unwrap().1.channels().len(), 2);
     // 組をやめて「ブラシを使う」: 組を外す
-    s.apply(Action::Mat(MatAction::Enabled(false)));
-    s.apply(Action::Path(PathAction::UseBrush));
+    s.act(Action::Mat(MatAction::Enabled(false)));
+    s.act(Action::Path(PathAction::UseBrush));
     assert_eq!(s.path_layer().unwrap().1.channels(), vec![Channel::Color]);
     assert!(s
-        .doc
+        .doc()
         .layer(layer)
         .unwrap()
         .surface(Channel::Roughness)
@@ -946,26 +956,26 @@ fn headless_a_path_survives_saving_and_opening() {
     crate::common::tmp::clean_up_after_test(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let mut s = state(128);
-    s.color.set_main([0.2, 0.7, 0.3, 1.0]);
+    s.color_mut().set_main([0.2, 0.7, 0.3, 1.0]);
     for (x, y) in [(20.0, 20.0), (100.0, 40.0), (60.0, 100.0)] {
         click2d(&mut s, x, y);
     }
-    s.apply(Action::Path(PathAction::Point(PointOp::Close)));
-    s.apply(Action::Path(PathAction::Point(PointOp::Width {
+    s.act(Action::Path(PathAction::Point(PointOp::Close)));
+    s.act(Action::Path(PathAction::Point(PointOp::Width {
         index: 1,
         pressure: 0.4,
     })));
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let before = canvas_points(&s);
     let before_pixels: Vec<[u8; 4]> = (0..128).map(|x| pixel(&s, x, 64)).collect();
     let file = dir.join("path.ylp");
-    s.apply(Action::SaveProjectAs(file.clone()));
-    assert!(file.exists(), "{}", s.message);
+    s.act(Action::SaveProjectAs(file.clone()));
+    assert!(file.exists(), "{}", s.message());
     let mut t = AppState::new(64, 64);
-    t.apply(Action::OpenProject(file));
-    let opened = t.doc.layer(layer).expect("同じレイヤー");
+    t.act(Action::OpenProject(file));
+    let opened = t.doc().layer(layer).expect("同じレイヤー");
     let Some(LayerPath::Canvas(c)) = opened.path() else {
-        panic!("パスが戻らない: {}", t.message)
+        panic!("パスが戻らない: {}", t.message())
     };
     assert_eq!(
         c.points
@@ -981,11 +991,11 @@ fn headless_a_path_survives_saving_and_opening() {
     let after_pixels: Vec<[u8; 4]> = (0..128).map(|x| pixel(&t, x, 64)).collect();
     assert_eq!(before_pixels, after_pixels, "画素も同じ");
     // 開いたあとも、同じツールで直せる
-    t.apply(Action::SelectTool(Tool::Path));
-    t.selected_layer = Some(layer);
-    let undo = t.doc.undo_count();
-    t.apply(Action::Path(PathAction::Point(PointOp::Open)));
-    assert_eq!(t.doc.undo_count(), undo + 1, "{}", t.message);
+    t.act(Action::SelectTool(Tool::Path));
+    t.set_selected_layer(Some(layer));
+    let undo = t.doc().undo_count();
+    t.act(Action::Path(PathAction::Point(PointOp::Open)));
+    assert_eq!(t.doc().undo_count(), undo + 1, "{}", t.message());
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1055,10 +1065,10 @@ fn state3d(model: ViewModel) -> (AppState, Rect) {
 
 fn state3d_sized(model: ViewModel, size: u32) -> (AppState, Rect) {
     let mut s = state(size);
-    s.view3d.set_model(model);
-    s.view3d.material = 0;
-    s.view3d.camera.yaw = 0.0;
-    s.view3d.camera.pitch = 0.0;
+    s.view3d_mut().set_model(model);
+    s.view3d_mut().material = 0;
+    s.view3d_mut().camera.yaw = 0.0;
+    s.view3d_mut().camera.pitch = 0.0;
     (
         s,
         Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0)),
@@ -1066,7 +1076,7 @@ fn state3d_sized(model: ViewModel, size: u32) -> (AppState, Rect) {
 }
 
 fn at3d(s: &AppState, rect: Rect, p: Vec3) -> Pos2 {
-    let view = s.view3d.camera.view(rect.width(), rect.height());
+    let view = s.view3d().camera.view(rect.width(), rect.height());
     let q = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + q.x, rect.top() + q.y)
 }
@@ -1080,7 +1090,7 @@ fn click3d(s: &mut AppState, rect: Rect, p: Vec3) {
 fn surface_path(s: &AppState) -> core_paths::SurfacePath {
     match path(s) {
         Some(LayerPath::Surface(p)) => p,
-        other => panic!("3D のパスが無い: {other:?} {}", s.message),
+        other => panic!("3D のパスが無い: {other:?} {}", s.message()),
     }
 }
 
@@ -1088,23 +1098,23 @@ fn surface_path(s: &AppState) -> core_paths::SurfacePath {
 fn alpha_at(s: &AppState, u: f32, v: f32) -> u8 {
     pixel(
         s,
-        (u * s.doc.width() as f32) as u32,
-        (v * s.doc.height() as f32) as u32,
+        (u * s.doc().width() as f32) as u32,
+        (v * s.doc().height() as f32) as u32,
     )[3]
 }
 
 #[test]
 fn headless_3d_clicks_add_points_on_the_face_and_paint_the_surface_one_undo_each() {
     let (mut s, rect) = state3d(two_material_plate());
-    let base = s.selected_layer.unwrap();
+    let base = s.selected_layer().unwrap();
     click3d(&mut s, rect, Vec3::new(-0.8, -0.4, 0.0));
-    assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
-    assert_ne!(s.selected_layer, Some(base));
+    assert_eq!(s.doc().layers().len(), 2, "{}", s.message());
+    assert_ne!(s.selected_layer(), Some(base));
     click3d(&mut s, rect, Vec3::new(-0.2, 0.5, 0.0));
     let p = surface_path(&s);
     assert_eq!(p.points.len(), 2);
-    assert_eq!(s.doc.undo_count(), 2);
-    let model = s.view3d.full_model().unwrap().clone();
+    assert_eq!(s.doc().undo_count(), 2);
+    let model = s.view3d().full_model().unwrap().clone();
     assert_eq!(
         p.model_fingerprint,
         core_paths::fingerprint(&model.geometry),
@@ -1114,15 +1124,15 @@ fn headless_3d_clicks_add_points_on_the_face_and_paint_the_surface_one_undo_each
     assert!(alpha_at(&s, 0.1, 0.30) > 0, "最初の点の近く");
     assert!(alpha_at(&s, 0.4, 0.75) > 0, "2 点目の近く");
     assert_eq!(alpha_at(&s, 0.9, 0.5), 0, "右の板には描かない");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(surface_path(&s).points.len(), 1);
     assert_eq!(alpha_at(&s, 0.4, 0.75), 0);
-    s.apply(Action::Undo);
-    assert_eq!(s.doc.layers().len(), 1);
-    s.apply(Action::Redo);
-    s.apply(Action::Redo);
+    s.act(Action::Undo);
+    assert_eq!(s.doc().layers().len(), 1);
+    s.act(Action::Redo);
+    s.act(Action::Redo);
     let redone = s
-        .doc
+        .doc()
         .layers()
         .iter()
         .find(|l| l.path().is_some())
@@ -1135,45 +1145,45 @@ fn headless_3d_refuses_other_texture_sets_the_outside_and_a_2d_path_layer() {
     let (mut s, rect) = state3d(two_material_plate());
     // ほかのテクスチャセット（右の板のマテリアル 1）の面
     click3d(&mut s, rect, Vec3::new(0.5, 0.0, 0.0));
-    assert_eq!(s.doc.layers().len(), 1);
+    assert_eq!(s.doc().layers().len(), 1);
     assert!(
-        s.message.contains("ほかのテクスチャセット") && s.message.contains('右'),
+        s.message().contains("ほかのテクスチャセット") && s.message().contains('右'),
         "{}",
-        s.message
+        s.message()
     );
-    s.lang = Lang::En;
+    s.set_lang(Lang::En);
     click3d(&mut s, rect, Vec3::new(0.5, 0.0, 0.0));
     assert!(
-        s.message.starts_with("Surface of another texture set"),
+        s.message().starts_with("Surface of another texture set"),
         "{}",
-        s.message
+        s.message()
     );
     // モデルの外
-    s.message.clear();
+    s.message_mut().clear();
     let a = rect.min + vec2(3.0, 3.0);
     pathtool::surface::press(&mut s, rect, a, StrokeSource::Mouse);
     pathtool::surface::release(&mut s, rect, a, StrokeSource::Mouse);
-    assert_eq!(s.message, "Not on the model");
-    assert_eq!(s.doc.layers().len(), 1);
+    assert_eq!(s.message(), "Not on the model");
+    assert_eq!(s.doc().layers().len(), 1);
     // 2D のパスレイヤーには 3D の点を足さない
     click2d(&mut s, 30.0, 30.0);
-    s.message.clear();
+    s.message_mut().clear();
     click3d(&mut s, rect, Vec3::new(-0.5, 0.0, 0.0));
-    assert!(s.message.contains("canvas path"), "{}", s.message);
+    assert!(s.message().contains("canvas path"), "{}", s.message());
     assert_eq!(canvas_points(&s).len(), 1);
     // モデルが無い / 今のセットがモデルに無い
     let mut t = state(128);
-    t.apply(Action::Path(PathAction::Point(PointOp::Add(
+    t.act(Action::Path(PathAction::Point(PointOp::Add(
         Place::Surface {
             triangle: 0,
             u: 0.2,
             v: 0.2,
         },
     ))));
-    assert_eq!(t.message, "モデルがありません");
-    t.view3d.set_model(two_material_plate());
-    t.view3d.material = -1;
-    t.apply(Action::Path(PathAction::Point(PointOp::Add(
+    assert_eq!(t.message(), "モデルがありません");
+    t.view3d_mut().set_model(two_material_plate());
+    t.view3d_mut().material = -1;
+    t.act(Action::Path(PathAction::Point(PointOp::Add(
         Place::Surface {
             triangle: 0,
             u: 0.2,
@@ -1181,11 +1191,11 @@ fn headless_3d_refuses_other_texture_sets_the_outside_and_a_2d_path_layer() {
         },
     ))));
     assert!(
-        t.message.contains("このモデルにありません"),
+        t.message().contains("このモデルにありません"),
         "{}",
-        t.message
+        t.message()
     );
-    assert_eq!(t.doc.layers().len(), 1);
+    assert_eq!(t.doc().layers().len(), 1);
 }
 
 #[test]
@@ -1194,22 +1204,25 @@ fn headless_3d_dragging_a_point_moves_it_across_faces_and_stays_on_this_texture_
     click3d(&mut s, rect, Vec3::new(-0.8, -0.5, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.5, 0.5, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.1, -0.5, 0.0));
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     let before = surface_path(&s);
     // 動かさずに離す: 選ぶだけ
-    let rev = s.doc.revision();
+    let rev = s.doc().revision();
     click3d(&mut s, rect, Vec3::new(-0.5, 0.5, 0.0));
-    assert_eq!((s.path_selected_index(), s.doc.revision()), (Some(1), rev));
+    assert_eq!(
+        (s.path_selected_index(), s.doc().revision()),
+        (Some(1), rev)
+    );
     // 掴んで動かす
     let from = at3d(&s, rect, Vec3::new(-0.5, 0.5, 0.0));
     let to = at3d(&s, rect, Vec3::new(-0.3, 0.8, 0.0));
     pathtool::surface::press(&mut s, rect, from, StrokeSource::Mouse);
-    assert!(s.path.drag.is_some() && s.is_stroking());
+    assert!(s.path().drag.is_some() && s.is_stroking());
     pathtool::surface::moved(&mut s, rect, from + vec2(30.0, -30.0), StrokeSource::Mouse);
     pathtool::surface::moved(&mut s, rect, to, StrokeSource::Mouse);
-    assert_eq!(s.doc.revision(), rev, "離すまで文書は変えない");
+    assert_eq!(s.doc().revision(), rev, "離すまで文書は変えない");
     pathtool::surface::release(&mut s, rect, to, StrokeSource::Mouse);
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     let after = surface_path(&s);
     assert_ne!(before.points[1], after.points[1]);
     assert_eq!(before.points[0], after.points[0]);
@@ -1218,23 +1231,23 @@ fn headless_3d_dragging_a_point_moves_it_across_faces_and_stays_on_this_texture_
     // 右の板（ほかのテクスチャセット）へは動かせない: 置けない所では前の置き場所のまま、離しても動かさない
     let from = at3d(&s, rect, Vec3::new(-0.3, 0.8, 0.0));
     let right = at3d(&s, rect, Vec3::new(0.6, 0.0, 0.0));
-    let n = s.doc.undo_count();
+    let n = s.doc().undo_count();
     pathtool::surface::press(&mut s, rect, from, StrokeSource::Mouse);
     pathtool::surface::moved(&mut s, rect, right, StrokeSource::Mouse);
     pathtool::surface::release(&mut s, rect, right, StrokeSource::Mouse);
-    assert_eq!(s.doc.undo_count(), n, "{}", s.message);
+    assert_eq!(s.doc().undo_count(), n, "{}", s.message());
     // Esc で捨てる・フォーカスを失うと確定
     pathtool::surface::press(&mut s, rect, from, StrokeSource::Mouse);
     let there = at3d(&s, rect, Vec3::new(-0.6, 0.0, 0.0));
     pathtool::surface::moved(&mut s, rect, there, StrokeSource::Mouse);
     assert!(s.path_cancel(9));
-    assert!(s.path.drag.is_none());
-    assert_eq!(s.doc.undo_count(), n);
+    assert!(s.path().drag.is_none());
+    assert_eq!(s.doc().undo_count(), n);
     pathtool::surface::press(&mut s, rect, from, StrokeSource::Mouse);
     pathtool::surface::moved(&mut s, rect, there, StrokeSource::Mouse);
     s.path_finish_drag();
-    assert!(s.path.drag.is_none());
-    assert_eq!(s.doc.undo_count(), n + 1);
+    assert!(s.path().drag.is_none());
+    assert_eq!(s.doc().undo_count(), n + 1);
 }
 
 #[test]
@@ -1246,7 +1259,7 @@ fn headless_3d_clicking_the_curve_inserts_a_surface_point() {
     let p = surface_path(&s);
     assert_eq!(p.points.len(), 3, "曲線の上を押すと差し込む");
     // 差し込んだ点は 2 点の間（モデルの x が真ん中）
-    let g = &s.view3d.full_model().unwrap().geometry;
+    let g = &s.view3d().full_model().unwrap().geometry;
     let x = |i: usize| {
         yolu_core::paths::point_position(g, &p.points[i])
             .unwrap()
@@ -1260,23 +1273,23 @@ fn headless_3d_clicking_the_curve_inserts_a_surface_point() {
 fn headless_3d_hidden_materials_do_not_shift_the_triangle_numbers_of_the_path() {
     let (mut s, rect) = state3d(two_material_plate());
     // 右の板（マテリアル 1）のセットで描く
-    s.view3d.material = 1;
+    s.view3d_mut().material = 1;
     click3d(&mut s, rect, Vec3::new(0.5, 0.2, 0.0));
-    let full = s.view3d.full_model().unwrap().clone();
+    let full = s.view3d().full_model().unwrap().clone();
     let first = surface_path(&s).points[0].triangle;
     assert!(
         full.geometry.triangles()[first as usize].material == 1,
         "受けたままの形の番号"
     );
     // 左の板を隠す: 見せる形は右の板だけ（三角形の番号が 2 ずれる）。それでも点の番号は変わらない
-    s.view3d.set_hidden(vec![0]);
-    assert_eq!(s.view3d.model.as_ref().unwrap().triangle_count(), 2);
-    assert_eq!(s.view3d.full_triangle(0), Some(2));
-    assert_eq!(s.view3d.full_triangle(1), Some(3));
-    assert_eq!(s.view3d.full_triangle(2), None);
+    s.view3d_mut().set_hidden(vec![0]);
+    assert_eq!(s.view3d().model.as_ref().unwrap().triangle_count(), 2);
+    assert_eq!(s.view3d().full_triangle(0), Some(2));
+    assert_eq!(s.view3d().full_triangle(1), Some(3));
+    assert_eq!(s.view3d().full_triangle(2), None);
     click3d(&mut s, rect, Vec3::new(0.8, -0.6, 0.0));
     let p = surface_path(&s);
-    assert_eq!(p.points.len(), 2, "{}", s.message);
+    assert_eq!(p.points.len(), 2, "{}", s.message());
     for pt in &p.points {
         assert!(full.geometry.triangles()[pt.triangle as usize].material == 1);
     }
@@ -1286,10 +1299,10 @@ fn headless_3d_hidden_materials_do_not_shift_the_triangle_numbers_of_the_path() 
         "指紋は受けたままの形のもの"
     );
     // 隠したままでも描き直せる（受けたままの形で描く）
-    s.apply(Action::Path(PathAction::Redraw));
-    assert!(alpha_at(&s, 0.8, 0.6) > 0, "{}", s.message);
+    s.act(Action::Path(PathAction::Redraw));
+    assert!(alpha_at(&s, 0.8, 0.6) > 0, "{}", s.message());
     // 隠していないセットの目を開けても、同じパス
-    s.view3d.set_hidden(vec![]);
+    s.view3d_mut().set_hidden(vec![]);
     assert_eq!(surface_path(&s), p);
 }
 
@@ -1298,38 +1311,38 @@ fn headless_a_path_on_another_model_is_not_edited_and_follows_a_replaced_model()
     let (mut s, rect) = state3d(two_material_plate());
     click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let old_print = surface_path(&s).model_fingerprint;
     let old_alpha = alpha_at(&s, 0.15, 0.35);
     assert!(old_alpha > 0);
     // 別の（UV が違う）モデルに入れ替えて、セットを結び付け直す: 位置が近い面へ付け直して描き直す
-    s.view3d.set_model(flipped_plate());
-    s.view3d.material = 0;
+    s.view3d_mut().set_model(flipped_plate());
+    s.view3d_mut().material = 0;
     s.sync_view3d();
     let p = surface_path(&s);
     assert_ne!(p.model_fingerprint, old_print);
-    let new_model = s.view3d.full_model().unwrap().clone();
+    let new_model = s.view3d().full_model().unwrap().clone();
     assert_eq!(
         p.model_fingerprint,
         core_paths::fingerprint(&new_model.geometry)
     );
-    assert_eq!(s.selected_layer, Some(layer));
-    assert!(s.message.contains("描き直し"), "{}", s.message);
+    assert_eq!(s.selected_layer(), Some(layer));
+    assert!(s.message().contains("描き直し"), "{}", s.message());
     // UV を左右に入れ替えたので、画素は反対側（u = 0.85）に描かれる。元の所は空
     assert!(alpha_at(&s, 0.85, 0.35) > 0, "新しい UV の所に描き直した");
     assert_eq!(alpha_at(&s, 0.15, 0.35), 0);
     // 1 回の Undo で前の状態（前のモデルのパスと画素）に戻る
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(surface_path(&s).model_fingerprint, old_print);
     assert!(alpha_at(&s, 0.15, 0.35) > 0);
     // 戻した状態は今のモデルと合わない: 編集は断る
-    let n = s.doc.undo_count();
-    s.message.clear();
+    let n = s.doc().undo_count();
+    s.message_mut().clear();
     click3d(&mut s, rect, Vec3::new(-0.5, 0.0, 0.0));
-    assert_eq!(s.doc.undo_count(), n);
-    assert!(s.message.contains("別のモデル"), "{}", s.message);
-    s.apply(Action::Path(PathAction::Redraw));
-    assert_eq!(s.doc.undo_count(), n, "別のモデルのパスは描き直さない");
+    assert_eq!(s.doc().undo_count(), n);
+    assert!(s.message().contains("別のモデル"), "{}", s.message());
+    s.act(Action::Path(PathAction::Redraw));
+    assert_eq!(s.doc().undo_count(), n, "別のモデルのパスは描き直さない");
 }
 
 #[test]
@@ -1339,8 +1352,8 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     crate::common::tmp::clean_up_after_test(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let (mut s, rect) = state3d(two_material_plate());
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Roughness, true)));
     for p in [
         Vec3::new(-0.8, -0.4, 0.0),
         Vec3::new(-0.4, 0.5, 0.0),
@@ -1348,60 +1361,60 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     ] {
         click3d(&mut s, rect, p);
     }
-    s.apply(Action::Path(PathAction::Point(PointOp::Width {
+    s.act(Action::Path(PathAction::Point(PointOp::Width {
         index: 1,
         pressure: 0.5,
     })));
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let before = surface_path(&s);
     let before_alpha = alpha_at(&s, 0.1, 0.3);
     assert!(before_alpha > 0);
     let file = dir.join("path3d.ylp");
-    s.apply(Action::SaveProjectAs(file.clone()));
-    assert!(file.exists(), "{}", s.message);
+    s.act(Action::SaveProjectAs(file.clone()));
+    assert!(file.exists(), "{}", s.message());
 
     // 同じ形のモデルを読むと、パスは結び付いて、そのまま編集できる
     let mut t = AppState::new(64, 64);
-    t.apply(Action::OpenProject(file.clone()));
-    let Some(LayerPath::Surface(opened)) = t.doc.layer(layer).and_then(|l| l.path().cloned())
+    t.act(Action::OpenProject(file.clone()));
+    let Some(LayerPath::Surface(opened)) = t.doc().layer(layer).and_then(|l| l.path().cloned())
     else {
-        panic!("3D のパスが戻らない: {}", t.message)
+        panic!("3D のパスが戻らない: {}", t.message())
     };
     assert_eq!(
         opened, before,
         "点・太さ・ブラシ・組・指紋が保存して開いても同じ"
     );
     assert_eq!(alpha_at(&t, 0.1, 0.3), before_alpha, "画素も同じ");
-    t.apply(Action::SelectTool(Tool::Path));
-    t.selected_layer = Some(layer);
-    t.view3d.set_model(two_material_plate());
-    t.view3d.material = 0;
-    t.view3d.camera.yaw = 0.0;
-    t.view3d.camera.pitch = 0.0;
+    t.act(Action::SelectTool(Tool::Path));
+    t.set_selected_layer(Some(layer));
+    t.view3d_mut().set_model(two_material_plate());
+    t.view3d_mut().material = 0;
+    t.view3d_mut().camera.yaw = 0.0;
+    t.view3d_mut().camera.pitch = 0.0;
     t.sync_view3d();
     assert_eq!(
-        *t.path_fingerprint(&t.view3d.full_model().unwrap().geometry),
+        *t.path_fingerprint(&t.view3d().full_model().unwrap().geometry),
         before.model_fingerprint
     );
-    let undo = t.doc.undo_count();
+    let undo = t.doc().undo_count();
     click3d(&mut t, rect, Vec3::new(-0.2, 0.8, 0.0));
-    assert_eq!(surface_path(&t).points.len(), 4, "{}", t.message);
-    assert_eq!(t.doc.undo_count(), undo + 1);
+    assert_eq!(surface_path(&t).points.len(), 4, "{}", t.message());
+    assert_eq!(t.doc().undo_count(), undo + 1);
 
     // 別の形のモデル（最初に読んだもの）では結び付かない: 編集しない・描き直さない
     let mut u = AppState::new(64, 64);
-    u.apply(Action::OpenProject(file));
-    u.apply(Action::SelectTool(Tool::Path));
-    u.selected_layer = Some(layer);
-    u.view3d.set_model(flipped_plate());
-    u.view3d.material = 0;
-    u.view3d.camera.yaw = 0.0;
-    u.view3d.camera.pitch = 0.0;
-    let undo = u.doc.undo_count();
+    u.act(Action::OpenProject(file));
+    u.act(Action::SelectTool(Tool::Path));
+    u.set_selected_layer(Some(layer));
+    u.view3d_mut().set_model(flipped_plate());
+    u.view3d_mut().material = 0;
+    u.view3d_mut().camera.yaw = 0.0;
+    u.view3d_mut().camera.pitch = 0.0;
+    let undo = u.doc().undo_count();
     click3d(&mut u, rect, Vec3::new(-0.2, 0.8, 0.0));
     assert_eq!(surface_path(&u).points.len(), 3);
-    assert_eq!(u.doc.undo_count(), undo);
-    assert!(u.message.contains("別のモデル"), "{}", u.message);
+    assert_eq!(u.doc().undo_count(), undo);
+    assert!(u.message().contains("別のモデル"), "{}", u.message());
     assert_eq!(surface_path(&u), before, "パスはそのまま残る");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1411,13 +1424,13 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
     let (mut s, rect) = state3d(two_material_plate());
     click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     // 左のマテリアル（0）が新しいモデルに無い: 画素にする
-    let old = s.view3d.full_model().unwrap().clone();
+    let old = s.view3d().full_model().unwrap().clone();
     let g = &old.geometry;
     let p = surface_path(&s);
     let far = rebind_far_model();
-    let report = pathtool::rebind::rebind_document(&mut s.doc, g, &far.geometry, 0, Lang::Ja);
+    let report = pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, Lang::Ja);
     assert_eq!(report.len(), 1);
     assert_eq!(
         report[0].outcome,
@@ -1428,26 +1441,28 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
         report[0].reason.as_deref().unwrap().contains("点 1"),
         "{report:?}"
     );
-    assert!(s.doc.layer(layer).unwrap().path().is_none());
+    assert!(s.doc().layer(layer).unwrap().path().is_none());
     assert!(alpha_at(&s, 0.15, 0.35) > 0, "画素は残る");
-    s.apply(Action::Undo);
-    assert!(s.doc.layer(layer).unwrap().path().is_some());
+    s.act(Action::Undo);
+    assert!(s.doc().layer(layer).unwrap().path().is_some());
     // 画素のロックでは描き直せないが、画素にもできない（すべてのロックでない）→ 画素にする。すべてのロックでは残す
-    s.doc.set_layer_locks(layer, LayerLocks::PIXELS).unwrap();
-    let report = pathtool::rebind::rebind_document(&mut s.doc, g, &far.geometry, 0, Lang::En);
+    s.doc_mut()
+        .set_layer_locks(layer, LayerLocks::PIXELS)
+        .unwrap();
+    let report = pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, Lang::En);
     assert_eq!(report[0].outcome, pathtool::rebind::Outcome::Rasterized);
-    s.apply(Action::Undo);
-    s.doc.set_layer_locks(layer, LayerLocks::ALL).unwrap();
-    let report = pathtool::rebind::rebind_document(&mut s.doc, g, &far.geometry, 0, Lang::En);
+    s.act(Action::Undo);
+    s.doc_mut().set_layer_locks(layer, LayerLocks::ALL).unwrap();
+    let report = pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, Lang::En);
     assert_eq!(report[0].outcome, pathtool::rebind::Outcome::KeptLocked);
     assert_eq!(report[0].reason.as_deref(), Some("The layer is locked"));
     assert_eq!(
-        s.doc.layer(layer).unwrap().path().unwrap(),
+        s.doc().layer(layer).unwrap().path().unwrap(),
         &LayerPath::Surface(p),
         "そのまま残る"
     );
     // 指紋が同じ（ポーズだけ）なら何もしない
-    assert!(pathtool::rebind::rebind_document(&mut s.doc, g, g, 0, Lang::Ja).is_empty());
+    assert!(pathtool::rebind::rebind_document(s.doc_mut(), g, g, 0, Lang::Ja).is_empty());
 }
 
 /// 板から遠く離れた別のメッシュ（付け直せない）。
@@ -1532,30 +1547,30 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     shape.unwrap();
     // 最初のモデルを受けるとカメラはそのモデルの既定の位置になるので、板（外向きの法線は −Z）を正面から見る向きは受けたあとに決める
     // （同じ名前・同じ三角形のモデルを受け直してもカメラは動かない）
-    s.view3d.camera.yaw = 0.0;
-    s.view3d.camera.pitch = 0.0;
-    assert_eq!(s.sets.len(), 2, "マテリアルごとにセット");
+    s.view3d_mut().camera.yaw = 0.0;
+    s.view3d_mut().camera.pitch = 0.0;
+    assert_eq!(s.sets().len(), 2, "マテリアルごとにセット");
     // 左のセット（今のセット）と右のセットに、それぞれ 3D のパス
     click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
-    let left_layer = s.selected_layer.unwrap();
-    let left_uid = s.sets.get(0).unwrap().uid;
-    let right_uid = s.sets.get(1).unwrap().uid;
-    s.apply(Action::SelectSet(right_uid));
+    let left_layer = s.selected_layer().unwrap();
+    let left_uid = s.sets().get(0).unwrap().uid;
+    let right_uid = s.sets().get(1).unwrap().uid;
+    s.act(Action::SelectSet(right_uid));
     click3d(&mut s, rect, Vec3::new(0.3, -0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(0.7, 0.4, 0.0));
-    let right_layer = s.selected_layer.unwrap();
+    let right_layer = s.selected_layer().unwrap();
     let old_print = surface_path(&s).model_fingerprint;
     assert!(alpha_at(&s, 0.65, 0.35) > 0, "右の板の最初の点（u = 0.65）");
     // UV の左右が入れ替わった新しいモデルを受ける: どちらのセットのパスも描き直す
     let (_, shape) = s.receive_link_model(&link_plate(2, true));
     shape.unwrap();
-    let new_print = core_paths::fingerprint(&s.view3d.full_model().unwrap().geometry);
+    let new_print = core_paths::fingerprint(&s.view3d().full_model().unwrap().geometry);
     assert_ne!(old_print, new_print);
     // 今のセット（右）: UV が入れ替わったので、画素は反対側に
-    let Some(LayerPath::Surface(p)) = s.doc.layer(right_layer).and_then(|l| l.path().cloned())
+    let Some(LayerPath::Surface(p)) = s.doc().layer(right_layer).and_then(|l| l.path().cloned())
     else {
-        panic!("右のパスが無い: {}", s.message)
+        panic!("右のパスが無い: {}", s.message())
     };
     assert_eq!(p.model_fingerprint, new_print);
     assert!(
@@ -1563,8 +1578,8 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
         "右のセットの画素が新しい UV の所へ"
     );
     // 今でないセット（左）の文書も付け直す
-    s.apply(Action::SelectSet(left_uid));
-    let Some(LayerPath::Surface(p)) = s.doc.layer(left_layer).and_then(|l| l.path().cloned())
+    s.act(Action::SelectSet(left_uid));
+    let Some(LayerPath::Surface(p)) = s.doc().layer(left_layer).and_then(|l| l.path().cloned())
     else {
         panic!("左のパスが無い")
     };
@@ -1573,17 +1588,21 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
         alpha_at(&s, 0.85, 0.35) > 0 && alpha_at(&s, 0.15, 0.35) == 0,
         "左のセットの画素も新しい UV の所へ"
     );
-    assert!(s.message.contains("パス 2 本を描き直し"), "{}", s.message);
+    assert!(
+        s.message().contains("パス 2 本を描き直し"),
+        "{}",
+        s.message()
+    );
     // 1 回の Undo（セットごと）で前のモデルのパスに戻る
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(surface_path(&s).model_fingerprint, old_print);
     // 同じ形のモデルをもう 1 度受けても、何もしない
     let (_, shape) = s.receive_link_model(&link_plate(3, true));
     shape.unwrap();
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     let (_, shape) = s.receive_link_model(&link_plate(4, true));
     shape.unwrap();
-    assert_eq!(s.doc.undo_count(), undo, "指紋が同じなら付け直さない");
+    assert_eq!(s.doc().undo_count(), undo, "指紋が同じなら付け直さない");
 }
 
 #[test]
@@ -1599,27 +1618,27 @@ fn headless_posing_does_not_unbind_a_path_and_a_same_shape_model_is_not_a_replac
     }
     let posed =
         ViewModel::new("板", meshes, vec![Some("左".into()), Some("右".into())], 5).unwrap();
-    s.view3d.set_model(posed);
+    s.view3d_mut().set_model(posed);
     assert!(
-        s.view3d.take_replaced().is_none(),
+        s.view3d_mut().take_replaced().is_none(),
         "三角形・UV が同じなら差し替えではない"
     );
     s.sync_view3d();
     assert_eq!(surface_path(&s), before, "パスはそのまま");
     assert!(
-        s.message.is_empty() || !s.message.contains("差し替え"),
+        s.message().is_empty() || !s.message().contains("差し替え"),
         "{}",
-        s.message
+        s.message()
     );
     // 再描き直しは、今のポーズの面に描く
-    s.apply(Action::Path(PathAction::Redraw));
+    s.act(Action::Path(PathAction::Redraw));
     assert!(alpha_at(&s, 0.15, 0.35) > 0);
 }
 
 /// 選んでいるレイヤーの Color の画素（文書の並び）。
 fn layer_color_bytes(s: &AppState) -> Vec<u8> {
-    let id = s.selected_layer.unwrap();
-    s.doc
+    let id = s.selected_layer().unwrap();
+    s.doc()
         .layer(id)
         .unwrap()
         .surface(Channel::Color)
@@ -1635,8 +1654,12 @@ fn headless_a_3d_path_is_drawn_on_the_rest_shape_so_a_pose_does_not_change_its_p
     click3d(&mut s, rect, Vec3::new(-0.5, 0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.2, -0.2, 0.0));
     let before = layer_color_bytes(&s);
-    assert!(before.chunks(4).any(|p| p[3] > 0), "描いた: {}", s.message);
-    let rest = s.view3d.full_model().unwrap().geometry.clone();
+    assert!(
+        before.chunks(4).any(|p| p[3] > 0),
+        "描いた: {}",
+        s.message()
+    );
+    let rest = s.view3d().full_model().unwrap().geometry.clone();
     // 左の面だけを横に 1.8 倍に伸ばしたポーズ（UV は同じ。ポーズの形で描くと UV の上の太さが変わる）
     let mut meshes = two_material_plate().meshes;
     for p in &mut meshes[0].positions[..4] {
@@ -1646,26 +1669,26 @@ fn headless_a_3d_path_is_drawn_on_the_rest_shape_so_a_pose_does_not_change_its_p
     let posed = ViewModel::new("板", meshes.clone(), names.clone(), 5)
         .unwrap()
         .with_rest(rest.clone());
-    s.view3d.set_model(posed);
-    assert!(s.view3d.take_replaced().is_none());
+    s.view3d_mut().set_model(posed);
+    assert!(s.view3d_mut().take_replaced().is_none());
     s.sync_view3d();
-    s.apply(Action::Path(PathAction::Redraw));
+    s.act(Action::Path(PathAction::Redraw));
     assert_eq!(
         layer_color_bytes(&s),
         before,
         "休みの形で描くので、ポーズを変えても同じ画素: {}",
-        s.message
+        s.message()
     );
     // ブラシの直径の換算も休みの形（ポーズで大きさが変わらない）
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(20.0))));
-    let unit = yolu_core::geometry::world_radius(&rest, 1.0, s.doc.width()) as f64;
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(20.0))));
+    let unit = yolu_core::geometry::world_radius(&rest, 1.0, s.doc().width()) as f64;
     assert_eq!(surface_path(&s).brush.0.radius, 10.0 * unit);
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     // 休みの形を持たない形（ポーズの区別が無い Live Link の古い口の最初の形など）は、その形が休みの形
     let unposed = ViewModel::new("板", meshes, names, 6).unwrap();
-    s.view3d.set_model(unposed);
+    s.view3d_mut().set_model(unposed);
     s.sync_view3d();
-    s.apply(Action::Path(PathAction::Redraw));
+    s.act(Action::Path(PathAction::Redraw));
     assert_ne!(
         layer_color_bytes(&s),
         before,
@@ -1677,11 +1700,11 @@ fn headless_a_3d_path_is_drawn_on_the_rest_shape_so_a_pose_does_not_change_its_p
 fn headless_a_posed_figure_redraws_its_path_on_the_rest_pose() {
     use yolu_app::view3d::pose::{self, PoseAction};
     let mut s = state(128);
-    s.apply(Action::Pose(PoseAction::LoadFigure));
-    assert!(s.view3d.pose.session.is_some(), "{}", s.message);
+    s.act(Action::Pose(PoseAction::LoadFigure));
+    assert!(s.view3d().pose.session.is_some(), "{}", s.message());
     s.sync_view3d();
-    let model = s.view3d.full_model().unwrap().clone();
-    let material = s.view3d.material;
+    let model = s.view3d().full_model().unwrap().clone();
+    let material = s.view3d().material;
     // 描くテクスチャセットの三角形から、離れた 3 つ
     let picks: Vec<u32> = (0..model.geometry.triangle_count() as u32)
         .filter(|&t| model.geometry.triangles()[t as usize].material == material)
@@ -1690,7 +1713,7 @@ fn headless_a_posed_figure_redraws_its_path_on_the_rest_pose() {
         .collect();
     assert_eq!(picks.len(), 3);
     for t in picks {
-        s.apply(Action::Path(PathAction::Point(PointOp::Add(
+        s.act(Action::Path(PathAction::Point(PointOp::Add(
             Place::Surface {
                 triangle: t,
                 u: 0.3,
@@ -1698,20 +1721,20 @@ fn headless_a_posed_figure_redraws_its_path_on_the_rest_pose() {
             },
         ))));
     }
-    assert_eq!(surface_path(&s).points.len(), 3, "{}", s.message);
+    assert_eq!(surface_path(&s).points.len(), 3, "{}", s.message());
     let before = layer_color_bytes(&s);
     assert!(before.chunks(4).any(|p| p[3] > 0));
     // すべての骨を回す
-    let session = s.view3d.pose.session.as_ref().unwrap();
+    let session = s.view3d().pose.session.as_ref().unwrap();
     let mut p = session.pose().clone();
     for l in &mut p.locals {
         l.rotation = yolu_core::glam::Quat::from_rotation_z(0.35) * l.rotation;
     }
-    pose::set_pose(&mut s.view3d, p).unwrap();
+    pose::set_pose(s.view3d_mut(), p).unwrap();
     s.sync_view3d();
-    assert!(s.view3d.pose.session.as_ref().unwrap().is_posed());
-    s.apply(Action::Path(PathAction::Redraw));
-    assert_eq!(layer_color_bytes(&s), before, "{}", s.message);
+    assert!(s.view3d().pose.session.as_ref().unwrap().is_posed());
+    s.act(Action::Path(PathAction::Redraw));
+    assert_eq!(layer_color_bytes(&s), before, "{}", s.message());
 }
 
 #[test]
@@ -1724,11 +1747,11 @@ fn headless_a_3d_pen_touch_is_a_press_and_a_lift_is_a_release() {
         pathtool::surface::pen_sample(&mut s, rect, a, 1, false, true);
     }
     assert_eq!(surface_path(&s).points.len(), 2);
-    assert!(s.path.pen_down.is_none());
+    assert!(s.path().pen_down.is_none());
     // 押してよい所でなければ触れても始めない
     let a = at3d(&s, rect, Vec3::new(-0.2, 0.0, 0.0));
     pathtool::surface::pen_sample(&mut s, rect, a, 1, true, false);
-    assert!(s.path.pen_down.is_none());
+    assert!(s.path().pen_down.is_none());
     assert_eq!(surface_path(&s).points.len(), 2);
 }
 
@@ -1744,13 +1767,13 @@ fn pen_in_both_views(
     surface_first: bool,
 ) {
     let canvas = |s: &mut AppState| {
-        if s.path.pen_in(false) || over.0 || !contact {
+        if s.path().pen_in(false) || over.0 || !contact {
             let v = view(s);
             pathtool::canvas::pen_sample(s, &v, at, id, contact);
         }
     };
     let surface = |s: &mut AppState| {
-        if over.1 || s.path.pen_in(true) || !contact {
+        if over.1 || s.path().pen_in(true) || !contact {
             pathtool::surface::pen_sample(s, rect, at, id, contact, over.1);
         }
     };
@@ -1776,7 +1799,7 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
         click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
         click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
         let before = surface_path(&s);
-        let undo = s.doc.undo_count();
+        let undo = s.doc().undo_count();
         let from = at3d(&s, rect, Vec3::new(-0.3, 0.4, 0.0));
         let to = at3d(&s, rect, Vec3::new(-0.6, 0.6, 0.0));
         let both = |s: &mut AppState, at: Pos2, contact: bool, over: (bool, bool)| {
@@ -1784,21 +1807,21 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
         };
         both(&mut s, from, true, (false, true));
         assert!(
-            s.path.drag.is_some_and(|d| d.surface),
+            s.path().drag.is_some_and(|d| d.surface),
             "{order}: 3D のドラッグ"
         );
-        assert_eq!(s.path.pen_down.map(|p| p.surface), Some(true), "{order}");
+        assert_eq!(s.path().pen_down.map(|p| p.surface), Some(true), "{order}");
         // 触れたまま 2D のキャンバスの上へ動いても、触れた 3D のビューが続ける
         both(&mut s, to, true, (true, false));
-        assert_eq!(s.path.pen_down.map(|p| p.surface), Some(true), "{order}");
+        assert_eq!(s.path().pen_down.map(|p| p.surface), Some(true), "{order}");
         both(&mut s, to, false, (true, false));
         assert!(
-            s.path.drag.is_none() && s.path.pen_down.is_none(),
+            s.path().drag.is_none() && s.path().pen_down.is_none(),
             "{order}"
         );
         assert!(!s.is_stroking(), "{order}: 離したあとに取り残さない");
         assert_eq!(
-            s.doc.undo_count(),
+            s.doc().undo_count(),
             undo + 1,
             "{order}: 動かしたのは 1 回の Undo"
         );
@@ -1806,43 +1829,43 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
 
         // 2D で触れて点を掴み、離したサンプルを 3D が見ても、2D が離したのを受け取って確定する
         let mut t = state(256);
-        t.view3d.set_model(two_material_plate());
-        t.view3d.material = 0;
+        t.view3d_mut().set_model(two_material_plate());
+        t.view3d_mut().material = 0;
         for (x, y) in [(40.0, 40.0), (120.0, 120.0), (200.0, 40.0)] {
             click2d(&mut t, x, y);
         }
-        let undo = t.doc.undo_count();
+        let undo = t.doc().undo_count();
         let both = |t: &mut AppState, at: Pos2, contact: bool, over: (bool, bool)| {
             pen_in_both_views(t, rect, at, 2, contact, over, surface_first)
         };
         let (from, to) = (at(&t, 120.0, 120.0), at(&t, 120.0, 190.0));
         both(&mut t, from, true, (true, false));
         assert!(
-            t.path.drag.is_some_and(|d| !d.surface),
+            t.path().drag.is_some_and(|d| !d.surface),
             "{order}: 2D のドラッグ"
         );
-        assert_eq!(t.path.pen_down.map(|p| p.surface), Some(false), "{order}");
+        assert_eq!(t.path().pen_down.map(|p| p.surface), Some(false), "{order}");
         both(&mut t, to, true, (true, false));
         both(&mut t, to, false, (true, false));
         assert!(
-            t.path.drag.is_none() && t.path.pen_down.is_none(),
+            t.path().drag.is_none() && t.path().pen_down.is_none(),
             "{order}"
         );
         assert!(!t.is_stroking(), "{order}: 離したあとに取り残さない");
-        assert_eq!(t.doc.undo_count(), undo + 1, "{order}");
+        assert_eq!(t.doc().undo_count(), undo + 1, "{order}");
         assert!((canvas_points(&t)[1].1 - 190.0).abs() < 1.0, "{order}");
         // 触れたまま 3D のビューの上へ動いても、触れた 2D のビューが続ける（3D のビューは新しく始めない）
         let (from, to) = (at(&t, 120.0, 190.0), at(&t, 120.0, 100.0));
         both(&mut t, from, true, (true, false));
         both(&mut t, to, true, (false, true));
-        assert_eq!(t.path.pen_down.map(|p| p.surface), Some(false), "{order}");
+        assert_eq!(t.path().pen_down.map(|p| p.surface), Some(false), "{order}");
         both(&mut t, to, false, (false, true));
         assert!(
-            t.path.drag.is_none() && t.path.pen_down.is_none(),
+            t.path().drag.is_none() && t.path().pen_down.is_none(),
             "{order}"
         );
         assert!(!t.is_stroking(), "{order}");
-        assert_eq!(t.doc.undo_count(), undo + 2, "{order}");
+        assert_eq!(t.doc().undo_count(), undo + 2, "{order}");
         assert!((canvas_points(&t)[1].1 - 100.0).abs() < 1.0, "{order}");
     }
 }
@@ -1850,25 +1873,25 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
 #[test]
 fn headless_a_material_3d_path_uses_the_material_group_and_the_brush_size_follows_the_model() {
     let (mut s, rect) = state3d(two_material_plate());
-    s.apply(Action::Mat(MatAction::Enabled(true)));
-    s.apply(Action::Mat(MatAction::Channel(Channel::Metallic, true)));
-    s.mat.set_scalar(Channel::Metallic, 1.0);
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(24.0))));
+    s.act(Action::Mat(MatAction::Enabled(true)));
+    s.act(Action::Mat(MatAction::Channel(Channel::Metallic, true)));
+    s.mat_mut().set_scalar(Channel::Metallic, 1.0);
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(24.0))));
     click3d(&mut s, rect, Vec3::new(-0.8, 0.0, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.2, 0.0, 0.0));
     let p = surface_path(&s);
     assert_eq!(p.material.as_ref().unwrap().len(), 2);
-    let g = &s.view3d.full_model().unwrap().geometry;
-    let unit = yolu_core::geometry::world_radius(g, 1.0, s.doc.width());
+    let g = &s.view3d().full_model().unwrap().geometry;
+    let unit = yolu_core::geometry::world_radius(g, 1.0, s.doc().width());
     assert!(
         (p.brush.0.radius as f32 - 12.0 * unit).abs() < 1e-6,
         "半径はモデルの大きさに合わせる（{} と {}）",
         p.brush.0.radius,
         12.0 * unit
     );
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let metallic = s
-        .doc
+        .doc()
         .layer(layer)
         .unwrap()
         .surface(Channel::Metallic)
@@ -1877,9 +1900,9 @@ fn headless_a_material_3d_path_uses_the_material_group_and_the_brush_size_follow
         .unwrap();
     assert!(metallic.a > 0 && metallic.r > 250, "{metallic:?}");
     // 直径のスライダーの値はモデルから画素に戻す（太さを替えると描き直す）
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(48.0))));
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(48.0))));
     assert!((surface_path(&s).brush.0.radius as f32 - 24.0 * unit).abs() < 1e-6);
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Spacing(0.5))));
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Spacing(0.5))));
     assert_eq!(surface_path(&s).brush.0.spacing, 0.5);
 }
 
@@ -1891,7 +1914,7 @@ fn headless_the_tool_is_in_the_strip_with_a_key_and_both_languages() {
     assert_ne!(Tool::Path.name_in(Lang::Ja), Tool::Path.name_in(Lang::En));
     let mut s = AppState::new(64, 64);
     for lang in Lang::ALL {
-        s.lang = lang;
+        s.set_lang(lang);
         for refusal in [
             yolu_app::pathtool::edit::Refusal::TooMany,
             yolu_app::pathtool::edit::Refusal::NeedThree,
@@ -1914,13 +1937,13 @@ fn headless_the_tool_is_in_the_strip_with_a_key_and_both_languages() {
 // ───────── 評価の失敗・遮り・モデルの入れ替え中のドラッグ ─────────
 
 fn add_canvas(s: &mut AppState, x: f64, y: f64) {
-    s.apply(Action::Path(PathAction::Point(PointOp::Add(
+    s.act(Action::Path(PathAction::Point(PointOp::Add(
         Place::Canvas { x, y },
     ))));
 }
 
 fn add_surface(s: &mut AppState, triangle: u32, u: f64, v: f64) {
-    s.apply(Action::Path(PathAction::Point(PointOp::Add(
+    s.act(Action::Path(PathAction::Point(PointOp::Add(
         Place::Surface { triangle, u, v },
     ))));
 }
@@ -1936,9 +1959,9 @@ fn doc_state(
     Option<usize>,
 ) {
     (
-        s.doc.layers().len(),
-        s.doc.undo_count(),
-        s.doc.revision(),
+        s.doc().layers().len(),
+        s.doc().undo_count(),
+        s.doc().revision(),
         path(s),
         s.path_selected_index(),
     )
@@ -1947,30 +1970,30 @@ fn doc_state(
 /// 失敗した操作が、文書・選んだ点を変えず、ドラッグも残さず、画面の言語で短い理由を出す。
 fn assert_refused_with(s: &mut AppState, words: [(Lang, &str); 2], op: impl Fn(&mut AppState)) {
     for (lang, word) in words {
-        s.lang = lang;
+        s.set_lang(lang);
         let before = doc_state(s);
-        s.message.clear();
+        s.message_mut().clear();
         op(s);
         assert_eq!(doc_state(s), before, "{lang:?}: 文書は変わらない");
         assert!(
-            s.message.contains(word),
+            s.message().contains(word),
             "{lang:?}: 「{word}」が無い: {}",
-            s.message
+            s.message()
         );
-        assert!(s.path.drag.is_none() && !s.is_stroking(), "{lang:?}");
+        assert!(s.path().drag.is_none() && !s.is_stroking(), "{lang:?}");
     }
-    s.lang = Lang::Ja;
+    s.set_lang(Lang::Ja);
 }
 
 #[test]
 fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages() {
     // 2D、パスのあるレイヤー: 直径 1・間隔 1% の細かい標本が、幅の広いキャンバスの端から端で上限（400 万）を超える
     let mut s = AppState::new(12000, 16);
-    s.apply(Action::SelectTool(Tool::Path));
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(1.0))));
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Spacing(0.01))));
+    s.act(Action::SelectTool(Tool::Path));
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(1.0))));
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Spacing(0.01))));
     add_canvas(&mut s, 10.0, 8.0);
-    assert!(path(&s).is_some(), "{}", s.message);
+    assert!(path(&s).is_some(), "{}", s.message());
     assert_eq!(canvas_points(&s).len(), 1);
     assert_refused_with(
         &mut s,
@@ -1981,24 +2004,24 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
 
     // 2D、新しいレイヤー: 画素の予算が足りない（作りかけのレイヤーを残さない）
     let mut t = state(128);
-    t.doc.set_source_budget_bytes(0).unwrap();
+    t.doc_mut().set_source_budget_bytes(0).unwrap();
     assert_refused_with(&mut t, [(Lang::Ja, "予算"), (Lang::En, "budget")], |t| {
         add_canvas(t, 30.0, 30.0)
     });
-    assert_eq!(t.doc.layers().len(), 1);
+    assert_eq!(t.doc().layers().len(), 1);
     assert!(path(&t).is_none());
 
     // 2D、パスのあるレイヤー: 進行中のストロークの巻き戻しの予算が足りない
     let mut u = state(128);
     add_canvas(&mut u, 30.0, 30.0);
     add_canvas(&mut u, 100.0, 60.0);
-    u.doc.set_stroke_budget_bytes(1).unwrap();
+    u.doc_mut().set_stroke_budget_bytes(1).unwrap();
     assert_refused_with(&mut u, [(Lang::Ja, "予算"), (Lang::En, "budget")], |u| {
         add_canvas(u, 60.0, 100.0)
     });
     assert_eq!(canvas_points(&u).len(), 2);
     assert_refused_with(&mut u, [(Lang::Ja, "予算"), (Lang::En, "budget")], |u| {
-        u.apply(Action::Path(PathAction::Redraw))
+        u.act(Action::Path(PathAction::Redraw))
     });
 
     // 3D: 三角形がモデルに無い点（パスのあるレイヤー・新しいレイヤー）
@@ -2008,7 +2031,7 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
         [(Lang::Ja, "三角形"), (Lang::En, "triangle")],
         |v| add_surface(v, 99_999, 0.1, 0.1),
     );
-    assert_eq!(v.doc.layers().len(), 1, "新しいレイヤーを作らない");
+    assert_eq!(v.doc().layers().len(), 1, "新しいレイヤーを作らない");
     click3d(&mut v, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut v, rect, Vec3::new(-0.3, 0.4, 0.0));
     assert_eq!(surface_path(&v).points.len(), 2);
@@ -2018,12 +2041,12 @@ fn headless_a_failed_evaluation_changes_nothing_and_says_why_in_both_languages()
         |v| add_surface(v, 99_999, 0.1, 0.1),
     );
     // 3D: ブラシの間隔に対してパスが長すぎる（直径をごく小さく・間隔を 1% に）
-    v.apply(Action::Path(PathAction::Brush(BrushEdit::Spacing(0.01))));
-    assert_eq!(surface_path(&v).brush.0.spacing, 0.01, "{}", v.message);
+    v.act(Action::Path(PathAction::Brush(BrushEdit::Spacing(0.01))));
+    assert_eq!(surface_path(&v).brush.0.spacing, 0.01, "{}", v.message());
     assert_refused_with(
         &mut v,
         [(Lang::Ja, "長すぎ"), (Lang::En, "too long")],
-        |v| v.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(1e-5)))),
+        |v| v.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(1e-5)))),
     );
     assert_eq!(surface_path(&v).points.len(), 2);
 }
@@ -2035,7 +2058,7 @@ fn headless_the_point_limit_refuses_through_the_path_action_in_2d_and_3d() {
     let mut s = state(256);
     click2d(&mut s, 40.0, 40.0);
     click2d(&mut s, 200.0, 40.0);
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let Some(LayerPath::Canvas(mut c)) = path(&s) else {
         panic!()
     };
@@ -2046,13 +2069,13 @@ fn headless_the_point_limit_refuses_through_the_path_action_in_2d_and_3d() {
             CanvasPoint::new(x, 20.0 + row as f64 * 5.0, 1.0).unwrap()
         })
         .collect();
-    s.doc.set_canvas_path(layer, c).unwrap();
+    s.doc_mut().set_canvas_path(layer, c).unwrap();
     assert_eq!(canvas_points(&s).len(), MAX_POINTS);
     assert_refused_with(&mut s, [(Lang::Ja, "4096"), (Lang::En, "4096")], |s| {
         add_canvas(s, 230.0, 230.0)
     });
     assert_refused_with(&mut s, [(Lang::Ja, "4096"), (Lang::En, "4096")], |s| {
-        s.apply(Action::Path(PathAction::Point(PointOp::Insert {
+        s.act(Action::Path(PathAction::Point(PointOp::Insert {
             segment: 0,
             place: Place::Canvas { x: 30.0, y: 30.0 },
         })))
@@ -2063,7 +2086,7 @@ fn headless_the_point_limit_refuses_through_the_path_action_in_2d_and_3d() {
     let (mut t, rect) = state3d(two_material_plate());
     click3d(&mut t, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut t, rect, Vec3::new(-0.3, 0.4, 0.0));
-    let layer = t.selected_layer.unwrap();
+    let layer = t.selected_layer().unwrap();
     let mut p = surface_path(&t);
     let first = p.points[0];
     p.points = (0..MAX_POINTS)
@@ -2073,19 +2096,19 @@ fn headless_the_point_limit_refuses_through_the_path_action_in_2d_and_3d() {
             ..first
         })
         .collect();
-    let model = t.view3d.full_model().unwrap().clone();
+    let model = t.view3d().full_model().unwrap().clone();
     let rendered = core_paths::render_surface(
         &p,
         &model.geometry,
         &core_paths::Options {
-            width: t.doc.width(),
-            height: t.doc.height(),
-            tile_size: t.doc.tile_size(),
+            width: t.doc().width(),
+            height: t.doc().height(),
+            tile_size: t.doc().tile_size(),
             ..Default::default()
         },
     )
     .expect("4096 点でも描ける");
-    t.doc
+    t.doc_mut()
         .set_path(layer, LayerPath::Surface(p), rendered.channels)
         .unwrap();
     assert_eq!(surface_path(&t).points.len(), MAX_POINTS);
@@ -2170,7 +2193,7 @@ fn occlusion_state() -> (AppState, Rect) {
     // 遮蔽と点の印はモデル・カメラ・点数で決まる。画素への再描画は小さい文書で行う。
     let size = 32;
     let (probe, rect) = state3d_sized(two_material_plate(), size);
-    let camera = probe.view3d.camera.view(rect.width(), rect.height());
+    let camera = probe.view3d().camera.view(rect.width(), rect.height());
     let front = if camera.position.z >= 0.0 { 0.5 } else { -0.5 };
     state3d_sized(plate_behind_blocker(front), size)
 }
@@ -2214,7 +2237,7 @@ fn headless_3d_points_behind_the_model_are_dimmed_and_not_grabbed_up_to_256_poin
     add_surface(&mut s, 0, 0.5, 0.25); // (-0.5, 0)
     add_surface(&mut s, 1, 0.25, 0.5); // (0.5, 0)
     add_surface(&mut s, 1, 0.05, 0.2); // (-0.5, 0.6)
-    assert_eq!(surface_path(&s).points.len(), 3, "{}", s.message);
+    assert_eq!(surface_path(&s).points.len(), 3, "{}", s.message());
     let a = at3d(&s, rect, Vec3::new(-0.5, 0.0, 0.0));
     let c = at3d(&s, rect, Vec3::new(0.5, 0.0, 0.0));
     let b = at3d(&s, rect, Vec3::new(-0.5, 0.6, 0.0));
@@ -2228,42 +2251,46 @@ fn headless_3d_points_behind_the_model_are_dimmed_and_not_grabbed_up_to_256_poin
     assert_eq!(fill_at(&fills, c), dim, "遮られる点は薄く出す");
 
     // 遮られる点は掴まない（足す・差し込む先も手前の板で、ほかのテクスチャセットの面として断る）
-    let (undo, points) = (s.doc.undo_count(), surface_path(&s).points.clone());
-    s.message.clear();
+    let (undo, points) = (s.doc().undo_count(), surface_path(&s).points.clone());
+    s.message_mut().clear();
     pathtool::surface::press(&mut s, rect, c, StrokeSource::Mouse);
-    assert!(s.path.drag.is_none(), "掴まない");
+    assert!(s.path().drag.is_none(), "掴まない");
     assert!(
-        s.message.contains("ほかのテクスチャセット"),
+        s.message().contains("ほかのテクスチャセット"),
         "{}",
-        s.message
+        s.message()
     );
-    assert_eq!(s.doc.undo_count(), undo);
+    assert_eq!(s.doc().undo_count(), undo);
     assert_eq!(surface_path(&s).points, points);
     // 同じ場所でも、手前の板が見せる形に無ければ（遮らなければ）掴む
-    s.view3d.set_hidden(vec![1]);
+    s.view3d_mut().set_hidden(vec![1]);
     pathtool::surface::press(&mut s, rect, c, StrokeSource::Mouse);
-    assert_eq!(s.path.drag.map(|d| d.index), Some(1), "遮りが無ければ掴む");
+    assert_eq!(
+        s.path().drag.map(|d| d.index),
+        Some(1),
+        "遮りが無ければ掴む"
+    );
     pathtool::surface::release(&mut s, rect, c, StrokeSource::Mouse);
-    assert_eq!(s.doc.undo_count(), undo, "動かさなければ文書は変わらない");
-    s.view3d.set_hidden(Vec::new());
+    assert_eq!(s.doc().undo_count(), undo, "動かさなければ文書は変わらない");
+    s.view3d_mut().set_hidden(Vec::new());
 
     // 判定は 256 点まで: ちょうど 256 点なら調べる。257 点になると調べず、全部見えるものとして出して掴める
     for i in 0..253 {
         add_surface(&mut s, 0, 0.5, 0.25 + 0.0002 * (i + 1) as f64);
     }
-    assert_eq!(surface_path(&s).points.len(), 256, "{}", s.message);
+    assert_eq!(surface_path(&s).points.len(), 256, "{}", s.message());
     assert_eq!(fill_at(&marker_fills(&s, rect), c), dim, "256 点は調べる");
     pathtool::surface::press(&mut s, rect, c, StrokeSource::Mouse);
-    assert!(s.path.drag.is_none(), "256 点では遮られる点を掴まない");
+    assert!(s.path().drag.is_none(), "256 点では遮られる点を掴まない");
     add_surface(&mut s, 0, 0.5, 0.25 + 0.0002 * 254.0);
-    assert_eq!(surface_path(&s).points.len(), 257, "{}", s.message);
+    assert_eq!(surface_path(&s).points.len(), 257, "{}", s.message());
     assert_eq!(
         fill_at(&marker_fills(&s, rect), c),
         pathtool::PATH_COLOR,
         "257 点は調べず、全部見えるものとして出す"
     );
     pathtool::surface::press(&mut s, rect, c, StrokeSource::Mouse);
-    assert_eq!(s.path.drag.map(|d| d.index), Some(1), "257 点では掴める");
+    assert_eq!(s.path().drag.map(|d| d.index), Some(1), "257 点では掴める");
     pathtool::surface::release(&mut s, rect, c, StrokeSource::Mouse);
 }
 
@@ -2276,43 +2303,46 @@ fn headless_replacing_the_model_while_a_3d_point_is_held_drops_the_drag() {
     let to = at3d(&s, rect, Vec3::new(-0.6, 0.6, 0.0));
     pathtool::surface::press(&mut s, rect, held, StrokeSource::Mouse);
     pathtool::surface::moved(&mut s, rect, to, StrokeSource::Mouse);
-    assert!(s.path.drag.is_some_and(|d| d.surface && d.target.is_some()));
+    assert!(s
+        .path()
+        .drag
+        .is_some_and(|d| d.surface && d.target.is_some()));
     assert!(s.is_stroking());
     // 掴んだまま、UV の違うモデルに入れ替わる: パスは新しいモデルへ付け直し、掴んでいた点の動きは捨てる
-    s.view3d.set_model(flipped_plate());
-    s.view3d.material = 0;
+    s.view3d_mut().set_model(flipped_plate());
+    s.view3d_mut().material = 0;
     s.sync_view3d();
     assert!(
-        s.path.drag.is_none() && !s.is_stroking(),
+        s.path().drag.is_none() && !s.is_stroking(),
         "ドラッグを取り残さない"
     );
     let rebound = surface_path(&s);
     assert_eq!(
         rebound.model_fingerprint,
-        core_paths::fingerprint(&s.view3d.full_model().unwrap().geometry)
+        core_paths::fingerprint(&s.view3d().full_model().unwrap().geometry)
     );
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     pathtool::surface::release(&mut s, rect, to, StrokeSource::Mouse);
     assert_eq!(
-        s.doc.undo_count(),
+        s.doc().undo_count(),
         undo,
         "前のモデルの三角形の番号を、付け直したパスへ当てない"
     );
     assert_eq!(surface_path(&s), rebound);
     // 2D の点を掴んでいるあいだの入れ替えは、2D のドラッグに触れない
     let mut t = state(256);
-    t.view3d.set_model(two_material_plate());
-    t.view3d.material = 0;
+    t.view3d_mut().set_model(two_material_plate());
+    t.view3d_mut().material = 0;
     for (x, y) in [(40.0, 40.0), (120.0, 120.0), (200.0, 40.0)] {
         click2d(&mut t, x, y);
     }
     press2d(&mut t, 120.0, 120.0);
     move2d(&mut t, 150.0, 200.0);
-    t.view3d.set_model(flipped_plate());
-    t.view3d.material = 0;
+    t.view3d_mut().set_model(flipped_plate());
+    t.view3d_mut().material = 0;
     t.sync_view3d();
     assert!(
-        t.path.drag.is_some_and(|d| !d.surface),
+        t.path().drag.is_some_and(|d| !d.surface),
         "2D のドラッグは続く"
     );
     release2d(&mut t, 150.0, 200.0);
@@ -2337,34 +2367,42 @@ fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_rea
     ] {
         // 付け直せないモデル（板から遠く離れたメッシュ）に入れ替わる: 画素にし、レイヤーの名前と最初の理由を知らせる
         let (mut s, rect) = state3d(two_material_plate());
-        s.lang = lang;
+        s.set_lang(lang);
         click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
         click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
-        s.view3d.set_model(rebind_far_model());
-        s.view3d.material = 0;
+        s.view3d_mut().set_model(rebind_far_model());
+        s.view3d_mut().material = 0;
         s.sync_view3d();
         assert!(s.path_layer().is_none(), "画素にした");
-        assert!(s.message.contains(rasterized), "{lang:?}: {}", s.message);
         assert!(
-            !s.message.contains(redrawn),
-            "0 件は出さない: {}",
-            s.message
+            s.message().contains(rasterized),
+            "{lang:?}: {}",
+            s.message()
         );
-        assert!(s.message.contains(because), "{lang:?}: {}", s.message);
+        assert!(
+            !s.message().contains(redrawn),
+            "0 件は出さない: {}",
+            s.message()
+        );
+        assert!(s.message().contains(because), "{lang:?}: {}", s.message());
         // 付け直せるときは、描き直した件数だけ（理由は無い）
         let (mut t, rect) = state3d(two_material_plate());
-        t.lang = lang;
+        t.set_lang(lang);
         click3d(&mut t, rect, Vec3::new(-0.7, -0.3, 0.0));
         click3d(&mut t, rect, Vec3::new(-0.3, 0.4, 0.0));
-        t.view3d.set_model(flipped_plate());
-        t.view3d.material = 0;
+        t.view3d_mut().set_model(flipped_plate());
+        t.view3d_mut().material = 0;
         t.sync_view3d();
-        assert!(t.message.contains(redrawn), "{lang:?}: {}", t.message);
-        assert!(!t.message.contains(rasterized), "{lang:?}: {}", t.message);
+        assert!(t.message().contains(redrawn), "{lang:?}: {}", t.message());
         assert!(
-            !t.message.contains(lang.pick("（", " (")),
+            !t.message().contains(rasterized),
             "{lang:?}: {}",
-            t.message
+            t.message()
+        );
+        assert!(
+            !t.message().contains(lang.pick("（", " (")),
+            "{lang:?}: {}",
+            t.message()
         );
     }
 }
@@ -2372,7 +2410,7 @@ fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_rea
 // ───────── パスの一覧（1 つのレイヤーに何本ものパス） ─────────
 
 fn list_op(s: &mut AppState, op: ListOp) {
-    s.apply(Action::Path(PathAction::List(op)));
+    s.act(Action::Path(PathAction::List(op)));
 }
 
 fn entries(s: &AppState) -> Vec<core_paths::LayerPathEntry> {
@@ -2384,11 +2422,11 @@ fn two_lines(s: &mut AppState) -> (LayerId, u128, u128) {
     click2d(s, 40.0, 40.0);
     click2d(s, 120.0, 40.0);
     let a = path(s).unwrap().id();
-    s.apply(Action::Path(PathAction::SelectPath(None)));
+    s.act(Action::Path(PathAction::SelectPath(None)));
     click2d(s, 40.0, 200.0);
     click2d(s, 120.0, 200.0);
     let b = path(s).unwrap().id();
-    (s.selected_layer.unwrap(), a, b)
+    (s.selected_layer().unwrap(), a, b)
 }
 
 #[test]
@@ -2396,36 +2434,36 @@ fn headless_enter_finishes_a_path_and_the_next_clicks_start_another_in_the_same_
     let mut s = state(256);
     click2d(&mut s, 40.0, 40.0);
     click2d(&mut s, 120.0, 40.0);
-    let layer = s.selected_layer.unwrap();
+    let layer = s.selected_layer().unwrap();
     let first = path(&s).unwrap().id();
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     // Enter（パスの編集を抜ける）は文書を変えない
-    s.apply(Action::Path(PathAction::SelectPath(None)));
+    s.act(Action::Path(PathAction::SelectPath(None)));
     assert!(s.path_layer().is_none());
-    assert_eq!(s.doc.undo_count(), undo);
+    assert_eq!(s.doc().undo_count(), undo);
     click2d(&mut s, 40.0, 200.0);
     click2d(&mut s, 120.0, 200.0);
     assert_eq!(
-        s.doc.layers().len(),
+        s.doc().layers().len(),
         2,
         "同じレイヤーに加える: {}",
-        s.message
+        s.message()
     );
-    assert_eq!(s.selected_layer, Some(layer));
+    assert_eq!(s.selected_layer(), Some(layer));
     let list = entries(&s);
     assert_eq!(list.len(), 2);
     assert_eq!(list[0].id(), first, "前のパスは下");
     assert_eq!(path(&s).unwrap().id(), list[1].id(), "新しいパスを編集する");
-    assert_eq!(s.doc.undo_count(), undo + 2, "点ごとに 1 回の Undo");
+    assert_eq!(s.doc().undo_count(), undo + 2, "点ごとに 1 回の Undo");
     assert!(pixel(&s, 80, 40)[3] > 0 && pixel(&s, 80, 200)[3] > 0);
     // 編集していないパスの曲線を押すと、そのパスを選ぶ（点は置かない）
     click2d(&mut s, 80.0, 40.0);
     assert_eq!(path(&s).unwrap().id(), first);
-    assert_eq!(s.doc.undo_count(), undo + 2);
+    assert_eq!(s.doc().undo_count(), undo + 2);
     assert_eq!(canvas_points(&s).len(), 2);
     // Undo: 2 本目の 2 点目、2 本目（一覧から外れる）
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(entries(&s).len(), 1);
     assert_eq!(pixel(&s, 80, 200)[3], 0);
     assert!(pixel(&s, 80, 40)[3] > 0);
@@ -2435,7 +2473,7 @@ fn headless_enter_finishes_a_path_and_the_next_clicks_start_another_in_the_same_
 fn headless_list_operations_are_one_undo_each() {
     let mut s = state(256);
     let (_, a, b) = two_lines(&mut s);
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     // 名前（空の名前は番号の名前）
     assert_eq!(
         pathtool::list::display_name(Lang::Ja, &entries(&s), 0),
@@ -2443,13 +2481,13 @@ fn headless_list_operations_are_one_undo_each() {
     );
     list_op(&mut s, ListOp::Rename(a, "  線\n".into()));
     assert_eq!(entries(&s)[0].name, "線", "前後の空白と制御文字を除く");
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     // 隠すと画素から消える（点と設定は残る）
     list_op(&mut s, ListOp::Visible(a, false));
     assert_eq!(pixel(&s, 80, 40)[3], 0);
     assert!(pixel(&s, 80, 200)[3] > 0);
     assert_eq!(entries(&s)[0].path.point_count(), 2);
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert!(pixel(&s, 80, 40)[3] > 0);
     // 複製: すぐ上に、新しい ID と「〜のコピー」の名前、写しを選ぶ
     list_op(&mut s, ListOp::Duplicate(a));
@@ -2469,24 +2507,24 @@ fn headless_list_operations_are_one_undo_each() {
     assert_eq!(entries(&s).len(), 2);
     assert_eq!(pixel(&s, 80, 200)[3], 0);
     // コピーは文書を変えない。貼り付けは一覧の上に新しい ID で加える
-    let n = s.doc.undo_count();
+    let n = s.doc().undo_count();
     list_op(&mut s, ListOp::Copy(a));
-    assert_eq!(s.doc.undo_count(), n);
+    assert_eq!(s.doc().undo_count(), n);
     list_op(&mut s, ListOp::Paste);
     let list = entries(&s);
     assert_eq!(list.len(), 3);
     assert!(list
         .iter()
         .all(|e| e.id() != list[2].id() || e.name == "線 のコピー"));
-    assert_eq!(s.doc.undo_count(), n + 1);
+    assert_eq!(s.doc().undo_count(), n + 1);
     // 1 つの操作が 1 回の Undo: 全部戻すと 2 本の名前の無い一覧
     for _ in 0..5 {
-        s.apply(Action::Undo);
+        s.act(Action::Undo);
     }
     let list = entries(&s);
     assert_eq!(list.iter().map(|e| e.id()).collect::<Vec<_>>(), vec![a, b]);
     assert!(list.iter().all(|e| e.name.is_empty() && e.visible));
-    assert_eq!(s.doc.undo_count(), undo);
+    assert_eq!(s.doc().undo_count(), undo);
 }
 
 #[test]
@@ -2494,9 +2532,9 @@ fn headless_a_3d_path_is_renamed_without_the_model_and_without_redrawing() {
     let (mut s, rect) = state3d(two_material_plate());
     click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
-    let (layer, id) = (s.selected_layer.unwrap(), path(&s).unwrap().id());
+    let (layer, id) = (s.selected_layer().unwrap(), path(&s).unwrap().id());
     let pixels = |s: &AppState| {
-        s.doc
+        s.doc()
             .layer(layer)
             .unwrap()
             .surface(Channel::Color)
@@ -2505,22 +2543,22 @@ fn headless_a_3d_path_is_renamed_without_the_model_and_without_redrawing() {
     };
     let drawn = pixels(&s);
     assert!(drawn.iter().any(|v| *v != 0));
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     // モデルを読んでいなくても、別のモデルを読んでいても、名前は替えられる（画素は変えない）
-    s.view3d.model = None;
+    s.view3d_mut().model = None;
     list_op(&mut s, ListOp::Rename(id, "腕".into()));
-    assert_eq!(entries(&s)[0].name, "腕", "{}", s.message);
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(entries(&s)[0].name, "腕", "{}", s.message());
+    assert_eq!(s.doc().undo_count(), undo + 1);
     assert_eq!(pixels(&s), drawn);
-    s.view3d.set_model(flipped_plate());
-    s.view3d.material = 0;
+    s.view3d_mut().set_model(flipped_plate());
+    s.view3d_mut().material = 0;
     list_op(&mut s, ListOp::Rename(id, "脚".into()));
-    assert_eq!(entries(&s)[0].name, "脚", "{}", s.message);
-    assert_eq!(s.doc.undo_count(), undo + 2, "1 回ずつの Undo");
+    assert_eq!(entries(&s)[0].name, "脚", "{}", s.message());
+    assert_eq!(s.doc().undo_count(), undo + 2, "1 回ずつの Undo");
     assert_eq!(pixels(&s), drawn, "描き直さない");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(entries(&s)[0].name, "腕");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(entries(&s)[0].name, "");
     assert_eq!(pixels(&s), drawn);
 }
@@ -2530,14 +2568,14 @@ fn headless_settings_and_positions_paste_onto_another_path() {
     let mut s = state(256);
     let (_, a, b) = two_lines(&mut s);
     // b を太くする
-    s.apply(Action::Path(PathAction::SelectPath(Some(b))));
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(60.0))));
+    s.act(Action::Path(PathAction::SelectPath(Some(b))));
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(60.0))));
     let find = |s: &AppState, id: u128| entries(s).into_iter().find(|e| e.id() == id).unwrap().path;
     let (pa, pb) = (find(&s, a), find(&s, b));
     assert_ne!(pathtool::path_brush(&pa), pathtool::path_brush(&pb));
     // b の設定を a へ: 点は a のまま
     list_op(&mut s, ListOp::Copy(b));
-    let n = s.doc.undo_count();
+    let n = s.doc().undo_count();
     list_op(&mut s, ListOp::PasteSettings(a));
     let next = find(&s, a);
     assert_eq!(pathtool::path_brush(&next), pathtool::path_brush(&pb));
@@ -2549,20 +2587,20 @@ fn headless_settings_and_positions_paste_onto_another_path() {
         (LayerPath::Canvas(x), LayerPath::Canvas(y)) => assert_eq!(x.points, y.points),
         other => panic!("{other:?}"),
     }
-    assert_eq!(s.doc.undo_count(), n + 2);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
+    assert_eq!(s.doc().undo_count(), n + 2);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(find(&s, a), pa);
     // 写していなければ断る
     let mut t = state(256);
     let (_, a, _) = two_lines(&mut t);
-    let n = t.doc.undo_count();
+    let n = t.doc().undo_count();
     list_op(&mut t, ListOp::PasteSettings(a));
-    assert_eq!(t.doc.undo_count(), n);
+    assert_eq!(t.doc().undo_count(), n);
     assert!(
-        t.message.contains("コピーしたパスがありません"),
+        t.message().contains("コピーしたパスがありません"),
         "{}",
-        t.message
+        t.message()
     );
 }
 
@@ -2577,24 +2615,24 @@ fn headless_a_list_survives_saving_and_opening() {
     click2d(&mut s, 20.0, 20.0);
     click2d(&mut s, 100.0, 20.0);
     let a = path(&s).unwrap().id();
-    s.apply(Action::Path(PathAction::SelectPath(None)));
+    s.act(Action::Path(PathAction::SelectPath(None)));
     click2d(&mut s, 20.0, 100.0);
     click2d(&mut s, 100.0, 100.0);
     list_op(&mut s, ListOp::Rename(a, "上の線".into()));
     list_op(&mut s, ListOp::Visible(a, false));
     let before = entries(&s);
-    s.apply(Action::SaveProjectAs(file.clone()));
-    assert!(file.exists(), "{}", s.message);
+    s.act(Action::SaveProjectAs(file.clone()));
+    assert!(file.exists(), "{}", s.message());
     let mut t = AppState::new(64, 64);
-    t.apply(Action::OpenProject(file));
+    t.act(Action::OpenProject(file));
     let layer = t
-        .doc
+        .doc()
         .layers()
         .iter()
         .find(|l| l.has_paths())
         .expect("パスレイヤー")
         .id();
-    t.selected_layer = Some(layer);
+    t.set_selected_layer(Some(layer));
     assert_eq!(entries(&t), before);
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -2604,16 +2642,16 @@ fn headless_a_replaced_model_moves_every_path_of_a_list() {
     let (mut s, rect) = state3d(two_material_plate());
     click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
-    s.apply(Action::Path(PathAction::SelectPath(None)));
+    s.act(Action::Path(PathAction::SelectPath(None)));
     click3d(&mut s, rect, Vec3::new(-0.8, 0.6, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.2, 0.7, 0.0));
-    assert_eq!(entries(&s).len(), 2, "{}", s.message);
-    s.view3d.set_model(flipped_plate());
-    s.view3d.material = 0;
+    assert_eq!(entries(&s).len(), 2, "{}", s.message());
+    s.view3d_mut().set_model(flipped_plate());
+    s.view3d_mut().material = 0;
     s.sync_view3d();
-    let print = core_paths::fingerprint(&s.view3d.full_model().unwrap().geometry);
+    let print = core_paths::fingerprint(&s.view3d().full_model().unwrap().geometry);
     let list = entries(&s);
-    assert_eq!(list.len(), 2, "一覧の全部を付け直す: {}", s.message);
+    assert_eq!(list.len(), 2, "一覧の全部を付け直す: {}", s.message());
     for e in &list {
         match &e.path {
             LayerPath::Surface(p) => assert_eq!(p.model_fingerprint, print),
@@ -2639,21 +2677,21 @@ fn headless_corner_and_handles_are_one_undo_each_and_moving_keeps_them() {
     let mut s = state(256);
     three_points(&mut s);
     let smooth = layer_color_bytes(&s);
-    s.apply(Action::Path(PathAction::Select(Some(1))));
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::SetCorner(true)));
+    s.act(Action::Path(PathAction::Select(Some(1))));
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::SetCorner(true)));
     assert_eq!(tangent_of(&s, 1), TangentValue::Corner);
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     assert_ne!(layer_color_bytes(&s), smooth, "角で折れる");
     // 動かしても角のまま
     drag2d(&mut s, (128.0, 200.0), (128.0, 180.0));
     assert_eq!(tangent_of(&s, 1), TangentValue::Corner);
-    s.apply(Action::Undo);
-    s.apply(Action::Path(PathAction::SetCorner(false)));
+    s.act(Action::Undo);
+    s.act(Action::Path(PathAction::SetCorner(false)));
     assert_eq!(tangent_of(&s, 1), TangentValue::Smooth);
     assert_eq!(layer_color_bytes(&s), smooth, "滑らかに戻すと同じ画素");
     // 取っ手: 今の曲がりのままの向き（入る側と出る側が反対を向く）
-    s.apply(Action::Path(PathAction::SetHandles(true)));
+    s.act(Action::Path(PathAction::SetHandles(true)));
     let TangentValue::Handles { incoming, outgoing } = tangent_of(&s, 1) else {
         panic!("{:?}", tangent_of(&s, 1))
     };
@@ -2668,7 +2706,7 @@ fn headless_corner_and_handles_are_one_undo_each_and_moving_keeps_them() {
     );
     // 頂点の点は左右対称なので、取っ手は横向き
     assert!(b.y.abs() < 1e-6 && b.x > 0.0, "{b}");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(tangent_of(&s, 1), TangentValue::Smooth);
 }
 
@@ -2676,17 +2714,17 @@ fn headless_corner_and_handles_are_one_undo_each_and_moving_keeps_them() {
 fn headless_dragging_a_handle_aligns_breaks_with_alt_and_scales_with_ctrl() {
     let mut s = state(256);
     three_points(&mut s);
-    s.apply(Action::Path(PathAction::Select(Some(1))));
-    s.apply(Action::Path(PathAction::SetHandles(true)));
+    s.act(Action::Path(PathAction::Select(Some(1))));
+    s.act(Action::Path(PathAction::SetHandles(true)));
     let TangentValue::Handles { incoming, outgoing } = tangent_of(&s, 1) else {
         panic!()
     };
     let len_in = DVec2::new(incoming[0], incoming[1]).length();
     let end = (128.0 + outgoing[0], 200.0 + outgoing[1]);
     // 出る側の先を上へ: 入る側は向きだけ合わせる（長さは今のまま）
-    let undo = s.doc.undo_count();
+    let undo = s.doc().undo_count();
     drag2d(&mut s, end, (128.0 + 30.0, 200.0 + 30.0));
-    assert_eq!(s.doc.undo_count(), undo + 1, "{}", s.message);
+    assert_eq!(s.doc().undo_count(), undo + 1, "{}", s.message());
     let TangentValue::Handles { incoming, outgoing } = tangent_of(&s, 1) else {
         panic!()
     };
@@ -2698,9 +2736,9 @@ fn headless_dragging_a_handle_aligns_breaks_with_alt_and_scales_with_ctrl() {
     assert!((a.length() - len_in).abs() < 1e-6, "{a}");
     assert!(a.normalize().dot(b.normalize()) < -0.9999);
     // Alt: 動かした側だけ（折れる）
-    s.path.input.alt = true;
+    s.path_mut().input.alt = true;
     drag2d(&mut s, (158.0, 230.0), (158.0, 200.0));
-    s.path.input.alt = false;
+    s.path_mut().input.alt = false;
     let TangentValue::Handles { incoming, outgoing } = tangent_of(&s, 1) else {
         panic!()
     };
@@ -2715,8 +2753,8 @@ fn headless_dragging_a_handle_aligns_breaks_with_alt_and_scales_with_ctrl() {
     // Ctrl: 揃った取っ手の両側を同じ割合で伸ばす
     let mut t = state(256);
     three_points(&mut t);
-    t.apply(Action::Path(PathAction::Select(Some(1))));
-    t.apply(Action::Path(PathAction::SetHandles(true)));
+    t.act(Action::Path(PathAction::Select(Some(1))));
+    t.act(Action::Path(PathAction::SetHandles(true)));
     let TangentValue::Handles { incoming, outgoing } = tangent_of(&t, 1) else {
         panic!()
     };
@@ -2725,7 +2763,7 @@ fn headless_dragging_a_handle_aligns_breaks_with_alt_and_scales_with_ctrl() {
         DVec2::new(outgoing[0], outgoing[1]),
     );
     let end = (128.0 + b.x, 200.0 + b.y);
-    t.path.input.ctrl = true;
+    t.path_mut().input.ctrl = true;
     drag2d(&mut t, end, (128.0 + b.x * 2.0, 200.0 + b.y * 2.0));
     let TangentValue::Handles { incoming, .. } = tangent_of(&t, 1) else {
         panic!()
@@ -2737,18 +2775,18 @@ fn headless_dragging_a_handle_aligns_breaks_with_alt_and_scales_with_ctrl() {
 fn headless_double_clicking_a_point_toggles_the_corner() {
     let mut s = state(256);
     three_points(&mut s);
-    s.path.input.now = Some(10.0);
+    s.path_mut().input.now = Some(10.0);
     click2d(&mut s, 128.0, 200.0);
-    s.path.input.now = Some(10.2);
+    s.path_mut().input.now = Some(10.2);
     click2d(&mut s, 128.0, 200.0);
     assert_eq!(tangent_of(&s, 1), TangentValue::Corner);
     // 間が空けば、ダブルクリックではない
-    s.path.input.now = Some(11.0);
+    s.path_mut().input.now = Some(11.0);
     click2d(&mut s, 128.0, 200.0);
-    s.path.input.now = Some(12.0);
+    s.path_mut().input.now = Some(12.0);
     click2d(&mut s, 128.0, 200.0);
     assert_eq!(tangent_of(&s, 1), TangentValue::Corner);
-    s.path.input.now = Some(12.1);
+    s.path_mut().input.now = Some(12.1);
     click2d(&mut s, 128.0, 200.0);
     assert_eq!(tangent_of(&s, 1), TangentValue::Smooth);
 }
@@ -2759,10 +2797,10 @@ fn headless_3d_handles_are_kept_in_the_rest_shape_space() {
     click3d(&mut s, rect, Vec3::new(-0.8, -0.5, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.5, 0.3, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.2, -0.5, 0.0));
-    s.apply(Action::Path(PathAction::Select(Some(1))));
-    s.apply(Action::Path(PathAction::SetHandles(true)));
+    s.act(Action::Path(PathAction::Select(Some(1))));
+    s.act(Action::Path(PathAction::SetHandles(true)));
     let TangentValue::Handles { outgoing, .. } = tangent_of(&s, 1) else {
-        panic!("{}", s.message)
+        panic!("{}", s.message())
     };
     assert!(
         outgoing[0] > 0.0 && outgoing[2].abs() < 1e-6,
@@ -2784,7 +2822,7 @@ fn headless_3d_handles_are_kept_in_the_rest_shape_space() {
     );
     let before = layer_color_bytes(&s);
     // 左の面を横に 2 倍に伸ばしたポーズ: 見える取っ手は 2 倍だが、持つ値（休みの形）は同じで、描いた画素も同じ
-    let rest = s.view3d.full_model().unwrap().geometry.clone();
+    let rest = s.view3d().full_model().unwrap().geometry.clone();
     let mut meshes = two_material_plate().meshes;
     for p in &mut meshes[0].positions[..4] {
         p.x = -1.0 + (p.x + 1.0) * 2.0;
@@ -2793,17 +2831,17 @@ fn headless_3d_handles_are_kept_in_the_rest_shape_space() {
     let posed = ViewModel::new("板", meshes, names, 5)
         .unwrap()
         .with_rest(rest);
-    s.view3d.set_model(posed);
+    s.view3d_mut().set_model(posed);
     s.sync_view3d();
-    s.apply(Action::Path(PathAction::Redraw));
+    s.act(Action::Path(PathAction::Redraw));
     assert_eq!(layer_color_bytes(&s), before);
     // 見えている先（伸ばした形）をつかんで、同じ所へ戻すと値は変わらない
     let shown_end = Vec3::new(-1.0 + (-0.5 + 1.0 + 0.2) * 2.0, 0.6, 0.0);
     let a = at3d(&s, rect, shown_end);
-    let n = s.doc.undo_count();
+    let n = s.doc().undo_count();
     pathtool::surface::press(&mut s, rect, a, StrokeSource::Mouse);
     assert!(
-        s.path.drag.is_some_and(|d| d.handle.is_some()),
+        s.path().drag.is_some_and(|d| d.handle.is_some()),
         "見えている先をつかむ"
     );
     let b = at3d(
@@ -2813,7 +2851,7 @@ fn headless_3d_handles_are_kept_in_the_rest_shape_space() {
     );
     pathtool::surface::moved(&mut s, rect, b, StrokeSource::Mouse);
     pathtool::surface::release(&mut s, rect, b, StrokeSource::Mouse);
-    assert_eq!(s.doc.undo_count(), n + 1);
+    assert_eq!(s.doc().undo_count(), n + 1);
     let TangentValue::Handles { outgoing, .. } = tangent_of(&s, 1) else {
         panic!()
     };
@@ -2837,18 +2875,18 @@ fn headless_the_kind_redraws_the_path_in_one_undo_and_sets_the_next_path() {
     }
     let stroke = layer_color_bytes(&s);
     assert_eq!(pixel(&s, 60, 50)[3], 0, "ストロークは内側を塗らない");
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Kind(PathKind::Fill)));
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Kind(PathKind::Fill)));
     assert_eq!(kind_of(&s), PathKind::Fill);
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     assert!(pixel(&s, 60, 50)[3] > 0, "塗りは内側を塗る");
-    s.apply(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(kind_of(&s), PathKind::Stroke);
     assert_eq!(layer_color_bytes(&s), stroke);
     // パスの編集を抜けているあいだは、次に作るパスの種類
-    s.apply(Action::Path(PathAction::SelectPath(None)));
-    s.apply(Action::Path(PathAction::Kind(PathKind::Erase)));
-    assert_eq!(s.doc.undo_count(), undo, "文書は変えない");
+    s.act(Action::Path(PathAction::SelectPath(None)));
+    s.act(Action::Path(PathAction::Kind(PathKind::Erase)));
+    assert_eq!(s.doc().undo_count(), undo, "文書は変えない");
     click2d(&mut s, 10.0, 60.0);
     click2d(&mut s, 120.0, 60.0);
     assert_eq!(kind_of(&s), PathKind::Erase);
@@ -2873,7 +2911,7 @@ fn headless_a_ribbon_reads_an_asset_image_and_refuses_without_one() {
     ));
     // 2 × 1 の画像（左が赤・右が青）を伸ばして並べる
     let rid = s
-        .shelf
+        .shelf_mut()
         .add_image(Lang::Ja, "帯", &[255, 0, 0, 255, 0, 0, 255, 255], 2, 1)
         .unwrap();
     let image = yolu_app::fx::inputs::image_id(&rid).unwrap();
@@ -2882,8 +2920,8 @@ fn headless_a_ribbon_reads_an_asset_image_and_refuses_without_one() {
         mode: core_paths::RibbonMode::Stretch,
         spacing: 1.0,
     });
-    s.apply(Action::Path(PathAction::Kind(kind)));
-    assert_eq!(kind_of(&s), kind, "{}", s.message);
+    s.act(Action::Path(PathAction::Kind(kind)));
+    assert_eq!(kind_of(&s), kind, "{}", s.message());
     let (left, right) = (pixel(&s, 20, 64), pixel(&s, 108, 64));
     assert!(left[0] > 200 && left[2] < 50, "{left:?}");
     assert!(right[2] > 200 && right[0] < 50, "{right:?}");
@@ -2904,27 +2942,27 @@ fn headless_the_tip_angle_and_depth_are_one_undo_each_and_use_brush_takes_the_br
     click2d(&mut s, 108.0, 64.0);
     let round = layer_color_bytes(&s);
     let square = yolu_core::builtin_tip("rounded-square").unwrap();
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Style(StyleEdit::Tip(Some(
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Style(StyleEdit::Tip(Some(
         square.clone(),
     )))));
     assert_eq!(style_of(&s).tip.as_deref(), Some(&*square));
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     assert_ne!(layer_color_bytes(&s), round);
-    s.apply(Action::Path(PathAction::Style(StyleEdit::Angle(30.0))));
-    s.apply(Action::Path(PathAction::Style(StyleEdit::Follow(true))));
+    s.act(Action::Path(PathAction::Style(StyleEdit::Angle(30.0))));
+    s.act(Action::Path(PathAction::Style(StyleEdit::Follow(true))));
     let style = style_of(&s);
     assert_eq!((style.angle, style.follow), (30.0, true));
-    assert_eq!(s.doc.undo_count(), undo + 3);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
+    assert_eq!(s.doc().undo_count(), undo + 3);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(style_of(&s), core_paths::PathStyle::default());
     assert_eq!(layer_color_bytes(&s), round);
     // ブラシを使う: 今のブラシの筆先・角度・向きも写す
-    s.m2.brush.tip.image = Some(square.clone());
-    s.m2.brush.tip.angle = 45.0;
-    s.apply(Action::Path(PathAction::UseBrush));
+    s.m2_mut().brush.tip.image = Some(square.clone());
+    s.m2_mut().brush.tip.angle = 45.0;
+    s.act(Action::Path(PathAction::UseBrush));
     let style = style_of(&s);
     assert_eq!(style.tip.as_deref(), Some(&*square));
     assert_eq!(style.angle, 45.0);
@@ -2942,11 +2980,11 @@ fn headless_a_3d_path_keeps_its_projection_depth() {
     click3d(&mut s, rect, Vec3::new(-0.8, -0.5, 0.0));
     click3d(&mut s, rect, Vec3::new(-0.2, 0.5, 0.0));
     let auto = layer_color_bytes(&s);
-    s.apply(Action::Path(PathAction::Style(StyleEdit::Depth(Some(2.0)))));
-    assert_eq!(surface_path(&s).style.depth, Some(2.0), "{}", s.message);
+    s.act(Action::Path(PathAction::Style(StyleEdit::Depth(Some(2.0)))));
+    assert_eq!(surface_path(&s).style.depth, Some(2.0), "{}", s.message());
     // 平らな板なので、深さを決めても同じ画素
     assert_eq!(layer_color_bytes(&s), auto);
-    s.apply(Action::Path(PathAction::Style(StyleEdit::Depth(None))));
+    s.act(Action::Path(PathAction::Style(StyleEdit::Depth(None))));
     assert_eq!(surface_path(&s).style.depth, None);
 }
 
@@ -2960,41 +2998,45 @@ fn headless_symmetry_and_reverse_are_one_undo_each() {
     let before = canvas_points(&s);
     assert_eq!(pixel(&s, 118, 30)[3], 0);
     // 対称定規が無ければ入れられない（理由が出る。取り消しの段も増えない）
-    let none = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Symmetry(true)));
+    let none = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Symmetry(true)));
     assert_eq!(style_of(&s).symmetry, core_paths::PathSymmetry::None);
-    assert!(s.message.contains("対称定規"), "{}", s.message);
-    assert_eq!(s.doc.undo_count(), none);
+    assert!(s.message().contains("対称定規"), "{}", s.message());
+    assert_eq!(s.doc().undo_count(), none);
     // 効いている対称定規（縦、中心 x = 64）の値を写して映す
     common::rulers::vertical(&mut s, 64.0);
     // 対称定規はあるが「特殊定規にスナップ」が切れているときは、切れていることを理由にする（対称定規が無いとは言わない）
-    s.rulers.snap_special = false;
-    s.apply(Action::Path(PathAction::Symmetry(true)));
+    s.rulers_mut().snap_special = false;
+    s.act(Action::Path(PathAction::Symmetry(true)));
     assert_eq!(style_of(&s).symmetry, core_paths::PathSymmetry::None);
     assert!(
-        s.message.contains("特殊定規にスナップが切れています"),
+        s.message().contains("特殊定規にスナップが切れています"),
         "{}",
-        s.message
+        s.message()
     );
-    assert!(!s.message.contains("対称定規がありません"), "{}", s.message);
-    assert_eq!(s.doc.undo_count(), none + 1, "定規を置いた 1 回のまま");
-    s.rulers.snap_special = true;
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Symmetry(true)));
+    assert!(
+        !s.message().contains("対称定規がありません"),
+        "{}",
+        s.message()
+    );
+    assert_eq!(s.doc().undo_count(), none + 1, "定規を置いた 1 回のまま");
+    s.rulers_mut().snap_special = true;
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Symmetry(true)));
     assert!(matches!(
         style_of(&s).symmetry,
         core_paths::PathSymmetry::Canvas(_)
     ));
     assert!(pixel(&s, 117, 30)[3] > 0, "映した側");
-    assert_eq!(s.doc.undo_count(), undo + 1);
+    assert_eq!(s.doc().undo_count(), undo + 1);
     // 向きの反転: 点の並びが逆、1 回の Undo
-    s.apply(Action::Path(PathAction::Reverse));
+    s.act(Action::Path(PathAction::Reverse));
     let reversed = canvas_points(&s);
     assert_eq!(reversed[0], before[1]);
     assert_eq!(reversed[1], before[0]);
-    assert_eq!(s.doc.undo_count(), undo + 2);
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
+    assert_eq!(s.doc().undo_count(), undo + 2);
+    s.act(Action::Undo);
+    s.act(Action::Undo);
     assert_eq!(canvas_points(&s), before);
     assert_eq!(pixel(&s, 117, 30)[3], 0);
 }
@@ -3012,27 +3054,27 @@ fn headless_shift_drag_selects_points_and_width_and_delete_apply_to_all_of_them(
         click2d(&mut s, x, y);
     }
     // Shift を押して、真ん中の 3 点を囲む
-    s.path.input.shift = true;
+    s.path_mut().input.shift = true;
     drag2d(&mut s, (60.0, 10.0), (200.0, 60.0));
-    s.path.input.shift = false;
+    s.path_mut().input.shift = false;
     assert_eq!(s.path_selected_indices(), vec![1, 2, 3]);
     assert_eq!(canvas_points(&s).len(), 5, "囲むだけで点は足さない");
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Widths(0.25)));
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Widths(0.25)));
     let widths: Vec<f64> = canvas_points(&s).iter().map(|p| p.2).collect();
     assert_eq!(widths, vec![1.0, 0.25, 0.25, 0.25, 1.0]);
-    assert_eq!(s.doc.undo_count(), undo + 1, "全部で 1 回の Undo");
-    s.apply(Action::Path(PathAction::SetCorner(true)));
+    assert_eq!(s.doc().undo_count(), undo + 1, "全部で 1 回の Undo");
+    s.act(Action::Path(PathAction::SetCorner(true)));
     for i in 1..=3 {
         assert_eq!(tangent_of(&s, i), TangentValue::Corner);
     }
     assert_eq!(tangent_of(&s, 0), TangentValue::Smooth);
-    s.apply(Action::Path(PathAction::DeleteSelected));
+    s.act(Action::Path(PathAction::DeleteSelected));
     let xs: Vec<f64> = canvas_points(&s).iter().map(|p| p.0).collect();
     assert_eq!(xs, vec![30.0, 230.0]);
-    assert_eq!(s.doc.undo_count(), undo + 3);
+    assert_eq!(s.doc().undo_count(), undo + 3);
     // 全部の点を選ぶ・Esc で外す
-    s.apply(Action::Path(PathAction::SelectAllPoints));
+    s.act(Action::Path(PathAction::SelectAllPoints));
     assert_eq!(s.path_selected_indices(), vec![0, 1]);
     assert!(s.path_cancel(50));
     assert!(s.path_selected_indices().is_empty());
@@ -3045,31 +3087,31 @@ fn headless_presets_save_apply_and_delete_through_the_settings_folder() {
     let _ = std::fs::remove_dir_all(&dir);
     crate::common::tmp::clean_up_after_test(&dir);
     let mut s = state(128);
-    s.path.presets.attach(dir.clone());
+    s.path_mut().presets.attach(dir.clone());
     click2d(&mut s, 10.0, 60.0);
     click2d(&mut s, 118.0, 60.0);
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::Diameter(40.0))));
-    s.apply(Action::Path(PathAction::Kind(PathKind::Erase)));
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Save)));
-    assert_eq!(s.path.presets.list().len(), 1, "{}", s.message);
-    let id = s.path.presets.list()[0].id;
-    assert_eq!(s.path.presets.list()[0].name, "消しゴム");
+    s.act(Action::Path(PathAction::Brush(BrushEdit::Diameter(40.0))));
+    s.act(Action::Path(PathAction::Kind(PathKind::Erase)));
+    s.act(Action::Path(PathAction::Preset(PresetOp::Save)));
+    assert_eq!(s.path().presets.list().len(), 1, "{}", s.message());
+    let id = s.path().presets.list()[0].id;
+    assert_eq!(s.path().presets.list()[0].name, "消しゴム");
     // 読み直しても同じ
     let mut again = yolu_app::pathtool::presets::PathPresets::default();
     again.attach(dir.clone());
-    assert_eq!(again.list(), s.path.presets.list());
+    assert_eq!(again.list(), s.path().presets.list());
     // 別のパスへ当てる: 種類と直径（1 回の Undo）
-    s.apply(Action::Path(PathAction::SelectPath(None)));
-    s.apply(Action::Path(PathAction::Kind(PathKind::Stroke)));
+    s.act(Action::Path(PathAction::SelectPath(None)));
+    s.act(Action::Path(PathAction::Kind(PathKind::Stroke)));
     click2d(&mut s, 10.0, 100.0);
     click2d(&mut s, 118.0, 100.0);
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
     assert_eq!(kind_of(&s), PathKind::Erase);
     assert_eq!(pathtool::path_brush(&path(&s).unwrap()).0.radius, 20.0);
-    assert_eq!(s.doc.undo_count(), undo + 1);
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Delete(id))));
-    assert!(s.path.presets.list().is_empty());
+    assert_eq!(s.doc().undo_count(), undo + 1);
+    s.act(Action::Path(PathAction::Preset(PresetOp::Delete(id))));
+    assert!(s.path().presets.list().is_empty());
     let mut empty = yolu_app::pathtool::presets::PathPresets::default();
     empty.attach(dir.clone());
     assert!(empty.list().is_empty(), "ファイルも消える");
@@ -3084,38 +3126,38 @@ fn headless_a_preset_carries_the_anti_alias_with_or_without_a_selected_path() {
     let _ = std::fs::remove_dir_all(&dir);
     crate::common::tmp::clean_up_after_test(&dir);
     let mut s = state(128);
-    s.path.presets.attach(dir.clone());
+    s.path_mut().presets.attach(dir.clone());
     click2d(&mut s, 10.0, 60.0);
     click2d(&mut s, 118.0, 60.0);
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
+    s.act(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
         AntiAlias::Strong,
     ))));
     assert_eq!(
         pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
         AntiAlias::Strong
     );
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Save)));
-    let id = s.path.presets.list()[0].id;
+    s.act(Action::Path(PathAction::Preset(PresetOp::Save)));
+    let id = s.path().presets.list()[0].id;
     // 選んでいるパスへ当てる
-    s.apply(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
+    s.act(Action::Path(PathAction::Brush(BrushEdit::AntiAlias(
         AntiAlias::None,
     ))));
     assert_eq!(
         pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
         AntiAlias::None
     );
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
+    s.act(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
     assert_eq!(
         pathtool::path_brush(&path(&s).unwrap()).0.anti_alias,
         AntiAlias::Strong
     );
     // パスを選んでいないときは、次に作るパスが取る今のブラシへ
     let mut t = state(128);
-    t.path.presets.attach(dir.clone());
+    t.path_mut().presets.attach(dir.clone());
     assert!(path(&t).is_none());
-    t.brush.anti_alias = AntiAlias::None;
-    t.apply(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
-    assert_eq!(t.brush.anti_alias, AntiAlias::Strong);
+    t.brush_mut().anti_alias = AntiAlias::None;
+    t.act(Action::Path(PathAction::Preset(PresetOp::Apply(id))));
+    assert_eq!(t.brush().anti_alias, AntiAlias::Strong);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -3126,14 +3168,14 @@ fn headless_a_preset_rename_rewrites_its_file_numbers_a_taken_name_and_keeps_an_
     let _ = std::fs::remove_dir_all(&dir);
     crate::common::tmp::clean_up_after_test(&dir);
     let mut s = state(128);
-    s.path.presets.attach(dir.clone());
+    s.path_mut().presets.attach(dir.clone());
     click2d(&mut s, 10.0, 60.0);
     click2d(&mut s, 118.0, 60.0);
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Save)));
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Save)));
-    let ids: Vec<u32> = s.path.presets.list().iter().map(|p| p.id).collect();
+    s.act(Action::Path(PathAction::Preset(PresetOp::Save)));
+    s.act(Action::Path(PathAction::Preset(PresetOp::Save)));
+    let ids: Vec<u32> = s.path().presets.list().iter().map(|p| p.id).collect();
     let names = |s: &AppState| -> Vec<String> {
-        s.path
+        s.path()
             .presets
             .list()
             .iter()
@@ -3142,43 +3184,52 @@ fn headless_a_preset_rename_rewrites_its_file_numbers_a_taken_name_and_keeps_an_
     };
     assert_eq!(names(&s), ["ストローク", "ストローク 2"]);
     // 入力欄を開く（文書は変えない）
-    let undo = s.doc.undo_count();
-    s.apply(Action::Path(PathAction::Preset(PresetOp::BeginRename(
+    let undo = s.doc().undo_count();
+    s.act(Action::Path(PathAction::Preset(PresetOp::BeginRename(
         ids[0],
     ))));
-    assert_eq!(s.path.preset_renaming, Some(ids[0]));
+    assert_eq!(s.path().preset_renaming, Some(ids[0]));
     // 前後の空白と制御文字を除く・ファイルを書き直す
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Rename(
+    s.act(Action::Path(PathAction::Preset(PresetOp::Rename(
         ids[0],
         "  太い線\n".into(),
     ))));
     assert_eq!(names(&s), ["太い線", "ストローク 2"]);
     let mut again = PathPresets::default();
     again.attach(dir.clone());
-    assert_eq!(again.list(), s.path.presets.list(), "読み直しても同じ");
+    assert_eq!(again.list(), s.path().presets.list(), "読み直しても同じ");
     // ほかのプリセットと同じ名前には番号を付ける・空の名前は前のまま
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Rename(
+    s.act(Action::Path(PathAction::Preset(PresetOp::Rename(
         ids[1],
         "太い線".into(),
     ))));
     assert_eq!(names(&s), ["太い線", "太い線 2"]);
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Rename(
+    s.act(Action::Path(PathAction::Preset(PresetOp::Rename(
         ids[1],
         "   ".into(),
     ))));
     assert_eq!(names(&s), ["太い線", "太い線 2"]);
-    assert_eq!(s.path.presets.rename(ids[1], " "), Err(RenameError::Empty));
-    assert_eq!(s.path.presets.rename(999, "x"), Err(RenameError::Missing));
-    // 同じ名前（自分の名前）には番号を付けない
-    assert_eq!(s.path.presets.rename(ids[0], "太い線").unwrap(), "太い線");
     assert_eq!(
-        s.doc.undo_count(),
+        s.path_mut().presets.rename(ids[1], " "),
+        Err(RenameError::Empty)
+    );
+    assert_eq!(
+        s.path_mut().presets.rename(999, "x"),
+        Err(RenameError::Missing)
+    );
+    // 同じ名前（自分の名前）には番号を付けない
+    assert_eq!(
+        s.path_mut().presets.rename(ids[0], "太い線").unwrap(),
+        "太い線"
+    );
+    assert_eq!(
+        s.doc().undo_count(),
         undo,
         "名前の変更は文書の取り消しに積まない"
     );
     // 名前を変えている途中で消すと、入力欄も閉じる
-    s.apply(Action::Path(PathAction::Preset(PresetOp::Delete(ids[0]))));
-    assert_eq!(s.path.preset_renaming, None);
+    s.act(Action::Path(PathAction::Preset(PresetOp::Delete(ids[0]))));
+    assert_eq!(s.path().preset_renaming, None);
     let mut after = PathPresets::default();
     after.attach(dir.clone());
     let left: Vec<&str> = after.list().iter().map(|p| p.name.as_str()).collect();
@@ -3191,43 +3242,41 @@ fn headless_a_preset_rename_rewrites_its_file_numbers_a_taken_name_and_keeps_an_
 #[test]
 fn headless_a_path_on_a_fill_layer_stays_on_that_layer_over_the_fill() {
     let mut s = state(128);
-    s.apply(Action::M2(yolu_app::m2::Edit::NewFill));
-    let fill = s.selected_layer.unwrap();
-    let layers = s.doc.layers().len();
+    s.act(Action::M2(yolu_app::m2::Edit::NewFill));
+    let fill = s.selected_layer().unwrap();
+    let layers = s.doc().layers().len();
     let fill_px = pixel(&s, 60, 60);
     assert_eq!(fill_px[3], 255, "塗りつぶし");
-    s.apply(Action::SelectTool(Tool::Path));
-    s.color.set_main([0.0, 0.0, 1.0, 1.0]);
+    s.act(Action::SelectTool(Tool::Path));
+    s.color_mut().set_main([0.0, 0.0, 1.0, 1.0]);
     click2d(&mut s, 10.0, 60.0);
     click2d(&mut s, 118.0, 60.0);
     assert_eq!(
-        s.doc.layers().len(),
+        s.doc().layers().len(),
         layers,
         "新しいレイヤーは作らない: {}",
-        s.message
+        s.message()
     );
-    assert_eq!(s.selected_layer, Some(fill));
-    assert!(s.doc.layer(fill).unwrap().has_paths());
+    assert_eq!(s.selected_layer(), Some(fill));
+    assert!(s.doc().layer(fill).unwrap().has_paths());
     let on = pixel(&s, 60, 60);
     assert!(on[2] > 200 && on[0] < 50, "パスは塗りつぶしの上: {on:?}");
     assert_eq!(pixel(&s, 60, 20), fill_px, "パスの外は塗りつぶしのまま");
     // 塗りつぶしレイヤーのパスは画素にしない
-    s.apply(Action::Path(PathAction::Rasterize(fill)));
-    assert!(s.doc.layer(fill).unwrap().has_paths());
-    s.apply(Action::Undo);
-    s.apply(Action::Undo);
-    assert!(!s.doc.layer(fill).unwrap().has_paths());
+    s.act(Action::Path(PathAction::Rasterize(fill)));
+    assert!(s.doc().layer(fill).unwrap().has_paths());
+    s.act(Action::Undo);
+    s.act(Action::Undo);
+    assert!(!s.doc().layer(fill).unwrap().has_paths());
     assert_eq!(pixel(&s, 60, 60), fill_px);
 }
 
 // ───────── 画面の操作（egui_kittest） ─────────
 
 fn canvas_pos(h: &Harness<'_, YoluApp>, x: f64, y: f64) -> Pos2 {
-    let app = h.state();
     let r = canvas_rect(h);
-    app.state
-        .view
-        .view(r, app.state.doc.width(), app.state.doc.height())
+    h.view()
+        .view(r, h.doc().width(), h.doc().height())
         .to_screen(x, y)
 }
 
@@ -3241,10 +3290,10 @@ fn path_app(size: u32) -> Harness<'static, YoluApp> {
 #[test]
 fn p_selects_the_path_tool_and_the_strip_and_menu_show_it() {
     let mut h = app(1280.0, 800.0, 256);
-    assert_eq!(h.state().state.tool, Tool::Brush);
+    assert_eq!(h.tool(), Tool::Brush);
     key(&h, Key::P, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.tool, Tool::Path);
+    assert_eq!(h.tool(), Tool::Path);
     // ツールの帯のボタンは、名前とキーのツールチップ
     h.get_by_label("パス（P）");
     // 編集のメニューにも並ぶ
@@ -3260,10 +3309,10 @@ fn clicking_the_canvas_adds_points_and_the_overlay_follows() {
         let at = canvas_pos(&h, x, y);
         click(&mut h, at);
     }
-    let s = &h.state().state;
-    assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.doc().layers().len(), 2, "{}", s.message());
     assert_eq!(s.path_layer().unwrap().1.point_count(), 3);
-    assert_eq!(s.doc.undo_count(), 3);
+    assert_eq!(s.doc().undo_count(), 3);
     // 点の印（橙）が見える
     let image = h.render().expect("描ける");
     let p = canvas_pos(&h, 130.0, 190.0);
@@ -3276,7 +3325,7 @@ fn clicking_the_canvas_adds_points_and_the_overlay_follows() {
     // 選んだ点（最後の点）は白、ほかの点は橙
     assert!(orange(p), "点の印");
     {
-        let (_, p) = h.state().state.path_layer().unwrap();
+        let (_, p) = h.app().path_layer().unwrap();
         assert!(p.is_canvas());
         assert_eq!(p.point_count(), 3);
     }
@@ -3291,12 +3340,12 @@ fn dragging_a_point_with_the_mouse_moves_it_once() {
         let at = canvas_pos(&h, x, y);
         click(&mut h, at);
     }
-    let n = h.state().state.doc.undo_count();
+    let n = h.doc().undo_count();
     let from = canvas_pos(&h, 130.0, 190.0);
     let to = canvas_pos(&h, 130.0, 120.0);
     drag(&mut h, &[from, from + (to - from) * 0.5, to]);
-    let s = &h.state().state;
-    assert_eq!(s.doc.undo_count(), n + 1);
+    let s = h.app();
+    assert_eq!(s.doc().undo_count(), n + 1);
     let pts = match s.path_layer().unwrap().1 {
         LayerPath::Canvas(c) => c.points.clone(),
         _ => unreachable!(),
@@ -3311,33 +3360,29 @@ fn escape_during_a_drag_leaves_the_point_and_focus_loss_commits() {
         let at = canvas_pos(&h, x, y);
         click(&mut h, at);
     }
-    let n = h.state().state.doc.undo_count();
+    let n = h.doc().undo_count();
     let from = canvas_pos(&h, 130.0, 190.0);
     let to = canvas_pos(&h, 60.0, 30.0);
     press(&h, from, egui::PointerButton::Primary);
     h.step();
     move_to(&h, to);
     h.step();
-    assert!(h.state().state.path.drag.is_some());
+    assert!(h.path().drag.is_some());
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(h.state().state.path.drag.is_none());
+    assert!(h.path().drag.is_none());
     assert_eq!(
-        h.state().state.path_selected_index(),
+        h.app().path_selected_index(),
         Some(1),
         "ドラッグを捨てた Esc は、選んだ点を残す"
     );
     release(&h, to, egui::PointerButton::Primary);
     h.run();
-    assert_eq!(
-        h.state().state.doc.undo_count(),
-        n,
-        "Esc で捨てた動きは当てない"
-    );
+    assert_eq!(h.doc().undo_count(), n, "Esc で捨てた動きは当てない");
     // もう 1 度の Esc で、選んだ点を外す
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.path_selected_index(), None);
+    assert_eq!(h.app().path_selected_index(), None);
     // フォーカスを失う: そこまでを確定
     press(&h, from, egui::PointerButton::Primary);
     h.step();
@@ -3345,13 +3390,13 @@ fn escape_during_a_drag_leaves_the_point_and_focus_loss_commits() {
     h.step();
     h.event(Event::WindowFocused(false));
     h.run();
-    assert!(h.state().state.path.drag.is_none());
-    assert_eq!(h.state().state.doc.undo_count(), n + 1);
+    assert!(h.path().drag.is_none());
+    assert_eq!(h.doc().undo_count(), n + 1);
     h.event(Event::WindowFocused(true));
     release(&h, to, egui::PointerButton::Primary);
     h.run();
     assert_eq!(
-        h.state().state.doc.undo_count(),
+        h.doc().undo_count(),
         n + 1,
         "離したのが後から来ても、もう 1 度は当てない"
     );
@@ -3364,18 +3409,18 @@ fn a_release_outside_the_window_is_not_missed() {
         let at = canvas_pos(&h, x, y);
         click(&mut h, at);
     }
-    let n = h.state().state.doc.undo_count();
+    let n = h.doc().undo_count();
     let from = canvas_pos(&h, 130.0, 190.0);
     let to = canvas_pos(&h, 110.0, 120.0);
     press(&h, from, egui::PointerButton::Primary);
     h.step();
     move_to(&h, to);
     h.step();
-    assert!(h.state().state.path.drag.is_some());
+    assert!(h.path().drag.is_some());
     // 離したイベントが届かないまま、次のフレーム（ボタンは離れている）
     h.step();
     h.step();
-    assert!(h.state().state.path.drag.is_none() || h.state().state.doc.undo_count() == n);
+    assert!(h.path().drag.is_none() || h.doc().undo_count() == n);
 }
 
 #[test]
@@ -3388,14 +3433,14 @@ fn delete_and_backspace_remove_the_selected_point_and_the_buttons_follow_the_sta
     // 真ん中の点を選んで Delete
     let mid = canvas_pos(&h, 130.0, 190.0);
     click(&mut h, mid);
-    assert_eq!(h.state().state.path_selected_index(), Some(1));
+    assert_eq!(h.app().path_selected_index(), Some(1));
     key(&h, Key::Delete, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 2);
+    assert_eq!(h.app().path_layer().unwrap().1.point_count(), 2);
     // 選んでいる点が無ければ最後の点（Backspace）
     key(&h, Key::Backspace, Modifiers::NONE);
     h.run();
-    assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 1);
+    assert_eq!(h.app().path_layer().unwrap().1.point_count(), 1);
     // 閉じるは 3 点以上
     for close in h.get_all_by_label("閉じる") {
         assert!(
@@ -3404,11 +3449,11 @@ fn delete_and_backspace_remove_the_selected_point_and_the_buttons_follow_the_sta
         );
     }
     // 文字を打っているあいだは Delete が点を消さない（名前の入力欄）
-    assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 1);
+    assert_eq!(h.app().path_layer().unwrap().1.point_count(), 1);
     // Undo でも戻る
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 2);
+    assert_eq!(h.app().path_layer().unwrap().1.point_count(), 2);
 }
 
 #[test]
@@ -3435,17 +3480,17 @@ fn the_panel_and_options_bar_show_names_and_values_in_both_languages_without_ins
         let n = h.get_all_by_label(label).count();
         assert!(n >= 1, "{label}");
     }
-    assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 4);
+    assert_eq!(h.app().path_layer().unwrap().1.point_count(), 4);
     // 名前と値と短い状態だけで、使い方の説明の文は置かない
     no_instruction_text(&mut h, Lang::Ja, "パネル");
     // 閉じる→開く
     let close = h.get_all_by_label("閉じる").next().unwrap().rect().center();
     click(&mut h, close);
     assert!(yolu_app::pathtool::edit::path_is_closed(
-        h.state().state.path_layer().unwrap().1
+        h.app().path_layer().unwrap().1
     ));
     assert!(h.get_all_by_label("開く").count() >= 1);
-    h.state_mut().state.set_language(Lang::En);
+    h.app_mut().set_language(Lang::En);
     h.run();
     for label in [
         "Path",
@@ -3464,26 +3509,24 @@ fn the_panel_and_options_bar_show_names_and_values_in_both_languages_without_ins
         assert!(h.get_all_by_label(label).count() >= 1, "{label}");
     }
     // 閉じたパスは終わりに始めの点の複製を持つ（4 点の輪は 5 点）
-    assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 5);
+    assert_eq!(h.app().path_layer().unwrap().1.point_count(), 5);
     no_instruction_text(&mut h, Lang::En, "panel");
 }
 
 #[test]
 fn rasterize_is_off_for_a_fill_layer_in_the_options_bar_the_panel_and_the_layer_menu() {
     let mut h = path_app(256);
-    let raster = h.state().state.selected_layer.unwrap();
-    h.state_mut()
-        .state
-        .apply(Action::M2(yolu_app::m2::Edit::NewFill));
+    let raster = h.selected_layer().unwrap();
+    h.act(Action::M2(yolu_app::m2::Edit::NewFill));
     h.run();
-    let fill = h.state().state.selected_layer.unwrap();
+    let fill = h.selected_layer().unwrap();
     assert_ne!(fill, raster);
     for (x, y) in [(50.0, 60.0), (130.0, 190.0)] {
         let at = canvas_pos(&h, x, y);
         click(&mut h, at);
     }
-    assert!(h.state().state.doc.layer(fill).unwrap().has_paths());
-    assert!(!h.state().state.path_can_rasterize(fill));
+    assert!(h.doc().layer(fill).unwrap().has_paths());
+    assert!(!h.app().path_can_rasterize(fill));
     // オプションバーとパスの欄のボタンは、どちらも押せない
     let nodes: Vec<_> = h.get_all_by_label("ラスタライズ").collect();
     assert!(
@@ -3497,33 +3540,30 @@ fn rasterize_is_off_for_a_fill_layer_in_the_options_bar_the_panel_and_the_layer_
     );
     // レイヤーの右クリックのメニューも押せない（理由はツールチップ）
     let rasterize = |h: &Harness<'_, YoluApp>, layer| {
-        yolu_app::shell::popup_entries(
-            &h.state().state,
-            yolu_app::state::PopupKind::LayerContext(layer),
-        )
-        .into_iter()
-        .find_map(|e| match e {
-            yolu_app::ui::menu::Entry::Item {
-                action: Action::Path(PathAction::Rasterize(_)),
-                enabled,
-                tooltip,
-                ..
-            } => Some((enabled, tooltip)),
-            _ => None,
-        })
+        yolu_app::shell::popup_entries(h.app(), yolu_app::state::PopupKind::LayerContext(layer))
+            .into_iter()
+            .find_map(|e| match e {
+                yolu_app::ui::menu::Entry::Item {
+                    action: Action::Path(PathAction::Rasterize(_)),
+                    enabled,
+                    tooltip,
+                    ..
+                } => Some((enabled, tooltip)),
+                _ => None,
+            })
     };
     let (enabled, tooltip) = rasterize(&h, fill).expect("パスのあるレイヤーには出る");
     assert!(!enabled && tooltip.is_some_and(|t| t.contains("塗りつぶし")));
     // ラスターレイヤーのパスは、これまでどおり画素にできる
-    h.state_mut().state.selected_layer = Some(raster);
-    h.state_mut().state.apply(Action::SelectTool(Tool::Path));
+    h.set_selected_layer(Some(raster));
+    h.act(Action::SelectTool(Tool::Path));
     h.run();
     for (x, y) in [(50.0, 60.0), (130.0, 190.0)] {
         let at = canvas_pos(&h, x, y);
         click(&mut h, at);
     }
-    let layer = h.state().state.selected_layer.unwrap();
-    assert!(h.state().state.path_can_rasterize(layer));
+    let layer = h.selected_layer().unwrap();
+    assert!(h.app().path_can_rasterize(layer));
     let (enabled, _) = rasterize(&h, layer).expect("パスのあるレイヤーには出る");
     assert!(enabled);
     assert!(h
@@ -3545,17 +3585,15 @@ fn rasterizing_from_the_panel_and_the_layer_menu_removes_the_path() {
         .rect()
         .center();
     click(&mut h, ras);
-    assert!(h.state().state.path_layer().is_none());
-    assert_eq!(h.state().state.message, "ラスタライズしました。");
-    h.state_mut().state.apply(Action::Undo);
+    assert!(h.app().path_layer().is_none());
+    assert_eq!(h.message(), "ラスタライズしました。");
+    h.act(Action::Undo);
     h.run();
-    assert!(h.state().state.path_layer().is_some());
+    assert!(h.app().path_layer().is_some());
     // レイヤーの右クリックのメニュー
-    let layer = h.state().state.selected_layer.unwrap();
-    let entries = yolu_app::shell::popup_entries(
-        &h.state().state,
-        yolu_app::state::PopupKind::LayerContext(layer),
-    );
+    let layer = h.selected_layer().unwrap();
+    let entries =
+        yolu_app::shell::popup_entries(h.app(), yolu_app::state::PopupKind::LayerContext(layer));
     assert!(entries.iter().any(|e| matches!(
         e,
         yolu_app::ui::menu::Entry::Item {
@@ -3564,11 +3602,9 @@ fn rasterizing_from_the_panel_and_the_layer_menu_removes_the_path() {
         }
     )));
     // パスの無いレイヤーには出ない
-    let other = h.state().state.doc.layers()[0].id();
-    let entries = yolu_app::shell::popup_entries(
-        &h.state().state,
-        yolu_app::state::PopupKind::LayerContext(other),
-    );
+    let other = h.doc().layers()[0].id();
+    let entries =
+        yolu_app::shell::popup_entries(h.app(), yolu_app::state::PopupKind::LayerContext(other));
     assert!(!entries.iter().any(|e| matches!(
         e,
         yolu_app::ui::menu::Entry::Item {
@@ -3581,20 +3617,15 @@ fn rasterizing_from_the_panel_and_the_layer_menu_removes_the_path() {
 #[test]
 fn view3d_clicks_add_points_and_the_overlay_marks_them() {
     let mut h = app(1280.0, 800.0, 256);
-    h.state_mut().state.view3d.load_demo();
-    h.state_mut().state.view3d.camera.yaw = -40.0;
-    h.state_mut().state.view3d.camera.pitch = 15.0;
+    h.view3d_mut().load_demo();
+    h.view3d_mut().camera.yaw = -40.0;
+    h.view3d_mut().camera.pitch = 15.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     key(&h, Key::P, Modifiers::NONE);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
     let screen_of = |h: &Harness<'_, YoluApp>, p: Vec3| {
-        let view = h
-            .state()
-            .state
-            .view3d
-            .camera
-            .view(rect.width(), rect.height());
+        let view = h.view3d().camera.view(rect.width(), rect.height());
         let q = view.to_screen(p).expect("カメラの前");
         pos2(rect.left() + q.x, rect.top() + q.y)
     };
@@ -3606,9 +3637,14 @@ fn view3d_clicks_add_points_and_the_overlay_marks_them() {
         let at = screen_of(&h, p);
         click(&mut h, at);
     }
-    let s = &h.state().state;
-    assert_eq!(s.doc.layers().len(), 2, "{}", s.message);
-    assert_eq!(s.path_layer().unwrap().1.point_count(), 3, "{}", s.message);
+    let s = h.app();
+    assert_eq!(s.doc().layers().len(), 2, "{}", s.message());
+    assert_eq!(
+        s.path_layer().unwrap().1.point_count(),
+        3,
+        "{}",
+        s.message()
+    );
     assert!(matches!(s.path_layer().unwrap().1, LayerPath::Surface(_)));
     // 3D の絵に橙の点の印が見える
     let image = h.render().expect("描ける");
@@ -3626,7 +3662,7 @@ fn view3d_clicks_add_points_and_the_overlay_marks_them() {
     }
     assert!(found, "点の印");
     {
-        let (_, p) = h.state().state.path_layer().unwrap();
+        let (_, p) = h.app().path_layer().unwrap();
         assert!(!p.is_canvas());
         assert_eq!(p.point_count(), 3);
     }
@@ -3639,7 +3675,7 @@ fn view3d_clicks_add_points_and_the_overlay_marks_them() {
     // 1 回の Undo ずつ戻る
     key(&h, Key::Z, Modifiers::COMMAND);
     h.run();
-    assert_eq!(h.state().state.path_layer().unwrap().1.point_count(), 2);
+    assert_eq!(h.app().path_layer().unwrap().1.point_count(), 2);
 }
 
 // ───────── 言語と文字の収まり ─────────
@@ -3784,12 +3820,12 @@ fn the_instruction_text_check_tells_sentences_from_names() {
 /// オプションバーで増える文字だけ（状態の帯の知らせなど、ツールに関係なく出るものは、別の試験が短さを確かめる）。
 fn no_instruction_text(h: &mut Harness<'static, YoluApp>, lang: Lang, what: &str) {
     let with_path = screen_texts(h);
-    let selected = h.state().state.path.selected;
-    h.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+    let selected = h.path().selected;
+    h.act(Action::SelectTool(Tool::Brush));
     h.run();
     let without = screen_texts(h);
-    h.state_mut().state.apply(Action::SelectTool(Tool::Path));
-    h.state_mut().state.path.selected = selected;
+    h.act(Action::SelectTool(Tool::Path));
+    h.path_mut().selected = selected;
     h.run();
     let only_path: Vec<&String> = with_path.difference(&without).collect();
     assert!(
@@ -3871,43 +3907,32 @@ fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
                 click(&mut h, at);
             }
             check(&mut h, "2D path");
-            h.state_mut()
-                .state
-                .apply(Action::Path(PathAction::Point(PointOp::Close)));
+            h.act(Action::Path(PathAction::Point(PointOp::Close)));
             h.run();
             check(&mut h, "closed");
-            h.state_mut()
-                .state
-                .apply(Action::Mat(MatAction::Enabled(true)));
+            h.act(Action::Mat(MatAction::Enabled(true)));
             h.run();
             check(&mut h, "material");
-            let layer = h.state().state.selected_layer.unwrap();
-            h.state_mut()
-                .state
-                .apply(Action::Path(PathAction::Rasterize(layer)));
+            let layer = h.selected_layer().unwrap();
+            h.act(Action::Path(PathAction::Rasterize(layer)));
             // 3D のパス
-            h.state_mut().state.view3d.load_demo();
+            h.view3d_mut().load_demo();
             click_tab(&mut h, yolu_app::Tab::View3d);
-            h.state_mut().state.apply(Action::NewLayer);
+            h.act(Action::NewLayer);
             h.run();
             let rect = h.state().view3d_rect().expect("3D のタブを描いた");
             for p in [Vec3::new(0.5, 0.1, -0.3), Vec3::new(0.5, 0.2, 0.2)] {
-                let view = h
-                    .state()
-                    .state
-                    .view3d
-                    .camera
-                    .view(rect.width(), rect.height());
+                let view = h.view3d().camera.view(rect.width(), rect.height());
                 let q = view.to_screen(p).expect("カメラの前");
                 click(&mut h, pos2(rect.left() + q.x, rect.top() + q.y));
             }
             assert!(
                 matches!(
-                    h.state().state.path_layer().map(|(_, p)| p.is_canvas()),
+                    h.app().path_layer().map(|(_, p)| p.is_canvas()),
                     Some(false)
                 ),
                 "{}",
-                h.state().state.message
+                h.message()
             );
             check(&mut h, "3D path");
         }
@@ -3919,14 +3944,14 @@ fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
 
 fn review_app(lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app(1360.0, 1400.0, 256);
-    h.state_mut().state.set_language(lang);
+    h.app_mut().set_language(lang);
     key(&h, Key::P, Modifiers::NONE);
     h.run();
     h
 }
 
 fn act(h: &mut Harness<'_, YoluApp>, a: PathAction) {
-    h.state_mut().state.apply(Action::Path(a));
+    h.act(Action::Path(a));
     h.run();
 }
 
@@ -3943,14 +3968,8 @@ fn three_paths(h: &mut Harness<'_, YoluApp>) {
         }
         act(h, PathAction::SelectPath(None));
     }
-    let ids: Vec<u128> = h
-        .state()
-        .state
-        .path_entries()
-        .iter()
-        .map(|e| e.id())
-        .collect();
-    let name = match h.state().state.lang {
+    let ids: Vec<u128> = h.app().path_entries().iter().map(|e| e.id()).collect();
+    let name = match h.lang() {
         Lang::Ja => "縁取り",
         Lang::En => "Outline",
     };
@@ -3985,7 +4004,7 @@ fn review_pictures_of_the_list_handles_and_context_menu() {
         h.step();
         release(&h, row.center(), egui::PointerButton::Secondary);
         h.run();
-        assert!(h.state().state.popup.is_some());
+        assert!(h.popup().is_some());
         let rect = crate::with_popup(
             &h,
             crate::group_rect(
@@ -4009,7 +4028,7 @@ fn renaming_a_preset_from_its_menu_puts_a_name_field_in_place_of_the_button() {
             click(&mut h, at);
         }
         act(&mut h, PathAction::Preset(PresetOp::Save));
-        let preset = h.state().state.path.presets.list()[0].clone();
+        let preset = h.path().presets.list()[0].clone();
         let button_label = lang.pick("プリセット", "Presets");
         let button = rect_of(&h, button_label, |r| r.left() < 320.0);
         click(&mut h, button.center());
@@ -4017,30 +4036,27 @@ fn renaming_a_preset_from_its_menu_puts_a_name_field_in_place_of_the_button() {
         click(&mut h, rename.center());
         let item = rect_of(&h, &preset.name, |r| r.left() > rename.right() - 4.0);
         click(&mut h, item.center());
-        assert!(h.state().state.popup.is_none());
-        assert_eq!(h.state().state.path.preset_renaming, Some(preset.id));
+        assert!(h.popup().is_none());
+        assert_eq!(h.path().preset_renaming, Some(preset.id));
         assert!(
             h.query_all_by_label(button_label)
                 .all(|n| n.rect().left() >= 320.0),
             "ボタンの所が名前の入力欄になる"
         );
         // Esc でやめる（名前も、選んだ点も、パスの編集も変わらない）
-        let point = h.state().state.path_selected_index();
+        let point = h.app().path_selected_index();
         assert!(point.is_some());
         h.event(Event::Text("x".into()));
         key(&h, Key::Escape, Modifiers::NONE);
         h.run();
-        assert_eq!(h.state().state.path.preset_renaming, None);
-        assert_eq!(h.state().state.path.presets.list()[0].name, preset.name);
+        assert_eq!(h.path().preset_renaming, None);
+        assert_eq!(h.path().presets.list()[0].name, preset.name);
         assert_eq!(
-            h.state().state.path_selected_index(),
+            h.app().path_selected_index(),
             point,
             "入力欄の Esc は点を外さない"
         );
-        assert!(
-            h.state().state.path_layer().is_some(),
-            "Esc はパスの編集を抜けない"
-        );
+        assert!(h.app().path_layer().is_some(), "Esc はパスの編集を抜けない");
         // 一覧の行の名前の入力欄の Esc も同じ
         let row = rect_of(&h, lang.pick("パス 1", "Path 1"), |r| r.left() < 320.0);
         let at = pos2(row.center().x, row.center().y);
@@ -4050,18 +4066,18 @@ fn renaming_a_preset_from_its_menu_puts_a_name_field_in_place_of_the_button() {
             h.step();
         }
         h.run();
-        assert!(h.state().state.path.renaming.is_some());
+        assert!(h.path().renaming.is_some());
         // 一覧の行を押すと点の選びは外れるので、選び直してから
         act(&mut h, PathAction::Select(point));
-        assert!(h.state().state.path.renaming.is_some());
+        assert!(h.path().renaming.is_some());
         key(&h, Key::Escape, Modifiers::NONE);
         h.run();
-        assert!(h.state().state.path.renaming.is_none());
-        assert_eq!(h.state().state.path_selected_index(), point);
+        assert!(h.path().renaming.is_none());
+        assert_eq!(h.app().path_selected_index(), point);
         // 入力欄の外の Esc は今までどおり点を外す
         key(&h, Key::Escape, Modifiers::NONE);
         h.run();
-        assert_eq!(h.state().state.path_selected_index(), None);
+        assert_eq!(h.app().path_selected_index(), None);
         act(&mut h, PathAction::Select(point));
         // Enter で決める
         click(&mut h, button.center());
@@ -4084,8 +4100,8 @@ fn renaming_a_preset_from_its_menu_puts_a_name_field_in_place_of_the_button() {
         }
         key(&h, Key::Enter, Modifiers::NONE);
         h.run();
-        assert_eq!(h.state().state.path.presets.list()[0].name, name);
-        assert_eq!(h.state().state.path.preset_renaming, None);
+        assert_eq!(h.path().presets.list()[0].name, name);
+        assert_eq!(h.path().preset_renaming, None);
         rect_of(&h, button_label, |r| r.left() < 320.0);
         no_instruction_text(&mut h, lang, "path preset rename");
     }
@@ -4101,9 +4117,7 @@ fn review_pictures_of_the_kinds_tips_and_presets() {
         }
         // リボン（伸ばす）
         let rid = h
-            .state_mut()
-            .state
-            .shelf
+            .shelf_mut()
             .add_image(lang, "band", &[255, 80, 0, 255, 0, 120, 255, 255], 2, 1)
             .unwrap();
         let image = yolu_app::fx::inputs::image_id(&rid).unwrap();
@@ -4147,7 +4161,7 @@ fn review_pictures_of_the_kinds_tips_and_presets() {
             |r| r.left() < 320.0,
         );
         click(&mut h, presets.center());
-        assert!(h.state().state.popup.is_some());
+        assert!(h.popup().is_some());
         let rename = popup_item(
             &h,
             if lang == Lang::Ja {
@@ -4174,20 +4188,15 @@ fn review_pictures_of_the_kinds_tips_and_presets() {
 fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
     for (lang, tag) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
         let mut h = review_app(lang);
-        h.state_mut().state.view3d.load_demo();
-        h.state_mut().state.view3d.camera.yaw = -40.0;
-        h.state_mut().state.view3d.camera.pitch = 15.0;
+        h.view3d_mut().load_demo();
+        h.view3d_mut().camera.yaw = -40.0;
+        h.view3d_mut().camera.pitch = 15.0;
         // 中央の表示域は右の列が広い分だけ狭いので、3 つの点が収まるようにカメラを引く
-        h.state_mut().state.view3d.camera.distance *= 1.3;
+        h.view3d_mut().camera.distance *= 1.3;
         click_tab(&mut h, yolu_app::Tab::View3d);
         let rect = h.state().view3d_rect().expect("3D のタブを描いた");
         let screen_of = |h: &Harness<'_, YoluApp>, p: Vec3| {
-            let view = h
-                .state()
-                .state
-                .view3d
-                .camera
-                .view(rect.width(), rect.height());
+            let view = h.view3d().camera.view(rect.width(), rect.height());
             let q = view.to_screen(p).expect("カメラの前");
             pos2(rect.left() + q.x, rect.top() + q.y)
         };
@@ -4201,10 +4210,10 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
             click(&mut h, at);
         }
         assert_eq!(
-            h.state().state.path_layer().map(|(_, p)| p.point_count()),
+            h.app().path_layer().map(|(_, p)| p.point_count()),
             Some(3),
             "{}",
-            h.state().state.message
+            h.message()
         );
         act(&mut h, PathAction::Select(Some(1)));
         act(&mut h, PathAction::SetHandles(true));
@@ -4220,21 +4229,19 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
         }
         // 塗りつぶしレイヤーの欄のパスの節
         let mut f = review_app(lang);
-        f.state_mut().state.color.set_main([0.85, 0.75, 0.4, 1.0]);
-        f.state_mut()
-            .state
-            .apply(Action::M2(yolu_app::m2::Edit::NewFill));
+        f.color_mut().set_main([0.85, 0.75, 0.4, 1.0]);
+        f.act(Action::M2(yolu_app::m2::Edit::NewFill));
         f.run();
-        let fill = f.state().state.selected_layer.unwrap();
-        f.state_mut().state.color.set_main([0.1, 0.2, 0.9, 1.0]);
+        let fill = f.selected_layer().unwrap();
+        f.color_mut().set_main([0.1, 0.2, 0.9, 1.0]);
         for (x, y) in [(30.0, 128.0), (128.0, 60.0), (226.0, 128.0)] {
             let at = canvas_pos(&f, x, y);
             click(&mut f, at);
         }
-        assert!(f.state().state.doc.layer(fill).unwrap().has_paths());
-        f.state_mut().state.apply(Action::SelectTool(Tool::Brush));
+        assert!(f.doc().layer(fill).unwrap().has_paths());
+        f.act(Action::SelectTool(Tool::Brush));
         // 塗りつぶしレイヤーの欄の下（パスの節）まで送る
-        f.state_mut().state.m2.props_scroll = 100_000.0;
+        f.m2_mut().props_scroll = 100_000.0;
         f.run();
         if lang == Lang::Ja {
             let rect = crate::group_rect(&f, yolu_app::Tab::Properties, None);
