@@ -97,6 +97,20 @@ pub fn render_options() -> eframe::egui_wgpu::RendererOptions {
     }
 }
 
+/// kittest の既定の装置の設定（`default_wgpu_setup()`）の D3D12 のシェーダーのコンパイラーを、製品と同じ `yolu_gpu::dx12_compiler()` にしたもの。
+/// 組み込みの DXC が作れない Windows の PC でも、製品と同じく FXC に戻って D3D12 を使える。装置の上限・機能とアダプターの選びは kittest のまま。
+pub fn default_wgpu_setup() -> eframe::egui_wgpu::WgpuSetup {
+    let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut setup {
+        create
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .shader_compiler = yolu_gpu::dx12_compiler();
+    }
+    setup
+}
+
 /// 描画の状態をつなぐ（3D ビューを wgpu で描く）。キャンバスは CPU の表示に固定する（実 GPU の機材でも同じ絵・同じ頁の数に
 /// なるように）。ウィンドウを作る試験の builder は、`with_render_state` を直に呼ばずにこれを通すこと。GPU の表示は canvas_gpu.rs が確かめる。
 pub fn with_render_state_cpu_canvas(

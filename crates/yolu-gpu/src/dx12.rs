@@ -19,22 +19,42 @@ pub fn instance_descriptor() -> wgpu::InstanceDescriptor {
     descriptor
 }
 
-fn choose() -> wgpu::Dx12Compiler {
-    wgpu::Dx12Compiler::from_env().unwrap_or_else(choose_without_env)
-}
-
 #[cfg(not(all(windows, target_env = "msvc", target_arch = "x86_64")))]
-fn choose_without_env() -> wgpu::Dx12Compiler {
-    wgpu::Dx12Compiler::default()
+fn choose() -> wgpu::Dx12Compiler {
+    wgpu::Dx12Compiler::from_env().unwrap_or_default()
 }
 
 #[cfg(all(windows, target_env = "msvc", target_arch = "x86_64"))]
-fn choose_without_env() -> wgpu::Dx12Compiler {
-    // 環境変数 `WGPU_BACKEND` が D3D12 を外していれば、確かめずに既定のまま（D3D12 の装置は作られない）
-    if wgpu::Backends::from_env().is_some_and(|b| !b.intersects(wgpu::Backends::DX12)) {
+fn choose() -> wgpu::Dx12Compiler {
+    // 環境変数 `WGPU_BACKEND` が D3D12 を外していれば、D3D12 の装置は作られない
+    let dx12_excluded =
+        wgpu::Backends::from_env().is_some_and(|b| !b.intersects(wgpu::Backends::DX12));
+    decide(
+        wgpu::Dx12Compiler::from_env(),
+        dx12_excluded,
+        probe_static_dxc,
+    )
+}
+
+/// 選びの規則（Windows の x86_64 msvc の `choose` が使う。OS によらずコンパイルされ、単体テストで確かめる）。
+/// 環境変数の指定（`env`）があればそれ（確かめない）。D3D12 が外されていれば既定のまま（確かめない）。
+/// それ以外は `probe` が通れば静的な DXC、失敗すれば FXC（理由を出す）。
+#[cfg_attr(
+    not(all(windows, target_env = "msvc", target_arch = "x86_64")),
+    allow(dead_code)
+)]
+fn decide(
+    env: Option<wgpu::Dx12Compiler>,
+    dx12_excluded: bool,
+    probe: impl FnOnce() -> Result<(), String>,
+) -> wgpu::Dx12Compiler {
+    if let Some(compiler) = env {
+        return compiler;
+    }
+    if dx12_excluded {
         return wgpu::Dx12Compiler::default();
     }
-    match probe_static_dxc() {
+    match probe() {
         Ok(()) => wgpu::Dx12Compiler::StaticDxc,
         Err(reason) => {
             eprintln!("D3D12 のシェーダーのコンパイラー: FXC を使う（{reason}）");
@@ -60,5 +80,58 @@ fn probe_static_dxc() -> Result<(), String> {
         )
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn probed(result: Result<(), String>) -> (wgpu::Dx12Compiler, bool) {
+        let called = Cell::new(false);
+        let compiler = decide(None, false, || {
+            called.set(true);
+            result
+        });
+        (compiler, called.get())
+    }
+
+    #[test]
+    fn a_passing_probe_selects_the_static_dxc() {
+        let (compiler, called) = probed(Ok(()));
+        assert!(called);
+        assert!(matches!(compiler, wgpu::Dx12Compiler::StaticDxc));
+    }
+
+    #[test]
+    fn a_failing_probe_falls_back_to_fxc() {
+        let (compiler, called) = probed(Err("理由".to_string()));
+        assert!(called);
+        assert!(matches!(compiler, wgpu::Dx12Compiler::Fxc));
+    }
+
+    #[test]
+    fn the_environment_choice_wins_without_probing() {
+        for env in [
+            wgpu::Dx12Compiler::Fxc,
+            wgpu::Dx12Compiler::StaticDxc,
+            wgpu::Dx12Compiler::DynamicDxc {
+                dxc_path: "dxcompiler.dll".to_string(),
+            },
+        ] {
+            let expected = format!("{env:?}");
+            let compiler = decide(Some(env), false, || panic!("環境変数があれば確かめない"));
+            assert_eq!(format!("{compiler:?}"), expected);
+        }
+    }
+
+    #[test]
+    fn excluded_d3d12_keeps_the_default_without_probing() {
+        let compiler = decide(None, true, || panic!("D3D12 が外れていれば確かめない"));
+        assert_eq!(
+            format!("{compiler:?}"),
+            format!("{:?}", wgpu::Dx12Compiler::default())
+        );
     }
 }

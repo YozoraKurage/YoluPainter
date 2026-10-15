@@ -69,8 +69,7 @@ fn select_device() -> Result<WgpuSetupExisting, String> {
             }
             for adapter in adapters {
                 let info = adapter.get_info();
-                let WgpuSetup::CreateNew(defaults) = egui_kittest::wgpu::default_wgpu_setup()
-                else {
+                let WgpuSetup::CreateNew(defaults) = crate::common::default_wgpu_setup() else {
                     unreachable!()
                 };
                 let descriptor = (defaults.device_descriptor)(&adapter);

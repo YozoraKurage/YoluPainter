@@ -35,7 +35,7 @@ use yolu_core::Channel;
 fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
     static CONNECTION: OnceLock<egui_wgpu::RenderState> = OnceLock::new();
     let connection = CONNECTION.get_or_init(|| {
-        let WgpuSetup::CreateNew(mut setup) = egui_kittest::wgpu::default_wgpu_setup() else {
+        let WgpuSetup::CreateNew(mut setup) = default_wgpu_setup() else {
             unreachable!("kittest の既定は新しく作る形")
         };
         let WgpuSetup::CreateNew(product) =
@@ -44,15 +44,6 @@ fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
             unreachable!("製品の設定は新しく作る形")
         };
         setup.device_descriptor = product.device_descriptor;
-        setup
-            .instance_descriptor
-            .backend_options
-            .dx12
-            .shader_compiler = product
-            .instance_descriptor
-            .backend_options
-            .dx12
-            .shader_compiler;
         egui_kittest::wgpu::create_render_state(WgpuSetup::CreateNew(setup), render_options())
     });
     let mut state = connection.clone();

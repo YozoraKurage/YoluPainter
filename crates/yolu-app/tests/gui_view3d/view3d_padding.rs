@@ -2661,7 +2661,7 @@ fn measure_upload_calls_on_this_gpu() {
     use eframe::egui_wgpu::wgpu;
     use std::time::Instant;
     let rs = egui_kittest::wgpu::create_render_state(
-        egui_kittest::wgpu::default_wgpu_setup(),
+        common::default_wgpu_setup(),
         common::render_options(),
     );
     let info = rs.adapter.get_info();

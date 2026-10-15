@@ -94,10 +94,16 @@ fn main() {
     p.mode = ProjectionMode::Triplanar;
     s.doc.set_fill_projection(layer, p, false).expect("投影");
 
-    let rs = egui_kittest::wgpu::create_render_state(
-        egui_kittest::wgpu::default_wgpu_setup(),
-        Default::default(),
-    );
+    // kittest の既定の装置の設定の D3D12 のシェーダーのコンパイラーを、製品と同じにする
+    let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut setup {
+        create
+            .instance_descriptor
+            .backend_options
+            .dx12
+            .shader_compiler = yolu_gpu::dx12_compiler();
+    }
+    let rs = egui_kittest::wgpu::create_render_state(setup, Default::default());
     let info = rs.adapter.get_info();
     eprintln!("GPU: {} ({:?})", info.name, info.backend);
     let mut paint = Paint::new(&rs);

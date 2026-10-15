@@ -1263,7 +1263,7 @@ fn a_device_without_compute_falls_back_with_the_device_reason() {
     else {
         return;
     };
-    let mut setup = egui_kittest::wgpu::default_wgpu_setup();
+    let mut setup = common::default_wgpu_setup();
     if let WgpuSetup::CreateNew(create) = &mut setup {
         create.device_descriptor = std::sync::Arc::new(|adapter| wgpu::DeviceDescriptor {
             label: Some("WebGL2 の上限"),
