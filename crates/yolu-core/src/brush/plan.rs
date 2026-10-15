@@ -28,6 +28,9 @@ pub(crate) struct StampControls {
     pub texture_density: f64,
     /// 絵の具の量・濃さの、筆圧でない入力の係数（使わなければ 1。3D の面のダブが画素の筆圧の係数に掛ける）。
     pub mix_others: (f64, f64),
+    /// 色の変化の 4 項目（[`ColorItem::ALL`] の並び）の、筆圧・傾き・速度の係数の積（ランダムを除く。使わなければ 1）。ランダムの分は
+    /// ダブごとに色の変化の乱数の列から引く（[`StrokeState::next_dab_color`]）。
+    pub color: [f64; 4],
 }
 
 /// ダブ 1 つの置き方。
@@ -233,6 +236,7 @@ impl Brush {
                 tapered(Item::TextureDensity),
             ),
             mix_others,
+            color: inf.color_others(&x),
         }
     }
 

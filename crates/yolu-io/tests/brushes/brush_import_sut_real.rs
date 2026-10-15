@@ -11,7 +11,8 @@ fn summary(b: &ImportedBrush) -> String {
     let notes: Vec<String> = b.unrepresented.iter().map(|n| format!("{n:?}")).collect();
     format!(
         "r={:.1} op={:.2} fl={:.2} hd={:.2} sp={:.2} rn={:.2} ang={:.1} tips={} tex={} \
-         prs={}{}{} tilt={}{}{} jit_ang={:.2} taper={:.0}/{:.0} stab={:.0} | notes: {}",
+         prs={}{}{} tilt={}{}{} jit_ang={:.2} taper={:.0}/{:.0} stab={:.0} \
+         clr=tip{}/sub{:.2}/stroke{}/{} clr_inf={}{}{}{} | notes: {}",
         s.radius,
         s.opacity,
         s.flow,
@@ -31,6 +32,14 @@ fn summary(b: &ImportedBrush) -> String {
         br.assist.taper_in,
         br.assist.taper_out,
         br.assist.stabilizer,
+        u8::from(br.color.tip.is_some()),
+        br.color.sub_mix,
+        u8::from(br.color.stroke.is_some()),
+        br.color.target.id(),
+        u8::from(br.influences.color_hue.is_on()),
+        u8::from(br.influences.color_saturation.is_on()),
+        u8::from(br.influences.color_value.is_on()),
+        u8::from(br.influences.color_sub_mix.is_on()),
         notes.join(", ")
     )
 }

@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use brush_files::sut::*;
 use yolu_io::brushes::{
-    import, import_bytes, BrushImportError, Fault, FileKind, ImportedBrush, ImportedSet,
+    import, import_bytes, BrushImportError, ColorNote, Fault, FileKind, ImportedBrush, ImportedSet,
     SkipReason, Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented,
 };
 
@@ -3067,4 +3067,248 @@ fn what_was_mapped_is_listed_apart_from_what_was_not() {
         let (ja, en) = m.texts();
         assert!(!ja.is_empty() && en.is_ascii() && !ja.is_ascii(), "{m:?}");
     }
+}
+
+// ---------------- 色の変化 ----------------
+
+/// 色の変化の列（先端の旗と値・サブ描画色混合率・ストロークごとの旗と値）。
+fn color_cells(tip: bool, stroke: bool) -> Vec<(&'static str, rusqlite::types::Value)> {
+    vec![
+        ("BrushChangePatternColor", int(i64::from(tip))),
+        ("BrushHueChange", int(90)),
+        ("BrushSaturationChange", int(-50)),
+        ("BrushValueChange", int(25)),
+        ("BrushSubColor", int(40)),
+        ("BrushChangeStrokeColor", int(i64::from(stroke))),
+        ("BrushStrokeHueChange", int(45)),
+        ("BrushStrokeSaturationChange", int(20)),
+        ("BrushStrokeValueChange", int(10)),
+        ("BrushStrokeSubColor", int(60)),
+    ]
+}
+
+fn one_color(cells: &[(&'static str, rusqlite::types::Value)]) -> ImportedBrush {
+    ok(&SutBuilder::new().brush("Color", 1, cells).build())
+        .brushes
+        .remove(0)
+}
+
+/// 実物の既定の影響元（色相・彩度・明度はランダム・最小値 −100、サブ描画色混合率は何も使わない）。
+fn default_color_effector() -> Vec<u8> {
+    effector_full(48, 0x80, [0, 100, 0, (-100i32) as u32], None, None)
+}
+
+#[test]
+fn the_color_change_columns_become_the_tip_sub_mix_and_stroke_changes() {
+    let b = one_color(&color_cells(true, true));
+    let c = &b.brush.color;
+    assert_eq!(
+        c.tip,
+        Some(yolu_core::TipColorChange {
+            hue: 90.0,
+            saturation: -0.5,
+            value: 0.25
+        })
+    );
+    assert_eq!(c.sub_mix, 0.4);
+    assert_eq!(
+        c.stroke,
+        Some(yolu_core::StrokeColorChange {
+            hue: 45.0,
+            saturation: 0.2,
+            value: 0.1,
+            sub_mix: 0.6
+        })
+    );
+    assert_eq!(c.target, yolu_core::ColorTarget::Main, "列が無ければメイン");
+    assert!(mapped(&b, SutMapped::ColorChange));
+    assert!(!has(&b, SutNote::ColorChange), "写せた物には知らせない");
+    // 先端とストロークごとの色相を両方使うと、足し算の上限を確かめていないと知らせる
+    assert!(has(&b, SutNote::ColorApprox(ColorNote::HueSum)));
+    b.brush.validate().unwrap();
+    // 旗が切の側は写さない（値があれば使っていないと知らせる）。サブ描画色混合率は先端の旗によらず写す
+    let b = one_color(&color_cells(false, true));
+    assert!(b.brush.color.tip.is_none() && b.brush.color.stroke.is_some());
+    assert_eq!(b.brush.color.sub_mix, 0.4);
+    assert!(has(&b, SutNote::ColorChange) && !has(&b, SutNote::ColorApprox(ColorNote::HueSum)));
+    let b = one_color(&color_cells(true, false));
+    assert!(b.brush.color.tip.is_some() && b.brush.color.stroke.is_none());
+    assert!(has(&b, SutNote::ColorChange));
+    let b = one_color(&color_cells(false, false));
+    assert!(b.brush.color.tip.is_none() && b.brush.color.stroke.is_none());
+    assert_eq!(b.brush.color.sub_mix, 0.4);
+    assert!(
+        mapped(&b, SutMapped::ColorChange),
+        "サブ描画色混合率だけでも写せた"
+    );
+    // 何も入っていない行は写さず、知らせもしない
+    let plain = one_color(&[("BrushChangePatternColor", int(0))]);
+    assert_eq!(plain.brush.color, yolu_core::ColorDynamics::default());
+    assert!(!mapped(&plain, SutMapped::ColorChange) && plain.unrepresented.is_empty());
+}
+
+#[test]
+fn the_color_change_target_and_out_of_range_values_are_read() {
+    for (value, target, note) in [
+        (0, yolu_core::ColorTarget::MainAndSub, false),
+        (1, yolu_core::ColorTarget::Main, false),
+        (2, yolu_core::ColorTarget::Sub, true),
+    ] {
+        let mut cells = color_cells(true, false);
+        cells.push(("BrushChangeColorTarget", int(value)));
+        let b = one_color(&cells);
+        assert_eq!(b.brush.color.target, target);
+        assert_eq!(
+            has(&b, SutNote::ColorApprox(ColorNote::TargetSub)),
+            note,
+            "{value}"
+        );
+    }
+    // サブだけでも、先端もストロークごとも無ければ知らせない
+    let b = one_color(&[("BrushChangeColorTarget", int(2))]);
+    assert!(!has(&b, SutNote::ColorApprox(ColorNote::TargetSub)));
+    // 範囲の外の値は範囲へ収める
+    let b = one_color(&[
+        ("BrushChangePatternColor", int(1)),
+        ("BrushHueChange", int(500)),
+        ("BrushSaturationChange", int(-300)),
+        ("BrushValueChange", int(300)),
+        ("BrushSubColor", int(250)),
+        ("BrushChangeStrokeColor", int(1)),
+        ("BrushStrokeHueChange", int(400)),
+        ("BrushStrokeSaturationChange", int(-5)),
+    ]);
+    let c = &b.brush.color;
+    assert_eq!(
+        c.tip,
+        Some(yolu_core::TipColorChange {
+            hue: 360.0,
+            saturation: -1.0,
+            value: 1.0
+        })
+    );
+    assert_eq!(c.sub_mix, 1.0);
+    assert_eq!(c.stroke.unwrap().hue, 180.0);
+    assert_eq!(c.stroke.unwrap().saturation, 0.0);
+    b.brush.validate().unwrap();
+}
+
+#[test]
+fn the_color_change_influences_are_read_with_a_signed_minimum() {
+    let mut cells = color_cells(true, false);
+    cells.extend([
+        ("BrushHueChangeEffector", blob(default_color_effector())),
+        // 彩度は筆圧（最小値 0）、明度は筆圧（最小値 −50）、サブ描画色混合率はランダム（最小値 20）
+        (
+            "BrushSaturationChangeEffector",
+            blob(effector_full(48, 0x10, [0, 100, 0, 0], None, None)),
+        ),
+        (
+            "BrushValueChangeEffector",
+            blob(effector_full(
+                48,
+                0x10,
+                [(-50i32) as u32, 100, 0, 0],
+                None,
+                None,
+            )),
+        ),
+        (
+            "BrushSubColorEffector",
+            blob(effector_full(48, 0x80, [0, 0, 0, 20], None, None)),
+        ),
+    ]);
+    let b = one_color(&cells);
+    let i = &b.brush.influences;
+    assert!(i.color_hue.random.on && !i.color_hue.pressure.on);
+    assert_eq!(i.color_hue.random.response.min(), -1.0);
+    assert!(i.color_saturation.pressure.on && i.color_saturation.pressure.response.min() == 0.0);
+    assert!(i.color_value.pressure.on);
+    assert_eq!(i.color_value.pressure.response.min(), -0.5);
+    assert!(i.color_sub_mix.random.on);
+    assert_eq!(i.color_sub_mix.random.response.min(), 0.2);
+    // 既定の（曲線の付かない）ランダムには、曲線の知らせを出さない。傾き・速度を使っていなければ近い動きの知らせも無い
+    assert!(!b.unrepresented.iter().any(|n| matches!(
+        n,
+        Unrepresented::ClipStudio(
+            SutNote::InfluenceCurve { .. } | SutNote::ColorApprox(ColorNote::MotionInfluence)
+        )
+    )));
+    b.brush.validate().unwrap();
+    // 色の項目でない影響元（大きさ）の読み方は変えない: 負の最小値は 0〜1 に丸まる（−100 は 1）
+    let b = one_color(&[(
+        "BrushSizeEffector",
+        blob(effector_full(
+            48,
+            0x80,
+            [0, 100, 0, (-100i32) as u32],
+            None,
+            None,
+        )),
+    )]);
+    assert_eq!(b.brush.influences.size.random.response.min(), 1.0);
+    // 傾きと速度を使うと近い動きと知らせる。曲線の付く BLOB なら、速さ・ランダムの曲線を読めないと知らせる
+    let mut cells = color_cells(true, false);
+    let mut with_curve = effector_full(48, 0x80 | 0x40, [0, 100, 0, 0], None, None);
+    with_curve.extend_from_slice(&[0; 44]);
+    cells.extend([
+        (
+            "BrushValueChangeEffector",
+            blob(effector_full(48, 0x20, [0, 100, 0, 0], None, None)),
+        ),
+        ("BrushHueChangeEffector", blob(with_curve)),
+    ]);
+    let b = one_color(&cells);
+    assert!(b.brush.influences.color_value.tilt.on);
+    assert!(has(&b, SutNote::ColorApprox(ColorNote::MotionInfluence)));
+    for input in [SutInput::Speed, SutInput::Random] {
+        assert!(
+            has(
+                &b,
+                SutNote::InfluenceCurve {
+                    target: SutTarget::ColorHue,
+                    input
+                }
+            ),
+            "{input:?}"
+        );
+    }
+    // 切の側の影響元は写さない（旗が切のとき色相・彩度・明度の影響元は残さない）
+    let mut cells = color_cells(false, false);
+    cells.push(("BrushHueChangeEffector", blob(default_color_effector())));
+    let b = one_color(&cells);
+    assert!(!b.brush.influences.color_hue.is_on());
+    // 読めない BLOB は外して知らせる
+    let mut cells = color_cells(true, false);
+    cells.push(("BrushSaturationChangeEffector", blob(vec![1, 2, 3])));
+    let b = one_color(&cells);
+    assert!(has(
+        &b,
+        SutNote::InfluenceUnreadable(SutTarget::ColorSaturation)
+    ));
+    assert!(!b.brush.influences.color_saturation.is_on());
+}
+
+#[test]
+fn the_color_change_notes_have_sentences_in_both_languages() {
+    for n in [
+        SutNote::ColorChange,
+        SutNote::ColorApprox(ColorNote::TargetSub),
+        SutNote::ColorApprox(ColorNote::MotionInfluence),
+        SutNote::ColorApprox(ColorNote::HueSum),
+        SutNote::InfluenceUnreadable(SutTarget::ColorHue),
+        SutNote::InfluenceCurve {
+            target: SutTarget::ColorSubMix,
+            input: SutInput::Speed,
+        },
+        SutNote::CurveSimplified(SutTarget::ColorValue, SutInput::Tilt),
+    ] {
+        let note = Unrepresented::ClipStudio(n.clone());
+        let (ja, en) = (note.to_string(), note.english());
+        assert!(
+            !ja.is_empty() && !en.is_empty() && en.is_ascii() && !ja.is_ascii(),
+            "{n:?}"
+        );
+    }
+    assert_eq!(SutMapped::ColorChange.texts(), ("色の変化", "color change"));
 }

@@ -11,8 +11,8 @@
 //! `mix.<項目>.pressure`・`.min`・`.curve`）は書かない（読むときも、版 7 にあれば知らない項目として断る）。ほかの版 2〜6 の項目は、その鍵のまま書く。
 //! 版 1〜6 で書けるブラシは、今までと同じ鍵・同じバイトで書く。
 //! バージョン 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗、
-//! 質感の回転）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`。影響元はバージョン 7 と
-//! 同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
+//! 質感の回転、色の変化）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
+//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`。影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
 //! バージョン 2〜8 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
@@ -31,9 +31,9 @@ use super::gaps::Gap;
 use super::images;
 use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
-    AntiAlias, Brush, BrushEffect, ColorMix, CoreError, DVec2, DualBrush, DualBrushMode, Influence,
-    Influences, InputResponse, InputUse, MixGround, MixMode, PaperTexture, StrokeAssist,
-    TaperTargets, TextureMode,
+    AntiAlias, Brush, BrushEffect, ColorItem, ColorMix, ColorTarget, CoreError, DVec2, DualBrush,
+    DualBrushMode, Influence, Influences, InputResponse, InputUse, MixGround, MixMode,
+    PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode, TipColorChange,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
@@ -337,6 +337,9 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     write_tip_and_jitter(&mut w, &mut pending, &b);
     write_texture_and_dual(&mut w, &mut pending, &b);
     write_color_and_controls(&mut w, &b, v7);
+    if v8 {
+        write_color_change(&mut w, &b);
+    }
     if v7 {
         write_influences(&mut w, &b);
     } else {
@@ -519,12 +522,42 @@ fn write_color_and_controls(w: &mut Writer, b: &Brush, v7: bool) {
     }
 }
 
-/// 影響元（版 7。使わない入力・既定の最小値と曲線は書かない）。
+/// 色の変化（バージョン 8。`color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target`。切・0・メインは書かない）。
+fn write_color_change(w: &mut Writer, b: &Brush) {
+    let c = &b.color;
+    if let Some(t) = &c.tip {
+        w.single("color.tip.hue", t.hue);
+        w.single("color.tip.saturation", t.saturation);
+        w.single("color.tip.value", t.value);
+    }
+    if c.sub_mix != 0.0 {
+        w.single("color.sub_mix", c.sub_mix);
+    }
+    if let Some(s) = &c.stroke {
+        w.single("color.stroke.hue", s.hue);
+        w.single("color.stroke.saturation", s.saturation);
+        w.single("color.stroke.value", s.value);
+        w.single("color.stroke.sub_mix", s.sub_mix);
+    }
+    if c.target != ColorTarget::Main {
+        w.line("color.target", c.target.id());
+    }
+}
+
+/// 影響元（版 7。使わない入力・既定の最小値と曲線は書かない。色の項目はバージョン 8）。
 fn write_influences(w: &mut Writer, b: &Brush) {
-    for item in Item::ALL {
+    let item_keys = Item::ALL
+        .into_iter()
+        .map(|i| (i.id(), b.influences.get(i)))
+        .chain(
+            ColorItem::ALL
+                .into_iter()
+                .map(|i| (i.id(), b.influences.color(i))),
+        );
+    for (id, influence) in item_keys {
         for input in Input::ALL {
-            let u = b.influences.get(item).input(input);
-            let key = format!("influence.{}.{}", item.id(), input.id());
+            let u = influence.input(input);
+            let key = format!("influence.{id}.{}", input.id());
             if u.on {
                 w.bool(&format!("{key}.on"), true);
             }
@@ -716,7 +749,21 @@ fn needs_v7(b: &Brush) -> bool {
 /// バージョン 7 までの項目で書けない物を使うか（使えばバージョン 8 で書く）。入り抜きの影響先が既定（大きさだけ・最小値 0）でないブラシと、
 /// 筆先の繰り返し方法・反転のしかた・先端同士の比較暗・質感の回転を使うブラシ。バージョン 8 にする条件は、ここに `||` で足す。
 fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
-    assist.is_some_and(|a| !a.taper_targets.is_default()) || uses_tip_rules(b)
+    assist.is_some_and(|a| !a.taper_targets.is_default())
+        || uses_tip_rules(b)
+        || uses_color_change(b)
+}
+
+/// 色の変化（先端・サブ描画色混合率・ストロークごと・変化対象と、色の項目の影響元）を使うか。
+fn uses_color_change(b: &Brush) -> bool {
+    let c = &b.color;
+    c.tip.is_some()
+        || c.sub_mix != 0.0
+        || c.stroke.is_some()
+        || c.target != ColorTarget::Main
+        || ColorItem::ALL
+            .into_iter()
+            .any(|i| !b.influences.color(i).is_default())
 }
 
 /// 筆先の繰り返し方法（バージョン 1〜7 が書ける乱数・順だけでない）・反転のしかた・先端同士の比較暗・質感の回転を使うか。
@@ -875,13 +922,17 @@ pub fn decode_user(
     read_tip_and_jitter(&mut r, &mut b, version, load)?;
     read_texture_and_dual(&mut r, &mut b, version, load)?;
     read_color_and_controls(&mut r, &mut b, version)?;
+    // 色の変化はバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+    if version >= 8 {
+        read_color_change(&mut r, &mut b)?;
+    }
     // 筆圧の応えは版 2〜6 の項目（版 1・7 のファイルにあれば、知らない項目として断る）
     if (2..=6).contains(&version) {
         read_pressure_responses(&mut r, &mut b)?;
     }
     // 影響元は版 7 の項目（版 6 までのファイルにあれば、知らない項目として断る）
     if version >= 7 {
-        read_influences(&mut r, &mut b)?;
+        read_influences(&mut r, &mut b, version)?;
     }
     // 色の混ぜは版 3 の項目（版 1・2 のファイルにあれば、知らない項目として断る）。絵の具の量・濃さの筆圧は版 3〜6 の鍵
     if version >= 3 {
@@ -1101,20 +1152,66 @@ fn read_pressure_responses(r: &mut Reader, b: &mut Brush) -> Result<(), StoreErr
         ("flow", Item::Flow),
         ("hardness", Item::Hardness),
     ] {
-        let response = read_response(r, &format!("pressure.{name}"))?;
+        let response = read_response(r, &format!("pressure.{name}"), false)?;
         b.influences.get_mut(item).pressure.response = response;
     }
     Ok(())
 }
 
-/// 版 7 の影響元（項目ごと・入力ごとの `.on`・`.min`・`.curve`）を読む。
-fn read_influences(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+/// 色の変化（`color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target`）を読む。先端・ストロークごとは、鍵が 1 つでもあれば持ち、
+/// 無い値は 0 とする。範囲は core の検査に任せる。
+fn read_color_change(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    let has = |r: &Reader, keys: &[&str]| keys.iter().any(|k| r.map.contains_key(*k));
+    let tip_keys = ["color.tip.hue", "color.tip.saturation", "color.tip.value"];
+    if has(r, &tip_keys) {
+        b.color.tip = Some(TipColorChange {
+            hue: r.single(tip_keys[0], 0.0)?,
+            saturation: r.single(tip_keys[1], 0.0)?,
+            value: r.single(tip_keys[2], 0.0)?,
+        });
+    }
+    b.color.sub_mix = r.single("color.sub_mix", 0.0)?;
+    let stroke_keys = [
+        "color.stroke.hue",
+        "color.stroke.saturation",
+        "color.stroke.value",
+        "color.stroke.sub_mix",
+    ];
+    if has(r, &stroke_keys) {
+        b.color.stroke = Some(StrokeColorChange {
+            hue: r.single(stroke_keys[0], 0.0)?,
+            saturation: r.single(stroke_keys[1], 0.0)?,
+            value: r.single(stroke_keys[2], 0.0)?,
+            sub_mix: r.single(stroke_keys[3], 0.0)?,
+        });
+    }
+    if let Some(id) = r.take("color.target") {
+        b.color.target = ColorTarget::ALL
+            .into_iter()
+            .find(|t| t.id() == id)
+            .ok_or(StoreError::BadValue("color.target".into()))?;
+    }
+    Ok(())
+}
+
+/// 版 7 の影響元（項目ごと・入力ごとの `.on`・`.min`・`.curve`）を読む。色の項目はバージョン 8 の項目。
+fn read_influences(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreError> {
     for item in Item::ALL {
         for input in Input::ALL {
             let key = format!("influence.{}.{}", item.id(), input.id());
             let on = r.bool(&format!("{key}.on"), false)?;
-            let response = read_response(r, &key)?;
+            let response = read_response(r, &key, false)?;
             *b.influences.get_mut(item).input_mut(input) = InputUse { on, response };
+        }
+    }
+    if version >= 8 {
+        for item in ColorItem::ALL {
+            for input in Input::ALL {
+                let key = format!("influence.{}.{}", item.id(), input.id());
+                let on = r.bool(&format!("{key}.on"), false)?;
+                let response = read_response(r, &key, item.signed())?;
+                *b.influences.color_mut(item).input_mut(input) = InputUse { on, response };
+            }
         }
     }
     Ok(())
@@ -1223,15 +1320,20 @@ fn read_import(r: &mut Reader) -> Result<Option<ImportMeta>, StoreError> {
     ))
 }
 
-/// 応えの最小値 `<key>.min` と曲線 `<key>.curve` を読む（無ければ既定）。
-fn read_response(r: &mut Reader, key: &str) -> Result<InputResponse, StoreError> {
+/// 応えの最小値 `<key>.min` と曲線 `<key>.curve` を読む（無ければ既定）。`signed` なら最小値は −1〜1（色相・彩度・明度の影響元）、でなければ 0〜1。
+fn read_response(r: &mut Reader, key: &str, signed: bool) -> Result<InputResponse, StoreError> {
     let min = r.single(&format!("{key}.min"), 0.0)?;
     let curve_key = format!("{key}.curve");
     let curve = match r.take(&curve_key) {
         Some(text) => parse_curve(&text).ok_or(StoreError::BadValue(curve_key))?,
         None => Vec::new(),
     };
-    InputResponse::new(min, curve).map_err(StoreError::Invalid)
+    let response = if signed {
+        InputResponse::new_signed(min, curve)
+    } else {
+        InputResponse::new(min, curve)
+    };
+    response.map_err(StoreError::Invalid)
 }
 
 /// 版 3 の色の混ぜの項目を読む（無い項目は既定）。`legacy`（版 3〜6）なら絵の具の量・濃さの筆圧の鍵も読み、影響元へ写す。
@@ -1258,7 +1360,7 @@ fn read_mix(
     if legacy {
         for (name, item) in [("paint", Item::MixPaint), ("density", Item::MixDensity)] {
             let on = r.bool(&format!("mix.{name}.pressure"), false)?;
-            let response = read_response(r, &format!("mix.{name}"))?;
+            let response = read_response(r, &format!("mix.{name}"), false)?;
             influences.get_mut(item).pressure = InputUse { on, response };
         }
     }
@@ -3444,5 +3546,205 @@ mod tests {
             decode(&none).unwrap().assist.map(|a| a.taper_targets),
             Some(TaperTargets::default())
         );
+    }
+    fn color_change_brush() -> Brush {
+        let signed = |min: f64| InputUse {
+            on: true,
+            response: InputResponse::new_signed(min, vec![]).unwrap(),
+        };
+        let mut b = Brush::default();
+        b.color.tip = Some(TipColorChange {
+            hue: 90.0,
+            saturation: 0.5,
+            value: -0.25,
+        });
+        b.color.sub_mix = 0.5;
+        b.color.stroke = Some(StrokeColorChange {
+            hue: 45.0,
+            saturation: 0.25,
+            value: 0.5,
+            sub_mix: 0.75,
+        });
+        b.color.target = ColorTarget::MainAndSub;
+        b.influences.color_hue.random = signed(-1.0);
+        b.influences.color_saturation.pressure = InputUse::STRAIGHT;
+        b.influences.color_value.pressure = InputUse {
+            on: true,
+            response: InputResponse::new_signed(
+                -0.5,
+                vec![pt(0.0, 0.0), pt(0.5, 0.8), pt(1.0, 1.0)],
+            )
+            .unwrap(),
+        };
+        b.influences.color_sub_mix.random = InputUse {
+            on: true,
+            response: InputResponse::new(0.25, vec![]).unwrap(),
+        };
+        b
+    }
+
+    #[test]
+    fn a_brush_with_a_color_change_is_version_eight_and_round_trips() {
+        let b = color_change_brush();
+        let u = user(1, b.clone());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "color.tip.hue=90",
+            "color.tip.saturation=0.5",
+            "color.tip.value=-0.25",
+            "color.sub_mix=0.5",
+            "color.stroke.hue=45",
+            "color.stroke.sub_mix=0.75",
+            "color.target=main_and_sub",
+            "influence.color_hue.random.on=1",
+            "influence.color_hue.random.min=-1",
+            "influence.color_value.pressure.min=-0.5",
+            "influence.color_sub_mix.random.min=0.25",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 変化が切・値が 0・メイン・影響元が既定のブラシは、色の鍵を 1 つも書かない
+        let mut only_target = Brush::default();
+        only_target.color.target = ColorTarget::Sub;
+        let t = text(&user(1, only_target.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n") && t.contains("color.target=sub\n"));
+        assert_eq!(decode(&t).unwrap().2, canonical(&only_target));
+        // 値が f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let mut odd = Brush::default();
+        odd.color.sub_mix = 0.123_456_789_012;
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(d.color.sub_mix, odd.color.sub_mix as f32 as f64);
+        assert_eq!(d, canonical(&odd));
+    }
+
+    #[test]
+    fn brushes_without_a_color_change_keep_their_version_and_their_bytes() {
+        for (what, b) in [
+            ("既定", Brush::default()),
+            ("影響元", influence_brush()),
+            ("色のゆらぎ", {
+                let mut b = Brush::default();
+                b.color.hue = 0.25;
+                b.color.foreground_background = 0.5;
+                b
+            }),
+        ] {
+            let t = text(&user(1, b));
+            let expected = if what == "影響元" { "7" } else { "1" };
+            assert!(
+                t.starts_with(&format!("yolupainter-brush {expected}\n")),
+                "{what}: {t}"
+            );
+            for key in [
+                "color.tip",
+                "color.sub_mix",
+                "color.stroke",
+                "color.target",
+                "color_hue",
+                "color_sub_mix",
+            ] {
+                assert!(!t.contains(key), "{what}: {key}");
+            }
+        }
+        // バージョン 1〜6 の見本（前のバージョンの書き手が書いたファイル）は、読んで書き戻すと同じバイト
+        for (what, file) in [
+            ("v1", include_str!("../../tests/ylbrush_files/v1.ylbrush")),
+            ("v6", include_str!("../../tests/ylbrush_files/v6.ylbrush")),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            let again = encode(&UserBrush {
+                id: 1,
+                name: d.name.clone(),
+                group: d.group,
+                brush: d.brush.clone(),
+                import: d.import.clone(),
+                assist: d.assist,
+            })
+            .unwrap()
+            .text;
+            assert_eq!(again, file, "{what}");
+        }
+    }
+
+    #[test]
+    fn the_color_change_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, color_change_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            assert!(
+                matches!(&err, StoreError::UnknownKey(_) | StoreError::BadValue(_)),
+                "バージョン {old}: {err:?}"
+            );
+        }
+        let mut only_influence = Brush::default();
+        only_influence.influences.color_hue.random = InputUse::STRAIGHT;
+        let t = text(&user(1, only_influence));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        let as_seven = t.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "influence.color_hue.random.on"
+        ));
+        // バージョン 8 のファイルの中の読めない値・範囲の外
+        let t = text(&user(1, color_change_brush()));
+        for (from, to) in [
+            ("color.target=main_and_sub", "color.target=left"),
+            ("color.tip.hue=90", "color.tip.hue=NaN"),
+            ("color.tip.value=-0.25", "color.tip.value=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("color.tip.hue=90", "color.tip.hue=361"),
+            ("color.tip.saturation=0.5", "color.tip.saturation=1.5"),
+            ("color.sub_mix=0.5", "color.sub_mix=-0.5"),
+            ("color.stroke.hue=45", "color.stroke.hue=181"),
+            ("color.stroke.value=0.5", "color.stroke.value=-0.5"),
+            (
+                "influence.color_hue.random.min=-1",
+                "influence.color_hue.random.min=-1.5",
+            ),
+            (
+                "influence.color_sub_mix.random.min=0.25",
+                "influence.color_sub_mix.random.min=-0.25",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_)
+                ),
+                "{to}"
+            );
+        }
+        // 色の項目でない影響元の負の最小値も断る
+        let plain = text(&user(1, color_change_brush())).replace(
+            "influence.color_hue.random.on=1",
+            "influence.size.random.on=1\ninfluence.size.random.min=-0.5\ninfluence.color_hue.random.on=1",
+        );
+        assert!(matches!(
+            decode(&plain).unwrap_err(),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            decode(&format!("{t}color.tip.hue=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
     }
 }

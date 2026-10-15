@@ -19,6 +19,11 @@ pub(super) struct Effector {
     pub flags: u32,
     /// 入力ごとの最小値（0〜1。筆圧・傾き・速さ・ランダムの順。ヘッダーの 4〜7 番目の整数の %。ヘッダーに無ければ 0）。
     pub minimums: [f64; 4],
+    /// 入力ごとの最小値を符号つきの整数として読んだもの（−1〜1。色相・彩度・明度の影響元は −100 まで取る。`minimums` は負の数を 0〜1 に
+    /// 丸めた値で、読み方を変えない）。
+    pub signed_minimums: [f64; 4],
+    /// ヘッダーと読めた曲線のあとに残ったバイト数（速さ・ランダムの曲線が付くと 44 バイト伸びる。0 なら曲線は付いていない）。
+    pub trailing: usize,
     /// 曲線の点（x・y とも 0〜1 を期待するが、ここでは丸めない）。並びはファイルのまま。どの曲線がどの入力のものかは
     /// [`Effector::pressure_curve`]・[`Effector::tilt_curve`]。
     pub curves: Vec<Vec<(f64, f64)>>,
@@ -90,8 +95,15 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
             .map_or(0.0, |&v| (v as f64 / 100.0).clamp(0.0, 1.0))
     };
     let minimums = [percent(3), percent(4), percent(5), percent(6)];
+    let signed = |i: usize| {
+        ints.get(i)
+            .map_or(0.0, |&v| (v as i32 as f64 / 100.0).clamp(-1.0, 1.0))
+    };
+    let signed_minimums = [signed(3), signed(4), signed(5), signed(6)];
     let slots = (header == 44 || header == 48).then(|| [ints[8] as usize, ints[9] as usize]);
     let mut curves = Vec::new();
+    // ヘッダーと、最後まで読めた曲線のあとに残ったバイト数
+    let mut rest = r.remaining();
     while curves.len() < MAX_CURVES && r.remaining() >= 12 {
         let (Ok(_), Ok(count), Ok(_)) = (r.u32(), r.u32(), r.u32()) else {
             break;
@@ -106,6 +118,8 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
                 return Some(Effector {
                     flags,
                     minimums,
+                    signed_minimums,
+                    trailing: rest,
                     curves,
                     slots,
                 });
@@ -119,10 +133,13 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
             break;
         }
         curves.push(points);
+        rest = r.remaining();
     }
     Some(Effector {
         flags,
         minimums,
+        signed_minimums,
+        trailing: rest,
         curves,
         slots,
     })
@@ -292,6 +309,26 @@ mod tests {
         let e = parse_effector(&blob).unwrap();
         assert_eq!(e.flags, 0xB0);
         assert!(e.curves.is_empty());
+    }
+
+    #[test]
+    fn effector_reads_a_negative_minimum_as_signed_and_keeps_the_unsigned_one() {
+        let mut blob = effector(48, 0x80, 0, &[]);
+        // 7 番目の整数（ランダムの最小値）に −100、4 番目（筆圧）に 50
+        blob[24..28].copy_from_slice(&(-100i32).to_be_bytes());
+        blob[12..16].copy_from_slice(&50u32.to_be_bytes());
+        let e = parse_effector(&blob).unwrap();
+        assert_eq!(e.signed_minimums, [0.5, 0.0, 0.0, -1.0]);
+        // 今の読み方（負の数は大きな正の数になり 1 に丸まる）は変えない
+        assert_eq!(e.minimums, [0.5, 0.0, 0.0, 1.0]);
+        assert_eq!(e.trailing, 0);
+        // 範囲を超える値は丸める
+        blob[24..28].copy_from_slice(&(-250i32).to_be_bytes());
+        assert_eq!(parse_effector(&blob).unwrap().signed_minimums[3], -1.0);
+        // 曲線の後ろに残ったバイトを数える
+        let mut longer = effector(44, 0x10, 0, &[&[(0.0, 0.0), (1.0, 1.0)]]);
+        longer.extend_from_slice(&[0; 44]);
+        assert_eq!(parse_effector(&longer).unwrap().trailing, 44);
     }
 
     #[test]

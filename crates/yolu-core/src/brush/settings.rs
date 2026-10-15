@@ -355,6 +355,14 @@ pub struct ColorDynamics {
     pub purity: f64,
     /// true: ダブごとに新しい色（Photoshop の「描点ごとに適用」）。false: ストロークに 1 色。
     pub per_tip: bool,
+    /// 先端の色の変化（描画色を色相・彩度・明度で動かす。切は None）。変化量 = 値 × 影響元の係数の積（[`ColorItem`]）。
+    pub tip: Option<TipColorChange>,
+    /// サブ描画色混合率（0〜1。描画色をサブ描画色へこの割合だけ寄せる。影響元は [`ColorItem::SubMix`]）。先端の色の変化の切り替えによらず効く。
+    pub sub_mix: f64,
+    /// ストロークごとの変化（ストロークの始めに 1 回だけランダムに引く。切は None）。
+    pub stroke: Option<StrokeColorChange>,
+    /// 先端とストロークごとの色相・彩度・明度・サブを当てる描画色。
+    pub target: ColorTarget,
 }
 
 impl Default for ColorDynamics {
@@ -367,7 +375,103 @@ impl Default for ColorDynamics {
             brightness: 0.0,
             purity: 0.0,
             per_tip: true,
+            tip: None,
+            sub_mix: 0.0,
+            stroke: None,
+            target: ColorTarget::Main,
         }
+    }
+}
+
+/// 先端の色の変化の値（影響元の係数を掛ける前）。
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct TipColorChange {
+    /// 色相（度。−360〜360）。
+    pub hue: f64,
+    /// 彩度・明度（−1〜1）。
+    pub saturation: f64,
+    pub value: f64,
+}
+
+/// ストロークごとの変化の大きさ。色相・彩度・明度は ±値、サブ描画色混合率は 0〜値の一様なばらつき。
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct StrokeColorChange {
+    /// 色相（度。0〜180）。
+    pub hue: f64,
+    /// 彩度・明度・サブ描画色混合率（0〜1）。
+    pub saturation: f64,
+    pub value: f64,
+    pub sub_mix: f64,
+}
+
+/// 色の変化を当てる描画色。このアプリはいつもメイン描画色で描くので、「サブ」だけのときは色相・彩度・明度・ストロークごとの変化を当てない。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ColorTarget {
+    /// メイン描画色。
+    #[default]
+    Main,
+    /// メインとサブ描画色。
+    MainAndSub,
+    /// サブ描画色だけ。
+    Sub,
+}
+
+impl ColorTarget {
+    /// すべての変化対象（並びは保存の順）。
+    pub const ALL: [ColorTarget; 3] =
+        [ColorTarget::Main, ColorTarget::MainAndSub, ColorTarget::Sub];
+
+    /// 保存に使う名前。
+    pub fn id(self) -> &'static str {
+        match self {
+            ColorTarget::Main => "main",
+            ColorTarget::MainAndSub => "main_and_sub",
+            ColorTarget::Sub => "sub",
+        }
+    }
+}
+
+impl ColorDynamics {
+    /// 先端の色相・彩度・明度の変化を当てるか（変化対象が「サブ」だけなら当てない）。
+    pub fn tip_active(&self) -> bool {
+        self.tip.is_some() && self.target != ColorTarget::Sub
+    }
+
+    /// ストロークごとの変化を当てるか（変化対象が「サブ」だけなら当てない）。
+    pub fn stroke_active(&self) -> bool {
+        self.stroke.is_some() && self.target != ColorTarget::Sub
+    }
+
+    /// 色の変化（先端・サブ描画色混合率・ストロークごと）のどれかが効くか。
+    pub fn change_active(&self) -> bool {
+        self.tip_active() || self.sub_mix > 0.0 || self.stroke_active()
+    }
+
+    /// 色の変化の値を確かめる（有限で範囲の中）。
+    pub(crate) fn validate_change(&self) -> Result<(), CoreError> {
+        let mut checks: Vec<(f64, f64, f64)> = vec![(self.sub_mix, 0.0, 1.0)];
+        if let Some(t) = &self.tip {
+            checks.extend([
+                (t.hue, -360.0, 360.0),
+                (t.saturation, -1.0, 1.0),
+                (t.value, -1.0, 1.0),
+            ]);
+        }
+        if let Some(s) = &self.stroke {
+            checks.extend([
+                (s.hue, 0.0, 180.0),
+                (s.saturation, 0.0, 1.0),
+                (s.value, 0.0, 1.0),
+                (s.sub_mix, 0.0, 1.0),
+            ]);
+        }
+        for (v, lo, hi) in checks {
+            require_finite(v, Reason::ColorChange)?;
+            if !(lo..=hi).contains(&v) {
+                return Err(CoreError::InvalidArgument(Reason::ColorChangeRange));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -572,6 +676,7 @@ impl Brush {
         if !(-1.0..=1.0).contains(&c.purity) {
             return Err(CoreError::InvalidArgument(Reason::PurityRange));
         }
+        c.validate_change()?;
         let k = &self.controls;
         for f in [k.fade_size, k.fade_opacity, k.fade_flow] {
             if f > MAX_FADE {
@@ -632,6 +737,9 @@ impl Brush {
         c.saturation = 0.0;
         c.brightness = 0.0;
         c.purity = 0.0;
+        c.tip = None;
+        c.sub_mix = 0.0;
+        c.stroke = None;
         b
     }
 

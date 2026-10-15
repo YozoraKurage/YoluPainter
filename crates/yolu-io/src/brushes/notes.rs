@@ -252,6 +252,11 @@ pub enum SutTarget {
     MixPaint,
     /// 絵の具濃度。
     MixDensity,
+    /// 色の変化の色相・彩度・明度・サブ描画色混合率（応えの最小値は、色相・彩度・明度だけ −1〜1）。
+    ColorHue,
+    ColorSaturation,
+    ColorValue,
+    ColorSubMix,
 }
 
 impl SutTarget {
@@ -264,13 +269,20 @@ impl SutTarget {
             Self::TextureDensity => ("質感の濃さ", "texture density"),
             Self::MixPaint => ("絵の具の量", "paint amount"),
             Self::MixDensity => ("絵の具の濃さ", "paint density"),
+            Self::ColorHue => ("色相の変化", "hue change"),
+            Self::ColorSaturation => ("彩度の変化", "saturation change"),
+            Self::ColorValue => ("明度の変化", "value change"),
+            Self::ColorSubMix => ("サブ描画色混合率", "secondary color mix"),
         }
     }
 
-    /// 写す先の影響元の項目。
-    pub fn item(self) -> yolu_core::brush::Item {
-        use yolu_core::brush::Item;
-        match self {
+    /// 写す先の影響元。
+    pub fn influence_mut(
+        self,
+        influences: &mut yolu_core::Influences,
+    ) -> &mut yolu_core::Influence {
+        use yolu_core::brush::{ColorItem, Item};
+        let item = match self {
             Self::Size => Item::Size,
             Self::Opacity => Item::Opacity,
             Self::Flow => Item::Flow,
@@ -278,7 +290,28 @@ impl SutTarget {
             Self::TextureDensity => Item::TextureDensity,
             Self::MixPaint => Item::MixPaint,
             Self::MixDensity => Item::MixDensity,
-        }
+            Self::ColorHue => return influences.color_mut(ColorItem::Hue),
+            Self::ColorSaturation => return influences.color_mut(ColorItem::Saturation),
+            Self::ColorValue => return influences.color_mut(ColorItem::Value),
+            Self::ColorSubMix => return influences.color_mut(ColorItem::SubMix),
+        };
+        influences.get_mut(item)
+    }
+
+    /// 応えの最小値が −1〜1 か（色相・彩度・明度の変化）。ほかは 0〜1。
+    pub fn signed(self) -> bool {
+        matches!(
+            self,
+            Self::ColorHue | Self::ColorSaturation | Self::ColorValue
+        )
+    }
+
+    /// 色の変化の項目か（速さ・ランダムの曲線の知らせは、曲線の付く BLOB のときだけ出す）。
+    pub fn is_color(self) -> bool {
+        matches!(
+            self,
+            Self::ColorHue | Self::ColorSaturation | Self::ColorValue | Self::ColorSubMix
+        )
     }
 }
 
@@ -380,6 +413,8 @@ pub enum SutMapped {
     TextureRotation,
     /// 質感の明るさ・コントラスト（取り込みのとき画像へ焼き込む。元に戻せない）。
     TextureTone,
+    /// 色の変化（先端の色相・彩度・明度・サブ描画色混合率・ストロークごとの変化・変化対象）。
+    ColorChange,
 }
 
 impl SutMapped {
@@ -409,8 +444,20 @@ impl SutMapped {
                 "質感の明るさ・コントラスト",
                 "texture brightness and contrast",
             ),
+            Self::ColorChange => ("色の変化", "color change"),
         }
     }
+}
+
+/// 色の変化の、近い動き・当たらない設定の知らせの種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorNote {
+    /// 変化対象がサブ描画色だけ。このアプリはいつもメイン描画色で描くので、色相・彩度・明度の変化は当たらない。
+    TargetSub,
+    /// 影響元に傾き・速度を使う（動きを測っていないので、筆圧と同じ式で写した近い動き）。
+    MotionInfluence,
+    /// 先端とストロークごとの色相の変化を両方使う（足し算で当てる。足し算に上限があるかは確かめていない）。
+    HueSum,
 }
 
 /// CLIP STUDIO の `.sut` の設定のうち、読めなかった・表せない・近似したもの。
@@ -478,8 +525,10 @@ pub enum SutNote {
     StartEndTargets(Vec<u32>),
     /// 手ぶれ補正のうち、写せなかったもの（速度による手ブレ補正）。
     Stabilizer,
-    /// 色の変化。
+    /// 色の変化の値があるが、切り替え（ブラシ先端色の変化・ストロークごとのランダム変化）が切で、使っていない。
     ColorChange,
+    /// 色の変化の、近い動き・当たらない設定の知らせ。
+    ColorApprox(ColorNote),
     /// 合成モード。
     BlendMode,
     /// 影響元設定の入力（速さ・ランダム）の曲線は読めず、直線にした。
@@ -546,6 +595,29 @@ impl SutNote {
                 "The texture image could not be identified by name and was matched by the order of the materials; it may be a different image.".into(),
             ),
             _ => unreachable!("筆先と質感の知らせだけがここへ来る"),
+        }
+    }
+
+    /// 色の変化の知らせの文。
+    fn color_texts(&self) -> (String, String) {
+        match self {
+            Self::ColorChange => (
+                "色の変化の値があるが、ブラシ先端色の変化かストロークごとのランダム変化が切のため、使っていない".into(),
+                "Color change values are set, but the tip color change or the per-stroke random change is off; they are not used.".into(),
+            ),
+            Self::ColorApprox(ColorNote::TargetSub) => (
+                "色の変化の変化対象がサブ描画色だけ。このアプリはメイン描画色で描くので、色相・彩度・明度は変わらない".into(),
+                "The color change target is the secondary color only. This app paints with the main color, so hue, saturation and value do not change.".into(),
+            ),
+            Self::ColorApprox(ColorNote::MotionInfluence) => (
+                "色の変化の影響元の傾き・速度は、動きを測っておらず、筆圧と同じ式で写した（近い動き）".into(),
+                "The tilt and speed influences of the color change were not measured and use the same formula as pressure (a close behavior).".into(),
+            ),
+            Self::ColorApprox(ColorNote::HueSum) => (
+                "先端とストロークごとの色相の変化は足し算で当てた（足し算に上限があるかは確かめていない。近い動き）".into(),
+                "The tip and per-stroke hue changes are added together (whether the sum has a limit was not verified; a close behavior).".into(),
+            ),
+            _ => unreachable!("色の変化の知らせだけがここへ来る"),
         }
     }
 
@@ -631,7 +703,7 @@ impl SutNote {
                 "手ぶれ補正の速度による調整は未対応".into(),
                 "Stabilization adjustment by speed is not supported.".into(),
             ),
-            Self::ColorChange => ("色の変化は未対応".into(), "Color change is not supported.".into()),
+            Self::ColorChange | Self::ColorApprox(_) => self.color_texts(),
             Self::BlendMode => ("合成モードは未対応".into(), "The blend mode is not supported.".into()),
             Self::InfluenceCurve { target, input } => {
                 let (tja, ten) = target.texts();

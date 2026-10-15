@@ -49,6 +49,7 @@
 //! ```
 
 use crate::Reason;
+mod color_change;
 pub mod curve;
 mod dynamics;
 pub(crate) mod edge;
@@ -79,7 +80,7 @@ pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use edge::AntiAlias;
 pub(crate) use edge::{Edge, TexelMetric};
 pub use influence::{
-    Influence, Influences, Input, InputResponse, InputUse, Item, PressureSwitches,
+    ColorItem, Influence, Influences, Input, InputResponse, InputUse, Item, PressureSwitches,
     MAX_CURVE_POINTS, STRAIGHT,
 };
 pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
@@ -87,9 +88,9 @@ pub use mix::{ColorMix, MixGround, MixMode};
 pub(crate) use plan::{DabPlan, StampControls, TipRun};
 pub use presets::{builtin_presets, BrushPreset};
 pub use settings::{
-    Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, FlipRule, Jitter,
-    PaperTexture, StrokeAssist, TaperTargets, TextureMode, TipSelection, TipShape, MAX_FADE,
-    MAX_STROKE_ASSIST, MIN_ONE_PIXEL_RADIUS,
+    Brush, BrushEffect, ColorDynamics, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
+    Jitter, PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
+    TipColorChange, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST, MIN_ONE_PIXEL_RADIUS,
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};
@@ -364,6 +365,9 @@ pub(crate) struct StrokeState {
     stroke_color: Rgba8,
     dab_color: Rgba8,
     color_random: Option<NetRandom>,
+    /// 色の変化（先端・サブ描画色混合率・ストロークごと）の進み。
+    color_change: color_change::ColorChange,
+    /// ダブごとに色が要るか（Photoshop の形の「描点ごとに適用」か、色の変化がダブごとに動く）。
     tip_colors: bool,
     /// ステンシルの色を受けるチャンネル（色のモードで、ステンシルが名指すチャンネルへ色を塗るとき）。
     stencil_kind: Option<ChannelKind>,
@@ -459,6 +463,14 @@ impl StrokeState {
             color_random = Some(r);
             tip_colors = brush.color.per_tip;
         }
+        let color_change = color_change::ColorChange::start(
+            &brush,
+            stroke_color,
+            tip_colors,
+            brush.effect.is_paint() && !brush.base.erase,
+        );
+        stroke_color = color_change.stroke_color(&brush);
+        tip_colors |= color_change.per_dab();
         let dual_random = brush
             .dual
             .as_ref()
@@ -505,6 +517,7 @@ impl StrokeState {
             stroke_color,
             dab_color: stroke_color,
             color_random,
+            color_change,
             tip_colors,
             stencil_kind,
             dual_random,
@@ -962,8 +975,7 @@ impl StrokeState {
         let mut any = false;
         for _ in 0..brush.jitter.count {
             if self.tip_colors {
-                let r = self.color_random.as_mut().expect("色の乱数");
-                self.dab_color = brush.color.next(s.color, r);
+                self.dab_color = self.next_dab_color(&c.color);
             }
             let Some(plan) = brush.next_dab(
                 &c,
@@ -1507,10 +1519,9 @@ impl StrokeState {
     /// 3D の面のダブを 1 つ始める（2D の描点のダブの数のループの 1 回にあたる）: ダブごとの色（色の変化の「描点ごと」）を次の色へ進め、
     /// 塗るダブなら、そのゆらぎの係数を覚える。覚えた係数と紙の質感は、この後の面の画素の塗り（`apply_pixel`・`apply_dab`・
     /// `apply_mapped_dab`）が使う。大きさが 0 で塗らないダブ（`look` が None）も、2D と同じく色の乱数は 1 つ進める。
-    pub(crate) fn begin_surface_dab(&mut self, look: Option<SurfaceDabLook>) {
+    pub(crate) fn begin_surface_dab(&mut self, look: Option<SurfaceDabLook>, color: &[f64; 4]) {
         if self.tip_colors {
-            let r = self.color_random.as_mut().expect("色の乱数");
-            self.dab_color = self.brush.color.next(self.brush.base.color, r);
+            self.dab_color = self.next_dab_color(color);
         }
         if look.is_some() {
             self.surface_look = look;

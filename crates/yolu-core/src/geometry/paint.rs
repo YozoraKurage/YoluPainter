@@ -1055,6 +1055,7 @@ impl SurfaceStroke {
                     mix_paint: controls.mix_others.0,
                     mix_density: controls.mix_others.1,
                 }),
+                &controls.color,
             )?;
             let Some(plan) = plan else {
                 continue;

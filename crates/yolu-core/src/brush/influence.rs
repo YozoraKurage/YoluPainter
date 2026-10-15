@@ -56,19 +56,37 @@ impl InputResponse {
 
     /// 最小値（0〜1）と曲線の点（空か 2 点の直線は直線）から作る。範囲外・有限でない値・形の合わない曲線は断る。
     pub fn new(min: f64, curve: Vec<CurvePoint>) -> Result<InputResponse, CoreError> {
+        InputResponse::build(min, curve, 0.0)
+    }
+
+    /// 最小値が −1〜1 の応え（色相・彩度・明度の影響元。最小値が負なら、入力 0 で係数が負になる: 最小値 −1 は係数 −1 + 2 × 曲線(x)）。
+    pub fn new_signed(min: f64, curve: Vec<CurvePoint>) -> Result<InputResponse, CoreError> {
+        InputResponse::build(min, curve, -1.0)
+    }
+
+    /// 最小値が lo〜1 の応え（lo は 0 か −1）。
+    fn build(min: f64, curve: Vec<CurvePoint>, lo: f64) -> Result<InputResponse, CoreError> {
         let curve = if curve.is_empty() {
             Curve::identity()
         } else {
             Curve::new(curve).map_err(|_| CoreError::InvalidArgument(Reason::InputCurveRange))?
         };
-        InputResponse::from_curve(min, curve)
+        InputResponse::build_from_curve(min, curve, lo)
     }
 
     /// 最小値（0〜1）と、検査済みの曲線から作る（編集の部品が返した曲線をそのまま入れる口。直線は直線として扱う）。
     pub fn from_curve(min: f64, curve: Curve) -> Result<InputResponse, CoreError> {
+        InputResponse::build_from_curve(min, curve, 0.0)
+    }
+
+    fn build_from_curve(min: f64, curve: Curve, lo: f64) -> Result<InputResponse, CoreError> {
         require_finite(min, Reason::InputMinimum)?;
-        if !(0.0..=1.0).contains(&min) {
-            return Err(CoreError::InvalidArgument(Reason::InputMinimumRange));
+        if !(lo..=1.0).contains(&min) {
+            return Err(CoreError::InvalidArgument(if lo < 0.0 {
+                Reason::InputMinimumSignedRange
+            } else {
+                Reason::InputMinimumRange
+            }));
         }
         Ok(InputResponse {
             min,
@@ -76,19 +94,24 @@ impl InputResponse {
         })
     }
 
-    /// 最小値だけを変えた写し（曲線はそのまま）。
+    /// 最小値だけを変えた写し（曲線はそのまま。最小値は 0〜1）。
     pub fn with_min(&self, min: f64) -> Result<InputResponse, CoreError> {
         InputResponse::new(min, self.curve().to_vec())
     }
 
-    /// 曲線だけを変えた写し（最小値はそのまま）。
+    /// 最小値だけを変えた写し（曲線はそのまま。最小値は −1〜1。色相・彩度・明度の影響元）。
+    pub fn with_min_signed(&self, min: f64) -> Result<InputResponse, CoreError> {
+        InputResponse::new_signed(min, self.curve().to_vec())
+    }
+
+    /// 曲線だけを変えた写し（最小値はそのまま。負の最小値も通る）。
     pub fn with_curve(&self, curve: Vec<CurvePoint>) -> Result<InputResponse, CoreError> {
-        InputResponse::new(self.min, curve)
+        InputResponse::build(self.min, curve, -1.0)
     }
 
     /// 検査済みの曲線へ差し替えた写し（最小値はそのまま。編集の部品が返した曲線を入れる）。
     pub fn with_curve_shape(&self, curve: Curve) -> Result<InputResponse, CoreError> {
-        InputResponse::from_curve(self.min, curve)
+        InputResponse::build_from_curve(self.min, curve, -1.0)
     }
 
     /// 入力 0 のときの係数（0〜1）。
@@ -124,6 +147,11 @@ impl InputResponse {
         InputResponse::new(self.min, self.curve().to_vec()).map(|_| ())
     }
 
+    /// [`InputResponse::validate`] の、最小値が −1〜1 の形（色相・彩度・明度の影響元）。
+    pub fn validate_signed(&self) -> Result<(), CoreError> {
+        InputResponse::new_signed(self.min, self.curve().to_vec()).map(|_| ())
+    }
+
     /// 入力 x（0〜1）の係数。恒等なら x そのもの。
     #[inline]
     pub fn apply(&self, x: f64) -> f64 {
@@ -149,7 +177,7 @@ impl InputResponse {
                 y: f(p.y),
             })
             .collect();
-        InputResponse::new(f(self.min), points).unwrap_or_else(|_| self.clone())
+        InputResponse::new_signed(f(self.min), points).unwrap_or_else(|_| self.clone())
     }
 }
 
@@ -223,6 +251,44 @@ impl Item {
             Item::MixPaint => "mix_paint",
             Item::MixDensity => "mix_density",
         }
+    }
+}
+
+/// 色の変化の影響元を持つ項目（[`Item`] とは別の並び。ランダムの乱数は色の変化の列から、ダブごとにこの順で引く）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ColorItem {
+    /// 先端の色相の変化。
+    Hue,
+    /// 先端の彩度の変化。
+    Saturation,
+    /// 先端の明度の変化。
+    Value,
+    /// サブ描画色混合率。
+    SubMix,
+}
+
+impl ColorItem {
+    /// すべての色の項目（並びは乱数を引く順・保存の順）。
+    pub const ALL: [ColorItem; 4] = [
+        ColorItem::Hue,
+        ColorItem::Saturation,
+        ColorItem::Value,
+        ColorItem::SubMix,
+    ];
+
+    /// 保存に使う名前。
+    pub fn id(self) -> &'static str {
+        match self {
+            ColorItem::Hue => "color_hue",
+            ColorItem::Saturation => "color_saturation",
+            ColorItem::Value => "color_value",
+            ColorItem::SubMix => "color_sub_mix",
+        }
+    }
+
+    /// 応えの最小値が −1〜1 か（色相・彩度・明度。サブ描画色混合率は 0〜1）。
+    pub fn signed(self) -> bool {
+        self != ColorItem::SubMix
     }
 }
 
@@ -331,6 +397,19 @@ impl Influence {
         v
     }
 
+    /// 使っている筆圧・傾き・速度の係数の積（ランダムを除く。どれも使っていなければ 1）。
+    #[inline]
+    pub(crate) fn others_product(&self, x: &InputValues) -> f64 {
+        let v = self.pressure_factor(x.pressure).unwrap_or(1.0);
+        self.times_others(v, x, None)
+    }
+
+    /// ランダムの係数（ランダムを使っていなければ 1）。u は [0, 1) の乱数。
+    #[inline]
+    pub(crate) fn random_factor(&self, u: f64) -> f64 {
+        self.random.factor(u).unwrap_or(1.0)
+    }
+
     /// 使っている入力の係数の積（筆圧・傾き・速度・ランダムの順。どの入力も使っていなければ None）。
     #[inline]
     pub(crate) fn factor(&self, x: &InputValues, random: Option<f64>) -> Option<f64> {
@@ -370,6 +449,12 @@ pub struct Influences {
     /// 色の混ぜの絵の具の量・濃さ（[`super::ColorMix`] の量・濃さ × 係数。混ぜるブラシだけに効く）。
     pub mix_paint: Influence,
     pub mix_density: Influence,
+    /// 色の変化の影響元（[`ColorItem`]。先端の色相・彩度・明度・サブ描画色混合率）。色相・彩度・明度の応えの最小値は −1〜1。
+    /// 変化量 = [`super::ColorDynamics`] の値 × 使っている入力の係数の積。
+    pub color_hue: Influence,
+    pub color_saturation: Influence,
+    pub color_value: Influence,
+    pub color_sub_mix: Influence,
     /// 速度の効きが一杯になる速さ（画素 / 時刻の単位。秒なら画素毎秒）。0 より大きい。速さは手ぶれ補正の後の筆の点の間の距離 ÷ 時刻の差で、
     /// 点の間は線形に補間する。時刻が進まない入力（時刻を渡さない）では最初の 0 のまま。
     pub speed_max: f64,
@@ -397,6 +482,10 @@ impl Influences {
             texture_density: Influence::OFF,
             mix_paint: Influence::OFF,
             mix_density: Influence::OFF,
+            color_hue: Influence::OFF,
+            color_saturation: Influence::OFF,
+            color_value: Influence::OFF,
+            color_sub_mix: Influence::OFF,
             speed_max: Influences::DEFAULT_SPEED_MAX,
         }
     }
@@ -434,6 +523,34 @@ impl Influences {
         }
     }
 
+    pub fn color(&self, item: ColorItem) -> &Influence {
+        match item {
+            ColorItem::Hue => &self.color_hue,
+            ColorItem::Saturation => &self.color_saturation,
+            ColorItem::Value => &self.color_value,
+            ColorItem::SubMix => &self.color_sub_mix,
+        }
+    }
+
+    pub fn color_mut(&mut self, item: ColorItem) -> &mut Influence {
+        match item {
+            ColorItem::Hue => &mut self.color_hue,
+            ColorItem::Saturation => &mut self.color_saturation,
+            ColorItem::Value => &mut self.color_value,
+            ColorItem::SubMix => &mut self.color_sub_mix,
+        }
+    }
+
+    /// 色の項目のどれかが、どれかの入力を使うか。
+    pub fn color_is_on(&self) -> bool {
+        ColorItem::ALL.into_iter().any(|i| self.color(i).is_on())
+    }
+
+    /// 色の項目のどれかがランダムを使うか。
+    pub fn color_uses_random(&self) -> bool {
+        ColorItem::ALL.into_iter().any(|i| self.color(i).random.on)
+    }
+
     /// 大きさ・不透明度・流量を筆圧で変えるか（簡単なブラシの切り替えの形）。
     pub fn pressure_switches(&self) -> PressureSwitches {
         PressureSwitches {
@@ -450,9 +567,14 @@ impl Influences {
         self.flow.pressure.on = switches.flow;
     }
 
-    /// どれかの項目が入力 input を使うか。
+    /// どれかの項目が入力 input を使うか（傾き・速度を求めるかの判定。色の項目も数える。色の項目のランダムは自分の乱数の列から引くので、
+    /// 影響元の乱数の列を要るかの判定（ランダム）には数えない）。
     pub fn uses(&self, input: Input) -> bool {
         Item::ALL.into_iter().any(|i| self.get(i).input(input).on)
+            || (input != Input::Random
+                && ColorItem::ALL
+                    .into_iter()
+                    .any(|i| self.color(i).input(input).on))
     }
 
     /// 範囲を確かめる（応えの最小値と曲線の形、速度の上限は 0 より大きい有限の数）。断ったら何も変えない。
@@ -460,6 +582,16 @@ impl Influences {
         for item in Item::ALL {
             for input in Input::ALL {
                 self.get(item).input(input).response.validate()?;
+            }
+        }
+        for item in ColorItem::ALL {
+            for input in Input::ALL {
+                let response = &self.color(item).input(input).response;
+                if item.signed() {
+                    response.validate_signed()?;
+                } else {
+                    response.validate()?;
+                }
             }
         }
         require_finite(self.speed_max, Reason::SpeedMax)?;
@@ -471,11 +603,25 @@ impl Influences {
         Ok(())
     }
 
+    /// 色の 4 項目の、筆圧・傾き・速度の係数の積（ランダムを除く。使わない項目は 1）。
+    pub(crate) fn color_others(&self, x: &InputValues) -> [f64; 4] {
+        let mut out = [1.0; 4];
+        if self.color_is_on() {
+            for (slot, item) in out.iter_mut().zip(ColorItem::ALL) {
+                *slot = self.color(item).others_product(x);
+            }
+        }
+        out
+    }
+
     /// 応えを画面の精度（f32）に丸めた写し（速さの上限はそのまま）。
     pub fn rounded_to_f32(&self) -> Influences {
         let mut out = self.clone();
         for item in Item::ALL {
             *out.get_mut(item) = self.get(item).rounded_to_f32();
+        }
+        for item in ColorItem::ALL {
+            *out.color_mut(item) = self.color(item).rounded_to_f32();
         }
         out
     }
@@ -580,6 +726,27 @@ mod tests {
         let full = InputResponse::new(1.0, vec![]).unwrap();
         assert_eq!(full.apply(0.0), 1.0);
         assert_eq!(full.apply(0.3), 1.0);
+    }
+
+    #[test]
+    fn a_signed_minimum_makes_the_factor_run_from_minus_one_to_one() {
+        let r = InputResponse::new_signed(-1.0, vec![]).unwrap();
+        assert_eq!(r.apply(0.0), -1.0);
+        assert_eq!(r.apply(0.5), 0.0);
+        assert_eq!(r.apply(1.0), 1.0);
+        assert!(r.validate().is_err() && r.validate_signed().is_ok());
+        // 曲線だけ変えても、最小値は保つ
+        let bent = r
+            .with_curve(vec![pt(0.0, 0.0), pt(0.5, 0.8), pt(1.0, 1.0)])
+            .unwrap();
+        assert_eq!(bent.min(), -1.0);
+        assert!((bent.apply(0.5) - (-1.0 + 2.0 * 0.8)).abs() < 1e-12);
+        // f32 に丸めても負の最小値は残る
+        let r = InputResponse::new_signed(-0.1, vec![])
+            .unwrap()
+            .rounded_to_f32();
+        assert_eq!(r.min(), -0.1f32 as f64);
+        assert!(InputResponse::new_signed(-1.01, vec![]).is_err());
     }
 
     #[test]

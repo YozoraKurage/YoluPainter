@@ -9,6 +9,7 @@ mod rayon_support;
 
 mod anti_alias;
 mod brush_sources;
+mod color_change;
 mod cross_symmetry;
 mod dab_digest;
 mod material;

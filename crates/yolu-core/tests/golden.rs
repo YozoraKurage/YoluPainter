@@ -1595,6 +1595,7 @@ fn brush_formulas_match_the_csharp_core_on_sweeps() {
                 brightness,
                 purity,
                 per_tip: true,
+                ..ColorDynamics::default()
             };
             let mut r = NetRandom::new((rng.next() & 0x7fffffff) as i32);
             for _ in 0..8 {

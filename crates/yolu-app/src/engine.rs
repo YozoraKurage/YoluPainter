@@ -19,6 +19,7 @@ pub use yolu_core::{
     ToneChannel, ToneCurves,
 };
 pub use yolu_core::{AntiAlias, ColorMix, MixGround, MixMode};
+pub use yolu_core::{ColorItem, ColorTarget, StrokeColorChange, TipColorChange};
 pub use yolu_core::{Influence, Influences, InputResponse, InputUse, PressureSwitches};
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。

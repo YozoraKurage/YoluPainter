@@ -7,11 +7,11 @@
 //!   プレビューの PNG。どの素材を使うかは `Variant` の参照の BLOB の名前から決める。名前で当たらない参照は、残った素材（素材の種類が
 //!   分かるときは種類ごと）と参照の数がちょうど合うときだけ並びで当て、そのときは推定として [`SutNote`] で知らせる。決められない・
 //!   取り出せない筆先は使わず、欠けたことを知らせる（黙って別の画像を使わない）。
-//! - 影響元設定（`*Effector`。大きさ・不透明度・流量・厚さ（真円率へ）・紙質濃度・絵の具量・絵の具濃度）は、筆圧・傾き・速さ・ランダムの
+//! - 影響元設定（`*Effector`。大きさ・不透明度・流量・厚さ（真円率へ）・紙質濃度・絵の具量・絵の具濃度・色相・彩度・明度・サブ描画色混合率）は、筆圧・傾き・速さ・ランダムの
 //!   切り替えと最小値、筆圧と傾きの曲線を影響元へ写す。速さ・ランダムの曲線は読めないので直線にして注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正（`FlickerReduction`。後補正は表せない）・間隔（種類ごと）・
 //!   筆先の角度・角度の影響元（ペンの向き・ペン軸の回転・線の方向・ランダム）・厚さの適用方向・最低 1 ピクセルも写す。写せたものは
 //!   [`SutMapped`]、近似したものは [`SutNote`] にも載せる。
-//! - 表せない設定（色の混ぜの旗だけのもの・吹き付け・デュアルブラシ・色の変化・合成モードなど）は、旗が立っているものだけ
+//! - 表せない設定（色の混ぜの旗だけのもの・吹き付け・デュアルブラシ・合成モードなど）は、旗が立っているものだけ
 //!   [`SutNote`] で知らせる。列の名前と単位は公開の解析からの推定を含むので、本物のファイルでの確かめは別に要る（確かめた所と
 //!   推測の所は docs/BRUSH_IMPORT.md）。
 //!
@@ -19,6 +19,7 @@
 
 mod blob;
 mod c2f;
+mod color;
 mod db;
 mod material;
 mod tar;
@@ -118,12 +119,6 @@ const VECTOR_MAGNET: &[&str] = &["brushusevectormagnet"];
 // （百分率の整数）
 const ROTATION_EFFECTOR: &[&str] = &["brushrotationeffector"];
 const ROTATION_RANDOM: &[&str] = &["brushrotationrandomscale"];
-const COLOR_CHANGE: &[&str] = &[
-    "brushhuechange",
-    "brushsaturationchange",
-    "brushvaluechange",
-    "brushsubcolor",
-];
 const BLEND_MODE: &[&str] = &["compositemode"];
 // 複数の筆先の繰り返し方法（0 繰り返し・1 折り返し・2 繰り返さない・3 ランダム・4 一巡のみ・5 ランダムに一巡。`…Type2` はいつも同じ値なので読まない）
 const PATTERN_ORDER: &[&str] = &["brushpatternordertype"];
@@ -136,7 +131,7 @@ const BLEND_DARKEN: &[&str] = &["brushblendpatternbydarken"];
 // `DualAntiAlias` はデュアルブラシごと表せないので読まない
 const ANTI_ALIAS: &[&str] = &["antialias"];
 
-/// 読む列の名前の全部。
+/// 読む列の名前の全部（色の変化の列は `color::KNOWN`）。
 const KNOWN: &[&[&str]] = &[
     SIZE,
     OPACITY,
@@ -193,7 +188,6 @@ const KNOWN: &[&[&str]] = &[
     VECTOR_MAGNET,
     ROTATION_EFFECTOR,
     ROTATION_RANDOM,
-    COLOR_CHANGE,
     BLEND_MODE,
     PATTERN_ORDER,
     PATTERN_REVERSE_H,
@@ -478,14 +472,17 @@ fn effector(
                 }
             },
             Input::Speed | Input::Random => {
-                notes.push(Unrepresented::ClipStudio(SutNote::InfluenceCurve {
-                    target,
-                    input: if input == Input::Speed {
-                        SutInput::Speed
-                    } else {
-                        SutInput::Random
-                    },
-                }));
+                // 色の変化の影響元の既定（ランダム）の BLOB はヘッダーだけで、曲線は付かない（付くと 44 バイト伸びる）。曲線が無ければ知らせない
+                if !target.is_color() || e.trailing > 0 {
+                    notes.push(Unrepresented::ClipStudio(SutNote::InfluenceCurve {
+                        target,
+                        input: if input == Input::Speed {
+                            SutInput::Speed
+                        } else {
+                            SutInput::Random
+                        },
+                    }));
+                }
                 None
             }
         };
@@ -500,9 +497,12 @@ fn effector(
                 target, input,
             )));
         }
-        let min = e.minimums[index];
-        let response =
-            InputResponse::new(min, points).or_else(|_| InputResponse::new(min, Vec::new()));
+        let (min, make): (f64, fn(f64, Vec<CurvePoint>) -> _) = if target.signed() {
+            (e.signed_minimums[index], InputResponse::new_signed)
+        } else {
+            (e.minimums[index], InputResponse::new)
+        };
+        let response = make(min, points).or_else(|_| make(min, Vec::new()));
         let Ok(response) = response else {
             continue;
         };
@@ -517,7 +517,7 @@ fn effector(
             mapped.push(item);
         }
     }
-    *brush.influences.get_mut(target.item()) = influence;
+    *target.influence_mut(&mut brush.influences) = influence;
 }
 
 /// 入り抜きの影響先の番号（`BrushInOutTarget` の項目の 1 つ目の整数）のうち、エンジンに同じ項目があるもの。実物で確かめた番号:
@@ -1245,7 +1245,6 @@ fn unrepresented_flags(row: &Row, notes: &mut Vec<Unrepresented>) {
     for (columns, note) in [
         (SPRAY, SutNote::Spray),
         (DUAL, SutNote::DualBrush),
-        (COLOR_CHANGE, SutNote::ColorChange),
         (BLEND_MODE, SutNote::BlendMode),
     ] {
         // 旗の列も、色の変化の値の列も、「0 でない数が 1 つでもある」で知る
@@ -1366,6 +1365,7 @@ fn brush_from_row(
     stabilizer(row, &mut brush, &mut notes, &mut mapped);
 
     color_mixing(row, &mut brush, &mut notes, &mut mapped);
+    color::color_change(row, &mut brush, &mut notes, &mut mapped);
     unrepresented_flags(row, &mut notes);
     Ok((brush, notes, mapped))
 }
@@ -1382,6 +1382,7 @@ pub(crate) fn read_sut(
     }
     let known: Vec<&str> = KNOWN
         .iter()
+        .chain(color::KNOWN)
         .flat_map(|names| names.iter().copied())
         .collect();
     let mut variants: Option<Variants<'_>> = db.variants(&known)?;

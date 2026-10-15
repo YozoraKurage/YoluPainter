@@ -34,8 +34,8 @@ pub use error::{
     SkippedPattern, UnsupportedFile,
 };
 pub use notes::{
-    AbrKind, ControlKind, DualNote, PatternNote, Setting, Source, SutInput, SutMapped, SutNote,
-    SutTarget, TextureNote, Unrepresented, VbrShape,
+    AbrKind, ColorNote, ControlKind, DualNote, PatternNote, Setting, Source, SutInput, SutMapped,
+    SutNote, SutTarget, TextureNote, Unrepresented, VbrShape,
 };
 pub use reader::MAX_DECODED_BYTES;
 

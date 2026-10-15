@@ -251,9 +251,10 @@ impl Stroke {
         &mut self,
         doc: &mut Document,
         look: Option<crate::brush::SurfaceDabLook>,
+        color: &[f64; 4],
     ) -> Result<(), CoreError> {
         doc.with_stroke(self.id, |state, _, _| {
-            state.begin_surface_dab(look);
+            state.begin_surface_dab(look, color);
             Ok(false)
         })
         .map(|_| ())

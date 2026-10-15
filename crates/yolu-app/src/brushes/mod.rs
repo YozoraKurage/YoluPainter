@@ -24,7 +24,7 @@ use egui::{Rect, Vec2};
 
 use crate::engine::{
     Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, Influence,
-    StrokeAssist,
+    StrokeAssist, StrokeColorChange, TipColorChange,
 };
 use crate::lang::Lang;
 use crate::m2;
@@ -201,6 +201,19 @@ pub fn canonical(brush: &Brush) -> Brush {
         },
         color: ColorDynamics {
             secondary: ColorDynamics::default().secondary,
+            // 色の変化は保存と同じ f32 の精度に丸める
+            tip: brush.color.tip.map(|t| TipColorChange {
+                hue: f(t.hue),
+                saturation: f(t.saturation),
+                value: f(t.value),
+            }),
+            sub_mix: f(brush.color.sub_mix),
+            stroke: brush.color.stroke.map(|s| StrokeColorChange {
+                hue: f(s.hue),
+                saturation: f(s.saturation),
+                value: f(s.value),
+                sub_mix: f(s.sub_mix),
+            }),
             ..brush.color
         },
         assist: StrokeAssist::default(),

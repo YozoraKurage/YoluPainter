@@ -148,7 +148,7 @@ impl ColorDynamics {
 }
 
 #[inline]
-fn mix(a: u8, b: u8, t: f64) -> u8 {
+pub(super) fn mix(a: u8, b: u8, t: f64) -> u8 {
     to_byte((a as f64 + (b as i32 - a as i32) as f64 * t) / 255.0)
 }
 

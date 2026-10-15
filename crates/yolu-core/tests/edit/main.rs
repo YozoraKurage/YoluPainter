@@ -14,6 +14,7 @@ mod bundle_layout;
 mod channels;
 mod clip_isolation;
 mod clipboard;
+mod color_change;
 mod comp2d;
 mod docops;
 mod export;
