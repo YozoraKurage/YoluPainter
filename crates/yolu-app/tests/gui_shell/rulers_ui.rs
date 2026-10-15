@@ -770,137 +770,149 @@ fn shot(h: &mut H, rect: Rect, name: &str) {
 
 #[test]
 fn snapshot_the_layer_list_with_ruler_icons() {
-    let lang = Lang::Ja;
-    let (mut h, a, _b) = two_layers(lang);
-    {
-        let s = &mut h.state_mut().state;
-        // A: 表示している定規、B: 全部隠した定規（薄いアイコン）、C: 定規の無いレイヤー
-        common::rulers::line(s, (0.0, 20.0), (64.0, 20.0));
-        common::rulers::symmetry_2d(s, (32.0, 32.0), (0.0, 1.0), 6, true);
-        let hidden = s.doc.add_layer("C").unwrap();
-        s.selected_layer = Some(hidden);
-        common::rulers::line(s, (0.0, 40.0), (64.0, 40.0));
-        let list: Vec<_> = s
-            .doc
-            .layer(hidden)
-            .unwrap()
-            .rulers()
-            .iter()
-            .cloned()
-            .map(|mut r| {
-                r.visible = false;
-                r
-            })
-            .collect();
-        s.doc.set_rulers(hidden, list, false).unwrap();
-        s.selected_layer = Some(a);
+    for lang in Lang::ALL {
+        let (mut h, a, _b) = two_layers(lang);
+        {
+            let s = &mut h.state_mut().state;
+            // A: 表示している定規、B: 全部隠した定規（薄いアイコン）、C: 定規の無いレイヤー
+            common::rulers::line(s, (0.0, 20.0), (64.0, 20.0));
+            common::rulers::symmetry_2d(s, (32.0, 32.0), (0.0, 1.0), 6, true);
+            let hidden = s.doc.add_layer("C").unwrap();
+            s.selected_layer = Some(hidden);
+            common::rulers::line(s, (0.0, 40.0), (64.0, 40.0));
+            let list: Vec<_> = s
+                .doc
+                .layer(hidden)
+                .unwrap()
+                .rulers()
+                .iter()
+                .cloned()
+                .map(|mut r| {
+                    r.visible = false;
+                    r
+                })
+                .collect();
+            s.doc.set_rulers(hidden, list, false).unwrap();
+            s.selected_layer = Some(a);
+        }
+        h.run();
+        let body = layers_body(&h);
+        let rect = Rect::from_min_max(body.min, pos2(body.right(), body.top() + 130.0));
+        if lang == Lang::Ja {
+            shot(
+                &mut h,
+                rect,
+                &format!("rulers_layer_list_{}", lang.pick("ja", "en")),
+            );
+        }
     }
-    h.run();
-    let body = layers_body(&h);
-    let rect = Rect::from_min_max(body.min, pos2(body.right(), body.top() + 130.0));
-    shot(
-        &mut h,
-        rect,
-        &format!("rulers_layer_list_{}", lang.pick("ja", "en")),
-    );
 }
 
 #[test]
 fn snapshot_the_ruler_section_of_the_properties_for_2d_and_3d() {
-    let lang = Lang::Ja;
-    for three_d in [false, true] {
-        let (mut h, _layer) = props_of(lang);
-        {
-            let s = &mut h.state_mut().state;
-            common::rulers::line(s, (0.0, 20.0), (64.0, 20.0));
-            if three_d {
-                common::rulers::mirror_3d(s, DVec3::new(0.2, 0.0, 0.0), DVec3::X);
-            } else {
-                common::rulers::symmetry_2d(s, (20.0, 40.0), (3.0, 4.0), 6, true);
+    for lang in Lang::ALL {
+        for three_d in [false, true] {
+            let (mut h, _layer) = props_of(lang);
+            {
+                let s = &mut h.state_mut().state;
+                common::rulers::line(s, (0.0, 20.0), (64.0, 20.0));
+                if three_d {
+                    common::rulers::mirror_3d(s, DVec3::new(0.2, 0.0, 0.0), DVec3::X);
+                } else {
+                    common::rulers::symmetry_2d(s, (20.0, 40.0), (3.0, 4.0), 6, true);
+                }
+            }
+            h.run();
+            let body = props_body(&h);
+            // 区分の終わり（2D は「キャンバスの中心」、3D は最後の「見えない面にも写す」）の下まで
+            let last = match (three_d, lang) {
+                (false, Lang::Ja) => "キャンバスの中心",
+                (false, Lang::En) => "Canvas Center",
+                (true, Lang::Ja) => "見えない面にも写す",
+                (true, Lang::En) => "Paint Hidden Surfaces",
+            };
+            let end = rect_of(&h, last, |r| body.contains(r.center())).bottom() + 8.0;
+            let rect = Rect::from_min_max(body.min, pos2(body.right(), end));
+            if lang == Lang::Ja {
+                shot(
+                    &mut h,
+                    rect,
+                    &format!(
+                        "rulers_props_{}_{}",
+                        if three_d { "3d" } else { "2d" },
+                        lang.pick("ja", "en")
+                    ),
+                );
             }
         }
-        h.run();
-        let body = props_body(&h);
-        // 区分の終わり（2D は「キャンバスの中心」、3D は最後の「見えない面にも写す」）の下まで
-        let last = match (three_d, lang) {
-            (false, Lang::Ja) => "キャンバスの中心",
-            (false, Lang::En) => "Canvas Center",
-            (true, Lang::Ja) => "見えない面にも写す",
-            (true, Lang::En) => "Paint Hidden Surfaces",
-        };
-        let end = rect_of(&h, last, |r| body.contains(r.center())).bottom() + 8.0;
-        let rect = Rect::from_min_max(body.min, pos2(body.right(), end));
-        shot(
-            &mut h,
-            rect,
-            &format!(
-                "rulers_props_{}_{}",
-                if three_d { "3d" } else { "2d" },
-                lang.pick("ja", "en")
-            ),
-        );
     }
 }
 
 #[test]
 fn snapshot_the_ruler_tool_properties() {
-    let lang = Lang::Ja;
-    let mut h = app(1600.0, 1000.0, 64);
-    {
-        let s = &mut h.state_mut().state;
-        s.lang = lang;
-        s.apply(Action::SelectTool(Tool::Ruler));
-        s.rulers.kind = RulerKind::Symmetry;
-        s.rulers.set_lines(6);
-        s.rulers.angle_step = true;
+    for lang in Lang::ALL {
+        let mut h = app(1600.0, 1000.0, 64);
+        {
+            let s = &mut h.state_mut().state;
+            s.lang = lang;
+            s.apply(Action::SelectTool(Tool::Ruler));
+            s.rulers.kind = RulerKind::Symmetry;
+            s.rulers.set_lines(6);
+            s.rulers.angle_step = true;
+        }
+        h.run();
+        // 撮る枠は、ツールプロパティの組の幅（行いっぱいに広がる「削除」の右）と、区分の終わり（最後の「特殊定規にスナップ」の下）に合わせる
+        let tab = h.state().tab_rects[&yolu_app::Tab::ToolProperties];
+        let in_column = |r: Rect| r.center().x < 400.0 && r.top() > tab.bottom();
+        let delete = rect_of(&h, lang.pick("削除", "Delete"), in_column);
+        let last = rect_of(
+            &h,
+            lang.pick("特殊定規にスナップ", "Snap to Special Ruler"),
+            in_column,
+        );
+        let rect = Rect::from_min_max(
+            pos2(tab.left() - 2.0, tab.top()),
+            pos2(delete.right() + 8.0, last.bottom() + 8.0),
+        );
+        if lang == Lang::Ja {
+            shot(
+                &mut h,
+                rect,
+                &format!("rulers_tool_props_{}", lang.pick("ja", "en")),
+            );
+        }
     }
-    h.run();
-    // 撮る枠は、ツールプロパティの組の幅（行いっぱいに広がる「削除」の右）と、区分の終わり（最後の「特殊定規にスナップ」の下）に合わせる
-    let tab = h.state().tab_rects[&yolu_app::Tab::ToolProperties];
-    let in_column = |r: Rect| r.center().x < 400.0 && r.top() > tab.bottom();
-    let delete = rect_of(&h, lang.pick("削除", "Delete"), in_column);
-    let last = rect_of(
-        &h,
-        lang.pick("特殊定規にスナップ", "Snap to Special Ruler"),
-        in_column,
-    );
-    let rect = Rect::from_min_max(
-        pos2(tab.left() - 2.0, tab.top()),
-        pos2(delete.right() + 8.0, last.bottom() + 8.0),
-    );
-    shot(
-        &mut h,
-        rect,
-        &format!("rulers_tool_props_{}", lang.pick("ja", "en")),
-    );
 }
 
 #[test]
 fn snapshot_the_canvas_shows_the_effective_ruler_strong_and_the_other_special_ruler_faint() {
-    let lang = Lang::Ja;
-    let mut h = app(1280.0, 800.0, 64);
-    {
-        let s = &mut h.state_mut().state;
-        s.lang = lang;
-        s.sel.animate = false;
-        common::rulers::add_canvas(
-            s,
-            RulerKind::Parallel,
-            DVec2::new(0.0, 10.0),
-            DVec2::new(64.0, 22.0),
-        );
-        // 後から作った対称定規が、スナップする特殊定規（平行線は印が外れて薄くなる）
-        common::rulers::symmetry_2d(s, (32.0, 36.0), (2.0, 1.0), 6, true);
-        common::rulers::line(s, (4.0, 56.0), (60.0, 52.0));
-        s.apply(Action::SelectTool(Tool::Ruler));
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        {
+            let s = &mut h.state_mut().state;
+            s.lang = lang;
+            s.sel.animate = false;
+            common::rulers::add_canvas(
+                s,
+                RulerKind::Parallel,
+                DVec2::new(0.0, 10.0),
+                DVec2::new(64.0, 22.0),
+            );
+            // 後から作った対称定規が、スナップする特殊定規（平行線は印が外れて薄くなる）
+            common::rulers::symmetry_2d(s, (32.0, 36.0), (2.0, 1.0), 6, true);
+            common::rulers::line(s, (4.0, 56.0), (60.0, 52.0));
+            s.apply(Action::SelectTool(Tool::Ruler));
+        }
+        h.run();
+        let rect = canvas_rect(&h);
+        if lang == Lang::Ja {
+            shot(
+                &mut h,
+                rect,
+                &format!("rulers_canvas_{}", lang.pick("ja", "en")),
+            );
+        }
     }
-    h.run();
-    let rect = canvas_rect(&h);
-    shot(
-        &mut h,
-        rect,
-        &format!("rulers_canvas_{}", lang.pick("ja", "en")),
-    );
 }
 
 /// いま描いた文字の全部。

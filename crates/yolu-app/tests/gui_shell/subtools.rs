@@ -991,22 +991,25 @@ fn shot_width(h: &mut H, name: &str, width: f32) {
 
 #[test]
 fn snapshots_of_the_sub_tool_panel_for_the_bucket_the_selection_and_the_liquify_tools() {
-    let (lang, name) = (Lang::Ja, "ja");
-    for (tool, label) in [
-        (Tool::Fill, "fill"),
-        (Tool::SelectRect, "select"),
-        (Tool::Gradient, "gradient"),
-        (Tool::Liquify, "liquify"),
-        (Tool::Eraser, "eraser"),
-    ] {
-        let mut h = app(1280.0, 800.0, 128);
-        language(&mut h, lang);
-        h.state_mut().state.sel.animate = false;
-        pick(&mut h, tool);
-        if tool == Tool::Fill {
-            click_row(&mut h, lang.pick("近い色", "Similar colors"));
+    for (lang, name) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
+        for (tool, label) in [
+            (Tool::Fill, "fill"),
+            (Tool::SelectRect, "select"),
+            (Tool::Gradient, "gradient"),
+            (Tool::Liquify, "liquify"),
+            (Tool::Eraser, "eraser"),
+        ] {
+            let mut h = app(1280.0, 800.0, 128);
+            language(&mut h, lang);
+            h.state_mut().state.sel.animate = false;
+            pick(&mut h, tool);
+            if tool == Tool::Fill {
+                click_row(&mut h, lang.pick("近い色", "Similar colors"));
+            }
+            if lang == Lang::Ja {
+                shot(&mut h, &format!("subtools_{label}_{name}"));
+            }
         }
-        shot(&mut h, &format!("subtools_{label}_{name}"));
     }
 }
 
