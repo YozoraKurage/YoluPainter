@@ -2107,6 +2107,53 @@ fn a_layer_far_bigger_than_the_canvas_is_cut_while_reading_so_it_fits_the_budget
     assert!(note(&notes, ImportFeature::OutsideCanvas).is_some());
 }
 
+#[test]
+fn an_uncompressed_layer_bigger_than_the_canvas_keeps_the_pixels_inside_and_tells_the_outside() {
+    // 64×64 のキャンバスに、無圧縮の 1500×1200 のレイヤー（場所 (-700, -500)）。チャンネルを行ごとに読む道で、画素は場所ごとに違う値
+    let (lw, lh) = (1500usize, 1200usize);
+    let mut l = red("大", (-500, -700, 700, 800));
+    l.compression = 0;
+    for y in 0..lh {
+        for x in 0..lw {
+            let i = (y * lw + x) * 4;
+            l.rgba[i..i + 4].copy_from_slice(&[(x % 251) as u8, (y % 241) as u8, 9, 255]);
+        }
+    }
+    let (d, notes) = imported(&Psd::new(64, 64, vec![l]).build());
+    for (cx, cy) in [(0usize, 0usize), (63, 0), (0, 63), (63, 63), (30, 20)] {
+        let (x, y) = (cx + 700, cy + 500);
+        assert_eq!(
+            pixel(&d, "大", cx as u32, cy as u32),
+            [(x % 251) as u8, (y % 241) as u8, 9, 255],
+            "({cx}, {cy})"
+        );
+    }
+    assert!(note(&notes, ImportFeature::OutsideCanvas).is_some());
+}
+
+#[test]
+fn records_after_the_ylp_layer_limit_are_counted_without_refusing_for_their_own_size() {
+    // 2049 枚で .ylp の上限を超えたあとの記録は、数えるだけ: 付加情報が予算を超える記録があっても、断る理由は .ylp の上限のまま
+    let leaf = |i: i32| L::new(&format!("L{i}"), (0, 0, 1, 1), [1, 2, 3, 255]).id(i + 1);
+    let mut layers: Vec<L> = (0..2049).map(leaf).collect();
+    layers.push(leaf(2049).tag(b"SoLd", &vec![7u8; 2 * MIB as usize]));
+    let bytes = Psd::new(2, 2, layers).build();
+    assert_eq!(
+        refused(&bytes, MIB),
+        CopyRefusal::LayerCountOverLimit {
+            count: 2050,
+            limit: 2048
+        }
+    );
+    // 上限の中にある記録なら、今までどおり付加情報の大きさで断る
+    let mut layers: Vec<L> = (0..3).map(leaf).collect();
+    layers.push(leaf(3).tag(b"SoLd", &vec![7u8; 2 * MIB as usize]));
+    assert_eq!(
+        refused(&Psd::new(2, 2, layers).build(), MIB),
+        CopyRefusal::LayerDataTooLarge { layer: "#4".into() }
+    );
+}
+
 /// `n` 個のグループを入れ子にして、一番内側にレイヤー 1 枚を置いた PSD。
 fn nested_groups(n: usize) -> Vec<u8> {
     let mut layers = Vec::new();

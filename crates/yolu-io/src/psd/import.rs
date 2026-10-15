@@ -946,6 +946,9 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     for i in 0..count {
         cancelled(o.cancel)?;
         doomed |= i >= limits.max_layers;
+        // 文書のレイヤーがもう .ylp の上限を超えている: 断る理由は「.ylp の上限」に決まっているので、以降の記録は数えるだけにして、
+        // 付加情報の大きさ・記録の誤りでは断らない（その記録は区切りでなくレイヤーとして数える）
+        let over_limit = layers_seen > crate::MAX_DOCUMENT_LAYERS;
         let mut head = [0u8; 18];
         r.read_exact(&mut head)?;
         let n = u16::from_be_bytes([head[16], head[17]]) as usize;
@@ -960,6 +963,11 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         }
         // 付加情報はレイヤーごとに全部メモリへ読む。固定の上限でなく、レイヤーの画素と同じ予算（設定の「レイヤーのメモリ」）に合わせる
         if u64::from(extra) > o.source_budget {
+            if over_limit {
+                skip(r, u64::from(extra))?;
+                layers_seen += 1;
+                continue;
+            }
             return Err(Stop::Refused(CopyRefusal::LayerDataTooLarge {
                 layer: format!("#{}", i + 1),
             }));
@@ -975,9 +983,17 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
         c.drop_layer = false;
         s.key = [0; 4];
         let mut rd = Reader::lenient(&buf);
-        let mut rec = read::record(&mut rd, &mut s).map_err(|e| in_layer(e, i + 1))?;
+        let record = read::record(&mut rd, &mut s);
         let c = s.copy.as_mut().unwrap();
-        if let Some(why) = c.take_refusal() {
+        let refusal = c.take_refusal();
+        if over_limit && (record.is_err() || refusal.is_some()) {
+            c.discard_layer();
+            c.in_layer = false;
+            layers_seen += 1;
+            continue;
+        }
+        let mut rec = record.map_err(|e| in_layer(e, i + 1))?;
+        if let Some(why) = refusal {
             return Err(Stop::Refused(why));
         }
         // マスクの定義があってチャンネルが無ければ、値は分からないので、矩形を空にして既定値だけにする
@@ -1219,12 +1235,45 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
             if tell(r)? + len as u64 > info_end {
                 return malformed("チャンネルがレイヤーの情報を超えています");
             }
-            let mut buf = vec![0u8; len];
-            r.read_exact(&mut buf)?;
-            if buf.len() < 2 {
-                continue;
+            // キャンバスからはみ出すレイヤーの無圧縮のチャンネルは、全バイトを持たずに 1 行ずつ読む（圧縮したチャンネルは、ファイルの中の大きさだけ持つ）
+            let mut buf = Vec::new();
+            let mut raw_window = None;
+            if let Some(win) = window.filter(|_| id != -2 && len >= 2) {
+                let compression = read_u16(r)?;
+                if compression == 0 {
+                    let component = if id == -1 { 3 } else { id as usize };
+                    raw_window = Some(
+                        read::decode_window_raw(
+                            r,
+                            len - 2,
+                            cw,
+                            ch,
+                            win,
+                            &mut l.pixels_rgba,
+                            component,
+                            4,
+                        )
+                        .map(|outside| {
+                            if id == -1 {
+                                alpha_outside = Some(outside)
+                            }
+                        }),
+                    );
+                } else {
+                    buf = vec![0u8; len];
+                    buf[..2].copy_from_slice(&compression.to_be_bytes());
+                    r.read_exact(&mut buf[2..])?;
+                }
+            } else {
+                buf = vec![0u8; len];
+                r.read_exact(&mut buf)?;
+                if buf.len() < 2 {
+                    continue;
+                }
             }
-            let decoded = if id == -2 {
+            let decoded = if let Some(done) = raw_window {
+                done
+            } else if id == -2 {
                 let m = l.mask.as_mut().unwrap();
                 read::decode_rows(Reader::lenient(&buf), cw, ch, &mut m.pixels, 0, 1, &mut s)
             } else if let Some(win) = window {

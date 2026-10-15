@@ -1037,6 +1037,47 @@ impl Window {
         self.y1 - self.y0
     }
 }
+/// 矩形の 1 行（y 行目）の範囲の部分を `out` の component へ写す。範囲の外に 0 でない値があれば true。
+fn window_row(
+    window: Window,
+    out: &mut [u8],
+    component: usize,
+    stride: usize,
+    y: usize,
+    row: &[u8],
+) -> bool {
+    if (window.y0..window.y1).contains(&y) {
+        let dest = &mut out[(y - window.y0) * window.width() * stride..];
+        for (i, v) in row[window.x0..window.x1].iter().enumerate() {
+            dest[i * stride + component] = *v;
+        }
+        row[..window.x0].iter().any(|v| *v != 0) || row[window.x1..].iter().any(|v| *v != 0)
+    } else {
+        row.iter().any(|v| *v != 0)
+    }
+}
+/// `decode_window` の、無圧縮（圧縮 0）のチャンネルをファイルから 1 行ずつ読む形。`len` は圧縮の種類（2 バイト。呼び手が読み済み）を除いたバイト数。
+/// チャンネルの全バイトを持たず、持つのは行 1 本。書く値・誤りの文は `decode_window` の無圧縮と同じ。
+pub(super) fn decode_window_raw<R: Read>(
+    r: &mut R,
+    len: usize,
+    w: u32,
+    h: u32,
+    window: Window,
+    out: &mut [u8],
+    component: usize,
+    stride: usize,
+) -> Result<bool> {
+    let (w, h) = (w as usize, h as usize);
+    check(len == w * h, "raw チャンネル長が矩形と不一致です")?;
+    let mut outside = false;
+    let mut row = vec![0u8; w];
+    for y in 0..h {
+        r.read_exact(&mut row)?;
+        outside |= window_row(window, out, component, stride, y, &row);
+    }
+    Ok(outside)
+}
 /// `decode` の、矩形の中の範囲だけを `out`（範囲の幅 × stride のバイトの行が上から並ぶ面）の component へ書く形。矩形全体の面は持たず、1 行ずつ展開して範囲を写す
 /// （キャンバスよりずっと大きなレイヤーを、全画素のメモリを取らずに読む）。書く値・誤り・知らせは `decode` と同じ。範囲の外に 0 でない値があれば true。
 pub(super) fn decode_window(
@@ -1053,16 +1094,7 @@ pub(super) fn decode_window(
     let (w, h) = (w as usize, h as usize);
     let mut outside = false;
     let mut visit = |y: usize, row: &[u8]| {
-        if (window.y0..window.y1).contains(&y) {
-            let dest = &mut out[(y - window.y0) * window.width() * stride..];
-            for (i, v) in row[window.x0..window.x1].iter().enumerate() {
-                dest[i * stride + component] = *v;
-            }
-            outside |= row[..window.x0].iter().any(|v| *v != 0)
-                || row[window.x1..].iter().any(|v| *v != 0);
-        } else {
-            outside |= row.iter().any(|v| *v != 0);
-        }
+        outside |= window_row(window, out, component, stride, y, row);
     };
     match compression {
         0 => {
