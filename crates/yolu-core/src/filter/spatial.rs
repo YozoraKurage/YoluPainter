@@ -35,9 +35,14 @@ pub(super) fn working_bytes(
         Settings::SlopeBlur { .. } | Settings::DirectionalBlur { .. } | Settings::Warp { .. } => {
             input * 12 + output * 4
         }
-        // 入力・出力と、行ごとの最大・最小の表（3 チャンネル × 段の数）
-        Settings::Morphology { .. } => {
-            input * (4 + 3 * u64::from(levels(input_width as usize))) + output * 4
+        // 入力・出力と、行ごとの最大・最小の表（3 チャンネル × 段の数）、出力の 1 行の最大・最小（`best`。出力の幅 ≤ 入力の幅）、
+        // 行ごとの区間の表（`spans`。半径 + 1 行分）
+        Settings::Morphology { radius, .. } => {
+            let levels = u64::from(levels(input_width as usize));
+            // 1 行の区間の数は `runs` の切れ目の数 − 1 以下: 切れ目は 4 つ + 2 × 段の数（重なりは減るだけ）
+            let runs_per_row = 3 + 2 * levels;
+            let spans = (u64::from(*radius) + 1) * runs_per_row * std::mem::size_of::<Run>() as u64;
+            input * (4 + 3 * levels) + output * 4 + input_width * 3 + spans
         }
         // ぼかし（`gaussian_q`）と同じ作業に、ぼかした画素（グローは明るい所の画素）を 1 枚
         Settings::EdgeDetect { .. } | Settings::HighPass { .. } | Settings::Glow { .. } => {
@@ -534,7 +539,7 @@ fn morphology(
 
 /// 行の 1 つの区間: 出力の列 start から len 画素。ウィンドウの左の端の列は、画素ごとに 1 つずつ進む並び（left_fixed でなければ。画像の左端で
 /// 止まれば全部同じ列）。右も同じ。level は 2 つの段の値（行の x から 2^level 画素の最大・最小）の段。
-struct Run {
+pub(super) struct Run {
     start: usize,
     len: usize,
     left: usize,

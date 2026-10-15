@@ -299,3 +299,45 @@ fn coarse_spatial_stages_stay_in_range_or_drop_out() {
         assert_eq!(s.coarse(1), Some(s.clone()));
     }
 }
+
+#[test]
+fn morphology_working_bytes_include_the_row_buffer_and_span_table() {
+    // 1 ブロック = 画像全体（halo は画像の外へは広がらない）。入力・出力とも 64 × 64、段の数は 7
+    let (size, radius) = (64u32, 8u32);
+    let stages = [Stage::new(Settings::Morphology {
+        mode: MorphologyMode::Dilate,
+        radius,
+    })];
+    let pixels = u64::from(size) * u64::from(size);
+    let before = pixels * (4 + 3 * 7) + pixels * 4;
+    let after = block_working_bytes(&stages, size, size, size).unwrap();
+    // 行のバッファ（幅 × 3）と区間の表（(半径 + 1) × (3 + 2 × 段) × 区間 1 つ）の分が足されている
+    let spans = u64::from(radius + 1) * (3 + 2 * 7) * std::mem::size_of::<spatial::Run>() as u64;
+    assert_eq!(after, before + u64::from(size) * 3 + spans);
+
+    let mut buf = Vec::new();
+    for i in 0..size * size {
+        buf.extend_from_slice(&[(i * 7) as u8, (i * 13) as u8, (i * 29) as u8, 255]);
+    }
+    let source = Image::new(&buf, size, size).unwrap();
+    let region = Rect::new(0, 0, size, size);
+    let output = pixels * 4;
+    let run = |budget| {
+        let options = Options {
+            working_budget: budget,
+            block_size: size,
+            ..Options::default()
+        };
+        evaluate(&source, ValueType::Scalar, &stages, region, &options)
+    };
+    // 前の見積りの予算では断り、新しい見積りの予算では通る（1 バイト足りなければ断る）
+    assert_eq!(
+        run(before + output).unwrap_err(),
+        Error::Budget {
+            needed: after + output,
+            budget: before + output
+        }
+    );
+    assert!(run(after + output).is_ok());
+    assert!(matches!(run(after + output - 1), Err(Error::Budget { .. })));
+}
