@@ -1,7 +1,7 @@
 //! PSD の調整レイヤーとしての、色調補正の 6 種（グラデーションマップ `grdm`・トーンカーブ `curv`・カラーバランス `blnc`・明るさ/コントラスト `brit`・
 //! 2 値化 `thrs`・ポスタリゼーション `post`）の読み書き。PSD の刻みに乗る値はそのまま往復し、刻みの間の値は丸めずレイヤーごとの理由で断り、
 //! 読み込みで表せないものは PreserveOnly と診断する。Photoshop・CLIP STUDIO の実物のファイルは持ち込まず、試験の中で一から組む
-//! （書いた PSD を psd-tools で読み直す確かめは `tools/io-fixtures/psd_tools_check.py`。Photoshop の実機は未確認）。
+//! （Photoshop の実機は未確認）。
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::generator::{ColorStop, OpacityStop, Ramp};
 use yolu_core::{
@@ -751,7 +751,6 @@ fn the_tool_and_psd_agree_on_every_composite_pixel() {
 }
 
 /// 書いた PSD を psd-tools で読み直すための出力（`YOLU_PSD_DUMP=<ディレクトリ>`。ふだんは何もしない）。
-/// `python3 tools/io-fixtures/psd_tools_check.py <ディレクトリ>` が値を照らす。
 #[test]
 fn dump_psd_for_psd_tools() {
     let Ok(dir) = std::env::var("YOLU_PSD_DUMP") else {

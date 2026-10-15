@@ -1,6 +1,5 @@
 //! 面の計算（geometry）を Unity 版の SurfaceGeometry（Editor/Preview の原文を本物の UnityEngine.CoreModule と組んだもの）の出力と
-//! ビットで照らし合わせる。台本は tests/golden/surface/cases.txt、正解は同じフォルダの index.txt（tools/csharp-golden/run.sh surface で作る）。
-//! 形の作り方・乱数・台本の読み方・出力の書き方は tools/csharp-golden/SurfaceGolden.cs と揃えてある（片方を変えたら両方を変える）。
+//! ビットで照らし合わせる。台本は tests/golden/surface/cases.txt、正解は同じフォルダの index.txt（前の Unity 版の C# の出力を引き継いだ物。作り直すときは Rust の出力から作る）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::collections::BTreeMap;
@@ -554,10 +553,7 @@ fn surface_geometry_matches_unity_bit_for_bit() {
     let mut compared = 0;
     for c in &cases {
         let Some((params, outs)) = expected.get(&c.name) else {
-            failures.push(format!(
-                "{}: 正解に無い（run.sh surface で作り直す）",
-                c.name
-            ));
+            failures.push(format!("{}: 正解に無い（Rust の出力から作り直す）", c.name));
             continue;
         };
         if *params != c.params.hex() {

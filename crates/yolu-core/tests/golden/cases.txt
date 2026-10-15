@@ -1534,7 +1534,7 @@ out layer 0
 out layer 1
 
 # ───────── 選択範囲 ─────────
-# 選択範囲の命令（Golden.cs と golden.rs の頭の書き方に足したもの）:
+# 選択範囲の命令（golden.rs の頭の書き方に足したもの）:
 #   select 組み合わせ 形…     replace|add|sub|inter と、形 rect X0 Y0 X1 Y1 | ellipse CX CY RX RY | poly X,Y… |
 #                             wand レイヤー|* ch X Y 許し幅 つながり(0|1) | all | none。今の選択範囲（無ければ空）と組み合わせて置く
 #   modify grow R | shrink R 端 | border R 端 | feather R 端 | sharpen | invert    今の選択範囲を変える（無ければ断る）

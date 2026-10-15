@@ -16,7 +16,7 @@ fn native(doc: &Document) -> NativeDocument {
     NativeDocument::from_core(doc).unwrap()
 }
 
-/// tools/csharp-golden/Golden.cs の SelectionFixtures と同じ作り方。
+/// 前の C# 側の選択範囲の入力と同じ作り方（正解は `fixtures/selection/`）。
 fn shapes(doc: &Document) -> Vec<(&'static str, SelectionMask)> {
     let ellipse = |cx, cy, rx, ry| SelectionMask::ellipse(doc, cx, cy, rx, ry).unwrap();
     let budget = yolu_core::selection::DEFAULT_WORKING_BUDGET_BYTES;

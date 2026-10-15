@@ -175,9 +175,6 @@ OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilTo
 | Wine | LGPL-2.1-or-later。使用環境の `/usr/share/doc/wine/copyright` と [上流の COPYING.LIB](https://gitlab.winehq.org/wine/wine/-/blob/master/COPYING.LIB) |
 | MinGW-w64 の GCC・binutils | ツール本体は GPL 系。ランタイムは別の許諾・例外を持つため [MinGW-w64](https://www.mingw-w64.org/) と各インストールの copyright を確認 |
 
-Wine 用の `bcryptprimitives.dll` はこのリポジトリの小さな接続コードから試験時だけ作る。
-Windows 配布物に入れない。Wine や Windows の DLL をコピーして作るものではない。
-
 ## 同梱の筆先とブラシ形式
 
 `crates/yolu-brush-sets/data/krita4/brushes/` は、Krita の `Krita_4_Default_Resources.bundle` の筆先 76 個（`.png`・`.gih`・`.gbr`）を

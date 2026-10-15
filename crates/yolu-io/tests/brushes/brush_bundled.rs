@@ -136,7 +136,7 @@ fn bundled_hoses_and_pngs_keep_their_tips() {
 }
 
 /// 同梱の PNG の筆先を、Rust とは別の復号器（Pillow）で求めた被覆率の指紋と比べる（Unity 版の PNG の読みは Core の外の
-/// Texture2D.LoadImage を通るので C# の照合に入らない。同じ式を Pillow の RGBA 変換の上で組んだもの。tools/brush-fixtures/png_tips.py）。
+/// Texture2D.LoadImage を通るので C# の照合に入らない。同じ式を Pillow の RGBA 変換の上で組んだ指紋）。
 #[test]
 fn bundled_png_tips_match_an_independent_decoder() {
     let expected = std::fs::read_to_string(format!(

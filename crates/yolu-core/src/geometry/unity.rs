@@ -238,7 +238,7 @@ mod tests {
     #[test]
     #[allow(clippy::excessive_precision)] // 同梱の Mono が "R" で書いた値をそのまま
     fn single_precision_like_mono() {
-        // 同梱の Mono で求めた値（tools/csharp-golden の確かめ。0.1f × 0.2f + 0.3f を FMA に縮めない）
+        // 同梱の Mono で求めた値（0.1f × 0.2f + 0.3f を FMA に縮めない）
         let (x, y, z) = (0.1f32, 0.2f32, 0.3f32);
         assert_eq!((x * y + z).to_bits(), 0x3ea3d70b);
         assert_eq!(normalized(Vec3::new(x, y, z)).x, 0.2672612);

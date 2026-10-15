@@ -297,7 +297,7 @@ fn brush(@builtin(global_invocation_id) id:vec3u) {
  output_pixels[i]=pack(result);
 }
 
-// 表示先は読み取らず、各呼び出しが担当する画素だけを書く。
+// 表示先は読み取らず、各呼び出しが受け持つ画素だけを書く。
 @group(0) @binding(5) var display_image: texture_storage_2d<rgba8unorm, write>;
 @group(0) @binding(6) var<storage, read> tile_coords: array<vec2u>;
 @compute @workgroup_size(64)

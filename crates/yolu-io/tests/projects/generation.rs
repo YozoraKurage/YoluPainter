@@ -1053,7 +1053,7 @@ fn copy_dir(from: &Path, to: &Path) {
 
 #[test]
 fn a_store_written_by_the_unity_code_is_read_back_listed_and_carried_on() {
-    // `tools/io-fixtures` が Unity 版の `GenerationStore.Commit` で書いた 2 世代（変わらない中身は共有）。置き場を触るので、写しで試す
+    // Unity 版の `GenerationStore.Commit` で書いた 2 世代（変わらない中身は共有）。置き場を触るので、写しで試す
     let dir = Dir::new();
     copy_dir(&fixture_path("unity-generation"), &dir.0);
     let store = GenerationStore::new(&dir.0);

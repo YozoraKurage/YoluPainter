@@ -1,5 +1,5 @@
 //! 効果（フィルターのスタック・Generator・Anchor・塗りつぶしの画像と投影・グラデーション）の正本と core の行き来。
-//! 正解は C# の実際の書き手（`tools/io-fixtures/EffectFixture.cs`）が作った正本と、同じ文書のレイヤーごとの評価した出力・入力。
+//! 正解は C# の実際の書き手が作った正本と、同じ文書のレイヤーごとの評価した出力・入力。
 //! 全チャンネルの合成（`*.composite`）は、合成の式が f32 の core の式になってから core で撮り直した（`YOLU_GOLDEN_UPDATE=1`）。
 use yolu_core::generator::{MapKind, MapState};
 use yolu_core::{
@@ -1098,8 +1098,8 @@ fn every_step_of_editing_effects_round_trips() {
 }
 
 /// 編集 API で作った文書の正本（固定の ID で作るので、ファイルと同じバイト列になる）。作り直すときは
-/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp effects_bridge::rust_written_effects_fixture_is`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --rust-written-effects` で Unity 版の読み手の記録を取り直す。
+/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp effects_bridge::rust_written_effects_fixture_is`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn rust_written_effects_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&edited_effects_document())

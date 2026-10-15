@@ -1,5 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../../target/determinism/dotnet/obj/</BaseIntermediateOutputPath>
-  </PropertyGroup>
-</Project>

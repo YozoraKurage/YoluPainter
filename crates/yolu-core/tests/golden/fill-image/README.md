@@ -1,10 +1,10 @@
 # 塗りつぶし投影の C# 正解
 
-`tools/csharp-golden/fill.sh golden` で再生成します（C# の元は Unity ブリッジのタグ `0.4.0` の `Runtime/Core`。場所は環境変数 `YOLUPAINTER_UNITY_SOURCE`）。すべて人工データです。
+前の Unity 版の C# Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`）の出力を引き継いだ物です。作り直すときは Rust の出力から作ります。すべて人工データです。
 
 異方性を切った道（`FillInput::anisotropic`・`shape_anisotropic` が false）の正解です。入れた道の正解は Rust が撮った [`../fill-image-anisotropic/`](../fill-image-anisotropic/README.md) にあります。
 
-`<mode>-<variant>.rgba` は37×29、straight RGBA8、左下からの行優先です。mode は0 UV、1トライプラナー、2平面、3球面、4円柱、5デカール。variant 0〜7 の入力は `tools/csharp-golden/FillGolden.cs` と Rust の `tests/support/fill_cases.rs` にあります。評価式は C# の原文を呼び出し、ここで再実装していません。
+`<mode>-<variant>.rgba` は37×29、straight RGBA8、左下からの行優先です。mode は0 UV、1トライプラナー、2平面、3球面、4円柱、5デカール。variant 0〜7 の入力は Rust の `tests/support/fill_cases.rs` にあります。
 
 `decal-values-<variant>.rgba` はデカール（mode 5）の `ApplyDecalToValue`。同じ variant 0〜7 の設定に、座標だけで決まる人工の値（`tests/support/fill_cases.rs` の `decal_values`）を渡した結果で、形式は上と同じです。
 

@@ -1,5 +1,5 @@
-//! レイヤーのロック（正本の版 12。属性の印のビット 1 と、直後の int）の読み書き。正解は C# の実際の書き手（`tools/io-fixtures/M2Fixture.cs` の
-//! `--locks`）が作った `locks-v21.utpaint` と、Rust が書いて C# の読み手に読ませた `rust-written-locks-v21.*`。ロックは合成を変えない。
+//! レイヤーのロック（正本の版 12。属性の印のビット 1 と、直後の int）の読み書き。正解は C# の実際の書き手が作った
+//!  `locks-v21.utpaint` と、Rust が書いて C# の読み手に読ませた `rust-written-locks-v21.*`。ロックは合成を変えない。
 use yolu_core::{
     BlendMode, Channel, ChannelBlend, CoreError, Document, LayerId, LayerKind, LayerLocks, Rect,
 };
@@ -149,8 +149,8 @@ fn a_native_document_written_by_csharp_with_locks_reads_into_core_and_writes_bac
 }
 
 /// Rust が編集してロックを付け外しした版 21。固定の ID で作り、ファイルと同じバイト列になる。作り直すときは
-/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp layer_locks::rust_written`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --rust-written-locks` で Unity 版の読み手の記録を取り直す。
+/// `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp layer_locks::rust_written`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 fn edited_locked_document() -> Document {
     let mut core = NativeDocument::read(&read("locks-v21.utpaint"))
         .unwrap()

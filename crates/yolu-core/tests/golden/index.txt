@@ -1,4 +1,4 @@
-# 生成: tools/csharp-golden（手で書き換えない）。Unity 版の C# の Core の出力。
+# 前の Unity 版の C# の出力を引き継いだ物（手で書き換えない。作り直すときは Rust の出力から作る）。Unity 版の C# の Core の出力。
 # source: YoluPainter 94c81415171f Runtime/Core=1582c88a9f0607c1 debug
 case blend_Normal params=1f4737c237f3eab9
 out 0 composite 24x20

@@ -1,4 +1,4 @@
-# 名前 操作 変種 種（tools/csharp-golden/run.sh clipboard が、C# の Core の出力の SHA-256 を index.txt へ書く。変種の意味は ClipboardGolden.cs）
+# 名前 操作 変種 種（正解は index.txt の C# の Core の出力の SHA-256。作り直すときは `YOLU_GOLDEN_UPDATE=1`）
 clipcopy_0_0 clipcopy 0 0
 clipcopy_0_1 clipcopy 0 1
 clipcopy_0_2 clipcopy 0 2

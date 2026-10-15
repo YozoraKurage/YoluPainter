@@ -14,7 +14,7 @@ GPU・画面の試験には動作する描画バックエンドが必要です�
 
 レイヤーの合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も Unity 版 C# の正解と照らしています。
 
-Unity 版 C# との照合には、リポジトリに収録された人工データを使います。core の正解の再生成ツールは `tools/csharp-golden/run.sh` です（出力先は `--out` で指定できます）。編集できるパスの正解は `tools/csharp-golden/run-paths.sh <出力先>` で作り、試験が読む `crates/yolu-core/tests/golden/paths` へ出力します。効果とレイヤーのロック・レイヤーの操作のつなぎ目の正解（事例ごとの SHA-256）は `tools/csharp-golden/run-seam.sh` で `crates/yolu-core/tests/golden/seam.txt` へ作ります。食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出し、`run-seam.sh dump <事例名> <出力>` の C# の側と `cmp` で比べます。どれも Unity 版のソースと Unity 同梱の .NET・Mono が必要です。Unity 版の `Runtime/Core` などは Unity ブリッジの 0.5.0 で外れたので、Unity ブリッジのリポジトリのタグ `0.4.0` を取り出し、環境変数 `YOLUPAINTER_UNITY_SOURCE` にその場所を渡します（`tools/csharp-golden/` のツールと `tools/bench-all.sh` の既定の場所は `/workspace`）。PSD の写し（core ⇔ PSD）の正解は `tools/csharp-golden/run.sh psd` で作ります。I/O と PSD のデータ形式・再生成方法は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの正解は `tools/csharp-golden/brushes.sh` で作り（Rust の試験が入力を書き、C# の読み手に通して `crates/yolu-io/tests/fixtures/brushes/` へ出力）、違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
+Unity 版 C# との照合には、リポジトリに収録された人工データを使います。正解（`crates/yolu-core/tests/golden/`・`crates/yolu-io/tests/fixtures/` など）は前の Unity 版 C# の出力を引き継いだ物で、C# の出力と照らし直す道は残していません。作り直すときは Rust の出力から作ります（`YOLU_GOLDEN_UPDATE=1` に対応する試験はそれで）。効果とレイヤーのロック・レイヤーの操作のつなぎ目の照合で食い違ったときは、試験を `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出します。I/O と PSD のデータ形式・作り直し方は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。ブラシ形式の取り込みの違いの調査は `BRUSH_GOLDEN_SHOW=<記録の番号>` でその入力の完全な指紋を出します。
 
 ### aarch64（NEON）の試験を x86_64 の Linux で回す
 
@@ -190,15 +190,9 @@ python3 tools/test-network-watch.py   # ツール自身の試験（アプリは�
 保証の射程: Linux の `strace` で見える試み（システムコール）だけで、通した場面だけです。Windows は段 1 だけ（ソースと依存の見張り）で、段 2 に当たる試験はありません。画面を閉じる操作は Ctrl+Q のキーで通し、
 外からの操作の受け口を実行中に入れて切る操作は通していません（入れた起動と入れない起動を別々に見ています。実行中に入れて切る動きは、`crates/yolu-app/tests/headless/mcp_server.rs` の試験が 127.0.0.1 の上で確かめます）。
 
-## Windows 向けの画面なし試験（Wine）
+## Windows のインストーラーの画面なし試験（Wine）
 
-Linux 上で Python 3.10 以降、Wine、MinGW-w64 と Rust の `x86_64-pc-windows-gnu` ターゲットを用意し、`tools/wine-tests.sh` を実行します。古い Wine で `bcryptprimitives.dll` が不足する場合だけ `--compat-bcrypt` を付けます。時間制限は `--timeout 180` のように秒で指定できます。
-
-core・io・protocol・ops・cli と app の画面なし試験が対象です（`yolu-cli` は、本物の `yolupainter-cli.exe` を標準入出力で動かす MCP の試験と、アプリの代わりの MCP の受け口（`yolu_mcp::http`）へ 127.0.0.1 の HTTP でつなぐ試験を含みます）。`--package yolu-protocol --package yolu-ops` のようにクレートを絞れます（全部をビルドすると wgpu・egui まで Windows 向けにビルドするため、画面の無いクレートだけを確かめたいとき用）。ログと結果は `target/wine-tests/summary.json` と同じフォルダに残ります。GPU・画面の試験は対象外で、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。互換 DLL は試験専用で、製品に同梱しません。
-
-Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。`tools/wine-tests.sh` の app の試験に含まれる通信の試験（`update::http`）は、同じ PC の `http://127.0.0.1` に立てた小さなサーバーへ、Windows では WinHTTP の本物で接続します。
-
-Wine は DACL（Live Link の受け渡しのフォルダとファイルを自分だけにする設定）をファイルやフォルダに保存しないので、`yolu-protocol` の DACL の中身を調べる試験（`private::windows_tests`）は Wine では呼び出しが通ることまでを見て、中身は本物の Windows の `cargo test -p yolu-protocol` で確かめます。
+Windows のインストーラー（NSIS）を画面なしで通す試験は `python3 tools/test-installer.py`（Wine・MinGW-w64・`makensis` が要る。内容は [RELEASING](RELEASING.md#windows-のインストーラー)）です。
 
 ## 配布用の許諾全文
 
@@ -211,13 +205,6 @@ python3 tools/third-party.py --bundle --offline
 初回など依存や原文が取得済みでない場合は `--offline` を外して実行します。照合に成功すると `target/third-party/<クレート>/THIRD_PARTY_LICENSES.txt` ができるので、該当する配布物に同梱します。追加の Python パッケージは不要です。
 
 `--target x86_64-pc-windows-msvc`・`--target x86_64-unknown-linux-gnu`・`--target aarch64-unknown-linux-gnu`（Linux の ARM。試作）・`--target universal-apple-darwin`（macOS の配布物。`aarch64-apple-darwin` と `x86_64-apple-darwin` の依存の和。この 2 つ単独も指せます）のどれかを指定すると、対象別に照合して `target/third-party/<target>/<クレート>/` へ出力します。省略時は従来の Windows GNU が対象です。`--package yolu-update` で更新クレートも確認できます。配布の詳細は [RELEASING](RELEASING.md) を参照してください。`tools/licenses-reviewed.json` に原文と SHA-256 を記録し、原文の欠落・変更や未確認の版・許諾では生成を失敗させます。製品ごとの範囲とクレート以外の表記は [THIRD_PARTY.md](../THIRD_PARTY.md) にあります。
-
-## CPU の速さをまとめて測る
-
-Linux で `tools/bench-all.sh --runs 5 --threads 4` を実行すると、既存の Rust と C# の合成・ブラシ・面のベンチを同じ回数・並列上限・CPU 割当で順に測り、
-`target/bench-all/summary.md` に比較表、同じ場所にログと実行条件を保存する。Python 3.10 以降・taskset・上記の C# 用の Unity 同梱ツールが必要。
-`--source DIR`（または `YOLUPAINTER_UNITY_SOURCE`）で Unity 版の場所（0.4.x までの `Runtime/Core` を持つ checkout。上の注意と同じ）、`--only blur` などで M2 ブラシの種類を絞れる（合成・通常ブラシ・面は常に測る）。
-合成・ブラシは予熱 2 回を除き、面は予熱なしの中央値。フィルターはレベル補正・ブラシのぼかし／指先を含む。GPU と独立フィルター全種は対象外。
 
 ## 画素の計算の SIMD
 

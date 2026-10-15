@@ -1,8 +1,7 @@
 //! cargo run -p yolu-io --example write_generation -- input.ylp output-folder
 //!
 //! 開いた `.ylp` のエントリをそのまま世代に入れた置き場（`as-opened`）と、`sets/<ID>/` の下の入れ子の名前（合成の PNG など）を
-//! 除いた置き場（`flat-names`）を、出力のフォルダの下に新しく書く。Unity 版の `GenerationStore.Load` に読ませて、名前の範囲の
-//! 違いを記録するため（`tools/io-fixtures/generate.py --generation`）。
+//! 除いた置き場（`flat-names`）を、出力のフォルダの下に新しく書く。名前の範囲の違いを調べるため。
 use std::fs;
 use std::path::Path;
 use yolu_io::{CommitOptions, Error, Files, GenerationStore, Project, Result};

@@ -38,11 +38,9 @@ rayonの並列度を変えても画素と由来は同じ。`max_degree_of_parall
 
 ## 再現と計測
 
-- `bash tools/csharp-golden/mesh.sh`: Unity同梱のMonoで、合成メッシュの正解を作り直す（C# の元は Unity ブリッジのタグ `0.4.0`。場所は環境変数 `YOLUPAINTER_UNITY_SOURCE`）。`mesh.sh <出力先> <中身の出力先>` は
-  不規則なメッシュの結果の全バイトも2つ目の場所へ書く（照合に使うのは出力先の `rough.txt` のSHA-256）。
+- 合成メッシュの正解は、前の Unity 版の C#（Unity ブリッジのタグ `0.4.0`）の出力を引き継いだ物。作り直すときは Rust の出力から作る（不規則なメッシュの照合に使うのは `rough.txt` のSHA-256）。
 - `cargo test -p yolu-core -p yolu-io`: 既知値、C#の正解、保存、拒否、取消、並列度、予算の照合。
-- `bash tools/csharp-golden/mesh.sh bench`: C#の計測。
-- `cargo run --release -p yolu-core --example mesh_bench`: Rustの同じ条件での計測。
+- `cargo run --release -p yolu-core --example mesh_bench`: Rustの計測。
 
 計測モデルは自作の69,312三角形の分割立方体。2048²、8レイサンプル、4スレッド、アンチエイリアス1、余白0、高ポリなし。
 マップごとの秒数は準備を含み、入力構築と保存を含まない。接空間法線・高さ・不透明度はこの条件では自己ベイクの既定値になる。

@@ -1,7 +1,6 @@
 //! 効果（フィルター・Generator・Anchor・塗りつぶしの画像・パス）とレイヤーのロック・レイヤーの操作のつなぎ目を、実 C# の PaintDocument の結果と
-//! 全バイトで照らす。台本・人工の文書・書き出しの並びは tools/csharp-golden/SeamGolden.cs と対（事例ごとに SHA-256 を 1 行、
-//! golden/seam.txt）。食い違ったときは `SEAM_DUMP_DIR=<dir>` で食い違った事例の生のバイト列を書き出し、
-//! `tools/csharp-golden/run-seam.sh dump <名前> <出力>` の結果と cmp で比べる。
+//! 全バイトで照らす。正解は事例ごとに SHA-256 を 1 行（golden/seam.txt。前の Unity 版の C# の出力を引き継いだ物で、作り直すときは Rust の出力から作る）。
+//! 食い違ったときは `SEAM_DUMP_DIR=<dir>` で食い違った事例の生のバイト列を書き出して調べる。
 //! メッシュマップは渡さない（Generator の Anchor は使える。マップを要る段は入力のまま通す＝効いていない効果）。
 use crate::attach_support;
 use crate::golden_update;
@@ -286,7 +285,7 @@ struct Rig {
     reader: FilterId,
     anchor: AnchorId,
 }
-/// 効果をひと通り持つ文書（SeamGolden.cs の MakeRig と同じ）。
+/// 効果をひと通り持つ文書。
 fn rig() -> Rig {
     let mut doc = new_doc();
     let base = doc.add_layer("土台").unwrap();
@@ -1641,7 +1640,7 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// 実 C# の PaintDocument が出した 事例（SeamGolden.cs）と、Rust が同じ台本で出したバイト列の SHA-256 が全部同じ。
+/// 実 C# の PaintDocument が出した 事例（正解）と、Rust が同じ台本で出したバイト列の SHA-256 が全部同じ。
 #[test]
 fn csharp_seam_golden_matches_every_case() {
     let golden: HashMap<&str, &str> = include_str!("../golden/seam.txt")

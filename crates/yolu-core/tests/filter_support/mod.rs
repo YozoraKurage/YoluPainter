@@ -23,7 +23,7 @@ pub fn pattern(w: u32, h: u32, ty: ValueType) -> Vec<u8> {
     }
     b
 }
-/// C# の実 FilterEngine が解決した Generator の値（FilterGolden.cs の SampleGolden）。段ごとに 1 画素 9 バイト:
+/// C# の実 FilterEngine が解決した Generator の値。段ごとに 1 画素 9 バイト:
 /// 種類（0 = 値なし、1 = スカラー f64、2 = ランプ適用後の RGBA）+ 8 バイト。段の番号が slot。
 pub struct Samples {
     pub width: u32,

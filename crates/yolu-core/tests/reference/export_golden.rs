@@ -1,6 +1,5 @@
 //! 書き出し（テンプレートとパディング）を Unity 版の C# の Core（ExportTemplates・TexturePadding）の出力と全バイトで照らし合わせる。
-//! 台本は tests/golden/export/cases.txt、正解は同じフォルダの index.txt と <事例>.bin（tools/csharp-golden/run.sh export で作る）。
-//! 乱数・台本の読み方・出力の書き方は tools/csharp-golden/ExportGolden.cs と揃えてある（片方を変えたら両方を変える）。
+//! 台本は tests/golden/export/cases.txt、正解は同じフォルダの index.txt と <事例>.bin（前の Unity 版の C# の出力を引き継いだ物。作り直すときは Rust の出力から作る）。
 #![allow(clippy::chunks_exact_to_as_chunks)]
 
 use std::collections::BTreeMap;
@@ -559,7 +558,7 @@ fn run_script() -> Vec<Case> {
 /// index.txt: 事例ごとの出来事の行。
 fn read_index() -> (Vec<String>, BTreeMap<String, Vec<String>>) {
     let text = std::fs::read_to_string(golden_dir().join("index.txt"))
-        .expect("index.txt が無い（tools/csharp-golden/run.sh export で作る）");
+        .expect("index.txt が無い（Rust の出力から作る）");
     let mut order = Vec::new();
     let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut current: Option<String> = None;
@@ -608,7 +607,7 @@ fn matches_the_csharp_core_byte_for_byte() {
     assert_eq!(
         names,
         order.iter().map(String::as_str).collect::<Vec<_>>(),
-        "台本の事例と index.txt の事例が違う（run.sh export を回し直す）"
+        "台本の事例と index.txt の事例が違う（Rust の出力から作り直す）"
     );
     let (mut outputs, mut shoulds, mut refusals, mut bytes) = (0usize, 0usize, 0usize, 0usize);
     let mut failures = Vec::new();

@@ -3,7 +3,7 @@ use cases::*;
 use std::sync::atomic::AtomicBool;
 use yolu_core::{fill_image::*, Rgba8};
 
-/// 正解の組: C# が撮った、異方性を切った道（`tools/csharp-golden/fill.sh golden`）と、Rust が撮った、異方性を入れた道
+/// 正解の組: 前の Unity 版の C# が撮った、異方性を切った道と、Rust が撮った、異方性を入れた道
 /// （撮り直しは `YOLU_GOLDEN_UPDATE=1`）。
 #[derive(Clone, Copy)]
 struct Golden {

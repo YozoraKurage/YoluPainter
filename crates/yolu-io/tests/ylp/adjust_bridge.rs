@@ -666,8 +666,8 @@ fn read_fixture(name: &str) -> Vec<u8> {
 }
 
 /// 版 24 の正解の正本（Rust が書いたもの。固定の ID で作り、ファイルと同じバイト列になる）。
-/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp adjust_bridge::`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --adjust` で Unity 版の読み手の記録を取り直す。
+/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp adjust_bridge::`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn version_24_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&document()).unwrap().to_bytes();
@@ -684,7 +684,7 @@ fn version_24_fixture_is_what_this_writer_produces() {
 
 #[test]
 fn unity_0_2_0_reader_refuses_version_24_before_touching_the_file() {
-    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 24 を読ませた記録（tools/io-fixtures --adjust）。
+    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 24 を読ませた記録。
     // 版 22・23 と同じく「Unsupported archive version」で断り、Unity 版は種類 64〜69 を別の意味で読まない
     let record = String::from_utf8(read_fixture("adjust-v24.unity.txt")).unwrap();
     let lines: Vec<&str> = record.lines().collect();

@@ -1,7 +1,7 @@
 //! 文書（タイル・レイヤー・チャンネル）と CPU の合成・ブラシ・フィルター・Generator、3D の面の計算（`geometry`）、スキンとポーズ（`skin`）。GPU にも OS にも頼らない純粋な計算で、cargo test で速く確かめる。
 //!
 //! 式・丸め・straight RGBA8 は、もと Unity 版の C# の Core（YoluPainter の `Runtime/Core`）を仕様にし、C# の Core に同じ入力を
-//! 通した出力（`tests/golden/`、`tools/csharp-golden/` で作る）とのバイト一致で確かめてきた。レイヤーの合成の式（[`blend`]）は、
+//! 通した出力（`tests/golden/`。前の Unity 版の C# の出力を引き継いだ物で、作り直すときは Rust の出力から作る）とのバイト一致で確かめてきた。レイヤーの合成の式（[`blend`]）は、
 //! この crate の f32 の式が正本で、合成を通る正解はこの crate で撮り直した（`YOLU_GOLDEN_UPDATE=1`）。Normal のチャンネルの
 //! 合成（[`normal`]）とブラシの画素（[`brush`]）も同じ f32 のレーンの式。フィルター・Generator の値など、f64 のままの式は今も C# の
 //! 正解と同じ値。

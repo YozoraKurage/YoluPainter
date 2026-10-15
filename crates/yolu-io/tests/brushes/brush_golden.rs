@@ -1,6 +1,6 @@
 //! Unity 版（C#）の読み手との照合。手で組んだ事例と、それを壊した入力（全バイトの書き換え・切り詰め・極端な値）を C# の
 //! GimpBrushReader・PhotoshopBrushReader・PhotoshopPatternReader に通した結果（tests/fixtures/brushes/、
-//! tools/csharp-golden/brushes.sh で作る）と、Rust の読み手の結果を比べる: 取り込めたか・断ったか・取り込んだ設定の指紋が同じか。
+//! 前の Unity 版の出力を引き継いだ正解。作り直すときは Rust の出力から作る）と、Rust の読み手の結果を比べる: 取り込めたか・断ったか・取り込んだ設定の指紋が同じか。
 //!
 //! 同じにならないと分かっている所（Rust が C# より正確・安全にした所）は、Rust の指紋を C# と同じ形に直して比べる:
 //! 筆先の反転・ペンの軸の回転・質感の合わせ方 8 種は core の拡張に写すので、C# が出す「未対応」の注記の数に足す。C# が
@@ -197,9 +197,7 @@ fn fixture(name: &str) -> String {
         "{}/tests/fixtures/brushes/{name}",
         env!("CARGO_MANIFEST_DIR")
     );
-    std::fs::read_to_string(&path).unwrap_or_else(|e| {
-        panic!("{path} を読めない（tools/csharp-golden/brushes.sh で作る）: {e}")
-    })
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path} を読めない: {e}"))
 }
 
 #[test]
@@ -210,7 +208,7 @@ fn hand_built_files_match_the_csharp_readers() {
     assert_eq!(
         lines.len(),
         cases.len(),
-        "事例の数が正解と違う。事例を変えたら tools/csharp-golden/brushes.sh で正解を作り直す"
+        "事例の数が正解と違う。事例を変えたら正解を作り直す"
     );
     let mut failures = Vec::new();
     let mut ok_cases = 0;
@@ -293,7 +291,7 @@ fn corrupted_files_are_accepted_and_refused_like_the_csharp_readers() {
     assert_eq!(
         lines.len(),
         cases.len(),
-        "壊した入力の数が正解と違う。変えたら tools/csharp-golden/brushes.sh で正解を作り直す"
+        "壊した入力の数が正解と違う。変えたら正解を作り直す"
     );
     let (mut compared, mut skipped) = (0usize, 0usize);
     let mut stats: BTreeMap<&str, usize> = BTreeMap::new();
@@ -365,22 +363,4 @@ fn corrupted_files_are_accepted_and_refused_like_the_csharp_readers() {
     assert_eq!(cases.len(), 11_522);
     assert_eq!((compared, skipped), (11_508, 14));
     assert_eq!(stats.get("有限でない数（比べない）").copied(), Some(3));
-}
-
-/// C# の正解を作るための入力（tools/csharp-golden/brushes.sh が呼ぶ）。
-#[test]
-#[ignore]
-fn export_corpus() {
-    let path = std::env::var("BRUSH_CORPUS_OUT").expect("BRUSH_CORPUS_OUT");
-    let mut out = b"YBRI\x01".to_vec();
-    for c in corpus::all() {
-        let label = if c.tag == 1 { c.label.as_bytes() } else { b"" };
-        out.push(c.tag);
-        out.push(corpus::kind_code(c.kind));
-        out.push(label.len() as u8);
-        out.extend_from_slice(label);
-        out.extend((c.bytes.len() as u32).to_be_bytes());
-        out.extend_from_slice(&c.bytes);
-    }
-    std::fs::write(path, out).unwrap();
 }

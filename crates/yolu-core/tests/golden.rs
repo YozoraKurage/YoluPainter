@@ -1,10 +1,9 @@
 //! 正解の出力（tests/golden）とのバイト一致。台本（golden/cases.txt）を走らせ、出来事の行（ダブの数・Undo の結果・断られた命令）と
-//! 出力の画素を比べる。正解はもと Unity 版の C# の Core の出力（tools/csharp-golden/run.sh）で、合成の式が f32 のこの crate の
+//! 出力の画素を比べる。正解はもと Unity 版の C# の Core の出力を引き継いだ物（作り直すときは Rust の出力から作る）で、合成の式が f32 のこの crate の
 //! 式になってから、合成を通る出力（.rgba と sweeps の行）はこの crate で撮り直した（`YOLU_GOLDEN_UPDATE=1` で違った正解だけを
 //! 書き直す。撮り直したら差分を見て、意図した変化だけかを確かめる）。Normal のチャンネルの合成も f32 の式になってから撮り直した
 //! （normal_stack・channels・sweeps の nblend・nclip・nfade）。ブラシの画素も f32 の式になってから撮り直した（brush_*・dyn_texture・
 //! fx_blur・stencil_parallel の 1 段の差）。ダブの数・位置・Undo などの出来事の行は C# と同じ。
-//! 乱数・台本の読み方は tools/csharp-golden/Golden.cs と揃えてある（片方を変えたら両方を変える）。
 //! 一致を確かめたのは同じ libm（Linux の glibc）の上だけ。exp・sin・cos・tan・atan・pow などを通る事例（ブラシの回転・傾き、ぼかしの小さい
 //! 半径、放射状の対称など）は、別の libm（Windows など）では 1 ULP ずれ得る。
 //! 束に入れず直下の 1 本: ワーカーの閾値（`yolu_core::brush::set_parallel_dab_pixels`。プロセスで 1 つ）を最初の試験で 1 にして戻さず、並列の経路を通ったダブがあることを確かめる。束のほかの試験の経路を変え、ほかの試験が閾値を変えると外れる。
@@ -146,7 +145,7 @@ type Index = HashMap<String, (String, Vec<String>)>;
 /// index.txt: 事例ごとの params の指紋と出来事の行。
 fn read_index() -> (Vec<String>, Index) {
     let text = std::fs::read_to_string(golden_dir().join("index.txt"))
-        .expect("index.txt が無い（tools/csharp-golden/run.sh で作る）");
+        .expect("index.txt が無い（Rust の出力から作る）");
     let mut order = Vec::new();
     let mut map: HashMap<String, (String, Vec<String>)> = HashMap::new();
     let mut current: Option<String> = None;
@@ -256,7 +255,7 @@ fn dual(b: &mut BrushBuild) -> &mut DualBrush {
     b.brush.dual.as_mut().expect("dual= の前に d のキー")
 }
 
-/// M1 より後のブラシのキー（tools/csharp-golden/Golden.cs の BrushKey と同じ並び・同じ読み方）。
+/// M1 より後のブラシのキー。
 fn brush_key(c: &mut CaseRun, b: &mut BrushBuild, k: &str, v: &str) -> bool {
     let br = &mut b.brush;
     match k {
@@ -538,7 +537,7 @@ fn channel_word(ch: Channel) -> String {
     }
 }
 
-/// ステンシルの画像（Golden.cs の StencilPixels と同じ）: grey:種:W:H、color:種:W:H、varied:W:H、half:W:H。
+/// ステンシルの画像: grey:種:W:H、color:種:W:H、varied:W:H、half:W:H。
 fn stencil_pixels(spec: &str) -> (Vec<u8>, usize, usize) {
     let q: Vec<&str> = spec.split(':').collect();
     let seeded = q[0] == "grey" || q[0] == "color";
@@ -1178,7 +1177,7 @@ fn radius(s: &str) -> Result<u32, CoreError> {
     u32::try_from(int(s)).map_err(|_| CoreError::InvalidArgument("radius"))
 }
 
-/// 選択範囲の形（Golden.cs の Shape と同じ書き方）。
+/// 選択範囲の形。
 fn shape(c: &mut CaseRun, doc: &Document, t: &[&str]) -> Result<SelectionMask, CoreError> {
     Ok(match t[0] {
         "rect" => SelectionMask::rectangle(doc, int(t[1]), int(t[2]), int(t[3]), int(t[4])),
@@ -1321,7 +1320,10 @@ fn cases_match_the_recorded_outputs_byte_for_byte() {
     let mut updated = 0;
     for (name, c) in &cases {
         let Some((params, events)) = index.get(name) else {
-            let _ = writeln!(failures, "{name}: index.txt に無い（run.sh で作り直す）");
+            let _ = writeln!(
+                failures,
+                "{name}: index.txt に無い（Rust の出力から作り直す）"
+            );
             continue;
         };
         if *params != c.params.hex() {
@@ -1502,7 +1504,7 @@ fn region_composite_equals_the_per_pixel_reference() {
     }
 }
 
-/// ブラシの式の掃引（Golden.cs の BrushSweeps と同じ乱数・同じ順）: System.Random の列、組み込みの筆先の画素、筆先の双線形、
+/// ブラシの式の掃引: System.Random の列、組み込みの筆先の画素、筆先の双線形、
 /// 色の変化、デュアルの合わせ方、ペンの傾き、曲線の点、HSV。
 #[test]
 fn brush_formulas_match_the_csharp_core_on_sweeps() {

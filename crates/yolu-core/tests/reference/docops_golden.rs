@@ -1,4 +1,4 @@
-//! 実 C# Core の正解との比較。台本・人工画素・状態の並びは DocOpsGolden.cs と対。
+//! 実 C# Core の正解との比較。台本・人工画素・状態の並びは正解（前の C# の出力）に合わせてある。
 use crate::golden_update;
 use std::path::Path;
 use yolu_core::*;
@@ -123,7 +123,7 @@ fn report(out: &mut Vec<u8>, r: LayerMergeReport) {
         u64b(out, r.changed_by_channel.get(&c).copied().unwrap_or(0));
     }
 }
-/// 中ほどだけ量のある選択範囲（量は 0 のこともある）。DocOpsGolden.cs の selected_ と同じ。
+/// 中ほどだけ量のある選択範囲（量は 0 のこともある）。
 fn partial_selection(d: &Document) -> SelectionMask {
     let ts = d.tile_size();
     let mut tiles = Vec::new();
@@ -156,7 +156,7 @@ enum Merge {
     Layers(Vec<LayerId>),
     Group(LayerId),
 }
-/// 結合がロックで断られる・断られない（DocOpsGolden.cs の MergeLock と同じ番号）。結果の型（0 成功・1 ロック・2 そのほかの拒否）、
+/// 結合がロックで断られる・断られない。結果の型（0 成功・1 ロック・2 そのほかの拒否）、
 /// 断ったレイヤー・持ち主・ロック、断ったあとの文書を書く。
 fn merge_lock(d: &mut Document, n: u32) -> Vec<u8> {
     let (a, b) = (d.layers()[0].id(), d.layers()[1].id());

@@ -1,5 +1,5 @@
 //! M2 のレイヤー（グループ・マスク・塗りつぶし・調整・クリッピング・チャンネルごとの有効と合成・Normal の設定）の正本と core の行き来。
-//! 正解は C# の実際の書き手（`tools/io-fixtures/M2Fixture.cs`）が作った正本と、同じ文書の全チャンネルの合成。
+//! 正解は C# の実際の書き手が作った正本と、同じ文書の全チャンネルの合成。
 use yolu_core::{
     AdjustmentSettings, BlendMode, Channel, ChannelBlend, ChannelInfo, ChannelKind, ColorSpace,
     Document, HeightEdgeMode, LayerId, LayerKind, NormalSettings, NormalYDirection, Rect, Rgba8,
@@ -362,7 +362,7 @@ fn csharp_native_versions_with_m2_layers_convert_and_save_as_the_current_version
     }
 }
 
-/// C# の旧版の基礎配置（`tools/io-fixtures/Generate.cs` の `Baseline`）が持つ既知の値が、core に落ちずに届く。上の試験は core を通した
+/// C# の旧版の基礎配置が持つ既知の値が、core に落ちずに届く。上の試験は core を通した
 /// 書き戻しとの自己照合なので、読みが値を落としても両側が同じに落として通る。ここでは正解の値そのものを core の側で確かめる。
 #[test]
 fn csharp_native_versions_carry_their_known_values_into_core() {
@@ -787,8 +787,8 @@ fn user_channel_references_must_be_in_the_documents_list() {
 }
 
 /// 版 22 の正解の正本（Rust が書いたもの）。固定の ID で作り、ファイルと同じバイト列になる。
-/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --user-channels` で Unity 版の読み手の記録を取り直す。
+/// 作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn version_22_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&user_channel_document())
@@ -806,7 +806,7 @@ fn version_22_fixture_is_what_this_writer_produces() {
 
 #[test]
 fn unity_0_2_0_reader_refuses_version_22_before_touching_the_file() {
-    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 22 を読ませた記録（tools/io-fixtures --user-channels）
+    // Unity 0.2.0 の DocumentBinary・YlpFormat に Rust が書いた版 22 を読ませた記録
     let record = String::from_utf8(read("user-channels-v22.unity.txt")).unwrap();
     let lines: Vec<&str> = record.lines().collect();
     assert_eq!(lines[0], "DocumentBinary.CurrentVersion: 21");
@@ -842,8 +842,8 @@ fn unity_0_2_0_reader_refuses_version_22_before_touching_the_file() {
 }
 
 /// Rust が書いた版 21 の正解の正本。m2-groups を編集して、塗りつぶし・調整・マスク・複製したグループを足したもの（固定の ID で作り、
-/// ファイルと同じバイト列になる）。作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::version_21`、続けて
-/// `python3 tools/io-fixtures/generate.py --source <Unity 版> --rust-written` で Unity 版の読み手の記録を取り直す。
+/// ファイルと同じバイト列になる）。作り直すときは `YOLU_UPDATE_FIXTURES=1 cargo test -p yolu-io --test ylp m2_bridge::version_21`。
+/// Unity 版の読み手の記録（`*.unity.txt`）は Unity 0.2.0 で取った物で、取り直す道は無い。
 #[test]
 fn version_21_fixture_is_what_this_writer_produces() {
     let bytes = NativeDocument::from_core(&edited_groups_document())

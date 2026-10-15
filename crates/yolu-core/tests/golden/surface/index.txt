@@ -1,4 +1,4 @@
-# 生成: tools/csharp-golden（手で書き換えない）。Unity 版の SurfaceGeometry（Editor/Preview の原文）の出力。
+# 前の Unity 版の C# の出力を引き継いだ物（手で書き換えない。作り直すときは Rust の出力から作る）。Unity 版の SurfaceGeometry（Editor/Preview の原文）の出力。
 # source: YoluPainter e689377af26e Editor/Preview/Surface*=f222859638ee768d UnityEngine.CoreModule debug
 case cube_basics params=a5e8570898d27d6f
 out 0 structure tris=12 nonmanifold=0 center=00000000,00000000,00000000 extents=3f000000,3f000000,3f000000 eps=35e878d0 adj=818cab66fc437e15 nodes=3 bvh=8c2fefc6ccbdb0f9
