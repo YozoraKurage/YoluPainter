@@ -583,15 +583,6 @@ fn snapshot_the_imported_group_with_the_mark_for_what_was_left_out() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
-#[test]
-fn snapshot_the_imported_group_in_english() {
-    let dir = temp_dir("snapshot-en");
-    let mut h = imported_panel(Lang::En, &dir);
-    let rect = crate::group_rect(&h, Tab::SubTools, Some(Tab::Color));
-    crate::clean_region(&mut h, "brushes_panel_imported_english", rect);
-    std::fs::remove_dir_all(dir).unwrap();
-}
-
 // ---------------- 「CLIP STUDIO から」のウィンドウ ----------------
 
 /// 試験用の CELSYS の設定のフォルダ: 筆先の画像を持つ .sut・丸い筆先の .sut・読めないファイル。

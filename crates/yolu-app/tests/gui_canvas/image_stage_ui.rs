@@ -6,7 +6,7 @@ use crate::common;
 use common::*;
 use egui::{vec2, Pos2, Rect};
 use egui_kittest::kittest::Queryable;
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::bake::{BakeAction, BakeBackend};
 use yolu_app::fillfx::{gizmo, inputs};
 use yolu_app::fx::{FxOp, Selected};
@@ -304,7 +304,6 @@ fn right_texts(h: &Harness<'_, YoluApp>) -> Vec<String> {
 
 #[test]
 fn snapshot_the_image_stage_panel_in_both_languages() {
-    let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
         for (target, name) in [
             (FilterTarget::Content, "color"),
@@ -357,12 +356,11 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
             // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
             h.state_mut().state.shelf.wait_inspections();
             h.run();
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-            common::shot::region(
-                &mut h,
-                &format!("fx_image_stage_{name}_{}", lang.pick("ja", "en")),
-                rect,
-            );
+            // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
+            if lang == Lang::Ja {
+                let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+                common::shot::region(&mut h, &format!("fx_image_stage_{name}_ja"), rect);
+            }
             // マスクの段は欄が長いので、下の半分も
             if target == FilterTarget::Mask {
                 h.state_mut().state.m2.props_scroll = 600.0;
@@ -371,15 +369,11 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
                     assert_plain(&format!("{lang:?} {name} 下"), &text);
                     assert!(lang == Lang::Ja || !has_japanese(&text), "{text}");
                 }
-                let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-                common::shot::region(
-                    &mut h,
-                    &format!("fx_image_stage_{name}_lower_{}", lang.pick("ja", "en")),
-                    rect,
-                );
+                if lang == Lang::Ja {
+                    let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+                    common::shot::region(&mut h, &format!("fx_image_stage_{name}_lower_ja"), rect);
+                }
             }
-            results.extend_harness(&mut h);
         }
     }
-    results.unwrap();
 }

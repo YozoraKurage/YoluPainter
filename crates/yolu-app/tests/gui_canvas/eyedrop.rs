@@ -1510,20 +1510,17 @@ fn the_3d_view_shows_the_mark_for_the_eyedropper_tool_and_while_a_right_press_ha
 
 #[test]
 fn snapshot_the_eyedrop_mark_in_2d_and_in_3d() {
-    let mut snapshots = egui_kittest::SnapshotResults::new();
     let mut h = mark_app(Tool::Eyedropper);
     h.event(Event::PointerMoved(screen_of(&h, 60, 60)));
     h.run();
     // 2D の既定の並びにスポイトの印を出した、ウィンドウ全体の見本
     common::shot::window(&mut h, "eyedrop_mark_2d");
-    snapshots.extend_harness(&mut h);
     let (mut h, [a, b, c]) = three_colors_3d_app();
     h.event(Event::PointerMoved(b));
     h.run();
     // 印と、両側の色の四角（印が見ている物）
     let rect = Rect::from_min_max(pos2(a.x - 40.0, b.y - 70.0), pos2(c.x + 40.0, b.y + 70.0));
     common::shot::region(&mut h, "eyedrop_mark_3d", rect);
-    snapshots.extend_harness(&mut h);
 }
 
 // ───────── 印の見本の読み方（画面を描かない） ─────────

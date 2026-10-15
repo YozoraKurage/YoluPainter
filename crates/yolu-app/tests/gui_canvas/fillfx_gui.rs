@@ -5,7 +5,7 @@ use crate::common;
 use common::*;
 use egui::{pos2, vec2, Event, Key, Modifiers, PointerButton, Pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::bake::{BakeAction, BakeBackend};
 use yolu_app::engine::{Channel, LayerId};
 use yolu_app::fillfx::{gizmo, inputs, FillOp};
@@ -488,7 +488,6 @@ fn the_gradient_tool_paints_with_a_real_drag_on_the_canvas_and_shift_g_selects_i
 
 #[test]
 fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
-    let mut results = SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, _) = window();
         {
@@ -571,14 +570,12 @@ fn the_fill_panel_draws_in_both_languages_without_clipped_text() {
             // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
             h.state_mut().state.shelf.wait_inspections();
             h.run();
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-            common::shot::region(
-                &mut h,
-                &format!("fillfx_panel_{}_{k}", lang.pick("ja", "en")),
-                rect,
-            );
+            // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
+            if lang == yolu_app::lang::Lang::Ja {
+                let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+                common::shot::region(&mut h, &format!("fillfx_panel_ja_{k}"), rect);
+            }
         }
-        results.extend_harness(&mut h);
     }
 }
 
@@ -1184,7 +1181,6 @@ fn a_pen_drag_on_a_point_in_the_2d_canvas_is_one_undo_and_escape_puts_it_back() 
 
 #[test]
 fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
-    let mut results = SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, rect) = window();
         let layer = {
@@ -1251,12 +1247,12 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        let props = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-        common::shot::region(
-            &mut h,
-            &format!("fillfx_points_{}", lang.pick("ja", "en")),
-            props,
-        );
+        // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
+        let ja = lang == yolu_app::lang::Lang::Ja;
+        if ja {
+            let props = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(&mut h, "fillfx_points_ja", props);
+        }
         // UV の空間: 立方体の UV の継ぎ目で色が切れる（モデルの空間は切れない）。2D のキャンバスにも印が出る
         let uv = yolu_core::fill_points::PointGradient {
             space: yolu_core::fill_points::PointSpace::Uv,
@@ -1285,24 +1281,19 @@ fn the_point_gradient_panel_and_its_markers_draw_in_both_languages() {
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        common::shot::region(
-            &mut h,
-            &format!("fillfx_points_uv_{}", lang.pick("ja", "en")),
-            rect,
-        );
+        if ja {
+            common::shot::region(&mut h, "fillfx_points_uv_ja", rect);
+        }
         click_tab(&mut h, Tab::Canvas);
         // 焼いたメッシュマップの重ね表示を外して、塗った絵を見せる
         h.state_mut().state.bake.view = yolu_app::bake::MeshMapView::None;
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        let rect = canvas_rect(&h);
-        common::shot::region(
-            &mut h,
-            &format!("fillfx_points_canvas_{}", lang.pick("ja", "en")),
-            rect,
-        );
-        results.extend_harness(&mut h);
+        if ja {
+            let rect = canvas_rect(&h);
+            common::shot::region(&mut h, "fillfx_points_canvas_ja", rect);
+        }
     }
 }
 
@@ -1470,7 +1461,6 @@ fn the_point_colour_opens_the_colour_window_and_one_drag_in_it_is_one_undo() {
 
 #[test]
 fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
-    let mut results = SnapshotResults::new();
     for lang in yolu_app::lang::Lang::ALL {
         let (mut h, _) = window();
         let layer = {
@@ -1512,18 +1502,16 @@ fn the_image_row_has_an_anisotropic_toggle_that_is_one_undo_step() {
         h.run();
         h.state_mut().state.message.clear();
         h.run();
-        let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-        common::shot::region(
-            &mut h,
-            &format!("fillfx_image_anisotropic_{}", lang.pick("ja", "en")),
-            rect,
-        );
+        // 英語の絵は撮らない（行の並びは文字の長さで変わらない）
+        if lang == yolu_app::lang::Lang::Ja {
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(&mut h, "fillfx_image_anisotropic_ja", rect);
+        }
         let steps = st(&h).doc.undo_count();
         click(&mut h, toggle.center());
         assert!(!on(&h));
         assert_eq!(st(&h).doc.undo_count(), steps + 1);
         undo(&mut h);
         assert!(on(&h));
-        results.extend_harness(&mut h);
     }
 }

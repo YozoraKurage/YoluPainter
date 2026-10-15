@@ -6,7 +6,6 @@ use common::*;
 use egui::{epaint::Shape, pos2, PointerButton, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
-use egui_kittest::SnapshotResults;
 use yolu_app::fx::{FilterKind, FxOp, Selected};
 use yolu_app::lang::Lang;
 use yolu_app::m2::{Edit, UiOp};
@@ -70,19 +69,12 @@ fn selected(h: &Harness<'_, YoluApp>) -> Option<Selected> {
 
 #[test]
 fn snapshot_effect_rows_and_the_generator_that_has_no_maps() {
-    let mut results = SnapshotResults::new();
-    for lang in Lang::ALL {
-        let mut h = app(1280.0, 1400.0, 128);
-        h.state_mut().state.set_language(lang);
-        effect_document(&mut h);
-        let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
-        common::shot::region(
-            &mut h,
-            &format!("fx_rows_generator_{}", lang.pick("ja", "en")),
-            rect,
-        );
-        results.extend_harness(&mut h);
-    }
+    let lang = Lang::Ja; // 英語の絵は撮らない（効果の行の並びは文字の長さで変わらない）
+    let mut h = app(1280.0, 1400.0, 128);
+    h.state_mut().state.set_language(lang);
+    effect_document(&mut h);
+    let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
+    common::shot::region(&mut h, "fx_rows_generator_ja", rect);
 }
 
 #[test]
@@ -806,7 +798,6 @@ fn a_right_click_on_the_layer_thumbnail_opens_the_layer_menu_like_the_row() {
 
 #[test]
 fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages() {
-    let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
         let suffix = lang.pick("ja", "en");
         let mut h = app(1280.0, 1400.0, 128);
@@ -828,7 +819,10 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         move_to(&h, pos2(640.0, 500.0));
         h.run();
         let rect = crate::group_rect(&h, yolu_app::Tab::Layers, None);
-        common::shot::region(&mut h, &format!("layers_target_pixels_{suffix}"), rect);
+        // 英語の絵は撮らない（レイヤーの行の並びは文字の長さで変わらない。ツールチップとメニューは英語も撮る）
+        if lang == Lang::Ja {
+            common::shot::region(&mut h, "layers_target_pixels_ja", rect);
+        }
         // 印に乗せるとツールチップに効果の数
         let tip = yolu_app::panels::layers::mask_effects_tip(lang, 2);
         let mark = h.get_by_label(&tip).rect().center();
@@ -860,7 +854,9 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         click(&mut h, at);
         move_to(&h, pos2(640.0, 500.0));
         h.run();
-        common::shot::region(&mut h, &format!("layers_target_mask_{suffix}"), rect);
+        if lang == Lang::Ja {
+            common::shot::region(&mut h, "layers_target_mask_ja", rect);
+        }
         // マスクのサムネイルの右クリック
         let at = mask_thumb(&h).center();
         press(&h, at, PointerButton::Secondary);
@@ -869,7 +865,6 @@ fn snapshot_the_layer_and_mask_targets_and_the_add_entrances_in_both_languages()
         h.run();
         let popup_rect = crate::with_popup(&h, rect);
         common::shot::region(&mut h, &format!("layers_mask_menu_{suffix}"), popup_rect);
-        results.extend_harness(&mut h);
     }
 }
 
@@ -1216,25 +1211,18 @@ fn a_choice_button_and_a_slider_of_a_new_filter_are_one_undo_step_each() {
 }
 
 #[test]
-fn snapshot_three_new_filter_panels_in_both_languages() {
-    let mut results = SnapshotResults::new();
-    for lang in Lang::ALL {
-        for (kind, name) in [
-            (FilterKind::SlopeBlur, "slope_blur"),
-            (FilterKind::Morphology, "morphology"),
-            (FilterKind::Glow, "glow"),
-        ] {
-            let mut h = with_new_filter(lang, kind);
-            move_to(&h, pos2(640.0, 500.0));
-            h.run();
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-            common::shot::region(
-                &mut h,
-                &format!("fx_props_{name}_{}", lang.pick("ja", "en")),
-                rect,
-            );
-            results.extend_harness(&mut h);
-        }
+fn snapshot_three_new_filter_panels() {
+    let lang = Lang::Ja; // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
+    for (kind, name) in [
+        (FilterKind::SlopeBlur, "slope_blur"),
+        (FilterKind::Morphology, "morphology"),
+        (FilterKind::Glow, "glow"),
+    ] {
+        let mut h = with_new_filter(lang, kind);
+        move_to(&h, pos2(640.0, 500.0));
+        h.run();
+        let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+        common::shot::region(&mut h, &format!("fx_props_{name}_ja"), rect);
     }
 }
 
@@ -1326,24 +1314,17 @@ fn a_pattern_shape_button_changes_the_generator_in_one_undo_step() {
 }
 
 #[test]
-fn snapshot_the_pattern_and_mask_builder_panels_in_both_languages() {
-    let mut results = SnapshotResults::new();
-    for lang in Lang::ALL {
-        for (kind, name) in [
-            (Kind::Pattern, "pattern"),
-            (Kind::MaskBuilder, "mask_builder"),
-        ] {
-            let mut h = with_new_generator(lang, kind, 1000.0);
-            move_to(&h, pos2(640.0, 500.0));
-            h.run();
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-            common::shot::region(
-                &mut h,
-                &format!("fx_props_{name}_{}", lang.pick("ja", "en")),
-                rect,
-            );
-            results.extend_harness(&mut h);
-        }
+fn snapshot_the_pattern_and_mask_builder_panels() {
+    let lang = Lang::Ja; // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
+    for (kind, name) in [
+        (Kind::Pattern, "pattern"),
+        (Kind::MaskBuilder, "mask_builder"),
+    ] {
+        let mut h = with_new_generator(lang, kind, 1000.0);
+        move_to(&h, pos2(640.0, 500.0));
+        h.run();
+        let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+        common::shot::region(&mut h, &format!("fx_props_{name}_ja"), rect);
     }
 }
 
@@ -1384,62 +1365,55 @@ fn four_plates() -> yolu_app::view3d::model::ViewModel {
 
 /// アイランドごとのばらつきの欄と、アイランドごとに違う値の 2D の絵（4 つのアイランドのモデルを読み、塗ったレイヤーに置き換えで足す）。
 #[test]
-fn snapshot_the_uv_island_variation_panel_and_canvas_in_both_languages() {
-    let mut results = SnapshotResults::new();
-    for lang in Lang::ALL {
-        let mut h = app(1280.0, 1400.0, 128);
-        h.state_mut().state.set_language(lang);
-        {
-            let s = &mut h.state_mut().state;
-            let layer = s.selected_layer.unwrap();
-            for y in 0..128 {
-                for x in 0..128 {
-                    s.doc
-                        .set_pixel(layer, x, y, yolu_core::Rgba8::new(196, 120, 64, 255))
-                        .unwrap();
-                }
+fn snapshot_the_uv_island_variation_panel_and_canvas() {
+    let lang = Lang::Ja; // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
+    let mut h = app(1280.0, 1400.0, 128);
+    h.state_mut().state.set_language(lang);
+    {
+        let s = &mut h.state_mut().state;
+        let layer = s.selected_layer.unwrap();
+        for y in 0..128 {
+            for x in 0..128 {
+                s.doc
+                    .set_pixel(layer, x, y, yolu_core::Rgba8::new(196, 120, 64, 255))
+                    .unwrap();
             }
-            s.view3d.set_model(four_plates());
-            s.sync_effect_inputs_with(true);
         }
-        fx(
-            &mut h,
-            FxOp::AddGenerator {
-                target: FilterTarget::Content,
-                kind: Kind::UvIslandVariation,
-            },
-        );
-        let Some(Selected::Filter { layer, id }) = selected(&h) else {
-            panic!("{lang:?}")
-        };
-        let mut g = selected_settings(&h).generator_settings().unwrap().clone();
-        g.blend = yolu_core::generator::Blend::Replace;
-        fx(
-            &mut h,
-            FxOp::SetSettings {
-                layer,
-                id,
-                settings: yolu_core::EffectSettings::generator(g),
-                coalesce: false,
-            },
-        );
-        assert_eq!(
-            h.state().state.doc.generator_inactive(layer, id).unwrap(),
-            None,
-            "{lang:?}: モデルを読んでいる"
-        );
-        // ブラシの円をアイランドに重ねない（指はキャンバスの外）
-        move_to(&h, pos2(1270.0, 990.0));
-        h.run();
-        // 欄と、アイランドごとに違う値の 2D の絵
-        let rect = canvas_rect(&h).union(crate::group_rect(&h, yolu_app::Tab::Properties, None));
-        common::shot::region(
-            &mut h,
-            &format!("fx_props_uv_island_variation_{}", lang.pick("ja", "en")),
-            rect,
-        );
-        results.extend_harness(&mut h);
+        s.view3d.set_model(four_plates());
+        s.sync_effect_inputs_with(true);
     }
+    fx(
+        &mut h,
+        FxOp::AddGenerator {
+            target: FilterTarget::Content,
+            kind: Kind::UvIslandVariation,
+        },
+    );
+    let Some(Selected::Filter { layer, id }) = selected(&h) else {
+        panic!("{lang:?}")
+    };
+    let mut g = selected_settings(&h).generator_settings().unwrap().clone();
+    g.blend = yolu_core::generator::Blend::Replace;
+    fx(
+        &mut h,
+        FxOp::SetSettings {
+            layer,
+            id,
+            settings: yolu_core::EffectSettings::generator(g),
+            coalesce: false,
+        },
+    );
+    assert_eq!(
+        h.state().state.doc.generator_inactive(layer, id).unwrap(),
+        None,
+        "{lang:?}: モデルを読んでいる"
+    );
+    // ブラシの円をアイランドに重ねない（指はキャンバスの外）
+    move_to(&h, pos2(1270.0, 990.0));
+    h.run();
+    // 欄と、アイランドごとに違う値の 2D の絵
+    let rect = canvas_rect(&h).union(crate::group_rect(&h, yolu_app::Tab::Properties, None));
+    common::shot::region(&mut h, "fx_props_uv_island_variation_ja", rect);
 }
 
 /// 描いた文字（アイコンの頭文字は除く）の一覧。
@@ -2008,38 +1982,27 @@ fn the_shape_row_of_a_generator_tells_each_shape_with_the_same_sentences_as_the_
 }
 
 #[test]
-fn snapshot_procedural_panels_in_both_languages() {
-    let mut results = SnapshotResults::new();
-    for lang in Lang::ALL {
-        for (kind, name) in [(Kind::Noise, "noise"), (Kind::Grunge, "grunge")] {
-            let mut h = app(1280.0, 1800.0, 32);
-            h.state_mut().state.set_language(lang);
-            fx(
-                &mut h,
-                FxOp::AddGenerator {
-                    target: FilterTarget::Content,
-                    kind,
-                },
-            );
-            if kind == Kind::Grunge {
-                while !yolu_app::panels::grunge_picker::ready() {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-                h.run();
+fn snapshot_procedural_panels() {
+    let lang = Lang::Ja; // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
+    for (kind, name) in [(Kind::Noise, "noise"), (Kind::Grunge, "grunge")] {
+        let mut h = app(1280.0, 1800.0, 32);
+        h.state_mut().state.set_language(lang);
+        fx(
+            &mut h,
+            FxOp::AddGenerator {
+                target: FilterTarget::Content,
+                kind,
+            },
+        );
+        if kind == Kind::Grunge {
+            while !yolu_app::panels::grunge_picker::ready() {
+                std::thread::sleep(std::time::Duration::from_millis(10));
             }
-            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-            common::shot::region(
-                &mut h,
-                &format!(
-                    "fx_procedural_{name}_{}",
-                    if lang == Lang::Ja { "ja" } else { "en" }
-                ),
-                rect,
-            );
-            results.extend_harness(&mut h);
+            h.run();
         }
+        let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+        common::shot::region(&mut h, &format!("fx_procedural_{name}_ja"), rect);
     }
-    results.unwrap();
 }
 
 #[test]

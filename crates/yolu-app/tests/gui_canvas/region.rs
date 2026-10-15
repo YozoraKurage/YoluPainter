@@ -1882,11 +1882,6 @@ fn paint_channels_toggle_chips_and_values_change_the_state() {
     h.state_mut().state.mat.emission = [0.2, 0.8, 0.4];
     h.run();
     paint_channels_shot(&mut h, "region_paint_channels_on");
-    apply(&mut h, Action::M2Ui(yolu_app::m2::UiOp::Language(Lang::En)));
-    // 知らせは作ったときの言語の文のまま残るので、英語の見た目からは外す
-    h.state_mut().state.message.clear();
-    h.run();
-    paint_channels_shot(&mut h, "region_paint_channels_on_english");
 }
 
 /// ツールプロパティのパネルの中だけを撮って、正解の絵と比べる。

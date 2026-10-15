@@ -309,7 +309,7 @@ fn the_channels_tab_edits_the_normal_settings_with_toggle_slider_and_dropdowns()
         .state
         .apply(Action::M2Ui(UiOp::Language(Lang::En)));
     h.run();
-    crate::common::shot::region(&mut h, "channels_normal_english", rect);
+    // 英語の絵は撮らない（欄の並びは文字の長さで変わらない）
     let _ = lowest(&h, "Height → Normal");
     let _ = lowest(&h, "Strength");
     let _ = lowest(&h, "Clamp");

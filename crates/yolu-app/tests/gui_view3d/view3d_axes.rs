@@ -179,16 +179,19 @@ fn snapshot_the_axis_widget_in_both_languages_and_both_projections() {
     for lang in Lang::ALL {
         let mut h = view(lang);
         assert_eq!(camera(&h).yaw, DEFAULT_YAW);
-        shot(&mut h, lang.pick("view3d_axes_ja", "view3d_axes_en"));
+        // 英語の絵は撮らない（軸の印に文字は無い）
+        let ja = lang == Lang::Ja;
+        if ja {
+            shot(&mut h, "view3d_axes_ja");
+        }
         // 正面の視点（正投影。+Z の丸が真ん中に重なり、真ん中の丸は明るく塗られる）
         let r = gizmo(&h, lang);
         let at = ball(&h, r, AxisView::Front);
         click(&mut h, at);
         assert!(camera(&h).is_orthographic());
-        shot(
-            &mut h,
-            lang.pick("view3d_axes_front_ortho_ja", "view3d_axes_front_ortho_en"),
-        );
+        if ja {
+            shot(&mut h, "view3d_axes_front_ortho_ja");
+        }
         // ツールチップの名前は視点のパイと同じ
         assert_eq!(
             axis_gizmo::name(Part::Axis(AxisView::Top), lang),

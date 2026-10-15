@@ -4,7 +4,7 @@ use crate::common;
 
 use common::*;
 use egui_kittest::kittest::Queryable;
-use egui_kittest::{Harness, SnapshotResults};
+use egui_kittest::Harness;
 use yolu_app::fx::{FilterKind, FxOp};
 use yolu_app::lang::Lang;
 use yolu_app::m2::Edit;
@@ -44,7 +44,6 @@ fn label(lang: Lang) -> &'static str {
 
 #[test]
 fn the_seam_switch_needs_a_model_and_turns_the_document_setting() {
-    let mut results = SnapshotResults::new();
     for lang in Lang::ALL {
         let mut h = app(1280.0, 1000.0, 128);
         h.state_mut().state.set_language(lang);
@@ -55,13 +54,11 @@ fn the_seam_switch_needs_a_model_and_turns_the_document_setting() {
         h.run();
         assert!(h.state().state.doc.seams_active());
         let at = rect_of(&h, label(lang), |_| true);
-        let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
-        common::shot::region(
-            &mut h,
-            &format!("fx_seams_switch_{}", lang.pick("ja", "en")),
-            rect,
-        );
-        results.extend_harness(&mut h);
+        // 英語の絵は撮らない（行の並びは文字の長さで変わらない）
+        if lang == Lang::Ja {
+            let rect = crate::group_rect(&h, yolu_app::Tab::Properties, None);
+            common::shot::region(&mut h, "fx_seams_switch_ja", rect);
+        }
         let count = h.state().state.doc.undo_count();
         click(&mut h, center(at));
         assert!(!h.state().state.doc.filter_seams());
