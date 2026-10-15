@@ -550,13 +550,7 @@ impl Document {
     ) -> Result<PasteResult, CoreError> {
         self.ensure_no_stroke()?;
         self.require_channel(channel)?;
-        let (index, parent) = match above {
-            Some(a) => {
-                let i = self.index_of(a)?;
-                (i + 1, self.layers[i].parent)
-            }
-            None => (self.layers.len(), None),
-        };
+        let (index, parent, set) = self.placement_above(above)?;
         let (w, h) = (self.width as i64, self.height as i64);
         let (cw, ch) = (clip.width as i64, clip.height as i64);
         let centered = (clip.document_width, clip.document_height) != (self.width, self.height);
@@ -623,6 +617,7 @@ impl Document {
         layer.put_surface(channel, Some(surface));
         layer.set_enabled(channel, true);
         layer.parent = parent;
+        layer.set = set;
         let mut steps = vec![Entry {
             kind: super::HistoryKind::AddLayer,
             command: Command::Insert {

@@ -89,11 +89,11 @@ pub use brush::{
 };
 pub use document::{
     clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,
-    CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport, LiquifyDab,
-    LiquifyMode, MergeMethod, MergeRefusal, PasteResult, PixelClipboard, PreparedResize,
-    Resampling, ResizeReport, SavedSelection, SeamFallback, Stroke, StrokeResult, StrokeStats,
-    TriangleFill, Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES, MAX_GROUP_DEPTH,
-    MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
+    CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport,
+    LayerSetInfo, LiquifyDab, LiquifyMode, MergeMethod, MergeRefusal, PasteResult, PixelClipboard,
+    PreparedResize, Resampling, ResizeReport, SavedSelection, SeamFallback, Stroke, StrokeResult,
+    StrokeStats, TriangleFill, Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES,
+    MAX_GROUP_DEPTH, MAX_LAYER_SETS, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
 };
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,
@@ -102,7 +102,7 @@ pub use effects::{
 };
 pub use error::CoreError;
 pub use glam;
-pub use layer::{ChannelBlend, Layer, LayerId, RasterMask};
+pub use layer::{ChannelBlend, Layer, LayerId, LayerSetId, RasterMask};
 pub use normal::{HeightEdgeMode, NormalSettings, NormalYDirection};
 pub use paths::LayerPathEntry;
 pub use rulers::{

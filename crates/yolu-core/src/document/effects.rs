@@ -981,14 +981,12 @@ impl Document {
             return Ok(None);
         };
         let points = self.anchor_points();
-        Ok(
-            match anchor::resolve(&points, a.0, reader, self.layers.len()) {
-                Ok(_) => None,
-                Err(anchor::Issue::NotChosen) => Some(AnchorIssueKind::NotChosen),
-                Err(anchor::Issue::Missing) => Some(AnchorIssueKind::Missing),
-                Err(anchor::Issue::NotBelow) => Some(AnchorIssueKind::NotBelow),
-            },
-        )
+        Ok(match self.resolve_anchor(&points, a.0, reader) {
+            Ok(_) => None,
+            Err(anchor::Issue::NotChosen) => Some(AnchorIssueKind::NotChosen),
+            Err(anchor::Issue::Missing) => Some(AnchorIssueKind::Missing),
+            Err(anchor::Issue::NotBelow) => Some(AnchorIssueKind::NotBelow),
+        })
     }
 
     /// レイヤーの Generator が読める Anchor（そのレイヤーより下にあるもの）。
@@ -1067,7 +1065,7 @@ impl Document {
                     if g.kind != generator::Kind::Anchor {
                         continue;
                     }
-                    if let Err(issue) = g.anchor.resolve(&points, i, self.layers.len()) {
+                    if let Err(issue) = self.resolve_anchor(&points, g.anchor.id, i) {
                         v.push(AnchorIssue {
                             layer: l.id,
                             filter: e.id,

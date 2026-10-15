@@ -233,9 +233,15 @@ impl Plan {
             .ok_or(Unsupported::UnknownChannel)?
             .kind;
         let layers = doc.layers();
+        // 合成するのは、チャンネルの出力の割り当てのレイヤーセットのレイヤーだけ（割り当てが無ければ何も重ねない）
+        let output = doc
+            .channel_output(channel)
+            .map_err(|_| Unsupported::UnknownChannel)?;
         let mut children: HashMap<Option<LayerId>, Vec<usize>> = HashMap::new();
         for (i, l) in layers.iter().enumerate() {
-            children.entry(l.parent()).or_default().push(i);
+            if Some(l.layer_set()) == output {
+                children.entry(l.parent()).or_default().push(i);
+            }
         }
         let mut builder = Builder {
             layers,

@@ -4,7 +4,7 @@
 //! （版 9・11・13・15）、Anchor（版 20）、塗りつぶしの画像と投影（版 16・17）、塗りつぶしのグラデーション（版 21））と、編集できる 2D・3D のパス
 //! （版 8・10・18）、レイヤーの後の手動の ID の色（版 19）。core に無い項目は先に検査して断り、部分変換を返さない。
 use crate::native::{
-    ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION,
+    ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION, EFFECTS_VERSION, LAYER_SETS_VERSION,
     MANUAL_ID_COLORS_VERSION, MIXING_VERSION, PATHS_VERSION, POINT_GRADIENT_VERSION,
     PROCEDURAL_VERSION, RULERS_VERSION, SEAMS_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION,
     USER_CHANNELS_VERSION,
@@ -29,8 +29,8 @@ use yolu_core::{
     BlendMode, BrightnessContrast, BrushSettings, Channel, ChannelBlend, ChannelInfo, ChannelKind,
     ColorAdjust, ColorBalance, ColorSpace, Document, EffectSettings, FilterEffect, FilterId,
     FilterSpec, FilterTarget, GradientMap, HeightEdgeMode, ImageId, LayerId, LayerKind, LayerLocks,
-    LayerPath, NormalSettings, NormalYDirection, Posterize, Rgba8, Ruler, RulerId, RulerKind,
-    RulerPlace, RulerScope, Threshold, TileCoord, ToneChannel, ToneCurves,
+    LayerPath, LayerSetId, LayerSetInfo, NormalSettings, NormalYDirection, Posterize, Rgba8, Ruler,
+    RulerId, RulerKind, RulerPlace, RulerScope, Threshold, TileCoord, ToneChannel, ToneCurves,
 };
 
 fn core_id(mut guid: [u8; 16]) -> u128 {
@@ -153,6 +153,7 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
             | "user_channel_count" | "user_channels" | "filter_seams" | "layer_count"
             | "manual_id_colors" => None,
             "bake_priority" => None,
+            "layer_set_count" | "layer_sets" | "route_count" | "route" => None,
             _ => Some((path.into(), "core に無い項目")),
         };
     };
@@ -199,7 +200,8 @@ fn unsupported(path: &str, fields: &HashMap<&str, &V>) -> Option<(String, &'stat
         | "point_gradients"
         | "text"
         | "ruler_count"
-        | "rulers" => None,
+        | "rulers"
+        | "set" => None,
         "mask" => match parts.next().unwrap_or_default().split('[').next() {
             Some(
                 "enabled" | "inverted" | "density" | "tile_count" | "tiles" | "filters" | "anchor",
@@ -285,6 +287,9 @@ pub(crate) fn core_issues_of(fields: &[crate::NativeField]) -> Vec<String> {
     issues
 }
 
+/// 版 36 の頭から読んだレイヤーセットの一覧と、チャンネルごとの出力の割り当て。
+type LoadedLayerSets = (Vec<LayerSetInfo>, Vec<(Channel, Option<LayerSetId>)>);
+
 /// 正本を core の文書へレイヤーごとに入れる（頭 → レイヤー → 終わり）。メモリの正本も、流して読む正本も同じ道を通る。
 pub(crate) struct CoreLoad {
     doc: Document,
@@ -292,6 +297,10 @@ pub(crate) struct CoreLoad {
     ids: Vec<LayerId>,
     parents: Vec<[u8; 16]>,
     locks: Vec<LayerLocks>,
+    /// 版 36 のレイヤーセットと出力の割り当て（頭から。版 35 までは None）。
+    layer_sets: Option<LoadedLayerSets>,
+    /// 版 36 のレイヤーの所属（読んだレイヤーの順）。
+    members: Vec<LayerSetId>,
 }
 impl CoreLoad {
     /// 頭（寸法・Normal の設定・ユーザーチャンネル）から空の文書を作る。`f` は頭の項目を含む。
@@ -350,12 +359,19 @@ impl CoreLoad {
         if version >= SEAMS_VERSION {
             doc.set_filter_seams_for_load(f.boolean("filter_seams")?);
         }
+        let layer_sets = if version >= LAYER_SETS_VERSION {
+            Some(read_layer_sets(f)?)
+        } else {
+            None
+        };
         Ok(Self {
             doc,
             version,
             ids: Vec::new(),
             parents: Vec::new(),
             locks: Vec::new(),
+            layer_sets,
+            members: Vec::new(),
         })
     }
     /// レイヤー `i` を足す（`f` はそのレイヤーの項目を含む）。
@@ -373,6 +389,10 @@ impl CoreLoad {
         } else {
             [0; 16]
         });
+        if version >= LAYER_SETS_VERSION {
+            self.members
+                .push(LayerSetId(core_id(f.guid(&format!("{p}.set"))?)));
+        }
         Ok(())
     }
     /// 親・保存した ID・ロックと手動の ID の色を付けて終える（`head` は文書の ID を含む頭の項目、`tail` は読み終えた正本の項目で、
@@ -383,6 +403,8 @@ impl CoreLoad {
             ids,
             parents,
             locks,
+            layer_sets,
+            members,
             ..
         } = self;
         let mut doc = doc;
@@ -408,6 +430,10 @@ impl CoreLoad {
             .collect::<Result<_>>()?;
         if parents.iter().any(Option::is_some) {
             doc.set_structure_for_load(&parents)?;
+        }
+        if let Some((sets, route)) = layer_sets {
+            doc.set_layer_sets_for_load(sets, &route, &members)
+                .map_err(|e| Error::from(e).in_context("レイヤーセットをcoreにできません"))?;
         }
         let mut doc = doc.with_persistent_ids(core_id(head.guid("id")?), &ids)?;
         // ロックは読み終えてから付ける（読み手自身の画素・属性の設定をロックが断らないように。C# の `SetLocksForLoad` と同じ）。
@@ -452,6 +478,30 @@ pub(crate) fn id_colors_of(fields: &[crate::NativeField]) -> Result<IdColorAssig
     }
     IdColorAssignments::new(binding, colors)
         .map_err(|e| Error::InvalidData(format!("手動の ID の色を core の形にできません: {}", e.0)))
+}
+
+/// 版 36 の頭のレイヤーセットと出力の割り当て（読み手が数・ID・並びを確かめた後）。割り当ての空の ID は既定値（None）。
+fn read_layer_sets(f: &Fields<'_>) -> Result<LoadedLayerSets> {
+    let sets = (0..f.int("layer_set_count")?)
+        .map(|i| {
+            let p = format!("layer_sets[{i}]");
+            Ok(LayerSetInfo {
+                id: LayerSetId(core_id(f.guid(&format!("{p}.id"))?)),
+                name: f.text(&format!("{p}.name"))?.to_owned(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let route = (0..f.int("route_count")?)
+        .map(|i| {
+            let p = format!("route[{i}]");
+            let set = f.guid(&format!("{p}.set"))?;
+            Ok((
+                f.channel(&format!("{p}.channel"))?,
+                (set != [0; 16]).then(|| LayerSetId(core_id(set))),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok((sets, route))
 }
 
 /// 版 33 の頭の `bake_priority` から、ベイクの優先（読み手が並び・範囲・指紋を確かめた後）。
@@ -506,7 +556,8 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
     }
 }
 
-/// 文書の正本の版（使う機能で決まる）: 定規を持つレイヤー（グループ）か、線対称の 2D のパスがあれば 35（版 27〜34 の中身も読み書きできる版）、
+/// 文書の正本の版（使う機能で決まる）: レイヤーセットが既定の形（名前の空の 1 つに全部のチャンネルを割り当てた形）でなければ 36（版 27〜35 の中身も
+/// 読み書きできる版）、定規を持つレイヤー（グループ）か、線対称の 2D のパスがあれば 35（版 27〜34 の中身も読み書きできる版）、
 /// パスのブラシのアンチエイリアス（なし 以外）があれば 34（版 27〜33 の中身も読み書きできる版）、
 /// 重なった UV のベイクの優先を既定から変えていれば 33（版 27〜32 の中身も読み書きできる版）、
 /// レイヤーのフィルターが UV の継ぎ目をまたぐ設定を切っていれば 32（版 27〜30 の中身も読み書きできる版）、
@@ -518,7 +569,9 @@ fn path_brush(path: &LayerPath) -> BrushSettings {
 /// 手動の ID の色（版 19 から）は 21 以上のどの版でも書けるので、版を決めない（色だけを持つ文書は Unity 版が読める 21 のまま）。
 pub(crate) fn version_of(doc: &Document) -> i32 {
     let user = doc.channels().into_iter().any(|c| !c.is_standard());
-    if uses_rulers_version(doc) {
+    if !doc.has_default_layer_sets() {
+        LAYER_SETS_VERSION
+    } else if uses_rulers_version(doc) {
         RULERS_VERSION
     } else if uses_anti_aliased_paths(doc) {
         ANTI_ALIAS_VERSION
@@ -633,7 +686,12 @@ pub(crate) fn write_layer_to(
     version: i32,
 ) -> Result<()> {
     let mut w = Out::for_version(sink, version);
-    write_layer(&mut w, layer)
+    write_layer(&mut w, layer)?;
+    // 版 36: レイヤーの末尾に、入っているレイヤーセット
+    if version >= LAYER_SETS_VERSION {
+        w.raw(&native_id(layer.layer_set().0))?;
+    }
+    Ok(())
 }
 /// 版の後ろからレイヤーの数まで（ID・寸法・Normal の設定・ユーザーチャンネル・レイヤーの数）。
 fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Result<()> {
@@ -683,6 +741,20 @@ fn write_head_after_version(w: &mut Out<'_>, doc: &Document, version: i32) -> Re
             for t in list {
                 w.int(*t as i32)?;
             }
+        }
+    }
+    if version >= LAYER_SETS_VERSION {
+        w.int(doc.layer_sets().len() as i32)?;
+        for s in doc.layer_sets() {
+            w.raw(&native_id(s.id.0))?;
+            w.text(&s.name)?;
+        }
+        let channels = doc.channels();
+        w.int(channels.len() as i32)?;
+        for c in channels {
+            w.int(c.index() as i32)?;
+            let set = doc.channel_output(c)?;
+            w.raw(&set.map_or([0; 16], |s| native_id(s.0)))?;
         }
     }
     w.int(doc.layers().len() as i32)

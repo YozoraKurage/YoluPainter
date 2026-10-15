@@ -19,6 +19,7 @@ mod format_doc;
 mod gradient_mixing_bridge;
 mod image_generator;
 mod layer_locks;
+mod layer_sets_bridge;
 mod look;
 mod m2_bridge;
 mod manual_id_colors;

@@ -113,7 +113,7 @@ fn all_rulers(d: &Document) -> Vec<(LayerId, Vec<Ruler>)> {
 #[test]
 fn documents_without_rulers_keep_their_old_version_and_ones_with_rulers_are_version_35() {
     assert_eq!(RULERS_VERSION, 35);
-    assert_eq!(MAX_NATIVE_VERSION, RULERS_VERSION);
+    const { assert!(RULERS_VERSION < MAX_NATIVE_VERSION) };
     let mut w = world();
     // 定規が無い文書: 版 21、定規の欄は無い
     let plain = NativeDocument::from_core(&w.doc).unwrap();
@@ -296,8 +296,8 @@ fn a_reader_that_stops_at_34_refuses_a_rulers_file() {
         bytes[8..12].copy_from_slice(&older.to_le_bytes());
         assert!(NativeDocument::read(&bytes).is_err(), "{older}");
     }
-    // 35 の上の版は断る
-    for newer in [MAX_NATIVE_VERSION + 1, 36, 40] {
+    // 読み手の一番新しい版の上の版は断る
+    for newer in [MAX_NATIVE_VERSION + 1, 40] {
         let mut b = native.to_bytes();
         b[8..12].copy_from_slice(&newer.to_le_bytes());
         let e = NativeDocument::read(&b).unwrap_err().to_string();

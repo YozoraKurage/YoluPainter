@@ -1100,6 +1100,8 @@ pub fn plan_export(
     options: &ExportOptions,
     ctl: &ExportControl,
 ) -> Result<ExportPlan> {
+    let wrapped = layer_sets_as_groups(d, options.channel)?;
+    let d = wrapped.as_ref().unwrap_or(d);
     precheck(d, options.channel, &ctl.limits())?;
     if ctl
         .cancel
@@ -1237,10 +1239,12 @@ impl ExportPlan {
         if let Some(b) = self.blockers.first() {
             return Err(Error::InvalidData(b.message()));
         }
+        let wrapped = layer_sets_as_groups(d, self.options.channel)?;
         if self.rounded.is_empty() {
-            Ok(None)
+            Ok(wrapped)
         } else {
-            Ok(Some(d.with_adjustments_replaced(&self.rounded)?))
+            let base = wrapped.as_ref().unwrap_or(d);
+            Ok(Some(base.with_adjustments_replaced(&self.rounded)?))
         }
     }
 
@@ -1995,5 +1999,31 @@ pub fn export_blockers(d: &CoreDocument) -> Vec<Blocker> {
 /// 厳密な書き出し（Color）: そのまま書けないもの（焼く・丸める・落とす）が 1 つでもあれば、レイヤーの名前と理由で断る。使う上限の値だけ `ctl` から
 /// （既定は C# と対の固定の上限）。振る舞い（何を断るか）は変わらない。
 pub(super) fn from_core_strict(d: &CoreDocument, ctl: &ExportControl) -> Result<Document> {
+    let wrapped = layer_sets_as_groups(d, Channel::Color)?;
+    let d = wrapped.as_ref().unwrap_or(d);
     Ok(Builder::new(d, &ExportOptions::color(), ctl, true)?.run(Compression::Raw)?)
+}
+
+/// レイヤーセットが 2 つ以上なら、レイヤーセットごとに一番上の段のグループ（分離）へ包んだ写し。グループの名前はレイヤーセットの名前で、空なら
+/// `Set <並びの番号（1 から）>`。表示するのは、書き出すチャンネルを出力しているレイヤーセットのグループだけ（PSD の合成が最終の結果と同じになる）。
+/// 1 つなら None（今の文書のまま書く。レイヤーセットの無かったときと同じバイト列）。
+fn layer_sets_as_groups(d: &CoreDocument, channel: Channel) -> Result<Option<CoreDocument>> {
+    let sets = d.layer_sets();
+    if sets.len() < 2 {
+        return Ok(None);
+    }
+    let output = d.channel_output(channel)?;
+    let names: Vec<String> = sets
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            if s.name.is_empty() {
+                format!("Set {}", i + 1)
+            } else {
+                s.name.clone()
+            }
+        })
+        .collect();
+    let visible: Vec<bool> = sets.iter().map(|s| Some(s.id) == output).collect();
+    Ok(Some(d.layer_sets_as_groups(&names, &visible)?))
 }

@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use super::{Command, Document, Order};
 use crate::adjust::AdjustmentSettings;
 use crate::error::CoreError;
-use crate::layer::{ChannelBlend, Layer, LayerId};
+use crate::layer::{ChannelBlend, Layer, LayerId, LayerSetId};
 use crate::surface::Surface;
 use crate::types::{Channel, ChannelInfo, LayerKind, Rgba8};
 
@@ -27,6 +27,8 @@ pub const MAX_GROUP_DEPTH: usize = 64;
 pub(crate) struct Tree {
     pub order: Order,
     groups: HashSet<LayerId>,
+    /// レイヤーのレイヤーセット（一番上の段の兄弟は同じレイヤーセットのレイヤーだけ）。
+    sets: HashMap<LayerId, LayerSetId>,
 }
 
 impl Tree {
@@ -75,13 +77,22 @@ impl Tree {
         let start = self.subtree_start(top);
         self.order[start..=top].iter().map(|e| e.0).collect()
     }
-    /// まとまりを parent の position（その親の兄弟の中の位置、0 = 一番下）へ動かす（C# の MoveSubtreeInternal）。
+    /// 並びの i 番が、親 parent・レイヤーセット set の段の兄弟か。
+    pub(super) fn is_sibling(&self, i: usize, parent: Option<LayerId>, set: LayerSetId) -> bool {
+        self.order[i].1 == parent && self.sets.get(&self.order[i].0) == Some(&set)
+    }
+    /// レイヤーのレイヤーセット。
+    pub(super) fn set_of(&self, id: LayerId) -> LayerSetId {
+        self.sets[&id]
+    }
+    /// まとまりを parent の position（その親の兄弟の中の位置、0 = 一番下。兄弟は同じレイヤーセットのレイヤー）へ動かす（C# の MoveSubtreeInternal）。
     fn move_subtree(&mut self, id: LayerId, parent: Option<LayerId>, position: usize) {
+        let set = self.set_of(id);
         let top = self.index(id);
         let start = self.subtree_start(top);
         let mut block: Vec<_> = self.order.drain(start..=top).collect();
         let siblings: Vec<usize> = (0..self.order.len())
-            .filter(|&i| self.order[i].1 == parent)
+            .filter(|&i| self.is_sibling(i, parent, set))
             .collect();
         let insert_at = if position < siblings.len() {
             self.subtree_start(siblings[position])
@@ -115,6 +126,7 @@ impl Document {
                 .filter(|l| l.is_group())
                 .map(|l| l.id)
                 .collect(),
+            sets: self.layers.iter().map(|l| (l.id, l.set)).collect(),
         }
     }
     fn order(&self) -> Order {
@@ -193,7 +205,7 @@ impl Document {
         Ok(())
     }
 
-    /// 新しいレイヤーを above のすぐ上（同じグループの中）へ、なければ一番上へ入れる（1 回の Undo）。
+    /// 新しいレイヤーを above のすぐ上（同じグループ・レイヤーセットの中）へ、なければ最初のレイヤーセットの一番上へ入れる（1 回の Undo）。
     pub(super) fn insert_new(
         &mut self,
         layer: Layer,
@@ -210,14 +222,9 @@ impl Document {
         cost: u64,
     ) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
-        let (index, parent) = match above {
-            Some(a) => {
-                let i = self.index_of(a)?;
-                (i + 1, self.layers[i].parent)
-            }
-            None => (self.layers.len(), None),
-        };
+        let (index, parent, set) = self.placement_above(above)?;
         layer.parent = parent;
+        layer.set = set;
         let id = layer.id;
         self.execute(
             Command::Insert {
@@ -385,7 +392,8 @@ impl Document {
     }
 
     /// レイヤー（グループなら中身ごと）をグループ parent（None は一番上の段）の子の position（0 = 一番下）へ動かす。
-    /// グループを自分の中へは入れられない。同じ所なら何もしない。
+    /// グループを自分の中へは入れられない。動かせるのは同じレイヤーセットの中だけ（別のレイヤーセットのグループへは断る。一番上の段は、
+    /// そのレイヤーのレイヤーセットの一番上の段）。同じ所なら何もしない。
     pub fn move_layer_to(
         &mut self,
         id: LayerId,
@@ -393,11 +401,16 @@ impl Document {
         position: usize,
     ) -> Result<(), CoreError> {
         self.ensure_no_stroke()?;
-        self.index_of(id)?;
+        let set = self.layers[self.index_of(id)?].set;
         if let Some(p) = parent {
             let pl = self.layer(p).ok_or(CoreError::LayerNotFound)?;
             if !pl.is_group() {
                 return Err(CoreError::InvalidArgument("グループにだけ入れられる"));
+            }
+            if pl.set != set {
+                return Err(CoreError::InvalidArgument(
+                    "別のレイヤーセットのグループへは入れられない",
+                ));
             }
             let mut cur = Some(p);
             while let Some(c) = cur {
@@ -412,7 +425,7 @@ impl Document {
         let siblings = self
             .layers
             .iter()
-            .filter(|l| l.parent == parent && l.id != id)
+            .filter(|l| l.parent == parent && l.set == set && l.id != id)
             .count();
         if position > siblings {
             return Err(CoreError::InvalidArgument("new_index"));
@@ -450,6 +463,12 @@ impl Document {
             }
         }
         let parent = self.layers[members[0]].parent;
+        let set = self.layers[members[0]].set;
+        if members.iter().any(|&i| self.layers[i].set != set) {
+            return Err(CoreError::InvalidArgument(
+                "別のレイヤーセットのレイヤーはまとめられない",
+            ));
+        }
         if members.iter().any(|&i| self.layers[i].parent != parent) {
             return Err(CoreError::InvalidArgument(
                 "同じグループの中のレイヤーだけをまとめられる",
@@ -459,6 +478,7 @@ impl Document {
         let gid = self.new_layer_id();
         let mut group = Layer::new(gid, name, LayerKind::Group);
         group.parent = parent;
+        group.set = set;
         let mut tree = self.tree();
         let before = tree.order.clone();
         let member_ids: Vec<LayerId> = members.iter().map(|&i| self.layers[i].id).collect();
@@ -470,6 +490,7 @@ impl Document {
         let insert_at = tree.index(*member_ids.last().expect("空でない")) + 1;
         tree.order.insert(insert_at, (gid, parent));
         tree.groups.insert(gid);
+        tree.sets.insert(gid, set);
         for (k, m) in member_ids.iter().enumerate() {
             tree.move_subtree(*m, Some(gid), k);
         }
@@ -590,6 +611,11 @@ impl Document {
                     }
                     if pi < i {
                         return Err(CoreError::InvalidArgument("レイヤーはグループの下に並ぶ"));
+                    }
+                    if tree.sets.get(&id) != tree.sets.get(&p) {
+                        return Err(CoreError::InvalidArgument(
+                            "グループの子が親と違うレイヤーセットにある",
+                        ));
                     }
                     // p が開いていなければ、p の子が途切れてから戻ってきた（子が連続していない）
                     while open.last() != Some(&p) {

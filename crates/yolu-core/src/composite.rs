@@ -26,7 +26,7 @@ use crate::adjust::AdjustKernel;
 use crate::blend::{blend, blend_row, clip_onto, clip_row, fade, fade_row, RowAmount};
 use crate::document::EvalSet;
 use crate::error::CoreError;
-use crate::layer::{Layer, LayerId};
+use crate::layer::{Layer, LayerId, LayerSetId};
 use crate::normal;
 use crate::surface::{Readers, Surface, Tile};
 use crate::types::{BlendMode, Channel, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord};
@@ -88,8 +88,30 @@ pub(crate) struct Stack<'a> {
 }
 
 impl<'a> Stack<'a> {
+    /// 並びの全部のレイヤーの計画（結合の準備のように、1 つのレイヤーセットの中から写した並び）。
     pub(crate) fn new(
         layers: &'a [Layer],
+        channel: Channel,
+        kind: ChannelKind,
+        eval: Option<&'a EvalSet>,
+    ) -> Self {
+        Self::build(layers, None, channel, kind, eval)
+    }
+
+    /// 文書の並びのうち、レイヤーセット `set` のレイヤーだけの計画（ほかのレイヤーセットのレイヤーは段に入れない。番号は並びのまま）。
+    pub(crate) fn in_set(
+        layers: &'a [Layer],
+        set: LayerSetId,
+        channel: Channel,
+        kind: ChannelKind,
+        eval: Option<&'a EvalSet>,
+    ) -> Self {
+        Self::build(layers, Some(set), channel, kind, eval)
+    }
+
+    fn build(
+        layers: &'a [Layer],
+        set: Option<LayerSetId>,
         channel: Channel,
         kind: ChannelKind,
         eval: Option<&'a EvalSet>,
@@ -97,7 +119,9 @@ impl<'a> Stack<'a> {
         let mut children: std::collections::HashMap<Option<LayerId>, Vec<usize>> =
             std::collections::HashMap::new();
         for (i, l) in layers.iter().enumerate() {
-            children.entry(l.parent).or_default().push(i);
+            if set.is_none_or(|s| l.set == s) {
+                children.entry(l.parent).or_default().push(i);
+            }
         }
         Stack {
             layers,

@@ -32,6 +32,16 @@ impl fmt::Display for LayerId {
     }
 }
 
+/// レイヤーセットの ID（文書の中で重ならない 128 bit。0 は使わない）。
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LayerSetId(pub u128);
+
+impl fmt::Debug for LayerSetId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "LayerSetId({:032x})", self.0)
+    }
+}
+
 /// レイヤーのチャンネルごとの合成モード・不透明度（Substance Painter のチャンネルごとの合成）。None の部分はレイヤーの値に従い、
 /// 値のある部分はそのチャンネルでだけレイヤーの値を置き換える（掛けない）。
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
@@ -147,6 +157,8 @@ pub struct Layer {
     pub(crate) kind: LayerKind,
     /// 入っているグループ（None は一番上の段）。
     pub(crate) parent: Option<LayerId>,
+    /// 入っているレイヤーセット（グループの子は親と同じ）。文書へ入れる所が決める（`Layer::new` の 0 は、まだ入れていない印）。
+    pub(crate) set: LayerSetId,
     /// チャンネルの番号ごとの面（ラスターだけ。無いチャンネルは None）。
     pub(crate) surfaces: Vec<Option<Surface>>,
     /// 有効なチャンネルの印（bit = チャンネルの番号）。無効にしたチャンネルの画素・値は保つ。
@@ -196,6 +208,7 @@ impl Layer {
             clipping: false,
             kind,
             parent: None,
+            set: LayerSetId(0),
             surfaces: Vec::new(),
             enabled: 0,
             fill: BTreeMap::new(),
@@ -246,6 +259,19 @@ impl Layer {
     /// 入っているグループ（None は一番上の段）。
     pub fn parent(&self) -> Option<LayerId> {
         self.parent
+    }
+    /// 入っているレイヤーセット。
+    pub fn layer_set(&self) -> LayerSetId {
+        self.set
+    }
+    /// other と同じ所（親とレイヤーセット）に置く。
+    pub(crate) fn place_like(&mut self, other: &Layer) {
+        self.parent = other.parent;
+        self.set = other.set;
+    }
+    /// 同じ段の兄弟か（同じ親で、同じレイヤーセット。一番上の段はレイヤーセットごとに別の段）。
+    pub(crate) fn is_sibling_of(&self, other: &Layer) -> bool {
+        self.parent == other.parent && self.set == other.set
     }
     /// チャンネルの面（ラスターでなければ、または無ければ None）。
     pub fn surface(&self, channel: Channel) -> Option<&Surface> {

@@ -39,6 +39,9 @@ impl State {
             normal_settings,
             selection,
             saved_selections,
+            // 交換しない: レイヤーセットの一覧と出力の割り当ては専用の段で変える（準備の操作は変えない。レイヤーの所属は `layers` が持つ）
+            layer_sets: _,
+            route: _,
             // 交換しない: 同じ文書の同じ値（準備用の文書は書き換えない）
             id: _,
             tile_size: _,
@@ -106,6 +109,9 @@ impl Document {
             height,
             tile_size,
             layers,
+            // 写す: 準備の中のレイヤーを足す操作・合成の比べが、本物と同じレイヤーセットと割り当てを読む
+            layer_sets,
+            route,
             channels,
             normal_settings,
             selection,
@@ -153,6 +159,8 @@ impl Document {
         let mut d = Document::with_tile_size(*width, *height, *tile_size)?;
         d.id = *id;
         d.layers = layers.clone();
+        d.layer_sets = layer_sets.clone();
+        d.route = *route;
         d.channels = channels.clone();
         d.normal_settings = *normal_settings;
         d.selection = selection.clone();
@@ -414,12 +422,27 @@ impl Document {
         if members.is_empty() {
             return Ok(());
         }
+        // 動かせるのは同じレイヤーセットの中だけ（並べ替えでほかのレイヤーセットへは移さない）
+        let set = self.layer(members[0]).expect("対象").set;
+        if members
+            .iter()
+            .any(|&m| self.layer(m).expect("対象").set != set)
+        {
+            return Err(CoreError::InvalidArgument(
+                "別のレイヤーセットのレイヤーは一緒に動かせない",
+            ));
+        }
         if let Some(p) = parent {
             let i = self.index_of(p)?;
             if !self.layers[i].is_group()
                 || members.iter().any(|&m| m == p || self.is_descendant(i, m))
             {
                 return Err(CoreError::InvalidArgument("移動先のグループ"));
+            }
+            if self.layers[i].set != set {
+                return Err(CoreError::InvalidArgument(
+                    "別のレイヤーセットのグループへは入れられない",
+                ));
             }
         }
         let mut tree = self.tree();
@@ -429,11 +452,9 @@ impl Document {
             blocks.extend(tree.block(m));
         }
         tree.order.retain(|e| !blocks.contains(&e.0));
-        let siblings: Vec<_> = tree
-            .order
-            .iter()
-            .filter(|e| e.1 == parent)
-            .map(|e| e.0)
+        let siblings: Vec<_> = (0..tree.order.len())
+            .filter(|&i| tree.is_sibling(i, parent, set))
+            .map(|i| tree.order[i].0)
             .collect();
         if position > siblings.len() {
             return Err(CoreError::InvalidArgument("position"));
@@ -472,11 +493,12 @@ impl Document {
         let moved = self.batch_layers_cost(Some(64), |d| {
             let mut moved = Vec::new();
             for id in members {
-                let p = d.layer(id).expect("対象").parent;
+                let me = d.layer(id).expect("対象");
+                let p = me.parent;
                 let siblings: Vec<_> = d
                     .layers
                     .iter()
-                    .filter(|l| l.parent == p)
+                    .filter(|l| l.is_sibling_of(me))
                     .map(|l| l.id)
                     .collect();
                 let at = siblings.iter().position(|&l| l == id).expect("兄弟");

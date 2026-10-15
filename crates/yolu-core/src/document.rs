@@ -17,6 +17,8 @@ mod edits;
 mod effects;
 mod eval;
 mod layer_path;
+mod layer_sets;
+pub use layer_sets::{LayerSetInfo, MAX_LAYER_SETS};
 mod layer_text;
 pub(crate) mod locks;
 mod look;
@@ -73,7 +75,7 @@ use crate::types::{
     BlendMode, Channel, ChannelInfo, ChannelKind, LayerKind, Rect, Rgba8, RowOrder, TileCoord,
 };
 
-pub use crate::layer::{Layer, LayerId};
+pub use crate::layer::{Layer, LayerId, LayerSetId};
 #[cfg(test)]
 mod cache_tests;
 #[cfg(test)]
@@ -95,6 +97,15 @@ pub struct CompositedTile {
 }
 
 impl CompositedTile {
+    /// 歩幅 1 のタイル（`composite_tiles_then` の仕上げ）。
+    fn whole(_: usize, coord: TileCoord, rect: Rect, pixels: Vec<u8>) -> Self {
+        CompositedTile {
+            coord,
+            rect,
+            stride: 1,
+            pixels,
+        }
+    }
     /// 画像の幅・高さ（画素）。
     pub fn size(&self) -> (u32, u32) {
         (
@@ -475,6 +486,8 @@ pub(crate) enum Command {
     Rulers {
         changes: Vec<rulers::RulerChange>,
     },
+    /// レイヤーセットの一覧・出力の割り当て・レイヤーの所属の入れ替え。
+    LayerSets(layer_sets::SetCommand),
 }
 
 pub(crate) struct Entry {
@@ -546,6 +559,11 @@ pub struct Document {
     height: u32,
     tile_size: u32,
     layers: Vec<Layer>,
+    /// レイヤーセット（1 つ以上。並びは画面の並び）。レイヤーは `Layer::set` でどれか 1 つに入る。
+    layer_sets: Vec<LayerSetInfo>,
+    /// チャンネルの番号ごとの出力の割り当て（最終の結果をどのレイヤーセットから取るか。None はそのチャンネルの既定値）。
+    /// 文書に無いチャンネルの欄も、在るレイヤーセットか None を持つ。
+    route: layer_sets::Route,
     /// チャンネルの一覧（番号ごと。None は空き）。0〜5 は標準で必ずある。
     channels: Vec<Option<ChannelInfo>>,
     pub(crate) normal_settings: NormalSettings,
@@ -627,12 +645,18 @@ impl Document {
         if tile_size == 0 || tile_size > 1024 {
             return Err(CoreError::InvalidArgument("tile_size"));
         }
+        let first = LayerSetId(random_id(u64::MAX) | 1);
         Ok(Document {
             id: random_id(0) | 1,
             width,
             height,
             tile_size,
             layers: Vec::new(),
+            layer_sets: vec![LayerSetInfo {
+                id: first,
+                name: String::new(),
+            }],
+            route: [Some(first); Channel::MAX],
             channels: Channel::ALL
                 .iter()
                 .map(|c| ChannelInfo::standard(*c))
@@ -912,8 +936,8 @@ impl Document {
         if index == 0 || index >= self.layers.len() || !self.layers[index].clipping {
             return false;
         }
-        let parent = self.layers[index].parent;
-        self.layers[..index].iter().any(|l| l.parent == parent)
+        let me = &self.layers[index];
+        self.layers[..index].iter().any(|l| l.is_sibling_of(me))
     }
 
     /// 属性の変更を 1 段として記録する（同じ値なら何もしない）。
@@ -1773,6 +1797,7 @@ impl Document {
             Command::Compound(steps) => self.switch_compound(steps, backwards),
             Command::Text(m) => self.switch_text(m, backwards),
             Command::Rulers { changes } => self.switch_rulers(changes, backwards),
+            Command::LayerSets(m) => self.switch_layer_sets(m, backwards),
         }
     }
 
@@ -1985,10 +2010,9 @@ impl Document {
             if !self.layers[i].clipping {
                 continue;
             }
-            let parent = self.layers[i].parent;
             let base = (0..i)
                 .rev()
-                .filter(|&j| self.layers[j].parent == parent)
+                .filter(|&j| self.layers[j].is_sibling_of(&self.layers[i]))
                 .find(|&j| !self.layers[j].clipping);
             if let Some(b) = base {
                 if self.layers[b].is_group() && !bases.contains(&b) {
@@ -2491,19 +2515,20 @@ impl Document {
 
     // ───────── 合成 ─────────
 
-    /// Color の合成（straight RGBA8、行は下から上）。
+    /// Color の最終の結果（straight RGBA8、行は下から上）。
     pub fn composite(&self, rect: Rect) -> Result<Vec<u8>, CoreError> {
         self.composite_channel(Channel::Color, rect)
     }
 
-    /// チャンネルの合成（straight RGBA8、行は下から上）。
+    /// チャンネルの最終の結果（出力の割り当てのレイヤーセットの、そのチャンネルの合成。割り当てが無ければ、そのチャンネルの既定値で塗った画素。
+    /// straight RGBA8、行は下から上）。
     pub fn composite_channel(&self, channel: Channel, rect: Rect) -> Result<Vec<u8>, CoreError> {
         let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
         self.composite_into(channel, rect, &mut out, RowOrder::BottomUp)?;
         Ok(out)
     }
 
-    /// 合成を呼び手の領域（width × height × 4）へ。order で行の並びを選ぶ。描いている途中でも読める。
+    /// 最終の結果を呼び手の領域（width × height × 4）へ。order で行の並びを選ぶ。描いている途中でも読める。
     pub fn composite_into(
         &self,
         channel: Channel,
@@ -2524,6 +2549,52 @@ impl Document {
         order: RowOrder,
         cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<(), CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => {
+                self.composite_set_into_cancellable(set, channel, rect, out, order, cancel)
+            }
+            None => {
+                self.check_rect(rect)?;
+                self.channel_kind(channel)?;
+                if out.len() != rect.width as usize * rect.height as usize * 4 {
+                    return Err(CoreError::InvalidArgument("出力の大きさが矩形と違う"));
+                }
+                self.fill_default(channel, out);
+                Ok(())
+            }
+        }
+    }
+
+    /// レイヤーセット `set` の、チャンネルの合成（出力の割り当てによらない。straight RGBA8、行は下から上）。描く・2D の表示が読む形。
+    pub fn composite_set_channel(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        rect: Rect,
+    ) -> Result<Vec<u8>, CoreError> {
+        let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
+        self.composite_set_into_cancellable(
+            set,
+            channel,
+            rect,
+            &mut out,
+            RowOrder::BottomUp,
+            None,
+        )?;
+        Ok(out)
+    }
+
+    /// `composite_set_channel` を呼び手の領域へ（取り消せる形。`composite_into_cancellable` と同じ決まり）。
+    pub fn composite_set_into_cancellable(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        rect: Rect,
+        out: &mut [u8],
+        order: RowOrder,
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<(), CoreError> {
+        self.require_layer_set(set)?;
         self.check_rect(rect)?;
         let kind = self.channel_kind(channel)?;
         if out.len() != rect.width as usize * rect.height as usize * 4 {
@@ -2532,10 +2603,10 @@ impl Document {
         let eval = if rect.is_empty() {
             eval::EvalSet::default()
         } else {
-            self.evaluate_for_composite(channel, kind, rect, cancel)?
+            self.evaluate_for_composite(set, channel, kind, rect, cancel)?
         };
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
-        match self.memo_request(channel) {
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
+        match self.memo_request(set, channel) {
             Some(memo) => {
                 composite::composite_into_memo(&stack, self.tile_size, rect, out, order, &memo)
             }
@@ -2543,9 +2614,41 @@ impl Document {
         }
     }
 
+    /// レイヤーセットの合成の、ただ 1 つの組み立て口: `set` のレイヤーだけを計画に入れる（並びは写さず、計画が他のレイヤーセットのレイヤーを
+    /// 飛ばす。計画の番号は文書の並びの番号のまま）。`below` があれば、並びのその番号より前のレイヤーだけ。
+    pub(crate) fn set_stack<'a>(
+        &'a self,
+        set: LayerSetId,
+        below: Option<usize>,
+        channel: Channel,
+        kind: ChannelKind,
+        eval: Option<&'a eval::EvalSet>,
+    ) -> Stack<'a> {
+        let layers = match below {
+            Some(index) => &self.layers[..index],
+            None => &self.layers[..],
+        };
+        Stack::in_set(layers, set, channel, kind, eval)
+    }
+
+    /// そのチャンネルの既定値で塗る（出力の割り当てが無いチャンネルの最終の結果）。
+    fn fill_default(&self, channel: Channel, out: &mut [u8]) {
+        let v = self
+            .channel_info(channel)
+            .map_or(Rgba8::TRANSPARENT, |i| i.default)
+            .to_array();
+        for px in out.chunks_exact_mut(4) {
+            px.copy_from_slice(&v);
+        }
+    }
+
     /// 描いている間の下の覚えを使う依頼（ストロークが無い・覚えを切っている・Anchor を読む効果がある・三角形の塗り・別のレイヤーへ書く
-    /// 多チャンネルのストロークのときは None）。
-    fn memo_request(&self, channel: Channel) -> Option<composite::MemoRequest<'_>> {
+    /// 多チャンネルのストローク・ストロークのレイヤーが別のレイヤーセットのときは None）。
+    fn memo_request(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+    ) -> Option<composite::MemoRequest<'_>> {
         let a = self.active.as_ref()?;
         if !self.journal.memo.enabled()
             || self.triangle_fill.is_some()
@@ -2555,12 +2658,14 @@ impl Document {
                 .iter()
                 .any(|s| s.layer_index != a.layer_index)
             || self.has_anchor_readers()
+            || self.layers.get(a.layer_index).is_none_or(|l| l.set != set)
         {
             return None;
         }
         Some(composite::MemoRequest {
             memo: &self.journal.memo,
             stroke: a.id,
+            set: set.0,
             layer: a.layer_index,
             channel,
             foreign: self.journal.foreign,
@@ -2602,7 +2707,7 @@ impl Document {
         self.journal.memo.set_enabled(on);
     }
 
-    /// 散らばったタイルの合成（straight RGBA8、行は下から上。キャンバスの外のタイルは飛ばす）。1 枚ずつ `composite_into` を呼ぶより、計画を
+    /// 散らばったタイルの最終の結果（straight RGBA8、行は下から上。キャンバスの外のタイルは飛ばす）。1 枚ずつ `composite_into` を呼ぶより、計画を
     /// 1 回で組み、タイルをワーカーへ分けるので、表示のように何枚も作り直すときの 1 枚あたりの時間が短い（比は文書と負荷による。計測の台
     /// `comp2d_bench --only call` の「1 枚ずつ ÷ 束」）。
     /// 効果の出力は、組のタイルを含むブロックだけを評価する。画素は `composite_into` と同じバイト。
@@ -2621,14 +2726,30 @@ impl Document {
         coords: &[TileCoord],
         cancel: Option<&std::sync::atomic::AtomicBool>,
     ) -> Result<Vec<CompositedTile>, CoreError> {
-        self.composite_tiles_then(channel, coords, cancel, |_, coord, rect, pixels| {
-            CompositedTile {
-                coord,
-                rect,
-                stride: 1,
-                pixels,
-            }
-        })
+        self.composite_tiles_then(channel, coords, cancel, CompositedTile::whole)
+    }
+
+    /// レイヤーセット `set` の、散らばったタイルの合成（出力の割り当てによらない。`composite_tiles_cancellable` と同じ決まり）。
+    pub fn composite_set_tiles_cancellable(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        coords: &[TileCoord],
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+    ) -> Result<Vec<CompositedTile>, CoreError> {
+        self.composite_set_tiles_then(set, channel, coords, cancel, CompositedTile::whole)
+    }
+
+    /// キャンバスの中のタイルと、その矩形（coords の並びのまま。キャンバスの外は飛ばす）。
+    fn canvas_tile_rects(&self, coords: &[TileCoord]) -> Vec<(TileCoord, Rect)> {
+        coords
+            .iter()
+            .filter_map(|c| {
+                self.tile_rect(*c)
+                    .filter(|r| !r.is_empty())
+                    .map(|r| (*c, r))
+            })
+            .collect()
     }
 
     /// `composite_tiles_cancellable` の、タイルごとの仕上げ `finish(番号, 座標, 矩形, 合成した画素)` を、そのタイルを合成したワーカーが
@@ -2641,24 +2762,50 @@ impl Document {
         cancel: Option<&std::sync::atomic::AtomicBool>,
         finish: impl Fn(usize, TileCoord, Rect, Vec<u8>) -> R + Sync,
     ) -> Result<Vec<R>, CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => self.composite_set_tiles_then(set, channel, coords, cancel, finish),
+            None => {
+                self.channel_kind(channel)?;
+                Ok(self
+                    .canvas_tile_rects(coords)
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, (coord, rect))| {
+                        let mut pixels = vec![0u8; rect.width as usize * rect.height as usize * 4];
+                        self.fill_default(channel, &mut pixels);
+                        finish(i, coord, rect, pixels)
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    /// `composite_tiles_then` の、レイヤーセットを指す形。
+    pub(crate) fn composite_set_tiles_then<R: Send>(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        coords: &[TileCoord],
+        cancel: Option<&std::sync::atomic::AtomicBool>,
+        finish: impl Fn(usize, TileCoord, Rect, Vec<u8>) -> R + Sync,
+    ) -> Result<Vec<R>, CoreError> {
+        self.require_layer_set(set)?;
         let kind = self.channel_kind(channel)?;
-        let tiles: Vec<(TileCoord, Rect)> = coords
-            .iter()
-            .filter_map(|c| {
-                self.tile_rect(*c)
-                    .filter(|r| !r.is_empty())
-                    .map(|r| (*c, r))
-            })
-            .collect();
+        let tiles = self.canvas_tile_rects(coords);
         if tiles.is_empty() {
             return Ok(Vec::new());
         }
         let wanted: Vec<TileCoord> = tiles.iter().map(|(c, _)| *c).collect();
-        let eval =
-            self.evaluate_for_composite_in(channel, kind, &eval::Region::Tiles(&wanted), cancel)?;
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let eval = self.evaluate_for_composite_in(
+            set,
+            channel,
+            kind,
+            &eval::Region::Tiles(&wanted),
+            cancel,
+        )?;
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
-        let memo = self.memo_request(channel);
+        let memo = self.memo_request(set, channel);
         composite::composite_tiles_with(
             &stack,
             self.tile_size,
@@ -2668,7 +2815,7 @@ impl Document {
         )
     }
 
-    /// 散らばったタイルの、歩幅 stride で拾った粗い合成（操作中・開いた直後の仮の絵）。画素 (i, j) は、タイルの左下から (i·stride, j·stride)
+    /// 散らばったタイルの、歩幅 stride で拾った粗い最終の結果（操作中・開いた直後の仮の絵）。画素 (i, j) は、タイルの左下から (i·stride, j·stride)
     /// の画素の合成と同じバイト。効果の出力は、評価していないブロックがあれば、粗く評価した出力（縮めた読み元で、半径を歩幅で割る。
     /// 近似で、キャッシュには入れない）で、全部が評価済みなら、その正確な出力を拾う。stride は 1 以上でタイルの一辺の約数。
     pub fn composite_coarse_tiles(
@@ -2677,28 +2824,56 @@ impl Document {
         coords: &[TileCoord],
         stride: u32,
     ) -> Result<Vec<CompositedTile>, CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => self.composite_set_coarse_tiles(set, channel, coords, stride),
+            None => {
+                if stride == 0 || !self.tile_size.is_multiple_of(stride) {
+                    return Err(CoreError::InvalidArgument("歩幅がタイルの一辺の約数でない"));
+                }
+                self.channel_kind(channel)?;
+                Ok(self
+                    .canvas_tile_rects(coords)
+                    .into_iter()
+                    .map(|(coord, rect)| {
+                        let (w, h) = (rect.width.div_ceil(stride), rect.height.div_ceil(stride));
+                        let mut pixels = vec![0u8; w as usize * h as usize * 4];
+                        self.fill_default(channel, &mut pixels);
+                        CompositedTile {
+                            coord,
+                            rect,
+                            stride,
+                            pixels,
+                        }
+                    })
+                    .collect())
+            }
+        }
+    }
+
+    /// レイヤーセット `set` の、粗い合成（出力の割り当てによらない。`composite_coarse_tiles` と同じ決まり）。
+    pub fn composite_set_coarse_tiles(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        coords: &[TileCoord],
+        stride: u32,
+    ) -> Result<Vec<CompositedTile>, CoreError> {
+        self.require_layer_set(set)?;
         if stride == 0 || !self.tile_size.is_multiple_of(stride) {
             return Err(CoreError::InvalidArgument("歩幅がタイルの一辺の約数でない"));
         }
         let kind = self.channel_kind(channel)?;
-        let tiles: Vec<(TileCoord, Rect)> = coords
-            .iter()
-            .filter_map(|c| {
-                self.tile_rect(*c)
-                    .filter(|r| !r.is_empty())
-                    .map(|r| (*c, r))
-            })
-            .collect();
+        let tiles = self.canvas_tile_rects(coords);
         if tiles.is_empty() {
             return Ok(Vec::new());
         }
         let wanted: Vec<TileCoord> = tiles.iter().map(|(c, _)| *c).collect();
-        let eval = if self.effects_pending(channel, &wanted) {
-            self.evaluate_for_composite_coarse(channel, kind, &wanted, stride, None)?
+        let eval = if self.set_effects_pending(set, channel, &wanted) {
+            self.evaluate_for_composite_coarse(set, channel, kind, &wanted, stride, None)?
         } else {
-            self.evaluate_for_composite_in(channel, kind, &eval::Region::Tiles(&wanted), None)?
+            self.evaluate_for_composite_in(set, channel, kind, &eval::Region::Tiles(&wanted), None)?
         };
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         let rects: Vec<Rect> = tiles.iter().map(|(_, r)| *r).collect();
         let images =
             composite::composite_coarse_tiles_into(&stack, self.tile_size, &rects, stride)?;
@@ -2716,6 +2891,7 @@ impl Document {
 
     /// レイヤー `id` より下の合成（そのレイヤーと上のレイヤーは入れない。調整レイヤーの入力の見積りに使う）。straight RGBA8、行は下から上。
     /// レイヤーの並びの前の部分だけで合成するので、入れ子のレイヤーは、親のグループがそのレイヤーより前にある並びの範囲で合成する。
+    /// 読むのは、そのレイヤーのレイヤーセットのレイヤーだけ。
     pub fn composite_below(
         &self,
         id: LayerId,
@@ -2724,31 +2900,56 @@ impl Document {
     ) -> Result<Vec<u8>, CoreError> {
         self.check_rect(rect)?;
         let index = self.index_of(id)?;
+        let set = self.layers[index].set;
         let kind = self.channel_kind(channel)?;
         let mut out = vec![0u8; rect.width as usize * rect.height as usize * 4];
         if rect.is_empty() {
             return Ok(out);
         }
-        let eval = self.evaluate_for_composite(channel, kind, rect, None)?;
-        let stack = Stack::new(&self.layers[..index], channel, kind, Some(&eval));
+        let eval = self.evaluate_for_composite(set, channel, kind, rect, None)?;
+        let stack = self.set_stack(set, Some(index), channel, kind, Some(&eval));
         composite::composite_into(&stack, self.tile_size, rect, &mut out, RowOrder::BottomUp)?;
         Ok(out)
     }
 
-    /// 1 画素の合成（参照の式。画素ごとにレイヤーを引くので遅い。試験・スポイト向け）。
+    /// 1 画素の最終の結果（参照の式。画素ごとにレイヤーを引くので遅い。試験・スポイト向け）。
     pub fn composite_pixel(&self, channel: Channel, x: u32, y: u32) -> Result<Rgba8, CoreError> {
+        match self.output_set(channel)? {
+            Some(set) => self.composite_set_pixel(set, channel, x, y),
+            None => {
+                if x >= self.width || y >= self.height {
+                    return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
+                }
+                self.channel_kind(channel)?;
+                Ok(self
+                    .channel_info(channel)
+                    .map_or(Rgba8::TRANSPARENT, |i| i.default))
+            }
+        }
+    }
+
+    /// レイヤーセット `set` の、1 画素の合成（出力の割り当てによらない）。
+    pub fn composite_set_pixel(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        x: u32,
+        y: u32,
+    ) -> Result<Rgba8, CoreError> {
+        self.require_layer_set(set)?;
         if x >= self.width || y >= self.height {
             return Err(CoreError::InvalidArgument("画素がキャンバスの外"));
         }
         let kind = self.channel_kind(channel)?;
         let ts = self.tile_size;
         let eval = self.evaluate_for_composite(
+            set,
             channel,
             kind,
             Rect::new(x / ts * ts, y / ts * ts, 1, 1),
             None,
         )?;
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         composite::composite_pixel(&stack, x, y)
     }
 

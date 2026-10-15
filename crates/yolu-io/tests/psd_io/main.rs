@@ -13,5 +13,6 @@ mod psd_adjust;
 mod psd_bake;
 mod psd_golden;
 mod psd_import;
+mod psd_layer_sets;
 mod psd_m2;
 mod psd_stream;

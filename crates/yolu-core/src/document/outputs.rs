@@ -13,7 +13,7 @@ use std::sync::atomic::AtomicBool;
 
 use super::eval::{cancelled, SourceKey};
 use super::*;
-use crate::composite::{composite_entries_into, Stack};
+use crate::composite::composite_entries_into;
 
 /// 面から何を読むか。
 #[derive(Clone, Copy)]
@@ -246,9 +246,12 @@ impl Document {
         if rect.is_empty() {
             return Ok(());
         }
-        let entries = Stack::new(&self.layers, channel, kind, None).plan_level(Some(id));
+        let set = self.layers[index].set;
+        let entries = self
+            .set_stack(set, None, channel, kind, None)
+            .plan_level(Some(id));
         let eval = self.evaluate_entries(&entries, channel, rect, cancel)?;
-        let stack = Stack::new(&self.layers, channel, kind, Some(&eval));
+        let stack = self.set_stack(set, None, channel, kind, Some(&eval));
         composite_entries_into(&stack, &entries, self.tile_size, rect, out, order)
     }
 }
@@ -281,7 +284,8 @@ impl Document {
     pub fn contributes(&self, id: LayerId, channel: Channel) -> Result<bool, CoreError> {
         let index = self.index_of(id)?;
         let kind = self.channel_kind(channel)?;
-        Ok(Stack::new(&self.layers, channel, kind, None)
+        Ok(self
+            .set_stack(self.layers[index].set, None, channel, kind, None)
             .make_entry(index)
             .is_some())
     }

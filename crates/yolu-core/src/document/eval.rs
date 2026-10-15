@@ -26,7 +26,7 @@ use crate::fill_image::{
 };
 use crate::filter::{self, GeneratorInput, ValueType};
 use crate::generator::{self, anchor, BoundGenerator, MapKind, MapState};
-use crate::layer::LayerId;
+use crate::layer::{LayerId, LayerSetId};
 use crate::surface::{Pixels, Surface, Tile};
 use crate::types::{Channel, ChannelKind, LayerKind, Rect, Rgba8, TileCoord};
 
@@ -911,7 +911,7 @@ impl Document {
                 if g.kind != generator::Kind::Anchor {
                     return None;
                 }
-                Some(match g.anchor.resolve(&points, index, self.layers.len()) {
+                Some(match self.resolve_anchor(&points, g.anchor.id, index) {
                     Ok(p) => AnchorStage::Bound(AnchorRef {
                         host: self.layers[p.host].id,
                         placement: match p.placement {
@@ -1021,12 +1021,14 @@ impl Document {
     /// 合成のために、プランに出るレイヤーのうち評価が要るものの出力を、矩形のタイルの範囲で作る。
     pub(crate) fn evaluate_for_composite(
         &self,
+        set: LayerSetId,
         channel: Channel,
         kind: ChannelKind,
         rect: Rect,
         cancel: Option<&AtomicBool>,
     ) -> Result<EvalSet, CoreError> {
         self.evaluate_for_composite_in(
+            set,
             channel,
             kind,
             &Region::Range(self.range_of_rect(rect)),
@@ -1037,19 +1039,26 @@ impl Document {
     /// `evaluate_for_composite` の、散らばったタイルの組も渡せる形。
     pub(crate) fn evaluate_for_composite_in(
         &self,
+        set: LayerSetId,
         channel: Channel,
         kind: ChannelKind,
         region: &Region<'_>,
         cancel: Option<&AtomicBool>,
     ) -> Result<EvalSet, CoreError> {
-        if !self.layers.iter().any(|l| {
-            l.has_evaluated_output(channel)
-                || l.mask.as_ref().is_some_and(|m| m.has_active_filters())
-        }) {
+        if !self.set_has_evaluated_output(set, channel) {
             return Ok(EvalSet::default());
         }
-        let stack = Stack::new(&self.layers, channel, kind, None);
+        let stack = self.set_stack(set, None, channel, kind, None);
         self.evaluate_entries_in(&stack.plan(), channel, region, cancel)
+    }
+
+    /// レイヤーセットに、評価した出力を読むレイヤー（効果・画像・グラデーション）か、効くフィルターのあるマスクがあるか。
+    fn set_has_evaluated_output(&self, set: LayerSetId, channel: Channel) -> bool {
+        self.layers.iter().any(|l| {
+            l.set == set
+                && (l.has_evaluated_output(channel)
+                    || l.mask.as_ref().is_some_and(|m| m.has_active_filters()))
+        })
     }
 
     /// 計画（段の並び）に出るレイヤーのうち評価が要るものの出力を、矩形のタイルの範囲で作る。合成（`evaluate_for_composite`）と、グループの
@@ -1104,17 +1113,28 @@ impl Document {
 
     /// 効果の出力（フィルター・Generator・画像・グラデーション）を、評価していないタイルがあるか（そのタイルを正確に合成するには、評価が
     /// 要るか）。評価した出力が持てるブロックが、キャッシュに無い・古いとき true。表示が、操作中の効果を粗く見せるかを決めるのに使う。
+    /// 最終の結果（出力の割り当てのレイヤーセット）について見る。割り当てが無ければ false。
     pub fn effects_pending(&self, channel: Channel, coords: &[TileCoord]) -> bool {
+        match self.output_set(channel) {
+            Ok(Some(set)) => self.set_effects_pending(set, channel, coords),
+            _ => false,
+        }
+    }
+
+    /// `effects_pending` の、レイヤーセットを指す形。
+    pub fn set_effects_pending(
+        &self,
+        set: LayerSetId,
+        channel: Channel,
+        coords: &[TileCoord],
+    ) -> bool {
         let Ok(kind) = self.channel_kind(channel) else {
             return false;
         };
-        if !self.layers.iter().any(|l| {
-            l.has_evaluated_output(channel)
-                || l.mask.as_ref().is_some_and(|m| m.has_active_filters())
-        }) {
+        if !self.set_has_evaluated_output(set, channel) {
             return false;
         }
-        let stack = Stack::new(&self.layers, channel, kind, None);
+        let stack = self.set_stack(set, None, channel, kind, None);
         let mut indices = Vec::new();
         collect_layers(&stack.plan(), &mut indices);
         let bt = self.block_tiles();
@@ -1148,19 +1168,17 @@ impl Document {
     /// キャッシュには入れない）。評価が要るレイヤーが無ければ空。
     pub(crate) fn evaluate_for_composite_coarse(
         &self,
+        set: LayerSetId,
         channel: Channel,
         kind: ChannelKind,
         coords: &[TileCoord],
         stride: u32,
         cancel: Option<&AtomicBool>,
     ) -> Result<EvalSet, CoreError> {
-        if !self.layers.iter().any(|l| {
-            l.has_evaluated_output(channel)
-                || l.mask.as_ref().is_some_and(|m| m.has_active_filters())
-        }) {
+        if !self.set_has_evaluated_output(set, channel) {
             return Ok(EvalSet::default());
         }
-        let stack = Stack::new(&self.layers, channel, kind, None);
+        let stack = self.set_stack(set, None, channel, kind, None);
         let mut indices = Vec::new();
         collect_layers(&stack.plan(), &mut indices);
         let mut set = EvalSet {
@@ -2303,7 +2321,11 @@ impl Document {
         };
         match r.placement {
             AnchorPlacement::Layer => {
+                let set = self.layers[host].set;
                 for (i, l) in self.layers.iter().enumerate().take(host + 1) {
+                    if l.set != set {
+                        continue;
+                    }
                     if matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
                         && l.has_evaluated_output(r.channel)
                         && l.is_channel_enabled(r.channel)
@@ -2322,6 +2344,24 @@ impl Document {
                 }
             }
         }
+    }
+
+    /// Anchor の合成が読むレイヤー: host のレイヤーセットのレイヤーの文書の番号（並びの順）、その中の host の位置、レイヤーの ID からその中の位置。
+    fn anchor_members(&self, host: usize) -> (Vec<usize>, usize, HashMap<LayerId, usize>) {
+        let set = self.layers[host].set;
+        let members: Vec<usize> = (0..self.layers.len())
+            .filter(|&i| self.layers[i].set == set)
+            .collect();
+        let host_at = members
+            .iter()
+            .position(|&i| i == host)
+            .expect("host は自分のレイヤーセットにある");
+        let position = members
+            .iter()
+            .enumerate()
+            .map(|(k, &i)| (self.layers[i].id, k))
+            .collect();
+        (members, host_at, position)
     }
 
     /// レイヤーの Anchor のタイル: そのレイヤーまでのスタックを、そのレイヤーより上が無いものとして合成した結果（全部透明なら None）。
@@ -2351,17 +2391,14 @@ impl Document {
         let dims = (self.width, self.height);
         // 合成が読むレイヤーは、host とそれより下（host の下の兄弟、祖先の下の兄弟、host がグループなら中身）だけで、どれも番号が host 以下
         // （グループは中身の上に並ぶ）。host より上の兄弟は読まない: 評価すると、それが host の Anchor を読むときに host の Anchor へ戻って
-        // 終わらない。祖先のグループは画素が要らないので、読まれないレイヤーと同じ Group の入れ物にする
-        let position: HashMap<LayerId, usize> = self
-            .layers
-            .iter()
-            .enumerate()
-            .map(|(i, l)| (l.id, i))
-            .collect();
+        // 終わらない。祖先のグループは画素が要らないので、読まれないレイヤーと同じ Group の入れ物にする。
+        // 読むのは host のレイヤーセットのレイヤーだけ（計画の番号は、そのレイヤーセットのレイヤーの並びの中の番号）
+        let (members, host_at, position) = self.anchor_members(host);
         // レイヤーごとの入力（読まれるレイヤーだけ画素を用意する）
-        let mut views: Vec<Option<TileView>> = Vec::with_capacity(self.layers.len());
-        let mut mask_views: Vec<Option<TileView>> = Vec::with_capacity(self.layers.len());
-        for (i, l) in self.layers.iter().enumerate() {
+        let mut views: Vec<Option<TileView>> = Vec::with_capacity(members.len());
+        let mut mask_views: Vec<Option<TileView>> = Vec::with_capacity(members.len());
+        for &i in &members {
+            let l = &self.layers[i];
             let reachable = i <= host;
             let content = if reachable
                 && matches!(l.kind, LayerKind::Raster | LayerKind::Fill)
@@ -2403,11 +2440,11 @@ impl Document {
             dims,
             tile: None,
         };
-        let layers: Vec<anchor::Layer<'_>> = self
-            .layers
+        let layers: Vec<anchor::Layer<'_>> = members
             .iter()
             .enumerate()
-            .map(|(i, l)| {
+            .map(|(k, &i)| {
+                let l = &self.layers[i];
                 let content = if i > host {
                     anchor::Content::Group // 読まれないレイヤー（host より上）と、画素の要らない祖先のグループ
                 } else {
@@ -2418,10 +2455,10 @@ impl Document {
                                 .clone()
                                 .unwrap_or_else(crate::AdjustmentSettings::invert),
                         ),
-                        LayerKind::Fill if views[i].is_none() => anchor::Content::Fill(
+                        LayerKind::Fill if views[k].is_none() => anchor::Content::Fill(
                             l.fill.get(&channel).copied().unwrap_or(Rgba8::TRANSPARENT),
                         ),
-                        _ => anchor::Content::Pixels(views[i].as_ref().unwrap_or(&empty)),
+                        _ => anchor::Content::Pixels(views[k].as_ref().unwrap_or(&empty)),
                     }
                 };
                 let enabled = i <= host
@@ -2442,7 +2479,7 @@ impl Document {
                     opacity: l.opacity_in(channel),
                     blend: l.blend_mode_in(channel),
                     clipping: l.clipping,
-                    mask: match (&l.mask, &mask_views[i]) {
+                    mask: match (&l.mask, &mask_views[k]) {
                         (Some(m), Some(v)) => Some(anchor::Mask {
                             source: v,
                             enabled: m.enabled,
@@ -2454,7 +2491,7 @@ impl Document {
                 }
             })
             .collect();
-        let plan = anchor::Plan::new(&layers, host, dims, kind).map_err(map_generator_error)?;
+        let plan = anchor::Plan::new(&layers, host_at, dims, kind).map_err(map_generator_error)?;
         let (x0, y0) = (coord.x * ts, coord.y * ts);
         let region = Rect::new(x0, y0, ts.min(self.width - x0), ts.min(self.height - y0));
         let pixels = plan
@@ -2524,7 +2561,7 @@ impl Document {
                     v.push(AnchorSig {
                         reader: l.id,
                         filter: e.id,
-                        resolved: g.anchor.resolve(&points, i, self.layers.len()).map(|p| {
+                        resolved: self.resolve_anchor(&points, g.anchor.id, i).map(|p| {
                             (
                                 self.layers[p.host].id,
                                 match p.placement {
@@ -2543,6 +2580,25 @@ impl Document {
     }
 
     /// Anchor を読む段がどこかにあるか（有効かは問わない）。
+    /// Anchor の参照を解決する（[`anchor::resolve`] に加えて、読み手と同じレイヤーセットの Anchor だけ。ほかのレイヤーセットの Anchor は
+    /// 無いもの（`Missing`）として扱う）。
+    pub(super) fn resolve_anchor(
+        &self,
+        points: &[anchor::Point],
+        id: u128,
+        reader: usize,
+    ) -> Result<anchor::Point, anchor::Issue> {
+        let other_set = |p: &anchor::Point| {
+            p.host < self.layers.len()
+                && reader < self.layers.len()
+                && self.layers[p.host].set != self.layers[reader].set
+        };
+        if id != 0 && points.iter().find(|p| p.id == id).is_some_and(other_set) {
+            return Err(anchor::Issue::Missing);
+        }
+        anchor::resolve(points, id, reader, self.layers.len())
+    }
+
     pub(super) fn has_anchor_readers(&self) -> bool {
         self.layers.iter().any(|l| {
             l.filters
@@ -2621,7 +2677,7 @@ impl Document {
                     if g.kind != generator::Kind::Anchor {
                         continue;
                     }
-                    let Ok(p) = g.anchor.resolve(&points, i, self.layers.len()) else {
+                    let Ok(p) = self.resolve_anchor(&points, g.anchor.id, i) else {
                         continue;
                     };
                     let halo: u32 = active[k..].iter().map(|e| e.settings.halo()).sum();
@@ -2728,7 +2784,7 @@ impl Document {
         let dims = (self.width, self.height);
         let points = self.anchor_points();
         let reference = (g.kind == generator::Kind::Anchor)
-            .then(|| g.anchor.resolve(&points, reader, self.layers.len()));
+            .then(|| self.resolve_anchor(&points, g.anchor.id, reader));
         // 値の読み元は要らない（使えるかの判定だけ）。使える参照には空の読み元を渡す
         struct Nothing(u32, u32);
         impl anchor::ValueSource for Nothing {

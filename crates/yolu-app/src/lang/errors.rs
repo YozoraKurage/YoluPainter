@@ -1089,6 +1089,31 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "2 点はパースだけ" => "Two points are for a perspective ruler only",
         "対称定規の線の本数（2〜16）" => "A symmetry ruler has 2 to 16 lines",
         "線の本数と線対称は対称定規だけ" => "Line count and line symmetry are for symmetry rulers only",
+        "別のレイヤーセットのグループへは入れられない" => {
+            "A layer cannot go into a group of another layer set"
+        }
+        "別のレイヤーセットのレイヤーはまとめられない" => {
+            "Layers of different layer sets cannot be grouped"
+        }
+        "グループの子が親と違うレイヤーセットにある" => {
+            "A layer in a group is in a different layer set from the group"
+        }
+        "別のレイヤーセットのレイヤーは一緒に動かせない" => {
+            "Layers of different layer sets cannot be moved together"
+        }
+        "別のレイヤーセットのレイヤーは結合できない" => {
+            "Layers of different layer sets cannot be merged"
+        }
+        "レイヤーセットの名前" => "The layer set name",
+        "レイヤーセットが無い" => "The layer set does not exist",
+        "レイヤーセットの数の上限" => "Too many layer sets",
+        "レイヤーセットの位置" => "The layer set position",
+        "最後のレイヤーセットは消せない" => "The last layer set cannot be removed",
+        "レイヤーセットの名前・表示の数" => "The layer set names and visibility do not match the sets",
+        "レイヤーセットの数" => "The number of layer sets",
+        "レイヤーセットの ID が空か重なっている" => "A layer set ID is empty or repeated",
+        "レイヤーの所属のレイヤーセット" => "The layer set of a layer",
+        "出力の割り当て" => "The output assignment",
         _ => return None,
     })
 }

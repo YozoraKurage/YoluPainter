@@ -193,11 +193,17 @@ impl Document {
                 "スマートマスクはレイヤーに置けません",
             ));
         }
-        if let Some(p) = placement.parent {
-            if !self.layers[self.index_of(p)?].is_group() {
-                return Err(CoreError::InvalidArgument("配置先がグループではありません"));
+        // 置き先のレイヤーセット: 配置先のグループのもの、一番上の段なら最初のレイヤーセット
+        let set = match placement.parent {
+            Some(p) => {
+                let l = &self.layers[self.index_of(p)?];
+                if !l.is_group() {
+                    return Err(CoreError::InvalidArgument("配置先がグループではありません"));
+                }
+                l.set
             }
-        }
+            None => self.layer_sets[0].id,
+        };
         self.check_user_channels(material)?;
         let wrap = material
             .layers
@@ -216,7 +222,7 @@ impl Document {
             .layers
             .iter()
             .enumerate()
-            .filter(|(_, l)| l.parent == placement.parent)
+            .filter(|(_, l)| l.parent == placement.parent && l.set == set)
             .map(|(i, _)| i)
             .collect();
         let index = match placement.position.and_then(|p| siblings.get(p)).copied() {
@@ -247,6 +253,7 @@ impl Document {
         for l in &mut copies {
             l.id = ids[&l.id];
             l.parent = l.parent.map(|p| ids[&p]).or(group).or(placement.parent);
+            l.set = set;
             if let Some(keep) = &placement.channels {
                 for c in material.channels() {
                     if l.is_channel_enabled(c) && !keep.contains(&c) {
@@ -263,6 +270,7 @@ impl Document {
                 LayerKind::Group,
             );
             l.parent = placement.parent;
+            l.set = set;
             copies.push(l);
         }
         let layer_id = copies
@@ -466,6 +474,11 @@ impl SmartMaterial {
         d.id = self.document_id;
         d.normal_settings = self.normal_settings;
         d.layers = self.layers.clone();
+        // 断片は 1 つのレイヤーセット（新しい文書の最初のもの）に入る
+        let set = d.layer_sets[0].id;
+        for l in &mut d.layers {
+            l.set = set;
+        }
         d.channels = self.channel_info.clone();
         Ok(d)
     }

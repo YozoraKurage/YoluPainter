@@ -19,6 +19,8 @@ impl Document {
             height,
             tile_size,
             layers,
+            layer_sets,
+            route,
             channels,
             normal_settings,
             selection,
@@ -57,6 +59,8 @@ impl Document {
         let mut copy = Document::with_tile_size(*width, *height, *tile_size)?;
         copy.id = *id;
         copy.layers = layers.clone();
+        copy.layer_sets = layer_sets.clone();
+        copy.route = *route;
         copy.channels = channels.clone();
         copy.normal_settings = *normal_settings;
         copy.selection = selection.clone();

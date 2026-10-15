@@ -56,6 +56,8 @@ impl Document {
             ));
         }
         let ts = self.tile_size;
+        // 読むのは、描くレイヤーのレイヤーセットの合成（出力の割り当てによらない）
+        let set = self.layers[states[0].layer_index].set;
         let mut total = 0u64; // C# の cloneSourceBytes（これまでのチャンネルの分）
         let mut sources = Vec::with_capacity(states.len());
         for state in states {
@@ -64,7 +66,7 @@ impl Document {
             // レイヤーが画素を持ち得るタイル（見えていて、そのチャンネルが有効なレイヤー。塗りつぶし・調整はキャンバス全体）
             let mut coords: BTreeSet<TileCoord> = BTreeSet::new();
             for layer in &self.layers {
-                if !layer.visible || !layer.is_channel_enabled(channel) {
+                if layer.set != set || !layer.visible || !layer.is_channel_enabled(channel) {
                     continue;
                 }
                 let found: Vec<TileCoord> = match layer.kind {
@@ -109,7 +111,14 @@ impl Document {
             let mut tiles = HashMap::with_capacity(rects.len());
             for (coord, rect) in rects {
                 let mut pixels = vec![0u8; rect.width as usize * rect.height as usize * 4];
-                self.composite_into(channel, rect, &mut pixels, RowOrder::BottomUp)?;
+                self.composite_set_into_cancellable(
+                    set,
+                    channel,
+                    rect,
+                    &mut pixels,
+                    RowOrder::BottomUp,
+                    None,
+                )?;
                 tiles.insert(
                     coord,
                     CompositeTile {
