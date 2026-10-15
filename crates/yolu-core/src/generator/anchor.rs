@@ -350,13 +350,26 @@ impl<'a> Plan<'a> {
         for (depth, i) in path.iter().enumerate() {
             let last = depth == path.len() - 1;
             let (level, clipped) = p.level(layers[*i].parent, Some((*i, last)), kind);
-            if !last && (clipped || layers[*i].blend != BlendMode::PassThrough) {
+            if !last
+                && (clipped
+                    || layers[*i].blend != BlendMode::PassThrough
+                    || p.clipped_above_sibling(*i))
+            {
                 p.entries.clear();
             } else {
                 p.entries.extend(level);
             }
         }
         Ok(p)
+    }
+    /// `i` のすぐ上の兄弟（同じ親の次）がクリッピングされているか。見えるかどうか・中身の種類によらず、通過のグループを分離させる
+    /// （文書の合成の `Entry::clipped_above` を立てる条件と同じ。祖先はグループなので、調整レイヤーが土台の扱いは要らない）。
+    fn clipped_above_sibling(&self, i: usize) -> bool {
+        self.layers
+            .iter()
+            .skip(i + 1)
+            .find(|l| l.parent == self.layers[i].parent)
+            .is_some_and(|l| l.clipping)
     }
     fn entry(&self, i: usize, kind: ChannelKind) -> Option<Entry> {
         let l = &self.layers[i];
