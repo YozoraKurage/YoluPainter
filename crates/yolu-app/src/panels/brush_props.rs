@@ -190,6 +190,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             brush.influences.speed_max = Influences::DEFAULT_SPEED_MAX;
             brush.assist.taper_in = 0.0;
             brush.assist.taper_out = 0.0;
+            brush.assist.taper_targets = crate::engine::TaperTargets::default();
         }
         Category::Jitter => brush.jitter = Jitter::default(),
         Category::Texture => {

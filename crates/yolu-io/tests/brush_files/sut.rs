@@ -318,6 +318,28 @@ pub fn in_out_targets(flagged: &[u32]) -> Vec<u8> {
     out
 }
 
+/// 入り抜きの影響先の BLOB で、`on` の「番号・最小値（%）」の項目の旗を立て、最小値を入れる（`in_out_targets` と同じ形。実物の 21 項目の並び）。
+pub fn in_out_targets_on(on: &[(u32, u32)]) -> Vec<u8> {
+    let ids = [
+        112u32, 1001, 1021, 1041, 1051, 1082, 1084, 1093, 1100, 1104, 1106, 1108, 1132, 1134,
+        50112, 51001, 51021, 51041, 51051, 51132, 51134,
+    ];
+    let mut out = Vec::new();
+    for w in [12u32, ids.len() as u32, 12] {
+        out.extend_from_slice(&w.to_be_bytes());
+    }
+    for id in ids {
+        let (flag, min) = on
+            .iter()
+            .find(|(i, _)| *i == id)
+            .map_or((0, 0), |(_, m)| (1u32, *m));
+        for w in [id, flag, min] {
+            out.extend_from_slice(&w.to_be_bytes());
+        }
+    }
+    out
+}
+
 fn utf16le(s: &str) -> Vec<u8> {
     s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
 }

@@ -282,6 +282,40 @@ impl SutTarget {
     }
 }
 
+/// 入り抜きの影響先の番号の名前（日本語・英語。画面の名前）。デュアル側（50000 を足した番号）は「サブ: 」を付ける。
+fn taper_target_name(id: u32) -> (String, String) {
+    let (dual, base) = if id >= 50000 {
+        (true, id - 50000)
+    } else {
+        (false, id)
+    };
+    let (ja, en) = match base {
+        112 => ("紙質濃度", "texture density"),
+        1001 => ("ブラシサイズ", "brush size"),
+        1021 => ("ブラシ濃度", "brush density"),
+        1041 => ("間隔", "spacing"),
+        1051 => ("厚さ", "thickness"),
+        1082 => ("絵の具量", "paint amount"),
+        1084 => ("絵の具濃度", "paint density"),
+        1100 => ("サブ描画色混合率", "sub color mixing"),
+        1104 => ("色相", "hue"),
+        1106 => ("彩度", "saturation"),
+        1108 => ("明度", "brightness"),
+        1132 => ("粒子サイズ", "particle size"),
+        1134 => ("粒子密度", "particle density"),
+        _ => return (format!("番号 {id}"), format!("number {id}")),
+    };
+    if dual {
+        (format!("デュアルブラシの{ja}"), format!("dual brush {en}"))
+    } else {
+        (ja.into(), en.into())
+    }
+}
+
+fn join_ja(names: impl Iterator<Item = String>) -> String {
+    names.collect::<Vec<_>>().join("・")
+}
+
 /// CLIP STUDIO の「影響元設定」の入力（注記で、どの入力の曲線かを言う）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SutInput {
@@ -411,8 +445,11 @@ pub enum SutNote {
     /// 吹き付け効果。
     Spray,
     DualBrush,
-    /// 入り抜き。
+    /// 入り抜き（指定方法がパーセント・フェード、長さの単位が画素でない、影響先の列が読めない、読めない長さ）。写さなかった。
     StartEnd,
+    /// 入り抜きの影響先のうち、エンジンに同じ項目が無く、写さなかったもの（影響先の番号。間隔・色相・彩度・明度・サブ描画色混合率・粒子・
+    /// デュアル側・番号の分からないもの）。写せる項目があれば、そちらだけを写している。
+    StartEndTargets(Vec<u32>),
     /// 手ぶれ補正のうち、写せなかったもの（速度による手ブレ補正）。
     Stabilizer,
     /// 色の変化。
@@ -530,8 +567,12 @@ impl SutNote {
             Self::Spray => ("吹き付け効果は未対応".into(), "The spray effect is not supported.".into()),
             Self::DualBrush => ("デュアルブラシは未対応".into(), "Dual brush is not supported.".into()),
             Self::StartEnd => (
-                "入り抜き（大きさ以外への影響・画素以外の長さの単位）は未対応".into(),
-                "Start and end taper is not supported (effects other than size, length units other than pixels).".into(),
+                "入り抜き（パーセント指定・フェード・画素以外の長さの単位・読めない影響先）は未対応".into(),
+                "Start and end taper is not supported (percentage and fade modes, length units other than pixels, unreadable targets).".into(),
+            ),
+            Self::StartEndTargets(ids) => (
+                format!("入り抜きの影響先のうち、{}は未対応で、写していない", join_ja(ids.iter().map(|&id| taper_target_name(id).0))),
+                format!("These start and end taper targets are not supported and were not carried over: {}.", ids.iter().map(|&id| taper_target_name(id).1).collect::<Vec<_>>().join(", ")),
             ),
             Self::Stabilizer => (
                 "手ぶれ補正の速度による調整は未対応".into(),
@@ -570,8 +611,8 @@ impl SutNote {
                 )
             }
             Self::StartEndDetail => (
-                "入り抜きは長さだけを写した（速さに応じた長さ・割合は読まない）".into(),
-                "Start and end taper keeps only the lengths (speed-dependent lengths and ratios are not read).".into(),
+                "入り抜きは長さ・影響先・最小値を写した（速さに応じた長さ・割合は読まない）".into(),
+                "Start and end taper keeps the lengths, targets and minimums (speed-dependent lengths and ratios are not read).".into(),
             ),
             Self::StabilizerStrength => (
                 "手ぶれ補正の強さは、段階 1 を糸の長さ 1 画素として写した（換算は推定）".into(),

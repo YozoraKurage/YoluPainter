@@ -87,7 +87,7 @@ pub(crate) use plan::{DabPlan, StampControls};
 pub use presets::{builtin_presets, BrushPreset};
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, Controls, DualBrush, DualBrushMode, Jitter, PaperTexture,
-    StrokeAssist, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
+    StrokeAssist, TaperTargets, TextureMode, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST,
     MIN_ONE_PIXEL_RADIUS,
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
@@ -943,7 +943,7 @@ impl StrokeState {
         &mut self,
         surface: &mut Surface,
         dab: PendingDab,
-        size_factor: f64,
+        taper: f64,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
         let _profile = profile::scope(profile::Stage::Stamp);
@@ -953,7 +953,8 @@ impl StrokeState {
         if brush.dual.is_some() {
             self.stamp_dual(dab.arc)?;
         }
-        let c = brush.stamp_controls(&dab, index, self.influence_random.as_mut());
+        let c = brush.stamp_controls(&dab, index, taper, self.influence_random.as_mut());
+        let size_factor = brush.assist.taper_item(Item::Size, taper).unwrap_or(1.0);
         let s = &brush.base;
         let mut any = false;
         for _ in 0..brush.jitter.count {

@@ -308,7 +308,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::VectorTools => Gap::VectorTools,
             SutNote::Spray => Gap::Spray,
             SutNote::DualBrush => Gap::DualBrush,
-            SutNote::StartEnd => Gap::StartEnd,
+            SutNote::StartEnd | SutNote::StartEndTargets(_) => Gap::StartEnd,
             SutNote::Stabilizer => Gap::Stabilizer,
             SutNote::ColorChange => Gap::ColorChange,
             SutNote::BlendMode => Gap::BlendMode,

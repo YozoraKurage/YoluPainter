@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
-use super::influence::{Influences, PressureSwitches};
+use super::influence::{Influences, Item, PressureSwitches};
 use super::mix::ColorMix;
 use super::stencil::BrushStencil;
 use super::tip::BrushTip;
@@ -346,8 +346,80 @@ pub struct StrokeAssist {
     /// 線が続くか終わるまで待つ（終わりはそのときに分かる）。0〜10000。
     pub taper_in: f64,
     pub taper_out: f64,
+    /// 入り・抜きを掛ける項目と、項目ごとの最小値（既定は大きさだけ・最小値 0）。
+    pub taper_targets: TaperTargets,
     /// 道の点（手ぶれ補正の後）を centripetal Catmull-Rom の曲線で結ぶ。区間は次の点が来たとき（最後の区間は確定のとき）に描く。
     pub curve: bool,
+}
+
+/// 入り・抜きを掛ける項目と、項目ごとの最小値（0〜1）。項目の係数は `最小値 + (1 − 最小値) × 入り抜きの係数`（入りの先頭と抜きの終わりで最小値、
+/// 範囲の外で 1）。掛ける項目は [`Item`] の 8 つ。既定は大きさだけ・最小値 0（入り抜きが大きさにだけ効いていた今までと同じ）。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TaperTargets {
+    /// [`Item::ALL`] の並びで、掛けるなら最小値。
+    mins: [Option<f64>; 8],
+}
+
+impl Default for TaperTargets {
+    /// 大きさだけ・最小値 0。
+    fn default() -> Self {
+        TaperTargets::SIZE_ONLY
+    }
+}
+
+impl TaperTargets {
+    /// 大きさだけ・最小値 0（既定）。
+    pub const SIZE_ONLY: TaperTargets = TaperTargets {
+        mins: [Some(0.0), None, None, None, None, None, None, None],
+    };
+
+    /// どの項目にも掛けない。
+    pub const NONE: TaperTargets = TaperTargets { mins: [None; 8] };
+
+    fn slot(item: Item) -> usize {
+        match item {
+            Item::Size => 0,
+            Item::Opacity => 1,
+            Item::Flow => 2,
+            Item::Hardness => 3,
+            Item::Roundness => 4,
+            Item::TextureDensity => 5,
+            Item::MixPaint => 6,
+            Item::MixDensity => 7,
+        }
+    }
+
+    /// 項目に掛けるなら、その最小値（0〜1）。
+    pub fn min(&self, item: Item) -> Option<f64> {
+        self.mins[Self::slot(item)]
+    }
+
+    /// 項目へ掛けるか（`Some(最小値)`）・掛けないか（`None`）を変えた写し。範囲外・有限でない最小値は断る。
+    pub fn with(mut self, item: Item, min: Option<f64>) -> Result<TaperTargets, CoreError> {
+        if let Some(m) = min {
+            Self::check(m)?;
+        }
+        self.mins[Self::slot(item)] = min;
+        Ok(self)
+    }
+
+    /// 既定（大きさだけ・最小値 0）か。
+    pub fn is_default(&self) -> bool {
+        *self == TaperTargets::SIZE_ONLY
+    }
+
+    fn check(min: f64) -> Result<(), CoreError> {
+        require_finite(min, "taper minimum")?;
+        if !(0.0..=1.0).contains(&min) {
+            return Err(CoreError::InvalidArgument("入り抜きの最小値（0〜1）"));
+        }
+        Ok(())
+    }
+
+    /// 持っている最小値を検査する。
+    pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        self.mins.iter().flatten().try_for_each(|m| Self::check(*m))
+    }
 }
 
 /// 効果のブラシ（C# の BrushEffect）。効果は色を塗らず、レイヤーの今の画素から読んだ色をストロークの覆いで混ぜる。
@@ -408,6 +480,7 @@ impl Brush {
                 ));
             }
         }
+        a.taper_targets.validate()?;
         if !(0.01..=1.0).contains(&t.roundness) {
             return Err(CoreError::InvalidArgument("roundness"));
         }

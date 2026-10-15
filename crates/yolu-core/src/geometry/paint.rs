@@ -73,7 +73,7 @@ use crate::brush::profile;
 use crate::brush::random::NetRandom;
 use crate::brush::{
     combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, Input,
-    InputResponse, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric,
+    InputResponse, Item, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric,
     DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
 use crate::{
@@ -1007,14 +1007,20 @@ impl SurfaceStroke {
             rotation: dab.rotation,
             speed: dab.speed,
         };
-        let controls = brush.stamp_controls(&pending, index, self.influence_random.as_mut());
-        // 大きさの係数（入り抜き）。筆圧の大きさとモデルの単位の半径は塗るときに掛ける（今までの 3D の式のまま）
-        let factor = if dab.skip {
+        // 入り抜きの係数（大きさ以外の掛ける項目は影響元の係数の後ろへ、大きさは下の半径の係数へ）
+        let taper = if dab.skip {
             0.0
         } else {
             brush
                 .assist
                 .taper(dab.arc, self.end.unwrap_or(f64::INFINITY))
+        };
+        let controls = brush.stamp_controls(&pending, index, taper, self.influence_random.as_mut());
+        // 大きさの係数（入り抜き）。筆圧の大きさとモデルの単位の半径は塗るときに掛ける（今までの 3D の式のまま）
+        let factor = if dab.skip {
+            0.0
+        } else {
+            brush.assist.taper_item(Item::Size, taper).unwrap_or(1.0)
         };
         // 散布の届く長さの元: 筆圧の前の半径を画面へ直したもの
         let nominal = dab.scale.map_or(0.0, |s| (s * self.world_radius) as f64);

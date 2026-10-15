@@ -48,11 +48,13 @@ pub(crate) struct DabPlan<'a> {
 
 impl Brush {
     /// 描点 1 つ（ストロークの index 番目）の係数（C# の Stamp の前半）。フェード（何番目の描点か）と影響元（[`Influences`]）を
-    /// 項目ごとに掛け合わせる。`random` は影響元の乱数の列（どの項目もランダムを使わなければ None。使う項目ごとに、項目の並びの順に 1 つ引く）。
+    /// 項目ごとに掛け合わせる。`taper` は入り抜きの係数（0〜1。[`StrokeAssist::taper`]。範囲の外は 1）で、大きさ以外の掛ける項目
+    /// （[`StrokeAssist::taper_item`]）には、影響元の係数の後ろへ掛ける（大きさへは呼び手が半径に掛ける）。`random` は影響元の乱数の列（どの項目もランダムを使わなければ None。使う項目ごとに、項目の並びの順に 1 つ引く）。
     pub(crate) fn stamp_controls(
         &self,
         dab: &PendingDab,
         index: u64,
+        taper: f64,
         random: Option<&mut NetRandom>,
     ) -> StampControls {
         let c = &self.controls;
@@ -73,18 +75,23 @@ impl Brush {
             upright: 1.0 - tilt,
             slow,
         };
+        let tapered = |item| self.assist.taper_item(item, taper);
         let [r_size, r_opacity, r_flow, r_hardness, r_roundness, r_texture, r_paint, r_density] =
             inf.draw_random(random);
         // フェードの後に、傾き・速度・ランダムをこの順で掛ける（使っていない入力は掛けない）
         let size_control = inf
             .size
             .times_others(dynamics::fade(c.fade_size, index), &x, r_size);
-        let opacity_control =
+        let opacity_control = taper_times(
             inf.opacity
-                .times_others(dynamics::fade(c.fade_opacity, index), &x, r_opacity);
-        let flow_control = inf
-            .flow
-            .times_others(dynamics::fade(c.fade_flow, index), &x, r_flow);
+                .times_others(dynamics::fade(c.fade_opacity, index), &x, r_opacity),
+            tapered(Item::Opacity),
+        );
+        let flow_control = taper_times(
+            inf.flow
+                .times_others(dynamics::fade(c.fade_flow, index), &x, r_flow),
+            tapered(Item::Flow),
+        );
         let tilt_turn = if c.tilt_angle && tilt > 0.0 {
             pen_tilt::azimuth(dab.tilt_x, dab.tilt_y)
         } else {
@@ -93,15 +100,22 @@ impl Brush {
         let s = &self.base;
         // 筆圧は項目ごとの応え（最小値と曲線）を通す。既定の応えは筆圧をそのまま返し、使っていない項目は掛けない
         let size_pressure = inf.size.pressure_factor(dab.pressure).unwrap_or(1.0);
-        let hardness_factor = inf.hardness.factor(&x, r_hardness);
+        let hardness_factor =
+            taper_factor(inf.hardness.factor(&x, r_hardness), tapered(Item::Hardness));
         let hardness = match hardness_factor {
             Some(f) => s.hardness * f,
             None => s.hardness,
         };
         let mut pressure = self.pressure_scale(dab.pressure);
         let mix_others = (
-            inf.mix_paint.times_others(1.0, &x, r_paint),
-            inf.mix_density.times_others(1.0, &x, r_density),
+            taper_times(
+                inf.mix_paint.times_others(1.0, &x, r_paint),
+                tapered(Item::MixPaint),
+            ),
+            taper_times(
+                inf.mix_density.times_others(1.0, &x, r_density),
+                tapered(Item::MixDensity),
+            ),
         );
         if mix_others.0 != 1.0 {
             pressure.mix_paint *= mix_others.0;
@@ -118,8 +132,14 @@ impl Brush {
             pressure,
             hardness,
             hardness_factor,
-            roundness: inf.roundness.factor(&x, r_roundness),
-            texture_density: inf.texture_density.factor(&x, r_texture).unwrap_or(1.0),
+            roundness: taper_factor(
+                inf.roundness.factor(&x, r_roundness),
+                tapered(Item::Roundness),
+            ),
+            texture_density: taper_times(
+                inf.texture_density.factor(&x, r_texture).unwrap_or(1.0),
+                tapered(Item::TextureDensity),
+            ),
             mix_others,
         }
     }
@@ -254,6 +274,25 @@ impl Brush {
     }
 }
 
+/// v に入り抜きの係数 f を掛ける（掛けない項目は v のまま）。
+#[inline]
+fn taper_times(v: f64, f: Option<f64>) -> f64 {
+    match f {
+        Some(f) => v * f,
+        None => v,
+    }
+}
+
+/// 影響元の係数（使わなければ None）に入り抜きの係数 f を掛ける（掛けない項目は変えない。影響元を使わない項目は f だけ）。
+#[inline]
+fn taper_factor(factor: Option<f64>, f: Option<f64>) -> Option<f64> {
+    match (factor, f) {
+        (Some(a), Some(b)) => Some(a * b),
+        (None, Some(b)) => Some(b),
+        (a, None) => a,
+    }
+}
+
 impl StrokeAssist {
     /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数: 入りで 0 から育ち、抜きで 0 へ細る（C# の Taper）。end が
     /// 有限でない（まだ終わりが分からない）間は抜きを掛けない。長さの単位は呼び手のもの（2D は文書の画素、3D は画面の点）。
@@ -266,6 +305,16 @@ impl StrokeAssist {
             f = f64_min(f, (end - arc) / self.taper_out);
         }
         f64_max(0.0, f64_min(1.0, f))
+    }
+
+    /// 項目 item に掛ける入り抜きの係数（[`StrokeAssist::taper`] の t から。`最小値 + (1 − 最小値) × t`）。掛けない項目と、入り抜きの
+    /// 範囲の外（t が 1）は None。最小値 0 の項目は t そのもの（既定の大きさだけの入り抜きは、浮動小数の演算を足さない）。
+    pub(crate) fn taper_item(&self, item: Item, t: f64) -> Option<f64> {
+        let min = self.taper_targets.min(item)?;
+        if t >= 1.0 {
+            return None;
+        }
+        Some(if min == 0.0 { t } else { min + (1.0 - min) * t })
     }
 
     /// 手ぶれ補正の糸: 筆 pen が入力 to に引かれて動いた先（糸の長さより近ければ、たるんでいて動かないので None）。
@@ -348,7 +397,7 @@ mod tests {
             rotation: 0.0,
             speed: 1500.0,
         };
-        let c = brush.stamp_controls(&dab, 0, None);
+        let c = brush.stamp_controls(&dab, 0, 1.0, None);
         // 速さ 1500 / 上限 3000 → 1 − clamp01(0.5) = 0.5 を流量の係数に掛ける（足さない）
         assert!((c.flow - 0.5).abs() < 1e-12, "{}", c.flow);
     }
@@ -369,7 +418,7 @@ mod tests {
 
     /// ブラシの最初の描点の計画（大きさ 4）。
     fn first_plan<'a>(brush: &'a Brush, dab: &PendingDab) -> (StampControls, DabPlan<'a>) {
-        let c = brush.stamp_controls(dab, 0, None);
+        let c = brush.stamp_controls(dab, 0, 1.0, None);
         let mut random = NetRandom::new(0);
         let mut tip_index = 0u64;
         let plan = brush
@@ -416,10 +465,10 @@ mod tests {
         };
         let mut brush = Brush::default();
         brush.influences.size.tilt.on = true;
-        assert_eq!(brush.stamp_controls(&dab, 0, None).tilt_turn, 0.0);
+        assert_eq!(brush.stamp_controls(&dab, 0, 1.0, None).tilt_turn, 0.0);
         // 角度を傾きに沿わせると、倒した向きだけ回す
         brush.controls.tilt_angle = true;
-        let turn = brush.stamp_controls(&dab, 0, None).tilt_turn;
+        let turn = brush.stamp_controls(&dab, 0, 1.0, None).tilt_turn;
         assert!((turn - pen_tilt::azimuth(0.3, 0.4)).abs() < 1e-15, "{turn}");
     }
 }

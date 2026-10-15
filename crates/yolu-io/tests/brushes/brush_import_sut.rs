@@ -1727,11 +1727,13 @@ fn a_taper_that_is_not_about_pixels_of_size_is_reported_instead_of_mapped() {
         cells.extend_from_slice(extra);
         one(&cells)
     };
-    // 単位が画素でない・影響先の種類が既定でない・影響先の旗が立っている・影響先の BLOB の形が違う・長さが負・長さの列が無い
+    // 単位が画素でない・パーセント指定・フェード・知らない指定方法・最小値が 100 を超える・影響先の BLOB の形が違う・長さが負・長さの列が無い
     let refused = [
         on(&[("BrushInLengthUnit", int(1))]),
         on(&[("BrushInOutType", int(1))]),
-        on(&[("BrushInOutTarget", blob(in_out_targets(&[1001])))]),
+        on(&[("BrushInOutType", int(2))]),
+        on(&[("BrushInOutType", int(7))]),
+        on(&[("BrushInOutTarget", blob(in_out_targets_on(&[(1001, 101)])))]),
         on(&[("BrushInOutTarget", blob(vec![0, 0, 0, 12, 1, 2, 3]))]),
         on(&[("BrushInOutTarget", blob(vec![0; 40]))]),
         one(&[("BrushUseIn", int(1)), ("BrushInLength", real(-5.0))]),
@@ -1756,6 +1758,147 @@ fn a_taper_that_is_not_about_pixels_of_size_is_reported_instead_of_mapped() {
     );
     assert!(has(&b, SutNote::StartEnd) && has(&b, SutNote::StartEndDetail));
     assert!(mapped(&b, SutMapped::StartEnd));
+}
+
+/// 長さ 20 の入り・抜きの行に、影響先の BLOB（旗を立てた項目の「番号・最小値（%）」）をつける。
+fn tapered(
+    targets: &[(u32, u32)],
+    extra: &[(&'static str, rusqlite::types::Value)],
+) -> ImportedBrush {
+    let mut cells = vec![
+        ("BrushUseIn", int(1)),
+        ("BrushInLength", real(20.0)),
+        ("BrushUseOut", int(1)),
+        ("BrushOutLength", real(10.0)),
+        ("BrushInOutTarget", blob(in_out_targets_on(targets))),
+    ];
+    cells.extend_from_slice(extra);
+    one(&cells)
+}
+
+fn target_min(b: &ImportedBrush, item: yolu_core::brush::Item) -> Option<f64> {
+    b.brush.assist.taper_targets.min(item)
+}
+
+#[test]
+fn the_six_taper_targets_that_the_engine_has_are_mapped_with_their_minimums() {
+    use yolu_core::brush::Item;
+    // 番号 → 項目、最小値（%）→ 0〜1
+    let cases = [
+        (1001, Item::Size),
+        (1021, Item::Flow),
+        (1051, Item::Roundness),
+        (112, Item::TextureDensity),
+        (1082, Item::MixPaint),
+        (1084, Item::MixDensity),
+    ];
+    for (id, item) in cases {
+        let b = tapered(&[(id, 30)], &[]);
+        assert_eq!(
+            (b.brush.assist.taper_in, b.brush.assist.taper_out),
+            (20.0, 10.0)
+        );
+        for other in Item::ALL {
+            let want = (other == item).then_some(0.3);
+            assert_eq!(target_min(&b, other), want, "{id} → {other:?}");
+        }
+        assert!(mapped(&b, SutMapped::StartEnd));
+        assert!(has(&b, SutNote::StartEndDetail));
+        assert!(b.unrepresented.iter().all(|n| !matches!(
+            n,
+            yolu_io::brushes::Unrepresented::ClipStudio(
+                SutNote::StartEnd | SutNote::StartEndTargets(_)
+            )
+        )));
+        assert!(b.brush.validate().is_ok());
+    }
+    // 複数の項目: 立てた項目だけ、それぞれの最小値
+    let b = tapered(&[(1001, 0), (1021, 50), (1051, 100)], &[]);
+    assert_eq!(target_min(&b, Item::Size), Some(0.0));
+    assert_eq!(target_min(&b, Item::Flow), Some(0.5));
+    assert_eq!(target_min(&b, Item::Roundness), Some(1.0));
+    assert_eq!(target_min(&b, Item::Opacity), None);
+}
+
+#[test]
+fn a_taper_whose_flags_are_all_off_still_tapers_the_size_only() {
+    use yolu_core::brush::Item;
+    let b = tapered(&[], &[]);
+    assert!(b.brush.assist.taper_targets.is_default());
+    assert_eq!(target_min(&b, Item::Size), Some(0.0));
+    assert!(mapped(&b, SutMapped::StartEnd));
+}
+
+#[test]
+fn taper_targets_the_engine_does_not_have_are_reported_and_the_rest_are_mapped() {
+    use yolu_core::brush::Item;
+    use yolu_io::brushes::Unrepresented;
+    // 間隔・色相・粒子密度・デュアル側のブラシサイズ・画面に無い番号 1093 は写さずに知らせる（並びは BLOB の項目の並び）。ブラシ濃度は写る
+    let b = tapered(
+        &[
+            (1021, 20),
+            (1041, 0),
+            (1104, 0),
+            (1134, 0),
+            (51001, 0),
+            (1093, 0),
+        ],
+        &[],
+    );
+    assert_eq!(target_min(&b, Item::Flow), Some(0.2));
+    assert_eq!(
+        target_min(&b, Item::Size),
+        None,
+        "旗が 0 の大きさは掛けない"
+    );
+    assert_eq!(b.brush.assist.taper_in, 20.0);
+    let dropped: Vec<&Vec<u32>> = b
+        .unrepresented
+        .iter()
+        .filter_map(|n| match n {
+            Unrepresented::ClipStudio(SutNote::StartEndTargets(ids)) => Some(ids),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dropped, vec![&vec![1041, 1093, 1104, 1134, 51001]]);
+    assert!(has(&b, SutNote::StartEndDetail));
+    // 写せる項目が 1 つも無いときは、入り抜きを写さない（知らせだけ）
+    let b = tapered(&[(1041, 0), (1104, 0)], &[]);
+    assert_eq!(
+        (b.brush.assist.taper_in, b.brush.assist.taper_out),
+        (0.0, 0.0)
+    );
+    assert!(b.brush.assist.taper_targets.is_default());
+    assert!(!mapped(&b, SutMapped::StartEnd));
+    assert!(b.unrepresented.iter().any(|n| matches!(
+        n,
+        Unrepresented::ClipStudio(SutNote::StartEndTargets(ids)) if ids == &vec![1041, 1104]
+    )));
+    // 知らせの文は、写せなかった項目の名前を日本語と英語で言う
+    let note = Unrepresented::ClipStudio(SutNote::StartEndTargets(vec![1041, 51001, 9]));
+    let (ja, en) = (note.to_string(), note.english());
+    assert!(
+        ja.contains("間隔") && ja.contains("デュアルブラシのブラシサイズ") && ja.contains("番号 9"),
+        "{ja}"
+    );
+    assert!(
+        en.contains("spacing") && en.contains("dual brush brush size") && en.contains("number 9"),
+        "{en}"
+    );
+}
+
+#[test]
+fn percent_and_fade_tapers_are_reported_and_not_mapped_even_with_targets() {
+    for kind in [1, 2] {
+        let b = tapered(&[(1021, 20)], &[("BrushInOutType", int(kind))]);
+        assert!(has(&b, SutNote::StartEnd), "型 {kind}");
+        assert_eq!(b.brush.assist.taper_in, 0.0, "型 {kind}");
+        assert!(b.brush.assist.taper_targets.is_default(), "型 {kind}");
+        assert!(!mapped(&b, SutMapped::StartEnd), "型 {kind}");
+    }
+    // 型 0 は写る
+    let b = tapered(&[(1021, 20)], &[("BrushInOutType", int(0))]);
+    assert_eq!(b.brush.assist.taper_in, 20.0);
 }
 
 fn falling() -> [(f64, f64); 2] {

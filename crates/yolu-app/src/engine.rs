@@ -15,8 +15,8 @@ pub use yolu_core::{
     Controls, CoreError, Document, DualBrush, DualBrushMode, GradientMap, HeightEdgeMode, Jitter,
     Layer, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, PixelClipboard,
     Posterize, PreparedResize, Rect, Rgba8, RowOrder, SelectionCombine, SelectionMask, Stroke,
-    StrokeAssist, SymmetryMode, TextureMode, Threshold, TileCoord, TipShape, ToneChannel,
-    ToneCurves,
+    StrokeAssist, SymmetryMode, TaperTargets, TextureMode, Threshold, TileCoord, TipShape,
+    ToneChannel, ToneCurves,
 };
 pub use yolu_core::{AntiAlias, ColorMix, MixGround, MixMode};
 pub use yolu_core::{Influence, Influences, InputResponse, InputUse, PressureSwitches};

@@ -770,6 +770,7 @@ fn known_core_reason(reason: &str) -> Option<&'static str> {
         "レイヤーはもうマスクを持っている" => "Layer already has a mask",
         "レイヤーはグループの下に並ぶ" => "Layers must follow their group",
         "手ぶれ補正・入り抜き（0〜10000）" => "Stabilizer and taper (0–10000)",
+        "入り抜きの最小値（0〜1）" => "Taper minimum (0–1)",
         "指先の強さ（0〜1）" => "Smudge strength (0–1)",
         "指先・クローンは対称と組めない（写しごとに読み元と動きが要る）" => {
             "Smudge and clone do not support symmetry"

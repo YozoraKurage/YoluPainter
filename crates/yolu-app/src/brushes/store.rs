@@ -30,7 +30,7 @@ use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CH
 use crate::engine::{
     AntiAlias, Brush, BrushEffect, ColorMix, CoreError, DVec2, DualBrush, DualBrushMode, Influence,
     Influences, InputResponse, InputUse, MixGround, MixMode, PaperTexture, StrokeAssist,
-    TextureMode,
+    TaperTargets, TextureMode,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, Input, Item, TipSelection, MAX_CURVE_POINTS};
@@ -57,6 +57,11 @@ pub const HEADER_V6: &str = "yolupainter-brush 6";
 /// 版 1〜6 の項目で書けない影響元を使うブラシの版（影響元は `influence.<項目>.<入力>.on`・`.min`・`.curve` だけで書く）。書けるブラシは
 /// 版 1〜6 のままで、今までと同じバイト。版 6 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。
 pub const HEADER_V7: &str = "yolupainter-brush 7";
+/// 版 7 までの項目で書けない物を使うブラシの版。版 8 は版 7 の書き方（影響元は `influence.<項目>.<入力>.…`）に、入り抜きを掛ける項目と
+/// 最小値（`assist.taper.<項目>`。既定の大きさだけ・最小値 0 でないとき）を足す。使わないブラシは版 1〜7 のままで、今までと同じバイト。
+/// 版 7 までしか読めない古いアプリは、このファイルを「新しい形式」として理由つきで読み飛ばす。版 8 の鍵が版 7 までのファイルにあれば、
+/// 知らない項目として断る。
+pub const HEADER_V8: &str = "yolupainter-brush 8";
 const EXTENSION: &str = "ylbrush";
 const ORDER_FILE: &str = "order.conf";
 /// 1 ファイルの大きさの上限。
@@ -322,8 +327,9 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
-    let v7 = needs_v7(&b);
-    let mut w = Writer(format!("{}\n", header_for(&b, assist.is_some(), v7)));
+    let v8 = needs_v8(assist);
+    let v7 = needs_v7(&b) || v8;
+    let mut w = Writer(format!("{}\n", header_for(&b, assist.is_some(), v7, v8)));
     write_base(&mut w, user, &b, v7);
     write_tip_and_jitter(&mut w, &mut pending, &b);
     write_texture_and_dual(&mut w, &mut pending, &b);
@@ -342,6 +348,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         w.line("assist.stabilizer", a.stabilizer);
         w.line("assist.taper_in", a.taper_in);
         w.line("assist.taper_out", a.taper_out);
+        // 入り抜きを掛ける項目と最小値（版 8。既定の大きさだけ・最小値 0 は書かない）
+        if v8 && !a.taper_targets.is_default() {
+            write_taper_targets(&mut w, &a.taper_targets);
+        }
     }
     write_effect(&mut w, &b.effect);
     if let Some(meta) = user.import.as_ref().map(ImportMeta::normalized) {
@@ -354,8 +364,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
 }
 
 /// 書き出すファイルの版（使う項目が一番新しい版）。
-fn header_for(b: &Brush, has_assist: bool, v7: bool) -> &'static str {
-    if v7 {
+fn header_for(b: &Brush, has_assist: bool, v7: bool, v8: bool) -> &'static str {
+    if v8 {
+        HEADER_V8
+    } else if v7 {
         HEADER_V7
     } else if b.controls.min_one_pixel {
         HEADER_V6
@@ -369,6 +381,17 @@ fn header_for(b: &Brush, has_assist: bool, v7: bool) -> &'static str {
         HEADER_V2
     } else {
         HEADER
+    }
+}
+
+/// 入り抜きを掛ける項目と最小値（`assist.taper.<項目>` を 8 項目とも。掛けない項目は `off`）。
+fn write_taper_targets(w: &mut Writer, targets: &TaperTargets) {
+    for item in Item::ALL {
+        let key = format!("assist.taper.{}", item.id());
+        match targets.min(item) {
+            Some(min) => w.line(&key, min),
+            None => w.line(&key, "off"),
+        }
     }
 }
 
@@ -680,6 +703,12 @@ fn needs_v7(b: &Brush) -> bool {
         || !pressure_only(&i.mix_density)
 }
 
+/// 版 7 までの項目で書けない物を使うか（使えば版 8 で書く）。今は、入り抜きの影響先が既定（大きさだけ・最小値 0）でないブラシ。
+/// 版 8 にする条件は、ここに `||` で足す。
+fn needs_v8(assist: Option<StrokeAssist>) -> bool {
+    assist.is_some_and(|a| !a.taper_targets.is_default())
+}
+
 /// 色の混ぜを使うか（使えば版 3 で書く）。混ぜ方が切なら、ほかの値が既定でなくても使っていない（`canonical` が既定へそろえる）。
 fn uses_mix(b: &Brush) -> bool {
     b.mix.is_active()
@@ -811,7 +840,7 @@ pub fn decode_user(
     }
     // 入り抜き・手ぶれ補正は版 4 の項目（版 3 までのファイルにあれば、知らない項目として断る）。版 4 でも、1 つも無ければ持たない
     let assist = if version >= 4 {
-        read_assist(&mut r)?
+        read_assist(&mut r, version)?
     } else {
         None
     };
@@ -845,6 +874,7 @@ fn split_file(text: &str) -> Result<(u32, Reader), StoreError> {
         Some(HEADER_V5) => 5,
         Some(HEADER_V6) => 6,
         Some(HEADER_V7) => 7,
+        Some(HEADER_V8) => 8,
         Some(first) if first.starts_with("yolupainter-brush ") => {
             return Err(StoreError::NewerVersion(first.to_owned()))
         }
@@ -1018,19 +1048,51 @@ fn read_influences(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
     Ok(())
 }
 
-/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。
-fn read_assist(r: &mut Reader) -> Result<Option<StrokeAssist>, StoreError> {
+/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。入り抜きの影響先（`assist.taper.*`）は版 8 の項目（版 7 までに
+/// あれば、知らない項目として断る）。
+fn read_assist(r: &mut Reader, version: u32) -> Result<Option<StrokeAssist>, StoreError> {
     let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
     let present = keys.iter().any(|k| r.map.contains_key(*k));
     let value = |r: &mut Reader, key: &str| r.float(key, 0.0);
     let (stabilizer, taper_in, taper_out) =
         (value(r, keys[0])?, value(r, keys[1])?, value(r, keys[2])?);
-    Ok(present.then_some(StrokeAssist {
+    let targets = if version >= 8 {
+        read_taper_targets(r)?
+    } else {
+        None
+    };
+    Ok((present || targets.is_some()).then_some(StrokeAssist {
         stabilizer,
         taper_in,
         taper_out,
+        taper_targets: targets.unwrap_or_default(),
         curve: false,
     }))
+}
+
+/// 入り抜きを掛ける項目と最小値（`assist.taper.<項目>`）。1 つも無ければ None（既定）。あれば 8 項目とも要る（`off` か 0〜1 の最小値）。
+fn read_taper_targets(r: &mut Reader) -> Result<Option<TaperTargets>, StoreError> {
+    let key = |item: Item| format!("assist.taper.{}", item.id());
+    if !Item::ALL.into_iter().any(|i| r.map.contains_key(&key(i))) {
+        return Ok(None);
+    }
+    let mut targets = TaperTargets::NONE;
+    for item in Item::ALL {
+        let k = key(item);
+        let text = r.take(&k).ok_or_else(|| StoreError::BadValue(k.clone()))?;
+        let min = match text.as_str() {
+            "off" => None,
+            number => Some(
+                number
+                    .parse::<f64>()
+                    .map_err(|_| StoreError::BadValue(k.clone()))?,
+            ),
+        };
+        targets = targets
+            .with(item, min)
+            .map_err(|_| StoreError::BadValue(k.clone()))?;
+    }
+    Ok(Some(targets))
 }
 
 /// 効果（`effect*`）を読む。
@@ -1959,7 +2021,7 @@ mod tests {
             StoreError::NotABrush
         ));
         assert!(matches!(
-            decode("yolupainter-brush 8\nname=a\n").unwrap_err(),
+            decode("yolupainter-brush 9\nname=a\n").unwrap_err(),
             StoreError::NewerVersion(_)
         ));
         assert!(matches!(
@@ -2030,6 +2092,7 @@ mod tests {
             stabilizer: 6.0,
             taper_in: 1130.5,
             taper_out: 14.0,
+            taper_targets: Default::default(),
             curve: false,
         };
         let u = carrying(assist);
@@ -2086,6 +2149,7 @@ mod tests {
             stabilizer: 3.0,
             taper_in: 20.0,
             taper_out: 0.0,
+            taper_targets: Default::default(),
             curve: false,
         }));
         // 版 1〜3 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
@@ -2101,7 +2165,7 @@ mod tests {
             );
         }
         // まだ無い版は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 8", 1);
+        let newer = t.replacen("yolupainter-brush 4", "yolupainter-brush 9", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
             StoreError::NewerVersion(_)
@@ -2126,6 +2190,7 @@ mod tests {
                 stabilizer: 0.0,
                 taper_in: 0.0,
                 taper_out: 9.0,
+                taper_targets: Default::default(),
                 curve: false
             })
         );
@@ -2167,6 +2232,7 @@ mod tests {
             stabilizer: 0.0,
             taper_in: 12.0,
             taper_out: 0.0,
+            taper_targets: Default::default(),
             curve: false,
         };
         let both = UserBrush {
@@ -2213,7 +2279,7 @@ mod tests {
         let old = "yolupainter-brush 1\nname=a\ngroup=pen\nhardness=1\n";
         assert_eq!(decode(old).unwrap().2.base.anti_alias, AntiAlias::None);
         // まだ無い版は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 5", "yolupainter-brush 8", 1);
+        let newer = t.replacen("yolupainter-brush 5", "yolupainter-brush 9", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
             StoreError::NewerVersion(_)
@@ -2248,6 +2314,7 @@ mod tests {
             stabilizer: 0.0,
             taper_in: 12.0,
             taper_out: 0.0,
+            taper_targets: Default::default(),
             curve: false,
         };
         let u = UserBrush {
@@ -2295,7 +2362,7 @@ mod tests {
         let old = "yolupainter-brush 1\nname=a\ngroup=pen\nhardness=1\n";
         assert!(!decode(old).unwrap().2.controls.min_one_pixel);
         // まだ無い版は新しい形式として断る
-        let newer = t.replacen("yolupainter-brush 6", "yolupainter-brush 8", 1);
+        let newer = t.replacen("yolupainter-brush 6", "yolupainter-brush 9", 1);
         assert!(matches!(
             decode(&newer).unwrap_err(),
             StoreError::NewerVersion(_)
@@ -2310,6 +2377,7 @@ mod tests {
             stabilizer: 12.0,
             taper_in: 25.0,
             taper_out: 40.0,
+            taper_targets: Default::default(),
             curve: false,
         };
         let mut u = carrying(assist);
@@ -2698,7 +2766,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("brush-00000005.ylbrush");
-        std::fs::write(&path, "yolupainter-brush 8\nname=future\n").unwrap();
+        std::fs::write(&path, "yolupainter-brush 9\nname=future\n").unwrap();
         let report = load_all(&dir);
         assert!(report.brushes.is_empty());
         assert!(matches!(
@@ -2707,7 +2775,7 @@ mod tests {
         ));
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "yolupainter-brush 8\nname=future\n"
+            "yolupainter-brush 9\nname=future\n"
         );
         std::fs::remove_dir_all(dir).unwrap();
     }
@@ -2766,6 +2834,7 @@ mod tests {
             stabilizer: 0.0,
             taper_in: 12.0,
             taper_out: 30.0,
+            taper_targets: Default::default(),
             curve: false,
         };
         v.push((
@@ -2992,5 +3061,152 @@ mod tests {
             decode(&format!("{v7}influence.size.wobble.on=1\n")).unwrap_err(),
             StoreError::UnknownKey(k) if k == "influence.size.wobble.on"
         ));
+    }
+    /// 入り抜きの影響先が既定でない入り抜き（不透明度 0.25・流量 0.5。大きさは掛けない）。
+    fn targeted_assist() -> StrokeAssist {
+        let targets = TaperTargets::NONE
+            .with(Item::Opacity, Some(0.25))
+            .unwrap()
+            .with(Item::Flow, Some(0.5))
+            .unwrap();
+        StrokeAssist {
+            stabilizer: 0.0,
+            taper_in: 12.0,
+            taper_out: 30.0,
+            taper_targets: targets,
+            curve: false,
+        }
+    }
+
+    #[test]
+    fn a_brush_with_taper_targets_is_version_eight_and_round_trips() {
+        let assist = targeted_assist();
+        let u = UserBrush {
+            assist: Some(assist),
+            ..user(1, Brush::default())
+        };
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "assist.taper.size=off\n",
+            "assist.taper.opacity=0.25\n",
+            "assist.taper.flow=0.5\n",
+            "assist.taper.hardness=off\n",
+            "assist.taper.roundness=off\n",
+            "assist.taper.texture_density=off\n",
+            "assist.taper.mix_paint=off\n",
+            "assist.taper.mix_density=off\n",
+            "assist.taper_in=12\n",
+        ] {
+            assert!(t.contains(line), "{line}: {t}");
+        }
+        assert!(
+            t.contains("influence.size.pressure.on=1"),
+            "版 8 は版 7 の影響元の鍵で書く: {t}"
+        );
+        assert!(!t.contains("pressure_size="), "{t}");
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.assist, Some(assist));
+        assert_eq!(d.brush, canonical(&Brush::default()));
+        // 読み戻して書き直しても同じ文
+        let back = UserBrush {
+            assist: d.assist,
+            brush: d.brush,
+            ..user(1, Brush::default())
+        };
+        assert_eq!(text(&back), t);
+        // 大きさの最小値も、0.0 ちょうどの項目も書き戻せる
+        let sized = StrokeAssist {
+            taper_targets: TaperTargets::SIZE_ONLY.with(Item::Size, Some(0.3)).unwrap(),
+            ..assist
+        };
+        let t = text(&UserBrush {
+            assist: Some(sized),
+            ..user(1, Brush::default())
+        });
+        assert!(t.contains("assist.taper.size=0.3\n"), "{t}");
+        assert_eq!(
+            decode_user(&t, &mut |_| unreachable!()).unwrap().assist,
+            Some(sized)
+        );
+    }
+
+    #[test]
+    fn a_brush_whose_taper_targets_are_the_default_keeps_its_older_version_and_bytes() {
+        let assist = StrokeAssist {
+            taper_in: 12.0,
+            taper_out: 30.0,
+            ..StrokeAssist::default()
+        };
+        assert!(assist.taper_targets.is_default());
+        let t = text(&carrying(assist));
+        assert!(
+            t.starts_with("yolupainter-brush 4\n") && !t.contains("assist.taper."),
+            "{t}"
+        );
+        // 影響元で版 7 になるブラシも、入り抜きの影響先が既定なら版 7 のまま
+        let mut b = Brush::default();
+        b.influences.size.random = InputUse::STRAIGHT;
+        let t = text(&UserBrush {
+            assist: Some(assist),
+            ..user(1, b)
+        });
+        assert!(
+            t.starts_with("yolupainter-brush 7\n") && !t.contains("assist.taper."),
+            "{t}"
+        );
+    }
+
+    #[test]
+    fn the_taper_target_items_belong_to_version_eight_and_are_checked() {
+        let v8 = text(&UserBrush {
+            assist: Some(targeted_assist()),
+            ..user(1, Brush::default())
+        });
+        let decode = |t: &str| decode_user(t, &mut |_| unreachable!());
+        // 版 7 までのファイルにあれば、知らない項目として断る
+        for old in 4..=7 {
+            let as_old = v8.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(_)),
+                "版 {old}"
+            );
+        }
+        let as_v7 = v8.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("assist.taper.")),
+            "版 7"
+        );
+        // 8 項目のどれかが無い・値が読めない・範囲の外は、そのファイルを断る
+        let without = v8.replace("assist.taper.mix_paint=off\n", "");
+        assert!(matches!(
+            decode(&without).unwrap_err(),
+            StoreError::BadValue(k) if k == "assist.taper.mix_paint"
+        ));
+        for bad in ["on", "x", "NaN", "inf", "-0.1", "1.5", ""] {
+            let broken = v8.replace("assist.taper.flow=0.5", &format!("assist.taper.flow={bad}"));
+            assert!(
+                matches!(decode(&broken).unwrap_err(), StoreError::BadValue(k) if k == "assist.taper.flow"),
+                "{bad}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{v8}assist.taper.size=off\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+        // 版 8 でも影響先の鍵が 1 つも無ければ既定（大きさだけ）
+        let none: String = v8
+            .lines()
+            .filter(|l| !l.starts_with("assist.taper."))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(
+            decode(&none).unwrap().assist.map(|a| a.taper_targets),
+            Some(TaperTargets::default())
+        );
     }
 }

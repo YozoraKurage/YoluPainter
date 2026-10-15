@@ -218,6 +218,7 @@ pub fn carried_assist(assist: Option<StrokeAssist>) -> Option<StrokeAssist> {
         stabilizer: a.stabilizer,
         taper_in: a.taper_in,
         taper_out: a.taper_out,
+        taper_targets: a.taper_targets,
         curve: false,
     };
     (carried != StrokeAssist::default()).then_some(carried)

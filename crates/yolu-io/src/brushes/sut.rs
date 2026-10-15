@@ -26,7 +26,7 @@ mod tar;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use yolu_core::brush::{Input, MAX_STROKE_ASSIST};
+use yolu_core::brush::{Input, Item, TaperTargets, MAX_STROKE_ASSIST};
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::{
     AntiAlias, Brush, BrushTip, Influence, Influences, InputResponse, InputUse, PaperTexture,
@@ -509,15 +509,23 @@ fn effector(
     *brush.influences.get_mut(target.item()) = influence;
 }
 
-/// 入り抜きの影響先が既定（大きさだけ）か。`BrushInOutType` が 0 で、`BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、
-/// 項目ごとに「項目の番号・旗・旗」）の旗がすべて 0 のとき。実物の .sut では、項目は 21 個で、旗はどれも 0 だった。読めない・形が違う・
-/// 旗が立っているものは、大きさへの入り抜きと決められないので false。影響先の列が無い版は既定（大きさ）として扱う。
-fn start_end_targets_size(row: &Row) -> bool {
-    if row.first_number(IN_OUT_TYPE).is_some_and(|v| v != 0.0) {
-        return false;
-    }
+/// 入り抜きの影響先の番号（`BrushInOutTarget` の項目の 1 つ目の整数）のうち、エンジンに同じ項目があるもの。実物で確かめた番号:
+/// 紙質濃度 112・ブラシサイズ 1001・ブラシ濃度 1021・厚さ 1051・絵の具量 1082・絵の具濃度 1084（デュアル側は 50000 を足した番号）。
+const TAPER_ITEMS: [(u32, Item); 6] = [
+    (1001, Item::Size),
+    (1021, Item::Flow),
+    (1051, Item::Roundness),
+    (112, Item::TextureDensity),
+    (1082, Item::MixPaint),
+    (1084, Item::MixDensity),
+];
+
+/// `BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、項目ごとに「項目の番号・オン・最小値（%）」）で、オンの項目の
+/// 「番号・最小値（0〜1）」。オンの項目が無ければ空（既定: 大きさだけ。実物の .sut は項目 21 個で、旗はどれも 0 だった）。影響先の列が無い
+/// 版も空。読めない・形が違う・旗が 0 か 1 でない・最小値が 0〜100 でない・同じ番号の項目が重なるものは None。
+fn start_end_targets(row: &Row) -> Option<Vec<(u32, f64)>> {
     let Some(blob) = row.first_blob(IN_OUT_TARGET) else {
-        return !row.is_oversized(IN_OUT_TARGET);
+        return (!row.is_oversized(IN_OUT_TARGET)).then(Vec::new);
     };
     let words: Vec<u32> = blob
         .as_chunks::<4>()
@@ -526,19 +534,32 @@ fn start_end_targets_size(row: &Row) -> bool {
         .map(|c| u32::from_be_bytes(*c))
         .collect();
     if blob.len() % 4 != 0 || words.len() < 3 || words[0] != 12 || words[2] != 12 {
-        return false;
+        return None;
     }
     let count = words[1] as usize;
-    words.len() == 3 + count * 3
-        && words[3..]
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .all(|item| item[1] == 0 && item[2] == 0)
+    if words.len() != 3 + count * 3 {
+        return None;
+    }
+    let mut on: Vec<(u32, f64)> = Vec::new();
+    for item in words[3..].as_chunks::<3>().0 {
+        let [id, flag, min] = *item;
+        if flag > 1 || (flag == 1 && min > 100) {
+            return None;
+        }
+        if flag == 1 {
+            if on.iter().any(|(seen, _)| *seen == id) {
+                return None;
+            }
+            on.push((id, f64::from(min) / 100.0));
+        }
+    }
+    Some(on)
 }
 
-/// 入り抜き: 大きさにだけ効く、長さが画素のものを `assist.taper_in`・`taper_out` へ。影響先・長さの単位が合わないものは写さずに知らせる。
-/// 速さに応じた長さ・割合は読まず、写したときに知らせる。
+/// 入り抜き: `BrushInOutType` が 0（長さ指定）で長さの単位が画素のものを、`assist.taper_in`・`taper_out` と、掛ける項目・項目ごとの最小値
+/// （`assist.taper_targets`）へ。影響先が全部オフなら大きさだけ（今まで通り）。写せない項目（間隔・色相・彩度・明度・サブ描画色混合率・
+/// 粒子・デュアル側・番号の分からないもの）は写さずに知らせ、写せる項目が 1 つも無ければ入り抜きを写さない。パーセント指定・フェード・
+/// 読めない形・単位が合わないものも写さずに知らせる。速さに応じた長さ・割合は読まず、写したときに知らせる。
 fn start_end(
     row: &Row,
     brush: &mut Brush,
@@ -552,7 +573,38 @@ fn start_end(
     if !sides.iter().any(|(flag, ..)| row.on(flag)) {
         return;
     }
-    let mut refused = !start_end_targets_size(row);
+    // 指定方法: 0 長さ指定・1 パーセント指定（線全体の長さが要るが、描いている間は終わりが分からない）・2 フェード（描き始めから最小値へ
+    // 向かい、抜きの長さで最小値に達して終わりまで続く。端で細る入り抜きでは表せない）
+    let mut refused = row.first_number(IN_OUT_TYPE).is_some_and(|v| v != 0.0);
+    let mut targets = TaperTargets::SIZE_ONLY;
+    if !refused {
+        match start_end_targets(row) {
+            None => refused = true,
+            Some(on) if on.is_empty() => {}
+            Some(on) => {
+                let mut taken_targets = TaperTargets::NONE;
+                let mut dropped = Vec::new();
+                for (id, min) in on {
+                    match TAPER_ITEMS.iter().find(|(known, _)| *known == id) {
+                        Some((_, item)) => {
+                            taken_targets = taken_targets
+                                .with(*item, Some(min))
+                                .unwrap_or(taken_targets);
+                        }
+                        None => dropped.push(id),
+                    }
+                }
+                if !dropped.is_empty() {
+                    notes.push(Unrepresented::ClipStudio(SutNote::StartEndTargets(dropped)));
+                }
+                if taken_targets == TaperTargets::NONE {
+                    // 写せる項目が 1 つも無い（知らせは上で済んでいる）
+                    return;
+                }
+                targets = taken_targets;
+            }
+        }
+    }
     let mut taken = false;
     if !refused {
         for (flag, length, unit, is_in) in sides {
@@ -580,6 +632,7 @@ fn start_end(
         notes.push(Unrepresented::ClipStudio(SutNote::StartEnd));
     }
     if taken {
+        brush.assist.taper_targets = targets;
         mapped.push(SutMapped::StartEnd);
         notes.push(Unrepresented::ClipStudio(SutNote::StartEndDetail));
     }

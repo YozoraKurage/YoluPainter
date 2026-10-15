@@ -157,6 +157,7 @@ fn preview_brush(brush: &Brush, spec: SampleSpec) -> Brush {
         stabilizer: 0.0,
         taper_in: (assist.taper_in * f).min(10_000.0),
         taper_out: (assist.taper_out * f).min(10_000.0),
+        taper_targets: assist.taper_targets,
         curve: assist.curve,
     };
     if let Some(t) = &mut b.texture {

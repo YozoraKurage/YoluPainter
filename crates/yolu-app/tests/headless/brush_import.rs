@@ -969,6 +969,7 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
         stabilizer: 7.0,
         taper_in: 0.0,
         taper_out: 0.0,
+        taper_targets: Default::default(),
         curve: true,
     };
     let drawer = s.m2.brush.assist;
@@ -995,6 +996,7 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
             stabilizer: 8.0,
             taper_in: 20.0,
             taper_out: 30.0,
+            taper_targets: Default::default(),
             curve: true
         }
     );
@@ -1166,6 +1168,7 @@ fn headless_the_sample_of_a_brush_without_start_end_is_drawn_with_the_drawers_se
         stabilizer: 7.0,
         taper_in: 3.0,
         taper_out: 0.0,
+        taper_targets: Default::default(),
         curve: false,
     };
     s.m2.brush.assist = drawer;
