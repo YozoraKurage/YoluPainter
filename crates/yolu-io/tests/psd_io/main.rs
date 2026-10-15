@@ -7,6 +7,7 @@
 #[path = "../../../yolu-core/tests/attach_support/mod.rs"]
 mod attach_support;
 
+mod alloc_probe;
 mod psd;
 mod psd_adjust;
 mod psd_bake;

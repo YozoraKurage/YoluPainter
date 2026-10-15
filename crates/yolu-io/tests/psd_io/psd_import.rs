@@ -1984,9 +1984,11 @@ fn a_layer_name_over_the_limit_is_cut_and_told_instead_of_refusing_the_whole_fil
     // 10 万字の名前のレイヤーが 1 枚あっても、ファイル全体は断らない。名前を上限（4096 UTF-16 単位）まで切り詰めて、落としたものとして知らせる
     let limit = Limits::default().max_name_code_units;
     let long = "あ".repeat(100_000);
+    // 長い名前のあとに続く付加情報（塗りの不透明度）と、次の記録も読めること（読み手の位置が記録の末尾まで進む）
     let layers = vec![
         red("普通", (0, 0, 2, 2)).id(1),
-        red(&long, (0, 0, 2, 2)).id(2),
+        red(&long, (0, 0, 2, 2)).id(2).tag(b"iOpa", &[128, 0, 0, 0]),
+        red("後", (0, 0, 2, 2)).id(3),
     ];
     let bytes = Psd::new(2, 2, layers).build();
     // 原本を保つ読みは、原本の名前を変えられないのでこれまでどおり断る
@@ -1995,9 +1997,19 @@ fn a_layer_name_over_the_limit_is_cut_and_told_instead_of_refusing_the_whole_fil
         CompatibilityMode::Rejected
     );
     let (d, notes) = imported(&bytes);
-    assert_eq!(d.layers().len(), 2);
-    let cut = d.layers().iter().find(|l| l.name() != "普通").unwrap();
+    assert_eq!(d.layers().len(), 3);
+    let cut = d
+        .layers()
+        .iter()
+        .find(|l| l.name().starts_with('あ'))
+        .unwrap();
     assert_eq!(cut.name().chars().count(), limit);
+    assert!(
+        (cut.opacity() - 128.0 / 255.0).abs() < 0.01,
+        "{}",
+        cut.opacity()
+    );
+    assert_eq!(pixel(&d, "後", 0, 0), [255, 0, 0, 255]);
     assert!(cut.name().chars().all(|c| c == 'あ'));
     assert_eq!(pixel(&d, cut.name(), 0, 0), [255, 0, 0, 255]);
     let n = note(&notes, ImportFeature::LayerNameTruncated).unwrap_or_else(|| panic!("{notes:?}"));
@@ -2015,6 +2027,46 @@ fn a_layer_name_over_the_limit_is_cut_and_told_instead_of_refusing_the_whole_fil
     assert_eq!(kept.encode_utf16().count(), limit - 1);
     assert!(kept.starts_with('a') && kept.chars().skip(1).all(|c| c == '\u{20bb7}'));
     assert!(note(&notes, ImportFeature::LayerNameTruncated).is_some());
+}
+
+#[test]
+fn a_layer_name_over_the_limit_is_read_only_up_to_the_limit() {
+    // 上限より長い名前は、上限までの単位だけを読んで String にし、残りは読み飛ばす。取り込みの間の作業メモリのピークは、
+    // 付加情報の 1 区間（名前の 2 バイト × n）を持つ分で済み、その上に名前の全体（Vec<u16> と String）を載せない
+    use crate::alloc_probe::peak_live_bytes;
+    let limit = Limits::default().max_name_code_units;
+    let n = 2_000_000usize;
+    let bytes = Psd::new(
+        2,
+        2,
+        vec![
+            red(&"あ".repeat(n), (0, 0, 2, 2)).id(1),
+            red("後", (0, 0, 2, 2)).id(2),
+        ],
+    )
+    .build();
+    let (outcome, peak) = peak_live_bytes(|| {
+        psd::import_copy(
+            &mut Cursor::new(&bytes[..]),
+            &CopyOptions {
+                source_budget: 2048 * MIB,
+                cancel: None,
+            },
+        )
+        .unwrap()
+    });
+    let CopyOutcome::Imported(i) = outcome else {
+        panic!("断られた")
+    };
+    let d = i.document;
+    assert_eq!(d.layers().len(), 2);
+    assert!(d.layers().iter().any(|l| l.name().chars().count() == limit));
+    assert_eq!(pixel(&d, "後", 0, 0), [255, 0, 0, 255]);
+    assert!(
+        peak < 3 * n,
+        "作業メモリのピーク {peak} バイト（名前の 2 バイト × n = {}）",
+        2 * n
+    );
 }
 
 #[test]
@@ -2119,7 +2171,46 @@ fn an_uncompressed_layer_bigger_than_the_canvas_keeps_the_pixels_inside_and_tell
             l.rgba[i..i + 4].copy_from_slice(&[(x % 251) as u8, (y % 241) as u8, 9, 255]);
         }
     }
-    let (d, notes) = imported(&Psd::new(64, 64, vec![l]).build());
+    let bytes = Psd::new(64, 64, vec![l]).build();
+    // 読み手を包み、1 回の読み取りの最大の大きさを数える: 行ごとの読みなら 1 行（lw バイト）の数倍を超えない。チャンネルを全部（lw × lh = 1.8 MB）
+    // 読む作りに戻すと、ここで落ちる
+    struct Counting<'a> {
+        inner: Cursor<&'a [u8]>,
+        largest: usize,
+    }
+    impl Read for Counting<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.largest = self.largest.max(n);
+            Ok(n)
+        }
+    }
+    impl Seek for Counting<'_> {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+    let mut reader = Counting {
+        inner: Cursor::new(&bytes[..]),
+        largest: 0,
+    };
+    let outcome = psd::import_copy(
+        &mut reader,
+        &CopyOptions {
+            source_budget: 2048 * MIB,
+            cancel: None,
+        },
+    )
+    .unwrap();
+    let CopyOutcome::Imported(i) = outcome else {
+        panic!("断られた")
+    };
+    let (d, notes) = (i.document, i.notes);
+    assert!(
+        reader.largest <= 4 * lw,
+        "1 回の読み取りの最大 {} バイト（1 行は {lw} バイト）",
+        reader.largest
+    );
     for (cx, cy) in [(0usize, 0usize), (63, 0), (0, 63), (63, 63), (30, 20)] {
         let (x, y) = (cx + 700, cy + 500);
         assert_eq!(

@@ -698,19 +698,6 @@ fn tree(records: Vec<Record>, s: &State) -> Result<Vec<Layer>> {
     current.reverse();
     Ok(current)
 }
-/// 名前を UTF-16 の `max` 単位以内に切る（代用対の途中では切らない）。
-fn cut_utf16(name: &str, max: usize) -> String {
-    let mut units = 0;
-    let mut end = name.len();
-    for (at, c) in name.char_indices() {
-        units += c.len_utf16();
-        if units > max {
-            end = at;
-            break;
-        }
-    }
-    name[..end].to_owned()
-}
 fn mask(mut r: Reader, s: &mut State) -> Result<Option<Mask>> {
     if r.remaining() == 0 {
         return Ok(None);
@@ -1058,6 +1045,7 @@ fn window_row(
 }
 /// `decode_window` の、無圧縮（圧縮 0）のチャンネルをファイルから 1 行ずつ読む形。`len` は圧縮の種類（2 バイト。呼び手が読み済み）を除いたバイト数。
 /// チャンネルの全バイトを持たず、持つのは行 1 本。書く値・誤りの文は `decode_window` の無圧縮と同じ。
+#[allow(clippy::too_many_arguments)]
 pub(super) fn decode_window_raw<R: Read>(
     r: &mut R,
     len: usize,
@@ -1080,6 +1068,7 @@ pub(super) fn decode_window_raw<R: Read>(
 }
 /// `decode` の、矩形の中の範囲だけを `out`（範囲の幅 × stride のバイトの行が上から並ぶ面）の component へ書く形。矩形全体の面は持たず、1 行ずつ展開して範囲を写す
 /// （キャンバスよりずっと大きなレイヤーを、全画素のメモリを取らずに読む）。書く値・誤り・知らせは `decode` と同じ。範囲の外に 0 でない値があれば true。
+#[allow(clippy::too_many_arguments)]
 pub(super) fn decode_window(
     mut r: Reader,
     w: u32,
@@ -1426,9 +1415,13 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
                 // 写しとしての取り込みは、長すぎる名前でファイル全体を断らず、上限まで切り詰めて知らせる（原本を保つ読みは、原本の名前を変えられないので断る）
                 let cut = n > max && s.copy.is_some();
                 check_budget(n <= max || cut, "Unicode名長の予算超過")?;
-                rec.layer.name = b.utf16(n)?;
+                // 切り詰めるときは上限までの単位だけを読む（長い名前の全体を String にしない）
+                rec.layer.name = if cut {
+                    b.utf16_prefix(n, max)?
+                } else {
+                    b.utf16(n)?
+                };
                 if cut {
-                    rec.layer.name = cut_utf16(&rec.layer.name, max);
                     s.preserve("NameTruncated", "luni が長すぎます", start, length);
                 }
                 if b.remaining() > 3 {
