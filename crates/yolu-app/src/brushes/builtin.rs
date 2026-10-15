@@ -47,6 +47,47 @@ fn preset_group(id: &str) -> Group {
     }
 }
 
+/// 厚塗りの筆（色の混ぜ。筆のグループ）。paint・density は絵の具の量・濃さの筆圧の最小値（None は筆圧を使わない）。
+fn thick(
+    radius: f64,
+    hardness: f64,
+    spacing: f64,
+    flow: f64,
+    mix: ColorMix,
+    paint: Option<f64>,
+    density: Option<f64>,
+) -> Brush {
+    let mut b = Brush {
+        mix,
+        ..Brush::simple(
+            BrushSettings {
+                radius,
+                hardness,
+                spacing,
+                flow,
+                ..BrushSettings::default()
+            },
+            // 置いた絵の具は筆圧で薄くならない（量・濃さのほうを筆圧に従わせる）
+            PressureSwitches {
+                opacity: false,
+                ..PressureSwitches::default()
+            },
+        )
+    };
+    for (min, i) in [
+        (paint, &mut b.influences.mix_paint),
+        (density, &mut b.influences.mix_density),
+    ] {
+        if let Some(min) = min {
+            i.pressure = InputUse {
+                on: true,
+                response: InputResponse::new(min, Vec::new()).expect("最小値だけの筆圧の応え"),
+            };
+        }
+    }
+    canonical(&b)
+}
+
 /// 組み込みの全部（グループごとに画面の並びで）。初めて呼んだときに 1 回だけ作る。
 pub fn all() -> &'static [Builtin] {
     static ALL: OnceLock<Vec<Builtin>> = OnceLock::new();
@@ -71,45 +112,6 @@ pub fn all() -> &'static [Builtin] {
                     ..BrushSettings::default()
                 })
             })
-        };
-        // 厚塗りの筆（色の混ぜ。筆のグループ）。paint・density は絵の具の量・濃さの筆圧の最小値（None は筆圧を使わない）
-        let thick = |radius: f64,
-                     hardness: f64,
-                     spacing: f64,
-                     flow: f64,
-                     mix: ColorMix,
-                     paint: Option<f64>,
-                     density: Option<f64>| {
-            let mut b = Brush {
-                mix,
-                ..Brush::simple(
-                    BrushSettings {
-                        radius,
-                        hardness,
-                        spacing,
-                        flow,
-                        ..BrushSettings::default()
-                    },
-                    // 置いた絵の具は筆圧で薄くならない（量・濃さのほうを筆圧に従わせる）
-                    PressureSwitches {
-                        opacity: false,
-                        ..PressureSwitches::default()
-                    },
-                )
-            };
-            for (min, i) in [
-                (paint, &mut b.influences.mix_paint),
-                (density, &mut b.influences.mix_density),
-            ] {
-                if let Some(min) = min {
-                    i.pressure = InputUse {
-                        on: true,
-                        response: InputResponse::new(min, Vec::new())
-                            .expect("最小値だけの筆圧の応え"),
-                    };
-                }
-            }
-            canonical(&b)
         };
         let mut oil = thick(
             20.0,

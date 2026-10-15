@@ -323,22 +323,57 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
     let v7 = needs_v7(&b);
-    let header = if v7 {
+    let mut w = Writer(format!("{}\n", header_for(&b, assist.is_some(), v7)));
+    write_base(&mut w, user, &b, v7);
+    write_tip_and_jitter(&mut w, &mut pending, &b);
+    write_texture_and_dual(&mut w, &mut pending, &b);
+    write_color_and_controls(&mut w, &b, v7);
+    if v7 {
+        write_influences(&mut w, &b);
+    } else {
+        write_pressure_responses(&mut w, &b);
+    }
+    // 色の混ぜ（版 3。混ぜ方が切のブラシは書かない）
+    if uses_mix(&b) {
+        write_mix(&mut w, &b, v7);
+    }
+    // 入り抜き・手ぶれ補正（版 4。持たないブラシは書かない）
+    if let Some(a) = assist {
+        w.line("assist.stabilizer", a.stabilizer);
+        w.line("assist.taper_in", a.taper_in);
+        w.line("assist.taper_out", a.taper_out);
+    }
+    write_effect(&mut w, &b.effect);
+    if let Some(meta) = user.import.as_ref().map(ImportMeta::normalized) {
+        write_import(&mut w, &meta);
+    }
+    Ok(Encoded {
+        text: w.0,
+        images: pending.images,
+    })
+}
+
+/// 書き出すファイルの版（使う項目が一番新しい版）。
+fn header_for(b: &Brush, has_assist: bool, v7: bool) -> &'static str {
+    if v7 {
         HEADER_V7
     } else if b.controls.min_one_pixel {
         HEADER_V6
     } else if b.base.anti_alias != AntiAlias::None {
         HEADER_V5
-    } else if assist.is_some() {
+    } else if has_assist {
         HEADER_V4
-    } else if uses_mix(&b) {
+    } else if uses_mix(b) {
         HEADER_V3
-    } else if uses_pressure_response(&b) {
+    } else if uses_pressure_response(b) {
         HEADER_V2
     } else {
         HEADER
-    };
-    let mut w = Writer(format!("{header}\n"));
+    }
+}
+
+/// 名前・グループ・基本の数値（版 1〜6 は筆圧の切り替えも）・縁のアンチエイリアス。
+fn write_base(w: &mut Writer, user: &UserBrush, b: &Brush, v7: bool) {
     let name: String = user.name.chars().take(MAX_NAME_CHARS).collect();
     w.line("name", name.replace(['\n', '\r'], " "));
     w.line("group", user.group.id());
@@ -347,8 +382,8 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.single("spacing", b.base.spacing);
     w.single("opacity", b.base.opacity);
     w.single("flow", b.base.flow);
-    let inf = &b.influences;
     if !v7 {
+        let inf = &b.influences;
         w.bool("pressure_size", inf.size.pressure.on);
         w.bool("pressure_opacity", inf.opacity.pressure.on);
         w.bool("pressure_flow", inf.flow.pressure.on);
@@ -357,6 +392,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     if b.base.anti_alias != AntiAlias::None {
         w.line("anti_alias", b.base.anti_alias.id());
     }
+}
+
+/// 筆先（`tip.*`）とばらつき（`jitter.*`）。
+fn write_tip_and_jitter(w: &mut Writer, pending: &mut Pending, b: &Brush) {
     let t = &b.tip;
     match &t.image {
         Some(image) => w.line("tip.image", pending.token(image)),
@@ -387,6 +426,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.line("jitter.flow", j.flow);
     w.line("jitter.scatter", j.scatter);
     w.line("jitter.count", j.count);
+}
+
+/// 紙の質感（`texture*`）とデュアルブラシ（`dual*`）。持たなければ書かない。
+fn write_texture_and_dual(w: &mut Writer, pending: &mut Pending, b: &Brush) {
     if let Some(tex) = &b.texture {
         w.line("texture", pending.token(&tex.image));
         w.line("texture.depth", tex.depth);
@@ -408,6 +451,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         w.line("dual.count", d.count);
         w.line("dual.mode", dual_mode_id(d.mode));
     }
+}
+
+/// 色のゆらぎ（`color.*`）と操作（`controls.*`。版 1〜6 は傾き・速さの切り替えも）。
+fn write_color_and_controls(w: &mut Writer, b: &Brush, v7: bool) {
     let c = &b.color;
     w.line("color.fg_bg", c.foreground_background);
     w.line("color.hue", c.hue);
@@ -416,6 +463,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     w.line("color.purity", c.purity);
     w.bool("color.per_tip", c.per_tip);
     let k = &b.controls;
+    let inf = &b.influences;
     w.line("controls.fade_size", k.fade_size);
     w.line("controls.fade_opacity", k.fade_opacity);
     w.line("controls.fade_flow", k.fade_flow);
@@ -436,65 +484,66 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     if k.min_one_pixel {
         w.bool("controls.min_one_pixel", true);
     }
-    if v7 {
-        // 影響元（版 7。使わない入力・既定の最小値と曲線は書かない）
-        for item in Item::ALL {
-            for input in Input::ALL {
-                let u = inf.get(item).input(input);
-                let key = format!("influence.{}.{}", item.id(), input.id());
-                if u.on {
-                    w.bool(&format!("{key}.on"), true);
-                }
-                if u.response.min() != 0.0 {
-                    w.single(&format!("{key}.min"), u.response.min());
-                }
-                if !u.response.curve().is_empty() {
-                    w.line(&format!("{key}.curve"), curve_text(u.response.curve()));
-                }
+}
+
+/// 影響元（版 7。使わない入力・既定の最小値と曲線は書かない）。
+fn write_influences(w: &mut Writer, b: &Brush) {
+    for item in Item::ALL {
+        for input in Input::ALL {
+            let u = b.influences.get(item).input(input);
+            let key = format!("influence.{}.{}", item.id(), input.id());
+            if u.on {
+                w.bool(&format!("{key}.on"), true);
             }
-        }
-    } else {
-        // 筆圧の応え（版 2。既定の項目は書かない）
-        if inf.hardness.pressure.on {
-            w.bool("controls.pressure_hardness", true);
-        }
-        for (name, r) in pressure_items(&b) {
-            if r.min() != 0.0 {
-                w.single(&format!("pressure.{name}.min"), r.min());
+            if u.response.min() != 0.0 {
+                w.single(&format!("{key}.min"), u.response.min());
             }
-            if !r.curve().is_empty() {
-                w.line(&format!("pressure.{name}.curve"), curve_text(r.curve()));
+            if !u.response.curve().is_empty() {
+                w.line(&format!("{key}.curve"), curve_text(u.response.curve()));
             }
         }
     }
-    // 色の混ぜ（版 3。混ぜ方が切のブラシは書かない）
-    if uses_mix(&b) {
-        let m = &b.mix;
-        w.line("mix.mode", mix_mode_id(m.mode));
-        w.single("mix.paint", m.paint);
-        w.single("mix.density", m.density);
-        w.single("mix.stretch", m.stretch);
-        w.line("mix.ground", mix_ground_id(m.ground));
-        // 絵の具の量・濃さの筆圧（版 3。版 7 は影響元の項目に書いた）
-        for (name, on, r) in mix_pressure_items(&b).into_iter().filter(|_| !v7) {
-            if on {
-                w.bool(&format!("mix.{name}.pressure"), true);
-            }
-            if r.min() != 0.0 {
-                w.single(&format!("mix.{name}.min"), r.min());
-            }
-            if !r.curve().is_empty() {
-                w.line(&format!("mix.{name}.curve"), curve_text(r.curve()));
-            }
+}
+
+/// 筆圧の応え（版 2。既定の項目は書かない）。
+fn write_pressure_responses(w: &mut Writer, b: &Brush) {
+    if b.influences.hardness.pressure.on {
+        w.bool("controls.pressure_hardness", true);
+    }
+    for (name, r) in pressure_items(b) {
+        if r.min() != 0.0 {
+            w.single(&format!("pressure.{name}.min"), r.min());
+        }
+        if !r.curve().is_empty() {
+            w.line(&format!("pressure.{name}.curve"), curve_text(r.curve()));
         }
     }
-    // 入り抜き・手ぶれ補正（版 4。持たないブラシは書かない）
-    if let Some(a) = assist {
-        w.line("assist.stabilizer", a.stabilizer);
-        w.line("assist.taper_in", a.taper_in);
-        w.line("assist.taper_out", a.taper_out);
+}
+
+/// 色の混ぜ（`mix.*`）。絵の具の量・濃さの筆圧は版 3〜6 の鍵で書き、版 7 は影響元の項目に書いた。
+fn write_mix(w: &mut Writer, b: &Brush, v7: bool) {
+    let m = &b.mix;
+    w.line("mix.mode", mix_mode_id(m.mode));
+    w.single("mix.paint", m.paint);
+    w.single("mix.density", m.density);
+    w.single("mix.stretch", m.stretch);
+    w.line("mix.ground", mix_ground_id(m.ground));
+    for (name, on, r) in mix_pressure_items(b).into_iter().filter(|_| !v7) {
+        if on {
+            w.bool(&format!("mix.{name}.pressure"), true);
+        }
+        if r.min() != 0.0 {
+            w.single(&format!("mix.{name}.min"), r.min());
+        }
+        if !r.curve().is_empty() {
+            w.line(&format!("mix.{name}.curve"), curve_text(r.curve()));
+        }
     }
-    match b.effect {
+}
+
+/// 効果（`effect*`）。
+fn write_effect(w: &mut Writer, effect: &BrushEffect) {
+    match *effect {
         BrushEffect::Paint => w.line("effect", "paint"),
         BrushEffect::Blur { radius } => {
             w.line("effect", "blur");
@@ -510,31 +559,29 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
             w.line("effect.y", offset.y);
         }
     }
-    if let Some(meta) = user.import.as_ref().map(ImportMeta::normalized) {
-        w.line(
-            "import.source",
-            meta.source.replace(|c: char| c.is_control(), " "),
-        );
-        if meta.pattern {
-            w.bool("import.pattern", true);
-        }
-        if !meta.gaps.is_empty() {
-            let ids: Vec<&str> = meta.gaps.iter().map(|g| g.id()).collect();
-            w.line("import.gaps", ids.join(","));
-        }
-        if !meta.mapped.is_empty() {
-            let ids: Vec<&str> = meta
-                .mapped
-                .iter()
-                .map(|m| super::gaps::mapped_id(*m))
-                .collect();
-            w.line("import.mapped", ids.join(","));
-        }
+}
+
+/// 取り込んだブラシの出どころと、表せなかった項目の印（`import.*`）。
+fn write_import(w: &mut Writer, meta: &ImportMeta) {
+    w.line(
+        "import.source",
+        meta.source.replace(|c: char| c.is_control(), " "),
+    );
+    if meta.pattern {
+        w.bool("import.pattern", true);
     }
-    Ok(Encoded {
-        text: w.0,
-        images: pending.images,
-    })
+    if !meta.gaps.is_empty() {
+        let ids: Vec<&str> = meta.gaps.iter().map(|g| g.id()).collect();
+        w.line("import.gaps", ids.join(","));
+    }
+    if !meta.mapped.is_empty() {
+        let ids: Vec<&str> = meta
+            .mapped
+            .iter()
+            .map(|m| super::gaps::mapped_id(*m))
+            .collect();
+        w.line("import.mapped", ids.join(","));
+    }
 }
 
 /// 項目を取り出しながら読む（取り出さなかった項目は最後に「知らない項目」として断る）。
@@ -733,6 +780,62 @@ pub fn decode_user(
     text: &str,
     load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
 ) -> Result<Decoded, StoreError> {
+    let (version, mut r) = split_file(text)?;
+    let name = r.take("name").ok_or(StoreError::BadValue("name".into()))?;
+    let name = super::clean_name(&name).ok_or(StoreError::BadValue("name".into()))?;
+    let group = r
+        .take("group")
+        .and_then(|g| Group::from_id(&g))
+        .ok_or(StoreError::BadValue("group".into()))?;
+    let mut b = Brush::default();
+    // 版 7 の影響元は、書いた項目だけ（無い入力は使わない）。版 1〜6 は今までの既定（筆圧で大きさと不透明度）から読む
+    if version >= 7 {
+        b.influences = Influences::none();
+    }
+    let legacy = version <= 6;
+    read_base(&mut r, &mut b, version)?;
+    read_tip_and_jitter(&mut r, &mut b, load)?;
+    read_texture_and_dual(&mut r, &mut b, load)?;
+    read_color_and_controls(&mut r, &mut b, version)?;
+    // 筆圧の応えは版 2〜6 の項目（版 1・7 のファイルにあれば、知らない項目として断る）
+    if (2..=6).contains(&version) {
+        read_pressure_responses(&mut r, &mut b)?;
+    }
+    // 影響元は版 7 の項目（版 6 までのファイルにあれば、知らない項目として断る）
+    if version >= 7 {
+        read_influences(&mut r, &mut b)?;
+    }
+    // 色の混ぜは版 3 の項目（版 1・2 のファイルにあれば、知らない項目として断る）。絵の具の量・濃さの筆圧は版 3〜6 の鍵
+    if version >= 3 {
+        b.mix = read_mix(&mut r, &mut b.influences, legacy)?;
+    }
+    // 入り抜き・手ぶれ補正は版 4 の項目（版 3 までのファイルにあれば、知らない項目として断る）。版 4 でも、1 つも無ければ持たない
+    let assist = if version >= 4 {
+        read_assist(&mut r)?
+    } else {
+        None
+    };
+    b.effect = read_effect(&mut r)?;
+    let import = read_import(&mut r)?;
+    if let Some(key) = r.map.keys().min() {
+        return Err(StoreError::UnknownKey(key.clone()));
+    }
+    // 範囲（有限・0〜10000）は core の検査に任せる
+    if let Some(a) = assist {
+        b.assist = a;
+    }
+    b.validate().map_err(StoreError::Invalid)?;
+    Ok(Decoded {
+        name,
+        group,
+        brush: canonical(&b),
+        import,
+        assist: carried_assist(assist),
+    })
+}
+
+/// 先頭の行から版を決め、残りの `key=value` の行を項目の表にする。
+fn split_file(text: &str) -> Result<(u32, Reader), StoreError> {
     let mut lines = text.lines();
     let version = match lines.next() {
         Some(HEADER) => 1,
@@ -757,25 +860,17 @@ pub fn decode_user(
             return Err(StoreError::DuplicateKey(key.to_owned()));
         }
     }
-    let mut r = Reader { map };
-    let name = r.take("name").ok_or(StoreError::BadValue("name".into()))?;
-    let name = super::clean_name(&name).ok_or(StoreError::BadValue("name".into()))?;
-    let group = r
-        .take("group")
-        .and_then(|g| Group::from_id(&g))
-        .ok_or(StoreError::BadValue("group".into()))?;
-    let mut b = Brush::default();
-    // 版 7 の影響元は、書いた項目だけ（無い入力は使わない）。版 1〜6 は今までの既定（筆圧で大きさと不透明度）から読む
-    if version >= 7 {
-        b.influences = Influences::none();
-    }
+    Ok((version, Reader { map }))
+}
+
+/// 基本の数値・版 1〜6 の筆圧の切り替え・縁のアンチエイリアスを読む。
+fn read_base(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreError> {
     b.base.radius = r.single("radius", b.base.radius)?;
     b.base.hardness = r.single("hardness", b.base.hardness)?;
     b.base.spacing = r.single("spacing", b.base.spacing)?;
     b.base.opacity = r.single("opacity", b.base.opacity)?;
     b.base.flow = r.single("flow", b.base.flow)?;
-    let legacy = version <= 6;
-    if legacy {
+    if version <= 6 {
         let i = &mut b.influences;
         i.size.pressure.on = r.bool("pressure_size", i.size.pressure.on)?;
         i.opacity.pressure.on = r.bool("pressure_opacity", i.opacity.pressure.on)?;
@@ -788,6 +883,15 @@ pub fn decode_user(
                 AntiAlias::from_id(&id).ok_or(StoreError::BadValue("anti_alias".into()))?;
         }
     }
+    Ok(())
+}
+
+/// 筆先（`tip.*`）とばらつき（`jitter.*`）を読む。
+fn read_tip_and_jitter(
+    r: &mut Reader,
+    b: &mut Brush,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<(), StoreError> {
     b.tip.image = r.tip("tip.image", load)?;
     if let Some(list) = r.take("tip.images") {
         if list != "none" {
@@ -813,6 +917,15 @@ pub fn decode_user(
     b.jitter.flow = r.float("jitter.flow", b.jitter.flow)?;
     b.jitter.scatter = r.float("jitter.scatter", b.jitter.scatter)?;
     b.jitter.count = r.parse("jitter.count", b.jitter.count)?;
+    Ok(())
+}
+
+/// 紙の質感（`texture*`）とデュアルブラシ（`dual*`）を読む。
+fn read_texture_and_dual(
+    r: &mut Reader,
+    b: &mut Brush,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<(), StoreError> {
     if let Some(image) = r.tip("texture", load)? {
         let mut texture = PaperTexture::new(image, 0.5);
         texture.depth = r.float("texture.depth", texture.depth)?;
@@ -838,12 +951,18 @@ pub fn decode_user(
         }
         b.dual = Some(dual);
     }
+    Ok(())
+}
+
+/// 色のゆらぎ（`color.*`）と操作（`controls.*`。版 1〜6 は傾き・速さの切り替えも）を読む。
+fn read_color_and_controls(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), StoreError> {
     b.color.foreground_background = r.float("color.fg_bg", b.color.foreground_background)?;
     b.color.hue = r.float("color.hue", b.color.hue)?;
     b.color.saturation = r.float("color.saturation", b.color.saturation)?;
     b.color.brightness = r.float("color.brightness", b.color.brightness)?;
     b.color.purity = r.float("color.purity", b.color.purity)?;
     b.color.per_tip = r.bool("color.per_tip", b.color.per_tip)?;
+    let legacy = version <= 6;
     let k = &mut b.controls;
     k.fade_size = r.parse("controls.fade_size", k.fade_size)?;
     k.fade_opacity = r.parse("controls.fade_opacity", k.fade_opacity)?;
@@ -868,54 +987,55 @@ pub fn decode_user(
     if version >= 6 {
         b.controls.min_one_pixel = r.bool("controls.min_one_pixel", false)?;
     }
-    // 筆圧の応えは版 2〜6 の項目（版 1・7 のファイルにあれば、知らない項目として断る）
-    if (2..=6).contains(&version) {
-        b.influences.hardness.pressure.on = r.bool("controls.pressure_hardness", false)?;
-        for (name, item) in [
-            ("size", Item::Size),
-            ("opacity", Item::Opacity),
-            ("flow", Item::Flow),
-            ("hardness", Item::Hardness),
-        ] {
-            let response = read_response(&mut r, &format!("pressure.{name}"))?;
-            b.influences.get_mut(item).pressure.response = response;
+    Ok(())
+}
+
+/// 版 2〜6 の筆圧の応え（硬さの切り替えと、大きさ・不透明度・流量・硬さの最小値と曲線）を読む。
+fn read_pressure_responses(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    b.influences.hardness.pressure.on = r.bool("controls.pressure_hardness", false)?;
+    for (name, item) in [
+        ("size", Item::Size),
+        ("opacity", Item::Opacity),
+        ("flow", Item::Flow),
+        ("hardness", Item::Hardness),
+    ] {
+        let response = read_response(r, &format!("pressure.{name}"))?;
+        b.influences.get_mut(item).pressure.response = response;
+    }
+    Ok(())
+}
+
+/// 版 7 の影響元（項目ごと・入力ごとの `.on`・`.min`・`.curve`）を読む。
+fn read_influences(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    for item in Item::ALL {
+        for input in Input::ALL {
+            let key = format!("influence.{}.{}", item.id(), input.id());
+            let on = r.bool(&format!("{key}.on"), false)?;
+            let response = read_response(r, &key)?;
+            *b.influences.get_mut(item).input_mut(input) = InputUse { on, response };
         }
     }
-    // 影響元は版 7 の項目（版 6 までのファイルにあれば、知らない項目として断る）
-    if version >= 7 {
-        for item in Item::ALL {
-            for input in Input::ALL {
-                let key = format!("influence.{}.{}", item.id(), input.id());
-                let on = r.bool(&format!("{key}.on"), false)?;
-                let response = read_response(&mut r, &key)?;
-                *b.influences.get_mut(item).input_mut(input) = InputUse { on, response };
-            }
-        }
-    }
-    // 色の混ぜは版 3 の項目（版 1・2 のファイルにあれば、知らない項目として断る）。絵の具の量・濃さの筆圧は版 3〜6 の鍵
-    if version >= 3 {
-        b.mix = read_mix(&mut r, &mut b.influences, legacy)?;
-    }
-    // 入り抜き・手ぶれ補正は版 4 の項目（版 3 までのファイルにあれば、知らない項目として断る）。版 4 でも、1 つも無ければ持たない
-    let assist = if version >= 4 {
-        let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
-        let present = keys.iter().any(|k| r.map.contains_key(*k));
-        let value = |r: &mut Reader, key: &str| r.float(key, 0.0);
-        let (stabilizer, taper_in, taper_out) = (
-            value(&mut r, keys[0])?,
-            value(&mut r, keys[1])?,
-            value(&mut r, keys[2])?,
-        );
-        present.then_some(StrokeAssist {
-            stabilizer,
-            taper_in,
-            taper_out,
-            curve: false,
-        })
-    } else {
-        None
-    };
-    b.effect = match r.take("effect").as_deref() {
+    Ok(())
+}
+
+/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。
+fn read_assist(r: &mut Reader) -> Result<Option<StrokeAssist>, StoreError> {
+    let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
+    let present = keys.iter().any(|k| r.map.contains_key(*k));
+    let value = |r: &mut Reader, key: &str| r.float(key, 0.0);
+    let (stabilizer, taper_in, taper_out) =
+        (value(r, keys[0])?, value(r, keys[1])?, value(r, keys[2])?);
+    Ok(present.then_some(StrokeAssist {
+        stabilizer,
+        taper_in,
+        taper_out,
+        curve: false,
+    }))
+}
+
+/// 効果（`effect*`）を読む。
+fn read_effect(r: &mut Reader) -> Result<BrushEffect, StoreError> {
+    Ok(match r.take("effect").as_deref() {
         None | Some("paint") => BrushEffect::Paint,
         Some("blur") => BrushEffect::Blur {
             radius: r.parse("effect.radius", 3)?,
@@ -927,58 +1047,46 @@ pub fn decode_user(
             offset: DVec2::new(r.float("effect.x", 0.0)?, r.float("effect.y", 0.0)?),
         },
         Some(_) => return Err(StoreError::BadValue("effect".into())),
-    };
-    let import = {
-        let source = r.take("import.source");
-        let pattern = r.take("import.pattern");
-        let gaps = r.take("import.gaps");
-        let mapped = r.take("import.mapped");
-        if source.is_none() && pattern.is_none() && gaps.is_none() && mapped.is_none() {
-            None
-        } else {
-            let source: String = source
-                .unwrap_or_default()
-                .chars()
-                .filter(|c| !c.is_control())
-                .collect::<String>()
-                .trim()
-                .chars()
-                .take(MAX_SOURCE_CHARS)
-                .collect();
-            let pattern = match pattern.as_deref() {
-                None | Some("0") => false,
-                Some("1") => true,
-                Some(_) => return Err(StoreError::BadValue("import.pattern".into())),
-            };
-            // 知らない項目の名前は読み飛ばす（新しい版が足した項目。描き方には関わらない情報）
-            let gaps = gaps
-                .unwrap_or_default()
-                .split(',')
-                .filter_map(Gap::from_id)
-                .collect();
-            let mapped = mapped
-                .unwrap_or_default()
-                .split(',')
-                .filter_map(super::gaps::mapped_from_id)
-                .collect();
-            Some(ImportMeta::new(source, pattern, gaps).with_mapped(mapped))
-        }
-    };
-    if let Some(key) = r.map.keys().min() {
-        return Err(StoreError::UnknownKey(key.clone()));
-    }
-    // 範囲（有限・0〜10000）は core の検査に任せる
-    if let Some(a) = assist {
-        b.assist = a;
-    }
-    b.validate().map_err(StoreError::Invalid)?;
-    Ok(Decoded {
-        name,
-        group,
-        brush: canonical(&b),
-        import,
-        assist: carried_assist(assist),
     })
+}
+
+/// 取り込んだブラシの出どころと、表せなかった項目の印（`import.*`）を読む。1 つも無ければ取り込みではない。
+fn read_import(r: &mut Reader) -> Result<Option<ImportMeta>, StoreError> {
+    let source = r.take("import.source");
+    let pattern = r.take("import.pattern");
+    let gaps = r.take("import.gaps");
+    let mapped = r.take("import.mapped");
+    if source.is_none() && pattern.is_none() && gaps.is_none() && mapped.is_none() {
+        return Ok(None);
+    }
+    let source: String = source
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>()
+        .trim()
+        .chars()
+        .take(MAX_SOURCE_CHARS)
+        .collect();
+    let pattern = match pattern.as_deref() {
+        None | Some("0") => false,
+        Some("1") => true,
+        Some(_) => return Err(StoreError::BadValue("import.pattern".into())),
+    };
+    // 知らない項目の名前は読み飛ばす（新しい版が足した項目。描き方には関わらない情報）
+    let gaps = gaps
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(Gap::from_id)
+        .collect();
+    let mapped = mapped
+        .unwrap_or_default()
+        .split(',')
+        .filter_map(super::gaps::mapped_from_id)
+        .collect();
+    Ok(Some(
+        ImportMeta::new(source, pattern, gaps).with_mapped(mapped),
+    ))
 }
 
 /// 応えの最小値 `<key>.min` と曲線 `<key>.curve` を読む（無ければ既定）。

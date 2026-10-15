@@ -590,6 +590,13 @@ fn pressure_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
 // ───────── 入り抜きとペン ─────────
 
 fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
+    taper_fields(ui, app, rows, lang);
+    fade_fields(ui, app, rows, lang);
+    pen_fields(ui, app, rows, lang);
+    speed_fields(ui, app, rows, lang);
+}
+
+fn taper_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     group(ui, rows, lang.pick("入り抜き", "Taper"));
     let assist = &mut app.m2.brush.assist;
     if let Some(v) = slider_row(
@@ -618,8 +625,10 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
     ) {
         assist.taper_out = v as f64;
     }
+}
+
+fn fade_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
     let k = &mut app.m2.brush.controls;
-    let inf = &mut app.m2.brush.influences;
     group(ui, rows, lang.pick("フェード（描点の数）", "Fade (dabs)"));
     for (id, label, field) in [
         ("fade.size", lang.pick("サイズ", "Size"), &mut k.fade_size),
@@ -644,6 +653,11 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
             *field = v.round().max(0.0) as u32;
         }
     }
+}
+
+fn pen_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
+    let k = &mut app.m2.brush.controls;
+    let inf = &mut app.m2.brush.influences;
     let pen = lang.pick("マウスでは効きません", "No effect with a mouse");
     group(ui, rows, lang.pick("ペンの傾き", "Pen tilt"));
     let (a, b) = toggle_pair(
@@ -686,6 +700,10 @@ fn dynamics_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang)
     ) {
         k.rotation_angle = v;
     }
+}
+
+fn speed_fields(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, lang: Lang) {
+    let inf = &mut app.m2.brush.influences;
     group(ui, rows, lang.pick("筆の速さ", "Speed"));
     let speed = "";
     let (a, b) = toggle_pair(
