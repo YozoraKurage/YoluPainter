@@ -999,6 +999,95 @@ fn an_empty_clipped_group_is_written_hidden_so_its_base_group_keeps_passing_thro
     assert!(!find(&out.document.layers, "空の組").visible);
 }
 
+/// 通過のグループに、見えないレイヤー（非表示・チャンネルを切った・透明）だけがクリッピングされた文書。PSD へ書いて読み直しても、書き出した統合画像と
+/// 読み直した文書の合成の、グループの外側の画素が反転しない（グループは分離する）。クリッピングが無い文書は反転する。
+/// 文書の合成だけでなく、書き出し・読み直しの後の画素を決まった値で確かめる（合成どうしの比べは、決まりが両方とも前の形でも通る）。
+#[test]
+fn a_pass_through_group_clipped_only_by_invisible_layers_stays_isolated_after_export_and_read() {
+    const RED: Rgba8 = Rgba8::new(200, 0, 0, 255);
+    const BLUE: Rgba8 = Rgba8::new(0, 0, 255, 255);
+    const GREEN: Rgba8 = Rgba8::new(0, 255, 0, 255);
+    const CYAN: Rgba8 = Rgba8::new(0, 255, 255, 255);
+    const INVERTED_RED: Rgba8 = Rgba8::new(55, 255, 255, 255);
+    const INVERTED_BLUE: Rgba8 = Rgba8::new(255, 255, 0, 255);
+    // 緑の帯は不透明なので、分離しても反転した緑
+    const INVERTED_GREEN: Rgba8 = Rgba8::new(255, 0, 255, 255);
+    const W: u32 = 8;
+    const H: u32 = 2;
+    fn fill(d: &mut Document, id: LayerId, c: Rgba8, x0: u32, x1: u32) {
+        for y in 0..H {
+            for x in x0..x1 {
+                d.set_pixel(id, x, y, c).unwrap();
+            }
+        }
+    }
+    // 下から: 基（左 赤・右 青）・通過のグループ（緑の帯と反転の調整）・グループへクリッピングしたレイヤー（None なら無い）
+    // 帯は x = 2..6、クリッピングのレイヤーが描かれるなら x = 3..5（帯の中）
+    let build = |kind: Option<&str>| {
+        let mut d = Document::with_tile_size(W, H, 4).unwrap();
+        let base = d.add_layer("基").unwrap();
+        fill(&mut d, base, RED, 0, 4);
+        fill(&mut d, base, BLUE, 4, W);
+        let band = d.add_layer("緑").unwrap();
+        fill(&mut d, band, GREEN, 2, 6);
+        let invert = d
+            .add_adjustment_layer("反転", AdjustmentSettings::invert(), None, None)
+            .unwrap();
+        let g = d.group_layers(&[band, invert], "グループ").unwrap();
+        d.set_layer_blend_mode(g, CoreBlend::PassThrough).unwrap();
+        if let Some(kind) = kind {
+            let c = d.add_layer("クリッピング").unwrap();
+            if kind != "transparent" {
+                fill(&mut d, c, CYAN, 3, 5);
+            }
+            match kind {
+                "hidden" => d.set_layer_visible(c, false).unwrap(),
+                "channel off" => d.set_channel_enabled(c, Channel::Color, false).unwrap(),
+                _ => {}
+            }
+            d.set_layer_clipping(c, true).unwrap();
+        }
+        d.clear_history().unwrap();
+        d
+    };
+    // 外側（x = 0 と 7）と帯の中（x = 2）の画素を、書き出した統合画像・読み直した文書の合成・PSD の参照合成の 3 つで（2 行とも同じ値）
+    let check = |kind: Option<&str>, outside: (Rgba8, Rgba8)| {
+        let d = build(kind);
+        let (out, back) = round_trip(&d, Channel::Color);
+        let merged = out.document.composite_rgba.as_ref().unwrap();
+        let read = look(&back, Channel::Color);
+        // 書いた PSD を読み直す。保存した統合画像と PSD の参照合成（レイヤーを重ねる）が一致する（食い違うと CompositeDiffers の注記が付く）。
+        // 参照合成の結果（読み直して重ねた 1 枚。上の行から）の外側も、同じ値
+        let bytes = psd::write(&out.document, &Limits::default()).unwrap();
+        let reread = psd::read(&bytes, &Limits::default()).unwrap();
+        assert!(
+            reread
+                .diagnostics()
+                .iter()
+                .all(|d| d.code != "CompositeDiffers"),
+            "{kind:?}: {:?}",
+            reread.diagnostics()
+        );
+        let (_, _, flattened) = psd::read_flattened(&bytes, &Limits::default(), None).unwrap();
+        for (name, bytes) in [
+            ("統合画像", merged),
+            ("読み直した合成", &read),
+            ("PSD の参照合成", &flattened),
+        ] {
+            let px = |x: u32, y: u32| Rgba8::from_slice(&bytes[((y * W + x) * 4) as usize..][..4]);
+            for y in 0..H {
+                assert_eq!(px(0, y), outside.0, "{kind:?} {name} 外側（赤）");
+                assert_eq!(px(7, y), outside.1, "{kind:?} {name} 外側（青）");
+                assert_eq!(px(2, y), INVERTED_GREEN, "{kind:?} {name} 帯の中");
+            }
+        }
+    };
+    check(None, (INVERTED_RED, INVERTED_BLUE));
+    for kind in ["hidden", "channel off", "transparent"] {
+        check(Some(kind), (RED, BLUE));
+    }
+}
+
 // ───────── 刻みの間の調整 ─────────
 
 fn adjusted(settings: AdjustmentSettings) -> Document {
