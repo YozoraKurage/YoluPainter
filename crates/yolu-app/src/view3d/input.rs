@@ -1397,7 +1397,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                                 frame: ui.ctx().cumulative_frame_nr(),
                                 pen_frame: false,
                             },
-                            &format!("nav={nav:?} click={}", click.is_some()),
+                            &crate::pen::log::mouse_kind("nav", nav, click.is_some()),
                             pos,
                             &format!("{button:?}"),
                             false,

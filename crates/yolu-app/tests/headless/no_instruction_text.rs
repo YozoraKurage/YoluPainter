@@ -413,11 +413,17 @@ fn tooltip_parameters(sources: &[(String, String)]) -> BTreeMap<String, BTreeSet
     table
 }
 
+/// 画面に出ない記録の口（`YOLU_PEN_LOG` のファイルにだけ書く行の形）。記録の行の文字列は、ここにまとめて置く。
+const LOG_ONLY: [&str; 1] = ["pen/log.rs"];
+
 fn collect_literals() -> Vec<Literal> {
     let sources = production_sources();
     let table = tooltip_parameters(&sources);
     let mut out = Vec::new();
     for (file, text) in &sources {
+        if LOG_ONLY.contains(&file.as_str()) {
+            continue;
+        }
         lex(file, text, &table, &mut out);
     }
     out

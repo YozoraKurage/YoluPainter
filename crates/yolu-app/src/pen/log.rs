@@ -178,6 +178,11 @@ pub struct Site<'a> {
     pub pen_frame: bool,
 }
 
+/// マウスの押しで引いた操作の `kind` の欄（`<name>=<value> click=<真偽>`）。
+pub fn mouse_kind(name: &str, value: impl std::fmt::Debug, click: bool) -> String {
+    format!("{name}={value:?} click={click}")
+}
+
 /// 押し始めの 1 行。`kind` は `press_kind` の結果か、マウスの押しで引いた操作。`skipped` が真のとき、押しは `pen_frame` のために使わなかった。
 pub fn press_line(site: Site, kind: &str, pos: Pos2, button: &str, skipped: bool) -> String {
     format!(
