@@ -396,7 +396,10 @@ impl StrokeState {
             for py in y0..=y1 {
                 for px in x0..=x1 {
                     let (ox, oy) = t.inverse(px as f64 + 0.5, py as f64 + 0.5);
-                    let coverage = shape.coverage_at(ox - shape.x, oy - shape.y);
+                    let mut coverage = shape.coverage_at(ox - shape.x, oy - shape.y);
+                    if shape.flow != 1.0 {
+                        coverage *= shape.flow;
+                    }
                     if coverage <= 0.0 {
                         continue;
                     }

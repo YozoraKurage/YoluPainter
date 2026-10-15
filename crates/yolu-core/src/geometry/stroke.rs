@@ -138,6 +138,8 @@ pub struct ScreenStrokeSampler {
     /// 最後に置いたダブ（とデュアルブラシの 2 つ目のダブ）からの線の長さ（次の区間へ持ち越す余り）。
     since: f64,
     dual_since: f64,
+    /// 次の 2 つ目のダブまでの間隔の係数（最後に置いた 2 つ目のダブの [`DualSink::put`] の値）。
+    dual_step: f64,
     /// 最後に測った線の向き（長さ 0 の区間では変えない）。
     direction: f64,
 }
@@ -152,6 +154,20 @@ fn distance(a: Vec2, b: Vec2) -> f32 {
 
 /// 区間の間隔: ダブの間隔と、デュアルブラシの 2 つ目のダブの間隔（無ければ None）。どちらも画面の単位。
 pub type SegmentGaps = (f32, Option<f32>);
+
+/// デュアルブラシの 2 つ目のダブを受け取る先。`put` は、そのダブから次の 2 つ目のダブまでの間隔の係数を返す（区間の間隔に掛ける。
+/// 1 は区間の間隔のまま。下限は区間の間隔の 0.01 倍）。
+pub trait DualSink {
+    fn put(&mut self, dab: ScreenDab) -> f64;
+}
+
+/// 位置と線の長さだけを集める（間隔はいつも区間の間隔のまま）。
+impl DualSink for Vec<(Vec2, f64)> {
+    fn put(&mut self, dab: ScreenDab) -> f64 {
+        self.push((dab.at, dab.arc));
+        1.0
+    }
+}
 
 impl ScreenStrokeSampler {
     /// 曲線で結ぶ道（今までの 3D のストローク）。
@@ -171,8 +187,14 @@ impl ScreenStrokeSampler {
             length: 0.0,
             since: 0.0,
             dual_since: 0.0,
+            dual_step: 1.0,
             direction: 0.0,
         }
+    }
+
+    /// 次の 2 つ目のダブまでの間隔の係数（押した点の 2 つ目のダブは呼ぶ側が置くので、その係数をここで渡す）。
+    pub fn set_dual_step(&mut self, factor: f64) {
+        self.dual_step = factor;
     }
 
     /// 最後に描いた点。
@@ -224,7 +246,7 @@ impl ScreenStrokeSampler {
         point: ScreenPoint,
         gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         if !self.curve {
             if StrokeCurve::coincident(
@@ -283,7 +305,7 @@ impl ScreenStrokeSampler {
         &mut self,
         gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         if !self.has_held {
             return Ok(());
@@ -305,7 +327,7 @@ impl ScreenStrokeSampler {
         next: Vec2,
         gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         let (a, b) = (self.previous, self.held);
         let before = if self.has_before {
@@ -354,7 +376,7 @@ impl ScreenStrokeSampler {
         points: &[Vec2],
         mut gaps: impl FnMut(Vec2) -> SegmentGaps,
         out: &mut Vec<ScreenDab>,
-        dual: &mut Vec<(Vec2, f64)>,
+        dual: &mut impl DualSink,
     ) -> Result<(), TooManyDabs> {
         let pieces = points.len() - 1;
         let mut lengths = vec![0f64; pieces + 1];
@@ -398,10 +420,30 @@ impl ScreenStrokeSampler {
             };
             if let Some(g) = dual_gap {
                 let mut j = 1usize;
-                walk(total, g as f64, &mut self.dual_since, |s| {
-                    let (at, _) = locate(s, &mut j);
-                    dual.push((at, base + s));
-                });
+                let mut direction = self.direction;
+                walk_steps(
+                    total,
+                    g as f64,
+                    &mut self.dual_since,
+                    &mut self.dual_step,
+                    |s| {
+                        let (at, f) = locate(s, &mut j);
+                        let t = ((j - 1) as f64 + f) / pieces as f64;
+                        let d = points[j] - points[j - 1];
+                        if d.x != 0.0 || d.y != 0.0 {
+                            direction = (-(d.y as f64)).atan2(d.x as f64);
+                        }
+                        dual.put(ScreenDab {
+                            at,
+                            pressure: lerp(a.pressure, b.pressure, t as f32),
+                            arc: base + s,
+                            direction,
+                            tilt: a.tilt + (b.tilt - a.tilt) * t,
+                            rotation: crate::brush::lerp_angle(a.rotation, b.rotation, t),
+                            speed: a.speed + (b.speed - a.speed) * t,
+                        })
+                    },
+                )?;
             }
             let mut j = 1usize;
             let mut direction = self.direction;
@@ -456,6 +498,39 @@ fn walk(total: f64, gap: f64, since: &mut f64, mut place: impl FnMut(f64)) {
         rest %= gap;
     }
     *since = rest;
+}
+
+/// [`walk`] の、置くごとに次の間隔の係数が変わる形（2 つ目のダブの間隔の影響元）。place は次の間隔の係数を返し、step は区間をまたいで
+/// 持ち越す係数。係数がいつも 1 なら [`walk`] と同じ位置・同じ余り。置く数が区間の上限を超えたら断る。
+fn walk_steps(
+    total: f64,
+    gap: f64,
+    since: &mut f64,
+    step: &mut f64,
+    mut place: impl FnMut(f64) -> f64,
+) -> Result<(), TooManyDabs> {
+    let next = |factor: f64| crate::brush::dual_step(gap, factor);
+    let mut g = next(*step);
+    let mut position = (g - *since).max(0.0);
+    let mut placed = 0u64;
+    while position <= total + ROUNDING {
+        placed += 1;
+        if placed > SURFACE_DABS_PER_SEGMENT as u64 + 1 {
+            return Err(TooManyDabs);
+        }
+        *step = place(position.min(total));
+        g = next(*step);
+        position += g;
+    }
+    let mut rest = total - (position - g);
+    if rest < ROUNDING {
+        rest = 0.0;
+    }
+    if rest >= g {
+        rest %= g;
+    }
+    *since = rest;
+    Ok(())
 }
 
 #[cfg(test)]

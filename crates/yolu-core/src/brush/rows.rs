@@ -1301,6 +1301,11 @@ unsafe fn combine<V: Lanes32>(mode: DualBrushMode, main: V::F, dual: V::F) -> V:
             DualBrushMode::LinearBurn => V::sub(V::add(main, dual), one),
             DualBrushMode::HardMix => V::select(V::ge(V::add(main, dual), one), one, zero),
             DualBrushMode::Subtract => V::sub(main, dual),
+            DualBrushMode::Normal => main,
+            DualBrushMode::Add => V::add(main, dual),
+            DualBrushMode::Lighten => V::max(main, dual),
+            DualBrushMode::Screen => V::sub(one, V::mul(V::sub(one, main), V::sub(one, dual))),
+            DualBrushMode::LinearHeight => V::sub(main, V::mul(dual, V::sub(one, main))),
         };
         V::select(V::le(main, zero), zero, clamp01_32::<V>(r))
     }
@@ -1868,6 +1873,10 @@ unsafe fn dual_rows<V: Slice32>(
         let (lo, hi) = unsafe { cover_row::<V>(&cover, &c, py, xs, cov) };
         if lo >= hi {
             continue;
+        }
+        if shape.flow != 1.0 {
+            let flow = shape.flow as f32;
+            cov[lo..hi].iter_mut().for_each(|v| *v *= flow);
         }
         if cells.is_none() {
             if !cov[lo..hi].iter().any(|&c| c > 0.0) {

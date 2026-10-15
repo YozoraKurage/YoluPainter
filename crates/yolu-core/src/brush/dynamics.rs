@@ -47,6 +47,11 @@ impl DualBrushMode {
                 }
             }
             DualBrushMode::Subtract => main - dual,
+            DualBrushMode::Normal => main,
+            DualBrushMode::Add => main + dual,
+            DualBrushMode::Lighten => f64_max(main, dual),
+            DualBrushMode::Screen => 1.0 - (1.0 - main) * (1.0 - dual),
+            DualBrushMode::LinearHeight => main - dual * (1.0 - main),
         };
         clamp01(r)
     }

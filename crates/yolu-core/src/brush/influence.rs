@@ -314,6 +314,40 @@ impl SprayItem {
     }
 }
 
+/// デュアルブラシ（2 つ目の筆先）の影響元を持つ項目（[`Item`] とは別の並び。入力はその 2 つ目のダブの所の値で、ランダムの乱数は
+/// デュアルの影響元の列から、2 つ目のダブごとにこの順で引く）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DualItem {
+    /// 2 つ目のブラシサイズ。
+    Size,
+    /// 2 つ目のブラシ濃度。
+    Flow,
+    /// 2 つ目の間隔。
+    Spacing,
+    /// 2 つ目の厚さ（真円率）。
+    Thickness,
+}
+
+impl DualItem {
+    /// すべてのデュアルの項目（並びは乱数を引く順・保存の順）。
+    pub const ALL: [DualItem; 4] = [
+        DualItem::Size,
+        DualItem::Flow,
+        DualItem::Spacing,
+        DualItem::Thickness,
+    ];
+
+    /// 保存に使う名前。
+    pub fn id(self) -> &'static str {
+        match self {
+            DualItem::Size => "dual_size",
+            DualItem::Flow => "dual_flow",
+            DualItem::Spacing => "dual_spacing",
+            DualItem::Thickness => "dual_thickness",
+        }
+    }
+}
+
 /// 1 つの項目の 1 つの入力: 使うかと、その応え。切っても応え（最小値と曲線）は残す。
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct InputUse {
@@ -480,6 +514,12 @@ pub struct Influences {
     /// 散布効果の影響元（[`SprayItem`]。粒子サイズ・粒子密度）。値 = [`super::Spray`] の値 × 使っている入力の係数の積（最小値は 0〜1）。
     pub spray_size: Influence,
     pub spray_density: Influence,
+    /// デュアルブラシの影響元（[`DualItem`]。2 つ目のサイズ・濃度・間隔・厚さ）。値 = [`super::DualBrush`] の値 × 使っている入力の
+    /// 係数の積（最小値は 0〜1）。
+    pub dual_size: Influence,
+    pub dual_flow: Influence,
+    pub dual_spacing: Influence,
+    pub dual_thickness: Influence,
     /// 速度の効きが一杯になる速さ（画素 / 時刻の単位。秒なら画素毎秒）。0 より大きい。速さは手ぶれ補正の後の筆の点の間の距離 ÷ 時刻の差で、
     /// 点の間は線形に補間する。時刻が進まない入力（時刻を渡さない）では最初の 0 のまま。
     pub speed_max: f64,
@@ -513,6 +553,10 @@ impl Influences {
             color_sub_mix: Influence::OFF,
             spray_size: Influence::OFF,
             spray_density: Influence::OFF,
+            dual_size: Influence::OFF,
+            dual_flow: Influence::OFF,
+            dual_spacing: Influence::OFF,
+            dual_thickness: Influence::OFF,
             speed_max: Influences::DEFAULT_SPEED_MAX,
         }
     }
@@ -592,6 +636,29 @@ impl Influences {
         }
     }
 
+    pub fn dual(&self, item: DualItem) -> &Influence {
+        match item {
+            DualItem::Size => &self.dual_size,
+            DualItem::Flow => &self.dual_flow,
+            DualItem::Spacing => &self.dual_spacing,
+            DualItem::Thickness => &self.dual_thickness,
+        }
+    }
+
+    pub fn dual_mut(&mut self, item: DualItem) -> &mut Influence {
+        match item {
+            DualItem::Size => &mut self.dual_size,
+            DualItem::Flow => &mut self.dual_flow,
+            DualItem::Spacing => &mut self.dual_spacing,
+            DualItem::Thickness => &mut self.dual_thickness,
+        }
+    }
+
+    /// デュアルの項目のどれかが、どれかの入力を使うか。
+    pub fn dual_is_on(&self) -> bool {
+        DualItem::ALL.into_iter().any(|i| self.dual(i).is_on())
+    }
+
     /// 大きさ・不透明度・流量を筆圧で変えるか（簡単なブラシの切り替えの形）。
     pub fn pressure_switches(&self) -> PressureSwitches {
         PressureSwitches {
@@ -608,7 +675,7 @@ impl Influences {
         self.flow.pressure.on = switches.flow;
     }
 
-    /// どれかの項目が入力 input を使うか（傾き・速度を求めるかの判定。色と散布の項目も数える。色と散布の項目のランダムは自分の乱数の列から
+    /// どれかの項目が入力 input を使うか（傾き・速度を求めるかの判定。色と散布とデュアルの項目も数える。それらのランダムは自分の乱数の列から
     /// 引くので、影響元の乱数の列を要るかの判定（ランダム）には数えない）。
     pub fn uses(&self, input: Input) -> bool {
         Item::ALL.into_iter().any(|i| self.get(i).input(input).on)
@@ -620,6 +687,10 @@ impl Influences {
                 && SprayItem::ALL
                     .into_iter()
                     .any(|i| self.spray(i).input(input).on))
+            || (input != Input::Random
+                && DualItem::ALL
+                    .into_iter()
+                    .any(|i| self.dual(i).input(input).on))
     }
 
     /// 範囲を確かめる（応えの最小値と曲線の形、速度の上限は 0 より大きい有限の数）。断ったら何も変えない。
@@ -642,6 +713,11 @@ impl Influences {
         for item in SprayItem::ALL {
             for input in Input::ALL {
                 self.spray(item).input(input).response.validate()?;
+            }
+        }
+        for item in DualItem::ALL {
+            for input in Input::ALL {
+                self.dual(item).input(input).response.validate()?;
             }
         }
         require_finite(self.speed_max, Reason::SpeedMax)?;
@@ -680,6 +756,9 @@ impl Influences {
         }
         for item in SprayItem::ALL {
             *out.spray_mut(item) = self.spray(item).rounded_to_f32();
+        }
+        for item in DualItem::ALL {
+            *out.dual_mut(item) = self.dual(item).rounded_to_f32();
         }
         out
     }

@@ -67,6 +67,7 @@ pub use sampling::{
 pub use screen::{cover_screen, ScreenCoverSettings, ScreenCoverage, ScreenShape};
 pub use seam_band::{seam_band_width, SeamBand, SeamBandStats, MAX_CHART_TRIANGLES};
 pub use stencil::SurfaceStencil;
+pub use stroke::DualSink;
 pub use stroke::{
     ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, StrokeCurve, TooManyDabs,
     SURFACE_DABS_PER_SEGMENT,

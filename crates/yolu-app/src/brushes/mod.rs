@@ -229,6 +229,12 @@ pub fn canonical(brush: &Brush) -> Brush {
             random_angle: s.random_angle.map(f),
             ..s
         }),
+        // デュアルブラシのバージョン 8 の値は保存と同じ f32 の精度に丸める（今までの値は f64 のまま書く）
+        dual: brush.dual.clone().map(|d| yolu_core::DualBrush {
+            flow: f(d.flow),
+            angle_random: f(d.angle_random),
+            ..d
+        }),
         ..brush.clone()
     }
 }

@@ -51,6 +51,7 @@
 use crate::Reason;
 mod color_change;
 pub mod curve;
+mod dual;
 mod dynamics;
 pub(crate) mod edge;
 mod effects;
@@ -77,9 +78,11 @@ use std::sync::Arc;
 use glam::DVec2;
 use rayon::prelude::*;
 
+pub(crate) use dual::{lifted_link, step as dual_step, DualLook, DualRun};
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use edge::AntiAlias;
 pub(crate) use edge::{Edge, TexelMetric};
+pub use influence::DualItem;
 pub use influence::{
     ColorItem, Influence, Influences, Input, InputResponse, InputUse, Item, PressureSwitches,
     SprayItem, MAX_CURVE_POINTS, STRAIGHT,
@@ -242,6 +245,21 @@ fn cos_sin(angle: f64) -> (f64, f64) {
     }
 }
 
+/// 筆の点 a から b への区間の割合 t の所の、道の上のダブ（線の長さ arc・線の向き direction。筆圧・傾き・回転・速さは主のダブと同じ補間）。
+fn path_dab(a: &BrushSample, b: &BrushSample, t: f64, arc: f64, direction: f64) -> PendingDab {
+    PendingDab {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        pressure: a.pressure + (b.pressure - a.pressure) * t,
+        arc,
+        direction,
+        tilt_x: a.tilt.x + (b.tilt.x - a.tilt.x) * t,
+        tilt_y: a.tilt.y + (b.tilt.y - a.tilt.y) * t,
+        rotation: lerp_angle(a.rotation, b.rotation, t),
+        speed: a.speed + (b.speed - a.speed) * t,
+    }
+}
+
 /// 角度 a から b へ短い向きに t だけ進んだ角度（回転の補間。差を ±π に折り返す）。
 #[inline]
 pub(crate) fn lerp_angle(a: f64, b: f64, t: f64) -> f64 {
@@ -315,6 +333,8 @@ struct DualDab {
     x: f64,
     y: f64,
     arc: f64,
+    /// そのダブの見え方（影響元・向きの足し。[`DualRun::look`]）。
+    look: DualLook,
 }
 
 /// 効果のダブの状態（指先の前の位置、読み元の位置のずれ、枠の大きさ）。
@@ -379,6 +399,9 @@ pub(crate) struct StrokeState {
     dual_pending: VecDeque<DualDab>,
     dual_coverage: HashMap<TileCoord, Vec<f32>>,
     dual_since_stamp: f64,
+    /// 2 つ目のダブの見え方の進みと、次の 2 つ目のダブまでの間隔の係数（直前に並べたダブの間隔の影響元）。
+    dual_run: DualRun,
+    dual_step: f64,
     /// 筆先の選びと反転の進み（順に使うときの番号・ランダムな反転の乱数の列）。
     tips: TipRun,
     // 曲線: 描いた点（curve_from）と、その前の点（curve_before）、まだ描いていない最新の点（curve_to）
@@ -527,6 +550,8 @@ impl StrokeState {
             dual_pending: VecDeque::new(),
             dual_coverage: HashMap::new(),
             dual_since_stamp: 0.0,
+            dual_run: DualRun::new(&brush),
+            dual_step: 1.0,
             tips: TipRun::new(&brush),
             curve_points: 0,
             has_curve_before: false,
@@ -786,10 +811,16 @@ impl StrokeState {
         let brush = self.brush.clone();
         if !self.has_sample {
             if brush.dual.is_some() {
+                let look = self.dual_run.look(
+                    &brush,
+                    &path_dab(&sample, &sample, 1.0, 0.0, self.direction),
+                );
+                self.dual_step = look.spacing;
                 self.dual_pending.push_back(DualDab {
                     x: sample.x,
                     y: sample.y,
                     arc: 0.0,
+                    look,
                 });
             }
             any |= self.emit(
@@ -822,31 +853,8 @@ impl StrokeState {
                 return Err(CoreError::InvalidArgument(Reason::TooManyDabsPerSegment));
             }
             if length > 0.0 {
-                if let Some(d) = &brush.dual {
-                    // 2 つ目の筆先のダブは自分の間隔で先に並べておき、主のダブが自分の線の長さまでのものを使う（入力の区切り方によらない）
-                    let dual_spacing = f64_max(0.01, d.radius * 2.0 * d.spacing);
-                    if length / dual_spacing > MAX_STAMPS_PER_SEGMENT {
-                        return Err(CoreError::InvalidArgument(
-                            Reason::TooManyDualBrushDabsPerSegment,
-                        ));
-                    }
-                    let mut at = dual_spacing - self.dual_since_stamp;
-                    while at <= length + 1e-9 {
-                        let t = f64_min(1.0, at / length);
-                        self.dual_pending.push_back(DualDab {
-                            x: p.x + dx * t,
-                            y: p.y + dy * t,
-                            arc: self.stroke_length + at,
-                        });
-                        at += dual_spacing;
-                    }
-                    self.dual_since_stamp = length - (at - dual_spacing);
-                    if self.dual_since_stamp < 1e-9 {
-                        self.dual_since_stamp = 0.0;
-                    }
-                    if self.dual_since_stamp >= dual_spacing {
-                        self.dual_since_stamp %= dual_spacing;
-                    }
+                if brush.dual.is_some() {
+                    self.queue_dual(&brush, &p, &sample, length)?;
                 }
                 let mut position = spacing - self.distance_since_stamp;
                 // 許しは入力の境での丸めを吸うだけ。溜めた距離は下で詰める
@@ -969,11 +977,16 @@ impl StrokeState {
         let index = self.stamp_count;
         self.stamp_count += 1;
         let brush = self.brush.clone();
-        if brush.dual.is_some() {
-            self.stamp_dual(dab.arc)?;
-        }
         let c = brush.stamp_controls(&dab, index, taper, self.influence_random.as_mut());
         let size_factor = brush.assist.taper_item(Item::Size, taper).unwrap_or(1.0);
+        if brush.dual.is_some() {
+            // サイズの連動の比: この描点の主の半径 ÷ 設定の主の半径（ゆらぎの前。最低 1 画素が入っていれば、主が置く下限まで持ち上げる）
+            let link = c.size_pressure * size_factor * c.size;
+            self.stamp_dual(
+                dab.arc,
+                lifted_link(link, brush.controls.min_one_pixel, brush.base.radius),
+            )?;
+        }
         let s = &brush.base;
         let mut any = false;
         let min_radius = if brush.controls.min_one_pixel {
@@ -1006,8 +1019,60 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 2 つ目の筆先のダブを線の長さ limit まで、画素ごとの溜まり（最大）へ置く（C# の StampDual）。
-    fn stamp_dual(&mut self, limit: f64) -> Result<(), CoreError> {
+    /// 前の点 p から sample までの長さ length の区間に、2 つ目の筆先のダブを自分の間隔で先に並べておく（主のダブが自分の線の長さまでの
+    /// ものを使う。入力の区切り方によらない）。間隔の影響元があれば、ダブごとに次の間隔が変わる。
+    fn queue_dual(
+        &mut self,
+        brush: &Brush,
+        p: &BrushSample,
+        sample: &BrushSample,
+        length: f64,
+    ) -> Result<(), CoreError> {
+        let d = brush.dual.as_ref().expect("デュアルブラシ");
+        let base = f64_max(0.01, d.radius * 2.0 * d.spacing);
+        if length / base > MAX_STAMPS_PER_SEGMENT {
+            return Err(CoreError::InvalidArgument(
+                Reason::TooManyDualBrushDabsPerSegment,
+            ));
+        }
+        let mut step = dual::step(base, self.dual_step);
+        let mut at = step - self.dual_since_stamp;
+        let mut placed = 0.0;
+        while at <= length + 1e-9 {
+            placed += 1.0;
+            if placed > MAX_STAMPS_PER_SEGMENT + 1.0 {
+                return Err(CoreError::InvalidArgument(
+                    Reason::TooManyDualBrushDabsPerSegment,
+                ));
+            }
+            let t = f64_min(1.0, at / length);
+            let look = self.dual_run.look(
+                brush,
+                &path_dab(p, sample, t, self.stroke_length + at, self.direction),
+            );
+            self.dual_pending.push_back(DualDab {
+                x: p.x + (sample.x - p.x) * t,
+                y: p.y + (sample.y - p.y) * t,
+                arc: self.stroke_length + at,
+                look,
+            });
+            self.dual_step = look.spacing;
+            step = dual::step(base, look.spacing);
+            at += step;
+        }
+        self.dual_since_stamp = length - (at - step);
+        if self.dual_since_stamp < 1e-9 {
+            self.dual_since_stamp = 0.0;
+        }
+        if self.dual_since_stamp >= step {
+            self.dual_since_stamp %= step;
+        }
+        Ok(())
+    }
+
+    /// 2 つ目の筆先のダブを線の長さ limit まで、画素ごとの溜まり（最大）へ置く（C# の StampDual）。`link` はサイズの連動の比
+    /// （この描点の主の半径 ÷ 設定の主の半径）。
+    fn stamp_dual(&mut self, limit: f64, link: f64) -> Result<(), CoreError> {
         let _profile = profile::scope(profile::Stage::Dual);
         let brush = self.brush.clone();
         let dual = brush.dual.as_ref().expect("デュアルブラシ");
@@ -1024,16 +1089,26 @@ impl StrokeState {
                     cx += (r.next_double() * 2.0 - 1.0) * reach;
                     cy += (r.next_double() * 2.0 - 1.0) * reach;
                 }
-                self.dual_dab_at(dual, cx, cy)?;
+                let radius = dual.dab_radius(&d.look, link);
+                if radius > 0.0 {
+                    self.dual_dab_at(dual, cx, cy, radius, &d.look)?;
+                }
             }
         }
         Ok(())
     }
 
     /// 2 つ目の筆先のダブ 1 つ（C# の DualDabAt）。丸い筆先も回転の式で測る（C# と同じ。角度 0 でも主の丸の近道とは丸めが違う）。
-    fn dual_dab_at(&mut self, dual: &DualBrush, x: f64, y: f64) -> Result<(), CoreError> {
-        let radius = dual.radius;
-        let shape = plan::dual_shape(dual, x, y, radius, self.brush.base.anti_alias);
+    fn dual_dab_at(
+        &mut self,
+        dual: &DualBrush,
+        x: f64,
+        y: f64,
+        radius: f64,
+        look: &DualLook,
+    ) -> Result<(), CoreError> {
+        let level = dual.anti_alias.unwrap_or(self.brush.base.anti_alias);
+        let shape = plan::dual_shape(dual, x, y, radius, level, look);
         let extent = if !shape.edge.is_off() {
             rows::dual_cover_shape(&shape).reach()
         } else if dual.tip.is_none() {
@@ -1891,6 +1966,8 @@ struct DualShape<'a> {
     tip: Option<&'a BrushTip>,
     /// 縁のアンチエイリアス（画素。主の筆先と同じ [`DabShape::with_edge`] の値）。
     edge: Edge,
+    /// 溜まりへ置く覆いに掛ける濃度（濃度 × 濃度の影響元の係数。1 は掛けない）。
+    flow: f64,
 }
 
 impl DualShape<'_> {

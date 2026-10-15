@@ -3549,3 +3549,395 @@ fn the_spray_notes_have_sentences_in_both_languages() {
     }
     assert_eq!(SutMapped::Spray.texts(), ("散布効果", "spraying effect"));
 }
+
+// ---------------- デュアルブラシ ----------------
+
+/// デュアルブラシの列（旗・2 つ目のサイズと、足す列）。
+fn dual_cells(
+    extra: &[(&'static str, rusqlite::types::Value)],
+) -> Vec<(&'static str, rusqlite::types::Value)> {
+    let mut cells = vec![("UseDualBrush", int(1)), ("DualSize", real(30.0))];
+    cells.extend_from_slice(extra);
+    cells
+}
+
+fn one_dual(cells: &[(&'static str, rusqlite::types::Value)]) -> ImportedBrush {
+    ok(&SutBuilder::new().brush("Dual", 1, cells).build())
+        .brushes
+        .remove(0)
+}
+
+fn dual_of(b: &ImportedBrush) -> yolu_core::DualBrush {
+    b.brush.dual.clone().expect("デュアルブラシ")
+}
+
+#[test]
+fn the_dual_columns_become_the_dual_brush() {
+    let b = one_dual(&dual_cells(&[
+        ("SyncDualBrushSize", int(1)),
+        ("DualFlow", int(60)),
+        ("DualHardness", int(80)),
+        ("DualAutoIntervalType", int(0)),
+        ("DualInterval", real(25.0)),
+        ("DualThickness", int(50)),
+        ("DualRotation", real(30.0)),
+        ("DualBrushCompositeMode", int(6)),
+        ("DualAntiAlias", int(2)),
+        ("AntiAlias", int(0)),
+        ("DualUsePatternImage", int(0)),
+    ]));
+    let d = dual_of(&b);
+    assert_eq!(d.radius, 15.0);
+    assert!(d.tip.is_none(), "円形");
+    assert!(d.link_size);
+    assert!((d.flow - 0.6).abs() < 1e-12);
+    assert!((d.hardness - 0.8).abs() < 1e-12);
+    assert!((d.spacing - 0.25).abs() < 1e-12);
+    assert!((d.roundness - 0.5).abs() < 1e-12);
+    assert_eq!(d.angle, 30.0);
+    assert_eq!(d.mode, yolu_core::DualBrushMode::Screen);
+    assert_eq!(d.anti_alias, Some(yolu_core::AntiAlias::Medium));
+    // 散布の旧形は使わない
+    assert_eq!((d.scatter, d.count), (0.0, 1));
+    assert!(mapped(&b, SutMapped::DualBrush));
+    assert!(
+        !has(&b, SutNote::DualBrush),
+        "写せた物には「写していない」を出さない"
+    );
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    b.brush.validate().unwrap();
+    // 主と同じアンチエイリアスは持たない（主に従う）
+    let b = one_dual(&dual_cells(&[
+        ("DualAntiAlias", int(2)),
+        ("AntiAlias", int(2)),
+    ]));
+    assert_eq!(dual_of(&b).anti_alias, None);
+    // 旗が切なら写さず、知らせもしない
+    let mut off = dual_cells(&[]);
+    off[0] = ("UseDualBrush", int(0));
+    let b = one_dual(&off);
+    assert!(b.brush.dual.is_none() && !mapped(&b, SutMapped::DualBrush));
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+}
+
+#[test]
+fn a_dual_brush_without_its_size_is_not_carried_over() {
+    let b = one_dual(&[("UseDualBrush", int(1)), ("DualFlow", int(50))]);
+    assert!(b.brush.dual.is_none());
+    assert!(!mapped(&b, SutMapped::DualBrush));
+    assert!(has(&b, SutNote::DualBrush), "写していないと知らせる");
+}
+
+#[test]
+fn the_thirteen_dual_modes_map_by_their_values() {
+    use yolu_core::DualBrushMode as M;
+    use yolu_io::brushes::SutDualNote;
+    let want = [
+        M::Normal,
+        M::Multiply,
+        M::Add,
+        M::Subtract,
+        M::Darken,
+        M::Lighten,
+        M::Screen,
+        M::Overlay,
+        M::ColorDodge,
+        M::ColorBurn,
+        M::LinearBurn,
+        M::HardMix,
+        M::LinearHeight,
+    ];
+    for (value, mode) in want.into_iter().enumerate() {
+        let b = one_dual(&dual_cells(&[(
+            "DualBrushCompositeMode",
+            int(value as i64),
+        )]));
+        assert_eq!(dual_of(&b).mode, mode, "{value}");
+        assert_eq!(
+            has(&b, SutNote::DualApprox(SutDualNote::LinearHeight)),
+            mode == M::LinearHeight,
+            "{value}"
+        );
+    }
+    // 列が無ければ乗算（知らせない）。知らない値は乗算にして知らせる
+    let b = one_dual(&dual_cells(&[]));
+    assert_eq!(dual_of(&b).mode, M::Multiply);
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    let b = one_dual(&dual_cells(&[("DualBrushCompositeMode", int(13))]));
+    assert_eq!(dual_of(&b).mode, M::Multiply);
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::Mode(13.0))));
+}
+
+#[test]
+fn the_dual_interval_type_uses_the_same_table_as_the_main_brush() {
+    use yolu_io::brushes::SutDualNote;
+    for (kind, spacing) in [(1, 0.12), (2, 0.08), (3, 0.04)] {
+        let b = one_dual(&dual_cells(&[
+            ("DualAutoIntervalType", int(kind)),
+            ("DualInterval", real(100.0)),
+        ]));
+        assert!((dual_of(&b).spacing - spacing).abs() < 1e-12, "{kind}");
+        // 主の同じ種類と同じ値
+        let main = one(&[("BrushAutoIntervalType", int(kind))]);
+        assert_eq!(main.brush.base.spacing, dual_of(&b).spacing, "{kind}");
+    }
+    let b = one_dual(&dual_cells(&[("DualAutoIntervalType", int(9))]));
+    assert_eq!(dual_of(&b).spacing, yolu_core::DualBrush::default().spacing);
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::IntervalType(9.0))));
+}
+
+#[test]
+fn the_dual_angle_flags_follow_the_main_brushs_bits() {
+    use yolu_io::brushes::SutDualNote;
+    for (flags, tilt, rotation, line, random, note) in [
+        (0x03, false, false, false, 0.0, false),
+        (0x13, true, false, false, 0.0, false),
+        (0x23, false, true, false, 0.0, false),
+        (0x43, false, false, true, 0.0, false),
+        (0x83, false, false, false, 0.4, false),
+        (0xF3, true, true, true, 0.4, false),
+        (0x403, false, false, false, 0.0, true),
+    ] {
+        let b = one_dual(&dual_cells(&[
+            ("DualRotationEffector", int(flags)),
+            ("DualRotationRandomScale", int(40)),
+        ]));
+        let d = dual_of(&b);
+        assert_eq!(
+            (d.angle_tilt, d.angle_rotation, d.angle_line),
+            (tilt, rotation, line),
+            "{flags:#x}"
+        );
+        assert!((d.angle_random - random).abs() < 1e-12, "{flags:#x}");
+        assert_eq!(
+            has(&b, SutNote::DualApprox(SutDualNote::Direction)),
+            note,
+            "{flags:#x}"
+        );
+    }
+    // 強さの読めないランダムは足さずに知らせる
+    let b = one_dual(&dual_cells(&[("DualRotationEffector", int(0x83))]));
+    assert_eq!(dual_of(&b).angle_random, 0.0);
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::Direction)));
+}
+
+#[test]
+fn a_horizontal_dual_thickness_turns_a_round_secondary_by_ninety_degrees() {
+    let b = one_dual(&dual_cells(&[
+        ("DualThickness", int(50)),
+        ("DualVerticalThicknes", int(0)),
+        ("DualRotation", real(10.0)),
+    ]));
+    assert_eq!(dual_of(&b).angle, 100.0);
+    // 垂直・潰していない 2 つ目は変えない
+    for cells in [
+        dual_cells(&[("DualThickness", int(50)), ("DualVerticalThicknes", int(1))]),
+        dual_cells(&[
+            ("DualThickness", int(100)),
+            ("DualVerticalThicknes", int(0)),
+        ]),
+    ] {
+        assert_eq!(dual_of(&one_dual(&cells)).angle, 0.0);
+    }
+}
+
+#[test]
+fn the_four_dual_influences_are_carried() {
+    let b = one_dual(&dual_cells(&[
+        (
+            "DualSizeEffector",
+            blob(effector_full(44, 0x10, [20, 0, 0, 0], None, None)),
+        ),
+        (
+            "DualFlowEffector",
+            blob(effector_full(44, 0x30, [0, 10, 0, 0], None, None)),
+        ),
+        (
+            "DualIntervalEffector",
+            blob(effector_full(44, 0x80, [0, 0, 0, 30], None, None)),
+        ),
+        (
+            "DualThicknessEffector",
+            blob(effector_full(44, 0x10, [50, 0, 0, 0], None, None)),
+        ),
+    ]));
+    let i = &b.brush.influences;
+    assert!(i.dual_size.pressure.on && (i.dual_size.pressure.response.min() - 0.2).abs() < 1e-12);
+    assert!(i.dual_flow.pressure.on && i.dual_flow.tilt.on);
+    assert!(i.dual_spacing.random.on && (i.dual_spacing.random.response.min() - 0.3).abs() < 1e-12);
+    assert!(i.dual_thickness.pressure.on);
+    assert!(mapped(&b, SutMapped::Pressure) && mapped(&b, SutMapped::Random));
+    // 主の項目には写さない
+    assert!(!i.size.is_on() && !i.flow.is_on() && !i.roundness.is_on());
+    b.brush.validate().unwrap();
+    // デュアルを写さないブラシには、影響元も写さない
+    let mut off = dual_cells(&[(
+        "DualSizeEffector",
+        blob(effector_full(44, 0x10, [20, 0, 0, 0], None, None)),
+    )]);
+    off[0] = ("UseDualBrush", int(0));
+    assert!(!one_dual(&off).brush.influences.dual_size.is_on());
+}
+
+#[test]
+fn the_secondary_tip_is_the_referenced_material_and_only_the_first_is_used() {
+    use yolu_io::brushes::SutDualNote;
+    let build = |names: &[[&str; 3]]| {
+        let cells = dual_cells(&[
+            ("DualUsePatternImage", int(1)),
+            ("DualPatternImageArray", blob(refs(names))),
+        ]);
+        let file = SutBuilder::new()
+            .material(Some("dual_a"), material_with_thumbnail(&tip_png()))
+            .material(
+                Some("dual_b"),
+                material_with_thumbnail(&png_gray(1, 1, &[0])),
+            )
+            .brush("Dual", 1, &cells)
+            .build();
+        ok(&file).brushes.remove(0)
+    };
+    let b = build(&[["x/dual_a.png", "c/a", "dual_a"]]);
+    let tip = dual_of(&b).tip.expect("2 つ目の筆先");
+    assert_eq!((tip.width(), tip.height()), (2, 2));
+    assert!(mapped(&b, SutMapped::DualBrush));
+    assert!(!has(&b, SutNote::DualApprox(SutDualNote::Tips)));
+    // 複数の筆先は 1 つ目だけ
+    let b = build(&[
+        ["x/dual_b.png", "c/b", "dual_b"],
+        ["x/dual_a.png", "c/a", "dual_a"],
+    ]);
+    let tip = dual_of(&b).tip.expect("2 つ目の筆先");
+    assert_eq!((tip.width(), tip.height()), (1, 1));
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::Tips)));
+    // 素材を決められなければ、デュアルブラシごと写さずに知らせる
+    let b = build(&[["x/unknown.png", "c/u", "unknown"]]);
+    assert!(b.brush.dual.is_none());
+    assert!(has(&b, SutNote::DualBrush));
+}
+
+#[test]
+fn dual_settings_the_engine_does_not_have_are_reported() {
+    use yolu_io::brushes::SutDualNote;
+    for (column, value, n) in [
+        ("ChangeRGBByDual", int(1), SutDualNote::Rgb),
+        ("DualContinuousPlot", int(1), SutDualNote::Continuous),
+        ("DualRibbon", int(1), SutDualNote::Ribbon),
+        (
+            "DualPatternReverseHorizontal",
+            int(2),
+            SutDualNote::TipRules,
+        ),
+        ("DualPatternOrderType", int(3), SutDualNote::TipRules),
+        ("DualUseSpray", int(1), SutDualNote::Spray),
+        ("DualSprayUseFixedPoint", int(1), SutDualNote::Spray),
+        (
+            "DualTextureImage",
+            blob(refs(&[["x/t.png", "c/t", "t"]])),
+            SutDualNote::Texture,
+        ),
+    ] {
+        let b = one_dual(&dual_cells(&[(column, value.clone())]));
+        assert!(b.brush.dual.is_some(), "{column}");
+        assert!(has(&b, SutNote::DualApprox(n)), "{column}");
+        // 切（0）なら知らせない
+        if column != "DualTextureImage" {
+            let b = one_dual(&dual_cells(&[(column, int(0))]));
+            assert!(
+                b.unrepresented.is_empty(),
+                "{column}: {:?}",
+                b.unrepresented
+            );
+        }
+    }
+}
+
+#[test]
+fn the_dual_notes_have_sentences_in_both_languages() {
+    use yolu_io::brushes::SutDualNote;
+    for n in [
+        SutNote::DualBrush,
+        SutNote::DualApprox(SutDualNote::LinearHeight),
+        SutNote::DualApprox(SutDualNote::Mode(13.0)),
+        SutNote::DualApprox(SutDualNote::IntervalType(9.0)),
+        SutNote::DualApprox(SutDualNote::SizeUnit),
+        SutNote::DualApprox(SutDualNote::Direction),
+        SutNote::DualApprox(SutDualNote::ThicknessDirection),
+        SutNote::DualApprox(SutDualNote::Tips),
+        SutNote::DualApprox(SutDualNote::TipRules),
+        SutNote::DualApprox(SutDualNote::Rgb),
+        SutNote::DualApprox(SutDualNote::Continuous),
+        SutNote::DualApprox(SutDualNote::Ribbon),
+        SutNote::DualApprox(SutDualNote::Texture),
+        SutNote::DualApprox(SutDualNote::Spray),
+        SutNote::DualApprox(SutDualNote::Darken),
+        SutNote::DualApprox(SutDualNote::AntiAlias(4.0)),
+        SutNote::InfluenceUnreadable(SutTarget::DualSize),
+        SutNote::TiltCurve(SutTarget::DualSpacing),
+    ] {
+        let note = Unrepresented::ClipStudio(n.clone());
+        let (ja, en) = (note.to_string(), note.english());
+        assert!(
+            !ja.is_empty() && !en.is_empty() && en.is_ascii() && !ja.is_ascii(),
+            "{n:?}"
+        );
+        for text in [&ja, &en] {
+            assert!(!text.chars().any(|c| c.is_control()), "{n:?}");
+        }
+    }
+    assert_eq!(
+        SutMapped::DualBrush.texts(),
+        ("デュアルブラシ", "dual brush")
+    );
+}
+
+#[test]
+fn the_dual_darken_between_tips_is_reported_when_on() {
+    use yolu_io::brushes::SutDualNote;
+    for column in ["DualBlendPatternByDarken", "DualBlendPatternByDarken2"] {
+        let b = one_dual(&dual_cells(&[(column, int(1))]));
+        assert!(b.brush.dual.is_some(), "{column}");
+        assert!(mapped(&b, SutMapped::DualBrush), "{column}");
+        assert!(
+            has(&b, SutNote::DualApprox(SutDualNote::Darken)),
+            "{column}"
+        );
+        // 主の比較暗は写していない（2 つ目の列は主の旗を立てない）
+        assert!(!b.brush.tip.darken_overlap, "{column}");
+        assert!(!mapped(&b, SutMapped::TipDarken), "{column}");
+        // 切（0）なら知らせない
+        let b = one_dual(&dual_cells(&[(column, int(0))]));
+        assert!(
+            b.unrepresented.is_empty(),
+            "{column}: {:?}",
+            b.unrepresented
+        );
+    }
+}
+
+#[test]
+fn an_unknown_dual_anti_aliasing_value_is_reported_and_follows_the_main_brush() {
+    use yolu_io::brushes::SutDualNote;
+    for value in [real(4.0), real(1.5), real(-1.0)] {
+        let b = one_dual(&dual_cells(&[("DualAntiAlias", value.clone())]));
+        assert_eq!(dual_of(&b).anti_alias, None, "{value:?}");
+        let rusqlite::types::Value::Real(v) = value else {
+            unreachable!()
+        };
+        assert!(
+            has(&b, SutNote::DualApprox(SutDualNote::AntiAlias(v))),
+            "{v}"
+        );
+    }
+    // 整数の 4 も同じ
+    let b = one_dual(&dual_cells(&[("DualAntiAlias", int(4))]));
+    assert_eq!(dual_of(&b).anti_alias, None);
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::AntiAlias(4.0))));
+    // 列が無いとき、0〜3 のときは知らせない
+    let b = one_dual(&dual_cells(&[]));
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    for level in 0..=3 {
+        let b = one_dual(&dual_cells(&[("DualAntiAlias", int(level))]));
+        assert!(b.unrepresented.is_empty(), "{level}: {:?}", b.unrepresented);
+    }
+}

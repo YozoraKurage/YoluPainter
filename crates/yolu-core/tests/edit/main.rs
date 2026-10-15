@@ -17,6 +17,7 @@ mod clipboard;
 mod color_change;
 mod comp2d;
 mod docops;
+mod dual_brush;
 mod export;
 mod history;
 mod import_tiles;

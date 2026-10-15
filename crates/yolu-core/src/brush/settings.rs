@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
+use super::edge::AntiAlias;
 use super::influence::{Influences, Item, PressureSwitches};
 use super::mix::ColorMix;
 use super::spray::Spray;
@@ -289,9 +290,50 @@ pub enum DualBrushMode {
     LinearBurn,
     HardMix,
     Subtract,
+    /// 通常: 2 つ目の溜まりを使わず、主の覆いのまま。
+    Normal,
+    /// 加算(発光): min(1, 主 + 2 つ目)。
+    Add,
+    /// 比較(明): max(主, 2 つ目)。
+    Lighten,
+    /// スクリーン: 1 − (1 − 主)(1 − 2 つ目)。
+    Screen,
+    /// 高さ(リニア): 主 − 2 つ目 × (1 − 主)（減算に近く、減算より濃い。[`DualBrushMode::combine`]）。
+    LinearHeight,
 }
 
 impl DualBrushMode {
+    /// [`DualBrushMode::ALL`] の後に足したモード（CLIP STUDIO PAINT のデュアルブラシにあって Photoshop に無い 5 つ）。
+    pub const EXTENDED: [DualBrushMode; 5] = [
+        DualBrushMode::Normal,
+        DualBrushMode::Add,
+        DualBrushMode::Lighten,
+        DualBrushMode::Screen,
+        DualBrushMode::LinearHeight,
+    ];
+
+    /// すべてのモード（[`DualBrushMode::ALL`] の 8 つの後に [`DualBrushMode::EXTENDED`] の 5 つ）。
+    pub const EVERY: [DualBrushMode; 13] = [
+        DualBrushMode::Multiply,
+        DualBrushMode::Darken,
+        DualBrushMode::Overlay,
+        DualBrushMode::ColorDodge,
+        DualBrushMode::ColorBurn,
+        DualBrushMode::LinearBurn,
+        DualBrushMode::HardMix,
+        DualBrushMode::Subtract,
+        DualBrushMode::Normal,
+        DualBrushMode::Add,
+        DualBrushMode::Lighten,
+        DualBrushMode::Screen,
+        DualBrushMode::LinearHeight,
+    ];
+
+    /// [`DualBrushMode::EXTENDED`] のモードか（Photoshop の 8 つに無い）。
+    pub fn is_extended(self) -> bool {
+        DualBrushMode::EXTENDED.contains(&self)
+    }
+
     /// 保存の値の順（C# の値と同じ）。
     pub const ALL: [DualBrushMode; 8] = [
         DualBrushMode::Multiply,
@@ -307,7 +349,8 @@ impl DualBrushMode {
 
 /// デュアルブラシ（2 つ目の筆先、C# の DualBrush）。主の筆先と同じ道筋に自分の間隔・散布・数でダブを置き、ストロークの間
 /// 画素ごとの最大の被覆率を溜める。主のダブは、そのダブの位置（線の長さ）までに置かれた 2 つ目のダブの溜まりと `mode` で
-/// 合わせた被覆率で塗る。大きさは筆圧・ゆらぎ・入り抜きの影響を受けない（Photoshop と同じ）。
+/// 合わせた被覆率で塗る。大きさは、影響元（[`super::DualItem`]）とサイズの連動（`link_size`）を使わなければ、筆圧・ゆらぎ・入り抜きの
+/// 影響を受けない（Photoshop と同じ）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct DualBrush {
     /// 筆先の画像（None は丸。`hardness` で縁が決まる）。
@@ -325,6 +368,19 @@ pub struct DualBrush {
     /// 1 つの間隔に置く数（1〜16）。
     pub count: u32,
     pub mode: DualBrushMode,
+    /// メインのブラシサイズに連動: 2 つ目の半径に、その描点の主のブラシの半径 ÷ 設定の主の半径を掛ける。
+    pub link_size: bool,
+    /// 濃度（0〜1）: 2 つ目のダブが溜まりへ置く覆いに掛ける。影響元は [`super::DualItem::Flow`]。
+    pub flow: f64,
+    /// 2 つ目だけのアンチエイリアス（None は主の [`BrushSettings::anti_alias`] と同じ）。
+    pub anti_alias: Option<AntiAlias>,
+    /// 向きに、ペンが倒れた向き・ペン軸の回転・線の方向を足すか（主の `controls.tilt_angle`・`controls.rotation_angle`・
+    /// `tip.follow_direction` と同じ規則）。
+    pub angle_tilt: bool,
+    pub angle_rotation: bool,
+    pub angle_line: bool,
+    /// 向きのランダムの強さ（0〜1。1 で ±180°。0 は無し。主の `jitter.angle` と同じ規則）。
+    pub angle_random: f64,
 }
 
 impl Default for DualBrush {
@@ -339,6 +395,13 @@ impl Default for DualBrush {
             scatter: 0.0,
             count: 1,
             mode: DualBrushMode::Multiply,
+            link_size: false,
+            flow: 1.0,
+            anti_alias: None,
+            angle_tilt: false,
+            angle_rotation: false,
+            angle_line: false,
+            angle_random: 0.0,
         }
     }
 }
@@ -780,8 +843,16 @@ impl DualBrush {
             self.angle,
             self.roundness,
             self.scatter,
+            self.flow,
+            self.angle_random,
         ] {
             require_finite(v, Reason::DualBrush)?;
+        }
+        if !(0.0..=1.0).contains(&self.flow) {
+            return Err(CoreError::InvalidArgument(Reason::DualBrushFlow));
+        }
+        if !(0.0..=1.0).contains(&self.angle_random) {
+            return Err(CoreError::InvalidArgument(Reason::DualBrushAngleRandom));
         }
         if !(0.5..=65536.0).contains(&self.radius) {
             return Err(CoreError::InvalidArgument(Reason::DualBrushRadiusRange));

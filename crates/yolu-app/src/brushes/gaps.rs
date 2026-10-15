@@ -313,7 +313,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::PostCorrection => Gap::PostCorrection,
             SutNote::VectorTools => Gap::VectorTools,
             SutNote::Spray | SutNote::SprayApprox(_) => Gap::Spray,
-            SutNote::DualBrush => Gap::DualBrush,
+            SutNote::DualBrush | SutNote::DualApprox(_) => Gap::DualBrush,
             SutNote::StartEnd | SutNote::StartEndTargets(_) => Gap::StartEnd,
             SutNote::Stabilizer => Gap::Stabilizer,
             SutNote::ColorChange | SutNote::ColorApprox(_) => Gap::ColorChange,
@@ -340,7 +340,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 22] = [
+pub const MAPPED_ALL: [SutMapped; 23] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -363,6 +363,7 @@ pub const MAPPED_ALL: [SutMapped; 22] = [
     SutMapped::TextureTone,
     SutMapped::ColorChange,
     SutMapped::Spray,
+    SutMapped::DualBrush,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -390,6 +391,7 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::TextureTone => "texture-tone",
         SutMapped::ColorChange => "color-change",
         SutMapped::Spray => "spray",
+        SutMapped::DualBrush => "dual-brush",
     }
 }
 

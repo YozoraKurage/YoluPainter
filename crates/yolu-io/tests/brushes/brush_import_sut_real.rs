@@ -12,7 +12,8 @@ fn summary(b: &ImportedBrush) -> String {
     format!(
         "r={:.1} op={:.2} fl={:.2} hd={:.2} sp={:.2} rn={:.2} ang={:.1} tips={} tex={} \
          prs={}{}{} tilt={}{}{} jit_ang={:.2} taper={:.0}/{:.0} stab={:.0} \
-         clr=tip{}/sub{:.2}/stroke{}/{} clr_inf={}{}{}{} spray={} spray_inf={}{} | notes: {}",
+         clr=tip{}/sub{:.2}/stroke{}/{} clr_inf={}{}{}{} spray={} spray_inf={}{} \
+         dual={} dual_inf={}{}{}{} | notes: {}",
         s.radius,
         s.opacity,
         s.flow,
@@ -52,6 +53,23 @@ fn summary(b: &ImportedBrush) -> String {
         )),
         u8::from(br.influences.spray_size.is_on()),
         u8::from(br.influences.spray_density.is_on()),
+        br.dual.as_ref().map_or("-".to_string(), |d| format!(
+            "{:.1}/{}/{}/{:.2}/{:.2}/{:?}/{}{}{}/{:.2}",
+            d.radius,
+            u8::from(d.tip.is_some()),
+            u8::from(d.link_size),
+            d.flow,
+            d.spacing,
+            d.mode,
+            u8::from(d.angle_tilt),
+            u8::from(d.angle_rotation),
+            u8::from(d.angle_line),
+            d.angle_random
+        )),
+        u8::from(br.influences.dual_size.is_on()),
+        u8::from(br.influences.dual_flow.is_on()),
+        u8::from(br.influences.dual_spacing.is_on()),
+        u8::from(br.influences.dual_thickness.is_on()),
         notes.join(", ")
     )
 }

@@ -518,6 +518,11 @@ pub fn dual_mode_label(lang: Lang, mode: DualBrushMode) -> &'static str {
         DualBrushMode::LinearBurn => blend_label(lang, BlendMode::LinearBurn),
         DualBrushMode::HardMix => blend_label(lang, BlendMode::HardMix),
         DualBrushMode::Subtract => blend_label(lang, BlendMode::Subtract),
+        DualBrushMode::Normal => blend_label(lang, BlendMode::Normal),
+        DualBrushMode::Add => lang.pick("加算(発光)", "Add (Glow)"),
+        DualBrushMode::Lighten => blend_label(lang, BlendMode::Lighten),
+        DualBrushMode::Screen => blend_label(lang, BlendMode::Screen),
+        DualBrushMode::LinearHeight => lang.pick("高さ(リニア)", "Height (Linear)"),
     }
 }
 

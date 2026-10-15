@@ -640,6 +640,8 @@ fn core_reason(reason: Reason) -> &'static str {
         Reason::DualBrushRoundness => "Dual brush roundness",
         Reason::DualBrushScatter => "Dual brush scatter",
         Reason::DualBrushCount => "Dual brush count",
+        Reason::DualBrushFlow => "Dual brush density (0–1)",
+        Reason::DualBrushAngleRandom => "Dual brush random angle strength (0–1)",
         Reason::MappedDabsNeedSamplingBrush => "Mapped dabs need clone, smudge, blur or the smear of color mixing",
         Reason::StencilPointCountMismatch => "Stencil point count must match pixel count",
         Reason::Pressure => "pressure",

@@ -39,6 +39,7 @@ use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
 use yolu_core::generator::CurvePoint;
 use yolu_core::BrushTip;
+use yolu_core::DualItem;
 use yolu_core::{Spray, SprayDirection, SprayItem};
 use yolu_io::brushes::bundled;
 
@@ -209,6 +210,11 @@ fn dual_mode_id(mode: DualBrushMode) -> &'static str {
         DualBrushMode::LinearBurn => "linear-burn",
         DualBrushMode::HardMix => "hard-mix",
         DualBrushMode::Subtract => "subtract",
+        DualBrushMode::Normal => "normal",
+        DualBrushMode::Add => "add",
+        DualBrushMode::Lighten => "lighten",
+        DualBrushMode::Screen => "screen",
+        DualBrushMode::LinearHeight => "linear-height",
     }
 }
 
@@ -341,6 +347,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     if v8 {
         write_color_change(&mut w, &b);
         write_spray(&mut w, &b);
+        write_dual_v8(&mut w, &b);
     }
     if v7 {
         write_influences(&mut w, &b);
@@ -570,7 +577,35 @@ fn write_spray(w: &mut Writer, b: &Brush) {
     }
 }
 
-/// 影響元（バージョン 7。使わない入力・既定の最小値と曲線は書かない。色と散布の項目はバージョン 8）。
+/// デュアルブラシのバージョン 8 の項目（`dual.*`。サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足し）。既定（切・1・主と同じ・0）は書かない。
+fn write_dual_v8(w: &mut Writer, b: &Brush) {
+    let Some(d) = &b.dual else {
+        return;
+    };
+    if d.link_size {
+        w.bool("dual.link_size", true);
+    }
+    if d.flow != 1.0 {
+        w.single("dual.flow", d.flow);
+    }
+    if let Some(level) = d.anti_alias {
+        w.line("dual.anti_alias", level.id());
+    }
+    for (key, on) in [
+        ("dual.angle_tilt", d.angle_tilt),
+        ("dual.angle_rotation", d.angle_rotation),
+        ("dual.angle_line", d.angle_line),
+    ] {
+        if on {
+            w.bool(key, true);
+        }
+    }
+    if d.angle_random != 0.0 {
+        w.single("dual.angle_random", d.angle_random);
+    }
+}
+
+/// 影響元（バージョン 7。使わない入力・既定の最小値と曲線は書かない。色と散布とデュアルの項目はバージョン 8）。
 fn write_influences(w: &mut Writer, b: &Brush) {
     let item_keys = Item::ALL
         .into_iter()
@@ -584,6 +619,11 @@ fn write_influences(w: &mut Writer, b: &Brush) {
             SprayItem::ALL
                 .into_iter()
                 .map(|i| (i.id(), b.influences.spray(i))),
+        )
+        .chain(
+            DualItem::ALL
+                .into_iter()
+                .map(|i| (i.id(), b.influences.dual(i))),
         );
     for (id, influence) in item_keys {
         for input in Input::ALL {
@@ -784,6 +824,23 @@ fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
         || uses_tip_rules(b)
         || uses_color_change(b)
         || uses_spray(b)
+        || uses_dual_v8(b)
+}
+
+/// デュアルブラシのバージョン 8 の項目（足したモード・サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足しと、デュアルの項目の影響元）を使うか。
+fn uses_dual_v8(b: &Brush) -> bool {
+    b.dual.as_ref().is_some_and(|d| {
+        d.mode.is_extended()
+            || d.link_size
+            || d.flow != 1.0
+            || d.anti_alias.is_some()
+            || d.angle_tilt
+            || d.angle_rotation
+            || d.angle_line
+            || d.angle_random != 0.0
+    }) || DualItem::ALL
+        .into_iter()
+        .any(|i| !b.influences.dual(i).is_default())
 }
 
 /// 散布効果（と、散布の項目の影響元）を使うか。
@@ -912,9 +969,11 @@ fn texture_mode(id: &str) -> Option<TextureMode> {
     TextureMode::ALL.into_iter().find(|m| mode_id(*m) == id)
 }
 
-fn dual_mode(id: &str) -> Option<DualBrushMode> {
-    DualBrushMode::ALL
+/// 保存の名前のモード。足したモード（[`DualBrushMode::EXTENDED`]）はバージョン 8 の値（バージョン 7 までのファイルにあれば None）。
+fn dual_mode(id: &str, version: u32) -> Option<DualBrushMode> {
+    DualBrushMode::EVERY
         .into_iter()
+        .filter(|m| version >= 8 || !m.is_extended())
         .find(|m| dual_mode_id(*m) == id)
 }
 
@@ -1141,7 +1200,12 @@ fn read_texture_and_dual(
         dual.scatter = r.float("dual.scatter", dual.scatter)?;
         dual.count = r.parse("dual.count", dual.count)?;
         if let Some(mode) = r.take("dual.mode") {
-            dual.mode = dual_mode(&mode).ok_or(StoreError::BadValue("dual.mode".into()))?;
+            dual.mode =
+                dual_mode(&mode, version).ok_or(StoreError::BadValue("dual.mode".into()))?;
+        }
+        // サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足しはバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+        if version >= 8 {
+            read_dual_v8(r, &mut dual)?;
         }
         b.dual = Some(dual);
     }
@@ -1262,7 +1326,30 @@ fn read_influences(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), St
                 *b.influences.spray_mut(item).input_mut(input) = InputUse { on, response };
             }
         }
+        for item in DualItem::ALL {
+            for input in Input::ALL {
+                let key = format!("influence.{}.{}", item.id(), input.id());
+                let on = r.bool(&format!("{key}.on"), false)?;
+                let response = read_response(r, &key, false)?;
+                *b.influences.dual_mut(item).input_mut(input) = InputUse { on, response };
+            }
+        }
     }
+    Ok(())
+}
+
+/// デュアルブラシのバージョン 8 の項目（`dual.link_size`・`dual.flow`・`dual.anti_alias`・`dual.angle_*`）を読む。範囲は core の検査に任せる。
+fn read_dual_v8(r: &mut Reader, d: &mut DualBrush) -> Result<(), StoreError> {
+    d.link_size = r.bool("dual.link_size", false)?;
+    d.flow = r.single("dual.flow", 1.0)?;
+    if let Some(id) = r.take("dual.anti_alias") {
+        d.anti_alias =
+            Some(AntiAlias::from_id(&id).ok_or(StoreError::BadValue("dual.anti_alias".into()))?);
+    }
+    d.angle_tilt = r.bool("dual.angle_tilt", false)?;
+    d.angle_rotation = r.bool("dual.angle_rotation", false)?;
+    d.angle_line = r.bool("dual.angle_line", false)?;
+    d.angle_random = r.single("dual.angle_random", 0.0)?;
     Ok(())
 }
 
@@ -4009,6 +4096,224 @@ mod tests {
         }
         assert!(matches!(
             decode(&format!("{t}spray.size=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    fn dual_v8_brush() -> Brush {
+        let mut b = Brush {
+            dual: Some(DualBrush {
+                radius: 6.5,
+                mode: DualBrushMode::LinearHeight,
+                link_size: true,
+                flow: 0.75,
+                anti_alias: Some(AntiAlias::Strong),
+                angle_tilt: true,
+                angle_rotation: true,
+                angle_line: true,
+                angle_random: 0.5,
+                ..DualBrush::default()
+            }),
+            ..Brush::default()
+        };
+        b.influences.dual_size.pressure = InputUse::STRAIGHT;
+        b.influences.dual_spacing.random = InputUse {
+            on: true,
+            response: InputResponse::new(0.25, vec![]).unwrap(),
+        };
+        b
+    }
+
+    #[test]
+    fn a_brush_with_the_new_dual_items_is_version_eight_and_round_trips() {
+        let b = dual_v8_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "dual=1",
+            "dual.mode=linear-height",
+            "dual.link_size=1",
+            "dual.flow=0.75",
+            "dual.anti_alias=strong",
+            "dual.angle_tilt=1",
+            "dual.angle_rotation=1",
+            "dual.angle_line=1",
+            "dual.angle_random=0.5",
+            "influence.dual_size.pressure.on=1",
+            "influence.dual_spacing.random.on=1",
+            "influence.dual_spacing.random.min=0.25",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 足したモードだけ・影響元だけでもバージョン 8
+        for mode in DualBrushMode::EXTENDED {
+            let only_mode = Brush {
+                dual: Some(DualBrush {
+                    mode,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            };
+            let t = text(&user(1, only_mode.clone()));
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{mode:?}: {t}");
+            assert_eq!(decode(&t).unwrap().2, canonical(&only_mode), "{mode:?}");
+        }
+        let mut only_influence = Brush {
+            dual: Some(DualBrush::default()),
+            ..Brush::default()
+        };
+        only_influence.influences.dual_thickness.tilt = InputUse::STRAIGHT;
+        let t = text(&user(1, only_influence.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&only_influence));
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let odd = Brush {
+            dual: Some(DualBrush {
+                flow: 0.123_456_789_012,
+                angle_random: 0.987_654_321_098,
+                ..DualBrush::default()
+            }),
+            ..Brush::default()
+        };
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(
+            d.dual.as_ref().unwrap().flow,
+            0.123_456_789_012f64 as f32 as f64
+        );
+        assert_eq!(d, canonical(&odd));
+    }
+
+    #[test]
+    fn dual_brushes_without_the_new_items_keep_their_version_and_their_bytes() {
+        for mode in DualBrushMode::ALL {
+            let b = Brush {
+                dual: Some(DualBrush {
+                    mode,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            };
+            let t = text(&user(1, b.clone()));
+            assert!(t.starts_with("yolupainter-brush 1\n"), "{mode:?}: {t}");
+            for key in [
+                "dual.link_size",
+                "dual.flow",
+                "dual.anti_alias",
+                "dual.angle_",
+                "influence.dual_",
+            ] {
+                assert!(!t.contains(key), "{mode:?} {key}: {t}");
+            }
+            assert_eq!(decode(&t).unwrap().2, canonical(&b));
+        }
+        for (what, file) in [
+            ("v1", include_str!("../../tests/ylbrush_files/v1.ylbrush")),
+            ("v6", include_str!("../../tests/ylbrush_files/v6.ylbrush")),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            let again = encode(&UserBrush {
+                id: 1,
+                name: d.name.clone(),
+                group: d.group,
+                brush: d.brush.clone(),
+                import: d.import.clone(),
+                assist: d.assist,
+            })
+            .unwrap()
+            .text;
+            assert_eq!(again, file, "{what}");
+        }
+    }
+
+    #[test]
+    fn the_new_dual_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, dual_v8_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目・知らない値として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            assert!(
+                matches!(&err, StoreError::UnknownKey(_) | StoreError::BadValue(_)),
+                "バージョン {old}: {err:?}"
+            );
+        }
+        // 足したモードの値は、バージョン 7 までのファイルでは読めない値
+        for mode in DualBrushMode::EXTENDED {
+            let only_mode = Brush {
+                dual: Some(DualBrush {
+                    mode,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            };
+            let as_one =
+                text(&user(1, only_mode)).replacen("yolupainter-brush 8", "yolupainter-brush 1", 1);
+            assert!(
+                matches!(decode(&as_one).unwrap_err(), StoreError::BadValue(k) if k == "dual.mode"),
+                "{mode:?}"
+            );
+        }
+        let mut only_influence = Brush {
+            dual: Some(DualBrush::default()),
+            ..Brush::default()
+        };
+        only_influence.influences.dual_flow.pressure = InputUse::STRAIGHT;
+        let as_seven = text(&user(1, only_influence)).replacen(
+            "yolupainter-brush 8",
+            "yolupainter-brush 7",
+            1,
+        );
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "influence.dual_flow.pressure.on"
+        ));
+        // デュアルブラシの無いファイルの、デュアルの新しい鍵は知らない項目
+        let stray = format!("{}dual.flow=0.5\n", text(&user(1, color_change_brush())));
+        assert!(matches!(
+            decode(&stray).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "dual.flow"
+        ));
+        // バージョン 8 のファイルの中の読めない値・範囲の外
+        for (from, to) in [
+            ("dual.mode=linear-height", "dual.mode=height"),
+            ("dual.anti_alias=strong", "dual.anti_alias=max"),
+            ("dual.link_size=1", "dual.link_size=2"),
+            ("dual.flow=0.75", "dual.flow=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("dual.flow=0.75", "dual.flow=1.5"),
+            ("dual.flow=0.75", "dual.flow=NaN"),
+            ("dual.angle_random=0.5", "dual.angle_random=2"),
+            (
+                "influence.dual_spacing.random.min=0.25",
+                "influence.dual_spacing.random.min=-0.25",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_) | StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}dual.flow=1\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
     }

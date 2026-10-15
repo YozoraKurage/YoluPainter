@@ -11,7 +11,8 @@
 //!   切り替えと最小値、筆圧と傾きの曲線を影響元へ写す。速さ・ランダムの曲線は読めないので直線にして注記する。入り抜き（大きさへ。長さは画素）・手ぶれ補正（`FlickerReduction`。後補正は表せない）・間隔（種類ごと）・
 //!   筆先の角度・角度の影響元（ペンの向き・ペン軸の回転・線の方向・ランダム）・厚さの適用方向・最低 1 ピクセルも写す。写せたものは
 //!   [`SutMapped`]、近似したものは [`SutNote`] にも載せる。
-//! - 表せない設定（色の混ぜの旗だけのもの・吹き付け・デュアルブラシ・合成モードなど）は、旗が立っているものだけ
+//! - デュアルブラシは `dual` が写す（2 つ目のサイズ・筆先・連動・濃度・硬さ・間隔・厚さ・向き・合成モード・アンチエイリアス・影響元）。
+//! - 表せない設定（色の混ぜの旗だけのもの・写せなかった吹き付けとデュアルブラシ・合成モードなど）は、旗が立っているものだけ
 //!   [`SutNote`] で知らせる。列の名前と単位は公開の解析からの推定を含むので、本物のファイルでの確かめは別に要る（確かめた所と
 //!   推測の所は docs/BRUSH_IMPORT.md）。
 //!
@@ -21,6 +22,7 @@ mod blob;
 mod c2f;
 mod color;
 mod db;
+mod dual;
 mod material;
 mod spray;
 mod tar;
@@ -70,7 +72,7 @@ const ROTATION: &[&str] = &["brushrotation"];
 const USE_PATTERN: &[&str] = &["brushusepatternimage"];
 const PATTERN_ARRAY: &[&str] = &["brushpatternimagearray"];
 const TEXTURE_IMAGE: &[&str] = &["textureimage"];
-// デュアルブラシの筆先・質感の参照（デュアルブラシ自体は表せないが、ファイルにはその素材も入るので、素材の数え合わせに使う）
+// デュアルブラシの筆先・質感の参照（筆先は `dual` が 2 つ目の筆先に使い、どちらも素材の数え合わせに使う）
 const DUAL_PATTERN_ARRAY: &[&str] = &["dualpatternimagearray"];
 const DUAL_USE_PATTERN: &[&str] = &["dualusepatternimage"];
 const DUAL_TEXTURE_IMAGE: &[&str] = &["dualtextureimage"];
@@ -129,7 +131,7 @@ const PATTERN_REVERSE_V: &[&str] = &["brushpatternreversevertical"];
 // ブラシ先端同士を比較暗で合成（旗。先端が重なるとき濃い方を残す）
 const BLEND_DARKEN: &[&str] = &["brushblendpatternbydarken"];
 // アンチエイリアス（整数。0 なし・1 弱・2 中・3 強。1 項目ずつ変えた書き出しの比べで決まった）。デュアルブラシの
-// `DualAntiAlias` はデュアルブラシごと表せないので読まない
+// `DualAntiAlias` は `dual` が読む
 const ANTI_ALIAS: &[&str] = &["antialias"];
 
 /// 読む列の名前の全部（色の変化の列は `color::KNOWN`）。
@@ -309,6 +311,20 @@ fn resolve_by_kind(
     if dual.is_some_and(|d| !d.complete) {
         return None;
     }
+    let picks = by_kind_picks(main, dual, materials, kind)?
+        .into_iter()
+        .take(main.items.len())
+        .collect();
+    Some(Resolved { picks })
+}
+
+/// [`resolve_by_kind`] の、メインとデュアルの参照の全部の当て（メインが先、デュアルが後）。当てられなければ None。
+fn by_kind_picks(
+    main: &Refs,
+    dual: Option<&Refs>,
+    materials: &[Material],
+    kind: Kind,
+) -> Option<Vec<Option<Pick>>> {
     let candidates: Vec<usize> = (0..materials.len())
         .filter(|&i| materials[i].kind == Some(kind))
         .collect();
@@ -337,15 +353,15 @@ fn resolve_by_kind(
         return None;
     }
     let mut rest = unused.into_iter();
-    let picks = found
-        .into_iter()
-        .map(|f| match f {
-            Some(i) => Some((i, false)),
-            None => rest.next().map(|i| (i, true)),
-        })
-        .take(main.items.len())
-        .collect();
-    Some(Resolved { picks })
+    Some(
+        found
+            .into_iter()
+            .map(|f| match f {
+                Some(i) => Some((i, false)),
+                None => rest.next().map(|i| (i, true)),
+            })
+            .collect(),
+    )
 }
 
 /// デュアルブラシを使う設定の、デュアルの素材の参照。使わない設定・参照の無い設定は None。
@@ -749,18 +765,27 @@ fn thickness_direction(
 /// 実測した 12%・8%・4% 〔円形の硬い筆先で測った値〕。エンジンの `spacing` は公称の直径に対する割合（`add_path_point` の
 /// `2 × 半径 × spacing`）なので、そのまま写せる。知らない種類は写さずに（既定の間隔のまま）知らせる。
 fn interval(row: &Row, brush: &mut Brush, notes: &mut Vec<Unrepresented>) {
-    let spacing = match row.first_number(INTERVAL_TYPE) {
-        None | Some(0.0) => row.first_number(INTERVAL).map(|v| v / 100.0),
-        Some(1.0) => Some(0.12),
-        Some(2.0) => Some(0.08),
-        Some(3.0) => Some(0.04),
-        Some(other) => {
+    let spacing = match interval_spacing(row, INTERVAL_TYPE, INTERVAL) {
+        Ok(spacing) => spacing,
+        Err(other) => {
             notes.push(Unrepresented::ClipStudio(SutNote::IntervalType(other)));
             None
         }
     };
     if let Some(v) = spacing {
         brush.base.spacing = v.clamp(0.01, 4.0);
+    }
+}
+
+/// 間隔の種類の列 `kind` と数値の列 `value` から、直径に対する割合の間隔（[`interval`] の表。2 つ目の筆先も同じ表）。数値が無ければ
+/// None、知らない種類は `Err(その値)`。
+fn interval_spacing(row: &Row, kind: &[&str], value: &[&str]) -> Result<Option<f64>, f64> {
+    match row.first_number(kind) {
+        None | Some(0.0) => Ok(row.first_number(value).map(|v| v / 100.0)),
+        Some(1.0) => Ok(Some(0.12)),
+        Some(2.0) => Ok(Some(0.08)),
+        Some(3.0) => Ok(Some(0.04)),
+        Some(other) => Err(other),
     }
 }
 
@@ -1235,8 +1260,13 @@ fn color_mixing(
     }
 }
 
-/// 写せない設定（湿った縁・ベクターのツール・写せなかった散布効果・デュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
-fn unrepresented_flags(row: &Row, spray_mapped: bool, notes: &mut Vec<Unrepresented>) {
+/// 写せない設定（湿った縁・ベクターのツール・写せなかった散布効果・写せなかったデュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
+fn unrepresented_flags(
+    row: &Row,
+    spray_mapped: bool,
+    dual_mapped: bool,
+    notes: &mut Vec<Unrepresented>,
+) {
     if row.on(WATER_EDGE) {
         notes.push(Unrepresented::WetEdges);
     }
@@ -1245,7 +1275,7 @@ fn unrepresented_flags(row: &Row, spray_mapped: bool, notes: &mut Vec<Unrepresen
     }
     for (columns, note) in [
         (if spray_mapped { &[] } else { SPRAY }, SutNote::Spray),
-        (DUAL, SutNote::DualBrush),
+        (if dual_mapped { &[] } else { DUAL }, SutNote::DualBrush),
         (BLEND_MODE, SutNote::BlendMode),
     ] {
         // 旗の列も、「0 でない数が 1 つでもある」で知る
@@ -1367,9 +1397,32 @@ fn brush_from_row(
 
     color_mixing(row, &mut brush, &mut notes, &mut mapped);
     color::color_change(row, &mut brush, &mut notes, &mut mapped);
-    spray::spray(row, &mut brush, &mut notes, &mut mapped);
-    unrepresented_flags(row, brush.spray.is_some(), &mut notes);
+    spray_dual_and_flags(
+        row,
+        name,
+        library,
+        budget,
+        &mut brush,
+        &mut notes,
+        &mut mapped,
+    )?;
     Ok((brush, notes, mapped))
+}
+
+/// 散布効果とデュアルブラシを写し、写せない設定の旗を知らせる（`brush_from_row` の終わり）。
+fn spray_dual_and_flags(
+    row: &Row,
+    name: &str,
+    library: &mut Library<'_>,
+    budget: &mut Budget,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) -> Result<(), Fault> {
+    spray::spray(row, brush, notes, mapped);
+    let dual = dual::dual(row, name, library, budget, brush, notes, mapped)?;
+    unrepresented_flags(row, brush.spray.is_some(), dual, notes);
+    Ok(())
 }
 
 pub(crate) fn read_sut(
@@ -1386,6 +1439,7 @@ pub(crate) fn read_sut(
         .iter()
         .chain(color::KNOWN)
         .chain(spray::KNOWN)
+        .chain(dual::KNOWN)
         .flat_map(|names| names.iter().copied())
         .collect();
     let mut variants: Option<Variants<'_>> = db.variants(&known)?;

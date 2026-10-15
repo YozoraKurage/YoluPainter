@@ -438,21 +438,38 @@ impl StrokeAssist {
 }
 
 impl DualBrush {
-    /// 2 つ目の筆先のダブの形（中心 x・y、半径 radius は呼び手の単位。2D の溜まりと同じく、丸も回転の式で測る）。
-    pub(crate) fn dab_shape(&self, x: f64, y: f64, radius: f64) -> DabShape<'_> {
-        rows::dual_cover_shape(&dual_shape(self, x, y, radius, AntiAlias::None))
+    /// 2 つ目の筆先のダブの形（中心 x・y、半径 radius は呼び手の単位。2D の溜まりと同じく、丸も回転の式で測る）に、そのダブの見え方
+    /// （向きの足し・真円率の係数）を当てたもの（3D の面の 2 つ目のダブ）。
+    pub(crate) fn dab_shape_look(
+        &self,
+        x: f64,
+        y: f64,
+        radius: f64,
+        look: &DualLook,
+    ) -> DabShape<'_> {
+        rows::dual_cover_shape(&dual_shape(self, x, y, radius, AntiAlias::None, look))
     }
 }
 
-/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。level はアンチエイリアスの段（2D。ダブの座標は描く先の画素）。
-pub(super) fn dual_shape(
-    dual: &DualBrush,
+/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。level はアンチエイリアスの段（2D。ダブの座標は描く先の画素）、look はそのダブの
+/// 見え方（向きの足し・真円率と濃度の係数）。
+pub(super) fn dual_shape<'a>(
+    dual: &'a DualBrush,
     x: f64,
     y: f64,
     radius: f64,
     level: AntiAlias,
-) -> DualShape<'_> {
-    let angle = dual.angle * std::f64::consts::PI / 180.0;
+    look: &DualLook,
+) -> DualShape<'a> {
+    let mut angle = dual.angle * std::f64::consts::PI / 180.0;
+    if look.turn != 0.0 {
+        angle += look.turn;
+    }
+    let roundness = if look.roundness != 1.0 {
+        f64_max(0.01, dual.roundness * look.roundness)
+    } else {
+        dual.roundness
+    };
     let (cos, sin) = cos_sin(angle);
     let (mut aspect_x, mut aspect_y) = (1.0, 1.0);
     if let Some(t) = &dual.tip {
@@ -468,12 +485,17 @@ pub(super) fn dual_shape(
         radius,
         cos,
         sin,
-        roundness: dual.roundness,
+        roundness,
         hardness: dual.hardness,
         aspect_x,
         aspect_y,
         tip: dual.tip.as_deref(),
         edge: Edge::OFF,
+        flow: if look.flow != 1.0 {
+            dual.flow * look.flow
+        } else {
+            dual.flow
+        },
     };
     if level != AntiAlias::None {
         // 縁と小さなダブの広げは主の筆先と同じ式（画像の筆先は半径・真円率を広げる）

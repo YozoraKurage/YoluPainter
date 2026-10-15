@@ -191,6 +191,7 @@ fn random_case(seed: u64) -> Case {
                 DualBrushMode::Darken,
                 DualBrushMode::Overlay,
             ]),
+            ..DualBrush::default()
         });
     }
     // 効果のブラシ（塗らず、読み元の枠から読んだ色を混ぜる）。消しゴムとは組まない

@@ -260,6 +260,11 @@ pub enum SutTarget {
     /// 散布効果の粒子サイズ・粒子密度。
     SpraySize,
     SprayDensity,
+    /// デュアルブラシの 2 つ目のサイズ・濃度・間隔・厚さ。
+    DualSize,
+    DualFlow,
+    DualSpacing,
+    DualThickness,
 }
 
 impl SutTarget {
@@ -278,6 +283,10 @@ impl SutTarget {
             Self::ColorSubMix => ("サブ描画色混合率", "secondary color mix"),
             Self::SpraySize => ("粒子サイズ", "particle size"),
             Self::SprayDensity => ("粒子密度", "particle density"),
+            Self::DualSize => ("2 つ目のブラシサイズ", "secondary brush size"),
+            Self::DualFlow => ("2 つ目のブラシ濃度", "secondary brush density"),
+            Self::DualSpacing => ("2 つ目の間隔", "secondary spacing"),
+            Self::DualThickness => ("2 つ目の厚さ", "secondary thickness"),
         }
     }
 
@@ -286,7 +295,7 @@ impl SutTarget {
         self,
         influences: &mut yolu_core::Influences,
     ) -> &mut yolu_core::Influence {
-        use yolu_core::brush::{ColorItem, Item, SprayItem};
+        use yolu_core::brush::{ColorItem, DualItem, Item, SprayItem};
         let item = match self {
             Self::Size => Item::Size,
             Self::Opacity => Item::Opacity,
@@ -301,6 +310,10 @@ impl SutTarget {
             Self::ColorSubMix => return influences.color_mut(ColorItem::SubMix),
             Self::SpraySize => return influences.spray_mut(SprayItem::Size),
             Self::SprayDensity => return influences.spray_mut(SprayItem::Density),
+            Self::DualSize => return influences.dual_mut(DualItem::Size),
+            Self::DualFlow => return influences.dual_mut(DualItem::Flow),
+            Self::DualSpacing => return influences.dual_mut(DualItem::Spacing),
+            Self::DualThickness => return influences.dual_mut(DualItem::Thickness),
         };
         influences.get_mut(item)
     }
@@ -424,6 +437,8 @@ pub enum SutMapped {
     ColorChange,
     /// 散布効果（粒子サイズ・連動・粒子密度・散布偏向・粒子の向き）。
     Spray,
+    /// デュアルブラシ（2 つ目の筆先・サイズ・連動・濃度・硬さ・間隔・厚さ・向き・合成モード・アンチエイリアス）。
+    DualBrush,
 }
 
 impl SutMapped {
@@ -455,6 +470,7 @@ impl SutMapped {
             ),
             Self::ColorChange => ("色の変化", "color change"),
             Self::Spray => ("散布効果", "spraying effect"),
+            Self::DualBrush => ("デュアルブラシ", "dual brush"),
         }
     }
 }
@@ -479,6 +495,41 @@ pub enum SprayNote {
     Bias,
     /// 粒子の向きの影響元のうち、ランダムでないビットが立っている（ビットの割り当てが分からないので、向きは足さない）。
     Direction,
+}
+
+/// `.sut` のデュアルブラシの、近い動き・写せない設定の知らせの種類。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SutDualNote {
+    /// 合成モードが高さ(リニア)（減算より濃い近い式で写した）。
+    LinearHeight,
+    /// 知らない合成モードの値（乗算にした）。
+    Mode(f64),
+    /// 知らない間隔の種類（設定の間隔のまま）。
+    IntervalType(f64),
+    /// 2 つ目のサイズの単位の列が 0 でない（画素として読んだ）。
+    SizeUnit,
+    /// 向きの影響元の知らない旗、または強さの読めないランダム（足さない）。
+    Direction,
+    /// 画像の筆先の水平の厚さの向き（画像も回るので写さない）。
+    ThicknessDirection,
+    /// 2 つ目の筆先が複数（1 つ目だけを使った）。
+    Tips,
+    /// 2 つ目の筆先の繰り返し方法・反転（読まない）。
+    TipRules,
+    /// 2 つ目の RGB 値を適用（色は重ねず、アルファだけを重ねる）。
+    Rgb,
+    /// 2 つ目の連続吹き付け。
+    Continuous,
+    /// 2 つ目のリボン。
+    Ribbon,
+    /// 2 つ目の紙質。
+    Texture,
+    /// 2 つ目の散布効果（固定点を含む）。
+    Spray,
+    /// 2 つ目の先端同士の比較暗（重なる 2 つ目のダブで濃い方を残す設定。読まない）。
+    Darken,
+    /// 知らない 2 つ目のアンチエイリアスの値（主に従う）。
+    AntiAlias(f64),
 }
 
 /// CLIP STUDIO の `.sut` の設定のうち、読めなかった・表せない・近似したもの。
@@ -538,6 +589,7 @@ pub enum SutNote {
     },
     /// 散布効果を写せなかった（粒子サイズ・粒子密度の値が無い・粒子サイズの単位が画素でない）。
     Spray,
+    /// デュアルブラシを写せなかった（2 つ目のサイズの値が無い・2 つ目の筆先の素材を決められない）。
     DualBrush,
     /// 入り抜き（指定方法がパーセント・フェード、長さの単位が画素でない、影響先の列が読めない、読めない長さ）。写さなかった。
     StartEnd,
@@ -552,6 +604,8 @@ pub enum SutNote {
     ColorApprox(ColorNote),
     /// 散布効果の、近い動きの知らせ。
     SprayApprox(SprayNote),
+    /// デュアルブラシの、近い動き・写せない設定の知らせ（[`SutNote::DualBrush`] は、デュアルブラシごと写せなかったときだけ）。
+    DualApprox(SutDualNote),
     /// 合成モード。
     BlendMode,
     /// 影響元設定の入力（速さ・ランダム）の曲線は読めず、直線にした。
@@ -642,6 +696,65 @@ impl SutNote {
             ),
             _ => unreachable!("色の変化の知らせだけがここへ来る"),
         }
+    }
+
+    /// デュアルブラシの知らせの文。
+    fn dual_texts(&self) -> (String, String) {
+        let (ja, en): (String, String) = match self {
+            Self::DualBrush => (
+                "デュアルブラシは、2 つ目のサイズが無いか 2 つ目の筆先の素材を決められないため、写していない".into(),
+                "The dual brush is not carried over: the secondary size is missing or the secondary tip material cannot be determined.".into(),
+            ),
+            Self::DualApprox(note) => match *note {
+                SutDualNote::LinearHeight => (
+                    "デュアルブラシの合成モード「高さ(リニア)」は、減算より濃い近い式で写した（近い動き）".into(),
+                    "The dual brush mode Height (Linear) is carried over with a close formula that is denser than Subtract (a close behavior).".into(),
+                ),
+                SutDualNote::Mode(v) => (
+                    format!("デュアルブラシの合成モード（値 {v}）は知らないので、乗算にした"),
+                    format!("The dual brush mode (value {v}) is unknown; Multiply is used."),
+                ),
+                SutDualNote::IntervalType(v) => (
+                    format!("デュアルブラシの間隔の種類（値 {v}）は知らないので、設定の間隔のままにした"),
+                    format!("The dual brush interval type (value {v}) is unknown; the set interval is kept."),
+                ),
+                SutDualNote::SizeUnit => ("デュアルブラシのサイズの単位は画素として読んだ".into(), "The dual brush size unit is read as pixels.".into()),
+                SutDualNote::Direction => (
+                    "デュアルブラシの向きの影響元に、知らない旗か強さの読めないランダムがあり、その分は足していない".into(),
+                    "The dual brush angle source has an unknown flag or a random strength that cannot be read; that part is not added.".into(),
+                ),
+                SutDualNote::ThicknessDirection => (
+                    "デュアルブラシの画像の筆先の水平の厚さの向きは写していない".into(),
+                    "The horizontal thickness direction of the dual brush image tip is not carried over.".into(),
+                ),
+                SutDualNote::Tips => (
+                    "デュアルブラシの 2 つ目の筆先が複数あり、1 つ目だけを使った".into(),
+                    "The dual brush has several secondary tips; only the first one is used.".into(),
+                ),
+                SutDualNote::TipRules => (
+                    "デュアルブラシの 2 つ目の筆先の繰り返し方法・反転は未対応".into(),
+                    "The repeat method and flips of the dual brush secondary tip are not supported.".into(),
+                ),
+                SutDualNote::Rgb => (
+                    "デュアルブラシの「RGB 値を適用」は未対応（アルファだけを重ねる）".into(),
+                    "Apply RGB value of the dual brush is not supported (only alpha is combined).".into(),
+                ),
+                SutDualNote::Continuous => ("デュアルブラシの連続吹き付けは未対応".into(), "Continuous spraying of the dual brush is not supported.".into()),
+                SutDualNote::Ribbon => ("デュアルブラシのリボンは未対応".into(), "Ribbon of the dual brush is not supported.".into()),
+                SutDualNote::Texture => ("デュアルブラシの紙質は未対応".into(), "The texture of the dual brush is not supported.".into()),
+                SutDualNote::Spray => ("デュアルブラシの散布効果は未対応".into(), "The spraying effect of the dual brush is not supported.".into()),
+                SutDualNote::Darken => (
+                    "デュアルブラシの先端同士の比較暗は未対応".into(),
+                    "Darken between the dual brush tips is not supported.".into(),
+                ),
+                SutDualNote::AntiAlias(v) => (
+                    format!("デュアルブラシのアンチエイリアス（値 {v}）は知らないので、メインに従う"),
+                    format!("The dual brush anti-aliasing (value {v}) is unknown; the main brush's setting is used."),
+                ),
+            },
+            _ => unreachable!("デュアルブラシの知らせだけがここへ来る"),
+        };
+        (ja, en)
     }
 
     /// 散布効果の知らせの文。
@@ -736,7 +849,7 @@ impl SutNote {
                 format!("Color mixing is not supported (amount of paint {paint}, density of paint {density}, color stretch {stretch})."),
             ),
             Self::Spray | Self::SprayApprox(_) => self.spray_texts(),
-            Self::DualBrush => ("デュアルブラシは未対応".into(), "Dual brush is not supported.".into()),
+            Self::DualBrush | Self::DualApprox(_) => self.dual_texts(),
             Self::StartEnd => (
                 "入り抜き（パーセント指定・フェード・画素以外の長さの単位・読めない影響先）は未対応".into(),
                 "Start and end taper is not supported (percentage and fade modes, length units other than pixels, unreadable targets).".into(),

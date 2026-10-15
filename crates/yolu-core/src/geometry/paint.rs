@@ -63,6 +63,7 @@ use super::project::{
 use super::query::coverage;
 use super::sampling::SamplingError;
 use super::stencil::SurfaceStencil;
+use super::stroke::DualSink;
 use super::stroke::{
     ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, TooManyDabs, SURFACE_DABS_PER_SEGMENT,
 };
@@ -76,6 +77,7 @@ use crate::brush::{
     InputResponse, Item, PendingDab, ShapeCoverage, SprayFrame, StampControls, SurfaceDabLook,
     TexelMetric, TipRun, DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
+use crate::brush::{lifted_link, DualLook, DualRun};
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
     StencilPoint, Stroke, SymmetryTransform,
@@ -294,11 +296,73 @@ impl DualCells {
 /// デュアルブラシ（2D と同じく、同じ道筋に自分の間隔・散布・数で 2 つ目のダブを先に並べ、テクセルごとの最大を溜める）。
 struct DualState {
     random: NetRandom,
-    /// 並べて、まだ置いていない 2 つ目のダブ: 画面の点・線の長さ・その時の画面の大きさ。
-    pending: VecDeque<(Vec2, f64, Option<f32>)>,
+    /// 2 つ目のダブの見え方の進み（2D と同じ [`DualRun`]）。
+    run: DualRun,
+    /// 並べて、まだ置いていない 2 つ目のダブ: 画面の点・線の長さ・その時の画面の大きさ・見え方。
+    pending: VecDeque<(Vec2, f64, Option<f32>, DualLook)>,
     /// 2 つ目の筆先の半径（モデルの単位。大きさは筆圧・ゆらぎ・入り抜きの影響を受けない）。
     world_radius: f32,
     cells: DualCells,
+}
+
+/// 道の上の点（画面の点）を、ダブの置き方の枠（y を上向きに直したもの）の描点に。height は画面の高さ。
+fn screen_pending(dab: &ScreenDab, height: f32) -> PendingDab {
+    PendingDab {
+        x: dab.at.x as f64,
+        y: height as f64 - dab.at.y as f64,
+        pressure: dab.pressure as f64,
+        arc: dab.arc,
+        direction: dab.direction,
+        tilt_x: dab.tilt.x,
+        tilt_y: dab.tilt.y,
+        rotation: dab.rotation,
+        speed: dab.speed,
+    }
+}
+
+/// 押した点の、道の上のダブ（線の長さ 0・向き 0・速さ 0）。
+fn dab_at_press(input: &SurfaceInput) -> ScreenDab {
+    ScreenDab {
+        at: input.at,
+        pressure: input.pressure,
+        arc: 0.0,
+        direction: 0.0,
+        tilt: input.tilt,
+        rotation: input.rotation,
+        speed: 0.0,
+    }
+}
+
+/// 道に並べた 2 つ目のダブに、その所の入力で見え方を付けて集める（間隔の係数を道へ返す）。
+struct DualLooks<'a> {
+    run: Option<&'a mut DualRun>,
+    brush: &'a Brush,
+    height: f32,
+    out: Vec<(ScreenDab, DualLook)>,
+}
+
+impl DualSink for DualLooks<'_> {
+    fn put(&mut self, dab: ScreenDab) -> f64 {
+        let look = match self.run.as_deref_mut() {
+            Some(run) => run.look(self.brush, &screen_pending(&dab, self.height)),
+            None => DualLook::PLAIN,
+        };
+        self.out.push((dab, look));
+        look.spacing
+    }
+}
+
+impl DualState {
+    /// デュアルブラシを持つブラシのストロークの始まり（持たなければ None）。
+    fn start(brush: &Brush, geometry: &SurfaceGeometry, width: u32) -> Option<DualState> {
+        brush.dual.as_ref().map(|d| DualState {
+            random: NetRandom::new(brush.seed ^ DUAL_STREAM),
+            run: DualRun::new(brush),
+            pending: VecDeque::new(),
+            world_radius: self::world_radius(geometry, d.radius, width),
+            cells: DualCells::default(),
+        })
+    }
 }
 
 /// 画面の上のダブの形の種類。
@@ -567,12 +631,7 @@ impl SurfaceStroke {
             rotation: input.rotation,
             speed: 0.0,
         };
-        let dual = stroke_brush.dual.as_ref().map(|d| DualState {
-            random: NetRandom::new(stroke_brush.seed ^ DUAL_STREAM),
-            pending: VecDeque::new(),
-            world_radius: self::world_radius(&geometry, d.radius, doc.width()),
-            cells: DualCells::default(),
-        });
+        let dual = DualState::start(&stroke_brush, &geometry, doc.width());
         let mut s = SurfaceStroke {
             geometry,
             view,
@@ -635,7 +694,7 @@ impl SurfaceStroke {
             speed: 0.0,
         });
         s.queue.push_back(dab);
-        s.enqueue_dual(&[(input.at, 0.0)]);
+        s.enqueue_first_dual(dab_at_press(&input));
         // 押した点のダブだけが並んでいる（抜きがあれば待たせる）
         s.paint_queued(doc, stroke, usize::MAX)?;
         Ok(s)
@@ -756,12 +815,19 @@ impl SurfaceStroke {
         };
         self.pen = point;
         self.pen_time = input.time;
-        let (mut points, mut duals) = (Vec::new(), Vec::new());
+        let mut points = Vec::new();
         let gaps = self.gaps();
+        let mut duals = DualLooks {
+            run: self.dual.as_mut().map(|d| &mut d.run),
+            brush: &self.brush,
+            height: self.view.height,
+            out: Vec::new(),
+        };
         self.sampler
             .add_point(point, gaps, &mut points, &mut duals)
             .map_err(|_| SurfaceStrokeError::TooManyDabs)?;
-        self.enqueue(points, &duals);
+        let duals = duals.out;
+        self.enqueue(points, duals);
         Ok(())
     }
 
@@ -875,12 +941,19 @@ impl SurfaceStroke {
         if self.brush.assist.stabilizer > 0.0 && self.pen.at != self.last_input.at {
             self.move_pen(self.last_input.at, self.last_input)?;
         }
-        let (mut points, mut duals) = (Vec::new(), Vec::new());
+        let mut points = Vec::new();
         let gaps = self.gaps();
+        let mut duals = DualLooks {
+            run: self.dual.as_mut().map(|d| &mut d.run),
+            brush: &self.brush,
+            height: self.view.height,
+            out: Vec::new(),
+        };
         self.sampler
             .finish_points(gaps, &mut points, &mut duals)
             .map_err(|_| SurfaceStrokeError::TooManyDabs)?;
-        self.enqueue(points, &duals);
+        let duals = duals.out;
+        self.enqueue(points, duals);
         self.end = Some(self.sampler.length());
         Ok(())
     }
@@ -903,7 +976,7 @@ impl SurfaceStroke {
     }
 
     /// 区間のダブの位置を、当たりと画面の大きさを決めて待ち行列の後ろに並べる（2 つ目の筆先のダブも）。
-    fn enqueue(&mut self, points: Vec<ScreenDab>, duals: &[(Vec2, f64)]) {
+    fn enqueue(&mut self, points: Vec<ScreenDab>, duals: Vec<(ScreenDab, DualLook)>) {
         self.queue.reserve(points.len());
         for p in points {
             let dab = self.locate(p);
@@ -913,20 +986,34 @@ impl SurfaceStroke {
     }
 
     /// 2 つ目の筆先のダブを、その所の画面の大きさを決めて並べる（面に当たらなければ直前の大きさ）。
-    fn enqueue_dual(&mut self, duals: &[(Vec2, f64)]) {
+    fn enqueue_dual(&mut self, duals: Vec<(ScreenDab, DualLook)>) {
         if self.dual.is_none() {
             return;
         }
-        for &(at, arc) in duals {
+        for (ScreenDab { at, arc, .. }, look) in duals {
             let scale = pick(&self.geometry, &self.view, at)
                 .filter(|h| self.material.is_none_or(|m| m == h.material))
                 .map(|h| self.view.world_radius_to_screen(h.position, 1.0))
                 .filter(|s| s.is_finite() && *s > 0.0)
                 .or(self.screen_scale);
             if let Some(d) = self.dual.as_mut() {
-                d.pending.push_back((at, arc, scale));
+                d.pending.push_back((at, arc, scale, look));
             }
         }
+    }
+
+    /// 押した点の 2 つ目のダブを、見え方を付けて並べ、次の 2 つ目のダブまでの間隔の係数を道へ渡す。
+    fn enqueue_first_dual(&mut self, first: ScreenDab) {
+        let mut duals = DualLooks {
+            run: self.dual.as_mut().map(|d| &mut d.run),
+            brush: &self.brush,
+            height: self.view.height,
+            out: Vec::new(),
+        };
+        let step = duals.put(first);
+        let duals = duals.out;
+        self.sampler.set_dual_step(step);
+        self.enqueue_dual(duals);
     }
 
     /// 筆圧を応えに通した大きさの係数（既定の応えは筆圧そのもの）。
@@ -992,9 +1079,6 @@ impl SurfaceStroke {
     ) -> Result<(), SurfaceStrokeError> {
         let index = self.stamps;
         self.stamps += 1;
-        if self.dual.is_some() {
-            self.stamp_dual(doc, dab.arc, dab.scale)?;
-        }
         let brush = self.brush.clone();
         let pending = PendingDab {
             x: dab.at.x as f64,
@@ -1022,6 +1106,21 @@ impl SurfaceStroke {
         } else {
             brush.assist.taper_item(Item::Size, taper).unwrap_or(1.0)
         };
+        if self.dual.is_some() {
+            // サイズの連動の比: この描点の主の半径 ÷ 設定の主の半径（ゆらぎの前。2D と同じ。最低 1 画素が入っていれば、主の下限
+            // （文書の画素で半径 0.5。面のテクセルで持ち上げる分は当たり次第なので入れない）まで持ち上げる）
+            let size = if self.pressure_size {
+                self.size_pressure(dab.pressure) as f64
+            } else {
+                1.0
+            };
+            let link = lifted_link(
+                size * factor * controls.size,
+                brush.controls.min_one_pixel,
+                self.radius_px,
+            );
+            self.stamp_dual(doc, dab.arc, dab.scale, link)?;
+        }
         // 散布の届く長さの元: 筆圧の前の半径を画面へ直したもの
         let nominal = dab.scale.map_or(0.0, |s| (s * self.world_radius) as f64);
         // 最低 1 ピクセル: 塗るときの半径は world_radius × 筆圧の大きさ × plan.radius で、world_radius はブラシの半径（文書の画素）の換算
@@ -1264,11 +1363,13 @@ impl SurfaceStroke {
         doc: &Document,
         limit: f64,
         scale: Option<f32>,
+        link: f64,
     ) -> Result<(), SurfaceStrokeError> {
         let Some(dual_brush) = self.brush.dual.clone() else {
             return Ok(());
         };
-        while let Some(&(at, arc, dual_scale)) = self.dual.as_ref().and_then(|d| d.pending.front())
+        while let Some(&(at, arc, dual_scale, look)) =
+            self.dual.as_ref().and_then(|d| d.pending.front())
         {
             if arc > limit {
                 break;
@@ -1295,7 +1396,16 @@ impl SurfaceStroke {
                 } else {
                     Vec2::new(x as f32, self.down(y))
                 };
-                self.dual_dab(doc, &dual_brush, center, s, world)?;
+                // 影響元・サイズの連動の係数（使わなければ 1 で、今までの大きさのまま）
+                let size = dual_brush.dab_radius(&look, link) / dual_brush.radius;
+                let radius = if size != 1.0 {
+                    (world as f64 * size) as f32
+                } else {
+                    world
+                };
+                if size > 0.0 {
+                    self.dual_dab(doc, &dual_brush, center, s, radius, &look)?;
+                }
             }
         }
         Ok(())
@@ -1310,13 +1420,19 @@ impl SurfaceStroke {
         at: Vec2,
         scale: f32,
         world: f32,
+        look: &DualLook,
     ) -> Result<(), SurfaceStrokeError> {
         if !(at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height) {
             return Ok(());
         }
         let hit = pick(&self.geometry, &self.view, at)
             .filter(|h| self.material.is_none_or(|m| m == h.material));
-        let shape = dual_brush.dab_shape(0.0, 0.0, (scale * world) as f64);
+        let shape = dual_brush.dab_shape_look(0.0, 0.0, (scale * world) as f64, look);
+        let flow = if look.flow != 1.0 {
+            dual_brush.flow * look.flow
+        } else {
+            dual_brush.flow
+        } as f32;
         let (stats, symmetry_note) = (self.stats, self.symmetry_note);
         let (result, _) = self.build_dab(
             doc,
@@ -1334,7 +1450,12 @@ impl SurfaceStroke {
         }
         if let Some(d) = self.dual.as_mut() {
             for p in &result.pixels {
-                d.cells.raise(p.x, p.y, p.coverage);
+                let c = if flow != 1.0 {
+                    p.coverage * flow
+                } else {
+                    p.coverage
+                };
+                d.cells.raise(p.x, p.y, c);
             }
             self.dual_bytes = d.cells.bytes();
         }
