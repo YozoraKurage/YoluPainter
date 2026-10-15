@@ -127,12 +127,12 @@ fn the_question_names_the_jobs_and_the_unsaved_changes_in_both_languages() {
     assert_eq!(close_question(Lang::Ja, false, &[]), "");
     assert_eq!(
         close_question(Lang::Ja, true, &[]),
-        "保存していない変更があります。変更を捨てて終わりますか？",
-        "仕事が無いときは、今までの問いのまま"
+        "保存していない変更があります。",
+        "仕事が無いときは、変更があることだけ（選びはボタン）"
     );
     assert_eq!(
         close_question(Lang::En, true, &[]),
-        "There are unsaved changes. Discard them and quit?"
+        "There are unsaved changes."
     );
     assert_eq!(
         close_question(Lang::Ja, false, &jobs),
@@ -146,14 +146,14 @@ fn the_question_names_the_jobs_and_the_unsaved_changes_in_both_languages() {
     assert!(
         both_ja.contains("保存していない変更")
             && both_ja.contains("書き出し")
-            && both_ja.contains("変更を捨てて"),
+            && both_ja.contains("取り消されます"),
         "{both_ja}"
     );
     let both_en = close_question(Lang::En, true, &jobs[..1]);
     assert!(
         both_en.contains("unsaved changes")
             && both_en.contains("Export")
-            && both_en.contains("Discard"),
+            && both_en.contains("cancelled"),
         "{both_en}"
     );
     // 日本語の問いに英語は、英語の問いに日本語は混ざらない

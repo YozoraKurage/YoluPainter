@@ -24,6 +24,7 @@ pub mod commands;
 pub mod crash;
 pub mod detach;
 pub mod dialog;
+pub mod discard;
 pub mod distribute;
 pub mod drafting;
 pub mod engine;

@@ -168,3 +168,203 @@ fn a_toast_that_fits_has_no_tooltip_and_the_text_readers_see_the_full_sentence()
         "ツールチップは重ねない"
     );
 }
+
+// ───────── 保存せずに閉じるときの問い（アプリの中のウィンドウ・3 つのボタン）─────────
+
+fn modified_app() -> egui_kittest::Harness<'static, yolu_app::YoluApp> {
+    let mut h = common::app(1000.0, 700.0, 128);
+    h.state_mut().set_discard_window(true);
+    h.event(egui::Event::PointerGone);
+    h.set_modified(true);
+    h
+}
+
+fn press(h: &mut egui_kittest::Harness<'static, yolu_app::YoluApp>, label: &str) {
+    use egui_kittest::kittest::Queryable;
+    let at = h.get_by_label(label).rect().center();
+    common::click(h, at);
+    h.run();
+}
+
+#[test]
+fn closing_with_unsaved_changes_asks_with_three_buttons_and_the_first_choice_stays_open() {
+    use egui_kittest::kittest::Queryable;
+    for lang in yolu_app::lang::Lang::ALL {
+        let mut h = modified_app();
+        h.set_lang(lang);
+        h.act(yolu_app::state::Action::Quit);
+        h.run();
+        assert!(h.state().discard_ask().is_some(), "{lang:?}: 問いが開く");
+        assert!(yolu_app::discard::window_rect(&h.ctx).is_some());
+        assert!(!h.state().is_closing(), "答えるまで閉じない");
+        let [review, discard, cancel] = yolu_app::discard::labels(lang);
+        assert_eq!(
+            [review, discard, cancel],
+            lang.pick(
+                ["変更を確認", "変更を破棄", "キャンセル"],
+                ["Review Changes", "Discard Changes", "Cancel"]
+            )
+        );
+        for label in [review, discard, cancel] {
+            assert_eq!(h.query_all_by_label(label).count(), 1, "{label}");
+        }
+        // 文は、ボタンに合う文（捨てるかの問いにしない）
+        let text = h.state().discard_ask().unwrap().text.clone();
+        assert_eq!(
+            text,
+            lang.pick(
+                "保存していない変更があります。",
+                "There are unsaved changes."
+            )
+        );
+        // Enter は「変更を確認」: 閉じずにアプリへ戻る（変更は残る）
+        common::key(&h, egui::Key::Enter, egui::Modifiers::NONE);
+        h.run();
+        assert!(h.state().discard_ask().is_none() && !h.state().is_closing());
+        assert!(h.modified() && !h.quit());
+    }
+}
+
+#[test]
+fn the_discard_button_closes_and_review_and_cancel_and_escape_do_not() {
+    // 変更を破棄: 問わずに閉じる
+    let mut h = modified_app();
+    h.act(yolu_app::state::Action::Quit);
+    h.run();
+    press(&mut h, "変更を破棄");
+    assert!(h.state().is_closing(), "変更を破棄で閉じる");
+    assert!(h.state().discard_ask().is_none());
+    // 変更を確認・キャンセル・Esc: 閉じない
+    for how in ["変更を確認", "キャンセル", "Esc"] {
+        let mut h = modified_app();
+        h.act(yolu_app::state::Action::Quit);
+        h.run();
+        if how == "Esc" {
+            common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+            h.run();
+        } else {
+            press(&mut h, how);
+        }
+        assert!(
+            !h.state().is_closing() && h.state().discard_ask().is_none(),
+            "{how}"
+        );
+        assert!(h.modified(), "{how}: 変更は残る");
+        // もう一度閉じると、また聞く
+        h.act(yolu_app::state::Action::Quit);
+        h.run();
+        assert!(h.state().discard_ask().is_some(), "{how}: もう一度聞く");
+    }
+}
+
+#[test]
+fn nothing_is_asked_without_changes_and_the_dialogs_off_form_is_unchanged() {
+    let mut h = common::app(1000.0, 700.0, 128);
+    h.state_mut().set_discard_window(true);
+    h.act(yolu_app::state::Action::Quit);
+    h.run();
+    assert!(
+        h.state().discard_ask().is_none() && h.state().is_closing(),
+        "変更が無ければ聞かない"
+    );
+    // ウィンドウを開かない試験の形（問いのウィンドウも許さない）は、聞かずに閉じる
+    let mut h = common::app(1000.0, 700.0, 128);
+    h.set_modified(true);
+    h.act(yolu_app::state::Action::Quit);
+    h.run();
+    assert!(h.state().discard_ask().is_none() && h.state().is_closing());
+}
+
+#[test]
+fn opening_a_dropped_project_over_unsaved_changes_asks_the_same_three_buttons() {
+    #[derive(Debug)]
+    struct Dropped(std::path::PathBuf);
+    impl egui::DroppedFile for Dropped {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Err("none".into())
+        }
+    }
+    let missing =
+        std::env::temp_dir().join(format!("yolu-defaults-missing-{}.ylp", std::process::id()));
+    let drop = |h: &mut egui_kittest::Harness<'static, yolu_app::YoluApp>| {
+        h.input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(Dropped(missing.clone())));
+        h.run();
+    };
+    // 変更を確認: 開かない（何も言わない）
+    let mut h = modified_app();
+    drop(&mut h);
+    assert!(h.state().discard_ask().is_some());
+    press(&mut h, "変更を確認");
+    assert!(h.message().is_empty(), "開かない: {}", h.message());
+    assert!(h.modified());
+    // キャンセル: 開かない
+    drop(&mut h);
+    press(&mut h, "キャンセル");
+    assert!(h.message().is_empty());
+    // 変更を破棄: 開く（ここでは無いファイルなので、開けない断りが出る）
+    drop(&mut h);
+    press(&mut h, "変更を破棄");
+    assert!(h.message().contains("を開けません"), "{}", h.message());
+}
+
+#[test]
+fn the_new_project_request_asks_before_the_window_and_only_discard_goes_on() {
+    use yolu_app::state::DialogRequest;
+    let mut h = modified_app();
+    *h.dialog_request_mut() = Some(DialogRequest::New);
+    h.run();
+    assert!(h.state().discard_ask().is_some());
+    assert!(
+        !h.np().window.is_some(),
+        "答えるまで新しいプロジェクトのウィンドウは開かない"
+    );
+    press(&mut h, "キャンセル");
+    assert!(!h.np().window.is_some());
+    *h.dialog_request_mut() = Some(DialogRequest::New);
+    h.run();
+    press(&mut h, "変更を破棄");
+    assert!(h.np().window.is_some(), "変更を破棄で進む");
+}
+
+#[test]
+fn a_question_about_running_jobs_only_has_two_buttons_and_enter_does_not_quit() {
+    use yolu_app::psd::PsdAction;
+    use yolu_app::state::Action;
+    let dir = std::env::temp_dir().join(format!("yolu-defaults-jobs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = common::app(1000.0, 700.0, 128);
+    h.state_mut().set_discard_window(true);
+    h.event(egui::Event::PointerGone);
+    h.psd_mut().park_next = true;
+    h.act(Action::Psd(PsdAction::Export(dir.join("out.psd"))));
+    assert!(h.psd().is_busy() && !h.modified());
+    h.act(Action::Quit);
+    h.run();
+    let ask = h.state().discard_ask().expect("仕事を取り消すので聞く");
+    assert_eq!(ask.kind, yolu_app::discard::Kind::JobsOnly);
+    {
+        use egui_kittest::kittest::Queryable;
+        assert_eq!(h.query_all_by_label("終わる").count(), 1);
+        assert_eq!(h.query_all_by_label("キャンセル").count(), 1);
+        assert_eq!(
+            h.query_all_by_label("変更を確認").count(),
+            0,
+            "変更が無いので「変更を確認」は出さない"
+        );
+    }
+    // Enter は終わらない（キャンセル）
+    common::key(&h, egui::Key::Enter, egui::Modifiers::NONE);
+    h.run();
+    assert!(h.state().discard_ask().is_none() && !h.state().is_closing() && h.psd().is_busy());
+    // 終わる: 仕事を取り消して閉じる
+    h.act(Action::Quit);
+    h.run();
+    press(&mut h, "終わる");
+    assert!(h.state().is_closing() && !h.psd().is_busy());
+    let _ = std::fs::remove_dir_all(dir);
+}

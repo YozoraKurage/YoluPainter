@@ -748,8 +748,8 @@ pub fn close_question(lang: Lang, modified: bool, jobs: &[CloseJob]) -> String {
         (false, true) => String::new(),
         (true, true) => lang
             .pick(
-                "保存していない変更があります。変更を捨てて終わりますか？",
-                "There are unsaved changes. Discard them and quit?",
+                "保存していない変更があります。",
+                "There are unsaved changes.",
             )
             .to_owned(),
         (false, false) => lang.pick(
@@ -757,8 +757,8 @@ pub fn close_question(lang: Lang, modified: bool, jobs: &[CloseJob]) -> String {
             format!("Running jobs ({names}) will be cancelled. Quit?"),
         ),
         (true, false) => lang.pick(
-            format!("保存していない変更があります。走っている仕事（{names}）も取り消されます。変更を捨てて終わりますか？"),
-            format!("There are unsaved changes, and running jobs ({names}) will be cancelled. Discard and quit?"),
+            format!("保存していない変更があります。走っている仕事（{names}）も取り消されます。"),
+            format!("There are unsaved changes, and running jobs ({names}) will be cancelled."),
         ),
     }
 }

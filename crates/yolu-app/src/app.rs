@@ -467,6 +467,12 @@ pub struct YoluApp {
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
+    /// 保存していない変更の問い（アプリの中のウィンドウ。聞いている間だけ Some。`discard`）。
+    discard_ask: Option<crate::discard::Ask>,
+    /// 問いに「変更を破棄」と答えた（次に閉じる流れを回すとき、もう問わずに閉じる）。
+    close_discarded: bool,
+    /// 問いをアプリの中のウィンドウで出すか（実際のウィンドウは `dialogs` と同じ。試験は単独で入れて、問いのウィンドウだけを確かめる）。
+    discard_window: bool,
     /// OS の終了を待たせる印（`session_end::set_saving`）に最後に伝えた「保存の間か」。ウィンドウが見えている間は `ui`、隠れている間は `logic` が
     /// 保存の結果を受けるたびに合わせる。
     saving_marked: bool,
@@ -1002,6 +1008,9 @@ impl YoluApp {
             ops: McpServer::new(),
             dialogs: false,
             closing: false,
+            discard_ask: None,
+            close_discarded: false,
+            discard_window: false,
             close_answer: None,
             custom_frame: false,
             bar_press_rects: Vec::new(),
@@ -1038,6 +1047,18 @@ impl YoluApp {
     #[doc(hidden)]
     pub fn answer_close_question(&mut self, answer: impl FnMut(&AppState) -> bool + 'static) {
         self.close_answer = Some(Box::new(answer));
+    }
+
+    /// 試験用: 保存していない変更の問いを、アプリの中のウィンドウで出す（ファイルのウィンドウは開かない）。
+    #[doc(hidden)]
+    pub fn set_discard_window(&mut self, on: bool) {
+        self.discard_window = on;
+    }
+
+    /// 保存していない変更の問いが開いているか（試験が読む）。
+    #[doc(hidden)]
+    pub fn discard_ask(&self) -> Option<&crate::discard::Ask> {
+        self.discard_ask.as_ref()
     }
 
     /// 終わると決めたか（保存の途中なら、保存が終わるまで決めない）。
@@ -1084,25 +1105,22 @@ impl YoluApp {
         }
         // Live Link の違う相手の頼み: 保存していない変更を捨ててよいか（「開く」と同じ確かめ）
         if self.link.wants_discard() {
-            let discard = self.confirm_discard();
-            self.link.answer_discard(discard);
+            self.discard_then(crate::discard::AfterDiscard::LinkDiscard);
         }
         // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。ウィンドウを開かない試験では聞かない）
-        if let Some(open) = self.state.recovery.take_open_request() {
-            if self.confirm_discard() {
-                self.state.recovery_open(open);
+        if self.discard_ask.is_none() {
+            if let Some(open) = self.state.recovery.take_open_request() {
+                self.discard_then(crate::discard::AfterDiscard::Recovery(open));
             }
         }
-        if !self.dialogs {
+        // 問いに答えるまで、ファイルの頼みは残しておく（答えのあとの次のフレームで当てる）
+        if !(self.dialogs || self.discard_window) || self.discard_ask.is_some() {
             return;
         }
         match self.state.dialog_request.take() {
             Some(DialogRequest::New) => {
                 // 保存していない変更は先に聞く（ウィンドウを開いてから聞くと、作業を捨てる前にウィンドウの設定が無駄になる）
-                if self.confirm_discard() {
-                    self.state
-                        .apply(Action::Project(crate::newproject::NpAction::OpenNew));
-                }
+                self.discard_then(crate::discard::AfterDiscard::New);
             }
             Some(DialogRequest::ProjectModel) => {
                 let lang = self.state.lang;
@@ -1119,20 +1137,7 @@ impl YoluApp {
                 }
             }
             Some(DialogRequest::Open) => {
-                let lang = self.state.lang;
-                if self.confirm_discard() {
-                    if let Some(path) = crate::dialog::file(&self.state, Place::Project)
-                        .set_title(lang.pick("プロジェクトを開く", "Open Project"))
-                        .add_filter(
-                            lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
-                            &["ylp"],
-                        )
-                        .pick_file()
-                    {
-                        self.state.note_file_chosen(Place::Project, &path);
-                        self.state.apply(Action::OpenProject(path));
-                    }
-                }
+                self.discard_then(crate::discard::AfterDiscard::Open);
             }
             Some(DialogRequest::SaveAs) => {
                 let lang = self.state.lang;
@@ -1253,18 +1258,11 @@ impl YoluApp {
                 }
             }
             Some(DialogRequest::PsdImport(target)) => {
-                let lang = self.state.lang;
                 // 今の文書を替えるときは、保存していない変更を捨ててよいか聞く
-                if target == crate::psd::PsdTarget::NewSet || self.confirm_discard() {
-                    if let Some(path) = crate::dialog::file(&self.state, Place::PsdImport)
-                        .set_title(lang.pick("PSD を読み込む", "Import PSD"))
-                        .add_filter("PSD", &["psd", "PSD"])
-                        .pick_file()
-                    {
-                        self.state.note_file_chosen(Place::PsdImport, &path);
-                        self.state
-                            .apply(Action::Psd(crate::psd::PsdAction::Import { path, target }));
-                    }
+                if target == crate::psd::PsdTarget::NewSet {
+                    self.import_psd_with_dialog(target);
+                } else {
+                    self.discard_then(crate::discard::AfterDiscard::PsdCurrent);
                 }
             }
             Some(DialogRequest::PsdExport) => {
@@ -1419,42 +1417,136 @@ impl YoluApp {
         if !self.state.modified && jobs.is_empty() {
             return true;
         }
+        if self.close_discarded {
+            return true;
+        }
         // 試験が、ウィンドウを開かずに答える口
         if let Some(answer) = self.close_answer.as_mut() {
             return answer(&self.state);
         }
-        if !self.dialogs {
+        if !self.asks_in_app() || self.close_discarded {
             return true;
         }
-        crate::dialog::message()
-            .set_title("YoluPainter")
-            .set_description(crate::windows::close_question(
-                self.state.lang,
-                self.state.modified,
-                &jobs,
-            ))
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .set_level(rfd::MessageLevel::Warning)
-            .show()
-            == rfd::MessageDialogResult::Yes
+        // 閉じる頼みは止めて（`close_flow`）、アプリの中のウィンドウで聞く。答えが「変更を破棄」・「終わる」なら、もう一度閉じる流れを回して閉じる
+        if self.discard_ask.is_none() {
+            self.discard_ask = Some(crate::discard::Ask {
+                kind: if self.state.modified {
+                    crate::discard::Kind::Changes
+                } else {
+                    crate::discard::Kind::JobsOnly
+                },
+                text: crate::windows::close_question(self.state.lang, self.state.modified, &jobs),
+                then: crate::discard::AfterDiscard::Close,
+            });
+        }
+        false
     }
 
-    /// 保存していない変更を捨ててよいか（ウィンドウを開かない試験では、聞かずに捨てる）。保存の途中は、保存の結果が出るまで、頼む前の印のまま
-    /// 聞く（保存の頼みは「変更あり」を下ろすが、保存が失敗すれば戻る。その変更を黙って捨てない）。
-    fn confirm_discard(&self) -> bool {
-        if !self.state.shows_modified() || !self.dialogs {
-            return true;
+    /// 保存していない変更の問いを、アプリの中のウィンドウで出すか（ウィンドウを開かない試験では聞かない）。
+    fn asks_in_app(&self) -> bool {
+        self.dialogs || self.discard_window
+    }
+
+    /// 保存していない変更を捨ててよければ `then` を続ける。変更が無い・ウィンドウを開かない試験では、聞かずにすぐ続ける。聞くときは、問いの
+    /// ウィンドウを出して（`show_discard_ask`）答えを待つ。保存の途中は、保存の結果が出るまで、頼む前の印のまま聞く（保存の頼みは「変更あり」を
+    /// 下ろすが、保存が失敗すれば戻る。その変更を黙って捨てない）。問いが開いている間に来た頼みは、重ねずに捨てる（Live Link の頼みは次のフレームで
+    /// 聞き直し、ファイルの頼みは問いが閉じるまで残る）。
+    fn discard_then(&mut self, then: crate::discard::AfterDiscard) {
+        if !self.state.shows_modified() || !self.asks_in_app() {
+            self.run_after_discard(then);
+            return;
         }
-        crate::dialog::message()
-            .set_title("YoluPainter")
-            .set_description(self.state.lang.pick(
-                "保存していない変更があります。変更を捨てますか？",
-                "There are unsaved changes. Discard them?",
-            ))
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .set_level(rfd::MessageLevel::Warning)
-            .show()
-            == rfd::MessageDialogResult::Yes
+        if self.discard_ask.is_some() {
+            return;
+        }
+        self.discard_ask = Some(crate::discard::Ask {
+            kind: crate::discard::Kind::Changes,
+            text: self
+                .state
+                .lang
+                .pick(
+                    "保存していない変更があります。",
+                    "There are unsaved changes.",
+                )
+                .to_owned(),
+            then,
+        });
+    }
+
+    /// 捨てて進む先（`discard_then` の続き）。
+    fn run_after_discard(&mut self, then: crate::discard::AfterDiscard) {
+        use crate::discard::AfterDiscard as Then;
+        match then {
+            Then::Close => {
+                self.close_discarded = true;
+                self.state.quit = true;
+            }
+            Then::LinkDiscard => self.link.answer_discard(true),
+            Then::Recovery(open) => self.state.recovery_open(open),
+            Then::New => {
+                self.state
+                    .apply(Action::Project(crate::newproject::NpAction::OpenNew));
+            }
+            Then::Open => {
+                let lang = self.state.lang;
+                if !self.dialogs {
+                    return;
+                }
+                if let Some(path) = crate::dialog::file(&self.state, Place::Project)
+                    .set_title(lang.pick("プロジェクトを開く", "Open Project"))
+                    .add_filter(
+                        lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
+                        &["ylp"],
+                    )
+                    .pick_file()
+                {
+                    self.state.note_file_chosen(Place::Project, &path);
+                    self.state.apply(Action::OpenProject(path));
+                }
+            }
+            Then::OpenPath(path) => self.state.apply(Action::OpenProject(path)),
+            Then::PsdCurrent => self.import_psd_with_dialog(crate::psd::PsdTarget::CurrentSet),
+        }
+    }
+
+    /// 捨てずに戻る（変更を確認・キャンセル）。答えを待っていた Live Link の頼みには「捨てない」と答える。
+    fn decline_after_discard(&mut self, then: crate::discard::AfterDiscard) {
+        if then == crate::discard::AfterDiscard::LinkDiscard {
+            self.link.answer_discard(false);
+        }
+    }
+
+    /// 読み込む PSD を選んで、`target` へ読む。
+    fn import_psd_with_dialog(&mut self, target: crate::psd::PsdTarget) {
+        let lang = self.state.lang;
+        if let Some(path) = crate::dialog::file(&self.state, Place::PsdImport)
+            .set_title(lang.pick("PSD を読み込む", "Import PSD"))
+            .add_filter("PSD", &["psd", "PSD"])
+            .pick_file()
+        {
+            self.state.note_file_chosen(Place::PsdImport, &path);
+            self.state
+                .apply(Action::Psd(crate::psd::PsdAction::Import { path, target }));
+        }
+    }
+
+    /// 保存していない変更の問いのウィンドウ（開いている間、毎フレーム）。答えが出たら、続ける・戻る。
+    fn show_discard_ask(&mut self, ctx: &egui::Context) {
+        let Some(ask) = self.discard_ask.as_ref() else {
+            return;
+        };
+        let Some(choice) = crate::discard::show(ctx, self.state.lang, ask) else {
+            return;
+        };
+        let Some(ask) = self.discard_ask.take() else {
+            return;
+        };
+        match choice {
+            crate::discard::Choice::Discard => self.run_after_discard(ask.then),
+            crate::discard::Choice::Review | crate::discard::Choice::Cancel => {
+                self.decline_after_discard(ask.then);
+            }
+        }
     }
 
     /// ウィンドウに落としたファイル（.ylp なら開く。.psd なら新しいテクスチャセットとして取り込む。ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら
@@ -1479,8 +1571,8 @@ impl YoluApp {
                     crate::notice::Source::Open,
                     crate::lang::refusals::during_stroke(self.state.lang),
                 );
-            } else if self.confirm_discard() {
-                self.state.apply(Action::OpenProject(path.clone()));
+            } else {
+                self.discard_then(crate::discard::AfterDiscard::OpenPath(path.clone()));
             }
             return;
         }
@@ -2358,6 +2450,8 @@ impl YoluApp {
         self.state.crash.show(&ctx, self.state.lang);
         // 直前の操作の知らせ（状態の帯の左には出さず、短く出して消える）
         crate::toast::show(&ctx, &mut self.state);
+        // 保存していない変更の問い（開いている間だけ）
+        self.show_discard_ask(&ctx);
         if self.dialogs {
             self.state.crash.execute_request(self.state.lang);
         }
@@ -2376,6 +2470,7 @@ impl YoluApp {
             .map(|p| p.state.rect);
         self.view3d.end_frame(popup_rect);
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当てる
+        let asking = self.discard_ask.is_some();
         self.handle_requests();
         self.link_exported();
         self.state.link = self.link.view(&self.state);
@@ -2384,6 +2479,10 @@ impl YoluApp {
         // 終了・ウィンドウを閉じる: 保存していない変更があれば聞く（ウィンドウを開かない試験では聞かない）
         let close_requested = ctx.input(|i| i.viewport().close_requested());
         self.close_flow(&ctx, close_requested);
+        // 問いを開いたフレームの次に、問いのウィンドウを描く
+        if !asking && self.discard_ask.is_some() {
+            ctx.request_repaint();
+        }
     }
 
     /// 保存の結果を受けて（フレームの初め）、OS の終了を待たせる印を今の保存の有無に合わせる。ウィンドウが見えている間（`ui`）も隠れている間
@@ -2599,6 +2698,10 @@ impl YoluApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         } else if self.state.quit {
             self.close_flow(ctx, false);
+            // 問いは見えるウィンドウでしか答えられないので、ウィンドウを出す
+            if self.discard_ask.is_some() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            }
         }
         // 見えないウィンドウでも、受けた要求は実行する（保存の結果を受けた後に）
         self.tick_ops(ctx);
