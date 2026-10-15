@@ -81,7 +81,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
             }
         }
         DraftKind::Figure => {
-            if let Err(reason) = crate::region::tools::paint_gate(app) {
+            if let Err(reason) = crate::m2::paint_gate(app) {
                 app.refuse(Source::Ruler, reason);
                 return;
             }
@@ -264,7 +264,7 @@ fn figure(app: &mut AppState, rect: Rect, a: DVec2, b: DVec2) {
     if app.is_stroking() {
         return;
     }
-    let layer = match crate::region::tools::paint_gate(app) {
+    let layer = match crate::m2::paint_gate(app) {
         Ok(id) => id,
         Err(e) => {
             app.refuse(Source::Ruler, e);

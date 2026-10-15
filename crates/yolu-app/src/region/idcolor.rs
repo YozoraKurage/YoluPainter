@@ -20,8 +20,9 @@ use yolu_core::mesh_maps::{
 };
 use yolu_core::SelectionMask;
 
-use super::tools::{read_only_message, Hover, Where};
+use super::tools::{Hover, Where};
 use crate::lang::Lang;
+use crate::m2::read_only_message;
 use crate::notice::Source;
 use crate::selection::{combine_name, combine_of};
 use crate::state::AppState;

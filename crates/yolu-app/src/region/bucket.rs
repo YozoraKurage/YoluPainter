@@ -1,8 +1,6 @@
 //! 色バケツの処理待ちと塗り残しの入力。確定までは文書も履歴も変更しない。
-use super::{
-    color::{self, Reference, Request},
-    tools::paint_gate,
-};
+use super::color::{self, Reference, Request};
+use crate::m2::paint_gate;
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
@@ -78,7 +76,7 @@ impl Style {
             opacity: app.brush.opacity as f64,
             erase: app.region.erase,
             mask: app.m2.edit_mask,
-            reveal: super::tools::mask_reveals(app, layer, app.region.erase),
+            reveal: crate::m2::mask_reveals(app, layer, app.region.erase),
             channels: app.paint_channels(),
         }
     }

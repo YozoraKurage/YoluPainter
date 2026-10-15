@@ -1440,6 +1440,39 @@ impl AppState {
     }
 }
 
+/// 読むだけのテクスチャセットなら、その短い理由（文書を変えるツールの入口で断る文。ステータスバーへ）。
+pub(crate) fn read_only_message(app: &AppState) -> Option<String> {
+    app.read_only_reason()
+        .map(|reason| crate::lang::refusals::read_only_set(app.lang, reason))
+}
+
+/// 塗る・消すの前に確かめること（描けないときは短い理由）。返すのは塗るレイヤー。
+pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
+    let lang = app.lang;
+    if let Some(message) = read_only_message(app) {
+        return Err(message);
+    }
+    let Some(layer) = app.selected_layer.filter(|id| app.doc.layer(*id).is_some()) else {
+        return Err(lang
+            .pick("塗るレイヤーがありません", "No layer to paint")
+            .into());
+    };
+    if let Some(reason) = app.paint_blocker() {
+        return Err(reason);
+    }
+    Ok(layer)
+}
+
+/// マスクの「塗る」は白（見せる）、「消す」は黒（隠す）。白・黒はマスクのサムネイルの色なので、反転したマスクでは書く値を逆にする。
+pub(crate) fn mask_reveals(app: &AppState, layer: LayerId, erase: bool) -> bool {
+    let inverted = app
+        .doc
+        .layer(layer)
+        .and_then(|l| l.mask())
+        .is_some_and(|m| m.inverted());
+    erase == inverted
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

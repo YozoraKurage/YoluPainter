@@ -15,7 +15,7 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
         crate::rulers::canvas::press(app, view, pos, source, m);
         return;
     }
-    if let Err(reason) = crate::region::tools::paint_gate(app) {
+    if let Err(reason) = crate::m2::paint_gate(app) {
         app.refuse(Source::Ruler, reason);
         return;
     }
@@ -65,7 +65,7 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     if app.is_stroking() {
         return;
     }
-    let layer = match crate::region::tools::paint_gate(app) {
+    let layer = match crate::m2::paint_gate(app) {
         Ok(id) => id,
         Err(e) => {
             app.refuse(Source::Ruler, e);
@@ -107,7 +107,7 @@ pub(crate) fn fill_region(
     mask: &SelectionMask,
 ) -> Result<bool, yolu_core::CoreError> {
     if app.m2.edit_mask {
-        let reveal = crate::region::tools::mask_reveals(app, layer, false);
+        let reveal = crate::m2::mask_reveals(app, layer, false);
         app.doc
             .fill_mask(layer, app.brush.opacity as f64, Some(mask), reveal)
     } else {

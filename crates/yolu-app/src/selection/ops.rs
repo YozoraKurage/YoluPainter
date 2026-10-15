@@ -19,9 +19,9 @@ impl AppState {
         if self.doc.selection().is_none() {
             return Err(self.no_selection_text());
         }
-        let layer = crate::region::tools::paint_gate(self)?;
+        let layer = crate::m2::paint_gate(self)?;
         let result = if self.m2.edit_mask {
-            let reveal = crate::region::tools::mask_reveals(self, layer, erase);
+            let reveal = crate::m2::mask_reveals(self, layer, erase);
             self.doc.fill_mask(layer, 1.0, None, reveal)
         } else {
             let channels = self.paint_channels();
@@ -95,7 +95,7 @@ impl AppState {
         let had_mask = self.doc.layer(id).is_some_and(|l| l.mask().is_some());
         let outside = selection.invert();
         // 外を「隠す」側へ書く値は、反転したマスクでは逆（保存値は隠す量。反転では 0 が隠れる）。足したばかりのマスクは反転していない
-        let reveal = crate::region::tools::mask_reveals(self, id, true);
+        let reveal = crate::m2::mask_reveals(self, id, true);
         self.doc
             .batch(|doc| {
                 if !had_mask {
