@@ -1038,7 +1038,11 @@ fn nothing_is_made_while_drawing() {
         s.act(Action::LayerMenu(op.clone()));
         assert_eq!(s.message(), "描いている間はできません。", "{op:?}");
         assert_eq!(layer_count(&s), 1, "{op:?}");
-        assert_eq!(s.shelf().resources().len(), shelf, "{op:?}: shelf も変えない");
+        assert_eq!(
+            s.shelf().resources().len(),
+            shelf,
+            "{op:?}: shelf も変えない"
+        );
     }
     s.set_lang(Lang::En);
     s.act(Action::LayerMenu(Op::FillImageFile {
