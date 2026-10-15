@@ -212,6 +212,22 @@ fn mirrored_surface(
     })
 }
 
+/// パスの点ごとの、モデル上の位置と面の法線。
+fn point_frames(points: &[PathPoint], g: &SurfaceGeometry) -> (Vec<Vec3>, Vec<Vec3>) {
+    let positions = points
+        .iter()
+        .map(|p| {
+            let t = &g.triangles()[p.triangle as usize];
+            t.a * (1.0 - p.u - p.v) as f32 + t.b * p.u as f32 + t.c * p.v as f32
+        })
+        .collect();
+    let normals = points
+        .iter()
+        .map(|p| g.triangles()[p.triangle as usize].normal())
+        .collect();
+    (positions, normals)
+}
+
 fn draw_surface_one(
     painter: &mut Painter<'_, '_>,
     path: &SurfacePath,
@@ -236,17 +252,7 @@ fn draw_surface_one(
     // 指先: 直前のダブの中心（キャンバスの画素）と、ダブの画素の広がり（継ぎ目をまたいだかを見る）
     let mut previous: Option<glam::DVec2> = None;
     let ps = &path.points;
-    let positions: Vec<_> = ps
-        .iter()
-        .map(|p| {
-            let t = &g.triangles()[p.triangle as usize];
-            t.a * (1.0 - p.u - p.v) as f32 + t.b * p.u as f32 + t.c * p.v as f32
-        })
-        .collect();
-    let normals: Vec<_> = ps
-        .iter()
-        .map(|p| g.triangles()[p.triangle as usize].normal())
-        .collect();
+    let (positions, normals) = point_frames(ps, g);
     let (mut dabs, mut gaps, mut samples) = (0, 0, 0);
     let tip = path.style.tip.clone();
     let mut dab = |hit: SurfaceHit, pressure: f64, direction: Vec3| -> Result<(), Error> {

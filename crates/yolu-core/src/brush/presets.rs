@@ -16,6 +16,42 @@ fn tip(id: &str) -> std::sync::Arc<super::BrushTip> {
     builtin_tip(id).expect("組み込みの筆先")
 }
 
+/// 筆圧の切り替えが既定（大きさと不透明度）の簡単な丸いブラシ。
+fn plain(s: BrushSettings) -> Brush {
+    Brush::simple(s, PressureSwitches::default())
+}
+
+/// 筆圧で大きさだけを変える簡単な丸いブラシ。
+fn size_only(s: BrushSettings) -> Brush {
+    switched(s, true, false, false)
+}
+
+/// 筆圧で不透明度だけを変える簡単な丸いブラシ。
+fn opacity_only(s: BrushSettings) -> Brush {
+    switched(s, false, true, false)
+}
+
+/// 筆圧で流量だけを変える簡単な丸いブラシ。
+fn flow_only(s: BrushSettings) -> Brush {
+    switched(s, false, false, true)
+}
+
+/// 筆圧で何も変えない簡単な丸いブラシ。
+fn no_pressure(s: BrushSettings) -> Brush {
+    switched(s, false, false, false)
+}
+
+fn switched(s: BrushSettings, size: bool, opacity: bool, flow: bool) -> Brush {
+    Brush::simple(
+        s,
+        PressureSwitches {
+            size,
+            opacity,
+            flow,
+        },
+    )
+}
+
 /// 組み込みのブラシ 13 個（C# と同じ値・同じ並び）。呼ぶたびに新しい写しを返す。
 pub fn builtin_presets() -> Vec<BrushPreset> {
     let base = BrushSettings::default();
@@ -28,53 +64,39 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
             brush,
         })
     };
-    let b = |s: BrushSettings, pressure: PressureSwitches| Brush::simple(s, pressure);
     add(
         "soft-round",
         "Soft Round",
         "Basic",
-        b(
-            BrushSettings {
-                radius: 24.0,
-                hardness: 0.0,
-                spacing: 0.1,
-                ..base
-            },
-            PressureSwitches::default(),
-        ),
+        plain(BrushSettings {
+            radius: 24.0,
+            hardness: 0.0,
+            spacing: 0.1,
+            ..base
+        }),
     );
     add(
         "hard-round",
         "Hard Round",
         "Basic",
-        b(
-            BrushSettings {
-                radius: 12.0,
-                hardness: 0.95,
-                spacing: 0.08,
-                ..base
-            },
-            PressureSwitches::default(),
-        ),
+        plain(BrushSettings {
+            radius: 12.0,
+            hardness: 0.95,
+            spacing: 0.08,
+            ..base
+        }),
     );
     add(
         "airbrush",
         "Airbrush",
         "Basic",
-        b(
-            BrushSettings {
-                radius: 40.0,
-                hardness: 0.0,
-                flow: 0.08,
-                spacing: 0.05,
-                ..base
-            },
-            PressureSwitches {
-                size: false,
-                opacity: false,
-                flow: true,
-            },
-        ),
+        flow_only(BrushSettings {
+            radius: 40.0,
+            hardness: 0.0,
+            flow: 0.08,
+            spacing: 0.05,
+            ..base
+        }),
     );
     add(
         "pencil",
@@ -82,19 +104,12 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
         "Drawing",
         Brush {
             texture: Some(PaperTexture::new(tip("grain"), 0.6)),
-            ..b(
-                BrushSettings {
-                    radius: 3.0,
-                    hardness: 0.6,
-                    spacing: 0.1,
-                    ..base
-                },
-                PressureSwitches {
-                    size: false,
-                    opacity: true,
-                    flow: false,
-                },
-            )
+            ..opacity_only(BrushSettings {
+                radius: 3.0,
+                hardness: 0.6,
+                spacing: 0.1,
+                ..base
+            })
         },
     );
     add(
@@ -107,19 +122,12 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
                 angle: 35.0,
                 ..TipShape::default()
             },
-            ..b(
-                BrushSettings {
-                    radius: 6.0,
-                    hardness: 1.0,
-                    spacing: 0.05,
-                    ..base
-                },
-                PressureSwitches {
-                    size: true,
-                    opacity: false,
-                    flow: false,
-                },
-            )
+            ..size_only(BrushSettings {
+                radius: 6.0,
+                hardness: 1.0,
+                spacing: 0.05,
+                ..base
+            })
         },
     );
     add(
@@ -131,20 +139,13 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
                 image: Some(tip("rounded-square")),
                 ..TipShape::default()
             },
-            ..b(
-                BrushSettings {
-                    radius: 14.0,
-                    opacity: 0.7,
-                    flow: 0.9,
-                    spacing: 0.05,
-                    ..base
-                },
-                PressureSwitches {
-                    size: false,
-                    opacity: false,
-                    flow: false,
-                },
-            )
+            ..no_pressure(BrushSettings {
+                radius: 14.0,
+                opacity: 0.7,
+                flow: 0.9,
+                spacing: 0.05,
+                ..base
+            })
         },
     );
     add(
@@ -165,14 +166,11 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
                 scale: 2.0,
                 ..PaperTexture::new(tip("grain"), 0.5)
             }),
-            ..b(
-                BrushSettings {
-                    radius: 18.0,
-                    spacing: 0.2,
-                    ..base
-                },
-                PressureSwitches::default(),
-            )
+            ..plain(BrushSettings {
+                radius: 18.0,
+                spacing: 0.2,
+                ..base
+            })
         },
     );
     add(
@@ -190,14 +188,11 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
                 ..Jitter::default()
             },
             texture: Some(PaperTexture::new(tip("grain"), 0.4)),
-            ..b(
-                BrushSettings {
-                    radius: 16.0,
-                    spacing: 0.1,
-                    ..base
-                },
-                PressureSwitches::default(),
-            )
+            ..plain(BrushSettings {
+                radius: 16.0,
+                spacing: 0.1,
+                ..base
+            })
         },
     );
     add(
@@ -214,19 +209,12 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
                 opacity: 0.2,
                 ..Jitter::default()
             },
-            ..b(
-                BrushSettings {
-                    radius: 20.0,
-                    spacing: 0.03,
-                    flow: 0.6,
-                    ..base
-                },
-                PressureSwitches {
-                    size: true,
-                    opacity: false,
-                    flow: false,
-                },
-            )
+            ..size_only(BrushSettings {
+                radius: 20.0,
+                spacing: 0.03,
+                flow: 0.6,
+                ..base
+            })
         },
     );
     add(
@@ -243,20 +231,13 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
                 angle: 1.0,
                 ..Jitter::default()
             },
-            ..b(
-                BrushSettings {
-                    radius: 30.0,
-                    opacity: 0.6,
-                    flow: 0.25,
-                    spacing: 0.1,
-                    ..base
-                },
-                PressureSwitches {
-                    size: true,
-                    opacity: false,
-                    flow: false,
-                },
-            )
+            ..size_only(BrushSettings {
+                radius: 30.0,
+                opacity: 0.6,
+                flow: 0.25,
+                spacing: 0.1,
+                ..base
+            })
         },
     );
     add(
@@ -275,57 +256,36 @@ pub fn builtin_presets() -> Vec<BrushPreset> {
                 angle: 1.0,
                 ..Jitter::default()
             },
-            ..b(
-                BrushSettings {
-                    radius: 20.0,
-                    spacing: 0.5,
-                    ..base
-                },
-                PressureSwitches {
-                    size: false,
-                    opacity: true,
-                    flow: false,
-                },
-            )
+            ..opacity_only(BrushSettings {
+                radius: 20.0,
+                spacing: 0.5,
+                ..base
+            })
         },
     );
     add(
         "soft-eraser",
         "Soft Eraser",
         "Erasers",
-        b(
-            BrushSettings {
-                radius: 24.0,
-                hardness: 0.0,
-                spacing: 0.1,
-                erase: true,
-                ..base
-            },
-            PressureSwitches {
-                size: true,
-                opacity: false,
-                flow: false,
-            },
-        ),
+        size_only(BrushSettings {
+            radius: 24.0,
+            hardness: 0.0,
+            spacing: 0.1,
+            erase: true,
+            ..base
+        }),
     );
     add(
         "hard-eraser",
         "Hard Eraser",
         "Erasers",
-        b(
-            BrushSettings {
-                radius: 10.0,
-                hardness: 0.95,
-                spacing: 0.08,
-                erase: true,
-                ..base
-            },
-            PressureSwitches {
-                size: true,
-                opacity: false,
-                flow: false,
-            },
-        ),
+        size_only(BrushSettings {
+            radius: 10.0,
+            hardness: 0.95,
+            spacing: 0.08,
+            erase: true,
+            ..base
+        }),
     );
     v
 }
