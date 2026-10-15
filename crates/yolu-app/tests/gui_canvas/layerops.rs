@@ -1552,8 +1552,10 @@ fn switching_to_the_move_tool_during_a_pen_brush_stroke_still_ends_the_stroke_wh
 
 // ───────── 画面（レイヤーの欄・メニュー・キー） ─────────
 
+/// レイヤーのパネルの行の中心（プロパティのレイヤーのタブにも、同じ名前の欄がある）。
 fn row_center(h: &Harness<'_, YoluApp>, name: &str) -> egui::Pos2 {
-    h.get_by_label(name).rect().center()
+    let panel = crate::group_rect(h, Tab::Layers, Some(Tab::Properties));
+    rect_of(h, name, |r| panel.contains_rect(r)).center()
 }
 
 fn named_layers(h: &mut Harness<'_, YoluApp>, n: usize) -> Vec<LayerId> {
@@ -1999,8 +2001,6 @@ fn showcase(lang: Lang) -> Harness<'static, YoluApp> {
             on: true,
         }));
         s.select_layers([layers[1], layers[2]], layers[2]);
-        // ステンシルのタブ（レイヤーのタブの名前の欄が、レイヤーの行と同じ名前で重ならない）
-        s.ui.property_tab = 0;
         settle(s);
     }
     h.run();

@@ -2628,9 +2628,6 @@ mod ui {
     #[test]
     fn the_panel_filters_by_kind_and_searches_by_name() {
         let mut h = window();
-        // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
-        h.ui_mut().property_tab = 0;
-        h.run();
         assert_eq!(st(&h).shelf().visible().len(), 6);
         h.get_by_label("スマートマテリアル").click();
         h.run();
@@ -2638,8 +2635,8 @@ mod ui {
         assert!(h.query_by_label("raster").is_some());
         assert!(h.query_by_label("mask").is_none());
         // 種類を戻して、名前で探す（打つたびに絞る。大文字小文字は区別しない）
-        h.get_by_label("すべて").click();
-        h.run();
+        // アセットの種類の「すべて」（プロパティのレイヤーのタブの「ロック」にも同じ名前がある）
+        crate::shots::click_in_group(&mut h, yolu_app::Tab::Assets, "すべて");
         let fields: Vec<_> = h
             .get_all_by_role(egui::accesskit::Role::TextInput)
             .map(|n| n.rect())

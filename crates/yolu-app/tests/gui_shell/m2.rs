@@ -62,9 +62,6 @@ fn stroke_across(h: &mut Harness<'_, YoluApp>, dy: f32) {
 #[test]
 fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     let mut h = app(1280.0, 800.0, 128);
-    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
-    h.ui_mut().property_tab = 0;
-    h.run();
     let first = h.selected_layer().unwrap();
     // グループ化: 選んでいるレイヤーが新しいグループに入る
     h.get_by_label("レイヤーをグループ化").click();
@@ -93,9 +90,8 @@ fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     assert_eq!(h.doc().layer(adj).unwrap().kind(), LayerKind::Adjustment);
     undo(&mut h);
     assert_eq!(doc_layers(&h), 1);
-    // マスク: 足すと描く先がマスクになり、もう一度押すとレイヤーへ戻る
-    h.get_by_label("レイヤーマスクを追加").click();
-    h.run();
+    // マスク: 足すと描く先がマスクになり、もう一度押すとレイヤーへ戻る（レイヤーのパネルの帯のボタン。プロパティのレイヤーのタブにも同じ名前がある）
+    shots::click_in_group(&mut h, Tab::Layers, "レイヤーマスクを追加");
     assert!(h.doc().layer(first).unwrap().mask().is_some());
     assert!(h.m2().edit_mask);
     h.get_by_label("レイヤーマスクを編集").click();
@@ -147,16 +143,13 @@ fn layer_tree_collapses_and_drag_moves_a_layer_into_a_group() {
 #[test]
 fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     let mut h = app(1280.0, 800.0, 128);
-    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
-    h.state_mut().state.ui.property_tab = 0;
-    h.run();
     for _ in 0..30 {
         apply(&mut h, Action::NewLayer);
     }
     let top = h.selected_layer().unwrap();
     let name = h.doc().layer(top).unwrap().name().to_owned();
     let before = h.doc().layers().len();
-    let from = rect_of(&h, &name, |_| true);
+    let from = shots::in_group(&h, Tab::Layers, &name).expect("レイヤーの行");
     let start = pos2(from.left() + 90.0, from.center().y);
     press(&h, start, PointerButton::Primary);
     h.step();
@@ -169,7 +162,10 @@ fn a_layer_drag_ends_cleanly_when_its_row_scrolls_out_of_view() {
     h.ui_mut().layer_scroll = 100_000.0;
     h.step();
     h.step();
-    assert!(h.query_by_label(&name).is_none(), "行は一覧の外");
+    assert!(
+        shots::in_group(&h, Tab::Layers, &name).is_none(),
+        "行は一覧の外"
+    );
     assert!(
         h.ui().layer_drag.is_some_and(|d| d.target.is_some()),
         "ボタンを押しているあいだは、落とす先をポインタに追わせる"
@@ -973,9 +969,6 @@ fn channels_are_not_grouped_without_liltoon_parts() {
     use yolu_core::look::LookKind;
     // lilToon でも、どのスロットも読まないユーザーチャンネルだけ
     let mut h = app(1280.0, 1000.0, 256);
-    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
-    h.ui_mut().property_tab = 0;
-    h.run();
     assert_eq!(h.doc().look().kind, LookKind::LilToon);
     apply(
         &mut h,
@@ -987,11 +980,9 @@ fn channels_are_not_grouped_without_liltoon_parts() {
     click_tab(&mut h, Tab::Channels);
     h.run();
     assert!(channel_groups(&h).is_empty());
-    assert!(h.query_by_label("AO").is_some());
+    assert!(shots::in_group(&h, Tab::Channels, "AO").is_some());
     // 見た目が標準（PBR）なら、スロットを読むチャンネルがあってもまとめない
     let mut h = liltoon_channels(Lang::Ja);
-    h.state_mut().state.ui.property_tab = 0;
-    h.run();
     assert!(!channel_groups(&h).is_empty());
     {
         let doc = h.doc_mut();
@@ -1002,7 +993,7 @@ fn channels_are_not_grouped_without_liltoon_parts() {
     h.run();
     assert!(channel_groups(&h).is_empty());
     for name in ["影の強度", "ラメのマスク", "スカラー 1"] {
-        assert!(h.query_by_label(name).is_some(), "{name}");
+        assert!(shots::in_group(&h, Tab::Channels, name).is_some(), "{name}");
     }
 }
 
@@ -1044,9 +1035,6 @@ fn canvas_alpha(h: &Harness<'_, YoluApp>, dx: f32) -> u8 {
 fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
     // （マスクの欄は、マスクに描くあいだ、ツールプロパティのブラシの欄の下に出る。入る高さで）
     let mut h = app(1280.0, 1500.0, 128);
-    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
-    h.state_mut().state.ui.property_tab = 0;
-    h.run();
     {
         let b = h.brush_mut();
         b.radius = 3.0;
@@ -1055,8 +1043,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
     stroke_across(&mut h, 0.0); // レイヤーに長い線
     assert_eq!(canvas_alpha(&h, 0.0), 255);
     assert_eq!(canvas_alpha(&h, 50.0), 255);
-    h.get_by_label("レイヤーマスクを追加").click();
-    h.run();
+    shots::click_in_group(&mut h, Tab::Layers, "レイヤーマスクを追加");
     // マスクに短く描く（塗ると隠す）
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -10.0, 0.0), offset(c, 10.0, 0.0)]);
@@ -1074,20 +1061,18 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
     assert_eq!(canvas_alpha(&h, 0.0), 0, "マスクを塗った所は隠れる");
     assert_eq!(canvas_alpha(&h, 50.0), 255, "ほかは見えたまま");
     // ツールプロパティのマスクの欄の反転・有効
-    h.get_by_label("反転").click();
-    h.run();
+    // （プロパティのレイヤーのタブにも同じ名前の欄がある）
+    shots::click_in_group(&mut h, Tab::ToolProperties, "反転");
     assert_eq!(canvas_alpha(&h, 0.0), 255, "反転すると塗った所だけが見える");
     assert_eq!(canvas_alpha(&h, 50.0), 0);
-    h.get_by_label("有効").click();
-    h.run();
+    shots::click_in_group(&mut h, Tab::ToolProperties, "有効");
     assert_eq!(canvas_alpha(&h, 50.0), 255, "切るとマスクなしと同じ");
     undo(&mut h);
     assert_eq!(canvas_alpha(&h, 50.0), 0, "有効の切り替えは 1 回の取り消し");
     undo(&mut h);
     assert_eq!(canvas_alpha(&h, 0.0), 0, "反転も 1 回の取り消し");
     // マスクを消すと見える
-    h.get_by_label("レイヤーマスクを削除").click();
-    h.run();
+    shots::click_in_group(&mut h, Tab::ToolProperties, "レイヤーマスクを削除");
     assert!(h.doc().layer(id).unwrap().mask().is_none());
     assert_eq!(canvas_alpha(&h, 0.0), 255);
     undo(&mut h);
@@ -1469,20 +1454,17 @@ fn mouse_speed_does_not_depend_on_how_many_events_arrive_per_frame() {
 #[test]
 fn the_two_languages_name_the_panels() {
     let mut h = app(1280.0, 800.0, 128);
-    // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
-    h.state_mut().state.ui.property_tab = 0;
-    h.run();
     assert!(h.query_by_label("新規レイヤー").is_some());
     assert!(h.query_by_label("レイヤーをグループ化").is_some());
     apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
     assert!(h.query_by_label("New Layer").is_some());
     assert!(h.query_by_label("Group Layers").is_some());
-    assert!(h.query_by_label("Add Layer Mask").is_some());
+    assert!(shots::in_group(&h, Tab::Layers, "Add Layer Mask").is_some());
     assert!(h.query_by_label("新規レイヤー").is_none());
     click_tab(&mut h, Tab::Channels);
     h.run();
     assert!(h.query_by_label("Add Channel").is_some());
-    assert!(h.query_by_label("Roughness").is_some());
+    assert!(shots::in_group(&h, Tab::Channels, "Roughness").is_some());
 }
 
 // ───────── 保存（.ylp） ─────────

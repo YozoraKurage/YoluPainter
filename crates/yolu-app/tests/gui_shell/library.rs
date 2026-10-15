@@ -2452,9 +2452,6 @@ mod ui {
     fn user_brushes_are_listed_with_their_names_and_made_current_from_the_library() {
         let dir = Dir::new("ui-brush");
         let mut h = window(&dir);
-        // ステンシルのタブ（レイヤーのタブにも同じ名前の欄・ボタンがあり、名前で探すと重なる）
-        h.ui_mut().property_tab = 0;
-        h.run();
         h.act(Action::Brush(BrushAction::Add));
         h.run();
         let (key, name) = st(&h)
@@ -2485,7 +2482,8 @@ mod ui {
         h.act(Action::Brush(BrushAction::Select(
             yolu_app::brushes::BrushKey::Builtin(yolu_app::brushes::builtin::STANDARD),
         )));
-        h.get_by_label("すべて").click();
+        // アセットの種類の「すべて」（プロパティのレイヤーのタブの「ロック」にも同じ名前がある）
+        crate::shots::click_in_group(&mut h, yolu_app::Tab::Assets, "すべて");
         settle(&mut h);
         wait(&mut h);
         let at = card(&h, &name).center();
