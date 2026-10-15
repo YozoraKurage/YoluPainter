@@ -2,6 +2,7 @@
 //! 3D ビューのハンドル、日英の見た目（説明の文を置かない・英語の画面に日本語を残さない・切れた文字が無い）とスナップショット。
 //! 位置と法線のマップは、試しの立方体を CPU で焼いて文書の効果の入力へ足す（`fillfx_gui` と同じ）。
 use crate::common;
+use crate::common::drive::Drive;
 
 use common::*;
 use egui::{vec2, Pos2, Rect};
@@ -25,11 +26,11 @@ fn quad() -> Vec<u8> {
 }
 
 fn st<'a>(h: &'a Harness<'_, YoluApp>) -> &'a AppState {
-    &h.state().state
+    h.app()
 }
 
 fn apply(h: &mut Harness<'_, YoluApp>, a: Action) {
-    h.state_mut().state.apply(a);
+    h.act(a);
     h.run();
 }
 
@@ -37,22 +38,22 @@ fn apply(h: &mut Harness<'_, YoluApp>, a: Action) {
 fn window(height: f32, lang: Lang) -> Harness<'static, YoluApp> {
     let mut h = app(1280.0, height, 64);
     {
-        let s = &mut h.state_mut().state;
+        let s = h.app_mut();
         s.set_language(lang);
-        s.bake.backend = BakeBackend::Cpu;
-        s.apply(Action::LoadDemoModel);
-        s.bake.settings.maps = vec![MeshMapKind::WorldNormal, MeshMapKind::Position];
-        s.bake.settings.padding = 4;
-        s.apply(Action::Bake(BakeAction::Start));
+        s.bake_mut().backend = BakeBackend::Cpu;
+        s.act(Action::LoadDemoModel);
+        s.bake_mut().settings.maps = vec![MeshMapKind::WorldNormal, MeshMapKind::Position];
+        s.bake_mut().settings.padding = 4;
+        s.act(Action::Bake(BakeAction::Start));
         s.wait_bake();
-        let mut inputs = s.doc.effect_inputs().clone();
+        let mut inputs = s.doc().effect_inputs().clone();
         for kind in [MeshMapKind::Position, MeshMapKind::WorldNormal] {
-            let map = s.sets.current().mesh_maps.get(kind).unwrap().clone();
+            let map = s.sets().current().mesh_maps.get(kind).unwrap().clone();
             inputs = inputs
                 .with_map(MapInput::from_baked(&map, MapState::Current).unwrap())
                 .unwrap();
         }
-        s.doc.set_effect_inputs(inputs).unwrap();
+        s.doc_mut().set_effect_inputs(inputs).unwrap();
     }
     click_tab(&mut h, Tab::View3d);
     click_tab(&mut h, Tab::Assets);
@@ -62,26 +63,21 @@ fn window(height: f32, lang: Lang) -> Harness<'static, YoluApp> {
 }
 
 fn shelf_image(h: &mut Harness<'_, YoluApp>, name: &str) -> ImageId {
-    let lang = st(h).lang;
-    let rid = h
-        .state_mut()
-        .state
-        .shelf
-        .add_image(lang, name, &quad(), 2, 2)
-        .unwrap();
+    let lang = st(h).lang();
+    let rid = h.shelf_mut().add_image(lang, name, &quad(), 2, 2).unwrap();
     h.run();
     inputs::image_id(&rid).unwrap()
 }
 
 /// 選んでいる段の Generator の設定。
 fn stage(h: &Harness<'_, YoluApp>) -> Settings {
-    let (_, effect, _) = st(h).fx.filter(&st(h).doc).unwrap();
+    let (_, effect, _) = st(h).fx().filter(st(h).doc()).unwrap();
     effect.settings().generator_settings().unwrap().clone()
 }
 
 fn add_image_stage(h: &mut Harness<'_, YoluApp>, target: FilterTarget) {
     if target == FilterTarget::Mask {
-        let layer = st(h).selected_layer.unwrap();
+        let layer = st(h).selected_layer().unwrap();
         apply(h, Action::M2(yolu_app::m2::Edit::AddMask(layer)));
     }
     apply(
@@ -118,27 +114,31 @@ fn the_image_is_picked_from_the_list_or_dropped_and_each_change_is_one_undo() {
     let mut h = window(1200.0, Lang::Ja);
     let image = shelf_image(&mut h, "石の模様");
     add_image_stage(&mut h, FilterTarget::Content);
-    let Some(Selected::Filter { layer, id }) = st(&h).fx.selected else {
+    let Some(Selected::Filter { layer, id }) = st(&h).fx().selected else {
         panic!("段を選ぶ")
     };
     assert_eq!(stage(&h).image.image, 0, "足した直後は画像を選んでいない");
     assert_eq!(
-        st(&h).doc.generator_inactive(layer, id).unwrap(),
+        st(&h).doc().generator_inactive(layer, id).unwrap(),
         Some(yolu_core::InactiveReason::Generator(
             yolu_core::generator::Inactive::NoImage
         ))
     );
     // 箱を押すと一覧
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let boxed = image_box(&h, "画像");
     click(&mut h, boxed.center());
-    assert!(st(&h).popup.is_some(), "画像の一覧が開く");
+    assert!(st(&h).popup().is_some(), "画像の一覧が開く");
     let item = popup_item(&h, "石の模様  (2 × 2)");
     click(&mut h, item.center());
-    assert_eq!(stage(&h).image.image, image.0, "{}", st(&h).message);
-    assert_eq!(st(&h).doc.undo_count(), steps + 1);
-    assert_eq!(st(&h).doc.generator_inactive(layer, id).unwrap(), None);
-    assert!(st(&h).message.contains("石の模様"), "{}", st(&h).message);
+    assert_eq!(stage(&h).image.image, image.0, "{}", st(&h).message());
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
+    assert_eq!(st(&h).doc().generator_inactive(layer, id).unwrap(), None);
+    assert!(
+        st(&h).message().contains("石の模様"),
+        "{}",
+        st(&h).message()
+    );
     apply(&mut h, Action::Undo);
     assert_eq!(stage(&h).image.image, 0);
     // アセットの画像をドラッグして箱へ落とす
@@ -153,14 +153,14 @@ fn the_image_is_picked_from_the_list_or_dropped_and_each_change_is_one_undo() {
             target.center(),
         ],
     );
-    assert_eq!(stage(&h).image.image, image.0, "{}", st(&h).message);
-    assert_eq!(st(&h).doc.undo_count(), steps + 1);
+    assert_eq!(stage(&h).image.image, image.0, "{}", st(&h).message());
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
     assert!(!egui::DragAndDrop::has_any_payload(&h.ctx));
     // 箱の名前は画像の名前になり、外すボタンで外れる（入力のまま通す）
     let named = image_box(&h, "石の模様");
     click(&mut h, Pos2::new(named.right() + 14.0, named.center().y));
     assert_eq!(stage(&h).image.image, 0);
-    assert_eq!(st(&h).doc.undo_count(), steps + 2);
+    assert_eq!(st(&h).doc().undo_count(), steps + 2);
     // 取り消すと戻り、もう 1 回で落とす前、もう 1 回で段が無くなる
     apply(&mut h, Action::Undo);
     assert_eq!(stage(&h).image.image, image.0);
@@ -168,7 +168,7 @@ fn the_image_is_picked_from_the_list_or_dropped_and_each_change_is_one_undo() {
     assert_eq!(stage(&h).image.image, 0);
     apply(&mut h, Action::Undo);
     assert!(st(&h)
-        .doc
+        .doc()
         .filters_of(layer, FilterTarget::Content)
         .unwrap()
         .is_empty());
@@ -179,7 +179,7 @@ fn the_projection_list_fits_the_box_to_the_model_and_the_handles_edit_it_in_3d()
     let mut h = window(1600.0, Lang::Ja);
     let image = shelf_image(&mut h, "tile");
     add_image_stage(&mut h, FilterTarget::Mask);
-    let Some(Selected::Filter { layer, id }) = st(&h).fx.selected else {
+    let Some(Selected::Filter { layer, id }) = st(&h).fx().selected else {
         panic!("段を選ぶ")
     };
     apply(
@@ -193,7 +193,7 @@ fn the_projection_list_fits_the_box_to_the_model_and_the_handles_edit_it_in_3d()
     // UV のあいだは置き場の欄もハンドルも無い
     assert!(h.query_all_by_label("3D ビューのハンドル").next().is_none());
     // 投影の種類をトライプラナーへ: 初めのままの置き場はモデルの外形に合わせる（1 回の Undo）
-    let steps = st(&h).doc.undo_count();
+    let steps = st(&h).doc().undo_count();
     let mode = rect_of(&h, "投影: UV", right);
     click(&mut h, mode.center());
     let item = popup_item(&h, "トライプラナー");
@@ -201,16 +201,16 @@ fn the_projection_list_fits_the_box_to_the_model_and_the_handles_edit_it_in_3d()
     let g = stage(&h);
     assert_eq!(g.image.projection.mode, ProjectionMode::Triplanar);
     assert_ne!(g.image.projection.placement, Placement::default());
-    assert_eq!(st(&h).doc.undo_count(), steps + 1);
+    assert_eq!(st(&h).doc().undo_count(), steps + 1);
     // デカールは一覧に無い
     let mode = rect_of(&h, "投影: トライプラナー", right);
     click(&mut h, mode.center());
-    let body = st(&h).popup.as_ref().expect("一覧が開く").state.rect;
+    let body = st(&h).popup().as_ref().expect("一覧が開く").state.rect;
     assert!(popup_item(&h, "円柱").is_positive());
     assert!(!h
         .query_all_by_label("デカール")
         .any(|n| body.contains_rect(n.rect())));
-    h.state_mut().state.popup = None;
+    *h.popup_mut() = None;
     h.run();
     // 成分（マスクの段なので出る）
     let component = rect_of(&h, "成分: 輝度", right);
@@ -218,20 +218,20 @@ fn the_projection_list_fits_the_box_to_the_model_and_the_handles_edit_it_in_3d()
     let item = popup_item(&h, "アルファ");
     click(&mut h, item.center());
     assert_eq!(stage(&h).image.component, ImageComponent::Alpha);
-    assert_eq!(st(&h).doc.undo_count(), steps + 2);
+    assert_eq!(st(&h).doc().undo_count(), steps + 2);
     // 3D ビューのハンドルを出すと、ギズモはこの段の置き場
     h.get_by_label("3D ビューのハンドル").click();
     h.run();
-    assert_eq!(st(&h).fillfx.edit_filter, Some((layer, id)));
+    assert_eq!(st(&h).fillfx().edit_filter, Some((layer, id)));
     assert_eq!(
         gizmo::target(st(&h)),
         Some(gizmo::Target::Filter(layer, id))
     );
     h.get_by_label("3D ビューのハンドル").click();
     h.run();
-    assert_eq!(st(&h).fillfx.edit_filter, None);
+    assert_eq!(st(&h).fillfx().edit_filter, None);
     assert_eq!(
-        st(&h).doc.undo_count(),
+        st(&h).doc().undo_count(),
         steps + 2,
         "ハンドルの出し入れは履歴に入らない"
     );
@@ -260,7 +260,7 @@ fn a_colour_stage_has_no_component_or_range_and_a_mask_stage_has_both() {
         }
         // 色の段でも、スカラーのチャンネルを足すと成分が出る
         if target == FilterTarget::Content {
-            let Some(Selected::Filter { layer, id }) = st(&h).fx.selected else {
+            let Some(Selected::Filter { layer, id }) = st(&h).fx().selected else {
                 panic!("段を選ぶ")
             };
             apply(
@@ -312,7 +312,7 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
             let mut h = window(1600.0, lang);
             let image = shelf_image(&mut h, "tile");
             add_image_stage(&mut h, target);
-            let Some(Selected::Filter { layer, id }) = st(&h).fx.selected else {
+            let Some(Selected::Filter { layer, id }) = st(&h).fx().selected else {
                 panic!("段を選ぶ")
             };
             apply(
@@ -339,7 +339,7 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
                     }),
                 );
             }
-            h.state_mut().state.message.clear();
+            h.message_mut().clear();
             h.run();
             let texts = right_texts(&h);
             assert!(
@@ -354,7 +354,7 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
                 }
             }
             // 棚の素材の絵は別のスレッドで作る。できるまで待ってから撮る
-            h.state_mut().state.shelf.wait_inspections();
+            h.shelf_mut().wait_inspections();
             h.run();
             // 英語の絵は撮らない（欄の並びは文字の長さで変わらない。英語の画面に日本語が残らないことは上で確かめる）
             if lang == Lang::Ja {
@@ -363,7 +363,7 @@ fn snapshot_the_image_stage_panel_in_both_languages() {
             }
             // マスクの段は欄が長いので、下の半分も
             if target == FilterTarget::Mask {
-                h.state_mut().state.m2.props_scroll = 600.0;
+                h.m2_mut().props_scroll = 600.0;
                 h.run();
                 for text in right_texts(&h) {
                     assert_plain(&format!("{lang:?} {name} 下"), &text);

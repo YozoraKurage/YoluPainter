@@ -7,6 +7,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+use common::drive::Drive;
 use egui::{pos2, Rect};
 use egui_kittest::Harness;
 use yolu_app::{Tab, YoluApp};
@@ -69,7 +70,7 @@ pub fn toast_area(h: &Harness<'_, YoluApp>) -> Rect {
 
 /// `base` に、開いているポップアップ（入れ子のメニューを含む）の範囲を足して、周りに 8 点の余白をつけた範囲。
 pub fn with_popup(h: &Harness<'_, YoluApp>, base: Rect) -> Rect {
-    match h.state().state.popup.as_ref() {
+    match h.popup().as_ref() {
         Some(popup) => base.union(popup.state.rect).expand(8.0),
         None => base,
     }

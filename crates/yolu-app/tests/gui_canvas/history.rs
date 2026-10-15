@@ -1,4 +1,5 @@
 use crate::common;
+use crate::common::drive::Drive;
 use egui_kittest::{
     kittest::{NodeT, Queryable},
     Harness,
@@ -16,8 +17,8 @@ use yolu_app::{
 fn rows_move_back_and_forward_in_both_languages() {
     for lang in [Lang::Ja, Lang::En] {
         let mut app = AppState::new_in(16, 16, lang);
-        let id = app.doc.add_layer("private layer name").unwrap();
-        app.doc.set_layer_opacity(id, 0.4, false).unwrap();
+        let id = app.doc_mut().add_layer("private layer name").unwrap();
+        app.doc_mut().set_layer_opacity(id, 0.4, false).unwrap();
         let mut h = common::gpu_thread::builder().build_ui_state(show, app);
         h.run();
         let earlier = h.get_by_label(title(HistoryKind::AddLayer, lang));
@@ -54,25 +55,28 @@ fn rows_move_back_and_forward_in_both_languages() {
 #[test]
 fn stroke_and_read_only_set_refuse_history_navigation() {
     let mut app = AppState::new(16, 16);
-    let id = app.doc.add_layer("a").unwrap();
-    let s = app.doc.begin_stroke(id, &BrushSettings::default()).unwrap();
+    let id = app.doc_mut().add_layer("a").unwrap();
+    let s = app
+        .doc_mut()
+        .begin_stroke(id, &BrushSettings::default())
+        .unwrap();
     go_to(&mut app, 0);
-    assert_eq!(app.doc.undo_count(), 1);
-    app.doc.cancel_stroke(s);
-    app.sets.get_mut(0).unwrap().read_only = Some("test".into());
+    assert_eq!(app.doc().undo_count(), 1);
+    app.doc_mut().cancel_stroke(s);
+    app.sets_mut().get_mut(0).unwrap().read_only = Some("test".into());
     go_to(&mut app, 0);
-    assert_eq!(app.doc.undo_count(), 1);
-    assert!(!app.modified);
+    assert_eq!(app.doc().undo_count(), 1);
+    assert!(!app.modified());
 }
 
 #[test]
 fn switching_sets_uses_each_documents_history() {
     let mut app = AppState::new(16, 16);
-    app.doc.add_layer("a").unwrap();
+    app.doc_mut().add_layer("a").unwrap();
     let mut second = Document::new(16, 16).unwrap();
     let id = second.add_layer("b").unwrap();
     second.set_layer_opacity(id, 0.5, false).unwrap();
-    let index = app.sets.push(
+    let index = app.sets_mut().push(
         "second".into(),
         "second".into(),
         false,
@@ -82,19 +86,19 @@ fn switching_sets_uses_each_documents_history() {
     );
     app.switch_set(index).unwrap();
     assert_eq!(
-        app.doc.history().collect::<Vec<_>>(),
+        app.doc().history().collect::<Vec<_>>(),
         vec![HistoryKind::AddLayer, HistoryKind::LayerProperties]
     );
     go_to(&mut app, 0);
     app.switch_set(0).unwrap();
     assert_eq!(
-        app.doc.history().collect::<Vec<_>>(),
+        app.doc().history().collect::<Vec<_>>(),
         vec![HistoryKind::AddLayer]
     );
-    assert_eq!(app.doc.undo_count(), 1);
+    assert_eq!(app.doc().undo_count(), 1);
     app.switch_set(index).unwrap();
-    assert_eq!(app.doc.undo_count(), 0);
-    assert_eq!(app.doc.redo_count(), 2);
+    assert_eq!(app.doc().undo_count(), 0);
+    assert_eq!(app.doc().redo_count(), 2);
 }
 
 #[test]
@@ -105,10 +109,10 @@ fn tab_is_available_and_invalid_position_is_ignored() {
         .find_tab(&Tab::History)
         .is_some());
     let mut app = AppState::new(16, 16);
-    app.doc.add_layer("a").unwrap();
+    app.doc_mut().add_layer("a").unwrap();
     go_to(&mut app, 2);
-    assert_eq!(app.doc.undo_count(), 1);
-    assert!(!app.modified);
+    assert_eq!(app.doc().undo_count(), 1);
+    assert!(!app.modified());
 }
 
 #[test]
@@ -131,8 +135,11 @@ fn empty_and_evicted_history_do_not_show_discarded_steps() {
 #[test]
 fn history_rows_are_disabled_during_a_stroke() {
     let mut app = AppState::new(16, 16);
-    let id = app.doc.add_layer("a").unwrap();
-    let s = app.doc.begin_stroke(id, &BrushSettings::default()).unwrap();
+    let id = app.doc_mut().add_layer("a").unwrap();
+    let s = app
+        .doc_mut()
+        .begin_stroke(id, &BrushSettings::default())
+        .unwrap();
     let mut h = common::gpu_thread::builder().build_ui_state(show, app);
     h.run();
     assert!(h.get_by_label("開始位置").accesskit_node().is_disabled());
@@ -148,20 +155,20 @@ fn history_rows_are_disabled_during_a_stroke() {
 #[test]
 fn long_history_only_builds_visible_rows_and_keeps_absolute_positions() {
     let mut app = AppState::new_in(16, 16, Lang::En);
-    let base = app.doc.layers()[0].id();
+    let base = app.doc().layers()[0].id();
     for i in 0..5_000 {
-        app.doc
+        app.doc_mut()
             .set_layer_opacity(base, if i % 2 == 0 { 0.3 } else { 0.7 }, false)
             .unwrap();
     }
-    let marker = app.doc.add_layer("marker").unwrap();
+    let marker = app.doc_mut().add_layer("marker").unwrap();
     for i in 0..5_000 {
-        app.doc
+        app.doc_mut()
             .set_layer_opacity(base, if i % 2 == 0 { 0.3 } else { 0.7 }, false)
             .unwrap();
     }
-    app.doc.remove_layer(marker).unwrap();
-    assert_eq!(app.doc.undo_count(), 10_002);
+    app.doc_mut().remove_layer(marker).unwrap();
+    assert_eq!(app.doc().undo_count(), 10_002);
     let mut h = common::gpu_thread::builder()
         .with_size(egui::vec2(300.0, 240.0))
         .with_max_steps(120)
