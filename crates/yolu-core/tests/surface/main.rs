@@ -16,6 +16,7 @@ mod material;
 mod mesh_maps;
 mod min_pixel;
 mod overlap_priority;
+mod spray;
 mod stencil;
 mod surface_ortho;
 mod surface_path_rebind;

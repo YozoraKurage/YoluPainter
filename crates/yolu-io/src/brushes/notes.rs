@@ -257,6 +257,9 @@ pub enum SutTarget {
     ColorSaturation,
     ColorValue,
     ColorSubMix,
+    /// 散布効果の粒子サイズ・粒子密度。
+    SpraySize,
+    SprayDensity,
 }
 
 impl SutTarget {
@@ -273,6 +276,8 @@ impl SutTarget {
             Self::ColorSaturation => ("彩度の変化", "saturation change"),
             Self::ColorValue => ("明度の変化", "value change"),
             Self::ColorSubMix => ("サブ描画色混合率", "secondary color mix"),
+            Self::SpraySize => ("粒子サイズ", "particle size"),
+            Self::SprayDensity => ("粒子密度", "particle density"),
         }
     }
 
@@ -281,7 +286,7 @@ impl SutTarget {
         self,
         influences: &mut yolu_core::Influences,
     ) -> &mut yolu_core::Influence {
-        use yolu_core::brush::{ColorItem, Item};
+        use yolu_core::brush::{ColorItem, Item, SprayItem};
         let item = match self {
             Self::Size => Item::Size,
             Self::Opacity => Item::Opacity,
@@ -294,6 +299,8 @@ impl SutTarget {
             Self::ColorSaturation => return influences.color_mut(ColorItem::Saturation),
             Self::ColorValue => return influences.color_mut(ColorItem::Value),
             Self::ColorSubMix => return influences.color_mut(ColorItem::SubMix),
+            Self::SpraySize => return influences.spray_mut(SprayItem::Size),
+            Self::SprayDensity => return influences.spray_mut(SprayItem::Density),
         };
         influences.get_mut(item)
     }
@@ -415,6 +422,8 @@ pub enum SutMapped {
     TextureTone,
     /// 色の変化（先端の色相・彩度・明度・サブ描画色混合率・ストロークごとの変化・変化対象）。
     ColorChange,
+    /// 散布効果（粒子サイズ・連動・粒子密度・散布偏向・粒子の向き）。
+    Spray,
 }
 
 impl SutMapped {
@@ -445,6 +454,7 @@ impl SutMapped {
                 "texture brightness and contrast",
             ),
             Self::ColorChange => ("色の変化", "color change"),
+            Self::Spray => ("散布効果", "spraying effect"),
         }
     }
 }
@@ -458,6 +468,17 @@ pub enum ColorNote {
     MotionInfluence,
     /// 先端とストロークごとの色相の変化を両方使う（足し算で当てる。足し算に上限があるかは確かめていない）。
     HueSum,
+}
+
+/// 散布効果の、近い動きの知らせの種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SprayNote {
+    /// 粒子密度から描点ごとの粒子の数への換算（確かめていない。近い動き）。
+    Density,
+    /// 散布偏向の式（中心への寄り方を確かめていない。近い動き）。
+    Bias,
+    /// 粒子の向きの影響元のうち、ランダムでないビットが立っている（ビットの割り当てが分からないので、向きは足さない）。
+    Direction,
 }
 
 /// CLIP STUDIO の `.sut` の設定のうち、読めなかった・表せない・近似したもの。
@@ -515,7 +536,7 @@ pub enum SutNote {
         density: f64,
         stretch: f64,
     },
-    /// 吹き付け効果。
+    /// 散布効果を写せなかった（粒子サイズ・粒子密度の値が無い・粒子サイズの単位が画素でない）。
     Spray,
     DualBrush,
     /// 入り抜き（指定方法がパーセント・フェード、長さの単位が画素でない、影響先の列が読めない、読めない長さ）。写さなかった。
@@ -529,6 +550,8 @@ pub enum SutNote {
     ColorChange,
     /// 色の変化の、近い動き・当たらない設定の知らせ。
     ColorApprox(ColorNote),
+    /// 散布効果の、近い動きの知らせ。
+    SprayApprox(SprayNote),
     /// 合成モード。
     BlendMode,
     /// 影響元設定の入力（速さ・ランダム）の曲線は読めず、直線にした。
@@ -621,6 +644,29 @@ impl SutNote {
         }
     }
 
+    /// 散布効果の知らせの文。
+    fn spray_texts(&self) -> (String, String) {
+        match self {
+            Self::Spray => (
+                "散布効果は、粒子サイズ・粒子密度の値が無いか、粒子密度が 1 未満か、粒子サイズの単位が画素でないため、写していない".into(),
+                "The spraying effect is not carried over: the particle size or density is missing, the density is below 1, or the particle size unit is not pixels.".into(),
+            ),
+            Self::SprayApprox(SprayNote::Density) => (
+                "散布効果の粒子密度は、描点ごとの粒子の数へ近い換算で写した（近い動き）".into(),
+                "The particle density of the spraying effect is converted to a number of particles per dab with a close estimate (a close behavior).".into(),
+            ),
+            Self::SprayApprox(SprayNote::Bias) => (
+                "散布効果の散布偏向は、中心への寄り方を近い式で写した（近い動き）".into(),
+                "The spray deviation is carried over with a close formula for how particles gather to the center (a close behavior).".into(),
+            ),
+            Self::SprayApprox(SprayNote::Direction) => (
+                "散布効果の粒子の向きの影響元は、知らない旗か複数の向きがあるため、向きは足していない".into(),
+                "The particle direction source of the spraying effect has an unknown flag or several directions; no direction is added.".into(),
+            ),
+            _ => unreachable!("散布効果の知らせだけがここへ来る"),
+        }
+    }
+
     fn texts(&self) -> (String, String) {
         match self {
             Self::PreviewImage => (
@@ -689,7 +735,7 @@ impl SutNote {
                 format!("色の混ぜは未対応（絵の具量 {paint}・絵の具濃度 {density}・色延び {stretch}）"),
                 format!("Color mixing is not supported (amount of paint {paint}, density of paint {density}, color stretch {stretch})."),
             ),
-            Self::Spray => ("吹き付け効果は未対応".into(), "The spray effect is not supported.".into()),
+            Self::Spray | Self::SprayApprox(_) => self.spray_texts(),
             Self::DualBrush => ("デュアルブラシは未対応".into(), "Dual brush is not supported.".into()),
             Self::StartEnd => (
                 "入り抜き（パーセント指定・フェード・画素以外の長さの単位・読めない影響先）は未対応".into(),

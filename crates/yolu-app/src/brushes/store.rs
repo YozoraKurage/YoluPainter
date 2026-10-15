@@ -39,6 +39,7 @@ use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
 use yolu_core::generator::CurvePoint;
 use yolu_core::BrushTip;
+use yolu_core::{Spray, SprayDirection, SprayItem};
 use yolu_io::brushes::bundled;
 
 pub const HEADER: &str = "yolupainter-brush 1";
@@ -339,6 +340,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     write_color_and_controls(&mut w, &b, v7);
     if v8 {
         write_color_change(&mut w, &b);
+        write_spray(&mut w, &b);
     }
     if v7 {
         write_influences(&mut w, &b);
@@ -544,7 +546,31 @@ fn write_color_change(w: &mut Writer, b: &Brush) {
     }
 }
 
-/// 影響元（バージョン 7。使わない入力・既定の最小値と曲線は書かない。色の項目はバージョン 8）。
+/// 散布効果（バージョン 8。`spray.*`。無いブラシは書かない。粒子サイズと粒子密度はいつも書き、ほかは既定（切・0・なし）なら書かない）。
+fn write_spray(w: &mut Writer, b: &Brush) {
+    let Some(s) = &b.spray else {
+        return;
+    };
+    w.single("spray.size", s.size);
+    if s.link_size {
+        w.bool("spray.link_size", true);
+    }
+    w.single("spray.density", s.density);
+    if s.bias != 0.0 {
+        w.single("spray.bias", s.bias);
+    }
+    if s.angle != 0.0 {
+        w.single("spray.angle", s.angle);
+    }
+    if s.direction != SprayDirection::None {
+        w.line("spray.direction", s.direction.id());
+    }
+    if let Some(r) = s.random_angle {
+        w.single("spray.random_angle", r);
+    }
+}
+
+/// 影響元（バージョン 7。使わない入力・既定の最小値と曲線は書かない。色と散布の項目はバージョン 8）。
 fn write_influences(w: &mut Writer, b: &Brush) {
     let item_keys = Item::ALL
         .into_iter()
@@ -553,6 +579,11 @@ fn write_influences(w: &mut Writer, b: &Brush) {
             ColorItem::ALL
                 .into_iter()
                 .map(|i| (i.id(), b.influences.color(i))),
+        )
+        .chain(
+            SprayItem::ALL
+                .into_iter()
+                .map(|i| (i.id(), b.influences.spray(i))),
         );
     for (id, influence) in item_keys {
         for input in Input::ALL {
@@ -752,6 +783,15 @@ fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
     assist.is_some_and(|a| !a.taper_targets.is_default())
         || uses_tip_rules(b)
         || uses_color_change(b)
+        || uses_spray(b)
+}
+
+/// 散布効果（と、散布の項目の影響元）を使うか。
+fn uses_spray(b: &Brush) -> bool {
+    b.spray.is_some()
+        || SprayItem::ALL
+            .into_iter()
+            .any(|i| !b.influences.spray(i).is_default())
 }
 
 /// 色の変化（先端・サブ描画色混合率・ストロークごと・変化対象と、色の項目の影響元）を使うか。
@@ -925,6 +965,7 @@ pub fn decode_user(
     // 色の変化はバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
     if version >= 8 {
         read_color_change(&mut r, &mut b)?;
+        read_spray(&mut r, &mut b)?;
     }
     // 筆圧の応えは版 2〜6 の項目（版 1・7 のファイルにあれば、知らない項目として断る）
     if (2..=6).contains(&version) {
@@ -1213,7 +1254,54 @@ fn read_influences(r: &mut Reader, b: &mut Brush, version: u32) -> Result<(), St
                 *b.influences.color_mut(item).input_mut(input) = InputUse { on, response };
             }
         }
+        for item in SprayItem::ALL {
+            for input in Input::ALL {
+                let key = format!("influence.{}.{}", item.id(), input.id());
+                let on = r.bool(&format!("{key}.on"), false)?;
+                let response = read_response(r, &key, false)?;
+                *b.influences.spray_mut(item).input_mut(input) = InputUse { on, response };
+            }
+        }
     }
+    Ok(())
+}
+
+/// 散布効果（`spray.*`）を読む。鍵が 1 つでもあれば持ち、無い値は既定（粒子サイズ・粒子密度は [`Spray::default`]）。範囲は core の検査に任せる。
+fn read_spray(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    const KEYS: [&str; 7] = [
+        "spray.size",
+        "spray.link_size",
+        "spray.density",
+        "spray.bias",
+        "spray.angle",
+        "spray.direction",
+        "spray.random_angle",
+    ];
+    if !KEYS.iter().any(|k| r.map.contains_key(*k)) {
+        return Ok(());
+    }
+    let d = Spray::default();
+    let direction = match r.take("spray.direction") {
+        None => SprayDirection::None,
+        Some(id) => SprayDirection::ALL
+            .into_iter()
+            .find(|v| v.id() == id)
+            .ok_or(StoreError::BadValue("spray.direction".into()))?,
+    };
+    let random_angle = if r.map.contains_key("spray.random_angle") {
+        Some(r.single("spray.random_angle", 0.0)?)
+    } else {
+        None
+    };
+    b.spray = Some(Spray {
+        size: r.single("spray.size", d.size)?,
+        link_size: r.bool("spray.link_size", false)?,
+        density: r.single("spray.density", d.density)?,
+        bias: r.single("spray.bias", 0.0)?,
+        angle: r.single("spray.angle", 0.0)?,
+        direction,
+        random_angle,
+    });
     Ok(())
 }
 
@@ -3744,6 +3832,183 @@ mod tests {
         ));
         assert!(matches!(
             decode(&format!("{t}color.tip.hue=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    fn spray_brush() -> Brush {
+        let mut b = Brush {
+            spray: Some(Spray {
+                size: 12.5,
+                link_size: true,
+                density: 7.0,
+                bias: -0.5,
+                angle: 30.0,
+                direction: SprayDirection::Center,
+                random_angle: Some(0.25),
+            }),
+            ..Brush::default()
+        };
+        b.influences.spray_size.random = InputUse {
+            on: true,
+            response: InputResponse::new(0.25, vec![]).unwrap(),
+        };
+        b.influences.spray_density.pressure = InputUse::STRAIGHT;
+        b
+    }
+
+    #[test]
+    fn a_brush_with_a_spray_is_version_eight_and_round_trips() {
+        let b = spray_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "spray.size=12.5",
+            "spray.link_size=1",
+            "spray.density=7",
+            "spray.bias=-0.5",
+            "spray.angle=30",
+            "spray.direction=center",
+            "spray.random_angle=0.25",
+            "influence.spray_size.random.on=1",
+            "influence.spray_size.random.min=0.25",
+            "influence.spray_density.pressure.on=1",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 既定の値（連動・偏向・向き・ランダムが無い）は書かない
+        let plain = Brush {
+            spray: Some(Spray::default()),
+            ..Brush::default()
+        };
+        let t = text(&user(1, plain.clone()));
+        let spray_lines: Vec<&str> = t.lines().filter(|l| l.starts_with("spray.")).collect();
+        assert_eq!(spray_lines, ["spray.size=10", "spray.density=5"], "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&plain));
+        // 影響元だけでもバージョン 8
+        let mut only_influence = Brush::default();
+        only_influence.influences.spray_density.random = InputUse::STRAIGHT;
+        let t = text(&user(1, only_influence.clone()));
+        assert!(
+            t.starts_with("yolupainter-brush 8\n") && !t.contains("spray."),
+            "{t}"
+        );
+        assert_eq!(decode(&t).unwrap().2, canonical(&only_influence));
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let odd = Brush {
+            spray: Some(Spray {
+                size: 3.123_456_789_012,
+                bias: 0.123_456_789_012,
+                ..Spray::default()
+            }),
+            ..Brush::default()
+        };
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(d.spray.unwrap().size, 3.123_456_789_012f64 as f32 as f64);
+        assert_eq!(d, canonical(&odd));
+    }
+
+    #[test]
+    fn brushes_without_a_spray_keep_their_version_and_their_bytes() {
+        for (what, b, version) in [
+            ("既定", Brush::default(), "1"),
+            ("影響元", influence_brush(), "7"),
+            ("色の変化", color_change_brush(), "8"),
+        ] {
+            let t = text(&user(1, b));
+            assert!(
+                t.starts_with(&format!("yolupainter-brush {version}\n")),
+                "{what}: {t}"
+            );
+            assert!(!t.contains("spray"), "{what}: {t}");
+        }
+        for (what, file) in [
+            ("v1", include_str!("../../tests/ylbrush_files/v1.ylbrush")),
+            ("v6", include_str!("../../tests/ylbrush_files/v6.ylbrush")),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            assert!(d.brush.spray.is_none(), "{what}");
+            let again = encode(&UserBrush {
+                id: 1,
+                name: d.name.clone(),
+                group: d.group,
+                brush: d.brush.clone(),
+                import: d.import.clone(),
+                assist: d.assist,
+            })
+            .unwrap()
+            .text;
+            assert_eq!(again, file, "{what}");
+        }
+    }
+
+    #[test]
+    fn the_spray_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, spray_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            assert!(
+                matches!(&err, StoreError::UnknownKey(_) | StoreError::BadValue(_)),
+                "バージョン {old}: {err:?}"
+            );
+        }
+        let mut only_influence = Brush::default();
+        only_influence.influences.spray_size.pressure = InputUse::STRAIGHT;
+        let as_seven = text(&user(1, only_influence)).replacen(
+            "yolupainter-brush 8",
+            "yolupainter-brush 7",
+            1,
+        );
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "influence.spray_size.pressure.on"
+        ));
+        // バージョン 8 のファイルの中の読めない値・範囲の外
+        for (from, to) in [
+            ("spray.direction=center", "spray.direction=left"),
+            ("spray.size=12.5", "spray.size=NaN"),
+            ("spray.link_size=1", "spray.link_size=2"),
+            ("spray.density=7", "spray.density=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("spray.size=12.5", "spray.size=0"),
+            ("spray.size=12.5", "spray.size=10001"),
+            ("spray.density=7", "spray.density=0.5"),
+            ("spray.bias=-0.5", "spray.bias=-1.5"),
+            ("spray.angle=30", "spray.angle=361"),
+            ("spray.random_angle=0.25", "spray.random_angle=2"),
+            (
+                "influence.spray_size.random.min=0.25",
+                "influence.spray_size.random.min=-0.25",
+            ),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}spray.size=1\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
     }

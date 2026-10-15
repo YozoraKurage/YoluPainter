@@ -90,6 +90,7 @@ pub use brush::{
     StencilTiling, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode, TipColorChange,
     TipSelection, TipShape,
 };
+pub use brush::{Spray, SprayDirection, SprayItem, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
 pub use document::{
     clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,
     CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport,

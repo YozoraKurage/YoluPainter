@@ -65,6 +65,7 @@ pub mod random;
 mod rows;
 mod settings;
 mod sources;
+mod spray;
 mod stencil;
 mod symmetric;
 mod tip;
@@ -81,7 +82,7 @@ pub use edge::AntiAlias;
 pub(crate) use edge::{Edge, TexelMetric};
 pub use influence::{
     ColorItem, Influence, Influences, Input, InputResponse, InputUse, Item, PressureSwitches,
-    MAX_CURVE_POINTS, STRAIGHT,
+    SprayItem, MAX_CURVE_POINTS, STRAIGHT,
 };
 pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
 pub use mix::{ColorMix, MixGround, MixMode};
@@ -94,6 +95,8 @@ pub use settings::{
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};
+pub use spray::{Spray, SprayDirection, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
+pub(crate) use spray::{SprayFrame, SprayRun};
 pub use stencil::{
     linear_to_srgb, luminance, BrushStencil, ImageColorSpace, StencilImage, StencilMapping,
     StencilMode, StencilPoint, StencilSample, StencilTexel, StencilTiling,
@@ -973,23 +976,28 @@ impl StrokeState {
         let size_factor = brush.assist.taper_item(Item::Size, taper).unwrap_or(1.0);
         let s = &brush.base;
         let mut any = false;
-        for _ in 0..brush.jitter.count {
+        let min_radius = if brush.controls.min_one_pixel {
+            MIN_ONE_PIXEL_RADIUS
+        } else {
+            0.0
+        };
+        let frame = SprayFrame::document(s.radius, min_radius);
+        for _ in 0..self.tips.spray.count(&brush, &c) {
             if self.tip_colors {
                 self.dab_color = self.next_dab_color(&c.color);
             }
-            let Some(plan) = brush.next_dab(
-                &c,
-                &dab,
-                s.radius * c.size_pressure * size_factor,
-                if brush.controls.min_one_pixel {
-                    MIN_ONE_PIXEL_RADIUS
-                } else {
-                    0.0
-                },
-                s.radius,
-                &mut self.random,
-                &mut self.tips,
-            ) else {
+            let Some(plan) = brush
+                .next_dab(
+                    &c,
+                    &dab,
+                    s.radius * c.size_pressure * size_factor,
+                    min_radius,
+                    s.radius,
+                    &mut self.random,
+                    &mut self.tips,
+                )
+                .and_then(|p| self.tips.spray.place(&brush, &c, &dab, p, frame))
+            else {
                 continue;
             };
             let shape = brush.dab_shape(&plan, &c).with_edge(s.anti_alias);

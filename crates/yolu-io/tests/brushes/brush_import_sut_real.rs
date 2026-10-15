@@ -12,7 +12,7 @@ fn summary(b: &ImportedBrush) -> String {
     format!(
         "r={:.1} op={:.2} fl={:.2} hd={:.2} sp={:.2} rn={:.2} ang={:.1} tips={} tex={} \
          prs={}{}{} tilt={}{}{} jit_ang={:.2} taper={:.0}/{:.0} stab={:.0} \
-         clr=tip{}/sub{:.2}/stroke{}/{} clr_inf={}{}{}{} | notes: {}",
+         clr=tip{}/sub{:.2}/stroke{}/{} clr_inf={}{}{}{} spray={} spray_inf={}{} | notes: {}",
         s.radius,
         s.opacity,
         s.flow,
@@ -40,6 +40,18 @@ fn summary(b: &ImportedBrush) -> String {
         u8::from(br.influences.color_saturation.is_on()),
         u8::from(br.influences.color_value.is_on()),
         u8::from(br.influences.color_sub_mix.is_on()),
+        br.spray.map_or("-".to_string(), |p| format!(
+            "{:.1}/{}/{:.0}/{:.2}/{:.1}/{}",
+            p.size,
+            u8::from(p.link_size),
+            p.density,
+            p.bias,
+            p.angle,
+            p.random_angle
+                .map_or("-".to_string(), |r| format!("{r:.2}"))
+        )),
+        u8::from(br.influences.spray_size.is_on()),
+        u8::from(br.influences.spray_density.is_on()),
         notes.join(", ")
     )
 }

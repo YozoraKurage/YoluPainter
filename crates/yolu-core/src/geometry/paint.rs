@@ -73,8 +73,8 @@ use crate::brush::profile;
 use crate::brush::random::NetRandom;
 use crate::brush::{
     combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, Input,
-    InputResponse, Item, PendingDab, ShapeCoverage, StampControls, SurfaceDabLook, TexelMetric,
-    TipRun, DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
+    InputResponse, Item, PendingDab, ShapeCoverage, SprayFrame, StampControls, SurfaceDabLook,
+    TexelMetric, TipRun, DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
@@ -1026,26 +1026,35 @@ impl SurfaceStroke {
         let nominal = dab.scale.map_or(0.0, |s| (s * self.world_radius) as f64);
         // 最低 1 ピクセル: 塗るときの半径は world_radius × 筆圧の大きさ × plan.radius で、world_radius はブラシの半径（文書の画素）の換算
         // なので、plan.radius の下限は、文書の画素で半径 0.5 になる値（筆圧の大きさは塗るときに掛かる値と同じ）
+        let pressure = if self.pressure_size {
+            fmax(0.001, self.size_pressure(dab.pressure)) as f64
+        } else {
+            1.0
+        };
         let min_radius = if brush.controls.min_one_pixel {
-            let pressure = if self.pressure_size {
-                fmax(0.001, self.size_pressure(dab.pressure)) as f64
-            } else {
-                1.0
-            };
             MIN_ONE_PIXEL_RADIUS / (self.radius_px * pressure)
         } else {
             0.0
         };
-        for _ in 0..brush.jitter.count {
-            let plan = brush.next_dab(
-                &controls,
-                &pending,
-                factor,
-                min_radius,
-                nominal,
-                &mut self.random,
-                &mut self.tips,
-            );
+        // 散布の粒子: 位置は画面の点、大きさは塗るときの半径（world_radius × 筆圧の大きさ）に掛ける係数の枠
+        let frame = SprayFrame {
+            reach: nominal * pressure,
+            ratio: pressure,
+            radius: 1.0 / (self.radius_px * pressure),
+            min_radius,
+        };
+        for _ in 0..self.tips.spray.count(&brush, &controls) {
+            let plan = brush
+                .next_dab(
+                    &controls,
+                    &pending,
+                    factor,
+                    min_radius,
+                    nominal,
+                    &mut self.random,
+                    &mut self.tips,
+                )
+                .and_then(|p| self.tips.spray.place(&brush, &controls, &pending, p, frame));
             stroke.begin_surface_dab(
                 doc,
                 plan.as_ref().map(|p| SurfaceDabLook {

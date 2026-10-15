@@ -220,6 +220,15 @@ pub fn canonical(brush: &Brush) -> Brush {
         stencil: None,
         symmetry: CanvasSymmetry::default(),
         model_symmetry: None,
+        // 散布効果は保存と同じ f32 の精度に丸める
+        spray: brush.spray.map(|s| yolu_core::Spray {
+            size: f(s.size),
+            density: f(s.density),
+            bias: f(s.bias),
+            angle: f(s.angle),
+            random_angle: s.random_angle.map(f),
+            ..s
+        }),
         ..brush.clone()
     }
 }

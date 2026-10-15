@@ -292,6 +292,28 @@ impl ColorItem {
     }
 }
 
+/// 散布効果の影響元を持つ項目（[`Item`] とは別の並び。ランダムの乱数は散布の列から引く: 密度は描点ごと、粒子サイズは粒子ごと）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SprayItem {
+    /// 粒子サイズ。
+    Size,
+    /// 粒子密度。
+    Density,
+}
+
+impl SprayItem {
+    /// すべての散布の項目（並びは保存の順）。
+    pub const ALL: [SprayItem; 2] = [SprayItem::Size, SprayItem::Density];
+
+    /// 保存に使う名前。
+    pub fn id(self) -> &'static str {
+        match self {
+            SprayItem::Size => "spray_size",
+            SprayItem::Density => "spray_density",
+        }
+    }
+}
+
 /// 1 つの項目の 1 つの入力: 使うかと、その応え。切っても応え（最小値と曲線）は残す。
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct InputUse {
@@ -455,6 +477,9 @@ pub struct Influences {
     pub color_saturation: Influence,
     pub color_value: Influence,
     pub color_sub_mix: Influence,
+    /// 散布効果の影響元（[`SprayItem`]。粒子サイズ・粒子密度）。値 = [`super::Spray`] の値 × 使っている入力の係数の積（最小値は 0〜1）。
+    pub spray_size: Influence,
+    pub spray_density: Influence,
     /// 速度の効きが一杯になる速さ（画素 / 時刻の単位。秒なら画素毎秒）。0 より大きい。速さは手ぶれ補正の後の筆の点の間の距離 ÷ 時刻の差で、
     /// 点の間は線形に補間する。時刻が進まない入力（時刻を渡さない）では最初の 0 のまま。
     pub speed_max: f64,
@@ -486,6 +511,8 @@ impl Influences {
             color_saturation: Influence::OFF,
             color_value: Influence::OFF,
             color_sub_mix: Influence::OFF,
+            spray_size: Influence::OFF,
+            spray_density: Influence::OFF,
             speed_max: Influences::DEFAULT_SPEED_MAX,
         }
     }
@@ -551,6 +578,20 @@ impl Influences {
         ColorItem::ALL.into_iter().any(|i| self.color(i).random.on)
     }
 
+    pub fn spray(&self, item: SprayItem) -> &Influence {
+        match item {
+            SprayItem::Size => &self.spray_size,
+            SprayItem::Density => &self.spray_density,
+        }
+    }
+
+    pub fn spray_mut(&mut self, item: SprayItem) -> &mut Influence {
+        match item {
+            SprayItem::Size => &mut self.spray_size,
+            SprayItem::Density => &mut self.spray_density,
+        }
+    }
+
     /// 大きさ・不透明度・流量を筆圧で変えるか（簡単なブラシの切り替えの形）。
     pub fn pressure_switches(&self) -> PressureSwitches {
         PressureSwitches {
@@ -567,14 +608,18 @@ impl Influences {
         self.flow.pressure.on = switches.flow;
     }
 
-    /// どれかの項目が入力 input を使うか（傾き・速度を求めるかの判定。色の項目も数える。色の項目のランダムは自分の乱数の列から引くので、
-    /// 影響元の乱数の列を要るかの判定（ランダム）には数えない）。
+    /// どれかの項目が入力 input を使うか（傾き・速度を求めるかの判定。色と散布の項目も数える。色と散布の項目のランダムは自分の乱数の列から
+    /// 引くので、影響元の乱数の列を要るかの判定（ランダム）には数えない）。
     pub fn uses(&self, input: Input) -> bool {
         Item::ALL.into_iter().any(|i| self.get(i).input(input).on)
             || (input != Input::Random
                 && ColorItem::ALL
                     .into_iter()
                     .any(|i| self.color(i).input(input).on))
+            || (input != Input::Random
+                && SprayItem::ALL
+                    .into_iter()
+                    .any(|i| self.spray(i).input(input).on))
     }
 
     /// 範囲を確かめる（応えの最小値と曲線の形、速度の上限は 0 より大きい有限の数）。断ったら何も変えない。
@@ -592,6 +637,11 @@ impl Influences {
                 } else {
                     response.validate()?;
                 }
+            }
+        }
+        for item in SprayItem::ALL {
+            for input in Input::ALL {
+                self.spray(item).input(input).response.validate()?;
             }
         }
         require_finite(self.speed_max, Reason::SpeedMax)?;
@@ -614,6 +664,11 @@ impl Influences {
         out
     }
 
+    /// 散布の 2 項目（[`SprayItem::ALL`] の並び）の、筆圧・傾き・速度の係数の積（ランダムを除く。使わない項目は 1）。
+    pub(crate) fn spray_others(&self, x: &InputValues) -> [f64; 2] {
+        SprayItem::ALL.map(|item| self.spray(item).others_product(x))
+    }
+
     /// 応えを画面の精度（f32）に丸めた写し（速さの上限はそのまま）。
     pub fn rounded_to_f32(&self) -> Influences {
         let mut out = self.clone();
@@ -622,6 +677,9 @@ impl Influences {
         }
         for item in ColorItem::ALL {
             *out.color_mut(item) = self.color(item).rounded_to_f32();
+        }
+        for item in SprayItem::ALL {
+            *out.spray_mut(item) = self.spray(item).rounded_to_f32();
         }
         out
     }
@@ -952,6 +1010,18 @@ mod tests {
         let mut r = NetRandom::new(11);
         assert_eq!(none.draw_random(Some(&mut r)), [None; 8]);
         assert_eq!(r.next_double(), NetRandom::new(11).next_double());
+    }
+
+    #[test]
+    fn only_a_spray_source_using_the_tilt_makes_the_influences_use_the_tilt() {
+        let mut inf = Influences::none();
+        assert!(!inf.uses(Input::Tilt));
+        inf.spray_mut(SprayItem::Density).input_mut(Input::Tilt).on = true;
+        assert!(inf.uses(Input::Tilt));
+        assert!(!inf.uses(Input::Speed));
+        // ランダムは自分の乱数の列から引くので、影響元の乱数の列を要るかには数えない
+        inf.spray_mut(SprayItem::Size).input_mut(Input::Random).on = true;
+        assert!(!inf.uses(Input::Random));
     }
 
     #[test]

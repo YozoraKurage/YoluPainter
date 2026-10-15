@@ -621,6 +621,8 @@ fn core_reason(reason: Reason) -> &'static str {
         Reason::ColorDynamicsRange => "Color dynamics (0–1)",
         Reason::ColorChange => "color change",
         Reason::ColorChangeRange => "Color change (tip hue −360–360°, saturation and value −1–1, secondary color mix 0–1, per-stroke hue 0–180°, others 0–1)",
+        Reason::Spray => "spray",
+        Reason::SprayRange => "Spray (particle size above 0 up to 10000, particle density 1–100, spray bias −1–1, particle direction −360–360°, random strength 0–1)",
         Reason::Purity => "purity",
         Reason::PurityRange => "Purity (−1–1)",
         Reason::FadeRange => "Fade (0–10000)",

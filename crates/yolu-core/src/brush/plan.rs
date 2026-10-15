@@ -31,6 +31,9 @@ pub(crate) struct StampControls {
     /// 色の変化の 4 項目（[`ColorItem::ALL`] の並び）の、筆圧・傾き・速度の係数の積（ランダムを除く。使わなければ 1）。ランダムの分は
     /// ダブごとに色の変化の乱数の列から引く（[`StrokeState::next_dab_color`]）。
     pub color: [f64; 4],
+    /// 散布の 2 項目（[`SprayItem::ALL`] の並び）の、筆圧・傾き・速度の係数の積（ランダムを除く。使わなければ 1）。ランダムの分は
+    /// 散布の乱数の列から引く（[`SprayRun`]）。
+    pub spray: [f64; 2],
 }
 
 /// ダブ 1 つの置き方。
@@ -56,7 +59,7 @@ pub(crate) struct DabPlan<'a> {
 const FLIP_STREAM: i32 = 0x27D4_EB2F;
 const SHUFFLE_STREAM: i32 = 0x1656_67B1;
 
-/// 筆先の選びと反転の、ストロークごとの進み（2D のストロークと 3D の面のストロークが 1 つずつ持つ）。
+/// 筆先の選びと反転と散布の、ストロークごとの進み（2D のストロークと 3D の面のストロークが 1 つずつ持つ）。
 /// 今までの乱数の列（ゆらぎ・色・影響元・デュアル・筆先の乱数選び）は引かない。ランダムな反転と並べ替えは、自分の列だけを引く。
 #[derive(Clone, Debug)]
 pub(crate) struct TipRun {
@@ -67,6 +70,8 @@ pub(crate) struct TipRun {
     flips: Option<NetRandom>,
     /// 並べ替えた筆先の並び（`Shuffle` で最初に要るとき作る）。
     order: Option<Vec<usize>>,
+    /// 散布効果の粒子の進み（散布の乱数の列）。
+    pub spray: SprayRun,
 }
 
 impl TipRun {
@@ -78,6 +83,7 @@ impl TipRun {
             seed: brush.seed,
             flips: random_flip.then(|| NetRandom::new(brush.seed ^ FLIP_STREAM)),
             order: None,
+            spray: SprayRun::new(brush),
         }
     }
 
@@ -237,6 +243,7 @@ impl Brush {
             ),
             mix_others,
             color: inf.color_others(&x),
+            spray: inf.spray_others(&x),
         }
     }
 
@@ -271,7 +278,7 @@ impl Brush {
             return None;
         }
         let (mut x, mut y) = (dab.x, dab.y);
-        if j.scatter > 0.0 {
+        if j.scatter > 0.0 && self.spray.is_none() {
             let reach = scatter_radius * 2.0 * j.scatter;
             x += (random.next_double() * 2.0 - 1.0) * reach;
             y += (random.next_double() * 2.0 - 1.0) * reach;

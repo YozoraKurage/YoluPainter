@@ -22,6 +22,7 @@ mod c2f;
 mod color;
 mod db;
 mod material;
+mod spray;
 mod tar;
 
 use std::collections::{HashMap, HashSet};
@@ -1234,8 +1235,8 @@ fn color_mixing(
     }
 }
 
-/// 写せない設定（湿った縁・ベクターのツール・吹き付け・デュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
-fn unrepresented_flags(row: &Row, notes: &mut Vec<Unrepresented>) {
+/// 写せない設定（湿った縁・ベクターのツール・写せなかった散布効果・デュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
+fn unrepresented_flags(row: &Row, spray_mapped: bool, notes: &mut Vec<Unrepresented>) {
     if row.on(WATER_EDGE) {
         notes.push(Unrepresented::WetEdges);
     }
@@ -1243,7 +1244,7 @@ fn unrepresented_flags(row: &Row, notes: &mut Vec<Unrepresented>) {
         notes.push(Unrepresented::ClipStudio(SutNote::VectorTools));
     }
     for (columns, note) in [
-        (SPRAY, SutNote::Spray),
+        (if spray_mapped { &[] } else { SPRAY }, SutNote::Spray),
         (DUAL, SutNote::DualBrush),
         (BLEND_MODE, SutNote::BlendMode),
     ] {
@@ -1366,7 +1367,8 @@ fn brush_from_row(
 
     color_mixing(row, &mut brush, &mut notes, &mut mapped);
     color::color_change(row, &mut brush, &mut notes, &mut mapped);
-    unrepresented_flags(row, &mut notes);
+    spray::spray(row, &mut brush, &mut notes, &mut mapped);
+    unrepresented_flags(row, brush.spray.is_some(), &mut notes);
     Ok((brush, notes, mapped))
 }
 
@@ -1383,6 +1385,7 @@ pub(crate) fn read_sut(
     let known: Vec<&str> = KNOWN
         .iter()
         .chain(color::KNOWN)
+        .chain(spray::KNOWN)
         .flat_map(|names| names.iter().copied())
         .collect();
     let mut variants: Option<Variants<'_>> = db.variants(&known)?;

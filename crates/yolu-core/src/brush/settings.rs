@@ -15,6 +15,7 @@ use glam::DVec2;
 
 use super::influence::{Influences, Item, PressureSwitches};
 use super::mix::ColorMix;
+use super::spray::Spray;
 use super::stencil::BrushStencil;
 use super::tip::BrushTip;
 use super::BrushSettings;
@@ -54,6 +55,8 @@ pub struct Brush {
     /// 両方あれば、3D の写しの後に 2D の写しを当てる。指先・クローンとは組めない。3D の面のストロークは見ない（面のストロークは
     /// 自分の対称を持つ）。
     pub model_symmetry: Option<Arc<ModelSymmetry>>,
+    /// 散布効果（None は無し）。入っている間、描点のダブは [`Jitter::scatter`]・[`Jitter::count`] の代わりに粒子の道を通る（[`Spray`]）。
+    pub spray: Option<Spray>,
 }
 
 impl From<BrushSettings> for Brush {
@@ -687,6 +690,7 @@ impl Brush {
         if let Some(d) = &self.dual {
             d.validate()?;
         }
+        self.spray.as_ref().map_or(Ok(()), Spray::validate)?;
         self.mix.validate()?;
         match self.effect {
             BrushEffect::Paint => {}

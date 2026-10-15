@@ -3339,3 +3339,213 @@ fn the_color_change_notes_have_sentences_in_both_languages() {
     }
     assert_eq!(SutMapped::ColorChange.texts(), ("色の変化", "color change"));
 }
+
+// ---------------- 散布効果 ----------------
+
+/// 散布効果の列（旗・粒子サイズ・粒子密度と、足す列）。
+fn spray_cells(
+    extra: &[(&'static str, rusqlite::types::Value)],
+) -> Vec<(&'static str, rusqlite::types::Value)> {
+    let mut cells = vec![
+        ("BrushUseSpray", int(1)),
+        ("BrushSpraySize", real(14.5)),
+        ("BrushSpraySizeUnit", int(0)),
+        ("BrushSprayDensity", int(4)),
+    ];
+    cells.extend_from_slice(extra);
+    cells
+}
+
+fn one_spray(cells: &[(&'static str, rusqlite::types::Value)]) -> ImportedBrush {
+    ok(&SutBuilder::new().brush("Spray", 1, cells).build())
+        .brushes
+        .remove(0)
+}
+
+#[test]
+fn the_spray_columns_become_the_spray_effect() {
+    use yolu_io::brushes::SprayNote;
+    let b = one_spray(&spray_cells(&[
+        ("BrushSpraySizeSyncBrushSize", int(1)),
+        ("BrushSprayBias", int(-100)),
+        ("BrushRotationInSpray", real(154.5)),
+    ]));
+    assert_eq!(
+        b.brush.spray,
+        Some(yolu_core::Spray {
+            size: 14.5,
+            link_size: true,
+            density: 4.0,
+            bias: -1.0,
+            angle: 154.5,
+            direction: yolu_core::SprayDirection::None,
+            random_angle: None,
+        })
+    );
+    assert!(mapped(&b, SutMapped::Spray));
+    assert!(
+        !has(&b, SutNote::Spray),
+        "写せた物には「写していない」を出さない"
+    );
+    // 密度の換算と偏向の式は近い動きと知らせる
+    assert!(has(&b, SutNote::SprayApprox(SprayNote::Density)));
+    assert!(has(&b, SutNote::SprayApprox(SprayNote::Bias)));
+    b.brush.validate().unwrap();
+    // 偏向 0 は知らせない
+    let b = one_spray(&spray_cells(&[("BrushSprayBias", int(0))]));
+    assert_eq!(b.brush.spray.unwrap().bias, 0.0);
+    assert!(!has(&b, SutNote::SprayApprox(SprayNote::Bias)));
+    // 旗が切なら写さず、知らせもしない
+    let mut off = spray_cells(&[]);
+    off[0] = ("BrushUseSpray", int(0));
+    let b = one_spray(&off);
+    assert!(b.brush.spray.is_none() && !mapped(&b, SutMapped::Spray));
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+}
+
+#[test]
+fn a_spray_without_its_values_or_with_another_unit_is_not_carried_over() {
+    for cells in [
+        vec![("BrushUseSpray", int(1)), ("BrushSprayDensity", int(4))],
+        vec![("BrushUseSpray", int(1)), ("BrushSpraySize", real(10.0))],
+        {
+            let mut cells = spray_cells(&[]);
+            cells[2] = ("BrushSpraySizeUnit", int(1));
+            cells
+        },
+    ] {
+        let b = one_spray(&cells);
+        assert!(b.brush.spray.is_none(), "{cells:?}");
+        assert!(!mapped(&b, SutMapped::Spray));
+        assert!(has(&b, SutNote::Spray), "写していないと知らせる");
+    }
+}
+
+#[test]
+fn a_spray_density_below_one_is_not_carried_over_instead_of_being_raised_to_one() {
+    for density in [real(0.0), real(0.5)] {
+        let mut cells = spray_cells(&[]);
+        cells[3] = ("BrushSprayDensity", density);
+        let b = one_spray(&cells);
+        assert!(b.brush.spray.is_none(), "{cells:?}");
+        assert!(!mapped(&b, SutMapped::Spray));
+        assert!(has(&b, SutNote::Spray), "写していないと知らせる");
+    }
+    // 1 は写す
+    let mut cells = spray_cells(&[]);
+    cells[3] = ("BrushSprayDensity", real(1.0));
+    assert_eq!(one_spray(&cells).brush.spray.unwrap().density, 1.0);
+}
+
+#[test]
+fn the_particle_direction_flags_map_random_and_report_unknown_bits() {
+    use yolu_io::brushes::SprayNote;
+    for (flags, random, note) in [
+        (0x1, None, false),
+        (0x3, None, true),
+        (0x81, Some(0.4), false),
+        (0x83, Some(0.4), true),
+        (0x0, None, false),
+    ] {
+        let b = one_spray(&spray_cells(&[
+            ("BrushRotationEffectorInSpray", int(flags)),
+            ("BrushRotationRandomInSpray", int(40)),
+        ]));
+        let s = b.brush.spray.unwrap();
+        assert_eq!(s.random_angle, random, "{flags:#x}");
+        assert_eq!(s.direction, yolu_core::SprayDirection::None, "{flags:#x}");
+        assert_eq!(
+            has(&b, SutNote::SprayApprox(SprayNote::Direction)),
+            note,
+            "{flags:#x}"
+        );
+    }
+    // 強さの列が無ければ一杯（1）
+    let b = one_spray(&spray_cells(&[("BrushRotationEffectorInSpray", int(0x81))]));
+    assert_eq!(b.brush.spray.unwrap().random_angle, Some(1.0));
+}
+
+#[test]
+fn the_particle_direction_flags_pick_the_direction_to_add() {
+    use yolu_core::SprayDirection::{Center, Line, None as Plain, Whole};
+    use yolu_io::brushes::SprayNote;
+    for (flags, direction, random, note) in [
+        (0x41, Line, None, false),
+        (0x101, Whole, None, false),
+        (0x201, Center, None, false),
+        (0xC1, Line, Some(0.4), false),
+        // 向きのビットが 2 つ・知らないビットは、向きを足さずに知らせる
+        (0x141, Plain, None, true),
+        (0x43, Line, None, true),
+    ] {
+        let b = one_spray(&spray_cells(&[
+            ("BrushRotationEffectorInSpray", int(flags)),
+            ("BrushRotationRandomInSpray", int(40)),
+        ]));
+        let s = b.brush.spray.unwrap();
+        assert_eq!(s.direction, direction, "{flags:#x}");
+        assert_eq!(s.random_angle, random, "{flags:#x}");
+        assert_eq!(
+            has(&b, SutNote::SprayApprox(SprayNote::Direction)),
+            note,
+            "{flags:#x}"
+        );
+    }
+}
+
+#[test]
+fn the_particle_size_and_density_influences_are_carried() {
+    let b = one_spray(&spray_cells(&[
+        (
+            "BrushSpraySizeEffector",
+            blob(effector_full(44, 0x80, [0, 0, 0, 30], None, None)),
+        ),
+        (
+            "BrushSprayDensityEffector",
+            blob(effector_full(
+                44,
+                0x10,
+                [20, 0, 0, 0],
+                Some(&[(0.0, 0.0), (0.5, 0.8), (1.0, 1.0)]),
+                None,
+            )),
+        ),
+    ]));
+    let i = &b.brush.influences;
+    assert!(i.spray_size.random.on && !i.spray_size.pressure.on);
+    assert!((i.spray_size.random.response.min() - 0.3).abs() < 1e-12);
+    assert!(i.spray_density.pressure.on);
+    assert!((i.spray_density.pressure.response.min() - 0.2).abs() < 1e-12);
+    assert_eq!(i.spray_density.pressure.response.curve().len(), 3);
+    assert!(mapped(&b, SutMapped::Pressure) && mapped(&b, SutMapped::Random));
+    b.brush.validate().unwrap();
+    // 散布を写さないブラシには、影響元も写さない
+    let mut off = spray_cells(&[(
+        "BrushSpraySizeEffector",
+        blob(effector_full(44, 0x80, [0, 0, 0, 30], None, None)),
+    )]);
+    off[0] = ("BrushUseSpray", int(0));
+    let b = one_spray(&off);
+    assert!(!b.brush.influences.spray_size.is_on());
+}
+
+#[test]
+fn the_spray_notes_have_sentences_in_both_languages() {
+    use yolu_io::brushes::SprayNote;
+    for n in [
+        SutNote::Spray,
+        SutNote::SprayApprox(SprayNote::Density),
+        SutNote::SprayApprox(SprayNote::Bias),
+        SutNote::SprayApprox(SprayNote::Direction),
+        SutNote::InfluenceUnreadable(SutTarget::SpraySize),
+        SutNote::TiltCurve(SutTarget::SprayDensity),
+    ] {
+        let note = Unrepresented::ClipStudio(n.clone());
+        let (ja, en) = (note.to_string(), note.english());
+        assert!(
+            !ja.is_empty() && !en.is_empty() && en.is_ascii() && !ja.is_ascii(),
+            "{n:?}"
+        );
+    }
+    assert_eq!(SutMapped::Spray.texts(), ("散布効果", "spraying effect"));
+}
