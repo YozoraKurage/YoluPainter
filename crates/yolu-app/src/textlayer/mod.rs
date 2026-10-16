@@ -664,8 +664,11 @@ impl AppState {
                 return;
             }
         }
+        // テキストのツールへ（キャンバスの押しは、もうテキストのツールで来る。替えられなければ打ち直さない）
+        if self.tool != Tool::Text && !self.switch_tool(Tool::Text, false) {
+            return;
+        }
         self.session.selected_layer = Some(id);
-        self.tool = Tool::Text;
         let mut editing = Editing::new(Some(id), false, value);
         let end = editing.buffer.chars().count();
         editing.move_cursor = Some(end);

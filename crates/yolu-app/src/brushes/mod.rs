@@ -1026,7 +1026,7 @@ impl AppState {
             // （入るツールはブラシか消しゴムで、サブツールの一覧は一覧自体がブラシのものなので、入るほうの写しは要らない）
             self.subtool_leave(self.tool);
             self.sel_tool_changed();
-            self.tool = tool;
+            self.put_tool(tool);
         }
         self.toolset.set.set_active(Some(slot));
     }

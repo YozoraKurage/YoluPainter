@@ -1170,9 +1170,15 @@ impl AppState {
             crate::features::tool_left(self);
             self.subtool_enter(tool);
         }
+        self.put_tool(tool);
+        true
+    }
+
+    /// ツールの値を書く口（替えた印の `tool_epoch` も進める）。離れるツールの設定を覚える・途中の形を捨てるのは呼ぶ側で、普段は
+    /// `switch_to` を通す。
+    pub(crate) fn put_tool(&mut self, tool: Tool) {
         self.tool = tool;
         self.tool_epoch += 1;
-        true
     }
 
     /// 描ける先が 3D の面だけか（3D のタブが出ていてモデルがあり、キャンバスのタブは出ていない）。ドックを分けて両方が出ているあいだは、

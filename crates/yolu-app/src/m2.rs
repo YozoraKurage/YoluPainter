@@ -1264,9 +1264,9 @@ impl AppState {
                 if before != kind {
                     self.clone.brush_loaded(&mut self.m2.brush.effect);
                 }
-                // 効果のブラシは消しゴムにできない。描くツールへ戻す
+                // 効果のブラシは消しゴムにできない。描くツールへ戻す（今のブラシのまま。`switch_to` はブラシのツールの最後のブラシへ替える）
                 if kind != EffectKind::Paint && self.tool.erases() {
-                    self.tool = crate::state::Tool::Brush;
+                    self.put_tool(crate::state::Tool::Brush);
                 }
             }
             BrushOp::Tip(id) => {
