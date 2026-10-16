@@ -25,7 +25,7 @@ use crate::selection::canvas::{
     drag_mode, paint_polygon_draft, paint_shape_outline, CLICK_RADIUS, CLOSE_RADIUS, DOUBLE_CLICK,
 };
 use crate::selection::{combine_of, shape, SelAction, SelEdit};
-use crate::state::key::{Key, Modifiers, PointerButton};
+use crate::state::key::{Key, Modifiers};
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 /// 3D ビューで引いている形（長方形・楕円・なげなわ）。点は表示域の画面の点（左上が原点）。
@@ -137,7 +137,7 @@ pub(super) fn press(
 fn wand(app: &mut AppState, rect: Rect, at: Pos2, modifiers: Modifiers) {
     match surface_point(app, rect, at) {
         Ok((x, y)) => {
-            let mode = combine_of(app.sel.combine, PointerButton::Primary, modifiers);
+            let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
             // 3D ビューでは対称定規の写しを使わない（種は押した面の点だけ）
             app.apply(Action::Sel(SelAction::Edit(SelEdit::Wand {
                 seeds: vec![(x.floor() as u32, y.floor() as u32)],
@@ -185,7 +185,7 @@ pub(super) fn finish_polygon(app: &mut AppState, rect: Rect, modifiers: Modifier
         crate::selection::canvas::refuse_too_few_points(app);
         return;
     }
-    let mode = combine_of(app.sel.combine, PointerButton::Primary, modifiers);
+    let mode = combine_of(app.sel.combine, app.sel.press_button, modifiers);
     select_shape(app, rect, ScreenShape::Polygon { points: &points }, mode);
 }
 
@@ -290,7 +290,7 @@ fn commit(app: &mut AppState, rect: Rect, drag: Drag) {
     let mode = drag_mode(
         app.sel.combine,
         drag.tool,
-        PointerButton::Primary,
+        app.sel.press_button,
         drag.pressed_with,
         drag.now,
     );

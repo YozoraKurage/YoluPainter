@@ -213,7 +213,7 @@ pub fn cancel(app: &mut AppState) {
 pub fn pen_driven(app: &AppState) -> bool {
     app.canvas
         .pen_press
-        .is_some_and(|p| p.kind == crate::pen::PressKind::View)
+        .is_some_and(|p| p.owner == crate::input::Owner::View)
 }
 
 /// 押した点（画面の点）の下の文書の点を、クローンの元にする（キャンバスの外は断る）。

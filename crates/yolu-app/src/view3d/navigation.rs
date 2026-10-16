@@ -488,12 +488,9 @@ pub fn shortcut(ui: &Ui, app: &mut AppState, rect: Rect, foreign: bool) {
     {
         return;
     }
-    let over = ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| {
-        rect.contains(p)
-            && ctx
-                .layer_id_at(p)
-                .is_none_or(|layer| layer == ui.layer_id())
-    });
+    let over = ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| crate::input::on_top(ui, rect, p));
     if over
         && ui.input(|i| i.modifiers == Modifiers::NONE)
         && ctx.input_mut(|i| crate::keymap::consume_command(i, app, "view3d.frame_selected"))

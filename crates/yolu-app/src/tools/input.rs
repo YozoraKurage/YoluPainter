@@ -91,10 +91,6 @@ pub trait CanvasTool: Sync {
     fn key(&self, _app: &mut AppState, _key: Key, _modifiers: Modifiers) -> bool {
         false
     }
-    /// ステンシルを動かしている間は押しを渡さないツールか。
-    fn respects_stencil(&self) -> bool {
-        true
-    }
 }
 
 /// キャンバスの入力を受けるツールの種類（表が指す。受け口の実体は `handler`）。
@@ -563,9 +559,6 @@ impl CanvasTool for SelectionInput {
             _ => return false,
         }
         true
-    }
-    fn respects_stencil(&self) -> bool {
-        false
     }
 }
 

@@ -35,6 +35,30 @@ pub struct Job {
     style: Style,
 }
 
+impl Job {
+    /// 終わらない塗りの仕事（試験用）。返す送り口を持っているあいだは走っているまま（文書が変わると仕事は捨てられる）。
+    #[doc(hidden)]
+    pub fn parked(
+        app: &AppState,
+        layer: LayerId,
+    ) -> (
+        Job,
+        std::sync::mpsc::Sender<Result<SelectionMask, CoreError>>,
+    ) {
+        let (worker, tx) = Worker::parked();
+        (
+            Job {
+                worker: worker.cancel_on_drop(),
+                document: app.session.doc.id(),
+                revision: app.session.doc.revision(),
+                layer,
+                style: Style::capture(app, layer),
+            },
+            tx,
+        )
+    }
+}
+
 pub fn request(app: &AppState, layer: LayerId, points: Vec<(f64, f64)>) -> Request {
     let mut options = app.region.color.clone();
     if app.region.sample_all {

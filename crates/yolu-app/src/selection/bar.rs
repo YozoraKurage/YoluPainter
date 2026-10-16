@@ -10,8 +10,8 @@ use egui::{pos2, vec2, Color32, Id, Order, Pos2, Rect, Sense, Ui, Vec2};
 use super::{saved::SavedOp, ModifyKind, SelAction, SelEdit, SelUiOp};
 use crate::canvas::view::CanvasView;
 use crate::engine::LayerKind;
+use crate::input::Owner;
 use crate::lang::Lang;
-use crate::pen::PressKind;
 use crate::state::{Action, AppState};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
@@ -196,7 +196,7 @@ pub fn visible(app: &AppState) -> bool {
         && !app
             .canvas
             .pen_press
-            .is_some_and(|p| p.kind != PressKind::Ignored)
+            .is_some_and(|p| p.owner != Owner::Ignored)
 }
 
 /// 帯の大きさ。

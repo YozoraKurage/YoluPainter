@@ -90,6 +90,14 @@ pub fn stroking(app: &AppState) -> bool {
     FEATURES.iter().any(|f| f.stroking.is_some_and(|s| s(app)))
 }
 
+/// `skip` の行を除いて、どれかの機能が描いている・ドラッグしている最中か。
+pub fn stroking_except(app: &AppState, skip: &str) -> bool {
+    FEATURES
+        .iter()
+        .filter(|f| f.id != skip)
+        .any(|f| f.stroking.is_some_and(|s| s(app)))
+}
+
 /// ツールが替わった（表の順に片づける）。
 pub fn tool_left(app: &mut AppState) {
     for f in FEATURES {

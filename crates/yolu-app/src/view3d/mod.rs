@@ -58,7 +58,9 @@ pub struct SurfaceInput {
     /// 直前の `paint_queued` が今のフレームに塗ったダブの数（同じフレームの表示の同期の時間を、ダブあたりに直すため。`note_sync` が取る）。
     pub frame_dabs: usize,
     /// ペンの今の押し（2D の `CanvasInput::pen_press` と同じ。押した瞬間に終わるバケツ・ID の色で選択を押し直さない印も兼ねる）。
-    pub pen_press: Option<crate::pen::PenPress>,
+    pub pen_press: Option<crate::input::Press>,
+    /// マウスのツールの押し（2D の `CanvasInput::mouse_press` と同じ。始めたボタンを離したらツールが終える。無ければ左ボタン）。
+    pub mouse_press: Option<crate::input::Press>,
     /// Ctrl+Space の拡縮のドラッグ（`nav` が `Nav::Zoom` のあいだ）。
     pub zoom: Option<crate::gesture::ZoomDrag>,
     pub surface: Option<yolu_core::geometry::SurfaceStroke>,
@@ -104,6 +106,7 @@ impl SurfaceInput {
     /// 前の押しの続きとして扱い、Alt で押した点の近くで離せばクローンの元を決めてしまう）。描いているストロークは別の持ち主が終える。
     pub fn drop_presses(&mut self) {
         self.pen_press = None;
+        self.mouse_press = None;
         self.nav = None;
         self.navigation = None;
         self.zoom = None;

@@ -7,7 +7,7 @@
 //!   ホイールで寄る・引く。Ctrl+Space + 左ドラッグは左右に動かして寄る・引く（動かさずに離すと寄る、Alt を足すと引く）。クローンのブラシでは、
 //!   Alt + 左を動かさずに離すと、そこがクローンの元（動かせばスナップ回転）。修飾は押しの始めに持っているもので決める。
 //! - ペンはマウスと同じ決まり: サイドボタンを押した接触は右ボタン、Alt・Space・Ctrl+Space を押した接触は左ボタンにそれらを足したもの。
-//!   描くのは、修飾もサイドボタンも無いペン先の接触だけ。行き先は触れた最初の点で決めて、離すまで変えない（`pen::PenPress`）。
+//!   描くのは、修飾もサイドボタンも無いペン先の接触だけ。行き先は触れた最初の点で決めて（`input::owner`。マウスの押しも同じ表）、離すまで変えない（`input::Press`）。
 //! - ぼかし・指先・クローンと 3D の対称（ミラー・放射状）と 2D の対称（UV の平面。3D の写しの後に当てる）は、面のストロークに通す
 //!   （core の `SurfaceStrokeOptions`）。
 //! - 選択ペン・選択消しのツールと、クイックマスクが入っている間のブラシ・消しゴムは、面に塗って選択範囲を直す（2D のキャンバスと同じ。`quick`）。
@@ -40,19 +40,12 @@ use super::{gizmo, pacing, Nav};
 use crate::engine::{BrushEffect, Tilt};
 use crate::features::Feature;
 use crate::gesture::{self, ZoomDrag};
+use crate::input::{on_top, Item, Owner, Phase, PointerSample, Press, PressCtx, Stream};
 use crate::notice::Source;
-use crate::pen::{PenPress, PenSample, PressKind};
+use crate::pen::PenSample;
 use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{AppState, ShiftHold, StrokeSource, SHIFT_HOLD_POINTS};
 use crate::tools::input::Surface;
-
-fn on_top(ui: &Ui, rect: Rect, p: Pos2) -> bool {
-    rect.contains(p)
-        && ui
-            .ctx()
-            .layer_id_at(p)
-            .is_none_or(|layer| layer == ui.layer_id())
-}
 
 pub(super) fn local(rect: Rect, p: Pos2) -> Vec2 {
     Vec2::new(p.x - rect.left(), p.y - rect.top())
@@ -69,18 +62,12 @@ struct PenState {
 }
 
 impl PenState {
-    fn of(s: &PenSample) -> PenState {
+    /// 点の傾き・回転・時刻（マウスの点は傾き・回転なし）。
+    fn of(s: &PointerSample) -> PenState {
         PenState {
             tilt: s.tilt,
             rotation: s.rotation,
-            time: s.time_ms as f64 / 1000.0,
-        }
-    }
-
-    fn mouse(time: f64) -> PenState {
-        PenState {
-            time,
-            ..PenState::default()
+            time: s.time,
         }
     }
 
@@ -915,20 +902,23 @@ fn pen_sample(
     ui: &Ui,
     app: &mut AppState,
     rect: Rect,
-    s: &PenSample,
+    s: &PointerSample,
     frame: &Frame,
     drag_at: &mut Option<Pos2>,
 ) {
-    let p = s.pos_points(ui.ctx().pixels_per_point());
-    let source = StrokeSource::Pen(s.pointer_id);
+    let StrokeSource::Pen(id) = s.source else {
+        return;
+    };
+    let p = s.pos;
+    let source = s.source;
     // ツールの帯のドラッグで始めた G/R/S（このペン）: 点を渡し、離したら G/R/S が決める
     if app
         .objects
         .transform
         .as_ref()
-        .is_some_and(|t| t.drag == Some(crate::fillfx::gizmo::Source::Pen(s.pointer_id)))
+        .is_some_and(|t| t.drag == Some(crate::fillfx::gizmo::Source::Pen(id)))
     {
-        if s.contact {
+        if s.phase.contact() {
             app.objects.pen_at = Some(p);
         } else {
             app.objects.pen_at = Some(p);
@@ -941,9 +931,9 @@ fn pen_sample(
         .fillfx
         .drag
         .as_ref()
-        .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Pen(s.pointer_id))
+        .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Pen(id))
     {
-        if s.contact {
+        if s.phase.contact() {
             *drag_at = Some(p);
         } else {
             if let Some(at) = drag_at.take() {
@@ -959,9 +949,9 @@ fn pen_sample(
         .fillfx
         .point_drag
         .as_ref()
-        .is_some_and(|d| d.in_3d && d.source == crate::fillfx::gizmo::Source::Pen(s.pointer_id))
+        .is_some_and(|d| d.in_3d && d.source == crate::fillfx::gizmo::Source::Pen(id))
     {
-        if s.contact {
+        if s.phase.contact() {
             *drag_at = Some(p);
         } else {
             if let Some(at) = drag_at.take() {
@@ -972,11 +962,14 @@ fn pen_sample(
         }
         return;
     }
-    let press = match app.view3d.input.pen_press {
-        Some(press) if press.id == s.pointer_id => press,
-        // ほかのペン（別の ID）の押しが続いている間は、この点を使わない
-        Some(_) => return,
-        None if s.contact => {
+    let press = match s.phase {
+        // 浮いているだけ・ほかのペン（別の ID）の押しが続いている間は、この点を使わない
+        Phase::Idle { .. } => return,
+        Phase::Move | Phase::Release { .. } => match app.view3d.input.pen_press {
+            Some(press) => press,
+            None => return,
+        },
+        Phase::Press => {
             // 離した後の残りを塗っている途中の押し: 残りを塗って確定してから、この押しを受ける
             if !frame.press_blocked && on_top(ui, rect, p) {
                 settle(app);
@@ -992,31 +985,29 @@ fn pen_sample(
                     },
                     &format!("{kind:?}"),
                     p,
-                    if s.barrel { "Secondary" } else { "Primary" },
+                    &format!("{:?}", s.button),
                     false,
                 )
             });
-            app.view3d.input.pen_press = Some(PenPress {
-                id: s.pointer_id,
-                kind,
+            let button = s.button;
+            app.view3d.input.pen_press = Some(Press {
+                source,
+                owner: kind,
+                button,
                 last: p,
             });
             match kind {
                 // 3D のサイドボタンは右ボタンとして `View`（スポイトの印は `nav_press` が持つ）
-                PressKind::Ignored | PressKind::Eyedrop => {}
-                PressKind::View => {
-                    let button = if s.barrel {
-                        PointerButton::Secondary
-                    } else {
-                        PointerButton::Primary
-                    };
+                Owner::Ignored | Owner::Eyedrop => {}
+                Owner::View => {
                     if let Some(nav) = nav_of(button, &frame.modifiers, frame.space) {
                         nav_press(app, nav, button, p, &frame.modifiers);
                     }
                     let click = click_of(app, button, &frame.modifiers, frame.space);
                     note_click(app, rect, source, button, p, click);
                     // サイドボタン（右ボタン）を動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（ほかのツールはスポイト。`nav_press`）
-                    if s.barrel && !frame.modifiers.any() && !frame.space {
+                    if button == PointerButton::Secondary && !frame.modifiers.any() && !frame.space
+                    {
                         crate::bake::overlap::menu_press(
                             app,
                             crate::region::tools::Where::Surface(rect),
@@ -1024,38 +1015,28 @@ fn pen_sample(
                         );
                     }
                 }
-                PressKind::Tool => {
+                Owner::Tool => {
+                    // 選択の行の組み合わせ方は、押したボタンで引く（2D と同じ）
+                    app.sel.press_button = button;
                     if app.mode == crate::mode::EditorMode::Edit {
                         // 編集のモード: 点の印で選ぶ・選んだ形の取っ手を掴む（描かない）。移動・回転・拡縮のツールは G/R/S のドラッグ
-                        crate::objects::press(
-                            app,
-                            rect,
-                            p,
-                            crate::fillfx::gizmo::Source::Pen(s.pointer_id),
-                        );
+                        crate::objects::press(app, rect, p, crate::fillfx::gizmo::Source::Pen(id));
                         crate::objects::transform::start_drag(ui.ctx(), app);
                     } else if crate::fillfx::gizmo::press(
                         app,
                         rect,
                         p,
-                        crate::fillfx::gizmo::Source::Pen(s.pointer_id),
+                        crate::fillfx::gizmo::Source::Pen(id),
                     ) || crate::fillfx::points::press(
                         app,
                         rect,
                         p,
-                        crate::fillfx::gizmo::Source::Pen(s.pointer_id),
+                        crate::fillfx::gizmo::Source::Pen(id),
                     ) {
                         // 形のギズモのハンドルの上・点の編集: 描かずにドラッグを始める
                     } else if app.mode.paints() && app.tool.def().surface == Surface::Path {
                         // パスのツール: 押す・動く・離すを、点を足す・掴む・動かすにする
-                        crate::pathtool::surface::pen_sample(
-                            app,
-                            rect,
-                            p,
-                            s.pointer_id,
-                            true,
-                            true,
-                        );
+                        crate::pathtool::surface::pen_sample(app, rect, p, id, true, true);
                     } else {
                         begin(
                             app,
@@ -1072,13 +1053,11 @@ fn pen_sample(
             }
             return;
         }
-        // 浮いているだけ
-        None => return,
     };
-    if s.contact {
-        match press.kind {
-            PressKind::Ignored | PressKind::Eyedrop => {}
-            PressKind::View => {
+    if s.phase == Phase::Move {
+        match press.owner {
+            Owner::Ignored | Owner::Eyedrop => {}
+            Owner::View => {
                 crate::pen::log::event(|| {
                     crate::pen::log::move_line(
                         crate::pen::log::Site {
@@ -1095,27 +1074,27 @@ fn pen_sample(
                 });
                 nav_move(app, rect, p, press.last)
             }
-            PressKind::Tool => {
+            Owner::Tool => {
                 if app.view3d.input.stroke == Some(source) {
                     add(app, rect, p, s.pressure, PenState::of(s));
                 } else if app.path.pen_in(true) {
-                    crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, true, false);
+                    crate::pathtool::surface::pen_sample(app, rect, p, id, true, false);
                 } else {
                     super::draft::moved(app, rect, p, source, &frame.modifiers);
                     super::select::moved(app, rect, p, source, &frame.modifiers);
                 }
             }
         }
-        app.view3d.input.pen_press = Some(PenPress { last: p, ..press });
+        app.view3d.input.pen_press = Some(Press { last: p, ..press });
     } else {
         // OS に押しを奪われて補った離し（本物の離しではない。`AppState::pen_release_lost`）は、マウスの取りこぼしと同じに扱う: ビューの操作の離しの操作
         // （クリックの拡縮・クローンの元・スポイト・メニュー）は出さず、途中をやめる。グラデーション・図形・定規は `draft::lost_release`、選択の形は何も選ばずにやめる。
         // ストロークと、ギズモ・パスの離しは、今までどおり最後の位置で終える
-        let lost = app.pen_release_lost(s);
-        match press.kind {
-            PressKind::Ignored | PressKind::Eyedrop => {}
-            PressKind::View if lost => nav_cancel(app),
-            PressKind::View => {
+        let lost = s.phase == Phase::Release { lost: true };
+        match press.owner {
+            Owner::Ignored | Owner::Eyedrop => {}
+            Owner::View if lost => nav_cancel(app),
+            Owner::View => {
                 // このペンが始めた物のボタン（ドラッグの操作か、離しの操作）
                 let button = app
                     .view3d
@@ -1134,7 +1113,7 @@ fn pen_sample(
                     p,
                 );
             }
-            PressKind::Tool => {
+            Owner::Tool => {
                 if app.view3d.input.stroke == Some(source) {
                     release(app, ui.ctx());
                 }
@@ -1147,7 +1126,7 @@ fn pen_sample(
                     super::select::release(app, rect, p, source, &frame.modifiers);
                 }
                 if app.path.pen_in(true) {
-                    crate::pathtool::surface::pen_sample(app, rect, p, s.pointer_id, false, false);
+                    crate::pathtool::surface::pen_sample(app, rect, p, id, false, false);
                 }
             }
         }
@@ -1155,46 +1134,67 @@ fn pen_sample(
     }
 }
 
-/// ペンが触れた最初の点の行き先。ビューを動かす（サイドボタン・Alt・Space・Ctrl+Space）・何もしない（押した所が別の部品・ビューを動かして
-/// いる最中・ステンシルを動かしている間・修飾を押したブラシと消しゴム）・ツール。ステンシルを動かす押しは、同じ押しの egui のポインタの
-/// 代わりの入力をステンシルが取るので、ビューを動かす判定より先に手放す（マウスの押しと同じく、ステンシルだけが動く）。
+/// ペンが触れた最初の点の行き先（`input::owner`。マウスの押しと同じ表）。描くツールの Ctrl は描かない（Shift は直線）。
 fn press_kind(
     ui: &Ui,
     app: &AppState,
     rect: Rect,
     p: Pos2,
-    s: &PenSample,
+    s: &PointerSample,
     frame: &Frame,
-) -> PressKind {
-    if frame.press_blocked
-        || !on_top(ui, rect, p)
-        || app.view3d.input.nav.is_some()
-        || app.view3d.input.stroke.is_some()
-        || app.view3d.input.draft.is_some()
-        || super::select::dragging(app)
-        || app.stencil.handling()
-    {
-        return PressKind::Ignored;
+) -> Owner {
+    let holds_off = gesture::pen_holds_off(app.tool.paints(), &frame.modifiers.into());
+    crate::input::owner(&press_ctx(
+        app,
+        s.button,
+        &frame.modifiers,
+        frame.space,
+        frame.press_blocked,
+        on_top(ui, rect, p),
+        holds_off,
+    ))
+}
+
+/// 3D ビューの押しの事情（マウスもペンも）。ドラッグの操作（`nav_of`）か離しの操作（`click_of`）があればビューの押し。ツールのボタンは左ボタンと、
+/// 選択のツールの選択の行を割り当てたボタン（2D の `nav::start_of` と同じ表）。ビューを動かしている・描いている・図形と選択の形を引いている間は、
+/// 押しを受けない。編集のモードの物の選びとポーズのモードのギズモも左ボタンのツールの押しに当たるので、モードではツールの押しを断らない
+/// （描くかは `begin` が決める）。
+fn press_ctx(
+    app: &AppState,
+    button: PointerButton,
+    m: &Modifiers,
+    space: bool,
+    blocked: bool,
+    on_top: bool,
+    holds_off: bool,
+) -> PressCtx {
+    let select_row = app.mode.paints()
+        && app.tool.is_select()
+        && crate::selection::combine_for(button, m).is_some();
+    PressCtx {
+        blocked,
+        on_top,
+        stencil: app.stencil.handling(),
+        busy: app.view3d.input.nav.is_some()
+            || app.view3d.input.stroke.is_some()
+            || app.view3d.input.draft.is_some()
+            || super::select::dragging(app),
+        view_op: nav_of(button, m, space).is_some(),
+        click_op: click_of(app, button, m, space).is_some(),
+        eyedrop: false,
+        tool: button == PointerButton::Primary || select_row,
+        paints: true,
+        holds_off,
     }
-    let button = if s.barrel {
-        PointerButton::Secondary
-    } else {
-        PointerButton::Primary
-    };
-    // ドラッグの操作か離しの操作があれば、ビューの押し（どちらも無いときだけ、ペン先はツール）
-    if nav_of(button, &frame.modifiers, frame.space).is_some()
-        || click_of(app, button, &frame.modifiers, frame.space).is_some()
-    {
-        return PressKind::View;
-    }
-    if button != PointerButton::Primary {
-        return PressKind::Ignored;
-    }
-    // Ctrl を押した接触は描かない（Shift は直線）
-    if gesture::pen_holds_off(app.tool.paints(), &frame.modifiers.into()) {
-        return PressKind::Ignored;
-    }
-    PressKind::Tool
+}
+
+/// マウスのツールの押しのボタン（選択の行を左ボタン以外にしていれば、そのボタン。ツールの押しが無ければ左ボタン）。
+fn tool_button(app: &AppState) -> PointerButton {
+    app.view3d
+        .input
+        .mouse_press
+        .filter(|p| p.owner == Owner::Tool)
+        .map_or(PointerButton::Primary, |p| p.button)
 }
 
 /// 入力を当てる（rect はタブの中身の表示域。`foreign` はこの押しが egui でほかの部品のものか）。
@@ -1215,6 +1215,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     if app.view3d.model.is_none() {
         nav_cancel(app);
         app.view3d.input.pen_press = None;
+        app.view3d.input.mouse_press = None;
         app.view3d.input.draft = None;
         super::select::focus_lost(app);
         // Touch の終わり・取りやめとフォーカスを失ったのは、モデルが無くても読む（古い力を次のマウスの押しに持ち越さない）
@@ -1247,15 +1248,6 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     super::navigation::fly(ui, app);
     let (events, now, frame_dt) = ui.input(|i| (i.events.clone(), i.time, i.unstable_dt as f64));
     super::select::frame(app, now);
-    // マウスの点の時刻（筆の速さ）: 2D のキャンバスと同じく、前のフレームからの時間をこのフレームのマウスの点の数で等分する
-    let mut clock = crate::gesture::MouseClock::new(
-        now,
-        frame_dt,
-        events
-            .iter()
-            .filter(|e| crate::gesture::is_mouse_sample_event(e))
-            .count(),
-    );
     // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
     let pose_mode = app.mode == crate::mode::EditorMode::Pose;
     // ポーズのモードの間はペンの点を見ないので、押している印も持ち越さない（離したのを見落とした印が次の押しを止めない）
@@ -1291,8 +1283,18 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         }
     };
 
-    // ペン（Windows Ink）。ペンの押し（触れてから離すまで）は、ペンの点だけで扱い、同じ押しが egui のポインタの押しとして二重に来ても使わない
-    let pen_frame = app.view3d.input.pen_press.is_some() || pen.iter().any(|s| s.contact);
+    // ペン（Windows Ink）の点が先、egui のイベントが後。ペンの押し（触れてから離すまで）は、ペンの点だけで扱い、同じ押しが egui のポインタの押しとして
+    // 二重に来ても使わない（`pen_frame`）。マウスの点の時刻（筆の速さ）は、2D のキャンバスと同じく、前のフレームからの時間をこのフレームのマウスの点の数で
+    // 等分する（`Stream`）
+    let stream = Stream::new(
+        pen,
+        &events,
+        app.view3d.input.pen_press.is_some(),
+        now,
+        frame_dt,
+    );
+    let pen_frame = stream.pen_frame;
+    let ppp = ui.ctx().pixels_per_point();
     if crate::pen::log::enabled() && (pen_frame || app.view3d.input.nav.is_some()) {
         crate::pen::log::event(|| {
             crate::pen::log::frame_line(
@@ -1310,16 +1312,15 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         modifiers,
         space,
     };
-    for s in pen {
-        pen_sample(ui, app, rect, s, &frame, &mut drag_at);
-    }
-
-    for event in &events {
-        // 描く点になりうるイベントごとに 1 つずつ進める（描かなくても進める。数えたときと同じ数になる）
-        let time = if crate::gesture::is_mouse_sample_event(event) {
-            clock.next_time()
-        } else {
-            now
+    for item in stream {
+        let (event, time) = match item {
+            Item::Pen(s) => {
+                let lost = app.pen_release_lost(s);
+                let s = PointerSample::pen(s, ppp, app.view3d.input.pen_press, lost, modifiers);
+                pen_sample(ui, app, rect, &s, &frame, &mut drag_at);
+                continue;
+            }
+            Item::Event { event, time } => (event, time),
         };
         // Y を押しているあいだのドラッグはステンシルの置き場を動かす（描かない・回さない・パンしない。編集・ポーズのモードでは描かないので、ステンシルも使わない）
         let over = match event {
@@ -1329,230 +1330,241 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         if app.mode.paints() && crate::stencil::handle_event(app, event, rect, over, &modifiers) {
             continue;
         }
-        match event {
-            // 指・ペンの Touch の力は、2D のキャンバスと同じ全体の調整を通して、マウスの道の筆圧にする
-            Event::Touch { force, phase, .. } => app.note_touch(*force, *phase),
-            Event::PointerButton {
-                pos,
-                button,
-                pressed,
-                modifiers: m,
-            } => {
-                let (pos, button, m) = (*pos, &PointerButton::from(*button), &Modifiers::from(*m));
-                if *pressed {
-                    if press_blocked || !on_top(ui, rect, pos) {
-                        continue;
-                    }
-                    // 離した後の残りを塗っている途中の押し: 残りを塗って確定してから、この押しを受ける（押しを捨てない）
-                    settle(app);
-                    if app.view3d.input.stroke.is_some()
-                        || app.view3d.input.draft.is_some()
-                        || super::select::dragging(app)
-                    {
-                        continue;
-                    }
-                    if pen_frame {
-                        // ペンの押しは、ペンの点が持つ（これは同じ押しの egui のポインタの代わりの入力）
+        // マウスの押し・離し・動き（ペンの点と同じ形。ペンの押しの間の印 `pen_frame` は点が持つ）
+        if let Some(s) = PointerSample::mouse(
+            event,
+            time,
+            app.canvas.touch_pressure.unwrap_or(1.0),
+            modifiers,
+            pen_frame,
+        ) {
+            let pen_frame = s.pen_frame;
+            match s.phase {
+                Phase::Press | Phase::Release { .. } => {
+                    let (pos, button, m) = (s.pos, &s.button, &s.modifiers);
+                    if s.phase == Phase::Press {
+                        if press_blocked || !on_top(ui, rect, pos) {
+                            continue;
+                        }
+                        // 離した後の残りを塗っている途中の押し: 残りを塗って確定してから、この押しを受ける（押しを捨てない）
+                        settle(app);
+                        let c = press_ctx(app, *button, m, space, press_blocked, true, false);
+                        if pen_frame {
+                            // ペンの押しは、ペンの点が持つ（これは同じ押しの egui のポインタの代わりの入力）
+                            crate::pen::log::event(|| {
+                                crate::pen::log::press_line(
+                                    crate::pen::log::Site {
+                                        view: "view3d",
+                                        src: "mouse",
+                                        frame: ui.ctx().cumulative_frame_nr(),
+                                        pen_frame: true,
+                                    },
+                                    "none",
+                                    pos,
+                                    &format!("{button:?}"),
+                                    true,
+                                )
+                            });
+                            continue;
+                        }
+                        // 押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作と離しの操作を別々に引き、押しの持ち主を決める
+                        // （`press_ctx`。ペンと同じ表）。ドラッグの操作があれば始め、離しの操作は覚えて、動かさずに離したら行う（動いたら捨てる）
+                        let nav = nav_of(*button, m, space);
+                        let click = click_of(app, *button, m, space);
                         crate::pen::log::event(|| {
                             crate::pen::log::press_line(
                                 crate::pen::log::Site {
                                     view: "view3d",
                                     src: "mouse",
                                     frame: ui.ctx().cumulative_frame_nr(),
-                                    pen_frame: true,
+                                    pen_frame: false,
                                 },
-                                "none",
+                                &crate::pen::log::mouse_kind("nav", nav, click.is_some()),
                                 pos,
                                 &format!("{button:?}"),
-                                true,
+                                false,
                             )
                         });
-                        continue;
-                    }
-                    // 押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作と離しの操作を別々に引く。ドラッグの操作があれば
-                    // 始め、離しの操作は覚えて、動かさずに離したら行う（動いたら捨てる）。どちらも無ければ、左ボタンはツールの押し
-                    let nav = nav_of(*button, m, space);
-                    let click = click_of(app, *button, m, space);
-                    crate::pen::log::event(|| {
-                        crate::pen::log::press_line(
-                            crate::pen::log::Site {
-                                view: "view3d",
-                                src: "mouse",
-                                frame: ui.ctx().cumulative_frame_nr(),
-                                pen_frame: false,
-                            },
-                            &crate::pen::log::mouse_kind("nav", nav, click.is_some()),
-                            pos,
-                            &format!("{button:?}"),
-                            false,
-                        )
-                    });
-                    if let Some(nav) = nav {
-                        nav_press(app, nav, *button, pos, m);
-                    }
-                    if nav.is_some() || click.is_some() {
-                        note_click(app, rect, StrokeSource::Mouse, *button, pos, click);
-                    }
-                    // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（ほかのツールはスポイト。動かせば回すだけ）
-                    if *button == PointerButton::Secondary && !m.any() && !space {
-                        crate::bake::overlap::menu_press(
-                            app,
-                            crate::region::tools::Where::Surface(rect),
-                            pos,
-                        );
-                    }
-                    if nav.is_some() || click.is_some() {
-                        // ビューの押し（ツールへは渡さない）
-                    } else if *button == PointerButton::Primary && app.view3d.input.nav.is_none() {
-                        if pose_mode {
-                            if app.view3d.pose.drag.is_none() {
-                                gizmo::press(app, rect, pos);
-                                // 移動・回転・拡縮のツール: 輪の外で、選んだボーンの面から左ドラッグを始めたら、その種類の G/R/S
-                                if let Some(kind) = app.edit_tool.transform() {
-                                    let selected =
-                                        app.view3d.pose.session.as_ref().and_then(|s| s.selected);
-                                    if app.view3d.pose.drag.is_none()
-                                        && selected.is_some()
-                                        && gizmo::bone_at(app, rect, pos) == selected
-                                    {
-                                        app.objects.drag_request =
-                                            Some((kind, pos, crate::fillfx::gizmo::Source::Mouse));
-                                        crate::objects::transform::start_drag(ui.ctx(), app);
-                                    }
-                                }
+                        let owner = crate::input::owner(&c);
+                        if owner == Owner::View {
+                            if let Some(nav) = nav {
+                                nav_press(app, nav, *button, pos, m);
                             }
-                        } else if app.mode == crate::mode::EditorMode::Edit {
-                            // 編集のモード: 点の印で選ぶ・選んだ形の取っ手を掴む（描かない）。移動・回転・拡縮のツールは G/R/S のドラッグ
-                            crate::objects::press(
-                                app,
-                                rect,
-                                pos,
-                                crate::fillfx::gizmo::Source::Mouse,
-                            );
-                            crate::objects::transform::start_drag(ui.ctx(), app);
-                        } else if !app.stencil.handling() {
-                            // 形のギズモのハンドルの上・点のグラデーションの点を編集している間は、描かずにドラッグを始める
-                            if !crate::fillfx::gizmo::press(
-                                app,
-                                rect,
-                                pos,
-                                crate::fillfx::gizmo::Source::Mouse,
-                            ) && !crate::fillfx::points::press(
-                                app,
-                                rect,
-                                pos,
-                                crate::fillfx::gizmo::Source::Mouse,
-                            ) {
-                                begin(
-                                    app,
-                                    rect,
-                                    pos,
-                                    app.canvas.touch_pressure.unwrap_or(1.0),
-                                    StrokeSource::Mouse,
-                                    false,
-                                    PenState::mouse(time),
-                                    *m,
-                                );
-                            }
+                            note_click(app, rect, StrokeSource::Mouse, *button, pos, click);
                         }
-                    }
-                } else {
-                    // ペンの押しの回す・パン・拡縮は、ペンの点が終える
-                    if !pen_frame {
-                        nav_release(app, rect, pos, *button);
-                        if *button == PointerButton::Secondary {
-                            crate::bake::overlap::menu_release(
+                        // 右ボタンを動かさずに離したら、ポリゴン塗りつぶしのアイランドのメニュー（ほかのツールはスポイト。動かせば回すだけ）
+                        if !c.busy && *button == PointerButton::Secondary && !m.any() && !space {
+                            crate::bake::overlap::menu_press(
                                 app,
-                                &ctx,
                                 crate::region::tools::Where::Surface(rect),
                                 pos,
                             );
                         }
+                        if owner == Owner::Tool {
+                            app.view3d.input.mouse_press = Some(Press {
+                                source: StrokeSource::Mouse,
+                                owner,
+                                button: *button,
+                                last: pos,
+                            });
+                            // 選択の行の組み合わせ方は、押したボタンで引く（2D と同じ）
+                            app.sel.press_button = *button;
+                            if pose_mode {
+                                if app.view3d.pose.drag.is_none() {
+                                    gizmo::press(app, rect, pos);
+                                    // 移動・回転・拡縮のツール: 輪の外で、選んだボーンの面から左ドラッグを始めたら、その種類の G/R/S
+                                    if let Some(kind) = app.edit_tool.transform() {
+                                        let selected = app
+                                            .view3d
+                                            .pose
+                                            .session
+                                            .as_ref()
+                                            .and_then(|s| s.selected);
+                                        if app.view3d.pose.drag.is_none()
+                                            && selected.is_some()
+                                            && gizmo::bone_at(app, rect, pos) == selected
+                                        {
+                                            app.objects.drag_request = Some((
+                                                kind,
+                                                pos,
+                                                crate::fillfx::gizmo::Source::Mouse,
+                                            ));
+                                            crate::objects::transform::start_drag(ui.ctx(), app);
+                                        }
+                                    }
+                                }
+                            } else if app.mode == crate::mode::EditorMode::Edit {
+                                // 編集のモード: 点の印で選ぶ・選んだ形の取っ手を掴む（描かない）。移動・回転・拡縮のツールは G/R/S のドラッグ
+                                crate::objects::press(
+                                    app,
+                                    rect,
+                                    pos,
+                                    crate::fillfx::gizmo::Source::Mouse,
+                                );
+                                crate::objects::transform::start_drag(ui.ctx(), app);
+                            } else {
+                                // 形のギズモのハンドルの上・点のグラデーションの点を編集している間は、描かずにドラッグを始める
+                                if !crate::fillfx::gizmo::press(
+                                    app,
+                                    rect,
+                                    pos,
+                                    crate::fillfx::gizmo::Source::Mouse,
+                                ) && !crate::fillfx::points::press(
+                                    app,
+                                    rect,
+                                    pos,
+                                    crate::fillfx::gizmo::Source::Mouse,
+                                ) {
+                                    begin(
+                                        app,
+                                        rect,
+                                        pos,
+                                        s.pressure,
+                                        StrokeSource::Mouse,
+                                        false,
+                                        PenState::of(&s),
+                                        *m,
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        // ペンの押しの回す・パン・拡縮は、ペンの点が終える
+                        if !pen_frame {
+                            nav_release(app, rect, pos, *button);
+                            if *button == PointerButton::Secondary {
+                                crate::bake::overlap::menu_release(
+                                    app,
+                                    &ctx,
+                                    crate::region::tools::Where::Surface(rect),
+                                    pos,
+                                );
+                            }
+                        }
+                        // ツールの押しのボタン（選択の行を左ボタン以外にしていれば、そのボタン）を離したら、ツールが終える
+                        let tool_released = *button == tool_button(app);
+                        if tool_released && app.view3d.input.stroke == Some(StrokeSource::Mouse) {
+                            release(app, &ctx);
+                        }
+                        if tool_released {
+                            app.view3d.input.mouse_press = None;
+                            super::draft::release(app, rect, pos, StrokeSource::Mouse, m);
+                            super::select::release(app, rect, pos, StrokeSource::Mouse, m);
+                            crate::pathtool::surface::release(app, rect, pos, StrokeSource::Mouse);
+                            flush(app, &mut drag_at);
+                            gizmo::release(app, true);
+                            if app
+                                .fillfx
+                                .drag
+                                .as_ref()
+                                .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+                            {
+                                crate::fillfx::gizmo::release(app, true);
+                            }
+                            if app
+                                .fillfx
+                                .point_drag
+                                .as_ref()
+                                .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
+                            {
+                                crate::fillfx::points::release(app, true);
+                            }
+                        }
                     }
-                    if *button == PointerButton::Primary
-                        && app.view3d.input.stroke == Some(StrokeSource::Mouse)
-                    {
-                        release(app, &ctx);
+                    app.view3d.input.last_pointer = Some(pos);
+                }
+                Phase::Move => {
+                    let pos = s.pos;
+                    let previous = app.view3d.input.last_pointer.unwrap_or(pos);
+                    if app.view3d.input.stroke == Some(StrokeSource::Mouse) && !pen_frame {
+                        add(app, rect, pos, s.pressure, PenState::of(&s));
                     }
-                    if *button == PointerButton::Primary {
-                        super::draft::release(app, rect, pos, StrokeSource::Mouse, m);
-                        super::select::release(app, rect, pos, StrokeSource::Mouse, m);
-                        crate::pathtool::surface::release(app, rect, pos, StrokeSource::Mouse);
-                        flush(app, &mut drag_at);
-                        gizmo::release(app, true);
-                        if app
+                    if !pen_frame {
+                        crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
+                        super::draft::moved(app, rect, pos, StrokeSource::Mouse, &s.modifiers);
+                        super::select::moved(app, rect, pos, StrokeSource::Mouse, &s.modifiers);
+                    }
+                    if app.view3d.pose.drag.is_some()
+                        || app
                             .fillfx
                             .drag
                             .as_ref()
                             .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
-                        {
-                            crate::fillfx::gizmo::release(app, true);
-                        }
-                        if app
-                            .fillfx
-                            .point_drag
-                            .as_ref()
-                            .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
-                        {
-                            crate::fillfx::points::release(app, true);
-                        }
+                        || app.fillfx.point_drag.as_ref().is_some_and(|d| {
+                            d.in_3d && d.source == crate::fillfx::gizmo::Source::Mouse
+                        })
+                    {
+                        drag_at = Some(pos);
                     }
+                    // ペンの押しの回す・パン・拡縮は、ペンの点が動かす
+                    if crate::pen::log::enabled() && app.view3d.input.nav.is_some() {
+                        crate::pen::log::event(|| {
+                            crate::pen::log::move_line(
+                                crate::pen::log::Site {
+                                    view: "view3d",
+                                    src: "mouse",
+                                    frame: ui.ctx().cumulative_frame_nr(),
+                                    pen_frame,
+                                },
+                                pos,
+                                previous,
+                                &nav_name(app),
+                                !pen_frame,
+                            )
+                        });
+                    }
+                    if !pen_frame {
+                        nav_move(app, rect, pos, previous);
+                    }
+                    app.view3d.input.last_pointer = Some(pos);
                 }
-                app.view3d.input.last_pointer = Some(pos);
+                Phase::Idle { .. } => {}
             }
-            Event::PointerMoved(pos) => {
-                let pos = *pos;
-                let previous = app.view3d.input.last_pointer.unwrap_or(pos);
-                if app.view3d.input.stroke == Some(StrokeSource::Mouse) && !pen_frame {
-                    add(
-                        app,
-                        rect,
-                        pos,
-                        app.canvas.touch_pressure.unwrap_or(1.0),
-                        PenState::mouse(time),
-                    );
-                }
-                if !pen_frame {
-                    crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
-                    super::draft::moved(app, rect, pos, StrokeSource::Mouse, &modifiers);
-                    super::select::moved(app, rect, pos, StrokeSource::Mouse, &modifiers);
-                }
-                if app.view3d.pose.drag.is_some()
-                    || app
-                        .fillfx
-                        .drag
-                        .as_ref()
-                        .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
-                    || app
-                        .fillfx
-                        .point_drag
-                        .as_ref()
-                        .is_some_and(|d| d.in_3d && d.source == crate::fillfx::gizmo::Source::Mouse)
-                {
-                    drag_at = Some(pos);
-                }
-                // ペンの押しの回す・パン・拡縮は、ペンの点が動かす
-                if crate::pen::log::enabled() && app.view3d.input.nav.is_some() {
-                    crate::pen::log::event(|| {
-                        crate::pen::log::move_line(
-                            crate::pen::log::Site {
-                                view: "view3d",
-                                src: "mouse",
-                                frame: ui.ctx().cumulative_frame_nr(),
-                                pen_frame,
-                            },
-                            pos,
-                            previous,
-                            &nav_name(app),
-                            !pen_frame,
-                        )
-                    });
-                }
-                if !pen_frame {
-                    nav_move(app, rect, pos, previous);
-                }
-                app.view3d.input.last_pointer = Some(pos);
-            }
+            continue;
+        }
+        match event {
+            // 指・ペンの Touch の力は、2D のキャンバスと同じ全体の調整を通して、マウスの道の筆圧にする
+            Event::Touch { force, phase, .. } => app.note_touch(*force, *phase),
             Event::MouseWheel { unit, delta, .. } => {
                 let Some(p) = ui.input(|i| i.pointer.hover_pos()) else {
                     continue;
@@ -1622,6 +1634,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                     app.path.rect = None;
                 }
                 app.view3d.input.pen_press = None;
+                app.view3d.input.mouse_press = None;
                 flush(app, &mut drag_at);
                 gizmo::release(app, true);
                 // 形のギズモ・点のドラッグは離したのを受け取れないので、ドラッグの前に戻す（履歴にも残さない）
@@ -1636,9 +1649,16 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     }
     flush(app, &mut drag_at);
     // ボタンを離したのを取りこぼしたとき（ウィンドウの外で離したなど）も、押していなければ離したことにする
-    let (primary, any_down) = ui.input(|i| (i.pointer.primary_down(), i.pointer.any_down()));
+    // ツールの押しのボタン（選択の行を左ボタン以外にしていれば、そのボタン）
+    let tool_button = tool_button(app);
+    let (tool_down, any_down) = ui.input(|i| {
+        (
+            i.pointer.button_down(tool_button.into()),
+            i.pointer.any_down(),
+        )
+    });
     if app.view3d.input.stroke == Some(StrokeSource::Mouse)
-        && !primary
+        && !tool_down
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
@@ -1651,7 +1671,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         .input
         .draft
         .is_some_and(|d| d.source == StrokeSource::Mouse)
-        && !primary
+        && !tool_down
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
@@ -1659,7 +1679,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         super::draft::lost_release(app, rect, StrokeSource::Mouse);
     }
     if super::select::dragging(app)
-        && !primary
+        && !tool_down
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
@@ -1670,7 +1690,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         .path
         .drag
         .is_some_and(|d| d.source == StrokeSource::Mouse && d.surface)
-        && !primary
+        && !tool_down
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
@@ -1682,7 +1702,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         .path
         .rect
         .is_some_and(|r| r.source == StrokeSource::Mouse && r.surface)
-        && !primary
+        && !tool_down
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
@@ -1693,7 +1713,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         }
     }
     if app.view3d.pose.drag.is_some()
-        && !primary
+        && !tool_down
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
@@ -1705,19 +1725,27 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         .drag
         .as_ref()
         .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
-        && !primary
+        && !tool_down
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
     {
         crate::fillfx::gizmo::release(app, true);
     }
+    // ツールの押しのボタンを離したのを取りこぼしたら、押しの控えも捨てる（次の押しのボタンを引き違えない）
+    if !tool_down
+        && !events
+            .iter()
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
+    {
+        app.view3d.input.mouse_press = None;
+    }
     // ペンが回している・パンしている・寄っている間は、egui のポインタが押していなくても続ける（ペンが離したときに終える）
     let pen_driven = app
         .view3d
         .input
         .pen_press
-        .is_some_and(|p| p.kind == PressKind::View);
+        .is_some_and(|p| p.owner == Owner::View);
     if !any_down && !pen_driven {
         nav_cancel(app);
     }

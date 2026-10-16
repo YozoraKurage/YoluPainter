@@ -362,7 +362,7 @@ pub struct CanvasInput {
     /// ペンの今の押し（触れてから離すまで。行き先は触れた最初の点で決める）。ペンの `contact` は押している間ずっと続くので、これが
     /// 押し直さない印も兼ねる（押した瞬間に終わるバケツ・ID の色で選択を、押しっぱなしの次の点でまた押さない）。離した点・ウィンドウが
     /// フォーカスを失ったときに下ろす。
-    pub pen_press: Option<crate::pen::PenPress>,
+    pub pen_press: Option<crate::input::Press>,
     /// Ctrl+Space の拡縮のドラッグ（押した点が中心）。
     pub zooming: Option<crate::gesture::ZoomDrag>,
     /// egui の Touch の筆圧（winit が出したとき）。
@@ -371,8 +371,9 @@ pub struct CanvasInput {
     pub rotating: Option<RotateDrag>,
     /// 表示の回す・パン・拡縮を始めたボタン（そのボタンを離したら終える）。
     pub nav_button: Option<key::PointerButton>,
-    /// 描く・選択などのツールの押しを始めたボタン（そのボタンを離したらツールが終える。無ければ左ボタン）。
-    pub tool_button: Option<key::PointerButton>,
+    /// マウスのツールの押し（描く・選択などのツールが受けた押し。始めたボタンを離したらツールが終える。無ければ左ボタン）。ビューを動かす押しは
+    /// `nav_button`、スポイトは `eyedrop` が持つ。
+    pub mouse_press: Option<crate::input::Press>,
     /// 右ボタン（ペンのサイドボタン）でスポイトを始めている（押したまま動かすと見本が付いてくる。離して決める）。
     pub eyedrop: Option<crate::eyedrop::RightPress>,
     pub rotate_key_held: bool,

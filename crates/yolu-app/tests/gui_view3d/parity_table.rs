@@ -831,8 +831,7 @@ fn d12_the_stroke_ends_on_the_lift_in_2d_and_after_the_queue_in_3d() {
 }
 
 /// D13 マウスのストロークが残っている間に、ペンが触れた。
-/// - 2D: ペンの `press_kind` は描いている間も `Tool` を通し、`begin_any` の前に「始めたストロークが残っていないか」を見ない（下の今の値）
-/// - 3D: `press_kind` が `stroke.is_some()` で `Ignored`（ペンは何もしない）
+/// - 2D・3D: 押しの持ち主（`input::owner`）が「描いている最中」で `Ignored`（ペンは何もしない。知らせも出ない）
 #[test]
 fn d13_a_pen_touch_while_a_mouse_stroke_is_still_down() {
     for view in VIEWS {
@@ -862,24 +861,12 @@ fn d13_a_pen_touch_while_a_mouse_stroke_is_still_down() {
         h.step();
         settle(&mut h);
         let s = seen(&h);
-        match view {
-            View::Canvas => {
-                // ペンの押しは `begin_any` へ進み、core が「描いている最中」で断る（今の値）
-                let lang = h.lang();
-                let what = lang
-                    .t("stroke_gate-cannot-paint")
-                    .trim_end_matches(['。', '.']);
-                let n = during.notice.clone().expect("2D: ペンの押しの知らせ");
-                assert_eq!((n.0, n.1), (Kind::Refusal, Source::Brush), "2D: {n:?}");
-                assert!(n.2.starts_with(what), "2D: {}", n.2);
-                assert_eq!(s.strokes, 1, "2D: マウスの 1 本だけ");
-            }
-            View::View3d => {
-                assert_eq!(during.notice, None, "3D: ペンの押しは何もしない");
-                assert_eq!(s.strokes, 1, "3D: マウスの 1 本だけ");
-                assert!(!ink_near_texel(&h, view, rect, b), "3D: ペンの所は塗らない");
-            }
-        }
+        assert_eq!(during.notice, None, "{view:?}: ペンの押しは何もしない");
+        assert_eq!(s.strokes, 1, "{view:?}: マウスの 1 本だけ");
+        assert!(
+            !ink_near_texel(&h, view, rect, b),
+            "{view:?}: ペンの所は塗らない"
+        );
     }
 }
 
@@ -1010,9 +997,9 @@ fn d15_the_pen_side_button_picks_on_a_tap_in_both_and_on_a_drag_only_in_2d() {
     }
 }
 
-/// D16 `press_kind` の判定の順（ビューを動かしている最中のペン先）。
-/// - 2D: ① 押せない・一番上でない・ステンシル ② 描いている ③ ナビ・離しの操作 ④ ツール。マウスの中ボタンのパンの途中でも、ペン先は描く
-/// - 3D: ① 押せない・一番上でない・ビューを動かしている・描いている・図形・選択・ステンシル で `Ignored`。パンの途中のペン先は何もしない
+/// D16 押しの持ち主を決める順（ビューを動かしている最中のペン先）。
+/// - 2D・3D: `input::owner` の ① 押せない・一番上でない・ステンシル ② 描いている・図形・選択の形・ビューを動かしている最中 で `Ignored`
+///   ③ ビューの操作・離しの操作 ④ スポイト ⑤ ツール。マウスの中ボタンのパンの途中のペン先は何もしない
 #[test]
 fn d16_a_pen_tip_while_the_mouse_middle_button_pans() {
     for view in VIEWS {
@@ -1045,16 +1032,17 @@ fn d16_a_pen_tip_while_the_mouse_middle_button_pans() {
         let s = seen(&h);
         release(&h, m, PointerButton::Middle);
         h.run();
-        match view {
-            View::Canvas => assert_painted(&s, &before, "2D: パンの途中でもペン先は描く"),
-            View::View3d => assert_silent(&s, &before, "3D: パンの途中のペン先は何もしない"),
-        }
+        assert_silent(
+            &s,
+            &before,
+            &format!("{view:?}: パンの途中のペン先は何もしない"),
+        );
     }
 }
 
 /// D17 ツールの押しのボタン（選択の「追加」の行を、左以外のボタン（Extra1 + Shift）にした）。
-/// - 2D: `app.canvas.tool_button` で、左以外のボタンでも選択を始められる
-/// - 3D: ツールは左ボタンだけ（左以外のボタンの押しは何もしない）
+/// - 2D・3D: 押しの持ち主（`input::owner`）は、選択の行を割り当てたボタンをツールのボタンにする。マウスのツールの押し（`mouse_press`）が
+///   始めたボタンを控え、そのボタンの離しで終える。組み合わせ方も押したボタンで引く（左ボタンで選んだ所に足す）
 #[test]
 fn d17_a_selection_row_moved_to_another_button() {
     use yolu_app::keyconfig::Combo;
@@ -1075,6 +1063,19 @@ fn d17_a_selection_row_moved_to_another_button() {
         assert!(h.keys_mut().combo_conflict(row.index).is_none());
         set_tool(&mut h, Tool::SelectRect);
         clear(&mut h);
+        // 先に左ボタンで別の所を選ぶ（足したか、置き換えたかを見分ける）
+        let (c, d) = (
+            spot(&h, view, rect, 0.65, 0.65),
+            spot(&h, view, rect, 0.95, 0.95),
+        );
+        mouse_stroke(&mut h, &[c, c + (d - c) * 0.5, d], Modifiers::NONE);
+        let first = c + (d - c) * 0.5;
+        let amount = |h: &H, at: Pos2| -> u8 {
+            let (x, y) = texel(h, view, rect, at);
+            h.doc().selection().map_or(0, |m| m.amount(x, y))
+        };
+        assert!(amount(&h, first) > 0, "{view:?}: 左ボタンで選んだ");
+        let undo = h.doc().undo_count();
         let (a, b) = (
             spot(&h, view, rect, -0.5, -0.5),
             spot(&h, view, rect, 0.5, 0.5),
@@ -1101,14 +1102,12 @@ fn d17_a_selection_row_moved_to_another_button() {
         h.step();
         hold(&mut h, Modifiers::NONE);
         h.run();
-        let selected = h.doc().selection().is_some_and(|m| !m.is_empty());
-        match view {
-            View::Canvas => assert!(selected, "2D: Extra1 + Shift で選択範囲を足した"),
-            View::View3d => {
-                assert!(!selected, "3D: 左以外のボタンはツールにならない");
-                assert_eq!(h.doc().undo_count(), 0);
-            }
-        }
+        assert!(
+            amount(&h, a + (b - a) * 0.5) > 0,
+            "{view:?}: Extra1 + Shift で選んだ"
+        );
+        assert!(amount(&h, first) > 0, "{view:?}: 置き換えずに足した");
+        assert_eq!(h.doc().undo_count(), undo + 1, "{view:?}: 1 回の選択");
     }
 }
 
@@ -1408,5 +1407,193 @@ fn d24_a_selected_layer_that_is_no_longer_in_the_document() {
                 &format!("{view:?} {tool:?}"),
             );
         }
+    }
+}
+
+// ───────── 押しの持ち主の表（`input::owner`）で変わった、マウスの途中のボタンと、ボタンを押していない間の押し ─────────
+
+/// マウスでビューを動かしている途中の別のボタンの押し。最初に押したボタンの操作だけが、離すまで続く。
+/// - 2D: 中ボタンのパンの途中の左ボタンは描かず、Alt + 左ボタンの表示の回しも始めない（前は、描いた・回し始めた）
+/// - 3D: 右ボタンで回している途中の中ボタンは、パンに替えない。中ボタンを離しても回しは続く（前は、替えて、離すと切れた）
+#[test]
+fn the_first_mouse_button_keeps_the_view_operation_until_it_is_released() {
+    // 2D: 中ボタンのパン + 左ボタン
+    let (mut h, rect) = scene(View::Canvas);
+    clear(&mut h);
+    let m = spot(&h, View::Canvas, rect, 0.8, 0.8);
+    press(&h, m, PointerButton::Middle);
+    h.step();
+    assert!(h.canvas().panning, "2D: 中ボタンでパンが始まっている");
+    let before = seen(&h);
+    let a = spot(&h, View::Canvas, rect, -0.4, 0.0);
+    press_with(&h, a, Modifiers::NONE);
+    h.step();
+    for i in 1..=4 {
+        move_to(&h, a + egui::vec2(8.0 * i as f32, 0.0));
+        h.step();
+    }
+    release_with(&h, a + egui::vec2(32.0, 0.0), Modifiers::NONE);
+    h.step();
+    assert!(h.canvas().panning, "2D: 中ボタンのパンは続く");
+    let s = seen(&h);
+    assert_silent(&s, &before, "2D: パンの途中の左ボタンは描かない");
+    release(&h, m, PointerButton::Middle);
+    h.run();
+    assert!(!h.canvas().panning, "2D: 中ボタンを離したらパンは終わる");
+
+    // 2D: 中ボタンのパン + Alt + 左ボタン
+    let (mut h, rect) = scene(View::Canvas);
+    let m = spot(&h, View::Canvas, rect, 0.8, 0.8);
+    let a = spot(&h, View::Canvas, rect, -0.4, 0.0);
+    hold(&mut h, Modifiers::ALT);
+    press_with(&h, a, Modifiers::ALT);
+    h.step();
+    assert!(
+        h.canvas().rotating.is_some(),
+        "2D: （比べる）Alt + 左ボタンは表示を回し始める"
+    );
+    release_with(&h, a, Modifiers::ALT);
+    h.step();
+    hold(&mut h, Modifiers::NONE);
+    press(&h, m, PointerButton::Middle);
+    h.step();
+    assert!(h.canvas().panning);
+    hold(&mut h, Modifiers::ALT);
+    press_with(&h, a, Modifiers::ALT);
+    h.step();
+    assert!(
+        h.canvas().rotating.is_none(),
+        "2D: パンの途中の Alt + 左ボタンは回し始めない"
+    );
+    assert!(h.canvas().panning, "2D: 中ボタンのパンは続く");
+    release_with(&h, a, Modifiers::ALT);
+    h.step();
+    hold(&mut h, Modifiers::NONE);
+    release(&h, m, PointerButton::Middle);
+    h.run();
+
+    // 3D: 右ボタンで回している途中の中ボタン
+    let (mut h, rect) = scene(View::View3d);
+    let r = spot(&h, View::View3d, rect, 0.8, 0.8);
+    press(&h, r, PointerButton::Secondary);
+    h.step();
+    let orbit = h.view3d().input.nav;
+    assert!(
+        matches!(
+            orbit,
+            Some((_, yolu_app::state::key::PointerButton::Secondary))
+        ),
+        "3D: 右ボタンで回している"
+    );
+    press(&h, r, PointerButton::Middle);
+    h.step();
+    assert_eq!(
+        h.view3d().input.nav,
+        orbit,
+        "3D: 中ボタンを押しても替わらない"
+    );
+    release(&h, r, PointerButton::Middle);
+    h.step();
+    assert_eq!(
+        h.view3d().input.nav,
+        orbit,
+        "3D: 中ボタンを離しても右ボタンの回しは続く"
+    );
+    release(&h, r, PointerButton::Secondary);
+    h.run();
+    assert_eq!(h.view3d().input.nav, None, "3D: 右ボタンを離したら終わる");
+}
+
+/// 範囲の塗りの裏の仕事（文書が 256×256 を超えると、塗りはいつも裏の仕事になる。ボタンを離した後も続く）が動いている間の押し。
+/// - ブラシはペンでもマウスでも描ける（ボタンを押していない間の仕事で、押しを捨てない）
+/// - 塗りつぶしの押しは、今までどおり「塗りつぶし中」と断る
+fn scene_big() -> (H, Rect) {
+    let mut h = app(1100.0, 760.0, 512);
+    thin_brush(&mut h);
+    click_tab(&mut h, Tab::Canvas);
+    h.run();
+    let rect = canvas_rect(&h);
+    (h, rect)
+}
+
+/// 終わらない塗りの仕事を置く（送り口を持っているあいだは走っているまま）。
+fn start_fill_job(
+    h: &mut H,
+) -> std::sync::mpsc::Sender<Result<yolu_app::engine::SelectionMask, yolu_app::engine::CoreError>> {
+    let layer = h.selected_layer().expect("レイヤー");
+    let (job, hold) = yolu_app::region::bucket::Job::parked(h.app(), layer);
+    h.app_mut().region.job = Some(job);
+    assert!(h.app().is_stroking(), "仕事の間は描いている最中に数える");
+    clear(h);
+    hold
+}
+
+/// 点 `at` へペンかマウスで触れて離す（1 点ごとに 1 フレーム）。
+fn tap(h: &mut H, pen: bool, points: &[Pos2]) {
+    let end = *points.last().unwrap();
+    if pen {
+        for (i, p) in points.iter().enumerate() {
+            h.state().pen().push(sample(*p, true, i as u32 * 10));
+            h.step();
+        }
+        h.state().pen().push(sample(end, false, 100));
+        h.step();
+    } else {
+        press_with(h, points[0], Modifiers::NONE);
+        h.step();
+        for p in &points[1..] {
+            move_to(h, *p);
+            h.step();
+        }
+        release_with(h, end, Modifiers::NONE);
+        h.step();
+    }
+}
+
+#[test]
+fn a_brush_press_while_the_fill_job_runs_still_paints_with_the_pen_and_the_mouse() {
+    for pen in [true, false] {
+        let (mut h, rect) = scene_big();
+        let points = line(&h, View::Canvas, rect);
+        let before = seen(&h);
+        let _hold = start_fill_job(&mut h);
+        tap(&mut h, pen, &points);
+        let s = seen(&h);
+        assert_eq!(
+            s.strokes,
+            before.strokes + 1,
+            "ペン {pen}: ストロークが 1 段増えた"
+        );
+        assert!(s.ink > before.ink, "ペン {pen}: 画素が変わった");
+        assert_eq!(s.notice, None, "ペン {pen}: 知らせは出ない");
+    }
+}
+
+#[test]
+fn a_fill_press_while_the_fill_job_runs_is_refused_with_the_pen_and_the_mouse() {
+    for pen in [true, false] {
+        let (mut h, rect) = scene_big();
+        // 近い色で塗るバケツ（裏の仕事になるのはこちら。ツールの入口がモデルを先に見るので、試しのモデルを読む）
+        h.view3d_mut().load_demo();
+        h.run();
+        set_tool(&mut h, Tool::Fill);
+        h.app_mut().region.by_color = true;
+        let at = spot(&h, View::Canvas, rect, 0.2, 0.2);
+        let _hold = start_fill_job(&mut h);
+        tap(&mut h, pen, &[at]);
+        let lang = h.lang();
+        assert_eq!(
+            h.last_notice()
+                .as_ref()
+                .map(|n| (n.kind, n.source, n.text.clone())),
+            Some((
+                Kind::Refusal,
+                Source::Fill,
+                lang.t("region-filling").to_owned()
+            )),
+            "ペン {pen}: 塗っている最中の断り"
+        );
+        assert!(h.region().job.is_some(), "ペン {pen}: 仕事はそのまま");
+        assert_eq!(h.doc().undo_count(), 0, "ペン {pen}: 段は増えない");
     }
 }
