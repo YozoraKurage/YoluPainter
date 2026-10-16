@@ -719,7 +719,7 @@ fn shown_3d_rulers_are_drawn_and_a_hidden_one_is_not() {
         .is_empty());
 }
 
-fn two_materials() -> (H, Rect) {
+pub(crate) fn two_materials() -> (H, Rect) {
     use yolu_app::view3d::model::ViewModel;
     use yolu_core::geometry::{ModelMesh, OrbitCamera, Submesh};
     let mut h = app(1100.0, 760.0, 64);

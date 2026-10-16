@@ -46,7 +46,7 @@ fn alpha_sum(h: &H) -> u64 {
 }
 
 /// 画面の点の下の面の UV が指す画素（今のテクスチャセットの面だけ）。
-fn texel_at(h: &H, rect: Rect, at: Pos2) -> Option<(u32, u32)> {
+pub(crate) fn texel_at(h: &H, rect: Rect, at: Pos2) -> Option<(u32, u32)> {
     let s = h.app();
     let model = s.view3d().model.as_ref()?;
     let view = s.view3d().camera.view(rect.width(), rect.height());
@@ -77,7 +77,7 @@ fn ink_near(h: &H, rect: Rect, at: Pos2, r: u32) -> bool {
     false
 }
 
-fn hold(h: &mut H, m: Modifiers) {
+pub(crate) fn hold(h: &mut H, m: Modifiers) {
     h.event(Event::ModifiersChanged(m));
     h.step();
 }
@@ -98,13 +98,13 @@ fn has_previous_end(h: &H) -> bool {
 }
 
 /// 細い線で見分けやすくする（文書は 256 角）。
-fn thin_brush(h: &mut H) {
+pub(crate) fn thin_brush(h: &mut H) {
     h.brush_mut().radius = 2.0;
     h.brush_mut().hardness = 1.0;
     h.m2_mut().random_seed = false;
 }
 
-fn sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
+pub(crate) fn sample(at: Pos2, contact: bool, time_ms: u32) -> PenSample {
     PenSample {
         pos: [at.x, at.y],
         pressure: if contact { 1.0 } else { 0.0 },
@@ -159,7 +159,7 @@ fn drag_with(h: &mut H, device: Device, points: &[Pos2], m: Modifiers) {
     hold(h, Modifiers::NONE);
 }
 
-fn world(h: &H, rect: Rect, x: f32, y: f32) -> Pos2 {
+pub(crate) fn world(h: &H, rect: Rect, x: f32, y: f32) -> Pos2 {
     screen_of(h, rect, Vec3::new(x, y, -0.5))
 }
 
