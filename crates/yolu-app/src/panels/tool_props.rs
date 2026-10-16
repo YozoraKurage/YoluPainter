@@ -20,7 +20,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
     let ctx = ui.ctx().clone();
-    app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
+    app.ui.samples.begin_frame(ctx.cumulative_pass_nr());
     let tool = app.tool;
     let def = tool.def();
     let index = tool as usize;

@@ -1740,7 +1740,7 @@ fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
     use yolu_app::brushes::sample::{key_of, SampleSpec};
     let mut h = app(1600.0, 900.0, 128);
     let ctx = h.ctx.clone();
-    h.brushes_mut().samples.render_in_background(&ctx);
+    h.ui_mut().samples.render_in_background(&ctx);
     let key = |h: &H| {
         let s = st(h);
         let mut brush = s.m2().brush.clone();
@@ -1749,7 +1749,7 @@ fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
     };
     // この絵を最後のフレームに描いたか
     let drawn = |h: &mut H, key: u64| {
-        let Some(id) = h.brushes_mut().samples.texture(&ctx, key) else {
+        let Some(id) = h.ui_mut().samples.texture(&ctx, key) else {
             return false;
         };
         h.output()
@@ -1775,7 +1775,7 @@ fn the_tool_sample_keeps_its_picture_while_the_changed_brush_is_redrawn() {
     h.step();
     let new = key(&h);
     assert_ne!(new, old);
-    let fresh = st(&h).brushes().samples.image(new).is_some() && drawn(&mut h, new);
+    let fresh = st(&h).ui().samples.image(new).is_some() && drawn(&mut h, new);
     assert!(
         drawn(&mut h, old) || fresh,
         "動かした直後のフレームも、見本は紙だけにならない"

@@ -305,18 +305,16 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
     let (right, wrong) = (key_for(drawer), key_for(st(&h).m2().brush.assist));
     assert_ne!(right, wrong, "二つの見本は別の絵");
     let start = Instant::now();
-    while st(&h).brushes().samples.image(right).is_none()
-        && start.elapsed() < Duration::from_secs(30)
-    {
+    while st(&h).ui().samples.image(right).is_none() && start.elapsed() < Duration::from_secs(30) {
         h.run();
         std::thread::sleep(Duration::from_millis(5));
     }
     assert!(
-        st(&h).brushes().samples.image(right).is_some(),
+        st(&h).ui().samples.image(right).is_some(),
         "描き手の設定の見本"
     );
     assert!(
-        st(&h).brushes().samples.image(wrong).is_none(),
+        st(&h).ui().samples.image(wrong).is_none(),
         "持つブラシの値で描いた見本は作られない"
     );
     std::fs::remove_dir_all(dir).unwrap();

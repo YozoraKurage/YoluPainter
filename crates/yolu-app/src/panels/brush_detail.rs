@@ -166,7 +166,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.brushes.ui.detail.open {
         return;
     }
-    app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
+    app.ui.samples.begin_frame(ctx.cumulative_pass_nr());
     let lang = app.lang;
     if !app.brushes.ui.detail.placed {
         // 初めは、左のドックの右・上の寄りに置く（キャンバスの真ん中を空ける）

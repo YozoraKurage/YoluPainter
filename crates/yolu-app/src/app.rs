@@ -588,7 +588,7 @@ impl YoluApp {
             app.state.services.crash = crate::crash::window::Report::load(dir);
         }
         // ブラシの見本のストロークは別のスレッドで描く（取り込んだ大きな筆先でも画面が止まらない）。試験のウィンドウは画面のスレッドで描く
-        app.state.brushes.samples.render_in_background(&cc.egui_ctx);
+        app.state.ui.samples.render_in_background(&cc.egui_ctx);
         app.state.brushes.krita.load_in_background();
         // 本物の OS のクリップボード（画像のコピー・貼り付け）に繋ぐ。試験のウィンドウは繋がない
         app.state.clip.use_system();

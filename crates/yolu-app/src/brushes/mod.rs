@@ -652,7 +652,6 @@ pub struct BrushesState {
     /// 起動のとき、フォルダにあるのに読み込まなかった利用者のブラシのファイルの番号（ツールの並びが、その札を消さずに覚える）。
     pub unloaded: std::collections::HashSet<u32>,
     pub ui: BrushUi,
-    pub samples: sample::SampleCache,
     /// ファイルの取り込み（裏のスレッドの仕事）。
     pub import: import::ImportState,
     /// 詳細のウィンドウの筆先の格子に出す Krita の筆先（読み込みと見本は別のスレッド）。
@@ -672,7 +671,6 @@ impl Default for BrushesState {
             loaded_through: 0,
             unloaded: std::collections::HashSet::new(),
             ui: BrushUi::default(),
-            samples: sample::SampleCache::default(),
             import: import::ImportState::default(),
             krita: krita::KritaTips::default(),
             csp: clipstudio::CspState::default(),

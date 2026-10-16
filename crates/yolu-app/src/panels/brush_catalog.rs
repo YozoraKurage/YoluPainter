@@ -277,7 +277,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if !app.toolset.catalog.open {
         return;
     }
-    app.brushes.samples.begin_frame(ctx.cumulative_pass_nr());
+    app.ui.samples.begin_frame(ctx.cumulative_pass_nr());
     let lang = app.lang;
     if !app.toolset.catalog.placed {
         // 初めは、左のドックの右に置く（キャンバスの真ん中を空ける）

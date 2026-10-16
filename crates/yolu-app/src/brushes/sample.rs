@@ -411,6 +411,16 @@ pub struct SampleCache {
     pub stats: SampleStats,
 }
 
+impl std::fmt::Debug for SampleCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SampleCache")
+            .field("len", &self.slots.len())
+            .field("bytes", &self.bytes)
+            .field("stats", &self.stats)
+            .finish_non_exhaustive()
+    }
+}
+
 impl SampleCache {
     /// フレームの頭（フレームの番号が変わったら、そのフレームに描いた数を数え直す）。
     pub fn begin_frame(&mut self, frame: u64) {

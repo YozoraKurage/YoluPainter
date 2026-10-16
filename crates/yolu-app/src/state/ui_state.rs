@@ -108,4 +108,6 @@ pub struct UiState {
     /// 前のフレームのツールの列のボタンの矩形（名前の欄・アイコンの格子を、その右に出す。`toolset::ui`）。ツールの並びを
     /// 初めに戻すと空にする。
     pub toolset_slot_rects: Vec<(crate::toolset::SlotId, egui::Rect)>,
+    /// ブラシの見本の画像とテクスチャ（`brushes::sample`。ツールのプロパティ・詳細のウィンドウ・一覧の行・アセットの欄が出す）。
+    pub samples: crate::brushes::sample::SampleCache,
 }

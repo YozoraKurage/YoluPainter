@@ -495,9 +495,7 @@ fn list_section(ui: &mut Ui, app: &mut AppState, tool: Tool, area: Rect, shape: 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
     let r = ui.max_rect();
     ui.advance_cursor_after_rect(r);
-    app.brushes
-        .samples
-        .begin_frame(ui.ctx().cumulative_pass_nr());
+    app.ui.samples.begin_frame(ui.ctx().cumulative_pass_nr());
     let tool = app.tool;
     app.subtools.ui.panel_right = r.right();
     app.subtool_follow(tool);

@@ -96,10 +96,10 @@ pub(super) fn paint_sample(
     } else {
         Rect::from_center_size(inner.center(), vec2(inner.width(), inner.width() / aspect))
     };
-    let shown = app.brushes.samples.shown(place, brush, spec);
+    let shown = app.ui.samples.shown(place, brush, spec);
     if let Some(texture) = shown
         .key
-        .and_then(|key| app.brushes.samples.texture(ui.ctx(), key))
+        .and_then(|key| app.ui.samples.texture(ui.ctx(), key))
     {
         ui.painter().image(
             texture,
@@ -109,7 +109,7 @@ pub(super) fn paint_sample(
         );
     }
     // 別のスレッドで描いている最中なら、絵ができたときに描き直しが来る
-    if !shown.current && app.brushes.samples.needs_next_frame() {
+    if !shown.current && app.ui.samples.needs_next_frame() {
         ui.ctx().request_repaint();
     }
 }
