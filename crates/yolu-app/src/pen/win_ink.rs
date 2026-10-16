@@ -34,10 +34,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::capture::{self, DragWatch, Follow, LastPen, Loss, PenWindowMove, TakenIds};
+use super::ink::{self, InkPoint, InkRect};
 use super::win_tab::{log_event, Tab};
 use super::wintab::{split_position, InkMessage};
 use super::{PenSample, WindowMover, WintabNotice};
-use crate::engine::Tilt;
 
 /// ウィンドウごとの、ポインタ（ペン・指）の直近の点・ウィンドウを動かす掴み・奪って補った番号・`StartDrag` の見張り（ウィンドウのプロシージャと、
 /// 帯を引いた画面のフレームの両方から触る）。
@@ -515,7 +515,28 @@ unsafe fn read_finger(id: u32) -> Option<Point> {
     ))
 }
 
-/// ペンなら、このメッセージに溜まった履歴の点を、画面の位置つきで古い順に返す（ペンでなければ空）。
+// `ink` の定数が `windows` クレートの値と同じであること（食い違うと、この Windows 向けのビルドが止まる）。
+const _: () = {
+    assert!(ink::PEN_MASK_PRESSURE == PEN_MASK_PRESSURE);
+    assert!(ink::PEN_MASK_ROTATION == PEN_MASK_ROTATION);
+    assert!(ink::PEN_MASK_TILT_X == PEN_MASK_TILT_X);
+    assert!(ink::PEN_MASK_TILT_Y == PEN_MASK_TILT_Y);
+    assert!(ink::PEN_FLAG_BARREL == PEN_FLAG_BARREL);
+    assert!(ink::PEN_FLAG_ERASER == PEN_FLAG_ERASER);
+    assert!(ink::PEN_FLAG_INVERTED == PEN_FLAG_INVERTED);
+    assert!(ink::POINTER_FLAG_INCONTACT == POINTER_FLAG_INCONTACT.0);
+};
+
+fn ink_rect(r: &RECT) -> InkRect {
+    InkRect {
+        left: r.left,
+        top: r.top,
+        right: r.right,
+        bottom: r.bottom,
+    }
+}
+
+/// ペンなら、このメッセージに溜まった履歴の点を、画面の位置つきで古い順に返す（ペンでなければ空）。値の直しは `ink::read`（OS に依らない）。
 unsafe fn read_pen(hwnd: HWND, id: u32) -> Vec<Read> {
     let mut kind = POINTER_INPUT_TYPE::default();
     if unsafe { GetPointerType(id, &mut kind) }.is_err() || kind != PT_PEN {
@@ -534,55 +555,27 @@ unsafe fn read_pen(hwnd: HWND, id: u32) -> Vec<Read> {
     for info in infos.iter().rev() {
         let p = &info.pointerInfo;
         let (mut device, mut display) = (RECT::default(), RECT::default());
-        let (x, y): (f64, f64) =
-            if unsafe { GetPointerDeviceRects(p.sourceDevice, &mut device, &mut display) }.is_ok()
-                && device.right > device.left
-                && device.bottom > device.top
-            {
-                let rx =
-                    (display.right - display.left) as f64 / (device.right - device.left) as f64;
-                let ry =
-                    (display.bottom - display.top) as f64 / (device.bottom - device.top) as f64;
-                (
-                    display.left as f64 + p.ptHimetricLocation.x as f64 * rx,
-                    display.top as f64 + p.ptHimetricLocation.y as f64 * ry,
-                )
-            } else {
-                (p.ptPixelLocation.x as f64, p.ptPixelLocation.y as f64)
-            };
-        let Some(pos) = screen_to_client(hwnd, [x, y]) else {
-            continue;
-        };
-        let pressure = if info.penMask & PEN_MASK_PRESSURE != 0 {
-            (info.pressure as f32 / 1024.0).clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
-        let tilt = Tilt {
-            x: if info.penMask & PEN_MASK_TILT_X != 0 {
-                info.tiltX as f32
-            } else {
-                0.0
-            },
-            y: if info.penMask & PEN_MASK_TILT_Y != 0 {
-                info.tiltY as f32
-            } else {
-                0.0
-            },
-        };
-        let sample = PenSample {
-            pos,
-            pressure,
-            tilt,
-            rotation: (info.penMask & PEN_MASK_ROTATION != 0)
-                .then_some((info.rotation % 360) as f32),
-            contact: p.pointerFlags.0 & POINTER_FLAG_INCONTACT.0 != 0,
-            eraser: info.penFlags & (PEN_FLAG_ERASER | PEN_FLAG_INVERTED) != 0,
-            barrel: info.penFlags & PEN_FLAG_BARREL != 0,
+        let rects = unsafe { GetPointerDeviceRects(p.sourceDevice, &mut device, &mut display) }
+            .is_ok()
+            .then(|| (ink_rect(&device), ink_rect(&display)));
+        let (values, screen) = ink::read(&InkPoint {
+            himetric: [p.ptHimetricLocation.x, p.ptHimetricLocation.y],
+            pixel: [p.ptPixelLocation.x, p.ptPixelLocation.y],
+            rects,
+            pen_mask: info.penMask,
+            pressure: info.pressure,
+            tilt_x: info.tiltX,
+            tilt_y: info.tiltY,
+            rotation: info.rotation,
+            pointer_flags: p.pointerFlags.0,
+            pen_flags: info.penFlags,
             pointer_id: id,
             time_ms: p.dwTime,
+        });
+        let Some(pos) = screen_to_client(hwnd, screen) else {
+            continue;
         };
-        out.push((sample, [x, y]));
+        out.push((values.with_pos(pos), screen));
     }
     out
 }

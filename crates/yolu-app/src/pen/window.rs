@@ -12,7 +12,7 @@ use egui::{pos2, vec2, Color32, Id, Pos2, Rect, Stroke, Vec2};
 use yolu_core::curve::Curve;
 
 use super::adjust::{fit, FitError, PressureAdjust};
-use super::PenSample;
+use super::{PenInput, PenSample};
 use crate::prefs::{Category, PrefsAction};
 use crate::state::{Action, AppState};
 use crate::ui::curve;
@@ -182,6 +182,19 @@ impl AppState {
     /// Touch の力を忘れる（終わった・フォーカスを失って終わりを受け取れない。次のマウスの押しの筆圧を 1 に戻す）。
     pub fn forget_touch(&mut self) {
         self.canvas.touch_pressure = None;
+    }
+
+    /// ペンの受け口から、溜まった点（古い順）を取り出す。ペンの点を取り出して筆圧を調整する道はここだけ（主のウィンドウも別ウィンドウも呼ぶ）:
+    /// 補った離しの印を `pen_lost` に入れ、調整を通す前の筆圧を筆圧の枠へ集め（`pressure_observe`）、そのあとで全体の調整（`adjust_pressure`）を 1 度だけ通した点を返す。
+    /// 返す点の `pos`・`contact` などは受け口の値のまま（変えるのは `pressure` だけ）。
+    pub fn take_pen_samples(&mut self, input: &PenInput, pixels_per_point: f32) -> Vec<PenSample> {
+        let (mut samples, lost) = input.drain_with_lost();
+        self.pen_lost = lost;
+        self.pressure_observe(pixels_per_point, &samples);
+        for sample in &mut samples {
+            sample.pressure = self.adjust_pressure(sample.pressure);
+        }
+        samples
     }
 
     /// このフレームのペンの点（調整を通す前）を、ウィンドウが開いていれば枠の中の線として集める。
@@ -498,5 +511,102 @@ pub(crate) fn rows(ui: &mut egui::Ui, rows: &mut w::Rows, app: &mut AppState, vi
     app.ui.pressure.dragging = dragging;
     for action in actions {
         app.apply(Action::Pressure(action));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::Tilt;
+    use crate::lang::Lang;
+    use crate::pen::PenInput;
+
+    fn sample(id: u32, contact: bool, pressure: f32, x: f32) -> PenSample {
+        PenSample {
+            pos: [x, 20.0],
+            pressure,
+            tilt: Tilt { x: 5.0, y: -6.0 },
+            rotation: Some(30.0),
+            contact,
+            eraser: true,
+            barrel: true,
+            pointer_id: id,
+            time_ms: 77,
+        }
+    }
+
+    /// 下限 0.2・上限 0.8・直線の調整（0.35 → (0.35 - 0.2) / 0.6 = 0.25。2 度掛けると (0.25 - 0.2) / 0.6 = 1/12）。
+    fn adjusted_app() -> AppState {
+        let mut app = AppState::new_in(8, 8, Lang::Ja);
+        app.prefs.settings.pressure = PressureAdjust::new(0.2, 0.8, vec![]).unwrap();
+        app
+    }
+
+    #[test]
+    fn the_adjustment_is_applied_once_and_the_observed_pressure_is_the_one_before_it() {
+        let mut app = adjusted_app();
+        app.ui.pressure.frame = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 100.0)));
+        let input = PenInput::detached();
+        input.push(sample(3, true, 0.35, 10.0));
+        input.push(sample(3, true, 0.5, 12.0));
+        input.push(sample(3, false, 0.0, 12.0));
+        let out = app.take_pen_samples(&input, 1.0);
+        let pressures: Vec<f32> = out.iter().map(|s| s.pressure).collect();
+        assert_eq!(pressures.len(), 3);
+        assert!((pressures[0] - 0.25).abs() < 1e-6, "{pressures:?}");
+        assert!((pressures[1] - 0.5).abs() < 1e-6, "{pressures:?}");
+        assert_eq!(pressures[2], 0.0);
+        // 枠へ集めたのは調整の前の値（0 は分布から除かれる）
+        assert_eq!(app.ui.pressure.samples(), vec![0.35, 0.5]);
+        // 筆圧のほかの値は受け口のまま
+        assert_eq!(out[0].pos, [10.0, 20.0]);
+        assert_eq!(out[0].tilt, Tilt { x: 5.0, y: -6.0 });
+        assert_eq!(out[0].rotation, Some(30.0));
+        assert!(out[0].contact && out[0].eraser && out[0].barrel);
+        assert_eq!((out[0].pointer_id, out[0].time_ms), (3, 77));
+        assert!(!out[2].contact);
+        // 取り出したので空
+        assert!(app.take_pen_samples(&input, 1.0).is_empty());
+    }
+
+    #[test]
+    fn the_default_adjustment_leaves_the_pressure_and_a_closed_window_collects_nothing() {
+        let mut app = AppState::new_in(8, 8, Lang::Ja);
+        let input = PenInput::detached();
+        input.push(sample(1, true, 0.35, 10.0));
+        let out = app.take_pen_samples(&input, 1.0);
+        assert_eq!(out[0].pressure, 0.35);
+        assert!(app.ui.pressure.samples().is_empty());
+    }
+
+    #[test]
+    fn a_supplied_release_puts_its_pointer_number_into_pen_lost_and_each_take_replaces_it() {
+        let mut app = adjusted_app();
+        let input = PenInput::detached();
+        input.push(sample(9, true, 0.35, 3.0));
+        input.push_lost(sample(9, false, 0.35, 3.0));
+        let out = app.take_pen_samples(&input, 1.0);
+        assert_eq!(out.len(), 2);
+        assert_eq!(app.pen_lost, vec![9]);
+        assert!(app.pen_release_lost(&out[1]));
+        assert!(!app.pen_release_lost(&out[0]));
+        // 補った離しの点にも調整は 1 度だけ掛かる
+        assert!((out[1].pressure - 0.25).abs() < 1e-6);
+        // 次の取り出しで印は入れ替わる（古い印を残さない）
+        input.push(sample(4, true, 0.5, 5.0));
+        app.take_pen_samples(&input, 1.0);
+        assert!(app.pen_lost.is_empty());
+    }
+
+    #[test]
+    fn the_collected_position_is_in_points() {
+        let mut app = adjusted_app();
+        app.ui.pressure.frame = Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(50.0, 50.0)));
+        let input = PenInput::detached();
+        // 画素の x が 150 で 2 倍の画面なら 75 点で、枠（幅 50）の外なので集めない。40 画素なら 20 点で枠の中
+        input.push(sample(1, true, 0.5, 150.0));
+        input.push(sample(1, true, 0.6, 40.0));
+        app.take_pen_samples(&input, 2.0);
+        assert_eq!(app.ui.pressure.samples(), vec![0.6]);
     }
 }

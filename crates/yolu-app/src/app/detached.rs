@@ -177,16 +177,12 @@ impl YoluApp {
             self.attach_native_mac(&ctx, win, &info);
             // WinTab の入切（設定「ペンの入力」）は、メインウィンドウと同じ札を、このウィンドウの文脈にも合わせる
             win.pen.sync_wintab();
-            let (drained, lost) = win.pen.drain_with_lost();
-            pen = drained;
-            self.state.pen_lost = lost;
+            pen = self
+                .state
+                .take_pen_samples(&win.pen, ctx.pixels_per_point());
             // 次のフレームの初めで、入力のあるフレームとして数える（別ウィンドウの egui の事象は、主のフレームの初めには見えない。`pacing`）
             if !pen.is_empty() || ctx.input(|i| !i.events.is_empty()) {
                 self.pacing.note_detached_input();
-            }
-            self.state.pressure_observe(ctx.pixels_per_point(), &pen);
-            for sample in &mut pen {
-                sample.pressure = self.state.adjust_pressure(sample.pressure);
             }
             // 自前の枠: 縁を押したら大きさを変える（描いている最中・ペンが触れている最中は受けない。メインウィンドウと同じ）
             if custom {

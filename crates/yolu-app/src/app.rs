@@ -2099,8 +2099,10 @@ impl YoluApp {
             self.state.wintab_unavailable(why);
         }
         // 補った離し（OS に押しを奪われて、離しの点を補った）の印も一緒に取る。2D と 3D の入力が、本物の離しと分けて扱う
-        let (mut pen, lost) = self.pen.drain_with_lost();
-        self.state.pen_lost = lost;
+        // （調整を通す前の筆圧は、取り出しの中で筆圧の枠へ集める）
+        let pen = self
+            .state
+            .take_pen_samples(&self.pen, ctx.pixels_per_point());
         self.settle_before_input(&ctx, &pen);
         // ウィンドウの縁（自前の枠だけ）: 押したら大きさを変える頼みを送る。描いている最中・ペンが触れている最中（キャンバスと 3D ビューが
         // ペンの押しとして扱うのと同じ `contact`。筆圧は触れていなくても 1 のペンも、触れた直後は 0 のペンもある）は受けない
@@ -2111,14 +2113,10 @@ impl YoluApp {
                 &self.bar_press_rects,
             )
         });
-        // 筆圧の調整（設定の「ペン」）: 調整を通す前の筆圧を集め、そのあとで全体の調整（設定）を通してから、キャンバスと 3D ビューへ渡す
-        self.state.pressure_observe(ctx.pixels_per_point(), &pen);
+        // 筆圧の調整（設定の「ペン」）: Windows Ink が使えない環境では、ペンが Touch の力として来る点も枠へ集める。
         // 描く枠が出ているときだけ（描いている間じゅう毎フレーム、全イベントの写しを作らない）
         if self.state.ui.pressure.open() && !self.pen.is_hooked() {
             ctx.input(|i| self.state.pressure_observe_touch(&i.events));
-        }
-        for sample in &mut pen {
-            sample.pressure = self.state.adjust_pressure(sample.pressure);
         }
         // 別ウィンドウで開いたポップアップは、メインウィンドウを押したら閉じる
         detached::close_foreign_popup(&ctx, &mut self.state);
