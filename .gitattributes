@@ -18,3 +18,6 @@ docs/YLP_FORMAT.md text eol=lf
 docs/YLP_DECISIONS.md text eol=lf
 # 上流の記載から組み立てた許諾の文は SHA-256 で照合するため、Windows のチェックアウトも LF に固定する
 tools/license-texts/** text eol=lf
+
+# 画面の文の .ftl は、埋め込む文の改行を Windows のチェックアウトでも LF に固定する
+*.ftl text eol=lf

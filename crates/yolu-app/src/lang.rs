@@ -153,6 +153,20 @@ mod tests {
         assert_eq!(Lang::default(), Lang::Ja);
     }
 
+    /// `Lang::reason` が、本物の `Reason` から `.ftl` のキーを引いて、日英の文を返す。
+    #[test]
+    fn reason_comes_from_the_ftl() {
+        use yolu_core::Reason;
+        assert_eq!(
+            Lang::En.reason(Reason::ColorBalanceRange),
+            "Color balance (−100–100)"
+        );
+        assert_eq!(
+            Lang::Ja.reason(Reason::ColorBalanceRange),
+            "カラーバランス（−100〜100）"
+        );
+    }
+
     fn env(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
         move |name| {
             pairs

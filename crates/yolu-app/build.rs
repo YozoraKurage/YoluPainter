@@ -57,7 +57,7 @@ fn main() {
 }
 
 /// 画面の文（`locales/<言語>/<モジュール>.ftl`）を `include_str!` で埋める一覧を `OUT_DIR/locales.rs` に書く（言語ごとに
-/// `(モジュール, 文)` の並び。ファイルの名前の順）。フォルダが無ければ空の一覧（存在しない道は rerun-if-changed に渡さない）。
+/// `(モジュール, 文)` の並び。ファイルの名前の順）。フォルダが無ければ空の一覧（存在しないパスは rerun-if-changed に渡さない）。
 fn embed_locales() {
     let root = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("cargo が渡す")).join("locales");
     if root.is_dir() {

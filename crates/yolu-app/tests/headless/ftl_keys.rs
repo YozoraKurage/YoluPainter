@@ -13,7 +13,7 @@ use fluent_syntax::ast;
 pub(crate) struct Message {
     /// `ja`・`en`
     pub(crate) lang: String,
-    /// `locales/ja/panels.ftl` のような道
+    /// `locales/ja/panels.ftl` のようなパス
     pub(crate) file: String,
     pub(crate) key: String,
     /// 値の文（選び（select）の候補ごとに 1 つ。引数の置き場は `{ $名前 }`）
@@ -28,7 +28,7 @@ fn locales() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("locales")
 }
 
-/// 言語ごとの .ftl の道（ファイルの名前の順）。
+/// 言語ごとの .ftl のパス（ファイルの名前の順）。
 pub(crate) fn ftl_files(lang: &str) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(locales().join(lang))
         .unwrap_or_else(|e| panic!("locales/{lang} を読めない: {e}"))
@@ -144,6 +144,34 @@ pub(crate) fn parse(lang: &str, path: &Path) -> (Vec<Message>, Vec<String>) {
         }
     }
     (out, errors)
+}
+
+/// .ftl の文の引数の置き場（`{ $名前 }`。選びの候補の中も）を、Rust の書式の置き場 `{}` に寄せる。ソースの `format!` の文を前提にした
+/// 表（名指しされた文言・理由の文・設定の値）と比べる前に使う。
+pub(crate) fn rust_placeholders(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find("{ $") {
+        let tail = &rest[start + 3..];
+        match tail.find(" }") {
+            Some(end)
+                if end > 0
+                    && tail[..end]
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') =>
+            {
+                out.push_str(&rest[..start]);
+                out.push_str("{}");
+                rest = &tail[end + 2..];
+            }
+            _ => {
+                out.push_str(&rest[..start + 3]);
+                rest = tail;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 日英の .ftl の全部の文。
@@ -321,7 +349,7 @@ fn the_keys_the_code_uses_are_in_both_languages_and_every_key_is_used() {
             ));
         }
     }
-    // core の断りの理由（`reason-*`）は、理由の種類から引く（下の試験が core の理由と 1 対 1 かを見る）
+    // core の断りの理由（`reason-*`）は、理由の種類から引く（下のテストが core の理由と 1 対 1 かを見る）
     for key in ja.keys() {
         if !key.starts_with("reason-") && !used.contains(key) {
             found.push(format!("{}: {key} はどこからも引かれない", ja[key].file));
@@ -427,4 +455,16 @@ fn the_embedded_texts_are_the_files() {
     // 無いキーは、落ちずにキーの文字
     assert_eq!(Lang::Ja.t("no-such-key"), "no-such-key");
     assert_eq!(Lang::En.f("no-such-key", &[]), "no-such-key");
+}
+
+#[test]
+fn placeholders_become_the_rust_form() {
+    assert_eq!(rust_placeholders("{ $count } 三角形"), "{} 三角形");
+    assert_eq!(
+        rust_placeholders("{ $a } と { $b-c } と { $d_e }"),
+        "{} と {} と {}"
+    );
+    assert_eq!(rust_placeholders("置き場なし"), "置き場なし");
+    assert_eq!(rust_placeholders("{ $ }"), "{ $ }");
+    assert_eq!(rust_placeholders("{ $a b }"), "{ $a b }");
 }
