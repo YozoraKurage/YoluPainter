@@ -10,6 +10,7 @@ use egui_dock::{DockArea, DockState, Node, NodeIndex, TabViewer};
 use crate::canvas::{self, display::CanvasDisplay};
 use crate::dialog::places::Place;
 use crate::features::PollStage;
+use crate::keyconfig::KeyEdit;
 use crate::livelink::LiveLink;
 use crate::mcp_server::McpServer;
 use crate::panels::{
@@ -1323,7 +1324,7 @@ impl YoluApp {
                     .pick_file()
                 {
                     self.state.note_file_chosen(Place::Keys, &path);
-                    self.state.keys_import(&path);
+                    self.state.apply(Action::Keys(KeyEdit::Import(path)));
                 }
             }
             Some(DialogRequest::OpenStencil) => {

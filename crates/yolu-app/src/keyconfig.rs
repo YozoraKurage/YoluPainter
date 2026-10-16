@@ -1012,7 +1012,72 @@ pub fn merged_pies(read: &[PieMenu]) -> Vec<PieMenu> {
     out
 }
 
+/// キーの設定とパイメニューの変更（ショートカットの設定の区分・キーの設定の読み込み。`Action::Keys`）。どれも効かせてから、ぶつかりが
+/// 無ければファイルへ書く（`keys_changed`）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum KeyEdit {
+    /// 操作と範囲の入力の並びを置き換える（既定と同じなら変えた所から外す）。
+    Set(GroupKey, Vec<Trigger>),
+    /// マウスの組み合わせ（既定の表の番号。None で外す）。
+    Combo(u8, Option<Combo>),
+    /// 操作と範囲の入力を既定に戻す。
+    Reset(GroupKey),
+    /// マウスの組み合わせを既定に戻す。
+    ResetCombo(u8),
+    /// 全部を既定に戻す（キー・マウス・パイ）。
+    ResetAll,
+    /// ファイルから読み込む。
+    Import(PathBuf),
+    /// 利用者のパイを加える。
+    PieAdd,
+    /// パイを消す（パイの ID。開く操作のキーも外す）。
+    PieRemove(String),
+    /// パイの名前（並びの番号と、利用者の付けた名前）。
+    PieName(usize, String),
+    /// パイの項目（並びの番号・何か所目・項目。None で空にする）。
+    PieSlot(usize, usize, Option<PieItem>),
+}
+
 impl AppState {
+    /// キーの設定とパイメニューを変える（`Action::Keys`）。
+    pub(crate) fn keys_apply(&mut self, edit: KeyEdit) {
+        match edit {
+            KeyEdit::Set(group, triggers) => self.keys.set(group, triggers),
+            KeyEdit::Combo(index, combo) => self.keys.set_combo(index, combo),
+            KeyEdit::Reset(group) => self.keys.reset(group),
+            KeyEdit::ResetCombo(index) => self.keys.reset_combo(index),
+            KeyEdit::ResetAll => return self.keys_reset_all(),
+            KeyEdit::Import(path) => return self.keys_import(&path),
+            KeyEdit::PieAdd => {
+                self.pie.add_user(self.lang);
+            }
+            KeyEdit::PieRemove(id) => {
+                if let Some(command) = self.pie.menu(&id).and_then(|m| m.command) {
+                    self.keys.forget_command(command);
+                }
+                self.pie.remove_user(&id);
+            }
+            KeyEdit::PieName(index, name) => match self.pie.menus.get_mut(index) {
+                Some(menu) => menu.name = PieName::User(name),
+                None => return,
+            },
+            KeyEdit::PieSlot(index, slot, item) => {
+                let menu = self.pie.menus.get_mut(index);
+                match menu.and_then(|m| m.slots.get_mut(slot)) {
+                    Some(place) => *place = item,
+                    None => return,
+                }
+            }
+        }
+        self.keys_changed();
+    }
+
+    /// ツールのキーの動き方を替える（`Action::ToolKeyMode`）。
+    pub(crate) fn keys_tool_mode(&mut self, command: &'static str, mode: ToolKeyMode) {
+        self.keys.set_tool_mode(command, mode);
+        self.keys_changed();
+    }
+
     /// キーの設定を変えたあと: 効かせて、ぶつかりが無ければファイルへ書く。
     pub fn keys_changed(&mut self) {
         keymap::install(self.keys.map());

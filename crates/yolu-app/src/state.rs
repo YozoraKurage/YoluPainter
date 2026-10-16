@@ -619,6 +619,8 @@ pub enum Action {
     /// ヒストリーの行へ移る（文書の履歴の位置。保持された一番古い段の前が 0）。取り消し・やり直しを続けて当てる（ポーズの取り消しと
     /// 多角形の点は見ない）。
     HistoryGoTo(usize),
+    /// キーの設定とパイメニューを変える（ショートカットの設定。キーの設定を保存する）。
+    Keys(crate::keyconfig::KeyEdit),
 }
 
 impl Action {
@@ -708,6 +710,7 @@ impl Action {
             Self::Object(..) => "Object",
             Self::ToolKeyMode(..) => "ToolKeyMode",
             Self::HistoryGoTo(..) => "HistoryGoTo",
+            Self::Keys(..) => "Keys",
         }
     }
 
@@ -1665,11 +1668,9 @@ impl AppState {
             Action::Pie(op) => self.pie_apply(op),
             Action::View3dNav(op) => crate::view3d::navigation::apply(self, op),
             Action::Object(op) => self.objects_apply(op),
-            Action::ToolKeyMode(command, mode) => {
-                self.keys.set_tool_mode(command, mode);
-                self.keys_changed();
-            }
+            Action::ToolKeyMode(command, mode) => self.keys_tool_mode(command, mode),
             Action::HistoryGoTo(target) => self.history_go_to(target, stroking),
+            Action::Keys(edit) => self.keys_apply(edit),
         }
     }
 }

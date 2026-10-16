@@ -18,7 +18,7 @@ use egui::{
 };
 
 use crate::commands::{self, Kind};
-use crate::keyconfig::{self, Combo, GroupKey};
+use crate::keyconfig::{self, Combo, GroupKey, KeyEdit};
 use crate::keymap::{self, Scope, Trigger, When, GESTURES};
 use crate::lang::Lang;
 use crate::pie::{PieItem, PieName};
@@ -533,15 +533,11 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                         let mut triggers = app.keys.triggers(group);
                         if i < triggers.len() {
                             triggers.remove(i);
-                            app.keys.set(group, triggers);
-                            app.keys_changed();
+                            app.apply(Action::Keys(KeyEdit::Set(group, triggers)));
                         }
                     }
                 }
-                Target::Mouse(index) => {
-                    app.keys.set_combo(index, None);
-                    app.keys_changed();
-                }
+                Target::Mouse(index) => app.apply(Action::Keys(KeyEdit::Combo(index, None))),
                 Target::Search => app.ui.shortcuts.key_filter = None,
             }
             end_capture(app);
@@ -570,8 +566,7 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                         }
                     }
                 }
-                app.keys.set(group, triggers);
-                app.keys_changed();
+                app.apply(Action::Keys(KeyEdit::Set(group, triggers)));
                 end_capture(app);
                 app.ui.shortcuts.swallow = Some(key);
                 return true;
@@ -599,8 +594,7 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                 let Some(combo) = Combo::pressed(button, &m).fit(&GESTURES[index as usize]) else {
                     continue;
                 };
-                app.keys.set_combo(index, Some(combo));
-                app.keys_changed();
+                app.apply(Action::Keys(KeyEdit::Combo(index, Some(combo))));
                 app.ui.shortcuts.ignore_click = true;
                 end_capture(app);
                 return true;
@@ -805,7 +799,7 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
     };
     if button(ui, lang.pick("既定に戻す", "Reset to Default"), "reset") {
         end_capture(app);
-        app.keys_reset_all();
+        app.apply(Action::Keys(KeyEdit::ResetAll));
     }
     if button(ui, lang.pick("書き出し…", "Export…"), "export") {
         app.outbox.dialog_request = Some(DialogRequest::KeymapExport);
@@ -1242,12 +1236,12 @@ fn draw_line(
         .clicked()
         {
             end_capture(app);
+            // 変えられない行（`Fixed`・`FixedMouse`）は変えた印が立たず、このボタンを出さない
             match line {
-                Line::Key { group, .. } => app.keys.reset(group),
-                Line::Mouse(index) => app.keys.reset_combo(index),
+                Line::Key { group, .. } => app.apply(Action::Keys(KeyEdit::Reset(group))),
+                Line::Mouse(index) => app.apply(Action::Keys(KeyEdit::ResetCombo(index))),
                 Line::Fixed { .. } | Line::FixedMouse => {}
             }
-            app.keys_changed();
         }
     }
 }
@@ -1405,10 +1399,9 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
     )
     .clicked()
     {
-        app.pie.add_user(lang);
+        app.apply(Action::Keys(KeyEdit::PieAdd));
         app.ui.shortcuts.pie = app.pie.menus.len() - 1;
         app.ui.shortcuts.picker = None;
-        app.keys_changed();
     }
     let index = app.ui.shortcuts.pie;
     let menu = app.pie.menus[index].clone();
@@ -1435,13 +1428,9 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
     )
     .clicked()
     {
-        if let Some(command) = menu.command {
-            app.keys.forget_command(command);
-        }
-        app.pie.remove_user(&menu.id);
+        app.apply(Action::Keys(KeyEdit::PieRemove(menu.id.clone())));
         app.ui.shortcuts.pie = 0;
         app.ui.shortcuts.picker = None;
-        app.keys_changed();
         return;
     }
     // 名前とキー
@@ -1472,9 +1461,8 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .map(|n| n.trim().to_owned())
             .filter(|n| !n.is_empty())
         {
-            app.pie.menus[index].name = PieName::User(name);
+            app.apply(Action::Keys(KeyEdit::PieName(index, name)));
             app.ui.shortcuts.names = None;
-            app.keys_changed();
         }
     } else {
         let p = ui.painter();
@@ -1621,8 +1609,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
             )
             .clicked()
         {
-            app.pie.menus[index].slots[slot] = None;
-            app.keys_changed();
+            app.apply(Action::Keys(KeyEdit::PieSlot(index, slot, None)));
         }
         y += 30.0;
     }
@@ -1677,8 +1664,8 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
         if let Some(text) = out.committed {
             let valid = serde_json::from_str::<serde_json::Value>(&text).is_ok();
             if valid {
-                app.pie.menus[index].slots[picker.slot] = Some(PieItem::Ops(text));
-                app.keys_changed();
+                let item = Some(PieItem::Ops(text));
+                app.apply(Action::Keys(KeyEdit::PieSlot(index, picker.slot, item)));
                 app.ui.shortcuts.picker = None;
                 return;
             }
@@ -1777,8 +1764,8 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
     bar.end(ui, Id::new("yolu.shortcuts.pick_scroll"), &mut scroll);
     app.ui.shortcuts.pick_scroll = scroll;
     if let Some(item) = chosen {
-        app.pie.menus[index].slots[picker.slot] = Some(item);
-        app.keys_changed();
+        let edit = KeyEdit::PieSlot(index, picker.slot, Some(item));
+        app.apply(Action::Keys(edit));
         app.ui.shortcuts.picker = None;
         return;
     }
