@@ -91,3 +91,49 @@ fn a_missed_release_finishes_the_3d_rectangle_selection_at_the_last_position() {
         "最後の位置までの矩形に入る点を選ぶ"
     );
 }
+
+#[test]
+fn a_missed_release_finishes_a_3d_path_point_drag_where_it_was() {
+    // 同じ押し・同じ動きを、取りこぼした離し(lost)と本物の離し(real)で終え、パスの点を比べる
+    let mut ended = Vec::new();
+    for lost in [true, false] {
+        let (mut h, rect) = path_view();
+        let undo = h.doc().undo_count();
+        let before = surface_points(&h);
+        let from = screen_of(&h, rect, front(0.0, 0.3));
+        let to = screen_of(&h, rect, front(0.1, 0.0));
+        press_with(&h, from, Modifiers::NONE);
+        h.step();
+        move_to(&h, to);
+        h.step();
+        assert!(
+            h.path().drag.is_some_and(|d| d.surface),
+            "面の上で点を掴んで動かしている"
+        );
+        if lost {
+            // ウィンドウの外で離して、離した印を受け取れなかった状態
+            lose_the_release_3d(&mut h);
+            h.step();
+        } else {
+            release_with(&h, to, Modifiers::NONE);
+            h.step();
+        }
+        assert!(
+            h.path().drag.is_none(),
+            "取りこぼしても点のドラッグを取り残さない"
+        );
+        assert_eq!(h.doc().undo_count(), undo + 1, "動かした点は確定する");
+        let after = surface_points(&h);
+        assert_ne!(after, before, "押す前の位置に戻っていない");
+        ended.push(after);
+    }
+    assert_eq!(ended[0], ended[1], "最後の位置で確定する(本物の離しと同じ)");
+}
+
+/// パス(面の点のパス)の点の並び(比べるための文字)。
+fn surface_points(h: &Harness<'static, YoluApp>) -> String {
+    match h.app().path_layer().expect("パス").1 {
+        yolu_core::LayerPath::Surface(p) => format!("{:?}", p.points),
+        other => panic!("面のパスでない: {other:?}"),
+    }
+}

@@ -1154,45 +1154,127 @@ fn point_count(h: &H, layer: yolu_app::engine::LayerId) -> usize {
         .map_or(0, |g| g.points.len())
 }
 
+/// 点のグラデーションの点（`index`）の位置。
+fn point_position(h: &H, layer: yolu_app::engine::LayerId, index: usize) -> [f64; 3] {
+    h.doc()
+        .layer(layer)
+        .unwrap()
+        .fill_points(yolu_app::engine::Channel::Color)
+        .unwrap()
+        .points[index]
+        .position
+}
+
 /// D19 離しを取りこぼしたとき（ボタンは押していないのに、ドラッグの途中の印だけが残った）の、点のグラデーションの点のドラッグ。
 /// - 2D: 取りこぼしは、全ツールが同じ道で終える（点のドラッグは `finish_stroke` から `fillfx::points::release`）
-/// - 3D: 取りこぼしは 7 つの個別の道で、点のドラッグ（`fillfx.point_drag`）の分は無い。マウスの点のドラッグの印が残り続ける
+/// - 3D: 取りこぼしは `view3d::held::Held` の表で終える。点のドラッグも最後の位置で確定する（点は動いた位置のまま、Undo は 1 回）
 #[test]
 fn d19_a_missed_release_of_a_point_drag() {
     use yolu_app::fillfx::points::PointDrag;
-    for view in VIEWS {
-        let (mut h, _) = scene(view);
-        let layer = points_layer(&mut h);
-        let in_3d = view == View::View3d;
-        let id = h.doc().id();
-        h.fillfx_mut().point_drag = Some(PointDrag {
-            layer,
-            channel: yolu_app::engine::Channel::Color,
-            index: 0,
-            source: yolu_app::fillfx::gizmo::Source::Mouse,
-            doc_id: id,
-            in_3d,
-            added: false,
-        });
-        if !in_3d {
-            // 2D の点のドラッグは、押したときにストロークの札も持つ（`begin_any`）
-            h.canvas_mut().stroke = Some(yolu_app::state::StrokeSource::Mouse);
-        }
-        for _ in 0..4 {
-            h.step();
-        }
-        let left = h.fillfx().point_drag.is_some();
-        match view {
-            View::Canvas => assert!(!left, "2D: 取りこぼしたら終える"),
-            View::View3d => {
-                assert!(left, "3D: 点のドラッグの印が残る（取りこぼしの道が無い）");
-                assert!(
-                    !h.app().is_stroking(),
-                    "3D: 残った印は「描いている最中」には数えない"
-                );
-            }
-        }
+    // 2D: 点のドラッグは、押したときにストロークの札も持つ（`begin_any`）
+    let (mut h, _) = scene(View::Canvas);
+    let layer = points_layer(&mut h);
+    let id = h.doc().id();
+    h.fillfx_mut().point_drag = Some(PointDrag {
+        layer,
+        channel: yolu_app::engine::Channel::Color,
+        index: 0,
+        source: yolu_app::fillfx::gizmo::Source::Mouse,
+        doc_id: id,
+        in_3d: false,
+        added: false,
+    });
+    h.canvas_mut().stroke = Some(yolu_app::state::StrokeSource::Mouse);
+    for _ in 0..4 {
+        h.step();
     }
+    assert!(h.fillfx().point_drag.is_none(), "2D: 取りこぼしたら終える");
+    // 3D: 面に点を追加して掴み、動かして、離したのを取りこぼす
+    let (mut h, rect) = scene(View::View3d);
+    let layer = points_layer(&mut h);
+    let before = point_count(&h, layer);
+    let undo = h.doc().undo_count();
+    let (a, b) = (
+        spot(&h, View::View3d, rect, 0.5, 0.5),
+        spot(&h, View::View3d, rect, -0.5, -0.5),
+    );
+    press_with(&h, a, Modifiers::NONE);
+    h.step();
+    assert!(
+        h.fillfx().point_drag.as_ref().is_some_and(|d| d.in_3d),
+        "3D: 点を追加して掴んだ"
+    );
+    assert_eq!(point_count(&h, layer), before + 1);
+    let added = point_position(&h, layer, before);
+    move_to(&h, b);
+    h.step();
+    let moved = point_position(&h, layer, before);
+    assert_ne!(moved, added, "3D: 掴んだ点が動いた");
+    lose_the_release_3d(&mut h);
+    h.step();
+    assert!(h.fillfx().point_drag.is_none(), "3D: 取りこぼしたら終える");
+    assert!(!h.app().is_stroking(), "3D: 描いている最中には数えない");
+    assert_eq!(
+        point_position(&h, layer, before),
+        moved,
+        "3D: 動いた位置のまま確定する"
+    );
+    assert_eq!(h.doc().undo_count(), undo + 1, "3D: 追加と移動は Undo 1 回");
+    key(&h, egui::Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert_eq!(point_count(&h, layer), before, "3D: Undo 1 回で戻る");
+}
+
+/// 2D で掴んでいる点のドラッグ（`in_3d` でない）は、3D ビューが離しのイベントを受けても、離しを取りこぼしても、3D の側は終えない
+/// （2D の側が自分の道で終える）。
+#[test]
+fn a_point_drag_started_in_2d_is_not_ended_by_the_3d_view() {
+    use yolu_app::fillfx::points::PointDrag;
+    let (mut h, rect) = scene(View::View3d);
+    let layer = points_layer(&mut h);
+    let id = h.doc().id();
+    h.fillfx_mut().point_drag = Some(PointDrag {
+        layer,
+        channel: yolu_app::engine::Channel::Color,
+        index: 0,
+        source: yolu_app::fillfx::gizmo::Source::Mouse,
+        doc_id: id,
+        in_3d: false,
+        added: false,
+    });
+    // ボタンを押していないフレーム（取りこぼしの道）
+    for _ in 0..3 {
+        h.step();
+    }
+    assert!(h.fillfx().point_drag.is_some(), "取りこぼしの道で終えない");
+    // 3D ビューの上での本物の離し
+    let at = spot(&h, View::View3d, rect, 0.0, 0.0);
+    press_with(&h, at, Modifiers::NONE);
+    release_with(&h, at, Modifiers::NONE);
+    h.run();
+    assert!(h.fillfx().point_drag.is_some(), "本物の離しでも終えない");
+}
+
+/// 3D のマウスのストロークを、ボタンを離したのを取りこぼしたとき、このフレームのうちに終えて、描いた分は 1 回の Undo にまとめる。
+#[test]
+fn a_missed_release_ends_a_3d_mouse_stroke_and_keeps_what_was_drawn() {
+    let (mut h, rect) = scene(View::View3d);
+    let points = line(&h, View::View3d, rect);
+    press_with(&h, points[0], Modifiers::NONE);
+    h.step();
+    for p in &points[1..] {
+        move_to(&h, *p);
+        h.step();
+    }
+    assert!(h.app().is_stroking(), "描いている最中");
+    lose_the_release_3d(&mut h);
+    h.step();
+    assert!(
+        !h.app().is_stroking(),
+        "残りの塗りが無いので、取りこぼしたフレームのうちに確定する"
+    );
+    assert_eq!(h.doc().undo_count(), 1);
+    assert!(seen(&h).ink > 0, "描いた分は残る");
 }
 
 /// D20 終わりの点の覚え方（Shift の直線の始め）。
@@ -1299,8 +1381,7 @@ fn d21_the_pen_in_the_edit_and_pose_modes() {
 }
 
 /// D22 押した瞬間の `rulers.last_drew` の記録（「スナップする特殊定規の切り替え」が、ポインタがどちらにも乗っていないときに使う）。
-/// - 2D: ツールの押し（ペン・マウス）で、描かないナビゲーションを除いて、`begin_any` の前に記録する
-/// - 3D: `begin` の中（モード・ベイクの確かめの後）で記録する。`begin` に届かない押し（点のグラデーションの点）は記録しない
+/// - 2D・3D とも: 押しの入口で、持ち主がツールで描けるモード（`mode.paints()`）のとき、ペン・マウスの押しを記録する。点のグラデーションの点の押しも記録する
 #[test]
 fn d22_which_presses_remember_the_view_last_drawn_in() {
     use yolu_app::rulers::Place;
@@ -1332,16 +1413,49 @@ fn d22_which_presses_remember_the_view_last_drawn_in() {
         pen_stroke(&mut h, &[at], Modifiers::NONE);
         match view {
             View::Canvas => {
-                // 2D: モデルの空間の点はキャンバスでは足さない。押しはツールの押しとして記録する
+                // 2D: モデルの空間の点はキャンバスでは足さない
                 assert_eq!(point_count(&h, layer), points_before, "2D: 点は足さない");
-                assert_eq!(h.rulers().last_drew, Some(Place::Canvas), "2D: 記録する");
             }
             View::View3d => {
-                // 3D: 面に点を足し（`begin` の前の `fillfx::points::press`）、記録しない
+                // 3D: 面に点を足す（`begin` の前の `fillfx::points::press`）
                 assert_eq!(point_count(&h, layer), points_before + 1, "3D: 点を足した");
-                assert_eq!(h.rulers().last_drew, None, "3D: 点の押しは記録しない");
             }
         }
+        assert_eq!(
+            h.rulers().last_drew,
+            Some(place(view)),
+            "{view:?}: 点の押しも記録する"
+        );
+        // マウスの押し: どちらも記録する
+        let (mut h, rect) = scene(view);
+        h.rulers_mut().last_drew = None;
+        let at = spot(&h, view, rect, 0.0, 0.0);
+        press_with(&h, at, Modifiers::NONE);
+        h.step();
+        assert_eq!(
+            h.rulers().last_drew,
+            Some(place(view)),
+            "{view:?}: マウスの押し"
+        );
+    }
+    // ポーズのモード(試しの人形)のマウスの押し: どちらも記録しない
+    for view in VIEWS {
+        let mut h = app(1470.0, 760.0, 128);
+        h.act(Action::Pose(yolu_app::view3d::pose::PoseAction::LoadFigure));
+        h.run();
+        assert!(h.app_mut().set_mode(yolu_app::mode::EditorMode::Pose));
+        if view == View::Canvas {
+            click_tab(&mut h, Tab::Canvas);
+        }
+        h.run();
+        let rect = match view {
+            View::View3d => h.state().view3d_rect().unwrap(),
+            View::Canvas => canvas_rect(&h),
+        };
+        h.rulers_mut().last_drew = None;
+        press_with(&h, rect.center(), Modifiers::NONE);
+        h.step();
+        assert_eq!(h.rulers().last_drew, None, "{view:?}: ポーズのモード");
     }
 }
 

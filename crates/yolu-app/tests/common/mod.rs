@@ -223,6 +223,19 @@ pub fn move_to(h: &Harness<'_, YoluApp>, at: Pos2) {
     h.event(Event::PointerMoved(at));
 }
 
+/// 3D ビューで、マウスのボタンを離したのを取りこぼした状態にする（ウィンドウの外で離した）: ツールの押しの控えのボタンを、押していないボタンに替える。
+/// egui の側は押したボタン（左ボタン）を押したまま（`any_down` は true）で、ツールの押しのボタンの確かめ（`tool_down`）だけが偽になる。
+/// 実際にボタンを離した状態ではないので、`input::handle` の終わりの `nav_cancel` と `stencil::settle` の「押していない」側は通らない。
+pub fn lose_the_release_3d(h: &mut Harness<'_, YoluApp>) {
+    use drive::Drive;
+    h.view3d_mut()
+        .input
+        .mouse_press
+        .as_mut()
+        .expect("ツールの押しの控え")
+        .button = yolu_app::state::key::PointerButton::Secondary;
+}
+
 /// ポインタを `at` に置いたまま、ツールチップが出る時間（既定 0.5 秒。1 フレーム 1/60 秒）より長く待つ。ツールチップの文字は
 /// アクセシビリティの木に出るので、`query_by_label` で読める。
 pub fn hover_and_wait(h: &mut Harness<'_, YoluApp>, at: Pos2) {

@@ -151,6 +151,55 @@ fn loading_the_figure_shows_the_pose_panel_and_tree() {
 }
 
 #[test]
+fn a_missed_release_ends_the_gizmo_drag_at_the_last_position() {
+    // 同じ押し・同じ 4 回の動きを、取りこぼした離し(lost)と本物の離し(real)で終え、回転を比べる
+    let mut ended = Vec::new();
+    for lost in [true, false] {
+        let (mut h, rect) = figure_view(256);
+        float_pose_tab(&mut h);
+        let upper = select_upper_arm(&mut h, rect);
+        let rest = rotation(&h, upper);
+        let at = ring_point(&h, rect, 2);
+        let r = gizmo::current_rings(h.app(), rect).unwrap();
+        let c = pos2(
+            rect.left() + r.center_screen.x,
+            rect.top() + r.center_screen.y,
+        );
+        let radial = (at - c).normalized();
+        let tangent = egui::vec2(-radial.y, radial.x);
+        press(&h, at, PointerButton::Primary);
+        h.step();
+        assert!(h.view3d().pose.drag.is_some(), "輪を掴んだ");
+        for k in 1..=4 {
+            move_to(&h, at + tangent * (10.0 * k as f32));
+            h.step();
+        }
+        if lost {
+            // ウィンドウの外で離して、離した印を受け取れなかった状態
+            lose_the_release_3d(&mut h);
+            h.step();
+        } else {
+            release(&h, at + tangent * 40.0, PointerButton::Primary);
+            h.step();
+        }
+        assert!(
+            h.view3d().pose.drag.is_none(),
+            "取りこぼしてもドラッグを取り残さない"
+        );
+        let turned = rotation(&h, upper);
+        assert!(turned.angle_between(rest) > 0.2, "回った: {turned}");
+        assert_eq!(undo_len(&h), 1, "ドラッグ 1 回で取り消し 1 つ");
+        ended.push(turned);
+    }
+    assert!(
+        ended[0].angle_between(ended[1]) < 1e-3,
+        "最後の位置まで回した(本物の離しと同じ): {} {}",
+        ended[0],
+        ended[1]
+    );
+}
+
+#[test]
 fn the_gizmo_rotates_the_selected_bone_with_undo_escape_and_focus_loss() {
     let (mut h, rect) = figure_view(256);
     float_pose_tab(&mut h);

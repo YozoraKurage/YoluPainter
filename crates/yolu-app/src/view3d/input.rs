@@ -35,6 +35,7 @@ use yolu_core::geometry::{
 };
 use yolu_core::glam::{DVec2, Vec2, Vec3};
 
+use super::held::Held;
 use super::model::ViewModel;
 use super::{gizmo, pacing, Nav};
 use crate::engine::{BrushEffect, Tilt};
@@ -135,8 +136,6 @@ fn begin(
     if !app.mode.paints() {
         return;
     }
-    // ツールの押しが入った 3D ビューを覚える（「スナップする特殊定規の切り替え」が、ポインタがどちらにも乗っていないときに使う）
-    app.rulers.last_drew = Some(crate::rulers::Place::View3d);
     match app.tool.def().surface {
         // スポイトは押した面の値を取るだけ（3D の Alt は回転なので、描くツールの一時的なスポイトは 2D だけ）
         Surface::Pick => {
@@ -989,6 +988,10 @@ fn pen_sample(
                     false,
                 )
             });
+            // ツールの押しが入った 3D ビューを覚える（「スナップする特殊定規の切り替え」が、ポインタがどちらにも乗っていないときに使う。2D と同じ）
+            if kind == Owner::Tool && app.mode.paints() {
+                app.rulers.last_drew = Some(crate::rulers::Place::View3d);
+            }
             let button = s.button;
             app.view3d.input.pen_press = Some(Press {
                 source,
@@ -1400,6 +1403,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                                 pos,
                             );
                         }
+                        if owner == Owner::Tool && app.mode.paints() {
+                            app.rulers.last_drew = Some(crate::rulers::Place::View3d);
+                        }
                         if owner == Owner::Tool {
                             app.view3d.input.mouse_press = Some(Press {
                                 source: StrokeSource::Mouse,
@@ -1482,33 +1488,15 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                             }
                         }
                         // ツールの押しのボタン（選択の行を左ボタン以外にしていれば、そのボタン）を離したら、ツールが終える
-                        let tool_released = *button == tool_button(app);
-                        if tool_released && app.view3d.input.stroke == Some(StrokeSource::Mouse) {
-                            release(app, &ctx);
-                        }
-                        if tool_released {
-                            app.view3d.input.mouse_press = None;
-                            super::draft::release(app, rect, pos, StrokeSource::Mouse, m);
-                            super::select::release(app, rect, pos, StrokeSource::Mouse, m);
-                            crate::pathtool::surface::release(app, rect, pos, StrokeSource::Mouse);
+                        if *button == tool_button(app) {
+                            // ギズモのドラッグは、1 フレームの最後の位置を当ててから終える
                             flush(app, &mut drag_at);
-                            gizmo::release(app, true);
-                            if app
-                                .fillfx
-                                .drag
-                                .as_ref()
-                                .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
-                            {
-                                crate::fillfx::gizmo::release(app, true);
+                            for held in Held::ALL {
+                                if held.held(app, StrokeSource::Mouse) {
+                                    held.release(app, rect, pos, StrokeSource::Mouse, m, &ctx);
+                                }
                             }
-                            if app
-                                .fillfx
-                                .point_drag
-                                .as_ref()
-                                .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
-                            {
-                                crate::fillfx::points::release(app, true);
-                            }
+                            app.view3d.input.mouse_press = None;
                         }
                     }
                     app.view3d.input.last_pointer = Some(pos);
@@ -1657,89 +1645,21 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
             i.pointer.any_down(),
         )
     });
-    if app.view3d.input.stroke == Some(StrokeSource::Mouse)
-        && !tool_down
+    let missed = !tool_down
         && !events
             .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        release(app, &ctx);
-    }
-    paint_queued(app, &ctx);
-    if app
-        .view3d
-        .input
-        .draft
-        .is_some_and(|d| d.source == StrokeSource::Mouse)
-        && !tool_down
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        super::draft::lost_release(app, rect, StrokeSource::Mouse);
-    }
-    if super::select::dragging(app)
-        && !tool_down
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        super::select::lost_release(app, StrokeSource::Mouse);
-    }
-    if app
-        .path
-        .drag
-        .is_some_and(|d| d.source == StrokeSource::Mouse && d.surface)
-        && !tool_down
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        app.path_finish_drag();
-    }
-    // 点を矩形で選ぶドラッグも、取りこぼしたら最後の位置で確定する（2D のツールと同じ）。位置が無ければ捨てる
-    if app
-        .path
-        .rect
-        .is_some_and(|r| r.source == StrokeSource::Mouse && r.surface)
-        && !tool_down
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        match app.view3d.input.last_pointer {
-            Some(at) => crate::pathtool::surface::release(app, rect, at, StrokeSource::Mouse),
-            None => app.path.rect = None,
+            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }));
+    if missed {
+        for held in Held::ALL {
+            if held.held(app, StrokeSource::Mouse) {
+                held.lost_release(app, rect, StrokeSource::Mouse, &ctx);
+            }
         }
-    }
-    if app.view3d.pose.drag.is_some()
-        && !tool_down
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        gizmo::release(app, true);
-    }
-    if app
-        .fillfx
-        .drag
-        .as_ref()
-        .is_some_and(|d| d.source == crate::fillfx::gizmo::Source::Mouse)
-        && !tool_down
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
-        crate::fillfx::gizmo::release(app, true);
-    }
-    // ツールの押しのボタンを離したのを取りこぼしたら、押しの控えも捨てる（次の押しのボタンを引き違えない）
-    if !tool_down
-        && !events
-            .iter()
-            .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }))
-    {
+        // ツールの押しのボタンを離したのを取りこぼしたら、押しの控えも捨てる（次の押しのボタンを引き違えない）
         app.view3d.input.mouse_press = None;
     }
+    // 取りこぼしたストロークも、このフレームのうちに塗り始める
+    paint_queued(app, &ctx);
     // ペンが回している・パンしている・寄っている間は、egui のポインタが押していなくても続ける（ペンが離したときに終える）
     let pen_driven = app
         .view3d

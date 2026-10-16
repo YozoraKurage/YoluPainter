@@ -546,6 +546,35 @@ fn an_end_square_grabbed_off_center_moves_by_the_pointer_movement_without_jumpin
 }
 
 #[test]
+fn a_missed_release_ends_a_gizmo_drag_at_the_last_position_in_one_step() {
+    let (mut h, rect, _) = edit_view();
+    select(&mut h);
+    let (_, b0, _) = points(&the_ruler(&h));
+    let steps = undo_count(&h);
+    let end = gizmo::handle_point(st(&h), rect, Handle::EndB).expect("b の四角");
+    let target = screen_of(&h, rect, Vec3::new(0.4, -0.3, -0.5));
+    press(&h, end, PointerButton::Primary);
+    h.step();
+    assert!(st(&h).fillfx().drag.is_some(), "四角を掴んだ");
+    move_to(&h, target);
+    h.step();
+    // ウィンドウの外で離して、離した印を受け取れなかった状態
+    lose_the_release_3d(&mut h);
+    h.step();
+    assert!(
+        st(&h).fillfx().drag.is_none(),
+        "取りこぼしてもドラッグを取り残さない"
+    );
+    let (_, b1, _) = points(&the_ruler(&h));
+    assert!(b1.distance(b0) > 1e-4, "動いた位置のまま");
+    assert!(
+        b1.distance(DVec3::new(0.4, -0.3, -0.5)) < 5e-3,
+        "最後の位置の面の点: {b1}"
+    );
+    assert_eq!(undo_count(&h), steps + 1, "1 回の取り消し");
+}
+
+#[test]
 fn s_on_one_axis_stretches_a_and_b_along_it_so_the_direction_changes_and_up_stays() {
     let mut h = app(1280.0, 860.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
