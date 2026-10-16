@@ -21,7 +21,7 @@ use yolu_core::mesh_maps::MeshOverlapPriority;
 
 use super::overlap::Islands;
 use crate::region::index::UvGrid;
-use crate::state::AppState;
+use crate::state::{ui_store, AppState, UiSlot};
 use crate::ui::theme as t;
 
 /// アイランドの薄い塗り・焼かないアイランドの塗りと斜線・縁の色。
@@ -200,7 +200,15 @@ struct Drawn {
     over: Vec<Shape>,
 }
 
-/// 見取り図の画面の状態（拡大・中心・選び替え・描いた形）。
+/// 画面の側に置く見取り図の物（描いた形と斜線のテクスチャ）。見取り図の印（`MapUi::screen`）の物として `ui_store` に置くので、
+/// ウィンドウを開き直すと（見取り図の状態を作り直すので）一緒に作り直される。
+#[derive(Default)]
+struct MapScreen {
+    drawn: Option<Drawn>,
+    hatch: Option<TextureHandle>,
+}
+
+/// 見取り図の画面の状態（拡大・中心・選び替え。描いた形は画面の側）。
 pub struct MapUi {
     /// 拡大（1 で 0〜1 の正方形が見取り図いっぱい）。
     zoom: f32,
@@ -213,8 +221,8 @@ pub struct MapUi {
     press: Option<Pos2>,
     /// 前のフレームに、見取り図から開いたアイランドのメニューがあった。
     menu_open: bool,
-    drawn: Option<Drawn>,
-    hatch: Option<TextureHandle>,
+    /// 画面の側に置いた描いた形と斜線のテクスチャ（`MapScreen`）の持ち主の印。
+    screen: UiSlot,
 }
 
 impl Default for MapUi {
@@ -226,8 +234,7 @@ impl Default for MapUi {
             cycle: None,
             press: None,
             menu_open: false,
-            drawn: None,
-            hatch: None,
+            screen: UiSlot::new(),
         }
     }
 }
@@ -310,7 +317,9 @@ impl MapUi {
         self.cycle = Some(Cycle { at, keys, index });
         Some(island)
     }
+}
 
+impl MapScreen {
     fn hatch(&mut self, ctx: &egui::Context) -> TextureId {
         self.hatch
             .get_or_insert_with(|| {
@@ -392,7 +401,7 @@ fn segments<'a>(
 
 /// アイランドの塗り（重なりの色の下）と、焼かないアイランドの斜線・縁（重なりの色の上）。優先・焼かないの状態で決まる（ポインタの強調は入れない）。
 fn base_shapes(
-    ui: &mut MapUi,
+    ui: &mut MapScreen,
     ctx: &egui::Context,
     data: &MapData,
     priority: &MeshOverlapPriority,
@@ -443,6 +452,41 @@ fn base_shapes(
         }
     }
     (under, shapes)
+}
+
+/// 塗りと縁の形（重なりの色の下と上）。状態か見え方が変わったときだけ作り直し、画面の側（`MapScreen`）に覚える。
+fn drawn(
+    state: &MapUi,
+    ctx: &egui::Context,
+    data: &Arc<MapData>,
+    priority: &MeshOverlapPriority,
+    frame: &Frame,
+) -> (Vec<Shape>, Vec<Shape>) {
+    let store = ui_store::Store::of(ctx);
+    let mut lock = store.lock();
+    let screen = lock.get_or_default::<MapScreen>(&state.screen);
+    let key = Arc::as_ptr(data) as usize;
+    let fresh = screen.drawn.as_ref().is_some_and(|d| {
+        d.data == key
+            && d.priority == *priority
+            && d.rect == frame.rect
+            && d.zoom == state.zoom
+            && d.center == state.center
+    });
+    if !fresh {
+        let (under, over) = base_shapes(screen, ctx, data, priority, frame);
+        screen.drawn = Some(Drawn {
+            data: key,
+            priority: priority.clone(),
+            rect: frame.rect,
+            zoom: state.zoom,
+            center: state.center,
+            under,
+            over,
+        });
+    }
+    let d = screen.drawn.as_ref().expect("作った");
+    (d.under.clone(), d.over.clone())
 }
 
 /// 見取り図を描いて、押下・ホイール・ドラッグを受ける。`list_hover` は一覧の行で指しているアイランド（代表）。
@@ -543,29 +587,8 @@ pub fn draw(
             None => None,
         };
         // 塗りと縁（状態か見え方が変わったときだけ作り直す）
-        let key = Arc::as_ptr(data) as usize;
-        let fresh = state.drawn.as_ref().is_some_and(|d| {
-            d.data == key
-                && d.priority == map.priority
-                && d.rect == rect
-                && d.zoom == state.zoom
-                && d.center == state.center
-        });
-        if !fresh {
-            let (under, over) = base_shapes(state, &ctx, data, &map.priority, &frame);
-            state.drawn = Some(Drawn {
-                data: key,
-                priority: map.priority.clone(),
-                rect,
-                zoom: state.zoom,
-                center: state.center,
-                under,
-                over,
-            });
-        }
-        if let Some(d) = &state.drawn {
-            painter.extend(d.under.iter().cloned());
-        }
+        let (under, over) = drawn(state, &ctx, data, &map.priority, &frame);
+        painter.extend(under);
         // 重なったテクセル（キャンバスと同じテクスチャ）
         if let Some((texture, [x1, y1])) = map.overlap {
             let mut mesh = Mesh::with_texture(texture);
@@ -585,9 +608,7 @@ pub fn draw(
             mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
             painter.add(Shape::mesh(mesh));
         }
-        if let Some(d) = &state.drawn {
-            painter.extend(d.over.iter().cloned());
-        }
+        painter.extend(over);
         // 強調（メニューを開いているアイランド、無ければポインタか一覧の行のアイランド）
         if let Some(island) = map.menu.or(out.hover).or(list_hover) {
             if let Some(i) = data.islands.island(island) {

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use egui::{Color32, ColorImage, Painter, Pos2, Shape, Stroke, TextureHandle, TextureOptions};
+use egui::{Color32, ColorImage, Painter, Pos2, Shape, Stroke, TextureOptions};
 use yolu_core::geometry::SurfaceGeometry;
 use yolu_core::glam::Vec2;
 use yolu_core::mesh_maps::{islands_of, uv_overlap, UvOverlap};
@@ -18,7 +18,7 @@ use crate::canvas::view::CanvasView;
 use crate::features::{Feature, PollStage};
 use crate::jobs::{JobSpec, Polled, Worker};
 use crate::notice::Source;
-use crate::state::{Action, AppState};
+use crate::state::{ui_store, Action, AppState, UiSlot};
 
 /// 既定の色（警告の色 `t::WARNING` に近い橙。テクセルを塗る不透明度）。
 pub const DEFAULT_COLOR: [u8; 4] = [232, 176, 60, 120];
@@ -37,11 +37,12 @@ pub struct Built {
     pub edges: Vec<[Vec2; 2]>,
 }
 
-/// 重なりの色のテクスチャと、それが覆う図のテクセルの幅・高さ（まとめた分だけ図より大きいことがある）。
+/// 重なりの色のテクスチャの印（テクスチャは画面の側の `ui_store` にある）と、それが覆う図のテクセルの幅・高さ（まとめた分だけ
+/// 図より大きいことがある）。
 struct Page {
     width: u32,
     height: u32,
-    texture: TextureHandle,
+    texture: UiSlot,
 }
 
 /// 図の状態（モデル・マテリアル・大きさごと）。
@@ -348,12 +349,14 @@ pub fn paint(painter: &Painter, app: &mut AppState, view: &CanvasView) {
     }
     let (mw, mh) = (built.map.width() as f64, built.map.height() as f64);
     let (dw, dh) = (doc_w as f64, doc_h as f64);
-    if let Some(page) = &s.page {
+    let page = s.page.as_ref();
+    let texture = page.and_then(|p| ui_store::texture_id(painter.ctx(), &p.texture));
+    if let (Some(page), Some(texture)) = (page, texture) {
         let x1 = page.width as f64 / mw * dw;
         let y1 = page.height as f64 / mh * dh;
         CanvasDisplay::quad(
             painter,
-            page.texture.id(),
+            texture,
             view,
             [(0.0, 0.0), (x1, 0.0), (x1, y1), (0.0, y1)],
             [
@@ -405,7 +408,7 @@ pub fn texture_for_map(
     }
     let page = s.page.as_ref()?;
     Some((
-        page.texture.id(),
+        ui_store::texture_id(ctx, &page.texture)?,
         [
             page.width as f32 / built.map.width() as f32,
             page.height as f32 / built.map.height() as f32,
@@ -436,7 +439,10 @@ fn texture(ctx: &egui::Context, map: &UvOverlap, color: [u8; 4], nearest: bool) 
         .into_iter()
         .map(|m| if m { fill } else { Color32::TRANSPARENT })
         .collect();
-    let texture = ctx.load_texture(
+    let texture = UiSlot::new();
+    let _ = ui_store::load_texture(
+        ctx,
+        &texture,
         "uv-overlap",
         ColorImage::new([w as usize, h as usize], pixels),
         options,
