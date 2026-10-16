@@ -21,7 +21,7 @@ use crate::m2::{DropTarget, Row};
 use crate::notice::Source as NoticeSource;
 use crate::panels::layers::ROW_HEIGHT;
 use crate::shelf::{self, ItemKind, PlaceTarget, ShelfDrag, ShelfOp};
-use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
+use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, Waker};
 use crate::ui::menu::{context_anchor, Entry, PopupState};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
@@ -77,11 +77,11 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     let ctx = ui.ctx().clone();
     let lang = app.lang;
     app.shelf.use_language(lang);
-    app.library.set_context(&ctx);
+    app.library.set_waker(repaint_waker(&ctx));
     let source = app.library.source;
     // 項目の情報とサムネイルは別のスレッドで作る。できた分を受け取り、見えている項目の分は格子を描くときに頼む
     match source {
-        Source::Project => app.shelf.begin_inspection_frame(&ctx),
+        Source::Project => app.shelf.begin_inspection_frame(repaint_waker(&ctx)),
         Source::Library => {
             let folder = app.library_root();
             app.library.prepare(folder);
@@ -1506,15 +1506,22 @@ fn library_menu_entries(app: &AppState) -> Vec<Entry<Action>> {
 /// （ライブラリの格子の上に落とした PNG と .ylsmart はライブラリへ、そうでない .ylsmart は棚へ。PNG は格子の上だけ
 /// （筆先・ステンシルの画像の箱へ落とした PNG は、そちらが取る）。.ylp は `YoluApp` が開く）。
 pub fn frame(ctx: &egui::Context, state: &mut AppState) {
-    state.shelf.context = Some(ctx.clone());
+    let waker = repaint_waker(ctx);
+    state.shelf.waker = Some(waker.clone());
     // 棚の項目の絵（アセットの欄・塗りつぶしの画像の箱が頼む）は、欄が見えていなくても受け取る
-    state.shelf.attach_repaint(ctx);
+    state.shelf.attach_repaint(waker);
     state.shelf.poll_inspections(shelf::INSPECTIONS_PER_FRAME);
     state.shelf_poll();
     state.library_poll();
     // 格子の範囲はこのフレームで描いたときだけ入る（前のフレームの分を取り、今のフレームの描画が入れ直す）
     let grid = state.library.grid_rect.take();
     import_dropped(ctx, state, grid);
+}
+
+/// 別のスレッドの仕事が終わったときに、この画面を描き直させる口。
+fn repaint_waker(ctx: &egui::Context) -> Waker {
+    let ctx = ctx.clone();
+    Waker::new(move || ctx.request_repaint())
 }
 
 pub(crate) fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {

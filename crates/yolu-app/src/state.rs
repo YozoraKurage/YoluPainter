@@ -20,9 +20,11 @@ use crate::view3d::View3dState;
 mod outbox;
 mod services;
 mod ui_state;
+mod waker;
 pub use outbox::Outbox;
 pub use services::Services;
 pub use ui_state::UiState;
+pub use waker::Waker;
 
 /// straight の RGBA（0〜1）。
 pub type Rgba = [f32; 4];

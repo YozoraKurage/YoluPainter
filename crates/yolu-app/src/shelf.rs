@@ -43,7 +43,7 @@ use crate::lang::Lang;
 use crate::library::cache::{Cache, Cached};
 use crate::library::service::{Cancel, Service, Work};
 use crate::notice::{Kind as NoticeKind, Source};
-use crate::state::{AppState, DialogRequest};
+use crate::state::{AppState, DialogRequest, Waker};
 
 /// 棚の素材のメモリの予算（Unity 版の既定は RAM の 1/16 を 256〜4096 MiB に収めた値。ここでは固定）。
 pub const SHELF_BUDGET: u64 = 512 * 1024 * 1024;
@@ -503,7 +503,7 @@ pub struct ShelfState {
     /// 読み込む .ylsmart の大きさの上限（バイト。試験で小さくする）。
     pub import_limit: u64,
     /// 書き出しが終わったことを画面に知らせる口（毎フレーム `YoluApp` が渡す）。
-    pub context: Option<egui::Context>,
+    pub waker: Option<Waker>,
     /// 試験用: true の間、別のスレッドの書き出しは結果を渡さずに待つ。
     hold: Arc<AtomicBool>,
     inspected: HashMap<String, Inspected>,
@@ -687,7 +687,7 @@ impl ShelfState {
             preview_budget: PREVIEW_BUDGET,
             image_thumb_pixels: IMAGE_THUMB_PIXELS,
             import_limit: IMPORT_LIMIT,
-            context: None,
+            waker: None,
             hold: Default::default(),
             inspected: HashMap::new(),
             builtin: Vec::new(),
@@ -780,7 +780,7 @@ impl ShelfState {
         job: impl FnOnce(&AtomicBool, Shelf) -> Result<Staged, yolu_io::Error> + Send + 'static,
     ) {
         let (tx, rx) = std::sync::mpsc::channel();
-        let repaint = self.context.clone();
+        let repaint = self.waker.clone();
         let hold = self.hold.clone();
         let cancel = Arc::new(AtomicBool::new(false));
         let running = Running::start(&self.running);
@@ -799,8 +799,8 @@ impl ShelfState {
             }
             drop(running);
             let _ = tx.send(done);
-            if let Some(ctx) = repaint {
-                ctx.request_repaint();
+            if let Some(waker) = repaint {
+                waker.wake();
             }
         });
         self.saving = Some(PendingSave {
@@ -983,14 +983,14 @@ impl ShelfState {
     }
 
     /// 新しいフレームの始まり（見えている項目を `request_inspections` で頼む前に 1 度）。
-    pub fn begin_inspection_frame(&self, ctx: &egui::Context) {
-        self.inspector.set_context(ctx.clone());
+    pub fn begin_inspection_frame(&self, waker: Waker) {
+        self.inspector.set_waker(waker);
         self.inspector.begin_frame();
     }
 
     /// できたときに画面を描き直させる口（棚のタブを開いていなくても、塗りつぶしの画像の箱などが `request_inspections` で頼める）。
-    pub fn attach_repaint(&self, ctx: &egui::Context) {
-        self.inspector.set_context(ctx.clone());
+    pub fn attach_repaint(&self, waker: Waker) {
+        self.inspector.set_waker(waker);
     }
 
     /// 見えている項目のうち、まだ見ていないものの情報とサムネイルを、別のスレッドへ頼む（頼み済みは見に来た印だけ）。
@@ -1858,7 +1858,7 @@ impl AppState {
             >= self.shelf.async_bytes
         {
             let (tx, rx) = std::sync::mpsc::channel();
-            let repaint = self.shelf.context.clone();
+            let repaint = self.shelf.waker.clone();
             let hold = self.shelf.hold.clone();
             let cancel = Arc::new(AtomicBool::new(false));
             let running = Running::start(&self.shelf.running);
@@ -1878,8 +1878,8 @@ impl AppState {
                 // 結果を渡す前に数えから外す（結果を受けた直後の保存が、終わりかけのスレッドのせいで断られない）
                 drop(running);
                 let _ = tx.send(done);
-                if let Some(ctx) = repaint {
-                    ctx.request_repaint();
+                if let Some(waker) = repaint {
+                    waker.wake();
                 }
             });
             self.info(

@@ -169,7 +169,7 @@ impl AppState {
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
         let running = Running::start(&self.library.running);
-        let repaint = self.shelf.context.clone();
+        let repaint = self.shelf.waker.clone();
         let hold = self.library.hold.clone();
         std::thread::spawn(move || {
             while hold.load(Ordering::SeqCst) {
@@ -178,8 +178,8 @@ impl AppState {
             let done = job(&flag, lang);
             drop(running);
             let _ = tx.send(done);
-            if let Some(ctx) = repaint {
-                ctx.request_repaint();
+            if let Some(waker) = repaint {
+                waker.wake();
             }
         });
         self.info(

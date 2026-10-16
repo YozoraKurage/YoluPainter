@@ -48,7 +48,7 @@ use crate::lang::Lang;
 use crate::shelf::{
     Attempt, Inspected, ItemKind, Unreadable, IMAGE_THUMB_PIXELS, IMPORT_LIMIT, PREVIEW_BUDGET,
 };
-use crate::state::AppState;
+use crate::state::{AppState, Waker};
 
 /// ライブラリのファイルの項目の ID の前置き（プロジェクトの棚の ID は UUID、組み込みは `builtin:` なので重ならない）。
 pub const LIBRARY_PREFIX: &str = "library:";
@@ -261,7 +261,7 @@ pub struct LibraryState {
     /// 項目を見るときの上限（試験で小さくする）。
     pub limits: Limits,
     cache: Option<Arc<Cache>>,
-    context: Option<egui::Context>,
+    waker: Option<Waker>,
     /// いま一覧にしているフォルダ（設定が変わったら一覧を捨てる）。
     folder: Option<PathBuf>,
     listed: bool,
@@ -298,7 +298,7 @@ impl Default for LibraryState {
                 thumb_pixels: IMAGE_THUMB_PIXELS,
             },
             cache: None,
-            context: None,
+            waker: None,
             folder: None,
             listed: false,
             problem: None,
@@ -330,9 +330,9 @@ impl LibraryState {
     }
 
     /// できたときに画面を描き直させる口を覚える。
-    pub fn set_context(&mut self, ctx: &egui::Context) {
-        self.inspector.set_context(ctx.clone());
-        self.context = Some(ctx.clone());
+    pub fn set_waker(&mut self, waker: Waker) {
+        self.inspector.set_waker(waker.clone());
+        self.waker = Some(waker);
     }
 
     /// 新しいフレームの始まり（見えている項目を `request_probes` で頼む前に 1 度）。
@@ -426,7 +426,7 @@ impl LibraryState {
         let (tx, rx) = std::sync::mpsc::channel();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
-        let repaint = self.context.clone();
+        let repaint = self.waker.clone();
         let root = folder.clone();
         let spawned = std::thread::Builder::new()
             .name("yolu-library-list".into())
@@ -438,8 +438,8 @@ impl LibraryState {
                     )
                 });
                 let _ = tx.send(result);
-                if let Some(ctx) = repaint {
-                    ctx.request_repaint();
+                if let Some(waker) = repaint {
+                    waker.wake();
                 }
             });
         if spawned.is_err() {

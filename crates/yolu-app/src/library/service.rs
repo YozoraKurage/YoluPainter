@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 
+use crate::state::Waker;
+
 /// この数のフレームのあいだ見に来なかった項目の仕事は、始める前に捨てる。
 pub const STALE_FRAMES: u64 = 3;
 
@@ -56,7 +58,7 @@ struct Shared<R> {
     wake: Condvar,
     idle: Condvar,
     cancel: Cancel,
-    repaint: Mutex<Option<egui::Context>>,
+    repaint: Mutex<Option<Waker>>,
 }
 
 /// 結果 `R` を別のスレッドで作る仕事場。
@@ -93,8 +95,8 @@ impl<R: Send + 'static> Service<R> {
     }
 
     /// できたときに画面を描き直させる口。
-    pub fn set_context(&self, ctx: egui::Context) {
-        *self.shared.repaint.lock().unwrap() = Some(ctx);
+    pub fn set_waker(&self, waker: Waker) {
+        *self.shared.repaint.lock().unwrap() = Some(waker);
     }
 
     /// 新しいフレームの始まり（見に来た印の時計を進める）。
@@ -224,8 +226,8 @@ fn worker<R: Send + 'static>(shared: Arc<Shared<R>>, tx: Sender<(String, Option<
         // 結果を渡してから「走っていない」ことにする（`wait_done` が返ったときには、結果は受け口に入っている）
         if !cancelled {
             let _ = tx.send((key, result));
-            if let Some(ctx) = shared.repaint.lock().unwrap().as_ref() {
-                ctx.request_repaint();
+            if let Some(waker) = shared.repaint.lock().unwrap().as_ref() {
+                waker.wake();
             }
         }
         {
