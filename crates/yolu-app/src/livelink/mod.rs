@@ -210,12 +210,12 @@ impl LinkTarget {
 impl AppState {
     /// 書き出しのウィンドウの置き場の既定（Live Link の相手の文書なら、利用者が選んだ置き場か頼みの `export_dir`）。
     pub fn link_export_dir(&self) -> Option<PathBuf> {
-        self.link_target.as_ref()?.export_folder()
+        self.services.link_target.as_ref()?.export_folder()
     }
 
     /// 書き出しのウィンドウで置き場を選んだ（Live Link の相手の文書なら、次からの既定にする）。
     pub fn note_export_dir(&mut self, dir: &std::path::Path) {
-        if let Some(t) = self.link_target.as_mut() {
+        if let Some(t) = self.services.link_target.as_mut() {
             t.export_dir = Some(dir.to_path_buf());
         }
     }
@@ -469,6 +469,7 @@ impl LiveLink {
             status: self.status.clone(),
             notice: self.notice.clone(),
             target: state
+                .services
                 .link_target
                 .as_ref()
                 .filter(|_| linked(state))
@@ -570,14 +571,14 @@ impl LiveLink {
     /// 毎フレームの頭で: 受け付けを合わせ、起きている印を書き、頼みを拾い、裏の仕事の終わりを受け、待っている頼みを当てる。
     pub fn poll(&mut self, state: &mut AppState) {
         let now = Instant::now();
-        if let Some(request) = state.link_reopen.take() {
+        if let Some(request) = state.services.link_reopen.take() {
             self.reopen(request);
         }
         self.sync(state, now);
         self.drop_stale_job(state);
         // 相手の文書でなくなった（別のモデル・新しいプロジェクト・開いた）なら、相手を忘れる
-        if state.link_target.is_some() && !linked(state) && self.job.is_none() {
-            state.link_target = None;
+        if state.services.link_target.is_some() && !linked(state) && self.job.is_none() {
+            state.services.link_target = None;
             self.problems.clear();
         }
         if let Some(folder) = &self.folder {
@@ -750,7 +751,7 @@ impl LiveLink {
 
     /// 裏の仕事を始める。
     fn start(&mut self, taken: Taken, request: Arc<Request>, same: bool, state: &mut AppState) {
-        let target = state.link_target.clone().filter(|_| same);
+        let target = state.services.link_target.clone().filter(|_| same);
         let keep_rig = target
             .as_ref()
             .is_some_and(|t| rig_unchanged(&t.request, &request));
@@ -946,7 +947,7 @@ impl LiveLink {
         self.slot_cache.clone_from(&opened.slot_cache);
         let reopening = taken.claimed.is_none();
         // 今の文書が、この頼みと同じ相手のままか。裏の仕事の間に別のモデルを開かれていれば、相手の文書ではない
-        let previous = state.link_target.clone().filter(|_| linked(state));
+        let previous = state.services.link_target.clone().filter(|_| linked(state));
         let resend = previous
             .as_ref()
             .is_some_and(|p| p.request.target.key == request.target.key);
@@ -1192,7 +1193,7 @@ impl LiveLink {
             .retain(|uid, _| state.session.sets.index_of(*uid).is_some());
         problems.splice(0..0, opened.problems.iter().cloned());
         problems.dedup();
-        state.link_target = Some(LinkTarget {
+        state.services.link_target = Some(LinkTarget {
             request: request.clone(),
             layout,
             rig: SceneModel::rig_id(&rig),
@@ -1276,7 +1277,7 @@ impl LiveLink {
         state: &mut AppState,
         files: &[(yolu_io::export::WrittenImage, u32, Option<String>)],
     ) {
-        let Some(target) = state.link_target.clone().filter(|_| linked(state)) else {
+        let Some(target) = state.services.link_target.clone().filter(|_| linked(state)) else {
             return;
         };
         let Some(folder) = &self.folder else {
@@ -1384,7 +1385,7 @@ fn busy(state: &AppState) -> bool {
 
 /// 今の文書が、記録の相手の文書のままか（モデルの記録が Live Link の相手で、ポーズのセッションが同じ Rig）。
 fn linked(state: &AppState) -> bool {
-    let Some(target) = &state.link_target else {
+    let Some(target) = &state.services.link_target else {
         return false;
     };
     let record = state
@@ -1406,6 +1407,7 @@ fn linked(state: &AppState) -> bool {
 fn same_target(state: &AppState, request: &Request) -> bool {
     linked(state)
         && state
+            .services
             .link_target
             .as_ref()
             .is_some_and(|t| t.request.target.key == request.target.key)

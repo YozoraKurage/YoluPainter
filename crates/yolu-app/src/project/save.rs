@@ -201,23 +201,29 @@ pub(crate) const JOB: JobSpec = JobSpec {
 impl AppState {
     /// 保存の仕事が動いているか（裏のスレッド。終わりは `poll_save` が受ける）。
     pub fn is_saving(&self) -> bool {
-        self.save.job.is_some()
+        self.services.save.job.is_some()
     }
 
     /// 「変更あり」の印。保存の間は、保存の結果が出るまで、頼む前の印のまま見せる（保存の頼みは `modified` を下ろして、その後の編集を
     /// 見分けるので、見せる側はこちらを読む）。
     pub fn shows_modified(&self) -> bool {
-        self.session.is_modified() || self.save.job.as_ref().is_some_and(|j| j.was_modified)
+        self.session.is_modified()
+            || self
+                .services
+                .save
+                .job
+                .as_ref()
+                .is_some_and(|j| j.was_modified)
     }
 
     /// 保存の進み具合（仕事の札・閉じるのを待つウィンドウ）。
     pub fn save_progress(&self) -> Option<SaveProgress> {
-        self.save.progress()
+        self.services.save.progress()
     }
 
     /// 終わった保存の仕事を受ける（フレームの初めに）。
     pub fn poll_save(&mut self) {
-        let Some(job) = &self.save.job else {
+        let Some(job) = &self.services.save.job else {
             return;
         };
         let finished = match job.rx.try_recv() {
@@ -225,7 +231,7 @@ impl AppState {
             Err(TryRecvError::Empty) => return,
             Err(TryRecvError::Disconnected) => stopped(self.lang),
         };
-        let job = self.save.job.take().expect("上で見た");
+        let job = self.services.save.job.take().expect("上で見た");
         // 操作の外で結果を書くので、操作と同じく新しい知らせとして出す
         let prior = self.message_begin();
         finish(self, job, finished);
@@ -239,7 +245,7 @@ impl AppState {
         crate::jobs::wait_until_idle(
             self,
             "保存の処理が終わらない（ハング検出上限）",
-            |s| s.save.job.is_some(),
+            |s| s.services.save.job.is_some(),
             Self::poll_save,
         );
     }
@@ -264,7 +270,7 @@ pub fn save_from(state: &mut AppState, path: &Path) {
 /// 外からの操作の保存の頼み: `save_from` と同じ道（裏のスレッド・書き直しの印・退避）で、結果は `SaveState::take_outcome` が渡す（メッセージだけに
 /// しない）。始められなければ理由の文（何も変えない）。試験の状態（`background` が false）は、頼みの中で終えるので、戻ってすぐ結果が取れる。
 pub fn save_for_ops(state: &mut AppState, path: &Path) -> Result<(), String> {
-    state.save.outcome = None;
+    state.services.save.outcome = None;
     start(state, path, true)
 }
 
@@ -274,7 +280,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
     if state.is_stroking() {
         return Err(crate::lang::refusals::during_stroke(lang).into());
     }
-    if state.save.job.is_some() {
+    if state.services.save.job.is_some() {
         return Err(crate::lang::refusals::saving(lang).into());
     }
     // 配布用に保存の写し（準備した写し・書いている途中）は、保存前のプロジェクトが開いている .ylp のハンドルから読む。普通は、保存で
@@ -325,7 +331,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         },
         reopen_limits: yolu_io::Limits::from_layer_pixels(state.load_source_bytes()),
         thresholds: yolu_io::Thresholds::current(),
-        hold: state.save.hold.take(),
+        hold: state.services.save.hold.take(),
         shared: shared.clone(),
     };
     let file = path
@@ -347,7 +353,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         maps,
         left_out,
     };
-    if state.save.background {
+    if state.services.save.background {
         let (tx, rx) = channel();
         std::thread::Builder::new()
             .name("yolu-save".into())
@@ -359,7 +365,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
         // 保存の間の編集を見分けるために下ろす（失敗したら戻す）。復旧の見張りは、保存の間は印を読まない
         state.session.clear_modified();
         state.shelf.changed = false;
-        state.save.job = Some(job(rx));
+        state.services.save.job = Some(job(rx));
     } else {
         // 試験の状態: 呼び手のスレッドで終えて、すぐ受ける（止めておく頼みは、止めても手を離す側がいないので使わない）
         let (tx, rx) = channel();
@@ -619,7 +625,7 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                 state.info(Source::Save, done.text);
             }
             if job.report {
-                state.save.outcome = Some(SaveOutcome {
+                state.services.save.outcome = Some(SaveOutcome {
                     path: job.path.clone(),
                     result: Ok(SavedFacts {
                         sets_written: job.written.iter().map(|(id, _, _)| id.clone()).collect(),
@@ -643,7 +649,7 @@ fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget
     }
     state.shelf.changed |= job.shelf_was_changed;
     if job.report {
-        state.save.outcome = Some(SaveOutcome {
+        state.services.save.outcome = Some(SaveOutcome {
             path: job.path.clone(),
             result: Err(text.clone()),
         });

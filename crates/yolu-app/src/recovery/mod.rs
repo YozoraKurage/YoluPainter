@@ -145,7 +145,8 @@ struct Active {
 /// 復旧のウィンドウの確かめ（キーの割り当てを止める）。
 pub(crate) const JOB: JobSpec = JobSpec {
     modal: Some(|app| {
-        app.recovery
+        app.services
+            .recovery
             .window
             .as_ref()
             .is_some_and(|w| w.confirm.is_some())
@@ -412,21 +413,26 @@ impl AppState {
 
     /// `recovery_tick` の、時刻を渡せる形（試験用）。
     pub fn recovery_tick_at(&mut self, now: Instant) -> Option<Duration> {
-        self.recovery.active.as_ref()?;
+        self.services.recovery.active.as_ref()?;
         self.recovery_poll();
         // 保存の間は見張りを止める。保存は開いた .ylp を置き換える（書き置きの読みと重ねない）うえ、「保存していない変更」の印
         // （`modified`）は保存の結果が出るまで確かでない（保存の頼みが下ろして、保存の間の編集だけを立て直す）
         if self.is_saving() {
-            return self.recovery.wakeup(now);
+            return self.services.recovery.wakeup(now);
         }
         let modified = self.session.is_modified();
         let stroking = self.is_stroking();
         let fingerprint = capture::fingerprint(self);
         {
-            let a = self.recovery.active.as_mut().expect("上で確かめた");
+            let a = self
+                .services
+                .recovery
+                .active
+                .as_mut()
+                .expect("上で確かめた");
             // 保存・開く・新規で変更なしに戻った: 保存した .ylp と同じなので、書かない。落ちても知らせない印へ
             if a.was_modified && !modified {
-                self.recovery.recovered_from = None;
+                self.services.recovery.recovered_from = None;
                 a.epoch += 1;
                 a.recorded = None;
                 a.submitted = None;
@@ -446,24 +452,29 @@ impl AppState {
             a.was_stroking = stroking;
             a.last_seen = Some(fingerprint.clone());
         }
-        let interval = Duration::from_secs(self.recovery.settings.interval_seconds as u64);
-        let strokes = self.recovery.settings.strokes_between;
-        let a = self.recovery.active.as_mut().expect("上で確かめた");
+        let interval = Duration::from_secs(self.services.recovery.settings.interval_seconds as u64);
+        let strokes = self.services.recovery.settings.strokes_between;
+        let a = self
+            .services
+            .recovery
+            .active
+            .as_mut()
+            .expect("上で確かめた");
         // 書くものが無いときは、「時間を待たずに書く」の頼み（フォーカスを失った）も下ろす。残すと、戻ってきて最初に描いた
         // ストロークの終わりで、間隔を待たずに書いてしまう
         if !stroking && !modified {
             a.dirty_since = None;
             a.force = false;
-            return self.recovery.wakeup(now);
+            return self.services.recovery.wakeup(now);
         }
         // 書き置きに入っていない変更。描いている最中でも、変わった時刻は覚える（取るのは描き終えてから）
         if a.recorded.as_ref() == Some(&fingerprint) || a.submitted.as_ref() == Some(&fingerprint) {
             a.force = false;
-            return self.recovery.wakeup(now);
+            return self.services.recovery.wakeup(now);
         }
         let since = *a.dirty_since.get_or_insert(now);
         if stroking {
-            return self.recovery.wakeup(now);
+            return self.services.recovery.wakeup(now);
         }
         let base = a.last_attempt.map_or(since, |l| l.max(since));
         let due = now.saturating_duration_since(base) >= interval
@@ -472,19 +483,24 @@ impl AppState {
         if due {
             self.recovery_submit(now);
         }
-        self.recovery.wakeup(now)
+        self.services.recovery.wakeup(now)
     }
 
     /// 材料を取って書き手へ頼む（取れない区切り — ストロークの最中・取り込みの途中 — なら、何もせず次のフレームで）。
     fn recovery_submit(&mut self, now: Instant) {
-        let recovered_from = self.recovery.recovered_from.clone();
+        let recovered_from = self.services.recovery.recovered_from.clone();
         let captured = match capture::capture(self, recovered_from.as_deref()) {
             Ok(captured) => captured,
             Err(capture::Refusal::NothingToWrite) => {
                 // 書けるセットが無い（どのセットも保存したことが無く読めない）。書き置きは作らず、同じ札のうちは頼み直さない
                 // （保存のときに、入れなかったセットを知らせる）
                 let fingerprint = capture::fingerprint(self);
-                let a = self.recovery.active.as_mut().expect("呼ぶ前に確かめた");
+                let a = self
+                    .services
+                    .recovery
+                    .active
+                    .as_mut()
+                    .expect("呼ぶ前に確かめた");
                 a.submitted = Some(fingerprint);
                 a.last_attempt = Some(now);
                 a.dirty_since = None;
@@ -495,10 +511,15 @@ impl AppState {
             // 描いている最中・取り込みの途中は、次のフレームで取り直す
             Err(_) => return,
         };
-        let keep = self.recovery.keep();
-        let limits = self.recovery.limits();
-        let enforce = self.recovery.quota_limits().is_some();
-        let a = self.recovery.active.as_mut().expect("呼ぶ前に確かめた");
+        let keep = self.services.recovery.keep();
+        let limits = self.services.recovery.limits();
+        let enforce = self.services.recovery.quota_limits().is_some();
+        let a = self
+            .services
+            .recovery
+            .active
+            .as_mut()
+            .expect("呼ぶ前に確かめた");
         a.submitted = Some(captured.fingerprint.clone());
         a.last_attempt = Some(now);
         a.dirty_since = None;
@@ -519,7 +540,7 @@ impl AppState {
     /// （描くのは止めない。次の頼みでやり直す）。失敗のあとに成功したら、戻ったことを知らせる。
     fn recovery_poll(&mut self) {
         let mut landed = false;
-        while let Some(a) = self.recovery.active.as_mut() {
+        while let Some(a) = self.services.recovery.active.as_mut() {
             let Some(outcome) = a.writer.take() else {
                 break;
             };
@@ -531,32 +552,32 @@ impl AppState {
                             let _ = a.session.mark(true);
                         }
                     }
-                    self.recovery.checkpoints += 1;
-                    self.recovery.last_millis = outcome.millis;
-                    self.recovery.trimmed_total += outcome.trimmed.generations;
-                    self.recovery.last_trimmed = outcome.trimmed;
+                    self.services.recovery.checkpoints += 1;
+                    self.services.recovery.last_millis = outcome.millis;
+                    self.services.recovery.trimmed_total += outcome.trimmed.generations;
+                    self.services.recovery.last_trimmed = outcome.trimmed;
                     landed = true;
-                    if self.recovery.failed {
-                        self.recovery.failed = false;
+                    if self.services.recovery.failed {
+                        self.services.recovery.failed = false;
                         self.info(Source::Recovery, self.lang.recovery_working_again());
                     }
                 }
                 Err(error) => {
                     a.submitted = None;
-                    self.recovery.failed = true;
+                    self.services.recovery.failed = true;
                     self.fail(Source::Recovery, self.lang.recovery_failed(&error));
                 }
             }
         }
         // ウィンドウが開いていれば、増えた世代を一覧に足す
         if landed {
-            self.recovery.refresh_window();
+            self.services.recovery.refresh_window();
         }
     }
 
     /// フォーカスを失ったなど: 時間を待たずに、次の見張りで書く。
     pub fn recovery_request_flush(&mut self) {
-        if let Some(a) = self.recovery.active.as_mut() {
+        if let Some(a) = self.services.recovery.active.as_mut() {
             a.force = true;
         }
     }
@@ -564,13 +585,17 @@ impl AppState {
     /// 動いている書き込みの終わりを、ほかのスレッドから待てる口（復旧が動いていなければ None）。保存が、開いた .ylp を置き換える前に、
     /// 書き置きの読みが終わるのを待つために使う。
     pub(crate) fn recovery_waiter(&self) -> Option<writer::Waiter> {
-        self.recovery.active.as_ref().map(|a| a.writer.waiter())
+        self.services
+            .recovery
+            .active
+            .as_ref()
+            .map(|a| a.writer.waiter())
     }
 
     /// 動いている書き込みが終わるまで待って、結果を受ける（試験。描画の途中では使わない）。期限が無いので、終わる前には
     /// `recovery_wait_within` を使う。
     pub fn recovery_wait(&mut self) {
-        if let Some(a) = self.recovery.active.as_ref() {
+        if let Some(a) = self.services.recovery.active.as_ref() {
             a.writer.wait();
         }
         self.recovery_poll();
@@ -580,6 +605,7 @@ impl AppState {
     /// 終わっていれば true。間に合わなかった書き込みは走ったままで、確定するまで前の世代が残る（置換は最後の 1 回）。
     pub fn recovery_wait_within(&mut self, wait: Duration) -> bool {
         let done = self
+            .services
             .recovery
             .active
             .as_ref()
@@ -601,13 +627,13 @@ impl AppState {
 
     /// `recovery_flush` の、待つ期限を付けられる形（終わるときは、遅いディスクで固まらないように期限を付ける）。
     fn recovery_flush_until(&mut self, deadline: Option<Instant>) -> bool {
-        if self.recovery.active.is_none() {
+        if self.services.recovery.active.is_none() {
             return true;
         }
         self.recovery_request_flush();
         for _ in 0..2 {
             self.recovery_tick_at(Instant::now());
-            if let Some(a) = self.recovery.active.as_ref() {
+            if let Some(a) = self.services.recovery.active.as_ref() {
                 if !a.writer.wait_until(deadline) {
                     return false;
                 }
@@ -622,7 +648,7 @@ impl AppState {
     }
 
     fn recovery_is_current(&self) -> bool {
-        let Some(a) = self.recovery.active.as_ref() else {
+        let Some(a) = self.services.recovery.active.as_ref() else {
             return true;
         };
         !self.session.is_modified() || a.recorded.as_ref() == Some(&capture::fingerprint(self))
@@ -630,43 +656,47 @@ impl AppState {
 
     /// 正しく閉じる: 変更があれば最後の世代を書いて待ち、印を消す（世代は設定の数だけ残す）。
     pub fn recovery_shutdown(&mut self) {
-        if self.recovery.active.is_none() {
+        if self.services.recovery.active.is_none() {
             return;
         }
         // 最後の世代を書く（遅いディスクで終了が固まらないよう、待つのは 10 秒まで。間に合わなければ、確定しなかった作りかけは
         // 残らず、前の世代が残る）
         let deadline = Instant::now() + Duration::from_secs(10);
         self.recovery_flush_until(Some(deadline));
-        let keep = self.recovery.keep();
-        let limits = self.recovery.quota_limits();
-        if let Some(a) = self.recovery.active.take() {
+        let keep = self.services.recovery.keep();
+        let limits = self.services.recovery.quota_limits();
+        if let Some(a) = self.services.recovery.active.take() {
             if a.writer.wait_until(Some(deadline)) {
                 a.session.close_clean(&a.root, keep, limits.as_ref());
             }
             // 間に合わなかったときは、書き込みが終わる前に印を消さない（落ちた体のまま。次の起動が世代を見つける）
         }
-        self.recovery.window = None;
+        self.services.recovery.window = None;
     }
 
     /// 復旧の操作を当てる。
     pub fn recovery_apply(&mut self, action: RecoveryAction) {
         use RecoveryAction as A;
-        if self.recovery.active.is_none() {
+        if self.services.recovery.active.is_none() {
             return;
         }
         match action {
             A::OpenWindow => {
-                self.recovery.window.get_or_insert_with(Default::default);
-                self.recovery.refresh_window();
+                self.services
+                    .recovery
+                    .window
+                    .get_or_insert_with(Default::default);
+                self.services.recovery.refresh_window();
             }
-            A::CloseWindow => self.recovery.window = None,
+            A::CloseWindow => self.services.recovery.window = None,
             A::Select(i) => {
-                if let Some(w) = self.recovery.window.as_mut() {
+                if let Some(w) = self.services.recovery.window.as_mut() {
                     w.select(i);
                 }
             }
             A::Open => {
                 let Some(row) = self
+                    .services
                     .recovery
                     .window
                     .as_ref()
@@ -691,48 +721,48 @@ impl AppState {
                 };
                 if self.session.is_modified() {
                     // 今の変更を捨ててよいかは、ウィンドウを持つ側（YoluApp）が聞いてから `recovery_open` する
-                    self.recovery.open_request = Some(request);
+                    self.services.recovery.open_request = Some(request);
                 } else {
                     self.recovery_open(request);
                 }
             }
             A::Discard => {
-                if let Some(w) = self.recovery.window.as_mut() {
+                if let Some(w) = self.services.recovery.window.as_mut() {
                     w.confirm = w.selected_row().cloned();
                 }
             }
             A::CancelDiscard => {
-                if let Some(w) = self.recovery.window.as_mut() {
+                if let Some(w) = self.services.recovery.window.as_mut() {
                     w.confirm = None;
                 }
             }
             A::ConfirmDiscard => self.recovery_discard_confirmed(),
             A::SetInterval(seconds) => {
                 let (lo, hi) = INTERVAL_RANGE;
-                self.recovery.settings.interval_seconds = seconds.clamp(lo, hi);
+                self.services.recovery.settings.interval_seconds = seconds.clamp(lo, hi);
                 self.recovery_save_settings();
             }
             A::SetKeep(count) => {
                 let (lo, hi) = KEEP_RANGE;
-                self.recovery.settings.generations_to_keep = count.clamp(lo, hi);
+                self.services.recovery.settings.generations_to_keep = count.clamp(lo, hi);
                 // 読めなかった設定でも、利用者が選んだ数は分かった（この実行のあいだ、その数で整理する）
-                self.recovery.keep_chosen = true;
+                self.services.recovery.keep_chosen = true;
                 self.recovery_save_settings();
             }
             A::SetDisk(budget) => {
-                self.recovery.settings.disk = match budget {
+                self.services.recovery.settings.disk = match budget {
                     DiskBudget::Gib(n) => {
                         DiskBudget::Gib(n.clamp(DISK_GIB_RANGE.0, DISK_GIB_RANGE.1))
                     }
                     other => other,
                 };
                 // 読めなかった設定でも、利用者が選んだ量は分かった（この実行のあいだ、その量で整理する）
-                self.recovery.disk_chosen = true;
+                self.services.recovery.disk_chosen = true;
                 self.recovery_save_settings();
                 self.recovery_enforce_now();
             }
             A::DiskDetails(open) => {
-                if let Some(w) = self.recovery.window.as_mut() {
+                if let Some(w) = self.services.recovery.window.as_mut() {
                     w.details = open;
                 }
             }
@@ -741,23 +771,24 @@ impl AppState {
 
     /// 使う量を替えたとき: 書き込みが終わるのを待って（置き場を変えない）、上限を超えていれば古い世代から消す。
     fn recovery_enforce_now(&mut self) {
-        if let Some(a) = self.recovery.active.as_ref() {
+        if let Some(a) = self.services.recovery.active.as_ref() {
             a.writer.wait();
         }
         self.recovery_poll();
-        if let (Some(a), Some(limits)) =
-            (self.recovery.active.as_ref(), self.recovery.quota_limits())
-        {
+        if let (Some(a), Some(limits)) = (
+            self.services.recovery.active.as_ref(),
+            self.services.recovery.quota_limits(),
+        ) {
             quota::enforce(&a.root, &limits, Some(a.session.dir()), pool::now_ms());
         }
-        self.recovery.refresh_window();
+        self.services.recovery.refresh_window();
     }
 
     fn recovery_save_settings(&mut self) {
-        let saved = match self.recovery.settings_path.clone() {
-            Some(path) => self.recovery.settings.save(&path).is_ok(),
+        let saved = match self.services.recovery.settings_path.clone() {
+            Some(path) => self.services.recovery.settings.save(&path).is_ok(),
             // 読めなかった設定のファイルは、選んだ置き場・数を既定で上書きしないために書かない
-            None => !self.recovery.settings_unreadable,
+            None => !self.services.recovery.settings_unreadable,
         };
         if !saved {
             self.fail(
@@ -772,7 +803,7 @@ impl AppState {
 
     /// 世代を開く（今の変更を捨ててよいと確かめたあと）。開けなければ何も変えずに理由を出す。
     pub fn recovery_open(&mut self, request: OpenRequest) {
-        let Some(a) = self.recovery.active.as_ref() else {
+        let Some(a) = self.services.recovery.active.as_ref() else {
             return;
         };
         if self.is_stroking() {
@@ -793,14 +824,14 @@ impl AppState {
         match pool::load(&a.root, &request.pool, &request.id, limits, a.session.dir()) {
             Ok((project, info)) => {
                 crate::project::open_recovered(self, project);
-                self.recovery.recovered_from = Some(info.project_path)
+                self.services.recovery.recovered_from = Some(info.project_path)
                     .filter(|p| !p.is_empty())
                     .or_else(|| Some(info.title).filter(|t| !t.is_empty()));
-                self.recovery.window = None;
+                self.services.recovery.window = None;
             }
             Err(error) => {
                 self.fail(Source::Recovery, self.lang.recovery_cannot_open(&error));
-                if let Some(w) = self.recovery.window.as_mut() {
+                if let Some(w) = self.services.recovery.window.as_mut() {
                     w.error = Some(self.message.clone());
                 }
             }
@@ -808,10 +839,16 @@ impl AppState {
     }
 
     fn recovery_discard_confirmed(&mut self) {
-        let Some(row) = self.recovery.window.as_mut().and_then(|w| w.confirm.take()) else {
+        let Some(row) = self
+            .services
+            .recovery
+            .window
+            .as_mut()
+            .and_then(|w| w.confirm.take())
+        else {
             return;
         };
-        let Some(a) = self.recovery.active.as_ref() else {
+        let Some(a) = self.services.recovery.active.as_ref() else {
             return;
         };
         let own = a.session.dir().to_path_buf();
@@ -821,13 +858,23 @@ impl AppState {
             self.recovery_poll();
         }
         let result = {
-            let a = self.recovery.active.as_ref().expect("上で確かめた");
+            let a = self
+                .services
+                .recovery
+                .active
+                .as_ref()
+                .expect("上で確かめた");
             pool::discard(&a.root, &row.pool, &row.id, Some(&own))
         };
         match result {
             Ok(()) if row.own => {
                 // この実行の置き場の世代を捨てた: 次の確定が期待する札を読み直し、書き置きは入っていないものとして書き直す
-                let a = self.recovery.active.as_mut().expect("上で確かめた");
+                let a = self
+                    .services
+                    .recovery
+                    .active
+                    .as_mut()
+                    .expect("上で確かめた");
                 a.writer.resync(&a.session.store());
                 a.recorded = None;
                 a.submitted = None;
@@ -835,12 +882,12 @@ impl AppState {
             Ok(()) => {}
             Err(error) => {
                 self.fail(Source::Recovery, self.lang.recovery_error(&error));
-                if let Some(w) = self.recovery.window.as_mut() {
+                if let Some(w) = self.services.recovery.window.as_mut() {
                     w.error = Some(self.message.clone());
                 }
             }
         }
-        self.recovery.refresh_window();
+        self.services.recovery.refresh_window();
     }
 }
 

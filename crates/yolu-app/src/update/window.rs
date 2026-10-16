@@ -7,13 +7,13 @@ use crate::windows::{show_list, Button, ListSpec, Reply, Row};
 
 /// 毎フレーム、開いている更新のウィンドウを描き、押された操作を当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    if !app.update.enabled() {
+    if !app.services.update.enabled() {
         return;
     }
-    if app.update.is_asking() {
+    if app.services.update.is_asking() {
         ask(ctx, app);
     }
-    if app.update.is_ready_open() {
+    if app.services.update.is_ready_open() {
         ready(ctx, app);
     }
 }
@@ -65,9 +65,9 @@ fn ask(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.update.ask_offset;
+    let mut offset = app.services.update.ask_offset;
     let reply = show_list(ctx, &spec, &mut offset, &mut 0.0);
-    app.update.ask_offset = offset;
+    app.services.update.ask_offset = offset;
     // 閉じる・Esc は「いいえ」（選ばずに通信はしない。ヘルプのメニューでいつでも変えられる）
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Update(UpdateAction::Answer(true))),
@@ -78,13 +78,13 @@ fn ask(ctx: &egui::Context, app: &mut AppState) {
 
 fn ready(ctx: &egui::Context, app: &mut AppState) {
     let lang = app.lang;
-    let Some(ready) = app.update.ready() else {
+    let Some(ready) = app.services.update.ready() else {
         return;
     };
     let version = ready.version.clone();
     // 保存の途中は、保存の頼みが下ろした「変更あり」の印ではなく、頼む前の印で見せる（保存が失敗すれば変更は残る）
     let modified = app.shows_modified();
-    let blocked = app.update.ready_blocked;
+    let blocked = app.services.update.ready_blocked;
     let button = |label: &str, primary: bool, tooltip: Option<&str>| Button {
         label: label.into(),
         primary,
@@ -147,9 +147,9 @@ fn ready(ctx: &egui::Context, app: &mut AppState) {
         buttons,
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.update.ready_offset;
+    let mut offset = app.services.update.ready_offset;
     let reply = show_list(ctx, &spec, &mut offset, &mut 0.0);
-    app.update.ready_offset = offset;
+    app.services.update.ready_offset = offset;
     let run = |save| Action::Update(UpdateAction::Run { save });
     match (reply, modified) {
         (Some(Reply::Button(1)), _) => app.apply(run(false)),

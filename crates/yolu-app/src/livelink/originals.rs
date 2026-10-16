@@ -148,7 +148,7 @@ pub fn install(
         if let Some((doc, layer)) = rebuilt_with(state.set_doc(index), picture, lang) {
             let mark = mark(&doc, layer);
             state.swap_untouched_set_document(index, doc);
-            state.link_originals.push(mark);
+            state.services.link_originals.push(mark);
             return Ok(());
         }
     }
@@ -156,7 +156,7 @@ pub fn install(
     let size = (doc.width(), doc.height());
     let layer = add_bottom_layer(doc, fit(picture, size), lang)?;
     let mark = mark(state.set_doc(index), layer);
-    state.link_originals.push(mark);
+    state.services.link_originals.push(mark);
     Ok(())
 }
 

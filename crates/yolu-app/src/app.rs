@@ -577,14 +577,14 @@ impl YoluApp {
             }
         }
         // 保存は裏のスレッドで動かす（描ける・見られる。試験の状態は、保存の頼みの中で終える）
-        app.state.save.background = true;
+        app.state.services.save.background = true;
         app.fit_window = true;
         // Windows は OS の枠を外している（main.rs）ので、帯と縁は自前
         app.custom_frame = titlebar::CUSTOM_FRAME;
         // 状態の帯の右端に版とビルドを出す（実際のウィンドウだけ。試験の画像がコミットごとに変わらないように）
-        app.state.usage.build = Some(crate::usage::build_label());
+        app.state.services.usage.build = Some(crate::usage::build_label());
         if let Some(dir) = crate::crash::directory() {
-            app.state.crash = crate::crash::window::Report::load(dir);
+            app.state.services.crash = crate::crash::window::Report::load(dir);
         }
         // ブラシの見本のストロークは別のスレッドで描く（取り込んだ大きな筆先でも画面が止まらない）。試験のウィンドウは画面のスレッドで描く
         app.state.brushes.samples.render_in_background(&cc.egui_ctx);
@@ -618,7 +618,7 @@ impl YoluApp {
         // 起動時の知らせを受け付けの文で上書きしない。状態は右端の印とツールチップに出す。
         let link = &mut self.link;
         self.state.keep_notice(|state| link.poll(state));
-        self.state.link = self.link.view(&self.state);
+        self.state.services.link = self.link.view(&self.state);
     }
 
     /// 復旧を始める（設定のフォルダの下の置き場。前の実行が落ちていれば復旧のウィンドウが開く）。始められなければ使わず、理由を状態の帯に出す。
@@ -629,7 +629,7 @@ impl YoluApp {
     /// `start_recovery` の、復旧の設定のファイル（`recovery.conf`）の場所を渡せる形。
     pub fn start_recovery_with(&mut self, conf: Option<std::path::PathBuf>) {
         let lang = self.state.lang;
-        let note = match self.state.recovery.start_from(conf) {
+        let note = match self.state.services.recovery.start_from(conf) {
             Ok(problems) => problems.first().map(|p| lang.recovery_settings_problem(p)),
             Err(e) => Some(lang.recovery_unavailable(&e)),
         };
@@ -764,7 +764,7 @@ impl YoluApp {
             .as_deref()
             .and_then(crate::update::config::path_for)
         {
-            app.state.update.attach_config(path);
+            app.state.services.update.attach_config(path);
         }
         // 表示の合成の設定（自動のときは、環境変数 `YOLUPAINTER_CANVAS` か自動のまま）
         app.compositing_applied = loaded.compositing;
@@ -1097,9 +1097,9 @@ impl YoluApp {
 
     /// Live Link を始める・やめるの頼みと、ファイルのウィンドウの頼みを当てる。
     fn handle_requests(&mut self) {
-        if let Some(request) = self.state.link_request.take() {
+        if let Some(request) = self.state.services.link_request.take() {
             self.link.request(request, &mut self.state);
-            self.state.link = self.link.view(&self.state);
+            self.state.services.link = self.link.view(&self.state);
         }
         // Live Link の違う相手の頼み: 保存していない変更を捨ててよいか（「開く」と同じ確かめ）
         if self.link.wants_discard() {
@@ -1107,7 +1107,7 @@ impl YoluApp {
         }
         // 復旧の世代を開く頼み（今の変更を捨ててよいか聞いてから。ウィンドウを開かない試験では聞かない）
         if self.state.ui.discard_ask.is_none() {
-            if let Some(open) = self.state.recovery.take_open_request() {
+            if let Some(open) = self.state.services.recovery.take_open_request() {
                 self.discard_then(crate::discard::AfterDiscard::Recovery(open));
             }
         }
@@ -1418,7 +1418,7 @@ impl YoluApp {
     /// 状態で聞く）。
     fn confirm_close(&mut self) -> bool {
         // 更新のために終わるときは、保存するか捨てるかを更新のウィンドウで選び済み。GPU を失って終わるときは、復旧の書き置きに任せる
-        if self.state.update.is_quitting() || self.gpu_lost.is_some() {
+        if self.state.services.update.is_quitting() || self.gpu_lost.is_some() {
             return true;
         }
         // 閉じると取り消される仕事（利用者が結果を待っている書き出しなど）も、保存していない変更と一緒に知らせる
@@ -2160,7 +2160,7 @@ impl YoluApp {
         assets::frame(&ctx, &mut self.state);
         self.handle_requests();
         self.link.poll(&mut self.state);
-        self.state.link = self.link.view(&self.state);
+        self.state.services.link = self.link.view(&self.state);
         // Live Link の頼みは描き直しの頼みが無くても拾う（受け付けている間は inbox を見る間隔で回す）
         if let Some(wake) = self.link.next_wake() {
             ctx.request_repaint_after(wake);
@@ -2243,7 +2243,7 @@ impl YoluApp {
                     &shell::menu_titles(self.state.lang),
                     open_menu,
                     // 新しい版があるあいだ、ヘルプの見出しに印を付ける
-                    self.state.update.offer().map(|_| shell::HELP_MENU),
+                    self.state.services.update.offer().map(|_| shell::HELP_MENU),
                 ));
                 // 右端: プロジェクトの名前と保存の状態。その左に Live Link の入口（Unity の印）。名前は、メニューの見出しの右からウィンドウの右の縁までの
                 // 幅（最大 352）に収まるように後ろを詰め、印は「見えている名前」の左に置く（長い名前でも、印がメニューの見出しに重ならない）
@@ -2295,7 +2295,8 @@ impl YoluApp {
                     vec2(26.0, r.height()),
                 );
                 let mut crash_ui = ui.new_child(egui::UiBuilder::new().max_rect(crash_rect));
-                self.state.crash.indicator(&mut crash_ui, self.state.lang);
+                let lang = self.state.lang;
+                self.state.services.crash.indicator(&mut crash_ui, lang);
                 link_icon = Some(shell::link_icon(
                     ui,
                     r,
@@ -2462,12 +2463,12 @@ impl YoluApp {
         crate::recovery::window::show(&ctx, &mut self.state);
         // 色のウィンドウ（相手の欄はこのフレームに描いた。変更は次のフレームに相手が受け取る）
         crate::panels::color_window::show_in_app(&ctx, &mut self.state);
-        self.state.crash.show(&ctx, self.state.lang);
+        self.state.services.crash.show(&ctx, self.state.lang);
         // 直前の操作の知らせ（状態の帯の左には出さず、短く出して消える）
         let free_right = crate::shell::status_free_right(&ctx, &self.state);
         crate::toast::show(&ctx, &mut self.state, free_right);
         if self.dialogs {
-            self.state.crash.execute_request(self.state.lang);
+            self.state.services.crash.execute_request(self.state.lang);
         }
         // ポップアップが 3D ビューに重なっているか（同じウィンドウに開いたときだけ）
         let view3d_window = self
@@ -2486,7 +2487,7 @@ impl YoluApp {
         // メニューで選んだ Live Link・ファイルの頼みはこのフレームのうちに当てる
         self.handle_requests();
         self.link_exported();
-        self.state.link = self.link.view(&self.state);
+        self.state.services.link = self.link.view(&self.state);
         // 「保存して更新」: 保存先を選ぶウィンドウも済んだこのフレームの終わりに、保存の結果を見て入れる
         self.state.update_finish_save();
         // 終了・ウィンドウを閉じる: 保存していない変更があれば聞く（ウィンドウを開かないテストでは聞かない）
@@ -2671,7 +2672,7 @@ impl YoluApp {
     fn tick_link(&mut self) {
         self.link.poll(&mut self.state);
         self.link_exported();
-        self.state.link = self.link.view(&self.state);
+        self.state.services.link = self.link.view(&self.state);
     }
 
     /// 書き出しが終わっていれば、Live Link の相手へ `exported` の返事を書く。
@@ -2687,7 +2688,7 @@ impl YoluApp {
         let port = self.state.prefs.settings.external_ops_port;
         self.ops.sync(want, port, ctx, &mut self.state);
         self.ops.poll(&mut self.state);
-        self.state.ops = self.ops.view();
+        self.state.services.ops = self.ops.view();
     }
 
     /// ウィンドウが隠れている間の 1 回（`eframe::App::logic` が、見えていないときに呼ぶ。試験は、`ui` を回さずにこれを呼んで、隠れたウィンドウの道を
@@ -2828,7 +2829,7 @@ mod tests {
                 args.push("--livelink".into());
             }
             app.start_live_link(&ctx, args.into_iter());
-            assert_eq!(app.state.link.is_on(), expected);
+            assert_eq!(app.state.services.link.is_on(), expected);
             assert_eq!(app.state.message, "起動時の知らせ");
             assert_eq!(
                 root.join("presence.json").is_file(),
@@ -2851,10 +2852,10 @@ mod tests {
         app.link.set_folder(root.clone()).unwrap();
         app.start_live_link(&ctx, ["yolupainter"].into_iter().map(Into::into));
         assert!(matches!(
-            app.state.link.status,
+            app.state.services.link.status,
             crate::livelink::LinkStatus::Failed(_)
         ));
-        assert!(app.state.link.tooltip(Lang::Ja).lines().count() >= 2);
+        assert!(app.state.services.link.tooltip(Lang::Ja).lines().count() >= 2);
         let _ = std::fs::remove_dir_all(root.parent().unwrap());
     }
 

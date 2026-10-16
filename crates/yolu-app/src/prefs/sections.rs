@@ -83,7 +83,7 @@ impl Category {
 
     /// この区分を左に出すか（更新は、公開鍵を組み込んだビルドだけ）。
     pub fn available(self, app: &AppState) -> bool {
-        self != Category::Updates || app.update.enabled()
+        self != Category::Updates || app.services.update.enabled()
     }
 
     /// この区分に並べる項目（表示順。この PC・このビルドで出すものだけ）。ショートカットは表なので項目は無い。
@@ -366,8 +366,8 @@ impl View {
             gpu_details: app.prefs.gpu_details,
             gpu_total: app.gpu_total_mib(),
             cache_details: app.prefs.cache_details,
-            update_startup: app.update.preference() == crate::update::Preference::On,
-            update_beta: app.update.beta(),
+            update_startup: app.services.update.preference() == crate::update::Preference::On,
+            update_beta: app.services.update.beta(),
             s,
         }
     }

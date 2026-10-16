@@ -485,7 +485,7 @@ impl McpServer {
         if self.pending.is_none() {
             return;
         }
-        let outcome = state.save.take_outcome();
+        let outcome = state.services.save.take_outcome();
         if outcome.is_none() && state.is_saving() {
             return;
         }

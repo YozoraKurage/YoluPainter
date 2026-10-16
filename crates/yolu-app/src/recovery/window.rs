@@ -110,16 +110,16 @@ pub fn row_name(lang: Lang, row: &Row) -> String {
 
 /// ウィンドウを描く（開いていれば）。押されたものは `Action::Recovery` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    if app.recovery.window.is_none() {
+    if app.services.recovery.window.is_none() {
         return;
     }
     let lang = app.lang;
     let (interval, keep, disk) = (
-        app.recovery.settings().interval_seconds,
-        app.recovery.settings().generations_to_keep,
-        app.recovery.settings().disk,
+        app.services.recovery.settings().interval_seconds,
+        app.services.recovery.settings().generations_to_keep,
+        app.services.recovery.settings().disk,
     );
-    let Some(state) = app.recovery.window.as_ref() else {
+    let Some(state) = app.services.recovery.window.as_ref() else {
         return;
     };
     let rows = state.rows.clone();
@@ -429,7 +429,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let footer = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
         w::fill(&p, footer, t::PANEL_HEADER);
         w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
-        if !app.crash.text.is_empty() {
+        if !app.services.crash.text.is_empty() {
             let report_rect = Rect::from_min_size(
                 pos2(footer.left() + 14.0, footer.top() + 10.0),
                 vec2(165.0, 28.0),
@@ -446,14 +446,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             )
             .clicked()
             {
-                app.crash.open = true;
+                app.services.crash.open = true;
             }
         }
         // 使っている量（短く。内訳はツールチップ）
         {
             let left = footer.left()
                 + 14.0
-                + if app.crash.text.is_empty() {
+                + if app.services.crash.text.is_empty() {
                     0.0
                 } else {
                     165.0 + 12.0
@@ -510,7 +510,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         }
     });
-    if let Some(state) = app.recovery.window.as_mut() {
+    if let Some(state) = app.services.recovery.window.as_mut() {
         state.offset = offset;
         state.scroll = scroll;
         state.drag_gib = drag_gib;
@@ -526,7 +526,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 
 /// 捨てる前の確かめ（開いている間は下のウィンドウを触れない）。
 fn discard_confirm(ctx: &egui::Context, app: &mut AppState) {
-    let Some(row) = app.recovery.window.as_ref().and_then(|w| w.confirm.clone()) else {
+    let Some(row) = app
+        .services
+        .recovery
+        .window
+        .as_ref()
+        .and_then(|w| w.confirm.clone())
+    else {
         return;
     };
     let lang = app.lang;

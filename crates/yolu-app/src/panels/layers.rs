@@ -1102,8 +1102,8 @@ fn layer_row(
     let effective_locks = app.session.doc.effective_locks(id).unwrap_or_default();
     let locked = effective_locks != yolu_core::LayerLocks::NONE;
     // Live Link で入れた「元の絵」が、GPU を通した・圧縮から読んだ・直した・拡大縮小した絵のとき、理由を出す印
-    let original_note = app
-        .link_originals
+    let marks = &app.services.link_originals;
+    let original_note = marks
         .get(app.session.doc.id(), id)
         .filter(|m| m.is_noted())
         .map(|m| m.tooltip(lang, (app.session.doc.width(), app.session.doc.height())));

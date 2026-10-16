@@ -184,6 +184,7 @@ fn child_crash() {
         // 復旧の書き手の panic は、書き手が受け止めて動き続ける（落ちではない）。実際の書き手で起こす。
         let mut state = crate::state::AppState::new_in(64, 64, Lang::En);
         state
+            .services
             .recovery
             .set_fault(Some(std::sync::Arc::new(|stage: &str| {
                 if stage == "snapshot" {
@@ -193,6 +194,7 @@ fn child_crash() {
             })));
         let root = std::env::temp_dir().join(format!("yolu-crash-writer-{}", stamp()));
         state
+            .services
             .recovery
             .enable(root.clone(), crate::recovery::RecoverySettings::default())
             .unwrap();
@@ -473,7 +475,7 @@ fn app_menu_indicator_and_recovery_open_the_same_report() {
             .record("test", "sample report")
             .unwrap();
         let mut state = crate::state::AppState::new_in(32, 32, lang);
-        state.crash = window::Report::load(dir.0.clone());
+        state.services.crash = window::Report::load(dir.0.clone());
         let mut h = Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
             .build_eframe(move |cc| {
@@ -482,25 +484,25 @@ fn app_menu_indicator_and_recovery_open_the_same_report() {
         h.run();
         h.get_by_label("!").click();
         h.run();
-        assert!(h.state().state.crash.open);
+        assert!(h.state().state.services.crash.open);
         h.get_by_label(lang.pick("閉じる", "Close")).click();
         h.run();
-        assert!(!h.state().state.crash.unread);
+        assert!(!h.state().state.services.crash.unread);
         h.get_by_label(lang.pick("ヘルプ", "Help")).click();
         h.run();
         h.get_by_label(lang.pick("ログのフォルダを開く", "Open Log Folder"))
             .click();
         h.run();
         assert_eq!(
-            h.state_mut().state.crash.request.take(),
+            h.state_mut().state.services.crash.request.take(),
             Some(window::Request::Folder)
         );
-        h.state_mut().state.recovery.window = Some(Default::default());
+        h.state_mut().state.services.recovery.window = Some(Default::default());
         h.run();
         h.get_by_label(lang.pick("クラッシュの報告", "Crash Report"))
             .click();
         h.run();
-        assert!(h.state().state.crash.open);
+        assert!(h.state().state.services.crash.open);
     }
 }
 

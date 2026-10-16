@@ -582,7 +582,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
     // Live Link の相手の文書（livelink.json）なら、Unity なしで同じモデルとポーズに開き直す（モデルのファイルの参照は残すだけ）
     let link_note = match livelink.map(|b| b.map(|b| crate::livelink::store::restore(&b))) {
         Ok(Some(Ok(request))) => {
-            state.link_reopen = Some(request);
+            state.services.link_reopen = Some(request);
             None
         }
         Ok(Some(Err(_))) | Err(_) => Some(state.lang.pick(
@@ -596,7 +596,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         kind = NoticeKind::Warning;
     }
     let note = match view_model {
-        Ok(Some(stored)) if state.link_reopen.is_some() => {
+        Ok(Some(stored)) if state.services.link_reopen.is_some() => {
             state.np.model_file = Some(crate::newproject::reopen::resolve_model_path(
                 &stored, &file_path,
             ));

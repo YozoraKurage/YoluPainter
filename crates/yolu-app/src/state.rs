@@ -9,7 +9,7 @@ use crate::canvas::view::{ViewState, ROTATE_STEP};
 use crate::engine::unit_f32_to_byte;
 use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8};
 use crate::lang::Lang;
-use crate::livelink::{LinkRequest, LinkView};
+use crate::livelink::LinkRequest;
 use crate::m2::{Edit, M2State, UiOp};
 use crate::notice::Source;
 use crate::sets::TextureSets;
@@ -17,7 +17,9 @@ use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
 
+mod services;
 mod ui_state;
+pub use services::Services;
 pub use ui_state::UiState;
 
 /// straight の RGBA（0〜1）。
@@ -767,28 +769,16 @@ pub struct AppState {
     pub last_notice: Option<crate::notice::Notice>,
     /// 起動してからの注意と失敗（ログのウィンドウが読む）。
     pub notice_log: crate::notice::NoticeLog,
-    /// 状態の帯の右端の版・ビルドと使っているメモリ。
-    pub usage: crate::usage::Usage,
     /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・開いているポップアップ・知らせの表示など。保存しない）。
     pub ui: UiState,
+    /// 裏で動く仕事の状態（保存・復旧の書き置き・Live Link・外からの操作・更新・クラッシュの報告・使っているメモリ。egui の型を持たない）。
+    pub services: Services,
     pub canvas: CanvasInput,
     /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
     pub places: crate::dialog::places::Places,
     /// 最近開いたプロジェクト（ファイルのメニュー。実際のウィンドウは起動で `recent.conf` から読む）。
     pub recent_projects: crate::recent::Recent,
     pub quit: bool,
-    /// Live Link の様子（毎フレーム `LiveLink` から写す。状態の帯とメニューが読む）。
-    pub link: LinkView,
-    /// Live Link を始める・やめる頼み（`YoluApp` が次に当てる）。
-    pub link_request: Option<LinkRequest>,
-    /// 今の文書の Live Link の相手（当てた頼み・まとめた Rig との対応。保存・送り直し・書き出しの返事が読む）。
-    pub link_target: Option<crate::livelink::LinkTarget>,
-    /// 開いた .ylp に残っていた Live Link の相手（`livelink.json`）。`LiveLink` が次のフレームで開き直す。
-    pub link_reopen: Option<yolu_protocol::files::Request>,
-    /// 外からの操作（MCP のクライアント・コマンドライン）を受けている様子（毎フレーム `McpServer` から写す。状態の帯の印が読む）。
-    pub ops: crate::mcp_server::OpsView,
-    /// Live Link で入れた「元の絵」のレイヤーの印（レイヤーの欄が読む。保存しない）。
-    pub link_originals: crate::livelink::OriginalMarks,
     /// 3D ビュー（モデル・カメラ・描くテクスチャセット・入力）。
     pub view3d: View3dState,
     /// クローンの元と設定（2D のキャンバスと 3D ビューで共有する。元は 2D が文書の点、3D が面の点を別々に持つ）。
@@ -807,8 +797,6 @@ pub struct AppState {
     pub psd: crate::psd::PsdState,
     /// 配布用に保存（準備した写し・ウィンドウの選び・走っている仕事）。
     pub distribute: crate::distribute::DistributeState,
-    /// .ylp の保存（裏のスレッドの仕事と進み具合。画面のスレッドは頼みと結果の受けだけ）。
-    pub save: crate::project::SaveState,
     /// ステンシル（画面に重ねた画像を通して塗る。アプリの状態で、.ylp には入れない）。
     pub stencil: crate::stencil::StencilState,
     /// 効果のレイヤー（選んでいる効果の行・効果の入力の覚え）。
@@ -830,8 +818,6 @@ pub struct AppState {
     pub drafting: crate::drafting::Drafting,
     /// 定規の画面の状態（これから作る定規の設定・スナップの入り切り・選んでいる定規・ドラッグの途中）。定規そのものはレイヤーが持つ。
     pub rulers: crate::rulers::RulerState,
-    /// 自動更新（公開鍵を組み込んだビルドだけで動く。聞かずに通信しない）。
-    pub update: crate::update::UpdateState,
     /// 設定（メモリの予算・CPU のスレッド・棚の場所など）と設定のウィンドウ。
     pub prefs: crate::prefs::PrefsState,
     pub uv_wireframe: crate::uv_wireframe::Wireframe,
@@ -844,9 +830,6 @@ pub struct AppState {
     pub clip: crate::clipboard::ClipState,
     /// ブラシの一覧（組み込みと利用者のブラシ・ツールごとの覚え・見本・詳細のウィンドウ）。アプリの状態で、.ylp には入れない。
     pub brushes: crate::brushes::BrushesState,
-    /// 復旧用の世代の書き置きと復旧のウィンドウ（`recovery`。動かすまでは何もしない）。
-    pub crash: crate::crash::window::Report,
-    pub recovery: crate::recovery::RecoveryState,
     /// ツールの並び（ツールの列とブラシのグループ。設定のフォルダの tools.json。.ylp には入れない）。
     pub toolset: crate::toolset::ToolsetState,
     /// アクション（操作の記録と再生。置き場は設定のフォルダの actions/。.ylp には入れない）。
@@ -1016,21 +999,15 @@ impl AppState {
             message: String::new(),
             last_notice: None,
             notice_log: Default::default(),
-            usage: crate::usage::Usage::default(),
             ui: UiState {
                 property_tab: crate::panels::properties::TAB_LAYER,
                 ..UiState::default()
             },
+            services: Services::default(),
             canvas: CanvasInput::default(),
             places: Default::default(),
             recent_projects: Default::default(),
             quit: false,
-            link: LinkView::default(),
-            link_request: None,
-            link_target: None,
-            link_reopen: None,
-            ops: Default::default(),
-            link_originals: Default::default(),
             view3d: View3dState::default(),
             clone: Default::default(),
             shelf: ShelfState::default(),
@@ -1040,7 +1017,6 @@ impl AppState {
             export: Default::default(),
             psd: Default::default(),
             distribute: Default::default(),
-            save: Default::default(),
             stencil: crate::stencil::StencilState::default(),
             fx: crate::fx::FxState::default(),
             np: Default::default(),
@@ -1052,15 +1028,12 @@ impl AppState {
             gradient: Default::default(),
             drafting: Default::default(),
             rulers: Default::default(),
-            update: crate::update::UpdateState::detect(),
             prefs: crate::prefs::PrefsState::default(),
             uv_wireframe: crate::uv_wireframe::Wireframe::default(),
             uv_overlap: Default::default(),
             pen_lost: Vec::new(),
             clip: crate::clipboard::ClipState::default(),
             brushes: crate::brushes::BrushesState::default(),
-            crash: Default::default(),
-            recovery: Default::default(),
             toolset: Default::default(),
             automation: Default::default(),
             text: Default::default(),
@@ -1261,7 +1234,7 @@ impl AppState {
         }
         match action {
             Action::OpenLogFolder => {
-                self.crash.request = Some(crate::crash::window::Request::Folder)
+                self.services.crash.request = Some(crate::crash::window::Request::Folder)
             }
             Action::ToggleUvWireframe => {
                 self.prefs.settings.uv_wireframe = !self.prefs.settings.uv_wireframe
@@ -1554,7 +1527,7 @@ impl AppState {
                 None => {}
             },
             Action::ToggleLiveLink => {
-                self.link_request = Some(if self.link.is_on() {
+                self.services.link_request = Some(if self.services.link.is_on() {
                     LinkRequest::Stop
                 } else {
                     LinkRequest::Start

@@ -967,7 +967,7 @@ pub fn sync_modified(app: &mut AppState) {
     };
     if edits != app.view3d.pose.seen_edits {
         app.view3d.pose.seen_edits = edits;
-        if app.np.model_file.is_some() || app.link_target.is_some() {
+        if app.np.model_file.is_some() || app.services.link_target.is_some() {
             app.session.mark_modified();
         }
     }

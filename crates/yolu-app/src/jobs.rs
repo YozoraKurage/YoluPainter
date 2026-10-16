@@ -410,7 +410,7 @@ mod tests {
             || app.psd.is_busy()
             || app.distribute.is_busy()
             || app.np_is_busy()
-            || app.update.is_busy()
+            || app.services.update.is_busy()
             || app.brushes.import.is_busy()
             || app.is_saving()
             || app.brushes.csp.is_busy()
@@ -425,8 +425,9 @@ mod tests {
             || app.psd.import_check.is_some()
             || app.distribute.window_visible()
             || app.distribute.replace.is_some()
-            || app.update.window_open()
+            || app.services.update.window_open()
             || app
+                .services
                 .recovery
                 .window
                 .as_ref()
@@ -457,7 +458,7 @@ mod tests {
         if app.distribute.is_busy() {
             jobs.push(CloseJob::Distribute);
         }
-        if app.update.progress().is_some() {
+        if app.services.update.progress().is_some() {
             jobs.push(CloseJob::UpdateDownload);
         }
         if app.brushes.import.is_busy() {
@@ -498,7 +499,7 @@ mod tests {
         if app.np.reopening.is_some() {
             ids.push("model");
         }
-        if app.update.progress().is_some() {
+        if app.services.update.progress().is_some() {
             ids.push("update");
         }
         ids
@@ -601,16 +602,16 @@ mod tests {
             }),
             ("save", |dir| {
                 let mut s = AppState::new(32, 32);
-                s.save.background = true;
-                let hold = s.save.hold_next();
+                s.services.save.background = true;
+                let hold = s.services.save.hold_next();
                 crate::project::save_from(&mut s, &dir.join("a.ylp"));
                 assert!(s.is_saving(), "{}", s.message);
                 (s, Some(hold))
             }),
             ("save.quit", |dir| {
                 let mut s = AppState::new(32, 32);
-                s.save.background = true;
-                let hold = s.save.hold_next();
+                s.services.save.background = true;
+                let hold = s.services.save.hold_next();
                 crate::project::save_from(&mut s, &dir.join("a.ylp"));
                 assert!(s.is_saving(), "{}", s.message);
                 s.quit = true;
@@ -656,7 +657,7 @@ mod tests {
             }),
             ("recovery", |dir| {
                 let mut s = AppState::new(32, 32);
-                s.recovery.window = Some(crate::recovery::window::WindowState {
+                s.services.recovery.window = Some(crate::recovery::window::WindowState {
                     confirm: Some(crate::recovery::Row {
                         pool: dir.to_path_buf(),
                         id: "1".into(),

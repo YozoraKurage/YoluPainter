@@ -130,7 +130,7 @@ impl AppState {
     /// 時刻 `now`（egui の時刻）に、測る頃なら使っているメモリを測り直す。`gpu` は wgpu の確保済みの量（分からなければ None）を
     /// 返す関数（測る頃にだけ呼ぶ）。測ったら true。
     pub fn refresh_usage(&mut self, now: f64, gpu: impl FnOnce() -> Option<u64>) -> bool {
-        if !self.usage.due(now) {
+        if !self.services.usage.due(now) {
             return false;
         }
         let (mut layers, mut history) = (0u64, 0u64);
@@ -144,8 +144,8 @@ impl AppState {
             layers = layers.saturating_add(doc.allocated_bytes());
             history = history.saturating_add(doc.history_bytes());
         }
-        self.usage = Usage {
-            build: self.usage.build.clone(),
+        self.services.usage = Usage {
+            build: self.services.usage.build.clone(),
             process: process_bytes(),
             gpu: gpu(),
             layers,

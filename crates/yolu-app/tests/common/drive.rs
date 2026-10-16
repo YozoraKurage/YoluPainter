@@ -140,10 +140,10 @@ pub trait Drive {
         &mut self.app_mut().ui.toast
     }
     fn usage(&self) -> &yolu_app::usage::Usage {
-        &self.app().usage
+        &self.app().services.usage
     }
     fn usage_mut(&mut self) -> &mut yolu_app::usage::Usage {
-        &mut self.app_mut().usage
+        &mut self.app_mut().services.usage
     }
     fn ui(&self) -> &yolu_app::state::UiState {
         &self.app().ui
@@ -222,43 +222,43 @@ pub trait Drive {
         &mut self.app_mut().session.model
     }
     fn link(&self) -> &yolu_app::livelink::LinkView {
-        &self.app().link
+        &self.app().services.link
     }
     fn link_mut(&mut self) -> &mut yolu_app::livelink::LinkView {
-        &mut self.app_mut().link
+        &mut self.app_mut().services.link
     }
     fn link_request(&self) -> &Option<yolu_app::livelink::LinkRequest> {
-        &self.app().link_request
+        &self.app().services.link_request
     }
     fn link_request_mut(&mut self) -> &mut Option<yolu_app::livelink::LinkRequest> {
-        &mut self.app_mut().link_request
+        &mut self.app_mut().services.link_request
     }
     fn link_target(&self) -> &Option<yolu_app::livelink::LinkTarget> {
-        &self.app().link_target
+        &self.app().services.link_target
     }
     fn link_target_mut(&mut self) -> &mut Option<yolu_app::livelink::LinkTarget> {
-        &mut self.app_mut().link_target
+        &mut self.app_mut().services.link_target
     }
     fn link_reopen(&self) -> &Option<yolu_protocol::files::Request> {
-        &self.app().link_reopen
+        &self.app().services.link_reopen
     }
     fn link_reopen_mut(&mut self) -> &mut Option<yolu_protocol::files::Request> {
-        &mut self.app_mut().link_reopen
+        &mut self.app_mut().services.link_reopen
     }
     fn project_epoch(&self) -> u64 {
         self.app().session.project_epoch()
     }
     fn ops(&self) -> &yolu_app::mcp_server::OpsView {
-        &self.app().ops
+        &self.app().services.ops
     }
     fn ops_mut(&mut self) -> &mut yolu_app::mcp_server::OpsView {
-        &mut self.app_mut().ops
+        &mut self.app_mut().services.ops
     }
     fn link_originals(&self) -> &yolu_app::livelink::OriginalMarks {
-        &self.app().link_originals
+        &self.app().services.link_originals
     }
     fn link_originals_mut(&mut self) -> &mut yolu_app::livelink::OriginalMarks {
-        &mut self.app_mut().link_originals
+        &mut self.app_mut().services.link_originals
     }
     fn resolution_chosen(&self) -> bool {
         self.app().session.resolution_chosen
@@ -333,10 +333,10 @@ pub trait Drive {
         &mut self.app_mut().distribute
     }
     fn save(&self) -> &yolu_app::project::SaveState {
-        &self.app().save
+        &self.app().services.save
     }
     fn save_mut(&mut self) -> &mut yolu_app::project::SaveState {
-        &mut self.app_mut().save
+        &mut self.app_mut().services.save
     }
     fn stencil(&self) -> &yolu_app::stencil::StencilState {
         &self.app().stencil
@@ -405,10 +405,10 @@ pub trait Drive {
         &mut self.app_mut().rulers
     }
     fn update(&self) -> &yolu_app::update::UpdateState {
-        &self.app().update
+        &self.app().services.update
     }
     fn update_mut(&mut self) -> &mut yolu_app::update::UpdateState {
-        &mut self.app_mut().update
+        &mut self.app_mut().services.update
     }
     fn prefs(&self) -> &yolu_app::prefs::PrefsState {
         &self.app().prefs
@@ -459,16 +459,16 @@ pub trait Drive {
         &mut self.app_mut().brushes
     }
     fn crash(&self) -> &yolu_app::crash::window::Report {
-        &self.app().crash
+        &self.app().services.crash
     }
     fn crash_mut(&mut self) -> &mut yolu_app::crash::window::Report {
-        &mut self.app_mut().crash
+        &mut self.app_mut().services.crash
     }
     fn recovery(&self) -> &yolu_app::recovery::RecoveryState {
-        &self.app().recovery
+        &self.app().services.recovery
     }
     fn recovery_mut(&mut self) -> &mut yolu_app::recovery::RecoveryState {
-        &mut self.app_mut().recovery
+        &mut self.app_mut().services.recovery
     }
     fn toolset(&self) -> &yolu_app::toolset::ToolsetState {
         &self.app().toolset

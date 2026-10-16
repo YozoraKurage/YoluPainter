@@ -122,7 +122,7 @@ fn recovery_entry(app: &AppState, idle: bool) -> Entry<Action> {
         app.lang.pick("復旧…", "Recovery…"),
         Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
     )
-    .enabled(idle && app.recovery.is_enabled())
+    .enabled(idle && app.services.recovery.is_enabled())
 }
 
 /// メニューバーの見出しの中身。
@@ -165,7 +165,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 )
                 .enabled(free),
                 Entry::Separator,
-                Entry::item("Live Link", Action::ToggleLiveLink).checked(app.link.is_on()),
+                Entry::item("Live Link", Action::ToggleLiveLink).checked(app.services.link.is_on()),
                 Entry::Separator,
                 command_item(l, "app.quit", Action::Quit),
             ]);
@@ -278,7 +278,7 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
         l.pick("YoluPainter について", "About YoluPainter"),
         Action::About,
     );
-    if !app.update.enabled() {
+    if !app.services.update.enabled() {
         return vec![
             Entry::item(
                 l.pick("ログのフォルダを開く", "Open Log Folder"),
@@ -287,9 +287,9 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
             about,
         ];
     }
-    let busy = app.update.is_busy();
+    let busy = app.services.update.is_busy();
     let mut entries = Vec::new();
-    if let Some(label) = app.update.install_label(l) {
+    if let Some(label) = app.services.update.install_label(l) {
         entries.push(
             Entry::item(label, Action::Update(UpdateAction::Install))
                 .enabled(!busy && !app.is_stroking()),
@@ -871,7 +871,7 @@ pub fn status_free_right(ctx: &egui::Context, app: &AppState) -> f32 {
 pub fn status_layout(p: &egui::Painter, app: &AppState, r: Rect) -> StatusLayout {
     let mut right = r.right() - 10.0;
     let mut dot = None;
-    if app.ops.indicator().is_some() {
+    if app.services.ops.indicator().is_some() {
         let d = Rect::from_center_size(
             pos2(right - OPS_DOT / 2.0, r.center().y),
             vec2(OPS_DOT, OPS_DOT),
@@ -880,7 +880,7 @@ pub fn status_layout(p: &egui::Painter, app: &AppState, r: Rect) -> StatusLayout
         dot = Some(d);
     }
     let mut items = Vec::new();
-    for item in app.usage.items(app.lang) {
+    for item in app.services.usage.items(app.lang) {
         let width = w::text_width(p, &item.text, t::LABEL_DIM);
         let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
         right = at.left() - 16.0;
@@ -901,8 +901,8 @@ pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
     let layout = status_layout(&p, app, r);
     // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
-    if let (Some(indicator), Some(dot)) = (app.ops.indicator(), layout.dot) {
-        let tip = app.ops.tooltip(app.lang);
+    if let (Some(indicator), Some(dot)) = (app.services.ops.indicator(), layout.dot) {
+        let tip = app.services.ops.tooltip(app.lang);
         p.circle_filled(dot.center(), OPS_DOT / 2.0, ops_indicator_color(indicator));
         let response = ui.interact(dot.expand(4.0), ui.id().with("status.ops"), Sense::hover());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &tip));
@@ -963,7 +963,7 @@ pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: boo
         pos2(left_of - LINK_ICON_SLOT, bar.top() + 1.0),
         vec2(LINK_ICON_WIDTH, bar.height() - 3.0),
     );
-    let link = &app.link;
+    let link = &app.services.link;
     let tip = link.tooltip(app.lang);
     let response = ui.interact(rect, ui.id().with("menubar.livelink"), Sense::hover());
     response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &tip));
@@ -984,7 +984,7 @@ pub fn link_icon(ui: &mut Ui, bar: Rect, left_of: f32, app: &AppState, open: boo
 /// 受け付けないの切り替え。文は名前と状態だけ（合わなかった物の理由は入口の印のツールチップ）。
 pub fn link_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
-    let link = &app.link;
+    let link = &app.services.link;
     let on = link.is_on();
     let mut entries = vec![Entry::Heading(link.heading(l))];
     if let Some(target) = link.target_line() {
