@@ -90,15 +90,64 @@ fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     assert_eq!(h.doc().layer(adj).unwrap().kind(), LayerKind::Adjustment);
     undo(&mut h);
     assert_eq!(doc_layers(&h), 1);
-    // マスク: 足すと描く先がマスクになり、もう一度押すとレイヤーへ戻る（レイヤーのパネルの帯のボタン。プロパティのレイヤーのタブにも同じ名前がある）
-    shots::click_in_group(&mut h, Tab::Layers, "レイヤーマスクを追加");
+    // マスク（帯には無く、行の右クリックのメニューにある）: 足すと描く先がマスクになり、「マスクに描く」でレイヤーへ戻る
+    let name = h.doc().layer(first).unwrap().name().to_owned();
+    choose_in_layer_menu(&mut h, &name, "レイヤーマスクを追加");
     assert!(h.doc().layer(first).unwrap().mask().is_some());
     assert!(h.m2().edit_mask);
-    h.get_by_label("レイヤーマスクを編集").click();
-    h.run();
+    choose_in_layer_menu(&mut h, &name, "マスクに描く");
     assert!(!h.m2().edit_mask);
     undo(&mut h);
     assert!(h.doc().layer(first).unwrap().mask().is_none());
+}
+
+/// クリッピングしているレイヤーの行は字下げしない（サムネイルと、その右に続く名前の位置が、していない行と同じ）。印はサムネイルの左の細い縦の帯で、
+/// 字下げや矢印ではない。行そのものの矩形は一覧の左端から始まり字下げで動かないので、位置はサムネイルの部品（「レイヤーの画素」）の左で比べる。
+#[test]
+fn a_clipped_layer_row_keeps_its_thumbnail_where_an_unclipped_row_has_it() {
+    let mut h = app(1280.0, 800.0, 128);
+    apply(&mut h, Action::NewLayer);
+    let top = h.selected_layer().unwrap();
+    // 上の行から順の、サムネイルの左
+    let lefts = |h: &Harness<'_, YoluApp>| -> Vec<f32> {
+        let body = layers_body(h);
+        let mut rects: Vec<egui::Rect> = h
+            .query_all_by_label("レイヤーの画素")
+            .map(|n| n.rect())
+            .filter(|r| body.contains_rect(*r))
+            .collect();
+        rects.sort_by(|a, b| a.top().total_cmp(&b.top()));
+        rects.iter().map(|r| r.left()).collect()
+    };
+    let before = lefts(&h);
+    assert_eq!(before.len(), 2, "{before:?}");
+    assert_eq!(before[0], before[1], "同じ深さの行はサムネイルの位置が同じ");
+    apply(&mut h, Action::M2(Edit::Clipping(top, true)));
+    let doc = h.doc();
+    assert!(doc.is_effectively_clipped(doc.layer_index(top).unwrap()));
+    assert_eq!(lefts(&h), before, "クリッピングしても字下げしない");
+}
+
+/// 並べ替えのボタンは帯から外したので、行の右クリックのメニューの「レイヤーを上へ」「レイヤーを下へ」が入り口。
+#[test]
+fn the_layer_menu_moves_a_layer_up_and_down_with_one_undo_each() {
+    let mut h = app(1280.0, 800.0, 128);
+    apply(&mut h, Action::NewLayer);
+    apply(&mut h, Action::NewLayer);
+    let order =
+        |h: &Harness<'_, YoluApp>| h.doc().layers().iter().map(|l| l.id()).collect::<Vec<_>>();
+    let [a, b, c] = order(&h)[..] else {
+        panic!("レイヤーが 3 枚")
+    };
+    let name = h.doc().layer(b).unwrap().name().to_owned();
+    choose_in_layer_menu(&mut h, &name, "レイヤーを上へ");
+    assert_eq!(order(&h), vec![a, c, b], "真ん中のレイヤーが 1 つ上へ");
+    choose_in_layer_menu(&mut h, &name, "レイヤーを下へ");
+    assert_eq!(order(&h), vec![a, b, c], "1 つ下へ戻る");
+    undo(&mut h);
+    assert_eq!(order(&h), vec![a, c, b], "下への 1 回の取り消し");
+    undo(&mut h);
+    assert_eq!(order(&h), vec![a, b, c], "上への 1 回の取り消し");
 }
 
 #[test]
@@ -245,6 +294,14 @@ fn the_blend_mode_and_opacity_stack_when_the_layers_panel_is_too_narrow() {
             assert!(
                 row.top() >= slider.bottom(),
                 "{lang:?} {width}: 一覧 {row:?} は不透明度 {slider:?} の下"
+            );
+            // 操作の帯は、不透明度のすぐ下（積んだときは積んだ行の下）で、一覧はその下
+            let add = rect_of(&h, lang.pick("新規レイヤー", "New Layer"), |r| {
+                panel(r) && r.width() < 40.0
+            });
+            assert!(
+                add.top() >= slider.bottom() && add.bottom() <= row.top(),
+                "{lang:?} {width}: 帯 {add:?} は不透明度 {slider:?} と一覧 {row:?} の間"
             );
         }
     }
@@ -1043,7 +1100,13 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
     stroke_across(&mut h, 0.0); // レイヤーに長い線
     assert_eq!(canvas_alpha(&h, 0.0), 255);
     assert_eq!(canvas_alpha(&h, 50.0), 255);
-    shots::click_in_group(&mut h, Tab::Layers, "レイヤーマスクを追加");
+    let name = h
+        .doc()
+        .layer(h.selected_layer().unwrap())
+        .unwrap()
+        .name()
+        .to_owned();
+    choose_in_layer_menu(&mut h, &name, "レイヤーマスクを追加");
     // マスクに短く描く（塗ると隠す）
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -10.0, 0.0), offset(c, 10.0, 0.0)]);
@@ -1459,7 +1522,7 @@ fn the_two_languages_name_the_panels() {
     apply(&mut h, Action::M2Ui(UiOp::Language(Lang::En)));
     assert!(h.query_by_label("New Layer").is_some());
     assert!(h.query_by_label("Group Layers").is_some());
-    assert!(shots::in_group(&h, Tab::Layers, "Add Layer Mask").is_some());
+    assert!(shots::in_group(&h, Tab::Layers, "New Fill Layer").is_some());
     assert!(h.query_by_label("新規レイヤー").is_none());
     click_tab(&mut h, Tab::Channels);
     h.run();

@@ -479,6 +479,24 @@ pub fn layers_body(h: &Harness<'_, YoluApp>) -> Rect {
     )
 }
 
+/// レイヤーの組の行 `name` を右クリックして、レイヤーのメニューを開く。
+pub fn open_layer_menu(h: &mut Harness<'_, YoluApp>, name: &str) {
+    let body = layers_body(h);
+    // 行の名前（幅のある物。サムネイルなど小さい部品は除く）
+    let row = rect_of(h, name, |r| body.contains_rect(r) && r.width() > 60.0);
+    press(h, row.center(), PointerButton::Secondary);
+    h.step();
+    release(h, row.center(), PointerButton::Secondary);
+    h.run();
+}
+
+/// レイヤーの組の行 `name` を右クリックして、出たメニューの項目 `item` を押す（帯から外した操作は、このメニューにある）。
+pub fn choose_in_layer_menu(h: &mut Harness<'_, YoluApp>, name: &str, item: &str) {
+    open_layer_menu(h, name);
+    let at = popup_item(h, item).center();
+    click(h, at);
+}
+
 /// 右の列（レイヤーの組を含む列）を、中央（キャンバスの組）との分け方の取り分 `fraction`（中央の取り分。大きいほど右の列が狭い）に動かす。既定の右の列はどのウィンドウでも幅が広いので、
 /// 狭い列の振る舞い（名前を詰めずに積むなど）を確かめる試験が使う。
 pub fn set_center_share(h: &mut Harness<'_, YoluApp>, fraction: f32) {

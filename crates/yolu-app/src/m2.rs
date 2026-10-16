@@ -671,7 +671,7 @@ pub fn layer_kind_icon(kind: LayerKind) -> &'static str {
     match kind {
         LayerKind::Raster => "paint_brush",
         LayerKind::Fill => "format_color_fill",
-        LayerKind::Adjustment => "tune",
+        LayerKind::Adjustment => "texture",
         LayerKind::Group => "folder",
     }
 }

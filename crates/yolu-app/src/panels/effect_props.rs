@@ -1584,7 +1584,7 @@ pub fn add_effect_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, target: 
             } else {
                 lang.t("panels-add-a-generator-values-from")
             },
-            "texture",
+            "generator",
         ),
     ];
     for (popup, key, label, tip, icon) in buttons {

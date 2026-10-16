@@ -43,6 +43,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `folder` | fluent | `folder` | regular |
 | `folder_open` | fluent | `folder_open` | regular |
 | `format_color_fill` | fluent | `paint_bucket` | regular |
+| `generator` | phosphor | `wave-sine` | regular |
 | `grid_dots` | fluent | `grid_dots` | regular |
 | `import` | fluent | `arrow_import` | regular |
 | `info` | fluent | `info` | regular |

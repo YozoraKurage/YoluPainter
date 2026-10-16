@@ -75,6 +75,7 @@ const FILES: &[(&str, &[u8])] = icon_files!(
     "anchor",
     "auto_awesome",
     "clip_below",
+    "generator",
     "tools/brush",
     "tools/brush_selected",
     "tools/eraser",

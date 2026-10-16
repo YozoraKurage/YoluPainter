@@ -380,7 +380,7 @@ pub fn effect_name(lang: Lang, settings: &EffectSettings) -> &'static str {
 
 pub fn effect_icon(settings: &EffectSettings) -> &'static str {
     if settings.is_generator() {
-        "texture"
+        "generator"
     } else {
         "auto_awesome"
     }
@@ -615,4 +615,18 @@ pub fn trim(v: f64, places: usize) -> String {
         s = "0".into();
     }
     s
+}
+
+#[cfg(test)]
+mod icon_tests {
+    use super::*;
+    use yolu_core::generator::{Kind, Settings};
+
+    #[test]
+    fn a_generator_row_has_the_generator_icon_and_a_filter_row_the_filter_icon() {
+        let generator = EffectSettings::generator(Settings::new(Kind::Noise));
+        assert_eq!(effect_icon(&generator), "generator");
+        let filter = EffectSettings::Filter(Filter::Invert);
+        assert_eq!(effect_icon(&filter), "auto_awesome");
+    }
 }

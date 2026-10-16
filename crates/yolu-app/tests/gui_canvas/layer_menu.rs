@@ -1499,7 +1499,7 @@ fn escape_closes_the_fill_submenu_first_and_then_the_menu() {
 }
 
 #[test]
-fn the_layers_toolbar_fill_button_opens_the_kinds_and_the_effect_button_the_filters() {
+fn the_layers_toolbar_fill_and_adjustment_buttons_open_the_kinds() {
     for lang in Lang::ALL {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
@@ -1542,55 +1542,221 @@ fn the_layers_toolbar_fill_button_opens_the_kinds_and_the_effect_button_the_filt
         }
         common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
-        // 効果: 「フィルターを追加」はフィルターだけ、「ジェネレーターを追加」はジェネレーターだけ（見出し・入れ子なし）
-        let at = toolbar_button(&h, lang.pick("フィルターを追加", "Add Filter")).center();
-        click(&mut h, at);
-        assert_eq!(
-            h.popup().as_ref().map(|p| p.kind),
-            Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddFilter(
-                FilterTarget::Content
-            )))
-        );
-        assert!(h
-            .query_by_label(lang.pick("ぼかし（ガウス）", "Gaussian Blur"))
-            .is_some());
-        assert!(h
-            .query_by_label(lang.pick("エッジの摩耗", "Edge Wear"))
-            .is_none());
-        assert!(h.query_by_label("Generator").is_none());
-        common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
-        h.run();
-        let at = toolbar_button(&h, lang.pick("ジェネレーターを追加", "Add Generator")).center();
-        click(&mut h, at);
-        assert_eq!(
-            h.popup().as_ref().map(|p| p.kind),
-            Some(PopupKind::M2(yolu_app::m2_menu::Popup::AddGenerator(
-                FilterTarget::Content
-            )))
-        );
-        assert!(h
-            .query_by_label(lang.pick("エッジの摩耗", "Edge Wear"))
-            .is_some());
-        assert!(h
-            .query_by_label(lang.pick("ぼかし（ガウス）", "Gaussian Blur"))
-            .is_none());
     }
 }
 
-/// レイヤーのパネルの下の帯のボタン（小さい四角。プロパティの欄の同じ名前のボタンと取り違えない）。
-fn toolbar_button(h: &Harness<'_, YoluApp>, label: &str) -> Rect {
-    common::rect_of(h, label, |r| r.top() > 200.0 && r.width() < 40.0)
+/// フィルター・ジェネレーターの追加は、行の右クリックのメニューの入れ子にある（フィルターだけ・ジェネレーターだけ。見出し・入れ子なし）。
+/// 足す先は、画素を対象にしている行では画素（Content）、マスクに描いている行ではマスク（Mask）。
+#[test]
+fn the_layer_menu_adds_filters_and_generators_to_the_pixels_or_to_the_mask_being_edited() {
+    use yolu_app::fx::FxOp;
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        h.set_lang(lang);
+        h.run();
+        let id = h.selected_layer().unwrap();
+        let name = h.doc().layer(id).unwrap().name().to_owned();
+        for target in [FilterTarget::Content, FilterTarget::Mask] {
+            if target == FilterTarget::Mask {
+                // マスクを足すと描く先がマスクになる
+                h.act(Action::M2(Edit::AddMask(id)));
+                h.run();
+                assert!(h.m2().edit_mask);
+            }
+            let entries = shell::popup_entries(h.app(), PopupKind::LayerContext(id));
+            let filters = submenu(&entries, lang.pick("フィルターを追加", "Add Filter"));
+            assert!(
+                filters
+                    .iter()
+                    .any(|e| matches!(e, Entry::Item { enabled: true, .. })),
+                "{lang:?} {target:?}: 押せるフィルターがある"
+            );
+            assert!(
+                filters.iter().all(|e| match e {
+                    Entry::Item { enabled: false, .. } => true,
+                    Entry::Item {
+                        action: Action::Fx(FxOp::AddFilter { target: t, .. }),
+                        ..
+                    } => *t == target,
+                    _ => false,
+                }),
+                "{lang:?} {target:?}: フィルターの足す先"
+            );
+            let generators = submenu(&entries, lang.pick("ジェネレーターを追加", "Add Generator"));
+            assert!(
+                generators
+                    .iter()
+                    .any(|e| matches!(e, Entry::Item { enabled: true, .. })),
+                "{lang:?} {target:?}: 押せるジェネレーターがある"
+            );
+            assert!(
+                generators.iter().all(|e| match e {
+                    Entry::Item { enabled: false, .. } => true,
+                    Entry::Item {
+                        action: Action::Fx(FxOp::AddGenerator { target: t, .. }),
+                        ..
+                    } => *t == target,
+                    _ => false,
+                }),
+                "{lang:?} {target:?}: ジェネレーターの足す先"
+            );
+            // 画面でも、それぞれの入れ子の中身だけが出る
+            for (submenu, present, absent) in [
+                (
+                    lang.pick("フィルターを追加", "Add Filter"),
+                    lang.pick("ぼかし（ガウス）", "Gaussian Blur"),
+                    lang.pick("エッジの摩耗", "Edge Wear"),
+                ),
+                (
+                    lang.pick("ジェネレーターを追加", "Add Generator"),
+                    lang.pick("エッジの摩耗", "Edge Wear"),
+                    lang.pick("ぼかし（ガウス）", "Gaussian Blur"),
+                ),
+            ] {
+                common::open_layer_menu(&mut h, &name);
+                // メニューの行を選ぶ。ポップアップの本体の矩形はメニューの後ろにあるプロパティの欄のボタン（同じ名前）も含むので、
+                // メニューの行の幅（250 以上）で選ぶ
+                let body = common::shot::popup(&h);
+                let item =
+                    common::rect_of(&h, submenu, |r| body.contains_rect(r) && r.width() > 250.0);
+                hover(&mut h, item.center());
+                assert_eq!(depth(&h), 1, "{lang:?} {target:?} {submenu}");
+                assert!(h.query_by_label(present).is_some(), "{lang:?} {present}");
+                assert!(h.query_by_label(absent).is_none(), "{lang:?} {absent}");
+                assert!(h.query_by_label("Generator").is_none());
+                common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+                common::key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+                h.run();
+                assert!(h.popup().is_none());
+            }
+        }
+    }
+}
+
+/// 一覧を途中まで送ると、一覧の上へはみ出た行の部品（サムネイルなど）は、上の操作の帯の空いた所を押しても、乗せても反応しない
+/// （当たりは一覧の中だけ）。
+#[test]
+fn a_row_scrolled_out_at_the_top_of_the_list_gets_no_clicks_or_tooltips_in_the_toolbar() {
+    let mut h = app(1280.0, 800.0, 64);
+    for _ in 0..30 {
+        h.act(Action::NewLayer);
+    }
+    let top = h.selected_layer().unwrap();
+    // 一番上の行にマスクを足して、サムネイルがツールチップを持つようにする（押す先の選択は一番下のレイヤーにしておく）
+    h.act(Action::M2(Edit::AddMask(top)));
+    let bottom = h.doc().layers()[0].id();
+    h.set_selected_layer(Some(bottom));
+    h.ui_mut().layer_scroll = 15.0;
+    h.run();
+    let body = common::layers_body(&h);
+    let label = "レイヤーの画素";
+    let mut thumbs: Vec<Rect> = h
+        .query_all_by_label(label)
+        .map(|n| n.rect())
+        .filter(|r| body.contains_rect(*r))
+        .collect();
+    thumbs.sort_by(|a, b| a.top().total_cmp(&b.top()));
+    let first = thumbs[0];
+    // 一番上の行は半分ほど一覧の上へはみ出ている（サムネイルの中心が一覧の上の端）
+    let list_top = first.center().y;
+    // 一覧の中に見えている部分は反応する（対照）
+    let tip = "レイヤーの画素（押すと画素が対象）";
+    let inside = pos2(first.center().x, list_top + 5.0);
+    common::hover_and_wait(&mut h, inside);
+    assert!(
+        h.query_by_label(tip).is_some(),
+        "見えている部分はツールチップが出る"
+    );
+    // 帯の空いた所（サムネイルの真上、一覧の上の端の 9 点上。当たりの許容の半径 5 点の外）は反応しない
+    let gap = pos2(first.center().x, list_top - 9.0);
+    common::hover_and_wait(&mut h, pos2(5.0, 5.0));
+    common::hover_and_wait(&mut h, gap);
+    assert!(
+        h.query_by_label(tip).is_none(),
+        "帯の空いた所にツールチップは出ない"
+    );
+    click(&mut h, gap);
+    assert_eq!(
+        h.selected_layer(),
+        Some(bottom),
+        "帯の空いた所を押しても選択は変わらない"
+    );
+    assert!(h.popup().is_none());
+}
+
+/// 帯に出ているボタンの名前（レイヤーのパネルの上の端から一覧の上の端までにある、小さい四角）。
+fn toolbar_rects(h: &Harness<'_, YoluApp>, label: &str) -> Vec<Rect> {
+    let body = common::layers_body(h);
+    h.query_all_by_label_contains(label)
+        .map(|n| n.rect())
+        .filter(|r| body.contains_rect(*r) && r.width() < 40.0)
+        .collect()
 }
 
 #[test]
-fn the_effect_buttons_need_a_selected_layer() {
+fn the_layers_toolbar_has_no_filter_generator_mask_or_move_buttons() {
+    for lang in Lang::ALL {
+        let mut h = app(1280.0, 800.0, 64);
+        h.set_lang(lang);
+        h.run();
+        for label in [
+            lang.pick("フィルターを追加", "Add Filter"),
+            lang.pick("ジェネレーターを追加", "Add Generator"),
+            lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
+            lang.pick("レイヤーマスクを編集", "Edit Layer Mask"),
+            lang.pick("レイヤーを上へ", "Move Layer Up"),
+            lang.pick("レイヤーを下へ", "Move Layer Down"),
+        ] {
+            assert!(
+                toolbar_rects(&h, label).is_empty(),
+                "{lang:?} {label}: 帯には置かない"
+            );
+        }
+        // 残るのは、左端のクリッピングと、右の新規・塗りつぶし・グループ・調整・削除
+        let labels = [
+            lang.pick("下のレイヤーでクリッピング", "Clip to the Layer Below"),
+            lang.pick("新規レイヤー", "New Layer"),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+            lang.pick("レイヤーをグループ化", "Group Layers"),
+            lang.pick("新規調整レイヤー", "New Adjustment Layer"),
+            lang.pick("レイヤーを削除", "Delete Layer"),
+        ];
+        let rects: Vec<Rect> = labels
+            .iter()
+            .map(|l| {
+                *toolbar_rects(&h, l)
+                    .first()
+                    .unwrap_or_else(|| panic!("{lang:?} {l}"))
+            })
+            .collect();
+        assert!(
+            rects.windows(2).all(|w| w[0].right() <= w[1].left()),
+            "{lang:?}: 左から クリッピング・新規・塗りつぶし・グループ・調整・削除 {rects:?}"
+        );
+        let gap = rects[1].left() - rects[0].right();
+        assert!(
+            gap > 60.0,
+            "{lang:?}: クリッピングは左端、残りは右へ寄る {rects:?}"
+        );
+    }
+}
+
+/// レイヤーが選ばれていなければ、一覧の空白の右クリックのメニューに効果は出ない（足す先が無い）。
+#[test]
+fn the_blank_menu_of_the_layer_list_has_no_effect_entries_without_a_selected_layer() {
     let mut h = app(1280.0, 800.0, 64);
     h.set_selected_layer(None);
     h.run();
+    let body = common::layers_body(&h);
+    let at = pos2(body.center().x, body.bottom() - 10.0);
+    common::press(&h, at, egui::PointerButton::Secondary);
+    h.step();
+    common::release(&h, at, egui::PointerButton::Secondary);
+    h.run();
+    assert!(h.popup().is_some(), "空白の右クリックでメニューが開く");
+    let _ = popup_item(&h, "新規塗りつぶしレイヤー");
     for label in ["フィルターを追加", "ジェネレーターを追加"] {
-        let at = toolbar_button(&h, label).center();
-        click(&mut h, at);
-        assert!(h.popup().is_none(), "レイヤーが無ければ効果は足せない");
+        assert!(h.query_by_label(label).is_none(), "{label}");
     }
 }
 
@@ -1601,26 +1767,19 @@ fn the_layers_toolbar_buttons_all_fit_in_the_panel_at_the_minimum_window_in_both
         h.set_lang(lang);
         h.run();
         let labels = [
-            lang.pick("新規レイヤー", "New Layer"),
-            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
-            lang.pick("新規調整レイヤー", "New Adjustment Layer"),
-            lang.pick("フィルターを追加", "Add Filter"),
-            lang.pick("ジェネレーターを追加", "Add Generator"),
-            lang.pick("レイヤーをグループ化", "Group Layers"),
-            lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
             // 押せないときは名前に理由が続く
             lang.pick("下のレイヤーでクリッピング", "Clip to the Layer Below"),
-            lang.pick("レイヤーを上へ", "Move Layer Up"),
-            lang.pick("レイヤーを下へ", "Move Layer Down"),
+            lang.pick("新規レイヤー", "New Layer"),
+            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+            lang.pick("レイヤーをグループ化", "Group Layers"),
+            lang.pick("新規調整レイヤー", "New Adjustment Layer"),
             lang.pick("レイヤーを削除", "Delete Layer"),
         ];
         let rects: Vec<Rect> = labels
             .iter()
             .map(|l| {
-                h.query_all_by_label_contains(l)
-                    .filter(|n| n.rect().top() > 200.0)
-                    .map(|n| n.rect())
-                    .next()
+                *toolbar_rects(&h, l)
+                    .first()
                     .unwrap_or_else(|| panic!("{lang:?} {l}"))
             })
             .collect();
@@ -2020,16 +2179,8 @@ fn snapshot_the_filter_menu_on_a_normal_map_shows_the_reason_as_a_tooltip() {
 fn snapshot_the_layers_toolbar_at_the_minimum_window() {
     let mut h = app(960.0, 640.0, 64);
     h.run();
-    let new_layer = h
-        .query_all_by_label("新規レイヤー")
-        .map(|n| n.rect())
-        .find(|r| r.top() > 200.0)
-        .expect("帯の新規レイヤー");
-    let delete = h
-        .query_all_by_label("レイヤーを削除")
-        .map(|n| n.rect())
-        .find(|r| r.top() > 200.0)
-        .expect("帯の削除");
-    let bar = new_layer.union(delete);
+    let clipping = toolbar_rects(&h, "下のレイヤーでクリッピング")[0];
+    let delete = toolbar_rects(&h, "レイヤーを削除")[0];
+    let bar = clipping.union(delete);
     common::shot::region(&mut h, "menus_layers_toolbar_min", bar);
 }

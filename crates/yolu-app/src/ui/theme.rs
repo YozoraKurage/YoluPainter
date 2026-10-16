@@ -28,6 +28,8 @@ pub const WARNING: Color32 = hex(0xE8B03C);
 /// 接続できている印（Live Link の入口）。
 pub const OK: Color32 = hex(0x4CAF6A);
 pub const ERROR: Color32 = hex(0xE5534B);
+/// 下のレイヤーでクリッピングしているレイヤーの行の、サムネイルの左の細い縦の印。
+pub const CLIPPING_MARK: Color32 = hex(0xF08A8A);
 pub const SLIDER_FILL: Color32 = hex(0x355F96);
 pub const SLIDER_FILL_HOVER: Color32 = hex(0x3F70B0);
 /// プロパティの欄の大見出しの帯（パネルの地より濃い）。

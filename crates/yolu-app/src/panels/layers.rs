@@ -1,7 +1,8 @@
 //! レイヤーのパネル（Unity 版の LayersPanel の配置）: 上に描くチャンネルの合成モードと不透明度（左端の切り替えで、そのチャンネルだけの
-//! 値にする）、行（目・グループの開閉・サムネイル・マスク・名前。ダブルクリックで名前を変える・右クリックのメニュー・ドラッグで
-//! 並べ替えとグループへの出し入れ）、下に操作の帯（新規・塗りつぶし・調整・グループ・マスク・上へ・下へ・削除）。行は上が一番上のレイヤーで、
-//! グループの中身は字下げして続く（閉じたグループの中身は出さない）。
+//! 値にする）、そのすぐ下に操作の帯（左端にクリッピング、右に新規・塗りつぶし・グループ・調整・削除）、その下に行（目・グループの開閉・
+//! サムネイル・マスク・名前。ダブルクリックで名前を変える・右クリックのメニュー・ドラッグで並べ替えとグループへの出し入れ）。
+//! 行は上が一番上のレイヤーで、グループの中身は字下げして続く（閉じたグループの中身は出さない）。クリッピングしているレイヤーは
+//! 字下げせず、サムネイルの左の細い縦の帯で示す。
 
 use std::collections::HashMap;
 
@@ -24,12 +25,19 @@ use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align, NumberFormat, SliderSpec};
 
 pub const ROW_HEIGHT: f32 = 30.0;
-pub const TOOLBAR_HEIGHT: f32 = 30.0;
-/// パネルの上の端から一覧の上の端まで（合成モードと不透明度の行）。パネルが狭くて 1 行に収まらないときは、合成モードと不透明度を
-/// 2 行に積む（`STACKED_LIST_TOP`）。
-pub const LIST_TOP: f32 = 6.0 + 24.0 + 6.0;
+/// 操作の帯の高さ。
+pub const TOOLBAR_HEIGHT: f32 = 26.0;
+/// 合成モードと不透明度の行の高さ・上の余白・次の帯との間。
+const TOP_HEIGHT: f32 = 20.0;
+const TOP_MARGIN: f32 = 4.0;
+const TOP_GAP: f32 = 4.0;
+/// パネルの上の端から一覧の上の端まで（合成モードと不透明度の行、操作の帯）。パネルが狭くて 1 行に収まらないときは、合成モードと
+/// 不透明度を 2 行に積む（`STACKED_LIST_TOP`）。
+pub const LIST_TOP: f32 = TOP_MARGIN + TOP_HEIGHT + TOP_GAP + TOOLBAR_HEIGHT;
 /// 合成モードと不透明度を 2 行に積んだときの、パネルの上の端から一覧の上の端まで。
-pub const STACKED_LIST_TOP: f32 = LIST_TOP + 24.0 + 4.0;
+pub const STACKED_LIST_TOP: f32 = LIST_TOP + TOP_HEIGHT + TOP_GAP;
+/// クリッピングしている行の縦の帯の幅（サムネイルの左、選んだ行の囲いから 1 px 離す）。
+const CLIPPING_MARK_WIDTH: f32 = 2.5;
 /// 1 段の字下げ。
 const INDENT: f32 = 14.0;
 /// 行の右端の印（描くチャンネルを使っていないレイヤー・パスレイヤー）の幅。
@@ -225,8 +233,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
 
     // 上: 描くチャンネルの合成モードと不透明度（Photoshop の配置）。そのチャンネルだけの値にするのは、合成モードのメニューの頭の項目
     let rest = Rect::from_min_size(
-        pos2(r.left() + t::PADDING, r.top() + 6.0),
-        vec2(r.width() - 2.0 * t::PADDING, 24.0),
+        pos2(r.left() + t::PADDING, r.top() + TOP_MARGIN),
+        vec2(r.width() - 2.0 * t::PADDING, TOP_HEIGHT),
     );
     let left_w = ((rest.width() - 6.0) * 0.42).floor();
     let mut blend_rect = Rect::from_min_size(rest.min, vec2(left_w, rest.height()));
@@ -242,7 +250,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let stacked = opacity_rect.width() < opacity_need;
     if stacked {
         blend_rect = Rect::from_min_size(rest.min, rest.size());
-        opacity_rect = blend_rect.translate(vec2(0.0, 28.0));
+        opacity_rect = blend_rect.translate(vec2(0.0, TOP_HEIGHT + TOP_GAP));
     }
     let list_top = if stacked { STACKED_LIST_TOP } else { LIST_TOP };
     if let Some((id, blend, opacity, own)) = selected {
@@ -300,10 +308,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     thumbs.retain(&app.session.doc);
     let list = Rect::from_min_max(
         pos2(r.left(), r.top() + list_top),
-        pos2(
-            r.right(),
-            (r.bottom() - TOOLBAR_HEIGHT).max(r.top() + list_top),
-        ),
+        r.max.max(pos2(r.right(), r.top() + list_top)),
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);
     let rows = m2::visible_rows(&app.session.doc, &app.m2.collapsed);
@@ -343,6 +348,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     }
 
     let chosen = app.selected_layers();
+    // 送って一覧の上へはみ出た行の部品（目・開閉・サムネイル・印）が、一覧の外（上の帯など）で当たりを持たないよう、
+    // 行を描くあいだだけ clip rect を一覧に絞る（egui は部品の当たりを clip rect で切る）
+    let outer_clip = ui.clip_rect();
+    ui.set_clip_rect(outer_clip.intersect(list));
     for entry in &layout.entries {
         let rect = Rect::from_min_size(
             pos2(list.left(), list.top() + entry.y - app.ui.layer_scroll),
@@ -369,6 +378,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
             }
         }
     }
+    ui.set_clip_rect(outer_clip);
     follow_drag(ui, app, list, &rows, &layout);
     crate::rulers::layer_icon::follow(ui, app, list, &rows, &layout, app.ui.layer_scroll);
     crate::panels::assets::layer_list_drop(ui, app, list, &rows, &layout);
@@ -410,11 +420,15 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     }
     bar.end(ui, "layers.scroll", &mut app.ui.layer_scroll);
 
-    toolbar(ui, app, &ctx, r, list, enabled);
+    let bar = Rect::from_min_size(
+        pos2(r.left(), r.top() + list_top - TOOLBAR_HEIGHT),
+        vec2(r.width(), TOOLBAR_HEIGHT),
+    );
+    toolbar(ui, app, &ctx, bar, enabled);
 }
 
-/// 下の操作の帯のボタンの数（左 8 つ・右 3 つ）。
-const TOOLBAR_BUTTONS: usize = 11;
+/// 操作の帯のボタンの数（左端にクリッピング 1 つ・右に 5 つ）。
+const TOOLBAR_BUTTONS: usize = 6;
 
 /// クリッピングの切り替えの名前（ツールチップと、試験・読み上げの名前）。
 pub fn clipping_name(lang: crate::lang::Lang) -> &'static str {
@@ -462,34 +476,26 @@ pub fn clipping_state(app: &AppState) -> (bool, Option<&'static str>) {
     }
 }
 
-/// 下の操作の帯。
-fn toolbar(
-    ui: &mut Ui,
-    app: &mut AppState,
-    ctx: &egui::Context,
-    r: Rect,
-    list: Rect,
-    enabled: bool,
-) {
+/// 操作の帯。左端にクリッピング、右へ向かって新規・塗りつぶし・グループ・調整・削除（いちばん右が削除）。
+fn toolbar(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, bar: Rect, enabled: bool) {
     let lang = app.lang;
-    let bar = Rect::from_min_size(
-        pos2(r.left(), list.bottom()),
-        vec2(r.width(), TOOLBAR_HEIGHT),
-    );
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
-    // ボタンは左に 8 つ（新規・塗りつぶし・調整・フィルター・ジェネレーター・グループ・マスク・クリッピング）、右に 3 つ（上へ・下へ・削除）。狭いパネルでは
-    // 重ならないよう間隔を詰める
+    // 狭いパネルでは、ボタンが重ならないよう間隔を詰める
     let pitch = ((bar.width() - 8.0) / TOOLBAR_BUTTONS as f32).min(27.0);
-    let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(pitch - 1.0, 24.0));
+    let button = |x: f32| {
+        Rect::from_min_size(
+            pos2(x, bar.top() + 1.0),
+            vec2(pitch - 1.0, bar.height() - 2.0),
+        )
+    };
     // 狭いパネルでは、ボタンの幅に合わせてアイコンも小さくする（隣のアイコンに触れない）
     let icon = |base: f32| base.min((pitch - 2.0).max(10.0));
-    let selected = app
+    let has = app
         .session
         .selected_layer
-        .and_then(|id| app.session.doc.layer(id));
-    let has = selected.is_some() && enabled;
-    let has_mask = selected.is_some_and(|l| l.mask().is_some());
-    let editing = app.m2.edit_mask && has_mask;
+        .and_then(|id| app.session.doc.layer(id))
+        .is_some()
+        && enabled;
     let removed: usize = app
         .session
         .doc
@@ -500,7 +506,30 @@ fn toolbar(
         .sum();
     let can_delete =
         app.session.selected_layer.is_some() && app.session.doc.layers().len() > removed;
-    let mut x = bar.left() + 4.0;
+
+    // クリッピング（すぐ下のレイヤーの中にだけ描く。押している状態が分かる切り替え）
+    let (clipping, clip_reason) = clipping_state(app);
+    let clip_tip = clipping_tooltip(lang, clip_reason);
+    if w::icon_button(
+        ui,
+        button(bar.left() + 4.0),
+        "layers.clipping",
+        "clip_below",
+        &clip_tip,
+        clipping,
+        has && clip_reason.is_none(),
+        icon(18.0),
+    )
+    .clicked()
+    {
+        if let Some(id) = app.session.selected_layer {
+            app.apply(Action::M2(Edit::Clipping(id, !clipping)));
+        }
+    }
+
+    // 右端に詰めて、左から新規・塗りつぶし・グループ・調整・削除
+    let right = bar.right() - 4.0 - pitch * (TOOLBAR_BUTTONS - 1) as f32;
+    let mut x = right;
     let mut next = || {
         let b = button(x);
         x += pitch;
@@ -529,58 +558,11 @@ fn toolbar(
         lang.t("panels-new-fill-layer-tip"),
         false,
         enabled,
-        icon(17.0),
+        icon(18.0),
     )
     .clicked()
     {
         open_popup(app, ctx, PopupKind::M2(Popup::NewFill), b, 0.0);
-    }
-    let b = next();
-    let response = w::icon_button(
-        ui,
-        b,
-        "layers.adjustment",
-        "tune",
-        lang.t("panels-new-adjustment-layer-tip"),
-        false,
-        enabled,
-        icon(17.0),
-    );
-    if response.clicked() {
-        open_popup(app, ctx, PopupKind::M2(Popup::NewAdjustment), b, 0.0);
-    }
-    // フィルター・ジェネレーターを選んでいるレイヤーの今の対象（画素かマスク）に足す。入り口は別々
-    let b = next();
-    if w::icon_button(
-        ui,
-        b,
-        "layers.filter",
-        "auto_awesome",
-        crate::fx::menu::add_filter_label(lang),
-        false,
-        has,
-        icon(17.0),
-    )
-    .clicked()
-    {
-        let target = crate::fx::menu::target(app);
-        open_popup(app, ctx, PopupKind::M2(Popup::AddFilter(target)), b, 0.0);
-    }
-    let b = next();
-    if w::icon_button(
-        ui,
-        b,
-        "layers.generator",
-        "texture",
-        crate::fx::menu::add_generator_label(lang),
-        false,
-        has,
-        icon(17.0),
-    )
-    .clicked()
-    {
-        let target = crate::fx::menu::target(app);
-        open_popup(app, ctx, PopupKind::M2(Popup::AddGenerator(target)), b, 0.0);
     }
     if w::icon_button(
         ui,
@@ -590,99 +572,49 @@ fn toolbar(
         lang.t("panels-group-layers-tip"),
         false,
         has,
-        icon(17.0),
+        icon(18.0),
     )
     .clicked()
     {
         app.apply(Action::M2(Edit::GroupSelected));
     }
-    let mask_tip = if has_mask {
-        lang.t("panels-edit-layer-mask-tip")
-    } else {
-        lang.t("panels-add-layer-mask-tip")
-    };
+    let b = next();
     if w::icon_button(
         ui,
-        next(),
-        "layers.mask",
-        "vignette",
-        mask_tip,
-        editing,
-        has,
-        icon(17.0),
-    )
-    .clicked()
-    {
-        if let Some(id) = app.session.selected_layer {
-            if has_mask {
-                app.apply(Action::M2Ui(UiOp::EditMask(!editing)));
-            } else {
-                app.apply(Action::M2(Edit::AddMask(id)));
-            }
-        }
-    }
-    // クリッピング（すぐ下のレイヤーの中にだけ描く。CLIP STUDIO と同じ、押している状態が分かる切り替え）
-    let (clipping, clip_reason) = clipping_state(app);
-    let clip_tip = clipping_tooltip(lang, clip_reason);
-    if w::icon_button(
-        ui,
-        next(),
-        "layers.clipping",
-        "keyboard_arrow_down",
-        &clip_tip,
-        clipping,
-        has && clip_reason.is_none(),
-        icon(17.0),
-    )
-    .clicked()
-    {
-        if let Some(id) = app.session.selected_layer {
-            app.apply(Action::M2(Edit::Clipping(id, !clipping)));
-        }
-    }
-    let x = bar.right() - 4.0 - pitch * 3.0;
-    if w::icon_button(
-        ui,
-        button(x),
-        "layers.up",
-        "expand_less",
-        lang.t("panels-move-layer-up-tip"),
+        b,
+        "layers.adjustment",
+        "texture",
+        lang.t("panels-new-adjustment-layer-tip"),
         false,
-        has,
+        enabled,
         icon(18.0),
     )
     .clicked()
     {
-        app.apply(Action::LayerUp);
+        open_popup(app, ctx, PopupKind::M2(Popup::NewAdjustment), b, 0.0);
     }
     if w::icon_button(
         ui,
-        button(x + pitch),
-        "layers.down",
-        "expand_more",
-        lang.t("panels-move-layer-down-tip"),
-        false,
-        has,
-        icon(18.0),
-    )
-    .clicked()
-    {
-        app.apply(Action::LayerDown);
-    }
-    if w::icon_button(
-        ui,
-        button(x + pitch * 2.0),
+        next(),
         "layers.delete",
         "delete",
         lang.t("panels-delete-layer-tip"),
         false,
         has && can_delete,
-        icon(17.0),
+        icon(18.0),
     )
     .clicked()
     {
         app.apply(Action::DeleteLayer);
     }
+}
+
+/// 調整レイヤーの行のサムネイルの絵: 調整の種類ごとの絵。種類が分からないときは、調整レイヤー全般の絵。
+pub fn adjustment_icon(settings: Option<&crate::engine::AdjustmentSettings>) -> &'static str {
+    settings.map_or_else(
+        || m2::layer_kind_icon(LayerKind::Adjustment),
+        |a| AdjustmentKind::of(a).icon(),
+    )
 }
 
 /// レイヤーの種類の見た目（サムネイルの位置）。ラスターは絵、塗りつぶしは色（無ければアイコン）、調整・グループはアイコン。
@@ -749,11 +681,13 @@ fn kind_thumb(
         }
         LayerKind::Adjustment => {
             w::rounded(&painter, thumb, t::PANEL_HEADER, 3.0);
-            let icon = layer
-                .adjustment()
-                .map(|a| AdjustmentKind::of(a).icon())
-                .unwrap_or("tune");
-            w::icon(&painter, thumb, icon, t::TEXT_DIM, 15.0);
+            w::icon(
+                &painter,
+                thumb,
+                adjustment_icon(layer.adjustment()),
+                t::TEXT_DIM,
+                15.0,
+            );
         }
         LayerKind::Group => {
             w::rounded(&painter, thumb, t::PANEL_HEADER, 3.0);
@@ -919,6 +853,15 @@ fn select_for_menu(app: &mut AppState, id: LayerId, in_selection: bool) {
     }
 }
 
+/// クリッピングしている行の縦の帯。`column` は行の開閉の欄（グループでない行ではサムネイルの左と同じ位置）で、帯はその左に置く。
+/// グループの行はサムネイルが開閉の矢印の右にあるので、サムネイルを基準にすると帯が矢印に重なる。
+pub fn clipping_mark_rect(row: Rect, column: Rect) -> Rect {
+    Rect::from_min_size(
+        pos2(column.left() - 3.0 - CLIPPING_MARK_WIDTH, row.top() + 3.0),
+        vec2(CLIPPING_MARK_WIDTH, row.height() - 7.0),
+    )
+}
+
 /// 行の右端のロックの印。自分のロックなら押すと外す（選んだレイヤーの中の行なら選んだ全部の自分のロックを外す）。
 fn lock_mark(
     ui: &mut Ui,
@@ -1055,14 +998,14 @@ fn layer_row(
         t::BORDER,
     );
 
-    // 目・字下げ・開閉（グループ）か下地へのクリッピングの印・サムネイル・マスク・名前
+    // 目・字下げ・開閉（グループ）・サムネイル・マスク・名前（下地へのクリッピングは字下げせず、サムネイルの左の帯で示す）
     let eye = Rect::from_min_size(
         pos2(row.left() + 4.0, row.top() + 3.0),
         vec2(24.0, row.height() - 6.0),
     );
     let mut x = eye.right() + 4.0 + INDENT * info.depth as f32;
     let fold = Rect::from_min_size(pos2(x, row.top() + 3.0), vec2(INDENT, row.height() - 6.0));
-    if info.is_group || clipped {
+    if info.is_group {
         x += INDENT;
     }
     let thumb = Rect::from_min_size(
@@ -1159,10 +1102,10 @@ fn layer_row(
     {
         app.apply(Action::ToggleVisible(id));
     }
-    // グループの開閉・クリッピングの印
+    // グループの開閉
     let collapsed = app.m2.collapsed.contains(&id);
-    if info.is_group {
-        if w::icon_button(
+    if info.is_group
+        && w::icon_button(
             ui,
             fold,
             ("layer.fold", id.0),
@@ -1181,11 +1124,17 @@ fn layer_row(
             14.0,
         )
         .clicked()
-        {
-            app.apply(Action::M2Ui(UiOp::ToggleCollapsed(id)));
-        }
-    } else if clipped {
-        w::icon(&painter, fold, "keyboard_arrow_down", t::TEXT_DIM, 14.0);
+    {
+        app.apply(Action::M2Ui(UiOp::ToggleCollapsed(id)));
+    }
+    if clipped {
+        // 選んだ行の囲い（サムネイルから 2 px 外）の外から 1 px 離す。グループの行も同じ深さの行と帯の x が揃う
+        w::rounded(
+            &painter,
+            clipping_mark_rect(row, fold),
+            t::CLIPPING_MARK,
+            1.0,
+        );
     }
     kind_thumb(ui, app, thumbs, ctx, list, thumb, id, !collapsed);
     // レイヤーのサムネイル（押すとレイヤーの画素が対象。選んだレイヤーで画素が対象なら、マスクの有無によらずマスクと同じ青い枠）
@@ -1426,6 +1375,71 @@ mod tests {
         }
         // 印が無いときは、1 つぶんの場所のまま（行の右端の余白）
         assert_eq!(name_right_inset(0), name_right_inset(1));
+    }
+
+    /// 行の欄の並び（`layer_row` と同じ式）: (開閉の欄, サムネイル)。
+    fn columns(row: Rect, depth: usize, group: bool) -> (Rect, Rect) {
+        let x = row.left() + 4.0 + 24.0 + 4.0 + INDENT * depth as f32;
+        let fold = Rect::from_min_size(pos2(x, row.top() + 3.0), vec2(INDENT, row.height() - 6.0));
+        let thumb_x = if group { x + INDENT } else { x };
+        let thumb = Rect::from_min_size(
+            pos2(thumb_x, row.top() + 4.0),
+            vec2(row.height() - 8.0, row.height() - 8.0),
+        );
+        (fold, thumb)
+    }
+
+    #[test]
+    fn the_clipping_mark_sits_left_of_the_thumbnail_and_clear_of_the_selection_outline() {
+        let row = Rect::from_min_size(pos2(0.0, 100.0), vec2(300.0, ROW_HEIGHT));
+        let (fold, thumb) = columns(row, 0, false);
+        let mark = clipping_mark_rect(row, fold);
+        // 選んだ行の囲い（サムネイルを 2 点広げ、内側に 2 点の線）の外から 1 点離れる
+        let outline = thumb.expand(2.0);
+        assert!(mark.right() + 1.0 <= outline.left(), "{mark:?} {outline:?}");
+        assert!(!mark.intersects(outline));
+        assert_eq!(mark.width(), CLIPPING_MARK_WIDTH);
+        assert!(
+            mark.top() >= row.top() && mark.bottom() <= row.bottom(),
+            "{mark:?}"
+        );
+        // 字下げの深さに合わせて動く（サムネイルのすぐ左。同じ距離）
+        let (fold2, _) = columns(row, 1, false);
+        let moved = clipping_mark_rect(row, fold2);
+        assert_eq!(moved.right() - mark.right(), INDENT);
+    }
+
+    #[test]
+    fn the_clipping_mark_of_a_group_row_clears_the_fold_arrow_and_lines_up_with_a_layer_row() {
+        let row = Rect::from_min_size(pos2(0.0, 100.0), vec2(300.0, ROW_HEIGHT));
+        for depth in 0..3 {
+            let (layer_fold, layer_thumb) = columns(row, depth, false);
+            let (group_fold, group_thumb) = columns(row, depth, true);
+            let layer_mark = clipping_mark_rect(row, layer_fold);
+            let group_mark = clipping_mark_rect(row, group_fold);
+            assert_eq!(
+                group_mark, layer_mark,
+                "深さ {depth}: 同じ深さの行と帯が揃う"
+            );
+            assert!(
+                !group_mark.intersects(group_fold),
+                "{group_mark:?} {group_fold:?}"
+            );
+            assert!(
+                group_mark.right() + 1.0 <= group_thumb.expand(2.0).left()
+                    && group_mark.right() + 1.0 <= layer_thumb.expand(2.0).left(),
+                "{group_mark:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_adjustment_row_shows_its_kinds_icon_and_falls_back_to_the_adjustment_layer_icon() {
+        assert_eq!(adjustment_icon(None), "texture");
+        for kind in AdjustmentKind::ALL {
+            assert_eq!(adjustment_icon(Some(&kind.settings())), kind.icon());
+        }
+        assert_eq!(m2::layer_kind_icon(LayerKind::Adjustment), "texture");
     }
 
     #[test]
