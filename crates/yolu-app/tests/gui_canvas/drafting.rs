@@ -160,14 +160,14 @@ fn cancelling_a_shape_or_ruler_changes_nothing() {
             &view,
             view.to_screen(10.0, 10.0),
             StrokeSource::Mouse,
-            Modifiers::NONE,
+            Modifiers::NONE.into(),
         );
         drafting::canvas::moved(
             &mut s,
             &view,
             view.to_screen(50.0, 50.0),
             StrokeSource::Mouse,
-            Modifiers::SHIFT,
+            Modifiers::SHIFT.into(),
         );
         assert!(s.is_stroking());
         assert!(s.drafting_cancel());
@@ -221,13 +221,19 @@ fn ruler_place_move_and_cancel_are_one_undo_step_each_and_cancel_changes_nothing
     let a = view.to_screen(10.0, 10.0);
     let b = view.to_screen(40.0, 40.0);
     let layer = s.selected_layer().unwrap();
-    drafting::canvas::press(&mut s, &view, a, StrokeSource::Mouse, Modifiers::NONE);
+    drafting::canvas::press(
+        &mut s,
+        &view,
+        a,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
     drafting::canvas::release(
         &mut s,
         &view,
         b,
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
         rect(),
     );
     let original = common::rulers::of(&s, layer);
@@ -240,21 +246,39 @@ fn ruler_place_move_and_cancel_are_one_undo_step_each_and_cancel_changes_nothing
         "作った物を選ぶ"
     );
     // 掴んで動かしている途中でやめても、何も変わらない
-    drafting::canvas::press(&mut s, &view, a, StrokeSource::Mouse, Modifiers::NONE);
-    drafting::canvas::moved(&mut s, &view, b, StrokeSource::Mouse, Modifiers::NONE);
+    drafting::canvas::press(
+        &mut s,
+        &view,
+        a,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
+    drafting::canvas::moved(
+        &mut s,
+        &view,
+        b,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
     assert!(s.is_stroking());
     s.drafting_cancel();
     assert!(!s.is_stroking());
     assert_eq!(common::rulers::of(&s, layer), original);
     assert_eq!(s.doc().undo_count(), 1);
     // 始点のつまみを動かして離す: 始点だけが動き、1 回の取り消し
-    drafting::canvas::press(&mut s, &view, a, StrokeSource::Mouse, Modifiers::NONE);
+    drafting::canvas::press(
+        &mut s,
+        &view,
+        a,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
     drafting::canvas::release(
         &mut s,
         &view,
         view.to_screen(15.0, 12.0),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
         rect(),
     );
     let moved = common::rulers::of(&s, layer);
@@ -1153,13 +1177,19 @@ fn a_ruler_without_length_is_not_placed_or_collapsed() {
     // 動かさずにクリックしただけでは置かない（向きが X に落ちて、意図しない水平の寄せ先になる）
     for kind in [RulerKind::Line, RulerKind::Parallel, RulerKind::Symmetry] {
         s.rulers_mut().kind = kind;
-        drafting::canvas::press(&mut s, &view, a, StrokeSource::Mouse, Modifiers::NONE);
+        drafting::canvas::press(
+            &mut s,
+            &view,
+            a,
+            StrokeSource::Mouse,
+            Modifiers::NONE.into(),
+        );
         drafting::canvas::release(
             &mut s,
             &view,
             a,
             StrokeSource::Mouse,
-            Modifiers::NONE,
+            Modifiers::NONE.into(),
             rect(),
         );
         assert_eq!(common::rulers::total(&s), 0, "{kind:?}");
@@ -1167,13 +1197,19 @@ fn a_ruler_without_length_is_not_placed_or_collapsed() {
     assert!(!s.doc().can_undo());
     // 置いた定規の端点を、もう一方の端点に重ねても潰さない（元の定規のまま。取り消しの段も増えない）
     s.rulers_mut().kind = RulerKind::Line;
-    drafting::canvas::press(&mut s, &view, a, StrokeSource::Mouse, Modifiers::NONE);
+    drafting::canvas::press(
+        &mut s,
+        &view,
+        a,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
     drafting::canvas::release(
         &mut s,
         &view,
         view.to_screen(40.0, 10.0),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
         rect(),
     );
     let layer = s.selected_layer().unwrap();
@@ -1184,14 +1220,14 @@ fn a_ruler_without_length_is_not_placed_or_collapsed() {
         &view,
         view.to_screen(40.0, 10.0),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
     );
     drafting::canvas::release(
         &mut s,
         &view,
         a,
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
         rect(),
     );
     assert_eq!(common::rulers::of(&s, layer), placed);

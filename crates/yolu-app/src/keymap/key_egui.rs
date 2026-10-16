@@ -148,7 +148,6 @@ mod tests {
             assert_eq!(m.any(), e.any(), "{e:?}");
             for &q in &all {
                 let other = Modifiers::from(q);
-                assert_eq!(m.contains(other), e.contains(q), "{e:?} {q:?}");
                 assert_eq!(
                     m.cmd_ctrl_matches(other),
                     e.cmd_ctrl_matches(q),

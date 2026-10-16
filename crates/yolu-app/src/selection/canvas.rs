@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use egui::{Color32, Modifiers, Painter, Pos2, Rect, Shape, Stroke};
+use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 
 use super::outline::Run;
 use super::overlay::Tint;
@@ -18,6 +18,7 @@ use crate::engine::{CanvasSymmetry, SelectionCombine};
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::rulers::draw::mirrored_points;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{Action, AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets as w;
@@ -284,7 +285,7 @@ pub fn release(
 pub(crate) fn drag_mode(
     base: SelectionCombine,
     tool: Tool,
-    button: egui::PointerButton,
+    button: PointerButton,
     pressed_with: Modifiers,
     now: Modifiers,
 ) -> SelectionCombine {
@@ -692,7 +693,7 @@ pub fn paint_overlay(
     }
     paint_ants(ctx, painter, view, app);
     paint_pen(ctx, painter, view, app);
-    paint_drafts(painter, view, app, ctx.input(|i| i.modifiers));
+    paint_drafts(painter, view, app, ctx.input(|i| i.modifiers.into()));
 }
 
 /// 選択ペンのツール: 動いているストロークの被覆（足す・消すで色を変える）と、ブラシの直径の輪のカーソル。

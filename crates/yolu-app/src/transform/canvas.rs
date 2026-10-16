@@ -1,13 +1,14 @@
 //! 移動・変形のツールのキャンバスの入力（押す・動く・離す・Esc・Enter・矢印キー）と、キャンバスの上の表示（動かすものの外枠とハンドル、
 //! ドラッグ中の変形後の外枠）。ドラッグの間は文書を変えず、離したところ（か Enter）で `Edit::Transform` を 1 回当てる。
 
-use egui::{Color32, CursorIcon, Modifiers, Painter, Pos2, Rect, Shape, Stroke, Vec2};
+use egui::{Color32, CursorIcon, Painter, Pos2, Rect, Shape, Stroke, Vec2};
 
 use super::{arrow_to_canvas, collapses, handle_points, handles_usable, hit, Bounds, Drag, Mode};
 use crate::canvas::view::CanvasView;
 use crate::layerops::Xform;
 use crate::m2::Edit;
 use crate::notice::Source;
+use crate::state::key::Modifiers;
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 impl AppState {

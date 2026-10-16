@@ -34,6 +34,7 @@ use crate::engine::{
 use crate::features::Feature;
 use crate::lang::Lang;
 use crate::notice::Source;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 /// 選択範囲を変える操作（半径を取るものと、取らないもの）。
@@ -250,9 +251,9 @@ pub struct SelState {
     /// 最後に押した時刻と点（ダブルクリックで多角形を閉じる）。
     pub last_press: Option<(f64, egui::Pos2)>,
     /// 形のドラッグを押し始めたときの修飾（離したときと見比べて、追加か縦横比の固定かを分ける）。
-    pub press_modifiers: egui::Modifiers,
+    pub press_modifiers: Modifiers,
     /// 選択のツールを押したボタン（組み合わせ方を、組み合わせの表のそのボタンの行で引く）。
-    pub press_button: egui::PointerButton,
+    pub press_button: PointerButton,
     /// ペンが触れている間の ID（ペンの触れる・離すを押す・離すにする）。
     pub pen_down: Option<u32>,
     /// 描いているストロークに固めた対称（写しのカーソルはこれ）。
@@ -318,8 +319,8 @@ impl Default for SelState {
             polygon: Vec::new(),
             polygon_hover: None,
             last_press: None,
-            press_modifiers: egui::Modifiers::NONE,
-            press_button: egui::PointerButton::Primary,
+            press_modifiers: Modifiers::NONE,
+            press_button: PointerButton::Primary,
             pen_down: None,
             stroke_symmetry: None,
             antialias: true,
@@ -485,19 +486,19 @@ fn modifier_text(lang: Lang, op: crate::keymap::Operation) -> Option<String> {
     if g.alt {
         parts.push("Alt");
     }
-    if g.button == egui::PointerButton::Primary && !g.click && !parts.is_empty() {
+    if g.button == PointerButton::Primary && !g.click && !parts.is_empty() {
         return Some(parts.join("+"));
     }
     Some(key_label(
         &Binding {
             scope: g.scope,
             held: None,
-            modifiers: egui::Modifiers {
+            modifiers: Modifiers {
                 alt: g.alt,
                 shift: g.shift,
                 ctrl: g.ctrl,
                 command: g.ctrl,
-                ..egui::Modifiers::NONE
+                ..Modifiers::NONE
             },
             button: g.button,
             operation: g.operation,
@@ -511,17 +512,14 @@ fn modifier_text(lang: Lang, op: crate::keymap::Operation) -> Option<String> {
 /// 組み合わせは `keymap::GESTURES` の表の selection の行）。
 pub fn combine_of(
     base: SelectionCombine,
-    button: egui::PointerButton,
-    modifiers: egui::Modifiers,
+    button: PointerButton,
+    modifiers: Modifiers,
 ) -> SelectionCombine {
     combine_for(button, &modifiers).unwrap_or(base)
 }
 
 /// 押したボタンと修飾が、選択の行（足す・引く・重ねる）に当たるなら、その組み合わせ方。
-pub fn combine_for(
-    button: egui::PointerButton,
-    modifiers: &egui::Modifiers,
-) -> Option<SelectionCombine> {
+pub fn combine_for(button: PointerButton, modifiers: &Modifiers) -> Option<SelectionCombine> {
     use crate::keymap::Operation;
     match crate::keymap::gesture("selection", button, modifiers, false) {
         Some(Operation::SelectionAdd) => Some(SelectionCombine::Add),

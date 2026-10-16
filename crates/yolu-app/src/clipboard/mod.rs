@@ -57,7 +57,7 @@ pub struct ClipState {
     /// Ctrl+V を処理した印（V を離したときの二重の貼り付けを避ける。`keys` が使う）。
     pub(crate) v_handled: bool,
     /// 前のフレームの終わりの修飾キー（`keys` が、フレームの中の事象の時点の Shift を見るのに使う）。
-    pub(crate) last_modifiers: egui::Modifiers,
+    pub(crate) last_modifiers: crate::state::key::Modifiers,
 }
 
 impl Default for ClipState {
@@ -69,7 +69,7 @@ impl Default for ClipState {
             written: None,
             stale: None,
             v_handled: false,
-            last_modifiers: egui::Modifiers::NONE,
+            last_modifiers: crate::state::key::Modifiers::NONE,
         }
     }
 }

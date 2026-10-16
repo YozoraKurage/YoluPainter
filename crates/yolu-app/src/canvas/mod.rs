@@ -9,9 +9,7 @@ pub mod gpu;
 pub mod nav;
 pub mod view;
 
-use egui::{
-    Color32, CursorIcon, Event, Key, Modifiers, PointerButton, Pos2, Rect, Sense, Stroke, Ui,
-};
+use egui::{Color32, CursorIcon, Event, Key, Pos2, Rect, Sense, Stroke, Ui};
 
 use self::display::CanvasDisplay;
 use self::view::{angle_label, CanvasView};
@@ -20,6 +18,7 @@ use crate::features::Feature;
 use crate::gesture;
 use crate::notice::Source;
 use crate::pen::{PenPress, PenSample, PressKind};
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{AppState, ShiftHold, StrokeSource};
 use crate::tools::input::{CanvasKind, InputCtx};
 use crate::ui::theme as t;
@@ -894,7 +893,7 @@ fn press_kind(
         // 編集・ポーズのモードは見るだけ。描くツールの Ctrl は描かない
         nav::Start::Tool
             if app.mode.paints()
-                && !gesture::pen_holds_off(app.tool.paints(), &frame.modifiers) =>
+                && !gesture::pen_holds_off(app.tool.paints(), &frame.modifiers.into()) =>
         {
             PressKind::Tool
         }
@@ -962,7 +961,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     let (events, modifiers, r_down, space_down) = ui.input(|i| {
         (
             i.events.clone(),
-            i.modifiers,
+            Modifiers::from(i.modifiers),
             crate::keymap::hold_down(i, "view.rotate_hold"),
             crate::keymap::hold_down(i, "view.pan_hold"),
         )
@@ -1029,7 +1028,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                 modifiers: event_modifiers,
                 ..
             } => {
-                let pos = *pos;
+                let (pos, button) = (*pos, &PointerButton::from(*button));
                 if *pressed {
                     // ポリゴン塗りつぶしの右クリック: アイランドの優先・焼かないのメニュー（開いているアイランドのメニューの外の右クリックは、
                     // 重なった次のアイランドのメニュー。開いているメニューの受け皿が上にあるので、そのときはメニューの本体の外かだけを見る）
@@ -1080,8 +1079,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     // 3D ビューで離した後の残りを塗っている途中（確定待ち）の押し: 先に確定してから、この押しを受ける
                     crate::view3d::input::settle(app);
                     // 押した瞬間に、実際のボタン・修飾・押しながらのキーで、ドラッグの操作と離しの操作を別々に引く（`nav::start_of`）
-                    let start = nav::start_of(app, *button, event_modifiers);
-                    let click = nav::click_of(app, *button, event_modifiers);
+                    let start = nav::start_of(app, *button, &(*event_modifiers).into());
+                    let click = nav::click_of(app, *button, &(*event_modifiers).into());
                     crate::pen::log::event(|| {
                         crate::pen::log::press_line(
                             crate::pen::log::Site {
@@ -1099,7 +1098,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     if app.is_stroking() {
                         // 描いている間は、表示を動かす操作もスポイトも始めない（描くのは今のストロークのボタンが続ける）
                     } else if start.moves_view() {
-                        nav::start(app, rect, pos, *button, start, event_modifiers);
+                        nav::start(app, rect, pos, *button, start, &(*event_modifiers).into());
                     } else if start == nav::Start::Pick {
                         // ほかのボタンを押している間（左ボタンのドラッグの途中など）は始めない
                         let others_down = ui.input(|i| {
@@ -1109,7 +1108,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                                 PointerButton::Middle,
                             ]
                             .into_iter()
-                            .any(|b| b != *button && i.pointer.button_down(b))
+                            .any(|b| b != *button && i.pointer.button_down(b.into()))
                         });
                         if !others_down {
                             crate::eyedrop::right_begin(app, StrokeSource::Mouse, pos, *button);
@@ -1133,7 +1132,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                             app.canvas.tool_button = Some(*button);
                             let view = app.view.view(rect, w_px, h_px);
                             let ctx = InputCtx {
-                                modifiers: *event_modifiers,
+                                modifiers: (*event_modifiers).into(),
                                 now,
                                 rect,
                                 pass: ctx.cumulative_pass_nr(),
@@ -1173,7 +1172,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                     // 離した: ドラッグを始めた側が終わらせる（ツールを替えていても）。そのボタンが始めた物だけを終える
                     if app.canvas.tool_button.unwrap_or(PointerButton::Primary) == *button {
                         let ctx = InputCtx {
-                            modifiers: *event_modifiers,
+                            modifiers: (*event_modifiers).into(),
                             now,
                             rect,
                             pass: ctx.cumulative_pass_nr(),
@@ -1331,12 +1330,12 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
             Event::Key {
                 key: key @ (Key::Enter | Key::Backspace),
                 pressed: true,
-                modifiers: event_modifiers,
+                modifiers: m,
                 ..
             } if !typing && !blocked => {
                 // ドラッグの途中の Enter（移動・変形）、多角形の確定・最後の点（選択）
                 for kind in CanvasKind::ALL {
-                    if kind.handler().key(app, *key, *event_modifiers) {
+                    if kind.handler().key(app, (*key).into(), (*m).into()) {
                         break;
                     }
                 }
@@ -1370,7 +1369,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     // 最後の位置で終える（ツールごとの終わらせ方は受け口が決める）
     // ツールの押しのボタン（選択の行を左ボタン以外にしていれば、そのボタン）
     let tool_button = app.canvas.tool_button.unwrap_or(PointerButton::Primary);
-    let released = !ui.input(|i| i.pointer.button_down(tool_button))
+    let released = !ui.input(|i| i.pointer.button_down(tool_button.into()))
         && !events
             .iter()
             .any(|e| matches!(e, Event::PointerButton { pressed: true, .. }));
@@ -1394,7 +1393,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
         .eyedrop
         .filter(|press| press.source == StrokeSource::Mouse)
         .is_some_and(|press| {
-            !ui.input(|i| i.pointer.button_down(press.button))
+            !ui.input(|i| i.pointer.button_down(press.button.into()))
                 && !events.iter().any(|e| {
                     matches!(
                         e,
@@ -1402,7 +1401,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
                             button,
                             pressed: true,
                             ..
-                        } if *button == press.button
+                        } if PointerButton::from(*button) == press.button
                     )
                 })
         });
@@ -1413,7 +1412,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     }
     // 表示を動かしている押しのボタンを離したのを取りこぼしたときも終える。ペンが回す・拡縮している間は、egui のポインタが押していなくても
     // 続ける（ペンが離したときに終える）
-    let down = |b: Option<PointerButton>| b.is_some_and(|b| ui.input(|i| i.pointer.button_down(b)));
+    let down =
+        |b: Option<PointerButton>| b.is_some_and(|b| ui.input(|i| i.pointer.button_down(b.into())));
     if !down(app.canvas.nav_button) && !nav::pen_driven(app) {
         app.canvas.rotating = None;
         app.canvas.zooming = None;

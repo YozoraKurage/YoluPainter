@@ -1,7 +1,7 @@
 //! マウスと修飾キーの組み合わせの一覧（`keymap::GESTURES` の表から作る）。一覧と実際の入力（3D ビューの回す・パン、ステンシルの移動、選択範囲の
 //! 作り方、2D のパン・回転・スポイト）は同じ表を読む。
 use crate::lang::Lang;
-use egui::{Key, Modifiers, PointerButton};
+use crate::state::key::{Key, Modifiers, PointerButton};
 
 pub use crate::keymap::Operation;
 

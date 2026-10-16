@@ -1,7 +1,8 @@
 use super::*;
-use egui::{Event, Modifiers, RawInput};
+use egui::{Event, RawInput};
 
 use crate::mode::EditorMode;
+use crate::state::key::Modifiers;
 use crate::state::{OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
 
@@ -40,11 +41,11 @@ impl Rig {
 
     fn key(key: Key, pressed: bool, repeat: bool, modifiers: Modifiers) -> Event {
         Event::Key {
-            key,
+            key: key.into(),
             physical_key: None,
             pressed,
             repeat,
-            modifiers,
+            modifiers: modifiers.into(),
         }
     }
 
@@ -356,11 +357,11 @@ fn a_modifier_released_first_does_not_end_the_hold() {
     rig.mode("tool.gradient", ToolKeyMode::Hold);
     // Shift+G（グラデーション）
     rig.frame(vec![
-        Event::ModifiersChanged(Modifiers::SHIFT),
+        Event::ModifiersChanged(Modifiers::SHIFT.into()),
         Rig::key(Key::G, true, false, Modifiers::SHIFT),
     ]);
     assert_eq!(rig.tool(), Tool::Gradient);
-    rig.frame(vec![Event::ModifiersChanged(Modifiers::NONE)]);
+    rig.frame(vec![Event::ModifiersChanged(Modifiers::NONE.into())]);
     rig.idle(0.1);
     assert_eq!(
         rig.tool(),

@@ -310,8 +310,8 @@ fn the_set_context_menu_and_an_assigned_key_open_the_bake_window() {
     h.keys_mut().set(
         ("bake.open", Scope::Everywhere),
         vec![Trigger::Key {
-            modifiers: egui::Modifiers::COMMAND | egui::Modifiers::ALT,
-            key: egui::Key::B,
+            modifiers: (egui::Modifiers::COMMAND | egui::Modifiers::ALT).into(),
+            key: egui::Key::B.into(),
         }],
     );
     h.app_mut().keys_changed();
@@ -967,8 +967,8 @@ fn closing_from_another_category_still_tells_that_the_conflicting_keys_are_not_s
     h.keys_mut().set(
         ("tool.eraser", Scope::Paint),
         vec![Trigger::Key {
-            modifiers: egui::Modifiers::NONE,
-            key: egui::Key::B,
+            modifiers: egui::Modifiers::NONE.into(),
+            key: egui::Key::B.into(),
         }],
     );
     h.app_mut().keys_changed();

@@ -217,17 +217,6 @@ impl Modifiers {
         ..Self::NONE
     };
 
-    /// 両方のどちらかで押している修飾。
-    pub const fn plus(self, rhs: Self) -> Self {
-        Self {
-            alt: self.alt | rhs.alt,
-            ctrl: self.ctrl | rhs.ctrl,
-            shift: self.shift | rhs.shift,
-            mac_cmd: self.mac_cmd | rhs.mac_cmd,
-            command: self.command | rhs.command,
-        }
-    }
-
     pub fn is_none(&self) -> bool {
         *self == Self::NONE
     }
@@ -247,47 +236,20 @@ impl Modifiers {
         }
         (!pattern.ctrl || self.ctrl) && (!pattern.command || self.command)
     }
-
-    /// `query` の修飾を全部押しているか（Ctrl と Command、Mac の Command と Command は同じ物として見る）。
-    pub fn contains(&self, query: Self) -> bool {
-        if query == Self::NONE {
-            return true;
-        }
-        if self.alt && query.alt {
-            return self.contains(Self {
-                alt: false,
-                ..query
-            });
-        }
-        if self.shift && query.shift {
-            return self.contains(Self {
-                shift: false,
-                ..query
-            });
-        }
-        if (self.ctrl || self.command) && (query.ctrl || query.command) {
-            return self.contains(Self {
-                command: false,
-                ctrl: false,
-                ..query
-            });
-        }
-        if (self.mac_cmd || self.command) && (query.mac_cmd || query.command) {
-            return self.contains(Self {
-                mac_cmd: false,
-                command: false,
-                ..query
-            });
-        }
-        false
-    }
 }
 
 impl std::ops::BitOr for Modifiers {
     type Output = Self;
 
+    /// 両方のどちらかで押している修飾。
     fn bitor(self, rhs: Self) -> Self {
-        self.plus(rhs)
+        Self {
+            alt: self.alt | rhs.alt,
+            ctrl: self.ctrl | rhs.ctrl,
+            shift: self.shift | rhs.shift,
+            mac_cmd: self.mac_cmd | rhs.mac_cmd,
+            command: self.command | rhs.command,
+        }
     }
 }
 

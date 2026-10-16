@@ -15,12 +15,13 @@
 //!   選んだ。モードが替わる直前は、離したことにして戻してから替える。フォーカスを失った・ポップアップ・ダイアログ・文字の入力が開いたときも、離したことにする。
 //! - 押した時刻は、アプリ共通の時計（メインウィンドウの時刻。外へ出したウィンドウの時刻は、ウィンドウごとに始まりが違う）で持つ。
 
-use egui::{Event, Key};
+use egui::Event;
 
 use crate::brushes::BrushKey;
 use crate::commands;
 use crate::keymap::Fired;
 use crate::lang::Lang;
+use crate::state::key::Key;
 use crate::state::{Action, AppState, Tool};
 use crate::toolset::{SlotId, ToolsetAction};
 
@@ -232,7 +233,7 @@ pub fn swallow_repeats(i: &mut egui::InputState, app: &AppState) {
     i.events.retain(|e| {
         !matches!(
             e,
-            Event::Key { key, pressed: true, repeat: true, .. } if keys.contains(key)
+            Event::Key { key, pressed: true, repeat: true, .. } if keys.contains(&(*key).into())
         )
     });
 }
@@ -260,7 +261,9 @@ pub fn update(ctx: &egui::Context, app: &mut AppState) {
         if used(app, level.revision) {
             level.drew = true;
         }
-        if level.held.is_none() && (blocked || !focused || !ctx.input(|i| i.key_down(level.key))) {
+        if level.held.is_none()
+            && (blocked || !focused || !ctx.input(|i| i.key_down(level.key.into())))
+        {
             level.held = Some((now - level.started).max(0.0));
         }
     }

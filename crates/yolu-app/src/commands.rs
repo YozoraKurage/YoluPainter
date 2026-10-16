@@ -11,8 +11,6 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use egui::Key;
-
 use yolu_core::geometry::AxisView;
 
 use crate::clipboard::ClipAction;
@@ -26,6 +24,7 @@ use crate::pathtool::PathAction;
 use crate::pie::PieAction;
 use crate::prefs::PrefsAction;
 use crate::selection::{SelAction, SelEdit, SelUiOp};
+use crate::state::key::Key;
 use crate::state::{Action, AppState, Tool};
 use crate::view3d::navigation::NavOp;
 

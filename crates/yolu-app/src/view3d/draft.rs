@@ -10,7 +10,7 @@
 //! どれも離すまで文書を変えない。Esc・フォーカスを失う・ツールの切り替え・ビューが隠れるで、途中の形を何も描かずに捨てる（離したのを取りこぼした
 //! グラデーションは、2D と同じく最後の位置で塗る。ペンの押しを OS に奪われて補った離しも、取りこぼしと同じ）。
 
-use egui::{Modifiers, Painter, Pos2, Rect};
+use egui::{Painter, Pos2, Rect};
 use yolu_core::geometry::{
     cover_screen, pick, ProjectionSettings, ScreenCoverSettings, ScreenCoverage, ScreenShape,
     SurfaceHit, SurfaceInput,
@@ -23,6 +23,7 @@ use super::input::{
 use crate::drafting::canvas::{fill_region, finish_paint, paint_outline};
 use crate::drafting::{endpoints, outline, Figure};
 use crate::notice::Source;
+use crate::state::key::Modifiers;
 use crate::state::{AppState, StrokeSource, Tool};
 
 /// 3D ビューでグラデーション・図形・定規のドラッグの途中か（どれでも true。離す・Esc・フォーカスを失うまで）。

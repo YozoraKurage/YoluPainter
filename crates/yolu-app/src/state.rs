@@ -367,9 +367,9 @@ pub struct CanvasInput {
     pub panning: bool,
     pub rotating: Option<RotateDrag>,
     /// 表示の回す・パン・拡縮を始めたボタン（そのボタンを離したら終える）。
-    pub nav_button: Option<egui::PointerButton>,
+    pub nav_button: Option<key::PointerButton>,
     /// 描く・選択などのツールの押しを始めたボタン（そのボタンを離したらツールが終える。無ければ左ボタン）。
-    pub tool_button: Option<egui::PointerButton>,
+    pub tool_button: Option<key::PointerButton>,
     /// 右ボタン（ペンのサイドボタン）でスポイトを始めている（押したまま動かすと見本が付いてくる。離して決める）。
     pub eyedrop: Option<crate::eyedrop::RightPress>,
     pub rotate_key_held: bool,
@@ -388,7 +388,7 @@ pub struct CanvasInput {
     pub ruler_constraint: Option<crate::drafting::Constraint>,
     /// クローンの元を決める組み合わせ（既定は Alt + 左）で押した点とボタン（画面の点。動かさずに離したらクローンの元にする。動かしたら
     /// ドラッグの操作だけ）。
-    pub clone_press: Option<(Pos2, egui::PointerButton)>,
+    pub clone_press: Option<(Pos2, key::PointerButton)>,
     /// 描いているクローンのストロークが使う offset（文書の座標の、描く点から元までのずれ。元の印が今写している点へ動くのに使う）。
     pub clone_offset: Option<yolu_core::glam::DVec2>,
 }

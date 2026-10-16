@@ -2,9 +2,10 @@ use super::{endpoints, outline, Drag, Figure};
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
+    state::key::Modifiers,
     state::{AppState, StrokeSource, Tool},
 };
-use egui::{Color32, Modifiers, Painter, Pos2, Rect, Shape, Stroke};
+use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 use yolu_core::{glam::DVec2, BrushSample, SelectionMask};
 
 pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSource, m: Modifiers) {

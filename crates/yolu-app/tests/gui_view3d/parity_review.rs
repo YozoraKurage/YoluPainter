@@ -327,8 +327,8 @@ impl Press {
     /// 組み合わせの行の範囲の、この組み合わせの押し（押しながらのキーは行のまま）。
     fn of(g: &Gesture, c: Combo) -> Press {
         Press {
-            held: g.held.and_then(yolu_app::keymap::hold_key),
-            button: c.button,
+            held: g.held.and_then(yolu_app::keymap::hold_key).map(Into::into),
+            button: c.button.into(),
             modifiers: Modifiers {
                 alt: c.alt,
                 shift: c.shift,
@@ -407,7 +407,7 @@ fn observe_view3d(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation
     output.textures_delta.clear();
     let mut found = Vec::new();
     if let Some((nav, button)) = app.view3d().input.nav {
-        assert_eq!(button, press.button, "{press:?}");
+        assert_eq!(PointerButton::from(button), press.button, "{press:?}");
         found.push(match nav {
             Nav::Orbit => Operation::Orbit,
             Nav::SnapOrbit => Operation::SnapOrbit,
@@ -416,11 +416,11 @@ fn observe_view3d(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation
         });
     }
     if let Some(e) = app.view3d().input.eyedrop {
-        assert_eq!(e.button, press.button, "{press:?}");
+        assert_eq!(PointerButton::from(e.button), press.button, "{press:?}");
         found.push(Operation::Pick);
     }
     if let Some((_, button)) = app.view3d().input.clone_press {
-        assert_eq!(button, press.button, "{press:?}");
+        assert_eq!(PointerButton::from(button), press.button, "{press:?}");
         found.push(Operation::CloneSource);
     }
     if !found.is_empty() {
@@ -477,14 +477,14 @@ fn observe_stencil(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operatio
         },
         |ui| {
             yolu_app::stencil::update_keys(ui.ctx(), &mut app);
-            yolu_app::stencil::handle_event(&mut app, &event, rect, true, &press.modifiers);
+            yolu_app::stencil::handle_event(&mut app, &event, rect, true, &press.modifiers.into());
         },
     );
     output.textures_delta.clear();
     let Some(drag) = app.stencil().drag else {
         return Vec::new();
     };
-    assert_eq!(drag.button, press.button, "{press:?}");
+    assert_eq!(PointerButton::from(drag.button), press.button, "{press:?}");
     vec![match drag.kind {
         DragKind::Move => Operation::MoveStencil,
         DragKind::Scale => Operation::ScaleStencil,
@@ -526,7 +526,7 @@ fn stencil_snaps(config: &[(u8, Option<Combo>)], modifiers: Modifiers) -> bool {
                 &event,
                 rect,
                 true,
-                &press.modifiers
+                &press.modifiers.into()
             ));
         },
     );
@@ -539,7 +539,7 @@ fn stencil_snaps(config: &[(u8, Option<Combo>)], modifiers: Modifiers) -> bool {
         &Event::PointerMoved(to),
         rect,
         true,
-        &modifiers
+        &modifiers.into()
     ));
     let angle = app.stencil().angle;
     let snapped = (angle / 15.0 - (angle / 15.0).round()).abs() < 1e-3;
@@ -607,15 +607,19 @@ fn observe_canvas(
             found.push(Operation::Rotate);
         }
         if let Some(e) = s.canvas().eyedrop {
-            assert_eq!(e.button, press.button, "{press:?}");
+            assert_eq!(PointerButton::from(e.button), press.button, "{press:?}");
             found.push(Operation::Pick);
         }
         if let Some((_, button)) = s.canvas().clone_press {
-            assert_eq!(button, press.button, "{press:?}");
+            assert_eq!(PointerButton::from(button), press.button, "{press:?}");
             found.push(Operation::CloneSource);
         }
         if s.canvas().panning || s.canvas().rotating.is_some() {
-            assert_eq!(s.canvas().nav_button, Some(press.button), "{press:?}");
+            assert_eq!(
+                s.canvas().nav_button.map(PointerButton::from),
+                Some(press.button),
+                "{press:?}"
+            );
         }
         if !found.is_empty() {
             // ビューの押し・スポイト・クローンの元は描かない
@@ -716,7 +720,7 @@ fn every_listed_mouse_gesture_matches_the_real_input_handler() {
 #[test]
 fn changing_the_button_or_the_modifiers_of_any_mouse_row_moves_its_operation_to_the_new_combination(
 ) {
-    use egui::PointerButton::{Extra1, Extra2, Middle, Primary, Secondary};
+    use yolu_app::state::key::PointerButton::{Extra1, Extra2, Middle, Primary, Secondary};
     let mut h = app(1280.0, 800.0, 256);
     for g in GESTURES.iter() {
         let old = Combo::of(g);
@@ -792,11 +796,10 @@ fn only_the_eyedropper_tool_picks_on_a_left_press_and_every_other_tool_picks_wit
         .collect();
     // 一覧の「スポイト」の左ボタンの行は無い（描くツールの Alt + 左は、表示を回す組み合わせになった）。右ボタンの行は、どのツールからでも
     assert_eq!(picking, [Tool::Eyedropper]);
-    assert!(bindings()
-        .iter()
-        .all(|b| !(b.operation == Operation::Pick && b.button == PointerButton::Primary)));
+    assert!(bindings().iter().all(|b| !(b.operation == Operation::Pick
+        && PointerButton::from(b.button) == PointerButton::Primary)));
     assert!(bindings().iter().any(|b| b.operation == Operation::Pick
-        && b.button == PointerButton::Secondary
+        && PointerButton::from(b.button) == PointerButton::Secondary
         && b.scope == "canvas"));
 }
 
@@ -839,7 +842,7 @@ fn shift_snaps_the_stencil_rotation_to_the_listed_step() {
                     &press,
                     rect,
                     true,
-                    &Modifiers::NONE
+                    &Modifiers::NONE.into()
                 ));
             },
         );

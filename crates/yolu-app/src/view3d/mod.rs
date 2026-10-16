@@ -65,7 +65,7 @@ pub struct SurfaceInput {
     /// クイックマスクのブラシ・消しゴムの 3D のストローク（選択範囲の被覆を集める。被覆は `AppState::sel` の選択ペンが持つ）。
     pub cover: Option<yolu_core::geometry::SurfaceCoverStroke>,
     /// ドラッグで回している・パンしている（押したボタンと一緒に）。
-    pub nav: Option<(Nav, egui::PointerButton)>,
+    pub nav: Option<(Nav, crate::state::key::PointerButton)>,
     pub navigation: Option<navigation::Drag>,
     pub last_pointer: Option<egui::Pos2>,
     /// 最後のストロークで受けた点の数（試験用）。
@@ -73,9 +73,9 @@ pub struct SurfaceInput {
     /// 描いているストロークに固めた 3D の対称（対称の面の表示と、写しのカーソルはこれを読む）。
     pub symmetry: Option<yolu_core::geometry::SurfaceSymmetrySetup>,
     /// クローンの元を決める組み合わせ（既定は Alt + 左）で押した点とボタン（動かさずに離したらクローンの元にする。動かしたらドラッグの操作だけ）。
-    pub clone_press: Option<(egui::Pos2, egui::PointerButton)>,
+    pub clone_press: Option<(egui::Pos2, crate::state::key::PointerButton)>,
     /// 視点の移動の間に押されていた移動キー（右ボタンを先に離しても、押したままの間は、キーの繰り返しをキーの表に渡さない。`keymap::take_fly_keys`）。
-    pub fly_held: Vec<egui::Key>,
+    pub fly_held: Vec<crate::state::key::Key>,
     /// 右ボタン（ペンのサイドボタン）を押した点と、押したときの見本（動かさずに離したらスポイト。動かしたら回すだけ）。
     pub eyedrop: Option<crate::eyedrop::RightPress>,
     /// 確定した 3D ストロークの終点（面の点。Shift + 押しの直線の始め。今のカメラで画面へ写し直して使う。今のモデルの世代のときだけ使う）。

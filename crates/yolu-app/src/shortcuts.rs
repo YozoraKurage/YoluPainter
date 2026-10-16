@@ -9,9 +9,9 @@ use crate::{
     keymap::{self, Trigger, When},
     lang::Lang,
     mode::EditorMode,
+    state::key::{Key, Modifiers},
     state::Action,
 };
-use egui::{Key, Modifiers};
 
 pub use editor::ShortcutWindow;
 

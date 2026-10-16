@@ -27,6 +27,7 @@ use crate::m2::channel_name;
 use crate::matpaint::CHANNELS;
 use crate::notice::Source;
 use crate::panels::properties::toggle_row;
+use crate::state::key::PointerButton;
 use crate::state::{AppState, StrokeSource, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Rows};
@@ -76,7 +77,7 @@ pub struct RightPress {
     pub at: Pos2,
     pub sample: Option<Color32>,
     /// 押したボタン（そのボタンを離して決める。組み合わせの表で、スポイトを別のボタンにもできる）。
-    pub button: egui::PointerButton,
+    pub button: PointerButton,
 }
 
 /// 押したときにスポイトとして働くか（スポイトのツール。描くツールの右ボタンは `RightPress`）。
@@ -89,7 +90,7 @@ pub fn right_begin(
     app: &mut AppState,
     source: StrokeSource,
     at: Pos2,
-    button: egui::PointerButton,
+    button: PointerButton,
 ) -> bool {
     if app.is_stroking() || app.canvas.eyedrop.is_some() || left_drag_in_progress(app) {
         return false;

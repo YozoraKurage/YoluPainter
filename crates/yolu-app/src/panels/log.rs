@@ -309,7 +309,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         let pressed = ui.input_mut(|i| {
             let event = i.events.iter().any(|e| matches!(e, egui::Event::Copy));
             i.events.retain(|e| !matches!(e, egui::Event::Copy));
-            event || i.consume_key(modifiers, key)
+            event || i.consume_key(modifiers.into(), key.into())
         });
         if pressed && !rows.is_empty() {
             copy = Some(copy_text(app, !app.ui.log_view.selected.is_empty()));

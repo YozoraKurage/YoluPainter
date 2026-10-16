@@ -17,11 +17,12 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use egui::{Event, InputState, Key, Modifiers, PointerButton};
+use egui::{Event, InputState};
 
 use crate::clipboard::ClipAction;
 use crate::commands;
 use crate::lang::Lang;
+use crate::state::key::{Key, Modifiers, PointerButton};
 use crate::state::{Action, AppState, Tool};
 use crate::toolkeys::ToolKeyMode;
 
@@ -778,7 +779,9 @@ fn take_key(i: &mut InputState, modifiers: Modifiers, key: Key) -> (bool, bool) 
         else {
             return true;
         };
-        let is_match = *pressed_key == key && modifiers_match(pressed_modifiers, modifiers, key);
+        let (pressed_key, pressed_modifiers) =
+            (Key::from(*pressed_key), Modifiers::from(*pressed_modifiers));
+        let is_match = pressed_key == key && modifiers_match(&pressed_modifiers, modifiers, key);
         found |= is_match;
         fresh |= is_match && !*repeat;
         !is_match
@@ -807,7 +810,7 @@ pub fn hold_key(command: &str) -> Option<Key> {
 
 /// 押している間だけ効く操作のキーを今押しているか。
 pub fn hold_down(i: &InputState, command: &str) -> bool {
-    hold_key(command).is_some_and(|key| i.key_down(key))
+    hold_key(command).is_some_and(|key| i.key_down(key.into()))
 }
 
 /// 視点の移動キーの押し（繰り返しを含む。Shift 以外の修飾キーが無いもの。Ctrl を押した Ctrl+S などは残す）を取り除く。右ボタンを押している
@@ -822,7 +825,7 @@ pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
     if flying {
         // 右ボタンを押す前から押していたキーも、移動の間は押されている
         for key in &keys {
-            if i.key_down(*key) && !held.contains(key) {
+            if i.key_down((*key).into()) && !held.contains(key) {
                 held.push(*key);
             }
         }
@@ -836,7 +839,8 @@ pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
             modifiers,
             pressed,
             ..
-        } if keys.contains(key) => {
+        } if keys.contains(&(*key).into()) => {
+            let key = &Key::from(*key);
             if !*pressed {
                 // 離した: 次の押しは新しい押し
                 held.retain(|k| k != key);
@@ -854,7 +858,7 @@ pub fn take_fly_keys(i: &mut InputState, held: &mut Vec<Key>, flying: bool) {
         }
         _ => true,
     });
-    held.retain(|key| i.key_down(*key));
+    held.retain(|key| i.key_down((*key).into()));
 }
 
 /// 操作のキー（表の最初のキーの行。画面の部品の決まった働きは、その定義のキー）。
@@ -1590,11 +1594,11 @@ mod tests {
         let mut got = Vec::new();
         let input = egui::RawInput {
             events: vec![Event::Key {
-                key,
+                key: key.into(),
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers,
+                modifiers: modifiers.into(),
             }],
             ..Default::default()
         };
@@ -1857,12 +1861,12 @@ mod tests {
     #[test]
     fn one_operation_runs_once_per_frame_even_when_two_of_its_rows_match() {
         let app = AppState::new(32, 32);
-        let key = |key, modifiers| Event::Key {
-            key,
+        let key = |key: Key, modifiers: Modifiers| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         // JIS 配列の ^ のキーは、キーの Equals と文字の ^ が両方届く。表示を右に回すのは 1 回だけ
         let (got, left) = dispatched_events(
@@ -1931,12 +1935,12 @@ mod tests {
     #[test]
     fn consume_key_removes_the_matching_events_only() {
         let ctx = egui::Context::default();
-        let key_event = |key, modifiers| Event::Key {
-            key,
+        let key_event = |key: Key, modifiers: Modifiers| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         let input = egui::RawInput {
             events: vec![
@@ -2194,11 +2198,11 @@ mod tests {
         let mut got = Vec::new();
         let input = egui::RawInput {
             events: vec![Event::Key {
-                key,
+                key: key.into(),
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers,
+                modifiers: modifiers.into(),
             }],
             ..Default::default()
         };
@@ -2283,16 +2287,16 @@ mod tests {
         // 押したままのキーの繰り返しでは開かない（事象は取り除く）。ほかの操作の繰り返しは今までどおり効く。egui は、押したままのキーの
         // 2 回目からの押しを繰り返しにするので、同じ入れ物で押してから続ける
         let ctx = egui::Context::default();
-        let frame = |key, modifiers, repeat| {
+        let frame = |key: Key, modifiers: Modifiers, repeat| {
             let mut got = Vec::new();
             let mut left = Vec::new();
             let input = egui::RawInput {
                 events: vec![Event::Key {
-                    key,
+                    key: key.into(),
                     physical_key: None,
                     pressed: true,
                     repeat,
-                    modifiers,
+                    modifiers: modifiers.into(),
                 }],
                 ..Default::default()
             };
@@ -2636,13 +2640,13 @@ mod tests {
     fn consume_command_reads_the_table_and_respects_the_condition() {
         let mut app = AppState::new(32, 32);
         let ctx = egui::Context::default();
-        let press = |key, modifiers| egui::RawInput {
+        let press = |key: Key, modifiers: Modifiers| egui::RawInput {
             events: vec![Event::Key {
-                key,
+                key: key.into(),
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers,
+                modifiers: modifiers.into(),
             }],
             ..Default::default()
         };
@@ -2738,12 +2742,12 @@ mod tests {
 
     #[test]
     fn taking_the_fly_keys_removes_only_plain_and_shifted_presses_of_those_keys() {
-        let key = |key, modifiers, pressed| Event::Key {
-            key,
+        let key = |key: Key, modifiers: Modifiers, pressed| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         let ctx = egui::Context::default();
         let mut left = Vec::new();
@@ -2771,7 +2775,7 @@ mod tests {
         let keys: Vec<(Key, bool)> = left
             .iter()
             .filter_map(|e| match e {
-                Event::Key { key, pressed, .. } => Some((*key, *pressed)),
+                Event::Key { key, pressed, .. } => Some(((*key).into(), *pressed)),
                 _ => None,
             })
             .collect();
@@ -2790,12 +2794,12 @@ mod tests {
     #[test]
     fn a_fly_key_still_held_after_the_flight_stays_off_the_table_until_it_is_released_and_pressed_again(
     ) {
-        let key = |key, modifiers, pressed, repeat| Event::Key {
-            key,
+        let key = |key: Key, modifiers: Modifiers, pressed, repeat| Event::Key {
+            key: key.into(),
             physical_key: None,
             pressed,
             repeat,
-            modifiers,
+            modifiers: modifiers.into(),
         };
         let ctx = egui::Context::default();
         let mut held: Vec<Key> = Vec::new();
@@ -2812,7 +2816,7 @@ mod tests {
                         .events
                         .iter()
                         .filter_map(|e| match e {
-                            Event::Key { key, pressed, .. } => Some((*key, *pressed)),
+                            Event::Key { key, pressed, .. } => Some(((*key).into(), *pressed)),
                             _ => None,
                         })
                         .collect();
@@ -2911,11 +2915,11 @@ mod tests {
             count
         };
         let press = |repeat| Event::Key {
-            key: Key::W,
+            key: Key::W.into(),
             physical_key: None,
             pressed: true,
             repeat,
-            modifiers: Modifiers::NONE,
+            modifiers: Modifiers::NONE.into(),
         };
         // 右ボタンを押す前に W を押していた（表へ届く）
         assert_eq!(run(vec![press(false)], false, &mut held), 1);

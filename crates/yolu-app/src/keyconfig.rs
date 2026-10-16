@@ -14,7 +14,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use egui::{Key, Modifiers, PointerButton};
 use serde_json::{json, Map, Value};
 
 use crate::commands;
@@ -22,6 +21,7 @@ use crate::keymap::{self, Gesture, KeyBinding, Keymap, Operation, Scope, Trigger
 use crate::lang::Lang;
 use crate::notice::Source;
 use crate::pie::{self, PieItem, PieMenu, PieName};
+use crate::state::key::{Key, Modifiers, PointerButton};
 use crate::state::AppState;
 use crate::toolkeys::ToolKeyMode;
 use crate::ui::pie::SLOTS;

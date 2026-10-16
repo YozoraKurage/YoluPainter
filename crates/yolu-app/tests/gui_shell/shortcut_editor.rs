@@ -104,7 +104,10 @@ fn triggers(h: &H, group: GroupKey) -> Vec<keymap::Trigger> {
 }
 
 fn trigger(modifiers: Modifiers, key: Key) -> keymap::Trigger {
-    keymap::Trigger::Key { modifiers, key }
+    keymap::Trigger::Key {
+        modifiers: modifiers.into(),
+        key: key.into(),
+    }
 }
 
 const FLIP: GroupKey = ("view.flip", Scope::Everywhere);
@@ -341,11 +344,21 @@ fn a_mouse_cell_takes_the_next_button_pressed_on_it_with_its_modifiers() {
     assert!(!capturing(&h), "離しのクリックで待ち直さない");
     let combo = h.keys().combo(orbit).unwrap();
     assert_eq!(
-        (combo.button, combo.alt, combo.shift, combo.ctrl),
+        (
+            PointerButton::from(combo.button),
+            combo.alt,
+            combo.shift,
+            combo.ctrl
+        ),
         (PointerButton::Secondary, true, false, false)
     );
     assert_eq!(
-        keymap::gesture("view3d", PointerButton::Secondary, &Modifiers::ALT, false),
+        keymap::gesture(
+            "view3d",
+            PointerButton::Secondary.into(),
+            &Modifiers::ALT.into(),
+            false
+        ),
         Some(keymap::Operation::Orbit)
     );
 }

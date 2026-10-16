@@ -20,11 +20,11 @@ fn press(app: &mut AppState, key: Key, modifiers: Modifiers) {
     let ctx = egui::Context::default();
     let input = egui::RawInput {
         events: vec![Event::Key {
-            key,
+            key: key.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         }],
         ..Default::default()
     };
@@ -35,7 +35,7 @@ fn press(app: &mut AppState, key: Key, modifiers: Modifiers) {
 /// マウスの組み合わせの欄の文字は、どの行にどのボタン（戻る・進むも）を当てても書ける。離しの行は「動かさずに離す」。
 #[test]
 fn every_button_on_every_mouse_row_has_a_label_in_both_languages() {
-    use egui::PointerButton::*;
+    use crate::state::key::PointerButton::*;
     for g in crate::keymap::GESTURES.iter() {
         for button in [Primary, Secondary, Middle, Extra1, Extra2] {
             let combo = crate::keyconfig::Combo {
@@ -210,11 +210,11 @@ fn state_for(binding: &Binding) -> AppState {
 fn input_for(binding: &Binding) -> egui::RawInput {
     let events = match binding.trigger {
         Trigger::Key { modifiers, key } => vec![Event::Key {
-            key,
+            key: key.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         }],
         Trigger::Text(text) => vec![Event::Text(text.to_owned())],
     };
@@ -267,11 +267,11 @@ fn dispatched(app: &AppState, key: Key) -> Vec<Action> {
     let mut got = Vec::new();
     let input = egui::RawInput {
         events: vec![Event::Key {
-            key,
+            key: key.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers: Modifiers::NONE,
+            modifiers: Modifiers::NONE.into(),
         }],
         ..Default::default()
     };
@@ -602,11 +602,11 @@ fn the_screen_pick_keys_read_as_their_documented_text() {
         let m = ctrl_alt;
         let input = egui::RawInput {
             events: vec![Event::Key {
-                key: Key::I,
+                key: Key::I.into(),
                 physical_key: None,
                 pressed: true,
                 repeat: false,
-                modifiers: m,
+                modifiers: m.into(),
             }],
             ..Default::default()
         };

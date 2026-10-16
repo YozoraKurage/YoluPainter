@@ -317,7 +317,7 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
 pub fn flying(app: &AppState) -> bool {
     matches!(
         app.view3d.input.nav,
-        Some((Nav::Orbit, egui::PointerButton::Secondary))
+        Some((Nav::Orbit, crate::state::key::PointerButton::Secondary))
     )
 }
 

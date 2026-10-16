@@ -1,6 +1,6 @@
 //! 選択の形の幾何（ドラッグの 2 つの角の決め方・角を丸めた長方形の輪郭）。画面にも文書にも触れない計算だけ。
 
-use egui::Modifiers;
+use crate::state::key::Modifiers;
 
 use super::SelState;
 use crate::engine::DVec2;

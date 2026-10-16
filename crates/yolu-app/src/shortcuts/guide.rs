@@ -6,6 +6,7 @@ use crate::commands::{self, Kind};
 use crate::keyconfig;
 use crate::keymap::{self, Scope, GESTURES};
 use crate::lang::Lang;
+use crate::state::key::Modifiers;
 use crate::state::AppState;
 
 use super::editor::{command_name, mouse_name, when_label, Section};
@@ -81,12 +82,12 @@ pub fn tables(lang: Lang) -> String {
             held: g
                 .held
                 .and_then(|h| map.rows_of(h).find_map(keymap::KeyBinding::key)),
-            modifiers: egui::Modifiers {
+            modifiers: Modifiers {
                 alt: g.alt,
                 shift: g.shift,
                 ctrl: g.ctrl,
                 command: g.ctrl,
-                ..egui::Modifiers::NONE
+                ..Modifiers::NONE
             },
             button: g.button,
             operation: g.operation,

@@ -307,7 +307,7 @@ fn holding_ctrl_tab_and_releasing_toward_an_item_runs_it_and_a_long_hold_in_the_
     assert_eq!(pie_open(&h).as_deref(), Some("mode"));
     assert_eq!(
         h.pie().open.as_ref().unwrap().run.key,
-        Some(Key::Tab),
+        Some(Key::Tab.into()),
         "押しているキーを覚える"
     );
     // 右（ポーズ）の向きへ動かして離す: 箱に届かなくても、向きで指す

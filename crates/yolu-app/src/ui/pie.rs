@@ -50,15 +50,15 @@ pub struct Slot {
     pub tooltip: Option<String>,
 }
 
-/// 開いているパイの途中の状態。
+/// 開いているパイの途中の状態（`K` は開いたキーの型。egui のキーの事象から作れる物）。
 #[derive(Clone, Debug, PartialEq)]
-pub struct Runtime {
+pub struct Runtime<K> {
     /// 開いた所（真ん中）。画面の端では、項目が収まるようにずらす。
     pub center: Pos2,
     /// 開いたときのポインタの位置（ずらす前の真ん中。押したまま離したとき、ここから動かしたかを見る）。
     pub origin: Pos2,
     /// 開いたキー（押したまま離したら、指している項目を実行する）。キーで開いていない・離したら None。
-    pub key: Option<Key>,
+    pub key: Option<K>,
     /// 開いた時刻（`InputState::time`）。
     pub opened_at: f64,
     /// 開いたフレーム（そのフレームの押しは数えない）。
@@ -67,8 +67,8 @@ pub struct Runtime {
     pub hovered: Option<usize>,
 }
 
-impl Runtime {
-    pub fn new(ctx: &egui::Context, center: Pos2, key: Option<Key>) -> Runtime {
+impl<K> Runtime<K> {
+    pub fn new(ctx: &egui::Context, center: Pos2, key: Option<K>) -> Runtime<K> {
         Runtime {
             center,
             key,
@@ -167,10 +167,10 @@ pub fn pointed(
 }
 
 /// パイを描いて、入力を受ける。
-pub fn show(
+pub fn show<K: Copy + PartialEq + From<Key>>(
     ctx: &egui::Context,
     id: Id,
-    run: &mut Runtime,
+    run: &mut Runtime<K>,
     slots: &[Option<Slot>; SLOTS],
 ) -> Outcome {
     let screen = ctx.content_rect();
@@ -205,7 +205,7 @@ pub fn show(
         let released = run.key.is_some_and(|key| {
             i.events
                 .iter()
-                .any(|e| matches!(e, egui::Event::Key { key: k, pressed: false, .. } if *k == key))
+                .any(|e| matches!(e, egui::Event::Key { key: k, pressed: false, .. } if K::from(*k) == key))
         });
         (
             i.pointer.latest_pos(),

@@ -50,7 +50,7 @@ pub struct RegionState {
     /// ID の色で選ぶときの許し幅（8 bit のチャンネルの差の最大）。
     pub id_tolerance: u8,
     /// 入力のフレームごとの修飾キー（ID の色で選択の足す・引く・重ねる）。
-    pub modifiers: egui::Modifiers,
+    pub modifiers: crate::state::key::Modifiers,
     /// ポリゴン塗りつぶしのドラッグ。
     pub drag: Option<PolygonDrag>,
     /// ポインタの下の範囲（強調）。
@@ -78,7 +78,7 @@ impl Default for RegionState {
             job: None,
             erase: false,
             id_tolerance: yolu_core::id_colors::DEFAULT_TOLERANCE,
-            modifiers: egui::Modifiers::NONE,
+            modifiers: crate::state::key::Modifiers::NONE,
             drag: None,
             hover: None,
             cycle: None,

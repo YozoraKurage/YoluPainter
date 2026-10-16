@@ -49,13 +49,13 @@ fn headless_mouse_free_perspective_mesh_commit_cancel_undo() {
         let before = pixels(&s);
         let a = v.to_screen(4., 4.);
         let b = v.to_screen(6., 5.);
-        canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE);
+        canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE.into());
         canvas::moved(&mut s, &v, b, StrokeSource::Mouse, false);
         assert_eq!(pixels(&s), before);
         canvas::cancel(&mut s);
         assert_eq!(pixels(&s), before);
         assert_eq!(s.doc().undo_count(), 0);
-        canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE);
+        canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE.into());
         canvas::release(&mut s, &v, b, StrokeSource::Mouse, false);
         assert_ne!(pixels(&s), before);
         assert_eq!(s.doc().undo_count(), 1);
@@ -69,12 +69,12 @@ fn headless_control_corner_and_pen_enter_do_not_double_commit() {
     let v = view(&s);
     let a = v.to_screen(4., 4.);
     let b = v.to_screen(7., 6.);
-    canvas::pen_sample(&mut s, &v, a, 7, true, Modifiers::CTRL);
+    canvas::pen_sample(&mut s, &v, a, 7, true, Modifiers::CTRL.into());
     assert!(s.transform().advanced.draft.is_some());
-    canvas::pen_sample(&mut s, &v, b, 7, true, Modifiers::CTRL);
+    canvas::pen_sample(&mut s, &v, b, 7, true, Modifiers::CTRL.into());
     canvas::commit(&mut s);
     assert_eq!(s.doc().undo_count(), 1);
-    canvas::pen_sample(&mut s, &v, b, 7, false, Modifiers::CTRL);
+    canvas::pen_sample(&mut s, &v, b, 7, false, Modifiers::CTRL.into());
     assert_eq!(s.doc().undo_count(), 1);
 }
 #[test]
@@ -85,12 +85,12 @@ fn headless_focus_tool_and_revision_changes_cancel_safely() {
     let a = v.to_screen(4., 4.);
     let b = v.to_screen(7., 6.);
     let before = pixels(&s);
-    canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE);
+    canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE.into());
     canvas::moved(&mut s, &v, b, StrokeSource::Mouse, false);
     s.transform_cancel_drag();
     assert_eq!(pixels(&s), before);
     assert!(s.transform().advanced.draft.is_none());
-    canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE);
+    canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE.into());
     canvas::moved(&mut s, &v, b, StrokeSource::Mouse, false);
     s.act(Action::SelectTool(Tool::Brush));
     assert!(s.transform().advanced.draft.is_none());
@@ -105,7 +105,7 @@ fn headless_liquify_mouse_pen_restore_and_undo() {
     let a = v.to_screen(14., 14.);
     let b = v.to_screen(19., 14.);
     let before = pixels(&s);
-    canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE);
+    canvas::press(&mut s, &v, a, StrokeSource::Mouse, Modifiers::NONE.into());
     canvas::release(&mut s, &v, b, StrokeSource::Mouse, false);
     assert_ne!(pixels(&s), before);
     assert_eq!(s.doc().undo_count(), 1);
@@ -113,8 +113,8 @@ fn headless_liquify_mouse_pen_restore_and_undo() {
     s.transform_mut().advanced.mode = LiquifyMode::Restore;
     s.transform_mut().advanced.strength = 1.;
     s.transform_mut().advanced.diameter = 2048.;
-    canvas::pen_sample(&mut s, &v, a, 3, true, Modifiers::NONE);
-    canvas::pen_sample(&mut s, &v, b, 3, false, Modifiers::NONE);
+    canvas::pen_sample(&mut s, &v, a, 3, true, Modifiers::NONE.into());
+    canvas::pen_sample(&mut s, &v, b, 3, false, Modifiers::NONE.into());
     assert_ne!(pixels(&s), after);
     assert_eq!(s.doc().undo_count(), 2);
     s.act(Action::Undo);
@@ -152,7 +152,7 @@ fn snapshot_warp_grid_and_options_both_languages() {
                             &v,
                             v.to_screen(16., 16.),
                             StrokeSource::Mouse,
-                            Modifiers::NONE,
+                            Modifiers::NONE.into(),
                         );
                         canvas::moved(s, &v, v.to_screen(18., 19.), StrokeSource::Mouse, false);
                     }
@@ -244,7 +244,7 @@ fn headless_warped_pixels_save_and_open_without_new_format() {
         &v,
         v.to_screen(16., 16.),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
     );
     canvas::release(
         &mut s,
@@ -271,7 +271,7 @@ fn headless_perspective_mirrors_the_other_corner_of_the_same_edge() {
         &v,
         v.to_screen(4., 4.),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
     );
     canvas::moved(&mut s, &v, v.to_screen(6., 5.), StrokeSource::Mouse, false);
     let yolu_core::Warp::Projective(h) = &s.transform().advanced.draft.as_ref().unwrap().warp
@@ -299,14 +299,26 @@ fn review_liquify_restore_after_all_visible_pixels_leave_canvas() {
     let before = pixels(&s);
     let start = v.to_screen(16.5, 16.5);
     let outside = v.to_screen(100.5, 16.5);
-    canvas::press(&mut s, &v, start, StrokeSource::Mouse, Modifiers::NONE);
+    canvas::press(
+        &mut s,
+        &v,
+        start,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
     canvas::release(&mut s, &v, outside, StrokeSource::Mouse, false);
     assert!(s.transform_bounds_cached().is_none());
     assert_eq!(s.doc().undo_count(), 1);
     let empty = pixels(&s);
     assert!(empty.iter().all(|p| p.a == 0));
     s.transform_mut().advanced.mode = LiquifyMode::Restore;
-    canvas::press(&mut s, &v, start, StrokeSource::Mouse, Modifiers::NONE);
+    canvas::press(
+        &mut s,
+        &v,
+        start,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
     assert!(
         s.transform().advanced.draft.is_some(),
         "可視画素がなくても復元を開始できる: {}",
@@ -342,7 +354,13 @@ fn input_limit_stroke(extra: bool, lang: Lang) -> (AppState, Vec<Rgba8>, u64, u6
     let before = pixels(&s);
     let revision = s.doc().revision();
     let serial = s.doc().change_serial();
-    canvas::press(&mut s, &v, start, StrokeSource::Mouse, Modifiers::NONE);
+    canvas::press(
+        &mut s,
+        &v,
+        start,
+        StrokeSource::Mouse,
+        Modifiers::NONE.into(),
+    );
     for i in 1..=16_384 {
         if i == 16_384 {
             s.transform_mut().advanced.strength = 1.;
@@ -406,7 +424,7 @@ fn review_liquify_limit_includes_previously_committed_session_inputs() {
     // 戻すの押下だけでも描点を1個追加する。開始時の上限検査も通ること。
     s.transform_mut().advanced.mode = LiquifyMode::Restore;
     let at = v.to_screen(0.5, 0.5);
-    canvas::press(&mut s, &v, at, StrokeSource::Mouse, Modifiers::NONE);
+    canvas::press(&mut s, &v, at, StrokeSource::Mouse, Modifiers::NONE.into());
     canvas::release(&mut s, &v, at, StrokeSource::Mouse, false);
     assert_eq!(pixels(&s), before);
     assert_eq!(s.doc().undo_count(), 1);

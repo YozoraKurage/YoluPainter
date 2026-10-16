@@ -12,16 +12,14 @@
 
 use std::collections::HashMap;
 
-use egui::{
-    pos2, vec2, Event, Id, Key, Modifiers, PointerButton, Rect, Sense, Ui, UiBuilder, WidgetInfo,
-    WidgetType,
-};
+use egui::{pos2, vec2, Event, Id, Rect, Sense, Ui, UiBuilder, WidgetInfo, WidgetType};
 
 use crate::commands::{self, Kind};
 use crate::keyconfig::{self, Combo, GroupKey, KeyEdit};
 use crate::keymap::{self, Scope, Trigger, When, GESTURES};
 use crate::lang::Lang;
 use crate::pie::{PieItem, PieName};
+use crate::state::key::{Key, Modifiers, PointerButton};
 use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
 use crate::toolkeys::ToolKeyMode;
 use crate::ui::menu::{Entry, PopupState};
@@ -451,7 +449,7 @@ pub fn swallow_held(ctx: &egui::Context, app: &mut AppState) {
         i.events.retain(|e| match e {
             Event::Key {
                 key: k, pressed, ..
-            } if *k == key => {
+            } if Key::from(*k) == key => {
                 if !*pressed {
                     released = true;
                 }
@@ -459,7 +457,7 @@ pub fn swallow_held(ctx: &egui::Context, app: &mut AppState) {
             }
             _ => true,
         });
-        if !i.key_down(key) {
+        if !i.key_down(key.into()) {
             released = true;
         }
     });
@@ -493,7 +491,7 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                     repeat: false,
                     modifiers,
                     ..
-                } => Some((*key, *modifiers)),
+                } => Some(((*key).into(), (*modifiers).into())),
                 _ => None,
             })
             .collect();
@@ -506,7 +504,7 @@ fn take_capture(ctx: &egui::Context, app: &mut AppState) -> bool {
                     pressed: true,
                     pos,
                     modifiers,
-                } => Some((*button, *pos, *modifiers)),
+                } => Some(((*button).into(), *pos, (*modifiers).into())),
                 _ => None,
             })
             .collect();
@@ -939,7 +937,7 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let mut child = ui.new_child(UiBuilder::new().max_rect(list));
     child.set_clip_rect(list.intersect(ui.clip_rect()));
     let capture = app.ui.shortcuts.capture;
-    let held = ctx.input(|i| i.modifiers);
+    let held = ctx.input(|i| Modifiers::from(i.modifiers));
     for (i, line) in lines.iter().enumerate() {
         let row = Rect::from_min_size(
             pos2(list.left(), list.top() + i as f32 * ROW - scroll),
@@ -1480,7 +1478,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
         );
     }
     if let Some(command) = menu.command {
-        let held = ctx.input(|i| i.modifiers);
+        let held = ctx.input(|i| Modifiers::from(i.modifiers));
         let group = (command, Scope::Everywhere);
         let capture = app.ui.shortcuts.capture;
         let triggers = app.keys.triggers(group);

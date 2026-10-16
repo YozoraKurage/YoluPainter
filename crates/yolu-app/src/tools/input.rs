@@ -5,9 +5,10 @@
 //! スポイトはストロークで描くので `CanvasTool` を持たず、キャンバスの入力が直に扱う。3D は `Surface`（面の上で押したときの行き先）。
 //! 各ツールの実際の仕事は、ツールのモジュール（`transform::canvas` など）の関数。ここはその呼び出しを同じ形にそろえるだけ。
 
-use egui::{CursorIcon, Key, Modifiers, Pos2, Rect};
+use egui::{CursorIcon, Pos2, Rect};
 
 use crate::canvas::view::CanvasView;
+use crate::state::key::{Key, Modifiers};
 use crate::state::{AppState, StrokeSource};
 
 /// 入力の 1 回の前提（押した・動いた・離したときの修飾キーと時刻、キャンバスの表示域、描き直しの番号）。

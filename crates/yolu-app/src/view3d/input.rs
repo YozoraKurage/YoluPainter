@@ -27,7 +27,7 @@
 
 use std::time::Instant;
 
-use egui::{Color32, Event, Key, Modifiers, PointerButton, Pos2, Rect, Stroke, Ui};
+use egui::{Color32, Event, Key, Pos2, Rect, Stroke, Ui};
 use yolu_core::geometry::{
     copy_hits, pick, world_radius, CameraView, Ray, SurfaceCloneSource, SurfaceEffect,
     SurfaceGeometry, SurfaceHit, SurfaceInput, SurfaceStroke, SurfaceStrokeOptions,
@@ -42,6 +42,7 @@ use crate::features::Feature;
 use crate::gesture::{self, ZoomDrag};
 use crate::notice::Source;
 use crate::pen::{PenPress, PenSample, PressKind};
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{AppState, ShiftHold, StrokeSource, SHIFT_HOLD_POINTS};
 use crate::tools::input::Surface;
 
@@ -1217,7 +1218,7 @@ fn press_kind(
         return PressKind::Ignored;
     }
     // Ctrl を押した接触は描かない（Shift は直線）
-    if gesture::pen_holds_off(app.tool.paints(), &frame.modifiers) {
+    if gesture::pen_holds_off(app.tool.paints(), &frame.modifiers.into()) {
         return PressKind::Ignored;
     }
     PressKind::Tool
@@ -1262,7 +1263,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     }
     // 保存していない変更の問いが開いている間も止める（別ウィンドウの 3D ビューは問いの覆いの外で、入力を直に読むため）
     let blocked = crate::windows::pointer_blocked(app);
-    app.region.modifiers = ui.input(|i| i.modifiers);
+    app.region.modifiers = ui.input(|i| i.modifiers.into());
     // 設定のパネルを開いているあいだの押しは、パネルの外でも 3D に使わない（パネルは外の押しで閉じる。その押しが描き始め・回し始めに
     // ならないように。このフレームの押しで閉じるときも、パネルはこの後に描くので開いている）。ホイールは使える。ドックのタブの見出しを
     // つかんでいる間・離した直後と、押しがほかの部品のものであるときも、描き始めも回し始めもしない
@@ -1290,7 +1291,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     }
     let pen: &[PenSample] = if pose_mode { &[] } else { pen };
     let (snap, shift, modifiers) =
-        ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers));
+        ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers.into()));
     // 図形のドラッグの Shift・Alt は、動かさなくても形に効く
     super::draft::modifiers(app, &modifiers);
     super::select::modifiers(app, &modifiers);
@@ -1364,7 +1365,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 pressed,
                 modifiers: m,
             } => {
-                let pos = *pos;
+                let (pos, button, m) = (*pos, &PointerButton::from(*button), &Modifiers::from(*m));
                 if *pressed {
                     if press_blocked || !on_top(ui, rect, pos) {
                         continue;
@@ -1634,7 +1635,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 modifiers: key_modifiers,
                 ..
             } if !blocked && !ctx.egui_wants_keyboard_input() => {
-                super::select::key(app, rect, *key, *key_modifiers);
+                super::select::key(app, rect, (*key).into(), (*key_modifiers).into());
             }
             Event::WindowFocused(false) => {
                 // フォーカスを失ったら、そこまでを確定する（離したのを受け取れないので。離したのと同じく、残りは時間の枠で塗ってから）

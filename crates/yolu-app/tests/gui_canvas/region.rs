@@ -1561,7 +1561,7 @@ fn headless_id_select_picks_the_part_under_the_pointer_with_combine_modes() {
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
     let press = |s: &mut AppState, uv: (f32, f32), shift: bool, ctrl: bool| {
-        s.region_mut().modifiers = Modifiers {
+        s.region_mut().modifiers = yolu_app::state::key::Modifiers {
             shift,
             ctrl,
             command: ctrl,
@@ -1616,7 +1616,7 @@ fn headless_id_select_follows_the_combine_mode_of_the_selection_tools() {
     bake_id(&mut s);
     let view = canvas_view(&s, rect);
     let w = Where::Canvas(&view);
-    s.region_mut().modifiers = Modifiers::NONE;
+    s.region_mut().modifiers = Modifiers::NONE.into();
     let press = |s: &mut AppState, uv: (f32, f32)| {
         let at = at_uv(s, rect, uv);
         yolu_app::region::idcolor::select_by_id(s, w, at);
@@ -1636,7 +1636,7 @@ fn headless_id_select_follows_the_combine_mode_of_the_selection_tools() {
     press(&mut s, TRI0);
     assert_eq!((selected(&s, TRI0), selected(&s, TRI4)), (0, 255));
     // Shift は選んでいる方に関わらず足す
-    s.region_mut().modifiers = Modifiers {
+    s.region_mut().modifiers = yolu_app::state::key::Modifiers {
         shift: true,
         ..Default::default()
     };

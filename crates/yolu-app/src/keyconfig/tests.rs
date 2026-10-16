@@ -1,7 +1,7 @@
 //! キー・マウス・パイの設定（keymap.json）の試験: 文字の往復、置き換えと既定に戻す、ぶつかりと保存の断り、書き出しと読み込みの往復（知らない物の数）、
 //! 壊れたファイル、メニューの文字とキーの処理が変更に付いてくる、利用者のパイとそのキー、マウスの組み合わせ。
 
-use egui::{Event, Key, Modifiers, PointerButton};
+use egui::Event;
 
 use super::*;
 use crate::mode::EditorMode;
@@ -44,11 +44,11 @@ fn dispatched(app: &AppState, k: Key, modifiers: Modifiers) -> Vec<Action> {
     let mut got = Vec::new();
     let input = egui::RawInput {
         events: vec![Event::Key {
-            key: k,
+            key: k.into(),
             physical_key: None,
             pressed: true,
             repeat: false,
-            modifiers,
+            modifiers: modifiers.into(),
         }],
         ..Default::default()
     };
@@ -640,11 +640,11 @@ fn fired(app: &AppState, k: Key, repeat: bool) -> Vec<keymap::Fired> {
     let press = |ctx: &egui::Context, got: &mut Vec<keymap::Fired>, repeat: bool| {
         let input = egui::RawInput {
             events: vec![Event::Key {
-                key: k,
+                key: k.into(),
                 physical_key: None,
                 pressed: true,
                 repeat,
-                modifiers: Modifiers::NONE,
+                modifiers: Modifiers::NONE.into(),
             }],
             ..Default::default()
         };

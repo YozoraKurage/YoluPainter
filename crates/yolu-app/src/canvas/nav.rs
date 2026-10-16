@@ -6,7 +6,7 @@
 //! 右ボタン）が同じ関数を通る。回すのは 15° 刻みが既定で、Shift を押していれば自由。回すドラッグは、押した所から `gesture::CLICK_MOVE` を
 //! 超えて動くまで回さない。
 
-use egui::{Modifiers, PointerButton, Pos2, Rect};
+use egui::{Pos2, Rect};
 
 use super::{delta_angle, pointer_angle, ROTATE_DEAD_ZONE};
 use crate::canvas::view::ROTATE_STEP;
@@ -14,6 +14,7 @@ use crate::engine::SelectionCombine;
 use crate::gesture::{self, ZoomDrag};
 use crate::keymap::Operation;
 use crate::notice::Source;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{AppState, RotateDrag};
 
 /// 押しで始める物。
@@ -45,7 +46,7 @@ pub fn start_of(app: &AppState, button: PointerButton, m: &Modifiers) -> Start {
         if app.canvas.rotate_key_held {
             return Start::Rotate;
         }
-        if gesture::zoom_chord(m, app.canvas.space_held) {
+        if gesture::zoom_chord(&(*m).into(), app.canvas.space_held) {
             return Start::Zoom;
         }
         if app.canvas.space_held {

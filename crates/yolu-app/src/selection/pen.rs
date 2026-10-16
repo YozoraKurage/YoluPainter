@@ -15,13 +15,14 @@
 
 use std::collections::{HashMap, HashSet};
 
-use egui::{Modifiers, Pos2};
+use egui::Pos2;
 
 use super::{SelAction, SelEdit, ShapeDrag};
 use crate::canvas::view::CanvasView;
 use crate::engine::{CoreError, Document, SelectionCombine, SelectionMask, TileCoord};
 use crate::lang::Lang;
 use crate::notice::Source;
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{Action, AppState, BrushState, StrokeSource, Tool};
 
 /// 1 ストロークが使ってよい作業の場所（被覆・見た目の 2 つの札・クイックマスクの合成結果のぶんも数えて、持つ量の 3 倍で見る）。
@@ -389,7 +390,7 @@ pub struct ActivePen {
 /// 選択ペンのツールで消すか（基本の切り替えと、押したときの修飾: 作成方法の割り当て（`combine_for`）で、足すに当たる修飾は選択ペン・
 /// 引くに当たる修飾は選択消しに、押しているあいだだけ替える）。
 pub fn erases(base_erase: bool, modifiers: Modifiers) -> bool {
-    match super::combine_for(egui::PointerButton::Primary, &modifiers) {
+    match super::combine_for(PointerButton::Primary, &modifiers) {
         Some(SelectionCombine::Add) => false,
         Some(SelectionCombine::Subtract) => true,
         _ => base_erase,

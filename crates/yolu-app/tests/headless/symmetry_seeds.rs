@@ -77,7 +77,7 @@ fn click_wand(s: &mut AppState, view: &CanvasView, at: Point) {
         view,
         view.to_screen(at.0, at.1),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
         0.0,
     );
 }

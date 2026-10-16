@@ -1012,8 +1012,8 @@ fn a_mouse_release_that_never_arrived_drops_the_drag_without_selecting() {
             current: DVec2::new((b.x - rect.left()) as f64, (b.y - rect.top()) as f64),
             lasso: Vec::new(),
             moved: 100.0,
-            pressed_with: Modifiers::NONE,
-            now: Modifiers::NONE,
+            pressed_with: Modifiers::NONE.into(),
+            now: Modifiers::NONE.into(),
         });
         assert!(select::dragging(st(&h)));
         move_to(&h, b);

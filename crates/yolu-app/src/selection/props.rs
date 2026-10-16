@@ -13,6 +13,7 @@ use super::{combine_tooltip, SelAction};
 use crate::engine::SelectionCombine;
 use crate::lang::Lang;
 use crate::panels::properties::{slider_row, toggle_row};
+use crate::state::key::{Modifiers, PointerButton};
 use crate::state::{Action, AppState, Tool};
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
@@ -27,16 +28,9 @@ pub const CREATION_MODES: [SelectionCombine; 4] = [
 
 /// 作成方法のアイコンの組（CLIP STUDIO の「作成方法」）。選んでいる作成方法が点き、Shift・Ctrl・Shift+Ctrl を押しているあいだは、
 /// 実際に効く作成方法が一時的に点く（選んでいるものは枠だけになる）。置いた幅だけ進めた x を返す。
-fn creation_group(
-    ui: &mut Ui,
-    app: &mut AppState,
-    y: f32,
-    h: f32,
-    x: f32,
-    held: egui::Modifiers,
-) -> f32 {
+fn creation_group(ui: &mut Ui, app: &mut AppState, y: f32, h: f32, x: f32, held: Modifiers) -> f32 {
     let l = app.lang;
-    let effective = super::combine_of(app.sel.combine, egui::PointerButton::Primary, held);
+    let effective = super::combine_of(app.sel.combine, PointerButton::Primary, held);
     let width = CREATION_MODES.len() as f32 * 28.0 + 4.0;
     let group = Rect::from_min_size(pos2(x, y), vec2(width, h));
     w::rounded(ui.painter(), group, t::CONTROL_BG, 5.0);
@@ -104,14 +98,7 @@ fn pen_icon(erase: bool) -> &'static str {
 }
 
 /// 選択ペン・選択消しの切り替え（選択ペンのツールのオプションバー）。Shift は選択ペン・Ctrl は選択消しに、押しているあいだ替える。
-fn pen_group(
-    ui: &mut Ui,
-    app: &mut AppState,
-    y: f32,
-    h: f32,
-    x: f32,
-    held: egui::Modifiers,
-) -> f32 {
+fn pen_group(ui: &mut Ui, app: &mut AppState, y: f32, h: f32, x: f32, held: Modifiers) -> f32 {
     let l = app.lang;
     let erasing = super::pen::erases(app.sel.pen_erase, held);
     let items = [false, true].map(|erase| (erase, pen_icon(erase), pen_tooltip(l, erase)));
@@ -151,7 +138,7 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
     let (y, h) = (r.top() + 6.0, r.height() - 12.0);
     let l = app.lang;
     let p = ui.painter().clone();
-    let held = ui.input(|i| i.modifiers);
+    let held = ui.input(|i| Modifiers::from(i.modifiers));
     x = if app.tool == Tool::SelectPen {
         pen_group(ui, app, y, h, x, held)
     } else {
@@ -323,8 +310,8 @@ fn segmented_row(
 /// 「共通」のあいだは、畳む設定でも 4 つ出す。Shift+Ctrl を押している間に畳んでいると、効いている共通の代わりに「⋯」が点く。
 pub fn creation_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let l = app.lang;
-    let held = ui.input(|i| i.modifiers);
-    let effective = super::combine_of(app.sel.combine, egui::PointerButton::Primary, held);
+    let held = ui.input(|i| Modifiers::from(i.modifiers));
+    let effective = super::combine_of(app.sel.combine, PointerButton::Primary, held);
     let all =
         app.prefs.settings.selection_all_modes || app.sel.combine == SelectionCombine::Intersect;
     let modes = if all {
@@ -374,7 +361,7 @@ pub fn creation_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
 /// 選択ペン・選択消しの 1 行（バーと同じ値）。
 fn pen_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let l = app.lang;
-    let held = ui.input(|i| i.modifiers);
+    let held = ui.input(|i| Modifiers::from(i.modifiers));
     let erasing = super::pen::erases(app.sel.pen_erase, held);
     let items: Vec<Segment> = [false, true]
         .into_iter()
@@ -571,7 +558,7 @@ mod tests {
     use crate::keyconfig::Combo;
     use crate::keymap::{Operation, GESTURES};
     use crate::selection::pen::erases;
-    use egui::{Modifiers, PointerButton};
+    use crate::state::key::{Modifiers, PointerButton};
 
     #[test]
     fn segment_width_splits_the_row_evenly_and_never_goes_negative() {

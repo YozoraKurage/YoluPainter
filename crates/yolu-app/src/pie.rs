@@ -6,13 +6,14 @@
 //!   ポインタの所に開く（押しているキーを覚え、押したまま離したら指している項目を実行する）。開いている間は `PopupKind::Pie` のポップアップとして、
 //!   下の入力を止める。
 
-use egui::{Key, Pos2, Rect, Vec2};
+use egui::{Pos2, Rect, Vec2};
 use serde_json::Value;
 
 use crate::commands;
 use crate::lang::Lang;
 use crate::mode::EditorMode;
 use crate::notice::Source;
+use crate::state::key::Key;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
 use crate::ui::menu::PopupState;
 use crate::ui::pie::{self as widget, Outcome, Runtime, Slot, SLOTS};
@@ -71,7 +72,7 @@ pub enum PieAction {
 #[derive(Clone, Debug, PartialEq)]
 pub struct OpenPie {
     pub menu: String,
-    pub run: Runtime,
+    pub run: Runtime<Key>,
 }
 
 /// パイの状態（パイの並びと、開いているもの）。アプリの状態で、.ylp には入れない。
@@ -372,7 +373,7 @@ pub fn open_requested(ctx: &egui::Context, app: &mut AppState) {
     let key = command.and_then(|command| {
         let map = crate::keymap::current();
         let keys: Vec<Key> = map.rows_of(command).filter_map(|b| b.key()).collect();
-        ctx.input(|i| keys.into_iter().find(|k| i.key_down(*k)))
+        ctx.input(|i| keys.into_iter().find(|k| i.key_down((*k).into())))
     });
     let center = ctx
         .input(|i| i.pointer.latest_pos())

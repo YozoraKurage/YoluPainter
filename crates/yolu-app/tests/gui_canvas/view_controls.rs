@@ -61,7 +61,10 @@ fn tool(h: &H) -> Tool {
 }
 
 fn nav(h: &H) -> Option<(Nav, PointerButton)> {
-    h.view3d().input.nav
+    h.view3d()
+        .input
+        .nav
+        .map(|(nav, button)| (nav, button.into()))
 }
 
 fn cube_view() -> (H, Rect) {

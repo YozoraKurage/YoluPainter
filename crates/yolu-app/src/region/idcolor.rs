@@ -25,6 +25,7 @@ use crate::lang::Lang;
 use crate::m2::read_only_message;
 use crate::notice::Source;
 use crate::selection::{combine_name, combine_of};
+use crate::state::key::PointerButton;
 use crate::state::AppState;
 use crate::view3d::model::ViewModel;
 
@@ -371,7 +372,7 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     // 組み合わせ方は選択のツールと同じ（キーの修飾が無ければ、オプションバーで選んだ方）
     let mode = combine_of(
         app.sel.combine,
-        egui::PointerButton::Primary,
+        PointerButton::Primary,
         app.region.modifiers,
     );
     let mask = match SelectionMask::from_id_colors(&app.session.doc, &map, &[rgb], tolerance) {

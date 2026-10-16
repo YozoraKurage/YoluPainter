@@ -3,9 +3,10 @@ use super::{handle_points, Bounds, HANDLE_HIT};
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
+    state::key::Modifiers,
     state::{Action, AppState, StrokeSource, Tool},
 };
-use egui::{Modifiers, Painter, Pos2};
+use egui::{Painter, Pos2};
 use yolu_core::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

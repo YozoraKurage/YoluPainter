@@ -11,7 +11,7 @@
 //! 奪われて補った離し）は、離した位置が分からないので、図形・定規と同じく何も選ばずにやめる（2D のキャンバスの選択は最後の位置で選ぶ）。
 //! 状態は `AppState::sel.view3d`（`selection::SelState`）が持つので、ツールの切り替えと 2D のキャンバスの Esc も、2D の途中の形と同じ口で捨てる。
 
-use egui::{Modifiers, Painter, PointerButton, Pos2, Rect};
+use egui::{Painter, Pos2, Rect};
 use yolu_core::geometry::ScreenShape;
 use yolu_core::glam::DVec2;
 use yolu_core::selection::MAX_POLYGON_POINTS;
@@ -25,6 +25,7 @@ use crate::selection::canvas::{
     drag_mode, paint_polygon_draft, paint_shape_outline, CLICK_RADIUS, CLOSE_RADIUS, DOUBLE_CLICK,
 };
 use crate::selection::{combine_of, shape, SelAction, SelEdit};
+use crate::state::key::{Key, Modifiers, PointerButton};
 use crate::state::{Action, AppState, StrokeSource, Tool};
 
 /// 3D ビューで引いている形（長方形・楕円・なげなわ）。点は表示域の画面の点（左上が原点）。
@@ -189,13 +190,13 @@ pub(super) fn finish_polygon(app: &mut AppState, rect: Rect, modifiers: Modifier
 }
 
 /// Enter（多角形を閉じる）・Backspace（最後の点を消す）。扱ったか。
-pub(super) fn key(app: &mut AppState, rect: Rect, key: egui::Key, modifiers: Modifiers) -> bool {
+pub(super) fn key(app: &mut AppState, rect: Rect, key: Key, modifiers: Modifiers) -> bool {
     if app.tool != Tool::Polygon || app.sel.view3d.polygon.is_empty() {
         return false;
     }
     match key {
-        egui::Key::Enter => finish_polygon(app, rect, modifiers),
-        egui::Key::Backspace => {
+        Key::Enter => finish_polygon(app, rect, modifiers),
+        Key::Backspace => {
             app.sel.view3d.remove_last_point();
         }
         _ => return false,

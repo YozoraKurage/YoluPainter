@@ -1398,7 +1398,7 @@ fn headless_selection_tools_do_not_start_while_a_stroke_is_running_or_the_set_is
             &view,
             Pos2::new(100.0, 100.0),
             StrokeSource::Mouse,
-            Modifiers::NONE,
+            Modifiers::NONE.into(),
             0.0,
         );
         assert!(
@@ -1418,7 +1418,7 @@ fn headless_selection_tools_do_not_start_while_a_stroke_is_running_or_the_set_is
         &view,
         Pos2::new(40.0, 40.0),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
         0.0,
     );
     assert!(s.sel().drag.is_some());
@@ -1427,7 +1427,7 @@ fn headless_selection_tools_do_not_start_while_a_stroke_is_running_or_the_set_is
         &view,
         Pos2::new(160.0, 160.0),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
     );
     assert!(s.doc().selection().is_some(), "{}", s.message());
     // 読むだけのセットでは始めない
@@ -1438,7 +1438,7 @@ fn headless_selection_tools_do_not_start_while_a_stroke_is_running_or_the_set_is
         &view,
         Pos2::new(40.0, 40.0),
         StrokeSource::Mouse,
-        Modifiers::NONE,
+        Modifiers::NONE.into(),
         0.0,
     );
     assert!(s.sel().drag.is_none());
