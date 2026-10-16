@@ -16,7 +16,7 @@ pub(crate) struct Message {
     /// `locales/ja/panels.ftl` のような道
     pub(crate) file: String,
     pub(crate) key: String,
-    /// 値の文（選びの枝ごとに 1 つ。引数の置き場は `{ $名前 }`）
+    /// 値の文（選び（select）の候補ごとに 1 つ。引数の置き場は `{ $名前 }`）
     pub(crate) texts: Vec<String>,
     /// 値が使う引数の名前
     pub(crate) vars: BTreeSet<String>,
@@ -80,7 +80,7 @@ fn expression_texts(
     }
 }
 
-/// 値の文（選びの枝を全部たどる）。
+/// 値の文（選び（select）の候補を全部たどる）。
 fn pattern_texts(pattern: &ast::Pattern<&str>, vars: &mut BTreeSet<String>) -> Vec<String> {
     let mut texts = vec![String::new()];
     for element in &pattern.elements {
