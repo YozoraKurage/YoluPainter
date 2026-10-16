@@ -18,9 +18,9 @@ use super::*;
 use crate::math::to_byte;
 
 /// ダブごとの色の変化の乱数の列の種へ混ぜる値。
-const COLOR_CHANGE_STREAM: i32 = 0x3C6E_F372;
+pub(crate) const COLOR_CHANGE_STREAM: i32 = 0x3C6E_F372;
 /// ストロークごとの色の変化の乱数の列の種へ混ぜる値。
-const COLOR_STROKE_STREAM: i32 = 0x510E_527F;
+pub(crate) const COLOR_STROKE_STREAM: i32 = 0x510E_527F;
 
 /// 色の変化量（HSV の足し算とサブ描画色混合率）。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

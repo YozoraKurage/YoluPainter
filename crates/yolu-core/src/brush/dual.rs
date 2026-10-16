@@ -592,17 +592,39 @@ mod tests {
 
     #[test]
     fn the_new_stream_differs_from_every_other_stream() {
+        use crate::brush::color_change::{COLOR_CHANGE_STREAM, COLOR_STROKE_STREAM};
+        use crate::brush::plan::{FLIP_STREAM, SHUFFLE_STREAM};
+        use crate::brush::spray::SPRAY_STREAM;
+        // ブラシの種に混ぜる値の全部（主の列と、2 つ目が実際に引く列: 2 つ目の種 `種 ^ DUAL_TIP_STREAM` に、反転・並べ替え・散布が
+        // 自分の値をさらに混ぜる）。種に ^ で混ぜるので、混ぜる値が違えばどの種でも列が違う
         let streams = [
-            0,
-            DUAL_TIP_STREAM,
-            DUAL_INFLUENCE_STREAM,
-            DUAL_STREAM,
-            INFLUENCE_STREAM,
-            COLOR_STREAM,
+            ("種そのもの（描点の乱数）", 0),
+            ("COLOR_STREAM", COLOR_STREAM),
+            ("DUAL_STREAM", DUAL_STREAM),
+            ("INFLUENCE_STREAM", INFLUENCE_STREAM),
+            ("COLOR_CHANGE_STREAM", COLOR_CHANGE_STREAM),
+            ("COLOR_STROKE_STREAM", COLOR_STROKE_STREAM),
+            ("FLIP_STREAM", FLIP_STREAM),
+            ("SHUFFLE_STREAM", SHUFFLE_STREAM),
+            ("SPRAY_STREAM", SPRAY_STREAM),
+            ("DUAL_INFLUENCE_STREAM", DUAL_INFLUENCE_STREAM),
+            ("DUAL_TIP_STREAM", DUAL_TIP_STREAM),
+            (
+                "DUAL_TIP_STREAM ^ FLIP_STREAM",
+                DUAL_TIP_STREAM ^ FLIP_STREAM,
+            ),
+            (
+                "DUAL_TIP_STREAM ^ SHUFFLE_STREAM",
+                DUAL_TIP_STREAM ^ SHUFFLE_STREAM,
+            ),
+            (
+                "DUAL_TIP_STREAM ^ SPRAY_STREAM",
+                DUAL_TIP_STREAM ^ SPRAY_STREAM,
+            ),
         ];
-        for (i, a) in streams.iter().enumerate() {
-            for b in &streams[i + 1..] {
-                assert_ne!(a, b);
+        for (i, (name_a, a)) in streams.iter().enumerate() {
+            for (name_b, b) in &streams[i + 1..] {
+                assert_ne!(a, b, "{name_a} と {name_b}");
             }
         }
     }

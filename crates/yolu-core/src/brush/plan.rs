@@ -56,8 +56,8 @@ pub(crate) struct DabPlan<'a> {
 }
 
 /// ランダムな反転の乱数の列と、並べ替えの乱数の列の種へ混ぜる値（ゆらぎ・色・影響元・デュアルの列と重ならない）。
-const FLIP_STREAM: i32 = 0x27D4_EB2F;
-const SHUFFLE_STREAM: i32 = 0x1656_67B1;
+pub(crate) const FLIP_STREAM: i32 = 0x27D4_EB2F;
+pub(crate) const SHUFFLE_STREAM: i32 = 0x1656_67B1;
 
 /// 筆先の反転のしかた（左右・上下ごとの規則と、規則が [`FlipRule::Fixed`] のときの値）。主の筆先（[`TipShape`]）と 2 つ目の筆先
 /// （[`DualBrush`]）が同じ形で渡す。

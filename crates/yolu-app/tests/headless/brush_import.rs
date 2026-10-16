@@ -397,6 +397,101 @@ fn headless_a_sut_is_imported_with_its_tip_pressure_and_the_item_names_it_could_
 }
 
 #[test]
+fn headless_a_sut_with_a_dual_brush_and_version_eight_settings_is_saved_as_version_eight_and_comes_back_the_same(
+) {
+    use sut_files::*;
+    use yolu_core::{FlipRule, TipSelection};
+    let dir = temp_dir("sut-v8");
+    let tip = |pixels: &[u8]| material_with_thumbnail(&png_gray(2, 2, pixels));
+    let cells = [
+        // 主: 2 枚の筆先・繰り返し方法（同じ位置を保つ）・反転・先端同士の比較暗
+        ("BrushSize", real(40.0)),
+        ("BrushUsePatternImage", int(1)),
+        (
+            "BrushPatternImageArray",
+            blob(refs(&[
+                ["x/tip_a.png", "c/a", "tip_a"],
+                ["x/tip_b.png", "c/b", "tip_b"],
+            ])),
+        ),
+        ("BrushPatternOrderType", int(2)),
+        ("BrushPatternReverseHorizontal", int(3)),
+        ("BrushPatternReverseVertical", int(2)),
+        ("BrushBlendPatternByDarken", int(1)),
+        // 2 つ目: 2 枚の筆先・一巡のみ・ランダムな反転・比較暗・紙質・散布効果
+        ("UseDualBrush", int(1)),
+        ("DualSize", real(30.0)),
+        ("DualUsePatternImage", int(1)),
+        (
+            "DualPatternImageArray",
+            blob(refs(&[
+                ["x/dual_a.png", "c/da", "dual_a"],
+                ["x/dual_b.png", "c/db", "dual_b"],
+            ])),
+        ),
+        ("DualPatternOrderType", int(4)),
+        ("DualPatternReverseHorizontal", int(2)),
+        ("DualBlendPatternByDarken", int(1)),
+        (
+            "DualTextureImage",
+            blob(refs(&[["g/grain.png", "c/grain", "grain"]])),
+        ),
+        ("DualTextureDensity", int(40)),
+        ("DualTextureScale", int(200)),
+        ("DualUseSpray", int(1)),
+        ("DualSpraySize", real(10.0)),
+        ("DualSprayDensity", int(5)),
+    ];
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), tip(&[0, 255, 255, 0]))
+        .material(Some("tip_b"), tip(&[255, 0, 0, 255]))
+        .material(Some("dual_a"), tip(&[0, 0, 255, 255]))
+        .material(Some("dual_b"), tip(&[255, 255, 0, 0]))
+        .material(Some("grain"), tip(&[255, 200, 100, 0]))
+        .brush("Dual v8", 1, &cells)
+        .build();
+    let path = write(&dir, "dual_v8.sut", &file);
+    let mut s = state(&dir);
+    import(&mut s, &[path]);
+    let list = imported(&s);
+    assert_eq!(list.len(), 1);
+    let got = &list[0].baseline;
+    // 取り込んだ直後のブラシが、バージョン 8 の鍵の要る設定を全部持っている
+    let (t, d) = (&got.tip, got.dual.as_ref().expect("2 つ目"));
+    assert_eq!((t.images.len(), t.selection), (2, TipSelection::Hold));
+    assert_eq!(
+        (t.flip_x, t.flip_x_rule, t.flip_y_rule),
+        (false, FlipRule::OnFold, FlipRule::Random)
+    );
+    assert!(t.darken_overlap);
+    assert_eq!((d.tips.len(), d.selection), (2, TipSelection::Once));
+    assert_eq!(d.flip_x_rule, FlipRule::Random);
+    assert!(d.darken_overlap && d.texture.is_some() && d.spray.is_some());
+    // 書いたファイルはバージョン 8
+    assert_eq!(brush_files(&dir), 1);
+    let saved: Vec<PathBuf> = std::fs::read_dir(dir.join("brushes"))
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "ylbrush"))
+        .collect();
+    let text = std::fs::read_to_string(&saved[0]).unwrap();
+    assert!(text.starts_with("yolupainter-brush 8\n"), "{text}");
+    // 読み直しても同じ（画像は画素ごとに比べる）
+    let back = state(&dir);
+    assert!(
+        back.brushes().problems.is_empty(),
+        "{:?}",
+        back.brushes().problems
+    );
+    let again = imported(&back);
+    assert_eq!(again.len(), 1);
+    assert_eq!(&again[0].baseline, got);
+    assert_eq!(again[0].import, list[0].import);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn headless_files_that_cannot_be_read_say_why_in_both_languages_and_add_nothing() {
     let dir = temp_dir("refused");
     let garbage = write(&dir, "broken.gbr", b"this is not a brush at all, just text");

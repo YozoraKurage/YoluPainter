@@ -18,7 +18,7 @@ use std::f64::consts::PI;
 use super::*;
 
 /// 散布の乱数の列の種へ混ぜる値。
-const SPRAY_STREAM: i32 = 0x1F83_D9AB;
+pub(crate) const SPRAY_STREAM: i32 = 0x1F83_D9AB;
 
 /// 粒子密度 1 あたりの、描点 1 つの粒子の数。
 ///
