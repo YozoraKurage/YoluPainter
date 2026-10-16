@@ -39,10 +39,7 @@ pub fn restore_received_from(
         Ok(r) => r,
         Err(e) => {
             return Err(lang.kept_in_file(lang.with_reason(
-                lang.pick(
-                    "Unity から受けた値を読めません",
-                    "Cannot read the values received from Unity",
-                ),
+                lang.t("look-cannot-read-the-values-received"),
                 lang.io_error(&e),
             )))
         }
@@ -52,10 +49,7 @@ pub fn restore_received_from(
     }
     doc.set_received_look(received).map(|_| ()).map_err(|e| {
         lang.with_reason(
-            lang.pick(
-                "Unity から受けた値を戻せません",
-                "Cannot restore the values received from Unity",
-            ),
+            lang.t("look-cannot-restore-the-values-received"),
             lang.core_error(&e),
         )
     })
@@ -87,10 +81,7 @@ pub fn write_received_into(
         }
         project = project.with_received_look(id, next.as_ref()).map_err(|e| {
             lang.with_reason(
-                lang.pick(
-                    "Unity から受けた値を書けません",
-                    "Cannot write the values received from Unity",
-                ),
+                lang.t("look-cannot-write-the-values-received"),
                 lang.io_error(&e),
             )
         })?;
@@ -109,17 +100,14 @@ pub fn restore_from(
         Ok(None) => return Ok(()),
         Err(e) => {
             return Err(lang.kept_in_file(lang.with_reason(
-                lang.pick("見た目の設定を読めません", "Cannot read the look settings"),
+                lang.t("look-cannot-read-the-look-settings"),
                 lang.io_error(&e),
             )))
         }
     };
     doc.restore_look(look).map_err(|e| {
         lang.with_reason(
-            lang.pick(
-                "見た目の設定を戻せません",
-                "Cannot restore the look settings",
-            ),
+            lang.t("look-cannot-restore-the-look-settings"),
             lang.core_error(&e),
         )
     })
@@ -146,7 +134,7 @@ pub fn write_into(
         }
         project = project.with_look(id, next).map_err(|e| {
             lang.with_reason(
-                lang.pick("見た目の設定を書けません", "Cannot write the look settings"),
+                lang.t("look-cannot-write-the-look-settings"),
                 lang.io_error(&e),
             )
         })?;

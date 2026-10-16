@@ -122,33 +122,29 @@ impl FilterKind {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            FilterKind::Blur => lang.pick("ぼかし（ガウス）", "Gaussian Blur"),
-            FilterKind::Sharpen => {
-                lang.pick("シャープ（アンシャープマスク）", "Sharpen (Unsharp Mask)")
-            }
-            FilterKind::NoiseMono => lang.pick("ノイズ（モノクロ）", "Noise (Mono)"),
-            FilterKind::NoiseColor => lang.pick("ノイズ（カラー）", "Noise (Color)"),
-            FilterKind::Levels => lang.pick("レベル補正", "Levels"),
-            FilterKind::Invert => lang.pick("階調の反転", "Invert"),
-            FilterKind::Normalize => lang.pick("正規化（レイヤー全体）", "Normalize (Layer)"),
-            FilterKind::GradientMap => lang.pick("グラデーションマップ", "Gradient Map"),
-            FilterKind::ToneCurve => lang.pick("トーンカーブ", "Tone Curve"),
-            FilterKind::ColorBalance => lang.pick("カラーバランス", "Color Balance"),
-            FilterKind::BrightnessContrast => {
-                lang.pick("明るさ・コントラスト", "Brightness / Contrast")
-            }
-            FilterKind::Threshold => lang.pick("2 値化", "Threshold"),
-            FilterKind::Posterize => lang.pick("ポスタリゼーション", "Posterize"),
-            FilterKind::HistogramScan => lang.pick("値の切り出し", "Histogram Scan"),
-            FilterKind::HistogramRange => lang.pick("値の幅", "Histogram Range"),
-            FilterKind::SlopeBlur => lang.pick("ノイズに沿ったぼかし", "Slope Blur"),
-            FilterKind::DirectionalBlur => lang.pick("方向ぼかし", "Directional Blur"),
-            FilterKind::Warp => lang.pick("ゆがみ", "Warp"),
-            FilterKind::Morphology => lang.pick("太らせる・細らせる", "Dilate / Erode"),
-            FilterKind::EdgeDetect => lang.pick("輪郭の検出", "Edge Detect"),
-            FilterKind::HighPass => lang.pick("ハイパス", "High Pass"),
-            FilterKind::Median => lang.pick("メディアン", "Median"),
-            FilterKind::Glow => lang.pick("グロー", "Glow"),
+            FilterKind::Blur => lang.t("fx-gaussian-blur"),
+            FilterKind::Sharpen => lang.t("fx-sharpen-unsharp-mask"),
+            FilterKind::NoiseMono => lang.t("fx-noise-mono"),
+            FilterKind::NoiseColor => lang.t("fx-noise-color"),
+            FilterKind::Levels => lang.t("fx-levels"),
+            FilterKind::Invert => lang.t("fx-invert-2"),
+            FilterKind::Normalize => lang.t("fx-normalize-layer"),
+            FilterKind::GradientMap => lang.t("fx-gradient-map"),
+            FilterKind::ToneCurve => lang.t("fx-tone-curve"),
+            FilterKind::ColorBalance => lang.t("fx-color-balance"),
+            FilterKind::BrightnessContrast => lang.t("fx-brightness-contrast"),
+            FilterKind::Threshold => lang.t("fx-threshold"),
+            FilterKind::Posterize => lang.t("fx-posterize"),
+            FilterKind::HistogramScan => lang.t("fx-histogram-scan"),
+            FilterKind::HistogramRange => lang.t("fx-histogram-range"),
+            FilterKind::SlopeBlur => lang.t("fx-slope-blur"),
+            FilterKind::DirectionalBlur => lang.t("fx-directional-blur"),
+            FilterKind::Warp => lang.t("fx-warp"),
+            FilterKind::Morphology => lang.t("fx-dilate-erode"),
+            FilterKind::EdgeDetect => lang.t("fx-edge-detect"),
+            FilterKind::HighPass => lang.t("fx-high-pass"),
+            FilterKind::Median => lang.t("fx-median"),
+            FilterKind::Glow => lang.t("fx-glow"),
         }
     }
 
@@ -188,39 +184,39 @@ impl FilterKind {
 /// 目録の値の欄の名前（0.5.0 のフィルター。`kind` は目録の種類の名前、`param` は欄の名前）。
 pub fn param_label(lang: Lang, kind: &str, param: &str) -> &'static str {
     match (kind, param) {
-        ("pattern", "shape") => lang.pick("形", "Shape"),
-        ("pattern", "scale") => lang.pick("繰り返し", "Repeat"),
-        ("pattern", "width") => lang.pick("太さ", "Width"),
-        ("pattern", "softness") => lang.pick("ぼかし", "Blur"),
-        ("pattern", "offset_u") => lang.pick("ずらす U", "Offset U"),
-        ("pattern", "offset_v") => lang.pick("ずらす V", "Offset V"),
-        ("light", "azimuth") => lang.pick("水平の角度", "Azimuth"),
-        ("light", "elevation") => lang.pick("高さ", "Elevation"),
-        ("light", "softness") => lang.pick("回り込み", "Wrap"),
-        ("light", "ambient") => lang.pick("底上げ", "Ambient"),
-        ("mask_builder", "combine") => lang.pick("合わせ方", "Combine"),
-        ("mask_builder", p) if p.ends_with("_weight") => lang.pick("重み", "Weight"),
-        ("mask_builder", p) if p.ends_with("_level") => lang.pick("位置", "Level"),
-        ("mask_builder", p) if p.ends_with("_contrast") => lang.pick("コントラスト", "Contrast"),
-        ("mask_builder", p) if p.ends_with("_invert") => lang.pick("反転", "Invert"),
-        ("uv_island_variation", "min") => lang.pick("最小", "Min"),
-        ("uv_island_variation", "max") => lang.pick("最大", "Max"),
-        (_, "position") => lang.pick("位置", "Position"),
-        (_, "contrast") => lang.pick("コントラスト", "Contrast"),
-        (_, "range") => lang.pick("幅", "Range"),
-        ("warp", "intensity") => lang.pick("ずらす量", "Amount"),
-        ("glow", "intensity") => lang.pick("明るさ", "Intensity"),
-        (_, "intensity") => lang.pick("長さ", "Length"),
-        (_, "samples") => lang.pick("取る数", "Samples"),
-        ("morphology", "mode") => lang.pick("向き", "Mode"),
-        (_, "mode") => lang.pick("合わせ方", "Mode"),
-        (_, "scale") => lang.pick("ノイズの大きさ", "Noise Size"),
-        (_, "seed") => lang.pick("シード", "Seed"),
-        (_, "angle") => lang.pick("角度", "Angle"),
-        (_, "distance") => lang.pick("長さ", "Distance"),
-        (_, "width") => lang.pick("ぼかす幅", "Width"),
-        (_, "threshold") => lang.pick("しきい値", "Threshold"),
-        _ => lang.pick("半径", "Radius"),
+        ("pattern", "shape") => lang.t("fx-shape"),
+        ("pattern", "scale") => lang.t("fx-repeat"),
+        ("pattern", "width") => lang.t("fx-width"),
+        ("pattern", "softness") => lang.t("fx-blur"),
+        ("pattern", "offset_u") => lang.t("fx-offset-u"),
+        ("pattern", "offset_v") => lang.t("fx-offset-v"),
+        ("light", "azimuth") => lang.t("fx-azimuth"),
+        ("light", "elevation") => lang.t("fx-elevation"),
+        ("light", "softness") => lang.t("fx-wrap"),
+        ("light", "ambient") => lang.t("fx-ambient"),
+        ("mask_builder", "combine") => lang.t("fx-combine"),
+        ("mask_builder", p) if p.ends_with("_weight") => lang.t("fx-weight"),
+        ("mask_builder", p) if p.ends_with("_level") => lang.t("fx-level"),
+        ("mask_builder", p) if p.ends_with("_contrast") => lang.t("fx-contrast"),
+        ("mask_builder", p) if p.ends_with("_invert") => lang.t("fx-invert"),
+        ("uv_island_variation", "min") => lang.t("fx-min"),
+        ("uv_island_variation", "max") => lang.t("fx-max"),
+        (_, "position") => lang.t("fx-position"),
+        (_, "contrast") => lang.t("fx-contrast"),
+        (_, "range") => lang.t("fx-range"),
+        ("warp", "intensity") => lang.t("fx-amount"),
+        ("glow", "intensity") => lang.t("fx-intensity"),
+        (_, "intensity") => lang.t("fx-length"),
+        (_, "samples") => lang.t("fx-samples"),
+        ("morphology", "mode") => lang.t("fx-mode"),
+        (_, "mode") => lang.t("fx-mode-2"),
+        (_, "scale") => lang.t("fx-noise-size"),
+        (_, "seed") => lang.t("fx-seed"),
+        (_, "angle") => lang.t("fx-angle"),
+        (_, "distance") => lang.t("fx-distance"),
+        (_, "width") => lang.t("fx-width-2"),
+        (_, "threshold") => lang.t("fx-threshold-2"),
+        _ => lang.t("fx-radius"),
     }
 }
 
@@ -230,10 +226,10 @@ pub fn param_group(lang: Lang, kind: &str, param: &str) -> Option<&'static str> 
         return None;
     }
     Some(match param {
-        "curvature_weight" => lang.pick("曲率", "Curvature"),
-        "ambient_occlusion_weight" => lang.pick("AO", "Ambient Occlusion"),
-        "position_weight" => lang.pick("位置の高さ", "Height (Position)"),
-        "thickness_weight" => lang.pick("厚み", "Thickness"),
+        "curvature_weight" => lang.t("fx-curvature"),
+        "ambient_occlusion_weight" => lang.t("fx-ambient-occlusion"),
+        "position_weight" => lang.t("fx-height-position"),
+        "thickness_weight" => lang.t("fx-thickness"),
         _ => return None,
     })
 }
@@ -241,105 +237,36 @@ pub fn param_group(lang: Lang, kind: &str, param: &str) -> Option<&'static str> 
 /// 目録の値の欄のツールチップ（無ければ None）。
 pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
     Some(match (kind, param) {
-        ("pattern", "scale") => lang.pick(
-            "UV の 0〜1 に繰り返す回数",
-            "How many times the pattern repeats across UV 0–1",
-        ),
-        ("pattern", "width") => lang.pick(
-            "縞・水玉・格子の太さ、縁の幅（繰り返しの 1 つに対する割合）",
-            "Width of stripes, dots and grid lines, or of the border",
-        ),
-        ("pattern", "softness") => lang.pick("境目のぼかし", "Blur of the edges"),
-        ("light", "azimuth") => lang.pick(
-            "光の来る水平の向き（0° が +Z、90° が +X）",
-            "Horizontal direction the light comes from (0° = +Z, 90° = +X)",
-        ),
-        ("light", "elevation") => lang.pick(
-            "光の高さ（0° が水平、90° が真上）",
-            "Height of the light (0° = horizon, 90° = straight above)",
-        ),
-        ("light", "softness") => lang.pick(
-            "明暗の境を裏側へ回り込ませる量",
-            "How far the light wraps around past the terminator",
-        ),
-        ("light", "ambient") => lang.pick("暗い所の明るさ", "Brightness of the dark side"),
-        ("mask_builder", p) if p.ends_with("_weight") => lang.pick(
-            "このマップをどれだけ使うか（0 % は読まない）",
-            "How much this map counts (0% = not read)",
-        ),
-        ("mask_builder", p) if p.ends_with("_level") => lang.pick(
-            "どの値から上を 1 へ寄せるか",
-            "Where values start turning to 1",
-        ),
-        ("mask_builder", "combine") => {
-            lang.pick("マップの値の合わせ方", "How the maps are combined")
+        ("pattern", "scale") => lang.t("fx-how-many-times-the-pattern-tip"),
+        ("pattern", "width") => lang.t("fx-width-of-stripes-dots-and-tip"),
+        ("pattern", "softness") => lang.t("fx-blur-of-the-edges-tip"),
+        ("light", "azimuth") => lang.t("fx-horizontal-direction-the-light-comes-tip"),
+        ("light", "elevation") => lang.t("fx-height-of-the-light-0-tip"),
+        ("light", "softness") => lang.t("fx-how-far-the-light-wraps-tip"),
+        ("light", "ambient") => lang.t("fx-brightness-of-the-dark-side-tip"),
+        ("mask_builder", p) if p.ends_with("_weight") => lang.t("fx-how-much-this-map-counts-tip"),
+        ("mask_builder", p) if p.ends_with("_level") => {
+            lang.t("fx-where-values-start-turning-to-tip")
         }
-        ("uv_island_variation", "seed") => lang.pick(
-            "同じシード・同じモデルなら同じ値",
-            "The same seed and model give the same values",
-        ),
-        ("uv_island_variation", "min") => {
-            lang.pick("アイランドごとの値の下端", "Lowest value an island can get")
-        }
-        ("uv_island_variation", "max") => lang.pick(
-            "アイランドごとの値の上端",
-            "Highest value an island can get",
-        ),
-        ("histogram_scan", "position") => lang.pick(
-            "どの値から上を 1 にするか",
-            "Where values start turning to 1",
-        ),
-        ("histogram_scan", "contrast") => lang.pick(
-            "境目の鋭さ（1 で 2 値）",
-            "How sharp the cut is (1 = two values)",
-        ),
-        ("histogram_range", "range") => lang.pick(
-            "値の広がり（0 で位置の値 1 つ）",
-            "How far the values spread (0 = only the position)",
-        ),
-        ("histogram_range", "position") => lang.pick("真ん中の値", "The middle value"),
-        ("slope_blur", "intensity") => lang.pick(
-            "ノイズの坂の向きへ伸ばす長さ（画素）",
-            "How far along the noise slope (pixels)",
-        ),
-        ("slope_blur", "mode") => lang.pick(
-            "取った値の平均・最小・最大",
-            "Average, minimum or maximum of the samples",
-        ),
-        ("slope_blur" | "warp", "scale") => lang.pick(
-            "内蔵のノイズの 1 つの塊の大きさ（画素）",
-            "Size of one blob of the built-in noise (pixels)",
-        ),
-        ("warp", "intensity") => lang.pick(
-            "読む位置をずらす長さ（画素）",
-            "How far the pixels are moved (pixels)",
-        ),
-        ("directional_blur", "distance") => lang.pick(
-            "片側の長さ（画素。両側へぼかす）",
-            "Length to each side (pixels)",
-        ),
-        ("morphology", "radius") => {
-            lang.pick("丸い範囲の半径（画素）", "Round window radius (pixels)")
-        }
-        ("edge_detect", "width") => lang.pick(
-            "輪郭を探す前にぼかす幅（画素）",
-            "Blur before finding edges (pixels)",
-        ),
-        ("edge_detect", "threshold") => {
-            lang.pick("これ以下の弱い輪郭は 0", "Edges weaker than this become 0")
-        }
-        ("glow", "threshold") => lang.pick(
-            "これより明るい所だけ光る",
-            "Only parts brighter than this glow",
-        ),
-        ("median", "radius") => lang.pick(
-            "正方形の範囲の半径（画素）",
-            "Square window radius (pixels)",
-        ),
-        (_, "seed") => lang.pick(
-            "同じシードなら同じノイズ",
-            "The same seed gives the same noise.",
-        ),
+        ("mask_builder", "combine") => lang.t("fx-how-the-maps-are-combined-tip"),
+        ("uv_island_variation", "seed") => lang.t("fx-the-same-seed-and-model-tip"),
+        ("uv_island_variation", "min") => lang.t("fx-lowest-value-an-island-can-tip"),
+        ("uv_island_variation", "max") => lang.t("fx-highest-value-an-island-can-tip"),
+        ("histogram_scan", "position") => lang.t("fx-where-values-start-turning-to-2-tip"),
+        ("histogram_scan", "contrast") => lang.t("fx-how-sharp-the-cut-is-tip"),
+        ("histogram_range", "range") => lang.t("fx-how-far-the-values-spread-tip"),
+        ("histogram_range", "position") => lang.t("fx-the-middle-value-tip"),
+        ("slope_blur", "intensity") => lang.t("fx-how-far-along-the-noise-tip"),
+        ("slope_blur", "mode") => lang.t("fx-average-minimum-or-maximum-of-tip"),
+        ("slope_blur" | "warp", "scale") => lang.t("fx-size-of-one-blob-of-tip"),
+        ("warp", "intensity") => lang.t("fx-how-far-the-pixels-are-tip"),
+        ("directional_blur", "distance") => lang.t("fx-length-to-each-side-pixels-tip"),
+        ("morphology", "radius") => lang.t("fx-round-window-radius-pixels-tip"),
+        ("edge_detect", "width") => lang.t("fx-blur-before-finding-edges-pixels-tip"),
+        ("edge_detect", "threshold") => lang.t("fx-edges-weaker-than-this-become-tip"),
+        ("glow", "threshold") => lang.t("fx-only-parts-brighter-than-this-tip"),
+        ("median", "radius") => lang.t("fx-square-window-radius-pixels-tip"),
+        (_, "seed") => lang.t("fx-the-same-seed-gives-the-tip"),
         _ => return None,
     })
 }
@@ -347,18 +274,18 @@ pub fn param_hint(lang: Lang, kind: &str, param: &str) -> Option<&'static str> {
 /// 目録の選択肢の名前（0.5.0 のフィルター）。
 pub fn option_label(lang: Lang, option: &str) -> &'static str {
     match option {
-        "blur" => lang.pick("平均", "Average"),
-        "min" => lang.pick("最小", "Min"),
-        "max" => lang.pick("最大", "Max"),
-        "dilate" => lang.pick("太らせる", "Dilate"),
-        "erode" => lang.pick("細らせる", "Erode"),
-        "stripes" => lang.pick("縞", "Stripes"),
-        "checker" => lang.pick("市松", "Checker"),
-        "dots" => lang.pick("水玉", "Dots"),
-        "border" => lang.pick("縁", "Border"),
-        "grid" => lang.pick("格子", "Grid"),
-        "multiply" => lang.pick("乗算", "Multiply"),
-        "add" => lang.pick("加算", "Add"),
+        "blur" => lang.t("fx-average"),
+        "min" => lang.t("fx-min"),
+        "max" => lang.t("fx-max"),
+        "dilate" => lang.t("fx-dilate"),
+        "erode" => lang.t("fx-erode"),
+        "stripes" => lang.t("fx-stripes"),
+        "checker" => lang.t("fx-checker"),
+        "dots" => lang.t("fx-dots"),
+        "border" => lang.t("fx-border"),
+        "grid" => lang.t("fx-grid"),
+        "multiply" => lang.t("fx-multiply"),
+        "add" => lang.t("fx-add"),
         _ => "?",
     }
 }
@@ -397,31 +324,31 @@ pub const IMAGE_WRAPS: [Wrap; 3] = [Wrap::Repeat, Wrap::Clamp, Wrap::None];
 /// 画像の段がマスク・スカラーで値にする成分の名前。
 pub fn image_component_name(lang: Lang, c: ImageComponent) -> &'static str {
     match c {
-        ImageComponent::Red => lang.pick("R", "R"),
-        ImageComponent::Green => lang.pick("G", "G"),
-        ImageComponent::Blue => lang.pick("B", "B"),
-        ImageComponent::Alpha => lang.pick("アルファ", "Alpha"),
-        ImageComponent::Luminance => lang.pick("輝度", "Luminance"),
+        ImageComponent::Red => lang.t("fx-r"),
+        ImageComponent::Green => lang.t("fx-g"),
+        ImageComponent::Blue => lang.t("fx-b"),
+        ImageComponent::Alpha => lang.t("fx-alpha"),
+        ImageComponent::Luminance => lang.t("fx-luminance"),
     }
 }
 
 pub fn generator_name(lang: Lang, kind: Kind) -> &'static str {
     match kind {
-        Kind::EdgeWear => lang.pick("エッジの摩耗", "Edge Wear"),
-        Kind::Dirt => lang.pick("汚れ・隙間", "Dirt"),
-        Kind::PositionGradient => lang.pick("位置の勾配", "Position Gradient"),
-        Kind::Thickness => lang.pick("厚み", "Thickness"),
-        Kind::Direction => lang.pick("向き", "Direction"),
-        Kind::ShapeGradient => lang.pick("形のグラデーション", "Shape Gradient"),
-        Kind::IdColor => lang.pick("ID の色", "ID Color"),
-        Kind::Anchor => lang.pick("アンカー", "Anchor"),
-        Kind::Noise => lang.pick("ノイズ", "Noise"),
-        Kind::Grunge => lang.pick("グランジ", "Grunge"),
-        Kind::Image => lang.pick("画像", "Image"),
-        Kind::Pattern => lang.pick("模様", "Pattern"),
-        Kind::Light => lang.pick("ライト", "Light"),
-        Kind::MaskBuilder => lang.pick("マスクの組み立て", "Mask Builder"),
-        Kind::UvIslandVariation => lang.pick("アイランドごとのばらつき", "UV Island Variation"),
+        Kind::EdgeWear => lang.t("fx-edge-wear"),
+        Kind::Dirt => lang.t("fx-dirt"),
+        Kind::PositionGradient => lang.t("fx-position-gradient"),
+        Kind::Thickness => lang.t("fx-thickness"),
+        Kind::Direction => lang.t("fx-direction"),
+        Kind::ShapeGradient => lang.t("fx-shape-gradient"),
+        Kind::IdColor => lang.t("fx-id-color"),
+        Kind::Anchor => lang.t("fx-anchor"),
+        Kind::Noise => lang.t("fx-noise"),
+        Kind::Grunge => lang.t("fx-grunge"),
+        Kind::Image => lang.t("fx-image-2"),
+        Kind::Pattern => lang.t("fx-pattern"),
+        Kind::Light => lang.t("fx-light"),
+        Kind::MaskBuilder => lang.t("fx-mask-builder"),
+        Kind::UvIslandVariation => lang.t("fx-uv-island-variation"),
     }
 }
 
@@ -461,13 +388,13 @@ pub fn effect_icon(settings: &EffectSettings) -> &'static str {
 
 pub fn blend_name(lang: Lang, blend: Blend) -> &'static str {
     match blend {
-        Blend::Multiply => lang.pick("乗算", "Multiply"),
-        Blend::Replace => lang.pick("置き換え", "Replace"),
-        Blend::Screen => lang.pick("スクリーン", "Screen"),
-        Blend::Max => lang.pick("最大", "Max"),
-        Blend::Min => lang.pick("最小", "Min"),
-        Blend::Add => lang.pick("加算", "Add"),
-        Blend::Subtract => lang.pick("減算", "Subtract"),
+        Blend::Multiply => lang.t("fx-multiply"),
+        Blend::Replace => lang.t("fx-replace"),
+        Blend::Screen => lang.t("fx-screen"),
+        Blend::Max => lang.t("fx-max"),
+        Blend::Min => lang.t("fx-min"),
+        Blend::Add => lang.t("fx-add"),
+        Blend::Subtract => lang.t("fx-subtract"),
     }
 }
 
@@ -483,8 +410,8 @@ pub const BLENDS: [Blend; 7] = [
 
 pub fn noise_space_name(lang: Lang, space: NoiseSpace) -> &'static str {
     match space {
-        NoiseSpace::Model => lang.pick("モデルの上（3D）", "On the model (3D)"),
-        NoiseSpace::Uv => lang.pick("UV（継ぎ目が出る）", "UV (seams show)"),
+        NoiseSpace::Model => lang.t("fx-on-the-model-3d"),
+        NoiseSpace::Uv => lang.t("fx-uv-seams-show"),
     }
 }
 
@@ -496,9 +423,9 @@ pub const PROCEDURAL_SPACES: [ProceduralSpace; 3] = [
 
 pub fn procedural_space_name(lang: Lang, space: ProceduralSpace) -> &'static str {
     match space {
-        ProceduralSpace::Position => lang.pick("位置", "Position"),
+        ProceduralSpace::Position => lang.t("fx-position"),
         ProceduralSpace::Uv => "UV",
-        ProceduralSpace::Triplanar => lang.pick("トライプラナー", "Triplanar"),
+        ProceduralSpace::Triplanar => lang.t("fx-triplanar"),
     }
 }
 
@@ -507,7 +434,7 @@ pub const NOISE_BASES: [NoiseBasis; 3] =
 
 pub fn noise_basis_name(lang: Lang, basis: NoiseBasis) -> &'static str {
     match basis {
-        NoiseBasis::Value => lang.pick("値", "Value"),
+        NoiseBasis::Value => lang.t("fx-value"),
         NoiseBasis::Perlin => "Perlin",
         NoiseBasis::Worley => "Worley",
     }
@@ -553,9 +480,9 @@ pub const DIRECTIONS: [[f64; 3]; 6] = [
 
 pub fn direction_name(lang: Lang, d: [f64; 3]) -> String {
     if d == [0.0, 1.0, 0.0] {
-        lang.pick("上（+Y）", "Up (+Y)").into()
+        lang.t("fx-up-y").into()
     } else if d == [0.0, -1.0, 0.0] {
-        lang.pick("下（−Y）", "Down (−Y)").into()
+        lang.t("fx-down-y").into()
     } else if d == [1.0, 0.0, 0.0] {
         "+X".into()
     } else if d == [-1.0, 0.0, 0.0] {
@@ -573,27 +500,18 @@ pub fn direction_name(lang: Lang, d: [f64; 3]) -> String {
 /// 平面は後ろが 0・前が 1 の、1 方向のグラデーション（線形）。
 pub fn shape_name(lang: Lang, shape: Shape) -> &'static str {
     match shape {
-        Shape::Box => lang.pick("ボックス", "Box"),
-        Shape::Sphere => lang.pick("球", "Sphere"),
-        Shape::Plane => lang.pick("平面（線形）", "Plane (Linear)"),
+        Shape::Box => lang.t("fx-box"),
+        Shape::Sphere => lang.t("fx-sphere"),
+        Shape::Plane => lang.t("fx-plane-linear"),
     }
 }
 
 /// 形の短い説明（メニューの項目のツールチップ）。
 pub fn shape_hint(lang: Lang, shape: Shape) -> &'static str {
     match shape {
-        Shape::Box => lang.pick(
-            "箱の中は 1、面へ向かって 0 に消える",
-            "1 inside the box, fading to 0 at its faces",
-        ),
-        Shape::Sphere => lang.pick(
-            "球の中は 1、表面へ向かって 0 に消える",
-            "1 inside the sphere, fading to 0 at its surface",
-        ),
-        Shape::Plane => lang.pick(
-            "平面の後ろが 0、前が 1（1 方向のグラデーション）",
-            "0 behind the plane to 1 in front of it (a one-direction gradient)",
-        ),
+        Shape::Box => lang.t("fx-1-inside-the-box-fading-tip"),
+        Shape::Sphere => lang.t("fx-1-inside-the-sphere-fading-tip"),
+        Shape::Plane => lang.t("fx-0-behind-the-plane-to-tip"),
     }
 }
 
@@ -610,8 +528,8 @@ pub fn shape_tooltip(lang: Lang) -> String {
 
 pub fn read_mode_name(lang: Lang, mode: ReadMode) -> &'static str {
     match mode {
-        ReadMode::Value => lang.pick("値", "Value"),
-        ReadMode::Coverage => lang.pick("覆い", "Coverage"),
+        ReadMode::Value => lang.t("fx-value"),
+        ReadMode::Coverage => lang.t("fx-coverage"),
     }
 }
 
@@ -630,10 +548,7 @@ pub fn anchor_label(lang: Lang, anchor: &Anchor, placement: AnchorPlacement) -> 
         && !anchor.name().ends_with(')')
         && !anchor.name().ends_with('）')
     {
-        lang.pick(
-            format!("{}（マスク）", anchor.name()),
-            format!("{} (mask)", anchor.name()),
-        )
+        lang.f("fx-mask", &[("name", &anchor.name())])
     } else {
         anchor.name().to_owned()
     }

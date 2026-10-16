@@ -59,10 +59,10 @@ impl Plan {
 /// 再標本化の名前。
 pub fn resampling_name(lang: Lang, method: Option<CanvasResampling>) -> &'static str {
     match method {
-        Some(CanvasResampling::Bilinear) => lang.pick("バイリニア", "Bilinear"),
-        Some(CanvasResampling::Area) => lang.pick("面積平均", "Area average"),
-        Some(CanvasResampling::Nearest) => lang.pick("ニアレストネイバー", "Nearest"),
-        None => lang.pick("自動", "Automatic"),
+        Some(CanvasResampling::Bilinear) => lang.t("newproject-bilinear"),
+        Some(CanvasResampling::Area) => lang.t("newproject-area-average"),
+        Some(CanvasResampling::Nearest) => lang.t("newproject-nearest"),
+        None => lang.t("newproject-automatic"),
     }
 }
 
@@ -147,7 +147,7 @@ fn new_draft(app: &AppState, win: &NpWindow, group: Option<&super::Group>) -> Se
         Some(g) => g.name.clone(),
         None => format!(
             "{} {}",
-            lang.pick("テクスチャセット", "Texture Set"),
+            lang.t("newproject-texture-set"),
             win.drafts.len() + 1
         ),
     };
@@ -220,45 +220,30 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     }
     let drafts = &win.drafts;
     if drafts.is_empty() {
-        return Err(lang
-            .pick(
-                "プロジェクトには少なくとも 1 つのテクスチャセットが要ります",
-                "A project keeps at least one texture set",
-            )
-            .into());
+        return Err(lang.t("newproject-a-project-keeps-at-least").into());
     }
     if drafts.len() > MAX_SETS {
         return Err(crate::lang::refusals::set_limit(lang));
     }
     if win.model.is_some() && !matches!(win.prep, Prep::Ready { .. }) {
-        return Err(lang
-            .pick("モデルを準備できていません", "The model is not ready")
-            .into());
+        return Err(lang.t("newproject-the-model-is-not-ready").into());
     }
     let mut seen_names: Vec<String> = Vec::new();
     for d in drafts {
         let Some(name) = clean_name(&d.name) else {
-            return Err(lang.pick(
-                format!("テクスチャセットの名前は 1〜{MAX_NAME} 文字で、制御文字は使えません"),
-                format!("A texture set name is 1–{MAX_NAME} characters with no control characters"),
+            return Err(lang.f(
+                "newproject-a-texture-set-name-is",
+                &[("MAX_NAME", &MAX_NAME)],
             ));
         };
         let upper = name.to_uppercase();
         if seen_names.contains(&upper) {
-            return Err(lang.pick(
-                format!("「{name}」という名前のセットが 2 つあります"),
-                format!("Two texture sets are named {name}"),
-            ));
+            return Err(lang.f("newproject-two-texture-sets-are-named", &[("name", &name)]));
         }
         seen_names.push(upper);
         if let Some(uid) = d.uid {
             if app.session.sets.index_of(uid).is_none() {
-                return Err(lang
-                    .pick(
-                        "このプロジェクトに無いセットです",
-                        "The project has no such texture set",
-                    )
-                    .into());
+                return Err(lang.t("newproject-the-project-has-no-such").into());
             }
         }
         let standard = d.size.0 == d.size.1 && RESOLUTIONS.contains(&d.size.0);
@@ -267,10 +252,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         }
         if d.resizes() {
             if d.read_only {
-                return Err(lang.pick(
-                    format!("読むだけのセット「{}」は大きさを変えられません", d.name),
-                    format!("The read-only texture set “{}” cannot be resized", d.name),
-                ));
+                return Err(lang.f("newproject-the-read-only-texture-set", &[("name", &d.name)]));
             }
             if !standard {
                 return Err(crate::lang::refusals::set_size(lang));
@@ -281,17 +263,9 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     for (i, a) in drafts.iter().enumerate() {
         if let Some(group) = a.material {
             if let Some(b) = drafts[i + 1..].iter().find(|b| b.material == Some(group)) {
-                return Err(lang.pick(
-                    format!(
-                        "「{}」と「{}」が同じマテリアルを描きます",
-                        a.name.trim(),
-                        b.name.trim()
-                    ),
-                    format!(
-                        "“{}” and “{}” paint the same material",
-                        a.name.trim(),
-                        b.name.trim()
-                    ),
+                return Err(lang.f(
+                    "newproject-and-paint-the-same-material",
+                    &[("name", &a.name.trim()), ("name_2", &b.name.trim())],
                 ));
             }
         }
@@ -343,7 +317,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             rows.push(PlanRow {
                 left: name,
                 middle: String::new(),
-                right: lang.pick("消す", "Remove").into(),
+                right: lang.t("newproject-remove").into(),
                 warning: true,
             });
         }
@@ -374,11 +348,11 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             },
             middle: String::new(),
             right: if win.reload {
-                lang.pick("読み直す", "Reload").into()
+                lang.t("newproject-reload").into()
             } else if was.is_none() {
-                lang.pick("追加", "Add").into()
+                lang.t("newproject-add").into()
             } else {
-                lang.pick("差し替え", "Change").into()
+                lang.t("newproject-change").into()
             },
             warning: false,
         });
@@ -397,11 +371,9 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
                 .count();
             if unbound > 0 {
                 rows.push(PlanRow {
-                    left: lang
-                        .pick("3D のパスレイヤー", "Layers with 3D paths")
-                        .into(),
+                    left: lang.t("newproject-layers-with-3d-paths").into(),
                     middle: unbound.to_string(),
-                    right: lang.pick("画素だけ残る", "Pixels stay").into(),
+                    right: lang.t("newproject-pixels-stay").into(),
                     warning: true,
                 });
             }
@@ -410,7 +382,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             let (middle, warning) = match d.material.and_then(|g| groups.get(g)) {
                 Some(g) => (format!("→ {}", g.name), false),
                 None => (
-                    format!("→ {}", lang.pick("モデルに無い", "not in this model")),
+                    format!("→ {}", lang.t("newproject-not-in-this-model")),
                     true,
                 ),
             };
@@ -601,13 +573,10 @@ pub(super) fn apply(
         })
         .collect();
     let mut text = lang
-        .pick(
-            "プロジェクトの構成を変えました。",
-            "Project configuration applied.",
-        )
+        .t("newproject-project-configuration-applied")
         .to_owned();
     if let Some(name) = model_note {
-        text += &lang.pick(format!(" モデル: {name}。"), format!(" Model: {name}."));
+        text += &lang.f("newproject-model", &[("name", &name)]);
     }
     let pose_noted = pose_note.is_some();
     if let Some(note) = pose_note {
@@ -620,10 +589,7 @@ pub(super) fn apply(
         );
     }
     if !resized.is_empty() {
-        text += &lang.pick(
-            format!(" 大きさを変えたセット {}。", resized.len()),
-            format!(" Resized {}.", resized.len()),
-        );
+        text += &lang.f("newproject-resized", &[("resized", &resized.len())]);
     }
     if !dropped.is_empty() {
         let list = |sep: &str, unit: &dyn Fn(usize) -> String| {
@@ -635,10 +601,7 @@ pub(super) fn apply(
         };
         text += " ";
         text += &lang.with_reason(
-            lang.pick(
-                "縮小で消えた覚えた選択範囲があります",
-                "Some remembered selections were lost to the shrink",
-            ),
+            lang.t("newproject-some-remembered-selections-were-lost"),
             lang.pick(
                 list("・", &|n| format!("{n} 件")),
                 list(", ", &|n| n.to_string()),
@@ -647,10 +610,7 @@ pub(super) fn apply(
     }
     let not_in_model = app.session.model.is_some() && missing > 0;
     if not_in_model {
-        text += &lang.pick(
-            format!(" モデルに無いセット {missing}。"),
-            format!(" Not in the model: {missing}."),
-        );
+        text += &lang.f("newproject-not-in-the-model", &[("missing", &missing)]);
     }
     let kind = if dropped.is_empty() && !not_in_model && !pose_noted {
         crate::notice::Kind::Info
@@ -691,9 +651,9 @@ fn resample(app: &mut AppState, plan: &Plan) -> Result<Vec<Resized>, String> {
                     .map(|s| s.name.clone())
                     .unwrap_or_default();
                 return Err(lang.with_reason(
-                    lang.pick(
-                        format!("テクスチャセット{}を変えられません", lang.quote(&name)),
-                        format!("Cannot change texture set {}", lang.quote(&name)),
+                    lang.f(
+                        "newproject-cannot-change-texture-set",
+                        &[("name", &lang.quote(&name))],
                     ),
                     lang.core_error(&e),
                 ));

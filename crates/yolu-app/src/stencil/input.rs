@@ -243,11 +243,7 @@ pub fn handle_event(
         _ => return false,
     };
     if app.stencil.image.is_none() {
-        app.refuse(
-            Source::Stencil,
-            app.lang
-                .pick("ステンシルの画像がありません。", "No stencil image."),
-        );
+        app.refuse(Source::Stencil, app.lang.t("stencil-no-stencil-image"));
         return true;
     }
     app.stencil.begin_drag(kind, button, rect, *pos);

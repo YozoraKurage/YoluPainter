@@ -56,10 +56,7 @@ fn is_beta_label(text: &str) -> bool {
 /// 「について」の知らせ。試験版には、版のあとに試験版の印を付ける（正式版は製品名と版だけ）。
 pub fn about_text(lang: Lang, version: &str) -> String {
     if is_beta_label(version) {
-        format!(
-            "YoluPainter {version}{}",
-            lang.pick("（試験版）", " (beta)")
-        )
+        format!("YoluPainter {version}{}", lang.t("usage-beta"))
     } else {
         format!("YoluPainter {version}")
     }
@@ -173,18 +170,15 @@ impl Usage {
             items.push(Item {
                 key: "build",
                 text: build.clone(),
-                tip: lang.pick("版とビルド", "Version and build").to_owned(),
+                tip: lang.t("usage-version-and-build-tip").to_owned(),
             });
             // 試験版には、版の左に印（「試験版」「Beta」）。正式版は何も足さない。
             if is_beta_label(build) {
                 items.push(Item {
                     key: "beta",
-                    text: lang.pick("試験版", "Beta").to_owned(),
+                    text: lang.t("usage-beta-2").to_owned(),
                     tip: lang
-                        .pick(
-                            "試験版（正式版より前の版）",
-                            "Beta version (before the stable release)",
-                        )
+                        .t("usage-beta-version-before-the-stable-tip")
                         .to_owned(),
                 });
             }
@@ -216,18 +210,18 @@ pub fn tooltip(usage: &Usage, lang: Lang) -> String {
     if let Some(bytes) = usage.process {
         lines.push(format!(
             "{}: {}",
-            lang.pick("アプリ全体（実メモリ）", "App (resident)"),
+            lang.t("usage-app-resident-tip"),
             format_size(bytes)
         ));
     }
     lines.push(format!(
         "{}: {}",
-        lang.pick("レイヤーのメモリ", "Layer memory"),
+        lang.t("usage-layer-memory-tip"),
         format_size(usage.layers)
     ));
     lines.push(format!(
         "{}: {}",
-        lang.pick("取り消しの履歴", "Undo history"),
+        lang.t("usage-undo-history-tip"),
         format_size(usage.history)
     ));
     if let Some(bytes) = usage.gpu {

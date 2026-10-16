@@ -202,7 +202,7 @@ fn draw_corner(ui: &mut Ui, app: &mut AppState, view: Rect) {
             w::CornerIcon::new(
                 "readonly",
                 "lock",
-                format!("{}: {reason}", lang.pick("読むだけ", "Read-only")),
+                format!("{}: {reason}", lang.t("canvas-read-only-tip")),
             )
             .indicator()
             .color(t::WARNING),
@@ -216,15 +216,9 @@ fn draw_corner(ui: &mut Ui, app: &mut AppState, view: Rect) {
                 "rotate_90_degrees_cw",
                 crate::shortcuts::named_with_keys(
                     lang,
-                    &lang.pick(
-                        format!(
-                            "表示を回しています（{}）。押すと回転を戻します",
-                            angle_label(app.view.angle)
-                        ),
-                        format!(
-                            "The view is rotated ({}). Click to reset the rotation",
-                            angle_label(app.view.angle)
-                        ),
+                    &lang.f(
+                        "canvas-the-view-is-rotated-click-tip",
+                        &[("angle", &angle_label(app.view.angle))],
                     ),
                     &[crate::shortcuts::key_in("view.reset_rotation", app.mode)],
                 ),
@@ -243,7 +237,7 @@ fn draw_corner(ui: &mut Ui, app: &mut AppState, view: Rect) {
             w::CornerIcon::new(
                 "meshmap",
                 "visibility",
-                format!("{}: {name}", lang.pick("メッシュマップ", "Mesh Map")),
+                format!("{}: {name}", lang.t("canvas-mesh-map-tip")),
             )
             .selected(true),
         );
@@ -377,11 +371,7 @@ fn begin_stroke(
         return began;
     }
     let Some(layer) = app.session.selected_layer else {
-        app.refuse(
-            Source::Canvas,
-            app.lang
-                .pick("描くレイヤーがありません。", "No layer to paint on."),
-        );
+        app.refuse(Source::Canvas, app.lang.t("canvas-no-layer-to-paint-on"));
         return false;
     };
     if let Some(reason) = app.paint_blocker() {
@@ -396,10 +386,8 @@ fn begin_stroke(
             app.notify(
                 crate::notice::Kind::of_core(&e),
                 Source::Canvas,
-                app.lang.with_reason(
-                    app.lang.pick("描けません", "Cannot paint"),
-                    app.lang.core_error(&e),
-                ),
+                app.lang
+                    .with_reason(app.lang.t("canvas-cannot-paint"), app.lang.core_error(&e)),
             );
             return false;
         }
@@ -451,10 +439,8 @@ fn begin_stroke(
             app.notify(
                 crate::notice::Kind::of_core(&e),
                 Source::Canvas,
-                app.lang.with_reason(
-                    app.lang.pick("描けません", "Cannot paint"),
-                    app.lang.core_error(&e),
-                ),
+                app.lang
+                    .with_reason(app.lang.t("canvas-cannot-paint"), app.lang.core_error(&e)),
             );
             false
         }
@@ -594,11 +580,7 @@ fn finish_stroke_with(app: &mut AppState, cancel: bool, release: Option<&egui::C
     };
     if cancel {
         app.session.doc.cancel_stroke(stroke);
-        app.info(
-            Source::Canvas,
-            app.lang
-                .pick("ストロークを取り消しました。", "Stroke cancelled."),
-        );
+        app.info(Source::Canvas, app.lang.t("canvas-stroke-cancelled"));
     } else {
         match app.session.doc.end_stroke(stroke) {
             Err(e) => app.notify(
@@ -1434,10 +1416,7 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
 pub fn flip_tip(lang: crate::lang::Lang, mode: crate::mode::EditorMode) -> String {
     crate::shortcuts::named_with_keys(
         lang,
-        lang.pick(
-            "表示を左右反転しています。押すと戻します",
-            "The view is mirrored. Click to restore it",
-        ),
+        lang.t("canvas-the-view-is-mirrored-click-tip"),
         &[crate::shortcuts::key_in("view.flip", mode)],
     )
 }

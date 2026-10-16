@@ -203,7 +203,7 @@ impl AppState {
             return Err(CoreError::LayerNotFound);
         };
         let on_layer = self.rulers.on_layer;
-        let name = self.lang.pick("定規", "Ruler");
+        let name = self.lang.t("rulers-ruler");
         let special = ruler.is_special();
         ruler.snap = false;
         if !on_layer {

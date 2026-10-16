@@ -34,9 +34,9 @@ impl EditorMode {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Self::Paint => lang.pick("ペイント", "Paint"),
-            Self::Edit => lang.pick("編集", "Edit"),
-            Self::Pose => lang.pick("ポーズ", "Pose"),
+            Self::Paint => lang.t("mode-paint"),
+            Self::Edit => lang.t("mode-edit"),
+            Self::Pose => lang.t("mode-pose"),
         }
     }
 
@@ -79,10 +79,10 @@ impl EditTool {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Self::Select => lang.pick("選択", "Select"),
-            Self::Move => lang.pick("移動", "Move"),
-            Self::Rotate => lang.pick("回転", "Rotate"),
-            Self::Scale => lang.pick("拡縮", "Scale"),
+            Self::Select => lang.t("mode-select"),
+            Self::Move => lang.t("mode-move"),
+            Self::Rotate => lang.t("mode-rotate"),
+            Self::Scale => lang.t("mode-scale"),
         }
     }
 
@@ -138,12 +138,12 @@ pub enum ModeAction {
 
 /// ポーズにできない理由（ボーンのあるモデルが無い）。
 pub fn no_rig(lang: Lang) -> &'static str {
-    lang.pick("ボーンのあるモデルがありません", "No model with bones")
+    lang.t("mode-no-model-with-bones")
 }
 
 /// ブラシ・色の欄を編集・ポーズのモードで押せない理由。
 pub fn paint_only(lang: Lang) -> &'static str {
-    lang.pick("ペイントのモードで使います", "Used in Paint mode")
+    lang.t("mode-used-in-paint-mode")
 }
 
 impl AppState {
@@ -165,8 +165,7 @@ impl AppState {
         }
         if mode == EditorMode::Pose && self.view3d.pose.session.is_none() {
             let text = self.lang.with_reason(
-                self.lang
-                    .pick("ポーズのモードにできません", "Cannot enter Pose mode"),
+                self.lang.t("mode-cannot-enter-pose-mode"),
                 no_rig(self.lang),
             );
             self.refuse(Source::Pose, text);
@@ -235,7 +234,7 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
 
 /// 表示のメニューの「モード」（入れ子の 3 行）。
 pub fn view_menu_entry(app: &AppState) -> Entry<Action> {
-    Entry::submenu(app.lang.pick("モード", "Mode"), entries(app))
+    Entry::submenu(app.lang.t("mode-mode"), entries(app))
 }
 
 /// オプションバーの左端のドロップダウンの幅。
@@ -294,11 +293,11 @@ pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
         if open { color } else { t::TEXT_DIM },
         16.0,
     );
-    let name = format!("{}: {}", lang.pick("モード", "Mode"), mode.name(lang));
+    let name = format!("{}: {}", lang.t("mode-mode"), mode.name(lang));
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, true, &name));
     let tip = match crate::shortcuts::menu_key("mode.pie") {
-        Some(key) => lang.pick(format!("モード（{key}）"), format!("Mode ({key})")),
-        None => lang.pick("モード", "Mode").to_owned(),
+        Some(key) => lang.f("mode-mode-tip", &[("key", &key)]),
+        None => lang.t("mode-mode-2-tip").to_owned(),
     };
     let clicked = response.on_hover_text(tip).clicked();
     if clicked {
@@ -353,18 +352,10 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
     let mut x = x + 4.0;
     let key = crate::shortcuts::menu_key("object.snap_toggle");
     let tip = match key {
-        Some(k) => lang.pick(
-            format!("スナップを常にする（{k}）。Ctrl を押している間は逆"),
-            format!("Always snap ({k}). Hold Ctrl for the opposite"),
-        ),
-        None => lang
-            .pick(
-                "スナップを常にする。Ctrl を押している間は逆",
-                "Always snap. Hold Ctrl for the opposite",
-            )
-            .to_owned(),
+        Some(k) => lang.f("mode-always-snap-hold-ctrl-for-tip", &[("k", &k)]),
+        None => lang.t("mode-always-snap-hold-ctrl-for-2-tip").to_owned(),
     };
-    let label = lang.pick("スナップ", "Snap");
+    let label = lang.t("mode-snap");
     let width = 23.0 + w::text_width(ui.painter(), label, t::LABEL) + 8.0;
     let on = w::toggle(
         ui,
@@ -383,7 +374,7 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
     for (id, name, value, min, max, format) in [
         (
             "options.snap.move",
-            lang.pick("移動", "Move"),
+            lang.t("mode-move"),
             &mut steps.movement,
             0.001,
             100.0,
@@ -395,7 +386,7 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
         ),
         (
             "options.snap.rotate",
-            lang.pick("回転", "Rotate"),
+            lang.t("mode-rotate"),
             &mut steps.rotation,
             0.1,
             90.0,
@@ -407,7 +398,7 @@ pub fn snap_options(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) {
         ),
         (
             "options.snap.scale",
-            lang.pick("拡縮", "Scale"),
+            lang.t("mode-scale"),
             &mut steps.scale,
             0.001,
             10.0,

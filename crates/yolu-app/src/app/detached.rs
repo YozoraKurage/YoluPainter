@@ -259,7 +259,7 @@ impl YoluApp {
                         ui,
                         titlebar::close_rect(row),
                         frame_ids[1],
-                        lang.pick("ドックに戻す", "Return to Dock"),
+                        lang.t("app-return-to-dock"),
                     );
                 }
                 (full, drag, close)

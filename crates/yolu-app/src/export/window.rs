@@ -97,8 +97,8 @@ impl ExportForm {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            ExportForm::ChannelPng => lang.pick("今のチャンネル", "Current Channel"),
-            ExportForm::AllChannels => lang.pick("チャンネルごと", "Per Channel"),
+            ExportForm::ChannelPng => lang.t("export-current-channel"),
+            ExportForm::AllChannels => lang.t("export-per-channel"),
             ExportForm::UnityStandard => "Unity Standard / URP Lit",
             ExportForm::Hdrp => "HDRP Lit",
             ExportForm::LilToon => "lilToon",
@@ -272,10 +272,7 @@ impl AppState {
             .then(|| self.export.window.confirmed.take())
             .flatten();
         let Some(destination) = self.export_destination() else {
-            self.refuse(
-                Source::Export,
-                lang.pick("出力先がありません。", "There is no destination."),
-            );
+            self.refuse(Source::Export, lang.t("export-there-is-no-destination"));
             return;
         };
         let sets = self.export_checked_uids();
@@ -346,7 +343,7 @@ pub fn run_dialog(state: &mut AppState) {
     let nearest = nearest_existing_folder;
     if state.export_form().writes_file() {
         let mut dialog = crate::dialog::file(state, Place::ImageExport)
-            .set_title(lang.pick("チャンネルを PNG に書き出す", "Export the channel as PNG"))
+            .set_title(lang.t("export-export-the-channel-as-png"))
             .add_filter("PNG", &["png"])
             .set_file_name(
                 destination
@@ -367,7 +364,7 @@ pub fn run_dialog(state: &mut AppState) {
         }
     } else {
         let mut dialog = crate::dialog::file(state, Place::ImageExport)
-            .set_title(lang.pick("画像を書き出すフォルダ", "Folder for the exported images"));
+            .set_title(lang.t("export-folder-for-the-exported-images"));
         if let Some(dir) = destination.as_deref().and_then(nearest) {
             dialog = dialog.set_directory(dir);
         }
@@ -421,7 +418,7 @@ fn color_space_name(lang: Lang, srgb: bool) -> &'static str {
     if srgb {
         "sRGB"
     } else {
-        lang.pick("リニア", "Linear")
+        lang.t("export-linear")
     }
 }
 
@@ -536,7 +533,7 @@ fn draw_file(
     if file.exists {
         p.circle_filled(dot.center(), 3.0, t::WARNING);
         ui.interact(dot.expand(4.0), id, egui::Sense::hover())
-            .on_hover_text(lang.pick("上書き", "Overwrite"));
+            .on_hover_text(lang.t("export-overwrite-tip"));
     }
     let space = color_space_name(lang, file.srgb);
     w::text(
@@ -573,11 +570,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     // 置き換えの確認などのモーダルが前にある間の Esc は、そちらだけが受ける（ここは閉じない）
     let modal = crate::windows::modal_open(app);
     let spec = Spec {
-        title: lang.pick("テクスチャを書き出す", "Export Textures"),
+        title: lang.t("export-export-textures"),
         icon: Some("folder_open"),
         size: vec2(WIDTH, HEIGHT),
         modal: false,
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
+        close_label: lang.t("export-close-window"),
     };
     let id = Id::new(("yolu.window", WINDOW));
     let mut offset = app.ui.export_window_offset;
@@ -605,7 +602,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 pos2(left.left() + MARGIN, left.top() + 8.0),
                 vec2(left.width() - 2.0 * MARGIN, 16.0),
             ),
-            lang.pick("テクスチャセット", "Texture Sets"),
+            lang.t("export-texture-sets"),
             t::HEADER.with_color(t::TEXT_DIM),
             Align::Left,
         );
@@ -636,11 +633,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         w::text(
             &p,
             Rect::from_min_size(r.min, vec2(LABEL_WIDTH, r.height())),
-            lang.pick("出力先", "Output Path"),
+            lang.t("export-output-path"),
             t::LABEL,
             Align::Left,
         );
-        let choose = lang.pick("選ぶ…", "Choose…");
+        let choose = lang.t("export-choose");
         let choose_width = w::text_width(&p, choose, t::LABEL) + 24.0;
         let choose_rect = Rect::from_min_size(
             pos2(r.right() - choose_width, r.top()),
@@ -686,7 +683,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             row(1),
             (id, "template"),
-            Some(lang.pick("出力テンプレート", "Output Template")),
+            Some(lang.t("export-output-template")),
             form.name(lang),
             None,
             true,
@@ -700,7 +697,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             row(2),
             (id, "padding"),
-            Some(lang.pick("パディング", "Padding")),
+            Some(lang.t("export-padding")),
             &padding,
             None,
             true,
@@ -720,7 +717,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 pos2(right.left() + MARGIN, heading_top),
                 vec2(right.width() - 2.0 * MARGIN, 16.0),
             ),
-            lang.pick("書き出すファイル", "Files to Export"),
+            lang.t("export-files-to-export"),
             t::HEADER.with_color(t::TEXT_DIM),
             Align::Left,
         );
@@ -746,9 +743,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         w::fill(&p, footer, t::PANEL_HEADER);
         w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
         let reason = if exporting {
-            Some(lang.pick("書き出し中", "An export is running"))
+            Some(lang.t("export-an-export-is-running-2"))
         } else if destination.is_none() {
-            Some(lang.pick("出力先が未選択", "No output path"))
+            Some(lang.t("export-no-output-path"))
         } else if !any_checked {
             Some(no_set_reason.as_str())
         } else {
@@ -757,14 +754,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let mut x = footer.right() - MARGIN;
         let buttons = [
             (
-                lang.pick("キャンセル", "Cancel"),
+                lang.t("export-cancel"),
                 false,
                 true,
                 None,
                 ExportAction::CloseWindow,
             ),
             (
-                lang.pick("書き出す", "Export"),
+                lang.t("export-export"),
                 true,
                 reason.is_none(),
                 reason,

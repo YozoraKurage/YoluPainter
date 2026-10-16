@@ -948,9 +948,7 @@ pub fn blank_document(width: u32, height: u32) -> (Document, Option<LayerId>) {
 /// `blank_document`の、最初のレイヤーの名前を言語に合わせたもの（新しいレイヤーの名前と同じ言い方）。
 pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Option<LayerId>) {
     let mut doc = Document::new(width, height).expect("文書の大きさ");
-    let first = doc
-        .add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer")))
-        .ok();
+    let first = doc.add_layer(&format!("{} 1", lang.t("state-layer"))).ok();
     let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
     crate::look::apply_new_set_look(&mut doc);
     (doc, first)
@@ -968,7 +966,7 @@ impl AppState {
             return;
         }
         self.lang = lang;
-        let untitled = |l: Lang| l.pick("名称未設定", "Untitled");
+        let untitled = |l: Lang| l.t("state-untitled");
         if self.session.project.is_none() && self.session.project_name == untitled(old) {
             self.session.project_name = untitled(lang).into();
         }
@@ -979,7 +977,7 @@ impl AppState {
             self.session.project_name = crate::recovery::recovered_name(lang).into();
         }
         self.session.sets.retitle_defaults(old, lang);
-        let first_layer = |l: Lang| format!("{} 1", l.pick("レイヤー", "Layer"));
+        let first_layer = |l: Lang| format!("{} 1", l.t("state-layer"));
         if self.session.project.is_none()
             && !self.session.doc.can_undo()
             && self.session.doc.layers().len() == 1
@@ -1019,7 +1017,7 @@ impl AppState {
                 doc,
                 first,
                 sets,
-                lang.pick("名称未設定", "Untitled").into(),
+                lang.t("state-untitled").into(),
             ),
             tool: Tool::Brush,
             brush: BrushState::default(),
@@ -1105,10 +1103,7 @@ impl AppState {
             let text = crate::lang::refusals::during_stroke(self.lang);
             return self.refuse(Source::Edit, text);
         }
-        if self.refuse_while_saving(
-            self.lang
-                .pick("プロジェクトを開けません", "Cannot open a project"),
-        ) {
+        if self.refuse_while_saving(self.lang.t("state-cannot-open-a-project")) {
             return;
         }
         if !path.is_file() {
@@ -1264,7 +1259,7 @@ impl AppState {
     pub fn layer_name_for_new(&self) -> String {
         format!(
             "{} {}",
-            self.lang.pick("レイヤー", "Layer"),
+            self.lang.t("state-layer"),
             self.session.doc.layers().len() + 1
         )
     }
@@ -1355,7 +1350,7 @@ impl AppState {
                 }
                 match self.session.doc.undo() {
                     Ok(true) => {
-                        self.info(Source::Edit, self.lang.pick("取り消しました。", "Undone."));
+                        self.info(Source::Edit, self.lang.t("state-undone"));
                         self.session.mark_modified();
                     }
                     Ok(false) => {}
@@ -1377,7 +1372,7 @@ impl AppState {
                 }
                 match self.session.doc.redo() {
                     Ok(true) => {
-                        self.info(Source::Edit, self.lang.pick("やり直しました。", "Redone."));
+                        self.info(Source::Edit, self.lang.t("state-redone"));
                         self.session.mark_modified();
                     }
                     Ok(false) => {}
@@ -1426,10 +1421,7 @@ impl AppState {
                     if self.session.doc.layers().len() <= size {
                         self.refuse(
                             Source::Layer,
-                            self.lang.pick(
-                                "最後のレイヤーは消せません。",
-                                "Cannot delete the last layer.",
-                            ),
+                            self.lang.t("state-cannot-delete-the-last-layer"),
                         );
                         return;
                     }
@@ -1555,13 +1547,7 @@ impl AppState {
                 self.view3d.load_demo();
                 // 試しの立方体はファイルのモデルではない（プロジェクトのモデルの参照は外す）
                 self.np.model_file = None;
-                self.info(
-                    Source::View3d,
-                    self.lang.pick(
-                        "3D ビューに試しの立方体を読みました。",
-                        "Test cube loaded in the 3D View.",
-                    ),
-                );
+                self.info(Source::View3d, self.lang.t("state-test-cube-loaded-in-the"));
             }
             Action::FrameModel => {
                 if stroking {
@@ -1609,10 +1595,7 @@ impl AppState {
                     return refuse(self);
                 }
                 // 保存の間は、選んでから断るのではなく、ウィンドウを開く前に断る
-                if self.refuse_while_saving(self.lang.pick(
-                    "新しいプロジェクトを作れません",
-                    "Cannot create a new project",
-                )) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-create-a-new-project")) {
                     return;
                 }
                 self.outbox.dialog_request = Some(DialogRequest::New)
@@ -1627,10 +1610,7 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.refuse_while_saving(
-                    self.lang
-                        .pick("プロジェクトを開けません", "Cannot open a project"),
-                ) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-open-a-project")) {
                     return;
                 }
                 self.outbox.dialog_request = Some(DialogRequest::Open)
@@ -1639,10 +1619,7 @@ impl AppState {
                 if stroking {
                     return refuse(self);
                 }
-                if self.refuse_while_saving(
-                    self.lang
-                        .pick("プロジェクトを保存できません", "Cannot save the project"),
-                ) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-save-the-project")) {
                     return;
                 }
                 self.outbox.dialog_request = Some(DialogRequest::SaveAs)
@@ -1655,10 +1632,7 @@ impl AppState {
                     return refuse(self);
                 }
                 // 保存の間は、保存先を選ぶウィンドウ（まだファイルが無いプロジェクト）も開かずに断る
-                if self.refuse_while_saving(
-                    self.lang
-                        .pick("プロジェクトを保存できません", "Cannot save the project"),
-                ) {
+                if self.refuse_while_saving(self.lang.t("state-cannot-save-the-project")) {
                     return;
                 }
                 match self

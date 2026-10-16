@@ -479,24 +479,15 @@ impl AppState {
         match op {
             PresetOp::Save => {
                 let Some(data) = self.path_preset_data() else {
-                    self.refuse(Source::Path, lang.pick("モデルがありません", "No model"));
+                    self.refuse(Source::Path, lang.t("pathtool-no-model"));
                     return;
                 };
                 let base = base_name(lang, &data.kind);
                 match self.path.presets.save(base, data) {
-                    Ok(_) => self.info(
-                        Source::Path,
-                        lang.pick("パスのプリセットを保存しました。", "Path preset saved."),
-                    ),
+                    Ok(_) => self.info(Source::Path, lang.t("pathtool-path-preset-saved")),
                     Err(why) => self.fail(
                         Source::Path,
-                        lang.with_reason(
-                            lang.pick(
-                                "パスのプリセットを保存できません",
-                                "Cannot save the path preset",
-                            ),
-                            why,
-                        ),
+                        lang.with_reason(lang.t("pathtool-cannot-save-the-path-preset"), why),
                     ),
                 }
             }
@@ -511,13 +502,7 @@ impl AppState {
                 Ok(_) | Err(RenameError::Missing | RenameError::Empty) => {}
                 Err(RenameError::Write(why)) => self.fail(
                     Source::Path,
-                    lang.with_reason(
-                        lang.pick(
-                            "パスのプリセットの名前を変えられません",
-                            "Cannot rename the path preset",
-                        ),
-                        why,
-                    ),
+                    lang.with_reason(lang.t("pathtool-cannot-rename-the-path-preset"), why),
                 ),
             },
             PresetOp::Delete(id) => {
@@ -527,13 +512,7 @@ impl AppState {
                 if let Err(why) = self.path.presets.delete(id) {
                     self.fail(
                         Source::Path,
-                        lang.with_reason(
-                            lang.pick(
-                                "パスのプリセットを削除できません",
-                                "Cannot delete the path preset",
-                            ),
-                            why,
-                        ),
+                        lang.with_reason(lang.t("pathtool-cannot-delete-the-path-preset"), why),
                     );
                 }
             }
@@ -564,10 +543,7 @@ impl AppState {
             match current.or(first) {
                 Some(image) => r.image = image,
                 None => {
-                    self.refuse(
-                        Source::Path,
-                        lang.pick("アセットに画像がありません", "No image in the assets"),
-                    );
+                    self.refuse(Source::Path, lang.t("pathtool-no-image-in-the-assets"));
                     return;
                 }
             }
@@ -604,7 +580,7 @@ impl AppState {
         }
         if !path.is_canvas() {
             let Some(unit) = self.path_world_unit() else {
-                self.refuse(Source::Path, lang.pick("モデルがありません", "No model"));
+                self.refuse(Source::Path, lang.t("pathtool-no-model"));
                 return;
             };
             brush.radius *= unit;

@@ -54,7 +54,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
     // 消去のキーは、今のモードで効くときだけ添える（編集のモードの Delete は選んだ物を消す）
     let erase_name = crate::shortcuts::named_with_keys(
         lang,
-        lang.pick("選択範囲を消去", "Erase Selection"),
+        lang.t("selection-erase-selection"),
         &[crate::shortcuts::key_in("selection.erase", app.mode)],
     );
     [
@@ -64,7 +64,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
                 icon: "deselect",
                 tooltip: crate::shortcuts::named_with_keys(
                     lang,
-                    lang.pick("選択を解除", "Deselect"),
+                    lang.t("selection-deselect-tip"),
                     &[
                         crate::shortcuts::key_in("selection.deselect", app.mode),
                         app.mode.paints().then(|| "Esc".to_owned()),
@@ -78,7 +78,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
                 icon: "invert_colors",
                 tooltip: crate::shortcuts::named_with_keys(
                     lang,
-                    lang.pick("選択範囲を反転", "Invert Selection"),
+                    lang.t("selection-invert-selection-tip"),
                     &[crate::shortcuts::key_in("selection.invert", app.mode)],
                 ),
                 enabled: free,
@@ -87,21 +87,21 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "grow",
                 icon: "arrow_maximize",
-                tooltip: lang.pick("選択範囲を拡張…", "Grow Selection…").into(),
+                tooltip: lang.t("selection-grow-selection-tip").into(),
                 enabled: free,
                 action: ui(SelUiOp::OpenAmount(ModifyKind::Grow)),
             },
             Item {
                 id: "shrink",
                 icon: "arrow_minimize",
-                tooltip: lang.pick("選択範囲を縮小…", "Shrink Selection…").into(),
+                tooltip: lang.t("selection-shrink-selection-tip").into(),
                 enabled: free,
                 action: ui(SelUiOp::OpenAmount(ModifyKind::Shrink)),
             },
             Item {
                 id: "feather",
                 icon: "blur_on",
-                tooltip: lang.pick("境界をぼかす…", "Feather Selection…").into(),
+                tooltip: lang.t("selection-feather-selection-tip").into(),
                 enabled: free,
                 action: ui(SelUiOp::OpenAmount(ModifyKind::Feather)),
             },
@@ -111,7 +111,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
                 id: "fill",
                 icon: "format_color_fill",
                 tooltip: named(
-                    lang.pick("描画色で塗りつぶす", "Fill with the Paint Color"),
+                    lang.t("selection-fill-with-the-paint-color-tip"),
                     &paint_reason,
                 ),
                 enabled: free && paint_reason.is_none(),
@@ -132,7 +132,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
                 tooltip: named(
                     &crate::shortcuts::named_with_keys(
                         lang,
-                        lang.pick("コピーして新しいレイヤーに", "Copy to a New Layer"),
+                        lang.t("selection-copy-to-a-new-layer-tip"),
                         &[crate::shortcuts::key_in("selection.to_new_layer", app.mode)],
                     ),
                     &copy_reason,
@@ -144,10 +144,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
                 id: "mask",
                 icon: "vignette",
                 tooltip: named(
-                    lang.pick(
-                        "選択範囲をレイヤーマスクにする",
-                        "Make the Selection a Layer Mask",
-                    ),
+                    lang.t("selection-make-the-selection-a-layer-tip"),
                     &mask_reason,
                 ),
                 enabled: free && mask_reason.is_none(),
@@ -156,7 +153,7 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
             Item {
                 id: "remember",
                 icon: "save",
-                tooltip: lang.pick("選択範囲を覚える…", "Remember Selection…").into(),
+                tooltip: lang.t("selection-remember-selection-tip").into(),
                 enabled: free,
                 action: Action::Sel(SelAction::Saved(SavedOp::OpenWindow)),
             },
@@ -172,18 +169,13 @@ fn reasons(app: &AppState) -> (Option<String>, Option<String>, Option<String>) {
         .selected_layer
         .and_then(|id| app.session.doc.layer(id))
     else {
-        let none = lang
-            .pick("レイヤーが選ばれていません", "No layer is selected")
-            .to_owned();
+        let none = lang.t("selection-no-layer-is-selected").to_owned();
         return (Some(none.clone()), Some(none.clone()), Some(none));
     };
     let paint = app.paint_blocker();
     let masked = app.m2.edit_mask && layer.mask().is_some();
-    let copy =
-        (!masked && !matches!(layer.kind(), LayerKind::Raster | LayerKind::Fill)).then(|| {
-            lang.pick("画素を持たないレイヤーです", "This layer has no pixels")
-                .to_owned()
-        });
+    let copy = (!masked && !matches!(layer.kind(), LayerKind::Raster | LayerKind::Fill))
+        .then(|| lang.t("selection-this-layer-has-no-pixels").to_owned());
     (paint, copy, None)
 }
 
@@ -357,7 +349,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView, area: Rect) {
 
 /// 持ち手の名前（ツールチップと読み上げ）。
 pub fn grip_name(lang: Lang) -> &'static str {
-    lang.pick("ボタンの帯を動かす", "Move the Button Bar")
+    lang.t("selection-move-the-button-bar")
 }
 
 /// 帯の地・縁・影。

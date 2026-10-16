@@ -121,10 +121,10 @@ pub enum RegionAction {
 /// 範囲の種類の名前。
 pub fn kind_name(lang: Lang, kind: SurfaceRegionKind) -> &'static str {
     match kind {
-        SurfaceRegionKind::Triangle => lang.pick("三角形", "Triangle"),
-        SurfaceRegionKind::MeshPart => lang.pick("メッシュの塊", "Mesh Part"),
-        SurfaceRegionKind::UvIsland => lang.pick("UV アイランド", "UV Island"),
-        SurfaceRegionKind::Material => lang.pick("マテリアル", "Material"),
+        SurfaceRegionKind::Triangle => lang.t("region-triangle"),
+        SurfaceRegionKind::MeshPart => lang.t("region-mesh-part"),
+        SurfaceRegionKind::UvIsland => lang.t("region-uv-island"),
+        SurfaceRegionKind::Material => lang.t("region-material"),
     }
 }
 
@@ -200,13 +200,10 @@ impl AppState {
     pub fn region_missing_reason(&self) -> String {
         let lang = self.lang;
         if self.view3d.model.is_none() {
-            return lang.pick("モデルがありません", "No model").into();
+            return lang.t("region-no-model").into();
         }
         let name = &self.session.sets.current().name;
-        lang.pick(
-            format!("今のテクスチャセット「{name}」はこのモデルにありません。"),
-            format!("Texture set “{name}” is not in this model."),
-        )
+        lang.f("region-texture-set-is-not-in", &[("name", &name)])
     }
 
     /// 今のモデルの範囲の索引（モデルが替わるまで作り直さない）。

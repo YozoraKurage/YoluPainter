@@ -97,10 +97,7 @@ fn put_note(lang: Lang, rel: &str, existed: bool) -> String {
 fn count_note(lang: Lang, added: usize, existing: usize) -> String {
     let mut parts = Vec::new();
     if added > 0 {
-        parts.push(lang.pick(
-            format!("{added} 件をライブラリに入れました。"),
-            format!("Added {added} to the library."),
-        ));
+        parts.push(lang.f("library-added-to-the-library", &[("added", &added)]));
     }
     if existing > 0 {
         parts.push(lang.pick(
@@ -111,11 +108,11 @@ fn count_note(lang: Lang, added: usize, existing: usize) -> String {
             ),
         ));
     }
-    parts.join(lang.pick("", " "))
+    parts.join(lang.t("library-text"))
 }
 
 fn no_location(lang: Lang) -> &'static str {
-    lang.pick("ライブラリの場所がありません", "No library location")
+    lang.t("library-no-library-location")
 }
 
 fn kind_of_extension(path: &Path) -> Option<files::Kind> {
@@ -184,10 +181,7 @@ impl AppState {
         });
         self.info(
             Source::Library,
-            format!(
-                "{}: {name}",
-                lang.pick("ライブラリへ書き込み中", "Writing to the library")
-            ),
+            format!("{}: {name}", lang.t("library-writing-to-the-library")),
         );
         self.library.write = Some(PendingWrite {
             name,
@@ -253,10 +247,10 @@ impl AppState {
                         },
                     );
                 } else {
-                    let mut text = refused.join(lang.pick("", " "));
+                    let mut text = refused.join(lang.t("library-text"));
                     if new + old > 0 {
                         // 一部は入った: 気をつけること。全部断ったなら失敗
-                        text += lang.pick("", " ");
+                        text += lang.t("library-text");
                         text += &count_note(lang, new, old);
                         self.warn(Source::Library, text);
                     } else {
@@ -265,7 +259,7 @@ impl AppState {
                 }
             }
             None => {
-                let why = lang.pick("書き込みが途中で止まりました", "The write stopped midway");
+                let why = lang.t("library-the-write-stopped-midway");
                 self.cannot(NoticeKind::Error, Source::Library, attempt, None, why);
             }
         }
@@ -280,13 +274,7 @@ impl AppState {
             return;
         };
         if is_builtin(id) {
-            return self.refuse(
-                Source::Library,
-                lang.pick(
-                    "組み込みはライブラリへ入れられません。",
-                    "Built-in items cannot be added to the library.",
-                ),
-            );
+            return self.refuse(Source::Library, lang.t("library-built-in-items-cannot-be"));
         }
         let Some(kind) = ItemKind::of(&res.kind) else {
             return;
@@ -357,7 +345,7 @@ impl AppState {
     pub(crate) fn library_save_material(&mut self, id: LayerId) {
         let lang = self.lang;
         let Some(layer) = self.session.doc.layer(id) else {
-            let reason = lang.pick("レイヤーがありません", "Layer not found");
+            let reason = lang.t("library-layer-not-found");
             return self.refuse_material(None, reason);
         };
         let name = layer.name().to_owned();
@@ -674,10 +662,7 @@ impl AppState {
                 }
                 self.info(
                     Source::Library,
-                    format!(
-                        "{}: {name}",
-                        lang.pick("ライブラリから消しました", "Removed from the library")
-                    ),
+                    format!("{}: {name}", lang.t("library-removed-from-the-library")),
                 );
             }
             Err(e) => self.cannot(
@@ -695,9 +680,9 @@ impl AppState {
 /// 入れると、今は置けない素材になる。画像の ID だけを持たせると、ほかのプロジェクトでは指す画像が無い）。
 pub(crate) fn material_refusal(lang: Lang, layer: &crate::engine::Layer) -> Option<&'static str> {
     if layer.kind() != LayerKind::Fill {
-        Some(lang.pick("塗りつぶしのレイヤーではありません", "Not a fill layer"))
+        Some(lang.t("library-not-a-fill-layer"))
     } else if layer.fill_images().next().is_some() {
-        Some(lang.pick("画像を使っています", "It uses images"))
+        Some(lang.t("library-it-uses-images"))
     } else {
         None
     }

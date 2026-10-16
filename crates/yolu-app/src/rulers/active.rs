@@ -174,13 +174,10 @@ impl AppState {
                 Place::View3d => special.model,
             };
             if chosen.is_some_and(|r| r.ruler.kind == RulerKind::Symmetry) {
-                return lang.pick(
-                    "特殊定規にスナップが切れています",
-                    "Snap to Special Ruler is off",
-                );
+                return lang.t("rulers-snap-to-special-ruler-is");
             }
         }
-        lang.pick("対称定規がありません", "No symmetry ruler")
+        lang.t("rulers-no-symmetry-ruler")
     }
 
     /// 2D のキャンバスの点 `at`（キャンバスの座標）から、バケツ・自動選択が範囲を求める種の点。`snap` が真で、効いている 2D の対称定規が

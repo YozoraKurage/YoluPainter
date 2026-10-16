@@ -86,9 +86,7 @@ pub fn show_check(ctx: &egui::Context, app: &mut AppState) {
         .collect();
     let spec = ListSpec {
         id: CHECK,
-        title: lang
-            .pick("PSD の取り込みの確かめ", "Import PSD Check")
-            .into(),
+        title: lang.t("psd_import-import-psd-check").into(),
         icon: "warning",
         modal: true,
         width: 700.0,
@@ -99,23 +97,17 @@ pub fn show_check(ctx: &egui::Context, app: &mut AppState) {
         rows,
         buttons: vec![
             Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("psd_import-cancel").into(),
                 primary: false,
                 tooltip: None,
             },
             Button {
-                label: lang.pick("取り込む", "Import").into(),
+                label: lang.t("psd_import-import").into(),
                 primary: true,
-                tooltip: Some(
-                    lang.pick(
-                        "一覧のとおりに取り込みます。PSD 自体は書き換えません（書き出しは新しい PSD になります）",
-                        "Imports as listed. The PSD itself is never rewritten (exports are new PSDs)",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("psd_import-imports-as-listed-the-psd-tip").into()),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("psd_import-close-window").into(),
     };
     let mut offset = app.ui.psd_import_window_offset;
     let mut scroll = 0.0;
@@ -133,9 +125,9 @@ pub fn show_check(ctx: &egui::Context, app: &mut AppState) {
 /// 扱いの名前（右の列）。
 pub fn action_text(lang: Lang, action: ImportAction) -> &'static str {
     match action {
-        ImportAction::Ignored => lang.pick("無視", "Ignored"),
-        ImportAction::Dropped => lang.pick("落とす", "Dropped"),
-        ImportAction::Changed => lang.pick("変わる", "Changed"),
+        ImportAction::Ignored => lang.t("psd_import-ignored"),
+        ImportAction::Dropped => lang.t("psd_import-dropped"),
+        ImportAction::Changed => lang.t("psd_import-changed"),
     }
 }
 
@@ -145,7 +137,7 @@ fn layers_text(lang: Lang, note: &ImportNote) -> String {
     if note.layers.is_empty() {
         return String::new();
     }
-    let sep = lang.pick("、", ", ");
+    let sep = lang.t("psd_import-text");
     let mut text = note
         .layers
         .iter()
@@ -155,10 +147,7 @@ fn layers_text(lang: Lang, note: &ImportNote) -> String {
         .join(sep);
     let rest = note.count.saturating_sub(SHOWN.min(note.layers.len()));
     if rest > 0 {
-        text += &lang.pick(
-            format!(" ほか {rest} レイヤー"),
-            format!(" and {rest} more"),
-        );
+        text += &lang.f("psd_import-and-more", &[("rest", &rest)]);
     }
     text
 }
@@ -181,7 +170,7 @@ fn named(lang: Lang, keys: &[String], name: fn(Lang, &str) -> String) -> String 
             names.push(n)
         }
     }
-    names.join(lang.pick("・", ", "))
+    names.join(lang.t("psd_import-text-2"))
 }
 
 /// 未対応の調整の名前。落とした調整のキーは全部、機能の名前にする（知らないキーは「その他の調整」）。
@@ -197,28 +186,24 @@ fn adjustment_name(lang: Lang, key: &str) -> String {
         "brit" | "CgEd" => K::BrightnessContrast.name(lang).into(),
         "thrs" => K::Threshold.name(lang).into(),
         "post" => K::Posterize.name(lang).into(),
-        "hue " => lang
-            .pick("色相・彩度（旧式）", "Hue/saturation (legacy)")
-            .into(),
-        "selc" => lang.pick("特定色域の選択", "Selective color").into(),
-        "mixr" => lang.pick("チャンネルミキサー", "Channel mixer").into(),
-        "phfl" => lang.pick("フォトフィルター", "Photo filter").into(),
-        "vibA" => lang.pick("自然な彩度", "Vibrance").into(),
-        "blwh" => lang.pick("白黒", "Black and white").into(),
-        "clrL" => lang.pick("カラールックアップ", "Color lookup").into(),
-        "expA" => lang.pick("露光量", "Exposure").into(),
-        _ => lang.pick("その他の調整", "Other adjustments").into(),
+        "hue " => lang.t("psd_import-hue-saturation-legacy").into(),
+        "selc" => lang.t("psd_import-selective-color").into(),
+        "mixr" => lang.t("psd_import-channel-mixer").into(),
+        "phfl" => lang.t("psd_import-photo-filter").into(),
+        "vibA" => lang.t("psd_import-vibrance").into(),
+        "blwh" => lang.t("psd_import-black-and-white").into(),
+        "clrL" => lang.t("psd_import-color-lookup").into(),
+        "expA" => lang.t("psd_import-exposure").into(),
+        _ => lang.t("psd_import-other-adjustments").into(),
     }
 }
 
 /// 取り込めなかった合成モードの名前（知らないキーは「その他」）。
 fn blend_name(lang: Lang, key: &str) -> String {
     match key {
-        "diss" => lang.pick("ディゾルブ", "Dissolve").into(),
-        "pass" => lang
-            .pick("通過（グループ以外）", "Pass through (non-group)")
-            .into(),
-        _ => lang.pick("その他", "Other").into(),
+        "diss" => lang.t("psd_import-dissolve").into(),
+        "pass" => lang.t("psd_import-pass-through-non-group").into(),
+        _ => lang.t("psd_import-other").into(),
     }
 }
 
@@ -229,17 +214,11 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
     let plain = |ja: &str, en: &str| -> String { lang.pick(ja, en).into() };
     match note.feature {
         F::GlobalMask => plain("全体マスク", "Global mask"),
-        F::ImageResources => lang.pick(
-            format!("画像リソース {} 件", note.count),
-            format!("Image resources: {}", note.count),
-        ),
+        F::ImageResources => lang.f("psd_import-image-resources", &[("note", &note.count)]),
         F::ColorProfile => plain("sRGB 以外のカラープロファイル", "Non-sRGB color profile"),
         F::PixelAspect => plain("画素の縦横比", "Pixel aspect ratio"),
         F::ColorModeData => plain("色モードデータ", "Color mode data"),
-        F::DocumentTags => lang.pick(
-            format!("ドキュメントのタグ {} 件", note.count),
-            format!("Document tags: {}", note.count),
-        ),
+        F::DocumentTags => lang.f("psd_import-document-tags", &[("note", &note.count)]),
         F::ExtraChannel => plain(
             "統合画像の追加チャンネル",
             "Extra channel in the merged image",
@@ -260,21 +239,18 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             } else {
                 format!("{percent:.1}")
             };
-            lang.pick(
-                format!("統合画像との差: {shown}% の画素・最大 {max_diff}"),
-                format!("Differs from the merged image: {shown}% of pixels, max {max_diff}"),
+            lang.f(
+                "psd_import-differs-from-the-merged-image",
+                &[("shown", &shown), ("max_diff", &max_diff)],
             )
         }
         F::CompositeUnchecked(why) => {
             let why = match why {
-                Unchecked::NoComposite => lang.pick("統合画像なし", "no merged image"),
-                Unchecked::Unreadable => lang.pick("統合画像を読めない", "merged image unreadable"),
-                Unchecked::Budget => lang.pick("キャンバスが大きい", "canvas too large"),
+                Unchecked::NoComposite => lang.t("psd_import-no-merged-image"),
+                Unchecked::Unreadable => lang.t("psd_import-merged-image-unreadable"),
+                Unchecked::Budget => lang.t("psd_import-canvas-too-large"),
             };
-            lang.pick(
-                format!("統合画像との照合を省略（{why}）"),
-                format!("Merged image not compared ({why})"),
-            )
+            lang.f("psd_import-merged-image-not-compared", &[("why", &why)])
         }
         F::LayerIds => plain("レイヤー ID の欠落・重複", "Missing or duplicate layer IDs"),
         F::LayerName => plain("レイヤー名の文字", "Layer name characters"),
@@ -296,17 +272,11 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
         F::FillSettings => plain("塗りつぶしの設定", "Fill settings"),
         F::UnsupportedAdjustment => {
             let names = named(lang, &keys, adjustment_name);
-            lang.pick(
-                format!("調整レイヤー: {names}"),
-                format!("Adjustment layer: {names}"),
-            )
+            lang.f("psd_import-adjustment-layer", &[("names", &names)])
         }
         F::BlendMode => {
             let names = named(lang, &keys, blend_name);
-            lang.pick(
-                format!("合成モード: {names}"),
-                format!("Blend mode: {names}"),
-            )
+            lang.f("psd_import-blend-mode", &[("names", &names)])
         }
         F::MaskFlags => plain("マスクのフラグ", "Mask flags"),
         F::MaskFeather => plain("マスクのぼかし", "Mask feather"),
@@ -330,86 +300,32 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
 pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
     use ImportFeature as F;
     Some(match note.feature {
-        F::LayerEffects => lang.pick(
-            "レイヤー効果（ドロップシャドウなど）は評価しません。レイヤーの画素のまま取り込むので、合成が PSD の統合画像と変わります",
-            "Layer effects (drop shadow and so on) are not evaluated. The layer pixels are imported as they are, so the composite differs from the PSD's merged image",
-        ),
-        F::SmartObject => lang.pick(
-            "スマートオブジェクトの元のデータは持ちません。レイヤーの画素のまま取り込みます",
-            "The smart object's source data is not kept. The layer pixels are imported as they are",
-        ),
-        F::TextLayer => lang.pick(
-            "文字のデータは持ちません。レイヤーの画素のまま取り込みます",
-            "The text data is not kept. The layer pixels are imported as they are",
-        ),
-        F::VectorMask => lang.pick(
-            "ベクターマスクは評価しません。レイヤーの画素のまま取り込むので、合成が変わります",
-            "Vector masks are not evaluated. The layer pixels are imported as they are, so the composite changes",
-        ),
-        F::FillSettings => lang.pick(
-            "グラデーション・パターンの塗りつぶしの設定は持ちません。レイヤーの画素のまま取り込みます",
-            "Gradient and pattern fill settings are not kept. The layer pixels are imported as they are",
-        ),
-        F::UnsupportedAdjustment => lang.pick(
-            "この調整レイヤーは取り込めません。画素を持たないので、レイヤーごと落とします",
-            "This adjustment layer cannot be imported. It has no pixels, so the whole layer is dropped",
-        ),
-        F::BlendMode => lang.pick(
-            "未対応の合成モードは通常にします",
-            "Unsupported blend modes become Normal",
-        ),
-        F::BlendIf => lang.pick(
-            "ブレンド条件は評価しません。合成が変わります",
-            "Blend If is not evaluated. The composite changes",
-        ),
-        F::FillOpacity => lang.pick(
-            "塗りの不透明度は、レイヤーの不透明度に掛けます。合成モードによっては Photoshop と少し変わります",
-            "Fill opacity is multiplied into the layer opacity. With some blend modes it differs slightly from Photoshop",
-        ),
-        F::ClippedBlend | F::InteriorBlend | F::Knockout | F::ChannelRestrictions => lang.pick(
-            "この設定は評価しません。合成が変わることがあります",
-            "This setting is not evaluated. The composite may change",
-        ),
-        F::MaskFlags | F::MaskFeather | F::UserAndVectorMask => lang.pick(
-            "マスクのこの設定は評価しません。マスクの画素のまま取り込みます",
-            "This mask setting is not evaluated. The mask pixels are imported as they are",
-        ),
-        F::MaskDefault => lang.pick(
-            "既定値が 0・255 以外のマスクは、近いほうの 0 か 255 にします。マスクの矩形の外の見え方が変わります",
-            "A mask default other than 0 or 255 is set to the nearer of the two. Outside the mask rectangle the look changes",
-        ),
-        F::MaskWithoutPixels => lang.pick(
-            "マスクの矩形だけで画素の値がないので、既定値だけのマスクにします。矩形の中の見え方が変わることがあります",
-            "The mask has a rectangle but no pixel values, so it becomes a mask of its default value only. Inside the rectangle the look may change",
-        ),
-        F::OutsideCanvas | F::MaskOutsideCanvas => lang.pick(
-            "キャンバスの外にある画素は取り込めないので切り捨てます",
-            "Pixels outside the canvas cannot be kept and are cut off",
-        ),
-        F::LayerIds => lang.pick(
-            "レイヤー ID が無い・重複しているレイヤーには新しい ID を振ります。名前では対応付けません",
-            "Layers with a missing or duplicate ID get a new ID. Nothing is matched by name",
-        ),
-        F::ColorProfile => lang.pick(
-            "色は変換せず、画素の値のまま取り込みます",
-            "Colors are not converted; pixel values are imported as they are",
-        ),
-        F::PixelAspect => lang.pick(
-            "縦横比は持たず、正方形の画素として取り込みます",
-            "The aspect ratio is not kept; pixels are imported as squares",
-        ),
-        F::CompositeDiffers { .. } => lang.pick(
-            "取り込んだプロジェクトの合成を、PSD に保存された統合画像と照らした結果です",
-            "The imported project's composite compared with the merged image saved in the PSD",
-        ),
-        F::CompositeUnchecked(_) => lang.pick(
-            "統合画像と照らしていないので、合成が PSD と同じかは確かめていません",
-            "The composite was not compared with the merged image, so it is unverified",
-        ),
-        F::MissingChannels => lang.pick(
-            "RGB のチャンネルが揃わないレイヤーは取り込めないので、レイヤーごと落とします",
-            "A layer without all RGB channels cannot be imported and is dropped",
-        ),
+        F::LayerEffects => lang.t("psd_import-layer-effects-drop-shadow-and-tip"),
+        F::SmartObject => lang.t("psd_import-the-smart-object-s-source-tip"),
+        F::TextLayer => lang.t("psd_import-the-text-data-is-not-tip"),
+        F::VectorMask => lang.t("psd_import-vector-masks-are-not-evaluated-tip"),
+        F::FillSettings => lang.t("psd_import-gradient-and-pattern-fill-settings-tip"),
+        F::UnsupportedAdjustment => lang.t("psd_import-this-adjustment-layer-cannot-be-tip"),
+        F::BlendMode => lang.t("psd_import-unsupported-blend-modes-become-normal-tip"),
+        F::BlendIf => lang.t("psd_import-blend-if-is-not-evaluated-tip"),
+        F::FillOpacity => lang.t("psd_import-fill-opacity-is-multiplied-into-tip"),
+        F::ClippedBlend | F::InteriorBlend | F::Knockout | F::ChannelRestrictions => {
+            lang.t("psd_import-this-setting-is-not-evaluated-tip")
+        }
+        F::MaskFlags | F::MaskFeather | F::UserAndVectorMask => {
+            lang.t("psd_import-this-mask-setting-is-not-tip")
+        }
+        F::MaskDefault => lang.t("psd_import-a-mask-default-other-than-tip"),
+        F::MaskWithoutPixels => lang.t("psd_import-the-mask-has-a-rectangle-tip"),
+        F::OutsideCanvas | F::MaskOutsideCanvas => {
+            lang.t("psd_import-pixels-outside-the-canvas-cannot-tip")
+        }
+        F::LayerIds => lang.t("psd_import-layers-with-a-missing-or-tip"),
+        F::ColorProfile => lang.t("psd_import-colors-are-not-converted-pixel-tip"),
+        F::PixelAspect => lang.t("psd_import-the-aspect-ratio-is-not-tip"),
+        F::CompositeDiffers { .. } => lang.t("psd_import-the-imported-project-s-composite-tip"),
+        F::CompositeUnchecked(_) => lang.t("psd_import-the-composite-was-not-compared-tip"),
+        F::MissingChannels => lang.t("psd_import-a-layer-without-all-rgb-tip"),
         _ => return None,
     })
 }
@@ -418,15 +334,15 @@ pub fn feature_tooltip(lang: Lang, note: &ImportNote) -> Option<&'static str> {
 
 pub(crate) fn color_mode_name(lang: Lang, mode: u16) -> String {
     match mode {
-        0 => lang.pick("ビットマップ", "Bitmap").into(),
-        1 => lang.pick("グレースケール", "Grayscale").into(),
-        2 => lang.pick("インデックスカラー", "Indexed color").into(),
+        0 => lang.t("psd_import-bitmap").into(),
+        1 => lang.t("psd_import-grayscale").into(),
+        2 => lang.t("psd_import-indexed-color").into(),
         3 => "RGB".into(),
         4 => "CMYK".into(),
-        7 => lang.pick("マルチチャンネル", "Multichannel").into(),
-        8 => lang.pick("ダブルトーン", "Duotone").into(),
+        7 => lang.t("psd_import-multichannel").into(),
+        8 => lang.t("psd_import-duotone").into(),
         9 => "Lab".into(),
-        n => lang.pick(format!("色モード {n}"), format!("Color mode {n}")),
+        n => lang.f("psd_import-color-mode", &[("n", &n)]),
     }
 }
 

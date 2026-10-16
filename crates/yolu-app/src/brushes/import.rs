@@ -264,7 +264,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
         Some(JobCard {
             text: format!(
                 "{} — {}{}",
-                lang.pick("ブラシを取り込み中", "Importing brushes"),
+                lang.t("brushes-importing-brushes"),
                 p.file,
                 if p.total > 1 {
                     format!(" ({}/{})", p.index, p.total)
@@ -317,9 +317,9 @@ impl AppState {
         if user_count >= super::MAX_USER_BRUSHES {
             self.refuse(
                 Source::Brush,
-                lang.pick(
-                    format!("ブラシは {} 個までです。", super::MAX_USER_BRUSHES),
-                    format!("At most {} brushes.", super::MAX_USER_BRUSHES),
+                lang.f(
+                    "brushes-at-most-brushes",
+                    &[("MAX_USER_BRUSHES", &super::MAX_USER_BRUSHES)],
                 ),
             );
             return;
@@ -353,7 +353,7 @@ impl AppState {
                 self.fail(
                     Source::Brush,
                     lang.with_reason(
-                        lang.pick("ブラシを取り込めません", "Cannot import the brushes"),
+                        lang.t("brushes-cannot-import-the-brushes"),
                         lang.thread_error(&e),
                     ),
                 );
@@ -363,10 +363,7 @@ impl AppState {
         let first = paths.first().map(|p| file_name(p)).unwrap_or_default();
         self.info(
             Source::Brush,
-            lang.pick(
-                format!("ブラシを取り込み中: {first}"),
-                format!("Importing brushes: {first}"),
-            ),
+            lang.f("brushes-importing-brushes-2", &[("value", &first)]),
         );
         self.brushes.import.job = Some(Job {
             worker,
@@ -384,10 +381,7 @@ impl AppState {
         if let Some(job) = &mut self.brushes.import.job {
             job.worker.cancel();
             job.canceling = true;
-            self.info(
-                Source::Brush,
-                lang.pick("取り込みを取り消しています…", "Canceling the import…"),
-            );
+            self.info(Source::Brush, lang.t("brushes-canceling-the-import"));
         }
     }
 
@@ -511,7 +505,7 @@ impl AppState {
         let mut text = Self::brush_import_message(lang, &report, job.canceling);
         let mut kind = import_kind(&report);
         if let Some(order) = order_error.filter(|o| !o.is_empty()) {
-            text.push_str(&lang.pick(format!("。{order}"), format!(". {order}")));
+            text.push_str(&lang.f("brushes-text", &[("order", &order)]));
             kind = kind.worse(crate::notice::Kind::Warning);
         }
         self.notify(kind, Source::Brush, text);
@@ -537,31 +531,23 @@ impl AppState {
                 let file = lang.quote(file);
                 if r.failed.len() == 1 {
                     return lang.with_reason(
-                        lang.pick(
-                            format!("{file}を取り込めません"),
-                            format!("Cannot import {file}"),
-                        ),
+                        lang.f("brushes-cannot-import", &[("file", &file)]),
                         reason(error),
                     );
                 }
                 let unreadable = lang.with_reason(
-                    lang.pick(format!("{file}は読めません"), format!("Cannot read {file}")),
+                    lang.f("brushes-cannot-read", &[("file", &file)]),
                     reason(error),
                 );
-                return lang.pick(
-                    format!(
-                        "{} 個のファイルを取り込めません。{unreadable}",
-                        r.failed.len()
-                    ),
-                    format!("Cannot import {} files. {unreadable}", r.failed.len()),
+                return lang.f(
+                    "brushes-cannot-import-files",
+                    &[("failed", &r.failed.len()), ("unreadable", &unreadable)],
                 );
             }
         }
         let n = r.imported;
         if r.stopped && n == 0 {
-            return lang
-                .pick("取り込みが止まりました。", "The import stopped.")
-                .into();
+            return lang.t("brushes-the-import-stopped").into();
         }
         let mut text = if r.files <= 1 {
             lang.pick(
@@ -584,46 +570,35 @@ impl AppState {
         };
         if canceled {
             text = if n == 0 {
-                lang.pick("取り込みをやめました", "Import canceled").into()
+                lang.t("brushes-import-canceled").into()
             } else {
-                lang.pick(
-                    format!("取り込みをやめました（{n} 個は取り込み済み）"),
-                    format!("Import canceled ({n} already imported)"),
-                )
+                lang.f("brushes-import-canceled-already-imported", &[("n", &n)])
             };
         }
         if r.stopped {
-            text.push_str(lang.pick("。取り込みが止まりました", ". The import stopped"));
+            text.push_str(lang.t("brushes-the-import-stopped-2"));
         }
         if r.skipped > 0 {
-            text.push_str(&lang.pick(
-                format!("。{} 個は取り込めませんでした", r.skipped),
-                format!(". {} could not be imported", r.skipped),
-            ));
+            text.push_str(&lang.f("brushes-could-not-be-imported", &[("skipped", &r.skipped)]));
         }
         if let Some((file, error)) = r.failed.first() {
             let unreadable = lang.with_reason(
-                lang.pick(
-                    format!("{}は読めません", lang.quote(file)),
-                    format!("Cannot read {}", lang.quote(file)),
-                ),
+                lang.f("brushes-cannot-read", &[("file", &lang.quote(file))]),
                 reason(error),
             );
-            text.push_str(lang.pick("。", ". "));
+            text.push_str(lang.t("brushes-text-2"));
             text.push_str(unreadable.trim_end_matches(['。', '.']));
         }
         if r.capped {
-            text.push_str(&lang.pick(
-                format!("。ブラシは {} 個までです", super::MAX_USER_BRUSHES),
-                format!(". At most {} brushes", super::MAX_USER_BRUSHES),
+            text.push_str(&lang.f(
+                "brushes-at-most-brushes-2",
+                &[("MAX_USER_BRUSHES", &super::MAX_USER_BRUSHES)],
             ));
         }
         if let Some(e) = &r.save_error {
-            let unsaved = lang.with_reason(
-                lang.pick("ブラシを保存できません", "Cannot save the brushes"),
-                e.describe(lang),
-            );
-            text.push_str(lang.pick("。", ". "));
+            let unsaved =
+                lang.with_reason(lang.t("brushes-cannot-save-the-brushes"), e.describe(lang));
+            text.push_str(lang.t("brushes-text-2"));
             text.push_str(unsaved.trim_end_matches(['。', '.']));
         }
         text

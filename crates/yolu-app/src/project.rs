@@ -140,11 +140,7 @@ pub(crate) fn caught_as_text<T>(
 }
 
 fn reading_stopped(lang: Lang) -> String {
-    lang.pick(
-        "プロジェクトを読む途中で止まりました",
-        "Reading the project stopped",
-    )
-    .into()
+    lang.t("project-reading-the-project-stopped").into()
 }
 
 /// 保存した合成の PNG から、見せるだけの文書（1 枚のレイヤー）を作る。大きさが正本と違えば使わない。
@@ -156,51 +152,39 @@ pub(crate) fn preview_document(
 ) -> (Document, Option<String>) {
     let blank = || {
         let mut doc = Document::new(width, height).expect("正本の大きさは検証済み");
-        let _ = doc.add_layer(lang.pick("保存した合成（読むだけ）", "Saved composite (read-only)"));
+        let _ = doc.add_layer(lang.t("project-saved-composite-read-only"));
         let _ = doc.clear_history();
         doc
     };
     let Some(png) = png else {
-        return (
-            blank(),
-            Some(
-                lang.pick("保存した合成の絵なし", "No saved composite")
-                    .into(),
-            ),
-        );
+        return (blank(), Some(lang.t("project-no-saved-composite").into()));
     };
     let image = match image::load_from_memory_with_format(png, image::ImageFormat::Png) {
         Ok(i) => i.to_rgba8(),
         Err(e) => {
             return (
                 blank(),
-                Some(lang.pick(
-                    format!("保存した合成の絵を読めません（{e}）"),
-                    format!("Invalid saved composite ({e})"),
-                )),
+                Some(lang.f("project-invalid-saved-composite", &[("e", &e)])),
             )
         }
     };
     if image.width() != width || image.height() != height {
         return (
             blank(),
-            Some(lang.pick(
-                format!(
-                    "保存した合成の絵の大きさ {}×{} がキャンバスの {width}×{height} と違う",
-                    image.width(),
-                    image.height()
-                ),
-                format!(
-                    "Saved composite size {}×{} differs from canvas {width}×{height}",
-                    image.width(),
-                    image.height()
-                ),
+            Some(lang.f(
+                "project-saved-composite-size-differs-from",
+                &[
+                    ("width", &image.width()),
+                    ("height", &image.height()),
+                    ("width_2", &width),
+                    ("height_2", &height),
+                ],
             )),
         );
     }
     let mut doc = Document::new(width, height).expect("正本の大きさは検証済み");
     let layer = doc
-        .add_layer(lang.pick("保存した合成（読むだけ）", "Saved composite (read-only)"))
+        .add_layer(lang.t("project-saved-composite-read-only"))
         .expect("空の文書にレイヤーを足せる");
     let ts = doc.tile_size();
     let mut tile = vec![0u8; (ts * ts * 4) as usize];
@@ -282,7 +266,7 @@ enum Opened {
 /// 「「ファイル」を開けません」（理由は `Lang::with_reason` で添える）。
 pub(crate) fn cannot_open(lang: Lang, path: &Path) -> String {
     let file = lang.quote(&path.display().to_string());
-    lang.pick(format!("{file}を開けません"), format!("Cannot open {file}"))
+    lang.f("project-cannot-open", &[("file", &file)])
 }
 
 /// 復旧の世代から読んだプロジェクトで今の状態を置き換える。保存していない「名称未設定（復旧）」として開き、元の .ylp には
@@ -292,9 +276,7 @@ pub fn open_recovered(state: &mut AppState, project: Project) {
         state.refuse(
             Source::Recovery,
             state.lang.with_reason(
-                state
-                    .lang
-                    .pick("復旧を開けません", "Cannot open the recovery"),
+                state.lang.t("project-cannot-open-the-recovery"),
                 crate::lang::refusals::saving(state.lang),
             ),
         );
@@ -417,13 +399,9 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 }
                 Ok(None) => {}
                 Err(e) => map_problems.push(lang.with_reason(
-                    lang.pick(
-                        format!("{}の {} を読めません", lang.quote(&set.name), kind.name()),
-                        format!(
-                            "Cannot read the {} of {}",
-                            kind.name(),
-                            lang.quote(&set.name)
-                        ),
+                    lang.f(
+                        "project-cannot-read-the-of",
+                        &[("name", &lang.quote(&set.name)), ("name_2", &kind.name())],
                     ),
                     lang.io_error(&e),
                 )),
@@ -446,16 +424,14 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
             let name = path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
+                .unwrap_or_else(|| state.lang.t("project-untitled").into());
             // ファイルのとおりに開いたので、変更は無い
             state.reset_to_opened_file(name, shelf, path);
             let name = path
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string());
-            state
-                .lang
-                .pick(format!("開きました: {name}。"), format!("Opened: {name}."))
+            state.lang.f("project-opened", &[("name", &name)])
         }
         Opened::Backup(path) => {
             // 題名と保存の名前の候補は元の .ylp の名前（退避の名前の時刻の部分ではない）。始まりの場所も元の .ylp のフォルダー
@@ -465,7 +441,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 .as_deref()
                 .and_then(stem)
                 .or_else(|| stem(path))
-                .unwrap_or_else(|| state.lang.pick("名称未設定", "Untitled").into());
+                .unwrap_or_else(|| state.lang.t("project-untitled").into());
             // ファイルのとおりに開いたので、変更は無い
             state.reset_project_identity(name, shelf);
             state.session.save_folder = origin
@@ -476,10 +452,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_else(|| path.display().to_string());
-            state.lang.pick(
-                format!("開きました: {name}（退避）。"),
-                format!("Opened: {name} (backup)."),
-            )
+            state.lang.f("project-opened-backup", &[("name", &name)])
         }
         Opened::Recovered => {
             state.reset_project_identity(crate::recovery::recovered_name(state.lang).into(), shelf);
@@ -490,20 +463,16 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                     set.saved = None;
                 }
             }
-            state.lang.pick(
-                format!("復旧しました（テクスチャセット {count}）。"),
-                format!("Recovered ({count} texture sets)."),
-            )
+            state
+                .lang
+                .f("project-recovered-texture-sets", &[("value", &count)])
         }
     };
     if !read_only.is_empty() {
         text += " ";
         text += &state.lang.with_reason(
-            state.lang.pick(
-                "読むだけで開いたテクスチャセットがあります",
-                "Some texture sets opened read-only",
-            ),
-            read_only.join(state.lang.pick("・", ", ")),
+            state.lang.t("project-some-texture-sets-opened-read"),
+            read_only.join(state.lang.t("project-text")),
         );
     }
     if !selection_issues.is_empty() {
@@ -513,19 +482,15 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         text += &notice;
     }
     if map_count > 0 {
-        text += &state.lang.pick(
-            format!(" メッシュマップ {map_count} 枚。"),
-            format!(" {map_count} mesh map(s)."),
-        );
+        text += &state
+            .lang
+            .f("project-mesh-map-s", &[("map_count", &map_count)]);
     }
     if !map_problems.is_empty() {
         let lang = state.lang;
         text += " ";
-        text += &map_problems.join(lang.pick("", " "));
-        text += lang.pick(
-            "メッシュマップはファイルには残っています。",
-            " The mesh maps are kept in the file.",
-        );
+        text += &map_problems.join(lang.t("project-text-2"));
+        text += lang.t("project-the-mesh-maps-are-kept");
     }
     // io の知らせのうち、セットごとの変換の理由は上で言ったので除く
     let notes: Vec<String> = project
@@ -570,11 +535,8 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         kind = NoticeKind::Warning;
         text += " ";
         text += &state.lang.with_reason(
-            state.lang.pick(
-                "効果の入力がそろわないので、読むだけのテクスチャセットがあります",
-                "Some texture sets are read-only because their effect inputs are missing",
-            ),
-            waiting.join(state.lang.pick("・", ", ")),
+            state.lang.t("project-some-texture-sets-are-read"),
+            waiting.join(state.lang.t("project-text")),
         );
     }
     // モデルのファイルの参照（view.json）があれば、別のスレッドで読み直す（読み終えたら結び付ける）。参照は .ylp からの相対の
@@ -585,10 +547,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
             state.services.link_reopen = Some(request);
             None
         }
-        Ok(Some(Err(_))) | Err(_) => Some(state.lang.pick(
-            "Live Link のモデルは自動では開きません（ファイルには残っています）。",
-            "The Live Link model is not reopened automatically (kept in the file).",
-        )),
+        Ok(Some(Err(_))) | Err(_) => Some(state.lang.t("project-the-live-link-model-is")),
         Ok(None) => None,
     };
     if let Some(note) = link_note {
@@ -607,12 +566,9 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
             crate::newproject::reopen::start(state, &file_path, &stored, &text, kind)
         }
         Ok(None) => None,
-        Err(e) => Some(state.lang.pick(
-            format!("モデルの参照を読めません（{}）。", state.lang.io_error(&e)),
-            format!(
-                "Cannot read the model reference ({}).",
-                state.lang.io_error(&e)
-            ),
+        Err(e) => Some(state.lang.f(
+            "project-cannot-read-the-model-reference",
+            &[("e", &state.lang.io_error(&e))],
         )),
     };
     // モデルの参照の但し書き（読めない参照・ネットワーク上のモデル）は気をつけること
@@ -626,9 +582,9 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
 /// 開いたときの知らせのうち、棚を読めなかった分（読めた棚には None。先頭に空白を置いて、知らせの文へ続ける）。
 pub fn unreadable_shelf_notice(state: &AppState) -> Option<String> {
     let reason = state.shelf.unavailable.as_ref()?.reason(state.lang);
-    Some(state.lang.pick(
-        format!(" プロジェクトのアセットを読めません（{reason}）。"),
-        format!(" The project's assets cannot be read ({reason})."),
+    Some(state.lang.f(
+        "project-the-project-s-assets-cannot",
+        &[("reason", &reason)],
     ))
 }
 
@@ -654,10 +610,7 @@ pub fn new_into(state: &mut AppState) {
         state.refuse(
             Source::Project,
             state.lang.with_reason(
-                state.lang.pick(
-                    "新しいプロジェクトを作れません",
-                    "Cannot create a new project",
-                ),
+                state.lang.t("project-cannot-create-a-new-project"),
                 crate::lang::refusals::saving(state.lang),
             ),
         );
@@ -668,14 +621,9 @@ pub fn new_into(state: &mut AppState) {
     let (doc, _) = blank_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, state.lang);
     let sets = TextureSets::first_in(&doc, state.lang);
     state.replace_sets(sets, doc);
-    let name = state.lang.pick("名称未設定", "Untitled").into();
+    let name = state.lang.t("project-untitled").into();
     state.reset_project_identity(name, ShelfState::default());
-    state.info(
-        Source::Project,
-        state
-            .lang
-            .pick("新しいプロジェクトを作りました。", "New project created."),
-    );
+    state.info(Source::Project, state.lang.t("project-new-project-created"));
 }
 
 /// 開いた・保存した時のプロジェクト（`base`）から、文書を別の物に替えたセットの ID（セットの今の文書の ID が、`base` の同じセットの正本の
@@ -715,13 +663,7 @@ pub(crate) fn reopen_note(
                 .map(|(name, blob)| (name.as_str(), blob.len())),
         )
         .err()?;
-    Some(
-        lang.pick(
-            " 今の「レイヤーのメモリ」の予算では開き直せません。",
-            " Too large to reopen within the current Layer memory budget.",
-        )
-        .into(),
-    )
+    Some(lang.t("project-too-large-to-reopen-within").into())
 }
 
 /// 保存の知らせのうち退避の文。前の版は、退避する設定で上書きしたときだけ残る（退避しない設定・新規の保存では作らない）。
@@ -733,10 +675,7 @@ fn backup_text(lang: Lang, path: &Path, report: &yolu_io::SaveReport) -> String 
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        text += &lang.pick(
-            format!(" 前の版は {name}-backups~ に残しました。"),
-            format!(" Previous version: {name}-backups~."),
-        );
+        text += &lang.f("project-previous-version-backups", &[("name", &name)]);
     }
     if let Some(first) = report.prune_failures.first() {
         let n = report.prune_failures.len();

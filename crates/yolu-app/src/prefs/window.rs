@@ -113,11 +113,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
     let lang = app.lang;
     let spec = Spec {
-        title: lang.pick("設定", "Settings"),
+        title: lang.t("prefs-settings"),
         icon: Some("tune"),
         size: SIZE,
         modal: false,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("prefs-close"),
     };
     let window_id = id();
     let finished = editor::begin_frame(ctx, app, app.prefs.shows(Category::Shortcuts));
@@ -370,7 +370,7 @@ fn search_field(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .frame(egui::Frame::NONE)
             .font(t::LABEL.font())
             .text_color(t::TEXT)
-            .hint_text(lang.pick("設定を探す", "Search Settings"))
+            .hint_text(lang.t("prefs-search-settings"))
             .margin(egui::Margin::ZERO)
             .vertical_align(egui::Align::Center),
     );
@@ -384,7 +384,7 @@ fn search_field(ui: &mut Ui, app: &mut AppState, r: Rect) {
             clear,
             id().with("search-clear"),
             "close",
-            lang.pick("検索を消す", "Clear Search"),
+            lang.t("prefs-clear-search-tip"),
             false,
             true,
             13.0,

@@ -96,10 +96,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         } else {
             let what = |e: &yolu_core::CoreError| {
                 lang.with_reason(
-                    lang.pick(
-                        format!("セット「{}」の写しを取れません", set.name),
-                        format!("Cannot copy texture set “{}”", set.name),
-                    ),
+                    lang.f("project-cannot-copy-texture-set", &[("name", &set.name)]),
                     lang.core_error(e),
                 )
             };
@@ -182,10 +179,7 @@ pub(crate) fn left_out_note(lang: Lang, names: &[String]) -> String {
         return String::new();
     }
     let quoted = quoted_names(lang, names);
-    lang.pick(
-        format!("テクスチャセット{quoted}は読めないため、保存に入れていません。"),
-        format!("Texture set {quoted} could not be read and was left out of the save."),
-    )
+    lang.f("project-texture-set-could-not-be", &[("quoted", &quoted)])
 }
 
 /// 組み立てが済まなかった理由。
@@ -361,10 +355,7 @@ pub(crate) fn build(
         for map in maps {
             project = project.with_mesh_map(id, map).map_err(|e| {
                 BuildError::Message(lang.with_reason(
-                    lang.pick(
-                        format!("セット「{name}」のメッシュマップを書けません"),
-                        format!("Cannot write the mesh maps of set \"{name}\""),
-                    ),
+                    lang.f("project-cannot-write-the-mesh-maps", &[("name", &name)]),
                     lang.io_error(&e),
                 ))
             })?;
@@ -374,10 +365,7 @@ pub(crate) fn build(
     if let Some(shelf) = &capture.shelf {
         project = project.with_shelf(shelf, writer).map_err(|e| {
             BuildError::Message(lang.with_reason(
-                lang.pick(
-                    "プロジェクトのアセットを書けません",
-                    "Cannot write the project's assets",
-                ),
+                lang.t("project-cannot-write-the-project-s"),
                 lang.io_error(&e),
             ))
         })?;
@@ -440,21 +428,18 @@ fn compose_sets(
             .expect("読むだけのセットは作り直さない");
         let native = DocumentSource::from_core(doc.clone()).map_err(|e| {
             BuildError::Message(lang.with_reason(
-                lang.pick(
-                    format!("セット「{}」の中身を作れません", set.name),
-                    format!("Cannot build the contents of texture set “{}”", set.name),
+                lang.f(
+                    "project-cannot-build-the-contents-of",
+                    &[("name", &set.name)],
                 ),
                 lang.io_error(&e),
             ))
         })?;
         let pngs = composite_pngs(doc).map_err(|e| {
             BuildError::Message(lang.with_reason(
-                lang.pick(
-                    format!("セット「{}」の合成の PNG を作れません", set.name),
-                    format!(
-                        "Cannot build the composite PNG of texture set “{}”",
-                        set.name
-                    ),
+                lang.f(
+                    "project-cannot-build-the-composite-png",
+                    &[("name", &set.name)],
                 ),
                 lang.io_error(&e),
             ))

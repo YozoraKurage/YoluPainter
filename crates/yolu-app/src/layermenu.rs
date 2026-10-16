@@ -49,16 +49,13 @@ pub fn creation_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .command_key("layer.new")
         .enabled(free),
+        Entry::submenu(lang.t("layermenu-new-fill-layer"), fill_entries(app)),
         Entry::submenu(
-            lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
-            fill_entries(app),
-        ),
-        Entry::submenu(
-            lang.pick("新規調整レイヤー", "New Adjustment Layer"),
+            lang.t("layermenu-new-adjustment-layer"),
             adjustment_entries(app),
         ),
         Entry::item(
-            lang.pick("新規パスレイヤー", "New Path Layer"),
+            lang.t("layermenu-new-path-layer"),
             Action::LayerMenu(Op::PathLayer),
         )
         .enabled(free),
@@ -79,23 +76,17 @@ pub fn fill_entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     vec![
-        Entry::item(lang.pick("単色", "Solid Color"), Action::M2(Edit::NewFill)).enabled(free),
+        Entry::item(lang.t("layermenu-solid-color"), Action::M2(Edit::NewFill)).enabled(free),
+        Entry::submenu(lang.t("layermenu-gradient-decal"), gradient_entries(app))
+            .tooltip(lang.t("layermenu-paints-values-over-a-box-tip"))
+            .enabled(free),
         Entry::submenu(
-            lang.pick("グラデーションデカール", "Gradient Decal"),
-            gradient_entries(app),
-        )
-        .tooltip(lang.pick(
-            "3D ビューの箱・球・平面の範囲で、値を塗り分ける",
-            "Paints values over a box, sphere or plane in the 3D view",
-        ))
-        .enabled(free),
-        Entry::submenu(
-            lang.pick("画像", "Image"),
+            lang.t("layermenu-image"),
             image_entries(app, ProjectionMode::Uv),
         )
         .enabled(free),
         Entry::submenu(
-            lang.pick("デカール", "Decal"),
+            lang.t("layermenu-decal"),
             image_entries(app, ProjectionMode::Decal),
         )
         .enabled(free),
@@ -144,7 +135,7 @@ fn image_entries(app: &AppState, mode: ProjectionMode) -> Vec<Entry<Action>> {
         v.push(Entry::Separator);
     }
     let mut import = Entry::item(
-        lang.pick("ファイルから取り込む…", "Import from File…"),
+        lang.t("layermenu-import-from-file"),
         Action::LayerMenu(Op::FillImageDialog(mode)),
     )
     .enabled(free && app.shelf.unavailable.is_none());
@@ -277,33 +268,21 @@ impl AppState {
                     match self.decal_problem(id) {
                         None => self.info(
                             Source::FillLayer,
-                            format!(
-                                "{}: {name}",
-                                lang.pick("デカールを置きました", "Decal placed")
-                            ),
+                            format!("{}: {name}", lang.t("layermenu-decal-placed")),
                         ),
                         // 置いたが、まだ出ない（理由つき）: 気をつけること
                         Some(why) => self.warn(
                             Source::FillLayer,
-                            lang.pick(
-                                format!(
-                                    "デカールを置きました。{}はまだ出ません（{why}）。",
-                                    lang.quote(&name)
-                                ),
-                                format!(
-                                    "Decal placed. {} is not shown yet ({why}).",
-                                    lang.quote(&name)
-                                ),
+                            lang.f(
+                                "layermenu-decal-placed-is-not-shown",
+                                &[("name", &lang.quote(&name)), ("why", &why)],
                             ),
                         ),
                     }
                 } else {
                     self.info(
                         Source::FillLayer,
-                        format!(
-                            "{}: {name}",
-                            lang.pick("画像の塗りつぶしを追加しました", "Image fill added")
-                        ),
+                        format!("{}: {name}", lang.t("layermenu-image-fill-added")),
                     );
                 }
             }
@@ -334,13 +313,7 @@ impl AppState {
             self.fillfx.handles_hidden = false;
             self.info(
                 Source::FillLayer,
-                format!(
-                    "{}: {name}",
-                    lang.pick(
-                        "グラデーションデカールを追加しました",
-                        "Gradient decal added"
-                    )
-                ),
+                format!("{}: {name}", lang.t("layermenu-gradient-decal-added")),
             );
         }
     }

@@ -327,25 +327,21 @@ fn other_under(app: &AppState, rect: Rect, pointer: Pos2) -> Option<u128> {
 fn pick_place(app: &AppState, rect: Rect, at: Pos2, ctx: &SurfaceCtx) -> Result<Place, String> {
     let lang = app.lang;
     let Some(shown) = app.view3d.model.clone() else {
-        return Err(lang.pick("モデルがありません", "No model").into());
+        return Err(lang.t("pathtool-no-model").into());
     };
     let view = camera_view(app, rect);
     let Some(hit) = pick(&shown.geometry, &view, local(rect, at)) else {
-        return Err(lang
-            .pick("モデルの上ではありません", "Not on the model")
-            .into());
+        return Err(lang.t("pathtool-not-on-the-model").into());
     };
     if hit.material != ctx.material {
         let name = shown.material_name(hit.material as usize, lang);
-        return Err(lang.pick(
-            format!("ほかのテクスチャセット（{name}）の面です。"),
-            format!("Surface of another texture set ({name})."),
+        return Err(lang.f(
+            "pathtool-surface-of-another-texture-set",
+            &[("name", &name)],
         ));
     }
     let Some(triangle) = app.view3d.full_triangle(hit.triangle) else {
-        return Err(lang
-            .pick("モデルの上ではありません", "Not on the model")
-            .into());
+        return Err(lang.t("pathtool-not-on-the-model").into());
     };
     let (mut u, mut v) = (hit.barycentric.y as f64, hit.barycentric.z as f64);
     let sum = u + v;
@@ -377,13 +373,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource) {
     };
     if let Some(LayerPath::Surface(path)) = &existing {
         if path.model_fingerprint != *ctx.fingerprint {
-            app.refuse(
-                Source::Path,
-                app.lang.pick(
-                    "別のモデルで描かれたパスです",
-                    "The path was drawn on another model",
-                ),
-            );
+            app.refuse(Source::Path, app.lang.t("pathtool-the-path-was-drawn-on-2"));
             return;
         }
         // Shift を押して押したら、点を矩形で選ぶ

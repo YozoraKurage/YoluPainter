@@ -174,35 +174,20 @@ impl Failure {
     /// ウィンドウと状態の帯に出す理由。`importing` は取消のとき「何も書いていません」を付けるかの違いだけ。
     fn text(&self, lang: Lang, importing: bool) -> String {
         match self {
-            Self::Canceled if importing => lang.pick("取り消しました", "Cancelled").into(),
-            Self::Canceled => lang
-                .pick(
-                    "取り消しました（何も書いていません）",
-                    "Cancelled (nothing was written)",
-                )
-                .into(),
-            Self::Stopped => lang
-                .pick("PSD の処理が止まりました", "The PSD job stopped")
-                .into(),
+            Self::Canceled if importing => lang.t("psd-cancelled").into(),
+            Self::Canceled => lang.t("psd-cancelled-nothing-was-written").into(),
+            Self::Stopped => lang.t("psd-the-psd-job-stopped").into(),
             Self::File(e) => lang.file_error(e),
             Self::Export(e) => lang.io_error(e),
-            Self::Unreadable(e) => lang.with_reason(
-                lang.pick(
-                    "書く PSD を読み戻せません",
-                    "Cannot read back the PSD to write",
-                ),
-                lang.io_error(e),
-            ),
+            Self::Unreadable(e) => {
+                lang.with_reason(lang.t("psd-cannot-read-back-the-psd"), lang.io_error(e))
+            }
             Self::Overrun(over) => overrun_text(lang, over),
             Self::PartlyReplaced { done, cause } => {
                 let cause = lang.file_error(cause);
-                lang.pick(
-                    format!(
-                        "置き換えの途中で失敗しました（{cause}）。先の {done} 個は置き換わっています。"
-                    ),
-                    format!(
-                        "Failed partway through replacing ({cause}). {done} earlier file(s) already replaced."
-                    ),
+                lang.f(
+                    "psd-failed-partway-through-replacing-earlier",
+                    &[("cause", &cause), ("done", &done)],
                 )
             }
             Self::Message { ja, en } => lang.pick(ja.clone(), en.clone()),
@@ -221,30 +206,29 @@ impl Failure {
 /// 予算・形式の上限で書けない理由（レイヤーの名前つき。取り込みの断りと同じ言い回し）。
 fn overrun_text(lang: Lang, over: &Overrun) -> String {
     match over {
-        Overrun::Canvas { width, height } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}）"),
-            format!("Canvas too large ({width}×{height})"),
+        Overrun::Canvas { width, height } => lang.f(
+            "psd-canvas-too-large",
+            &[("width", &width), ("height", &height)],
         ),
         Overrun::Side {
             width,
             height,
             limit,
-        } => lang.pick(
-            format!("キャンバスの辺が長すぎます（{width}×{height}・1 辺 {limit} まで）"),
-            format!("Canvas side too long ({width}×{height}; up to {limit} per side)"),
+        } => lang.f(
+            "psd-canvas-side-too-long-up",
+            &[("width", &width), ("height", &height), ("limit", &limit)],
         ),
-        Overrun::Layers { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 件・上限 {limit} 件）"),
-            format!("Too many layers ({count}; limit {limit})"),
+        Overrun::Layers { count, limit } => lang.f(
+            "psd-too-many-layers-limit",
+            &[("value", &count), ("limit", &limit)],
         ),
         Overrun::Memory { layer } if layer.is_empty() => lang.pick(
             "画素の予算を超えました".into(),
             "Pixel budget exceeded".into(),
         ),
-        Overrun::Memory { layer } => lang.pick(
-            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
-            format!("Layer memory budget exceeded at \"{layer}\""),
-        ),
+        Overrun::Memory { layer } => {
+            lang.f("psd-layer-memory-budget-exceeded-at", &[("layer", &layer)])
+        }
         Overrun::Extra => lang.pick(
             "レイヤーの付加情報が予算を超えました".into(),
             "Layer extra data exceeds the budget".into(),
@@ -253,32 +237,19 @@ fn overrun_text(lang: Lang, over: &Overrun) -> String {
             "PSD が 2 GiB を超えます".into(),
             "The PSD would exceed 2 GiB".into(),
         ),
-        Overrun::FileSize { layer } => lang.pick(
-            format!("「{layer}」を書くと PSD が 2 GiB を超えます"),
-            format!("Writing \"{layer}\" would make the PSD exceed 2 GiB"),
-        ),
+        Overrun::FileSize { layer } => {
+            lang.f("psd-writing-would-make-the-psd", &[("layer", &layer)])
+        }
     }
 }
 
 /// 上限の理由のツールチップ: 予算で断ったものは設定で上げられること、PSD の 2 GiB・辺 30000 は形式の上限であること。
 fn overrun_tooltip(lang: Lang, over: &Overrun) -> &'static str {
     match over {
-        Overrun::FileSize { .. } => lang.pick(
-            "PSD は 1 ファイル 2 GiB までです",
-            "A PSD file is limited to 2 GiB",
-        ),
-        Overrun::Side { .. } if !over.raised_by_budget() => lang.pick(
-            "PSD は 1 辺 30000 までです",
-            "A PSD side is limited to 30000 pixels",
-        ),
-        Overrun::Layers { .. } => lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります（グループは区切りの記録も数えます）。上げると書き出せることがあります",
-            "The limit follows Layer memory in Settings (each group also takes a divider record). Raising it may let this export succeed",
-        ),
-        _ => lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります。上げると書き出せることがあります",
-            "The limit follows Layer memory in Settings. Raising it may let this export succeed",
-        ),
+        Overrun::FileSize { .. } => lang.t("psd-a-psd-file-is-limited-tip"),
+        Overrun::Side { .. } if !over.raised_by_budget() => lang.t("psd-a-psd-side-is-limited-tip"),
+        Overrun::Layers { .. } => lang.t("psd-the-limit-follows-layer-memory-tip"),
+        _ => lang.t("psd-the-limit-follows-layer-memory-2-tip"),
     }
 }
 
@@ -425,9 +396,9 @@ pub(crate) const JOB: JobSpec = JobSpec {
             text: format!(
                 "{} — {}",
                 if p.importing {
-                    lang.pick("PSD を読み込み中", "Reading PSD")
+                    lang.t("psd-reading-psd")
                 } else {
-                    lang.pick("PSD を書き出し中", "Writing PSD")
+                    lang.t("psd-writing-psd")
                 },
                 p.file
             ),
@@ -640,10 +611,7 @@ impl AppState {
             PsdAction::CancelImport => {
                 if self.psd.import_check.take().is_some() {
                     self.psd.imported.pop();
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の取り込みをやめました。", "PSD import canceled."),
-                    );
+                    self.info(Source::Psd, lang.t("psd-psd-import-canceled"));
                 }
             }
             PsdAction::ConfirmReplace => {
@@ -653,10 +621,7 @@ impl AppState {
             }
             PsdAction::CancelConfirm => {
                 if self.psd.confirm.take().is_some() {
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の書き出しをやめました。", "PSD export canceled."),
-                    );
+                    self.info(Source::Psd, lang.t("psd-psd-export-canceled"));
                 }
             }
             PsdAction::ConfirmWrite => {
@@ -666,19 +631,13 @@ impl AppState {
             }
             PsdAction::CancelWrite => {
                 if self.psd.notes_confirm.take().is_some() {
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の書き出しをやめました。", "PSD export canceled."),
-                    );
+                    self.info(Source::Psd, lang.t("psd-psd-export-canceled"));
                 }
             }
             PsdAction::Cancel => {
                 if let Some(job) = &self.psd.job {
                     job.worker.cancel();
-                    self.info(
-                        Source::Psd,
-                        lang.pick("PSD の処理を取り消しています…", "Canceling the PSD job…"),
-                    );
+                    self.info(Source::Psd, lang.t("psd-canceling-the-psd-job"));
                 }
             }
             PsdAction::DismissReport => self.psd.report = None,
@@ -688,10 +647,7 @@ impl AppState {
     fn start_psd_import(&mut self, path: &Path, target: PsdTarget) {
         let lang = self.lang;
         if self.psd.job.is_some() || self.psd.import_check.is_some() {
-            self.refuse(
-                Source::Psd,
-                lang.pick("PSD を処理中です。", "A PSD job is running."),
-            );
+            self.refuse(Source::Psd, lang.t("psd-a-psd-job-is-running"));
             return;
         }
         if target == PsdTarget::CurrentSet {
@@ -727,22 +683,13 @@ impl AppState {
             Err(e) => {
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD を読み込めません", "Cannot read the PSD"),
-                        lang.thread_error(&e),
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-read-the-psd"), lang.thread_error(&e)),
                 );
                 return;
             }
         };
         let file = file_name(path);
-        self.info(
-            Source::Psd,
-            lang.pick(
-                format!("PSD を読み込み中: {file}"),
-                format!("Reading PSD: {file}"),
-            ),
-        );
+        self.info(Source::Psd, lang.f("psd-reading-psd-2", &[("file", &file)]));
         let guard = (target == PsdTarget::CurrentSet).then(|| {
             (
                 self.session.sets.current().uid,
@@ -771,7 +718,7 @@ impl AppState {
     fn refuse_psd_export_lines(&mut self, kind: NoticeKind, file: &str, lines: Vec<Line>) {
         let lang = self.lang;
         let text = lang.with_reason(
-            lang.pick("PSD に書き出せません", "Cannot export PSD"),
+            lang.t("psd-cannot-export-psd"),
             lines.first().map(|l| l.text.clone()).unwrap_or_default(),
         );
         self.notify(kind, Source::Psd, text);
@@ -779,12 +726,7 @@ impl AppState {
             importing: false,
             file: file.to_owned(),
             ok: false,
-            summary: lang
-                .pick(
-                    "書き出せません。何も書いていません",
-                    "Cannot export. Nothing was written",
-                )
-                .into(),
+            summary: lang.t("psd-cannot-export-nothing-was-written").into(),
             lines,
         });
     }
@@ -792,10 +734,7 @@ impl AppState {
     fn start_psd_export(&mut self, path: &Path, confirmed: bool) {
         let lang = self.lang;
         if self.psd.job.is_some() {
-            self.refuse(
-                Source::Psd,
-                lang.pick("PSD を処理中です。", "A PSD job is running."),
-            );
+            self.refuse(Source::Psd, lang.t("psd-a-psd-job-is-running"));
             return;
         }
         let file = file_name(path);
@@ -808,9 +747,9 @@ impl AppState {
         let targets = match export_targets(&self.session.doc, path, &channels) {
             Ok(t) => t,
             Err(name) => {
-                let why = vec![lang.pick(
-                    format!("チャンネルのファイル名{}が重なります", lang.quote(&name)),
-                    format!("The channel file name {} clashes", lang.quote(&name)),
+                let why = vec![lang.f(
+                    "psd-the-channel-file-name-clashes",
+                    &[("name", &lang.quote(&name))],
                 )];
                 return self.refuse_psd_export(NoticeKind::Error, &file, why);
             }
@@ -887,21 +826,12 @@ impl AppState {
             Err(e) => {
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD に書き出せません", "Cannot export PSD"),
-                        lang.thread_error(&e),
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-export-psd"), lang.thread_error(&e)),
                 );
                 return;
             }
         };
-        self.info(
-            Source::Psd,
-            lang.pick(
-                format!("PSD に書き出し中: {file}"),
-                format!("Writing PSD: {file}"),
-            ),
-        );
+        self.info(Source::Psd, lang.f("psd-writing-psd-2", &[("file", &file)]));
         self.psd.job = Some(Job {
             kind: Kind::Export,
             file,
@@ -930,21 +860,12 @@ impl AppState {
             Err(e) => {
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD に書き出せません", "Cannot export PSD"),
-                        lang.thread_error(&e),
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-export-psd"), lang.thread_error(&e)),
                 );
                 return;
             }
         };
-        self.info(
-            Source::Psd,
-            lang.pick(
-                format!("PSD に書き出し中: {file}"),
-                format!("Writing PSD: {file}"),
-            ),
-        );
+        self.info(Source::Psd, lang.f("psd-writing-psd-2", &[("file", &file)]));
         self.psd.job = Some(Job {
             kind: Kind::Export,
             file,
@@ -1003,10 +924,7 @@ impl AppState {
                 if canceled {
                     self.info(Source::Psd, text);
                 } else if importing {
-                    let message = lang.with_reason(
-                        lang.pick("PSD を読み込めません", "Cannot read the PSD"),
-                        text,
-                    );
+                    let message = lang.with_reason(lang.t("psd-cannot-read-the-psd"), text);
                     self.fail(Source::Psd, message);
                 } else {
                     // 書き出せなかった理由（予算の超過・書けない場所など）は結果のウィンドウにも出す（知らせは `refuse_psd_export_lines` の 1 回）。
@@ -1027,21 +945,13 @@ impl AppState {
                 let reason = crate::lang::psd_copy_refusal(lang, &why);
                 self.fail(
                     Source::Psd,
-                    lang.with_reason(
-                        lang.pick("PSD を読み込めません", "Cannot import the PSD"),
-                        &reason,
-                    ),
+                    lang.with_reason(lang.t("psd-cannot-import-the-psd"), &reason),
                 );
                 self.psd.report = Some(Report {
                     importing: true,
                     file: job.file,
                     ok: false,
-                    summary: lang
-                        .pick(
-                            "読み込めません。ファイルは変えていません",
-                            "Cannot import. The file was not modified",
-                        )
-                        .into(),
+                    summary: lang.t("psd-cannot-import-the-file-was").into(),
                     lines: vec![Line {
                         warning: true,
                         text: reason,
@@ -1060,10 +970,7 @@ impl AppState {
                     // 無視・落とす・変わるものがある: 利用者が確かめるまで、何も入れない
                     self.info(
                         Source::Psd,
-                        lang.pick(
-                            format!("PSD を読みました: {}（取り込みの確かめ待ち）", job.file),
-                            format!("Read {} (waiting for the import check)", job.file),
-                        ),
+                        lang.f("psd-read-waiting-for-the-import", &[("file", &job.file)]),
                     );
                     self.psd.import_check = Some(crate::psd_import::ImportCheck {
                         doc,
@@ -1079,13 +986,9 @@ impl AppState {
                 self.info(
                     Source::Psd,
                     match files.as_slice() {
-                        [(path, bytes)] => lang.pick(
-                            format!(
-                                "PSD に書き出しました: {}（{} バイト）。",
-                                path.display(),
-                                bytes
-                            ),
-                            format!("Wrote PSD: {} ({} bytes).", path.display(), bytes),
+                        [(path, bytes)] => lang.f(
+                            "psd-wrote-psd-bytes",
+                            &[("path", &path.display()), ("bytes", &bytes)],
                         ),
                         many => {
                             let dir = many[0]
@@ -1093,10 +996,7 @@ impl AppState {
                                 .parent()
                                 .map(|d| d.display().to_string())
                                 .unwrap_or_default();
-                            lang.pick(
-                                format!("PSD を {} 個書き出しました: {dir}", many.len()),
-                                format!("Wrote {} PSDs: {dir}", many.len()),
-                            )
+                            lang.f("psd-wrote-psds", &[("many", &many.len()), ("dir", &dir)])
                         }
                     },
                 );
@@ -1120,10 +1020,7 @@ impl AppState {
                 self.psd.imported.pop();
                 self.warn(
                     Source::Psd,
-                    lang.pick(
-                        format!("描いている間に読み終わったので、{file} は入れませんでした。"),
-                        format!("{file} finished reading while drawing, so it was not imported."),
-                    ),
+                    lang.f("psd-finished-reading-while-drawing-so", &[("file", &file)]),
                 );
                 return;
             }
@@ -1134,12 +1031,7 @@ impl AppState {
                 self.psd.imported.pop();
                 self.warn(
                     Source::Psd,
-                    lang.pick(
-                        format!(
-                            "読み込んでいる間にプロジェクトが変わったので、{file} は入れませんでした。"
-                        ),
-                        format!("The project changed while reading, so {file} was not imported."),
-                    ),
+                    lang.f("psd-the-project-changed-while-reading", &[("file", &file)]),
                 );
                 return;
             }
@@ -1152,20 +1044,15 @@ impl AppState {
         }
         let layers = doc.layers().len();
         let switched = self.install_psd(doc, target, file);
-        let mut text = lang.pick(
-            format!(
-                "PSD を読み込みました（{file}・レイヤー {layers}）。PSD 自体は書き換えません。"
-            ),
-            format!("Imported {file} ({layers} layers). The PSD itself is never rewritten."),
+        let mut text = lang.f(
+            "psd-imported-layers-the-psd-itself",
+            &[("file", &file), ("layers", &layers)],
         );
         if switched {
             self.info(Source::Psd, text);
         } else {
             // 入れたが、描いている間なので足したセットへは切り替えていない（気をつけること）
-            text += lang.pick(
-                " 描いている間なので、切り替えていません。",
-                " Not switched to it while drawing.",
-            );
+            text += lang.t("psd-not-switched-to-it-while");
             self.warn(Source::Psd, text);
         }
     }

@@ -227,16 +227,9 @@ fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
         app.session.doc.height() as f64,
     );
     if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
-        app.refuse(
-            Source::Canvas,
-            app.lang.pick("キャンバスの外です。", "Outside the canvas."),
-        );
+        app.refuse(Source::Canvas, app.lang.t("canvas-outside-the-canvas"));
         return;
     }
     app.clone.set_canvas_source(app.session.doc.id(), (x, y));
-    app.info(
-        Source::Canvas,
-        app.lang
-            .pick("クローンの元を決めました。", "Clone source set."),
-    );
+    app.info(Source::Canvas, app.lang.t("canvas-clone-source-set"));
 }

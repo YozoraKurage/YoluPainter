@@ -202,10 +202,7 @@ impl AppState {
                 self.fail(
                     NoticeSource::Brush,
                     lang.with_reason(
-                        lang.pick(
-                            "CLIP STUDIO のブラシを探せません",
-                            "Cannot search for the CLIP STUDIO brushes",
-                        ),
+                        lang.t("brushes-cannot-search-for-the-clip"),
                         lang.thread_error(&e),
                     ),
                 );

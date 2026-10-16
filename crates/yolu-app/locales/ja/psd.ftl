@@ -1,0 +1,37 @@
+# 画面の文（psd）。キーは「psd-」と英語の文から作った短い名前、ツールチップの文はキーの終わりが -tip。
+
+psd-cancelled = 取り消しました
+psd-cancelled-nothing-was-written = 取り消しました（何も書いていません）
+psd-the-psd-job-stopped = PSD の処理が止まりました
+psd-cannot-read-back-the-psd = 書く PSD を読み戻せません
+psd-failed-partway-through-replacing-earlier = 置き換えの途中で失敗しました（{ $cause }）。先の { $done } 個は置き換わっています。
+psd-canvas-too-large = キャンバスが大きすぎます（{ $width }×{ $height }）
+psd-canvas-side-too-long-up = キャンバスの辺が長すぎます（{ $width }×{ $height }・1 辺 { $limit } まで）
+psd-too-many-layers-limit = レイヤーが多すぎます（{ $value } 件・上限 { $limit } 件）
+psd-layer-memory-budget-exceeded-at = 「{ $layer }」でレイヤーのメモリの予算を超えました
+psd-writing-would-make-the-psd = 「{ $layer }」を書くと PSD が 2 GiB を超えます
+psd-a-psd-file-is-limited-tip = PSD は 1 ファイル 2 GiB までです
+psd-a-psd-side-is-limited-tip = PSD は 1 辺 30000 までです
+psd-the-limit-follows-layer-memory-tip = 上限は設定の「レイヤーのメモリ」から決まります（グループは区切りの記録も数えます）。上げると書き出せることがあります
+psd-the-limit-follows-layer-memory-2-tip = 上限は設定の「レイヤーのメモリ」から決まります。上げると書き出せることがあります
+psd-reading-psd = PSD を読み込み中
+psd-writing-psd = PSD を書き出し中
+psd-psd-import-canceled = PSD の取り込みをやめました。
+psd-psd-export-canceled = PSD の書き出しをやめました。
+psd-canceling-the-psd-job = PSD の処理を取り消しています…
+psd-a-psd-job-is-running = PSD を処理中です。
+psd-cannot-read-the-psd = PSD を読み込めません
+psd-reading-psd-2 = PSD を読み込み中: { $file }
+psd-cannot-export-psd = PSD に書き出せません
+psd-cannot-export-nothing-was-written = 書き出せません。何も書いていません
+psd-the-channel-file-name-clashes = チャンネルのファイル名{ $name }が重なります
+psd-writing-psd-2 = PSD に書き出し中: { $file }
+psd-cannot-import-the-psd = PSD を読み込めません
+psd-cannot-import-the-file-was = 読み込めません。ファイルは変えていません
+psd-read-waiting-for-the-import = PSD を読みました: { $file }（取り込みの確かめ待ち）
+psd-wrote-psd-bytes = PSD に書き出しました: { $path }（{ $bytes } バイト）。
+psd-wrote-psds = PSD を { $many } 個書き出しました: { $dir }
+psd-finished-reading-while-drawing-so = 描いている間に読み終わったので、{ $file } は入れませんでした。
+psd-the-project-changed-while-reading = 読み込んでいる間にプロジェクトが変わったので、{ $file } は入れませんでした。
+psd-imported-layers-the-psd-itself = PSD を読み込みました（{ $file }・レイヤー { $layers }）。PSD 自体は書き換えません。
+psd-not-switched-to-it-while = {" "}描いている間なので、切り替えていません。

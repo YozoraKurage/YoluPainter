@@ -14,15 +14,15 @@ use crate::ui::widgets::{self as w, NumberFormat, Rows, SliderSpec};
 
 pub fn shape_name(lang: Lang, shape: GradientShape) -> &'static str {
     match shape {
-        GradientShape::Linear => lang.pick("線形", "Linear"),
-        GradientShape::Radial => lang.pick("放射", "Radial"),
+        GradientShape::Linear => lang.t("gradient-linear"),
+        GradientShape::Radial => lang.t("gradient-radial"),
     }
 }
 
 pub fn end_name(lang: Lang, end: End) -> &'static str {
     match end {
-        End::Transparent => lang.pick("透明へ", "To transparent"),
-        End::Sub => lang.pick("サブの色へ", "To background"),
+        End::Transparent => lang.t("gradient-to-transparent"),
+        End::Sub => lang.t("gradient-to-background"),
     }
 }
 
@@ -35,30 +35,18 @@ fn paint_erase_names(app: &AppState) -> ([&'static str; 2], [&'static str; 2]) {
     let lang = app.lang;
     if app.m2.edit_mask {
         (
+            [lang.t("gradient-white-show"), lang.t("gradient-black-hide")],
             [
-                lang.pick("白（見せる）", "White (show)"),
-                lang.pick("黒（隠す）", "Black (hide)"),
-            ],
-            [
-                lang.pick(
-                    "マスクを白のグラデーションで塗る",
-                    "Fill the mask with a white gradient",
-                ),
-                lang.pick(
-                    "マスクを黒のグラデーションで塗る",
-                    "Fill the mask with a black gradient",
-                ),
+                lang.t("gradient-fill-the-mask-with-a"),
+                lang.t("gradient-fill-the-mask-with-a-2"),
             ],
         )
     } else {
         (
-            [lang.pick("塗る", "Paint"), lang.pick("消す", "Erase")],
+            [lang.t("gradient-paint"), lang.t("gradient-erase")],
             [
-                lang.pick(
-                    "描画色と不透明度で塗る",
-                    "Paint with the paint color and the opacity",
-                ),
-                lang.pick("透明にしていく", "Erase toward transparent"),
+                lang.t("gradient-paint-with-the-paint-color"),
+                lang.t("gradient-erase-toward-transparent"),
             ],
         )
     }
@@ -82,14 +70,8 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
             app.gradient.shape == shape,
             true,
             Some(match shape {
-                GradientShape::Linear => lang.pick(
-                    "始点から終点へ直線で",
-                    "In a straight line from start to end",
-                ),
-                GradientShape::Radial => lang.pick(
-                    "始点を中心に、終点までの半径で",
-                    "Around the start, out to the end",
-                ),
+                GradientShape::Linear => lang.t("gradient-in-a-straight-line-from-tip"),
+                GradientShape::Radial => lang.t("gradient-around-the-start-out-to-tip"),
             }),
             None,
         )
@@ -108,7 +90,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         "gradient.opacity",
         app.brush.opacity * 100.0,
         &SliderSpec::new(
-            lang.pick("不透明度", "Opacity"),
+            lang.t("gradient-opacity"),
             0.0,
             100.0,
             NumberFormat::int("%"),
@@ -180,7 +162,7 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Conte
         ui,
         rows,
         "gradient.prop.opacity",
-        lang.pick("不透明度", "Opacity"),
+        lang.t("gradient-opacity"),
         app.brush.opacity * 100.0,
         (0.0, 100.0),
         NumberFormat::int("%"),
@@ -212,7 +194,7 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Conte
             ui,
             rows,
             "gradient.between",
-            lang.pick("2 つのマテリアルの間", "Between two materials"),
+            lang.t("gradient-between-two-materials"),
             on,
             None,
             app.gradient.end_material.is_some(),
@@ -224,7 +206,7 @@ pub fn body(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Conte
             ui,
             r,
             "gradient.capture",
-            lang.pick("現在のマテリアルを終点に", "Use Current Material as End"),
+            lang.t("gradient-use-current-material-as-end"),
             false,
             true,
             None,

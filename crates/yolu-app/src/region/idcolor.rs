@@ -67,7 +67,7 @@ impl AppState {
     fn id_parts(&mut self, wait: bool) -> Option<Result<&Parts, String>> {
         let lang = self.lang;
         let Some(model) = self.view3d.full_model().cloned() else {
-            return Some(Err(lang.pick("モデルがありません", "No model").into()));
+            return Some(Err(lang.t("region-no-model").into()));
         };
         if !self
             .region
@@ -163,7 +163,7 @@ impl AppState {
             .get(MeshMapKind::Id)
             .cloned()
         else {
-            return Err(lang.pick("ID マップがありません", "No ID map").into());
+            return Err(lang.t("region-no-id-map").into());
         };
         let input = if wait {
             Some(self.bake_input())
@@ -171,29 +171,15 @@ impl AppState {
             self.bake_input_nowait()
         };
         let check = match input {
-            None => {
-                return Err(lang
-                    .pick("ID マップを確かめています", "Checking the ID map")
-                    .into())
-            }
+            None => return Err(lang.t("region-checking-the-id-map").into()),
             Some(Ok(input)) => self.mesh_map_check_with(index, MeshMapKind::Id, Some(&input)),
             // モデルが無い・入力を作れない: 照合できない
             Some(Err(_)) => self.mesh_map_check_with(index, MeshMapKind::Id, None),
         };
         match check.map(|c| c.state) {
             Some(MeshMapState::Current) => Ok(map),
-            Some(MeshMapState::Stale) => Err(lang
-                .pick(
-                    "ID マップが古いです（ベイクし直し）",
-                    "The ID map is stale (bake again)",
-                )
-                .into()),
-            _ => Err(lang
-                .pick(
-                    "ID マップを確かめられません",
-                    "The ID map cannot be checked",
-                )
-                .into()),
+            Some(MeshMapState::Stale) => Err(lang.t("region-the-id-map-is-stale").into()),
+            _ => Err(lang.t("region-the-id-map-cannot-be").into()),
         }
     }
 
@@ -256,20 +242,11 @@ impl AppState {
         };
         let count = parts.of_triangle.iter().max().map_or(0, |m| m + 1);
         if part >= count {
-            self.refuse(
-                Source::Bake,
-                lang.pick("その部品はありません", "No such part"),
-            );
+            self.refuse(Source::Bake, lang.t("region-no-such-part"));
             return None;
         }
         if !colors.colors().is_empty() && colors.binding() != parts.binding {
-            self.refuse(
-                Source::Bake,
-                lang.pick(
-                    "手動の ID の色は別のモデルのものです",
-                    "These manual ID colors belong to another model",
-                ),
-            );
+            self.refuse(Source::Bake, lang.t("region-these-manual-id-colors-belong"));
             return None;
         }
         if rgb.is_some_and(|c| c > 0xffffff) {
@@ -281,7 +258,7 @@ impl AppState {
                 self.fail(
                     Source::Bake,
                     lang.with_reason(
-                        lang.pick("ID の色を変えられません", "Cannot change the ID color"),
+                        lang.t("region-cannot-change-the-id-color"),
                         lang.mesh_map_error(&e),
                     ),
                 );
@@ -293,7 +270,7 @@ impl AppState {
 
 /// 手動の ID の色を変えた知らせ。
 fn changed(lang: Lang) -> &'static str {
-    lang.pick("手動の ID の色を変えました。", "Manual ID colors changed.")
+    lang.t("region-manual-id-colors-changed")
 }
 
 /// ポインタの下の ID の色。取れなければ理由。
@@ -398,12 +375,11 @@ pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     app.info(
         Source::Selection,
         if app.session.doc.selection().is_none() {
-            lang.pick("何も選択されていません。", "Nothing selected.")
-                .into()
+            lang.t("region-nothing-selected").into()
         } else {
             format!(
                 "{} {} ± {} ({})",
-                lang.pick("ID の色", "ID color"),
+                lang.t("region-id-color"),
                 hex(rgb),
                 tolerance,
                 combine_name(lang, mode)

@@ -171,13 +171,8 @@ impl AppState {
             let text = error.text(self.lang);
             self.fail(
                 Source::Clipboard,
-                self.lang.with_reason(
-                    self.lang.pick(
-                        "画像を OS へコピーできません",
-                        "Cannot copy the image to the OS",
-                    ),
-                    text,
-                ),
+                self.lang
+                    .with_reason(self.lang.t("clipboard-cannot-copy-the-image-to"), text),
             );
         }
     }
@@ -188,11 +183,7 @@ impl AppState {
             .session
             .selected_layer
             .filter(|id| self.session.doc.layer(*id).is_some())
-            .ok_or_else(|| {
-                self.lang
-                    .pick("レイヤーが選ばれていません。", "No layer is selected.")
-                    .to_string()
-            })?;
+            .ok_or_else(|| self.lang.t("clipboard-no-layer-is-selected").to_string())?;
         let mask = self.m2.edit_mask
             && self
                 .session
@@ -261,15 +252,14 @@ impl AppState {
                 }
                 let (doc_w, doc_h) = (self.session.doc.width(), self.session.doc.height());
                 if image.width > doc_w || image.height > doc_h {
-                    return Err(lang.pick(
-                        format!(
-                            "画像がテクスチャセットより大きい（{} × {} > {} × {}）",
-                            image.width, image.height, doc_w, doc_h
-                        ),
-                        format!(
-                            "Image is larger than the texture set ({} × {} > {} × {})",
-                            image.width, image.height, doc_w, doc_h
-                        ),
+                    return Err(lang.f(
+                        "clipboard-image-is-larger-than-the",
+                        &[
+                            ("width", &image.width),
+                            ("height", &image.height),
+                            ("doc_w", &doc_w),
+                            ("doc_h", &doc_h),
+                        ],
                     ));
                 }
                 image::from_image(image, self.m2.paint_channel)
@@ -284,8 +274,7 @@ impl AppState {
                 from_app(
                     &self.clip.pixels,
                     None,
-                    lang.pick("クリップボードが空です。", "The clipboard is empty.")
-                        .to_string(),
+                    lang.t("clipboard-the-clipboard-is-empty").to_string(),
                 )
             }
             Err(error) => from_app(&self.clip.pixels, Some(error), error.text(lang).to_string()),
@@ -311,12 +300,12 @@ impl AppState {
         self.ensure_selection();
         let mut notes = Vec::new();
         if result.centered {
-            notes.push(lang.pick("中央", "centred").to_string());
+            notes.push(lang.t("clipboard-centred").to_string());
         }
         if result.clipped_pixels > 0 {
-            notes.push(lang.pick(
-                format!("はみ出した {} 画素を切り落とし", result.clipped_pixels),
-                format!("{} pixels cut off", result.clipped_pixels),
+            notes.push(lang.f(
+                "clipboard-pixels-cut-off",
+                &[("clipped_pixels", &result.clipped_pixels)],
             ));
         }
         if let Some(error) = os_error {
@@ -329,10 +318,7 @@ impl AppState {
 /// ペーストした知らせ: 名前に、あれば補足（中央・切り落とし・OS を読めなかった理由）を括弧で並べる。コピーの知らせと同じく
 /// 文の形にしない（句点・ピリオドを付けない）。
 fn pasted_text(lang: crate::lang::Lang, name: &str, notes: &[String]) -> String {
-    let head = lang.pick(
-        format!("ペーストしました: {name}"),
-        format!("Pasted as {name}"),
-    );
+    let head = lang.f("clipboard-pasted-as", &[("name", &name)]);
     if notes.is_empty() {
         return head;
     }
@@ -345,23 +331,11 @@ fn copied_text(lang: crate::lang::Lang, clip: &PixelClipboard, cut: bool) -> Str
     use crate::engine::ClipboardSource::*;
     let size = format!("{} × {}", clip.width(), clip.height());
     match (clip.source(), cut) {
-        (Mask, true) => lang.pick(
-            format!("マスクをカットしました（{size}）"),
-            format!("Cut mask ({size})"),
-        ),
-        (Mask, false) => lang.pick(
-            format!("マスクをコピーしました（{size}）"),
-            format!("Copied mask ({size})"),
-        ),
-        (Composite, _) => lang.pick(
-            format!("結合してコピーしました（{size}）"),
-            format!("Copied merged ({size})"),
-        ),
-        (_, true) => lang.pick(format!("カットしました（{size}）"), format!("Cut ({size})")),
-        _ => lang.pick(
-            format!("コピーしました（{size}）"),
-            format!("Copied ({size})"),
-        ),
+        (Mask, true) => lang.f("clipboard-cut-mask", &[("size", &size)]),
+        (Mask, false) => lang.f("clipboard-copied-mask", &[("size", &size)]),
+        (Composite, _) => lang.f("clipboard-copied-merged", &[("size", &size)]),
+        (_, true) => lang.f("clipboard-cut", &[("size", &size)]),
+        _ => lang.f("clipboard-copied", &[("size", &size)]),
     }
 }
 

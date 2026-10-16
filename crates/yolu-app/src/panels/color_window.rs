@@ -585,7 +585,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 close,
                 state_id().with("close"),
                 "close",
-                lang.pick("閉じる", "Close"),
+                lang.t("panels-close-tip"),
                 false,
                 true,
                 15.0,
@@ -681,11 +681,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 6.0,
             );
             response.widget_info(|| {
-                egui::WidgetInfo::labeled(
-                    egui::WidgetType::Other,
-                    true,
-                    lang.pick("色相の円", "Hue wheel"),
-                )
+                egui::WidgetInfo::labeled(egui::WidgetType::Other, true, lang.t("panels-hue-wheel"))
             });
 
             // 16 進
@@ -703,7 +699,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 hex_of(window, alpha),
                 state_id().with("hex"),
                 &hex,
-                Some(lang.pick("16 進の色（#RRGGBB）", "Hex color (#RRGGBB)")),
+                Some(lang.t("panels-hex-color-rrggbb-tip")),
                 false,
             );
             // 別の欄を押して相手を替えたフレームに決まった入力は、打っていたときの相手（前の相手）へ当てる
@@ -754,10 +750,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                     }
                 } else {
                     let typed = lang.quote(&text);
-                    failure = Some(lang.pick(
-                        format!("{typed}は 16 進の色として読めません。"),
-                        format!("{typed} is not a valid hex color."),
-                    ));
+                    failure = Some(lang.f("panels-is-not-a-valid-hex", &[("typed", &typed)]));
                 }
             }
 
@@ -765,7 +758,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
             let mut alpha_active = false;
             if let Some(a) = state.shown.alpha {
                 let spec = SliderSpec::new("A", 0.0, 100.0, NumberFormat::int("%"))
-                    .tooltip(lang.pick("不透明度", "Opacity"));
+                    .tooltip(lang.t("panels-opacity-tip"));
                 let out = w::slider(
                     ui,
                     alpha_of(window),
@@ -804,12 +797,8 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                 ],
                 alpha: state.shown.alpha,
             };
-            if paint_button(
-                ui,
-                paint,
-                main,
-                lang.pick("描画色を入れる", "Use Paint Color"),
-            ) && main != state.shown
+            if paint_button(ui, paint, main, lang.t("panels-use-paint-color"))
+                && main != state.shown
             {
                 state.sync(main);
                 updates.push((

@@ -218,7 +218,7 @@ pub fn props_visible(app: &AppState) -> bool {
 fn unique_anchor_name(doc: &Document, base: &str, lang: Lang) -> String {
     let base = base.trim();
     let mut name = if base.is_empty() {
-        lang.pick("アンカー", "Anchor").to_owned()
+        lang.t("fx-anchor").to_owned()
     } else {
         base.to_owned()
     };
@@ -333,7 +333,7 @@ impl AppState {
                     text += &format!(
                         " {}",
                         lang.with_reason(
-                            lang.pick("効果がありません", "It has no effect"),
+                            lang.t("fx-it-has-no-effect"),
                             lang.inactive_reason(&why),
                         )
                     );
@@ -392,10 +392,7 @@ impl AppState {
                     .layer(layer)
                     .ok_or(CoreError::LayerNotFound)?;
                 let base = match placement {
-                    AnchorPlacement::Mask => lang.pick(
-                        format!("{}（マスク）", l.name()),
-                        format!("{} (mask)", l.name()),
-                    ),
+                    AnchorPlacement::Mask => lang.f("fx-mask", &[("name", &l.name())]),
                     AnchorPlacement::Layer => l.name().to_owned(),
                 };
                 let name = unique_anchor_name(&self.session.doc, &base, lang);
@@ -404,10 +401,7 @@ impl AppState {
                     .doc
                     .add_anchor(layer, placement, Some(&name), None)?;
                 self.select_anchor(id);
-                Ok(Some(lang.pick(
-                    format!("アンカー「{name}」を置きました。"),
-                    format!("Put the anchor \"{name}\"."),
-                )))
+                Ok(Some(lang.f("fx-put-the-anchor", &[("name", &name)])))
             }
             FxOp::RemoveAnchor(id) => {
                 let name = self
@@ -420,10 +414,7 @@ impl AppState {
                 if self.fx.selected == Some(Selected::Anchor { id }) {
                     self.fx.selected = None;
                 }
-                Ok(Some(lang.pick(
-                    format!("アンカー「{name}」を外しました。"),
-                    format!("Removed the anchor \"{name}\"."),
-                )))
+                Ok(Some(lang.f("fx-removed-the-anchor", &[("name", &name)])))
             }
             FxOp::RenameAnchor { id, name } => {
                 self.session.doc.rename_anchor(id, name.trim())?;
@@ -480,9 +471,9 @@ impl AppState {
                             .map(|r| r.name.clone())
                     }) {
                         Some(name) => {
-                            format!("{}: {name}", lang.pick("画像を差しました", "Image set"))
+                            format!("{}: {name}", lang.t("fx-image-set"))
                         }
-                        None => lang.pick("画像を外しました", "Image removed").into(),
+                        None => lang.t("fx-image-removed").into(),
                     },
                 ))
             }
@@ -537,16 +528,13 @@ impl AppState {
     fn added_text(&self, name: &str, target: FilterTarget) -> String {
         let lang = self.lang;
         match target {
-            FilterTarget::Mask => lang.pick(
-                format!("マスクに {name} を追加しました。"),
-                format!("Added {name} to the mask."),
-            ),
+            FilterTarget::Mask => lang.f("fx-added-to-the-mask", &[("name", &name)]),
             FilterTarget::Content => {
                 let channel =
                     crate::m2::channel_name(lang, &self.session.doc, self.m2.paint_channel);
-                lang.pick(
-                    format!("{channel} の画素に {name} を追加しました。"),
-                    format!("Added {name} to the {channel} pixels."),
+                lang.f(
+                    "fx-added-to-the-pixels",
+                    &[("channel", &channel), ("name", &name)],
                 )
             }
         }
@@ -575,10 +563,7 @@ impl AppState {
             next.id_colors.retain(|c| *c != rgb);
         } else if !next.id_colors.contains(&rgb) {
             if next.id_colors.len() >= 32 {
-                self.refuse(
-                    Source::Effect,
-                    lang.pick("ID の色は 32 個までです。", "At most 32 ID colors."),
-                );
+                self.refuse(Source::Effect, lang.t("fx-at-most-32-id-colors"));
                 return true;
             }
             next.id_colors.push(rgb);
@@ -588,15 +573,9 @@ impl AppState {
             self.refuse(
                 Source::Effect,
                 if remove {
-                    lang.pick(
-                        format!("ID の色 {hex} は入っていません。"),
-                        format!("{hex} is not in the ID colors."),
-                    )
+                    lang.f("fx-is-not-in-the-id", &[("hex", &hex)])
                 } else {
-                    lang.pick(
-                        format!("ID の色 {hex} は入っています。"),
-                        format!("{hex} is already in the ID colors."),
-                    )
+                    lang.f("fx-is-already-in-the-id", &[("hex", &hex)])
                 },
             );
         } else {
@@ -611,15 +590,9 @@ impl AppState {
                     self.info(
                         Source::Effect,
                         if remove {
-                            lang.pick(
-                                format!("ID の色から {hex} を外しました。"),
-                                format!("Took {hex} out of the ID colors."),
-                            )
+                            lang.f("fx-took-out-of-the-id", &[("hex", &hex)])
                         } else {
-                            lang.pick(
-                                format!("ID の色に {hex} を追加しました。"),
-                                format!("Added {hex} to the ID colors."),
-                            )
+                            lang.f("fx-added-to-the-id-colors", &[("hex", &hex)])
                         },
                     );
                 }
@@ -678,26 +651,12 @@ impl AppState {
         let lang = self.lang;
         if let Some(first) = fresh.first() {
             let reason = match first.kind {
-                AnchorIssueKind::Missing => {
-                    lang.pick("読むアンカーがありません", "The anchor to read is gone")
-                }
-                AnchorIssueKind::NotBelow => lang.pick(
-                    "アンカーが自分のレイヤーより下にありません",
-                    "The anchor is not below its layer",
-                ),
+                AnchorIssueKind::Missing => lang.t("fx-the-anchor-to-read-is"),
+                AnchorIssueKind::NotBelow => lang.t("fx-the-anchor-is-not-below"),
                 AnchorIssueKind::NotChosen => "",
             };
             let note = lang.with_reason(
-                lang.pick(
-                    format!(
-                        "アンカーを読むジェネレーター {} 段が、入力をそのまま通すようになりました",
-                        fresh.len()
-                    ),
-                    format!(
-                        "{} anchor generator(s) now pass their input through",
-                        fresh.len()
-                    ),
-                ),
+                lang.f("fx-anchor-generator-s-now-pass", &[("fresh", &fresh.len())]),
                 reason,
             );
             // 直前の知らせ（あれば）に、アンカーの但し書きを添える（気をつけること）

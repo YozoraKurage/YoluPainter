@@ -116,10 +116,10 @@ impl LinkView {
     /// ウィンドウの先頭に出す状態の名前（名前だけ）。
     pub fn state_label(&self, lang: Lang) -> &'static str {
         match &self.status {
-            LinkStatus::Off => lang.pick("受け付けていない", "Not accepting"),
-            LinkStatus::Accepting if self.working => lang.pick("読み込み中", "Loading"),
-            LinkStatus::Accepting => lang.pick("受付中", "Accepting"),
-            LinkStatus::Failed(_) => lang.pick("フォルダを使えません", "Folder unavailable"),
+            LinkStatus::Off => lang.t("livelink-not-accepting"),
+            LinkStatus::Accepting if self.working => lang.t("livelink-loading"),
+            LinkStatus::Accepting => lang.t("livelink-accepting"),
+            LinkStatus::Failed(_) => lang.t("livelink-folder-unavailable"),
         }
     }
 
@@ -156,24 +156,16 @@ pub fn reason_text(lang: Lang, reason: &str) -> String {
         return reason.to_owned();
     };
     match r {
-        Reason::MeshNotFromFbx => {
-            lang.pick("FBX のメッシュではありません", "Not a mesh from an FBX")
-        }
-        Reason::BoneNotFound => lang.pick("FBX の中に見つかりません", "Not found in the FBX"),
-        Reason::AmbiguousBone => lang.pick(
-            "同じ名前のボーンがあり、決まりません",
-            "Ambiguous: bones with the same name",
-        ),
-        Reason::UnsupportedImport => lang.pick(
-            "取り込みの設定（軸の変換の焼き込み）に合わせられません",
-            "Unsupported import setting (Bake Axis Conversion)",
-        ),
-        Reason::FbxUnreadable => lang.pick("FBX を読めません", "Cannot read the FBX"),
-        Reason::TextureUnreadable => lang.pick("テクスチャを読めません", "Cannot read the texture"),
-        Reason::TooLarge => lang.pick("大きすぎます", "Too large"),
-        Reason::FormatUnknown => lang.pick("形式が違います", "Unknown format"),
-        Reason::Busy => lang.pick("今は受け付けられません", "Not now"),
-        Reason::Declined => lang.pick("開くのをやめました", "Opening was cancelled"),
+        Reason::MeshNotFromFbx => lang.t("livelink-not-a-mesh-from-an"),
+        Reason::BoneNotFound => lang.t("livelink-not-found-in-the-fbx"),
+        Reason::AmbiguousBone => lang.t("livelink-ambiguous-bones-with-the-same"),
+        Reason::UnsupportedImport => lang.t("livelink-unsupported-import-setting-bake-axis"),
+        Reason::FbxUnreadable => lang.t("livelink-cannot-read-the-fbx"),
+        Reason::TextureUnreadable => lang.t("livelink-cannot-read-the-texture"),
+        Reason::TooLarge => lang.t("livelink-too-large-2"),
+        Reason::FormatUnknown => lang.t("livelink-unknown-format"),
+        Reason::Busy => lang.t("livelink-not-now"),
+        Reason::Declined => lang.t("livelink-opening-was-cancelled"),
     }
     .to_owned()
 }
@@ -537,10 +529,7 @@ impl LiveLink {
         let root = self.root.clone().or_else(default_folder);
         let opened = match root {
             Some(root) => Folder::open(root).map_err(|e| e.to_string()),
-            None => Err(state
-                .lang
-                .pick("フォルダの場所が決まりません", "The folder is not known")
-                .to_owned()),
+            None => Err(state.lang.t("livelink-the-folder-is-not-known").to_owned()),
         };
         match opened {
             Ok(f) => {
@@ -555,10 +544,9 @@ impl LiveLink {
                 self.next_inbox = None;
             }
             Err(e) => {
-                let text = state.lang.pick(
-                    format!("Live Link: 受け渡しのフォルダを使えません（{e}）"),
-                    format!("Live Link: Cannot use the exchange folder ({e})"),
-                );
+                let text = state
+                    .lang
+                    .f("livelink-live-link-cannot-use-the", &[("e", &e)]);
                 if self.status != LinkStatus::Failed(text.clone()) {
                     self.notify(NoticeLevel::Error, text.clone(), state);
                 }
@@ -623,10 +611,7 @@ impl LiveLink {
 
     /// 文書が替わったので当てなかった頼みに、`declined` を返す。
     fn decline_replaced(&mut self, taken: &Taken, state: &mut AppState) {
-        let text = state.lang.pick(
-            "Live Link: プロジェクトが替わったので、開きませんでした。",
-            "Live Link: Not opened (the project was replaced).",
-        );
+        let text = state.lang.t("livelink-live-link-not-opened-the");
         self.decline(taken, text, state);
     }
 
@@ -663,10 +648,7 @@ impl LiveLink {
         {
             declined.extend(self.job.take().map(Running::cancel));
         }
-        let text = state.lang.pick(
-            "Live Link: 受け付けをやめたので、開きませんでした。",
-            "Live Link: Not opened (no longer accepting).",
-        );
+        let text = state.lang.t("livelink-live-link-not-opened-no");
         for taken in &declined {
             self.decline(taken, text, state);
         }
@@ -696,10 +678,9 @@ impl LiveLink {
             Err(refusal) => {
                 let refusal = refusal.clone();
                 let why = reason_text(state.lang, refusal.reason.as_str());
-                let text = state.lang.pick(
-                    format!("Live Link: 開きませんでした（{why}）。"),
-                    format!("Live Link: Not opened ({why})."),
-                );
+                let text = state
+                    .lang
+                    .f("livelink-live-link-not-opened", &[("why", &why)]);
                 self.reply(
                     &taken,
                     ReplyKind::Refused,
@@ -731,10 +712,7 @@ impl LiveLink {
                             vec![Problem::new(request.target.name.clone(), Reason::Declined)],
                         );
                         self.finish(&taken);
-                        let text = state.lang.pick(
-                            "Live Link: 保存していない変更があるので、開きませんでした。",
-                            "Live Link: Not opened (unsaved changes).",
-                        );
+                        let text = state.lang.t("livelink-live-link-not-opened-unsaved");
                         self.notify(NoticeLevel::Info, text.into(), state);
                         return;
                     }
@@ -919,9 +897,9 @@ impl LiveLink {
         self.reply(&taken, ReplyKind::Refused, problems.clone());
         self.finish(&taken);
         self.problems = problems;
-        let text = lang.pick(
-            format!("Live Link: 「{name}」を開けません（{why}）。"),
-            format!("Live Link: Cannot open “{name}” ({why})."),
+        let text = lang.f(
+            "livelink-live-link-cannot-open",
+            &[("name", &name), ("why", &why)],
         );
         self.notify(NoticeLevel::Warning, text, state);
     }
@@ -1215,30 +1193,21 @@ impl LiveLink {
         self.problems = shown;
         let name = &request.target.name;
         let mut text = if reopening {
-            lang.pick(
-                format!("Live Link: 「{name}」のモデルを開き直しました。"),
-                format!("Live Link: Reopened the model of “{name}”."),
-            )
+            lang.f("livelink-live-link-reopened-the-model", &[("name", &name)])
         } else if first_install {
-            lang.pick(
-                format!("Live Link: 「{name}」を開きました。"),
-                format!("Live Link: Opened “{name}”."),
-            )
+            lang.f("livelink-live-link-opened", &[("name", &name)])
         } else {
-            lang.pick(
-                format!("Live Link: 「{name}」を送り直しで更新しました。"),
-                format!("Live Link: Updated “{name}”."),
-            )
+            lang.f("livelink-live-link-updated", &[("name", &name)])
         };
         if !self.problems.is_empty() {
-            text += &lang.pick(
-                format!(" 合わない物 {} 件。", self.problems.len()),
-                format!(" {} item(s) did not fit.", self.problems.len()),
+            text += &lang.f(
+                "livelink-item-s-did-not-fit",
+                &[("problems", &self.problems.len())],
             );
         }
         for n in notes.iter().chain(&changed) {
             let n = n.trim_end_matches(['。', '.']);
-            text += &lang.pick(format!(" {n}。"), format!(" {n}."));
+            text += &lang.f("livelink-text", &[("n", &n)]);
         }
         let level = if notes.is_empty() && self.problems.is_empty() {
             NoticeLevel::Info

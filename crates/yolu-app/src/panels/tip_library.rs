@@ -132,7 +132,7 @@ fn search(ui: &mut Ui, rows: &mut Rows, app: &mut AppState, lang: Lang) {
         r,
         "krita.search",
         &mut app.brushes.krita.search,
-        lang.pick("名前で探す", "Search by name"),
+        lang.t("panels-search-by-name-tip"),
     );
 }
 

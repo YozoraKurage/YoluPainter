@@ -81,46 +81,27 @@ pub struct ToolsetState {
 impl Refusal {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
-            Refusal::Newer(_) => lang
-                .pick(
-                    "ツールの並びのファイルが新しい版のものです",
-                    "the tool layout file is from a newer version",
-                )
-                .into(),
-            Refusal::Unreadable => lang
-                .pick(
-                    "ツールの並びのファイルを読めませんでした",
-                    "the tool layout file could not be read",
-                )
-                .into(),
-            Refusal::TooManyTools => lang.pick(
-                format!("ツールは {} 個までです", super::MAX_TOOLS),
-                format!("at most {} tools", super::MAX_TOOLS),
+            Refusal::Newer(_) => lang.t("toolset-the-tool-layout-file-is").into(),
+            Refusal::Unreadable => lang.t("toolset-the-tool-layout-file-could").into(),
+            Refusal::TooManyTools => {
+                lang.f("toolset-at-most-tools", &[("MAX_TOOLS", &super::MAX_TOOLS)])
+            }
+            Refusal::TooManyGroups => lang.f(
+                "toolset-at-most-groups-per-tool",
+                &[("MAX_GROUPS", &super::MAX_GROUPS)],
             ),
-            Refusal::TooManyGroups => lang.pick(
-                format!("グループはツールごとに {} 個までです", super::MAX_GROUPS),
-                format!("at most {} groups per tool", super::MAX_GROUPS),
-            ),
-            Refusal::TooManyBrushes => lang.pick(
-                format!(
-                    "1 つのグループのブラシは {} 個までです",
-                    super::MAX_GROUP_BRUSHES
-                ),
-                format!("at most {} brushes per group", super::MAX_GROUP_BRUSHES),
+            Refusal::TooManyBrushes => lang.f(
+                "toolset-at-most-brushes-per-group",
+                &[("MAX_GROUP_BRUSHES", &super::MAX_GROUP_BRUSHES)],
             ),
             Refusal::LastOfKind(tool) => lang.pick(
                 format!("{}ツールは 1 つ残します", tool.name_in(lang)),
                 format!("one {} tool stays", tool.name_in(lang).to_lowercase()),
             ),
-            Refusal::NoGroups => lang
-                .pick(
-                    "このツールはブラシのグループを持てません",
-                    "this tool has no brush groups",
-                )
-                .into(),
-            Refusal::AlreadyPlaced(tool) => lang.pick(
-                format!("{}はもうツールバーにあります", tool.name_in(lang)),
-                format!("{} is already in the toolbar", tool.name_in(lang)),
+            Refusal::NoGroups => lang.t("toolset-this-tool-has-no-brush").into(),
+            Refusal::AlreadyPlaced(tool) => lang.f(
+                "toolset-is-already-in-the-toolbar",
+                &[("name_in", &tool.name_in(lang))],
             ),
             Refusal::Missing => String::new(),
         }
@@ -132,36 +113,24 @@ impl LoadProblem {
         let file = lang.quote(file::FILE_NAME);
         match self {
             LoadProblem::Broken { reason, moved_to } => {
-                let what = lang.pick(
-                    format!("ツールの並びのファイル{file}を読めないので、最初の並びにしました"),
-                    format!("Cannot read the tool layout file {file}; using the initial layout"),
-                );
+                let what = lang.f("toolset-cannot-read-the-tool-layout", &[("file", &file)]);
                 let reason = reason.describe(lang);
                 let mut text = lang.with_reason(what, reason);
                 match moved_to {
-                    Some(name) => text.push_str(&lang.pick(
-                        format!("元のファイルは{}に残しました。", lang.quote(name)),
-                        format!(" The original was kept as {}.", lang.quote(name)),
+                    Some(name) => text.push_str(&lang.f(
+                        "toolset-the-original-was-kept-as",
+                        &[("name", &lang.quote(name))],
                     )),
-                    None => text.push_str(lang.pick(
-                        "元のファイルを残せないので、並びは保存しません。",
-                        " The original could not be kept, so the layout is not saved.",
-                    )),
+                    None => text.push_str(lang.t("toolset-the-original-could-not-be")),
                 }
                 text
             }
             LoadProblem::Unreadable(reason) => lang.with_reason(
-                lang.pick(
-                    format!("ツールの並びのファイル{file}を読めません"),
-                    format!("Cannot read the tool layout file {file}"),
-                ),
+                lang.f("toolset-cannot-read-the-tool-layout-2", &[("file", &file)]),
                 reason,
             ),
             LoadProblem::Newer(_) => lang.with_reason(
-                lang.pick(
-                    format!("ツールの並びのファイル{file}は新しい版のものなので、変えずに最初の並びで使います"),
-                    format!("The tool layout file {file} is from a newer version; it is left as is and the initial layout is used"),
-                ),
+                lang.f("toolset-the-tool-layout-file-is-2", &[("file", &file)]),
                 "",
             ),
         }
@@ -331,22 +300,13 @@ impl AppState {
         userfiles::write_text(&path, &text, file::MAX_FILE_BYTES, verify).map_err(|e| {
             let reason = match e {
                 FileError::Io(e) => self.lang.file_error(&e),
-                FileError::TooLarge => self.lang.pick("大きすぎます", "too large").into(),
-                FileError::NotText | FileError::Mismatch => self
-                    .lang
-                    .pick(
-                        "書いた中身を確かめられません",
-                        "the written file did not match",
-                    )
-                    .into(),
+                FileError::TooLarge => self.lang.t("toolset-too-large").into(),
+                FileError::NotText | FileError::Mismatch => {
+                    self.lang.t("toolset-the-written-file-did-not").into()
+                }
             };
-            self.lang.with_reason(
-                self.lang.pick(
-                    "ツールの並びを保存できません",
-                    "Cannot save the tool layout",
-                ),
-                reason,
-            )
+            self.lang
+                .with_reason(self.lang.t("toolset-cannot-save-the-tool-layout"), reason)
         })
     }
 
@@ -368,10 +328,7 @@ impl AppState {
         }
         let lang = self.lang;
         let text = lang.with_reason(
-            lang.pick(
-                "ツールの並びを変えられません",
-                "Cannot change the tool layout",
-            ),
+            lang.t("toolset-cannot-change-the-tool-layout"),
             refusal.describe(lang),
         );
         self.refuse(Source::Brush, text);
@@ -476,7 +433,7 @@ impl AppState {
                     let taken = |n: &str| set.slots().iter().any(|s| s.name_in(lang) == n);
                     (
                         Some(userfiles::unused_name(base, taken)),
-                        Some(lang.pick("グループ", "Group").to_owned()),
+                        Some(lang.t("toolset-group").to_owned()),
                     )
                 } else {
                     (None, None)
@@ -554,10 +511,7 @@ impl AppState {
                         }
                         self.info(
                             Source::Brush,
-                            lang.pick(
-                                format!("ツールを削除しました: {name}"),
-                                format!("Tool deleted: {name}"),
-                            ),
+                            lang.f("toolset-tool-deleted", &[("name", &name)]),
                         );
                         self.toolset_persist();
                     }
@@ -575,7 +529,7 @@ impl AppState {
                 if self.toolset_blocked() {
                     return;
                 }
-                let base = lang.pick("グループ", "Group");
+                let base = lang.t("toolset-group");
                 let name = match self.toolset.set.slot(slot) {
                     Some(s) => userfiles::unused_name(base, |n| {
                         s.groups.iter().any(|g| g.name_in(lang) == n)
@@ -625,10 +579,7 @@ impl AppState {
                         self.brush_after_unplaced();
                         self.info(
                             Source::Brush,
-                            lang.pick(
-                                format!("グループを削除しました: {name}"),
-                                format!("Group deleted: {name}"),
-                            ),
+                            lang.f("toolset-group-deleted", &[("name", &name)]),
                         );
                         self.toolset_persist();
                     }
@@ -667,13 +618,7 @@ impl AppState {
                 (self.toolset.ui, self.ui.toolset_slot_rects) = Default::default();
                 self.toolset_follow_current();
                 self.brush_after_unplaced();
-                self.info(
-                    Source::Brush,
-                    lang.pick(
-                        "ツールの並びを最初の並びに戻しました。",
-                        "The tool layout was reset.",
-                    ),
-                );
+                self.info(Source::Brush, lang.t("toolset-the-tool-layout-was-reset"));
                 self.toolset_persist();
             }
         }

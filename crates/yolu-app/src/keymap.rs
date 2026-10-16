@@ -1060,23 +1060,20 @@ impl Operation {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Self::Orbit => lang.pick("回転", "Orbit"),
-            Self::Pan => lang.pick("パン", "Pan"),
-            Self::Zoom => lang.pick("ズーム", "Zoom"),
-            Self::Rotate => lang.pick("回転", "Rotate"),
+            Self::Orbit => lang.t("keymap-orbit"),
+            Self::Pan => lang.t("keymap-pan"),
+            Self::Zoom => lang.t("keymap-zoom"),
+            Self::Rotate => lang.t("keymap-rotate"),
             Self::Pick => Tool::Eyedropper.name_in(lang),
-            Self::SnapOrbit => lang.pick("スナップ回転", "Snap Orbit"),
-            Self::CloneSource => lang.pick("クローンの元を決める", "Set Clone Source"),
-            Self::SelectionAdd => lang.pick("選択範囲に追加", "Add to Selection"),
-            Self::SelectionSubtract => lang.pick("選択範囲から引く", "Subtract from Selection"),
-            Self::SelectionIntersect => lang.pick("選択範囲と重ねる", "Intersect with Selection"),
-            Self::MoveStencil => lang.pick("ステンシルの移動", "Move Stencil"),
-            Self::RotateStencil => lang.pick("ステンシルの回転", "Rotate Stencil"),
-            Self::ScaleStencil => lang.pick("ステンシルの拡縮", "Scale Stencil"),
-            Self::SnapStencilRotation => lang.pick(
-                "ステンシルの回転を 15° 刻みに",
-                "Snap Stencil Rotation to 15°",
-            ),
+            Self::SnapOrbit => lang.t("keymap-snap-orbit"),
+            Self::CloneSource => lang.t("keymap-set-clone-source"),
+            Self::SelectionAdd => lang.t("keymap-add-to-selection"),
+            Self::SelectionSubtract => lang.t("keymap-subtract-from-selection"),
+            Self::SelectionIntersect => lang.t("keymap-intersect-with-selection"),
+            Self::MoveStencil => lang.t("keymap-move-stencil"),
+            Self::RotateStencil => lang.t("keymap-rotate-stencil"),
+            Self::ScaleStencil => lang.t("keymap-scale-stencil"),
+            Self::SnapStencilRotation => lang.t("keymap-snap-stencil-rotation-to-15"),
         }
     }
 }

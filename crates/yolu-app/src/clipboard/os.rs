@@ -49,21 +49,10 @@ pub enum OsClipboardError {
 impl OsClipboardError {
     pub fn text(self, lang: Lang) -> &'static str {
         match self {
-            OsClipboardError::Unavailable => lang.pick(
-                "OS のクリップボードを使えません",
-                "OS clipboard unavailable",
-            ),
-            OsClipboardError::Busy => {
-                lang.pick("OS のクリップボードが使用中です", "OS clipboard is busy")
-            }
-            OsClipboardError::Unreadable => lang.pick(
-                "OS のクリップボードの画像を扱えません",
-                "Cannot convert the OS clipboard image",
-            ),
-            OsClipboardError::NotResponding => lang.pick(
-                "OS のクリップボードが応答しません",
-                "OS clipboard is not responding",
-            ),
+            OsClipboardError::Unavailable => lang.t("clipboard-os-clipboard-unavailable"),
+            OsClipboardError::Busy => lang.t("clipboard-os-clipboard-is-busy"),
+            OsClipboardError::Unreadable => lang.t("clipboard-cannot-convert-the-os-clipboard"),
+            OsClipboardError::NotResponding => lang.t("clipboard-os-clipboard-is-not-responding"),
         }
     }
 }

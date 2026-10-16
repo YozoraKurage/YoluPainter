@@ -179,15 +179,9 @@ pub fn start(
         // `//` が「今のドライブの根」と読まれて別の場所の参照に変わり、保存し直すと壊れる）
         let path = PathBuf::from(stored);
         app.np.model_file = Some(path.clone());
-        return Some(lang.pick(
-            format!(
-                "ネットワーク上のモデル{}は自動では読みません。",
-                lang.quote(&file_name(&path))
-            ),
-            format!(
-                "The model {} on the network is not read automatically.",
-                lang.quote(&file_name(&path))
-            ),
+        return Some(lang.f(
+            "newproject-the-model-on-the-network",
+            &[("path", &lang.quote(&file_name(&path)))],
         ));
     }
     let path = resolve_model_path(stored, ylp);
@@ -252,9 +246,9 @@ pub(super) fn poll(app: &mut AppState) {
     let (note_kind, note) = match result {
         None => (
             Kind::Warning,
-            lang.pick(
-                format!("モデル{}が見つかりません。", lang.quote(&name)),
-                format!("The model {} was not found.", lang.quote(&name)),
+            lang.f(
+                "newproject-the-model-was-not-found",
+                &[("name", &lang.quote(&name))],
             ),
         ),
         Some(Ok(prepared)) => {
@@ -263,13 +257,13 @@ pub(super) fn poll(app: &mut AppState) {
                 app.session.model = Some(SceneModel::from_rig(&session.rig));
             }
             let report = app.bind_model_only();
-            let mut text = lang.pick(format!("モデル: {name}。"), format!("Model: {name}."));
+            let mut text = lang.f("newproject-model-2", &[("name", &name)]);
             let mut kind = Kind::Info;
             if !report.unmatched.is_empty() {
                 kind = Kind::Warning;
-                text += &lang.pick(
-                    format!(" モデルに無いセット {}。", report.unmatched.len()),
-                    format!(" Not in the model: {}.", report.unmatched.len()),
+                text += &lang.f(
+                    "newproject-not-in-the-model-2",
+                    &[("unmatched", &report.unmatched.len())],
                 );
             }
             // ファイルのポーズ（pose.json）を戻す（合わない項目は飛ばして理由をポーズの欄に残す。取り消しの段にも変更の印にもしない）
@@ -284,9 +278,9 @@ pub(super) fn poll(app: &mut AppState) {
         Some(Err(e)) => (
             Kind::Error,
             lang.with_reason(
-                lang.pick(
-                    format!("モデル{}を読み込めません", lang.quote(&name)),
-                    format!("Cannot load the model {}", lang.quote(&name)),
+                lang.f(
+                    "newproject-cannot-load-the-model",
+                    &[("name", &lang.quote(&name))],
                 ),
                 lang.view_error(&e),
             ),

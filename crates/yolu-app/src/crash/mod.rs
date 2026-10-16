@@ -595,14 +595,14 @@ fn failure_dialog_with(reason: Option<&str>) {
     let lang = crate::settings::path()
         .map(|p| crate::settings::load_for_startup(&p, system).0.lang)
         .unwrap_or(system);
-    let folder = lang.pick("ログのフォルダを開く", "Open Log Folder");
+    let folder = lang.t("crash-open-log-folder");
     let result = rfd::MessageDialog::new()
         .set_title("YoluPainter")
         .set_description(dialog_text(lang, reason, LABELLED_BUTTONS))
         .set_level(rfd::MessageLevel::Error)
         .set_buttons(rfd::MessageButtons::OkCancelCustom(
             folder.into(),
-            lang.pick("閉じる", "Close").into(),
+            lang.t("crash-close").into(),
         ))
         .show();
     if opens_folder(&result, folder) {
@@ -628,10 +628,7 @@ fn dialog_text(lang: crate::lang::Lang, reason: Option<&str>, labelled: bool) ->
     if labelled {
         reason.into()
     } else {
-        format!(
-            "{reason}\n{}",
-            lang.pick("ログのフォルダを開きますか？", "Open the log folder?")
-        )
+        format!("{reason}\n{}", lang.t("crash-open-the-log-folder"))
     }
 }
 
@@ -679,9 +676,9 @@ fn short_reason(lang: crate::lang::Lang, reason: Option<&str>) -> &'static str {
                 .iter()
                 .any(|word| reason.to_ascii_lowercase().contains(word)) =>
         {
-            lang.pick("GPU を使えません", "GPU unavailable")
+            lang.t("crash-gpu-unavailable")
         }
-        Some(_) => lang.pick("ウィンドウを開けません", "Cannot open the window"),
-        None => lang.pick("予期しないエラー", "Unexpected error"),
+        Some(_) => lang.t("crash-cannot-open-the-window"),
+        None => lang.t("crash-unexpected-error"),
     }
 }

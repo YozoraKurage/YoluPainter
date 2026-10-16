@@ -46,16 +46,10 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
     let lang = app.lang;
     let mode = app.psd.export.mode;
     let mut items = vec![
-        Item::Label(lang.pick("方式", "Mode").into()),
-        Item::Mode(
-            ExportMode::Bake,
-            lang.pick("焼き込んで書く", "Bake and write"),
-        ),
-        Item::Mode(
-            ExportMode::Flat,
-            lang.pick("平らに 1 枚", "Flatten to one layer"),
-        ),
-        Item::Label(lang.pick("チャンネル", "Channels").into()),
+        Item::Label(lang.t("psd_export-mode").into()),
+        Item::Mode(ExportMode::Bake, lang.t("psd_export-bake-and-write")),
+        Item::Mode(ExportMode::Flat, lang.t("psd_export-flatten-to-one-layer")),
+        Item::Label(lang.t("psd_export-channels").into()),
     ];
     for c in app.session.doc.channels() {
         items.push(Item::Channel(
@@ -66,8 +60,8 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
     }
     let visible = items.len().min(MAX_ROWS);
     let height = window::HEADER_HEIGHT + 8.0 + visible as f32 * ROW_HEIGHT + 10.0 + FOOTER;
-    let title = lang.pick("PSD の書き出し", "Export PSD");
-    let close_label = lang.pick("ウィンドウを閉じる", "Close Window");
+    let title = lang.t("psd_export-export-psd");
+    let close_label = lang.t("psd_export-close-window");
     let spec = Spec {
         title,
         icon: Some("folder_open"),
@@ -130,13 +124,13 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
         let mut x = footer.right() - 14.0;
         let buttons = [
             (
-                lang.pick("やめる", "Cancel"),
+                lang.t("psd_export-cancel"),
                 false,
                 None,
                 PsdAction::CancelExportOptions,
             ),
             (
-                lang.pick("書き出し…", "Export…"),
+                lang.t("psd_export-export"),
                 true,
                 Some(export_tooltip(lang)),
                 PsdAction::ChooseExportFile,
@@ -175,23 +169,14 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
 /// 方式のツールチップ（説明はここに置く）。
 fn mode_tooltip(lang: Lang, mode: ExportMode) -> &'static str {
     match mode {
-        ExportMode::Bake => lang.pick(
-            "レイヤーを残し、PSD に形の無いフィルター・ジェネレーター・画像・パスなどは、評価した画素にして書きます。書く前に、焼くものを一覧で確かめます",
-            "Keeps the layers. Filters, generators, images, paths and other features PSD has no form for are written as evaluated pixels. What changes is listed before writing",
-        ),
-        ExportMode::Flat => lang.pick(
-            "合成した絵だけを、1 枚のレイヤーに書きます",
-            "Writes only the composite, as a single layer",
-        ),
+        ExportMode::Bake => lang.t("psd_export-keeps-the-layers-filters-generators-tip"),
+        ExportMode::Flat => lang.t("psd_export-writes-only-the-composite-as-tip"),
     }
 }
 
 /// 「書き出し…」のツールチップ。
 fn export_tooltip(lang: Lang) -> &'static str {
-    lang.pick(
-        "書き出す先を選びます。複数のチャンネルは 名前_チャンネル.psd で並べて書きます",
-        "Choose where to write. Several channels are written as Name_Channel.psd",
-    )
+    lang.t("psd_export-choose-where-to-write-several-tip")
 }
 
 /// ラジオ（選んでいる丸）。押されたら true。
@@ -260,16 +245,16 @@ fn summary(lang: Lang, sections: &[(Channel, Vec<ExportNote>)]) -> String {
     }
     let mut parts = Vec::new();
     if baked > 0 {
-        parts.push(lang.pick(format!("焼く {baked}"), format!("Bake {baked}")));
+        parts.push(lang.f("psd_export-bake", &[("baked", &baked)]));
     }
     if rounded > 0 {
-        parts.push(lang.pick(format!("丸める {rounded}"), format!("Round {rounded}")));
+        parts.push(lang.f("psd_export-round", &[("rounded", &rounded)]));
     }
     if dropped > 0 {
-        parts.push(lang.pick(format!("落とす {dropped}"), format!("Drop {dropped}")));
+        parts.push(lang.f("psd_export-drop", &[("dropped", &dropped)]));
     }
     if other > 0 {
-        parts.push(lang.pick(format!("注意 {other}"), format!("Note {other}")));
+        parts.push(lang.f("psd_export-note", &[("other", &other)]));
     }
     parts.join(" · ")
 }
@@ -312,9 +297,7 @@ pub fn show_confirm(ctx: &egui::Context, app: &mut AppState) {
     }
     let spec = ListSpec {
         id: CONFIRM,
-        title: lang
-            .pick("PSD の書き出しの確かめ", "Export PSD Check")
-            .into(),
+        title: lang.t("psd_export-export-psd-check").into(),
         icon: "warning",
         modal: true,
         width: 640.0,
@@ -325,23 +308,17 @@ pub fn show_confirm(ctx: &egui::Context, app: &mut AppState) {
         rows,
         buttons: vec![
             Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("psd_export-cancel").into(),
                 primary: false,
                 tooltip: None,
             },
             Button {
-                label: lang.pick("書く", "Write").into(),
+                label: lang.t("psd_export-write").into(),
                 primary: true,
-                tooltip: Some(
-                    lang.pick(
-                        "一覧のとおりに PSD を書きます。プロジェクトは変えません（効果はプロジェクトに残ります）",
-                        "Writes the PSD as listed. The project is not changed (its effects stay)",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("psd_export-writes-the-psd-as-listed-tip").into()),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("psd_export-close-window").into(),
     };
     let mut offset = app.ui.psd_notes_offset;
     let mut scroll = 0.0;
@@ -361,7 +338,7 @@ fn names(lang: Lang, stages: &[yolu_core::EffectSettings]) -> String {
         .iter()
         .map(|s| crate::fx::names::effect_name(lang, s))
         .collect::<Vec<_>>()
-        .join(lang.pick("・", ", "))
+        .join(lang.t("psd_export-text"))
 }
 
 fn adjustment_name(lang: Lang, kind: AdjustmentType) -> &'static str {
@@ -379,57 +356,52 @@ fn parameter_name(lang: Lang, p: RoundedParameter) -> String {
         ToneChannel::Blue => "B",
     };
     match p {
-        RoundedParameter::InputBlack => lang.pick("入力の黒", "Input black").into(),
-        RoundedParameter::InputWhite => lang.pick("入力の白", "Input white").into(),
-        RoundedParameter::OutputBlack => lang.pick("出力の黒", "Output black").into(),
-        RoundedParameter::OutputWhite => lang.pick("出力の白", "Output white").into(),
-        RoundedParameter::Gamma => lang.pick("ガンマ", "Gamma").into(),
-        RoundedParameter::Hue => lang.pick("色相", "Hue").into(),
-        RoundedParameter::Saturation => lang.pick("彩度", "Saturation").into(),
-        RoundedParameter::Lightness => lang.pick("明度", "Lightness").into(),
+        RoundedParameter::InputBlack => lang.t("psd_export-input-black").into(),
+        RoundedParameter::InputWhite => lang.t("psd_export-input-white").into(),
+        RoundedParameter::OutputBlack => lang.t("psd_export-output-black").into(),
+        RoundedParameter::OutputWhite => lang.t("psd_export-output-white").into(),
+        RoundedParameter::Gamma => lang.t("psd_export-gamma").into(),
+        RoundedParameter::Hue => lang.t("psd_export-hue").into(),
+        RoundedParameter::Saturation => lang.t("psd_export-saturation").into(),
+        RoundedParameter::Lightness => lang.t("psd_export-lightness").into(),
         RoundedParameter::Balance { range, axis } => {
             let range = match range {
-                BalanceRange::Shadows => lang.pick("シャドウ", "Shadows"),
-                BalanceRange::Midtones => lang.pick("中間", "Midtones"),
-                BalanceRange::Highlights => lang.pick("ハイライト", "Highlights"),
+                BalanceRange::Shadows => lang.t("psd_export-shadows"),
+                BalanceRange::Midtones => lang.t("psd_export-midtones"),
+                BalanceRange::Highlights => lang.t("psd_export-highlights"),
             };
             let axis = match axis {
-                0 => lang.pick("シアン — レッド", "Cyan — Red"),
-                1 => lang.pick("マゼンタ — グリーン", "Magenta — Green"),
-                _ => lang.pick("イエロー — ブルー", "Yellow — Blue"),
+                0 => lang.t("psd_export-cyan-red"),
+                1 => lang.t("psd_export-magenta-green"),
+                _ => lang.t("psd_export-yellow-blue"),
             };
             format!("{range} {axis}")
         }
-        RoundedParameter::Brightness => lang.pick("明るさ", "Brightness").into(),
-        RoundedParameter::Contrast => lang.pick("コントラスト", "Contrast").into(),
-        RoundedParameter::CurveInput { curve, point } => lang.pick(
-            format!("{} 点 {} の入力", tone(curve), point + 1),
-            format!("{} point {} input", tone(curve), point + 1),
+        RoundedParameter::Brightness => lang.t("psd_export-brightness").into(),
+        RoundedParameter::Contrast => lang.t("psd_export-contrast").into(),
+        RoundedParameter::CurveInput { curve, point } => lang.f(
+            "psd_export-point-input",
+            &[("curve", &tone(curve)), ("point", &(point + 1))],
         ),
-        RoundedParameter::CurveOutput { curve, point } => lang.pick(
-            format!("{} 点 {} の出力", tone(curve), point + 1),
-            format!("{} point {} output", tone(curve), point + 1),
+        RoundedParameter::CurveOutput { curve, point } => lang.f(
+            "psd_export-point-output",
+            &[("curve", &tone(curve)), ("point", &(point + 1))],
         ),
-        RoundedParameter::ColorStopPosition(i) => lang.pick(
-            format!("色 {} の位置", i + 1),
-            format!("Color {} position", i + 1),
-        ),
-        RoundedParameter::ColorStopMidpoint(i) => lang.pick(
-            format!("色 {} の中点", i + 1),
-            format!("Color {} midpoint", i + 1),
-        ),
-        RoundedParameter::OpacityStopPosition(i) => lang.pick(
-            format!("不透明度 {} の位置", i + 1),
-            format!("Opacity {} position", i + 1),
-        ),
-        RoundedParameter::OpacityStopMidpoint(i) => lang.pick(
-            format!("不透明度 {} の中点", i + 1),
-            format!("Opacity {} midpoint", i + 1),
-        ),
-        RoundedParameter::OpacityStopValue(i) => lang.pick(
-            format!("不透明度 {} の値", i + 1),
-            format!("Opacity {} value", i + 1),
-        ),
+        RoundedParameter::ColorStopPosition(i) => {
+            lang.f("psd_export-color-position", &[("i", &(i + 1))])
+        }
+        RoundedParameter::ColorStopMidpoint(i) => {
+            lang.f("psd_export-color-midpoint", &[("i", &(i + 1))])
+        }
+        RoundedParameter::OpacityStopPosition(i) => {
+            lang.f("psd_export-opacity-position", &[("i", &(i + 1))])
+        }
+        RoundedParameter::OpacityStopMidpoint(i) => {
+            lang.f("psd_export-opacity-midpoint", &[("i", &(i + 1))])
+        }
+        RoundedParameter::OpacityStopValue(i) => {
+            lang.f("psd_export-opacity-value", &[("i", &(i + 1))])
+        }
     }
 }
 
@@ -456,78 +428,62 @@ fn changes_text(lang: Lang, changes: &[RoundedValue]) -> String {
         .collect();
     if changes.len() > SHOWN {
         let rest = changes.len() - SHOWN;
-        parts.push(lang.pick(format!("ほか {rest}"), format!("{rest} more")));
+        parts.push(lang.f("psd_export-more", &[("rest", &rest)]));
     }
-    parts.join(lang.pick("、", ", "))
+    parts.join(lang.t("psd_export-text-2"))
 }
 
 /// 注記の「機能」と「結果」（確認のウィンドウの 2 つの列。文は名詞句）。
 pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
-    let pixels: String = lang.pick("画素へ", "To pixels").into();
-    let mask_pixels: String = lang.pick("マスクの画素へ", "To mask pixels").into();
-    let dropped: String = lang.pick("落とす", "Dropped").into();
+    let pixels: String = lang.t("psd_export-to-pixels").into();
+    let mask_pixels: String = lang.t("psd_export-to-mask-pixels").into();
+    let dropped: String = lang.t("psd_export-dropped").into();
     match &note.action {
         NoteAction::BakedFilters(v) => (
-            format!("{}: {}", lang.pick("フィルター", "Filters"), names(lang, v)),
+            format!("{}: {}", lang.t("psd_export-filters"), names(lang, v)),
             pixels,
         ),
         NoteAction::BakedFill(s) => {
             let mut parts: Vec<String> = Vec::new();
             if s.image {
-                parts.push(lang.pick("画像", "Image").into());
+                parts.push(lang.t("psd_export-image").into());
             }
             if s.decal {
-                parts.push(lang.pick("デカール", "Decal").into());
+                parts.push(lang.t("psd_export-decal").into());
             }
             if s.gradient {
-                parts.push(lang.pick("グラデーション", "Gradient").into());
+                parts.push(lang.t("psd_export-gradient").into());
             }
-            let mut what = parts.join(lang.pick("・", ", "));
+            let mut what = parts.join(lang.t("psd_export-text"));
             if let Some(mode) = s.projection {
                 what += &format!(
                     "（{}）",
                     crate::panels::fill_props::projection_name(lang, mode)
                 );
             }
-            (
-                format!("{}: {what}", lang.pick("塗りつぶし", "Fill")),
-                pixels,
-            )
+            (format!("{}: {what}", lang.t("psd_export-fill")), pixels)
         }
-        NoteAction::BakedTranslucentFill => (
-            lang.pick("半透明の塗りつぶし", "Translucent fill").into(),
-            pixels,
-        ),
+        NoteAction::BakedTranslucentFill => (lang.t("psd_export-translucent-fill").into(), pixels),
         NoteAction::BakedPath => (
-            lang.pick("パス", "Path").into(),
-            lang.pick("画素のみ", "Pixels only").into(),
+            lang.t("psd_export-path").into(),
+            lang.t("psd_export-pixels-only").into(),
         ),
         NoteAction::BakedMaskFilters(v) => (
-            format!(
-                "{}: {}",
-                lang.pick("マスクのフィルター", "Mask filters"),
-                names(lang, v)
-            ),
+            format!("{}: {}", lang.t("psd_export-mask-filters"), names(lang, v)),
             mask_pixels,
         ),
-        NoteAction::BakedInvertedMask => (
-            lang.pick("反転したマスク", "Inverted mask").into(),
-            mask_pixels,
-        ),
+        NoteAction::BakedInvertedMask => (lang.t("psd_export-inverted-mask").into(), mask_pixels),
         NoteAction::BakedClippedGroup => (
-            lang.pick("クリッピングされたグループ", "Clipped group")
-                .into(),
-            lang.pick("1 枚へ", "To one layer").into(),
+            lang.t("psd_export-clipped-group").into(),
+            lang.t("psd_export-to-one-layer").into(),
         ),
-        NoteAction::DroppedClippingMark => (
-            lang.pick("効いていないクリッピングの印", "Idle clipping mark")
-                .into(),
-            dropped,
-        ),
+        NoteAction::DroppedClippingMark => {
+            (lang.t("psd_export-idle-clipping-mark").into(), dropped)
+        }
         NoteAction::DroppedFilters(v) => (
             format!(
                 "{}: {}",
-                lang.pick("効いていないフィルター", "Inactive filters"),
+                lang.t("psd_export-inactive-filters"),
                 names(lang, v)
             ),
             dropped,
@@ -535,18 +491,16 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
         NoteAction::DroppedMaskFilters(v) => (
             format!(
                 "{}: {}",
-                lang.pick("効いていないマスクのフィルター", "Inactive mask filters"),
+                lang.t("psd_export-inactive-mask-filters"),
                 names(lang, v)
             ),
             dropped,
         ),
-        NoteAction::DroppedAnchor => (lang.pick("アンカー", "Anchor").into(), dropped),
-        NoteAction::DroppedMaskAnchor => {
-            (lang.pick("マスクのアンカー", "Mask anchor").into(), dropped)
-        }
+        NoteAction::DroppedAnchor => (lang.t("psd_export-anchor").into(), dropped),
+        NoteAction::DroppedMaskAnchor => (lang.t("psd_export-mask-anchor").into(), dropped),
         NoteAction::NormalBlend => (
-            lang.pick("法線の重ね方", "Normal blending").into(),
-            lang.pick("色の式で重なる", "As colors").into(),
+            lang.t("psd_export-normal-blending").into(),
+            lang.t("psd_export-as-colors").into(),
         ),
         NoteAction::ExpandedGradientCurve {
             cause,
@@ -569,7 +523,7 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
                         format!("{en} → stops: {colors} color, {opacities} opacity")
                     )
                 ),
-                lang.pick(format!("最大差 {max_diff}"), format!("Max diff {max_diff}")),
+                lang.f("psd_export-max-diff", &[("max_diff", &max_diff)]),
             )
         }
         NoteAction::Rounded {
@@ -583,12 +537,12 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
             }
             (
                 what,
-                lang.pick(format!("最大差 {max_diff}"), format!("Max diff {max_diff}")),
+                lang.f("psd_export-max-diff", &[("max_diff", &max_diff)]),
             )
         }
         NoteAction::BakedText => (
-            lang.pick("テキストレイヤー", "Text layer").into(),
-            lang.pick("画素のみ", "Pixels only").into(),
+            lang.t("psd_export-text-layer").into(),
+            lang.t("psd_export-pixels-only").into(),
         ),
     }
 }
@@ -597,86 +551,49 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
 pub fn blocker_text(lang: Lang, doc: &Document, channel: Option<Channel>, b: &Blocker) -> String {
     let name = &b.layer;
     let what = match &b.refusal {
-        Refusal::NormalLevels => lang.pick(
-            format!("「{name}」のレベル補正は、DirectX 向きの Normal の PSD に書けません"),
-            format!("\"{name}\" has levels that a DirectX Normal PSD cannot hold"),
+        Refusal::NormalLevels => lang.f("psd_export-has-levels-that-a-directx", &[("name", &name)]),
+        Refusal::ClippedGroup => lang.f("psd_export-is-a-clipped-group", &[("name", &name)]),
+        Refusal::InvertedMask => lang.f("psd_export-has-an-inverted-mask", &[("name", &name)]),
+        Refusal::FillTranslucent => lang.f("psd_export-is-a-translucent-fill", &[("name", &name)]),
+        Refusal::FillPixels => lang.f("psd_export-is-a-fill-that-reads", &[("name", &name)]),
+        Refusal::LevelsBetweenSteps => {
+            lang.f("psd_export-has-levels-between-psd-s", &[("name", &name)])
+        }
+        Refusal::LevelsRange => lang.f("psd_export-has-a-levels-input-outside", &[("name", &name)]),
+        Refusal::HueSaturationBetweenSteps => lang.f(
+            "psd_export-has-hue-saturation-between-psd",
+            &[("name", &name)],
         ),
-        Refusal::ClippedGroup => lang.pick(
-            format!("「{name}」はクリッピングされたグループです"),
-            format!("\"{name}\" is a clipped group"),
+        Refusal::GradientMapBetweenSteps => {
+            lang.f("psd_export-has-a-gradient-map-between", &[("name", &name)])
+        }
+        Refusal::GradientMapCurveStops => {
+            lang.f("psd_export-has-a-gradient-map-whose", &[("name", &name)])
+        }
+        Refusal::GradientMapMixingStops => {
+            lang.f("psd_export-has-a-gradient-map-whose-2", &[("name", &name)])
+        }
+        Refusal::GradientMapMixing => {
+            lang.f("psd_export-has-a-gradient-map-with", &[("name", &name)])
+        }
+        Refusal::GradientMapCurve => {
+            lang.f("psd_export-has-a-gradient-map-with-2", &[("name", &name)])
+        }
+        Refusal::ToneCurveBetweenSteps => {
+            lang.f("psd_export-has-a-tone-curve-between", &[("name", &name)])
+        }
+        Refusal::ColorBalanceBetweenSteps => lang.f(
+            "psd_export-has-color-balance-between-psd",
+            &[("name", &name)],
         ),
-        Refusal::InvertedMask => lang.pick(
-            format!("「{name}」のマスクは反転しています"),
-            format!("\"{name}\" has an inverted mask"),
+        Refusal::BrightnessContrastBetweenSteps => lang.f(
+            "psd_export-has-brightness-contrast-between-psd",
+            &[("name", &name)],
         ),
-        Refusal::FillTranslucent => lang.pick(
-            format!("「{name}」は半透明の塗りつぶしです"),
-            format!("\"{name}\" is a translucent fill"),
-        ),
-        Refusal::FillPixels => lang.pick(
-            format!("「{name}」の塗りつぶしは画像・投影・グラデーションを使っています"),
-            format!("\"{name}\" is a fill that reads an image, projection or gradient"),
-        ),
-        Refusal::LevelsBetweenSteps => lang.pick(
-            format!("「{name}」のレベル補正は PSD の刻みの間にあります"),
-            format!("\"{name}\" has levels between PSD's steps"),
-        ),
-        Refusal::LevelsRange => lang.pick(
-            format!("「{name}」のレベル補正の入力が PSD の範囲に収まりません"),
-            format!("\"{name}\" has a levels input outside PSD's range"),
-        ),
-        Refusal::HueSaturationBetweenSteps => lang.pick(
-            format!("「{name}」の色相・彩度は PSD の刻みの間にあります"),
-            format!("\"{name}\" has hue/saturation between PSD's steps"),
-        ),
-        Refusal::GradientMapBetweenSteps => lang.pick(
-            format!("「{name}」のグラデーションマップは PSD の刻みの間にあります"),
-            format!("\"{name}\" has a gradient map between PSD's steps"),
-        ),
-        Refusal::GradientMapCurveStops => lang.pick(
-            format!("「{name}」のグラデーションマップの値のカーブは、PSD の停止点の上限の中で展開できません"),
-            format!("\"{name}\" has a gradient map whose value curve does not fit PSD's stop limit"),
-        ),
-        Refusal::GradientMapMixingStops => lang.pick(
-            format!("「{name}」のグラデーションマップの混色は、PSD の停止点の上限の中で展開できません"),
-            format!("\"{name}\" has a gradient map whose color mixing does not fit PSD's stop limit"),
-        ),
-        Refusal::GradientMapMixing => lang.pick(
-            format!("「{name}」のグラデーションマップに混色（混色モード・混合率曲線）があります"),
-            format!("\"{name}\" has a gradient map with color mixing (mode or mixing curves)"),
-        ),
-        Refusal::GradientMapCurve => lang.pick(
-            format!("「{name}」のグラデーションマップに値のカーブがあります"),
-            format!("\"{name}\" has a gradient map with a value curve"),
-        ),
-        Refusal::ToneCurveBetweenSteps => lang.pick(
-            format!("「{name}」のトーンカーブは PSD の刻みの間にあります"),
-            format!("\"{name}\" has a tone curve between PSD's steps"),
-        ),
-        Refusal::ColorBalanceBetweenSteps => lang.pick(
-            format!("「{name}」のカラーバランスは PSD の刻みの間にあります"),
-            format!("\"{name}\" has color balance between PSD's steps"),
-        ),
-        Refusal::BrightnessContrastBetweenSteps => lang.pick(
-            format!("「{name}」の明るさ・コントラストは PSD の刻みの間にあります"),
-            format!("\"{name}\" has brightness/contrast between PSD's steps"),
-        ),
-        Refusal::Effects => lang.pick(
-            format!("「{name}」にフィルターかジェネレーターがあります"),
-            format!("\"{name}\" has filters or generators"),
-        ),
-        Refusal::Anchor => lang.pick(
-            format!("「{name}」にアンカーがあります"),
-            format!("\"{name}\" has an anchor"),
-        ),
-        Refusal::Path => lang.pick(
-            format!("「{name}」にパスがあります"),
-            format!("\"{name}\" has a path"),
-        ),
-        Refusal::Text => lang.pick(
-            format!("「{name}」はテキストレイヤーです"),
-            format!("\"{name}\" is a text layer"),
-        ),
+        Refusal::Effects => lang.f("psd_export-has-filters-or-generators", &[("name", &name)]),
+        Refusal::Anchor => lang.f("psd_export-has-an-anchor", &[("name", &name)]),
+        Refusal::Path => lang.f("psd_export-has-a-path", &[("name", &name)]),
+        Refusal::Text => lang.f("psd_export-is-a-text-layer", &[("name", &name)]),
     };
     match channel {
         Some(c) => format!("{}: {what}", channel_name(lang, doc, c)),

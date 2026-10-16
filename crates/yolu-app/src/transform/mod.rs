@@ -110,8 +110,8 @@ impl TransformState {
 
 pub fn resampling_name(lang: crate::lang::Lang, mode: Resampling) -> &'static str {
     match mode {
-        Resampling::Bilinear => lang.pick("バイリニア", "Bilinear"),
-        Resampling::Nearest => lang.pick("ニアレストネイバー", "Nearest"),
+        Resampling::Bilinear => lang.t("transform-bilinear"),
+        Resampling::Nearest => lang.t("transform-nearest"),
     }
 }
 

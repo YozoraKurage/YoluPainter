@@ -549,20 +549,18 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
 /// 物の名前（知らせの文に使う）。
 fn object_name(lang: Lang, o: Object) -> &'static str {
     match o {
-        Object::Shape(Target::Projection(_)) => lang.pick("投影の置き場", "Projection placement"),
-        Object::Shape(Target::Gradient(..)) => {
-            lang.pick("グラデーションデカール", "Gradient decal")
-        }
-        Object::Shape(Target::Filter(..)) => lang.pick("フィルターの形", "Filter shape"),
-        Object::Point { .. } => lang.pick("点", "Point"),
-        Object::Path { .. } => lang.pick("パス", "Path"),
-        Object::Ruler { .. } | Object::Shape(Target::Ruler(..)) => lang.pick("定規", "Ruler"),
+        Object::Shape(Target::Projection(_)) => lang.t("objects-projection-placement"),
+        Object::Shape(Target::Gradient(..)) => lang.t("objects-gradient-decal"),
+        Object::Shape(Target::Filter(..)) => lang.t("objects-filter-shape"),
+        Object::Point { .. } => lang.t("objects-point"),
+        Object::Path { .. } => lang.t("objects-path"),
+        Object::Ruler { .. } | Object::Shape(Target::Ruler(..)) => lang.t("objects-ruler"),
     }
 }
 
 /// 選んでいる物が無いときの断り。
 fn nothing_selected(lang: Lang) -> &'static str {
-    lang.pick("選んだ物がありません", "Nothing is selected")
+    lang.t("objects-nothing-is-selected")
 }
 
 impl AppState {
@@ -587,10 +585,8 @@ impl AppState {
                     return;
                 }
                 let Some(o) = selected(self) else {
-                    let text = lang.with_reason(
-                        lang.pick("削除できません", "Cannot delete"),
-                        nothing_selected(lang),
-                    );
+                    let text =
+                        lang.with_reason(lang.t("objects-cannot-delete"), nothing_selected(lang));
                     self.refuse(Source::Edit, text);
                     return;
                 };
@@ -609,13 +605,7 @@ fn delete(app: &mut AppState, o: Object) {
     );
     match o {
         Object::Shape(Target::Projection(_)) => {
-            let text = lang.with_reason(
-                what,
-                lang.pick(
-                    "塗りつぶしレイヤーの投影です",
-                    "it is the fill layer's projection",
-                ),
-            );
+            let text = lang.with_reason(what, lang.t("objects-it-is-the-fill-layer"));
             app.refuse(Source::FillLayer, text);
         }
         Object::Shape(Target::Gradient(layer, channel)) => {

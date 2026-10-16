@@ -93,26 +93,26 @@ impl Group {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Group::Pen => lang.pick("ペン", "Pen"),
-            Group::Brush => lang.pick("筆", "Brush"),
-            Group::Airbrush => lang.pick("エアブラシ", "Airbrush"),
-            Group::Eraser => lang.pick("消しゴム", "Eraser"),
-            Group::Effect => lang.pick("効果", "Effects"),
-            Group::Special => lang.pick("特殊", "Special"),
-            Group::Imported => lang.pick("取り込み", "Imported"),
+            Group::Pen => lang.t("brushes-pen"),
+            Group::Brush => lang.t("brushes-brush"),
+            Group::Airbrush => lang.t("brushes-airbrush"),
+            Group::Eraser => lang.t("brushes-eraser"),
+            Group::Effect => lang.t("brushes-effects"),
+            Group::Special => lang.t("brushes-special"),
+            Group::Imported => lang.t("brushes-imported"),
         }
     }
 
     /// タブに書く短い名前（全名はツールチップ）。
     pub fn short(self, lang: Lang) -> &'static str {
         match self {
-            Group::Pen => lang.pick("ペン", "Pen"),
-            Group::Brush => lang.pick("筆", "Brush"),
-            Group::Airbrush => lang.pick("エア", "Air"),
-            Group::Eraser => lang.pick("消し", "Erase"),
-            Group::Effect => lang.pick("効果", "FX"),
-            Group::Special => lang.pick("特殊", "Misc"),
-            Group::Imported => lang.pick("取込", "Import"),
+            Group::Pen => lang.t("brushes-pen"),
+            Group::Brush => lang.t("brushes-brush"),
+            Group::Airbrush => lang.t("brushes-air"),
+            Group::Eraser => lang.t("brushes-erase"),
+            Group::Effect => lang.t("brushes-fx"),
+            Group::Special => lang.t("brushes-misc"),
+            Group::Imported => lang.t("brushes-import"),
         }
     }
 
@@ -562,16 +562,16 @@ impl Category {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Category::Shape => lang.pick("形状", "Shape"),
-            Category::Stroke => lang.pick("ストローク", "Stroke"),
-            Category::Pressure => lang.pick("筆圧", "Pen Pressure"),
-            Category::Dynamics => lang.pick("入り抜きとペン", "Taper & Pen"),
-            Category::Jitter => lang.pick("ゆらぎ", "Jitter"),
-            Category::Texture => lang.pick("テクスチャ", "Texture"),
-            Category::Dual => lang.pick("デュアルブラシ", "Dual Brush"),
-            Category::Color => lang.pick("色の揺らぎ", "Color Dynamics"),
-            Category::Mix => lang.pick("色の混ぜ", "Color Mixing"),
-            Category::Effect => lang.pick("効果", "Effect"),
+            Category::Shape => lang.t("brushes-shape"),
+            Category::Stroke => lang.t("brushes-stroke"),
+            Category::Pressure => lang.t("brushes-pen-pressure"),
+            Category::Dynamics => lang.t("brushes-taper-pen"),
+            Category::Jitter => lang.t("brushes-jitter"),
+            Category::Texture => lang.t("brushes-texture"),
+            Category::Dual => lang.t("brushes-dual-brush-2"),
+            Category::Color => lang.t("brushes-color-dynamics"),
+            Category::Mix => lang.t("brushes-color-mixing-2"),
+            Category::Effect => lang.t("brushes-effect"),
         }
     }
 
@@ -839,8 +839,7 @@ impl AppState {
         }
         self.refuse(
             crate::notice::Source::Brush,
-            self.lang
-                .pick("ブラシを取り込み中です。", "Importing brushes."),
+            self.lang.t("brushes-importing-brushes-3"),
         );
         true
     }
@@ -889,18 +888,15 @@ impl AppState {
         let lang = self.lang;
         let file = lang.quote(&first.file);
         let one = lang.with_reason(
-            lang.pick(
-                format!("ブラシのファイル{file}を読めません"),
-                format!("Cannot read the brush file {file}"),
-            ),
+            lang.f("brushes-cannot-read-the-brush-file", &[("file", &file)]),
             first.describe(lang),
         );
         Some(if problems.len() == 1 {
             one
         } else {
-            lang.pick(
-                format!("ブラシを {} 件読めません。{one}", problems.len()),
-                format!("Cannot read {} brushes. {one}", problems.len()),
+            lang.f(
+                "brushes-cannot-read-brushes",
+                &[("problems", &problems.len()), ("one", &one)],
             )
         })
     }
@@ -1090,7 +1086,7 @@ impl AppState {
             return None;
         }
         let lang = self.lang;
-        let base = clean_name(&new.name).unwrap_or_else(|| lang.pick("ブラシ", "Brush").into());
+        let base = clean_name(&new.name).unwrap_or_else(|| lang.t("brushes-brush-2").into());
         let store = self.brushes.store.as_ref();
         let lib = &mut self.brushes.lib;
         // 番号は読んだファイルの続き。起動のあとに別の所で置かれたファイルの番号は飛ばす（保存は置換なので、当たると上書きする）
@@ -1184,11 +1180,8 @@ impl AppState {
             return;
         }
         let name = match from {
-            None => lang.pick("ブラシ", "Brush").to_owned(),
-            Some(_) => lang.pick(
-                format!("{} のコピー", source.name_in(lang)),
-                format!("{} copy", source.name_in(lang)),
-            ),
+            None => lang.t("brushes-brush-2").to_owned(),
+            Some(_) => lang.f("brushes-copy", &[("name_in", &source.name_in(lang))]),
         };
         let key = match from {
             Some(_) => self.brush_copy_of(source_key, name.clone(), group, false),
@@ -1339,10 +1332,7 @@ impl AppState {
                 format!("At most {MAX_USER_BRUSHES} brushes."),
             );
         }
-        let name = lang.pick(
-            format!("{} のコピー", source.name_in(lang)),
-            format!("{} copy", source.name_in(lang)),
-        );
+        let name = lang.f("brushes-copy", &[("name_in", &source.name_in(lang))]);
         let before = self.toolset.set.slot(slot).and_then(|s| {
             let at = s.groups.iter().position(|g| g.id == group)?;
             s.groups.get(at + 1).map(|g| g.id)
@@ -1725,7 +1715,7 @@ impl AppState {
                     let Some(source) = self.brushes.lib.entry(key).map(|e| e.name_in(lang)) else {
                         return;
                     };
-                    let name = lang.pick(format!("{source} のコピー"), format!("{source} copy"));
+                    let name = lang.f("brushes-copy-2", &[("source", &source)]);
                     let Some(new) = self.brush_copy_of(key, name, group, false) else {
                         return;
                     };

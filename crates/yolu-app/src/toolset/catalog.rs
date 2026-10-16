@@ -54,12 +54,12 @@ impl Kind {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Kind::Builtin => lang.pick("組み込み", "Built-in"),
+            Kind::Builtin => lang.t("toolset-built-in"),
             Kind::Krita => "Krita",
             Kind::Photoshop => "Photoshop",
             Kind::ClipStudio => "CLIP STUDIO",
-            Kind::OtherImports => lang.pick("そのほかの取り込み", "Other Imports"),
-            Kind::Mine => lang.pick("自分のブラシ", "My Brushes"),
+            Kind::OtherImports => lang.t("toolset-other-imports"),
+            Kind::Mine => lang.t("toolset-my-brushes"),
         }
     }
 

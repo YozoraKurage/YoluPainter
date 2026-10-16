@@ -72,7 +72,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Image,
             true,
-            app.lang.pick("ナビゲーター", "Navigator"),
+            app.lang.t("navigator-navigator"),
         )
     });
     let size = (app.session.doc.width(), app.session.doc.height());
@@ -162,7 +162,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
                 egui::Slider::new(&mut zoom, MIN_ZOOM..=MAX_ZOOM)
                     .logarithmic(true)
                     .clamping(egui::SliderClamping::Edits)
-                    .text(app.lang.pick("拡大率", "Zoom"))
+                    .text(app.lang.t("navigator-zoom"))
                     .custom_formatter(|v, _| format!("{:.0}%", v * fit as f64 * 100.0))
                     .custom_parser(|text| {
                         let text = text.trim();
@@ -187,7 +187,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             .add(
                 egui::Slider::new(&mut angle, -180.0..=180.0)
                     .suffix("°")
-                    .text(app.lang.pick("回転", "Rotation")),
+                    .text(app.lang.t("navigator-rotation")),
             )
             .changed()
             && enabled
@@ -197,18 +197,10 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
         }
         ui.horizontal(|ui| {
             for (i, icon, label) in [
-                (0, "flip", app.lang.pick("左右反転", "Flip horizontally")),
-                (
-                    1,
-                    "arrow_maximize",
-                    app.lang.pick("全体を表示", "Fit canvas"),
-                ),
+                (0, "flip", app.lang.t("navigator-flip-horizontally")),
+                (1, "arrow_maximize", app.lang.t("navigator-fit-canvas")),
                 (2, "target", "100%"),
-                (
-                    3,
-                    "restart_alt",
-                    app.lang.pick("回転を戻す", "Reset rotation"),
-                ),
+                (3, "restart_alt", app.lang.t("navigator-reset-rotation")),
             ] {
                 let (r, _) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::hover());
                 if widgets::icon_button(

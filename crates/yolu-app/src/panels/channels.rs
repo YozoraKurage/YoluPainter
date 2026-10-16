@@ -62,18 +62,18 @@ impl Part {
 
     fn label(self, lang: crate::lang::Lang) -> &'static str {
         match self {
-            Part::Look(Section::Main) => lang.pick("メインカラー", "Main Color"),
-            Part::Look(Section::Shadow) => lang.pick("影", "Shadow"),
-            Part::Look(Section::RimShade) => lang.pick("リムシェード", "RimShade"),
-            Part::Look(Section::Emission) => lang.pick("発光", "Emission"),
-            Part::Look(Section::Normal) => lang.pick("ノーマルマップ", "Normal Map"),
-            Part::Look(Section::Backlight) => lang.pick("逆光ライト", "Backlight"),
-            Part::Look(Section::Reflection) => lang.pick("光沢", "Reflection"),
-            Part::Look(Section::MatCap) => lang.pick("マットキャップ", "MatCap"),
-            Part::Look(Section::Rim) => lang.pick("リムライト", "Rim Light"),
-            Part::Look(Section::Glitter) => lang.pick("ラメ", "Glitter"),
-            Part::Look(Section::Outline) => lang.pick("輪郭線", "Outline"),
-            Part::Look(_) | Part::Other => lang.pick("そのほか", "Other"),
+            Part::Look(Section::Main) => lang.t("panels-main-color"),
+            Part::Look(Section::Shadow) => lang.t("panels-shadow"),
+            Part::Look(Section::RimShade) => lang.t("panels-rimshade"),
+            Part::Look(Section::Emission) => lang.t("panels-emission"),
+            Part::Look(Section::Normal) => lang.t("panels-normal-map"),
+            Part::Look(Section::Backlight) => lang.t("panels-backlight"),
+            Part::Look(Section::Reflection) => lang.t("panels-reflection"),
+            Part::Look(Section::MatCap) => lang.t("panels-matcap"),
+            Part::Look(Section::Rim) => lang.t("panels-rim-light"),
+            Part::Look(Section::Glitter) => lang.t("panels-glitter"),
+            Part::Look(Section::Outline) => lang.t("panels-outline"),
+            Part::Look(_) | Part::Other => lang.t("panels-other"),
         }
     }
 }
@@ -308,7 +308,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         add,
         "channels.add",
         "add",
-        lang.pick("チャンネルを追加", "Add Channel"),
+        lang.t("panels-add-channel-tip"),
         false,
         enabled,
         18.0,
@@ -323,7 +323,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         button(bar.right() - 4.0 - 26.0),
         "channels.delete",
         "delete",
-        lang.pick("チャンネルを削除", "Delete Channel"),
+        lang.t("panels-delete-channel-tip"),
         false,
         enabled && !paint.is_standard(),
         17.0,
@@ -345,7 +345,7 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         app,
         rows,
         "normal",
-        lang.pick("ノーマル", "Normal"),
+        lang.t("panels-normal"),
         "3d_rotation",
         None,
     );
@@ -362,12 +362,9 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         ui,
         rows,
         "normal.derive",
-        lang.pick("ハイト → ノーマル", "Height → Normal"),
+        lang.t("panels-height-normal"),
         derive,
-        Some(lang.pick(
-            "ノーマルの出力（プレビュー・.ylp のテクスチャ・書き出し）で、描いたノーマルのレイヤーの下にハイトのチャンネルから作った法線を足します。ハイトから毎回作り直し、レイヤーには描きません",
-            "Adds the normal derived from the Height channel under the painted Normal layers in the Normal output (preview, .ylp texture, exports). It is regenerated from Height, never painted into a layer",
-        )),
+        Some(lang.t("panels-adds-the-normal-derived-from-tip")),
         enabled,
     ) {
         edit(app, settings.with_derive(next), false);
@@ -376,7 +373,7 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
         ui,
         rows,
         "normal.strength",
-        lang.pick("強さ", "Strength"),
+        lang.t("panels-strength"),
         settings.strength() as f32,
         (
             -(NormalSettings::MAX_STRENGTH as f32),
@@ -387,10 +384,7 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
             trim: true,
             suffix: "",
         },
-        Some(lang.pick(
-            "ハイトの全範囲（0 → 1）で何テクセル分盛り上がるか。マイナスにすると凸が凹になります",
-            "Texels of rise for the full height range (0 → 1). Negative turns bumps into dents",
-        )),
+        Some(lang.t("panels-texels-of-rise-for-the-tip")),
         enabled && derive,
     ) {
         if let Ok(next) = settings.with_strength(value as f64) {
@@ -404,30 +398,24 @@ fn normal_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::
             let (response, at) = w::dropdown(ui, r, id, None, value, Some(tip), enabled, 0.0);
             response.clicked().then_some(at)
         };
-    group_label(ui, rows, lang.pick("端", "Edges"));
+    group_label(ui, rows, lang.t("panels-edges"));
     if let Some(at) = dropdown(
         ui,
         rows,
         "normal.edges",
         edges_name(lang, settings.edges()),
-        lang.pick(
-            "クランプ: キャンバスの端の傾きは端のテクセルで求めます。ラップ: 反対側の端を読みます（タイルするテクスチャ）",
-            "Clamp: the slope at the canvas edge uses the edge texel. Wrap: it reads the opposite edge (tiling textures)",
-        ),
+        lang.t("panels-clamp-the-slope-at-the"),
         enabled && derive,
     ) {
         open_popup(app, ctx, Popup::NormalEdges, at, at.width());
     }
-    group_label(ui, rows, lang.pick("ファイルの Y", "File Y"));
+    group_label(ui, rows, lang.t("panels-file-y"));
     if let Some(at) = dropdown(
         ui,
         rows,
         "normal.direction",
         direction_name(settings.file_direction()),
-        lang.pick(
-            "画像の書き出し・PNG・PSD で書くノーマルの画像の緑の向き。Unity は OpenGL（Y+）で、.ylp のテクスチャとプレビューは常に OpenGL です",
-            "Green direction of Normal images written by the exports. Unity uses OpenGL (Y+); the .ylp texture and the preview always do",
-        ),
+        lang.t("panels-green-direction-of-normal-images"),
         enabled,
     ) {
         open_popup(app, ctx, Popup::NormalDirection, at, at.width());
@@ -531,10 +519,7 @@ fn channel_row(
         paint_btn,
         ("channel.paint", channel.index()),
         "paint_brush",
-        &lang.pick(
-            format!("{name} を描くチャンネルにする"),
-            format!("Paint {name}"),
-        ),
+        &lang.f("panels-paint-tip", &[("name", &name)]),
         painting,
         enabled,
         15.0,
@@ -552,10 +537,7 @@ fn channel_row(
         } else {
             "visibility_off"
         },
-        &lang.pick(
-            format!("{name} をキャンバスに出す"),
-            format!("Show {name} in the canvas"),
-        ),
+        &lang.f("panels-show-in-the-canvas-tip", &[("name", &name)]),
         showing,
         true,
         16.0,
@@ -620,7 +602,7 @@ fn channel_row(
         let dot = pos2(icon_rect.right() - 1.0, row.top() + 7.0);
         painter.circle_filled(dot, 3.0, t::ACCENT);
         let names: Vec<&str> = reading.iter().map(|s| s.label(lang)).collect();
-        let tip = format!("lilToon: {}", names.join(lang.pick("、", ", ")));
+        let tip = format!("lilToon: {}", names.join(lang.t("panels-text-tip")));
         let hit = icon_rect.intersect(list);
         let response = ui.interact(
             hit,
@@ -640,7 +622,7 @@ fn channel_row(
             ("channel.kind", channel.index()),
             None,
             &format,
-            Some(lang.pick("チャンネルの種類", "Channel type")),
+            Some(lang.t("panels-channel-type-tip")),
             enabled,
             0.0,
         );

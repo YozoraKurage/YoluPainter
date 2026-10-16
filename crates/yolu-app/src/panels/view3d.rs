@@ -466,7 +466,7 @@ impl View3dSlot {
             w::CornerIcon::new(
                 "shading",
                 "texture",
-                format!("{}: {shading}", lang.pick("3D の表示", "3D shading")),
+                format!("{}: {shading}", lang.t("panels-3d-shading-tip")),
             )
             .selected(open_shading),
         );
@@ -474,10 +474,7 @@ impl View3dSlot {
             w::CornerIcon::new(
                 "settings",
                 "light_mode",
-                lang.pick(
-                    "光・環境・トーンマッピング",
-                    "Light, environment, tone mapping",
-                ),
+                lang.t("panels-light-environment-tone-mapping-tip"),
             )
             .selected(app.view3d.display.settings_open),
         );
@@ -485,10 +482,7 @@ impl View3dSlot {
             w::CornerIcon::new(
                 "frame",
                 "target",
-                lang.pick(
-                    "モデル全体が見える位置へ戻す",
-                    "Fit the whole model in view",
-                ),
+                lang.t("panels-fit-the-whole-model-in-tip"),
             )
             .enabled(!app.is_stroking()),
         );
@@ -534,11 +528,11 @@ impl View3dSlot {
         let lang = app.lang;
         // モデルが無いだけのときは、空の状態の文字（「モデルなし」）を置かず、読むボタンだけにする
         let title = if all_hidden {
-            Some(lang.pick("すべて隠しています", "All hidden"))
+            Some(lang.t("panels-all-hidden"))
         } else if app.view3d.model.is_none() {
             None
         } else {
-            Some(lang.pick("3D を描けません（GPU なし）", "Cannot draw 3D (no GPU)"))
+            Some(lang.t("panels-cannot-draw-3d-no-gpu"))
         };
         if let Some(title) = title {
             w::text(
@@ -568,7 +562,7 @@ impl View3dSlot {
             } else {
                 crate::shortcuts::tip_with_key(
                     lang,
-                    lang.pick("新規プロジェクト", "New Project"),
+                    lang.t("panels-new-project-tip"),
                     &Action::NewProjectDialog,
                 )
             };
@@ -577,7 +571,7 @@ impl View3dSlot {
                 ui,
                 r,
                 "view3d.new_project",
-                lang.pick("新規プロジェクト…", "New Project…"),
+                lang.t("panels-new-project"),
                 true,
                 idle,
                 Some(&tip),
@@ -596,7 +590,7 @@ impl View3dSlot {
                     ui,
                     r,
                     "view3d.demo",
-                    lang.pick("試しの立方体を読む", "Load Test Cube"),
+                    lang.t("panels-load-test-cube"),
                     false,
                     true,
                     None,
@@ -645,44 +639,20 @@ fn zoom_chord_held(ui: &Ui) -> Option<bool> {
 /// 選択範囲の重ねを 3D に出していない印のツールチップ（何が（なぜ）の 1 文。理由は予算か、文書の大きさか）。
 fn overlay_skipped_tooltip(lang: crate::lang::Lang, skip: Skip) -> String {
     let reason = match skip {
-        Skip::Budget => lang.pick(
-            "GPU のメモリの予算（3D の絵の取り分）に入りません",
-            "it does not fit in the GPU memory budget for 3D pictures",
-        ),
-        Skip::Size => lang.pick(
-            "キャンバスの幅か高さが GPU のテクスチャの上限を超えています",
-            "the canvas is wider or taller than the GPU texture limit",
-        ),
+        Skip::Budget => lang.t("panels-it-does-not-fit-in-tip"),
+        Skip::Size => lang.t("panels-the-canvas-is-wider-or-tip"),
     };
-    lang.with_reason(
-        lang.pick(
-            "選択範囲を 3D に出していません",
-            "Selection not shown in 3D",
-        ),
-        reason,
-    )
+    lang.with_reason(lang.t("panels-selection-not-shown-in-3d-tip"), reason)
 }
 
 /// 3D の絵が元の大きさより縮んでいることの印のツールチップ（隅の警告のアイコン）: 縮めた段と短い理由。`by_budget` は縮めがメモリの予算で
 /// 決まったか（None は分からない: メッシュマップ）。
 fn reduced_tooltip(lang: crate::lang::Lang, level: u32, by_budget: Option<bool>) -> String {
-    let text = lang.pick(
-        format!("縮小表示 1/{}", 1u64 << level),
-        format!("Reduced 1/{}", 1u64 << level),
-    );
+    let text = lang.f("panels-reduced-1-tip", &[("level", &(1u64 << level))]);
     let reason = match by_budget {
-        Some(true) => lang.pick(
-            "GPU のメモリの予算を超えるので、3D には縮めて見せています（絵と書き出しは元の大きさのまま）",
-            "Shown smaller in 3D to stay within the GPU memory budget (the texture and exports keep their size)",
-        ),
-        Some(false) => lang.pick(
-            "GPU のテクスチャの大きさの上限を超えるので、3D には縮めて見せています（絵と書き出しは元の大きさのまま）",
-            "Shown smaller in 3D because it exceeds the GPU texture size limit (the texture and exports keep their size)",
-        ),
-        None => lang.pick(
-            "GPU のメモリの予算か大きさの上限を超えるので、縮めて見せています",
-            "Shown smaller to stay within the GPU memory budget or size limit",
-        ),
+        Some(true) => lang.t("panels-shown-smaller-in-3d-to-tip"),
+        Some(false) => lang.t("panels-shown-smaller-in-3d-because-tip"),
+        None => lang.t("panels-shown-smaller-to-stay-within-tip"),
     };
     format!("{text}: {reason}")
 }
@@ -766,26 +736,21 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             };
             if tab == SettingsTab::Quality {
                 // アンチエイリアス: 機材が使える数だけ押せる（使えない数は理由をツールチップに）
-                heading(
-                    &mut rows,
-                    &p,
-                    lang.pick("アンチエイリアス", "Anti-aliasing"),
-                );
+                heading(&mut rows, &p, lang.t("panels-anti-aliasing"));
                 let r = rows.row(24.0, 4.0);
                 let supported = d.supported_sample_counts();
                 let shown = d.shown_samples();
                 for (n, cell) in display::SAMPLE_CHOICES.iter().zip(Rows::split(r, 4, 4.0)) {
                     let usable = supported.contains(n);
                     let label = if *n == 1 {
-                        lang.pick("切", "Off").to_owned()
+                        lang.t("panels-off").to_owned()
                     } else {
                         format!("{n}×")
                     };
                     let tip = if usable {
-                        format!("{} {label}", lang.pick("アンチエイリアス", "Anti-aliasing"))
+                        format!("{} {label}", lang.t("panels-anti-aliasing-tip"))
                     } else {
-                        lang.pick("この GPU は対応していません", "Not supported on this GPU")
-                            .to_owned()
+                        lang.t("panels-not-supported-on-this-gpu-tip").to_owned()
                     };
                     if w::button(
                         ui,
@@ -808,9 +773,9 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     w::text(
                         ui.painter(),
                         r,
-                        &lang.pick(
-                            format!("描画は {}×（メモリの上限）", d.drawn_samples),
-                            format!("Drawing at {}× (memory limit)", d.drawn_samples),
+                        &lang.f(
+                            "panels-drawing-at-memory-limit",
+                            &[("drawn_samples", &d.drawn_samples)],
                         ),
                         t::LABEL_DIM.with_color(t::WARNING),
                         Align::Left,
@@ -823,7 +788,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     ui,
                     r,
                     "view3d.set.bloom",
-                    lang.pick("ブルーム", "Bloom"),
+                    lang.t("panels-bloom"),
                     d.post.bloom,
                     None,
                     true,
@@ -832,18 +797,18 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                     app.apply(Action::View3d(Op::Bloom(bloom)));
                 }
                 let mut dragging = false;
-                let off = (!d.post.bloom).then(|| lang.pick("ブルームが切です", "Bloom is off"));
+                let off = (!d.post.bloom).then(|| lang.t("panels-bloom-is-off"));
                 for (id, label, value, max, op) in [
                     (
                         "bloom_strength",
-                        lang.pick("強さ", "Strength"),
+                        lang.t("panels-strength"),
                         d.post.bloom_strength,
                         display::BLOOM_STRENGTH_MAX,
                         Op::BloomStrength as fn(f32) -> Op,
                     ),
                     (
                         "bloom_threshold",
-                        lang.pick("しきい値", "Threshold"),
+                        lang.t("panels-threshold"),
                         d.post.bloom_threshold,
                         display::BLOOM_THRESHOLD_MAX,
                         Op::BloomThreshold as fn(f32) -> Op,
@@ -874,7 +839,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             }
 
             // 環境
-            heading(&mut rows, &p, lang.pick("環境", "Environment"));
+            heading(&mut rows, &p, lang.t("panels-environment"));
             let r = rows.row(24.0, 4.0);
             for (i, (kind, cell)) in EnvKind::ALL.iter().zip(Rows::split(r, 3, 4.0)).enumerate() {
                 if w::button(
@@ -898,7 +863,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 app,
                 &mut rows,
                 "env_intensity",
-                lang.pick("明るさ", "Intensity"),
+                lang.t("panels-intensity"),
                 d.env_intensity,
                 0.0,
                 4.0,
@@ -912,7 +877,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 app,
                 &mut rows,
                 "env_rotation",
-                lang.pick("回転", "Rotation"),
+                lang.t("panels-rotation"),
                 d.env_rotation,
                 -180.0,
                 180.0,
@@ -926,7 +891,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 ui,
                 r,
                 "view3d.set.background",
-                lang.pick("背景に映す", "Show as background"),
+                lang.t("panels-show-as-background"),
                 d.env_background,
                 None,
                 env_on,
@@ -939,7 +904,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 app,
                 &mut rows,
                 "env_blur",
-                lang.pick("ぼかし", "Blur"),
+                lang.t("panels-blur"),
                 d.env_blur * 100.0,
                 0.0,
                 100.0,
@@ -951,13 +916,13 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             rows.space(4.0);
 
             // ライト
-            heading(&mut rows, &p, lang.pick("ライト", "Light"));
+            heading(&mut rows, &p, lang.t("panels-light"));
             slider(
                 ui,
                 app,
                 &mut rows,
                 "light_intensity",
-                lang.pick("強さ", "Strength"),
+                lang.t("panels-strength"),
                 d.light_intensity,
                 0.0,
                 4.0,
@@ -971,7 +936,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 app,
                 &mut rows,
                 "light_yaw",
-                lang.pick("方位", "Azimuth"),
+                lang.t("panels-azimuth"),
                 d.light_yaw,
                 -180.0,
                 180.0,
@@ -985,7 +950,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 app,
                 &mut rows,
                 "light_pitch",
-                lang.pick("高さ", "Elevation"),
+                lang.t("panels-elevation"),
                 d.light_pitch,
                 -89.0,
                 89.0,
@@ -999,7 +964,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 ui,
                 r,
                 "view3d.set.shadows",
-                lang.pick("影", "Shadows"),
+                lang.t("panels-shadows-2"),
                 d.shadows,
                 None,
                 true,
@@ -1012,7 +977,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 app,
                 &mut rows,
                 "shadow_softness",
-                lang.pick("やわらかさ", "Softness"),
+                lang.t("panels-softness"),
                 d.shadow_softness * 100.0,
                 0.0,
                 100.0,
@@ -1024,7 +989,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
             rows.space(4.0);
 
             // トーンマッピング
-            heading(&mut rows, &p, lang.pick("トーンマッピング", "Tone Mapping"));
+            heading(&mut rows, &p, lang.t("panels-tone-mapping"));
             let r = rows.row(24.0, 4.0);
             for (i, (curve, cell)) in [Curve::None, Curve::Neutral, Curve::Aces]
                 .iter()
@@ -1051,7 +1016,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 app,
                 &mut rows,
                 "exposure",
-                lang.pick("露出", "Exposure"),
+                lang.t("panels-exposure"),
                 d.exposure,
                 -6.0,
                 6.0,
@@ -1066,7 +1031,7 @@ fn settings_panel(ui: &mut Ui, app: &mut AppState, content: Rect, button: Option
                 ui,
                 r,
                 "view3d.set.reset",
-                lang.pick("既定に戻す", "Reset"),
+                lang.t("panels-reset"),
                 false,
                 true,
                 None,

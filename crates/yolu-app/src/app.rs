@@ -121,24 +121,24 @@ impl Tab {
     /// 言語ごとのタブの名前。
     pub fn title_in(self, lang: crate::lang::Lang) -> &'static str {
         match self {
-            Tab::SubTools => lang.pick("サブツール", "Tools"),
-            Tab::ToolProperties => lang.pick("ツールプロパティ", "Tool Properties"),
-            Tab::BrushSize => lang.pick("ブラシサイズ", "Brush Size"),
-            Tab::Assets => lang.pick("アセット", "Assets"),
-            Tab::Color => lang.pick("カラー", "Color"),
-            Tab::Pose => lang.pick("ポーズ", "Pose"),
-            Tab::Canvas => lang.pick("キャンバス", "Canvas"),
-            Tab::View3d => lang.pick("3D ビュー", "3D View"),
-            Tab::TextureSets => lang.pick("テクスチャセット", "Texture Sets"),
-            Tab::Layers => lang.pick("レイヤー", "Layers"),
-            Tab::Properties => lang.pick("プロパティ", "Properties"),
-            Tab::Material => lang.pick("マテリアル", "Material"),
-            Tab::Navigator => lang.pick("ナビゲーター", "Navigator"),
-            Tab::Channels => lang.pick("チャンネル", "Channels"),
-            Tab::History => lang.pick("ヒストリー", "History"),
-            Tab::ColorSets => lang.pick("カラーセット", "Color Sets"),
-            Tab::Log => lang.pick("ログ", "Log"),
-            Tab::Actions => lang.pick("アクション", "Actions"),
+            Tab::SubTools => lang.t("app-tools"),
+            Tab::ToolProperties => lang.t("app-tool-properties"),
+            Tab::BrushSize => lang.t("app-brush-size"),
+            Tab::Assets => lang.t("app-assets"),
+            Tab::Color => lang.t("app-color"),
+            Tab::Pose => lang.t("app-pose"),
+            Tab::Canvas => lang.t("app-canvas"),
+            Tab::View3d => lang.t("app-3d-view"),
+            Tab::TextureSets => lang.t("app-texture-sets"),
+            Tab::Layers => lang.t("app-layers"),
+            Tab::Properties => lang.t("app-properties"),
+            Tab::Material => lang.t("app-material"),
+            Tab::Navigator => lang.t("app-navigator"),
+            Tab::Channels => lang.t("app-channels"),
+            Tab::History => lang.t("app-history"),
+            Tab::ColorSets => lang.t("app-color-sets"),
+            Tab::Log => lang.t("app-log"),
+            Tab::Actions => lang.t("app-actions"),
         }
     }
 }
@@ -728,9 +728,9 @@ impl YoluApp {
         notices.extend(app.state.toolset_problem_message());
         notices.extend(app.state.subtool_problem_message());
         notices.extend(app.state.ramp_sets.problem().map(|e| {
-            lang.pick(
-                format!("グラデーションセットを読めません。{}", e.describe(lang)),
-                format!("Cannot read the gradient sets. {}", e.describe(lang)),
+            lang.f(
+                "app-cannot-read-the-gradient-sets",
+                &[("describe", &e.describe(lang))],
             )
         }));
         // カラーセット（読めなかった物は、起動時の知らせに「 / 」で添える）
@@ -895,8 +895,7 @@ impl YoluApp {
         if crate::settings::save(path, &now).is_err() {
             self.state.fail(
                 crate::notice::Source::Settings,
-                now.lang
-                    .pick("設定を保存できません。", "Cannot save the settings."),
+                now.lang.t("app-cannot-save-the-settings"),
             );
         }
     }
@@ -1131,7 +1130,7 @@ impl YoluApp {
             Some(DialogRequest::ProjectModel) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::Model)
-                    .set_title(lang.pick("モデルを選ぶ", "Choose a model"))
+                    .set_title(lang.t("app-choose-a-model"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
                 {
@@ -1153,11 +1152,8 @@ impl YoluApp {
                 let lang = self.state.lang;
                 let name = format!("{}.ylp", self.state.session.project_name);
                 let dialog = crate::dialog::file_for_save(&self.state, Place::Project)
-                    .set_title(lang.pick("別名で保存", "Save As"))
-                    .add_filter(
-                        lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
-                        &["ylp"],
-                    )
+                    .set_title(lang.t("app-save-as"))
+                    .add_filter(lang.t("app-yolupainter-project"), &["ylp"])
                     .set_file_name(name);
                 if let Some(path) = dialog.save_file() {
                     self.state.note_file_chosen(Place::Project, &path);
@@ -1167,7 +1163,7 @@ impl YoluApp {
             Some(DialogRequest::OpenModel) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::Model)
-                    .set_title(lang.pick("3D ビューに FBX を開く", "Open FBX in the 3D View"))
+                    .set_title(lang.t("app-open-fbx-in-the-3d"))
                     .add_filter("FBX", &["fbx", "FBX"])
                     .pick_file()
                 {
@@ -1189,7 +1185,7 @@ impl YoluApp {
             Some(DialogRequest::PrefsLibraryFolder) => {
                 let lang = self.state.lang;
                 let mut dialog = crate::dialog::file(&self.state, Place::Settings)
-                    .set_title(lang.pick("ライブラリの場所", "Library folder"));
+                    .set_title(lang.t("app-library-folder"));
                 if let Some(current) = self
                     .state
                     .prefs
@@ -1211,10 +1207,7 @@ impl YoluApp {
                 let lang = self.state.lang;
                 let yes = crate::dialog::message()
                     .set_title("YoluPainter")
-                    .set_description(lang.pick(
-                        "ツールの並びを最初の並びに戻しますか？（ツールとグループの名前・並びは取り消せません。ブラシのファイルは残ります）",
-                        "Reset the tool layout? (Tool and group names and order cannot be restored. Brush files stay.)",
-                    ))
+                    .set_description(lang.t("app-reset-the-tool-layout-tool"))
                     .set_buttons(rfd::MessageButtons::YesNo)
                     .set_level(rfd::MessageLevel::Warning)
                     .show()
@@ -1238,10 +1231,7 @@ impl YoluApp {
                     .unwrap_or_default();
                 let yes = crate::dialog::message()
                     .set_title("YoluPainter")
-                    .set_description(lang.pick(
-                        format!("ブラシのファイル「{name}」を消しますか？（取り消せません）"),
-                        format!("Delete the brush file \"{name}\"? (This cannot be undone.)"),
-                    ))
+                    .set_description(lang.f("app-delete-the-brush-file-this", &[("name", &name)]))
                     .set_buttons(rfd::MessageButtons::YesNo)
                     .set_level(rfd::MessageLevel::Warning)
                     .show()
@@ -1254,7 +1244,7 @@ impl YoluApp {
             Some(DialogRequest::PrefsCacheFolder) => {
                 let lang = self.state.lang;
                 let mut dialog = crate::dialog::file(&self.state, Place::Settings)
-                    .set_title(lang.pick("キャッシュの場所", "Cache folder"));
+                    .set_title(lang.t("app-cache-folder"));
                 let current = self.state.prefs.settings.disk_cache_folder();
                 if current.is_dir() {
                     dialog = dialog.set_directory(current);
@@ -1279,7 +1269,7 @@ impl YoluApp {
                 let lang = self.state.lang;
                 let name = crate::psd::default_export_name(&self.state);
                 let dialog = crate::dialog::file(&self.state, Place::PsdExport)
-                    .set_title(lang.pick("PSD に書き出す", "Export PSD"))
+                    .set_title(lang.t("app-export-psd"))
                     .add_filter("PSD", &["psd"])
                     .set_file_name(name);
                 if let Some(path) = dialog.save_file() {
@@ -1292,9 +1282,9 @@ impl YoluApp {
             Some(DialogRequest::TextFont) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::Font)
-                    .set_title(lang.pick("フォントのファイルを開く", "Open a Font File"))
+                    .set_title(lang.t("app-open-a-font-file"))
                     .add_filter(
-                        lang.pick("フォント", "Fonts"),
+                        lang.t("app-fonts"),
                         &["ttf", "otf", "ttc", "TTF", "OTF", "TTC"],
                     )
                     .pick_file()
@@ -1307,7 +1297,7 @@ impl YoluApp {
             Some(DialogRequest::KeymapExport) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::Keys)
-                    .set_title(lang.pick("キーの設定を書き出す", "Export Key Settings"))
+                    .set_title(lang.t("app-export-key-settings"))
                     .set_file_name(crate::keyconfig::FILE_NAME)
                     .add_filter("JSON", &["json", "JSON"])
                     .save_file()
@@ -1319,7 +1309,7 @@ impl YoluApp {
             Some(DialogRequest::KeymapImport) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::Keys)
-                    .set_title(lang.pick("キーの設定を読み込む", "Import Key Settings"))
+                    .set_title(lang.t("app-import-key-settings"))
                     .add_filter("JSON", &["json", "JSON"])
                     .pick_file()
                 {
@@ -1330,7 +1320,7 @@ impl YoluApp {
             Some(DialogRequest::OpenStencil) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
-                    .set_title(lang.pick("ステンシルの画像を開く", "Open a stencil image"))
+                    .set_title(lang.t("app-open-a-stencil-image"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
@@ -1342,10 +1332,7 @@ impl YoluApp {
             Some(DialogRequest::FillImage) => {
                 let lang = self.state.lang;
                 if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
-                    .set_title(lang.pick(
-                        "画像をアセットへ取り込む",
-                        "Add an image to the project's assets",
-                    ))
+                    .set_title(lang.t("app-add-an-image-to-the"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
@@ -1358,7 +1345,7 @@ impl YoluApp {
                 let lang = self.state.lang;
                 // 選ばずに閉じたら何も作らない（Undo の段も増やさない）
                 if let Some(path) = crate::dialog::file(&self.state, Place::ImageImport)
-                    .set_title(lang.pick("画像で塗りつぶしを作る", "Create a fill from an image"))
+                    .set_title(lang.t("app-create-a-fill-from-an"))
                     .add_filter("PNG", &["png", "PNG"])
                     .pick_file()
                 {
@@ -1373,9 +1360,9 @@ impl YoluApp {
             Some(DialogRequest::ImportBrushes) => {
                 let lang = self.state.lang;
                 if let Some(paths) = crate::dialog::file(&self.state, Place::Brush)
-                    .set_title(lang.pick("ブラシを取り込む", "Import Brushes"))
+                    .set_title(lang.t("app-import-brushes"))
                     .add_filter(
-                        lang.pick("ブラシのファイル", "Brush files"),
+                        lang.t("app-brush-files"),
                         &yolu_io::brushes::FileKind::EXTENSIONS,
                     )
                     .pick_files()
@@ -1389,11 +1376,8 @@ impl YoluApp {
             }
             Some(DialogRequest::ClipStudioFolder) => {
                 let lang = self.state.lang;
-                let mut dialog =
-                    crate::dialog::file(&self.state, Place::Settings).set_title(lang.pick(
-                        "CLIP STUDIO のサブツールのフォルダ",
-                        "CLIP STUDIO sub tool folder",
-                    ));
+                let mut dialog = crate::dialog::file(&self.state, Place::Settings)
+                    .set_title(lang.t("app-clip-studio-sub-tool-folder"));
                 // 今探している場所（手で選んだフォルダか、既定の場所のうち開けたもの）から選び始める
                 let csp = &self.state.brushes.csp;
                 let start = csp.folder.clone().or_else(|| {
@@ -1478,10 +1462,7 @@ impl YoluApp {
             text: self
                 .state
                 .lang
-                .pick(
-                    "保存していない変更があります。",
-                    "There are unsaved changes.",
-                )
+                .t("app-there-are-unsaved-changes")
                 .to_owned(),
             then,
         });
@@ -1507,11 +1488,8 @@ impl YoluApp {
                     return;
                 }
                 if let Some(path) = crate::dialog::file(&self.state, Place::Project)
-                    .set_title(lang.pick("プロジェクトを開く", "Open Project"))
-                    .add_filter(
-                        lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
-                        &["ylp"],
-                    )
+                    .set_title(lang.t("app-open-project"))
+                    .add_filter(lang.t("app-yolupainter-project"), &["ylp"])
                     .pick_file()
                 {
                     self.state.note_file_chosen(Place::Project, &path);
@@ -1534,7 +1512,7 @@ impl YoluApp {
     fn import_psd_with_dialog(&mut self, target: crate::psd::PsdTarget) {
         let lang = self.state.lang;
         if let Some(path) = crate::dialog::file(&self.state, Place::PsdImport)
-            .set_title(lang.pick("PSD を読み込む", "Import PSD"))
+            .set_title(lang.t("app-import-psd"))
             .add_filter("PSD", &["psd", "PSD"])
             .pick_file()
         {
@@ -1644,10 +1622,7 @@ impl YoluApp {
             if message.ends_with('.') { " " } else { ". " },
         );
         // 取り込みの知らせに添える（取り込まなかった物がある: 気をつけること）
-        let extra = lang.pick(
-            format!("ほか {more} 件は取り込みません（PSD は 1 つずつ）。"),
-            format!("{more} more not imported (one PSD at a time)."),
-        );
+        let extra = lang.f("app-more-not-imported-one-psd", &[("more", &more)]);
         self.state.amend(
             crate::notice::Kind::Warning,
             crate::notice::Source::Psd,
@@ -2513,12 +2488,7 @@ impl YoluApp {
     fn mark_saving(&mut self) {
         let saving = self.state.is_saving();
         self.saving_marked = saving;
-        crate::session_end::set_saving(
-            saving,
-            self.state
-                .lang
-                .pick("YoluPainter が保存しています", "YoluPainter is saving"),
-        );
+        crate::session_end::set_saving(saving, self.state.lang.t("app-yolupainter-is-saving"));
     }
 
     /// 終了・ウィンドウを閉じる頼みを進める。保存の途中は閉じず（保存を捨てない）、終わるまで待つ。保存が終わったら、その結果の後の状態で、

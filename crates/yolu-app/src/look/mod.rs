@@ -612,14 +612,14 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
             {
                 let right = add(
                     d,
-                    lang.pick("顔の影（右）", "Face Shadow (Right)"),
+                    lang.t("look-face-shadow-right"),
                     ChannelKind::Scalar,
                     ColorSpace::Linear,
                     WHITE,
                 )?;
                 let left = add(
                     d,
-                    lang.pick("顔の影（左）", "Face Shadow (Left)"),
+                    lang.t("look-face-shadow-left"),
                     ChannelKind::Scalar,
                     ColorSpace::Linear,
                     WHITE,
@@ -704,9 +704,9 @@ impl AppState {
                     self.session.mark_modified();
                     self.info(
                         Source::Material,
-                        lang.pick(
-                            format!("lilToon のひな形を当てました（チャンネル {made}）。"),
-                            format!("Applied the lilToon template ({made} channels)."),
+                        lang.f(
+                            "look-applied-the-liltoon-template-channels",
+                            &[("made", &made)],
                         ),
                     );
                 }

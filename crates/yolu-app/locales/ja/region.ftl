@@ -1,0 +1,35 @@
+# 画面の文（region）。キーは「region-」と英語の文から作った短い名前、ツールチップの文はキーの終わりが -tip。
+
+region-filled = 塗りました。
+region-nothing-to-fill-there = そこには塗るものがありません。
+region-filling = 塗りつぶし中
+region-no-reference-layers = 参照レイヤーがありません
+region-cannot-start-the-fill = 塗りつぶしを始められません。
+region-fill-cancelled = 塗りつぶしを取り消しました。
+region-fill-failed = 塗りつぶしに失敗しました
+region-stroke-is-too-long = ストロークが長すぎます
+region-no-model = モデルがありません
+region-no-id-map = ID マップがありません
+region-checking-the-id-map = ID マップを確かめています
+region-the-id-map-is-stale = ID マップが古いです（ベイクし直し）
+region-the-id-map-cannot-be = ID マップを確かめられません
+region-no-such-part = その部品はありません
+region-these-manual-id-colors-belong = 手動の ID の色は別のモデルのものです
+region-cannot-change-the-id-color = ID の色を変えられません
+region-manual-id-colors-changed = 手動の ID の色を変えました。
+region-nothing-selected = 何も選択されていません。
+region-id-color = ID の色
+region-triangle = 三角形
+region-mesh-part = メッシュの塊
+region-uv-island = UV アイランド
+region-material = マテリアル
+region-texture-set-is-not-in = 今のテクスチャセット「{ $name }」はこのモデルにありません。
+region-no-triangle-of-this-texture = ポインタの下にこのテクスチャセットの三角形がありません
+region-this-surface-s-uv-is = この面の UV はテクスチャの外です
+region-this-face-belongs-to-another = ほかのテクスチャセット{ $name }の面です。
+region-erased = を消しました。
+region-filled-2 = を塗りました。
+region-stroke-cancelled = ストロークを取り消しました。
+region-erased-2 = を消しました。
+region-filled-3 = を塗りました。
+region-no-triangle-of-this-texture-2 = ポインタの下にこのテクスチャセットの三角形がありません。

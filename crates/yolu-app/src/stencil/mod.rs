@@ -456,10 +456,7 @@ impl AppState {
                 self.stencil.overlay = None;
                 self.stencil.thumb = None;
                 self.stencil.drag = None;
-                self.info(
-                    Source::Stencil,
-                    lang.pick("ステンシルを外しました。", "The stencil was removed."),
-                );
+                self.info(Source::Stencil, lang.t("stencil-the-stencil-was-removed"));
             }
             StencilOp::Mode(mode) => self.stencil.mode = mode,
             StencilOp::Tiling(tiling) => self.stencil.tiling = tiling,
@@ -487,7 +484,7 @@ impl AppState {
                 self.stencil.remember(&name, path);
                 self.info(
                     Source::Stencil,
-                    format!("{}: {name}", lang.pick("ステンシル", "Stencil")),
+                    format!("{}: {name}", lang.t("stencil-stencil")),
                 );
             }
             Err(e) => {
@@ -495,9 +492,9 @@ impl AppState {
                 self.fail(
                     Source::Stencil,
                     lang.with_reason(
-                        lang.pick(
-                            format!("ステンシル{}を読めません", lang.quote(&name)),
-                            format!("Cannot load the stencil {}", lang.quote(&name)),
+                        lang.f(
+                            "stencil-cannot-load-the-stencil",
+                            &[("name", &lang.quote(&name))],
                         ),
                         lang.stencil_error(&e),
                     ),

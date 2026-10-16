@@ -459,28 +459,21 @@ impl Problem {
     /// 状態の帯の短い文。
     pub fn text(&self, lang: Lang) -> String {
         match self {
-            Self::Unreadable => lang
-                .pick("設定を読めません。", "Cannot read the settings.")
-                .into(),
-            Self::Language(_) => lang
-                .pick(
-                    "言語の設定を読めません。",
-                    "Cannot read the language setting.",
-                )
-                .into(),
+            Self::Unreadable => lang.t("settings-cannot-read-the-settings").into(),
+            Self::Language(_) => lang.t("settings-cannot-read-the-language-setting").into(),
             Self::Invalid { key, value } => {
                 let shown: String = value.chars().take(12).collect();
                 let name = setting_name(lang, key);
-                lang.pick(
-                    format!("{name}の設定が正しくありません（{shown}）。既定に戻します。"),
-                    format!("Invalid {name} setting ({shown}); using the default."),
+                lang.f(
+                    "settings-invalid-setting-using-the-default",
+                    &[("name", &name), ("shown", &shown)],
                 )
             }
             Self::Backups(value) => {
                 let shown: String = value.chars().take(12).collect();
-                lang.pick(
-                    format!("退避を残す数の設定が正しくありません（{shown}）。すべて残します。"),
-                    format!("Invalid Backups to Keep setting ({shown}); keeping all."),
+                lang.f(
+                    "settings-invalid-backups-to-keep-setting",
+                    &[("shown", &shown)],
                 )
             }
         }
@@ -490,48 +483,46 @@ impl Problem {
 /// 設定のキーの、画面での名前。
 pub fn setting_name(lang: Lang, key: &str) -> &'static str {
     match key {
-        "language" => lang.pick("言語", "Language"),
-        "view3d_orbit" => lang.pick("回転の中心", "Orbit center"),
-        "view3d_zoom" => lang.pick("ズームの中心", "Zoom center"),
-        "view3d_axis_ortho" => lang.pick("軸の向きで正投影", "Orthographic on axis views"),
-        "view3d_antialias" => lang.pick("アンチエイリアス", "Anti-aliasing"),
-        "view3d_bloom" => lang.pick("ブルーム", "Bloom"),
-        "view3d_bloom_strength" => lang.pick("ブルームの強さ", "Bloom strength"),
-        "view3d_bloom_threshold" => lang.pick("ブルームのしきい値", "Bloom threshold"),
-        "view3d_paint_hidden" => lang.pick("隠れた所も塗る", "Paint hidden areas"),
-        "view3d_paint_backfaces" => lang.pick("裏の面も塗る", "Paint back faces"),
-        "view3d_paint_falloff" => lang.pick("面の向きで弱める", "Fade by angle"),
-        "view3d_paint_falloff_start" => lang.pick("弱め始め", "Fade start"),
-        "view3d_paint_falloff_end" => lang.pick("塗らない角度", "Fade end"),
-        "view3d_paint_seam_bleed" => lang.pick("継ぎ目のにじみ", "Seam bleed"),
-        "export_padding" => lang.pick("書き出しのパディング", "Export padding"),
-        "export_form" => lang.pick("出力テンプレート", "Output template"),
-        "undo_budget_mib" => lang.pick("取り消し履歴", "Undo history"),
-        "source_budget_mib" => lang.pick("レイヤーのメモリ", "Layer memory"),
-        "stroke_budget_mib" => lang.pick("1 回の操作", "One operation"),
-        "min_undo_steps" => lang.pick("最小の取り消し段数", "Minimum undo steps"),
-        "cpu_threads" => lang.pick("CPU のスレッド", "CPU threads"),
-        "compositing" => lang.pick("表示の合成", "Display compositing"),
-        "vsync" => lang.pick("垂直同期", "VSync"),
-        "library_folder" => lang.pick("ライブラリの場所", "Library folder"),
-        "backups" => lang.pick("退避を残す数", "Backups to Keep"),
-        "gpu_memory" => lang.pick("GPU のメモリ", "GPU memory"),
-        "bake_ray_query" => lang.pick("ベイクで RT コアを使う", "Use RT cores for baking"),
-        "external_ops" => lang.pick("外からの操作を受ける", "Accept external commands"),
-        "external_ops_port" => lang.pick("ポート番号", "Port"),
-        "uv_wireframe_color" => lang.pick("UV ワイヤーフレームの色", "UV wireframe color"),
-        "uv_overlap_color" => lang.pick("重なった UV の色", "Overlapping UV color"),
-        "pressure_low" => lang.pick("筆圧の下限", "Pen pressure low"),
-        "pressure_high" => lang.pick("筆圧の上限", "Pen pressure high"),
-        "pressure_curve" => lang.pick("筆圧の曲線", "Pen pressure curve"),
-        "tablet_pressure" => {
-            lang.pick("タブレットの筆圧（試し）", "Tablet pressure (experimental)")
-        }
-        "pen_input" => lang.pick("ペンの入力", "Pen input"),
-        "disk_cache" => lang.pick("ディスクキャッシュ", "Disk cache"),
-        "disk_cache_folder" => lang.pick("キャッシュの場所", "Cache folder"),
-        "disk_cache_limit_gib" => lang.pick("キャッシュの上限", "Cache limit"),
-        _ => lang.pick("設定", "Setting"),
+        "language" => lang.t("settings-language"),
+        "view3d_orbit" => lang.t("settings-orbit-center"),
+        "view3d_zoom" => lang.t("settings-zoom-center"),
+        "view3d_axis_ortho" => lang.t("settings-orthographic-on-axis-views"),
+        "view3d_antialias" => lang.t("settings-anti-aliasing"),
+        "view3d_bloom" => lang.t("settings-bloom"),
+        "view3d_bloom_strength" => lang.t("settings-bloom-strength"),
+        "view3d_bloom_threshold" => lang.t("settings-bloom-threshold"),
+        "view3d_paint_hidden" => lang.t("settings-paint-hidden-areas"),
+        "view3d_paint_backfaces" => lang.t("settings-paint-back-faces"),
+        "view3d_paint_falloff" => lang.t("settings-fade-by-angle"),
+        "view3d_paint_falloff_start" => lang.t("settings-fade-start"),
+        "view3d_paint_falloff_end" => lang.t("settings-fade-end"),
+        "view3d_paint_seam_bleed" => lang.t("settings-seam-bleed"),
+        "export_padding" => lang.t("settings-export-padding"),
+        "export_form" => lang.t("settings-output-template"),
+        "undo_budget_mib" => lang.t("settings-undo-history"),
+        "source_budget_mib" => lang.t("settings-layer-memory"),
+        "stroke_budget_mib" => lang.t("settings-one-operation"),
+        "min_undo_steps" => lang.t("settings-minimum-undo-steps"),
+        "cpu_threads" => lang.t("settings-cpu-threads"),
+        "compositing" => lang.t("settings-display-compositing"),
+        "vsync" => lang.t("settings-vsync"),
+        "library_folder" => lang.t("settings-library-folder"),
+        "backups" => lang.t("settings-backups-to-keep"),
+        "gpu_memory" => lang.t("settings-gpu-memory"),
+        "bake_ray_query" => lang.t("settings-use-rt-cores-for-baking"),
+        "external_ops" => lang.t("settings-accept-external-commands"),
+        "external_ops_port" => lang.t("settings-port"),
+        "uv_wireframe_color" => lang.t("settings-uv-wireframe-color"),
+        "uv_overlap_color" => lang.t("settings-overlapping-uv-color"),
+        "pressure_low" => lang.t("settings-pen-pressure-low"),
+        "pressure_high" => lang.t("settings-pen-pressure-high"),
+        "pressure_curve" => lang.t("settings-pen-pressure-curve"),
+        "tablet_pressure" => lang.t("settings-tablet-pressure-experimental"),
+        "pen_input" => lang.t("settings-pen-input"),
+        "disk_cache" => lang.t("settings-disk-cache"),
+        "disk_cache_folder" => lang.t("settings-cache-folder"),
+        "disk_cache_limit_gib" => lang.t("settings-cache-limit"),
+        _ => lang.t("settings-setting"),
     }
 }
 
@@ -883,7 +874,7 @@ fn parse_folder(value: &str) -> Option<Option<PathBuf>> {
 
 /// 書く内容。言語は常に、ほかは既定でないものだけ（何も変えていない間は今までと同じ中身）。
 fn render(settings: &Settings) -> String {
-    let mut text = format!("language={}\n", settings.lang.pick("ja", "en"));
+    let mut text = format!("language={}\n", settings.lang.t("settings-en"));
     let default = Settings::default();
     if settings.export_padding != default.export_padding {
         let value = if settings.export_padding < 0 {

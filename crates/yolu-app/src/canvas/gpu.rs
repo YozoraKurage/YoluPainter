@@ -118,14 +118,9 @@ impl Failure {
     /// 種類の短い文。
     pub fn describe(&self, lang: Lang) -> String {
         match self.kind {
-            FailureKind::TextureLimit => lang.pick(
-                "キャンバスの大きさが GPU のテクスチャの上限を超えます",
-                "Canvas is larger than the GPU texture limit",
-            ),
-            FailureKind::Init => {
-                lang.pick("GPU の初期化に失敗しました", "GPU initialization failed")
-            }
-            FailureKind::Run => lang.pick("GPU での合成に失敗しました", "GPU compositing failed"),
+            FailureKind::TextureLimit => lang.t("canvas-canvas-is-larger-than-the"),
+            FailureKind::Init => lang.t("canvas-gpu-initialization-failed"),
+            FailureKind::Run => lang.t("canvas-gpu-compositing-failed"),
         }
         .into()
     }
@@ -135,33 +130,15 @@ impl Fallback {
     /// 理由の短い文（ツールチップなどに使える。画面にはまだ出さない）。
     pub fn describe(&self, lang: Lang) -> String {
         match self {
-            Fallback::Policy => lang
-                .pick("設定で GPU を使わない", "GPU turned off in the settings")
-                .into(),
-            Fallback::NoDevice => lang.pick("GPU が見つかりません", "No GPU found").into(),
-            Fallback::SoftwareAdapter => lang
-                .pick("ソフトウェアの GPU です", "Software GPU adapter")
-                .into(),
-            Fallback::DeviceLimits => lang
-                .pick(
-                    "GPU の機能が足りません",
-                    "The GPU lacks the needed features",
-                )
-                .into(),
+            Fallback::Policy => lang.t("canvas-gpu-turned-off-in-the").into(),
+            Fallback::NoDevice => lang.t("canvas-no-gpu-found").into(),
+            Fallback::SoftwareAdapter => lang.t("canvas-software-gpu-adapter").into(),
+            Fallback::DeviceLimits => lang.t("canvas-the-gpu-lacks-the-needed").into(),
             Fallback::Unsupported(u) => match u {
-                Unsupported::UnknownChannel => lang
-                    .pick("プロジェクトにないチャンネルです", "Unknown channel")
-                    .into(),
-                Unsupported::GroupDepth => lang
-                    .pick(
-                        "グループの入れ子が深すぎて GPU で合成できません",
-                        "Groups are nested too deeply to composite on the GPU",
-                    )
-                    .into(),
+                Unsupported::UnknownChannel => lang.t("canvas-unknown-channel").into(),
+                Unsupported::GroupDepth => lang.t("canvas-groups-are-nested-too-deeply").into(),
             },
-            Fallback::OverBudget => lang
-                .pick("GPU のメモリの予算を超えます", "Over the GPU memory budget")
-                .into(),
+            Fallback::OverBudget => lang.t("canvas-over-the-gpu-memory-budget").into(),
             Fallback::Failed(failure) => failure.describe(lang),
         }
     }

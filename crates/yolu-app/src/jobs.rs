@@ -252,16 +252,16 @@ impl CloseJob {
     /// 確かめの文に出す名前（仕事の札・メニューの名前と同じ言い方）。
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            CloseJob::Bake => lang.pick("ベイク", "Bake"),
-            CloseJob::Export => lang.pick("書き出し", "Export"),
-            CloseJob::PsdImport => lang.pick("PSD の取り込み", "PSD import"),
-            CloseJob::PsdExport => lang.pick("PSD の書き出し", "PSD export"),
-            CloseJob::Distribute => lang.pick("配布用に保存", "Save for distribution"),
-            CloseJob::UpdateDownload => lang.pick("更新のダウンロード", "Update download"),
-            CloseJob::BrushImport => lang.pick("ブラシの取り込み", "Brush import"),
-            CloseJob::LibraryWrite => lang.pick("ライブラリへの書き込み", "Writing to the library"),
-            CloseJob::ShelfSave => lang.pick("素材の保存", "Saving a material"),
-            CloseJob::ShelfImport => lang.pick("素材の取り込み", "Importing a material"),
+            CloseJob::Bake => lang.t("jobs-bake"),
+            CloseJob::Export => lang.t("jobs-export"),
+            CloseJob::PsdImport => lang.t("jobs-psd-import"),
+            CloseJob::PsdExport => lang.t("jobs-psd-export"),
+            CloseJob::Distribute => lang.t("jobs-save-for-distribution"),
+            CloseJob::UpdateDownload => lang.t("jobs-update-download"),
+            CloseJob::BrushImport => lang.t("jobs-brush-import"),
+            CloseJob::LibraryWrite => lang.t("jobs-writing-to-the-library"),
+            CloseJob::ShelfSave => lang.t("jobs-saving-a-material"),
+            CloseJob::ShelfImport => lang.t("jobs-importing-a-material"),
         }
     }
 }

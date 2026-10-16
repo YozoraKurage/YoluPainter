@@ -80,7 +80,7 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
     let lang = app.lang;
     let csp = &app.brushes.csp;
     let Some(listing) = &csp.listing else {
-        return (lang.pick("探しています", "Searching").into(), false, None);
+        return (lang.t("panels-searching").into(), false, None);
     };
     let folders = listing
         .searched
@@ -91,12 +91,9 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
     let tip = (!folders.is_empty()).then_some(folders);
     if let Some(missing) = listing.missing {
         let text = match missing {
-            Missing::NoFolder => lang.pick(
-                "サブツールのフォルダが見つかりません",
-                "Sub tool folder not found",
-            ),
-            Missing::Unreadable => lang.pick("フォルダを開けません", "Cannot open the folder"),
-            Missing::NoFiles => lang.pick("サブツールがありません", "No sub tools"),
+            Missing::NoFolder => lang.t("panels-sub-tool-folder-not-found"),
+            Missing::Unreadable => lang.t("panels-cannot-open-the-folder"),
+            Missing::NoFiles => lang.t("panels-no-sub-tools"),
         };
         return (text.into(), true, tip);
     }
@@ -106,9 +103,9 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
         format!("{n} sub tool{}", if n == 1 { "" } else { "s" }),
     );
     if csp.is_busy() {
-        text.push_str(lang.pick(" — 読み込み中", " — loading"));
+        text.push_str(lang.t("panels-loading"));
     } else if listing.truncated {
-        text.push_str(lang.pick(" — 一部のみ", " — partial"));
+        text.push_str(lang.t("panels-partial"));
     }
     (text, false, tip)
 }
@@ -130,13 +127,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         }
     }
     let (summary_text, warning, summary_tip) = summary(app);
-    let title = lang.pick("CLIP STUDIO から", "From CLIP STUDIO");
+    let title = lang.t("panels-from-clip-studio");
     let spec = Spec {
         title,
         icon: Some("folder_open"),
         size: vec2(WIDTH, height),
         modal: true,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("panels-close"),
     };
     let mut actions: Vec<BrushAction> = Vec::new();
     let mut offset: Vec2 = app.ui.brushes_csp_offset;
@@ -344,12 +341,9 @@ fn draw_footer(
     };
     // 右から: 取り込む・全部選ぶ（外す）
     let import_label = if selected > 0 {
-        lang.pick(
-            format!("取り込む（{selected}）"),
-            format!("Import ({selected})"),
-        )
+        lang.f("panels-import-tip", &[("selected", &selected)])
     } else {
-        lang.pick("取り込む", "Import").to_owned()
+        lang.t("panels-import-2-tip").to_owned()
     };
     let import_width = w::text_width(&p, &import_label, t::LABEL) + 28.0;
     let mut x = footer.right() - 14.0 - import_width;
@@ -360,10 +354,7 @@ fn draw_footer(
         "import",
         true,
         selected > 0 && !importing,
-        lang.pick(
-            "選んだサブツールを取り込む",
-            "Import the selected sub tools",
-        ),
+        lang.t("panels-import-the-selected-sub-tools-tip"),
     )
     .0
     {
@@ -371,9 +362,9 @@ fn draw_footer(
     }
     let all = ready > 0 && selected == ready;
     let all_label = if all {
-        lang.pick("選びを外す", "Clear")
+        lang.t("panels-clear-tip")
     } else {
-        lang.pick("すべて選ぶ", "Select All")
+        lang.t("panels-select-all-tip")
     };
     let all_width = w::text_width(&p, all_label, t::LABEL) + 28.0;
     x -= 8.0 + all_width;
@@ -384,10 +375,7 @@ fn draw_footer(
         "all",
         false,
         ready > 0,
-        lang.pick(
-            "読めたサブツールを全部選ぶ・外す",
-            "Select or clear every readable sub tool",
-        ),
+        lang.t("panels-select-or-clear-every-readable-tip"),
     )
     .0
     {
@@ -398,14 +386,11 @@ fn draw_footer(
     let (picked, width) = button(
         ui,
         x,
-        lang.pick("フォルダ…", "Folder…"),
+        lang.t("panels-folder-tip"),
         "folder",
         false,
         true,
-        lang.pick(
-            "CLIP STUDIO のサブツールのフォルダを選ぶ",
-            "Choose the CLIP STUDIO sub tool folder",
-        ),
+        lang.t("panels-choose-the-clip-studio-sub-tip"),
     );
     if picked {
         actions.push(BrushAction::ClipStudioPickFolder);
@@ -414,11 +399,11 @@ fn draw_footer(
     if button(
         ui,
         x,
-        lang.pick("探し直す", "Rescan"),
+        lang.t("panels-rescan-tip"),
         "rescan",
         false,
         true,
-        lang.pick("今の場所を探し直す", "Search the same place again"),
+        lang.t("panels-search-the-same-place-again-tip"),
     )
     .0
     {

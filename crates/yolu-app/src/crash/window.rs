@@ -51,7 +51,7 @@ impl Report {
         if self.unread
             && ui
                 .button("!")
-                .on_hover_text(lang.pick("クラッシュの報告", "Crash Report"))
+                .on_hover_text(lang.t("crash-crash-report-tip"))
                 .clicked()
         {
             self.open = true;
@@ -63,18 +63,42 @@ impl Report {
         }
         let mut open = true;
         let mut close = false;
-        egui::Window::new(lang.pick("クラッシュの報告", "Crash Report")).id(egui::Id::new("crash-report")).open(&mut open).default_width(650.0).show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
-                ui.add(egui::TextEdit::multiline(&mut self.text.as_str()).desired_width(f32::INFINITY).font(egui::TextStyle::Monospace));
+        egui::Window::new(lang.t("crash-crash-report"))
+            .id(egui::Id::new("crash-report"))
+            .open(&mut open)
+            .default_width(650.0)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(400.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut self.text.as_str())
+                                .desired_width(f32::INFINITY)
+                                .font(egui::TextStyle::Monospace),
+                        );
+                    });
+                if let Some(error) = &self.error {
+                    ui.label(error);
+                }
+                ui.horizontal(|ui| {
+                    if ui.button(lang.t("crash-copy")).clicked() {
+                        ctx.copy_text(self.text.clone());
+                    }
+                    if ui.button(lang.t("crash-open-folder")).clicked() {
+                        self.request = Some(Request::Folder);
+                    }
+                    if ui
+                        .button(lang.t("crash-report-on-github"))
+                        .on_hover_text(lang.t("crash-nothing-is-sent-automatically-copy-tip"))
+                        .clicked()
+                    {
+                        self.request = Some(Request::GitHub);
+                    }
+                    if ui.button(lang.t("crash-close")).clicked() {
+                        close = true;
+                    }
+                });
             });
-            if let Some(error) = &self.error { ui.label(error); }
-            ui.horizontal(|ui| {
-                if ui.button(lang.pick("コピー", "Copy")).clicked() { ctx.copy_text(self.text.clone()); }
-                if ui.button(lang.pick("フォルダを開く", "Open Folder")).clicked() { self.request = Some(Request::Folder); }
-                if ui.button(lang.pick("GitHub に報告", "Report on GitHub")).on_hover_text(lang.pick("自動送信はありません。本文はコピーして貼り付けてください", "Nothing is sent automatically. Copy and paste the report into the issue")).clicked() { self.request = Some(Request::GitHub); }
-                if ui.button(lang.pick("閉じる", "Close")).clicked() { close = true; }
-            });
-        });
         if !open || close {
             self.close();
         }
@@ -90,9 +114,7 @@ impl Report {
             Some(Request::GitHub) => crate::update::launch::open_page(&issue_url()),
             None => return,
         };
-        self.error = result
-            .err()
-            .map(|_| lang.pick("開けません", "Cannot open").into());
+        self.error = result.err().map(|_| lang.t("crash-cannot-open").into());
     }
 }
 

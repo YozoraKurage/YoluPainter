@@ -42,9 +42,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     w::fill(ui.painter(), bar, t::PANEL_HEADER);
     let button = |x: f32| Rect::from_min_size(pos2(x, bar.top() + 3.0), vec2(26.0, 24.0));
     let (icon, tip) = if recording {
-        ("stop", lang.pick("記録を止める", "Stop Recording"))
+        ("stop", lang.t("panels-stop-recording"))
     } else {
-        ("record", lang.pick("記録", "Record"))
+        ("record", lang.t("panels-record"))
     };
     if w::icon_button(
         ui,
@@ -70,10 +70,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
     if recording && app.automation.skipped() {
         let mark = button(bar.left() + 34.0);
         w::icon(ui.painter(), mark, "warning", t::WARNING, 15.0);
-        let text = lang.pick(
-            "記録しなかった操作があります（描く・選択範囲・変形など、命令の無い操作）",
-            "Some operations were not recorded (drawing, selections, transforms and others without a command)",
-        );
+        let text = lang.t("panels-some-operations-were-not-recorded");
         let response = ui.interact(mark, Id::new("actions.skipped"), Sense::hover());
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
         response.on_hover_text(text);
@@ -84,7 +81,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         button(right - 26.0 * 2.0 - 2.0),
         "actions.play",
         "play",
-        lang.pick("再生", "Play"),
+        lang.t("panels-play-tip"),
         false,
         selected.is_some() && !recording,
         16.0,
@@ -100,7 +97,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         button(right - 26.0),
         "actions.delete",
         "delete",
-        lang.pick("削除", "Delete"),
+        lang.t("panels-delete-tip"),
         false,
         selected.is_some(),
         17.0,
@@ -157,7 +154,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 field,
                 ("actions.rename", i),
                 name,
-                Some(lang.pick("アクションの名前", "Action name")),
+                Some(lang.t("panels-action-name-tip")),
                 first,
             );
             if let Some(next) = out.committed {
@@ -199,35 +196,32 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         let count = names.len();
         response.context_menu(|ui| {
             if ui
-                .add_enabled(!recording, egui::Button::new(lang.pick("再生", "Play")))
+                .add_enabled(!recording, egui::Button::new(lang.t("panels-play")))
                 .clicked()
             {
                 pending.push(AutomationOp::Play(i));
                 ui.close();
             }
-            if ui.button(lang.pick("名前を変更", "Rename")).clicked() {
+            if ui.button(lang.t("panels-rename")).clicked() {
                 pending.push(AutomationOp::StartRename(i));
                 ui.close();
             }
             if ui
-                .add_enabled(i > 0, egui::Button::new(lang.pick("上へ移動", "Move Up")))
+                .add_enabled(i > 0, egui::Button::new(lang.t("panels-move-up")))
                 .clicked()
             {
                 pending.push(AutomationOp::Move { from: i, to: i - 1 });
                 ui.close();
             }
             if ui
-                .add_enabled(
-                    i + 1 < count,
-                    egui::Button::new(lang.pick("下へ移動", "Move Down")),
-                )
+                .add_enabled(i + 1 < count, egui::Button::new(lang.t("panels-move-down")))
                 .clicked()
             {
                 pending.push(AutomationOp::Move { from: i, to: i + 1 });
                 ui.close();
             }
             ui.separator();
-            if ui.button(lang.pick("削除", "Delete")).clicked() {
+            if ui.button(lang.t("panels-delete")).clicked() {
                 pending.push(AutomationOp::Delete(i));
                 ui.close();
             }

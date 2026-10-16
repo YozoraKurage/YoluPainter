@@ -78,8 +78,8 @@ pub enum PenError {
 impl PenError {
     pub fn text(self, lang: Lang) -> &'static str {
         match self {
-            PenError::TooLarge => lang.pick("ストロークが大きすぎます", "The stroke is too large"),
-            PenError::Core => lang.pick("選択範囲を作れません", "Cannot build the selection"),
+            PenError::TooLarge => lang.t("selection-the-stroke-is-too-large"),
+            PenError::Core => lang.t("selection-cannot-build-the-selection"),
         }
     }
 }
@@ -461,11 +461,7 @@ pub fn finish(app: &mut AppState, cancel: bool) -> bool {
     };
     app.sel.drag = None;
     if cancel {
-        app.info(
-            Source::Selection,
-            app.lang
-                .pick("ストロークを取り消しました。", "Stroke cancelled."),
-        );
+        app.info(Source::Selection, app.lang.t("selection-stroke-cancelled"));
         return true;
     }
     match active.stroke.finish() {

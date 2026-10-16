@@ -224,13 +224,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 
     let mut actions: Vec<BakeAction> = Vec::new();
     let mut close = false;
-    let title = lang.pick("メッシュマップをベイク", "Bake Mesh Maps");
+    let title = lang.t("bake-bake-mesh-maps");
     let spec = Spec {
         title,
         icon: Some("texture"),
         size: SIZE,
         modal: false,
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
+        close_label: lang.t("bake-close-window"),
     };
     let id = Id::new("yolu.bake-window");
     let popup_open = app.ui.popup_was_open;
@@ -317,7 +317,7 @@ fn draw(
     w::text(
         &p,
         Rect::from_min_size(pos2(body.left() + 12.0, y), vec2(body.width() - 24.0, 16.0)),
-        lang.pick("焼くテクスチャセット", "Texture Sets to Bake"),
+        lang.t("bake-texture-sets-to-bake"),
         t::HEADER.with_color(t::TEXT_DIM),
         Align::Left,
     );
@@ -348,12 +348,9 @@ fn draw(
             let in_model = s.slots.is_some();
             let last = s.checked && checked_count == 1;
             let tip = if !in_model {
-                Some(lang.pick(
-                    "このマテリアルは読み込んだモデルにありません",
-                    "This material is not in the loaded model",
-                ))
+                Some(lang.t("bake-this-material-is-not-in-tip"))
             } else if last {
-                Some(lang.pick("1 つは残します", "At least one stays checked"))
+                Some(lang.t("bake-at-least-one-stays-checked-tip"))
             } else {
                 None
             };
@@ -375,9 +372,8 @@ fn draw(
                 s.size.0,
                 s.size.1,
                 match &s.slots {
-                    Some(slots) =>
-                        format!("{} {}", lang.pick("スロット", "Slot"), slot_list(slots)),
-                    None => lang.pick("モデルに無い", "Not in model").to_owned(),
+                    Some(slots) => format!("{} {}", lang.t("bake-slot"), slot_list(slots)),
+                    None => lang.t("bake-not-in-model").to_owned(),
                 }
             );
             w::text(
@@ -440,7 +436,7 @@ fn draw_list(
     w::text(
         &p,
         Rect::from_min_max(pos2(common.left() + 28.0, common.top()), common.max),
-        lang.pick("共通の設定", "Common Settings"),
+        lang.t("bake-common-settings"),
         t::LABEL.with_color(t::TEXT),
         Align::Left,
     );
@@ -458,7 +454,7 @@ fn draw_list(
     let cov = cursor.next();
     {
         let any = maps.iter().any(|m| m.baked.is_some());
-        let label = lang.pick("UV の範囲", "UV Coverage");
+        let label = lang.t("bake-uv-coverage");
         w::icon(
             &p,
             Rect::from_min_size(cov.min + vec2(6.0, 0.0), vec2(18.0, cov.height())),
@@ -483,10 +479,7 @@ fn draw_list(
             eye,
             "bake.view.coverage",
             if on { "visibility" } else { "visibility_off" },
-            &lang.pick(
-                format!("{label}をキャンバスに出す"),
-                format!("Show {label} in the canvas"),
-            ),
+            &lang.f("bake-show-in-the-canvas-tip", &[("label", &label)]),
             on,
             any,
             16.0,
@@ -513,7 +506,7 @@ fn draw_list(
     w::text(
         &p,
         Rect::from_min_max(pos2(over.left() + 28.0, over.top()), over.max),
-        lang.pick("重なった UV", "Overlapping UVs"),
+        lang.t("bake-overlapping-uvs"),
         t::LABEL.with_color(t::TEXT),
         Align::Left,
     );
@@ -582,8 +575,7 @@ fn draw_list(
         let checked = settings.maps.contains(&m.kind);
         let last = checked && settings.maps.len() == 1;
         let help = if last {
-            lang.pick("1 つは残します", "At least one stays checked")
-                .to_owned()
+            lang.t("bake-at-least-one-stays-checked-tip").to_owned()
         } else {
             format!("{full}\n{}", kind_help(lang, m.kind))
         };
@@ -623,10 +615,7 @@ fn draw_list(
             } else {
                 "visibility_off"
             },
-            &lang.pick(
-                format!("{full}をキャンバスに出す"),
-                format!("Show {full} in the canvas"),
-            ),
+            &lang.f("bake-show-in-the-canvas-2-tip", &[("full", &full)]),
             showing_this,
             m.baked.is_some(),
             16.0,
@@ -646,7 +635,7 @@ fn draw_list(
 /// 一覧の右端の状態の名前（照合の最中は「確認中」）。
 fn row_state_label(lang: Lang, row: &MapRow) -> &'static str {
     if row.checking {
-        lang.pick("確認中", "Checking")
+        lang.t("bake-checking")
     } else {
         state_label(lang, row.state)
     }
@@ -816,7 +805,7 @@ fn draw_page(
             w::text(
                 &p,
                 r,
-                lang.pick("共通の設定", "Common Settings"),
+                lang.t("bake-common-settings-tip"),
                 t::HEADER.with_color(t::TEXT_DIM),
                 Align::Left,
             );
@@ -824,15 +813,12 @@ fn draw_page(
                 &mut child,
                 &mut y,
                 "bake.padding",
-                lang.pick("余白", "Padding"),
+                lang.t("bake-padding-tip"),
                 settings.padding as f64,
                 0.0,
                 64.0,
                 NumberFormat::int(" px"),
-                lang.pick(
-                    "UV の外へ塗り広げるテクセルの数",
-                    "Texels dilated beyond the UV islands",
-                ),
+                lang.t("bake-texels-dilated-beyond-the-uv-tip"),
             ) {
                 settings.padding = v.round() as i32;
             }
@@ -840,15 +826,12 @@ fn draw_page(
                 &mut child,
                 &mut y,
                 "bake.aa",
-                lang.pick("アンチエイリアス", "Antialiasing"),
+                lang.t("bake-antialiasing-tip"),
                 settings.antialiasing as f64,
                 1.0,
                 4.0,
                 NumberFormat::int("×"),
-                lang.pick(
-                    "テクセルごとの縦横のサンプル数（2 なら 2 × 2）",
-                    "Samples per texel along each axis (2 means 2 × 2)",
-                ),
+                lang.t("bake-samples-per-texel-along-each-tip"),
             ) {
                 settings.antialiasing = v.round().clamp(1.0, 4.0) as i32;
             }
@@ -857,7 +840,7 @@ fn draw_page(
             w::text(
                 &p,
                 r,
-                lang.pick("焼く場所", "Bake On"),
+                lang.t("bake-bake-on-tip"),
                 t::HEADER.with_color(t::TEXT_DIM),
                 Align::Left,
             );
@@ -866,7 +849,7 @@ fn draw_page(
             w::text(
                 &p,
                 parts[0],
-                lang.pick("場所", "Run on"),
+                lang.t("bake-run-on-tip"),
                 t::LABEL,
                 Align::Left,
             );
@@ -901,7 +884,7 @@ fn draw_page(
                 w::text(
                     &p,
                     r,
-                    lang.pick("最後のベイク", "Last Bake"),
+                    lang.t("bake-last-bake-tip"),
                     t::HEADER.with_color(t::TEXT_DIM),
                     Align::Left,
                 );
@@ -938,7 +921,7 @@ fn draw_page(
             w::text(
                 &p,
                 r,
-                lang.pick("重なった UV", "Overlapping UVs"),
+                lang.t("bake-overlapping-uvs-tip"),
                 t::HEADER,
                 Align::Left,
             );
@@ -950,7 +933,7 @@ fn draw_page(
             w::text(
                 &p,
                 parts[0],
-                lang.pick("優先", "Priority"),
+                lang.t("bake-priority-tip"),
                 t::LABEL,
                 Align::Left,
             );
@@ -975,12 +958,9 @@ fn draw_page(
                 &mut child,
                 r,
                 "bake.overlap.outside",
-                lang.pick("0〜1 の外のアイランドを焼かない", "Skip islands outside 0–1"),
+                lang.t("bake-skip-islands-outside-0-1-tip"),
                 overlap.skip_outside,
-                Some(locked.unwrap_or(lang.pick(
-                    "UV を 0〜1 の外へずらしたアイランドを焼かない（切っているときは、0〜1 の外の UV があるとベイクを断る）",
-                    "Islands moved outside the 0–1 UV square are not baked (when off, a UV outside 0–1 stops the bake)",
-                ))),
+                Some(locked.unwrap_or(lang.t("bake-islands-moved-outside-the-0-tip"))),
                 enabled,
             );
             if next != overlap.skip_outside {
@@ -1013,9 +993,9 @@ fn draw_page(
                     Align::Left,
                 );
                 let on = overlap.picking == Some(*list);
-                let add_tip = lang.pick(
-                    format!("2D か 3D で押したアイランドを{}に追加する（入っているアイランドを押すと外す・Esc でやめる）", lang.quote(name)),
-                    format!("Add the island you click in 2D or 3D to {} (clicking one already listed removes it; Esc stops)", lang.quote(name)),
+                let add_tip = lang.f(
+                    "bake-add-the-island-you-click-tip",
+                    &[("name", &lang.quote(name))],
                 );
                 if w::icon_button(
                     &mut child,
@@ -1063,7 +1043,7 @@ fn draw_page(
                         ),
                         ("bake.overlap.remove", *list as u8, island.representative),
                         "close",
-                        locked.unwrap_or(lang.pick("一覧から外す", "Remove from the list")),
+                        locked.unwrap_or(lang.t("bake-remove-from-the-list-tip")),
                         false,
                         enabled,
                         14.0,
@@ -1080,11 +1060,8 @@ fn draw_page(
                 y += 4.0;
                 let r = lrow(18.0, 2.0, &mut y);
                 let text = lang.with_reason(
-                    lang.pick(
-                        "手で選んだアイランドは使えません",
-                        "The chosen islands cannot be used",
-                    ),
-                    lang.pick("別のモデルのもの", "they belong to another model"),
+                    lang.t("bake-the-chosen-islands-cannot-be-tip"),
+                    lang.t("bake-they-belong-to-another-model-tip"),
                 );
                 let shown = w::fit(&p, &text, r.width(), t::LABEL_DIM);
                 w::text(
@@ -1113,22 +1090,19 @@ fn draw_page(
             w::text(&p, r, kind_label(lang, kind), t::HEADER, Align::Left);
             // 状態
             let state_text = match m.and_then(|m| m.baked.as_ref().map(|b| (m.state, b))) {
-                None => lang.pick("まだ焼いていません", "Not baked yet").to_owned(),
+                None => lang.t("bake-not-baked-yet-tip").to_owned(),
                 Some((state, ((w_, h_), slots))) => format!(
                     "{}: {} ({w_}×{h_}, {} {})",
-                    lang.pick("焼いたマップ", "Baked map"),
+                    lang.t("bake-baked-map-tip"),
                     m.map_or_else(|| state_label(lang, state), |m| row_state_label(lang, m)),
-                    lang.pick("スロット", "slot"),
+                    lang.t("bake-slot-tip"),
                     slot_list(slots)
                 ),
             };
             let r = row(18.0, 2.0, &mut y);
             w::text(&p, r, &state_text, t::LABEL_DIM, Align::Left);
             if let Some(m) = m.filter(|m| !m.reasons.is_empty()) {
-                let text = lang.with_reason(
-                    lang.pick("古いので使いません", "Stale and not used"),
-                    &m.reasons,
-                );
+                let text = lang.with_reason(lang.t("bake-stale-and-not-used-tip"), &m.reasons);
                 let r = row(18.0, 2.0, &mut y);
                 let shown = w::fit(&p, &text, r.width(), t::LABEL_DIM);
                 w::text(
@@ -1148,24 +1122,52 @@ fn draw_page(
                 }
             }
             y += 6.0;
-            let rays_tip = lang.pick(
-                "テクセルごとのレイの数（多いほどなめらかで遅い）",
-                "Rays per texel (more is smoother and slower)",
-            );
-            let distance_tip = lang.pick(
-                "最大の距離（モデルの境界箱の対角線に対する割合）",
-                "Max distance, relative to the bounding-box diagonal",
-            );
-            let spread_tip = lang.pick("180° なら半球全体", "180° is the whole hemisphere");
+            let rays_tip = lang.t("bake-rays-per-texel-more-is-tip");
+            let distance_tip = lang.t("bake-max-distance-relative-to-the-tip");
+            let spread_tip = lang.t("bake-180-is-the-whole-hemisphere-tip");
             match kind {
                 MeshMapKind::AmbientOcclusion | MeshMapKind::BentNormal => {
-                    if let Some(v) = slider(&mut child, &mut y, "bake.ao.rays", lang.pick("レイ", "Rays"), settings.ao_samples as f64, 1.0, 512.0, NumberFormat::int(""), rays_tip) {
+                    if let Some(v) = slider(
+                        &mut child,
+                        &mut y,
+                        "bake.ao.rays",
+                        lang.t("bake-rays-tip"),
+                        settings.ao_samples as f64,
+                        1.0,
+                        512.0,
+                        NumberFormat::int(""),
+                        rays_tip,
+                    ) {
                         settings.ao_samples = v.round() as i32;
                     }
-                    if let Some(v) = slider(&mut child, &mut y, "bake.ao.distance", lang.pick("距離", "Distance"), settings.ao_max_distance, 0.001, 1.0, NumberFormat { decimals: 3, trim: true, suffix: "" }, distance_tip) {
+                    if let Some(v) = slider(
+                        &mut child,
+                        &mut y,
+                        "bake.ao.distance",
+                        lang.t("bake-distance-tip"),
+                        settings.ao_max_distance,
+                        0.001,
+                        1.0,
+                        NumberFormat {
+                            decimals: 3,
+                            trim: true,
+                            suffix: "",
+                        },
+                        distance_tip,
+                    ) {
                         settings.ao_max_distance = v.clamp(0.001, 1.0);
                     }
-                    if let Some(v) = slider(&mut child, &mut y, "bake.ao.spread", lang.pick("広がり", "Spread"), settings.ao_spread_degrees, 1.0, 180.0, NumberFormat::int("°"), spread_tip) {
+                    if let Some(v) = slider(
+                        &mut child,
+                        &mut y,
+                        "bake.ao.spread",
+                        lang.t("bake-spread-tip"),
+                        settings.ao_spread_degrees,
+                        1.0,
+                        180.0,
+                        NumberFormat::int("°"),
+                        spread_tip,
+                    ) {
                         settings.ao_spread_degrees = v.round().clamp(1.0, 180.0);
                     }
                     let r = row(22.0, 4.0, &mut y);
@@ -1173,54 +1175,141 @@ fn draw_page(
                         &mut child,
                         r,
                         "bake.ao.backfaces",
-                        lang.pick("裏面を無視", "Ignore back faces"),
+                        lang.t("bake-ignore-back-faces-tip"),
                         settings.ao_ignore_backfaces,
-                        Some(lang.pick("裏から見た面をレイが通り抜ける", "Rays pass through faces seen from behind")),
+                        Some(lang.t("bake-rays-pass-through-faces-seen-tip")),
                         true,
                     );
                     if kind == MeshMapKind::AmbientOcclusion {
                         let r = row(24.0, 4.0, &mut y);
                         let halves = Rect::from_min_size(r.min, vec2(r.width(), r.height()));
                         let parts = w::Rows::split(halves, 3, 4.0);
-                        w::text(&p, parts[0], lang.pick("減衰", "Falloff"), t::LABEL, Align::Left);
+                        w::text(
+                            &p,
+                            parts[0],
+                            lang.t("bake-falloff-tip"),
+                            t::LABEL,
+                            Align::Left,
+                        );
                         for (i, (falloff, name, tip)) in [
-                            (MeshOcclusionFalloff::None, lang.pick("なし", "None"), lang.pick("距離で変えない", "Distance does not matter")),
-                            (MeshOcclusionFalloff::Linear, lang.pick("線形", "Linear"), lang.pick("近い遮蔽物ほど暗い", "Nearer occluders darken more")),
+                            (
+                                MeshOcclusionFalloff::None,
+                                lang.t("bake-none-tip"),
+                                lang.t("bake-distance-does-not-matter-tip"),
+                            ),
+                            (
+                                MeshOcclusionFalloff::Linear,
+                                lang.t("bake-linear-tip"),
+                                lang.t("bake-nearer-occluders-darken-more-tip"),
+                            ),
                         ]
                         .into_iter()
                         .enumerate()
                         {
-                            if w::button(&mut child, parts[i + 1], ("bake.ao.falloff", i), name, settings.ao_falloff == falloff, true, Some(tip), None).clicked() {
+                            if w::button(
+                                &mut child,
+                                parts[i + 1],
+                                ("bake.ao.falloff", i),
+                                name,
+                                settings.ao_falloff == falloff,
+                                true,
+                                Some(tip),
+                                None,
+                            )
+                            .clicked()
+                            {
                                 settings.ao_falloff = falloff;
                             }
                         }
                     }
                 }
                 MeshMapKind::Thickness => {
-                    if let Some(v) = slider(&mut child, &mut y, "bake.thickness.rays", lang.pick("レイ", "Rays"), settings.thickness_samples as f64, 1.0, 512.0, NumberFormat::int(""), rays_tip) {
+                    if let Some(v) = slider(
+                        &mut child,
+                        &mut y,
+                        "bake.thickness.rays",
+                        lang.t("bake-rays-tip"),
+                        settings.thickness_samples as f64,
+                        1.0,
+                        512.0,
+                        NumberFormat::int(""),
+                        rays_tip,
+                    ) {
                         settings.thickness_samples = v.round() as i32;
                     }
-                    if let Some(v) = slider(&mut child, &mut y, "bake.thickness.distance", lang.pick("距離", "Distance"), settings.thickness_max_distance, 0.001, 1.0, NumberFormat { decimals: 3, trim: true, suffix: "" }, distance_tip) {
+                    if let Some(v) = slider(
+                        &mut child,
+                        &mut y,
+                        "bake.thickness.distance",
+                        lang.t("bake-distance-tip"),
+                        settings.thickness_max_distance,
+                        0.001,
+                        1.0,
+                        NumberFormat {
+                            decimals: 3,
+                            trim: true,
+                            suffix: "",
+                        },
+                        distance_tip,
+                    ) {
                         settings.thickness_max_distance = v.clamp(0.001, 1.0);
                     }
-                    if let Some(v) = slider(&mut child, &mut y, "bake.thickness.spread", lang.pick("広がり", "Spread"), settings.thickness_spread_degrees, 1.0, 180.0, NumberFormat::int("°"), spread_tip) {
+                    if let Some(v) = slider(
+                        &mut child,
+                        &mut y,
+                        "bake.thickness.spread",
+                        lang.t("bake-spread-tip"),
+                        settings.thickness_spread_degrees,
+                        1.0,
+                        180.0,
+                        NumberFormat::int("°"),
+                        spread_tip,
+                    ) {
                         settings.thickness_spread_degrees = v.round().clamp(1.0, 180.0);
                     }
                 }
                 MeshMapKind::Curvature => {
-                    if let Some(v) = slider(&mut child, &mut y, "bake.curvature.radius", lang.pick("半径", "Radius"), settings.curvature_radius, 0.001, 0.5, NumberFormat { decimals: 3, trim: true, suffix: "" }, lang.pick(
-                        "この距離の内側の辺を数える（モデルの境界箱の対角線に対する割合）。大きいほど幅が広くやわらかい",
-                        "Edges within this distance count (relative to the bounding-box diagonal). Larger is wider and softer",
-                    )) {
+                    if let Some(v) = slider(
+                        &mut child,
+                        &mut y,
+                        "bake.curvature.radius",
+                        lang.t("bake-radius-tip"),
+                        settings.curvature_radius,
+                        0.001,
+                        0.5,
+                        NumberFormat {
+                            decimals: 3,
+                            trim: true,
+                            suffix: "",
+                        },
+                        lang.t("bake-edges-within-this-distance-count-tip"),
+                    ) {
                         settings.curvature_radius = v.clamp(0.001, 0.5);
                     }
                 }
                 MeshMapKind::Id => {
                     let r = row(24.0, 4.0, &mut y);
                     let parts = w::Rows::split(r, ID_SOURCES.len() + 1, 4.0);
-                    w::text(&p, parts[0], lang.pick("色の分け方", "Colors from"), t::LABEL, Align::Left);
+                    w::text(
+                        &p,
+                        parts[0],
+                        lang.t("bake-colors-from-tip"),
+                        t::LABEL,
+                        Align::Left,
+                    );
                     for (i, source) in ID_SOURCES.iter().enumerate() {
-                        if w::button(&mut child, parts[i + 1], ("bake.id.source", i), id_source_label(lang, *source), settings.id_source == *source, true, Some(id_source_help(lang, *source)), None).clicked() {
+                        if w::button(
+                            &mut child,
+                            parts[i + 1],
+                            ("bake.id.source", i),
+                            id_source_label(lang, *source),
+                            settings.id_source == *source,
+                            true,
+                            Some(id_source_help(lang, *source)),
+                            None,
+                        )
+                        .clicked()
+                        {
                             settings.id_source = *source;
                         }
                     }
@@ -1232,10 +1321,7 @@ fn draw_page(
                 w::text(
                     &p,
                     r,
-                    lang.pick(
-                        "高ポリが無いので、このマップは一様です",
-                        "No high poly, so this map is uniform",
-                    ),
+                    lang.t("bake-no-high-poly-so-this-tip"),
                     t::LABEL_DIM.with_color(t::WARNING),
                     Align::Left,
                 );
@@ -1273,9 +1359,9 @@ fn draw_footer(
     let p = ui.painter().clone();
     w::fill(&p, footer, t::PANEL_HEADER);
     w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
-    let bake_label = lang.pick("チェックしたマップをベイク", "Bake Checked Maps");
-    let cancel_label = lang.pick("取消", "Cancel");
-    let close_label = lang.pick("閉じる", "Close");
+    let bake_label = lang.t("bake-bake-checked-maps");
+    let cancel_label = lang.t("bake-cancel");
+    let close_label = lang.t("bake-close");
     let button_w = |s: &str| w::text_width(&p, s, t::LABEL) + 28.0;
     let by = footer.top() + 12.0;
     let bh = 28.0;
@@ -1285,12 +1371,7 @@ fn draw_footer(
         vec2(button_w(close_label), bh),
     );
     x = close.left() - 8.0;
-    let close_tip = progress.map(|_| {
-        lang.pick(
-            "ベイクは続きます。進み具合は画面の右下に出ます",
-            "The bake goes on; its progress shows at the bottom right",
-        )
-    });
+    let close_tip = progress.map(|_| lang.t("bake-the-bake-goes-on-its-tip"));
     if w::button(
         ui,
         close,
@@ -1317,10 +1398,7 @@ fn draw_footer(
             cancel_label,
             false,
             !prog.canceling,
-            Some(lang.pick(
-                "ベイクを止めます。前のマップはそのままです",
-                "Stop the bake; the previous maps stay as they are",
-            )),
+            Some(lang.t("bake-stop-the-bake-the-previous-tip")),
             Some("close"),
         )
         .clicked()
@@ -1344,7 +1422,7 @@ fn draw_footer(
         let set = if prog.total > 1 {
             format!(
                 "{} {}/{}: {} · ",
-                lang.pick("セット", "Set"),
+                lang.t("bake-set"),
                 prog.index,
                 prog.total,
                 prog.set
@@ -1353,7 +1431,7 @@ fn draw_footer(
             String::new()
         };
         let phase = if prog.canceling {
-            lang.pick("取り消し中", "Canceling").to_owned()
+            lang.t("bake-canceling").to_owned()
         } else {
             phase_label(lang, &prog.phase)
         };
@@ -1376,10 +1454,7 @@ fn draw_footer(
             bake_label,
             true,
             refusal.is_none(),
-            Some(refusal.unwrap_or(lang.pick(
-                "読み込んだモデルから焼きます。モデル・マテリアル・テクスチャは変わりません",
-                "Bake from the loaded model. The model, its materials and textures are not changed",
-            ))),
+            Some(refusal.unwrap_or(lang.t("bake-bake-from-the-loaded-model-tip"))),
             Some("texture"),
         )
         .clicked()
@@ -1415,13 +1490,8 @@ fn draw_footer(
 /// ID マップのページの状態の行。最後のベイクで部品が 1 つだけだったときに限り、ID が 1 色だと知らせる（部品は ID の分け方で決まり、
 /// 高ポリの有無とは関係ない。焼いていなければ何も言わない）。
 pub fn id_status(lang: Lang, kind: MeshMapKind, report: Option<&MeshBakeReport>) -> Option<String> {
-    (kind == MeshMapKind::Id && report.is_some_and(|r| r.id_parts == 1)).then(|| {
-        lang.pick(
-            "最後のベイクは部品が 1 つなので、ID は 1 色です",
-            "The last bake had one part, so the ID is one color",
-        )
-        .to_owned()
-    })
+    (kind == MeshMapKind::Id && report.is_some_and(|r| r.id_parts == 1))
+        .then(|| lang.t("bake-the-last-bake-had-one").to_owned())
 }
 
 /// 焼く場所の一行（長ければ … で切り、全文と詳しい理由はツールチップ）。
@@ -1497,62 +1567,26 @@ pub fn note_text(lang: Lang, note: &MeshBakeNote) -> String {
 /// マップの意味（ツールチップ）。
 pub fn kind_help(lang: Lang, kind: MeshMapKind) -> &'static str {
     match kind {
-        MeshMapKind::WorldNormal => lang.pick(
-            "モデルの滑らかな（頂点の）法線。モデルの空間のワールドの軸で、n × 0.5 + 0.5 で保存する",
-            "The model's smooth (vertex) normals in model space: world axes, stored as n × 0.5 + 0.5",
-        ),
-        MeshMapKind::Position => lang.pick(
-            "位置をモデルの境界箱で 0〜1 にしたもの（軸ごと）",
-            "Positions normalized to the model's bounding box (0–1 on each axis)",
-        ),
-        MeshMapKind::AmbientOcclusion => lang.pick(
-            "どれだけ開けているか。1 は何にも遮られず、0 はどの向きにも近くで遮られる",
-            "How open each texel is: 1 is unblocked, 0 is blocked close by in every direction",
-        ),
-        MeshMapKind::Curvature => lang.pick(
-            "0.5 は平ら。明るいほど凸（外側の縁）、暗いほど凹（内側の角）",
-            "0.5 is flat; brighter is convex (outer edges), darker is concave (inner corners)",
-        ),
-        MeshMapKind::Thickness => lang.pick(
-            "内側へ向けたレイが反対側へ出るまでの距離を最大の距離で割ったもの。0 は薄く、1 は厚い",
-            "How far rays travel inward before leaving the other side, over the max distance: 0 is thin, 1 is thick",
-        ),
-        MeshMapKind::TangentNormal => lang.pick(
-            "高ポリの法線をこのモデルの接空間で（OpenGL、Y+）。高ポリに当たらなければ平ら",
-            "The high poly's normals in this model's tangent space (OpenGL, Y+). Flat where it is missed",
-        ),
-        MeshMapKind::Height => lang.pick(
-            "投影に沿った、このモデルから高ポリまでの符号付きの距離（外側が明るい）。当たらなければ 0.5",
-            "The signed distance from this model to the high poly along the projection (outside is brighter). 0.5 where it is missed",
-        ),
-        MeshMapKind::Id => lang.pick(
-            "部品（スロット・メッシュ・つながった部品・UV アイランド）ごとの単色",
-            "A flat color for each part (slot, mesh, connected mesh part or UV island)",
-        ),
-        MeshMapKind::BentNormal => lang.pick(
-            "AO のレイの、遮られなかった向きの平均（ワールド空間）",
-            "The average unblocked direction of the AO rays (world space)",
-        ),
-        MeshMapKind::Opacity => lang.pick(
-            "高ポリに当たれば 1、外れれば 0（高ポリが無ければモデルが覆う所は 1）",
-            "1 where the high poly is hit, 0 where it is missed (1 where the model covers when there is none)",
-        ),
+        MeshMapKind::WorldNormal => lang.t("bake-the-model-s-smooth-vertex-tip"),
+        MeshMapKind::Position => lang.t("bake-positions-normalized-to-the-model-tip"),
+        MeshMapKind::AmbientOcclusion => lang.t("bake-how-open-each-texel-is-tip"),
+        MeshMapKind::Curvature => lang.t("bake-0-5-is-flat-brighter-tip"),
+        MeshMapKind::Thickness => lang.t("bake-how-far-rays-travel-inward-tip"),
+        MeshMapKind::TangentNormal => lang.t("bake-the-high-poly-s-normals-tip"),
+        MeshMapKind::Height => lang.t("bake-the-signed-distance-from-this-tip"),
+        MeshMapKind::Id => lang.t("bake-a-flat-color-for-each-tip"),
+        MeshMapKind::BentNormal => lang.t("bake-the-average-unblocked-direction-of-tip"),
+        MeshMapKind::Opacity => lang.t("bake-1-where-the-high-poly-tip"),
     }
 }
 
 fn id_source_help(lang: Lang, source: yolu_core::mesh_maps::MeshIdSource) -> &'static str {
     use yolu_core::mesh_maps::MeshIdSource as S;
     match source {
-        S::MeshPart => lang.pick(
-            "つながった部品（3D で辺を共有する三角形。UV の継ぎ目をまたぐ）ごとの色",
-            "A color per connected piece of the mesh (triangles sharing edges in 3D, across UV seams)",
-        ),
-        S::UvIsland => lang.pick("UV アイランドごとの色", "A color per UV island"),
-        S::Mesh => lang.pick("メッシュ（レンダラー）ごとの色", "A color per mesh (renderer)"),
-        S::MaterialSlot => lang.pick(
-            "マテリアルのスロット（レンダラーのサブメッシュ）ごとの色",
-            "A color per material slot (a renderer's submesh)",
-        ),
+        S::MeshPart => lang.t("bake-a-color-per-connected-piece-tip"),
+        S::UvIsland => lang.t("bake-a-color-per-uv-island-tip"),
+        S::Mesh => lang.t("bake-a-color-per-mesh-renderer-tip"),
+        S::MaterialSlot => lang.t("bake-a-color-per-material-slot-tip"),
         S::VertexColor | S::MaterialAsset => "",
     }
 }

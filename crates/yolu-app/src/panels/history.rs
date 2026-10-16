@@ -8,31 +8,29 @@ use crate::{
 
 pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
     match kind {
-        HistoryKind::Other => lang.pick("その他", "Other"),
-        HistoryKind::Brush => lang.pick("ブラシで描く", "Brush stroke"),
-        HistoryKind::Pixels => lang.pick("画素を変える", "Edit pixels"),
-        HistoryKind::AddLayer => lang.pick("レイヤーを追加", "Add layer"),
-        HistoryKind::RemoveLayer => lang.pick("レイヤーを消す", "Remove layer"),
-        HistoryKind::LayerOrder => lang.pick("レイヤーを並べ替える", "Arrange layers"),
-        HistoryKind::LayerProperties => lang.pick("レイヤーを変える", "Edit layer"),
-        HistoryKind::Channel => lang.pick("チャンネルを変える", "Edit channel"),
-        HistoryKind::Fill => lang.pick("塗りつぶしを変える", "Edit fill"),
-        HistoryKind::AddMask => lang.pick("マスクを追加", "Add mask"),
-        HistoryKind::RemoveMask => lang.pick("マスクを消す", "Remove mask"),
-        HistoryKind::Mask => lang.pick("マスクを変える", "Edit mask"),
-        HistoryKind::Selection => lang.pick("選択範囲を変える", "Change selection"),
-        HistoryKind::AddEffect => lang.pick("効果を追加", "Add effect"),
-        HistoryKind::RemoveEffect => lang.pick("効果を消す", "Remove effect"),
-        HistoryKind::Effect => lang.pick("効果を変える", "Edit effect"),
-        HistoryKind::Anchor => lang.pick("アンカーを変える", "Edit anchor"),
-        HistoryKind::Path => lang.pick("パスを変える", "Edit path"),
-        HistoryKind::Batch => lang.pick("まとめて編集", "Batch edit"),
-        HistoryKind::Look => lang.pick("見た目を変える", "Edit look"),
-        HistoryKind::SavedSelections => {
-            lang.pick("覚えた選択範囲を変える", "Edit remembered selections")
-        }
-        HistoryKind::Text => lang.pick("テキストを変える", "Edit Text"),
-        HistoryKind::Rulers => lang.pick("定規を変える", "Edit Ruler"),
+        HistoryKind::Other => lang.t("panels-other-2"),
+        HistoryKind::Brush => lang.t("panels-brush-stroke"),
+        HistoryKind::Pixels => lang.t("panels-edit-pixels"),
+        HistoryKind::AddLayer => lang.t("panels-add-layer"),
+        HistoryKind::RemoveLayer => lang.t("panels-remove-layer"),
+        HistoryKind::LayerOrder => lang.t("panels-arrange-layers"),
+        HistoryKind::LayerProperties => lang.t("panels-edit-layer"),
+        HistoryKind::Channel => lang.t("panels-edit-channel"),
+        HistoryKind::Fill => lang.t("panels-edit-fill"),
+        HistoryKind::AddMask => lang.t("panels-add-mask"),
+        HistoryKind::RemoveMask => lang.t("panels-remove-mask"),
+        HistoryKind::Mask => lang.t("panels-edit-mask"),
+        HistoryKind::Selection => lang.t("panels-change-selection"),
+        HistoryKind::AddEffect => lang.t("panels-add-effect"),
+        HistoryKind::RemoveEffect => lang.t("panels-remove-effect"),
+        HistoryKind::Effect => lang.t("panels-edit-effect"),
+        HistoryKind::Anchor => lang.t("panels-edit-anchor"),
+        HistoryKind::Path => lang.t("panels-edit-path"),
+        HistoryKind::Batch => lang.t("panels-batch-edit"),
+        HistoryKind::Look => lang.t("panels-edit-look"),
+        HistoryKind::SavedSelections => lang.t("panels-edit-remembered-selections"),
+        HistoryKind::Text => lang.t("panels-edit-text"),
+        HistoryKind::Rulers => lang.t("panels-edit-ruler"),
     }
 }
 
@@ -60,7 +58,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             let mut kinds = app.session.doc.history().skip(rows.start.saturating_sub(1));
             for position in rows {
                 let label = if position == 0 {
-                    app.lang.pick("開始位置", "Starting point")
+                    app.lang.t("panels-starting-point")
                 } else {
                     title(kinds.next().expect("保持された履歴の範囲"), app.lang)
                 };

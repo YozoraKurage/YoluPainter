@@ -308,21 +308,9 @@ pub(crate) fn refuse_miss(app: &mut AppState, miss: Miss) {
 /// `refuse_miss` の、断りの出どころを選べる版（自動選択は選択範囲の出どころ）。
 pub(crate) fn refuse_miss_as(app: &mut AppState, miss: Miss, source: Source) {
     match miss {
-        Miss::Nothing => app.refuse(
-            source,
-            app.lang.pick(
-                "ポインタの下にこのテクスチャセットの三角形がありません",
-                "No triangle of this texture set under the pointer",
-            ),
-        ),
+        Miss::Nothing => app.refuse(source, app.lang.t("region-no-triangle-of-this-texture")),
         Miss::OtherSet(name) => app.refuse(source, other_set_face(app.lang, &name)),
-        Miss::OutsideUv => app.refuse(
-            source,
-            app.lang.pick(
-                "この面の UV はテクスチャの外です",
-                "This surface's UV is outside the texture",
-            ),
-        ),
+        Miss::OutsideUv => app.refuse(source, app.lang.t("region-this-surface-s-uv-is")),
     }
 }
 
@@ -354,10 +342,7 @@ fn other_set(app: &mut AppState, name: &str) {
 /// ポインタの下の面がほかのテクスチャセット（`name`）のものだという断り。
 pub(crate) fn other_set_face(lang: Lang, name: &str) -> String {
     let name = lang.quote(name);
-    lang.pick(
-        format!("ほかのテクスチャセット{name}の面です。"),
-        format!("This face belongs to another texture set, {name}."),
-    )
+    lang.f("region-this-face-belongs-to-another", &[("name", &name)])
 }
 
 // ───────── バケツ ─────────
@@ -426,13 +411,7 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             },
         };
         if hits.is_empty() {
-            app.refuse(
-                Source::Fill,
-                lang.pick(
-                    "ポインタの下にこのテクスチャセットの三角形がありません",
-                    "No triangle of this texture set under the pointer",
-                ),
-            );
+            app.refuse(Source::Fill, lang.t("region-no-triangle-of-this-texture"));
             return;
         }
         let kind = app.region.kind;
@@ -486,17 +465,14 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
                 format!(
                     "{what}{}",
                     if erase {
-                        lang.pick("を消しました。", " erased.")
+                        lang.t("region-erased")
                     } else {
-                        lang.pick("を塗りました。", " filled.")
+                        lang.t("region-filled-2")
                     }
                 ),
             );
         }
-        Ok(false) => app.refuse(
-            Source::Fill,
-            lang.pick("そこには塗るものがありません。", "Nothing to fill there."),
-        ),
+        Ok(false) => app.refuse(Source::Fill, lang.t("region-nothing-to-fill-there")),
         Err(e) => app.notify(
             crate::notice::Kind::of_core(&e),
             Source::Fill,
@@ -670,10 +646,7 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
     if cancel {
         drag.fill.cancel(&mut app.session.doc);
         app.region.cycle = None;
-        app.info(
-            Source::Fill,
-            lang.pick("ストロークを取り消しました。", "Stroke cancelled."),
-        );
+        app.info(Source::Fill, lang.t("region-stroke-cancelled"));
         return true;
     }
     match drag.fill.commit(&mut app.session.doc) {
@@ -686,30 +659,15 @@ pub fn finish_drag(app: &mut AppState, cancel: bool) -> bool {
             if result.changed {
                 app.session.mark_modified();
                 let text = if drag.erase {
-                    format!(
-                        "{what} × {regions} {}",
-                        lang.pick("を消しました。", "erased.")
-                    )
+                    format!("{what} × {regions} {}", lang.t("region-erased-2"))
                 } else {
-                    format!(
-                        "{what} × {regions} {}",
-                        lang.pick("を塗りました。", "filled.")
-                    )
+                    format!("{what} × {regions} {}", lang.t("region-filled-3"))
                 };
                 app.info(Source::Fill, text);
             } else if regions == 0 {
-                app.refuse(
-                    Source::Fill,
-                    lang.pick(
-                        "ポインタの下にこのテクスチャセットの三角形がありません。",
-                        "No triangle of this texture set under the pointer.",
-                    ),
-                );
+                app.refuse(Source::Fill, lang.t("region-no-triangle-of-this-texture-2"));
             } else {
-                app.refuse(
-                    Source::Fill,
-                    lang.pick("そこには塗るものがありません。", "Nothing to fill there."),
-                );
+                app.refuse(Source::Fill, lang.t("region-nothing-to-fill-there"));
             }
         }
         Err(e) => app.notify(

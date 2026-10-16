@@ -56,12 +56,12 @@ impl Section {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Section::Everywhere => lang.pick("どこでも・視点", "Everywhere & View"),
-            Section::Paint => lang.pick("ペイント", "Paint"),
-            Section::Edit => lang.pick("編集", "Edit"),
-            Section::Pose => lang.pick("ポーズ", "Pose"),
-            Section::During => lang.pick("途中の操作", "During an Operation"),
-            Section::Pies => lang.pick("パイメニュー", "Pie Menus"),
+            Section::Everywhere => lang.t("shortcuts-everywhere-view"),
+            Section::Paint => lang.t("shortcuts-paint"),
+            Section::Edit => lang.t("shortcuts-edit"),
+            Section::Pose => lang.t("shortcuts-pose"),
+            Section::During => lang.t("shortcuts-during-an-operation"),
+            Section::Pies => lang.t("shortcuts-pie-menus"),
         }
     }
 
@@ -138,10 +138,10 @@ impl PickKind {
 
     fn label(self, lang: Lang) -> &'static str {
         match self {
-            PickKind::Command => lang.pick("操作", "Command"),
-            PickKind::Pie => lang.pick("別のパイ", "Another Pie"),
-            PickKind::Ops => lang.pick("yolu-ops の命令", "yolu-ops Command"),
-            PickKind::Recorded => lang.pick("記録したアクション", "Recorded Action"),
+            PickKind::Command => lang.t("shortcuts-command"),
+            PickKind::Pie => lang.t("shortcuts-another-pie"),
+            PickKind::Ops => lang.t("shortcuts-yolu-ops-command"),
+            PickKind::Recorded => lang.t("shortcuts-recorded-action"),
         }
     }
 }
@@ -198,10 +198,9 @@ pub fn command_name(app: &AppState, command: &str) -> String {
             .pie
             .menu(id)
             .map_or_else(|| id.to_owned(), |m| m.name(app.lang));
-        return app.lang.pick(
-            format!("パイメニュー{}", app.lang.quote(&name)),
-            format!("Pie Menu {}", app.lang.quote(&name)),
-        );
+        return app
+            .lang
+            .f("shortcuts-pie-menu", &[("name", &app.lang.quote(&name))]);
     }
     commands::find(command)
         .and_then(|c| c.label(app))
@@ -221,19 +220,17 @@ fn cached_name(window: &mut ShortcutWindow, app: &AppState, command: &'static st
 
 /// 編集のモードの「選ぶ」（印を左クリック）。
 fn lang_select(lang: Lang) -> &'static str {
-    lang.pick("選ぶ", "Select")
+    lang.t("shortcuts-select")
 }
 
 /// 場面の名前（場面の行だけ）。
 pub(crate) fn when_label(lang: Lang, when: When) -> Option<String> {
     Some(match when {
         When::Always => return None,
-        When::HasSelection => lang.pick("選択範囲があるとき", "With a selection").into(),
+        When::HasSelection => lang.t("shortcuts-with-a-selection").into(),
         When::Tool(tool) => tool.name_in(lang).into(),
         When::Windows => "Windows".into(),
-        When::PointSelected => lang
-            .pick("点を選んでいるとき", "With a point selected")
-            .into(),
+        When::PointSelected => lang.t("shortcuts-with-a-point-selected").into(),
     })
 }
 
@@ -241,10 +238,10 @@ pub(crate) fn when_label(lang: Lang, when: When) -> Option<String> {
 pub(crate) fn mouse_name(lang: Lang, index: u8) -> String {
     let g = &GESTURES[index as usize];
     let place = match g.scope {
-        "canvas" => lang.pick("2D", "2D"),
-        "view3d" => lang.pick("3D", "3D"),
-        "stencil" => lang.pick("ステンシル", "Stencil"),
-        _ => lang.pick("選択範囲", "Selection"),
+        "canvas" => lang.t("shortcuts-2d"),
+        "view3d" => lang.t("shortcuts-3d"),
+        "stencil" => lang.t("shortcuts-stencil"),
+        _ => lang.t("shortcuts-selection"),
     };
     let (open, close) = lang.pick(("（", "）"), (" (", ")"));
     format!("{}{open}{place}{close}", g.operation.label(lang))
@@ -749,10 +746,7 @@ pub(crate) fn select_section(app: &mut AppState, section: Section) {
 }
 
 fn unsaved_reason(lang: Lang) -> &'static str {
-    lang.pick(
-        "ぶつかるキーがあるので、キーの設定を保存していません",
-        "Key settings are not saved while keys conflict",
-    )
+    lang.t("shortcuts-key-settings-are-not-saved")
 }
 
 /// 右の欄の中身（`pane` は設定のウィンドウの右の欄のうち、上の探す欄より下）: 表かパイメニューの編集と、下の帯。
@@ -795,14 +789,14 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         )
         .clicked()
     };
-    if button(ui, lang.pick("既定に戻す", "Reset to Default"), "reset") {
+    if button(ui, lang.t("shortcuts-reset-to-default"), "reset") {
         end_capture(app);
         app.apply(Action::Keys(KeyEdit::ResetAll));
     }
-    if button(ui, lang.pick("書き出し…", "Export…"), "export") {
+    if button(ui, lang.t("shortcuts-export"), "export") {
         app.outbox.dialog_request = Some(DialogRequest::KeymapExport);
     }
-    if button(ui, lang.pick("読み込み…", "Import…"), "import") {
+    if button(ui, lang.t("shortcuts-import"), "import") {
         app.outbox.dialog_request = Some(DialogRequest::KeymapImport);
     }
     if app.keys.unsaved || app.keys.has_conflicts() {
@@ -821,7 +815,7 @@ fn search_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let ctx = ui.ctx().clone();
     let button_label = match app.ui.shortcuts.key_filter {
         Some(t) => trigger_label(&t),
-        None => lang.pick("キーで探す", "Find by Key").to_owned(),
+        None => lang.t("shortcuts-find-by-key").to_owned(),
     };
     let searching = matches!(
         app.ui.shortcuts.capture,
@@ -855,7 +849,7 @@ fn search_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
             .frame(egui::Frame::NONE)
             .font(t::LABEL.font())
             .text_color(t::TEXT)
-            .hint_text(lang.pick("探す", "Search"))
+            .hint_text(lang.t("shortcuts-search"))
             .margin(egui::Margin::ZERO)
             .vertical_align(egui::Align::Center),
     );
@@ -907,14 +901,14 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
                 pos2(head.left() + 10.0, head.top()),
                 pos2(col_key, head.bottom()),
             ),
-            lang.pick("操作", "Action"),
+            lang.t("shortcuts-action"),
             t::LABEL_DIM,
             Align::Left,
         );
         w::text(
             p,
             Rect::from_min_max(pos2(col_key, head.top()), pos2(col_mouse, head.bottom())),
-            lang.pick("キー", "Key"),
+            lang.t("shortcuts-key"),
             t::LABEL_DIM,
             Align::Left,
         );
@@ -922,9 +916,9 @@ fn table(ui: &mut Ui, app: &mut AppState, r: Rect) {
             p,
             Rect::from_min_max(pos2(col_mouse, head.top()), head.max),
             if has_tool_rows {
-                lang.pick("マウス・動き方", "Mouse / Behavior")
+                lang.t("shortcuts-mouse-behavior")
             } else {
-                lang.pick("マウス", "Mouse")
+                lang.t("shortcuts-mouse")
             },
             t::LABEL_DIM,
             Align::Left,
@@ -1057,7 +1051,7 @@ fn draw_line(
                 let conflict = app.keys.conflict(group, i);
                 let tip = if locked {
                     Some(
-                        lang.pick("このキーは変えられません", "This key cannot be changed")
+                        lang.t("shortcuts-this-key-cannot-be-changed-tip")
                             .to_owned(),
                     )
                 } else if let Some(other) = conflict {
@@ -1123,7 +1117,7 @@ fn draw_line(
                         r,
                         ("yolu.shortcuts.add", group.0, group.1 as u8),
                         "add",
-                        lang.pick("キーを追加", "Add Key"),
+                        lang.t("shortcuts-add-key-tip"),
                         false,
                         true,
                         14.0,
@@ -1140,7 +1134,7 @@ fn draw_line(
             }
         }
         Line::Fixed { key, .. } => {
-            let tip = lang.pick("このキーは変えられません", "This key cannot be changed");
+            let tip = lang.t("shortcuts-this-key-cannot-be-changed-tip");
             let target = Target::Key {
                 group: ("", Scope::Everywhere),
                 chip: None,
@@ -1159,10 +1153,7 @@ fn draw_line(
             );
         }
         Line::FixedMouse => {
-            let tip = lang.pick(
-                "このボタンは変えられません",
-                "This button cannot be changed",
-            );
+            let tip = lang.t("shortcuts-this-button-cannot-be-changed-tip");
             let _ = chip(
                 ui,
                 app,
@@ -1171,7 +1162,7 @@ fn draw_line(
                     group: ("", Scope::Edit),
                     chip: None,
                 },
-                lang.pick("左ボタン", "Left Button"),
+                lang.t("shortcuts-left-button"),
                 false,
                 false,
                 false,
@@ -1191,14 +1182,18 @@ fn draw_line(
             let tip = conflict.map(|c| match c {
                 keyconfig::ComboConflict::With(other) => {
                     let (open, close) = lang.pick(("「", "」"), ("“", "”"));
-                    lang.pick(
-                        format!("{open}{}{close}とぶつかります", mouse_name(lang, other)),
-                        format!("Conflicts with {open}{}{close}", mouse_name(lang, other)),
+                    lang.f(
+                        "shortcuts-conflicts-with",
+                        &[
+                            ("open", &open),
+                            ("other", &mouse_name(lang, other)),
+                            ("close", &close),
+                        ],
                     )
                 }
-                keyconfig::ComboConflict::Painting => lang
-                    .pick("描く操作とぶつかります", "Conflicts with painting")
-                    .to_owned(),
+                keyconfig::ComboConflict::Painting => {
+                    lang.t("shortcuts-conflicts-with-painting").to_owned()
+                }
             });
             let (clicked, _) = chip(
                 ui,
@@ -1226,7 +1221,7 @@ fn draw_line(
             r,
             ("yolu.shortcuts.reset", salt),
             "restart_alt",
-            lang.pick("既定に戻す", "Reset to Default"),
+            lang.t("shortcuts-reset-to-default-tip"),
             false,
             true,
             15.0,
@@ -1307,9 +1302,14 @@ fn same_key_tip(app: &AppState, other: GroupKey) -> String {
     let (open, close) = lang.pick(("「", "」"), ("“", "”"));
     let name = command_name(app, other.0);
     let section = Section::of_scope(other.1).label(lang);
-    lang.pick(
-        format!("{open}{name}{close}（{section}）と同じキー"),
-        format!("Same key as {open}{name}{close} ({section})"),
+    lang.f(
+        "shortcuts-same-key-as-tip",
+        &[
+            ("open", &open),
+            ("name", &name),
+            ("close", &close),
+            ("section", &section),
+        ],
     )
 }
 
@@ -1320,9 +1320,15 @@ fn takes_tip(app: &AppState, group: GroupKey, other: GroupKey) -> String {
     let name = command_name(app, other.0);
     let mine = Section::of_scope(group.1).label(lang);
     let section = Section::of_scope(other.1).label(lang);
-    lang.pick(
-        format!("{mine}のモードでは、{section}の{open}{name}{close}より先に取ります"),
-        format!("In {mine} mode, takes this key before {open}{name}{close} ({section})"),
+    lang.f(
+        "shortcuts-in-mode-takes-this-key-tip",
+        &[
+            ("mine", &mine),
+            ("section", &section),
+            ("open", &open),
+            ("name", &name),
+            ("close", &close),
+        ],
     )
 }
 
@@ -1332,9 +1338,14 @@ fn first_tip(app: &AppState, other: GroupKey) -> String {
     let (open, close) = lang.pick(("「", "」"), ("“", "”"));
     let name = command_name(app, other.0);
     let section = Section::of_scope(other.1).label(lang);
-    lang.pick(
-        format!("{section}のモードでは{open}{name}{close}が先に取ります"),
-        format!("In {section} mode, {open}{name}{close} takes this key first"),
+    lang.f(
+        "shortcuts-in-mode-takes-this-key-2-tip",
+        &[
+            ("section", &section),
+            ("open", &open),
+            ("name", &name),
+            ("close", &close),
+        ],
     )
 }
 
@@ -1343,14 +1354,14 @@ fn first_tip(app: &AppState, other: GroupKey) -> String {
 /// 8 か所の名前（上から時計回り）。
 pub fn slot_name(lang: Lang, slot: usize) -> &'static str {
     [
-        lang.pick("上", "Top"),
-        lang.pick("右上", "Top Right"),
-        lang.pick("右", "Right"),
-        lang.pick("右下", "Bottom Right"),
-        lang.pick("下", "Bottom"),
-        lang.pick("左下", "Bottom Left"),
-        lang.pick("左", "Left"),
-        lang.pick("左上", "Top Left"),
+        lang.t("shortcuts-top"),
+        lang.t("shortcuts-top-right"),
+        lang.t("shortcuts-right"),
+        lang.t("shortcuts-bottom-right"),
+        lang.t("shortcuts-bottom"),
+        lang.t("shortcuts-bottom-left"),
+        lang.t("shortcuts-left"),
+        lang.t("shortcuts-top-left"),
     ][slot]
 }
 
@@ -1390,7 +1401,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
         add,
         "yolu.shortcuts.pie_add",
         "add",
-        lang.pick("パイメニューを追加", "Add Pie Menu"),
+        lang.t("shortcuts-add-pie-menu-tip"),
         false,
         true,
         15.0,
@@ -1406,12 +1417,11 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let user = matches!(menu.name, PieName::User(_));
     let remove = Rect::from_min_size(pos2(add.right() + 4.0, y + 2.0), vec2(22.0, 22.0));
     let remove_tip = if user {
-        lang.pick("このパイメニューを削除", "Delete This Pie Menu")
-            .to_owned()
+        lang.t("shortcuts-delete-this-pie-menu-tip").to_owned()
     } else {
         lang.with_reason(
-            lang.pick("削除できません", "Cannot delete"),
-            lang.pick("最初からあるパイメニューです", "it is a built-in pie menu"),
+            lang.t("shortcuts-cannot-delete-tip"),
+            lang.t("shortcuts-it-is-a-built-in-tip"),
         )
     };
     if w::icon_button(
@@ -1439,7 +1449,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
         w::text(
             p,
             Rect::from_min_size(pos2(r.left(), y), vec2(label_w, 24.0)),
-            lang.pick("名前", "Name"),
+            lang.t("shortcuts-name"),
             t::LABEL_DIM,
             Align::Left,
         );
@@ -1472,7 +1482,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
         w::text(
             p,
             Rect::from_min_size(pos2(r.left(), y), vec2(label_w, 24.0)),
-            lang.pick("キー", "Key"),
+            lang.t("shortcuts-key"),
             t::LABEL_DIM,
             Align::Left,
         );
@@ -1600,7 +1610,7 @@ fn pies(ui: &mut Ui, app: &mut AppState, r: Rect) {
                 clear,
                 ("yolu.shortcuts.slot_clear", slot),
                 "close",
-                lang.pick("空にする", "Clear"),
+                lang.t("shortcuts-clear-tip"),
                 false,
                 true,
                 13.0,
@@ -1670,8 +1680,8 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
             app.refuse(
                 crate::notice::Source::Settings,
                 lang.with_reason(
-                    lang.pick("命令を入れられません", "Cannot set the command"),
-                    lang.pick("JSON として読めません", "it is not valid JSON"),
+                    lang.t("shortcuts-cannot-set-the-command"),
+                    lang.t("shortcuts-it-is-not-valid-json"),
                 ),
             );
         }
@@ -1692,7 +1702,7 @@ fn picker(ui: &mut Ui, app: &mut AppState, index: usize, r: Rect) {
             .frame(egui::Frame::NONE)
             .font(t::LABEL.font())
             .text_color(t::TEXT)
-            .hint_text(lang.pick("探す", "Search"))
+            .hint_text(lang.t("shortcuts-search"))
             .margin(egui::Margin::ZERO)
             .vertical_align(egui::Align::Center),
     );

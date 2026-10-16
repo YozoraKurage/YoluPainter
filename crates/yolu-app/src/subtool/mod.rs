@@ -429,10 +429,7 @@ impl AppState {
         self.fail(
             crate::notice::Source::Brush,
             lang.with_reason(
-                lang.pick(
-                    format!("サブツールのファイル{file}を読めないため、保存できません"),
-                    format!("Cannot save sub tools because the file {file} could not be read"),
-                ),
+                lang.f("subtool-cannot-save-sub-tools-because", &[("file", &file)]),
                 problem.describe(lang),
             ),
         );
@@ -483,21 +480,15 @@ impl AppState {
         let lang = self.lang;
         let file = lang.quote(&first.file);
         let one = lang.with_reason(
-            lang.pick(
-                format!("サブツールのファイル{file}を読めません"),
-                format!("Cannot read the sub tool file {file}"),
-            ),
+            lang.f("subtool-cannot-read-the-sub-tool", &[("file", &file)]),
             first.describe(lang),
         );
         Some(if problems.len() == 1 {
             one
         } else {
-            lang.pick(
-                format!(
-                    "サブツールのファイルを {} 件読めません。{one}",
-                    problems.len()
-                ),
-                format!("Cannot read {} sub tool files. {one}", problems.len()),
+            lang.f(
+                "subtool-cannot-read-sub-tool-files",
+                &[("problems", &problems.len()), ("one", &one)],
             )
         })
     }
@@ -533,13 +524,10 @@ impl AppState {
         };
         let source_name = list.name_in(source_key, lang);
         let base = match from {
-            None => lang.pick("プリセット", "Preset").to_owned(),
-            Some(_) => lang.pick(
-                format!("{source_name} のコピー"),
-                format!("{source_name} copy"),
-            ),
+            None => lang.t("subtool-preset").to_owned(),
+            Some(_) => lang.f("subtool-copy", &[("source_name", &source_name)]),
         };
-        let base = clean_name(&base).unwrap_or_else(|| lang.pick("プリセット", "Preset").into());
+        let base = clean_name(&base).unwrap_or_else(|| lang.t("subtool-preset").into());
         self.subtool_sync(tool);
         let Some(list) = self.subtool_list_mut(tool) else {
             return;

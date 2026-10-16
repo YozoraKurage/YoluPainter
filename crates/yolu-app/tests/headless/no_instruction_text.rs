@@ -3,10 +3,11 @@
 //! 画面の文字は名前・状態・短い理由だけで、説明はツールチップに置く。さらに、開発用の数（メモリの MiB・上げたタイル・三角形の数・
 //! 合成の方式）を、状態の帯とビューの隅に出さない。
 //!
-//! 見る範囲: `src/` の（試験を除く）ソースの文字列リテラルすべて。日本語と英語は `lang.pick("日本語", "English")` で並べて書くので、
-//! 両方を見る。ツールチップに渡す文字（`tooltip`・`on_hover_text` などの引数、`tooltip:` の欄、`let tip = …`、名前に tooltip・tip を
-//! 含む関数の中）は、説明を置く場所なので見ない。ツールチップの引数の場所は、ソースの関数の定義（引数の名前が tooltip・tip・hint）から
-//! 読む。
+//! 見る範囲: `src/` の（試験を除く）ソースの文字列リテラルすべてと、ソースがキーで引く .ftl の文（`lang.t("キー")`・
+//! `lang.f("キー", …)` の所に、そのキーの日英の文があるものとして見る。core の断りの理由の英語の文 `reason-*` も見る）。
+//! ツールチップに渡す文字（`tooltip`・`on_hover_text` などの引数、`tooltip:` の欄、`let tip = …`、名前に tooltip・tip を
+//! 含む関数の中）は、説明を置く場所なので見ない。ソースの直書きの文は、ツールチップの引数の場所を、ソースの関数の定義（引数の名前が
+//! tooltip・tip・hint）から読む。.ftl の文は、キーの終わりが `-tip` ならツールチップ。
 //! 見ない範囲: ツールチップ、組み立て方が上の書き方に当たらない文（変数に入れてから別の場所で出す文）。ボタンやメニューや選択肢の名前も文字列としては
 //! 見る（指示の言葉を含まなければ通り、含めば引っかかる）。名前そのものが指示の言葉（「押す」「Tap」など）を含む選択肢だけは、`ALLOWED_NAMES` に
 //! 原文で並べて許す（断りの文の `ALLOWED` とは別。文は入れない）。
@@ -242,9 +243,14 @@ struct Literal {
 struct Frame {
     kind: char,
     call: String,
+    /// `x.call(` の形（メソッドの呼び出し）
+    method: bool,
     arg: usize,
     field: Option<String>,
 }
+
+/// .ftl のキーで文を引く口（`lang.t("キー")`・`lang.f("キー", …)`。メソッドの呼び出しだけ）。
+const KEY_CALLS: [&str; 2] = ["t", "f"];
 
 /// ツールチップの名前か（`tooltip`・`tip`・`hint`・`help` を、`_` で分けた語に含む。`own_tip`・`mode_tooltip`・`RANGE_TIP_JA` など）。
 fn tooltip_name(name: &str) -> bool {
@@ -419,17 +425,41 @@ const LOG_ONLY: [&str; 1] = ["pen/log.rs"];
 fn collect_literals() -> Vec<Literal> {
     let sources = production_sources();
     let table = tooltip_parameters(&sources);
+    let keys = crate::ftl_keys::texts_by_key();
     let mut out = Vec::new();
     for (file, text) in &sources {
         if LOG_ONLY.contains(&file.as_str()) {
             continue;
         }
-        lex(file, text, &table, &mut out);
+        lex(file, text, &table, &keys, &mut out);
+    }
+    // core の断りの理由の英語の文（`lang.reason(…)` が理由の種類から引く。キーはソースに無い）。日本語は core の `Reason::ja` の
+    // 写しで、core の文はこの決まりの外（前の英語の表 `core_reason` を見ていたのと同じ範囲）
+    for message in crate::ftl_keys::messages()
+        .into_iter()
+        .filter(|m| m.lang == "en" && m.key.starts_with("reason-"))
+    {
+        let key = message.key;
+        for text in message.texts {
+            out.push(Literal {
+                file: format!("locales/en/reason.ftl ({key})"),
+                line: 0,
+                text,
+                tooltip: false,
+                function: None,
+            });
+        }
     }
     out
 }
 
-fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &mut Vec<Literal>) {
+fn lex(
+    file: &str,
+    src: &str,
+    table: &BTreeMap<String, BTreeSet<usize>>,
+    keys: &BTreeMap<String, Vec<String>>,
+    out: &mut Vec<Literal>,
+) {
     let chars: Vec<char> = src.chars().collect();
     let n = chars.len();
     let (mut i, mut line) = (0usize, 1usize);
@@ -438,6 +468,9 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
     let mut fns: Vec<(String, usize)> = Vec::new();
     let mut pending_fn: Option<String> = None;
     let mut last_ident: Option<String> = None;
+    // 直前の字句が `.` か・最後の名前が `.` の後ろか（`x.t(` を `t(` と見分ける）
+    let mut previous_was_dot = false;
+    let mut last_ident_method = false;
     let mut previous_was_fn = false;
     let mut let_name: Option<String> = None;
     let mut after_let = false;
@@ -572,15 +605,32 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
             tooltip |= let_name.as_deref().is_some_and(tooltip_name);
             let function = fns.last().map(|(name, _)| name.clone());
             tooltip |= function.as_deref().is_some_and(tooltip_name);
-            out.push(Literal {
-                file: file.to_owned(),
-                line: start_line,
-                text: buf,
-                tooltip,
-                function,
+            let key_call = frames.last().is_some_and(|f| {
+                f.kind == '(' && f.method && f.arg == 0 && KEY_CALLS.contains(&f.call.as_str())
             });
+            if key_call {
+                // .ftl のキー: そのキーの日英の文を、この場所の文として見る（ツールチップかはキーの `-tip`）
+                for text in keys.get(&buf).into_iter().flatten() {
+                    out.push(Literal {
+                        file: file.to_owned(),
+                        line: start_line,
+                        text: text.clone(),
+                        tooltip: buf.ends_with("-tip"),
+                        function: function.clone(),
+                    });
+                }
+            } else {
+                out.push(Literal {
+                    file: file.to_owned(),
+                    line: start_line,
+                    text: buf,
+                    tooltip,
+                    function,
+                });
+            }
             i = j;
             last_ident = None;
+            previous_was_dot = false;
             continue;
         }
         if c == '\'' {
@@ -624,6 +674,8 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
                 after_let = true;
             }
             previous_was_fn = word == "fn";
+            last_ident_method = previous_was_dot;
+            previous_was_dot = false;
             last_ident = Some(word);
             i = j;
             continue;
@@ -644,6 +696,7 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
                     } else {
                         String::new()
                     },
+                    method: c == '(' && last_ident.is_some() && last_ident_method,
                     arg: 0,
                     field: None,
                 });
@@ -689,6 +742,7 @@ fn lex(file: &str, src: &str, table: &BTreeMap<String, BTreeSet<usize>>, out: &m
         }
         if !c.is_whitespace() {
             previous_was_fn = false;
+            previous_was_dot = c == '.';
         }
         i += 1;
     }
@@ -888,7 +942,7 @@ fn the_status_bar_and_the_view_corners_show_no_developer_numbers() {
         "Cannot draw 3D (no GPU)",
     ];
     // 設定のウィンドウのメモリの予算の値（MiB は値の単位で、説明でも内部の数でもない。状態の帯・ビューの隅には出さない）
-    const SETTING_VALUES: [&str; 3] = ["自動（{mib} MiB）", "Auto ({mib} MiB)", "{n} MiB"];
+    const SETTING_VALUES: [&str; 3] = ["自動（{ $mib } MiB）", "Auto ({ $mib } MiB)", "{n} MiB"];
     let leaks: Vec<String> = literals
         .iter()
         .filter(|l| !l.tooltip && is_screen_text(&l.text))
@@ -1029,13 +1083,34 @@ fn the_scan_tells_tooltips_from_screen_text() {
             x.on_hover_text("押すとやめます");
         }
         fn mode_tooltip(lang: Lang) -> &'static str { "ドラッグで回す" }
+        fn keys() {
+            ui.label(lang.t("sample-name"));
+            ui.label(lang.f("sample-loaded", &[("name", &name)]));
+            icon(ui, lang.t("sample-name"), lang.t("sample-swap-tip"), true);
+            t("_Invisible", 0.0, "非表示", "Invisible");
+        }
         "#
         .to_owned(),
     )];
     let table = tooltip_parameters(&sources);
     assert_eq!(table.get("icon"), Some(&BTreeSet::from([2])));
+    let keys = BTreeMap::from([
+        (
+            "sample-name".to_owned(),
+            vec!["キーの名前".to_owned(), "Key name".to_owned()],
+        ),
+        (
+            "sample-loaded".to_owned(),
+            vec!["{ $name } を読み込みました".to_owned()],
+        ),
+        (
+            "sample-swap-tip".to_owned(),
+            vec!["押すと入れ替えます".to_owned()],
+        ),
+        ("_Invisible".to_owned(), vec!["キーではない".to_owned()]),
+    ]);
     let mut out = Vec::new();
-    lex("sample.rs", &sources[0].1, &table, &mut out);
+    lex("sample.rs", &sources[0].1, &table, &keys, &mut out);
     let tooltip_of = |text: &str| {
         out.iter()
             .find(|l| l.text == text)
@@ -1049,6 +1124,23 @@ fn the_scan_tells_tooltips_from_screen_text() {
     assert!(tooltip_of("ドラッグして動かす"));
     assert!(tooltip_of("押すとやめます"));
     assert!(tooltip_of("ドラッグで回す"));
+    // .ftl のキー: キーの文を、引いた所の文として見る（ツールチップかはキーの `-tip`）。キーの文字そのものは見ない
+    assert!(!tooltip_of("キーの名前") && !tooltip_of("Key name"));
+    assert!(!tooltip_of("{ $name } を読み込みました"));
+    assert!(tooltip_of("押すと入れ替えます"));
+    assert_eq!(out.iter().filter(|l| l.text == "キーの名前").count(), 2);
+    assert!(out.iter().all(|l| !l.text.starts_with("sample-")));
+    assert_eq!(
+        out.iter()
+            .find(|l| l.text == "Key name")
+            .unwrap()
+            .function
+            .as_deref(),
+        Some("keys")
+    );
+    // メソッドでない `t(…)`（効果の表の関数など）はキーとして読まない
+    assert!(out.iter().any(|l| l.text == "_Invisible"));
+    assert!(out.iter().all(|l| l.text != "キーではない"));
 }
 
 /// 試験を除くのは `#[cfg(test)]` を付けた項目だけで、その後ろの本番のコードは見張りの対象に残る（`view3d/pose.rs` は、試験用の関数 1 つの

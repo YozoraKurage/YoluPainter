@@ -234,7 +234,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         Rect::from_min_max(pos2(rest.left() + left_w + 6.0, rest.top()), rest.max);
     // 1 行の不透明度のスライダーは、名前と値（幅広の数字）と左右の余白が要る。収まらないほど狭いときは、名前を詰める代わりに
     // 合成モードの下の行へ積み、名前を詰めずに出す
-    let opacity_label = lang.pick("不透明度", "Opacity");
+    let opacity_label = lang.t("panels-opacity");
     let opacity_need = {
         let p = ui.painter();
         w::text_width(p, opacity_label, t::LABEL) + w::text_width(p, "100%", t::VALUE) + 8.0 + 14.0
@@ -249,19 +249,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         let name = m2::channel_name(lang, &app.session.doc, channel);
         let (blend_tip, opacity_tip) = if own {
             (
-                lang.pick(
-                    format!("{name} だけの合成モード"),
-                    format!("Blend mode ({name} only)"),
-                ),
-                lang.pick(
-                    format!("{name} だけの不透明度"),
-                    format!("Opacity ({name} only)"),
-                ),
+                lang.f("panels-blend-mode-only-tip", &[("name", &name)]),
+                lang.f("panels-opacity-only-tip", &[("name", &name)]),
             )
         } else {
             (
-                lang.pick("合成モード", "Blend mode").to_owned(),
-                lang.pick("レイヤーの不透明度", "Layer opacity").to_owned(),
+                lang.t("panels-blend-mode-tip").to_owned(),
+                lang.t("panels-layer-opacity-tip").to_owned(),
             )
         };
         let (response, b) = w::dropdown(
@@ -424,7 +418,7 @@ const TOOLBAR_BUTTONS: usize = 11;
 
 /// クリッピングの切り替えの名前（ツールチップと、試験・読み上げの名前）。
 pub fn clipping_name(lang: crate::lang::Lang) -> &'static str {
-    lang.pick("下のレイヤーでクリッピング", "Clip to the Layer Below")
+    lang.t("panels-clip-to-the-layer-below")
 }
 
 /// クリッピングのボタンのツールチップ（押せないときは名前に理由を添える。試験・読み上げの名前も同じ）。
@@ -462,18 +456,9 @@ pub fn clipping_state(app: &AppState) -> (bool, Option<&'static str>) {
     {
         (false, None)
     } else if parent.is_some() {
-        (
-            false,
-            Some(lang.pick(
-                "グループの中で一番下のレイヤーです",
-                "Bottom layer of its group",
-            )),
-        )
+        (false, Some(lang.t("panels-bottom-layer-of-its-group")))
     } else {
-        (
-            false,
-            Some(lang.pick("一番下のレイヤーです", "Bottom layer")),
-        )
+        (false, Some(lang.t("panels-bottom-layer")))
     }
 }
 
@@ -526,7 +511,7 @@ fn toolbar(
         next(),
         "layers.add",
         "add",
-        lang.pick("新規レイヤー", "New Layer"),
+        lang.t("panels-new-layer-tip"),
         false,
         enabled,
         icon(18.0),
@@ -541,7 +526,7 @@ fn toolbar(
         b,
         "layers.fill",
         "format_color_fill",
-        lang.pick("新規塗りつぶしレイヤー", "New Fill Layer"),
+        lang.t("panels-new-fill-layer-tip"),
         false,
         enabled,
         icon(17.0),
@@ -556,7 +541,7 @@ fn toolbar(
         b,
         "layers.adjustment",
         "tune",
-        lang.pick("新規調整レイヤー", "New Adjustment Layer"),
+        lang.t("panels-new-adjustment-layer-tip"),
         false,
         enabled,
         icon(17.0),
@@ -602,7 +587,7 @@ fn toolbar(
         next(),
         "layers.group",
         "folder",
-        lang.pick("レイヤーをグループ化", "Group Layers"),
+        lang.t("panels-group-layers-tip"),
         false,
         has,
         icon(17.0),
@@ -612,9 +597,9 @@ fn toolbar(
         app.apply(Action::M2(Edit::GroupSelected));
     }
     let mask_tip = if has_mask {
-        lang.pick("レイヤーマスクを編集", "Edit Layer Mask")
+        lang.t("panels-edit-layer-mask-tip")
     } else {
-        lang.pick("レイヤーマスクを追加", "Add Layer Mask")
+        lang.t("panels-add-layer-mask-tip")
     };
     if w::icon_button(
         ui,
@@ -661,7 +646,7 @@ fn toolbar(
         button(x),
         "layers.up",
         "expand_less",
-        lang.pick("レイヤーを上へ", "Move Layer Up"),
+        lang.t("panels-move-layer-up-tip"),
         false,
         has,
         icon(18.0),
@@ -675,7 +660,7 @@ fn toolbar(
         button(x + pitch),
         "layers.down",
         "expand_more",
-        lang.pick("レイヤーを下へ", "Move Layer Down"),
+        lang.t("panels-move-layer-down-tip"),
         false,
         has,
         icon(18.0),
@@ -689,7 +674,7 @@ fn toolbar(
         button(x + pitch * 2.0),
         "layers.delete",
         "delete",
-        lang.pick("レイヤーを削除", "Delete Layer"),
+        lang.t("panels-delete-layer-tip"),
         false,
         has && can_delete,
         icon(17.0),
@@ -956,16 +941,16 @@ fn lock_mark(
         pos2(row.right() - 24.0, row.top()),
         vec2(20.0, row.height()),
     );
-    let names = lock_names(lang, effective).join(lang.pick("、", ", "));
+    let names = lock_names(lang, effective).join(lang.t("panels-text"));
     let mut tip = if full {
-        lang.pick("ロック: すべて", "Locked: all").to_owned()
+        lang.t("panels-locked-all-tip").to_owned()
     } else {
-        format!("{}: {names}", lang.pick("ロック", "Locked"))
+        format!("{}: {names}", lang.t("panels-locked-tip"))
     };
     let enabled = app.can_edit();
     let own_locked = own != LayerLocks::NONE;
     if !own_locked {
-        tip.push_str(lang.pick("（グループから）", " (from its group)"));
+        tip.push_str(lang.t("panels-from-its-group"));
     }
     let response = ui.interact(
         mark,
@@ -1162,9 +1147,9 @@ fn layer_row(
             "visibility_off"
         },
         if visible {
-            lang.pick("非表示にする", "Hide")
+            lang.t("panels-hide-tip")
         } else {
-            lang.pick("表示する", "Show")
+            lang.t("panels-show-tip")
         },
         false,
         enabled,
@@ -1187,9 +1172,9 @@ fn layer_row(
                 "expand_more"
             },
             if collapsed {
-                lang.pick("グループを開く", "Expand Group")
+                lang.t("panels-expand-group-tip")
             } else {
-                lang.pick("グループを閉じる", "Collapse Group")
+                lang.t("panels-collapse-group-tip")
             },
             false,
             true,
@@ -1217,7 +1202,7 @@ fn layer_row(
             Sense::hover()
         },
     );
-    let thumb_label = lang.pick("レイヤーの画素", "Layer pixels");
+    let thumb_label = lang.t("panels-layer-pixels");
     thumbr.widget_info(|| {
         WidgetInfo::selected(WidgetType::Button, enabled, pixels_target, thumb_label)
     });
@@ -1229,10 +1214,7 @@ fn layer_row(
         open_layer_menu(app, ctx, id, in_selection, thumbr.interact_pointer_pos());
     }
     if has_mask {
-        let _ = thumbr.on_hover_text(lang.pick(
-            "レイヤーの画素（押すと画素が対象）",
-            "Layer pixels (click to target the pixels)",
-        ));
+        let _ = thumbr.on_hover_text(lang.t("panels-layer-pixels-click-to-target-tip"));
     }
     // マスク（押すとマスクが対象。右クリックでマスクのメニュー）
     if has_mask {
@@ -1293,10 +1275,7 @@ fn layer_row(
             );
             mark.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, &count));
         }
-        let tip = lang.pick(
-            "レイヤーマスク（押すとマスクが対象）",
-            "Layer mask (click to target the mask)",
-        );
+        let tip = lang.t("panels-layer-mask-click-to-target-tip");
         let hover = match hidden_effects {
             0 => tip.to_owned(),
             n => format!("{tip}\n{}", mask_effects_tip(lang, n)),
@@ -1390,10 +1369,7 @@ fn layer_row(
             ui.make_persistent_id(("layer.nochannel", id.0)),
             Sense::hover(),
         )
-        .on_hover_text(lang.pick(
-            "このレイヤーは描くチャンネルを使っていません",
-            "This layer does not use the paint channel",
-        ));
+        .on_hover_text(lang.t("panels-this-layer-does-not-use-tip"));
     }
     // 右端の印: パスで描かれたレイヤー（手では描けない。ラスタライズで普通のレイヤーになる）
     if has_path {
@@ -1405,10 +1381,7 @@ fn layer_row(
             ui.make_persistent_id(("layer.path", id.0)),
             Sense::hover(),
         )
-        .on_hover_text(lang.pick(
-            "パスで描かれたレイヤー（手では描けません。ラスタライズで普通のレイヤーになります）",
-            "Drawn by a path (it cannot be painted by hand; Rasterize makes it a normal layer)",
-        ));
+        .on_hover_text(lang.t("panels-drawn-by-a-path-it-tip"));
     }
     // 右端の印: テキストレイヤー（手では描けない。ラスタライズで普通のレイヤーになる）
     if has_text {
@@ -1420,10 +1393,7 @@ fn layer_row(
             ui.make_persistent_id(("layer.text", id.0)),
             Sense::hover(),
         )
-        .on_hover_text(lang.pick(
-            "テキストレイヤー（文字を打ち直せます。手では描けません。ラスタライズで普通のレイヤーになります）",
-            "Text layer (the text stays editable; it cannot be painted by hand; Rasterize makes it a normal layer)",
-        ));
+        .on_hover_text(lang.t("panels-text-layer-the-text-stays-tip"));
     }
     // 右端の印: Live Link で入れた元の絵の読み方（理由はツールチップ）
     if let Some(note) = original_note {

@@ -69,7 +69,7 @@ pub const REFUSAL_PNG_SIZE: &str = "画像の 1 辺は 1〜8192 です";
 
 /// 16 ビットの PNG を 8 ビットへ丸めて使ったときの知らせ（使う・置くの知らせに足す）。
 pub fn rounded_note(lang: Lang) -> &'static str {
-    lang.pick("16 bit を 8 bit にしました", "Reduced from 16 to 8 bits")
+    lang.t("library-reduced-from-16-to-8")
 }
 
 pub fn library_id(rel: &str) -> String {
@@ -100,21 +100,15 @@ impl Source {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Source::Project => lang.pick("プロジェクト", "Project"),
-            Source::Library => lang.pick("ライブラリ", "Library"),
+            Source::Project => lang.t("library-project"),
+            Source::Library => lang.t("library-library"),
         }
     }
 
     pub fn tooltip(self, lang: Lang) -> &'static str {
         match self {
-            Source::Project => lang.pick(
-                "このプロジェクトのアセット（.ylp に保存される）",
-                "This project's assets (saved in the .ylp)",
-            ),
-            Source::Library => lang.pick(
-                "個人のライブラリ（フォルダ。ほかのプロジェクトからも使える）",
-                "Your library (a folder, shared by your projects)",
-            ),
+            Source::Project => lang.t("library-this-project-s-assets-saved-tip"),
+            Source::Library => lang.t("library-your-library-a-folder-shared-tip"),
         }
     }
 }
@@ -339,15 +333,9 @@ impl LibraryState {
     /// 次の書き込みを始められない理由（書き込みが走っている間。やめた書き込みのスレッドが終わるまでも）。
     pub fn busy_reason(&self, lang: Lang) -> Option<&'static str> {
         if self.write.is_some() {
-            Some(lang.pick(
-                "ライブラリへ書き込み中です",
-                "Already writing to the library",
-            ))
+            Some(lang.t("library-already-writing-to-the-library"))
         } else if self.running.load(Ordering::SeqCst) > 0 {
-            Some(lang.pick(
-                "やめた書き込みを終えています",
-                "Finishing the cancelled write",
-            ))
+            Some(lang.t("library-finishing-the-cancelled-write"))
         } else {
             None
         }

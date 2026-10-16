@@ -1,5 +1,6 @@
 //! 画面の文に開発の言葉を置かない（試作の名残・内部の名前・実装の用語）。`no_instruction_text.rs` が操作の説明文を見るのと同じく、
-//! `src/` の（試験を除く）ソースの文字列リテラルを見る。ユーザーが読む文は、名前・状態・短い理由だけにする。
+//! `src/` の（試験を除く）ソースの文字列リテラルと、画面の文の .ftl（`locales/<言語>/*.ftl`）の文を見る。ユーザーが読む文は、
+//! 名前・状態・短い理由だけにする。
 //!
 //! 見ない範囲: コメント、`#[cfg(test)]` から後ろ・`tests.rs`、`expect(…)`・`panic!(…)` などの開発者向けの文、`=>` の左
 //! （`lang/errors.rs` の、core のエラー文を英語にする表のキー。core の文そのものを直すときに、表と一緒に変える）。
@@ -92,7 +93,35 @@ fn literals(line: &str, with_keys: bool) -> Vec<String> {
 }
 
 fn scan(root: &Path) -> Vec<String> {
-    scan_words(root, &BANNED, false)
+    let mut found = scan_words(root, &BANNED, false);
+    // core の断りの理由の日本語（`reason-*`）は core の `Reason::ja` の写しで、core の文はこの決まりの外（英語は見る）
+    found.extend(scan_ftl(
+        |message| !(message.lang == "ja" && message.key.starts_with("reason-")),
+        |text| banned_in(text, &BANNED),
+    ));
+    found
+}
+
+/// 画面の文の .ftl の文のうち `which` の物で、`hit` が（言葉, 理由）を返したものを「ファイル: キー」つきで集める。
+fn scan_ftl(
+    which: impl Fn(&crate::ftl_keys::Message) -> bool,
+    hit: impl Fn(&str) -> Option<(String, String)>,
+) -> Vec<String> {
+    let mut found = Vec::new();
+    for message in crate::ftl_keys::messages() {
+        if !which(&message) {
+            continue;
+        }
+        for text in &message.texts {
+            if let Some((word, why)) = hit(text) {
+                found.push(format!(
+                    "{}: {}: 「{word}」（{why}）: {text}",
+                    message.file, message.key
+                ));
+            }
+        }
+    }
+    found
 }
 
 fn scan_words(root: &Path, banned: &[(&str, &str)], with_keys: bool) -> Vec<String> {
@@ -219,6 +248,11 @@ fn no_message_in_any_crate_uses_a_literal_translation_word() {
                 .map(|f| format!("{name}/{f}")),
         );
     }
+    found.extend(
+        scan_ftl(|_| true, |text| banned_in(text, &EVERYWHERE))
+            .into_iter()
+            .map(|f| format!("yolu-app/{f}")),
+    );
     assert!(
         found.is_empty(),
         "文に英語の直訳の言い回し（画布・層・島・窓・道具・字体）と分かりにくい言葉（装置・機械・機材）:\n{}",
@@ -251,6 +285,11 @@ fn no_message_in_any_crate_calls_the_project_or_the_canvas_a_document() {
                 .map(|f| format!("{name}/{f}")),
         );
     }
+    found.extend(
+        scan_ftl(|_| true, |text| banned_in(text, &banned))
+            .into_iter()
+            .map(|f| format!("yolu-app/{f}")),
+    );
     assert!(found.is_empty(), "文に「文書」:\n{}", found.join("\n"));
 }
 
@@ -280,6 +319,11 @@ fn no_screen_text_in_any_crate_calls_the_projects_assets_a_shelf() {
                 .map(|f| format!("{name}/{f}")),
         );
     }
+    found.extend(
+        scan_ftl(|_| true, shelf_word)
+            .into_iter()
+            .map(|f| format!("yolu-app/{f}")),
+    );
     assert!(found.is_empty(), "文に「棚」・shelf:\n{}", found.join("\n"));
 }
 

@@ -170,8 +170,7 @@ fn preset_row(ui: &mut Ui, app: &mut AppState, tool: Tool, row: Rect, view: RowV
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, name));
     let tip = if modified {
-        app.lang
-            .pick(format!("{name}（変更あり）"), format!("{name} (modified)"))
+        app.lang.f("panels-modified-tip", &[("name", &name)])
     } else {
         name.to_owned()
     };
@@ -334,12 +333,9 @@ fn preset_footer(ui: &mut Ui, app: &mut AppState, tool: Tool, bar: Rect) {
         ("subtool.delete", tool.id()),
         "delete",
         if user {
-            lang.pick("サブツールを削除", "Delete Sub Tool")
+            lang.t("panels-delete-sub-tool-tip")
         } else {
-            lang.pick(
-                "組み込みのサブツールは消せません",
-                "Built-in sub tools cannot be deleted",
-            )
+            lang.t("panels-built-in-sub-tools-cannot-tip")
         },
         false,
         free && user,
@@ -355,10 +351,7 @@ fn preset_footer(ui: &mut Ui, app: &mut AppState, tool: Tool, bar: Rect) {
         button(x),
         ("subtool.add", tool.id()),
         "add",
-        lang.pick(
-            "今の設定を新しいサブツールに",
-            "Add the Current Settings as a Sub Tool",
-        ),
+        lang.t("panels-add-the-current-settings-as-2-tip"),
         false,
         free,
         18.0,
@@ -373,7 +366,7 @@ fn preset_footer(ui: &mut Ui, app: &mut AppState, tool: Tool, bar: Rect) {
         button(x),
         ("subtool.duplicate", tool.id()),
         "content_copy",
-        lang.pick("サブツールを複製", "Duplicate Sub Tool"),
+        lang.t("panels-duplicate-sub-tool-tip"),
         false,
         free,
         16.0,
@@ -389,12 +382,9 @@ fn preset_footer(ui: &mut Ui, app: &mut AppState, tool: Tool, bar: Rect) {
         ("subtool.revert", tool.id()),
         "restart_alt",
         if modified {
-            lang.pick(
-                "元の設定に戻す（変更あり）",
-                "Revert to the original settings (modified)",
-            )
+            lang.t("panels-revert-to-the-original-settings-tip")
         } else {
-            lang.pick("元の設定に戻す", "Revert to the original settings")
+            lang.t("panels-revert-to-the-original-settings-2-tip")
         },
         false,
         free && modified,

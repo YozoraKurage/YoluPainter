@@ -126,10 +126,7 @@ impl AppState {
                 self.gradient.between = true;
                 self.info(
                     Source::Gradient,
-                    lang.pick(
-                        "現在のマテリアルを終点にしました",
-                        "The current material is the end",
-                    ),
+                    lang.t("gradient-the-current-material-is-the"),
                 );
             }
             GradientOp::Apply { start, end } => self.gradient_paint(start, end),
@@ -164,22 +161,13 @@ impl AppState {
     pub(crate) fn gradient_target(&mut self) -> Option<(yolu_core::LayerId, bool)> {
         let lang = self.lang;
         let Some(id) = self.session.selected_layer else {
-            self.refuse(
-                Source::Gradient,
-                lang.pick("描くレイヤーがありません。", "No layer to paint on."),
-            );
+            self.refuse(Source::Gradient, lang.t("gradient-no-layer-to-paint-on"));
             return None;
         };
         let masked = self.m2.edit_mask;
         let kind = self.session.doc.layer(id).map(|l| l.kind());
         if !masked && kind != Some(LayerKind::Raster) {
-            self.refuse(
-                Source::Gradient,
-                lang.pick(
-                    "ペイントレイヤーかマスクだけにグラデーションを塗れます",
-                    "Only a paint layer or a mask takes a gradient",
-                ),
-            );
+            self.refuse(Source::Gradient, lang.t("gradient-only-a-paint-layer-or"));
             return None;
         }
         Some((id, masked))
@@ -250,14 +238,8 @@ impl AppState {
             )
         };
         match result {
-            Ok(true) => self.info(
-                Source::Gradient,
-                lang.pick("グラデーションを塗りました", "Gradient applied"),
-            ),
-            Ok(false) => self.refuse(
-                Source::Gradient,
-                lang.pick("塗る所がありません", "Nothing to paint there"),
-            ),
+            Ok(true) => self.info(Source::Gradient, lang.t("gradient-gradient-applied")),
+            Ok(false) => self.refuse(Source::Gradient, lang.t("gradient-nothing-to-paint-there")),
             Err(e) => self.notify(
                 crate::notice::Kind::of_core(&e),
                 Source::Gradient,

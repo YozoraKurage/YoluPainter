@@ -160,7 +160,7 @@ impl Wireframe {
 
 pub fn menu_entry(app: &AppState) -> crate::ui::menu::Entry<Action> {
     crate::ui::menu::Entry::item(
-        app.lang.pick("UV ワイヤーフレーム", "UV Wireframe"),
+        app.lang.t("uv_wireframe-uv-wireframe"),
         Action::ToggleUvWireframe,
     )
     .checked(app.prefs.settings.uv_wireframe)
@@ -174,13 +174,10 @@ fn tip(app: &AppState) -> String {
         app.region_missing_reason()
     } else if app.prefs.settings.uv_wireframe && app.uv_wireframe.truncated {
         app.lang
-            .pick(
-                "UV の辺が表示の上限を超えています",
-                "UV edges exceed the display limit",
-            )
+            .t("uv_wireframe-uv-edges-exceed-the-display-tip")
             .into()
     } else {
-        app.lang.pick("UV ワイヤーフレーム", "UV Wireframe").into()
+        app.lang.t("uv_wireframe-uv-wireframe-tip").into()
     }
 }
 

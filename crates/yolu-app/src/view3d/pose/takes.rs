@@ -310,10 +310,7 @@ fn overlay(
 /// 「「名前」のフレーム N」（知らせの頭。数で終わるので、続く語との間に空白を置く）。
 fn what(lang: Lang, name: &str, frame: i64) -> String {
     let name = lang.quote(name);
-    lang.pick(
-        format!("{name}のフレーム {frame}"),
-        format!("frame {frame} of {name}"),
-    )
+    lang.f("view3d-frame-of", &[("name", &name), ("frame", &frame)])
 }
 
 /// フレームの初めに: 求め終えたテイクのポーズを当てて知らせる。描いている間・続けて変えている操作の途中は、終わるまで待つ。
@@ -349,18 +346,12 @@ pub fn poll(app: &mut AppState) {
     match applied {
         Ok(()) => app.info(
             Source::Pose,
-            lang.pick(
-                format!("{head} をポーズにしました。"),
-                format!("Posed from {head}."),
-            ),
+            lang.f("view3d-posed-from", &[("head", &head)]),
         ),
         Err(ViewError::Cancelled) => {}
         Err(e) => {
             let text = lang.with_reason(
-                lang.pick(
-                    format!("{head} をポーズにできません"),
-                    format!("Cannot pose from {head}"),
-                ),
+                lang.f("view3d-cannot-pose-from", &[("head", &head)]),
                 lang.view_error(&e),
             );
             app.notify(e.notice_kind(), Source::Pose, text);

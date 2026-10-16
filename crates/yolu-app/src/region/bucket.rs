@@ -112,13 +112,9 @@ fn apply(
                 }
             }
             if changed {
-                app.info(Source::Fill, app.lang.pick("塗りました。", "Filled."));
+                app.info(Source::Fill, app.lang.t("region-filled"));
             } else {
-                app.refuse(
-                    Source::Fill,
-                    app.lang
-                        .pick("そこには塗るものがありません。", "Nothing to fill there."),
-                );
+                app.refuse(Source::Fill, app.lang.t("region-nothing-to-fill-there"));
             }
         }
         Err(e) => app.notify(
@@ -131,7 +127,7 @@ fn apply(
 
 fn refuse_busy(app: &mut AppState) -> bool {
     if app.region.job.is_some() || app.region.leftover_drag.is_some() {
-        app.refuse(Source::Fill, app.lang.pick("塗りつぶし中", "Filling"));
+        app.refuse(Source::Fill, app.lang.t("region-filling"));
         true
     } else {
         false
@@ -157,11 +153,7 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
             .iter()
             .any(|id| app.session.doc.layer(*id).is_some())
     {
-        app.refuse(
-            Source::Fill,
-            app.lang
-                .pick("参照レイヤーがありません", "No reference layers"),
-        );
+        app.refuse(Source::Fill, app.lang.t("region-no-reference-layers"));
         return;
     }
     if app.session.doc.width() as u64 * app.session.doc.height() as u64
@@ -186,11 +178,7 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
         let _ = tx.send(color::compute(&snapshot, &req, cancel.flag()));
     });
     let Ok(worker) = spawn else {
-        app.fail(
-            Source::Fill,
-            app.lang
-                .pick("塗りつぶしを始められません。", "Cannot start the fill."),
-        );
+        app.fail(Source::Fill, app.lang.t("region-cannot-start-the-fill"));
         return;
     };
     app.region.job = Some(Job {
@@ -200,7 +188,7 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
         layer,
         style,
     });
-    app.info(Source::Fill, app.lang.pick("塗りつぶし中", "Filling"));
+    app.info(Source::Fill, app.lang.t("region-filling"));
 }
 
 pub fn poll(app: &mut AppState, ctx: &Context) {
@@ -211,11 +199,7 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
         // この Esc は仕事の取消に使った（キャンバスが同じ Esc で選択範囲を解除しない）
         crate::ui::window::note_escape_taken(ctx);
         app.region.job = None;
-        app.info(
-            Source::Fill,
-            app.lang
-                .pick("塗りつぶしを取り消しました。", "Fill cancelled."),
-        );
+        app.info(Source::Fill, app.lang.t("region-fill-cancelled"));
         return;
     }
     let job = app.region.job.as_ref().unwrap();
@@ -230,19 +214,12 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
             let style = std::mem::replace(&mut finished.style, Style::capture(app, layer));
             match paint_gate(app) {
                 Ok(now) if now == layer => apply(app, layer, style, result),
-                _ => app.warn(
-                    Source::Fill,
-                    app.lang
-                        .pick("塗りつぶしを取り消しました。", "Fill cancelled."),
-                ),
+                _ => app.warn(Source::Fill, app.lang.t("region-fill-cancelled")),
             }
         }
         Polled::Lost => {
             app.region.job = None;
-            app.fail(
-                Source::Fill,
-                app.lang.pick("塗りつぶしに失敗しました", "Fill failed"),
-            );
+            app.fail(Source::Fill, app.lang.t("region-fill-failed"));
         }
         Polled::Empty => ctx.request_repaint_after(std::time::Duration::from_millis(16)),
     }
@@ -353,11 +330,7 @@ pub fn drag_surface(app: &mut AppState, rect: Rect, at: Pos2) {
     if drag.points.len() + added.len() > MAX_DRAG_POINTS {
         app.region.leftover_drag = None;
         app.view3d.stroke_ended();
-        app.refuse(
-            Source::Fill,
-            app.lang
-                .pick("ストロークが長すぎます", "Stroke is too long"),
-        );
+        app.refuse(Source::Fill, app.lang.t("region-stroke-is-too-long"));
         return;
     }
     drag.points.extend(added);
@@ -457,11 +430,7 @@ pub fn drag(app: &mut AppState, view: &CanvasView, at: Pos2) {
         if drag.points.len() >= MAX_DRAG_POINTS {
             app.region.leftover_drag = None;
             app.canvas.stroke = None;
-            app.refuse(
-                Source::Fill,
-                app.lang
-                    .pick("ストロークが長すぎます", "Stroke is too long"),
-            );
+            app.refuse(Source::Fill, app.lang.t("region-stroke-is-too-long"));
         } else {
             drag.points.push(p);
         }

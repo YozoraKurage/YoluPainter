@@ -36,12 +36,9 @@ pub fn material_from_link(key: &LinkKey) -> MaterialRef {
 
 pub fn describe_material_in(material: &MaterialRef, lang: crate::lang::Lang) -> String {
     match material {
-        MaterialRef::Material { name, .. } => lang.pick(
-            format!("マテリアル「{name}」"),
-            format!("Material “{name}”"),
-        ),
-        MaterialRef::Unassigned => lang.pick("マテリアルなし", "No material").into(),
-        MaterialRef::PendingSlot(_) => lang.pick("マテリアルに未割り当て", "Unassigned").into(),
+        MaterialRef::Material { name, .. } => lang.f("sets-material", &[("name", &name)]),
+        MaterialRef::Unassigned => lang.t("sets-no-material").into(),
+        MaterialRef::PendingSlot(_) => lang.t("sets-unassigned").into(),
     }
 }
 
@@ -53,15 +50,12 @@ pub fn material_tooltip_in(material: &MaterialRef, lang: crate::lang::Lang) -> S
             asset: Some(a),
         } => {
             let guid = &a.guid[..a.guid.len().min(8)];
-            lang.pick(
-                format!("マテリアル「{name}」（アセット {guid}…・{}）", a.file_id),
-                format!("Material “{name}” (asset {guid}… · {})", a.file_id),
+            lang.f(
+                "sets-material-asset-tip",
+                &[("name", &name), ("guid", &guid), ("file_id", &a.file_id)],
             )
         }
-        MaterialRef::PendingSlot(n) => lang.pick(
-            format!("マテリアルに未割り当て（スロット {n}）"),
-            format!("Unassigned (slot {n})"),
-        ),
+        MaterialRef::PendingSlot(n) => lang.f("sets-unassigned-slot-tip", &[("n", &n)]),
         other => describe_material_in(other, lang),
     }
 }
@@ -552,9 +546,9 @@ impl BindReport {
     pub fn limit_text(&self, lang: crate::lang::Lang) -> Option<String> {
         let limit = crate::newproject::MAX_SETS;
         (self.skipped > 0).then(|| {
-            lang.pick(
-                format!("テクスチャセットが上限（{limit}）に達したため、{} 個のマテリアルにはセットを作っていません。", self.skipped),
-                format!("Texture set limit ({limit}) reached: {} material(s) have no set.", self.skipped),
+            lang.f(
+                "sets-texture-set-limit-reached-material",
+                &[("limit", &limit), ("skipped", &self.skipped)],
             )
         })
     }
@@ -605,13 +599,7 @@ impl AppState {
     /// 今のセットを替える（描いている間は断る）。表示（拡大・回転）と選んだレイヤーはセットごとに覚える。
     pub fn switch_set(&mut self, index: usize) -> Result<(), String> {
         if index >= self.session.sets.len() {
-            return Err(self
-                .lang
-                .pick(
-                    "そのテクスチャセットはありません。",
-                    "Texture set not found.",
-                )
-                .into());
+            return Err(self.lang.t("sets-texture-set-not-found").into());
         }
         if index == self.session.sets.current_index() {
             return Ok(());
@@ -834,13 +822,7 @@ impl AppState {
     pub fn rename_set(&mut self, uid: u32, name: &str) -> Result<(), String> {
         let name = name.trim();
         let Some(i) = self.session.sets.index_of(uid) else {
-            return Err(self
-                .lang
-                .pick(
-                    "そのテクスチャセットはありません。",
-                    "Texture set not found.",
-                )
-                .into());
+            return Err(self.lang.t("sets-texture-set-not-found").into());
         };
         if let Some(reason) = &self.session.sets.list[i].read_only {
             return Err(crate::lang::refusals::read_only_set(self.lang, reason));
@@ -849,13 +831,7 @@ impl AppState {
             || name.chars().any(|c| c.is_control())
             || name.encode_utf16().count() > 256
         {
-            return Err(self
-                .lang
-                .pick(
-                    "テクスチャセットの名前は 1〜256 文字で、制御文字は使えません。",
-                    "Invalid texture set name (1–256 characters, no control characters).",
-                )
-                .into());
+            return Err(self.lang.t("sets-invalid-texture-set-name-1").into());
         }
         let upper = name.to_uppercase();
         if self
@@ -865,10 +841,9 @@ impl AppState {
             .iter()
             .any(|s| s.uid != uid && s.name.to_uppercase() == upper)
         {
-            return Err(self.lang.pick(
-                format!("「{name}」はほかのテクスチャセットと同じ名前です。"),
-                format!("Another texture set is already named {name}."),
-            ));
+            return Err(self
+                .lang
+                .f("sets-another-texture-set-is-already", &[("name", &name)]));
         }
         let set = &mut self.session.sets.list[i];
         if set.name != name {
@@ -888,15 +863,9 @@ impl AppState {
             return Err(crate::lang::refusals::during_stroke(lang).into());
         }
         if self.session.sets.len() >= crate::newproject::MAX_SETS {
-            return Err(lang.pick(
-                format!(
-                    "1 つのプロジェクトのテクスチャセットは {} までです。",
-                    crate::newproject::MAX_SETS
-                ),
-                format!(
-                    "A project has at most {} texture sets.",
-                    crate::newproject::MAX_SETS
-                ),
+            return Err(lang.f(
+                "sets-a-project-has-at-most",
+                &[("MAX_SETS", &crate::newproject::MAX_SETS)],
             ));
         }
         let groups = self
@@ -926,7 +895,7 @@ impl AppState {
             Some(g) => g.name.clone(),
             None => format!(
                 "{} {}",
-                lang.pick("テクスチャセット", "Texture Set"),
+                lang.t("sets-texture-set"),
                 self.session.sets.len() + 1
             ),
         };
@@ -947,10 +916,7 @@ impl AppState {
         self.switch_set(uid_index)?;
         self.info(
             Source::TextureSet,
-            lang.pick(
-                format!("テクスチャセット {name} を追加しました。"),
-                format!("Added the texture set {name}."),
-            ),
+            lang.f("sets-added-the-texture-set", &[("name", &name)]),
         );
         Ok(uid)
     }
@@ -994,12 +960,7 @@ impl AppState {
             return Ok(Vec::new());
         }
         if gone.len() >= self.session.sets.len() {
-            return Err(lang
-                .pick(
-                    "プロジェクトには少なくとも 1 つのテクスチャセットが要ります。",
-                    "A project keeps at least one texture set.",
-                )
-                .into());
+            return Err(lang.t("sets-a-project-keeps-at-least").into());
         }
         let current = self.session.sets.current_index();
         if gone.contains(&self.session.sets.current().uid) {

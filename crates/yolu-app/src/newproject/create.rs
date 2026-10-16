@@ -21,12 +21,7 @@ fn chosen_groups(
     }
     let chosen = win.chosen(count);
     if chosen.is_empty() {
-        return Err(lang
-            .pick(
-                "テクスチャセットが 1 つも選ばれていません",
-                "No texture set is chosen",
-            )
-            .into());
+        return Err(lang.t("newproject-no-texture-set-is-chosen").into());
     }
     Ok(chosen)
 }
@@ -45,17 +40,10 @@ pub(super) fn create_from_window(
         return Err(crate::lang::refusals::saving(lang).into());
     }
     if !win.is_ready() {
-        return Err(lang
-            .pick("モデルを準備できていません", "The model is not ready")
-            .into());
+        return Err(lang.t("newproject-the-model-is-not-ready").into());
     }
     if !RESOLUTIONS.contains(&win.resolution) {
-        return Err(lang
-            .pick(
-                "解像度が選べる大きさではありません",
-                "Choose one of the resolutions",
-            )
-            .into());
+        return Err(lang.t("newproject-choose-one-of-the-resolutions").into());
     }
     let groups = win.groups(app);
     let chosen = chosen_groups(win, groups.len(), lang)?;
@@ -135,36 +123,27 @@ fn install(
     app.replace_sets_with(sets, doc, false);
     // ウィンドウで選んだ解像度（Live Link の元の絵が、最初のセットの大きさを黙って替えない）
     app.session.resolution_chosen = true;
-    app.reset_project_identity(
-        lang.pick("名称未設定", "Untitled").into(),
-        ShelfState::default(),
-    );
+    app.reset_project_identity(lang.t("newproject-untitled").into(), ShelfState::default());
     app.sync_mesh_map_view();
     // 上限を超えるマテリアルがあれば、セットにならなかった数を言う（黙って落とさない）
     let over = if over_limit > 0 {
-        lang.pick(
-            format!("。上限のため {over_limit} 個のマテリアルはセットにならない"),
-            format!("; {over_limit} more materials are over the limit and get no set"),
+        lang.f(
+            "newproject-more-materials-are-over-the",
+            &[("over_limit", &over_limit)],
         )
     } else {
         String::new()
     };
     let created = match &model_name {
-        None => lang
-            .pick(
-                "モデルなしの新しいプロジェクトを作りました。",
-                "New project without a model created.",
-            )
-            .to_owned(),
-        Some(name) if sets_count == 1 => lang.pick(
-            format!("{name} の新しいプロジェクトを作りました。"),
-            format!("New project for {name}."),
-        ),
-        Some(name) => lang.pick(
-            format!(
-                "{name} の新しいプロジェクトを作りました（テクスチャセット {sets_count}{over}）。"
-            ),
-            format!("New project for {name} with {sets_count} texture sets{over}."),
+        None => lang.t("newproject-new-project-without-a-model").to_owned(),
+        Some(name) if sets_count == 1 => lang.f("newproject-new-project-for", &[("name", &name)]),
+        Some(name) => lang.f(
+            "newproject-new-project-for-with-texture",
+            &[
+                ("name", &name),
+                ("sets_count", &sets_count),
+                ("over", &over),
+            ],
         ),
     };
     if bake && has_model {

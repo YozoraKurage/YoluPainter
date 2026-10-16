@@ -200,7 +200,7 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
                     tab,
                     ("brush.group.add", slot),
                     "add",
-                    lang.pick("グループを追加", "Add Group"),
+                    lang.t("panels-add-group-tip"),
                     false,
                     editable,
                     15.0,
@@ -615,7 +615,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.delete",
         "delete",
-        lang.pick("ブラシを削除", "Delete Brush"),
+        lang.t("panels-delete-brush-tip"),
         false,
         free && layout && placed,
         17.0,
@@ -630,7 +630,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.catalog",
         "add",
-        lang.pick("ブラシを追加", "Add Brushes"),
+        lang.t("panels-add-brushes-tip"),
         app.toolset.catalog.open,
         free && layout,
         18.0,
@@ -645,10 +645,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.add",
         "copy_add",
-        lang.pick(
-            "今の設定を新しいブラシに",
-            "Add the Current Settings as a Brush",
-        ),
+        lang.t("panels-add-the-current-settings-as-tip"),
         false,
         free && layout,
         17.0,
@@ -664,10 +661,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
             button(x),
             "brush.import",
             "import",
-            lang.pick(
-                "ブラシを取り込む（ABR・GBR・GIH・VBR・PNG・PAT）",
-                "Import brushes (ABR, GBR, GIH, VBR, PNG, PAT)",
-            ),
+            lang.t("panels-import-brushes-abr-gbr-gih-tip"),
             app.brushes.import.is_busy(),
             !app.brushes.import.is_busy() && layout,
             17.0,
@@ -683,7 +677,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
             button(x),
             "brush.import_csp",
             "folder_open",
-            lang.pick("CLIP STUDIO から取り込む", "Import from CLIP STUDIO"),
+            lang.t("panels-import-from-clip-studio-tip"),
             app.brushes.csp.open,
             !app.brushes.import.is_busy() && layout,
             17.0,
@@ -699,7 +693,7 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         button(x),
         "brush.duplicate",
         "content_copy",
-        lang.pick("ブラシを複製", "Duplicate Brush"),
+        lang.t("panels-duplicate-brush-tip"),
         false,
         free && layout,
         16.0,
@@ -715,12 +709,9 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
         "brush.revert",
         "restart_alt",
         if modified {
-            lang.pick(
-                "元の設定に戻す（変更あり）",
-                "Revert to the original settings (modified)",
-            )
+            lang.t("panels-revert-to-the-original-settings-tip")
         } else {
-            lang.pick("元の設定に戻す", "Revert to the original settings")
+            lang.t("panels-revert-to-the-original-settings-2-tip")
         },
         false,
         free && modified,
@@ -811,22 +802,17 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     };
     let hardness_applies = super::brush_props::hardness_applies(app);
     let b = &mut app.brush;
-    let size_tip = lang.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])");
+    let size_tip = lang.t("panels-brush-diameter-and-tip");
     if let Some(v) = field(
         ui,
         next(),
         "tool.size",
-        SliderSpec::new(
-            lang.pick("直径", "Size"),
-            1.0,
-            256.0,
-            NumberFormat::int(" px"),
-        )
-        .tooltip(size_tip),
+        SliderSpec::new(lang.t("panels-size"), 1.0, 256.0, NumberFormat::int(" px"))
+            .tooltip(size_tip),
         b.radius * 2.0,
         Some((
             &mut b.pressure.size,
-            lang.pick("筆圧で直径を変える", "Pen pressure changes the size"),
+            lang.t("panels-pen-pressure-changes-the-size-tip"),
         )),
         editable,
     ) {
@@ -836,16 +822,11 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         ui,
         next(),
         "tool.opacity",
-        SliderSpec::new(
-            lang.pick("不透明度", "Opacity"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
+        SliderSpec::new(lang.t("panels-opacity"), 0.0, 100.0, NumberFormat::int("%")),
         b.opacity * 100.0,
         Some((
             &mut b.pressure.opacity,
-            lang.pick("筆圧で不透明度を変える", "Pen pressure changes the opacity"),
+            lang.t("panels-pen-pressure-changes-the-opacity-tip"),
         )),
         editable,
     ) {
@@ -856,19 +837,16 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         next(),
         "tool.hardness",
         SliderSpec::new(
-            lang.pick("硬さ", "Hardness"),
+            lang.t("panels-hardness"),
             0.0,
             100.0,
             NumberFormat::int("%"),
         )
-        .tooltip_reason(
-            (!hardness_applies)
-                .then(|| lang.pick("画像の筆先では効きません", "No effect on an image tip")),
-        ),
+        .tooltip_reason((!hardness_applies).then(|| lang.t("panels-no-effect-on-an-image"))),
         b.hardness * 100.0,
         Some((
             &mut app.m2.brush.influences.hardness.pressure.on,
-            lang.pick("筆圧で硬さを変える", "Pen pressure changes the hardness"),
+            lang.t("panels-pen-pressure-changes-the-hardness-tip"),
         )),
         editable && hardness_applies,
     ) {
@@ -878,16 +856,11 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         ui,
         next(),
         "tool.flow",
-        SliderSpec::new(
-            lang.pick("流量", "Flow"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
+        SliderSpec::new(lang.t("panels-flow"), 0.0, 100.0, NumberFormat::int("%")),
         b.flow * 100.0,
         Some((
             &mut b.pressure.flow,
-            lang.pick("筆圧で流量を変える", "Pen pressure changes the flow"),
+            lang.t("panels-pen-pressure-changes-the-flow-tip"),
         )),
         editable,
     ) {
@@ -897,12 +870,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         ui,
         next(),
         "tool.spacing",
-        SliderSpec::new(
-            lang.pick("間隔", "Spacing"),
-            1.0,
-            100.0,
-            NumberFormat::int("%"),
-        ),
+        SliderSpec::new(lang.t("panels-spacing"), 1.0, 100.0, NumberFormat::int("%")),
         b.spacing * 100.0,
         None,
         editable,
@@ -921,7 +889,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         Rect::from_min_max(row.min, pos2(detail.left() - 4.0, row.bottom())),
         "tool.stabilizer",
         SliderSpec::new(
-            lang.pick("手ぶれ補正", "Stabilizer"),
+            lang.t("panels-stabilizer"),
             0.0,
             200.0,
             NumberFormat::int(" px"),
@@ -938,7 +906,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
         detail,
         "tool.detail",
         "tune",
-        lang.pick("ブラシの詳細", "Brush Details"),
+        lang.t("panels-brush-details-tip"),
         open,
         true,
         16.0,
@@ -950,8 +918,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
     // 効果のブラシの主な値
     let tool_is_eraser = app.tool.erases();
     // ぼかしの半径と指先の強さは、3D の面のダブも同じ値を使う
-    let effect_off = tool_is_eraser
-        .then(|| lang.pick("消しゴムでは使えません", "Not available with the eraser"));
+    let effect_off = tool_is_eraser.then(|| lang.t("panels-not-available-with-the-eraser"));
     match app.m2.brush.effect {
         BrushEffect::Blur { radius } => {
             if let Some(v) = field(
@@ -959,7 +926,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
                 next(),
                 "tool.blur",
                 SliderSpec::new(
-                    lang.pick("ぼかしの半径", "Blur radius"),
+                    lang.t("panels-blur-radius"),
                     1.0,
                     64.0,
                     NumberFormat::int(" px"),
@@ -980,7 +947,7 @@ pub(super) fn tool_body(ui: &mut Ui, app: &mut AppState, area: Rect) {
                 next(),
                 "tool.smudge",
                 SliderSpec::new(
-                    lang.pick("指先の強さ", "Smudge strength"),
+                    lang.t("panels-smudge-strength"),
                     0.0,
                     100.0,
                     NumberFormat::int("%"),
@@ -1024,8 +991,8 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         next(150.0),
         "options.size",
         b.radius * 2.0,
-        &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px"))
-            .tooltip(l.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])"))
+        &SliderSpec::new(l.t("panels-size"), 1.0, 256.0, NumberFormat::int(" px"))
+            .tooltip(l.t("panels-brush-diameter-and-tip"))
             .enabled(editable),
     );
     if out.changed {
@@ -1036,13 +1003,8 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         next(130.0),
         "options.opacity",
         b.opacity * 100.0,
-        &SliderSpec::new(
-            l.pick("不透明度", "Opacity"),
-            0.0,
-            100.0,
-            NumberFormat::int("%"),
-        )
-        .enabled(editable),
+        &SliderSpec::new(l.t("panels-opacity"), 0.0, 100.0, NumberFormat::int("%"))
+            .enabled(editable),
     );
     if out.changed {
         b.opacity = out.value / 100.0;

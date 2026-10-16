@@ -175,11 +175,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, below: f32) {
                 response.hovered() || response.dragged(),
             );
             response.widget_info(|| {
-                WidgetInfo::labeled(
-                    WidgetType::Other,
-                    movable,
-                    lang.pick("視点の軸", "View axes"),
-                )
+                WidgetInfo::labeled(WidgetType::Other, movable, lang.t("view3d-view-axes"))
             });
             if response.dragged() && movable {
                 let d = response.drag_delta();

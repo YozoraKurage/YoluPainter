@@ -279,11 +279,7 @@ pub(super) fn cancel(app: &mut AppState, ctx: &egui::Context) -> bool {
     let any = app.sel.view3d.cancel();
     if any {
         crate::ui::window::note_escape_taken(ctx);
-        app.info(
-            Source::Selection,
-            app.lang
-                .pick("選択の途中をやめました。", "Selection cancelled."),
-        );
+        app.info(Source::Selection, app.lang.t("view3d-selection-cancelled"));
     }
     any
 }

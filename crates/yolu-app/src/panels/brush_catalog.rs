@@ -186,10 +186,7 @@ fn row_view(ui: &mut Ui, app: &mut AppState, row: Rect, r: &Row) {
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, &r.name));
     let tip = if r.placed {
-        lang.pick(
-            format!("{}（並びにあります。追加すると写しを作ります）", r.name),
-            format!("{} (already in a group; adding makes a copy)", r.name),
-        )
+        lang.f("panels-already-in-a-group-adding-tip", &[("name", &r.name)])
     } else {
         r.name.clone()
     };
@@ -212,7 +209,7 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
         search,
         "brush.catalog.search",
         &mut app.toolset.catalog.search,
-        lang.pick("検索", "Search"),
+        lang.t("panels-search-tip"),
     ) {
         app.toolset.catalog.scroll = 0.0;
     }
@@ -255,9 +252,9 @@ fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect) -> bool {
         vec2(110.0, bar.height() - 16.0),
     );
     let label = if count > 1 {
-        lang.pick(format!("{count} 個を追加"), format!("Add {count}"))
+        lang.f("panels-add", &[("value", &count)])
     } else {
-        lang.pick("追加", "Add").to_owned()
+        lang.t("panels-add-2").to_owned()
     };
     w::button(
         ui,
@@ -291,13 +288,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         app.ui.toolset_catalog_offset = center - screen.center();
         app.toolset.catalog.placed = true;
     }
-    let title = lang.pick("ブラシを追加", "Add Brushes");
+    let title = lang.t("panels-add-brushes");
     let spec = Spec {
         title,
         icon: Some("add"),
         size: vec2(WIDTH, HEIGHT),
         modal: false,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("panels-close"),
     };
     let mut offset: Vec2 = app.ui.toolset_catalog_offset;
     let mut add = false;
@@ -331,7 +328,7 @@ pub fn context_menu(app: &AppState) -> Vec<Entry<Action>> {
     };
     let free = !app.is_stroking() && !app.brushes.import.is_busy();
     vec![Entry::item(
-        lang.pick("ファイルを削除…", "Delete File…"),
+        lang.t("panels-delete-file"),
         Action::Brush(BrushAction::DeleteFileDialog(
             crate::brushes::BrushKey::User(id),
         )),

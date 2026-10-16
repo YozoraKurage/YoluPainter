@@ -51,11 +51,11 @@ pub fn bundled_font(name: &str) -> Option<Arc<[u8]>> {
 /// 日本語の画面で OS の一覧に日本語のファミリー名があれば、それを使う。
 pub fn font_label(lang: Lang, font: &TextFont, list: Option<&SystemFonts>) -> String {
     match font {
-        TextFont::Bundled(name) if name == "biz-udpgothic-bold" => lang
-            .pick("BIZ UDPゴシック 太字", "BIZ UDPGothic Bold")
-            .into(),
+        TextFont::Bundled(name) if name == "biz-udpgothic-bold" => {
+            lang.t("textlayer-biz-udpgothic-bold").into()
+        }
         TextFont::Bundled(name) if name == text::DEFAULT_FONT => {
-            lang.pick("BIZ UDPゴシック", "BIZ UDPGothic").into()
+            lang.t("textlayer-biz-udpgothic").into()
         }
         TextFont::Bundled(name) => name.clone(),
         TextFont::File {
@@ -458,20 +458,14 @@ impl AppState {
             if list.len() > 3 {
                 quoted.push("…".into());
             }
-            quoted.join(lang.pick("・", ", "))
+            quoted.join(lang.t("textlayer-text"))
         };
         let mut texts = Vec::new();
         if !different.is_empty() {
-            texts.push(lang.with_reason(
-                lang.pick("フォントが違います", "Font differs"),
-                names(&different),
-            ));
+            texts.push(lang.with_reason(lang.t("textlayer-font-differs"), names(&different)));
         }
         if !missing.is_empty() {
-            texts.push(lang.with_reason(
-                lang.pick("フォントが見つかりません", "Font not found"),
-                names(&missing),
-            ));
+            texts.push(lang.with_reason(lang.t("textlayer-font-not-found"), names(&missing)));
         }
         if !texts.is_empty() {
             self.warn(Source::Text, texts.join(" "));
@@ -532,12 +526,8 @@ impl AppState {
         let lang = self.lang;
         match self.text_font_lookup(font) {
             Some(Found::Ready { font, bytes, .. }) => Ok((font, bytes)),
-            Some(Found::Missing) => Err(lang
-                .pick("フォントが見つかりません", "Font not found")
-                .to_owned()),
-            None => Err(lang
-                .pick("フォントを探しています", "Searching for the font")
-                .to_owned()),
+            Some(Found::Missing) => Err(lang.t("textlayer-font-not-found").to_owned()),
+            None => Err(lang.t("textlayer-searching-for-the-font").to_owned()),
         }
     }
 
@@ -567,14 +557,8 @@ impl AppState {
         let lang = self.lang;
         match self.text_font_status(id) {
             FontStatus::Ready | FontStatus::Different => None,
-            FontStatus::Missing => Some(
-                lang.pick("フォントが見つかりません", "Font not found")
-                    .to_owned(),
-            ),
-            FontStatus::Searching => Some(
-                lang.pick("フォントを探しています", "Searching for the font")
-                    .to_owned(),
-            ),
+            FontStatus::Missing => Some(lang.t("textlayer-font-not-found").to_owned()),
+            FontStatus::Searching => Some(lang.t("textlayer-searching-for-the-font").to_owned()),
         }
     }
 
@@ -677,11 +661,8 @@ impl AppState {
 
     /// 「文字を描けません（理由）。」
     fn text_cannot(&self, reason: &str) -> String {
-        self.lang.with_reason(
-            self.lang
-                .pick("テキストを描けません", "Cannot draw the text"),
-            reason,
-        )
+        self.lang
+            .with_reason(self.lang.t("textlayer-cannot-draw-the-text"), reason)
     }
 
     /// 入力欄の文が変わった（打っている文字を描き直す。新しい文字は最初の 1 文字でレイヤーを作る）。
@@ -766,7 +747,7 @@ impl AppState {
             .filter(|l| l.text().is_some())
             .count()
             + 1;
-        format!("{} {n}", self.lang.pick("テキスト", "Text"))
+        format!("{} {n}", self.lang.t("textlayer-text-2"))
     }
 
     /// 打ち終わる（打っている間の変更は 1 回の Undo にまとまっている）。何も打たずに終えた新しいレイヤーは消す。
@@ -920,7 +901,7 @@ impl AppState {
             self.refuse(
                 Source::Text,
                 lang.with_reason(
-                    lang.pick("フォントを読めません", "Cannot read the font"),
+                    lang.t("textlayer-cannot-read-the-font"),
                     lang.quote(&path.to_string_lossy()),
                 ),
             );
@@ -963,10 +944,7 @@ impl AppState {
         match self.session.doc.rasterize(id) {
             Ok(()) => {
                 self.session.mark_modified();
-                self.info(
-                    Source::Text,
-                    lang.pick("ラスタライズしました。", "Rasterized."),
-                );
+                self.info(Source::Text, lang.t("textlayer-rasterized"));
             }
             Err(e) => self.notify(Kind::of_core(&e), Source::Text, lang.core_error(&e)),
         }
@@ -1063,11 +1041,8 @@ pub fn transformed(
     let det = t.a * t.d - t.b * t.c;
     if det <= 0.0 {
         return Err(lang.with_reason(
-            lang.pick(
-                "テキストレイヤーは反転できません",
-                "Cannot flip a text layer",
-            ),
-            lang.pick("テキストの値は反転を持ちません", "text values have no flip"),
+            lang.t("textlayer-cannot-flip-a-text-layer"),
+            lang.t("textlayer-text-values-have-no-flip"),
         ));
     }
     let (long, short) = (t.a.hypot(t.c), t.b.hypot(t.d));
@@ -1076,14 +1051,8 @@ pub fn transformed(
         || skew.abs() > UNIFORM_TOLERANCE * long * short
     {
         return Err(lang.with_reason(
-            lang.pick(
-                "テキストレイヤーは縦横の比を変えられません",
-                "Cannot change the aspect ratio of a text layer",
-            ),
-            lang.pick(
-                "サイズは縦横で共通で、傾きも持たない",
-                "the size is one value for both directions and there is no skew",
-            ),
+            lang.t("textlayer-cannot-change-the-aspect-ratio"),
+            lang.t("textlayer-the-size-is-one-value"),
         ));
     }
     let mut next = value.clone();

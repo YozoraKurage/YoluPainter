@@ -178,7 +178,7 @@ impl Lang {
     pub fn fill_error(self, e: &FillError) -> String {
         match e {
             FillError::Invalid(what) => self.with_reason(
-                self.pick("投影の値が使えません", "Invalid projection"),
+                self.t("fillfx-invalid-projection"),
                 self.pick(
                     (*what).to_owned(),
                     match *what {
@@ -243,11 +243,7 @@ impl AppState {
         match self.session.doc.layer(layer).map(|l| l.kind()) {
             Some(LayerKind::Fill) => Some(layer),
             _ => {
-                self.refuse(
-                    Source::FillLayer,
-                    self.lang
-                        .pick("塗りつぶしのレイヤーではありません", "Not a fill layer"),
-                );
+                self.refuse(Source::FillLayer, self.lang.t("fillfx-not-a-fill-layer"));
                 None
             }
         }
@@ -285,12 +281,8 @@ impl AppState {
                         self.info(
                             Source::FillLayer,
                             match image.and_then(|i| self.shelf.get(&inputs::resource_id(i))) {
-                                Some(r) => format!(
-                                    "{}: {}",
-                                    lang.pick("画像を差しました", "Image set"),
-                                    r.name
-                                ),
-                                None => lang.pick("画像を外しました", "Image removed").into(),
+                                Some(r) => format!("{}: {}", lang.t("fillfx-image-set"), r.name),
+                                None => lang.t("fillfx-image-removed").into(),
                             },
                         );
                     }
@@ -356,10 +348,7 @@ impl AppState {
                         }
                     }
                     None => {
-                        self.refuse(
-                            Source::FillLayer,
-                            lang.pick("モデルがありません", "No model"),
-                        );
+                        self.refuse(Source::FillLayer, lang.t("fillfx-no-model"));
                     }
                 }
             }
@@ -663,12 +652,7 @@ impl AppState {
         let lang = self.lang;
         let rid = inputs::resource_id(image);
         let Some(name) = self.shelf.get(&rid).map(|r| r.name.clone()) else {
-            return Err(lang
-                .pick(
-                    "アセットに画像がありません",
-                    "No such image in the project's assets",
-                )
-                .into());
+            return Err(lang.t("fillfx-no-such-image-in-the").into());
         };
         self.use_shelf_image(&rid)?;
         match self
@@ -681,9 +665,7 @@ impl AppState {
             Some(size) => Ok((name, size)),
             None => {
                 self.release_shelf_image(image);
-                Err(lang
-                    .pick("画像を読めません", "Cannot read the image")
-                    .into())
+                Err(lang.t("fillfx-cannot-read-the-image").into())
             }
         }
     }
@@ -700,20 +682,14 @@ impl AppState {
         let view = self.view3d.camera.view(rect.width(), rect.height());
         let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
         let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, gui) else {
-            self.refuse(
-                Source::FillLayer,
-                lang.pick("モデルの上ではありません", "Not on the model"),
-            );
+            self.refuse(Source::FillLayer, lang.t("fillfx-not-on-the-model"));
             return;
         };
         if hit.material != material {
             let name = model.material_name(hit.material as usize, lang);
             self.refuse(
                 Source::FillLayer,
-                lang.pick(
-                    format!("ほかのテクスチャセット（{name}）の面です。"),
-                    format!("Surface of another texture set ({name})."),
-                ),
+                lang.f("fillfx-surface-of-another-texture-set", &[("name", &name)]),
             );
             return;
         }
@@ -756,23 +732,14 @@ impl AppState {
                 match self.decal_problem(id) {
                     None => self.info(
                         Source::FillLayer,
-                        format!(
-                            "{}: {name}",
-                            lang.pick("デカールを置きました", "Decal placed")
-                        ),
+                        format!("{}: {name}", lang.t("fillfx-decal-placed")),
                     ),
                     // 置いたが、まだ出ない（理由つき）: 気をつけること
                     Some(why) => self.warn(
                         Source::FillLayer,
-                        lang.pick(
-                            format!(
-                                "デカールを置きました。{}はまだ出ません（{why}）。",
-                                lang.quote(&name)
-                            ),
-                            format!(
-                                "Decal placed. {} is not shown yet ({why}).",
-                                lang.quote(&name)
-                            ),
+                        lang.f(
+                            "fillfx-decal-placed-is-not-shown",
+                            &[("name", &lang.quote(&name)), ("why", &why)],
                         ),
                     ),
                 }
@@ -818,15 +785,9 @@ impl AppState {
                     format!(
                         "{}: {name}",
                         if added {
-                            lang.pick(
-                                "アセットに画像を取り込みました",
-                                "Image added to the project's assets",
-                            )
+                            lang.t("fillfx-image-added-to-the-project")
                         } else {
-                            lang.pick(
-                                "すでにアセットにあります",
-                                "Already in the project's assets",
-                            )
+                            lang.t("fillfx-already-in-the-project-s")
                         }
                     ),
                 );
@@ -842,10 +803,7 @@ impl AppState {
 /// 「「名前」をアセットに取り込めません」（理由は `Lang::with_reason` で添える）。
 fn cannot_add_image(lang: Lang, name: &str) -> String {
     let name = lang.quote(name);
-    lang.pick(
-        format!("{name}をアセットに取り込めません"),
-        format!("Cannot import {name}"),
-    )
+    lang.f("fillfx-cannot-import", &[("name", &name)])
 }
 
 /// 取り込める画像の 1 辺の上限（core の画像の入力と同じ）。
@@ -855,21 +813,13 @@ const MAX_IMAGE_SIDE: u32 = 8192;
 /// 読める上限（1 辺と確保）は `Limits` でも守る。
 fn read_png(path: &std::path::Path, lang: Lang) -> Result<(Vec<u8>, u32, u32), String> {
     use image::ImageDecoder;
-    let unreadable = || {
-        lang.pick("PNG として読めません", "Not a readable PNG")
-            .to_owned()
-    };
+    let unreadable = || lang.t("fillfx-not-a-readable-png").to_owned();
     let file = std::fs::File::open(path).map_err(|e| lang.file_error(&e))?;
     let mut decoder = image::codecs::png::PngDecoder::new(std::io::BufReader::new(file))
         .map_err(|_| unreadable())?;
     let (w, h) = decoder.dimensions();
     if !(1..=MAX_IMAGE_SIDE).contains(&w) || !(1..=MAX_IMAGE_SIDE).contains(&h) {
-        return Err(lang
-            .pick(
-                "画像の 1 辺は 1〜8192 です",
-                "Image sides must be 1 to 8192",
-            )
-            .to_owned());
+        return Err(lang.t("fillfx-image-sides-must-be-1").to_owned());
     }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_SIDE);

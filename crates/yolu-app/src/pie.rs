@@ -168,7 +168,7 @@ impl PieState {
     pub fn add_user(&mut self, lang: Lang) -> String {
         let n = (1..)
             .find(|n| {
-                let name = lang.pick(format!("パイメニュー {n}"), format!("Pie Menu {n}"));
+                let name = lang.f("pie-pie-menu", &[("n", &n)]);
                 !self.menus.iter().any(|m| m.name(lang) == name)
             })
             .unwrap_or(1);
@@ -178,7 +178,7 @@ impl PieState {
                 break id;
             }
         };
-        let name = lang.pick(format!("パイメニュー {n}"), format!("Pie Menu {n}"));
+        let name = lang.f("pie-pie-menu", &[("n", &n)]);
         self.menus.push(user_menu(&id, name, Default::default()));
         id
     }
@@ -279,24 +279,15 @@ fn ops_label(json: &str) -> String {
 }
 
 fn unknown_command(lang: Lang, id: &str) -> String {
-    lang.pick(
-        format!("操作{}がありません", lang.quote(id)),
-        format!("No command {}", lang.quote(id)),
-    )
+    lang.f("pie-no-command", &[("id", &lang.quote(id))])
 }
 
 fn unknown_pie(lang: Lang, id: &str) -> String {
-    lang.pick(
-        format!("パイメニュー{}がありません", lang.quote(id)),
-        format!("No pie menu {}", lang.quote(id)),
-    )
+    lang.f("pie-no-pie-menu", &[("id", &lang.quote(id))])
 }
 
 fn no_action(lang: Lang, name: &str) -> String {
-    lang.pick(
-        format!("アクション{}がありません", lang.quote(name)),
-        format!("No action {}", lang.quote(name)),
-    )
+    lang.f("pie-no-action", &[("name", &lang.quote(name))])
 }
 
 /// パイを開かない途中の操作か（ポーズのギズモ・形のギズモ・点のドラッグ、3D の視点の操作、範囲のドラッグ、アイランドのメニューの右の押し、
@@ -320,8 +311,8 @@ pub fn dragging(app: &AppState) -> bool {
 fn refuse_during_drag(app: &mut AppState) {
     let lang = app.lang;
     let text = lang.with_reason(
-        lang.pick("パイメニューを開けません", "Cannot open the pie menu"),
-        lang.pick("ほかの操作の途中です", "another operation is in progress"),
+        lang.t("pie-cannot-open-the-pie-menu"),
+        lang.t("pie-another-operation-is-in-progress"),
     );
     app.refuse(Source::Edit, text);
 }
@@ -457,13 +448,8 @@ pub fn run(app: &mut AppState, item: &PieItem) {
             };
             if let Some(reason) = command.unavailable(lang) {
                 let what = command.label(app).unwrap_or_else(|| id.clone());
-                let text = lang.with_reason(
-                    lang.pick(
-                        format!("{what}は使えません"),
-                        format!("{what} is not available"),
-                    ),
-                    reason,
-                );
+                let text =
+                    lang.with_reason(lang.f("pie-is-not-available", &[("what", &what)]), reason);
                 app.refuse(Source::Edit, text);
                 return;
             }
@@ -500,15 +486,12 @@ pub fn run(app: &mut AppState, item: &PieItem) {
 /// yolu-ops の命令（JSON）を、今の文書に 1 回の取り消しで当てる（アクションの再生と同じ口）。
 fn run_ops(app: &mut AppState, json: &str) {
     let lang = app.lang;
-    let what = lang.pick("命令を実行できません", "Cannot run the commands");
+    let what = lang.t("pie-cannot-run-the-commands");
     let items = match serde_json::from_str::<Value>(json) {
         Ok(Value::Array(items)) => items,
         Ok(v) => vec![v],
         Err(_) => {
-            let text = lang.with_reason(
-                what,
-                lang.pick("JSON を読めません", "the JSON cannot be read"),
-            );
+            let text = lang.with_reason(what, lang.t("pie-the-json-cannot-be-read"));
             app.refuse(Source::Ops, text);
             return;
         }
@@ -527,7 +510,7 @@ fn run_ops(app: &mut AppState, json: &str) {
     }
     // 記録の間は当てない（アクションの再生と同じ。記録に入らない変更を文書に残さない）
     if app.automation.recorder.is_some() {
-        let text = lang.with_reason(what, lang.pick("記録中です", "Recording is in progress"));
+        let text = lang.with_reason(what, lang.t("pie-recording-is-in-progress"));
         app.refuse(Source::Ops, text);
         return;
     }

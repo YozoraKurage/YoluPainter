@@ -287,24 +287,15 @@ impl AppState {
         let lang = self.lang;
         let mut note = String::new();
         if !report.created.is_empty() {
-            let names = report.created.join(lang.pick("・", ", "));
-            note += &lang.pick(
-                format!("新しいテクスチャセット: {names}。"),
-                format!("New texture sets: {names}."),
-            );
+            let names = report.created.join(lang.t("model-text"));
+            note += &lang.f("model-new-texture-sets", &[("names", &names)]);
         }
         if !report.unmatched.is_empty() {
-            let names = report.unmatched.join(lang.pick("・", ", "));
+            let names = report.unmatched.join(lang.t("model-text"));
             if !note.is_empty() {
                 note.push(' ');
             }
-            note += &lang.with_reason(
-                lang.pick(
-                    "モデルに無いテクスチャセットがあります",
-                    "Some texture sets are not in the model",
-                ),
-                names,
-            );
+            note += &lang.with_reason(lang.t("model-some-texture-sets-are-not"), names);
         }
         if let Some(limit) = report.limit_text(lang) {
             if !note.is_empty() {

@@ -1,0 +1,28 @@
+# 画面の文（objects）。キーは「objects-」と英語の文から作った短い名前、ツールチップの文はキーの終わりが -tip。
+
+objects-projection-placement = 投影の置き場
+objects-gradient-decal = グラデーションデカール
+objects-filter-shape = フィルターの形
+objects-point = 点
+objects-path = パス
+objects-ruler = 定規
+objects-nothing-is-selected = 選んだ物がありません
+objects-cannot-delete = 削除できません
+objects-it-is-the-fill-layer = 塗りつぶしレイヤーの投影です
+objects-move = 移動
+objects-rotate = 回転
+objects-scale = 拡縮
+objects-local = {" "}ローカル { $a }
+objects-local-2 = {" "}ローカル { $p }
+objects-cannot-move-the-path = パスを動かせません
+objects-no-model = モデルがありません
+objects-point-is-not-on-the = { $i } 番目の点が面に乗りません
+objects-the-3d-view-is-not = 3D ビューが見えていません
+objects-used-in-edit-or-pose = 編集かポーズのモードで使います
+objects-points-can-only-be-moved = 点は移動だけです
+objects-no-bone-is-selected = ボーンを選んでいません
+objects-another-operation-is-in-progress = ほかの操作の途中です
+objects-cannot-scale = 拡縮できません
+objects-a-negative-factor-cannot-be = 負の倍率は使えません
+objects-the-3d-view-is-in = 3D ビューが別のウィンドウにあります
+objects-it-has-no-default-placement = 既定の置き場がありません

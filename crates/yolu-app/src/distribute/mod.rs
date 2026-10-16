@@ -191,12 +191,9 @@ pub(crate) const JOB: JobSpec = JobSpec {
             text: format!(
                 "{} — {}",
                 if p.writing {
-                    lang.pick("配布用に保存中", "Saving for distribution")
+                    lang.t("distribute-saving-for-distribution")
                 } else {
-                    lang.pick(
-                        "配布用の写しを準備中",
-                        "Preparing the copy for distribution",
-                    )
+                    lang.t("distribute-preparing-the-copy-for-distribution")
                 },
                 p.file
             ),
@@ -221,11 +218,8 @@ pub fn default_name(state: &AppState) -> String {
 pub fn run_dialog(state: &mut AppState) {
     let lang = state.lang;
     let dialog = crate::dialog::file(state, Place::Distribute)
-        .set_title(lang.pick("配布用に保存", "Save for Distribution"))
-        .add_filter(
-            lang.pick("YoluPainter プロジェクト", "YoluPainter Project"),
-            &["ylp"],
-        )
+        .set_title(lang.t("distribute-save-for-distribution"))
+        .add_filter(lang.t("distribute-yolupainter-project"), &["ylp"])
         .set_file_name(default_name(state));
     match dialog.save_file() {
         Some(path) => {
@@ -328,10 +322,7 @@ impl AppState {
                 if self.distribute.replace.take().is_some() {
                     self.info(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用の保存をやめました。",
-                            "Save for distribution canceled.",
-                        ),
+                        lang.t("distribute-save-for-distribution-canceled"),
                     );
                     self.settle_distribute_window();
                 }
@@ -341,10 +332,7 @@ impl AppState {
                     job.worker.cancel();
                     self.info(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用の保存を取り消しています…",
-                            "Canceling the save for distribution…",
-                        ),
+                        lang.t("distribute-canceling-the-save-for-distribution"),
                     );
                 }
             }
@@ -377,7 +365,7 @@ impl AppState {
         if self.psd.is_busy() || self.psd.import_check.is_some() {
             self.refuse(
                 Source::Distribute,
-                lang.pick("PSD を処理中です。", "A PSD job is running."),
+                lang.t("distribute-a-psd-job-is-running"),
             );
             return;
         }
@@ -386,7 +374,7 @@ impl AppState {
             self.refuse(
                 Source::Distribute,
                 lang.with_reason(
-                    lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                    lang.t("distribute-cannot-save-for-distribution"),
                     crate::lang::refusals::saving(lang),
                 ),
             );
@@ -397,10 +385,7 @@ impl AppState {
             Err(text) => {
                 self.fail(
                     Source::Distribute,
-                    lang.with_reason(
-                        lang.pick("配布用に保存できません", "Cannot save for distribution"),
-                        text,
-                    ),
+                    lang.with_reason(lang.t("distribute-cannot-save-for-distribution"), text),
                 );
                 return;
             }
@@ -423,10 +408,7 @@ impl AppState {
                 self.fail(
                     Source::Distribute,
                     lang.with_reason(
-                        lang.pick(
-                            "配布用の写しを準備できません",
-                            "Cannot prepare the copy for distribution",
-                        ),
+                        lang.t("distribute-cannot-prepare-the-copy-for"),
                         lang.thread_error(&e),
                     ),
                 );
@@ -435,10 +417,7 @@ impl AppState {
         };
         self.info(
             Source::Distribute,
-            lang.pick(
-                "配布用の写しを準備中…",
-                "Preparing the copy for distribution…",
-            ),
+            lang.t("distribute-preparing-the-copy-for-distribution-2"),
         );
         self.distribute.job = Some(Job {
             kind: Kind::Prepare,
@@ -461,10 +440,7 @@ impl AppState {
         {
             self.refuse(
                 Source::Distribute,
-                lang.pick(
-                    "開いているファイルには書けません",
-                    "Cannot write over the open file",
-                ),
+                lang.t("distribute-cannot-write-over-the-open"),
             );
             // ウィンドウなしの流れなら閉じ、ウィンドウがあれば除く物のウィンドウに戻る（選び直せる）
             self.settle_distribute_window();
@@ -507,7 +483,7 @@ impl AppState {
                 self.fail(
                     Source::Distribute,
                     lang.with_reason(
-                        lang.pick("配布用に保存できません", "Cannot save for distribution"),
+                        lang.t("distribute-cannot-save-for-distribution"),
                         lang.thread_error(&e),
                     ),
                 );
@@ -519,10 +495,7 @@ impl AppState {
         let file = file_name(&path);
         self.info(
             Source::Distribute,
-            lang.pick(
-                format!("配布用に保存中: {file}"),
-                format!("Saving for distribution: {file}"),
-            ),
+            lang.f("distribute-saving-for-distribution-2", &[("file", &file)]),
         );
         self.distribute.job = Some(Job {
             kind: Kind::Write,
@@ -563,16 +536,16 @@ impl AppState {
                     .take()
                     .map(|w| w.prepared.left_out.clone())
                     .unwrap_or_default();
-                let mut text = lang.pick(
-                    format!("配布用に保存しました: {}", path.display()),
-                    format!("Saved for distribution: {}", path.display()),
+                let mut text = lang.f(
+                    "distribute-saved-for-distribution",
+                    &[("path", &path.display())],
                 );
                 if left_out.is_empty() {
                     self.info(Source::Distribute, text);
                 } else {
                     // パスのあとで文を区切ってから続ける（保存の知らせと同じ形。パスに空白があっても、どこまでがパスか読み分けられる）。
                     // 入れなかったセットがあるので注意としてログにも残す
-                    text += lang.pick("。 ", ". ");
+                    text += lang.t("distribute-text");
                     text += &crate::project::capture::left_out_note(lang, &left_out);
                     self.warn(Source::Distribute, text);
                 }
@@ -586,24 +559,15 @@ impl AppState {
                 match failure {
                     Failure::Canceled => self.info(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用の保存を取り消しました。",
-                            "Save for distribution canceled.",
-                        ),
+                        lang.t("distribute-save-for-distribution-canceled-2"),
                     ),
                     Failure::Stopped => self.fail(
                         Source::Distribute,
-                        lang.pick(
-                            "配布用に保存できません（処理が止まりました）。",
-                            "Cannot save for distribution (the job stopped).",
-                        ),
+                        lang.t("distribute-cannot-save-for-distribution-the"),
                     ),
                     Failure::Message(text) => self.fail(
                         Source::Distribute,
-                        lang.with_reason(
-                            lang.pick("配布用に保存できません", "Cannot save for distribution"),
-                            text,
-                        ),
+                        lang.with_reason(lang.t("distribute-cannot-save-for-distribution"), text),
                     ),
                 }
             }
@@ -688,10 +652,7 @@ fn write(
         SaveTarget::open_within(dest, &yolu_io::Limits::unbounded())
             .map_err(|e| {
                 Failure::Message(lang.with_reason(
-                    lang.pick(
-                        "置き換える先を .ylp として読めません",
-                        "The file to replace is not a readable .ylp",
-                    ),
+                    lang.t("distribute-the-file-to-replace-is"),
                     lang.io_error(&e),
                 ))
             })?

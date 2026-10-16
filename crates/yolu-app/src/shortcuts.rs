@@ -159,7 +159,7 @@ pub fn named_with_keys(lang: Lang, name: &str, keys: &[Option<String>]) -> Strin
         return name.to_owned();
     }
     let keys = keys.join(" / ");
-    lang.pick(format!("{name}（{keys}）"), format!("{name} ({keys})"))
+    lang.f("shortcuts-text", &[("name", &name), ("keys", &keys)])
 }
 
 /// ツールのキーの文字（ペイントのモードの表から。設定で外していれば空）。
@@ -178,7 +178,7 @@ pub fn shortcut_text(action: &Action) -> Option<String> {
 /// ツールチップの名前にキーを添える（「すべてを選択（Ctrl+A）」・英語は「Select All (Ctrl+A)」）。割り当てが無ければ名前だけ。
 pub fn tip_with_key(lang: Lang, name: &str, action: &Action) -> String {
     match shortcut_text(action) {
-        Some(key) => lang.pick(format!("{name}（{key}）"), format!("{name} ({key})")),
+        Some(key) => lang.f("shortcuts-text-tip", &[("name", &name), ("key", &key)]),
         None => name.to_owned(),
     }
 }

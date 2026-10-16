@@ -305,7 +305,7 @@ fn is_unplaced(entries: &[LayerPathEntry]) -> bool {
 
 /// パスを持つレイヤーの名前。
 fn layer_name(lang: Lang, n: usize) -> String {
-    format!("{} {n}", lang.pick("パス", "Path"))
+    format!("{} {n}", lang.t("pathtool-path"))
 }
 
 /// パスの描き方の設定を替えた新しいパス。
@@ -497,7 +497,7 @@ impl AppState {
     /// 3D のパスの文脈。モデルが無い・今のテクスチャセットがモデルに無いときは、その理由。
     pub fn path_surface_ctx(&self) -> Result<SurfaceCtx, String> {
         let Some(model) = self.view3d.full_model().cloned() else {
-            return Err(self.lang.pick("モデルがありません", "No model").into());
+            return Err(self.lang.t("pathtool-no-model").into());
         };
         if self.view3d.material < 0 {
             return Err(self.region_missing_reason());
@@ -663,13 +663,7 @@ impl AppState {
             return None;
         }
         if self.m2.edit_mask {
-            self.refuse(
-                Source::Path,
-                lang.pick(
-                    "パスはマスクに描けません",
-                    "A path cannot be drawn on a mask",
-                ),
-            );
+            self.refuse(Source::Path, lang.t("pathtool-a-path-cannot-be-drawn"));
             return None;
         }
         let Some(layer) = self
@@ -677,10 +671,7 @@ impl AppState {
             .selected_layer
             .filter(|id| self.session.doc.layer(*id).is_some())
         else {
-            self.refuse(
-                Source::Path,
-                lang.pick("描くレイヤーがありません。", "No layer to paint on."),
-            );
+            self.refuse(Source::Path, lang.t("pathtool-no-layer-to-paint-on"));
             return None;
         };
         let existing = self.path_layer().map(|(_, p)| p.clone());
@@ -695,23 +686,11 @@ impl AppState {
             .map(|e| e.path.clone());
         match (&side, surface) {
             (Some(LayerPath::Surface(_)), Some(false)) => {
-                self.refuse(
-                    Source::Path,
-                    lang.pick(
-                        "このレイヤーにはモデルの上のパスがあります",
-                        "This layer has a path on the model",
-                    ),
-                );
+                self.refuse(Source::Path, lang.t("pathtool-this-layer-has-a-path"));
                 None
             }
             (Some(LayerPath::Canvas(_)), Some(true)) => {
-                self.refuse(
-                    Source::Path,
-                    lang.pick(
-                        "このレイヤーにはキャンバスのパスがあります",
-                        "This layer has a canvas path",
-                    ),
-                );
+                self.refuse(Source::Path, lang.t("pathtool-this-layer-has-a-canvas"));
                 None
             }
             _ => Some((layer, existing)),
@@ -783,13 +762,7 @@ impl AppState {
     fn path_surface_ctx_for(&self, s: &SurfacePath) -> Result<SurfaceCtx, String> {
         let ctx = self.path_surface_ctx()?;
         if s.model_fingerprint != *ctx.fingerprint {
-            return Err(self
-                .lang
-                .pick(
-                    "別のモデルで描かれたパスです",
-                    "The path was drawn on another model",
-                )
-                .into());
+            return Err(self.lang.t("pathtool-the-path-was-drawn-on-2").into());
         }
         Ok(ctx)
     }
@@ -942,11 +915,7 @@ impl AppState {
         self.path.pending = None;
         let any = if self.path.drag.take().is_some() {
             self.path.pen_down = None;
-            self.info(
-                Source::Path,
-                self.lang
-                    .pick("点の移動をやめました。", "Point move cancelled."),
-            );
+            self.info(Source::Path, self.lang.t("pathtool-point-move-cancelled"));
             true
         } else if self.path.rect.take().is_some() {
             true
@@ -1238,10 +1207,7 @@ impl AppState {
                     Ok(()) => {
                         self.path.selected = None;
                         self.session.mark_modified();
-                        self.info(
-                            Source::Path,
-                            lang.pick("ラスタライズしました。", "Rasterized."),
-                        );
+                        self.info(Source::Path, lang.t("pathtool-rasterized"));
                     }
                     Err(e) => self.notify(
                         crate::notice::Kind::of_core(&e),
@@ -1382,10 +1348,7 @@ impl AppState {
                 if posed {
                     self.refuse(
                         Source::Path,
-                        lang.pick(
-                            "ポーズを付けているときは入れられません",
-                            "Not available while the model is posed",
-                        ),
+                        lang.t("pathtool-not-available-while-the-model"),
                     );
                     return;
                 }
@@ -1402,13 +1365,7 @@ impl AppState {
                             normal: plane.normal,
                         },
                         _ => {
-                            self.refuse(
-                                Source::Path,
-                                lang.pick(
-                                    "3D のパスの対称は鏡の面 1 枚だけです",
-                                    "A 3D path can mirror across one plane only",
-                                ),
-                            );
+                            self.refuse(Source::Path, lang.t("pathtool-a-3d-path-can-mirror"));
                             return;
                         }
                     },
@@ -1535,13 +1492,7 @@ impl AppState {
             if self.path.pen_down.is_some_and(|p| p.surface) {
                 self.path.pen_down = None;
             }
-            self.warn(
-                Source::Path,
-                lang.pick(
-                    "モデルが替わったので、点の移動をやめました。",
-                    "The model changed, so the point move was cancelled.",
-                ),
-            );
+            self.warn(Source::Path, lang.t("pathtool-the-model-changed-so-the"));
         }
         let mut all = Vec::new();
         for i in 0..self.session.sets.len() {
@@ -1590,10 +1541,7 @@ impl AppState {
 
 /// 面に投影できなかった標本の知らせ。
 fn gaps_message(lang: Lang, gaps: usize) -> String {
-    lang.pick(
-        format!("{gaps} 個の標本が面から外れて、描いていません"),
-        format!("{gaps} sample(s) were off the surface and skipped"),
-    )
+    lang.f("pathtool-sample-s-were-off-the", &[("gaps", &gaps)])
 }
 
 /// モデルの差し替えの知らせ: 結果ごとの件数（0 は出さない）と、最初の 1 件の理由（レイヤー名つき。画素にした・残したものを先に）。
@@ -1628,12 +1576,9 @@ fn rebind_message(lang: Lang, reports: &[rebind::PathReport]) -> String {
         .or_else(|| reports.iter().find(|r| r.reason.is_some()));
     if let Some((name, reason)) = first.and_then(|r| Some((&r.name, r.reason.as_deref()?))) {
         let name = lang.quote(name);
-        text.push_str(lang.pick("", " "));
+        text.push_str(lang.t("pathtool-text"));
         text.push_str(&lang.with_reason(
-            lang.pick(
-                format!("レイヤー{name}のパスは描き直せません"),
-                format!("Cannot redraw the path of layer {name}"),
-            ),
+            lang.f("pathtool-cannot-redraw-the-path-of", &[("name", &name)]),
             reason,
         ));
     }

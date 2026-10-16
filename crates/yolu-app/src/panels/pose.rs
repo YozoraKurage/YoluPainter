@@ -87,10 +87,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
             let shown = match fraction {
                 Some(f) => format!(
                     "{}: {name} {}%",
-                    lang.pick("読み込み中", "Loading"),
+                    lang.t("panels-loading-2"),
                     (f * 100.0).floor() as u32
                 ),
-                None => format!("{}: {name}", lang.pick("読み込み中", "Loading")),
+                None => format!("{}: {name}", lang.t("panels-loading-2")),
             };
             let label = Rect::from_min_max(row.min, pos2(cancel.left() - 6.0, row.bottom()));
             w::text(ui.painter(), label, &shown, t::LABEL_DIM, Align::Left);
@@ -104,7 +104,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 cancel,
                 "pose.cancel-load",
                 "close",
-                lang.pick("読み込みを取り消す", "Cancel loading"),
+                lang.t("panels-cancel-loading-tip"),
                 false,
                 true,
                 15.0,
@@ -175,10 +175,7 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         next(26.0),
         "pose.mode",
         "accessibility",
-        lang.pick(
-            "ポーズのモード（3D ビューの左ドラッグでギズモの輪を回す・面を押してボーンを選ぶ）",
-            "Pose mode (drag a gizmo ring in the 3D View to rotate; click a surface to pick a bone)",
-        ),
+        lang.t("panels-pose-mode-drag-a-gizmo-tip"),
         app.mode == crate::mode::EditorMode::Pose,
         free && has,
         18.0,
@@ -192,7 +189,7 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         next(26.0),
         "pose.open",
         "folder_open",
-        lang.pick("FBX を開く", "Open FBX"),
+        lang.t("panels-open-fbx-tip"),
         false,
         free,
         18.0,
@@ -212,10 +209,7 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         next(26.0),
         "pose.reset",
         "restart_alt",
-        lang.pick(
-            "ポーズを戻す（ファイルのポーズへ）",
-            "Reset pose (to the file's pose)",
-        ),
+        lang.t("panels-reset-pose-to-the-file-tip"),
         false,
         free && !editing && posed,
         18.0,
@@ -237,14 +231,10 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         ui,
         next(half),
         "pose.undo",
-        lang.pick("取り消し", "Undo"),
+        lang.t("panels-undo"),
         false,
         free && !editing && can_undo,
-        Some(&pose_tip(
-            lang,
-            lang.pick("ポーズの取り消し", "Undo pose"),
-            "edit.undo",
-        )),
+        Some(&pose_tip(lang, lang.t("panels-undo-pose-tip"), "edit.undo")),
         None,
     )
     .clicked()
@@ -255,14 +245,10 @@ fn toolbar(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         ui,
         next(half),
         "pose.redo",
-        lang.pick("やり直し", "Redo"),
+        lang.t("panels-redo"),
         false,
         free && !editing && can_redo,
-        Some(&pose_tip(
-            lang,
-            lang.pick("ポーズのやり直し", "Redo pose"),
-            "edit.redo",
-        )),
+        Some(&pose_tip(lang, lang.t("panels-redo-pose-tip"), "edit.redo")),
         None,
     )
     .clicked()
@@ -288,7 +274,7 @@ fn content(
         w::text(
             ui.painter(),
             at,
-            &format!("{}: {name}", lang.pick("読み込み中", "Loading")),
+            &format!("{}: {name}", lang.t("panels-loading-2")),
             t::LABEL_DIM,
             Align::Left,
         );
@@ -308,10 +294,7 @@ fn content(
     // Live Link の相手のモデル: 送り直すと、ここで動かした分も Unity のポーズで上書きする
     if app.services.link_target.is_some() && app.session.model.iter().any(|m| m.is_live_link()) {
         ui.interact(at, ui.id().with("pose.livelink"), egui::Sense::hover())
-            .on_hover_text(lang.pick(
-                "Unity から送り直すと、ポーズは Unity の値で上書きされます（ここで動かした分も）",
-                "Resending from Unity overwrites the pose with Unity's values (including changes made here)",
-            ));
+            .on_hover_text(lang.t("panels-resending-from-unity-overwrites-the-tip"));
     }
     if !s.warnings.is_empty() {
         let at = rows.row(BONE_ROW, 0.0);
@@ -331,12 +314,9 @@ fn content(
         app,
         rows,
         "pose.bones",
-        lang.pick("ボーン", "Bones"),
+        lang.t("panels-bones"),
         "accessibility",
-        Some(lang.pick(
-            "すべてのボーンを戻す（BlendShape はそのまま）",
-            "Reset all bones (BlendShapes stay)",
-        )),
+        Some(lang.t("panels-reset-all-bones-blendshapes-stay")),
     );
     if reset_all {
         edit::reset(app, Reset::AllBones);
@@ -359,7 +339,7 @@ fn content(
             app,
             rows,
             "pose.takes",
-            lang.pick("テイク", "Takes"),
+            lang.t("panels-takes"),
             "video_clip",
             None,
         );
@@ -374,7 +354,7 @@ fn content(
         app,
         rows,
         "pose.presets",
-        lang.pick("ポーズのプリセット", "Pose Presets"),
+        lang.t("panels-pose-presets"),
         "save",
         None,
     );
@@ -388,9 +368,9 @@ fn content(
         app,
         rows,
         "pose.hide",
-        lang.pick("面を隠す", "Hide Surfaces"),
+        lang.t("panels-hide-surfaces"),
         "visibility_off",
-        Some(lang.pick("すべて表示する", "Show everything")),
+        Some(lang.t("panels-show-everything")),
     );
     if show_all {
         crate::view3d::pose::hide::show_all(app);
@@ -408,10 +388,7 @@ fn content(
             "pose.shapes",
             "BlendShape",
             "tune",
-            Some(lang.pick(
-                "すべての BlendShape を戻す（ボーンはそのまま）",
-                "Reset all BlendShapes (bones stay)",
-            )),
+            Some(lang.t("panels-reset-all-blendshapes-bones-stay")),
         );
         if reset_shapes {
             edit::reset(app, Reset::AllShapes);
@@ -444,7 +421,7 @@ pub(crate) fn warning_row(
     w::text(
         &p,
         Rect::from_min_max(pos2(at.left() + 20.0, at.top()), at.max),
-        &lang.pick(format!("知らせ {count} 件"), format!("Notices {count}")),
+        &lang.f("panels-notices", &[("value", &count)]),
         t::LABEL_DIM,
         Align::Left,
     );
@@ -663,7 +640,7 @@ fn blend_shapes(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, body: Rect) {
                 button,
                 ("pose.shape.reset", m, k),
                 "restart_alt",
-                lang.pick("この BlendShape を戻す", "Reset this BlendShape"),
+                lang.t("panels-reset-this-blendshape-tip"),
                 false,
                 free && differs && !s.is_editing(),
                 14.0,
@@ -717,10 +694,7 @@ fn set_weight(app: &mut AppState, m: usize, k: usize, value: f32, active: bool, 
 /// ポーズの取り消し・やり直しのツールチップ（ポーズのモードのキーを添える。設定で変えたキーに付いてくる）。
 fn pose_tip(lang: crate::lang::Lang, name: &str, command: &str) -> String {
     match crate::shortcuts::key_in(command, crate::mode::EditorMode::Pose) {
-        Some(key) => lang.pick(
-            format!("{name}（ポーズのモードでは {key}）"),
-            format!("{name} ({key} in pose mode)"),
-        ),
+        Some(key) => lang.f("panels-in-pose-mode-tip", &[("name", &name), ("key", &key)]),
         None => name.to_owned(),
     }
 }

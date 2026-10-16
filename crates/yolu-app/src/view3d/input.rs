@@ -119,20 +119,10 @@ fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
     match pick(&model.geometry, &view, local(rect, at)) {
         Some(hit) if hit.material == app.view3d.material => {
             app.clone.set_source(hit);
-            app.info(
-                Source::View3d,
-                app.lang
-                    .pick("クローンの元を決めました。", "Clone source set."),
-            );
+            app.info(Source::View3d, app.lang.t("view3d-clone-source-set"));
         }
         _ => {
-            app.refuse(
-                Source::View3d,
-                app.lang.pick(
-                    "今のテクスチャセットの面ではありません。",
-                    "Not a surface of the active texture set.",
-                ),
-            );
+            app.refuse(Source::View3d, app.lang.t("view3d-not-a-surface-of-the"));
         }
     }
 }
@@ -196,13 +186,7 @@ fn begin(
         Surface::Cover => {}
         // 移動と変形・ゆがみ・テキストは 2D のキャンバスだけで使う（3D ビューで描き始めない）
         Surface::Unsupported => {
-            app.refuse(
-                Source::View3d,
-                app.lang.pick(
-                    "このツールは 2D のキャンバスで使います",
-                    "This tool works on the 2D canvas",
-                ),
-            );
+            app.refuse(Source::View3d, app.lang.t("view3d-this-tool-works-on-the"));
             return;
         }
         Surface::Paint => {}
@@ -241,11 +225,7 @@ fn begin(
         return;
     }
     let Some(layer) = app.session.selected_layer else {
-        app.refuse(
-            Source::View3d,
-            app.lang
-                .pick("描くレイヤーがありません。", "No layer to paint on."),
-        );
+        app.refuse(Source::View3d, app.lang.t("view3d-no-layer-to-paint-on"));
         return;
     };
     if let Some(reason) = app.paint_blocker() {
@@ -326,10 +306,8 @@ pub(super) fn refuse_other_set(
     let name = model.material_name(hit.material as usize, app.lang);
     app.refuse(
         Source::View3d,
-        app.lang.pick(
-            format!("ほかのテクスチャセット（{name}）の面です。"),
-            format!("Surface of another texture set ({name})."),
-        ),
+        app.lang
+            .f("view3d-surface-of-another-texture-set", &[("name", &name)]),
     );
     true
 }
@@ -380,10 +358,7 @@ pub(super) fn open_stroke(
                     destination: app.clone.destination_for(&model.geometry),
                 }),
                 None => {
-                    app.refuse(
-                        Source::View3d,
-                        app.lang.pick("クローンの元がありません", "No clone source"),
-                    );
+                    app.refuse(Source::View3d, app.lang.t("view3d-no-clone-source"));
                     return None;
                 }
             },
@@ -397,13 +372,7 @@ pub(super) fn open_stroke(
     if (symmetry.is_some() || canvas_symmetry.is_some())
         && matches!(effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_))
     {
-        app.refuse(
-            Source::View3d,
-            app.lang.pick(
-                "指先・クローンでは対称を使えません",
-                "Smudge and clone do not work with symmetry",
-            ),
-        );
+        app.refuse(Source::View3d, app.lang.t("view3d-smudge-and-clone-do-not"));
         return None;
     }
     // ステンシル: 置き場とカメラはストロークの始めに決める（面のテクセルの点を画面へ写して、そこの画像を読む）
@@ -414,10 +383,8 @@ pub(super) fn open_stroke(
             app.notify(
                 crate::notice::Kind::of_core(&e),
                 Source::View3d,
-                app.lang.with_reason(
-                    app.lang.pick("描けません", "Cannot paint"),
-                    app.lang.core_error(&e),
-                ),
+                app.lang
+                    .with_reason(app.lang.t("view3d-cannot-paint"), app.lang.core_error(&e)),
             );
             return None;
         }
@@ -434,10 +401,8 @@ pub(super) fn open_stroke(
             app.notify(
                 crate::notice::Kind::of_core(&e),
                 Source::View3d,
-                app.lang.with_reason(
-                    app.lang.pick("描けません", "Cannot paint"),
-                    app.lang.core_error(&e),
-                ),
+                app.lang
+                    .with_reason(app.lang.t("view3d-cannot-paint"), app.lang.core_error(&e)),
             );
             return None;
         }
@@ -690,11 +655,7 @@ pub fn finish(app: &mut AppState, cancel: bool) {
     };
     if cancel {
         app.session.doc.cancel_stroke(stroke);
-        app.info(
-            Source::View3d,
-            app.lang
-                .pick("ストロークを取り消しました。", "Stroke cancelled."),
-        );
+        app.info(Source::View3d, app.lang.t("view3d-stroke-cancelled"));
     } else {
         let mut surface = surface;
         let last = surface

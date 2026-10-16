@@ -116,22 +116,22 @@ impl ItemKind {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            ItemKind::Image => lang.pick("画像", "Images"),
-            ItemKind::Brush => lang.pick("ブラシ", "Brushes"),
-            ItemKind::Material => lang.pick("マテリアル", "Materials"),
-            ItemKind::SmartMaterial => lang.pick("スマートマテリアル", "Smart Materials"),
-            ItemKind::SmartMask => lang.pick("スマートマスク", "Smart Masks"),
+            ItemKind::Image => lang.t("shelf-images"),
+            ItemKind::Brush => lang.t("shelf-brushes"),
+            ItemKind::Material => lang.t("shelf-materials"),
+            ItemKind::SmartMaterial => lang.t("shelf-smart-materials"),
+            ItemKind::SmartMask => lang.t("shelf-smart-masks"),
         }
     }
 
     /// 1 つの名前（フッター・ツールチップ）。
     pub fn singular(self, lang: Lang) -> &'static str {
         match self {
-            ItemKind::Image => lang.pick("画像", "Image"),
-            ItemKind::Brush => lang.pick("ブラシ", "Brush"),
-            ItemKind::Material => lang.pick("マテリアル", "Material"),
-            ItemKind::SmartMaterial => lang.pick("スマートマテリアル", "Smart Material"),
-            ItemKind::SmartMask => lang.pick("スマートマスク", "Smart Mask"),
+            ItemKind::Image => lang.t("shelf-image"),
+            ItemKind::Brush => lang.t("shelf-brush"),
+            ItemKind::Material => lang.t("shelf-material"),
+            ItemKind::SmartMaterial => lang.t("shelf-smart-material"),
+            ItemKind::SmartMask => lang.t("shelf-smart-mask"),
         }
     }
 
@@ -176,16 +176,14 @@ impl Block {
             Block::Kind(k) => format!(
                 "{}{}",
                 k.singular(lang),
-                lang.pick("はまだ置けません", " cannot be placed yet")
+                lang.t("shelf-cannot-be-placed-yet")
             ),
-            Block::Images => lang.pick("画像入りは置けません", "Contains images").into(),
-            Block::Generators => lang
-                .pick("ジェネレーター付きは置けません", "Has pinned generators")
-                .into(),
+            Block::Images => lang.t("shelf-contains-images").into(),
+            Block::Generators => lang.t("shelf-has-pinned-generators").into(),
             Block::Unsupported(e) => e.reason(lang).to_owned(),
             // 項目の状態の行にも出すので、句点は付けない（「読めません（理由）」）
             Block::Unreadable(e) => lang
-                .with_reason(lang.pick("読めません", "Unreadable"), e.reason(lang))
+                .with_reason(lang.t("shelf-unreadable"), e.reason(lang))
                 .trim_end_matches(['。', '.'])
                 .to_owned(),
         }
@@ -774,9 +772,9 @@ impl ShelfState {
     /// 別のスレッドの仕事の呼び名（レイヤーの保存か、ライブラリのファイルの取り込みか）。
     pub fn saving_label(&self, lang: Lang) -> &'static str {
         if self.saving.as_ref().is_some_and(|p| p.from_library) {
-            lang.pick("取り込み中", "Importing")
+            lang.t("shelf-importing")
         } else {
-            lang.pick("保存中", "Saving")
+            lang.t("shelf-saving")
         }
     }
 
@@ -824,11 +822,11 @@ impl ShelfState {
     /// 次の保存を始められない理由（書き出しが走っている間。やめた保存のスレッドが終わるまでも）。
     pub fn busy_reason(&self, lang: Lang) -> Option<&'static str> {
         if self.saving.as_ref().is_some_and(|p| p.from_library) {
-            Some(lang.pick("取り込み中です", "Already importing"))
+            Some(lang.t("shelf-already-importing"))
         } else if self.saving.is_some() {
-            Some(lang.pick("保存中です", "Already saving"))
+            Some(lang.t("shelf-already-saving"))
         } else if self.saves_running() > 0 {
-            Some(lang.pick("やめた保存を終えています", "Finishing the cancelled save"))
+            Some(lang.t("shelf-finishing-the-cancelled-save"))
         } else {
             None
         }
@@ -1135,10 +1133,7 @@ impl ShelfState {
             .with_shelf(&self.shelf, crate::project::writer())
             .map_err(|e| {
                 lang.with_reason(
-                    lang.pick(
-                        "プロジェクトのアセットを書けません",
-                        "Cannot write the project's assets",
-                    ),
+                    lang.t("shelf-cannot-write-the-project-s"),
                     lang.io_error(&e),
                 )
             })
@@ -1227,12 +1222,12 @@ fn channel_name(c: Channel) -> &'static str {
 
 fn channel_label(lang: Lang, c: Channel) -> &'static str {
     match c {
-        Channel::Color => lang.pick("カラー", "Color"),
-        Channel::Roughness => lang.pick("ラフネス", "Roughness"),
-        Channel::Metallic => lang.pick("メタリック", "Metallic"),
-        Channel::Height => lang.pick("ハイト", "Height"),
-        Channel::Normal => lang.pick("ノーマル", "Normal"),
-        Channel::Emission => lang.pick("エミッション", "Emission"),
+        Channel::Color => lang.t("shelf-color"),
+        Channel::Roughness => lang.t("shelf-roughness"),
+        Channel::Metallic => lang.t("shelf-metallic"),
+        Channel::Height => lang.t("shelf-height"),
+        Channel::Normal => lang.t("shelf-normal"),
+        Channel::Emission => lang.t("shelf-emission"),
         _ => "",
     }
 }
@@ -1555,29 +1550,22 @@ pub(crate) fn image_as_material(
     height: u32,
     name: &str,
 ) -> Result<SmartMaterial, String> {
-    let unreadable = || {
-        lang.pick("画像を読めません", "Cannot read the image")
-            .to_owned()
-    };
+    let unreadable = || lang.t("shelf-cannot-read-the-image").to_owned();
     let reader =
         image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
     let (found_w, found_h) = reader.into_dimensions().map_err(|_| unreadable())?;
     if (found_w, found_h) != (width, height) {
-        return Err(lang
-            .pick(
-                "画像の大きさが索引と違います",
-                "Image size differs from the index",
-            )
-            .to_owned());
+        return Err(lang.t("shelf-image-size-differs-from-the").to_owned());
     }
     let (mut doc, note) = crate::project::preview_document(Some(png), width, height, lang);
     if note.is_some() {
         return Err(unreadable());
     }
-    let id = doc.layers().first().map(|l| l.id()).ok_or_else(|| {
-        lang.pick("レイヤーがありません", "Layer not found")
-            .to_owned()
-    })?;
+    let id = doc
+        .layers()
+        .first()
+        .map(|l| l.id())
+        .ok_or_else(|| lang.t("shelf-layer-not-found").to_owned())?;
     doc.set_layer_name(id, name)
         .map_err(|e| lang.core_error(&e))?;
     doc.capture_smart_material(&[id], name)
@@ -1618,11 +1606,7 @@ impl AppState {
         if let Some(w) = self.library.write.take() {
             self.info(
                 Source::Assets,
-                format!(
-                    "{}: {}",
-                    self.lang.pick("書き込みをやめました", "Cancelled writing"),
-                    w.name
-                ),
+                format!("{}: {}", self.lang.t("shelf-cancelled-writing"), w.name),
             );
         }
     }
@@ -1635,10 +1619,9 @@ impl AppState {
                 format!(
                     "{}: {}",
                     if p.from_library {
-                        self.lang
-                            .pick("取り込みをやめました", "Cancelled importing")
+                        self.lang.t("shelf-cancelled-importing")
                     } else {
-                        self.lang.pick("保存をやめました", "Cancelled saving")
+                        self.lang.t("shelf-cancelled-saving")
                     },
                     p.name
                 ),
@@ -1670,13 +1653,10 @@ impl AppState {
         {
             if is_builtin(id) {
                 let reason = match op {
-                    ShelfOp::Remove(_) | ShelfOp::AskRemove(_) => self
-                        .lang
-                        .pick("組み込みは消せません", "Built-in items cannot be removed"),
-                    _ => self.lang.pick(
-                        "組み込みは書き出せません",
-                        "Built-in items cannot be exported",
-                    ),
+                    ShelfOp::Remove(_) | ShelfOp::AskRemove(_) => {
+                        self.lang.t("shelf-built-in-items-cannot-be")
+                    }
+                    _ => self.lang.t("shelf-built-in-items-cannot-be-2"),
                 };
                 return self.refuse(Source::Assets, self.lang.with_reason(reason, ""));
             }
@@ -1761,7 +1741,7 @@ impl AppState {
         if self.shelf.saving.is_none() {
             return false;
         }
-        let reason = self.lang.pick("保存中です", "Already saving");
+        let reason = self.lang.t("shelf-already-saving");
         self.cannot(
             NoticeKind::Refusal,
             Source::Assets,
@@ -1779,13 +1759,7 @@ impl AppState {
                 let lang = self.lang;
                 self.fail(
                     Source::Assets,
-                    lang.with_reason(
-                        lang.pick(
-                            "プロジェクトのアセットを読めなかったので、変えられません",
-                            "Cannot change the project's assets because they could not be read",
-                        ),
-                        e.reason(lang),
-                    ),
+                    lang.with_reason(lang.t("shelf-cannot-change-the-project-s"), e.reason(lang)),
                 );
                 false
             }
@@ -1829,11 +1803,11 @@ impl AppState {
                 Source::Assets,
                 Attempt::ShelfSave,
                 None,
-                lang.pick("レイヤーがありません", "Layer not found"),
+                lang.t("shelf-layer-not-found"),
             );
         };
         let name = if mask {
-            format!("{layer_name}{}", lang.pick(" のマスク", " mask"))
+            format!("{layer_name}{}", lang.t("shelf-mask"))
         } else {
             layer_name
         };
@@ -1893,7 +1867,7 @@ impl AppState {
             });
             self.info(
                 Source::Assets,
-                format!("{}: {name}", lang.pick("保存中", "Saving")),
+                format!("{}: {name}", lang.t("shelf-saving")),
             );
             self.shelf.saving = Some(PendingSave {
                 name,
@@ -1935,17 +1909,8 @@ impl AppState {
         self.info(
             Source::Assets,
             match kept {
-                Kept::Added => format!(
-                    "{}: {name}",
-                    lang.pick("アセットに入れました", "Added to the project's assets")
-                ),
-                Kept::Existing => format!(
-                    "{}: {name}",
-                    lang.pick(
-                        "すでにアセットにあります",
-                        "Already in the project's assets"
-                    )
-                ),
+                Kept::Added => format!("{}: {name}", lang.t("shelf-added-to-the-project-s")),
+                Kept::Existing => format!("{}: {name}", lang.t("shelf-already-in-the-project-s")),
             },
         );
     }
@@ -2011,9 +1976,9 @@ impl AppState {
         let result = match pending.rx.try_recv() {
             Ok(r) => Some(r.map_err(|e| crate::lang::shelf_io_error(lang, &e))),
             Err(std::sync::mpsc::TryRecvError::Empty) => None,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Err(lang
-                .pick("書き出しが途中で止まりました", "The write stopped midway")
-                .to_owned())),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Some(Err(lang.t("shelf-the-write-stopped-midway").to_owned()))
+            }
         };
         if let Some(result) = result {
             let pending = self.shelf.saving.take().expect("上で確かめた");
@@ -2027,17 +1992,16 @@ impl AppState {
                         match kept {
                             Kept::Added => format!(
                                 "{}: {name}{}",
-                                lang.pick("プロジェクトに取り込みました", "Added to the project"),
+                                lang.t("shelf-added-to-the-project"),
                                 if rounded {
                                     format!(" · {}", crate::library::rounded_note(lang))
                                 } else {
                                     String::new()
                                 }
                             ),
-                            Kept::Existing => format!(
-                                "{}: {name}",
-                                lang.pick("すでにプロジェクトにあります", "Already in the project")
-                            ),
+                            Kept::Existing => {
+                                format!("{}: {name}", lang.t("shelf-already-in-the-project"))
+                            }
                         },
                     );
                 }
@@ -2110,13 +2074,9 @@ impl AppState {
         };
         let made = if builtin {
             // 同梱の素材はコードから組む（ファイルも棚の中身も無い）
-            self.shelf.build_builtin(id, lang).ok_or_else(|| {
-                lang.pick(
-                    "組み込みの素材を組めません",
-                    "Cannot build the built-in item",
-                )
-                .to_owned()
-            })
+            self.shelf
+                .build_builtin(id, lang)
+                .ok_or_else(|| lang.t("shelf-cannot-build-the-built-in").to_owned())
         } else if kind == Some(ItemKind::Image) {
             image_as_material(lang, bytes, width, height, &name)
         } else {
@@ -2158,7 +2118,7 @@ impl AppState {
                     Source::Assets,
                     Attempt::Place,
                     Some(name),
-                    lang.pick("選んだレイヤーがありません", "No layer selected"),
+                    lang.t("shelf-no-layer-selected"),
                 );
             };
             let had_mask = self
@@ -2174,9 +2134,9 @@ impl AppState {
                     let mut text = format!(
                         "{}: {name}",
                         if had_mask {
-                            lang.pick("マスクを入れ替えました", "Replaced the mask")
+                            lang.t("shelf-replaced-the-mask")
                         } else {
-                            lang.pick("マスクにしました", "Applied as the mask")
+                            lang.t("shelf-applied-as-the-mask")
                         }
                     );
                     text += &resized_note(lang, &material, result.resampled);
@@ -2213,7 +2173,7 @@ impl AppState {
                 let n = result.layers.len();
                 let mut text = format!(
                     "{}: {name}（{n} {}",
-                    lang.pick("置きました", "Placed"),
+                    lang.t("shelf-placed"),
                     lang.pick("レイヤー", if n == 1 { "layer" } else { "layers" })
                 );
                 // 同梱の素材は大きさに依らない（画素が無い）ので、変えたとは言わない
@@ -2259,15 +2219,9 @@ impl AppState {
         if users.is_empty() && !self.shelf.used_by(project, id) {
             return None;
         }
-        let what = lang.pick(
-            format!(
-                "{}はレイヤーが使っているので、アセットから消せません",
-                lang.quote(&res.name)
-            ),
-            format!(
-                "Cannot remove {} because a layer uses it",
-                lang.quote(&res.name)
-            ),
+        let what = lang.f(
+            "shelf-cannot-remove-because-a-layer",
+            &[("name", &lang.quote(&res.name))],
         );
         let list = users.iter().take(3).cloned().collect::<Vec<_>>().join(", ");
         let more = if users.len() > 3 { " …" } else { "" };
@@ -2296,13 +2250,7 @@ impl AppState {
                 self.session.mark_modified();
                 self.info(
                     Source::Assets,
-                    format!(
-                        "{}: {name}",
-                        lang.pick(
-                            "アセットから消しました",
-                            "Removed from the project's assets"
-                        )
-                    ),
+                    format!("{}: {name}", lang.t("shelf-removed-from-the-project-s")),
                 );
             }
             Ok(false) => {}
@@ -2337,17 +2285,8 @@ impl AppState {
         let (new, old) = (added.len(), existing.len());
         if refused.is_empty() {
             let text = match (added.as_slice(), existing.as_slice()) {
-                ([name], []) => format!(
-                    "{}: {name}",
-                    lang.pick("アセットに入れました", "Added to the project's assets")
-                ),
-                ([], [name]) => format!(
-                    "{}: {name}",
-                    lang.pick(
-                        "すでにアセットにあります",
-                        "Already in the project's assets"
-                    )
-                ),
+                ([name], []) => format!("{}: {name}", lang.t("shelf-added-to-the-project-s")),
+                ([], [name]) => format!("{}: {name}", lang.t("shelf-already-in-the-project-s")),
                 _ => kept_note(lang, new, old),
             };
             if new + old > 0 {
@@ -2356,10 +2295,10 @@ impl AppState {
             return;
         }
         // 断りがあっても、入れた分とすでにあった分は別に数える（すでにあったものを「入れました」と言わない）
-        let mut text = refused.join(lang.pick("", " "));
+        let mut text = refused.join(lang.t("shelf-text"));
         if new + old > 0 {
             // 一部は入った（入れた分・すでにあった分）: 気をつけること。全部断ったなら失敗
-            text += lang.pick("", " ");
+            text += lang.t("shelf-text");
             text += &kept_note(lang, new, old);
             self.warn(Source::Assets, text);
         } else {
@@ -2376,11 +2315,7 @@ impl AppState {
             .unwrap_or_default();
         match std::fs::metadata(path) {
             Ok(m) if m.len() > self.shelf.import_limit => {
-                return Err(refused(
-                    lang,
-                    &shown,
-                    lang.pick("大きすぎます", "Too large"),
-                ));
+                return Err(refused(lang, &shown, lang.t("shelf-too-large")));
             }
             Ok(_) => {}
             Err(e) => return Err(refused(lang, &shown, &lang.file_error(&e))),
@@ -2394,10 +2329,7 @@ impl AppState {
             Err(e) => {
                 let file = lang.quote(&shown);
                 return Err(lang.with_reason(
-                    lang.pick(
-                        format!("{file}はスマート素材として読めません"),
-                        format!("{file} is not a readable smart asset"),
-                    ),
+                    lang.f("shelf-is-not-a-readable-smart", &[("file", &file)]),
                     lang.io_error(&e),
                 ));
             }
@@ -2423,15 +2355,9 @@ impl AppState {
         if !ItemKind::of(&res.kind).is_some_and(ItemKind::is_smart) {
             return self.refuse(
                 Source::Assets,
-                lang.pick(
-                    format!(
-                        "{}はスマート素材ではないので、書き出せません。",
-                        lang.quote(&name)
-                    ),
-                    format!(
-                        "{} is not a smart asset, so it cannot be exported.",
-                        lang.quote(&name)
-                    ),
+                lang.f(
+                    "shelf-is-not-a-smart-asset",
+                    &[("name", &lang.quote(&name))],
                 ),
             );
         }
@@ -2443,21 +2369,14 @@ impl AppState {
         match result {
             Ok(()) => self.info(
                 Source::Assets,
-                format!(
-                    "{}: {}",
-                    lang.pick("書き出しました", "Exported"),
-                    path.display()
-                ),
+                format!("{}: {}", lang.t("shelf-exported"), path.display()),
             ),
             Err(e) => {
                 let target = lang.quote(&path.display().to_string());
                 self.fail(
                     Source::Assets,
                     lang.with_reason(
-                        lang.pick(
-                            format!("{target}に書き出せません"),
-                            format!("Cannot export to {target}"),
-                        ),
+                        lang.f("shelf-cannot-export-to", &[("target", &target)]),
                         lang.file_error(&e),
                     ),
                 );
@@ -2470,10 +2389,7 @@ impl AppState {
 fn kept_note(lang: Lang, added: usize, existing: usize) -> String {
     let mut parts = Vec::new();
     if added > 0 {
-        parts.push(lang.pick(
-            format!("{added} 件をアセットに入れました。"),
-            format!("Added {added} to the project's assets."),
-        ));
+        parts.push(lang.f("shelf-added-to-the-project-s-2", &[("added", &added)]));
     }
     if existing > 0 {
         parts.push(lang.pick(
@@ -2484,7 +2400,7 @@ fn kept_note(lang: Lang, added: usize, existing: usize) -> String {
             ),
         ));
     }
-    parts.join(lang.pick("", " "))
+    parts.join(lang.t("shelf-text"))
 }
 
 /// アセットへ読み込めなかったファイルの 1 文（「「名前」をアセットに読み込めません（理由）。」）。

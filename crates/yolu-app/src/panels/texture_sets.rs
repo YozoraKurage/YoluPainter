@@ -46,21 +46,17 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "lock",
             t::WARNING,
-            format!("{}: {reason}", app.lang.pick("読むだけ", "Read-only")),
+            format!("{}: {reason}", app.lang.t("panels-read-only-tip")),
         );
     }
     let model = app.session.model.as_ref()?;
     let Some(material) = set.bound else {
         // 薄い切れた鎖。理由はツールチップ（マテリアルに付いていないセットと、今のモデルに無いマテリアルのセット）
         let tooltip = match &set.material {
-            crate::sets::MaterialRef::Material { .. } => app.lang.pick(
-                "今のモデルに無いマテリアル。鍵は残してあり、そのマテリアルのあるモデルでまた付く",
-                "Material not in this model. Its reference is kept for models that use it.",
-            ),
-            _ => app.lang.pick(
-                "今のモデルのマテリアルに付いていない",
-                "Not assigned to a material of this model",
-            ),
+            crate::sets::MaterialRef::Material { .. } => {
+                app.lang.t("panels-material-not-in-this-model-tip")
+            }
+            _ => app.lang.t("panels-not-assigned-to-a-material-tip"),
         };
         return look("link_off", t::TEXT_DIM, tooltip.into());
     };
@@ -68,21 +64,14 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         return look(
             "visibility_off",
             t::TEXT_DIM,
-            app.lang
-                .pick("3D ビューに見せていない", "Hidden in the 3D View")
-                .into(),
+            app.lang.t("panels-hidden-in-the-3d-view-tip").into(),
         );
     }
     if app.view3d.unpainted.contains(&(material as i32)) {
         return look(
             "warning",
             t::WARNING,
-            app.lang
-                .pick(
-                    "3D ビューに絵を見せていない: GPU のメモリの予算が足りない（今のセットから遠いセットから見せない。絵と書き出しはそのまま）",
-                    "Not shown in the 3D View: over the GPU memory budget (the sets farthest from the current one are left out; the texture and exports are unchanged)",
-                )
-                .into(),
+            app.lang.t("panels-not-shown-in-the-3d-tip").into(),
         );
     }
     let _ = model;
@@ -100,15 +89,12 @@ pub struct BakeEntrance {
 /// 理由は、焼いている最中ならそれ、そうでなければ「まだ焼いていない」。ウィンドウはどちらでも開ける（押せるのは描いていないときだけ）。
 pub fn bake_entrance(app: &AppState) -> BakeEntrance {
     let lang = app.lang;
-    let name = lang.pick("メッシュマップをベイク…", "Bake Mesh Maps…");
+    let name = lang.t("panels-bake-mesh-maps");
     let marked = app.session.sets.current().mesh_maps.is_empty();
     let reason = if app.bake.is_baking() {
-        Some(lang.pick("ベイク中", "Baking"))
+        Some(lang.t("panels-baking"))
     } else if marked {
-        Some(lang.pick(
-            "このテクスチャセットはまだベイクしていません",
-            "This texture set has not been baked yet",
-        ))
+        Some(lang.t("panels-this-texture-set-has-not"))
     } else {
         None
     };
@@ -170,10 +156,7 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         button(bar.left() + 4.0),
         "set.add",
         "add",
-        lang.pick(
-            "空のテクスチャセットを追加（今のセットと同じ大きさ・チャンネル）",
-            "Add an empty texture set (same size and channels as this one)",
-        ),
+        lang.t("panels-add-an-empty-texture-set-tip"),
         false,
         free && app.session.sets.len() < crate::newproject::MAX_SETS,
         16.0,
@@ -189,15 +172,9 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         "set.remove",
         "delete",
         if only {
-            lang.pick(
-                "プロジェクトには少なくとも 1 つのテクスチャセットが要ります",
-                "A project keeps at least one texture set",
-            )
+            lang.t("panels-a-project-keeps-at-least-tip")
         } else {
-            lang.pick(
-                "今のテクスチャセットを消す（確かめます。その作業は消えます）",
-                "Remove this texture set (asked first; its work is lost)",
-            )
+            lang.t("panels-remove-this-texture-set-asked-tip")
         },
         false,
         free && !only,
@@ -241,7 +218,7 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
         button(bar.right() - 30.0),
         "set.configure",
         "tune",
-        lang.pick("プロジェクト設定…", "Project Configuration…"),
+        lang.t("panels-project-configuration-tip"),
         false,
         free,
         16.0,
@@ -354,12 +331,9 @@ fn set_row(
             "visibility_off"
         },
         if visible {
-            app.lang.pick(
-                "隠す（3D ビューと Unity に見せない）",
-                "Hide in the 3D View and Unity",
-            )
+            app.lang.t("panels-hide-in-the-3d-view-tip")
         } else {
-            app.lang.pick("見せる", "Show")
+            app.lang.t("panels-show-2-tip")
         },
         false,
         true,

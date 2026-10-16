@@ -29,10 +29,10 @@ impl OrbitCenter {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Self::View => lang.pick("画面の中心", "View center"),
-            Self::Surface => lang.pick("面の位置（自動深度）", "Surface (auto depth)"),
-            Self::Model => lang.pick("モデルの中心", "Model center"),
-            Self::TextureSet => lang.pick("テクスチャセットの中心", "Texture set center"),
+            Self::View => lang.t("view3d-view-center"),
+            Self::Surface => lang.t("view3d-surface-auto-depth"),
+            Self::Model => lang.t("view3d-model-center"),
+            Self::TextureSet => lang.t("view3d-texture-set-center"),
         }
     }
 
@@ -58,8 +58,8 @@ impl ZoomCenter {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Self::View => lang.pick("画面の中心へ", "Toward view center"),
-            Self::Pointer => lang.pick("ポインタの所へ", "Toward pointer"),
+            Self::View => lang.t("view3d-toward-view-center"),
+            Self::Pointer => lang.t("view3d-toward-pointer"),
         }
     }
 }

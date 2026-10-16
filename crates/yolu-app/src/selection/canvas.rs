@@ -160,8 +160,7 @@ pub fn finish_polygon(app: &mut AppState, modifiers: Modifiers) {
 pub(crate) fn refuse_too_few_points(app: &mut AppState) {
     app.refuse(
         Source::Selection,
-        app.lang
-            .pick("点が足りません（3 つ以上）。", "Needs at least 3 points."),
+        app.lang.t("selection-needs-at-least-3-points"),
     );
 }
 
@@ -341,8 +340,7 @@ pub fn cancel(app: &mut AppState) -> bool {
     if any {
         app.info(
             Source::Selection,
-            app.lang
-                .pick("選択の途中をやめました。", "Selection cancelled."),
+            app.lang.t("selection-selection-cancelled"),
         );
     }
     any
@@ -497,10 +495,7 @@ fn ants_shapes(view: &CanvasView, clip: Rect, runs: &[Run], phase: f32) -> Ants 
 
 /// 縁を一部しか描いていない理由（キャンバスの隅に出す短い状態。使い方の説明ではない）。
 fn partial_edge_note(lang: Lang) -> &'static str {
-    lang.pick(
-        "縁が多いため一部だけ表示",
-        "Edge partly shown: too many segments",
-    )
+    lang.t("selection-edge-partly-shown-too-many")
 }
 
 /// 縁が一部だけの印を、キャンバスの左下に出す。

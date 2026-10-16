@@ -114,9 +114,9 @@ fn view(app: &AppState, win: &NpWindow) -> View {
 
 fn title(lang: Lang, configure: bool) -> &'static str {
     if configure {
-        lang.pick("プロジェクト設定", "Project Configuration")
+        lang.t("newproject-project-configuration")
     } else {
-        lang.pick("新規プロジェクト", "New Project")
+        lang.t("newproject-new-project")
     }
 }
 
@@ -194,7 +194,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         icon: Some(if configure { "tune" } else { "add" }),
         size: vec2(WIDTH, height(&win, &v)),
         modal: true,
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
+        close_label: lang.t("newproject-close-window"),
     };
     let mut actions: Vec<NpAction> = Vec::new();
     let mut offset = win.offset;
@@ -264,7 +264,7 @@ fn draw(
 
     // テンプレート（新規）
     if !win.configure {
-        label(&p, y, lang.pick("テンプレート", "Template"), true);
+        label(&p, y, lang.t("newproject-template"), true);
         let (r, b) = w::dropdown(
             ui,
             control(y),
@@ -282,7 +282,7 @@ fn draw(
     }
 
     // メッシュ
-    label(&p, y, lang.pick("メッシュ", "Mesh"), true);
+    label(&p, y, lang.t("newproject-mesh"), true);
     {
         let c = control(y);
         let mut x = c.right();
@@ -294,7 +294,7 @@ fn draw(
             folder,
             id.with("choose"),
             "folder_open",
-            lang.pick("モデルを選ぶ…", "Choose a model…"),
+            lang.t("newproject-choose-a-model-tip"),
             false,
             choose_enabled,
             17.0,
@@ -313,9 +313,9 @@ fn draw(
                 id.with("clear"),
                 "close",
                 if win.configure {
-                    lang.pick("モデルを替えない", "Keep the current model")
+                    lang.t("newproject-keep-the-current-model-tip")
                 } else {
-                    lang.pick("モデルを使わない", "Do not use a model")
+                    lang.t("newproject-do-not-use-a-model-tip")
                 },
                 false,
                 !locked,
@@ -334,10 +334,7 @@ fn draw(
                 reload,
                 id.with("reload"),
                 "restart_alt",
-                lang.pick(
-                    "適用するときにモデルをファイルから読み直す（FBX を書き出し直した後）。テクスチャセットはそれぞれのマテリアルのまま",
-                    "Reload the model from its file when you apply (after exporting the FBX again). The texture sets stay on their materials",
-                ),
+                lang.t("newproject-reload-the-model-from-its-tip"),
                 win.reload,
                 !locked,
                 17.0,
@@ -368,11 +365,7 @@ fn draw(
         }
         let tip = if v.model_tip.is_empty() {
             if none {
-                lang.pick(
-                    "2D で描く。モデルは後から選べます",
-                    "Paint in 2D. A model can be chosen later",
-                )
-                .to_owned()
+                lang.t("newproject-paint-in-2d-a-model-tip").to_owned()
             } else {
                 String::new()
             }
@@ -397,7 +390,7 @@ fn draw(
                     cancel,
                     id.with("cancel-prep"),
                     "close",
-                    lang.pick("準備を取り消す", "Cancel preparation"),
+                    lang.t("newproject-cancel-preparation-tip"),
                     false,
                     !locked,
                     15.0,
@@ -408,7 +401,7 @@ fn draw(
                 }
                 // 割合が分かれば帯を埋めて % を添え、分からない間は往復する帯
                 let fraction = job.fraction();
-                let label = lang.pick("モデルを準備中", "Preparing the model");
+                let label = lang.t("newproject-preparing-the-model");
                 let label = match fraction {
                     Some(f) => format!("{label} {}%", (f * 100.0).floor() as u32),
                     None => label.to_owned(),
@@ -420,7 +413,7 @@ fn draw(
                 w::progress_bar(&p, bar, fraction, ui.ctx().input(|i| i.time));
             }
             Prep::Canceled { .. } | Prep::Failed { .. } => {
-                let again = lang.pick("もう一度準備する", "Prepare again");
+                let again = lang.t("newproject-prepare-again");
                 let bw = w::text_width(&p, again, t::LABEL) + 28.0;
                 let button = Rect::from_min_size(pos2(row.right() - bw, y), vec2(bw, ROW));
                 if w::button(
@@ -443,8 +436,7 @@ fn draw(
                         (why.clone(), true, why)
                     }
                     _ => (
-                        lang.pick("準備を取り消しました", "Preparation canceled")
-                            .to_owned(),
+                        lang.t("newproject-preparation-canceled").to_owned(),
                         false,
                         String::new(),
                     ),
@@ -525,9 +517,9 @@ fn draw(
                 "missing",
                 "link_off",
                 t::WARNING,
-                &lang.pick(
-                    format!("モデルに無い {}", v.missing),
-                    format!("{} not in this model", v.missing),
+                &lang.f(
+                    "newproject-not-in-this-model-tip",
+                    &[("missing", &v.missing)],
                 ),
                 &names.join("\n"),
             );
@@ -539,9 +531,9 @@ fn draw(
                 .filter(|g| win.drafts.iter().all(|d| d.material != Some(g.index)))
                 .map(|g| g.name.clone())
                 .collect();
-            let text = lang.pick(
-                format!("セットの無いマテリアル {}", v.unused),
-                format!("{} materials without a texture set", v.unused),
+            let text = lang.f(
+                "newproject-materials-without-a-texture-set-tip",
+                &[("unused", &v.unused)],
             );
             let tw = w::text_width(ui.painter(), &text, t::LABEL_DIM);
             chip(
@@ -560,10 +552,7 @@ fn draw(
                 add,
                 id.with("add-unused"),
                 "add",
-                lang.pick(
-                    "セットの無いマテリアルに、空のテクスチャセットを追加",
-                    "Add an empty texture set for each material without one",
-                ),
+                lang.t("newproject-add-an-empty-texture-set-tip"),
                 false,
                 !locked,
                 16.0,
@@ -575,9 +564,9 @@ fn draw(
             x += 30.0;
         }
         if !v.notes.is_empty() {
-            let text = lang.pick(
-                format!("読み込みの知らせ {}", v.notes.len()),
-                format!("{} notices while loading", v.notes.len()),
+            let text = lang.f(
+                "newproject-notices-while-loading-tip",
+                &[("notes", &v.notes.len())],
             );
             chip(
                 ui,
@@ -601,11 +590,8 @@ fn draw(
 
     // 解像度（新規）・補間方法（構成）
     if win.configure {
-        label(&p, y, lang.pick("補間方法", "Resampling"), v.sizes_changing);
-        let tip = lang.pick(
-            "セットの大きさを変えるときの再標本化。自動は、縮めるなら面積平均、広げるならバイリニア",
-            "How a texture set is resampled when its size changes. Automatic uses area average to shrink and bilinear to enlarge",
-        );
+        label(&p, y, lang.t("newproject-resampling"), v.sizes_changing);
+        let tip = lang.t("newproject-how-a-texture-set-is-tip");
         let c = control(y);
         let box_rect = Rect::from_min_max(
             c.min,
@@ -631,13 +617,10 @@ fn draw(
             let at = Rect::from_min_size(pos2(c.right() - 24.0, y), vec2(24.0, ROW));
             w::icon(&p, at, "warning", t::WARNING, 15.0);
             ui.interact(at, id.with("resample-warning"), Sense::hover())
-                .on_hover_text(lang.pick(
-                    "適用すると、大きさを変えるセットは再標本化され、その取り消しの履歴が消えます（元の大きさへ戻せません）",
-                    "Applying resamples the resized texture sets and clears their undo history (the old size cannot be restored)",
-                ));
+                .on_hover_text(lang.t("newproject-applying-resamples-the-resized-texture-tip"));
         }
     } else {
-        label(&p, y, lang.pick("解像度", "Resolution"), true);
+        label(&p, y, lang.t("newproject-resolution"), true);
         let (r, b) = w::dropdown(
             ui,
             control(y),
@@ -655,22 +638,14 @@ fn draw(
     y += ROW + GAP;
 
     // 法線の形式
-    label(
-        &p,
-        y,
-        lang.pick("ノーマルマップの形式", "Normal map format"),
-        true,
-    );
+    label(&p, y, lang.t("newproject-normal-map-format"), true);
     let (r, b) = w::dropdown(
         ui,
         control(y),
         id.with("normal"),
         None,
         normal_name(lang, win.normal),
-        Some(lang.pick(
-            "Unity は OpenGL の形式で読みます。この形式はファイルの書き出しに使います",
-            "Unity reads normal maps as OpenGL. The format is used when exporting files",
-        )),
+        Some(lang.t("newproject-unity-reads-normal-maps-as-tip")),
         !locked,
         0.0,
     );
@@ -687,15 +662,9 @@ fn draw(
             ui,
             row,
             id.with("bake"),
-            lang.pick(
-                "作成後にメッシュマップをベイクする",
-                "Bake mesh maps after creating",
-            ),
+            lang.t("newproject-bake-mesh-maps-after-creating"),
             win.bake && can_bake,
-            Some(lang.pick(
-                "モデルから法線・位置・AO・曲率・厚みを焼く",
-                "Normal, position, AO, curvature and thickness from the model",
-            )),
+            Some(lang.t("newproject-normal-position-ao-curvature-and-tip")),
             can_bake && !locked,
         );
         if next != win.bake && can_bake {
@@ -743,7 +712,7 @@ fn draw(
         ui,
         cancel,
         id.with("cancel"),
-        lang.pick("キャンセル", "Cancel"),
+        lang.t("newproject-cancel"),
         false,
         !locked,
         None,
@@ -756,9 +725,9 @@ fn draw(
     let ready = win.is_ready();
     let tip = (!ready).then(|| {
         if win.is_loading() {
-            lang.pick("モデルを準備しています", "The model is being prepared")
+            lang.t("newproject-the-model-is-being-prepared-tip")
         } else {
-            lang.pick("モデルを準備できていません", "The model is not ready")
+            lang.t("newproject-the-model-is-not-ready-tip")
         }
     });
     if w::button(
@@ -766,9 +735,9 @@ fn draw(
         ok,
         id.with("ok"),
         if win.configure {
-            lang.pick("適用", "Apply")
+            lang.t("newproject-apply")
         } else {
-            lang.pick("作成", "Create")
+            lang.t("newproject-create")
         },
         true,
         ready && !locked,
@@ -813,7 +782,7 @@ fn draw_materials(
     w::text(
         &p,
         Rect::from_min_size(pos2(left, *y), vec2(width, 16.0)),
-        lang.pick("テクスチャセット", "Texture Sets"),
+        lang.t("newproject-texture-sets"),
         t::HEADER.with_color(t::TEXT_DIM),
         Align::Left,
     );
@@ -844,17 +813,14 @@ fn draw_materials(
         let detail = format!(
             "{}\n{}: {}\n{}",
             g.name,
-            lang.pick("メッシュ", "Meshes"),
+            lang.t("newproject-meshes"),
             g.meshes.join(", "),
-            lang.pick(
-                format!("マテリアルスロット {}", g.slots),
-                format!("{} material slot(s)", g.slots),
-            ),
+            lang.f("newproject-material-slot-s", &[("slots", &g.slots)]),
         );
         let tip = if last {
             format!(
                 "{}\n{detail}",
-                lang.pick("1 つは残します", "At least one stays checked")
+                lang.t("newproject-at-least-one-stays-checked-tip")
             )
         } else if full {
             format!("{}\n{detail}", crate::lang::refusals::set_limit(lang))
@@ -901,7 +867,7 @@ fn draw_drafts(
     w::text(
         &p,
         Rect::from_min_size(pos2(left, *y), vec2(width, 16.0)),
-        lang.pick("テクスチャセット", "Texture Sets"),
+        lang.t("newproject-texture-sets"),
         t::HEADER.with_color(t::TEXT_DIM),
         Align::Left,
     );
@@ -955,7 +921,7 @@ fn draw_drafts(
             );
             child
                 .interact(name, id.with(("name-ro", i)), Sense::hover())
-                .on_hover_text(lang.pick("読むだけのテクスチャセット", "Read-only texture set"));
+                .on_hover_text(lang.t("newproject-read-only-texture-set-tip"));
         } else {
             let out = w::text_field(
                 &mut child,
@@ -963,9 +929,9 @@ fn draw_drafts(
                 id.with(("name", i)),
                 &d.name,
                 Some(if d.uid.is_none() {
-                    lang.pick("追加する空のテクスチャセット", "A new, empty texture set")
+                    lang.t("newproject-a-new-empty-texture-set-tip")
                 } else {
-                    lang.pick("テクスチャセットの名前", "Texture set name")
+                    lang.t("newproject-texture-set-name-tip")
                 }),
                 false,
             );
@@ -980,21 +946,11 @@ fn draw_drafts(
             size_text(d.size)
         );
         let size_tip = if d.uid.is_none() {
-            lang.pick(
-                "追加するテクスチャセットの大きさ",
-                "Size of the new texture set",
-            )
-            .to_owned()
+            lang.t("newproject-size-of-the-new-texture-tip").to_owned()
         } else {
-            lang.pick(
-                format!(
-                    "このテクスチャセットの大きさ（今は {} × {}）。変えると、適用するときにレイヤーを再標本化します",
-                    d.current.0, d.current.1
-                ),
-                format!(
-                    "Size of this texture set (now {} × {}). A new size resamples its layers when you apply",
-                    d.current.0, d.current.1
-                ),
+            lang.f(
+                "newproject-size-of-this-texture-set-tip",
+                &[("current", &d.current.0), ("current_2", &d.current.1)],
             )
         };
         let (r, b) = w::dropdown(
@@ -1016,11 +972,8 @@ fn draw_drafts(
                 g.name.clone(),
                 format!(
                     "{}\n{}: {}",
-                    lang.pick(
-                        "このテクスチャセットが描くマテリアル（それを使う全部のメッシュ）",
-                        "The material this texture set paints (every mesh that uses it)"
-                    ),
-                    lang.pick("メッシュ", "Meshes"),
+                    lang.t("newproject-the-material-this-texture-set"),
+                    lang.t("newproject-meshes"),
                     g.meshes.join(", ")
                 ),
             ),
@@ -1028,13 +981,10 @@ fn draw_drafts(
                 if v.groups.is_empty() {
                     "—".to_owned()
                 } else {
-                    lang.pick("モデルに無い", "not in this model").to_owned()
+                    lang.t("newproject-not-in-this-model").to_owned()
                 },
-                lang.pick(
-                    "このテクスチャセットが描くマテリアル",
-                    "The material this texture set paints",
-                )
-                .to_owned(),
+                lang.t("newproject-the-material-this-texture-set-2")
+                    .to_owned(),
             ),
         };
         let (r, b) = w::dropdown(
@@ -1058,15 +1008,9 @@ fn draw_drafts(
             id.with(("remove", i)),
             "delete",
             if last {
-                lang.pick(
-                    "プロジェクトには少なくとも 1 つのテクスチャセットが要ります",
-                    "A project keeps at least one texture set",
-                )
+                lang.t("newproject-a-project-keeps-at-least-tip")
             } else {
-                lang.pick(
-                    "このテクスチャセットを消す（適用するときにもう一度確かめます。その作業は消えます）",
-                    "Remove this texture set (asked again when you apply; its work is lost)",
-                )
+                lang.t("newproject-remove-this-texture-set-asked-tip")
             },
             false,
             !last && !locked,
@@ -1085,13 +1029,10 @@ fn draw_drafts(
         ui,
         add,
         id.with("add"),
-        lang.pick("テクスチャセットを追加", "Add Texture Set"),
+        lang.t("newproject-add-texture-set"),
         false,
         can_add && !locked,
-        Some(lang.pick(
-            "マテリアルの無いセットも追加できる、空のテクスチャセット（開いているセットと同じ大きさ・チャンネル）",
-            "An empty texture set, for a material without one or none yet (same size and channels as the open one)",
-        )),
+        Some(lang.t("newproject-an-empty-texture-set-for-tip")),
         Some("add"),
     )
     .clicked()
@@ -1110,8 +1051,8 @@ fn open_dropdown(ui: &Ui, dropdown: &mut OpenDropdown, kind: Dropdown, anchor: R
 
 pub fn normal_name(lang: Lang, direction: NormalYDirection) -> &'static str {
     match direction {
-        NormalYDirection::OpenGL => lang.pick("OpenGL（Y+、Unity）", "OpenGL (Y+, Unity)"),
-        NormalYDirection::DirectX => lang.pick("DirectX（Y−）", "DirectX (Y−)"),
+        NormalYDirection::OpenGL => lang.t("newproject-opengl-y-unity"),
+        NormalYDirection::DirectX => lang.t("newproject-directx-y"),
     }
 }
 
@@ -1154,7 +1095,7 @@ fn dropdown_entries(win: &NpWindow, v: &View, kind: Dropdown) -> Vec<Entry<NpAct
             };
             let mut entries = Vec::new();
             let standard = d.current.0 == d.current.1 && RESOLUTIONS.contains(&d.current.0);
-            let current = lang.pick("今の大きさ", "current");
+            let current = lang.t("newproject-current");
             if d.uid.is_some() && !standard {
                 entries.push(
                     Entry::item(
@@ -1230,15 +1171,11 @@ fn dropdown_popup(
 /// 確かめの題（何を確かめるか）。
 fn confirm_title(lang: Lang, plan: &Plan, reload: bool) -> &'static str {
     match plan.kinds.as_slice() {
-        [ConfirmKind::Removal] => {
-            lang.pick("テクスチャセットを消しますか？", "Remove texture sets?")
-        }
-        [ConfirmKind::Resize] => lang.pick("大きさを変えますか？", "Resize texture sets?"),
-        [ConfirmKind::Model] if reload => {
-            lang.pick("モデルを読み直しますか？", "Reload the model?")
-        }
-        [ConfirmKind::Model] => lang.pick("モデルを替えますか？", "Change the model?"),
-        _ => lang.pick("構成を適用しますか？", "Apply the configuration?"),
+        [ConfirmKind::Removal] => lang.t("newproject-remove-texture-sets"),
+        [ConfirmKind::Resize] => lang.t("newproject-resize-texture-sets"),
+        [ConfirmKind::Model] if reload => lang.t("newproject-reload-the-model"),
+        [ConfirmKind::Model] => lang.t("newproject-change-the-model"),
+        _ => lang.t("newproject-apply-the-configuration"),
     }
 }
 
@@ -1263,7 +1200,7 @@ fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &m
     let reload = plan
         .rows
         .iter()
-        .any(|r| r.right == lang.pick("読み直す", "Reload"));
+        .any(|r| r.right == lang.t("newproject-reload"));
     w::icon(
         &p,
         Rect::from_min_size(card.min + vec2(14.0, 0.0), vec2(20.0, 40.0)),
@@ -1281,7 +1218,7 @@ fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &m
     w::text(
         &p,
         Rect::from_min_size(card.min + vec2(14.0, 40.0), vec2(card.width() - 28.0, 22.0)),
-        lang.pick("取り消せません", "This cannot be undone"),
+        lang.t("newproject-this-cannot-be-undone"),
         t::LABEL.with_color(t::WARNING),
         Align::Left,
     );
@@ -1328,9 +1265,9 @@ fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &m
         w::text(
             &p,
             r,
-            &lang.pick(
-                format!("ほか {} 件", plan.rows.len() - CARD_ROWS),
-                format!("and {} more", plan.rows.len() - CARD_ROWS),
+            &lang.f(
+                "newproject-and-more",
+                &[("CARD_ROWS", &(plan.rows.len() - CARD_ROWS))],
             ),
             t::LABEL_DIM,
             Align::Left,
@@ -1350,7 +1287,7 @@ fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &m
         ui,
         cancel,
         id.with("cancel"),
-        lang.pick("やめる", "Cancel"),
+        lang.t("newproject-cancel-2"),
         false,
         true,
         None,
@@ -1364,7 +1301,7 @@ fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &m
         ui,
         ok,
         id.with("apply"),
-        lang.pick("適用", "Apply"),
+        lang.t("newproject-apply"),
         true,
         true,
         None,
@@ -1399,35 +1336,29 @@ fn remove_confirm(ctx: &egui::Context, app: &mut AppState) {
     let spec = crate::windows::ListSpec {
         id: "remove-sets",
         title: if uids.len() == 1 {
-            lang.pick("テクスチャセットを消しますか？", "Remove texture set?")
+            lang.t("newproject-remove-texture-set")
         } else {
-            lang.pick("テクスチャセットを消しますか？", "Remove texture sets?")
+            lang.t("newproject-remove-texture-sets")
         }
         .into(),
         icon: "warning",
         modal: true,
         width: 460.0,
-        summary: Some((lang.pick("取り消せません", "This cannot be undone").into(), true)),
+        summary: Some((lang.t("newproject-this-cannot-be-undone").into(), true)),
         rows,
         buttons: vec![
             crate::windows::Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("newproject-cancel-2").into(),
                 primary: false,
                 tooltip: None,
             },
             crate::windows::Button {
-                label: lang.pick("消す", "Remove").into(),
+                label: lang.t("newproject-remove").into(),
                 primary: true,
-                tooltip: Some(
-                    lang.pick(
-                        "レイヤー・履歴・焼いたメッシュマップごと消えます。保存したファイルは、保存するまで残ります",
-                        "Its layers, history and baked mesh maps are removed. The saved file keeps it until you save",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("newproject-its-layers-history-and-baked-tip").into()),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("newproject-close-window").into(),
     };
     let mut offset: Vec2 = app.ui.np_remove_offset;
     let mut scroll = 0.0;

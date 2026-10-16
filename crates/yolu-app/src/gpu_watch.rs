@@ -155,20 +155,11 @@ pub enum Saved {
 
 /// GPU でエラーが起きて続けられないときの理由の文（画面と、終わる前のウィンドウに出す。名前・状態・短い理由だけ）。
 pub fn lost_text(lang: Lang, saved: Saved) -> String {
-    let head = lang.pick(
-        "GPU でエラーが起きたため、続けられません。",
-        "A GPU error occurred, so YoluPainter cannot continue.",
-    );
+    let head = lang.t("gpu_watch-a-gpu-error-occurred-so");
     let tail = match saved {
-        Saved::Yes => lang.pick(
-            "描いていた絵は復旧用に保存しました。",
-            " Your work was saved for recovery.",
-        ),
+        Saved::Yes => lang.t("gpu_watch-your-work-was-saved-for"),
         Saved::NothingToSave => "",
-        Saved::No => lang.pick(
-            "復旧用に保存できませんでした。",
-            " Could not save for recovery.",
-        ),
+        Saved::No => lang.t("gpu_watch-could-not-save-for-recovery"),
     };
     format!("{head}{tail}")
 }
@@ -178,7 +169,7 @@ pub fn lost_dialog_text(lang: Lang, saved: Saved) -> String {
     format!(
         "{}\n{}",
         lost_text(lang, saved),
-        lang.pick("このあと終了します。", "YoluPainter will now close.")
+        lang.t("gpu_watch-yolupainter-will-now-close")
     )
 }
 

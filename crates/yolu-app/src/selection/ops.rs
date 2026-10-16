@@ -7,9 +7,7 @@ use crate::state::AppState;
 
 impl AppState {
     fn no_selection_text(&self) -> String {
-        self.lang
-            .pick("選択範囲がありません。", "No selection.")
-            .into()
+        self.lang.t("selection-no-selection").into()
     }
 
     /// 選択範囲を、描画色（マテリアルで塗るなら組の全部。マスクを描いているならマスクの白）で塗りつぶす。`erase` なら消す
@@ -32,16 +30,13 @@ impl AppState {
         let changed = result.map_err(|e| lang.core_error(&e))?;
         let (done, same) = if erase {
             (
-                lang.pick("選択範囲を消去しました。", "Erased the selection."),
-                lang.pick("消す画素がありません。", "Nothing to erase."),
+                lang.t("selection-erased-the-selection"),
+                lang.t("selection-nothing-to-erase"),
             )
         } else {
             (
-                lang.pick("選択範囲を塗りつぶしました。", "Filled the selection."),
-                lang.pick(
-                    "塗りつぶしは変わりません。",
-                    "The fill did not change anything.",
-                ),
+                lang.t("selection-filled-the-selection"),
+                lang.t("selection-the-fill-did-not-change"),
             )
         };
         Ok(if changed { done } else { same }.into())
@@ -73,10 +68,7 @@ impl AppState {
         self.ensure_selection();
         Ok(format!(
             "{}: {name}",
-            lang.pick(
-                "コピーして新しいレイヤーにしました",
-                "Copied to a new layer"
-            )
+            lang.t("selection-copied-to-a-new-layer")
         ))
     }
 
@@ -92,9 +84,7 @@ impl AppState {
             .selected_layer
             .filter(|id| self.session.doc.layer(*id).is_some())
         else {
-            return Err(lang
-                .pick("レイヤーが選ばれていません。", "No layer is selected.")
-                .into());
+            return Err(lang.t("selection-no-layer-is-selected-2").into());
         };
         let had_mask = self
             .session
@@ -121,18 +111,9 @@ impl AppState {
         self.set_edit_mask(true);
         let kind = self.session.doc.layer(id).map(|l| l.kind());
         Ok(match (had_mask, kind) {
-            (true, _) => lang.pick(
-                "選択範囲の外をマスクで隠しました。",
-                "Hid everything outside the selection in the mask.",
-            ),
-            (false, Some(LayerKind::Group)) => lang.pick(
-                "グループにマスクを追加しました。",
-                "Added a mask to the group.",
-            ),
-            _ => lang.pick(
-                "選択範囲からマスクを作りました。",
-                "Made a mask from the selection.",
-            ),
+            (true, _) => lang.t("selection-hid-everything-outside-the-selection"),
+            (false, Some(LayerKind::Group)) => lang.t("selection-added-a-mask-to-the"),
+            _ => lang.t("selection-made-a-mask-from-the"),
         }
         .into())
     }

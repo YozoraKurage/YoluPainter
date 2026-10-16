@@ -166,7 +166,7 @@ pub fn view_name(app: &AppState) -> Option<String> {
     let lang = app.lang;
     match app.bake.view {
         MeshMapView::None => None,
-        MeshMapView::Coverage => Some(lang.pick("UV の範囲", "UV Coverage").to_owned()),
+        MeshMapView::Coverage => Some(lang.t("bake-uv-coverage").to_owned()),
         MeshMapView::Kind(kind) => Some(super::kind_label(lang, kind).to_owned()),
     }
 }

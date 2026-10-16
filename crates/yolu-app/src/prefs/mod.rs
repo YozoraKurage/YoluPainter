@@ -316,13 +316,7 @@ impl AppState {
                     if yolu_mcp::valid_port(port) {
                         self.prefs.settings.external_ops_port = port;
                     } else {
-                        self.refuse(
-                            Source::Settings,
-                            lang.pick(
-                                "ポート番号は 1024〜65535 です。",
-                                "The port is a number from 1024 to 65535.",
-                            ),
-                        );
+                        self.refuse(Source::Settings, lang.t("prefs-the-port-is-a-number"));
                     }
                 }
                 Pref::ExportPadding(v) => {
@@ -366,13 +360,7 @@ impl AppState {
                 Pref::AxisOrthographic(on) => self.prefs.settings.navigation.axis_ortho = on,
                 Pref::LibraryFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
-                        self.refuse(
-                            Source::Settings,
-                            lang.pick(
-                                "ライブラリの場所は絶対パスで指定します。",
-                                "The library folder must be an absolute path.",
-                            ),
-                        );
+                        self.refuse(Source::Settings, lang.t("prefs-the-library-folder-must-be"));
                     }
                     folder => self.prefs.settings.library_folder = folder,
                 },
@@ -392,13 +380,7 @@ impl AppState {
                 }
                 Pref::DiskCacheFolder(folder) => match folder {
                     Some(path) if !path.is_absolute() => {
-                        self.refuse(
-                            Source::Settings,
-                            lang.pick(
-                                "キャッシュの場所は絶対パスで指定します。",
-                                "The cache folder must be an absolute path.",
-                            ),
-                        );
+                        self.refuse(Source::Settings, lang.t("prefs-the-cache-folder-must-be"));
                     }
                     folder => {
                         self.prefs.settings.disk_cache_folder = folder;
@@ -447,10 +429,7 @@ impl AppState {
         }
         self.prefs.cache_failures = failures;
         let lang = self.lang;
-        let reason = lang.pick(
-            "ディスクのキャッシュから読めないタイルがあります",
-            "Some tiles cannot be read back from the disk cache",
-        );
+        let reason = lang.t("prefs-some-tiles-cannot-be-read");
         // 保存したプロジェクトの中にあるセットは、開いたときの中身のまま書ける。無いセット（新しいプロジェクト・前の保存の後に
         // 追加したセット）は元の中身が無いので、そのセットだけ保存と復旧用の書き置きに入らない（保存のたびに知らせる）
         let base = self.session.project.as_ref().map(|p| p.project_shared());
@@ -510,9 +489,9 @@ impl AppState {
             reason,
         );
         for why in lang.pick(ja_why, en_why) {
-            text += lang.pick("", " ");
+            text += lang.t("prefs-text");
             text += &why;
-            text += lang.pick("。", ".");
+            text += lang.t("prefs-text-2");
         }
         self.fail(Source::TextureSet, text);
     }
@@ -567,12 +546,10 @@ impl AppState {
         } else if self.prefs.over != Some((id, source)) {
             self.prefs.over = Some((id, source));
             let lang = self.lang;
-            self.refuse(Source::Settings, lang
-                .pick(
-                    "レイヤーのメモリがすでに予算を超えているので、予算を上げるまで追加できません。",
-                    "The layer memory is already over the budget; nothing can be added until it is raised.",
-                )
-                );
+            self.refuse(
+                Source::Settings,
+                lang.t("prefs-the-layer-memory-is-already"),
+            );
         }
     }
 
@@ -610,9 +587,9 @@ impl AppState {
 
 pub(crate) fn padding_name(lang: Lang, texels: i32) -> String {
     match texels {
-        0 => lang.pick("なし", "No padding").into(),
-        n if n < 0 => lang.pick("無限に広げる", "Dilation infinite").into(),
-        n => lang.pick(format!("{n} px 広げる"), format!("Dilation {n} px")),
+        0 => lang.t("prefs-no-padding").into(),
+        n if n < 0 => lang.t("prefs-dilation-infinite").into(),
+        n => lang.f("prefs-dilation-px", &[("n", &n)]),
     }
 }
 
@@ -620,7 +597,7 @@ fn budget_name(lang: Lang, kind: BudgetKind, budget: Budget, ram_mib: u64) -> St
     match budget {
         Budget::Auto => {
             let mib = kind.automatic_mib(ram_mib);
-            lang.pick(format!("自動（{mib} MiB）"), format!("Auto ({mib} MiB)"))
+            lang.f("prefs-auto-mib", &[("mib", &mib)])
         }
         Budget::Mib(n) => format!("{n} MiB"),
     }
@@ -641,7 +618,7 @@ fn disk_limit_name(lang: Lang, limit: DiskLimit, free: Option<u64>) -> String {
     match limit {
         DiskLimit::Auto => {
             let gib = DiskLimit::Auto.bytes(free) >> 30;
-            lang.pick(format!("自動（{gib} GiB）"), format!("Auto ({gib} GiB)"))
+            lang.f("prefs-auto-gib", &[("gib", &gib)])
         }
         DiskLimit::Gib(n) => format!("{n} GiB"),
     }
@@ -667,10 +644,8 @@ impl AppState {
 
 fn threads_name(lang: Lang, threads: Option<u32>, cores: u32) -> String {
     match threads {
-        None => lang.pick(format!("自動（{cores}）"), format!("Automatic ({cores})")),
-        Some(1) => lang
-            .pick("1（並列にしない）", "1 (no parallel work)")
-            .into(),
+        None => lang.f("prefs-automatic", &[("cores", &cores)]),
+        Some(1) => lang.t("prefs-1-no-parallel-work").into(),
         Some(n) => n.to_string(),
     }
 }
@@ -685,7 +660,7 @@ fn pen_api_name(api: PenApi) -> &'static str {
 
 fn compositing_name(lang: Lang, c: Compositing) -> &'static str {
     match c {
-        Compositing::Auto => lang.pick("自動", "Automatic"),
+        Compositing::Auto => lang.t("prefs-automatic-2"),
         Compositing::Gpu => "GPU",
         Compositing::Cpu => "CPU",
     }

@@ -183,7 +183,7 @@ impl BrushGroup {
         match (&self.name, self.builtin) {
             (Some(name), _) => name.clone(),
             (None, Some(group)) => group.name(lang).to_owned(),
-            (None, None) => lang.pick("グループ", "Group").to_owned(),
+            (None, None) => lang.t("toolset-group").to_owned(),
         }
     }
 

@@ -597,10 +597,7 @@ pub fn open_fbx_with(view3d: &mut View3dState, path: &Path, limits: ModelLimits)
 fn cannot_load(lang: Lang, name: &str, error: &ViewError) -> String {
     let name = lang.quote(name);
     lang.with_reason(
-        lang.pick(
-            format!("{name}を読み込めません"),
-            format!("Cannot load {name}"),
-        ),
+        lang.f("view3d-cannot-load", &[("name", &name)]),
         lang.view_error(error),
     )
 }
@@ -644,16 +641,13 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
                     message = Some(if warnings > 0 {
                         (
                             Kind::Warning,
-                            lang.pick(
-                                format!("{name}を読み込みました（知らせ {warnings} 件）"),
-                                format!("Loaded {name} ({warnings} notices)"),
+                            lang.f(
+                                "view3d-loaded-notices",
+                                &[("name", &name), ("warnings", &warnings)],
                             ),
                         )
                     } else {
-                        (
-                            Kind::Info,
-                            lang.pick(format!("{name}を読み込みました"), format!("Loaded {name}")),
-                        )
+                        (Kind::Info, lang.f("view3d-loaded", &[("name", &name)]))
                     });
                 }
             }
@@ -662,10 +656,7 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
                 message = Some(if matches!(e, ViewError::Cancelled) {
                     (
                         Kind::Info,
-                        lang.pick(
-                            format!("{name}の読み込みを取り消しました。"),
-                            format!("Loading {name} was canceled."),
-                        ),
+                        lang.f("view3d-loading-was-canceled", &[("name", &name)]),
                     )
                 } else {
                     (Kind::Error, cannot_load(lang, &loading.name, &e))
@@ -876,10 +867,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.view3d.pose.cancel_loading();
             app.info(
                 Source::Pose,
-                app.lang.pick(
-                    format!("{name}の読み込みを取り消しました。"),
-                    format!("Cancelled loading {name}."),
-                ),
+                app.lang.f("view3d-cancelled-loading", &[("name", &name)]),
             );
         }
         return;
@@ -901,10 +889,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
             app.np.model_file = None;
             let note = app.bind_rig_model();
             if let Some(s) = &app.view3d.pose.session {
-                let mut text = app.lang.pick(
-                    format!("{}を読み込みました", s.rig.name()),
-                    format!("Loaded {}", s.rig.name()),
-                );
+                let mut text = app.lang.f("view3d-loaded", &[("name", &s.rig.name())]);
                 let mut kind = Kind::Info;
                 if let Some((note_kind, note)) = note {
                     text += &format!(" {note}");
@@ -927,18 +912,12 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
         PoseAction::Reset => reset(&mut app.view3d),
         PoseAction::Undo => undo(&mut app.view3d).map(|done| {
             if done {
-                app.info(
-                    Source::Pose,
-                    app.lang.pick("ポーズを取り消しました。", "Pose undone."),
-                );
+                app.info(Source::Pose, app.lang.t("view3d-pose-undone"));
             }
         }),
         PoseAction::Redo => redo(&mut app.view3d).map(|done| {
             if done {
-                app.info(
-                    Source::Pose,
-                    app.lang.pick("ポーズをやり直しました。", "Pose redone."),
-                );
+                app.info(Source::Pose, app.lang.t("view3d-pose-redone"));
             }
         }),
         PoseAction::ChooseTake(source, take) => {

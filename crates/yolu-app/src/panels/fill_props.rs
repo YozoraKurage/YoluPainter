@@ -224,7 +224,7 @@ fn image_section(
         app,
         rows,
         "fill-image",
-        &format!("{} · {name}", lang.pick("画像", "Image")),
+        &format!("{} · {name}", lang.t("panels-image")),
         "texture",
         None,
     );
@@ -246,10 +246,7 @@ fn image_section(
             image,
             enabled,
             popup: Popup::FillImage(id, channel),
-            clear_tip: lang.pick(
-                "画像を外す（値に戻る）",
-                "Remove the image (the channel shows its value)",
-            ),
+            clear_tip: lang.t("panels-remove-the-image-the-channel-tip"),
         },
         |image| {
             Action::Fill(FillOp::Image {
@@ -266,7 +263,7 @@ fn image_section(
             .doc
             .layer(id)
             .is_some_and(|l| l.fill_anisotropic(channel));
-        let label = lang.pick("異方性フィルター", "Anisotropic filtering");
+        let label = lang.t("panels-anisotropic-filtering");
         let h = w::toggle_height(ui.painter(), rows.width(), label);
         let r = rows.row(h, 4.0);
         let next = w::toggle(
@@ -275,10 +272,7 @@ fn image_section(
             "fill.image.anisotropic",
             label,
             anisotropic,
-            Some(lang.pick(
-                "斜めから当てた画像や縦横の繰り返しの違う画像を、画素の細長い足跡に沿って最大 16 点で読み、にじみを減らす",
-                "Reads images projected at an angle or tiled unevenly along each pixel's long footprint (up to 16 samples), so they blur less",
-            )),
+            Some(lang.t("panels-reads-images-projected-at-an-tip")),
             enabled,
         );
         if next != anisotropic {
@@ -367,12 +361,9 @@ pub fn image_row<K: egui::AsIdSalt>(
             ui,
             r,
             format!("{key}.space"),
-            Some(lang.pick("読み方", "Read as")),
+            Some(lang.t("panels-read-as")),
             space_name(lang, space),
-            Some(lang.pick(
-                "画像の値が何か（アセットの画像の色空間。この画像を読む全部のレイヤーに効き、取り消しには入らない）。データのチャンネルは常に値のまま、色のチャンネルではリニアの画像を sRGB に直して読む",
-                "What the image's values are (the image asset's colour space, for every layer that reads it; not an undo step). Data channels always use the values as stored; in a colour channel a linear image is encoded to sRGB",
-            )),
+            Some(lang.t("panels-what-the-image-s-values-tip")),
             enabled,
             LABEL_W + 22.0,
         );
@@ -466,7 +457,7 @@ fn image_box(
     w::outline(p, thumb, t::BORDER, 1.0, 0.0);
     let label = match (&resource, image) {
         (Some((_, name)), _) => name.clone(),
-        (None, Some(_)) => lang.pick("見つからない画像", "Missing image").into(),
+        (None, Some(_)) => lang.t("panels-missing-image").into(),
         _ => String::new(),
     };
     let area = Rect::from_min_max(
@@ -492,12 +483,9 @@ fn image_box(
         t::TEXT_DIM,
         16.0,
     );
-    let tip = lang.pick(
-        "画像（押すとこのプロジェクトの画像の一覧。アセットのパネルの画像をドラッグして落とせる）",
-        "Image (click for this project's images; drop one from the Assets panel)",
-    );
+    let tip = lang.t("panels-image-click-for-this-project-tip");
     let info = if label.is_empty() {
-        lang.pick("画像", "Image").to_owned()
+        lang.t("panels-image").to_owned()
     } else {
         label.clone()
     };
@@ -517,11 +505,9 @@ fn image_box(
 /// 棚の画像の読み方（色空間）の名前。
 pub fn space_name(lang: Lang, space: yolu_core::ImageColorSpace) -> &'static str {
     match space {
-        yolu_core::ImageColorSpace::Srgb => lang.pick("色（sRGB）", "Color (sRGB)"),
-        yolu_core::ImageColorSpace::Linear => lang.pick("データ（リニア）", "Data (linear)"),
-        yolu_core::ImageColorSpace::Unspecified => {
-            lang.pick("不明（そのまま）", "Unknown (as stored)")
-        }
+        yolu_core::ImageColorSpace::Srgb => lang.t("panels-color-srgb"),
+        yolu_core::ImageColorSpace::Linear => lang.t("panels-data-linear"),
+        yolu_core::ImageColorSpace::Unspecified => lang.t("panels-unknown-as-stored"),
     }
 }
 
@@ -592,13 +578,13 @@ pub fn image_list(
     }
     v.push(
         Entry::item(
-            lang.pick("ファイルから取り込む…", "Import from File…"),
+            lang.t("panels-import-from-file"),
             Action::Fill(FillOp::ImportImageDialog),
         )
         .enabled(free && app.shelf.unavailable.is_none()),
     );
     if current.is_some() {
-        v.push(Entry::item(lang.pick("画像を外す", "Remove the Image"), set(None)).enabled(free));
+        v.push(Entry::item(lang.t("panels-remove-the-image"), set(None)).enabled(free));
     }
     v
 }
@@ -616,20 +602,20 @@ const MODES: [ProjectionMode; 6] = [
 
 pub fn projection_name(lang: Lang, mode: ProjectionMode) -> &'static str {
     match mode {
-        ProjectionMode::Uv => lang.pick("UV", "UV"),
-        ProjectionMode::Triplanar => lang.pick("トライプラナー", "Tri-planar"),
-        ProjectionMode::Planar => lang.pick("平面", "Planar"),
-        ProjectionMode::Spherical => lang.pick("球", "Spherical"),
-        ProjectionMode::Cylindrical => lang.pick("円柱", "Cylindrical"),
-        ProjectionMode::Decal => lang.pick("デカール", "Decal"),
+        ProjectionMode::Uv => lang.t("panels-uv"),
+        ProjectionMode::Triplanar => lang.t("panels-tri-planar"),
+        ProjectionMode::Planar => lang.t("panels-planar"),
+        ProjectionMode::Spherical => lang.t("panels-spherical"),
+        ProjectionMode::Cylindrical => lang.t("panels-cylindrical"),
+        ProjectionMode::Decal => lang.t("panels-decal"),
     }
 }
 
 pub fn wrap_name(lang: Lang, wrap: Wrap) -> &'static str {
     match wrap {
-        Wrap::Repeat => lang.pick("繰り返す", "Repeat"),
-        Wrap::Clamp => lang.pick("端を伸ばす", "Clamp to edge"),
-        Wrap::None => lang.pick("透明", "Transparent"),
+        Wrap::Repeat => lang.t("panels-repeat"),
+        Wrap::Clamp => lang.t("panels-clamp-to-edge"),
+        Wrap::None => lang.t("panels-transparent"),
     }
 }
 
@@ -638,22 +624,10 @@ const WRAPS: [Wrap; 3] = [Wrap::Repeat, Wrap::Clamp, Wrap::None];
 /// 置き場（箱）の欄の名前。
 fn size_tooltip(lang: Lang, mode: ProjectionMode) -> &'static str {
     match mode {
-        ProjectionMode::Planar => lang.pick(
-            "平面: 画像は箱の X と Y（−Z の側から見て）に広がる。Z は使わない",
-            "Planar: the image spans the box's X and Y (seen from its −Z side); Z is not used",
-        ),
-        ProjectionMode::Decal => lang.pick(
-            "デカール: 画像は箱の X と Y に広がる。Z は面の中へ届く深さ",
-            "Decal: the image spans the box's X and Y; Z is how deep it reaches into the surface",
-        ),
-        ProjectionMode::Cylindrical => lang.pick(
-            "円柱: 画像は箱の Y 軸のまわりを 1 周し、Y の大きさに広がる。X と Z は使わない",
-            "Cylindrical: the image goes once around the box's Y axis and spans its Y size; X and Z are not used",
-        ),
-        _ => lang.pick(
-            "トライプラナー: 各面の画像は箱のほかの 2 つの大きさに広がる",
-            "Tri-planar: each face's image spans the box's two other sizes",
-        ),
+        ProjectionMode::Planar => lang.t("panels-planar-the-image-spans-the-tip"),
+        ProjectionMode::Decal => lang.t("panels-decal-the-image-spans-the-tip"),
+        ProjectionMode::Cylindrical => lang.t("panels-cylindrical-the-image-goes-once-tip"),
+        _ => lang.t("panels-tri-planar-each-face-s-tip"),
     }
 }
 
@@ -672,7 +646,7 @@ fn projection_section(
         app,
         rows,
         "fill-projection",
-        lang.pick("投影", "Projection"),
+        lang.t("panels-projection"),
         "view_in_ar",
         None,
     );
@@ -748,18 +722,12 @@ pub fn projection_rows(
         ui,
         r,
         format!("{key}.mode"),
-        Some(lang.pick("投影", "Projection")),
+        Some(lang.t("panels-projection")),
         projection_name(lang, p.mode),
         Some(if matches!(popups.mode, Popup::ProjectionMode(_)) {
-            lang.pick(
-                "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに。デカール: 箱の正面から、箱の中だけに、画像のアルファで切り抜く",
-                "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre. Decal: through the box's front face, only inside the box, cut out by the image's alpha",
-            )
+            lang.t("panels-uv-the-image-on-the-tip")
         } else {
-            lang.pick(
-                "UV: UV の正方形に画像を敷く。トライプラナー: 箱の 3 つの軸から投影して面の向きで混ぜる（UV の継ぎ目が出ない）。平面: 箱の正面から。球・円柱: 箱の中心のまわりに",
-                "UV: the image on the UV square. Tri-planar: three projections along the box's axes, mixed where the surface turns (no UV seams). Planar: through the box's front face. Spherical and cylindrical: around the box's centre",
-            )
+            lang.t("panels-uv-the-image-on-the-2-tip")
         }),
         enabled,
         LABEL_W + 22.0,
@@ -773,12 +741,9 @@ pub fn projection_rows(
         ui,
         r,
         format!("{key}.wrap"),
-        Some(lang.pick("外側", "Outside")),
+        Some(lang.t("panels-outside")),
         wrap_name(lang, p.wrap),
-        Some(lang.pick(
-            "画像の外を、繰り返す・端の画素を伸ばす・透明にする",
-            "Repeat the image, continue its edge pixels, or leave it transparent outside the image",
-        )),
+        Some(lang.t("panels-repeat-the-image-continue-its-tip")),
         enabled,
         LABEL_W + 22.0,
     );
@@ -790,18 +755,12 @@ pub fn projection_rows(
         ui,
         rows,
         &format!("{key}.tiles"),
-        lang.pick("タイル", "Tiling"),
+        lang.t("panels-tiling"),
         p.tiles,
         &NumSpec::new(1e-3, 1e4, 0.01, 3),
         [
-            lang.pick(
-                "画像を U 方向に繰り返す回数",
-                "How many times the image repeats across the projected square (U)",
-            ),
-            lang.pick(
-                "画像を V 方向に繰り返す回数",
-                "How many times the image repeats across the projected square (V)",
-            ),
+            lang.t("panels-how-many-times-the-image-tip"),
+            lang.t("panels-how-many-times-the-image-2-tip"),
         ],
         enabled,
     ) {
@@ -811,18 +770,12 @@ pub fn projection_rows(
         ui,
         rows,
         &format!("{key}.offset"),
-        lang.pick("オフセット", "Offset"),
+        lang.t("panels-offset"),
         p.offset,
         &NumSpec::new(-1e4, 1e4, 0.005, 3),
         [
-            lang.pick(
-                "画像をずらす（画像の幅の単位）",
-                "Shifts the image (in image widths)",
-            ),
-            lang.pick(
-                "画像をずらす（画像の高さの単位）",
-                "Shifts the image (in image heights)",
-            ),
+            lang.t("panels-shifts-the-image-in-image-tip"),
+            lang.t("panels-shifts-the-image-in-image-2-tip"),
         ],
         enabled,
     ) {
@@ -832,7 +785,7 @@ pub fn projection_rows(
         ui,
         rows,
         &format!("{key}.rotation"),
-        lang.pick("回転", "Rotation"),
+        lang.t("panels-rotation"),
         p.rotation as f32,
         (-180.0, 180.0),
         NumberFormat {
@@ -840,10 +793,7 @@ pub fn projection_rows(
             trim: true,
             suffix: "°",
         },
-        Some(lang.pick(
-            "投影の正方形の中心のまわりに、画像を反時計回りに回す",
-            "Turns the image counter-clockwise about the projected square's centre",
-        )),
+        Some(lang.t("panels-turns-the-image-counter-clockwise-tip")),
         enabled,
     ) {
         next.rotation = f64::from(v);
@@ -853,13 +803,10 @@ pub fn projection_rows(
             ui,
             rows,
             &format!("{key}.blend"),
-            lang.pick("混ぜ幅", "Blend"),
+            lang.t("panels-blend"),
             p.blend_width,
             (0.0, 1.0),
-            Some(lang.pick(
-                "面が箱の軸の間で向きを変える所で: 0%: いちばん向いている軸へ切り替え、100%: 法線に比例して混ぜる",
-                "Where the surface turns between the box's axes: 0%: a hard switch to the axis it faces most; 100%: mixed in proportion to the normal",
-            )),
+            Some(lang.t("panels-where-the-surface-turns-between-tip")),
             enabled,
         ) {
             next.blend_width = v;
@@ -870,13 +817,10 @@ pub fn projection_rows(
             ui,
             rows,
             "decal.depth",
-            lang.pick("奥行きの縁", "Depth edge"),
+            lang.t("panels-depth-edge"),
             1.0 - p.depth_hardness,
             (0.0, 1.0),
-            Some(lang.pick(
-                "箱の手前・奥の面へ向かって、どれだけやわらかく消えるか（0%: ぱっと切る）",
-                "How softly the decal fades towards the box's front and back faces (0%: a hard cut)",
-            )),
+            Some(lang.t("panels-how-softly-the-decal-fades-tip")),
             enabled,
         ) {
             next.depth_hardness = 1.0 - v;
@@ -885,14 +829,11 @@ pub fn projection_rows(
             ui,
             rows,
             "decal.angle",
-            lang.pick("裏向き", "Back faces"),
+            lang.t("panels-back-faces"),
             p.backface_angle as f32,
             (0.0, 180.0),
             NumberFormat::int("°"),
-            Some(lang.pick(
-                "画像を見る側からこの角度より傾いた面は隠す（180°: 隠さない）",
-                "Faces turned more than this from the side the image is seen from are hidden (180°: none)",
-            )),
+            Some(lang.t("panels-faces-turned-more-than-this-tip")),
             enabled,
         ) {
             next.backface_angle = f64::from(v);
@@ -901,13 +842,10 @@ pub fn projection_rows(
             ui,
             rows,
             "decal.angle.edge",
-            lang.pick("面の縁", "Face edge"),
+            lang.t("panels-face-edge"),
             1.0 - p.backface_hardness,
             (0.0, 1.0),
-            Some(lang.pick(
-                "その角度へ向かって、どれだけやわらかく消えるか（0%: ぱっと切る）",
-                "How softly faces fade out towards that angle (0%: a hard cut)",
-            )),
+            Some(lang.t("panels-how-softly-faces-fade-out-tip")),
             enabled,
         ) {
             next.backface_hardness = 1.0 - v;
@@ -983,13 +921,10 @@ pub fn placement_fields(
         ui,
         rows,
         &format!("{key}.center"),
-        lang.pick("中心", "Center"),
+        lang.t("panels-center"),
         v.center,
         &NumSpec::new(-1e6, 1e6, 0.01, 3),
-        lang.pick(
-            "箱の中心（モデルのルートから。シーンの単位）",
-            "The box's centre, from the model root (scene units)",
-        ),
+        lang.t("panels-the-box-s-centre-from-tip"),
         enabled,
     ) {
         next.center = c;
@@ -998,13 +933,10 @@ pub fn placement_fields(
         ui,
         rows,
         &format!("{key}.rotation3d"),
-        lang.pick("回転", "Rotation"),
+        lang.t("panels-rotation"),
         v.rotation,
         &NumSpec::new(-360.0, 360.0, 1.0, 1),
-        lang.pick(
-            "度のオイラー角（Z → X → Y の順に回す）",
-            "Euler angles in degrees (turned about Z, then X, then Y)",
-        ),
+        lang.t("panels-euler-angles-in-degrees-turned-2-tip"),
         enabled,
     ) {
         next.rotation = r.map(wrap_degrees);
@@ -1014,7 +946,7 @@ pub fn placement_fields(
             ui,
             rows,
             &format!("{key}.size"),
-            lang.pick("大きさ", "Size"),
+            lang.t("panels-size-3"),
             v.size,
             &NumSpec::new(1e-6, 1e6, 0.01, 3),
             size_tooltip(lang, p.mode),
@@ -1051,7 +983,7 @@ fn handle_buttons(
         ui,
         main,
         (key, "handles"),
-        lang.pick("3D ビューのハンドル", "Handles in 3D View"),
+        lang.t("panels-handles-in-3d-view"),
         editing,
         enabled && has_model,
         Some(&handles_tip(lang, app.mode)),
@@ -1066,7 +998,7 @@ fn handle_buttons(
         fit_rect,
         (key, "fit"),
         "target",
-        lang.pick("モデルに合わせる（外形）", "Fit to the model (its bounds)"),
+        lang.t("panels-fit-to-the-model-its-tip"),
         false,
         enabled && has_model,
         16.0,
@@ -1119,7 +1051,7 @@ fn gradient_section(
         app,
         rows,
         "fill-gradient",
-        lang.pick("グラデーションデカール", "Gradient Decal"),
+        lang.t("panels-gradient-decal"),
         "palette",
         None,
     );
@@ -1138,13 +1070,10 @@ fn gradient_section(
             ui,
             r,
             "fill.gradient.add",
-            lang.pick("グラデーションを追加", "Add Gradient"),
+            lang.t("panels-add-gradient"),
             false,
             enabled,
-            Some(lang.pick(
-                "3D ビューの箱・球・平面の範囲で、値を塗り分ける（モデルの上の位置で決まる）",
-                "Paints a value over a box, sphere or plane in the 3D view (decided by the position on the model)",
-            )),
+            Some(lang.t("panels-paints-a-value-over-a-tip")),
             Some("add"),
         )
         .clicked()
@@ -1159,7 +1088,7 @@ fn gradient_section(
         ui,
         r,
         "fill.gradient.remove",
-        lang.pick("グラデーションを外す", "Remove Gradient"),
+        lang.t("panels-remove-gradient"),
         false,
         enabled,
         None,
@@ -1186,7 +1115,7 @@ fn gradient_section(
         ui,
         r,
         "fill.gradient.shape",
-        Some(lang.pick("形", "Shape")),
+        Some(lang.t("panels-shape")),
         shape_name(lang, g.volume.shape),
         Some(shape_tip.as_str()),
         enabled,
@@ -1205,13 +1134,10 @@ fn gradient_section(
         ui,
         row,
         "fill.gradient.edit",
-        lang.pick("3D ビューで編集", "Edit in 3D View"),
+        lang.t("panels-edit-in-3d-view"),
         editing,
         enabled && has_model,
-        Some(lang.pick(
-            "3D ビューに形とハンドルを出す",
-            "Show the shape in the 3D view with handles",
-        )),
+        Some(lang.t("panels-show-the-shape-in-the-tip")),
         Some("view_in_ar"),
     )
     .clicked()
@@ -1227,13 +1153,10 @@ fn gradient_section(
         ui,
         rows,
         "fill.gradient.center",
-        lang.pick("中心", "Center"),
+        lang.t("panels-center"),
         v.center,
         &NumSpec::new(-1e6, 1e6, 0.01, 3),
-        lang.pick(
-            "形の中心（モデルのルートから。シーンの単位）",
-            "The shape's centre, from the model root (scene units)",
-        ),
+        lang.t("panels-the-shape-s-centre-from-tip"),
         enabled,
     ) {
         v.center = c;
@@ -1242,13 +1165,10 @@ fn gradient_section(
         ui,
         rows,
         "fill.gradient.rotation",
-        lang.pick("回転", "Rotation"),
+        lang.t("panels-rotation"),
         v.rotation,
         &NumSpec::new(-360.0, 360.0, 1.0, 1),
-        lang.pick(
-            "度のオイラー角（Z → X → Y の順に回す）",
-            "Euler angles in degrees (turned about Z, then X, then Y)",
-        ),
+        lang.t("panels-euler-angles-in-degrees-turned-2-tip"),
         enabled,
     ) {
         v.rotation = a.map(wrap_degrees);
@@ -1259,13 +1179,10 @@ fn gradient_section(
                 ui,
                 rows,
                 "fill.gradient.size",
-                lang.pick("大きさ", "Size"),
+                lang.t("panels-size-3"),
                 v.size,
                 &NumSpec::new(1e-6, 1e6, 0.01, 3),
-                lang.pick(
-                    "箱の幅（それぞれの軸に沿って。シーンの単位）",
-                    "The box's full width along each of its own axes (scene units)",
-                ),
+                lang.t("panels-the-box-s-full-width-tip"),
                 enabled,
             ) {
                 v.size = s;
@@ -1277,13 +1194,10 @@ fn gradient_section(
                 ui,
                 row,
                 "fill.gradient.radius",
-                lang.pick("半径", "Radius"),
+                lang.t("panels-radius"),
                 v.size[0] / 2.0,
                 &NumSpec::new(0.5e-6, 0.5e6, 0.01, 3),
-                Some(lang.pick(
-                    "球の半径（シーンの単位）",
-                    "The sphere's radius (scene units)",
-                )),
+                Some(lang.t("panels-the-sphere-s-radius-scene-tip")),
                 None,
                 enabled,
             );
@@ -1297,13 +1211,10 @@ fn gradient_section(
                 ui,
                 row,
                 "fill.gradient.width",
-                lang.pick("幅", "Width"),
+                lang.t("panels-width"),
                 v.size[1],
                 &NumSpec::new(1e-6, 1e6, 0.01, 3),
-                Some(lang.pick(
-                    "平面の後ろの 0 から前の 1 までにかかる距離（シーンの単位）。平面は自分の +Y を向く",
-                    "How far the value takes to go from 0 behind the plane to 1 in front of it (scene units). The plane faces its own +Y",
-                )),
+                Some(lang.t("panels-how-far-the-value-takes-tip")),
                 None,
                 enabled,
             );
@@ -1317,13 +1228,10 @@ fn gradient_section(
             ui,
             rows,
             "fill.gradient.falloff",
-            lang.pick("減衰", "Falloff"),
+            lang.t("panels-falloff"),
             v.falloff,
             (0.0, 1.0),
-            Some(lang.pick(
-                "境の内側がどれだけ 1 から 0 へ消えるか（0%: ぱっと切る、100%: 真ん中まで）",
-                "How much of the inside fades from 1 to 0 at the boundary (0%: a hard edge; 100%: the fade reaches the middle)",
-            )),
+            Some(lang.t("panels-how-much-of-the-inside-2-tip")),
             enabled,
         ) {
             v.falloff = f;
@@ -1334,7 +1242,7 @@ fn gradient_section(
         ui,
         rows,
         "fill.gradient.invert",
-        lang.pick("反転", "Invert"),
+        lang.t("panels-invert"),
         g.invert,
         None,
         enabled,
@@ -1518,7 +1426,7 @@ fn points_section(
         app,
         rows,
         "fill-points",
-        lang.pick("点のグラデーション", "Point Gradient"),
+        lang.t("panels-point-gradient"),
         "data_scatter",
         None,
     );
@@ -1537,13 +1445,10 @@ fn points_section(
             ui,
             r,
             "fill.points.add",
-            lang.pick("点のグラデーションを追加", "Add Point Gradient"),
+            lang.t("panels-add-point-gradient"),
             false,
             enabled,
-            Some(lang.pick(
-                "置いた点ごとに色を決め、点の間を滑らかにつなぐ（モデルがあればモデルの面の上の位置で、継ぎ目で切れない）",
-                "Sets a colour at each placed point and blends smoothly between them (on the model's surface when there is a model, without breaking at seams)",
-            )),
+            Some(lang.t("panels-sets-a-colour-at-each-tip")),
             Some("add"),
         )
         .clicked()
@@ -1561,13 +1466,10 @@ fn points_section(
         ui,
         edit_rect,
         "fill.points.edit",
-        lang.pick("点を編集", "Edit Points"),
+        lang.t("panels-edit-points"),
         editing,
         enabled,
-        Some(lang.pick(
-            "3D ビューと 2D のキャンバスで: 面を押して点を追加、印をドラッグで移動、Delete で選んだ点を削除",
-            "In the 3D view and the 2D canvas: press on the surface to add a point, drag a marker to move it, Delete removes the selected point",
-        )),
+        Some(lang.t("panels-in-the-3d-view-and-tip")),
         Some("edit"),
     )
     .clicked()
@@ -1586,7 +1488,7 @@ fn points_section(
         remove_rect,
         "fill.points.remove",
         "delete",
-        lang.pick("点のグラデーションを外す", "Remove Point Gradient"),
+        lang.t("panels-remove-point-gradient-tip"),
         false,
         enabled,
         15.0,
@@ -1609,23 +1511,17 @@ fn points_section(
     let items = [
         ChoiceButton {
             id: "fill.points.model",
-            label: lang.pick("モデル", "Model"),
+            label: lang.t("panels-model"),
             selected: g.space == PointSpace::Model,
             enabled: enabled && has_model,
-            tooltip: Some(lang.pick(
-                "モデルの面の上の位置でつなぐ（焼いた位置のマップを読む。UV の継ぎ目で切れない）",
-                "Blends by position on the model's surface (reads the baked position map; continuous across UV seams)",
-            )),
+            tooltip: Some(lang.t("panels-blends-by-position-on-the-tip")),
         },
         ChoiceButton {
             id: "fill.points.uv",
-            label: lang.pick("UV", "UV"),
+            label: lang.t("panels-uv"),
             selected: g.space == PointSpace::Uv,
             enabled,
-            tooltip: Some(lang.pick(
-                "テクスチャの UV の上の位置でつなぐ",
-                "Blends by position on the texture's UV",
-            )),
+            tooltip: Some(lang.t("panels-blends-by-position-on-the-2-tip")),
         },
     ];
     if let Some(i) = choice_buttons(ui, rows, &items) {
@@ -1650,13 +1546,10 @@ fn points_section(
         ui,
         rows,
         "fill.points.spread",
-        lang.pick("広がり", "Spread"),
+        lang.t("panels-spread"),
         g.spread,
         (0.0, 1.0),
-        Some(lang.pick(
-            "点の周りの色の平らさと、遠くの点の色の混ざり方（0%: 点の真上がその点の色）",
-            "How flat the colour is around each point and how much distant points mix in (0%: exactly the point's colour on the point)",
-        )),
+        Some(lang.t("panels-how-flat-the-colour-is-tip")),
         enabled,
     ) {
         let mut next = g.clone();
@@ -1671,7 +1564,7 @@ fn points_section(
         let swatch = Rect::from_min_size(row.min + vec2(0.0, 2.0), vec2(28.0, row.height() - 4.0));
         let c = p.color;
         let shown = [c.r, c.g, c.b, c.a].map(|v| v as f32 / 255.0);
-        let tip = lang.pick("点の色と不透明度", "The point's colour and opacity");
+        let tip = lang.t("panels-the-point-s-colour-and-tip");
         if w::color_swatch(ui, swatch, ("fill.points.swatch", i), shown, tip, enabled).clicked() {
             fill(app, FillOp::SelectPoint(Some(i)));
         }
@@ -1709,7 +1602,7 @@ fn points_section(
             delete,
             ("fill.points.delete", i),
             "close",
-            lang.pick("点を削除", "Delete Point"),
+            lang.t("panels-delete-point-tip"),
             false,
             enabled && g.points.len() > 1,
             13.0,
@@ -1732,7 +1625,7 @@ fn points_section(
     w::text(
         ui.painter(),
         Rect::from_min_size(row.min, vec2(LABEL_W, row.height())),
-        lang.pick("色", "Color"),
+        lang.t("panels-color"),
         t::LABEL,
         w::Align::Left,
     );
@@ -1758,7 +1651,7 @@ fn points_section(
         ui,
         rows,
         "fill.points.opacity",
-        lang.pick("不透明度", "Opacity"),
+        lang.t("panels-opacity"),
         c.a as f64 / 255.0,
         (0.0, 1.0),
         None,
@@ -1774,25 +1667,22 @@ fn points_section(
             ui,
             rows,
             "fill.points.position",
-            lang.pick("位置", "Position"),
+            lang.t("panels-position"),
             point.position,
             &NumSpec::new(-1e6, 1e6, 0.01, 3),
-            lang.pick(
-                "点の位置（モデルのルートから。シーンの単位）",
-                "The point's position, from the model root (scene units)",
-            ),
+            lang.t("panels-the-point-s-position-from-tip"),
             enabled,
         ),
         PointSpace::Uv => vec2_row(
             ui,
             rows,
             "fill.points.uv",
-            lang.pick("位置", "Position"),
+            lang.t("panels-position"),
             [point.position[0], point.position[1]],
             &NumSpec::new(-1e3, 1e3, 0.01, 3),
             [
-                lang.pick("点の U", "The point's U"),
-                lang.pick("点の V", "The point's V"),
+                lang.t("panels-the-point-s-u-tip"),
+                lang.t("panels-the-point-s-v-tip"),
             ],
             enabled,
         )
@@ -1839,7 +1729,7 @@ fn point_color(
         target,
         &name,
         current,
-        lang.pick("点の色", "The point's colour"),
+        lang.t("panels-the-point-s-colour-tip"),
         enabled,
     )
 }
@@ -1919,11 +1809,11 @@ fn shape_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec<Entry<
 /// 階調のプリセットの名前。
 pub fn preset_name(lang: Lang, preset: Preset) -> &'static str {
     match preset {
-        Preset::BlackWhite => lang.pick("黒から白", "Black to white"),
-        Preset::WhiteBlack => lang.pick("白から黒", "White to black"),
-        Preset::ForegroundBackground => lang.pick("メインからサブ", "Foreground to background"),
-        Preset::ForegroundTransparent => lang.pick("メインから透明", "Foreground to transparent"),
-        Preset::WarmCool => lang.pick("暖色から寒色", "Warm to cool"),
+        Preset::BlackWhite => lang.t("panels-black-to-white"),
+        Preset::WhiteBlack => lang.t("panels-white-to-black"),
+        Preset::ForegroundBackground => lang.t("panels-foreground-to-background"),
+        Preset::ForegroundTransparent => lang.t("panels-foreground-to-transparent"),
+        Preset::WarmCool => lang.t("panels-warm-to-cool"),
     }
 }
 
@@ -1993,10 +1883,10 @@ fn curve_preset_entries(app: &AppState, layer: LayerId, channel: Channel) -> Vec
         return Vec::new();
     };
     let names = [
-        lang.pick("線形", "Linear"),
-        lang.pick("やわらかい", "Soft"),
-        lang.pick("かたい", "Hard"),
-        lang.pick("S 字", "S-curve"),
+        lang.t("panels-linear"),
+        lang.t("panels-soft"),
+        lang.t("panels-hard"),
+        lang.t("panels-s-curve"),
     ];
     (0..ramp_ops::CURVE_PRESETS.len())
         .filter_map(|k| {
@@ -2037,14 +1927,8 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
 pub fn handles_tip(lang: Lang, mode: crate::mode::EditorMode) -> String {
     let key = crate::shortcuts::named_with_keys(
         lang,
-        lang.pick(
-            "3D ビューに箱とハンドルを出す・隠す",
-            "Show or hide the box and its handles in the 3D view",
-        ),
+        lang.t("panels-show-or-hide-the-box-tip"),
         &[crate::shortcuts::key_in("fill.toggle_handles", mode)],
     );
-    lang.pick(
-        format!("{key}。矢印と中心の四角で移動、輪で回転（Ctrl で 15° ずつ）、面のつまみで大きさ（Shift で両側）"),
-        format!("{key}. Arrows and the centre square move, rings rotate (Ctrl for 15° steps), face knobs resize (Shift for both sides)"),
-    )
+    lang.f("panels-arrows-and-the-centre-square-tip", &[("key", &key)])
 }

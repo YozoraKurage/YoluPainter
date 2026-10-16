@@ -45,7 +45,7 @@ pub fn window_entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect();
     entries.push(Entry::Separator);
     entries.push(Entry::item(
-        l.pick("パネルの並びを戻す", "Reset Panel Layout"),
+        l.t("detach-reset-panel-layout"),
         Action::ResetLayout,
     ));
     entries
@@ -55,14 +55,14 @@ pub fn window_entries(app: &AppState) -> Vec<Entry<Action>> {
 pub fn tab_entries(app: &AppState, tab: Tab) -> Vec<Entry<Action>> {
     let l = app.lang;
     let open = Entry::item(
-        l.pick("別ウィンドウで開く", "Open in New Window"),
+        l.t("detach-open-in-new-window"),
         Action::Dock(DockOp::Detach(tab)),
     );
     if !app.ui.panels.outside.contains(&tab) {
         return vec![open];
     }
     let back = Entry::item(
-        l.pick("ドックに戻す", "Return to Dock"),
+        l.t("detach-return-to-dock"),
         Action::Dock(DockOp::Return(tab)),
     );
     if app.ui.panels.alone.contains(&tab) {

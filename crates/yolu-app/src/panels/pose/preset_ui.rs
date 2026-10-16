@@ -45,7 +45,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         field,
         "pose.preset.name",
         &shown,
-        Some(lang.pick("ポーズを保存する名前", "Name to save the pose under")),
+        Some(lang.t("panels-name-to-save-the-pose-tip")),
         false,
     );
     if let Some(name) = out.committed {
@@ -56,13 +56,10 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         save,
         "pose.preset.save",
-        lang.pick("ポーズを保存", "Save Pose"),
+        lang.t("panels-save-pose"),
         false,
         can_save,
-        Some(lang.pick(
-            "今のポーズ（休みの形と違うボーンの位置・回転・大きさ）をこの名前で保存する。同じ名前があれば番号を付ける",
-            "Save the current pose (position, rotation and scale of the bones that differ from rest) under this name. A name already in use gets a number",
-        )),
+        Some(lang.t("panels-save-the-current-pose-position-tip")),
         Some("save"),
     )
     .clicked()
@@ -147,10 +144,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             response.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Button, editable, name)
             });
-            let response = response.on_hover_text(lang.pick(
-                "このポーズを当てる（ポーズの取り消しに 1 段積む）",
-                "Apply this pose (one pose undo step)",
-            ));
+            let response = response.on_hover_text(lang.t("panels-apply-this-pose-one-pose-tip"));
             if response.clicked() {
                 op = Some(Op::Apply(*id, false));
             }
@@ -160,7 +154,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             mirror,
             ("pose.preset.mirror", *id),
             "flip",
-            lang.pick("左右を反転して当てる", "Apply Mirrored"),
+            lang.t("panels-apply-mirrored-tip"),
             false,
             editable,
             14.0,
@@ -174,7 +168,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             overwrite,
             ("pose.preset.overwrite", *id),
             "save",
-            lang.pick("今のポーズで上書き", "Overwrite with Current Pose"),
+            lang.t("panels-overwrite-with-current-pose-tip"),
             false,
             // 保存と同じ条件（休みの形のままでは、保存したポーズを空の項目で置き換えて元に戻せなくなる）
             can_save,
@@ -189,7 +183,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             rename,
             ("pose.preset.edit", *id),
             "edit",
-            lang.pick("名前を変える", "Rename"),
+            lang.t("panels-rename-tip"),
             renaming == Some(*id),
             free,
             14.0,
@@ -203,7 +197,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             delete,
             ("pose.preset.delete", *id),
             "delete",
-            lang.pick("このポーズを消す", "Delete this pose"),
+            lang.t("panels-delete-this-pose-tip"),
             false,
             free,
             13.0,

@@ -593,9 +593,9 @@ fn free_name(path: &Path) -> PathBuf {
 }
 
 fn broken_message(lang: Lang, why: &str) -> String {
-    lang.pick(
-        format!("キーの設定（{FILE_NAME}）を読めないので、既定のキーで始めました（{why}）。ファイルは消さずに残してあります。"),
-        format!("Cannot read the key settings ({FILE_NAME}), so the default keys are used ({why}). The file is kept."),
+    lang.f(
+        "keyconfig-cannot-read-the-key-settings",
+        &[("FILE_NAME", &FILE_NAME), ("why", &why)],
     )
 }
 
@@ -647,9 +647,9 @@ fn hides(a: &Gesture, b: &Gesture) -> bool {
 }
 
 pub fn skipped_message(lang: Lang, skipped: usize) -> String {
-    lang.pick(
-        format!("キーの設定の、読めない・知らない項目（操作・入力・組み合わせ・パイの項目）{skipped} 個を飛ばしました。"),
-        format!("Skipped {skipped} unreadable or unknown item(s) (actions, keys, combinations or pie items) in the key settings."),
+    lang.f(
+        "keyconfig-skipped-unreadable-or-unknown-item",
+        &[("skipped", &skipped)],
     )
 }
 
@@ -828,7 +828,7 @@ fn slot_of(v: &Value, skipped: &mut usize) -> Option<PieItem> {
 
 /// `keymap.json` の中身を読む。形が違えば理由。知らない操作・範囲・組み合わせは飛ばして数える。
 pub fn parse(text: &str, lang: Lang) -> Result<Parsed, String> {
-    let bad = |why: &str| lang.pick(format!("形が違います: {why}"), format!("bad format: {why}"));
+    let bad = |why: &str| lang.f("keyconfig-bad-format", &[("why", &why)]);
     let v: Value = serde_json::from_str(text).map_err(|e| bad(&e.to_string()))?;
     let o = v.as_object().ok_or_else(|| bad("not an object"))?;
     if o.get("format").and_then(Value::as_str) != Some(FORMAT) {
@@ -836,10 +836,7 @@ pub fn parse(text: &str, lang: Lang) -> Result<Parsed, String> {
     }
     let version = o.get("version").and_then(Value::as_u64).unwrap_or(0);
     if version == 0 || version > VERSION {
-        return Err(lang.pick(
-            format!("この版では読めない版です（{version}）"),
-            format!("unsupported version ({version})"),
-        ));
+        return Err(lang.f("keyconfig-unsupported-version", &[("version", &version)]));
     }
     let mut parsed = Parsed::default();
     // パイ（キーの `pie.<ID>` を知るため、先に読む）
@@ -1085,10 +1082,7 @@ impl AppState {
             let lang = self.lang;
             self.fail(
                 Source::Settings,
-                lang.pick(
-                    format!("キーの設定を保存できません（{e}）"),
-                    format!("Cannot save the key settings ({e})"),
-                ),
+                lang.f("keyconfig-cannot-save-the-key-settings", &[("e", &e)]),
             );
         }
     }
@@ -1106,16 +1100,10 @@ impl AppState {
         let text =
             serde_json::to_string_pretty(&self.keys.to_json(&self.pie.menus)).unwrap_or_default();
         match yolu_io::atomic::replace_bytes(path, text.as_bytes()) {
-            Ok(()) => self.info(
-                Source::Settings,
-                lang.pick("キーの設定を書き出しました。", "Key settings exported."),
-            ),
+            Ok(()) => self.info(Source::Settings, lang.t("keyconfig-key-settings-exported")),
             Err(e) => self.fail(
                 Source::Settings,
-                lang.pick(
-                    format!("キーの設定を書き出せません（{e}）"),
-                    format!("Cannot export the key settings ({e})"),
-                ),
+                lang.f("keyconfig-cannot-export-the-key-settings", &[("e", &e)]),
             ),
         }
     }
@@ -1131,9 +1119,7 @@ impl AppState {
                 self.pie.menus = merged_pies(&parsed.pies);
                 self.keys.apply(&parsed);
                 self.keys_changed();
-                let mut text = lang
-                    .pick("キーの設定を読み込みました。", "Key settings imported.")
-                    .to_owned();
+                let mut text = lang.t("keyconfig-key-settings-imported").to_owned();
                 if parsed.skipped > 0 {
                     text.push(' ');
                     text.push_str(&skipped_message(lang, parsed.skipped));
@@ -1144,10 +1130,7 @@ impl AppState {
             }
             Err(why) => self.fail(
                 Source::Settings,
-                lang.pick(
-                    format!("キーの設定を読み込めません（{why}）"),
-                    format!("Cannot import the key settings ({why})"),
-                ),
+                lang.f("keyconfig-cannot-import-the-key-settings", &[("why", &why)]),
             ),
         }
     }

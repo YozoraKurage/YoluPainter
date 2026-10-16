@@ -70,7 +70,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
             });
     v.push(
         Entry::item(
-            l.pick("描画色で塗りつぶす", "Fill with the Paint Color"),
+            l.t("selection-fill-with-the-paint-color"),
             edit(SelEdit::Fill),
         )
         .enabled(paintable),
@@ -79,10 +79,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     v.push(command_item(l, "selection.to_new_layer", edit(SelEdit::ToNewLayer)).enabled(copyable));
     v.push(
         Entry::item(
-            l.pick(
-                "選択範囲をレイヤーマスクにする",
-                "Make the Selection a Layer Mask",
-            ),
+            l.t("selection-make-the-selection-a-layer"),
             edit(SelEdit::ToMask),
         )
         .enabled(free && any && app.session.selected_layer.is_some()),
@@ -106,10 +103,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     );
     v.push(
         Entry::item(
-            l.pick(
-                "選択範囲のボタンの帯を表示",
-                "Show the Selection Button Bar",
-            ),
+            l.t("selection-show-the-selection-button-bar"),
             Action::Sel(SelAction::Ui(SelUiOp::Bar(
                 !app.prefs.settings.selection_bar,
             ))),

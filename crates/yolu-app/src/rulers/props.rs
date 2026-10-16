@@ -21,9 +21,9 @@ pub fn title(lang: Lang, r: &Ruler) -> String {
     match r.kind {
         RulerKind::Perspective => {
             let points = if r.two_points {
-                lang.pick("2 点", "2 Points")
+                lang.t("rulers-2-points")
             } else {
-                lang.pick("1 点", "1 Point")
+                lang.t("rulers-1-point")
             };
             format!("{} {points}", kind_name(lang, r.kind))
         }
@@ -120,7 +120,7 @@ pub fn section_for_layer(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         app,
         rows,
         "rulers",
-        lang.pick("定規", "Ruler"),
+        lang.t("rulers-ruler"),
         "tools/ruler",
         None,
     );
@@ -209,9 +209,9 @@ fn ruler_row(
             "visibility_off"
         },
         gate.label(if r.visible {
-            lang.pick("非表示にする", "Hide")
+            lang.t("rulers-hide-tip")
         } else {
-            lang.pick("表示する", "Show")
+            lang.t("rulers-show-tip")
         }),
         false,
         gate.enabled,
@@ -251,7 +251,7 @@ fn ruler_row(
         trash,
         ("ruler.delete", r.id.0),
         "delete",
-        gate.label(lang.pick("定規を削除", "Delete Ruler")),
+        gate.label(lang.t("rulers-delete-ruler-tip")),
         false,
         gate.enabled,
         16.0,
@@ -299,7 +299,7 @@ fn snap_mark(
         };
         p.circle_stroke(center, 4.5, egui::Stroke::new(1.2, tone));
     }
-    let tip = lang.pick("スナップする特殊定規", "Snapping Special Ruler");
+    let tip = lang.t("rulers-snapping-special-ruler-tip");
     response.widget_info(|| WidgetInfo::selected(WidgetType::Button, gate.enabled, r.snap, tip));
     let clicked = response.clicked();
     let _ = response.on_hover_text(gate.label(tip));
@@ -324,17 +324,17 @@ fn scope_buttons(
     gate: Gate<'_>,
 ) {
     let lang = app.lang;
-    group_label(ui, rows, lang.pick("表示の範囲", "Visible In"));
+    group_label(ui, rows, lang.t("rulers-visible-in"));
     let scopes = [RulerScope::All, RulerScope::Group, RulerScope::Selected];
     let labels = [
-        lang.pick("すべて", "All"),
-        lang.pick("グループ", "Group"),
-        lang.pick("選択時", "Selected"),
+        lang.t("rulers-all"),
+        lang.t("rulers-group"),
+        lang.t("rulers-selected"),
     ];
     let tips = [
-        lang.pick("すべてのレイヤー", "All Layers"),
-        lang.pick("同じグループの中", "Within the Same Group"),
-        lang.pick("選んでいるときだけ", "Only While Selected"),
+        lang.t("rulers-all-layers"),
+        lang.t("rulers-within-the-same-group"),
+        lang.t("rulers-only-while-selected"),
     ];
     let ids = [
         "ruler.scope.all",
@@ -429,10 +429,7 @@ fn canvas_fields(
                 ui,
                 rows,
                 &format!("{salt}.a"),
-                (
-                    lang.pick("始点 X", "Start X"),
-                    lang.pick("始点 Y", "Start Y"),
-                ),
+                (lang.t("rulers-start-x"), lang.t("rulers-start-y")),
                 a,
                 canvas_ranges(size),
                 gate,
@@ -443,7 +440,7 @@ fn canvas_fields(
                 ui,
                 rows,
                 &format!("{salt}.b"),
-                (lang.pick("終点 X", "End X"), lang.pick("終点 Y", "End Y")),
+                (lang.t("rulers-end-x"), lang.t("rulers-end-y")),
                 b,
                 canvas_ranges(size),
                 gate,
@@ -459,10 +456,7 @@ fn canvas_fields(
                 ui,
                 rows,
                 &format!("{salt}.a"),
-                (
-                    lang.pick("中心 X", "Center X"),
-                    lang.pick("中心 Y", "Center Y"),
-                ),
+                (lang.t("rulers-center-x"), lang.t("rulers-center-y")),
                 a,
                 canvas_ranges(size),
                 gate,
@@ -480,10 +474,7 @@ fn canvas_fields(
                 ui,
                 rows,
                 &format!("{salt}.a"),
-                (
-                    lang.pick("中心 X", "Center X"),
-                    lang.pick("中心 Y", "Center Y"),
-                ),
+                (lang.t("rulers-center-x"), lang.t("rulers-center-y")),
                 a,
                 canvas_ranges(size),
                 gate,
@@ -496,7 +487,7 @@ fn canvas_fields(
                 ui,
                 row,
                 "ruler.center_canvas",
-                lang.pick("キャンバスの中心", "Canvas Center"),
+                lang.t("rulers-canvas-center"),
                 false,
                 gate.on(a != center),
                 gate.tip(None),
@@ -524,7 +515,7 @@ fn angle_slider(
         ui,
         rows,
         &format!("ruler.{}.angle", r.id),
-        lang.pick("角度", "Angle"),
+        lang.t("rulers-angle"),
         angle_of(a, b) as f32,
         (-180.0, 180.0),
         NumberFormat {
@@ -559,14 +550,14 @@ fn perspective_points(
     let items = [
         ChoiceButton {
             id: "ruler.one",
-            label: lang.pick("1 点", "1 Point"),
+            label: lang.t("rulers-1-point"),
             selected: !r.two_points,
             enabled: gate.enabled,
             tooltip: gate.tip(None),
         },
         ChoiceButton {
             id: "ruler.two",
-            label: lang.pick("2 点", "2 Points"),
+            label: lang.t("rulers-2-points"),
             selected: r.two_points,
             enabled: gate.enabled,
             tooltip: gate.tip(None),
@@ -583,8 +574,8 @@ fn perspective_points(
         rows,
         &format!("{salt}.a"),
         (
-            lang.pick("消失点 1 X", "Vanishing Point 1 X"),
-            lang.pick("消失点 1 Y", "Vanishing Point 1 Y"),
+            lang.t("rulers-vanishing-point-1-x"),
+            lang.t("rulers-vanishing-point-1-y"),
         ),
         a,
         vanishing_ranges(size),
@@ -600,8 +591,8 @@ fn perspective_points(
             rows,
             &format!("{salt}.b"),
             (
-                lang.pick("消失点 2 X", "Vanishing Point 2 X"),
-                lang.pick("消失点 2 Y", "Vanishing Point 2 Y"),
+                lang.t("rulers-vanishing-point-2-x"),
+                lang.t("rulers-vanishing-point-2-y"),
             ),
             b,
             vanishing_ranges(size),
@@ -626,7 +617,7 @@ fn symmetry_count(
         ui,
         rows,
         &format!("ruler.{}.lines", r.id),
-        lang.pick("線の本数", "Lines"),
+        lang.t("rulers-lines"),
         r.lines as f32,
         (2.0, 16.0),
         NumberFormat::int(""),
@@ -641,7 +632,7 @@ fn symmetry_count(
         ui,
         rows,
         &format!("ruler.{}.line_symmetry", r.id),
-        lang.pick("線対称", "Line Symmetry"),
+        lang.t("rulers-line-symmetry"),
         r.line_symmetry,
         gate.tip(None),
         gate.enabled,
@@ -670,14 +661,14 @@ fn model_fields(
             let items = [
                 ChoiceButton {
                     id: "ruler.one",
-                    label: lang.pick("1 点", "1 Point"),
+                    label: lang.t("rulers-1-point"),
                     selected: !r.two_points,
                     enabled: gate.enabled,
                     tooltip: gate.tip(None),
                 },
                 ChoiceButton {
                     id: "ruler.two",
-                    label: lang.pick("2 点", "2 Points"),
+                    label: lang.t("rulers-2-points"),
                     selected: r.two_points,
                     enabled: gate.enabled,
                     tooltip: gate.tip(None),
@@ -697,7 +688,7 @@ fn model_fields(
                 ui,
                 rows,
                 &format!("ruler.{}.see_through", r.id),
-                lang.pick("見えない面にも写す", "Paint Hidden Surfaces"),
+                lang.t("rulers-paint-hidden-surfaces"),
                 r.see_through,
                 gate.tip(None),
                 gate.enabled,
@@ -725,7 +716,7 @@ fn axis_buttons(
     gate: Gate<'_>,
 ) {
     let lang = app.lang;
-    group_label(ui, rows, lang.pick("軸", "Axis"));
+    group_label(ui, rows, lang.t("rulers-axis"));
     let items: Vec<ChoiceButton> = ["X", "Y", "Z"]
         .iter()
         .enumerate()
@@ -766,18 +757,18 @@ fn center_buttons(
         .model
         .as_ref()
         .map(|m| m.geometry.bounds().center.as_dvec3());
-    group_label(ui, rows, lang.pick("中心", "Center"));
+    group_label(ui, rows, lang.t("rulers-center"));
     let items = [
         ChoiceButton {
             id: "ruler.center.origin",
-            label: lang.pick("原点", "Origin"),
+            label: lang.t("rulers-origin"),
             selected: false,
             enabled: gate.on(a != DVec3::ZERO),
             tooltip: gate.tip(None),
         },
         ChoiceButton {
             id: "ruler.center.bounds",
-            label: lang.pick("境界の中心", "Bounds Center"),
+            label: lang.t("rulers-bounds-center"),
             selected: false,
             enabled: gate.on(bounds.is_some_and(|c| c != a)),
             tooltip: gate.tip(None),

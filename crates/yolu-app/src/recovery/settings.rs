@@ -74,11 +74,11 @@ impl DiskBudget {
     /// ウィンドウに出す名前（数は出さない。指定した量は「指定」とだけ）。
     pub fn name(self, lang: crate::lang::Lang) -> &'static str {
         match self {
-            DiskBudget::Auto => lang.pick("自動", "Automatic"),
-            DiskBudget::Low => lang.pick("少なめ", "Low"),
-            DiskBudget::Standard => lang.pick("標準", "Standard"),
-            DiskBudget::High => lang.pick("多め", "High"),
-            DiskBudget::Gib(_) => lang.pick("指定", "Custom"),
+            DiskBudget::Auto => lang.t("recovery-automatic"),
+            DiskBudget::Low => lang.t("recovery-low"),
+            DiskBudget::Standard => lang.t("recovery-standard"),
+            DiskBudget::High => lang.t("recovery-high"),
+            DiskBudget::Gib(_) => lang.t("recovery-custom"),
         }
     }
 

@@ -111,48 +111,20 @@ impl StoreError {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
             StoreError::Io(e) => lang.file_error(e),
-            StoreError::TooLarge => lang
-                .pick("ファイルが大きすぎます", "The file is too large")
-                .into(),
-            StoreError::NotABrush => lang
-                .pick("ブラシのファイルではありません", "Not a brush file")
-                .into(),
-            StoreError::NewerVersion(v) => lang.pick(
-                format!("新しい形式です（{v}）"),
-                format!("A newer format ({v})"),
-            ),
-            StoreError::Syntax(line) => lang.pick(
-                format!("{line} 行目が読めません"),
-                format!("Cannot read line {line}"),
-            ),
-            StoreError::UnknownKey(k) => lang.pick(
-                format!("知らない項目「{k}」があります"),
-                format!("Unknown item \"{k}\""),
-            ),
-            StoreError::DuplicateKey(k) => lang.pick(
-                format!("項目「{k}」が重なっています"),
-                format!("Repeated item \"{k}\""),
-            ),
-            StoreError::BadValue(k) => lang.pick(
-                format!("項目「{k}」の値が読めません"),
-                format!("Invalid value of \"{k}\""),
-            ),
-            StoreError::UnknownTip(n) => lang.pick(
-                format!("知らない画像「{n}」があります"),
-                format!("Unknown image \"{n}\""),
-            ),
+            StoreError::TooLarge => lang.t("brushes-the-file-is-too-large").into(),
+            StoreError::NotABrush => lang.t("brushes-not-a-brush-file").into(),
+            StoreError::NewerVersion(v) => lang.f("brushes-a-newer-format", &[("v", &v)]),
+            StoreError::Syntax(line) => lang.f("brushes-cannot-read-line", &[("line", &line)]),
+            StoreError::UnknownKey(k) => lang.f("brushes-unknown-item", &[("k", &k)]),
+            StoreError::DuplicateKey(k) => lang.f("brushes-repeated-item", &[("k", &k)]),
+            StoreError::BadValue(k) => lang.f("brushes-invalid-value-of", &[("k", &k)]),
+            StoreError::UnknownTip(n) => lang.f("brushes-unknown-image", &[("n", &n)]),
             StoreError::Invalid(e) => lang.core_error(e),
-            StoreError::BadImage(short) => lang.pick(
-                format!("画像「{short}」を読めません"),
-                format!("Cannot read the image \"{short}\""),
-            ),
-            StoreError::Mismatch => lang
-                .pick(
-                    "書いた内容を読み戻せませんでした",
-                    "The written file did not read back the same",
-                )
-                .into(),
-            StoreError::TooMany => lang.pick("ファイルが多すぎます", "Too many files").into(),
+            StoreError::BadImage(short) => {
+                lang.f("brushes-cannot-read-the-image", &[("short", &short)])
+            }
+            StoreError::Mismatch => lang.t("brushes-the-written-file-did-not").into(),
+            StoreError::TooMany => lang.t("brushes-too-many-files").into(),
         }
     }
 }

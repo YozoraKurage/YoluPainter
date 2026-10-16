@@ -220,24 +220,15 @@ fn what(
         InactiveTarget::Generator { mask, kind } => {
             let name = super::names::generator_name(lang, kind);
             if mask {
-                lang.pick(format!("{name}（マスク）"), format!("{name} (mask)"))
+                lang.f("fx-mask", &[("name", &name)])
             } else {
                 name.to_owned()
             }
         }
-        InactiveTarget::FillGradient(c) => lang.pick(
-            format!("グラデーション（{}）", channel_name(c)),
-            format!("Gradient ({})", channel_name(c)),
-        ),
-        InactiveTarget::Decal => lang.pick("デカール", "Decal").to_owned(),
-        InactiveTarget::FillImage(c) => lang.pick(
-            format!("画像（{}）", channel_name(c)),
-            format!("Image ({})", channel_name(c)),
-        ),
-        InactiveTarget::FillPoints(c) => lang.pick(
-            format!("点のグラデーション（{}）", channel_name(c)),
-            format!("Point gradient ({})", channel_name(c)),
-        ),
+        InactiveTarget::FillGradient(c) => lang.f("fx-gradient", &[("c", &channel_name(c))]),
+        InactiveTarget::Decal => lang.t("fx-decal").to_owned(),
+        InactiveTarget::FillImage(c) => lang.f("fx-image", &[("c", &channel_name(c))]),
+        InactiveTarget::FillPoints(c) => lang.f("fx-point-gradient", &[("c", &channel_name(c))]),
     }
 }
 
@@ -463,25 +454,15 @@ impl AppState {
     /// 文書の画像の ID を返す（`Document::set_fill_image` に渡せる）。棚に無い・復号できないときは理由。
     pub fn use_shelf_image(&mut self, resource_id: &str) -> Result<ImageId, String> {
         let lang = self.lang;
-        let id = image_id(resource_id).ok_or_else(|| {
-            lang.pick(
-                "その画像はアセットにありません",
-                "No such image in the project's assets",
-            )
-            .to_owned()
-        })?;
+        let id =
+            image_id(resource_id).ok_or_else(|| lang.t("fx-no-such-image-in-the").to_owned())?;
         let present = self
             .shelf
             .resources()
             .iter()
             .any(|r| r.kind == "image" && r.id == resource_id);
         if !present {
-            return Err(lang
-                .pick(
-                    "その画像はアセットにありません",
-                    "No such image in the project's assets",
-                )
-                .into());
+            return Err(lang.t("fx-no-such-image-in-the").into());
         }
         self.fx.inputs.requested.insert(id);
         self.fx.inputs.image_errors.remove(&id);
@@ -744,10 +725,8 @@ impl AppState {
                 self.fail(
                     Source::TextureSet,
                     self.lang.with_reason(
-                        self.lang.pick(
-                            format!("テクスチャセット「{name}」を編集できません"),
-                            format!("Cannot edit texture set \"{name}\""),
-                        ),
+                        self.lang
+                            .f("fx-cannot-edit-texture-set", &[("name", &name)]),
                         &reason,
                     ),
                 );
@@ -780,10 +759,9 @@ impl AppState {
             set.saved = saved;
         }
         let name = self.session.sets.get(index).map_or("", |s| s.name.as_str());
-        let mut text = self.lang.pick(
-            format!("入力がそろったので、テクスチャセット「{name}」を編集できます。"),
-            format!("Texture set \"{name}\" is editable now that its inputs are in place."),
-        );
+        let mut text = self
+            .lang
+            .f("fx-texture-set-is-editable-now", &[("name", &name)]);
         // 選択範囲・見た目・覚えた選択範囲を戻せなかったら、開いたときと同じく理由を言う（気をつけること）
         let mut kind = crate::notice::Kind::Info;
         for e in [restored.err(), look_restored.err(), saved_restored.err()]

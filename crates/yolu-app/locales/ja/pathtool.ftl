@@ -1,0 +1,35 @@
+# 画面の文（pathtool）。キーは「pathtool-」と英語の文から作った短い名前、ツールチップの文はキーの終わりが -tip。
+
+pathtool-outside-the-canvas = キャンバスの外です
+pathtool-path = パス
+pathtool-copy = { $name } のコピー
+pathtool-path-copied = パスをコピーしました。
+pathtool-no-path-has-been-copied = コピーしたパスがありません
+pathtool-cannot-add-a-path = パスを追加できません
+pathtool-a-layer-holds-up-to = 1 つのレイヤーのパスは 256 本までです
+pathtool-paths-on-the-canvas-and = キャンバスのパスとモデルの上のパスの間では写せません
+pathtool-the-path-was-drawn-on = 別のモデルで描かれたパスです
+pathtool-cannot-paste = 貼り付けられません
+pathtool-no-model = モデルがありません
+pathtool-a-path-cannot-be-drawn = パスはマスクに描けません
+pathtool-no-layer-to-paint-on = 描くレイヤーがありません。
+pathtool-this-layer-has-a-path = このレイヤーにはモデルの上のパスがあります
+pathtool-this-layer-has-a-canvas = このレイヤーにはキャンバスのパスがあります
+pathtool-the-path-was-drawn-on-2 = 別のモデルで描かれたパスです
+pathtool-point-move-cancelled = 点の移動をやめました。
+pathtool-rasterized = ラスタライズしました。
+pathtool-not-available-while-the-model = ポーズを付けているときは入れられません
+pathtool-a-3d-path-can-mirror = 3D のパスの対称は鏡の面 1 枚だけです
+pathtool-the-model-changed-so-the = モデルが替わったので、点の移動をやめました。
+pathtool-sample-s-were-off-the = { $gaps } 個の標本が面から外れて、描いていません
+pathtool-text = {""}
+pathtool-cannot-redraw-the-path-of = レイヤー{ $name }のパスは描き直せません
+pathtool-path-preset-saved = パスのプリセットを保存しました。
+pathtool-cannot-save-the-path-preset = パスのプリセットを保存できません
+pathtool-cannot-rename-the-path-preset = パスのプリセットの名前を変えられません
+pathtool-cannot-delete-the-path-preset = パスのプリセットを削除できません
+pathtool-no-image-in-the-assets = アセットに画像がありません
+pathtool-the-layer-is-locked = レイヤーがロックされています
+pathtool-sample-s-could-not-be = { $gaps } 個の標本は新しい面に投影できませんでした
+pathtool-not-on-the-model = モデルの上ではありません
+pathtool-surface-of-another-texture-set = ほかのテクスチャセット（{ $name }）の面です。

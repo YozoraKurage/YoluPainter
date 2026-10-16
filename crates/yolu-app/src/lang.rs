@@ -70,7 +70,7 @@ impl Lang {
 
     /// 読めなかったがファイルには残っていることを添えた文（「〜を読めません（理由）。ファイルには残っています。」）。
     pub fn kept_in_file(self, sentence: String) -> String {
-        sentence + self.pick("ファイルには残っています。", " It is kept in the file.")
+        sentence + self.t("lang-it-is-kept-in-the")
     }
 
     /// 文の中に置く名前（「名前」・"name"。英語の文は ASCII の引用符で、日本語が混じらない限り ASCII のまま）。

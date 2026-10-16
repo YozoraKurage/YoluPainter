@@ -215,10 +215,7 @@ fn inside(app: &AppState, x: f64, y: f64) -> bool {
 }
 
 fn outside(app: &mut AppState) {
-    app.refuse(
-        Source::Path,
-        app.lang.pick("キャンバスの外です", "Outside the canvas"),
-    );
+    app.refuse(Source::Path, app.lang.t("pathtool-outside-the-canvas"));
 }
 
 /// 動いた。

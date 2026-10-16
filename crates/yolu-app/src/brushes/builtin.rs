@@ -220,13 +220,13 @@ pub fn find(id: &str) -> Option<&'static Builtin> {
 /// 組み込みの表示名。
 pub fn name(lang: Lang, id: &str) -> String {
     let own = match id {
-        STANDARD | STANDARD_ERASER => Some(lang.pick("標準", "Standard")),
-        "blur" => Some(lang.pick("ぼかし", "Blur")),
-        "smudge" => Some(lang.pick("指先", "Smudge")),
-        "clone" => Some(lang.pick("クローン", "Clone")),
-        "oil" => Some(lang.pick("油彩", "Oil paint")),
-        "gouache" => Some(lang.pick("ガッシュ", "Gouache")),
-        "mixer" => Some(lang.pick("混色", "Mixer")),
+        STANDARD | STANDARD_ERASER => Some(lang.t("brushes-standard")),
+        "blur" => Some(lang.t("brushes-blur")),
+        "smudge" => Some(lang.t("brushes-smudge")),
+        "clone" => Some(lang.t("brushes-clone")),
+        "oil" => Some(lang.t("brushes-oil-paint")),
+        "gouache" => Some(lang.t("brushes-gouache")),
+        "mixer" => Some(lang.t("brushes-mixer")),
         _ => None,
     };
     match own {

@@ -209,10 +209,7 @@ impl AppState {
                 if !self.mat.set_channel(channel, on) {
                     self.refuse(
                         Source::Material,
-                        lang.pick(
-                            "マテリアルは 1 つ以上のチャンネルを塗ります",
-                            "A material paints at least one channel",
-                        ),
+                        lang.t("matpaint-a-material-paints-at-least"),
                     );
                 }
             }

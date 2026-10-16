@@ -32,25 +32,19 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         row,
         "pose.hide.children",
-        lang.pick("子を含める", "Include Children"),
+        lang.t("panels-include-children"),
         state.children,
-        Some(lang.pick(
-            "選んだボーンの子孫のボーンの影響も含めて隠す",
-            "Also hide the surfaces influenced by the bones under the selected bone",
-        )),
+        Some(lang.t("panels-also-hide-the-surfaces-influenced-tip")),
         free,
     );
     let threshold = super::super::properties::percent_row(
         ui,
         rows,
         "pose.hide.threshold",
-        lang.pick("しきい値", "Threshold"),
+        lang.t("panels-threshold"),
         f64::from(state.threshold),
         (0.0, 1.0),
-        Some(lang.pick(
-            "面の 3 頂点が、そのボーンに掛けているウェイトの平均がこの値以上の面を隠す",
-            "Hide surfaces whose three vertices average at least this weight on the bone",
-        )),
+        Some(lang.t("panels-hide-surfaces-whose-three-vertices-tip")),
         free,
     );
     if children != state.children || threshold.is_some() {
@@ -65,13 +59,10 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         row,
         "pose.hide.add",
-        lang.pick("選んだボーンの面を隠す", "Hide Selected Bone"),
+        lang.t("panels-hide-selected-bone"),
         false,
         free && selected.is_some(),
-        Some(lang.pick(
-            "選んだボーンの影響のある面を隠す。同じボーンにもう一度使うと、しきい値と子の設定を入れ替える",
-            "Hide the surfaces the selected bone influences. Using it again on the same bone replaces its threshold and children setting",
-        )),
+        Some(lang.t("panels-hide-the-surfaces-the-selected-tip")),
         Some("visibility_off"),
     )
     .clicked()
@@ -101,7 +92,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             "{}%{}",
             (e.threshold * 100.0).round(),
             if e.children {
-                lang.pick("・子", " +children")
+                lang.t("panels-children")
             } else {
                 ""
             }
@@ -133,7 +124,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             button,
             ("pose.hide.remove", i),
             "close",
-            lang.pick("この項目を外す", "Remove this entry"),
+            lang.t("panels-remove-this-entry-tip"),
             false,
             free,
             12.0,
@@ -151,7 +142,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     rows.space(4.0);
     let row = rows.row(t::ROW_HEIGHT, 4.0);
     let field = Rect::from_min_max(row.min, pos2(row.right() - SAVE_W - 4.0, row.bottom()));
-    let default_name = lang.pick("隠し方", "Hide Set");
+    let default_name = lang.t("panels-hide-set");
     let shown = if app.view3d.pose.hide_name.is_empty() {
         default_name.to_owned()
     } else {
@@ -162,7 +153,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         field,
         "pose.hide.name",
         &shown,
-        Some(lang.pick("隠し方を保存する名前", "Name to save the hide set under")),
+        Some(lang.t("panels-name-to-save-the-hide-tip")),
         false,
     );
     if let Some(name) = out.committed {
@@ -173,13 +164,10 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         save,
         "pose.hide.save",
-        lang.pick("保存", "Save"),
+        lang.t("panels-save"),
         false,
         free && !state.is_clear(),
-        Some(lang.pick(
-            "今の隠し方（隠している項目と、入れているプリセットの和）を、この名前で保存する。同じ名前があれば番号を付ける",
-            "Save the current hide set (the entries plus the active presets) under this name. A name already in use gets a number",
-        )),
+        Some(lang.t("panels-save-the-current-hide-set-tip")),
         Some("save"),
     )
     .clicked()
@@ -214,10 +202,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ("pose.hide.preset", *id),
             &label,
             on,
-            Some(lang.pick(
-                "この隠し方を入れる・外す。入れた隠し方は全部の和で隠す",
-                "Turn this hide set on or off. Every active set hides together",
-            )),
+            Some(lang.t("panels-turn-this-hide-set-on-tip")),
             free,
         ) != on
         {
@@ -228,7 +213,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             button,
             ("pose.hide.delete", *id),
             "delete",
-            lang.pick("この隠し方を消す", "Delete this hide set"),
+            lang.t("panels-delete-this-hide-set-tip"),
             false,
             free,
             13.0,

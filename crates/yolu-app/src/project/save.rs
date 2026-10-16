@@ -187,7 +187,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
     card: Some(|app, lang| {
         let p = app.save_progress()?;
         Some(JobCard {
-            text: format!("{} — {}", lang.pick("保存しています", "Saving"), p.file),
+            text: format!("{} — {}", lang.t("project-saving"), p.file),
             fraction: Some(p.fraction),
             // 保存は途中で止めない（検証した一時ファイルからの 1 回の置換で確定させる）
             cancel: None,
@@ -254,7 +254,7 @@ impl AppState {
 /// 結果を返さずに裏のスレッドが止まった。
 fn stopped(lang: Lang) -> Finished {
     Finished {
-        result: Err(lang.pick("処理が止まりました", "The save stopped").into()),
+        result: Err(lang.t("project-the-save-stopped").into()),
         target: None,
     }
 }
@@ -288,12 +288,7 @@ fn start(state: &mut AppState, path: &Path, report: bool) -> Result<(), String> 
     // （FAT・exFAT・一部のネットワーク）は、開いているファイルを置き換えられないので、保存が置換のためにそのハンドルを手放し、写しの読みは
     // 断られる。その間は保存しない
     if state.distribute.is_busy() || state.distribute.is_open() {
-        return Err(lang
-            .pick(
-                "配布用に保存の途中は保存しません",
-                "Cannot save while saving for distribution",
-            )
-            .into());
+        return Err(lang.t("project-cannot-save-while-saving-for").into());
     }
     let capture = capture(state, path.to_path_buf())?;
     // 開いている .ylp と同じファイルへの保存なら、その保存先の印を引き継ぐ（複製を渡し、結果の印で置き換える）
@@ -413,7 +408,7 @@ fn work(request: Request) -> Finished {
     let built = match build(&capture, None, &shared.build) {
         Ok(b) => b,
         Err(BuildError::Message(text)) => return fail(text),
-        Err(BuildError::Canceled) => return fail(lang.pick("取り消しました", "Canceled").into()),
+        Err(BuildError::Canceled) => return fail(lang.t("project-canceled").into()),
     };
     let project = Arc::new(built.project);
     let overwrite = path.exists();
@@ -427,10 +422,7 @@ fn work(request: Request) -> Finished {
                     .map(|(_, t)| t)
                     .map_err(|e| {
                         lang.with_reason(
-                            lang.pick(
-                                "上書きする先を .ylp として読めません",
-                                "Invalid overwrite target",
-                            ),
+                            lang.t("project-invalid-overwrite-target"),
                             lang.io_error(&e),
                         )
                     })
@@ -468,17 +460,14 @@ fn work(request: Request) -> Finished {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string());
-    let mut text = lang.pick(format!("保存しました: {file}。"), format!("Saved: {file}."));
+    let mut text = lang.f("project-saved", &[("file", &file)]);
     if !capture.left_out.is_empty() {
         text += " ";
         text += &left_out_note(lang, &capture.left_out);
     }
     let map_total: usize = capture.maps.iter().map(|(_, _, m)| m.len()).sum();
     if map_total > 0 {
-        text += &lang.pick(
-            format!(" メッシュマップ {map_total} 枚を書きました。"),
-            format!(" Wrote {map_total} mesh map(s)."),
-        );
+        text += &lang.f("project-wrote-mesh-map-s", &[("map_total", &map_total)]);
     }
     // 開くときに読めなかった見た目の設定（新しい形式など）を、変えた見た目で上書きしたセット
     if !built.looks_overwritten.is_empty() {
@@ -495,11 +484,8 @@ fn work(request: Request) -> Finished {
             .collect();
         text += " ";
         text += &lang.with_reason(
-            lang.pick(
-                "読めなかった見た目の設定を上書きしました",
-                "Overwrote unreadable look settings",
-            ),
-            names.join(lang.pick("、", ", ")),
+            lang.t("project-overwrote-unreadable-look-settings"),
+            names.join(lang.t("project-text-3")),
         );
     }
     // 開くときに読めなかった、名前を付けて残した選択範囲の項目を、変えた並びで置き換えたセット
@@ -517,11 +503,8 @@ fn work(request: Request) -> Finished {
             .collect();
         text += " ";
         text += &lang.with_reason(
-            lang.pick(
-                "読めなかった覚えた選択範囲の項目を置き換えました",
-                "Replaced unreadable remembered selections",
-            ),
-            names.join(lang.pick("、", ", ")),
+            lang.t("project-replaced-unreadable-remembered-selections"),
+            names.join(lang.t("project-text-3")),
         );
     }
     if built.pose_overwritten {
@@ -562,12 +545,7 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
     match finished.result {
         Ok(done) => {
             let Some(target) = finished.target else {
-                return fail(
-                    state,
-                    &job,
-                    lang.pick("処理が止まりました", "The save stopped").into(),
-                    None,
-                );
+                return fail(state, &job, lang.t("project-the-save-stopped").into(), None);
             };
             match state.session.project.as_mut().filter(|_| job.reuse) {
                 Some(file) => {
@@ -612,7 +590,7 @@ fn finish(state: &mut AppState, job: Job, finished: Finished) {
                 .path
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| lang.pick("名称未設定", "Untitled").into());
+                .unwrap_or_else(|| lang.t("project-untitled").into());
             state.session.rewritten_sets = job.written.len();
             // 入れなかったセットは、画面にあってファイルに無い。「保存していない変更」のままにして、閉じる・開き直す・捨てるときに聞く
             // （次の保存でも同じ。知らせは保存の時点の 1 回だけで、あとの知らせに上書きされうるので、注意としてログにも残す）
@@ -664,8 +642,5 @@ fn fail(state: &mut AppState, job: &Job, text: String, target: Option<SaveTarget
 /// 「「ファイル」に保存できません」（理由は `Lang::with_reason` で添える）。
 fn cannot_save(lang: Lang, path: &Path) -> String {
     let file = lang.quote(&path.display().to_string());
-    lang.pick(
-        format!("{file}に保存できません"),
-        format!("Cannot save to {file}"),
-    )
+    lang.f("project-cannot-save-to", &[("file", &file)])
 }

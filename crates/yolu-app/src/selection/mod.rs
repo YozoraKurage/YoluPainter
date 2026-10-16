@@ -61,11 +61,11 @@ impl ModifyKind {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            ModifyKind::Grow => lang.pick("拡張", "Grow"),
-            ModifyKind::Shrink => lang.pick("縮小", "Shrink"),
-            ModifyKind::Border => lang.pick("境界線", "Border"),
-            ModifyKind::Feather => lang.pick("境界をぼかす", "Feather"),
-            ModifyKind::Sharpen => lang.pick("境界をくっきり", "Sharpen Edge"),
+            ModifyKind::Grow => lang.t("selection-grow"),
+            ModifyKind::Shrink => lang.t("selection-shrink"),
+            ModifyKind::Border => lang.t("selection-border"),
+            ModifyKind::Feather => lang.t("selection-feather"),
+            ModifyKind::Sharpen => lang.t("selection-sharpen-edge"),
         }
     }
 
@@ -85,26 +85,11 @@ impl ModifyKind {
     /// 半径の意味（ツールチップ）。
     pub fn tooltip(self, lang: Lang) -> &'static str {
         match self {
-            ModifyKind::Grow => lang.pick(
-                "半径の円の中の最大の量にする",
-                "Largest amount within a circle of the radius",
-            ),
-            ModifyKind::Shrink => lang.pick(
-                "半径の円の中の最小の量にする",
-                "Smallest amount within a circle of the radius",
-            ),
-            ModifyKind::Border => lang.pick(
-                "縁の帯だけを残す（拡張 − 縮小）",
-                "A band around the edge: Grow minus Shrink",
-            ),
-            ModifyKind::Feather => lang.pick(
-                "縁をぼかす（ガウス。標準偏差は半径 ÷ 3.5）",
-                "Soften the edge (Gaussian blur, σ = radius / 3.5)",
-            ),
-            ModifyKind::Sharpen => lang.pick(
-                "半分以上選ばれた所を全部選び、ほかを外す",
-                "At least half selected becomes fully selected",
-            ),
+            ModifyKind::Grow => lang.t("selection-largest-amount-within-a-circle-tip"),
+            ModifyKind::Shrink => lang.t("selection-smallest-amount-within-a-circle-tip"),
+            ModifyKind::Border => lang.t("selection-a-band-around-the-edge-tip"),
+            ModifyKind::Feather => lang.t("selection-soften-the-edge-gaussian-blur-tip"),
+            ModifyKind::Sharpen => lang.t("selection-at-least-half-selected-becomes-tip"),
         }
     }
 }
@@ -434,10 +419,10 @@ fn exact_bounds(mask: &SelectionMask) -> Option<(u32, u32, u32, u32)> {
 /// 組み合わせ方の名前。
 pub fn combine_name(lang: Lang, mode: SelectionCombine) -> &'static str {
     match mode {
-        SelectionCombine::Replace => lang.pick("新規", "New"),
-        SelectionCombine::Add => lang.pick("追加", "Add"),
-        SelectionCombine::Subtract => lang.pick("削除", "Subtract"),
-        SelectionCombine::Intersect => lang.pick("共通", "Intersect"),
+        SelectionCombine::Replace => lang.t("selection-new"),
+        SelectionCombine::Add => lang.t("selection-add"),
+        SelectionCombine::Subtract => lang.t("selection-subtract"),
+        SelectionCombine::Intersect => lang.t("selection-intersect"),
     }
 }
 
@@ -461,7 +446,7 @@ pub fn name_with_modifier(
     operation: Option<crate::keymap::Operation>,
 ) -> String {
     match operation.and_then(|op| modifier_text(lang, op)) {
-        Some(key) => lang.pick(format!("{name}（{key}）"), format!("{name} ({key})")),
+        Some(key) => lang.f("selection-text-2", &[("name", &name), ("key", &key)]),
         None => name.to_owned(),
     }
 }
@@ -589,15 +574,13 @@ impl AppState {
             .set_selection_if_changed(next)
             .map_err(|e| lang.core_error(&e))?;
         Ok(if self.session.doc.selection().is_none() {
-            lang.pick("何も選ばれていません。", "Nothing is selected.")
-                .into()
+            lang.t("selection-nothing-is-selected").into()
         } else if !changed {
-            lang.pick("選択範囲は変わりません。", "The selection did not change.")
-                .into()
+            lang.t("selection-the-selection-did-not-change").into()
         } else {
             format!(
                 "{}: {}",
-                lang.pick("選択範囲", "Selection"),
+                lang.t("selection-selection"),
                 combine_name(lang, mode)
             )
         })
@@ -624,8 +607,7 @@ impl AppState {
 
     fn sel_apply(&mut self, edit: SelEdit) -> Result<String, String> {
         let lang = self.lang;
-        let none =
-            || -> String { lang.pick("選択範囲がありません。", "No selection.").into() };
+        let none = || -> String { lang.t("selection-no-selection").into() };
         match edit {
             SelEdit::All => {
                 let all = SelectionMask::all(&self.session.doc);
@@ -633,10 +615,9 @@ impl AppState {
                     .set_selection_if_changed(Some(all))
                     .map_err(|e| lang.core_error(&e))?;
                 Ok(if changed {
-                    lang.pick("すべてを選択しました。", "Selected all.").into()
+                    lang.t("selection-selected-all").into()
                 } else {
-                    lang.pick("すでにすべて選択しています。", "Already all selected.")
-                        .into()
+                    lang.t("selection-already-all-selected").into()
                 })
             }
             SelEdit::Clear => {
@@ -647,7 +628,7 @@ impl AppState {
                     .doc
                     .clear_selection()
                     .map_err(|e| lang.core_error(&e))?;
-                Ok(lang.pick("選択を解除しました。", "Deselected.").into())
+                Ok(lang.t("selection-deselected").into())
             }
             SelEdit::Invert => {
                 let Some(current) = self.session.doc.selection().cloned() else {
@@ -656,11 +637,9 @@ impl AppState {
                 self.set_selection_if_changed(Some(current.invert()))
                     .map_err(|e| lang.core_error(&e))?;
                 Ok(if self.session.doc.selection().is_none() {
-                    lang.pick("反転して、何も残りません。", "Nothing is left selected.")
-                        .into()
+                    lang.t("selection-nothing-is-left-selected").into()
                 } else {
-                    lang.pick("選択範囲を反転しました。", "Inverted the selection.")
-                        .into()
+                    lang.t("selection-inverted-the-selection").into()
                 })
             }
             SelEdit::Modify {
@@ -686,16 +665,13 @@ impl AppState {
                     .map_err(|e| lang.core_error(&e))?;
                 let name = kind.name(lang);
                 Ok(if self.session.doc.selection().is_none() {
-                    format!(
-                        "{name}: {}",
-                        lang.pick("何も残りません。", "nothing is left selected.")
-                    )
+                    format!("{name}: {}", lang.t("selection-nothing-is-left-selected-2"))
                 } else if !changed {
-                    format!("{name}: {}", lang.pick("変わりません。", "no change."))
+                    format!("{name}: {}", lang.t("selection-no-change"))
                 } else if kind.uses_radius() {
                     format!("{name}: {r} px")
                 } else {
-                    format!("{name}{}", lang.pick("。", "."))
+                    format!("{name}{}", lang.t("selection-text-3"))
                 })
             }
             SelEdit::Rect {
@@ -772,7 +748,7 @@ impl AppState {
                     });
                 }
                 let Some(shape) = shape else {
-                    return Err(lang.pick("種がありません。", "No seed.").into());
+                    return Err(lang.t("selection-no-seed").into());
                 };
                 self.combine_shape(shape, mode)
             }
@@ -790,10 +766,7 @@ impl AppState {
                         crate::lang::refusals::during_stroke(self.lang),
                     );
                 } else if self.session.doc.selection().is_none() {
-                    self.refuse(
-                        Source::Selection,
-                        self.lang.pick("選択範囲がありません。", "No selection."),
-                    );
+                    self.refuse(Source::Selection, self.lang.t("selection-no-selection"));
                 } else if let Some(reason) = self.read_only_reason() {
                     self.refuse(
                         Source::Selection,

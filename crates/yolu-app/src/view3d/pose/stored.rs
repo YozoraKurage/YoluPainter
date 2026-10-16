@@ -141,14 +141,13 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
         Ok(Some(p)) => p,
         Ok(None) => return None,
         Err(e) => {
-            return Some(lang.kept_in_file(lang.with_reason(
-                lang.pick("ポーズを読めません", "Cannot read the pose"),
-                lang.io_error(&e),
-            )))
+            return Some(lang.kept_in_file(
+                lang.with_reason(lang.t("view3d-cannot-read-the-pose"), lang.io_error(&e)),
+            ))
         }
     };
     let session = app.view3d.pose.session.as_ref()?;
-    let label = lang.pick("ファイルのポーズ", "Pose in file");
+    let label = lang.t("view3d-pose-in-file");
     let built = pose_from_stored(&session.rig, &stored, label);
     let total = stored.bones.len() + stored.shapes.len();
     let nothing_fits = built.applied == 0 && total > 0;
@@ -175,16 +174,16 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
     }
     Some(match result {
         Err(e) => lang.with_reason(
-            lang.pick("ポーズを戻せません", "Cannot restore the pose"),
+            lang.t("view3d-cannot-restore-the-pose"),
             lang.view_error(&e),
         ),
         Ok(()) if nothing_fits => lang.pick(
             "ファイルのポーズに合うボーンがありません。".to_owned(),
             "No bone fits the pose in the file.".to_owned(),
         ),
-        Ok(()) if skipped > 0 => lang.pick(
-            format!("ポーズを戻しました（合わない項目 {skipped} 件）。"),
-            format!("Pose restored (unmatched items: {skipped})."),
+        Ok(()) if skipped > 0 => lang.f(
+            "view3d-pose-restored-unmatched-items",
+            &[("skipped", &skipped)],
         ),
         Ok(()) => lang.pick(
             "ポーズを戻しました。".to_owned(),
@@ -237,16 +236,10 @@ pub fn unsaved_note(lang: Lang, unsaved: &[String]) -> String {
     if unsaved.is_empty() {
         return String::new();
     }
-    let names = unsaved.join(lang.pick("・", ", "));
+    let names = unsaved.join(lang.t("view3d-text"));
     format!(
         " {}",
-        lang.with_reason(
-            lang.pick(
-                "ポーズに保存できない項目があります",
-                "Some items are not saved in the pose",
-            ),
-            names,
-        )
+        lang.with_reason(lang.t("view3d-some-items-are-not-saved-2"), names,)
     )
 }
 
@@ -267,11 +260,8 @@ pub fn write_into(
         Err(_) => overwritten = true,
         Ok(_) => {}
     }
-    let written = project.with_pose(next.as_ref()).map_err(|e| {
-        lang.with_reason(
-            lang.pick("ポーズを書けません", "Cannot write the pose"),
-            lang.io_error(&e),
-        )
-    })?;
+    let written = project
+        .with_pose(next.as_ref())
+        .map_err(|e| lang.with_reason(lang.t("view3d-cannot-write-the-pose"), lang.io_error(&e)))?;
     Ok((written, overwritten))
 }

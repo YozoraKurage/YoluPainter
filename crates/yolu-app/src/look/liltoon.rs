@@ -1689,9 +1689,9 @@ impl RenderMode {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            RenderMode::Opaque => lang.pick("不透明", "Opaque"),
-            RenderMode::Cutout => lang.pick("カットアウト", "Cutout"),
-            RenderMode::Transparent => lang.pick("半透明", "Transparent"),
+            RenderMode::Opaque => lang.t("look-opaque"),
+            RenderMode::Cutout => lang.t("look-cutout"),
+            RenderMode::Transparent => lang.t("look-transparent"),
         }
     }
 }

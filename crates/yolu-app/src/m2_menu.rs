@@ -147,8 +147,8 @@ pub fn patterns(
 /// Normal の設定の端の名前（Height の微分がキャンバスの外で読むもの）。
 pub fn edges_name(lang: Lang, mode: HeightEdgeMode) -> &'static str {
     match mode {
-        HeightEdgeMode::Clamp => lang.pick("クランプ", "Clamp"),
-        HeightEdgeMode::Wrap => lang.pick("ラップ（タイル）", "Wrap (tiling)"),
+        HeightEdgeMode::Clamp => lang.t("m2_menu-clamp"),
+        HeightEdgeMode::Wrap => lang.t("m2_menu-wrap-tiling"),
     }
 }
 
@@ -266,28 +266,28 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             let modified = app.subtool_is_modified(tool, key);
             vec![
                 Entry::item(
-                    lang.pick("名前を変更", "Rename"),
+                    lang.t("m2_menu-rename"),
                     Action::SubTool(SubToolAction::StartRename(tool, key)),
                 )
                 .enabled(free && user),
                 Entry::item(
-                    lang.pick("複製", "Duplicate"),
+                    lang.t("m2_menu-duplicate"),
                     Action::SubTool(SubToolAction::Duplicate(tool, key)),
                 )
                 .enabled(free),
                 Entry::item(
-                    lang.pick("この設定で登録", "Register These Settings"),
+                    lang.t("m2_menu-register-these-settings"),
                     Action::SubTool(SubToolAction::Register(tool, key)),
                 )
                 .enabled(free && user && modified),
                 Entry::item(
-                    lang.pick("元に戻す", "Revert"),
+                    lang.t("m2_menu-revert"),
                     Action::SubTool(SubToolAction::Revert(tool, key)),
                 )
                 .enabled(free && modified),
                 Entry::Separator,
                 Entry::item(
-                    lang.pick("削除", "Delete"),
+                    lang.t("m2_menu-delete"),
                     Action::SubTool(SubToolAction::Delete(tool, key)),
                 )
                 .enabled(free && user),
@@ -306,12 +306,12 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::Tip => tips(
             app,
             app.m2.brush.tip.image.as_deref(),
-            lang.pick("丸（硬さ）", "Round (hardness)"),
+            lang.t("m2_menu-round-hardness"),
             BrushOp::Tip,
         ),
         Popup::Texture => {
             let current = app.m2.brush.texture.as_ref().map(|t| &*t.image);
-            let mut v = tips(app, current, lang.pick("なし", "None"), BrushOp::Texture);
+            let mut v = tips(app, current, lang.t("m2_menu-none"), BrushOp::Texture);
             // 取り込んだ模様は、組み込みの質感の後ろに並べる
             let patterns = patterns(app);
             if !patterns.is_empty() {
@@ -331,7 +331,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::DualTip => tips(
             app,
             app.m2.brush.dual.as_ref().and_then(|d| d.tip.as_deref()),
-            lang.pick("丸（硬さ）", "Round (hardness)"),
+            lang.t("m2_menu-round-hardness"),
             BrushOp::DualTip,
         ),
         Popup::TextureMode => {
@@ -407,24 +407,24 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             let user = !channel.is_standard();
             vec![
                 Entry::item(
-                    lang.pick("描くチャンネルにする", "Paint This Channel"),
+                    lang.t("m2_menu-paint-this-channel"),
                     Action::M2Ui(UiOp::PaintChannel(channel)),
                 )
                 .radio(app.m2.paint_channel == channel)
                 .enabled(free),
                 Entry::item(
-                    lang.pick("キャンバスに表示", "Show in Canvas"),
+                    lang.t("m2_menu-show-in-canvas"),
                     Action::M2Ui(UiOp::DisplayChannel(channel)),
                 )
                 .radio(app.m2.display_channel == channel),
                 Entry::Separator,
                 Entry::item(
-                    lang.pick("名前を変更", "Rename"),
+                    lang.t("m2_menu-rename"),
                     Action::M2Ui(UiOp::RenameChannel(channel)),
                 )
                 .enabled(free && user),
                 Entry::item(
-                    lang.pick("チャンネルを削除", "Delete Channel"),
+                    lang.t("m2_menu-delete-channel"),
                     Action::M2(Edit::RemoveChannel(channel)),
                 )
                 .enabled(free && user),

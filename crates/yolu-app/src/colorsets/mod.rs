@@ -29,25 +29,25 @@ pub enum Error {
 impl Error {
     pub fn message(&self, lang: Lang) -> String {
         match self {
-            Self::Limit => lang.pick("カラーセットの上限超過", "Color set limit exceeded"),
-            Self::Name => lang.pick("色またはセットの名前が不正", "Invalid color or set name"),
-            Self::Color => lang.pick("色の値が範囲外", "Color value out of range"),
-            Self::Header => lang.pick("カラーセットの形式が不正", "Invalid color set header"),
-            Self::Encoding => lang.pick("名前の文字コードが不正", "Invalid name encoding"),
-            Self::Version => lang.pick("未対応のカラーセットの版", "Unsupported color set version"),
-            Self::Truncated => lang.pick("カラーセットのデータ不足", "Truncated color set"),
-            Self::Trailing => lang.pick("カラーセットに余分なデータ", "Trailing color set data"),
-            Self::Mismatch => lang.pick("ACO の色の一覧が不一致", "Inconsistent ACO color lists"),
+            Self::Limit => lang.t("colorsets-color-set-limit-exceeded"),
+            Self::Name => lang.t("colorsets-invalid-color-or-set-name"),
+            Self::Color => lang.t("colorsets-color-value-out-of-range"),
+            Self::Header => lang.t("colorsets-invalid-color-set-header"),
+            Self::Encoding => lang.t("colorsets-invalid-name-encoding"),
+            Self::Version => lang.t("colorsets-unsupported-color-set-version"),
+            Self::Truncated => lang.t("colorsets-truncated-color-set"),
+            Self::Trailing => lang.t("colorsets-trailing-color-set-data"),
+            Self::Mismatch => lang.t("colorsets-inconsistent-aco-color-lists"),
             Self::ColorSpace(space) => {
                 return format!(
                     "{}: {space}",
-                    lang.pick("未対応の ACO 色空間", "Unsupported ACO color space")
+                    lang.t("colorsets-unsupported-aco-color-space")
                 )
             }
-            Self::Alpha => lang.pick("GPL は透明度に未対応", "GPL does not support alpha"),
-            Self::Io => lang.pick("カラー設定の読み書きに失敗", "Color settings I/O failed"),
-            Self::Selection => lang.pick("色が未選択", "No color selected"),
-            Self::LastSet => lang.pick("最後のカラーセット", "Last color set"),
+            Self::Alpha => lang.t("colorsets-gpl-does-not-support-alpha"),
+            Self::Io => lang.t("colorsets-color-settings-i-o-failed"),
+            Self::Selection => lang.t("colorsets-no-color-selected"),
+            Self::LastSet => lang.t("colorsets-last-color-set"),
         }
         .into()
     }
@@ -238,7 +238,7 @@ impl ColorSets {
     }
     pub fn duplicate(&mut self, lang: Lang) -> Result<(), Error> {
         let mut p = self.palette().clone();
-        let suffix = lang.pick(" 複製", " Copy");
+        let suffix = lang.t("colorsets-copy");
         while p.name.len() + suffix.len() > MAX_NAME_BYTES {
             p.name.pop();
         }

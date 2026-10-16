@@ -152,16 +152,16 @@ pub struct IslandRow {
 /// 一覧の名前（手で選ぶアイランドの一覧の見出し・知らせ）。
 pub fn list_name(lang: Lang, list: MeshOverlapList) -> &'static str {
     match list {
-        MeshOverlapList::Skip => lang.pick("焼かないアイランド", "Islands Not Baked"),
-        MeshOverlapList::Prefer => lang.pick("優先するアイランド", "Preferred Islands"),
+        MeshOverlapList::Skip => lang.t("bake-islands-not-baked"),
+        MeshOverlapList::Prefer => lang.t("bake-preferred-islands"),
     }
 }
 
 /// 決め方の短い名前（ウィンドウの切り替えのボタン）。
 pub fn rule_label(lang: Lang, rule: MeshOverlapRule) -> &'static str {
     match rule {
-        MeshOverlapRule::LowestIndex => lang.pick("番号", "Index"),
-        MeshOverlapRule::LargerArea => lang.pick("面積", "Area"),
+        MeshOverlapRule::LowestIndex => lang.t("bake-index"),
+        MeshOverlapRule::LargerArea => lang.t("bake-area"),
         MeshOverlapRule::PositiveX => "+X",
         MeshOverlapRule::NegativeX => "−X",
     }
@@ -170,22 +170,10 @@ pub fn rule_label(lang: Lang, rule: MeshOverlapRule) -> &'static str {
 /// 決め方の意味（ツールチップ）。
 pub fn rule_help(lang: Lang, rule: MeshOverlapRule) -> &'static str {
     match rule {
-        MeshOverlapRule::LowestIndex => lang.pick(
-            "重なったテクセルには、番号の小さい三角形の値を焼く",
-            "An overlapping texel takes the triangle with the lower index",
-        ),
-        MeshOverlapRule::LargerArea => lang.pick(
-            "重なったテクセルには、3D の面積の大きいアイランドの値を焼く",
-            "An overlapping texel takes the island with the larger 3D area",
-        ),
-        MeshOverlapRule::PositiveX => lang.pick(
-            "重なったテクセルには、モデルの +X の側のアイランドの値を焼く（ミラーの片側）",
-            "An overlapping texel takes the island on the model's +X side (one side of a mirror)",
-        ),
-        MeshOverlapRule::NegativeX => lang.pick(
-            "重なったテクセルには、モデルの −X の側のアイランドの値を焼く（ミラーの片側）",
-            "An overlapping texel takes the island on the model's −X side (one side of a mirror)",
-        ),
+        MeshOverlapRule::LowestIndex => lang.t("bake-an-overlapping-texel-takes-the-tip"),
+        MeshOverlapRule::LargerArea => lang.t("bake-an-overlapping-texel-takes-the-2-tip"),
+        MeshOverlapRule::PositiveX => lang.t("bake-an-overlapping-texel-takes-the-3-tip"),
+        MeshOverlapRule::NegativeX => lang.t("bake-an-overlapping-texel-takes-the-4-tip"),
     }
 }
 
@@ -279,9 +267,9 @@ impl AppState {
                             .filter_map(|m| m.first().map(|r| *r as usize))
                             .filter(|r| *r >= *start && *r < end && *r <= t)
                             .count();
-                        format!("{name} · {} {n}", lang.pick("アイランド", "Island"))
+                        format!("{name} · {} {n}", lang.t("bake-island"))
                     }
-                    _ => format!("{} {}", lang.pick("アイランド", "Island"), t),
+                    _ => format!("{} {}", lang.t("bake-island"), t),
                 };
                 IslandRow {
                     representative: t,
@@ -426,17 +414,11 @@ impl AppState {
         let done = match (list, was) {
             (Some(l), _) => {
                 let name = lang.quote(list_name(lang, l));
-                lang.pick(
-                    format!("アイランドを{name}に追加しました。"),
-                    format!("Island added to {name}."),
-                )
+                lang.f("bake-island-added-to", &[("name", &name)])
             }
             (None, Some(w)) => {
                 let name = lang.quote(list_name(lang, w));
-                lang.pick(
-                    format!("アイランドを{name}から外しました。"),
-                    format!("Island removed from {name}."),
-                )
+                lang.f("bake-island-removed-from", &[("name", &name)])
             }
             (None, None) => return false,
         };
@@ -460,11 +442,7 @@ impl AppState {
                 self.info(
                     Source::Bake,
                     done.unwrap_or_else(|| {
-                        lang.pick(
-                            "重なった UV の決め方を変えました。",
-                            "Overlapping UV priority changed.",
-                        )
-                        .to_owned()
+                        lang.t("bake-overlapping-uv-priority-changed").to_owned()
                     }),
                 );
                 true
@@ -563,13 +541,7 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
     };
     let found = candidates(app, &islands, w, at);
     if found.is_empty() {
-        app.refuse(
-            Source::Bake,
-            lang.pick(
-                "ポインタの下にこのテクスチャセットの三角形がありません。",
-                "No triangle of this texture set under the pointer.",
-            ),
-        );
+        app.refuse(Source::Bake, lang.t("bake-no-triangle-of-this-texture"));
         return true;
     }
     let keys: Vec<u64> = found.iter().map(|(k, _)| *k).collect();
@@ -727,38 +699,31 @@ pub fn menu_entries(app: &AppState, set: u32, island: usize, map: bool) -> Vec<E
     let mut out = vec![
         Entry::item(
             if map {
-                lang.pick("優先する", "Prefer")
+                lang.t("bake-prefer")
             } else {
-                lang.pick("優先して焼く", "Prefer in Bake")
+                lang.t("bake-prefer-in-bake")
             },
             op((!preferred).then_some(MeshOverlapList::Prefer)),
         )
         .checked(preferred)
         .enabled(enabled)
-        .tooltip(lang.pick(
-            "重なったテクセルに、このアイランドの値を焼く",
-            "Overlapping texels take this island's values",
-        )),
+        .tooltip(lang.t("bake-overlapping-texels-take-this-island-tip")),
         Entry::item(
             if map {
-                lang.pick("焼かない", "Skip")
+                lang.t("bake-skip")
             } else {
-                lang.pick("焼かない", "Skip in Bake")
+                lang.t("bake-skip-in-bake")
             },
             op((!skipped).then_some(MeshOverlapList::Skip)),
         )
         .checked(skipped)
         .enabled(enabled)
-        .tooltip(lang.pick(
-            "このアイランドをベイクの割り当てから外す",
-            "Leaves this island out of the bake",
-        )),
+        .tooltip(lang.t("bake-leaves-this-island-out-of-tip")),
     ];
     if map {
         out.push(Entry::Separator);
         out.push(
-            Entry::item(lang.pick("外す", "Remove"), op(None))
-                .enabled(enabled && (preferred || skipped)),
+            Entry::item(lang.t("bake-remove"), op(None)).enabled(enabled && (preferred || skipped)),
         );
     }
     out

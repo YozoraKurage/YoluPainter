@@ -119,10 +119,7 @@ impl AppState {
                     Ok(()) => self.note_unsaved_order(false),
                     Err(e) => {
                         let text = lang.with_reason(
-                            lang.pick(
-                                "アクションの名前を変えられません",
-                                "Cannot rename the action",
-                            ),
+                            lang.t("automation-cannot-rename-the-action"),
                             e.reason(lang),
                         );
                         self.fail(Source::Action, text);
@@ -144,18 +141,15 @@ impl AppState {
                         self.automation.renaming = None;
                         self.info(
                             Source::Action,
-                            lang.pick(
-                                format!("アクション{}を削除しました。", lang.quote(&name)),
-                                format!("Deleted action {}.", lang.quote(&name)),
-                            ),
+                            lang.f("automation-deleted-action", &[("name", &lang.quote(&name))]),
                         );
                         self.note_unsaved_order(true);
                     }
                     Err(e) => {
                         let text = lang.with_reason(
-                            lang.pick(
-                                format!("アクション{}を削除できません", lang.quote(&name)),
-                                format!("Cannot delete action {}", lang.quote(&name)),
+                            lang.f(
+                                "automation-cannot-delete-action",
+                                &[("name", &lang.quote(&name))],
                             ),
                             e.reason(lang),
                         );
@@ -173,10 +167,7 @@ impl AppState {
                     }
                     Err(e) => {
                         let text = lang.with_reason(
-                            lang.pick(
-                                "アクションを並べ替えられません",
-                                "Cannot reorder the actions",
-                            ),
+                            lang.t("automation-cannot-reorder-the-actions"),
                             e.reason(lang),
                         );
                         self.fail(Source::Action, text);
@@ -194,10 +185,7 @@ impl AppState {
         }
         let lang = self.lang;
         let text = lang.with_reason(
-            lang.pick(
-                "アクションの並びを保存できません",
-                "Cannot save the order of the actions",
-            ),
+            lang.t("automation-cannot-save-the-order-of"),
             store::StoreError::Io.reason(lang),
         );
         if after_info {
@@ -214,10 +202,7 @@ impl AppState {
         };
         let commands = recorder.commands();
         if commands.is_empty() {
-            self.info(
-                Source::Action,
-                lang.pick("記録した操作はありません。", "Nothing was recorded."),
-            );
+            self.info(Source::Action, lang.t("automation-nothing-was-recorded"));
             return;
         }
         let name = self.automation.store.new_name(lang);
@@ -226,20 +211,15 @@ impl AppState {
                 self.automation.selected = Some(index);
                 self.info(
                     Source::Action,
-                    lang.pick(
-                        format!("アクション{}を保存しました。", lang.quote(&name)),
-                        format!("Saved action {}.", lang.quote(&name)),
-                    ),
+                    lang.f("automation-saved-action", &[("name", &lang.quote(&name))]),
                 );
                 self.note_unsaved_order(true);
             }
             Err(e) => {
                 // 保存できなければ記録を続ける（記録した操作を捨てない）
                 self.automation.recorder = Some(recorder);
-                let text = lang.with_reason(
-                    lang.pick("アクションを保存できません", "Cannot save the action"),
-                    e.reason(lang),
-                );
+                let text =
+                    lang.with_reason(lang.t("automation-cannot-save-the-action"), e.reason(lang));
                 self.fail(Source::Action, text);
             }
         }
@@ -251,12 +231,12 @@ impl AppState {
             return;
         };
         let (name, commands) = (item.name.clone(), item.commands.clone());
-        let what = lang.pick(
-            format!("アクション{}を再生できません", lang.quote(&name)),
-            format!("Cannot play action {}", lang.quote(&name)),
+        let what = lang.f(
+            "automation-cannot-play-action",
+            &[("name", &lang.quote(&name))],
         );
         if self.automation.recorder.is_some() {
-            let text = lang.with_reason(&what, lang.pick("記録中です", "Recording is in progress"));
+            let text = lang.with_reason(&what, lang.t("automation-recording-is-in-progress"));
             self.refuse(Source::Action, text);
             return;
         }
@@ -277,10 +257,7 @@ impl AppState {
         match result {
             Ok(_) => self.info(
                 Source::Action,
-                lang.pick(
-                    format!("アクション{}を再生しました。", lang.quote(&name)),
-                    format!("Played action {}.", lang.quote(&name)),
-                ),
+                lang.f("automation-played-action", &[("name", &lang.quote(&name))]),
             ),
             Err(e) => {
                 let message = e
@@ -300,9 +277,13 @@ impl AppState {
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or_default();
                 let reason = match at {
-                    Some(i) => lang.pick(
-                        format!("{} 番目の {command} — {message}", i + 1),
-                        format!("command {} {command} — {message}", i + 1),
+                    Some(i) => lang.f(
+                        "automation-command",
+                        &[
+                            ("i", &(i + 1)),
+                            ("command", &command),
+                            ("message", &message),
+                        ],
                     ),
                     None => message,
                 };

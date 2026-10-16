@@ -48,9 +48,9 @@ impl EnvKind {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            EnvKind::None => lang.pick("なし", "None"),
-            EnvKind::Sky => lang.pick("空", "Sky"),
-            EnvKind::Studio => lang.pick("スタジオ", "Studio"),
+            EnvKind::None => lang.t("view3d-none"),
+            EnvKind::Sky => lang.t("view3d-sky"),
+            EnvKind::Studio => lang.t("view3d-studio"),
         }
     }
 }
@@ -122,9 +122,9 @@ impl SettingsTab {
 
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            SettingsTab::Display => lang.pick("表示", "Display"),
-            SettingsTab::Quality => lang.pick("画質", "Quality"),
-            SettingsTab::Navigation => lang.pick("視点", "Navigation"),
+            SettingsTab::Display => lang.t("view3d-display"),
+            SettingsTab::Quality => lang.t("view3d-quality"),
+            SettingsTab::Navigation => lang.t("view3d-navigation"),
         }
     }
 }
@@ -414,8 +414,8 @@ pub enum Op {
 /// トーンマッピングの曲線の名前。
 pub fn tone_label(lang: Lang, curve: Curve) -> &'static str {
     match curve {
-        Curve::None => lang.pick("なし", "None"),
-        Curve::Neutral => lang.pick("ニュートラル", "Neutral"),
+        Curve::None => lang.t("view3d-none"),
+        Curve::Neutral => lang.t("view3d-neutral"),
         Curve::Aces => "ACES",
     }
 }
@@ -423,15 +423,12 @@ pub fn tone_label(lang: Lang, curve: Curve) -> &'static str {
 /// 何を見せるかの名前（見出しのドロップダウンに出す）。
 pub fn shading_label(app: &AppState, shading: Shading) -> String {
     match shading {
-        Shading::Material => app
-            .lang
-            .pick("マテリアル (PBR)", "Material (PBR)")
-            .to_owned(),
-        Shading::Neutral => app.lang.pick("中立", "Neutral").to_owned(),
+        Shading::Material => app.lang.t("view3d-material-pbr").to_owned(),
+        Shading::Neutral => app.lang.t("view3d-neutral-2").to_owned(),
         Shading::Channel(c) => crate::m2::channel_name(app.lang, &app.session.doc, c),
         Shading::MeshMap(k) => format!(
             "{}: {}",
-            app.lang.pick("メッシュマップ", "Mesh Map"),
+            app.lang.t("view3d-mesh-map"),
             crate::bake::kind_label(app.lang, k)
         ),
     }
@@ -463,7 +460,7 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .radio(current == Shading::Neutral),
         Entry::Separator,
-        Entry::Heading(lang.pick("チャンネルだけ", "Channel Only").to_owned()),
+        Entry::Heading(lang.t("view3d-channel-only").to_owned()),
     ];
     for c in CHANNELS {
         v.push(
@@ -476,9 +473,7 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
     }
     v.push(Entry::Separator);
     // メッシュマップ: 今のテクスチャセットで焼いてあるものだけ選べる
-    v.push(Entry::Heading(
-        lang.pick("メッシュマップだけ", "Mesh Map Only").to_owned(),
-    ));
+    v.push(Entry::Heading(lang.t("view3d-mesh-map-only").to_owned()));
     let maps = &app.session.sets.current().mesh_maps;
     for kind in MeshMapKind::ALL {
         v.push(
@@ -538,7 +533,7 @@ pub fn settings_tabs(
     w::text(
         ui.painter(),
         r,
-        lang.pick("回転の中心", "Orbit center"),
+        lang.t("view3d-orbit-center"),
         t::LABEL_BOLD,
         w::Align::Left,
     );
@@ -564,7 +559,7 @@ pub fn settings_tabs(
     w::text(
         ui.painter(),
         r,
-        lang.pick("ズームの中心", "Zoom center"),
+        lang.t("view3d-zoom-center"),
         t::LABEL_BOLD,
         w::Align::Left,
     );
@@ -591,12 +586,12 @@ pub fn settings_tabs(
         ui,
         r,
         "view3d.frame_selected",
-        lang.pick("選んだ所に合わせる", "Frame Selected"),
+        lang.t("view3d-frame-selected"),
         false,
         !app.is_stroking() && navigation::selected_bounds(&app.view3d).is_some(),
         Some(&crate::shortcuts::named_with_keys(
             lang,
-            lang.pick("選んだ所に合わせる", "Frame Selected"),
+            lang.t("view3d-frame-selected-tip"),
             &[crate::shortcuts::key_in("view3d.frame_selected", app.mode)],
         )),
         Some("target"),

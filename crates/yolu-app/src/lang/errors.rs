@@ -33,7 +33,7 @@ fn lock_list(lang: Lang, lock: yolu_core::LayerLocks) -> String {
     if lock.contains(L::ALL) {
         return crate::layerops::lock_name(lang, L::ALL).into();
     }
-    crate::layerops::lock_names(lang, lock).join(lang.pick("、", ", "))
+    crate::layerops::lock_names(lang, lock).join(lang.t("lang-text"))
 }
 
 /// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
@@ -74,93 +74,56 @@ impl Lang {
                     (Lang::En, false) => format!("A parent group has {locks} locked"),
                 }
             }
-            CoreError::Cancelled => self.pick("取り消しました", "Cancelled").into(),
+            CoreError::Cancelled => self.t("lang-cancelled").into(),
             CoreError::StrokeActive => super::refusals::during_stroke(self).into(),
-            CoreError::NoActiveStroke => self
-                .pick("ストロークは終わっています", "Stroke already ended")
-                .into(),
+            CoreError::NoActiveStroke => self.t("lang-stroke-already-ended").into(),
             CoreError::LayerNotFound | CoreError::InvalidArgument(Reason::NoLayersToSave) => {
-                self.pick("レイヤーがありません", "Layer not found").into()
+                self.t("lang-layer-not-found").into()
             }
-            CoreError::ChannelNotFound => self
-                .pick("チャンネルがありません", "Channel not found")
-                .into(),
+            CoreError::ChannelNotFound => self.t("lang-channel-not-found").into(),
             // 予算は設定のウィンドウの名前（レイヤーのメモリ・1 回の操作）で言う
-            CoreError::SourceBudgetExceeded => self
-                .pick(
-                    "レイヤーのメモリの予算を超えます",
-                    "Over the Layer memory budget",
-                )
-                .into(),
-            CoreError::StrokeBudgetExceeded => self
-                .pick(
-                    "1 回の操作のメモリの予算を超えます（取り消しました）",
-                    "Over the memory budget of one operation (cancelled)",
-                )
-                .into(),
-            CoreError::WorkingBudgetExceeded => self
-                .pick(
-                    "作業のメモリの上限を超えます",
-                    "Working memory budget exceeded",
-                )
-                .into(),
-            CoreError::Unsupported(Reason::UserChannelMappingDoesNotMatch) => self
-                .pick("チャンネルが合いません", "Channels do not match")
-                .into(),
+            CoreError::SourceBudgetExceeded => self.t("lang-over-the-layer-memory-budget").into(),
+            CoreError::StrokeBudgetExceeded => self.t("lang-over-the-memory-budget-of").into(),
+            CoreError::WorkingBudgetExceeded => {
+                self.t("lang-working-memory-budget-exceeded").into()
+            }
+            CoreError::Unsupported(Reason::UserChannelMappingDoesNotMatch) => {
+                self.t("lang-channels-do-not-match").into()
+            }
             CoreError::InvalidArgument(Reason::TooManyLayers) => {
-                self.pick("レイヤーが多すぎます", "Too many layers").into()
+                self.t("lang-too-many-layers").into()
             }
-            CoreError::InvalidArgument(Reason::NoMaskToSave) => {
-                self.pick("マスクがありません", "No mask").into()
-            }
+            CoreError::InvalidArgument(Reason::NoMaskToSave) => self.t("lang-no-mask").into(),
             CoreError::InvalidArgument(Reason::SmartMaterialName) => {
-                self.pick("名前が使えません", "Name not allowed").into()
+                self.t("lang-name-not-allowed").into()
             }
-            CoreError::InvalidArgument(Reason::TargetNotGroup) => self
-                .pick("置き先がグループではありません", "Target is not a group")
-                .into(),
-            CoreError::InvalidArgument(Reason::SelectionNameTooLong) => self.pick(
-                format!(
-                    "名前が長すぎます（{} 文字まで）。",
-                    yolu_core::MAX_SAVED_NAME_CHARS
-                ),
-                format!(
-                    "The name is too long (up to {} characters).",
-                    yolu_core::MAX_SAVED_NAME_CHARS
-                ),
+            CoreError::InvalidArgument(Reason::TargetNotGroup) => {
+                self.t("lang-target-is-not-a-group").into()
+            }
+            CoreError::InvalidArgument(Reason::SelectionNameTooLong) => self.f(
+                "lang-the-name-is-too-long",
+                &[("MAX_SAVED_NAME_CHARS", &yolu_core::MAX_SAVED_NAME_CHARS)],
             ),
-            CoreError::InvalidArgument(Reason::SavedSelectionNameExists) => self
-                .pick(
-                    "同じ名前の選択範囲があります。",
-                    "A saved selection with that name exists.",
-                )
-                .into(),
+            CoreError::InvalidArgument(Reason::SavedSelectionNameExists) => {
+                self.t("lang-a-saved-selection-with-that").into()
+            }
             // core の文（「できない: 〜」のようにコロンでつないだ形）は、何が（なぜ）の 1 つの文に組み直す
             CoreError::MergeRefused(reason) => self.with_reason(
-                self.pick("結合できません", "Cannot merge"),
+                self.t("lang-cannot-merge"),
                 self.pick(reason.to_string(), merge_refusal(*reason).to_owned()),
             ),
             CoreError::MergeAppearance(report) => self.with_reason(
-                self.pick(
-                    "結合で見た目が許容差を超えて変わります",
-                    "Merge changes the appearance beyond the tolerance",
-                ),
+                self.t("lang-merge-changes-the-appearance-beyond"),
                 report.max_visible_difference.to_string(),
             ),
             CoreError::InactiveEffect { reason, .. } => self.with_reason(
-                self.pick(
-                    "効いていない効果は焼き込めません",
-                    "Cannot bake an inactive effect",
-                ),
+                self.t("lang-cannot-bake-an-inactive-effect"),
                 self.inactive_reason(reason),
             ),
-            CoreError::InvalidArgument(what) => self.with_reason(
-                self.pick("値が範囲外です", "Invalid value"),
-                self.pick(what.ja(), core_reason(*what)),
-            ),
-            CoreError::Unsupported(what) => {
-                self.with_reason(self.pick(what.ja(), core_reason(*what)), "")
+            CoreError::InvalidArgument(what) => {
+                self.with_reason(self.t("lang-invalid-value"), self.reason(*what))
             }
+            CoreError::Unsupported(what) => self.with_reason(self.reason(*what), ""),
             _ if self == Self::Ja => error.to_string(),
             CoreError::Clipboard(reason) => clipboard_refusal(*reason).into(),
             CoreError::BatchActive => "Not allowed inside a batch of edits".into(),
@@ -239,15 +202,14 @@ impl Lang {
                 format,
                 app,
                 version,
-            } => self.pick(
-                format!(
-                    "未対応の .ylp の形式 {format} です（{app} {version} で保存。上限 {}）",
-                    yolu_io::MAX_FORMAT
-                ),
-                format!(
-                    "The .ylp format {format} is not supported (saved by {app} {version}; maximum {})",
-                    yolu_io::MAX_FORMAT
-                ),
+            } => self.f(
+                "lang-the-ylp-format-is-not",
+                &[
+                    ("value", &format),
+                    ("app", &app),
+                    ("version", &version),
+                    ("MAX_FORMAT", &yolu_io::MAX_FORMAT),
+                ],
             ),
         }
     }
@@ -259,25 +221,19 @@ impl Lang {
     fn file_error_text(self, error: &std::io::Error) -> String {
         use std::io::ErrorKind::*;
         let reason = match error.kind() {
-            NotFound => self.pick(
-                "ファイルまたはフォルダーがありません",
-                "File or folder not found",
-            ),
-            PermissionDenied => self.pick("アクセスが拒否されました", "Access denied"),
-            AlreadyExists => self.pick("ファイルが既にあります", "File already exists"),
-            InvalidData => self.pick("ファイルのデータが不正です", "Invalid file data"),
-            StorageFull => self.pick("ディスクの空きがありません", "Disk full"),
-            QuotaExceeded => self.pick("容量の割り当てを超えました", "Disk quota exceeded"),
-            ReadOnlyFilesystem => self.pick("読み取り専用の場所です", "Read-only location"),
-            ResourceBusy => self.pick("ファイルが使用中です", "File in use"),
-            FileTooLarge => self.pick("ファイルが大きすぎます", "File too large"),
-            _ => self.pick("ファイルの読み書きに失敗しました", "File I/O failed"),
+            NotFound => self.t("lang-file-or-folder-not-found"),
+            PermissionDenied => self.t("lang-access-denied"),
+            AlreadyExists => self.t("lang-file-already-exists"),
+            InvalidData => self.t("lang-invalid-file-data"),
+            StorageFull => self.t("lang-disk-full"),
+            QuotaExceeded => self.t("lang-disk-quota-exceeded"),
+            ReadOnlyFilesystem => self.t("lang-read-only-location"),
+            ResourceBusy => self.t("lang-file-in-use"),
+            FileTooLarge => self.t("lang-file-too-large"),
+            _ => self.t("lang-file-i-o-failed"),
         };
         match error.raw_os_error() {
-            Some(code) => self.pick(
-                format!("{reason}（OS エラー {code}）"),
-                format!("{reason} (OS error {code})"),
-            ),
+            Some(code) => self.f("lang-os-error", &[("reason", &reason), ("code", &code)]),
             None => reason.into(),
         }
     }
@@ -286,7 +242,7 @@ impl Lang {
     pub fn mesh_map_error(self, error: &yolu_core::mesh_maps::MeshMapError) -> String {
         use yolu_core::mesh_maps::MeshMapError;
         crate::crash::problem(match error {
-            MeshMapError::Refused(why) => self.pick(why.ja(), core_reason(*why)).into(),
+            MeshMapError::Refused(why) => self.reason(*why).into(),
             // スレッドの束の失敗は OS・rayon の文（英語ならそのまま）
             MeshMapError::Threads(why) => self.pick(
                 why.clone(),
@@ -304,19 +260,11 @@ impl Lang {
     pub fn thread_error(self, error: &std::io::Error) -> String {
         use std::io::ErrorKind::*;
         let reason = match error.kind() {
-            WouldBlock | OutOfMemory => {
-                self.pick("システムの資源が足りません", "Not enough system resources")
-            }
-            _ => self.pick(
-                "システムが処理の開始を断りました",
-                "The system refused to start the task",
-            ),
+            WouldBlock | OutOfMemory => self.t("lang-not-enough-system-resources"),
+            _ => self.t("lang-the-system-refused-to-start"),
         };
         crate::crash::problem(match error.raw_os_error() {
-            Some(code) => self.pick(
-                format!("{reason}（OS エラー {code}）"),
-                format!("{reason} (OS error {code})"),
-            ),
+            Some(code) => self.f("lang-os-error", &[("reason", &reason), ("code", &code)]),
             None => reason.into(),
         })
     }
@@ -329,23 +277,16 @@ impl Lang {
         match error {
             StencilError::Core(e) => self.core_error(e),
             StencilError::File(e) => self.file_error(e),
-            StencilError::NotPng => self
-                .pick("PNG として読めません", "Not a readable PNG")
-                .into(),
+            StencilError::NotPng => self.t("lang-not-a-readable-png").into(),
             StencilError::TooLarge {
                 width,
                 height,
                 side,
-            } => self.pick(
-                format!("画像が大きすぎます（{width} × {height}、1 辺は {side} まで）"),
-                format!("Image too large ({width} × {height}; maximum side {side})"),
+            } => self.f(
+                "lang-image-too-large-maximum-side",
+                &[("width", &width), ("height", &height), ("side", &side)],
             ),
-            StencilError::Limits => self
-                .pick(
-                    "画像が大きすぎます（メモリの上限）",
-                    "Image too large (memory limit)",
-                )
-                .into(),
+            StencilError::Limits => self.t("lang-image-too-large-memory-limit").into(),
         }
     }
 
@@ -582,423 +523,6 @@ fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
 /// 英語の文がまだ無い理由の、一般の英語の文。
 const GENERIC_REASON: &str = "Unsupported value or operation";
 
-/// core の断りの理由の英語（英語の文が無い理由は一般の文）。
-fn core_reason(reason: Reason) -> &'static str {
-    match reason {
-        Reason::ColorBalanceRange => "Color balance (−100–100)",
-        Reason::BrightnessContrastRange => "Brightness (−150–150) and contrast (−50–100)",
-        Reason::ThresholdRange => "Threshold (1–255)",
-        Reason::PosterizeLevelsRange => "Posterize levels (2–255)",
-        Reason::AdjustmentNotFromEightValues => "This adjustment kind cannot be built from the eight values",
-        Reason::Adjustment => "adjustment",
-        Reason::LevelsInputRange => "Levels input range",
-        Reason::LevelsOutputRange => "Levels output range",
-        Reason::GammaRange => "Gamma (0.1–9.99)",
-        Reason::HueSaturationAndValue => "Hue, saturation and value",
-        Reason::AdjustmentKindAndValuesDoNotMatch => "The adjustment kind and its values do not match",
-        Reason::InputCurveRange => "Input curve (2–16 points, ends at 0 and 1, at least 0.02 apart, values 0–1)",
-        Reason::InputMinimum => "input minimum",
-        Reason::InputMinimumRange => "Input minimum (0–1)",
-        Reason::InputMinimumSignedRange => "Hue, saturation and value input minimum (−1–1)",
-        Reason::SpeedMax => "speed_max",
-        Reason::MaximumSpeedGreaterThanZero => "Maximum speed (greater than zero)",
-        Reason::ColorMix => "color mix",
-        Reason::StrokeAssistance => "stroke assistance",
-        Reason::StabilizerAndTaperRange => "Stabilizer and taper (0–10000)",
-        Reason::TaperMinimum => "taper minimum",
-        Reason::TaperMinimumRange => "Taper minimum (0–1)",
-        Reason::Roundness => "roundness",
-        Reason::JitterRange => "Jitter (0–1)",
-        Reason::Scatter => "scatter",
-        Reason::Count => "count",
-        Reason::TextureDepth => "texture depth",
-        Reason::TextureAngle => "texture angle",
-        Reason::TextureScale => "texture scale",
-        Reason::TextureDepthRange => "Texture depth (0–1)",
-        Reason::TextureScaleRange => "Texture scale (0.05–64)",
-        Reason::BrushTipSequenceRange => "Brush tip sequence (1–256)",
-        Reason::ColourDynamics => "colour dynamics",
-        Reason::ColorDynamicsRange => "Color dynamics (0–1)",
-        Reason::ColorChange => "color change",
-        Reason::ColorChangeRange => "Color change (tip hue −360–360°, saturation and value −1–1, secondary color mix 0–1, per-stroke hue 0–180°, others 0–1)",
-        Reason::Spray => "spray",
-        Reason::SprayRange => "Spray (particle size above 0 up to 10000, particle density 1–100, spray bias −1–1, particle direction −360–360°, random strength 0–1)",
-        Reason::Purity => "purity",
-        Reason::PurityRange => "Purity (−1–1)",
-        Reason::FadeRange => "Fade (0–10000)",
-        Reason::BlurRadiusRange => "Blur radius (1–64)",
-        Reason::SmudgeStrength => "smudge strength",
-        Reason::SmudgeStrengthRange => "Smudge strength (0–1)",
-        Reason::CloneOffset => "clone offset",
-        Reason::ClonePositionRange => "Clone position (±1e7)",
-        Reason::EffectBrushesCannotErase => "Effect brushes cannot erase",
-        Reason::SmudgeAndCloneWithoutSymmetry => "Smudge and clone do not support symmetry",
-        Reason::DualBrush => "dual brush",
-        Reason::DualBrushRadiusRange => "Dual brush radius (0.5–65536)",
-        Reason::DualBrushHardness => "Dual brush hardness",
-        Reason::DualBrushSpacing => "Dual brush spacing",
-        Reason::DualBrushRoundness => "Dual brush roundness",
-        Reason::DualBrushScatter => "Dual brush scatter",
-        Reason::DualBrushCount => "Dual brush count",
-        Reason::DualBrushFlow => "Dual brush density (0–1)",
-        Reason::DualBrushAngleRandom => "Dual brush random angle strength (0–1)",
-        Reason::DualBrushTips => "Dual brush secondary tip sequence (1–256)",
-        Reason::MappedDabsNeedSamplingBrush => "Mapped dabs need clone, smudge, blur or the smear of color mixing",
-        Reason::StencilPointCountMismatch => "Stencil point count must match pixel count",
-        Reason::Pressure => "pressure",
-        Reason::Coverage => "coverage",
-        Reason::MappedDabPixel => "Mapped dab pixel",
-        Reason::MappedDabSource => "Mapped dab source",
-        Reason::MappedPixelNeedsSource => "A mapped pixel needs a source",
-        Reason::DuplicateMappedDabPixel => "Duplicate mapped dab pixel",
-        Reason::StencilImageSizeRange => "Stencil image size (1–8192)",
-        Reason::StencilBufferSizeMismatch => "Stencil buffer size must be width × height × 4 bytes",
-        Reason::StencilMipmapBudgetExceeded => "Stencil mipmap budget exceeded",
-        Reason::StencilMapping => "stencil mapping",
-        Reason::StencilPoint => "stencil point",
-        Reason::StencilFootprint => "stencil footprint",
-        Reason::StencilPointRange => "Stencil point (±1e9)",
-        Reason::StencilFootprintRange => "Stencil footprint",
-        Reason::BrushTipSizeRange => "Brush tip size (1–2048)",
-        Reason::BrushTipCoverageSizeMismatch => "Brush tip coverage size must be width × height",
-        Reason::Radius => "radius",
-        Reason::Hardness => "hardness",
-        Reason::Spacing => "spacing",
-        Reason::Opacity => "opacity",
-        Reason::Flow => "flow",
-        Reason::X => "x",
-        Reason::Y => "y",
-        Reason::Time => "time",
-        Reason::Tilt => "tilt",
-        Reason::Rotation => "rotation",
-        Reason::InputTimeMovedBackwards => "Input time moved backwards",
-        Reason::InputCoordinatesOutOfRange => "Input coordinates out of range",
-        Reason::TooManyDabsPerSegment => "More than one million dabs per segment",
-        Reason::TooManyDualBrushDabsPerSegment => "More than one million dual brush dabs per segment",
-        Reason::StencilTransformMissingFor2DDabs => "Missing canvas-to-stencil transform for 2D dabs",
-        Reason::CoveragePressure => "coverage/pressure",
-        Reason::EffectBrushesNeedDabs => "Effect brushes require dab painting",
-        Reason::MixingBrushNeedsDabs => "A mixing brush cannot paint pixel by pixel",
-        Reason::Center => "center",
-        Reason::Dab => "dab",
-        Reason::StencilTransformMissing => "Missing canvas-to-stencil transform",
-        Reason::SourceCanvasSize => "Size of the source canvas",
-        Reason::CopiedRectangleEmpty => "Copied rectangle is empty",
-        Reason::CopiedRectangleOutsideCanvas => "Copied rectangle lies outside the canvas",
-        Reason::CopiedPixelsSizeMismatch => "Copied pixels must be width × height × 4 bytes",
-        Reason::PixelOutsideRectangle => "Pixel outside the rectangle",
-        Reason::LayerHasNoMask => "Layer has no mask",
-        Reason::TileOutsideCanvas => "Tile outside canvas",
-        Reason::CannotCutDisabledChannel => "Cannot cut a disabled channel",
-        Reason::ImageSizeDiffersFromCanvas => "Image size differs from the canvas",
-        Reason::ReplacePixelsNeedsPaintLayer => "Only paint layers have pixels to replace",
-        Reason::CannotReplaceDisabledChannel => "Cannot replace a disabled channel",
-        Reason::MaskStrokeCannotReadChannelComposite => "A mask stroke cannot read the channel composite",
-        Reason::CompositeSourceOnlyBeforeFirstDab => "The composite source can only be set before the first dab of a clone or color mixing",
-        Reason::LayerAlreadyHasMask => "Layer already has a mask",
-        Reason::Density => "density",
-        Reason::ValuesNeedFillLayer => "Values require a fill layer",
-        Reason::AdjustmentSettingsNeedAdjustmentLayer => "Adjustment settings require an adjustment layer",
-        Reason::AdjustmentNotForEnabledChannels => "Adjustment not supported by enabled channels",
-        Reason::HueSaturationNeedsColorChannel => "Hue/Saturation requires a color channel",
-        Reason::CannotDisableChannelDrawnByPath => "Cannot disable a channel drawn by a path",
-        Reason::CannotDisableColorOnTextLayer => "Cannot disable Color on a text layer",
-        Reason::PassThroughNeedsGroup => "Pass Through requires a group",
-        Reason::FilterIdEmptyOrDuplicated => "Filter ID is empty or duplicated",
-        Reason::AdjustmentLayersHaveNoPixels => "Adjustment layers have no pixels",
-        Reason::GroupsHaveNoCompositeFilters => "Groups have no filters on their composite",
-        Reason::Strength => "strength",
-        Reason::FilterChannelsDuplicated => "Filter channels are duplicated",
-        Reason::NoFilterChannelSelected => "No filter channel selected",
-        Reason::MaskFiltersSharedByAllChannels => "Mask filters have no channels (a mask is shared by all channels)",
-        Reason::FilterIdEmpty => "Filter ID is empty",
-        Reason::FilterIdDuplicated => "Filter ID is duplicated",
-        Reason::Index => "index",
-        Reason::MaskFiltersHaveNoChannels => "Mask filters have no channels",
-        Reason::LayerHasNoSuchFilter => "The layer has no such filter",
-        Reason::TooManyStackEffects => "Maximum 32 effects per stack",
-        Reason::StackReachTooLarge => "Total reach of the stack exceeds 512 pixels",
-        Reason::MaskAnchorNeedsMask => "Cannot place a mask anchor on a layer without a mask",
-        Reason::ThisMaskAlreadyHasAnchor => "This mask already has an anchor",
-        Reason::ThisLayerAlreadyHasAnchor => "This layer already has an anchor",
-        Reason::AnchorIdEmpty => "Anchor ID is empty",
-        Reason::AnchorIdDuplicated => "Anchor ID is duplicated",
-        Reason::AnchorNotFound => "Anchor not found",
-        Reason::NotAnchorGenerator => "Not an anchor generator",
-        Reason::AnchorCannotReadNormal => "An anchor cannot read Normal",
-        Reason::AnchorIdEmptyOrDuplicated => "Anchor ID is empty or duplicated",
-        Reason::NoMask => "No mask",
-        Reason::GeneratorReadsOwnLayerAnchor => "A generator reading an anchor on its own layer (the value would feed back)",
-        Reason::OnlyFillLayersHaveThis => "Only fill layers have this",
-        Reason::ImageIdEmpty => "Image ID is empty",
-        Reason::ProjectHasNoSuchImage => "The project has no such image",
-        Reason::ImageSize => "Image size",
-        Reason::ChannelWithoutImage => "Channel without an image",
-        Reason::FillImageAnisotropyChannel => "Fill image channel for turning anisotropic filtering off",
-        Reason::ProjectionValues => "Projection values",
-        Reason::FillPointGradientChannel => "Fill point gradient channel",
-        Reason::ChannelHasNoPointGradient => "The channel has no point gradient",
-        Reason::FillImageChannelOrId => "Fill image channel or ID",
-        Reason::FillGradientChannel => "Fill gradient channel",
-        Reason::FilterId => "Filter ID",
-        Reason::FilterChannels => "Filter channels",
-        Reason::MaskFilterChannels => "Mask filter channels",
-        Reason::BudgetBelowFilterNeed => "Budget is smaller than the current filters need",
-        Reason::BlockPixels => "block_pixels",
-        Reason::NotGenerator => "Not a generator",
-        Reason::ChannelHasNoGradient => "The channel has no gradient",
-        Reason::PointGradientNotForNormal => "A point gradient is for colour or scalar channels, not the normal",
-        Reason::ShapeGradientNotForNormal => "A shape gradient is a color or scalar, not a normal",
-        Reason::FillGradientShapeGradientWithRamp => "A fill gradient is a shape gradient with a ramp",
-        Reason::FillGradientReplaces => "A fill gradient replaces",
-        Reason::GradientSettings => "Gradient settings",
-        Reason::FillInput => "Fill input",
-        Reason::PixelOutsideCanvas => "Pixel outside canvas",
-        Reason::CannotPaintByHandOnPathLayer => "Cannot paint by hand on a path layer",
-        Reason::CannotPaintByHandOnTextLayer => "Cannot paint by hand on a text layer",
-        Reason::PathsOnlyOnRasterOrFill => "Paths draw only on raster and fill layers",
-        Reason::TextLayerCannotHavePath => "A text layer cannot have a path",
-        Reason::PathChannelNotEnabled => "The path channel is not enabled on the layer",
-        Reason::LayerPathKeepsChannel => "A layer path does not change its channel",
-        Reason::LayerPathKeepsKind => "A layer path does not change its kind (model or canvas)",
-        Reason::PaintedSurfaceChannelsDuplicated => "Painted surface channels are duplicated",
-        Reason::OnePaintedSurfacePerPathChannel => "One painted surface per path channel, at the canvas size",
-        Reason::PathLayerNeedsAtLeastOnePath => "A path layer needs at least one path",
-        Reason::ModelPathsSetWithSetPaths => "Paths on a model are drawn with the model and set with set_paths",
-        Reason::FillLayerPathsCannotBeRasterized => "The paths of a fill layer cannot be rasterized",
-        Reason::PathToRenameMissing => "The layer has no such path to rename",
-        Reason::FillPathPixelsNeedFillLayer => "Fill-layer path pixels belong to a fill layer",
-        Reason::PathsAttachOnlyToLayerWithoutPaths => "Paths can be attached only to a raster or fill layer without paths",
-        Reason::PathChannelSurfaceMissing => "The layer has no surface for the path channel",
-        Reason::LayerSetName => "The layer set name",
-        Reason::LayerSetDoesNotExist => "The layer set does not exist",
-        Reason::TooManyLayerSets => "Too many layer sets",
-        Reason::LayerSetPosition => "The layer set position",
-        Reason::LastLayerSetCannotBeRemoved => "The last layer set cannot be removed",
-        Reason::LayerSetNamesAndVisibilityMismatch => "The layer set names and visibility do not match the sets",
-        Reason::LayerSetCount => "The number of layer sets",
-        Reason::LayerSetIdEmptyOrRepeated => "A layer set ID is empty or repeated",
-        Reason::LayerSetOfLayer => "The layer set of a layer",
-        Reason::GroupChildInOtherLayerSet => "A layer in a group is in a different layer set from the group",
-        Reason::OutputAssignment => "The output assignment",
-        Reason::NotTextLayer => "Not a text layer",
-        Reason::NoTextStepToMergeInto => "No text step to merge into",
-        Reason::TextNeedsPlainRasterLayer => "Text needs a raster layer without a path or text",
-        Reason::TextLayerHasNoColor => "The text layer has no Color",
-        Reason::UnknownLock => "Unknown lock",
-        Reason::LookRestoreOnlyAfterLoading => "Look settings can only be restored right after loading",
-        Reason::IdColorsRestoreOnlyAfterLoading => "ID colors can only be restored right after loading",
-        Reason::BakePriorityOutOfRange => "The overlapping UV priority is out of range",
-        Reason::BakePriorityRestoreOnlyAfterLoading => "Bake priority can only be restored right after loading",
-        Reason::EmptyMaterial => "Empty material",
-        Reason::DuplicateChannel => "Duplicate channel",
-        Reason::MergingRequiresAtLeastTwoLayers => "Merging requires at least two layers",
-        Reason::MergeAcrossLayerSets => "Layers of different layer sets cannot be merged",
-        Reason::MoveAcrossLayerSets => "Layers of different layer sets cannot be moved together",
-        Reason::DestinationGroup => "Destination group",
-        Reason::IntoGroupOfOtherLayerSet => "A layer cannot go into a group of another layer set",
-        Reason::Position => "position",
-        Reason::OutputSizeDoesNotMatchRectangle => "Output size does not match rectangle",
-        Reason::LayerOutputOnlyRasterOrFill => "Only raster and fill layers have layer output pixels",
-        Reason::GroupOutputOnlyGroups => "Only groups have a group output",
-        Reason::NotAdjustmentLayer => "Not an adjustment layer",
-        Reason::ChannelsAtBothEndsGradient => "Channels at both ends of the gradient",
-        Reason::CannotFillDisabledChannel => "Cannot fill a disabled channel",
-        Reason::ProjectChangedSinceResizePrepared => "The project changed after the resize was prepared",
-        Reason::ImageSideRange => "Image side (1–8192)",
-        Reason::TooManyRulers => "A layer can have at most 64 rulers",
-        Reason::RulerIdsOverlap => "Ruler IDs overlap",
-        Reason::RulerIdUsedOnOtherLayer => "A ruler ID overlaps a ruler on another layer",
-        Reason::TargetIsSameLayer => "The target layer is the same layer",
-        Reason::RulerToMoveNotOnLayer => "The ruler to move is not on that layer",
-        Reason::RulerNotOnLayer => "That ruler is not on that layer",
-        Reason::StraightRulerCannotSnap => "A straight ruler cannot be the snapping special ruler",
-        Reason::TransformNotFinite => "Transform must be finite",
-        Reason::TransformDegenerateOrOutOfRange => "Transform is degenerate or out of range",
-        Reason::NoRasterLayerToMove => "No raster layer to move",
-        Reason::SelectionNameEmpty => "The selection name is empty",
-        Reason::SelectionNameTooLong => "The selection name is too long",
-        Reason::SelectionNameHasControlCharacters => "The selection name has control characters",
-        Reason::NoSelection => "There is no selection",
-        Reason::TooManySavedSelections => "Too many saved selections",
-        Reason::NoSuchSavedSelection => "No such saved selection",
-        Reason::SavedSelectionNameExists => "A saved selection with that name exists",
-        Reason::SelectionSizeDoesNotMatchCanvas => "Selection size does not match canvas",
-        Reason::SavedSelectionsRestoreOnlyAfterLoading => "Saved selections can only be restored right after loading",
-        Reason::SelectionNameHasOuterSpaces => "The selection name has leading or trailing spaces",
-        Reason::SelectionRestoreOnlyAfterLoading => "Selection restore requires a freshly loaded project",
-        Reason::FillNeedsRasterLayer => "Fill requires a raster layer",
-        Reason::Amount => "amount",
-        Reason::RegionSizeDoesNotMatchCanvas => "Region size does not match canvas",
-        Reason::NoLayersToSave => "No layers to save",
-        Reason::NotFillLayer => "Not a fill layer",
-        Reason::NoMaskToSave => "No mask to save",
-        Reason::EmptySmartMaterial => "Empty smart material",
-        Reason::InvalidSmartMaskFragment => "Invalid smart mask fragment",
-        Reason::SmartMaskCannotBePlacedOnLayer => "A smart mask cannot be placed on a layer",
-        Reason::TargetNotGroup => "The target is not a group",
-        Reason::TooManyLayers => "Maximum 2048 layers",
-        Reason::UserChannelMappingDoesNotMatch => "User channel mapping does not match",
-        Reason::SmartMaterialCannotBePlacedOnMask => "A smart material cannot be placed on a mask",
-        Reason::ParentNotAGroup => "Parent must be a group",
-        Reason::CannotMoveGroupIntoItself => "Cannot move a group into itself",
-        Reason::NewIndex => "new_index",
-        Reason::NoLayersToMerge => "No layers to merge",
-        Reason::GroupAcrossLayerSets => "Layers of different layer sets cannot be grouped",
-        Reason::MergeRequiresLayersInSameGroup => "Merge requires layers in the same group",
-        Reason::NotGroup => "Not a group",
-        Reason::CyclicHierarchy => "Cyclic hierarchy",
-        Reason::ParentGroupNotFound => "Parent group not found",
-        Reason::ParentNotGroup => "Parent is not a group",
-        Reason::CyclicGroupHierarchy => "Cyclic group hierarchy",
-        Reason::LayersMustFollowTheirGroup => "Layers must follow their group",
-        Reason::GroupChildrenNotContiguous => "Group children are not contiguous",
-        Reason::GroupNestingTooDeep => "Group nesting is too deep",
-        Reason::ParentCountDoesNotMatchLayerCount => "Parent count does not match layer count",
-        Reason::ChannelNameExists => "Channel name already exists",
-        Reason::TooManyChannels => "Maximum 64 channels",
-        Reason::ChannelIdExists => "Channel ID already exists",
-        Reason::CannotChangeBuiltInChannel => "Cannot change a built-in channel",
-        Reason::HueSaturationLayerEnabled => "Hue/Saturation layer enabled",
-        Reason::CannotRemoveBuiltInChannel => "Cannot remove a built-in channel",
-        Reason::Width => "width",
-        Reason::Height => "height",
-        Reason::TileSize => "tile_size",
-        Reason::PersistentIds => "persistent_ids",
-        Reason::MaskRgbNotZero => "Mask RGB must be zero",
-        Reason::CannotPaintFillLayer => "Cannot paint a fill layer",
-        Reason::CannotPaintAdjustmentLayer => "Cannot paint an adjustment layer",
-        Reason::CannotPaintGroup => "Cannot paint a group",
-        Reason::BudgetBelowExistingPixels => "Budget is smaller than existing pixels",
-        Reason::SurfaceNotFound => "Surface not found",
-        Reason::CannotPaintDisabledChannel => "Cannot paint a disabled channel",
-        Reason::StepDoesNotDivideTileEdge => "The step does not divide the tile edge",
-        Reason::RectangleOutsideCanvas => "Rectangle outside canvas",
-        Reason::GeneratorSettings => "Generator settings",
-        Reason::FilterSettings => "Filter settings",
-        Reason::MeshMapKind => "Mesh map kind",
-        Reason::MapWidth => "Map width",
-        Reason::MapHeight => "Map height",
-        Reason::MapSizeAndLengthDoNotMatch => "Map size and length do not match",
-        Reason::MapConditionKey => "Map condition key",
-        Reason::MapBoundingBox => "Map bounding box",
-        Reason::ModelPositionAndRotation => "Model position and rotation",
-        Reason::ImageSizeAndPixelLengthDoNotMatch => "Image size and pixel length do not match",
-        Reason::GeneratorNeedsGeneratorSettings => "A generator is placed with generator settings",
-        Reason::GeneratorNotOnTangentNormal => "A generator makes one value per pixel and cannot be placed on a tangent-space normal",
-        Reason::AnchorNameEmpty => "Anchor name is empty",
-        Reason::AnchorNameTooLong => "Anchor name is too long",
-        Reason::EffectsOnlyOnStandardChannels => "Effects (filters, images, gradients) can only be placed on standard channels",
-        Reason::PathModelFingerprintChanged => "The model fingerprint differs from when the path was made",
-        Reason::PathRefersToMissingTriangle => "The path refers to a missing triangle",
-        Reason::PathTooLongForBrushSpacing => "The path is too long for the brush spacing",
-        Reason::SurfaceDabWasRefused => "The surface dab was refused",
-        Reason::RibbonImageMissing => "The ribbon image is missing",
-        Reason::FillPathLeavesUvIsland => "The fill path does not stay on one UV island",
-        Reason::TangentNormalOnlyRenormalizingBlur => "Only the renormalizing blur applies to tangent-space normals",
-        Reason::ColorFiltersOnlyOnColorChannels => "Gradient Map and Color Balance apply only to color channels",
-        Reason::ScalarFiltersOnlyOnScalarsAndMasks => "Histogram Scan, Histogram Range, Dilate / Erode and Edge Detect apply only to scalar channels and masks",
-        Reason::GlowOnlyOnColorChannels => "Glow applies only to color channels",
-        Reason::StencilImagePixelsPoints => "Stencil image pixels / points",
-        Reason::IdMapRequired => "An ID map is required",
-        Reason::IdMapSize => "ID map size",
-        Reason::IdColor => "ID color",
-        Reason::LookShaderName => "Look shader name",
-        Reason::LookShaderIdentity => "Look shader identity",
-        Reason::LookPropertyCount => "Number of look properties",
-        Reason::LookTextureCount => "Number of look textures",
-        Reason::LookKeywordCount => "Number of look keywords",
-        Reason::LookPropertyName => "Look property name",
-        Reason::LookPropertyValue => "Look property value",
-        Reason::LookTextureName => "Look texture name",
-        Reason::LookPackedTextureComponent => "Look packed texture component",
-        Reason::LookImageId => "Look image ID",
-        Reason::LookKeyword => "Look keyword",
-        Reason::ReceivedLookSource => "Source of the received look",
-        Reason::ReceivedLookTextureCount => "Number of received look textures",
-        Reason::ReceivedLookTexture => "Received look texture",
-        Reason::ReceivedLookSlotName => "Received look slot name",
-        Reason::Gradient => "Gradient",
-        Reason::TriangleCoordinates => "Triangle coordinates",
-        Reason::TriangleIndex => "Triangle index",
-        Reason::ManualIdColorsOutOfRange => "Manual ID colors are out of range",
-        Reason::ManualIdColorsFingerprintInvalid => "The model fingerprint of the manual ID colors is invalid",
-        Reason::ManualIdColorsOtherModel => "The manual ID colors belong to another model",
-        Reason::ChosenIslandsOutOfRange => "Too many chosen islands, or an island out of range",
-        Reason::IslandBothSkippedAndPreferred => "The same island is both not baked and preferred",
-        Reason::ChosenIslandsFingerprintInvalid => "The model fingerprint of the chosen islands is invalid",
-        Reason::ChosenIslandsOtherModel => "The chosen islands belong to another model",
-        Reason::ChosenIslandNotInModel => "A chosen island is not in the model",
-        Reason::UvOutsideUnitSquare => "UVs outside 0–1 (tiled or UDIM UVs) cannot be baked",
-        Reason::HeightToNormalStrengthRange => "Height to Normal strength (±256)",
-        Reason::Size => "Size",
-        Reason::NormalBufferSizeMismatch => "Normal buffer size must be width × height × 4 bytes",
-        Reason::HeightBufferSizeMismatch => "Height buffer size must be width × height × 4 bytes",
-        Reason::HeightToNormalNeedsHeight => "Height to Normal requires the Height channel",
-        Reason::RulerIdZero => "A ruler ID cannot be 0",
-        Reason::CanvasRulerPointsRange => "Ruler points must be finite and within ±1e7",
-        Reason::CanvasRulerPointsTooClose => "The two ruler points are too close (at least 0.01 px apart)",
-        Reason::HiddenFacesOnlyFor3DSymmetry => "Mirroring onto hidden faces is for 3D symmetry only",
-        Reason::ModelRulerPointsRange => "Ruler points must be finite and within ±1e6",
-        Reason::ModelRulerPointsTooClose => "The two ruler points are too close (at least 1e-6 apart)",
-        Reason::RulerDirectionZero => "The ruler direction is zero",
-        Reason::SymmetryRulerLineParallelToAxis => "The first line of a symmetry ruler is parallel to its rotation axis",
-        Reason::TwoPointsOnlyForPerspective => "Two points are for a perspective ruler only",
-        Reason::SymmetryRulerLineCountRange => "A symmetry ruler has 2 to 16 lines",
-        Reason::LineSymmetryNeedsEvenLines => "Line symmetry needs an even number of lines",
-        Reason::LineCountOnlyForSymmetryRulers => "Line count and line symmetry are for symmetry rulers only",
-        Reason::RadiusRange => "Radius (0–200)",
-        Reason::Cx => "cx",
-        Reason::Cy => "cy",
-        Reason::Rx => "rx",
-        Reason::Ry => "ry",
-        Reason::TooManyPolygonPoints => "Too many polygon points (maximum 100000)",
-        Reason::SeedOutsideCanvas => "Seed outside canvas",
-        Reason::SelectionSize => "Selection size",
-        Reason::SelectionTileSize => "Selection tile size",
-        Reason::EmptySelectionTile => "Empty selection tile",
-        Reason::OverlappingSelectionTiles => "Overlapping selection tiles",
-        Reason::SelectionTileOutsideCanvas => "Selection tile outside canvas",
-        Reason::SelectionTileLength => "Selection tile length",
-        Reason::SelectionTilePaddingNotZero => "Selection tile padding must be zero",
-        Reason::TileLength => "Tile length",
-        Reason::SelectionSizeMismatch => "Selection size mismatch",
-        Reason::SmartMaterialName => "Smart material name",
-        Reason::InvalidTileByteCount => "Invalid tile byte count",
-        Reason::TileCoordinatesOutsideCanvas => "Tile coordinates outside canvas",
-        Reason::PaddingOutsideCanvasNotZero => "Padding outside canvas must be zero",
-        Reason::SymmetryCenter => "symmetry center",
-        Reason::SymmetryCenterRange => "Symmetry center (±1e7)",
-        Reason::RadialSymmetryCountRange => "Radial symmetry count (2–16)",
-        Reason::SymmetryAngle => "symmetry angle",
-        Reason::SymmetryAngleRange => "The symmetry angle must be within ±360 degrees",
-        Reason::CannotReadFontFile => "Cannot read the font file",
-        Reason::FontHasNoOutlines => "The font has no outlines",
-        Reason::TextSurfaceNotEmpty => "The text surface must be empty",
-        Reason::BundledFontName => "Bundled font name",
-        Reason::FontFilePath => "Font file path",
-        Reason::FontName => "Font name",
-        Reason::TextLength => "Text length",
-        Reason::ControlCharactersInText => "Control characters in the text",
-        Reason::TextSize => "Text size",
-        Reason::LineSpacing => "Line spacing",
-        Reason::Tracking => "Tracking",
-        Reason::TextPosition => "Text position",
-        Reason::TextRotation => "Text rotation",
-        Reason::WrapWidth => "Wrap width",
-        Reason::ChannelName => "Channel name",
-        Reason::UvComparisonResolution => "UV comparison resolution",
-        Reason::PaintAmountRange => "Paint amount (0–1)",
-        Reason::PaintDensityRange => "Paint density (0–1)",
-        Reason::ColorStretchRange => "Color stretch (0–1)",
-        Reason::Angle => "angle",
-        Reason::Jitter => "jitter",
-        Reason::ColorBalance | Reason::Brightness | Reason::Contrast | Reason::AnchorNotBelowLayer | Reason::FilterSettingsOutOfRange | Reason::ColorNoiseNotForScalars | Reason::FilterImageSizeMismatch | Reason::FilterImageOrBlockSizeRange | Reason::FilterHaloTooLarge | Reason::FilterStackReachTooLarge | Reason::FilterRegionSizeRange | Reason::FilterStackTooDeep | Reason::FilterStatisticsCountMismatch | Reason::FilterStrengthRange | Reason::FilterGeneratorResolverMissing | Reason::FilterStatisticsInvalid | Reason::FilterSeamBandSizeMismatch | Reason::FilterGeneratorValueRange | Reason::AnchorPointsInvalid | Reason::AnchorCannotReadNormalChannel | Reason::AnchorMaskInvalid | Reason::AnchorLayerInvalid | Reason::AnchorLayerSettingsInvalid | Reason::AnchorImageSizeMismatch | Reason::AnchorGroupCycleOrTooDeep | Reason::GeneratorSizeNotPositive | Reason::GeneratorMapKindDuplicated | Reason::GeneratorAnchorSizeMismatch | Reason::GeneratorPositionBoundsTooLarge | Reason::GeneratorShapeTransformNotFinite | Reason::GeneratorRegionOutsideImage | Reason::GeneratorImageTooLarge | Reason::GeneratorStrengthOrSizeInvalid | Reason::PatternSettingsRange | Reason::LightSettingsRange | Reason::MaskBuilderSettingsRange | Reason::IslandVariationRange | Reason::PreviewOnlyNoiseOrGrunge | Reason::NoiseScaleRange | Reason::NoiseRotationRange | Reason::NoiseSoftnessRange | Reason::NoiseFractalRange | Reason::FractalSettingsOnlyForNoise | Reason::PresetOnlyForGrunge | Reason::CellOutputOnlyForWorley | Reason::RampPointsRange | Reason::RampCurveCountMismatch | Reason::RampCurveRange | Reason::RampInputNotFinite | Reason::ShapeSettingsRange | Reason::ShapeInputNotFinite | Reason::ModelFrameInvalid | Reason::GeneratorMapInvalid | Reason::GeneratorLevelsRange | Reason::GeneratorRatioOrAxisInvalid | Reason::GeneratorDirectionInvalid | Reason::ShapeAndRampOnlyForShapeGradient | Reason::GeneratorIdColorsInvalid | Reason::AnchorReadsHeightNotNormal | Reason::AnchorReferenceOnlyForAnchor | Reason::ImageStepProjectionInvalid | Reason::ImageStepHasNoNoise | Reason::ImageSettingsOnlyForImageStep | Reason::NoiseStepHasNoExtraNoise | Reason::NoiseSettingsOnlyForNoise | Reason::PatternStepHasNoExtraNoise | Reason::PatternSettingsOnlyForKind | Reason::MapPinInvalid | Reason::MeshMapKindUnknown | Reason::MeshMapSizeRange | Reason::MeshMapProvenanceRange | Reason::MeshMapSlotsInvalid | Reason::MeshMapBoundsInvalid | Reason::MeshMapTextTooLong | Reason::MeshMapLengthMismatch | Reason::MeshMapTexelSourceUnknown | Reason::MeshMapChannelRange | Reason::MeshTriangleCountRange | Reason::MeshUvOrSlotCountMismatch | Reason::MeshVertexAttributesInvalid | Reason::MeshValuesNotFinite | Reason::MeshSlotOrUvChannelRange | Reason::MeshRendererIndexInvalid | Reason::MeshMaterialIdsInvalid | Reason::MeshSizeRange | Reason::MeshBvhFaceRange | Reason::BakeSizeRange | Reason::BakeTargetSlotInvalid | Reason::BakePaddingOrAntialiasRange | Reason::BakeMapKindsInvalid | Reason::BakeRaySamplesRange | Reason::BakeDistanceRange | Reason::BakeRaySpreadRange | Reason::BakeCurvatureRadiusRange | Reason::BakeTooManyIdParts | Reason::ManualIdColorsOtherModelOrSplit | Reason::NormalRebuildInputInvalid | Reason::UvOverlapMapSizeRange | Reason::UvOverlapTriangleRange | Reason::BakeTargetSlotHasNoUv | Reason::BakeEstimateOverBudget | Reason::BakeCurvatureOverBudget | Reason::BakeResultMismatch | Reason::BakeUvRowsOverBudget | Reason::PathNameInvalid | Reason::TooManyPathsOnLayer | Reason::LayerPathsMixKinds | Reason::LayerPathsMixChannels | Reason::LayerPathsMixModels | Reason::LayerPathIdsDuplicated | Reason::PathGeometryMissing | Reason::PathSymmetryRange | Reason::CanvasPathPointRange | Reason::PathHandleRange | Reason::SurfacePathPointRange | Reason::PathBrushRadiusRange | Reason::PathTipAngleRange | Reason::PathProjectionDepthRange | Reason::PathMirrorPlaneInvalid | Reason::PathRibbonInvalid | Reason::PathSmudgeStrengthRange | Reason::PathNeedsStandardChannels | Reason::PathChannelCountRange | Reason::PathChannelsInvalid | Reason::CanvasPathNeedsCanvasSymmetry | Reason::TooManyPathPoints | Reason::SurfacePathNeedsMirrorSymmetry | Reason::PathModelFingerprintLength | Reason::PathBarycentricNotNormalized | Reason::FillPointCountRange | Reason::FillPointSpreadRange | Reason::FillPointPositionRange | Reason::FillPointUvDepthNotZero | Reason::ChannelNotInProject | Reason::SlotCannotBePainted | Reason::SlotUnknown | Reason::SlotNotPacked | Reason::PackedComponentRange | Reason::PenPressureRange | Reason::NoPointToFill | Reason::PathPointValueRange => {
-            GENERIC_REASON
-        }
-    }
-}
-
 impl Lang {
     pub fn surface_error(self, error: &yolu_core::geometry::SurfaceStrokeError) -> String {
         crate::crash::problem(self.surface_error_text(error))
@@ -1008,25 +532,10 @@ impl Lang {
         match error {
             SurfaceStrokeError::Core(e) => self.core_error(e),
             SurfaceStrokeError::Dab(e) => self.dab_refusal(*e).into(),
-            SurfaceStrokeError::TooManyDabs => self
-                .pick(
-                    "ストロークが長すぎるため、取り消しました",
-                    "Cancelled: the stroke is too long",
-                )
-                .into(),
+            SurfaceStrokeError::TooManyDabs => self.t("lang-cancelled-the-stroke-is-too").into(),
             SurfaceStrokeError::Sampling(e) => self.sampling_error(*e).into(),
-            SurfaceStrokeError::EffectWithSymmetry => self
-                .pick(
-                    "指先・クローンでは対称を使えません",
-                    "Smudge and clone do not work with symmetry",
-                )
-                .into(),
-            SurfaceStrokeError::CloneSource => self
-                .pick(
-                    "クローンの元が今のモデルの面ではありません",
-                    "The clone source is not on this model",
-                )
-                .into(),
+            SurfaceStrokeError::EffectWithSymmetry => self.t("lang-smudge-and-clone-do-not").into(),
+            SurfaceStrokeError::CloneSource => self.t("lang-the-clone-source-is-not").into(),
         }
     }
     /// 指先・クローンの読み元を決められなかった理由。どれもストロークごと取り消すので、「取り消し」を言う。内部の言葉（スナップショット・予算・図）は使わない。
@@ -1036,61 +545,28 @@ impl Lang {
     fn sampling_error_text(self, error: yolu_core::geometry::SamplingError) -> &'static str {
         use yolu_core::geometry::SamplingError::*;
         match error {
-            SnapshotChanged => self.pick(
-                "モデルが変わったため、取り消しました",
-                "Cancelled: the model changed",
-            ),
-            BindingMismatch => self.pick(
-                "面がモデルと合わないため、取り消しました",
-                "Cancelled: the surface does not match the model",
-            ),
-            InvalidArguments => self.pick(
-                "ブラシの大きさか位置が範囲外のため、取り消しました",
-                "Cancelled: brush size or position out of range",
-            ),
-            ChartBudget => self.pick(
-                "読み取る面が多すぎるため、取り消しました",
-                "Cancelled: too many faces to read from",
-            ),
-            LookupBudget => self.pick(
-                "読み取る範囲が広すぎるため、取り消しました",
-                "Cancelled: the area to read from is too large",
-            ),
-            Unreachable => self.pick(
-                "読み取り先に届かない画素があるため、取り消しました",
-                "Cancelled: some pixels cannot reach the source",
-            ),
+            SnapshotChanged => self.t("lang-cancelled-the-model-changed"),
+            BindingMismatch => self.t("lang-cancelled-the-surface-does-not"),
+            InvalidArguments => self.t("lang-cancelled-brush-size-or-position"),
+            ChartBudget => self.t("lang-cancelled-too-many-faces-to"),
+            LookupBudget => self.t("lang-cancelled-the-area-to-read"),
+            Unreachable => self.t("lang-cancelled-some-pixels-cannot-reach"),
         }
     }
     /// 対称の写しが塗られなかった理由（短い状態）。
     pub fn mirror_note(self, outcome: yolu_core::geometry::MirrorOutcome) -> &'static str {
         use yolu_core::geometry::MirrorOutcome::*;
         match outcome {
-            NoSurface => self.pick(
-                "近くに面が無い対称の写しは飛ばしました",
-                "Symmetry copies with no surface nearby were skipped",
-            ),
-            OtherSlot => self.pick(
-                "別のテクスチャセットにある対称の写しは飛ばしました",
-                "Symmetry copies on another texture set were skipped",
-            ),
-            Hidden => self.pick(
-                "見えない対称の写しは飛ばしました",
-                "Symmetry copies that cannot be seen were skipped",
-            ),
-            UvMismatch => self.pick(
-                "UV が潰れているか大きさが合わない対称の写しは飛ばしました",
-                "Symmetry copies with flat or mismatched UVs were skipped",
-            ),
+            NoSurface => self.t("lang-symmetry-copies-with-no-surface"),
+            OtherSlot => self.t("lang-symmetry-copies-on-another-texture"),
+            Hidden => self.t("lang-symmetry-copies-that-cannot-be"),
+            UvMismatch => self.t("lang-symmetry-copies-with-flat-or"),
             Painted | OnPlane => "",
         }
     }
     /// 指先が、つながらない面で拾い直したときの状態。
     pub fn smudge_lost(self) -> &'static str {
-        self.pick(
-            "指先はつながらない面で拾い直しました",
-            "Smudge picked up again on a disconnected surface",
-        )
+        self.t("lang-smudge-picked-up-again-on")
     }
     pub fn dab_refusal(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         crate::crash::problem(self.dab_refusal_text(error))
@@ -1103,38 +579,14 @@ impl Lang {
     fn path_dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
-            SnapshotChanged => self.pick(
-                "モデルが変わったため、塗れませんでした",
-                "Not painted because the model changed",
-            ),
-            InvalidArguments => self.pick(
-                "ブラシの大きさが範囲外のため、塗れませんでした",
-                "Not painted: brush size out of range",
-            ),
-            BindingMismatch => self.pick(
-                "面がモデルと合わないため、塗れませんでした",
-                "Not painted: the surface does not match the model",
-            ),
-            TriangleBudget => self.pick(
-                "ブラシがまたがる面が多すぎるため、塗れませんでした",
-                "Not painted: the brush covers too many faces",
-            ),
-            PixelBudget => self.pick(
-                "ブラシの範囲が広すぎるため、塗れませんでした",
-                "Not painted: the brush area is too large",
-            ),
-            VisibilityBudget => self.pick(
-                "見える面の判定が多すぎるため、塗れませんでした",
-                "Not painted: too many points to check for visibility",
-            ),
-            BvhBudget => self.pick(
-                "重なった面が多すぎるため、塗れませんでした",
-                "Not painted: too many overlapping faces under the brush",
-            ),
-            MemoryBudget => self.pick(
-                "1 回の操作のメモリが足りないため、塗れませんでした",
-                "Not painted: not enough memory for one operation",
-            ),
+            SnapshotChanged => self.t("lang-not-painted-because-the-model"),
+            InvalidArguments => self.t("lang-not-painted-brush-size-out"),
+            BindingMismatch => self.t("lang-not-painted-the-surface-does"),
+            TriangleBudget => self.t("lang-not-painted-the-brush-covers"),
+            PixelBudget => self.t("lang-not-painted-the-brush-area"),
+            VisibilityBudget => self.t("lang-not-painted-too-many-points"),
+            BvhBudget => self.t("lang-not-painted-too-many-overlapping"),
+            MemoryBudget => self.t("lang-not-painted-not-enough-memory"),
         }
     }
     /// 3D のブラシのストロークで、打ち（ブラシの 1 回分。対称の写し・デュアルブラシの 2 つ目の打ちも）を塗れなかった理由。2D の
@@ -1144,39 +596,15 @@ impl Lang {
     fn dab_refusal_text(self, error: yolu_core::geometry::DabRefusal) -> &'static str {
         use yolu_core::geometry::DabRefusal::*;
         match error {
-            SnapshotChanged => self.pick(
-                "モデルが変わったため、取り消しました",
-                "Cancelled: the model changed",
-            ),
-            InvalidArguments => self.pick(
-                "ブラシの大きさかカメラが範囲外のため、取り消しました",
-                "Cancelled: brush size or camera out of range",
-            ),
-            BindingMismatch => self.pick(
-                "面がモデルと合わないため、取り消しました",
-                "Cancelled: the surface does not match the model",
-            ),
-            TriangleBudget => self.pick(
-                "ブラシがまたがる面が多すぎるため、取り消しました",
-                "Cancelled: the brush covers too many faces",
-            ),
-            PixelBudget => self.pick(
-                "ブラシの範囲が広すぎるため、取り消しました",
-                "Cancelled: the brush area is too large",
-            ),
-            VisibilityBudget => self.pick(
-                "見える面の判定が多すぎるため、取り消しました",
-                "Cancelled: too many points to check for visibility",
-            ),
-            BvhBudget => self.pick(
-                "重なった面が多すぎるため、取り消しました",
-                "Cancelled: too many overlapping faces under the brush",
-            ),
+            SnapshotChanged => self.t("lang-cancelled-the-model-changed"),
+            InvalidArguments => self.t("lang-cancelled-brush-size-or-camera"),
+            BindingMismatch => self.t("lang-cancelled-the-surface-does-not"),
+            TriangleBudget => self.t("lang-cancelled-the-brush-covers-too"),
+            PixelBudget => self.t("lang-cancelled-the-brush-area-is"),
+            VisibilityBudget => self.t("lang-cancelled-too-many-points-to"),
+            BvhBudget => self.t("lang-cancelled-too-many-overlapping-faces"),
             // 2D の `CoreError::StrokeBudgetExceeded` と同じ文
-            MemoryBudget => self.pick(
-                "1 回の操作のメモリの予算を超えます（取り消しました）",
-                "Over the memory budget of one operation (cancelled)",
-            ),
+            MemoryBudget => self.t("lang-over-the-memory-budget-of"),
         }
     }
 }
@@ -1248,26 +676,12 @@ impl Lang {
     }
     fn geometry_error_text(self, error: GeometryError) -> &'static str {
         match error {
-            GeometryError::NonFinite => self.pick(
-                "メッシュの位置か UV に有限でない値があります",
-                "Non-finite position or UV in the mesh",
-            ),
-            GeometryError::BoundsOverflow => self.pick(
-                "メッシュの大きさが扱える範囲を超えています",
-                "Mesh bounds exceed the supported range",
-            ),
-            GeometryError::InvalidTolerance => self.pick(
-                "溶接の許しは正の値でなければなりません",
-                "Weld tolerance must be positive",
-            ),
-            GeometryError::TooManyTriangles => {
-                self.pick("三角形が多すぎます", "Too many triangles")
-            }
-            GeometryError::Canceled => self.pick("取り消しました", "Cancelled"),
-            GeometryError::Mismatch => self.pick(
-                "三角形の並びが元のモデルと違います",
-                "Triangle order differs from the original model",
-            ),
+            GeometryError::NonFinite => self.t("lang-non-finite-position-or-uv"),
+            GeometryError::BoundsOverflow => self.t("lang-mesh-bounds-exceed-the-supported"),
+            GeometryError::InvalidTolerance => self.t("lang-weld-tolerance-must-be-positive"),
+            GeometryError::TooManyTriangles => self.t("lang-too-many-triangles"),
+            GeometryError::Canceled => self.t("lang-cancelled"),
+            GeometryError::Mismatch => self.t("lang-triangle-order-differs-from-the"),
         }
     }
 
@@ -1283,12 +697,8 @@ impl Lang {
     fn model_error_text(self, error: &ModelError) -> String {
         match error {
             // 「〜できません: 理由」のコロンでつないだ形にしない
-            ModelError::Io(e) => {
-                self.with_reason(self.pick("ファイルを読めません", "Cannot read the file"), e)
-            }
-            ModelError::Parse(e) => {
-                self.with_reason(self.pick("FBX として読めません", "Invalid FBX"), e)
-            }
+            ModelError::Io(e) => self.with_reason(self.t("lang-cannot-read-the-file"), e),
+            ModelError::Parse(e) => self.with_reason(self.t("lang-invalid-fbx"), e),
             _ if self == Self::Ja => error.to_string(),
             ModelError::FileTooLarge { bytes, limit } => format!(
                 "File too large ({:.1} MiB, maximum {:.0} MiB)",
@@ -1338,41 +748,21 @@ pub fn shelf_io_error(lang: Lang, e: &yolu_io::Error) -> String {
     } else if m.contains(REFUSAL_GENERATORS) {
         Block::Generators.reason(lang)
     } else if m.contains(REFUSAL_MEMORY_BUDGET) {
-        lang.pick("アセットの予算を超えます", "Over the asset budget")
-            .into()
+        lang.t("lang-over-the-asset-budget").into()
     } else if m.contains(REFUSAL_ARCHIVE_BUDGET) {
-        lang.pick(
-            "ファイルの大きさの上限を超えます",
-            "Over the file size limit",
-        )
-        .into()
+        lang.t("lang-over-the-file-size-limit").into()
     } else if m.contains(REFUSAL_USER_CHANNELS) {
-        lang.pick("ユーザーチャンネルを使っています", "It uses user channels")
-            .into()
+        lang.t("lang-it-uses-user-channels").into()
     } else if m.contains(REFUSAL_RUST_GENERATORS) {
-        lang.pick("ノイズ・グランジを使っています", "It uses Noise and Grunge")
-            .into()
+        lang.t("lang-it-uses-noise-and-grunge").into()
     } else if m.contains(REFUSAL_RUST_ADJUSTMENTS) {
-        lang.pick("色調補正を使っています", "It uses colour adjustments")
-            .into()
+        lang.t("lang-it-uses-colour-adjustments").into()
     } else if m.contains(REFUSAL_NEW_FILTERS) {
-        lang.pick(
-            "0.5.0 で追加したフィルター・ジェネレーターを使っています",
-            "It uses filters or generators added in 0.5.0",
-        )
-        .into()
+        lang.t("lang-it-uses-filters-or-generators").into()
     } else if m.contains(REFUSAL_PATH_LISTS) {
-        lang.pick(
-            "パスの一覧か新しいパスの設定を使っています",
-            "It uses a path list or new path settings",
-        )
-        .into()
+        lang.t("lang-it-uses-a-path-list").into()
     } else if m.contains(REFUSAL_POINT_GRADIENTS) {
-        lang.pick(
-            "点のグラデーションか、異方性フィルターを切った画像を使っています",
-            "It uses a point gradient or an image with anisotropic filtering off",
-        )
-        .into()
+        lang.t("lang-it-uses-a-point-gradient").into()
     } else {
         lang.io_error(e)
     }
@@ -1383,32 +773,23 @@ pub fn library_known_error(lang: Lang, e: &yolu_io::Error) -> Option<String> {
     let m = e.to_string();
     let has = |text: &str| m.contains(text);
     let short = if has(files::REFUSAL_ROOT_LINK) {
-        lang.pick(
-            "ライブラリの場所がリンクです",
-            "The library folder is a link",
-        )
+        lang.t("lang-the-library-folder-is-a")
     } else if has(files::REFUSAL_ROOT_NOT_FOLDER) {
-        lang.pick(
-            "ライブラリの場所がフォルダではありません",
-            "The library location is not a folder",
-        )
+        lang.t("lang-the-library-location-is-not")
     } else if has(files::REFUSAL_LINK) {
-        lang.pick("リンクはたどりません", "Links are not followed")
+        lang.t("lang-links-are-not-followed")
     } else if has(files::REFUSAL_PATH) {
-        lang.pick(
-            "名前に使えない文字があります",
-            "The name has disallowed characters",
-        )
+        lang.t("lang-the-name-has-disallowed-characters")
     } else if has(files::REFUSAL_NOT_FILE) {
-        lang.pick("ファイルではありません", "Not a file")
+        lang.t("lang-not-a-file")
     } else if has(files::REFUSAL_TOO_LARGE) {
-        lang.pick("大きすぎます", "Too large")
+        lang.t("lang-too-large")
     } else if has(files::REFUSAL_EMPTY) {
-        lang.pick("空のファイルです", "Empty file")
+        lang.t("lang-empty-file")
     } else if has(files::REFUSAL_NO_NAME) {
-        lang.pick("名前を決められません", "Cannot choose a name")
+        lang.t("lang-cannot-choose-a-name")
     } else if has(REFUSAL_UNSUPPORTED) {
-        lang.pick("PNG と .ylsmart だけです", "PNG and .ylsmart only")
+        lang.t("lang-png-and-ylsmart-only")
     } else if has(REFUSAL_PNG_SIZE) {
         lang.pick(REFUSAL_PNG_SIZE, "Image sides must be 1 to 8192")
     } else if has(REFUSAL_PNG) {
@@ -1437,63 +818,36 @@ pub fn path_error(lang: Lang, error: &paths::Error) -> String {
     use paths::Error;
     match error {
         // 点の検査の理由は、そのまま短い理由（「値が範囲外です（…）」で包まない）
-        Error::Invalid(why) => crate::crash::problem(lang.pick(why.ja(), core_reason(*why))).into(),
-        Error::ModelMismatch => lang
-            .pick(
-                "モデルが、パスを描いたときと違います",
-                "The model differs from the one the path was drawn on",
-            )
-            .into(),
-        Error::MissingTriangle => lang
-            .pick(
-                "パスが指す三角形がモデルにありません",
-                "The path refers to a triangle the model does not have",
-            )
-            .into(),
-        Error::TooManySamples => lang
-            .pick(
-                "ブラシの間隔に対してパスが長すぎます",
-                "The path is too long for the brush spacing",
-            )
-            .into(),
-        Error::Canceled => lang.pick("取り消しました", "Cancelled").into(),
+        Error::Invalid(why) => crate::crash::problem(lang.reason(*why)).into(),
+        Error::ModelMismatch => lang.t("lang-the-model-differs-from-the").into(),
+        Error::MissingTriangle => lang.t("lang-the-path-refers-to-a").into(),
+        Error::TooManySamples => lang.t("lang-the-path-is-too-long").into(),
+        Error::Canceled => lang.t("lang-cancelled").into(),
         Error::Core(e) => lang.core_error(e),
         Error::Dab(d) => lang.path_dab_refusal(*d).into(),
-        Error::MissingImage => lang
-            .pick(
-                "リボンの画像がアセットにありません",
-                "The ribbon image is not in the assets",
-            )
-            .into(),
-        Error::FillIslands => lang
-            .pick(
-                "塗りのパスが 1 つの UV アイランドに収まっていません",
-                "The fill path does not stay on one UV island",
-            )
-            .into(),
+        Error::MissingImage => lang.t("lang-the-ribbon-image-is-not").into(),
+        Error::FillIslands => lang.t("lang-the-fill-path-does-not").into(),
     }
 }
 
 /// 付け直せなかった理由の文（画面の言語で）。
 pub fn rebind_error(lang: Lang, error: RebindError) -> String {
     match error {
-        RebindError::OtherModel => lang
-            .pick("別のモデルで描かれたパスです", "The path was drawn on another model")
-            .into(),
-        RebindError::NoMaterial => lang
-            .pick("マテリアルが新しいモデルにありません", "Its material is not in the new model")
-            .into(),
-        RebindError::MissingTriangle { point } => lang.pick(
-            format!("点 {} はモデルに無い三角形を指しています", point + 1),
-            format!("Point {} refers to a triangle the model does not have", point + 1),
+        RebindError::OtherModel => lang.t("lang-the-path-was-drawn-on").into(),
+        RebindError::NoMaterial => lang.t("lang-its-material-is-not-in").into(),
+        RebindError::MissingTriangle { point } => lang.f(
+            "lang-point-refers-to-a-triangle",
+            &[("point", &(point + 1))],
         ),
-        RebindError::SearchBudget { point } => lang.pick(
-            format!("点 {} を新しいメッシュで探すのに時間がかかりすぎました", point + 1),
-            format!("Finding point {} on the new mesh took too long", point + 1),
-        ),
-        RebindError::NoSurface { point, tolerance } => lang.pick(
-            format!("点 {} の近く（{tolerance:.4} 以内）に、同じマテリアルの面が新しいメッシュにありません", point + 1),
-            format!("Point {} has no surface of its material within {tolerance:.4} on the new mesh", point + 1),
+        RebindError::SearchBudget { point } => {
+            lang.f("lang-finding-point-on-the-new", &[("point", &(point + 1))])
+        }
+        RebindError::NoSurface { point, tolerance } => lang.f(
+            "lang-point-has-no-surface-of",
+            &[
+                ("point", &(point + 1)),
+                ("tolerance", &format!("{:.4}", tolerance)),
+            ],
         ),
     }
 }
@@ -1511,70 +865,61 @@ pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
         ),
         CopyRefusal::ColorFormat { depth, mode } => {
             let name = crate::psd_import::color_mode_name(lang, *mode);
-            lang.pick(
-                format!("RGB 8 bit 以外は取り込めません（{name}・{depth} bit）"),
-                format!("Only RGB 8-bit PSDs can be imported ({name}, {depth}-bit)"),
+            lang.f(
+                "lang-only-rgb-8-bit-psds",
+                &[("name", &name), ("depth", &depth)],
             )
         }
         CopyRefusal::NoLayers => lang.pick(
             "レイヤーがありません（統合画像だけの PSD）".into(),
             "No layers (a flattened image only)".into(),
         ),
-        CopyRefusal::TooManyLayers { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
+        CopyRefusal::TooManyLayers { count, limit } => lang.f(
+            "lang-too-many-layers-limit",
+            &[("value", &count), ("limit", &limit)],
         ),
-        CopyRefusal::CanvasTooLarge { width, height } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}）"),
-            format!("Canvas too large ({width}×{height})"),
+        CopyRefusal::CanvasTooLarge { width, height } => lang.f(
+            "lang-canvas-too-large",
+            &[("width", &width), ("height", &height)],
         ),
-        CopyRefusal::LayerTooLarge { layer } => lang.pick(
-            format!("「{layer}」の画素が大きすぎます"),
-            format!("\"{layer}\" has too many pixels"),
-        ),
-        CopyRefusal::BudgetExceeded { layer } => lang.pick(
-            format!("「{layer}」でレイヤーのメモリの予算を超えました"),
-            format!("Layer memory budget exceeded at \"{layer}\""),
-        ),
-        CopyRefusal::LayerDataTooLarge { layer } => lang.pick(
-            format!("「{layer}」の付加情報が大きすぎます"),
-            format!("\"{layer}\" has too much extra data"),
-        ),
+        CopyRefusal::LayerTooLarge { layer } => {
+            lang.f("lang-has-too-many-pixels", &[("layer", &layer)])
+        }
+        CopyRefusal::BudgetExceeded { layer } => {
+            lang.f("lang-layer-memory-budget-exceeded-at", &[("layer", &layer)])
+        }
+        CopyRefusal::LayerDataTooLarge { layer } => {
+            lang.f("lang-has-too-much-extra-data", &[("layer", &layer)])
+        }
         CopyRefusal::EdgeOverLimit {
             width,
             height,
             limit,
-        } => lang.pick(
-            format!("キャンバスが大きすぎます（{width}×{height}・上限 {limit}）"),
-            format!("Canvas too large ({width}×{height}; limit {limit})"),
+        } => lang.f(
+            "lang-canvas-too-large-limit",
+            &[("width", &width), ("height", &height), ("limit", &limit)],
         ),
-        CopyRefusal::LayerCountOverLimit { count, limit } => lang.pick(
-            format!("レイヤーが多すぎます（{count} 枚・上限 {limit} 枚）"),
-            format!("Too many layers ({count}; limit {limit})"),
+        CopyRefusal::LayerCountOverLimit { count, limit } => lang.f(
+            "lang-too-many-layers-limit",
+            &[("value", &count), ("limit", &limit)],
         ),
-        CopyRefusal::NestingTooDeep { limit } => lang.pick(
-            format!("グループの入れ子が深すぎます（上限 {limit} 段）"),
-            format!("Groups are nested too deeply (limit {limit})"),
-        ),
+        CopyRefusal::NestingTooDeep { limit } => {
+            lang.f("lang-groups-are-nested-too-deeply", &[("limit", &limit)])
+        }
     }
 }
 
 /// 理由のツールチップ（予算で断ったものは、設定で上げられること）。
 pub fn psd_copy_refusal_tooltip(lang: Lang, why: &CopyRefusal) -> Option<String> {
-    why.raised_by_budget().then(|| {
-        lang.pick(
-            "上限は設定の「レイヤーのメモリ」から決まります。上げると取り込めることがあります",
-            "The limit follows Layer memory in Settings. Raising it may let this import",
-        )
-        .into()
-    })
+    why.raised_by_budget()
+        .then(|| lang.t("lang-the-limit-follows-layer-memory-tip").into())
 }
 
 /// 更新の失敗の「何が」（`what` は "check" か "download"）。
 fn update_head(lang: Lang, what: &str) -> &'static str {
     match what {
-        "check" => lang.pick("更新を確かめられません", "Cannot check for updates"),
-        _ => lang.pick("更新をダウンロードできません", "Cannot download the update"),
+        "check" => lang.t("lang-cannot-check-for-updates"),
+        _ => lang.t("lang-cannot-download-the-update"),
     }
 }
 
@@ -1586,19 +931,12 @@ pub(crate) fn update_start_failure(lang: Lang, what: &str, error: &std::io::Erro
 pub(crate) fn update_failure(lang: Lang, what: &'static str, failure: UpdateFailure) -> String {
     let head = update_head(lang, what);
     let reason = match failure {
-        UpdateFailure::Network => lang.pick("通信できません", "connection failed"),
-        UpdateFailure::Verify => lang.pick("検証を通りません", "verification failed"),
-        UpdateFailure::NoAsset => lang.pick(
-            "この環境向けの配布物がありません",
-            "no download for this system",
-        ),
-        UpdateFailure::Disk => lang.pick("ファイルを保存できません", "cannot save the file"),
-        UpdateFailure::Stopped => lang.pick("処理が止まりました", "the job stopped"),
-        UpdateFailure::Canceled => {
-            return lang
-                .pick("ダウンロードを取り消しました。", "Download canceled.")
-                .into()
-        }
+        UpdateFailure::Network => lang.t("lang-connection-failed"),
+        UpdateFailure::Verify => lang.t("lang-verification-failed"),
+        UpdateFailure::NoAsset => lang.t("lang-no-download-for-this-system"),
+        UpdateFailure::Disk => lang.t("lang-cannot-save-the-file"),
+        UpdateFailure::Stopped => lang.t("lang-the-job-stopped"),
+        UpdateFailure::Canceled => return lang.t("lang-download-canceled").into(),
     };
     lang.with_reason(head, reason)
 }
@@ -1614,35 +952,21 @@ pub(crate) fn inactive_effect_reason(
         (&effect.target, &effect.reason)
     {
         if let Some(why) = failure {
-            return lang.pick(
-                format!("画像を読めません（{why}）"),
-                format!("Cannot read the image ({why})"),
-            );
+            return lang.f("lang-cannot-read-the-image", &[("why", &why)]);
         }
         if why.contains("その画像が無い") {
-            return lang
-                .pick(
-                    "プロジェクトに画像が無い",
-                    "The image is not in the project",
-                )
-                .into();
+            return lang.t("lang-the-image-is-not-in").into();
         }
     }
     lang.inactive_reason(&effect.reason)
 }
 
 pub(crate) fn hide_preset_save_error(lang: Lang, e: &HideStoreError) -> String {
-    lang.with_reason(
-        lang.pick("隠し方を保存できません", "Cannot save the hide set"),
-        e.describe(lang),
-    )
+    lang.with_reason(lang.t("lang-cannot-save-the-hide-set"), e.describe(lang))
 }
 
 pub(crate) fn pose_preset_save_error(lang: Lang, e: &PoseStoreError) -> String {
-    lang.with_reason(
-        lang.pick("ポーズを保存できません", "Cannot save the pose"),
-        e.describe(lang),
-    )
+    lang.with_reason(lang.t("lang-cannot-save-the-pose"), e.describe(lang))
 }
 
 #[cfg(test)]

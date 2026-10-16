@@ -167,11 +167,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
     card: Some(|app, lang| {
         let p = app.services.update.progress()?;
         Some(JobCard {
-            text: format!(
-                "{} — {}",
-                lang.pick("更新をダウンロード中", "Downloading update"),
-                p.version
-            ),
+            text: format!("{} — {}", lang.t("update-downloading-update"), p.version),
             fraction: Some(p.fraction),
             cancel: Some(crate::state::Action::Update(UpdateAction::Cancel)),
             canceling: p.canceling,
@@ -398,17 +394,13 @@ impl UpdateState {
         let offer = self.offer.as_ref()?;
         let version = &offer.version;
         Some(match (self.progress(), self.mode) {
-            (Some(_), _) => lang.pick(
-                format!("YoluPainter {version} をダウンロード中"),
-                format!("Downloading YoluPainter {version}"),
-            ),
-            (None, Mode::Installer) => lang.pick(
-                format!("YoluPainter {version} に更新"),
-                format!("Update to YoluPainter {version}"),
-            ),
-            (None, Mode::Page) => lang.pick(
-                format!("YoluPainter {version} のリリースを開く"),
-                format!("Open the YoluPainter {version} release"),
+            (Some(_), _) => lang.f("update-downloading-yolupainter", &[("version", &version)]),
+            (None, Mode::Installer) => {
+                lang.f("update-update-to-yolupainter", &[("version", &version)])
+            }
+            (None, Mode::Page) => lang.f(
+                "update-open-the-yolupainter-release",
+                &[("version", &version)],
             ),
         })
     }
@@ -562,10 +554,7 @@ fn staged_file_is_intact(ready: &Ready) -> bool {
 
 /// 別の起動が動いていて、更新を始められない理由（状態の知らせと準備のウィンドウが同じ文を出す）。
 pub(crate) fn blocked_text(lang: Lang) -> &'static str {
-    lang.pick(
-        "ほかの YoluPainter が開いています",
-        "Another YoluPainter is running",
-    )
+    lang.t("update-another-yolupainter-is-running")
 }
 
 /// 失敗の知らせの種類（取り消しは済んだ知らせ、ほかは失敗）。
@@ -668,10 +657,7 @@ impl AppState {
             if config::save(path, &stored).is_err() {
                 self.fail(
                     Source::Update,
-                    self.lang.pick(
-                        "更新の設定を保存できません。",
-                        "Cannot save the update setting.",
-                    ),
+                    self.lang.t("update-cannot-save-the-update-setting"),
                 );
             }
         }
@@ -681,10 +667,7 @@ impl AppState {
         let lang = self.lang;
         if self.services.update.job.is_some() {
             if manual {
-                self.refuse(
-                    Source::Update,
-                    lang.pick("更新を処理中です。", "An update job is running."),
-                );
+                self.refuse(Source::Update, lang.t("update-an-update-job-is-running"));
             }
             return;
         }
@@ -715,10 +698,7 @@ impl AppState {
             return;
         }
         if manual {
-            self.info(
-                Source::Update,
-                lang.pick("更新を確かめています…", "Checking for updates…"),
-            );
+            self.info(Source::Update, lang.t("update-checking-for-updates"));
         }
         self.services.update.job = Some(Job {
             kind: Kind::Check { manual },
@@ -742,20 +722,14 @@ impl AppState {
                 match (self.services.update.opener)(&url) {
                     Ok(()) => self.info(
                         Source::Update,
-                        lang.pick(
-                            format!(
-                                "YoluPainter {} のリリースのページを開きました。",
-                                offer.version
-                            ),
-                            format!("Opened the YoluPainter {} release page.", offer.version),
+                        lang.f(
+                            "update-opened-the-yolupainter-release-page",
+                            &[("version", &offer.version)],
                         ),
                     ),
                     Err(_) => self.fail(
                         Source::Update,
-                        lang.pick(
-                            format!("ページ{}を開けません。", lang.quote(&url)),
-                            format!("Cannot open the page {}.", lang.quote(&url)),
-                        ),
+                        lang.f("update-cannot-open-the-page", &[("url", &lang.quote(&url))]),
                     ),
                 }
             }
@@ -803,10 +777,7 @@ impl AppState {
                 }
                 self.info(
                     Source::Update,
-                    lang.pick(
-                        format!("YoluPainter {version} をダウンロード中…"),
-                        format!("Downloading YoluPainter {version}…"),
-                    ),
+                    lang.f("update-downloading-yolupainter-2", &[("version", &version)]),
                 );
                 self.services.update.job = Some(Job {
                     kind: Kind::Download { version, total },
@@ -840,9 +811,9 @@ impl AppState {
                             if manual {
                                 self.info(
                                     Source::Update,
-                                    lang.pick(
-                                        format!("YoluPainter {version} があります。"),
-                                        format!("YoluPainter {version} is available."),
+                                    lang.f(
+                                        "update-yolupainter-is-available",
+                                        &[("version", &version)],
                                     ),
                                 );
                             }
@@ -852,10 +823,7 @@ impl AppState {
                             if manual {
                                 self.info(
                                     Source::Update,
-                                    lang.pick(
-                                        "YoluPainter は最新です。",
-                                        "YoluPainter is up to date.",
-                                    ),
+                                    lang.t("update-yolupainter-is-up-to-date"),
                                 );
                             }
                         }
@@ -920,7 +888,7 @@ impl AppState {
             self.refuse(
                 Source::Update,
                 lang.with_reason(
-                    lang.pick("更新できません", "Cannot update"),
+                    lang.t("update-cannot-update"),
                     crate::lang::refusals::saving(lang),
                 ),
             );
@@ -957,10 +925,7 @@ impl AppState {
             if self.message.is_empty() {
                 self.refuse(
                     Source::Update,
-                    self.lang.pick(
-                        "保存しなかったので、更新しません。",
-                        "Not updating because the project was not saved.",
-                    ),
+                    self.lang.t("update-not-updating-because-the-project"),
                 );
             }
             return;
@@ -998,10 +963,7 @@ impl AppState {
             self.services.update.ready_open = false;
             self.fail(
                 Source::Update,
-                lang.pick(
-                    "ダウンロードしたファイルが変わっています。更新しません。",
-                    "The downloaded file has changed. Not updating.",
-                ),
+                lang.t("update-the-downloaded-file-has-changed"),
             );
             return;
         }
@@ -1009,9 +971,9 @@ impl AppState {
             Ok(()) => {
                 self.info(
                     Source::Update,
-                    lang.pick(
-                        format!("YoluPainter {} に更新します。", ready.version),
-                        format!("Updating to YoluPainter {}.", ready.version),
+                    lang.f(
+                        "update-updating-to-yolupainter",
+                        &[("version", &ready.version)],
                     ),
                 );
                 self.services.update.ready_open = false;
@@ -1019,13 +981,7 @@ impl AppState {
                 self.quit = true;
             }
             Err(_) => {
-                self.fail(
-                    Source::Update,
-                    lang.pick(
-                        "インストーラーを起動できません。",
-                        "Cannot start the installer.",
-                    ),
-                );
+                self.fail(Source::Update, lang.t("update-cannot-start-the-installer"));
             }
         }
     }

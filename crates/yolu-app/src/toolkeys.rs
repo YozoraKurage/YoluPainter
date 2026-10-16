@@ -59,19 +59,16 @@ impl ToolKeyMode {
     /// 選ぶ一覧の名前。
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Self::Tap => lang.pick("押すと切り替え", "Switch on Press"),
-            Self::Hold => lang.pick("押している間だけ", "Only While Held"),
-            Self::TapOrHold => lang.pick(
-                "短く押すと切り替え・長押しで押している間だけ",
-                "Tap to Switch, Hold for Temporary",
-            ),
+            Self::Tap => lang.t("toolkeys-switch-on-press"),
+            Self::Hold => lang.t("toolkeys-only-while-held"),
+            Self::TapOrHold => lang.t("toolkeys-tap-to-switch-hold-for"),
         }
     }
 
     /// 設定の表の欄に出す短い名前（長い名前は、欄に入りきらない）。
     pub fn short_label(self, lang: Lang) -> &'static str {
         match self {
-            Self::TapOrHold => lang.pick("短押し／長押し", "Tap / Hold"),
+            Self::TapOrHold => lang.t("toolkeys-tap-hold"),
             _ => self.label(lang),
         }
     }

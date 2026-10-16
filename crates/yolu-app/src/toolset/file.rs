@@ -81,22 +81,12 @@ pub enum Broken {
 impl Broken {
     pub fn describe(&self, lang: Lang) -> String {
         match self {
-            Broken::NotJson => lang.pick("JSON ではありません", "not JSON").into(),
-            Broken::Shape(at) => lang.pick(
-                format!("{at} の形が違います"),
-                format!("unexpected shape at {at}"),
-            ),
-            Broken::TooMany => lang.pick("数が上限を超えています", "over the limit").into(),
-            Broken::Duplicate => lang
-                .pick("同じ項目が 2 か所にあります", "an item appears twice")
-                .into(),
-            Broken::MissingTool => lang
-                .pick(
-                    "ブラシか消しゴムのツールがありません",
-                    "no brush or eraser tool",
-                )
-                .into(),
-            Broken::TooLarge => lang.pick("大きすぎます", "too large").into(),
+            Broken::NotJson => lang.t("toolset-not-json").into(),
+            Broken::Shape(at) => lang.f("toolset-unexpected-shape-at", &[("at", &at)]),
+            Broken::TooMany => lang.t("toolset-over-the-limit").into(),
+            Broken::Duplicate => lang.t("toolset-an-item-appears-twice").into(),
+            Broken::MissingTool => lang.t("toolset-no-brush-or-eraser-tool").into(),
+            Broken::TooLarge => lang.t("toolset-too-large").into(),
         }
     }
 }

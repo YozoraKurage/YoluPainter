@@ -70,9 +70,7 @@ pub fn rebind_document(
         let redraw = if can_redraw {
             redraw_one(doc, layer, &path, old, new, material, lang)
         } else {
-            Err(lang
-                .pick("レイヤーがロックされています", "The layer is locked")
-                .into())
+            Err(lang.t("pathtool-the-layer-is-locked").into())
         };
         let why = match redraw {
             Ok(note) => {
@@ -139,10 +137,5 @@ fn redraw_one(
     let gaps = rendered.gaps;
     doc.set_paths(layer, rebound, rendered.channels)
         .map_err(|e| lang.core_error(&e))?;
-    Ok((gaps > 0).then(|| {
-        lang.pick(
-            format!("{gaps} 個の標本は新しい面に投影できませんでした"),
-            format!("{gaps} sample(s) could not be projected onto the new surface"),
-        )
-    }))
+    Ok((gaps > 0).then(|| lang.f("pathtool-sample-s-could-not-be", &[("gaps", &gaps)])))
 }

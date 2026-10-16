@@ -24,13 +24,13 @@ pub fn restore_into(
     };
     let mask = selection.to_core().map_err(|e| {
         lang.with_reason(
-            lang.pick("選択範囲を読めません", "Cannot read the selection"),
+            lang.t("selection-cannot-read-the-selection"),
             lang.io_error(&e),
         )
     })?;
     doc.restore_selection(Some(mask)).map_err(|e| {
         lang.with_reason(
-            lang.pick("選択範囲を戻せません", "Cannot restore the selection"),
+            lang.t("selection-cannot-restore-the-selection"),
             lang.core_error(&e),
         )
     })
@@ -46,7 +46,7 @@ pub fn write_into(
     for (id, mask) in selections {
         let next = mask.map(Selection::from_core).transpose().map_err(|e| {
             lang.with_reason(
-                lang.pick("選択範囲の形にできません", "Cannot convert the selection"),
+                lang.t("selection-cannot-convert-the-selection"),
                 lang.io_error(&e),
             )
         })?;
@@ -60,7 +60,7 @@ pub fn write_into(
         }
         project = project.with_selection(id, next.as_ref()).map_err(|e| {
             lang.with_reason(
-                lang.pick("選択範囲を書けません", "Cannot write the selection"),
+                lang.t("selection-cannot-write-the-selection"),
                 lang.io_error(&e),
             )
         })?;
@@ -89,10 +89,7 @@ pub fn without_stale(
         if stale {
             project = project.with_selection(id, None).map_err(|e| {
                 lang.with_reason(
-                    lang.pick(
-                        "古い選択範囲を外せません",
-                        "Cannot drop the outdated selection",
-                    ),
+                    lang.t("selection-cannot-drop-the-outdated-selection"),
                     lang.io_error(&e),
                 )
             })?;
@@ -104,16 +101,13 @@ pub fn without_stale(
 /// 飛ばした項目の理由（短い文）。
 fn skip_text(lang: Lang, s: &Skipped) -> String {
     let reason = match &s.reason {
-        SkipReason::Index(_) => lang.pick("索引を読めません", "the index cannot be read"),
-        SkipReason::Item(_) => lang.pick("項目の形が正しくありません", "malformed item"),
-        SkipReason::MissingContent => lang.pick("中身がありません", "content is missing"),
-        SkipReason::UnreadableContent(_) => lang.pick("中身を読めません", "content cannot be read"),
-        SkipReason::WrongSize => lang.pick(
-            "キャンバスと大きさが違います",
-            "size differs from the canvas",
-        ),
-        SkipReason::DuplicateName => lang.pick("名前が重なっています", "duplicate name"),
-        SkipReason::TooMany => lang.pick("数の上限を超えています", "over the limit"),
+        SkipReason::Index(_) => lang.t("selection-the-index-cannot-be-read"),
+        SkipReason::Item(_) => lang.t("selection-malformed-item"),
+        SkipReason::MissingContent => lang.t("selection-content-is-missing"),
+        SkipReason::UnreadableContent(_) => lang.t("selection-content-cannot-be-read"),
+        SkipReason::WrongSize => lang.t("selection-size-differs-from-the-canvas"),
+        SkipReason::DuplicateName => lang.t("selection-duplicate-name"),
+        SkipReason::TooMany => lang.t("selection-over-the-limit"),
     };
     match &s.name {
         Some(name) => format!("{name} ({reason})"),
@@ -145,10 +139,7 @@ pub fn restore_saved_into(
     }
     let restored = doc.restore_saved_selections(list).map_err(|e| {
         lang.with_reason(
-            lang.pick(
-                "覚えた選択範囲を戻せません",
-                "Cannot restore the remembered selections",
-            ),
+            lang.t("selection-cannot-restore-the-remembered-selections"),
             lang.core_error(&e),
         )
     });
@@ -159,11 +150,8 @@ pub fn restore_saved_into(
     }
     let list: Vec<String> = skipped.iter().map(|s| skip_text(lang, s)).collect();
     Err(lang.kept_in_file(lang.with_reason(
-        lang.pick(
-            "読めない覚えた選択範囲があります",
-            "Some remembered selections cannot be read",
-        ),
-        list.join(lang.pick("、", ", ")),
+        lang.t("selection-some-remembered-selections-cannot-be"),
+        list.join(lang.t("selection-text")),
     )))
 }
 
@@ -202,10 +190,7 @@ pub fn write_saved_into(
     for (id, list) in lists {
         let stored = project.saved_selections(id).map_err(|e| {
             fail(
-                lang.pick(
-                    "覚えた選択範囲を読めません",
-                    "Cannot read the remembered selections",
-                ),
+                lang.t("selection-cannot-read-the-remembered-selections"),
                 lang.io_error(&e),
             )
         })?;
@@ -213,10 +198,7 @@ pub fn write_saved_into(
         for s in *list {
             let selection = Selection::from_core(&s.mask).map_err(|e| {
                 fail(
-                    lang.pick(
-                        "覚えた選択範囲の形にできません",
-                        "Cannot convert the remembered selections",
-                    ),
+                    lang.t("selection-cannot-convert-the-remembered-selections"),
                     lang.io_error(&e),
                 )
             })?;
@@ -242,10 +224,7 @@ pub fn write_saved_into(
         }
         project = project.with_saved_selections(id, &next).map_err(|e| {
             fail(
-                lang.pick(
-                    "覚えた選択範囲を書けません",
-                    "Cannot write the remembered selections",
-                ),
+                lang.t("selection-cannot-write-the-remembered-selections"),
                 lang.io_error(&e),
             )
         })?;

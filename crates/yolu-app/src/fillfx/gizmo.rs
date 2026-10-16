@@ -319,8 +319,7 @@ pub fn write_shape(
             if g.validate().is_err() {
                 app.fail(
                     NoticeSource::FillLayer,
-                    app.lang
-                        .pick("形の値が範囲外です", "The shape is out of range"),
+                    app.lang.t("fillfx-the-shape-is-out-of"),
                 );
                 return None;
             }
@@ -342,8 +341,7 @@ pub fn write_shape(
             if g.validate().is_err() {
                 app.fail(
                     NoticeSource::FillLayer,
-                    app.lang
-                        .pick("形の値が範囲外です", "The shape is out of range"),
+                    app.lang.t("fillfx-the-shape-is-out-of"),
                 );
                 return None;
             }
@@ -360,8 +358,7 @@ pub fn write_shape(
             if moved.validate().is_err() {
                 app.fail(
                     NoticeSource::Ruler,
-                    app.lang
-                        .pick("定規の値が範囲外です", "The ruler is out of range"),
+                    app.lang.t("fillfx-the-ruler-is-out-of"),
                 );
                 return None;
             }
@@ -391,14 +388,12 @@ pub fn release(app: &mut AppState, commit: bool) {
             let (source, text) = if matches!(d.target, Target::Ruler(..)) {
                 (
                     NoticeSource::Ruler,
-                    app.lang
-                        .pick("定規の操作をやめました", "Ruler edit cancelled"),
+                    app.lang.t("fillfx-ruler-edit-cancelled"),
                 )
             } else {
                 (
                     NoticeSource::FillLayer,
-                    app.lang
-                        .pick("形の操作をやめました", "Shape edit cancelled"),
+                    app.lang.t("fillfx-shape-edit-cancelled"),
                 )
             };
             app.info(source, text);

@@ -54,7 +54,7 @@ pub fn context(app: &AppState) -> Context {
 /// タブの名前。
 pub fn tab_labels(app: &AppState) -> [&'static str; 2] {
     let l = app.lang;
-    [l.pick("レイヤー", "Layer"), l.pick("ステンシル", "Stencil")]
+    [l.t("panels-layer"), l.t("panels-stencil")]
 }
 
 pub fn open_popup(
@@ -227,7 +227,7 @@ pub fn snap_symmetry_row(
         ui,
         rows,
         id,
-        lang.pick("対称定規にスナップ", "Snap to Symmetry Ruler"),
+        lang.t("panels-snap-to-symmetry-ruler"),
         value,
         unavailable,
         unavailable.is_none(),

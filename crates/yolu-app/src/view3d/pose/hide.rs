@@ -82,11 +82,8 @@ pub struct Skipped {
 impl Skipped {
     pub fn describe(&self, lang: Lang) -> String {
         let reason = match self.reason {
-            SkipReason::NotFound => lang.pick("ボーンがありません", "Bone not found"),
-            SkipReason::Ambiguous => lang.pick(
-                "同じ名前のボーンが複数あります",
-                "Several bones share the name",
-            ),
+            SkipReason::NotFound => lang.t("view3d-bone-not-found"),
+            SkipReason::Ambiguous => lang.t("view3d-several-bones-share-the-name"),
         };
         format!("{}: {} ({reason})", self.preset, self.path)
     }
@@ -238,13 +235,7 @@ fn change(app: &mut AppState, f: impl FnOnce(&mut HideState)) -> bool {
             if let Some(s) = app.view3d.pose.session.as_mut() {
                 s.hide = before;
             }
-            app.refuse(
-                Source::Pose,
-                lang.pick(
-                    "すべての面が隠れるため隠せません",
-                    "Cannot hide every surface",
-                ),
-            );
+            app.refuse(Source::Pose, lang.t("view3d-cannot-hide-every-surface"));
             false
         }
     }
@@ -278,10 +269,7 @@ pub fn hide_bone(app: &mut AppState, bone: usize) {
         mask_for(&s.rig, std::slice::from_ref(&entry)).is_none_or(|m| m.hidden_count() == 0)
     });
     if alone_hides_nothing {
-        app.warn(
-            Source::Pose,
-            lang.pick("隠れる面がありません", "No surfaces to hide"),
-        );
+        app.warn(Source::Pose, lang.t("view3d-no-surfaces-to-hide"));
     }
 }
 
@@ -351,7 +339,7 @@ pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
             saved.push(entry);
         }
     }
-    let fallback = lang.pick("隠し方", "Hide Set");
+    let fallback = lang.t("view3d-hide-set");
     let name = if name.trim().is_empty() {
         fallback
     } else {
@@ -360,16 +348,10 @@ pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
     match app.view3d.pose.hide_presets.add(name, saved) {
         Ok(id) => {
             if !unsaved.is_empty() {
-                let names = unsaved.join(lang.pick("・", ", "));
+                let names = unsaved.join(lang.t("view3d-text"));
                 app.warn(
                     Source::Pose,
-                    lang.with_reason(
-                        lang.pick(
-                            "同じ名前のボーンがあるので、保存できない項目があります",
-                            "Some items are not saved because bones share a name",
-                        ),
-                        names,
-                    ),
+                    lang.with_reason(lang.t("view3d-some-items-are-not-saved"), names),
                 );
             }
             Some(id)
@@ -402,7 +384,7 @@ pub fn delete_preset(app: &mut AppState, id: u32) {
         app.fail(
             Source::Pose,
             lang.with_reason(
-                lang.pick("隠し方を消せません", "Cannot delete the hide set"),
+                lang.t("view3d-cannot-delete-the-hide-set"),
                 e.describe(lang),
             ),
         );

@@ -75,12 +75,9 @@ impl Template {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Template::Pbr => lang.pick("PBR（すべてのチャンネル）", "PBR (all channels)"),
-            Template::LilToon => lang.pick(
-                "lilToon（カラー・ノーマル・エミッション）",
-                "lilToon (Color, Normal, Emission)",
-            ),
-            Template::ColorOnly => lang.pick("カラーのみ", "Color only"),
+            Template::Pbr => lang.t("newproject-pbr-all-channels"),
+            Template::LilToon => lang.t("newproject-liltoon-color-normal-emission"),
+            Template::ColorOnly => lang.t("newproject-color-only"),
         }
     }
 
@@ -93,7 +90,7 @@ impl Template {
             .collect();
         format!(
             "{}: {}",
-            lang.pick("チャンネル", "Channels"),
+            lang.t("newproject-channels-tip"),
             names.join(" · ")
         )
     }
@@ -501,7 +498,7 @@ pub(crate) const JOB: JobSpec = JobSpec {
         Some(JobCard {
             text: format!(
                 "{} — {}",
-                lang.pick("モデルを読み込み中", "Loading the model"),
+                lang.t("newproject-loading-the-model"),
                 r.file_name()
             ),
             fraction: r.fraction(),
@@ -546,13 +543,7 @@ impl AppState {
             }
             NpAction::CancelReopen => {
                 if self.np.reopening.take().is_some() {
-                    self.info(
-                        Source::Project,
-                        lang.pick(
-                            "モデルの読み込みを取り消しました。",
-                            "Model loading canceled.",
-                        ),
-                    );
+                    self.info(Source::Project, lang.t("newproject-model-loading-canceled"));
                 }
             }
             NpAction::AddSet => {
@@ -828,10 +819,8 @@ impl AppState {
             self.np.window = None;
             self.warn(
                 Source::Project,
-                self.lang.pick(
-                    "プロジェクトが変わったので、プロジェクト設定を閉じました。",
-                    "The project changed; Project Configuration was closed.",
-                ),
+                self.lang
+                    .t("newproject-the-project-changed-project-configuration"),
             );
         }
         if let Some(mut win) = self.np.window.take() {
@@ -877,10 +866,7 @@ impl AppState {
         if uids.len() >= self.session.sets.len() {
             self.refuse(
                 Source::Project,
-                lang.pick(
-                    "プロジェクトには少なくとも 1 つのテクスチャセットが要ります。",
-                    "A project keeps at least one texture set.",
-                ),
+                lang.t("newproject-a-project-keeps-at-least-2"),
             );
             return;
         }
@@ -949,7 +935,7 @@ pub fn new_set_document(
     let core = |e: crate::engine::CoreError| lang.core_error(&e);
     let mut doc = Document::with_tile_size(width, height, tile_size).map_err(core)?;
     let layer = doc
-        .add_layer(&format!("{} 1", lang.pick("レイヤー", "Layer")))
+        .add_layer(&format!("{} 1", lang.t("newproject-layer")))
         .map_err(core)?;
     for channel in channels {
         doc.set_channel_enabled(layer, *channel, true)

@@ -81,17 +81,15 @@ impl AdjustmentKind {
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            AdjustmentKind::Invert => lang.pick("階調の反転", "Invert"),
-            AdjustmentKind::Levels => lang.pick("レベル補正", "Levels"),
-            AdjustmentKind::HueSaturation => lang.pick("色相・彩度", "Hue / Saturation"),
-            AdjustmentKind::GradientMap => lang.pick("グラデーションマップ", "Gradient Map"),
-            AdjustmentKind::ToneCurve => lang.pick("トーンカーブ", "Tone Curve"),
-            AdjustmentKind::ColorBalance => lang.pick("カラーバランス", "Color Balance"),
-            AdjustmentKind::BrightnessContrast => {
-                lang.pick("明るさ・コントラスト", "Brightness / Contrast")
-            }
-            AdjustmentKind::Threshold => lang.pick("2 値化", "Threshold"),
-            AdjustmentKind::Posterize => lang.pick("ポスタリゼーション", "Posterize"),
+            AdjustmentKind::Invert => lang.t("m2-invert"),
+            AdjustmentKind::Levels => lang.t("m2-levels"),
+            AdjustmentKind::HueSaturation => lang.t("m2-hue-saturation"),
+            AdjustmentKind::GradientMap => lang.t("m2-gradient-map"),
+            AdjustmentKind::ToneCurve => lang.t("m2-tone-curve"),
+            AdjustmentKind::ColorBalance => lang.t("m2-color-balance"),
+            AdjustmentKind::BrightnessContrast => lang.t("m2-brightness-contrast"),
+            AdjustmentKind::Threshold => lang.t("m2-threshold"),
+            AdjustmentKind::Posterize => lang.t("m2-posterize"),
         }
     }
 
@@ -285,10 +283,10 @@ impl EffectKind {
     }
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            EffectKind::Paint => lang.pick("ペイント", "Paint"),
-            EffectKind::Blur => lang.pick("ぼかし", "Blur"),
-            EffectKind::Smudge => lang.pick("指先", "Smudge"),
-            EffectKind::Clone => lang.pick("クローン", "Clone"),
+            EffectKind::Paint => lang.t("m2-paint"),
+            EffectKind::Blur => lang.t("m2-blur"),
+            EffectKind::Smudge => lang.t("m2-smudge"),
+            EffectKind::Clone => lang.t("m2-clone"),
         }
     }
 }
@@ -431,28 +429,28 @@ pub fn presets() -> &'static [BrushPreset] {
 /// 組み込みのブラシの表示名と分類。
 pub fn preset_label(lang: Lang, preset: &BrushPreset) -> (&'static str, &'static str) {
     let name = match preset.id {
-        "soft-round" => lang.pick("ソフト円", "Soft Round"),
-        "hard-round" => lang.pick("ハード円", "Hard Round"),
-        "airbrush" => lang.pick("エアブラシ", "Airbrush"),
-        "pencil" => lang.pick("鉛筆", "Pencil"),
-        "ink-pen" => lang.pick("インクペン", "Ink Pen"),
-        "marker" => lang.pick("マーカー", "Marker"),
-        "chalk" => lang.pick("チョーク", "Chalk"),
-        "charcoal" => lang.pick("木炭", "Charcoal"),
-        "dry-brush" => lang.pick("かすれ筆", "Dry Brush"),
-        "watercolor" => lang.pick("水彩の縁", "Watercolor Edge"),
-        "splatter" => lang.pick("飛沫", "Splatter"),
-        "soft-eraser" => lang.pick("ソフト消しゴム", "Soft Eraser"),
-        "hard-eraser" => lang.pick("ハード消しゴム", "Hard Eraser"),
+        "soft-round" => lang.t("m2-soft-round"),
+        "hard-round" => lang.t("m2-hard-round"),
+        "airbrush" => lang.t("m2-airbrush"),
+        "pencil" => lang.t("m2-pencil"),
+        "ink-pen" => lang.t("m2-ink-pen"),
+        "marker" => lang.t("m2-marker"),
+        "chalk" => lang.t("m2-chalk"),
+        "charcoal" => lang.t("m2-charcoal"),
+        "dry-brush" => lang.t("m2-dry-brush"),
+        "watercolor" => lang.t("m2-watercolor-edge"),
+        "splatter" => lang.t("m2-splatter"),
+        "soft-eraser" => lang.t("m2-soft-eraser"),
+        "hard-eraser" => lang.t("m2-hard-eraser"),
         _ => preset.name,
     };
     let category = match preset.category {
-        "Basic" => lang.pick("基本", "Basic"),
-        "Drawing" => lang.pick("描画", "Drawing"),
-        "Dry media" => lang.pick("乾いた画材", "Dry media"),
-        "Paint" => lang.pick("絵の具", "Paint"),
-        "Effects" => lang.pick("効果", "Effects"),
-        "Erasers" => lang.pick("消しゴム", "Erasers"),
+        "Basic" => lang.t("m2-basic"),
+        "Drawing" => lang.t("m2-drawing"),
+        "Dry media" => lang.t("m2-dry-media"),
+        "Paint" => lang.t("m2-paint-2"),
+        "Effects" => lang.t("m2-effects"),
+        "Erasers" => lang.t("m2-erasers"),
         _ => preset.category,
     };
     (name, category)
@@ -461,13 +459,13 @@ pub fn preset_label(lang: Lang, preset: &BrushPreset) -> (&'static str, &'static
 /// 筆先・紙の質感の画像の名前（組み込みの生成画像）。
 pub fn tip_label(lang: Lang, id: &str) -> &'static str {
     match id {
-        "grain" => lang.pick("粒子", "Grain"),
-        "noisy-disc" => lang.pick("ざらついた円", "Noisy Disc"),
-        "charcoal" => lang.pick("木炭", "Charcoal"),
-        "bristles" => lang.pick("毛先", "Bristles"),
-        "dots" => lang.pick("ドット", "Dots"),
-        "rim" => lang.pick("縁取り", "Rim"),
-        "rounded-square" => lang.pick("角丸の四角", "Rounded Square"),
+        "grain" => lang.t("m2-grain-tip"),
+        "noisy-disc" => lang.t("m2-noisy-disc-tip"),
+        "charcoal" => lang.t("m2-charcoal-tip"),
+        "bristles" => lang.t("m2-bristles-tip"),
+        "dots" => lang.t("m2-dots-tip"),
+        "rim" => lang.t("m2-rim-tip"),
+        "rounded-square" => lang.t("m2-rounded-square-tip"),
         _ => "",
     }
 }
@@ -479,7 +477,7 @@ pub fn tip_display(lang: Lang, tip: &yolu_core::BrushTip) -> String {
         return builtin.to_owned();
     }
     if tip.name().trim().is_empty() {
-        lang.pick("取り込んだ画像", "Imported image").to_owned()
+        lang.t("m2-imported-image-tip").to_owned()
     } else {
         tip.name().to_owned()
     }
@@ -501,10 +499,10 @@ pub fn texture_mode_label(lang: Lang, mode: TextureMode) -> &'static str {
 /// アンチエイリアスの段の名前。
 pub fn anti_alias_label(lang: Lang, level: AntiAlias) -> &'static str {
     match level {
-        AntiAlias::None => lang.pick("なし", "None"),
-        AntiAlias::Weak => lang.pick("弱", "Weak"),
-        AntiAlias::Medium => lang.pick("中", "Medium"),
-        AntiAlias::Strong => lang.pick("強", "Strong"),
+        AntiAlias::None => lang.t("m2-none"),
+        AntiAlias::Weak => lang.t("m2-weak"),
+        AntiAlias::Medium => lang.t("m2-medium"),
+        AntiAlias::Strong => lang.t("m2-strong"),
     }
 }
 
@@ -519,10 +517,10 @@ pub fn dual_mode_label(lang: Lang, mode: DualBrushMode) -> &'static str {
         DualBrushMode::HardMix => blend_label(lang, BlendMode::HardMix),
         DualBrushMode::Subtract => blend_label(lang, BlendMode::Subtract),
         DualBrushMode::Normal => blend_label(lang, BlendMode::Normal),
-        DualBrushMode::Add => lang.pick("加算(発光)", "Add (Glow)"),
+        DualBrushMode::Add => lang.t("m2-add-glow"),
         DualBrushMode::Lighten => blend_label(lang, BlendMode::Lighten),
         DualBrushMode::Screen => blend_label(lang, BlendMode::Screen),
-        DualBrushMode::LinearHeight => lang.pick("高さ(リニア)", "Height (Linear)"),
+        DualBrushMode::LinearHeight => lang.t("m2-height-linear"),
     }
 }
 
@@ -583,12 +581,12 @@ pub fn direction_name(direction: NormalYDirection) -> &'static str {
 /// チャンネルの表示名（標準の 6 つは日本語ならカタカナ。ユーザーチャンネルは文書の名前）。
 pub fn channel_name(lang: Lang, doc: &Document, channel: Channel) -> String {
     let standard = match channel {
-        Channel::Color => Some(lang.pick("カラー", "Color")),
-        Channel::Roughness => Some(lang.pick("ラフネス", "Roughness")),
-        Channel::Metallic => Some(lang.pick("メタリック", "Metallic")),
-        Channel::Height => Some(lang.pick("ハイト", "Height")),
-        Channel::Normal => Some(lang.pick("ノーマル", "Normal")),
-        Channel::Emission => Some(lang.pick("エミッション", "Emission")),
+        Channel::Color => Some(lang.t("m2-color")),
+        Channel::Roughness => Some(lang.t("m2-roughness")),
+        Channel::Metallic => Some(lang.t("m2-metallic")),
+        Channel::Height => Some(lang.t("m2-height")),
+        Channel::Normal => Some(lang.t("m2-normal")),
+        Channel::Emission => Some(lang.t("m2-emission")),
         _ => None,
     };
     match standard {
@@ -615,9 +613,9 @@ pub fn channel_icon(channel: Channel) -> &'static str {
 /// チャンネルの種類の名前（新しいチャンネルの名前の元。画面の種類の欄は形式の名前 [`channel_format`]）。
 pub fn kind_name(lang: Lang, kind: ChannelKind) -> &'static str {
     match kind {
-        ChannelKind::Color => lang.pick("カラー", "Color"),
-        ChannelKind::Scalar => lang.pick("スカラー", "Scalar"),
-        ChannelKind::Normal => lang.pick("ノーマル", "Normal"),
+        ChannelKind::Color => lang.t("m2-color"),
+        ChannelKind::Scalar => lang.t("m2-scalar"),
+        ChannelKind::Normal => lang.t("m2-normal"),
     }
 }
 
@@ -662,10 +660,10 @@ pub fn new_channel_info(name: String, kind: ChannelKind) -> ChannelInfo {
 /// レイヤーの種類の名前とアイコン。
 pub fn layer_kind_label(lang: Lang, kind: LayerKind) -> &'static str {
     match kind {
-        LayerKind::Raster => lang.pick("レイヤー", "Layer"),
-        LayerKind::Fill => lang.pick("塗りつぶし", "Fill"),
-        LayerKind::Adjustment => lang.pick("調整", "Adjustment"),
-        LayerKind::Group => lang.pick("グループ", "Group"),
+        LayerKind::Raster => lang.t("m2-layer"),
+        LayerKind::Fill => lang.t("m2-fill"),
+        LayerKind::Adjustment => lang.t("m2-adjustment"),
+        LayerKind::Group => lang.t("m2-group"),
     }
 }
 
@@ -988,10 +986,8 @@ impl AppState {
                 if rulers > 0 {
                     self.info(
                         Source::Layer,
-                        self.lang.pick(
-                            format!("グループの定規 {rulers} 個も一緒に削除しました"),
-                            format!("Also deleted the group's {rulers} ruler(s)"),
-                        ),
+                        self.lang
+                            .f("m2-also-deleted-the-group-s", &[("rulers", &rulers)]),
                     );
                 }
             }
@@ -1098,26 +1094,17 @@ impl AppState {
                     self.info(
                         Source::Channel,
                         if settings.derive_from_height() {
-                            lang.pick("ハイト → ノーマルをオンにしました。", "Height → Normal on.")
+                            lang.t("m2-height-normal-on")
                         } else {
-                            lang.pick(
-                                "ハイト → ノーマルをオフにしました。",
-                                "Height → Normal off.",
-                            )
+                            lang.t("m2-height-normal-off")
                         },
                     );
                 } else if settings.file_direction() != old.file_direction() {
                     self.info(
                         Source::Channel,
-                        lang.pick(
-                            format!(
-                                "ノーマルのファイル: {}",
-                                direction_name(settings.file_direction())
-                            ),
-                            format!(
-                                "Normal files: {}",
-                                direction_name(settings.file_direction())
-                            ),
+                        lang.f(
+                            "m2-normal-files",
+                            &[("file_direction", &direction_name(settings.file_direction()))],
                         ),
                     );
                 }
@@ -1145,10 +1132,7 @@ impl AppState {
         match self.session.doc.cancel_coalescing() {
             Ok(true) => {
                 crate::automation::record::drag_cancelled(self, revision);
-                self.info(
-                    Source::Layer,
-                    self.lang.pick("取り消しました。", "Cancelled."),
-                );
+                self.info(Source::Layer, self.lang.t("m2-cancelled"));
             }
             Ok(false) => {}
             Err(e) => self.notify(
@@ -1458,7 +1442,7 @@ impl AppState {
         }
         if layer.kind() != LayerKind::Raster {
             return Some(lang.with_reason(
-                lang.pick("このレイヤーには描けません", "Cannot paint on this layer"),
+                lang.t("m2-cannot-paint-on-this-layer"),
                 layer_kind_label(lang, layer.kind()),
             ));
         }
@@ -1498,9 +1482,7 @@ pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
         .selected_layer
         .filter(|id| app.session.doc.layer(*id).is_some())
     else {
-        return Err(lang
-            .pick("塗るレイヤーがありません", "No layer to paint")
-            .into());
+        return Err(lang.t("m2-no-layer-to-paint").into());
     };
     if let Some(reason) = app.paint_blocker() {
         return Err(reason);

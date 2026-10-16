@@ -38,14 +38,14 @@ pub const HELP_MENU: usize = 7;
 /// 言語ごとのメニューバーの見出し。
 pub fn menu_titles(lang: Lang) -> [&'static str; 8] {
     [
-        lang.pick("ファイル", "File"),
-        lang.pick("編集", "Edit"),
-        lang.pick("レイヤー", "Layer"),
-        lang.pick("選択範囲", "Select"),
-        lang.pick("フィルター", "Filter"),
-        lang.pick("表示", "View"),
-        lang.pick("ウィンドウ", "Window"),
-        lang.pick("ヘルプ", "Help"),
+        lang.t("shell-file"),
+        lang.t("shell-edit"),
+        lang.t("shell-layer"),
+        lang.t("shell-select"),
+        lang.t("shell-filter"),
+        lang.t("shell-view"),
+        lang.t("shell-window"),
+        lang.t("shell-help"),
     ]
 }
 
@@ -61,21 +61,15 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
     vec![
         Entry::submenu(
-            l.pick("インポート", "Import"),
+            l.t("shell-import"),
             vec![
                 Entry::item(
-                    l.pick(
-                        "PSD を新しいテクスチャセットに…",
-                        "PSD as a New Texture Set…",
-                    ),
+                    l.t("shell-psd-as-a-new-texture"),
                     Action::Psd(PsdAction::ImportDialog(PsdTarget::NewSet)),
                 )
                 .enabled(free),
                 Entry::item(
-                    l.pick(
-                        "PSD を今のテクスチャセットに…",
-                        "PSD into the Current Texture Set…",
-                    ),
+                    l.t("shell-psd-into-the-current-texture"),
                     Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)),
                 )
                 .enabled(free && app.read_only_reason().is_none()),
@@ -84,7 +78,7 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
         .enabled(free),
         command_item(l, "file.export", Action::Export(ExportAction::OpenWindow)).enabled(free),
         Entry::item(
-            l.pick("PSD を書き出す…", "Export PSD…"),
+            l.t("shell-export-psd"),
             Action::Psd(PsdAction::ExportDialog),
         )
         .enabled(free),
@@ -108,18 +102,15 @@ fn recent_entry(app: &AppState, enabled: bool) -> Entry<Action> {
         })
         .collect();
     entries.push(Entry::Separator);
-    entries.push(Entry::item(
-        l.pick("一覧を消す", "Clear Recent"),
-        Action::ClearRecent,
-    ));
-    Entry::submenu(l.pick("最近開いたプロジェクト", "Open Recent"), entries)
+    entries.push(Entry::item(l.t("shell-clear-recent"), Action::ClearRecent));
+    Entry::submenu(l.t("shell-open-recent"), entries)
         .enabled(enabled && !app.recent_projects.is_empty())
 }
 
 /// ファイルのメニューの「復旧…」（保存の間・描いている間は押せない。復旧が無効のときも押せない）。
 fn recovery_entry(app: &AppState, idle: bool) -> Entry<Action> {
     Entry::item(
-        app.lang.pick("復旧…", "Recovery…"),
+        app.lang.t("shell-recovery"),
         Action::Recovery(crate::recovery::RecoveryAction::OpenWindow),
     )
     .enabled(idle && app.services.recovery.is_enabled())
@@ -149,7 +140,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
                 why(command_item(l, "file.save", Action::SaveProject).enabled(idle)),
                 why(command_item(l, "file.save_as", Action::SaveProjectAsDialog).enabled(idle)),
                 why(Entry::item(
-                    l.pick("配布用に保存…", "Save for Distribution…"),
+                    l.t("shell-save-for-distribution"),
                     Action::Distribute(crate::distribute::DistributeAction::Start),
                 )
                 .enabled(idle && !app.distribute.is_open() && !app.distribute.is_busy())),
@@ -160,7 +151,7 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             entries.extend([
                 Entry::Separator,
                 Entry::item(
-                    l.pick("プロジェクト設定…", "Project Configuration…"),
+                    l.t("shell-project-configuration"),
                     Action::Project(crate::newproject::NpAction::OpenConfigure),
                 )
                 .enabled(free),
@@ -257,14 +248,8 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
             .enabled(free),
             Entry::Separator,
             crate::mode::view_menu_entry(app),
-            Entry::item(
-                l.pick(
-                    "3D ビューでモデル全体を見る",
-                    "Frame the Model in the 3D View",
-                ),
-                Action::FrameModel,
-            )
-            .enabled(free && app.view3d.model.is_some()),
+            Entry::item(l.t("shell-frame-the-model-in-the"), Action::FrameModel)
+                .enabled(free && app.view3d.model.is_some()),
         ],
         WINDOW_MENU => crate::detach::menu::window_entries(app),
         _ => help_entries(app),
@@ -274,16 +259,10 @@ pub fn menu_entries(app: &AppState, index: usize) -> Vec<Entry<Action>> {
 /// ヘルプのメニュー。更新の項目は、公開鍵を組み込んだビルドだけに出る（新しい版があれば先頭に）。
 fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     let l = app.lang;
-    let about = Entry::item(
-        l.pick("YoluPainter について", "About YoluPainter"),
-        Action::About,
-    );
+    let about = Entry::item(l.t("shell-about-yolupainter-tip"), Action::About);
     if !app.services.update.enabled() {
         return vec![
-            Entry::item(
-                l.pick("ログのフォルダを開く", "Open Log Folder"),
-                Action::OpenLogFolder,
-            ),
+            Entry::item(l.t("shell-open-log-folder-tip"), Action::OpenLogFolder),
             about,
         ];
     }
@@ -298,14 +277,14 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
     }
     entries.push(
         Entry::item(
-            l.pick("更新を確かめる…", "Check for Updates…"),
+            l.t("shell-check-for-updates-tip"),
             Action::Update(UpdateAction::Check),
         )
         .enabled(!busy),
     );
     entries.push(Entry::Separator);
     entries.push(Entry::item(
-        l.pick("ログのフォルダを開く", "Open Log Folder"),
+        l.t("shell-open-log-folder-tip"),
         Action::OpenLogFolder,
     ));
     entries.push(about);
@@ -327,7 +306,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             let name = crate::m2::channel_name(app.lang, &app.session.doc, channel);
             let lang = app.lang;
             let own_item = Entry::item(
-                lang.pick(format!("{name} だけの値"), format!("{name} only")),
+                lang.f("shell-only", &[("name", &name)]),
                 Action::M2(Edit::OwnBlend {
                     id,
                     channel,
@@ -336,17 +315,9 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             )
             .checked(own)
             .tooltip(if own {
-                lang.pick(
-                    format!("{name} だけの合成モードと不透明度（押すとレイヤーの値に戻す）"),
-                    format!(
-                        "{name} only: its own blend mode and opacity (click to follow the layer)"
-                    ),
-                )
+                lang.f("shell-only-its-own-blend-mode-tip", &[("name", &name)])
             } else {
-                lang.pick(
-                    format!("レイヤーの合成モードと不透明度（押すと {name} 専用にする）"),
-                    format!("The layer's blend mode and opacity (click to give {name} its own)"),
-                )
+                lang.f("shell-the-layer-s-blend-mode-tip", &[("name", &name)])
             });
             [own_item, Entry::Separator]
                 .into_iter()
@@ -370,26 +341,26 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             let writable = set.is_some_and(|s| s.read_only.is_none());
             let l = app.lang;
             vec![
-                Entry::item(l.pick("名前を変更", "Rename"), Action::StartRenameSet(uid))
+                Entry::item(l.t("shell-rename"), Action::StartRenameSet(uid))
                     .enabled(!app.is_stroking() && writable),
                 Entry::item(
                     if visible {
-                        l.pick("隠す", "Hide")
+                        l.t("shell-hide")
                     } else {
-                        l.pick("見せる", "Show")
+                        l.t("shell-show")
                     },
                     Action::ToggleSetVisible(uid),
                 ),
                 Entry::Separator,
                 // 下の帯のベイクのボタンは、帯が狭いと隠れる。ここからも開ける（ベイクのウィンドウで、焼くセットを選ぶ）
                 Entry::item(
-                    l.pick("メッシュマップをベイク…", "Bake Mesh Maps…"),
+                    l.t("shell-bake-mesh-maps"),
                     Action::Bake(crate::bake::BakeAction::OpenWindow),
                 )
                 .command_key("bake.open"),
                 Entry::Separator,
                 Entry::item(
-                    l.pick("消す…", "Remove…"),
+                    l.t("shell-remove"),
                     Action::Project(crate::newproject::NpAction::RemoveSets(vec![uid])),
                 )
                 .enabled(!app.is_stroking() && app.session.sets.len() > 1),
@@ -416,12 +387,10 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
 /// 変形のメニューの項目（左右反転・上下反転・90° 回転）。
 fn transform_entry(l: Lang, x: Xform, free: bool) -> Entry<Action> {
     let name = match x {
-        Xform::Flip { horizontal: true } => l.pick("左右反転", "Flip Horizontal"),
-        Xform::Flip { horizontal: false } => l.pick("上下反転", "Flip Vertical"),
-        Xform::Rotate90 { clockwise: true } => {
-            l.pick("時計回りに 90° 回転", "Rotate 90° Clockwise")
-        }
-        _ => l.pick("反時計回りに 90° 回転", "Rotate 90° Counter-clockwise"),
+        Xform::Flip { horizontal: true } => l.t("shell-flip-horizontal"),
+        Xform::Flip { horizontal: false } => l.t("shell-flip-vertical"),
+        Xform::Rotate90 { clockwise: true } => l.t("shell-rotate-90-clockwise"),
+        _ => l.t("shell-rotate-90-counter-clockwise"),
     };
     Entry::item(name, Action::M2(Edit::Transform(x))).enabled(free)
 }
@@ -440,11 +409,8 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     let lang = app.lang;
     let free = !app.is_stroking();
     let mut v = crate::layermenu::creation_entries(app);
-    let new_group = Entry::item(
-        lang.pick("新規グループ", "New Group"),
-        Action::M2(Edit::NewGroup),
-    )
-    .enabled(free);
+    let new_group =
+        Entry::item(lang.t("shell-new-group"), Action::M2(Edit::NewGroup)).enabled(free);
     let Some(id) = id.filter(|id| app.session.doc.layer(*id).is_some()) else {
         v.push(Entry::Separator);
         v.push(new_group);
@@ -509,22 +475,19 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         // 塗りつぶしレイヤーのパスは画素にできない（パスの欄のボタンと同じ条件）
         let can = app.path_can_rasterize(id);
         let mut entry = Entry::item(
-            lang.pick("パスをラスタライズ", "Rasterize Path"),
+            lang.t("shell-rasterize-path"),
             Action::Path(PathAction::Rasterize(id)),
         )
         .enabled(free && can);
         if !can {
-            entry = entry.tooltip(lang.pick(
-                "塗りつぶしレイヤーのパスは画素にできません",
-                "A path on a fill layer cannot become pixels",
-            ));
+            entry = entry.tooltip(lang.t("shell-a-path-on-a-fill-tip"));
         }
         v.push(entry);
     }
     if layer.is_some_and(|l| l.text().is_some()) {
         v.push(
             Entry::item(
-                lang.pick("テキストをラスタライズ", "Rasterize Text"),
+                lang.t("shell-rasterize-text"),
                 Action::Text(crate::textlayer::TextAction::Rasterize(id)),
             )
             .enabled(free),
@@ -533,7 +496,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     // アセットの棚へ（レイヤーのまとまり・マスク）
     v.push(
         Entry::item(
-            lang.pick("スマートマテリアルとして保存", "Save as Smart Material"),
+            lang.t("shell-save-as-smart-material"),
             Action::Shelf(ShelfOp::SaveMaterial(id)),
         )
         .enabled(free),
@@ -542,7 +505,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     if let Some(l) = layer.filter(|l| l.kind() == crate::engine::LayerKind::Fill) {
         let refusal = crate::library::ops::material_refusal(lang, l);
         let entry = Entry::item(
-            lang.pick("マテリアルとして保存", "Save as Material"),
+            lang.t("shell-save-as-material"),
             Action::Shelf(ShelfOp::SaveAsMaterial(id)),
         )
         .enabled(free && refusal.is_none());
@@ -554,10 +517,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     if has_mask {
         v.push(
             Entry::item(
-                lang.pick(
-                    "マスクをスマートマスクとして保存",
-                    "Save Mask as Smart Mask",
-                ),
+                lang.t("shell-save-mask-as-smart-mask"),
                 Action::Shelf(ShelfOp::SaveMask(id)),
             )
             .enabled(free),
@@ -567,7 +527,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     v.push(Entry::Separator);
     v.push(
         Entry::item(
-            lang.pick("参照レイヤー", "Reference Layer"),
+            lang.t("shell-reference-layer"),
             Action::Region(crate::region::RegionAction::ReferenceLayer(id)),
         )
         .checked(app.region.references.contains(&(app.session.doc.id(), id)))
@@ -575,7 +535,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     );
     v.push(
         Entry::item(
-            lang.pick("クリッピング", "Clipping"),
+            lang.t("shell-clipping"),
             Action::M2(Edit::Clipping(id, !layer.is_some_and(|l| l.clipping()))),
         )
         .checked(layer.is_some_and(|l| l.clipping()))
@@ -585,7 +545,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     if has_mask {
         v.push(
             Entry::item(
-                lang.pick("マスクに描く", "Paint on Mask"),
+                lang.t("shell-paint-on-mask"),
                 Action::M2Ui(UiOp::EditMask(!editing)),
             )
             .checked(editing)
@@ -593,7 +553,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
         v.push(
             Entry::item(
-                lang.pick("マスクを有効にする", "Enable Mask"),
+                lang.t("shell-enable-mask"),
                 Action::M2(Edit::MaskEnabled(id, !mask.is_some_and(|m| m.enabled()))),
             )
             .checked(mask.is_some_and(|m| m.enabled()))
@@ -601,7 +561,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
         v.push(
             Entry::item(
-                lang.pick("マスクを反転", "Invert Mask"),
+                lang.t("shell-invert-mask"),
                 Action::M2(Edit::MaskInverted(id, !mask.is_some_and(|m| m.inverted()))),
             )
             .checked(mask.is_some_and(|m| m.inverted()))
@@ -609,7 +569,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
         v.push(
             Entry::item(
-                lang.pick("レイヤーマスクを削除", "Delete Layer Mask"),
+                lang.t("shell-delete-layer-mask"),
                 Action::M2(Edit::RemoveMask(id)),
             )
             .enabled(free),
@@ -617,7 +577,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     } else {
         v.push(
             Entry::item(
-                lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
+                lang.t("shell-add-layer-mask"),
                 Action::M2(Edit::AddMask(id)),
             )
             .enabled(free),
@@ -647,11 +607,11 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
     }
     v.push(Entry::Separator);
-    v.push(Entry::item(lang.pick("名前を変更", "Rename"), Action::StartRename(id)).enabled(free));
+    v.push(Entry::item(lang.t("shell-rename"), Action::StartRename(id)).enabled(free));
     if multi {
         v.push(
             Entry::item(
-                lang.pick("表示を切り替え", "Toggle Visibility"),
+                lang.t("shell-toggle-visibility"),
                 Action::M2(Edit::ToggleSelectedVisible),
             )
             .enabled(free),
@@ -660,9 +620,9 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         v.push(
             Entry::item(
                 if visible {
-                    lang.pick("非表示にする", "Hide")
+                    lang.t("shell-hide-2")
                 } else {
-                    lang.pick("表示する", "Show")
+                    lang.t("shell-show-2")
                 },
                 Action::ToggleVisible(id),
             )
@@ -670,31 +630,16 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         );
     }
     v.push(Entry::Separator);
-    v.push(
-        Entry::item(
-            lang.pick("レイヤーを上へ", "Move Layer Up"),
-            Action::LayerUp,
-        )
-        .enabled(free),
-    );
-    v.push(
-        Entry::item(
-            lang.pick("レイヤーを下へ", "Move Layer Down"),
-            Action::LayerDown,
-        )
-        .enabled(free),
-    );
+    v.push(Entry::item(lang.t("shell-move-layer-up"), Action::LayerUp).enabled(free));
+    v.push(Entry::item(lang.t("shell-move-layer-down"), Action::LayerDown).enabled(free));
     let removed: usize = members
         .iter()
         .map(|m| m2::subtree_len(&app.session.doc, *m))
         .sum::<usize>()
         .max(m2::subtree_len(&app.session.doc, id));
     v.push(
-        Entry::item(
-            lang.pick("レイヤーを削除", "Delete Layer"),
-            Action::DeleteLayer,
-        )
-        .enabled(free && app.session.doc.layers().len() > removed),
+        Entry::item(lang.t("shell-delete-layer"), Action::DeleteLayer)
+            .enabled(free && app.session.doc.layers().len() > removed),
     );
     v
 }
@@ -992,17 +937,14 @@ pub fn link_entries(app: &AppState) -> Vec<Entry<Action>> {
     }
     entries.push(Entry::Separator);
     entries.push(
-        Entry::item(l.pick("受け付ける", "Accept"), Action::ToggleLiveLink)
+        Entry::item(l.t("shell-accept"), Action::ToggleLiveLink)
             .radio(on)
             .enabled(!on),
     );
     entries.push(
-        Entry::item(
-            l.pick("受け付けない", "Don't accept"),
-            Action::ToggleLiveLink,
-        )
-        .radio(!on)
-        .enabled(on),
+        Entry::item(l.t("shell-don-t-accept"), Action::ToggleLiveLink)
+            .radio(!on)
+            .enabled(on),
     );
     entries
 }

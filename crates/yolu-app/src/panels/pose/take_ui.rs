@@ -35,7 +35,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         "pose.take",
         None,
         &label,
-        Some(lang.pick("FBX の中のテイク", "Take in the FBX")),
+        Some(lang.t("panels-take-in-the-fbx-tip")),
         free,
         0.0,
     );
@@ -50,12 +50,12 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         "pose.take.frame",
         frame as f32,
         &SliderSpec::new(
-            lang.pick("フレーム", "Frame"),
+            lang.t("panels-frame"),
             range.0 as f32,
             range.1 as f32,
             NumberFormat::int(""),
         )
-        .tooltip(lang.pick("テイクの中の時刻（フレーム）", "Time in the take (frame)"))
+        .tooltip(lang.t("panels-time-in-the-take-frame-tip"))
         .enabled(free && range.1 > range.0),
     );
     if out.changed || out.released {
@@ -67,13 +67,10 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         row,
         "pose.take.apply",
-        lang.pick("ポーズにする", "Apply as Pose"),
+        lang.t("panels-apply-as-pose"),
         false,
         free && !busy && !running,
-        Some(lang.pick(
-            "このテイクのこのフレームのポーズにする（ポーズの取り消しに 1 段積む）",
-            "Pose the model as in this frame of the take (one pose undo step)",
-        )),
+        Some(lang.t("panels-pose-the-model-as-in-tip")),
         None,
     )
     .clicked()

@@ -53,21 +53,17 @@ impl Problem {
     pub fn message(&self, lang: Lang) -> String {
         let reason = match &self.reason {
             ProblemReason::Invalid(text) => text.pick(super::ops_lang(lang)).to_owned(),
-            ProblemReason::TooLarge => lang
-                .pick("ファイルが大きすぎます", "the file is too large")
-                .to_owned(),
-            ProblemReason::Unreadable => lang
-                .pick("ファイルを読めません", "the file cannot be read")
-                .to_owned(),
-            ProblemReason::TooMany => lang.pick(
-                format!("アクションは {MAX_ACTIONS} 個までです"),
-                format!("at most {MAX_ACTIONS} actions"),
+            ProblemReason::TooLarge => lang.t("automation-the-file-is-too-large").to_owned(),
+            ProblemReason::Unreadable => lang.t("automation-the-file-cannot-be-read").to_owned(),
+            ProblemReason::TooMany => lang.f(
+                "automation-at-most-actions",
+                &[("MAX_ACTIONS", &MAX_ACTIONS)],
             ),
         };
         lang.with_reason(
-            lang.pick(
-                format!("アクションのファイル{}を読めません", lang.quote(&self.file)),
-                format!("Cannot read the action file {}", lang.quote(&self.file)),
+            lang.f(
+                "automation-cannot-read-the-action-file",
+                &[("file", &lang.quote(&self.file))],
             ),
             reason,
         )
@@ -92,26 +88,15 @@ impl StoreError {
     /// 理由の文（`Lang::with_reason` の「なぜ」）。
     pub fn reason(&self, lang: Lang) -> String {
         match self {
-            StoreError::NoFolder => lang
-                .pick("設定のフォルダがありません", "there is no settings folder")
-                .to_owned(),
-            StoreError::TooMany => lang.pick(
-                format!("アクションは {MAX_ACTIONS} 個までです"),
-                format!("at most {MAX_ACTIONS} actions"),
+            StoreError::NoFolder => lang.t("automation-there-is-no-settings-folder").to_owned(),
+            StoreError::TooMany => lang.f(
+                "automation-at-most-actions",
+                &[("MAX_ACTIONS", &MAX_ACTIONS)],
             ),
-            StoreError::NameTaken => lang
-                .pick(
-                    "同じ名前のアクションがあります",
-                    "an action with the same name exists",
-                )
-                .to_owned(),
+            StoreError::NameTaken => lang.t("automation-an-action-with-the-same").to_owned(),
             StoreError::BadName(e) => e.message.pick(super::ops_lang(lang)).to_owned(),
-            StoreError::TooLarge => lang
-                .pick("ファイルが大きすぎます", "the file would be too large")
-                .to_owned(),
-            StoreError::Io => lang
-                .pick("ファイルを書けません", "the file cannot be written")
-                .to_owned(),
+            StoreError::TooLarge => lang.t("automation-the-file-would-be-too").to_owned(),
+            StoreError::Io => lang.t("automation-the-file-cannot-be-written").to_owned(),
         }
     }
 }
@@ -255,7 +240,7 @@ impl ActionStore {
 
     /// 新しいアクションの名前（「アクション 1」から、重ならない番号）。
     pub fn new_name(&self, lang: Lang) -> String {
-        let base = lang.pick("アクション", "Action");
+        let base = lang.t("automation-action");
         (1..)
             .map(|n| format!("{base} {n}"))
             .find(|name| !self.name_taken(name, None))

@@ -123,10 +123,7 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
         reset,
         "brush.detail.reset",
         "restart_alt",
-        &lang.pick(
-            format!("{}を既定に戻す", category.name(lang)),
-            format!("Reset {}", category.name(lang)),
-        ),
+        &lang.f("panels-reset-tip", &[("name", &category.name(lang))]),
         false,
         true,
         15.0,
@@ -186,13 +183,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         .entry(app.brushes.lib.current())
         .map(|e| e.name_in(lang))
         .unwrap_or_default();
-    let title = format!("{} — {name}", lang.pick("ブラシの詳細", "Brush Details"));
+    let title = format!("{} — {name}", lang.t("panels-brush-details"));
     let spec = Spec {
         title: &title,
         icon: Some("tune"),
         size: vec2(WIDTH, HEIGHT),
         modal: false,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("panels-close"),
     };
     let mut offset: Vec2 = app.ui.brushes_detail_offset;
     let closed = window::show(ctx, id(), &spec, &mut offset, false, |ui, frame| {

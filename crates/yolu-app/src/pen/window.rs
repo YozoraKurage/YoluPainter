@@ -290,8 +290,8 @@ impl AppState {
 
 fn why_text(lang: crate::lang::Lang, why: FitError) -> &'static str {
     match why {
-        FitError::TooFew => lang.pick("線が足りません", "Not enough strokes"),
-        FitError::TooNarrow => lang.pick("筆圧がほぼ一定です", "The pressure barely varies"),
+        FitError::TooFew => lang.t("pen-not-enough-strokes"),
+        FitError::TooNarrow => lang.t("pen-the-pressure-barely-varies"),
     }
 }
 
@@ -387,22 +387,16 @@ pub(crate) fn rows(ui: &mut egui::Ui, rows: &mut w::Rows, app: &mut AppState, vi
     let sliders = [
         (
             "low",
-            lang.pick("下限", "Low"),
+            lang.t("pen-low"),
             adjust.low(),
-            lang.pick(
-                "この筆圧以下を 0 にする（軽く触れただけの揺れを無くす）",
-                "Pen pressure at or below this counts as zero (ignores the light touches)",
-            ),
+            lang.t("pen-pen-pressure-at-or-below"),
             true,
         ),
         (
             "high",
-            lang.pick("上限", "High"),
+            lang.t("pen-high"),
             adjust.high(),
-            lang.pick(
-                "この筆圧以上を 1 にする（強く押さなくても最大にする）",
-                "Pen pressure at or above this counts as full (reach the maximum without pressing hard)",
-            ),
+            lang.t("pen-pen-pressure-at-or-above"),
             false,
         ),
     ];
@@ -432,51 +426,39 @@ pub(crate) fn rows(ui: &mut egui::Ui, rows: &mut w::Rows, app: &mut AppState, vi
     let draw = rows.row(DRAW_HEIGHT, GAP);
     draw_frame(ui, draw, &app.ui.pressure, &adjust);
     ui.interact(draw, id.with("draw"), egui::Sense::hover())
-        .on_hover_text(lang.pick(
-            "普段の強さで何本か描く。描いた線はプロジェクトに入らない",
-            "Draw a few strokes at your usual strength. The strokes are not part of the project",
-        ));
+        .on_hover_text(lang.t("pen-draw-a-few-strokes-at-tip"));
     let row = rows.row(t::ROW_HEIGHT, GAP);
     let buttons = w::Rows::split(row, 4, GAP);
     let items = [
         (
             "fit",
-            lang.pick("自動調整", "Auto"),
+            lang.t("pen-auto"),
             can_fit,
-            lang.pick(
-                "描いた線の筆圧から、下限・上限・曲線を決める",
-                "Low, high and curve from the drawn strokes",
-            ),
+            lang.t("pen-low-high-and-curve-from"),
             PressureAction::Fit,
             true,
         ),
         (
             "clear",
-            lang.pick("消す", "Clear"),
+            lang.t("pen-clear"),
             has_strokes,
-            lang.pick("描いた線を消す", "Removes the drawn strokes"),
+            lang.t("pen-removes-the-drawn-strokes"),
             PressureAction::Clear,
             false,
         ),
         (
             "revert",
-            lang.pick("元に戻す", "Revert"),
+            lang.t("pen-revert"),
             !reverted,
-            lang.pick(
-                "「ペン」を開いたときの調整に戻す",
-                "Goes back to the adjustment from when Pen was opened",
-            ),
+            lang.t("pen-goes-back-to-the-adjustment"),
             PressureAction::Revert,
             false,
         ),
         (
             "reset",
-            lang.pick("既定", "Default"),
+            lang.t("pen-default"),
             !adjust.is_default(),
-            lang.pick(
-                "下限 0%・上限 100%・直線に戻す",
-                "Back to low 0%, high 100% and a straight line",
-            ),
+            lang.t("pen-back-to-low-0-high"),
             PressureAction::Reset,
             false,
         ),

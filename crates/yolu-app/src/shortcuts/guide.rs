@@ -62,20 +62,14 @@ pub fn tables(lang: Lang) -> String {
             continue;
         }
         out.push_str(&format!("### {}\n\n", section.label(lang)));
-        out.push_str(lang.pick(
-            "| 操作 | キー |\n|---|---|\n",
-            "| Action | Key |\n|---|---|\n",
-        ));
+        out.push_str(lang.t("shortcuts-action-key"));
         for (name, keys) in rows {
             out.push_str(&format!("| {} | {keys} |\n", escape(&name)));
         }
         out.push('\n');
     }
-    out.push_str(&format!("### {}\n\n", lang.pick("マウス", "Mouse")));
-    out.push_str(lang.pick(
-        "| 操作 | 組み合わせ | 効くモード |\n|---|---|---|\n",
-        "| Action | Combination | Mode |\n|---|---|---|\n",
-    ));
+    out.push_str(&format!("### {}\n\n", lang.t("shortcuts-mouse")));
+    out.push_str(lang.t("shortcuts-action-combination-mode"));
     for g in GESTURES.iter() {
         let binding = super::gestures::Binding {
             scope: g.scope,

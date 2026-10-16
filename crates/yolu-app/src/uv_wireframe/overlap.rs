@@ -291,10 +291,7 @@ impl AppState {
         self.uv_overlap.noticed.insert(uid);
         self.info(
             Source::Brush,
-            self.lang.pick(
-                "重なった UV は同じテクセルを使うので、片側だけには描けません。",
-                "Overlapping UVs share the same texels, so one side cannot be painted alone.",
-            ),
+            self.lang.t("uv_wireframe-overlapping-uvs-share-the-same"),
         );
     }
 }
@@ -320,7 +317,7 @@ pub fn note_surface(app: &mut AppState, rect: egui::Rect, at: Pos2) {
 /// 表示のメニューの入口（UV ワイヤーフレームの下）。
 pub fn menu_entry(app: &AppState) -> crate::ui::menu::Entry<Action> {
     crate::ui::menu::Entry::item(
-        app.lang.pick("重なった UV", "Overlapping UVs"),
+        app.lang.t("uv_wireframe-overlapping-uvs"),
         Action::ToggleUvOverlap,
     )
     .checked(app.prefs.settings.uv_overlap)

@@ -60,18 +60,11 @@ pub fn press(
         app.refuse(
             Source::Transform,
             if app.transform_targets().is_empty() {
-                app.lang.pick(
-                    "動かす画素のあるレイヤーがありません。",
-                    "No layer with pixels to move.",
-                )
+                app.lang.t("transform-no-layer-with-pixels-to")
             } else if app.session.doc.selection().is_some() {
-                app.lang.pick(
-                    "選択範囲の中に動かす画素がありません。",
-                    "No pixels to move inside the selection.",
-                )
+                app.lang.t("transform-no-pixels-to-move-inside")
             } else {
-                app.lang
-                    .pick("動かす画素がありません。", "No pixels to move.")
+                app.lang.t("transform-no-pixels-to-move")
             },
         );
         return;
@@ -144,10 +137,7 @@ pub fn commit(app: &mut AppState) {
             if collapses(&t) {
                 app.refuse(
                     Source::Transform,
-                    app.lang.pick(
-                        "潰れてしまうので変形しません。",
-                        "That would collapse the layer.",
-                    ),
+                    app.lang.t("transform-that-would-collapse-the-layer"),
                 );
                 return;
             }
@@ -164,7 +154,7 @@ pub fn cancel(app: &mut AppState) -> bool {
     if any {
         app.info(
             Source::Transform,
-            app.lang.pick("変形をやめました。", "Transform cancelled."),
+            app.lang.t("transform-transform-cancelled"),
         );
     }
     any

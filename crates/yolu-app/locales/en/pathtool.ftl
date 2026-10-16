@@ -1,0 +1,35 @@
+# Screen text (pathtool). Keys are "pathtool-" plus a short name from the English text; tooltip keys end in -tip.
+
+pathtool-outside-the-canvas = Outside the canvas
+pathtool-path = Path
+pathtool-copy = { $name } copy
+pathtool-path-copied = Path copied.
+pathtool-no-path-has-been-copied = No path has been copied
+pathtool-cannot-add-a-path = Cannot add a path
+pathtool-a-layer-holds-up-to = a layer holds up to 256 paths
+pathtool-paths-on-the-canvas-and = paths on the canvas and on the model do not share them
+pathtool-the-path-was-drawn-on = the path was drawn on another model
+pathtool-cannot-paste = Cannot paste
+pathtool-no-model = No model
+pathtool-a-path-cannot-be-drawn = A path cannot be drawn on a mask
+pathtool-no-layer-to-paint-on = No layer to paint on.
+pathtool-this-layer-has-a-path = This layer has a path on the model
+pathtool-this-layer-has-a-canvas = This layer has a canvas path
+pathtool-the-path-was-drawn-on-2 = The path was drawn on another model
+pathtool-point-move-cancelled = Point move cancelled.
+pathtool-rasterized = Rasterized.
+pathtool-not-available-while-the-model = Not available while the model is posed
+pathtool-a-3d-path-can-mirror = A 3D path can mirror across one plane only
+pathtool-the-model-changed-so-the = The model changed, so the point move was cancelled.
+pathtool-sample-s-were-off-the = { $gaps } sample(s) were off the surface and skipped
+pathtool-text = {" "}
+pathtool-cannot-redraw-the-path-of = Cannot redraw the path of layer { $name }
+pathtool-path-preset-saved = Path preset saved.
+pathtool-cannot-save-the-path-preset = Cannot save the path preset
+pathtool-cannot-rename-the-path-preset = Cannot rename the path preset
+pathtool-cannot-delete-the-path-preset = Cannot delete the path preset
+pathtool-no-image-in-the-assets = No image in the assets
+pathtool-the-layer-is-locked = The layer is locked
+pathtool-sample-s-could-not-be = { $gaps } sample(s) could not be projected onto the new surface
+pathtool-not-on-the-model = Not on the model
+pathtool-surface-of-another-texture-set = Surface of another texture set ({ $name }).

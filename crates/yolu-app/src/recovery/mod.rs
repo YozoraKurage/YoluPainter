@@ -816,10 +816,7 @@ impl AppState {
         if !saved {
             self.fail(
                 Source::Recovery,
-                self.lang.pick(
-                    "復旧の設定を保存できません。",
-                    "Cannot save the recovery settings.",
-                ),
+                self.lang.t("recovery-cannot-save-the-recovery-settings"),
             );
         }
     }
@@ -836,8 +833,7 @@ impl AppState {
             self.refuse(
                 Source::Recovery,
                 self.lang.with_reason(
-                    self.lang
-                        .pick("復旧を開けません", "Cannot open the recovery"),
+                    self.lang.t("recovery-cannot-open-the-recovery"),
                     crate::lang::refusals::saving(self.lang),
                 ),
             );

@@ -54,7 +54,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         icon: Some("select_all"),
         size: vec2(WIDTH, height),
         modal: true,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("selection-close"),
     };
     let id = window_id();
     let mut offset = app.ui.sel_dialog_offset;
@@ -66,7 +66,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let mut y = frame.body.top() + 14.0;
         let slider_rect = Rect::from_min_size(pos2(left, y), vec2(width, t::SLIDER_ROW_HEIGHT));
         let slider = SliderSpec::new(
-            lang.pick("半径", "Radius"),
+            lang.t("selection-radius"),
             0.0,
             MAX_MODIFY_RADIUS as f32,
             NumberFormat::int(" px"),
@@ -89,12 +89,9 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 ui,
                 row,
                 id.with("edge-lock"),
-                lang.pick("端を固定", "Edge lock"),
+                lang.t("selection-edge-lock"),
                 dialog.edge_lock,
-                Some(lang.pick(
-                    "選択範囲がキャンバスの外へ続くものとして扱う（縮小・境界線・ぼかしがキャンバスの端から離れない）",
-                    "Treat the selection as continuing past the canvas edge (Shrink, Border and Feather do not pull away from it)",
-                )),
+                Some(lang.t("selection-treat-the-selection-as-continuing-tip")),
                 true,
             );
         }
@@ -112,7 +109,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             ui,
             cancel_rect,
             id.with("cancel"),
-            lang.pick("キャンセル", "Cancel"),
+            lang.t("selection-cancel"),
             false,
             true,
             None,

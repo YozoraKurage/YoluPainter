@@ -59,17 +59,11 @@ fn pick(ui: &mut Ui, app: &mut AppState, response: &Response, color: &Swatch) {
         }
     }
     response.context_menu(|ui| {
-        if ui
-            .button(app.lang.pick("メインの色", "Foreground color"))
-            .clicked()
-        {
+        if ui.button(app.lang.t("panels-foreground-color")).clicked() {
             app.color.set_main(color.rgba);
             ui.close();
         }
-        if ui
-            .button(app.lang.pick("サブの色", "Background color"))
-            .clicked()
-        {
+        if ui.button(app.lang.t("panels-background-color")).clicked() {
             app.color.sub = color.rgba;
             ui.close();
         }
@@ -92,35 +86,32 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         }
                     })
                     .response
-                    .on_hover_text(lang.pick("カラーセット", "Color Sets"));
+                    .on_hover_text(lang.t("panels-color-sets-tip"));
                 if active != app.colorsets.active_index() {
                     app.colorsets.switch(active);
                 }
-                ui.menu_button(lang.pick("編集", "Edit"), |ui| {
-                    if ui.button(lang.pick("新規セット", "New Set")).clicked() {
+                ui.menu_button(lang.t("panels-edit"), |ui| {
+                    if ui.button(lang.t("panels-new-set")).clicked() {
                         let r = app.colorsets.add_set(Palette {
-                            name: lang.pick("新規セット", "New Set").into(),
+                            name: lang.t("panels-new-set").into(),
                             colors: Vec::new(),
                         });
                         report(app, r);
                         ui.close();
                     }
-                    if ui
-                        .button(lang.pick("セットを複製", "Duplicate Set"))
-                        .clicked()
-                    {
+                    if ui.button(lang.t("panels-duplicate-set")).clicked() {
                         let r = app.colorsets.duplicate(lang);
                         report(app, r);
                         ui.close();
                     }
-                    if ui.button(lang.pick("名前を変更", "Rename")).clicked() {
+                    if ui.button(lang.t("panels-rename")).clicked() {
                         app.colorsets.rename = Some(app.colorsets.palette().name.clone());
                         ui.close();
                     }
                     if ui
                         .add_enabled(
                             app.colorsets.entries().len() > 1,
-                            egui::Button::new(lang.pick("セットを削除", "Delete Set")),
+                            egui::Button::new(lang.t("panels-delete-set")),
                         )
                         .clicked()
                     {
@@ -129,7 +120,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button(lang.pick("読み込み", "Import")).clicked() {
+                    if ui.button(lang.t("panels-import")).clicked() {
                         if let Some(path) = crate::dialog::file(app, Place::ColorSet)
                             .add_filter("GPL / ACO", &["gpl", "aco"])
                             .pick_file()
@@ -141,11 +132,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         ui.close();
                     }
                     if ui
-                        .button(lang.pick("書き出し", "Export"))
-                        .on_hover_text(lang.pick(
-                            "GIMP パレット（RGB・8 ビット）",
-                            "GIMP palette (RGB, 8-bit)",
-                        ))
+                        .button(lang.t("panels-export-2"))
+                        .on_hover_text(lang.t("panels-gimp-palette-rgb-8-bit-tip"))
                         .clicked()
                     {
                         // 透明色を含む場合は保存先のウィンドウを開く前に理由を返す。
@@ -177,8 +165,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                     );
                     response
                         .clone()
-                        .on_hover_text(lang.pick("セット名", "Set name"));
-                    if ui.button(lang.pick("確定", "Apply")).clicked()
+                        .on_hover_text(lang.t("panels-set-name-tip"));
+                    if ui.button(lang.t("panels-apply")).clicked()
                         || (response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
                         let result = app.colorsets.edit(Edit::Rename(name.clone()));
@@ -196,7 +184,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 }
             }
             ui.horizontal_wrapped(|ui| {
-                if ui.button(lang.pick("色を追加", "Add Color")).clicked() {
+                if ui.button(lang.t("panels-add-color")).clicked() {
                     let r = app.colorsets.edit(Edit::Add(app.color.main));
                     report(app, r);
                 }
@@ -204,7 +192,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 if ui
                     .add_enabled(
                         selected.is_some(),
-                        egui::Button::new(lang.pick("置き換え", "Replace")),
+                        egui::Button::new(lang.t("panels-replace")),
                     )
                     .clicked()
                 {
@@ -216,7 +204,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                 if ui
                     .add_enabled(
                         selected.is_some(),
-                        egui::Button::new(lang.pick("削除", "Delete")),
+                        egui::Button::new(lang.t("panels-delete")),
                     )
                     .clicked()
                 {
@@ -261,7 +249,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                     report(app, r);
                 }
             }
-            egui::CollapsingHeader::new(lang.pick("履歴", "History"))
+            egui::CollapsingHeader::new(lang.t("panels-history"))
                 .default_open(true)
                 .show(ui, |ui| {
                     let cols = colorsets::columns(ui.available_width());
@@ -280,7 +268,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                             }
                         });
                 });
-            egui::CollapsingHeader::new(lang.pick("中間色", "Intermediate Colors"))
+            egui::CollapsingHeader::new(lang.t("panels-intermediate-colors"))
                 .default_open(true)
                 .show(ui, |ui| {
                     let side = ((ui.available_width() - 12.0) / 7.0).clamp(1.0, 24.0);
@@ -300,10 +288,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                                         _ => None,
                                     };
                                     let name = match corner {
-                                        Some(0) => lang.pick("左上", "Top left"),
-                                        Some(1) => lang.pick("右上", "Top right"),
-                                        Some(2) => lang.pick("左下", "Bottom left"),
-                                        Some(3) => lang.pick("右下", "Bottom right"),
+                                        Some(0) => lang.t("panels-top-left"),
+                                        Some(1) => lang.t("panels-top-right"),
+                                        Some(2) => lang.t("panels-bottom-left"),
+                                        Some(3) => lang.t("panels-bottom-right"),
                                         _ => "",
                                     };
                                     let c = Swatch {

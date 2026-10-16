@@ -25,11 +25,8 @@ pub enum Mode {
 impl Mode {
     pub fn label(self, lang: Lang) -> &'static str {
         match self {
-            Self::Visible => lang.pick("画面の色を取得", "Pick Screen Color"),
-            Self::HideWindow => lang.pick(
-                "ウィンドウを隠して画面の色を取得",
-                "Hide Window and Pick Screen Color",
-            ),
+            Self::Visible => lang.t("screen_pick-pick-screen-color"),
+            Self::HideWindow => lang.t("screen_pick-hide-window-and-pick-screen"),
         }
     }
     /// 操作の ID（キーの割り当て・ボタンの識別に使う）。
@@ -56,19 +53,10 @@ enum Failure {
 impl Failure {
     fn text(self, lang: Lang) -> &'static str {
         match self {
-            Self::Unsupported => lang.pick(
-                "画面の色の取得は Windows のみ対応",
-                "Screen color picking is available on Windows only",
-            ),
-            Self::Capture => lang.pick("画面を取得できません", "Screen capture unavailable"),
-            Self::Overlay => lang.pick(
-                "画面の色の選択を開始できません",
-                "Screen color picker unavailable",
-            ),
-            Self::Budget => lang.pick(
-                "画面の大きさが取得の上限を超えています",
-                "Screen capture size limit exceeded",
-            ),
+            Self::Unsupported => lang.t("screen_pick-screen-color-picking-is-available"),
+            Self::Capture => lang.t("screen_pick-screen-capture-unavailable"),
+            Self::Overlay => lang.t("screen_pick-screen-color-picker-unavailable"),
+            Self::Budget => lang.t("screen_pick-screen-capture-size-limit-exceeded"),
         }
     }
 }

@@ -260,8 +260,7 @@ pub fn commit(app: &mut AppState) -> bool {
     if d.input_limit_exceeded {
         app.warn(
             Source::Transform,
-            app.lang
-                .pick("ゆがみの入力数が上限です", "Liquify input limit reached"),
+            app.lang.t("transform-liquify-input-limit-reached"),
         );
         return true;
     }

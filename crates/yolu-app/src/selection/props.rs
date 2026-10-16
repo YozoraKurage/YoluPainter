@@ -64,9 +64,9 @@ fn creation_group(ui: &mut Ui, app: &mut AppState, y: f32, h: f32, x: f32, held:
 /// 帯の中の選択ペン・選択消しの名前（英語は帯に入る短さ）。
 fn pen_name(l: Lang, erase: bool) -> &'static str {
     if erase {
-        l.pick("選択消し", "Eraser")
+        l.t("selection-eraser")
     } else {
-        l.pick("選択ペン", "Pen")
+        l.t("selection-pen")
     }
 }
 
@@ -76,13 +76,13 @@ fn pen_tooltip(l: Lang, erase: bool) -> String {
     if erase {
         super::name_with_modifier(
             l,
-            l.pick("選択消し", "Selection Eraser"),
+            l.t("selection-selection-eraser-tip"),
             Some(Operation::SelectionSubtract),
         )
     } else {
         super::name_with_modifier(
             l,
-            l.pick("選択ペン", "Selection Pen"),
+            l.t("selection-selection-pen-tip"),
             Some(Operation::SelectionAdd),
         )
     }
@@ -160,8 +160,8 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
             at,
             "options.sel-pen.size",
             b.radius * 2.0,
-            &SliderSpec::new(l.pick("直径", "Size"), 1.0, 256.0, NumberFormat::int(" px"))
-                .tooltip(l.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])")),
+            &SliderSpec::new(l.t("selection-size"), 1.0, 256.0, NumberFormat::int(" px"))
+                .tooltip(l.t("selection-brush-diameter-and-tip")),
         );
         if out.changed {
             b.radius = (out.value / 2.0).max(0.5);
@@ -190,7 +190,7 @@ pub fn select_options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
 
 fn wand_tolerance_spec(l: Lang) -> SliderSpec<'static> {
     SliderSpec::new(
-        l.pick("許容値", "Tolerance"),
+        l.t("selection-tolerance"),
         0.0,
         255.0,
         NumberFormat::int(""),
@@ -331,17 +331,13 @@ pub fn creation_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         .collect();
     // 共通を選んでいるあいだは、畳む設定でも 4 つ出る（畳めない）ので、押せない
     let pinned = app.sel.combine == SelectionCombine::Intersect;
-    let label = l.pick("すべての作成方法", "All modes");
+    let label = l.t("selection-all-modes");
     let more = MoreButton {
         label,
         lit: all || effective == SelectionCombine::Intersect,
         enabled: !pinned,
         tooltip: if pinned {
-            l.pick(
-                "すべての作成方法（共通を選んでいる間）",
-                "All modes (while Intersect is chosen)",
-            )
-            .to_owned()
+            l.t("selection-all-modes-while-intersect-is-tip").to_owned()
         } else {
             label.to_owned()
         },
@@ -408,7 +404,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "props.wand.contiguous",
-            lang.pick("隣接", "Contiguous"),
+            lang.t("selection-contiguous"),
             app.sel.contiguous,
             None,
             true,
@@ -419,7 +415,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "props.wand.all-layers",
-            lang.pick("全レイヤーを対象", "Sample All Layers"),
+            lang.t("selection-sample-all-layers"),
             app.sel.all_layers,
             None,
             true,
@@ -432,24 +428,23 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             lang,
             "props.wand.snap-symmetry",
             app.sel.snap_symmetry,
-            app.paints_only_in_3d()
-                .then(|| lang.pick("2D だけ", "2D only")),
+            app.paints_only_in_3d().then(|| lang.t("selection-2d-only")),
         ) {
             app.sel.snap_symmetry = v;
         }
         return;
     }
     if tool == Tool::SelectPen {
-        let shared = lang.pick("ブラシと共通", "Shared with the brush");
+        let shared = lang.t("selection-shared-with-the-brush");
         if let Some(v) = slider_row(
             ui,
             rows,
             "sel.pen.size",
-            lang.pick("直径", "Size"),
+            lang.t("selection-size"),
             app.brush.radius * 2.0,
             (1.0, 256.0),
             NumberFormat::int(" px"),
-            Some(lang.pick("ブラシの直径（[ と ]）", "Brush diameter ([ and ])")),
+            Some(lang.t("selection-brush-diameter-and-tip")),
             true,
         ) {
             app.brush.radius = (v / 2.0).max(0.5);
@@ -458,7 +453,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "sel.pen.hardness",
-            lang.pick("硬さ", "Hardness"),
+            lang.t("selection-hardness"),
             app.brush.hardness * 100.0,
             (0.0, 100.0),
             NumberFormat::int("%"),
@@ -471,7 +466,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "sel.pen.opacity",
-            lang.pick("不透明度", "Opacity"),
+            lang.t("selection-opacity"),
             app.brush.opacity * 100.0,
             (0.0, 100.0),
             NumberFormat::int("%"),
@@ -496,9 +491,9 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
         ui,
         rows,
         "sel.antialias",
-        lang.pick("アンチエイリアス", "Anti-alias"),
+        lang.t("selection-anti-alias"),
         app.sel.antialias,
-        (!aa_applies).then(|| lang.pick("角が丸いときに効く", "Applies to rounded corners")),
+        (!aa_applies).then(|| lang.t("selection-applies-to-rounded-corners-tip")),
         aa_applies,
     ) {
         app.sel.antialias = v;
@@ -508,11 +503,11 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "sel.fixed-ratio",
-            lang.pick("縦横比を固定", "Fixed ratio"),
+            lang.t("selection-fixed-ratio"),
             app.sel.fixed_ratio,
             Some(&crate::shortcuts::named_with_keys(
                 lang,
-                lang.pick("縦横比を固定", "Fixed ratio"),
+                lang.t("selection-fixed-ratio-tip"),
                 &[Some(super::shape::RATIO_KEY.to_owned())],
             )),
             true,
@@ -523,11 +518,11 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "sel.from-center",
-            lang.pick("中心から", "From center"),
+            lang.t("selection-from-center"),
             app.sel.from_center,
             Some(&crate::shortcuts::named_with_keys(
                 lang,
-                lang.pick("中心から", "From center"),
+                lang.t("selection-from-center-tip"),
                 &[Some(super::shape::CENTER_KEY.to_owned())],
             )),
             true,
@@ -540,7 +535,7 @@ fn tool_settings(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             "sel.corner-radius",
-            lang.pick("角の丸め", "Corner radius"),
+            lang.t("selection-corner-radius"),
             app.sel.corner_radius as f32,
             (0.0, 512.0),
             NumberFormat::int(" px"),

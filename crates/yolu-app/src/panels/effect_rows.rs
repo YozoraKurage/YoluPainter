@@ -341,9 +341,9 @@ fn effect_row(
         vec2(24.0, row.height() - 4.0),
     );
     let eye_tip = if enabled_stage {
-        lang.pick("フィルターを無効にする", "Turn the filter off")
+        lang.t("panels-turn-the-filter-off-tip")
     } else {
-        lang.pick("フィルターを有効にする", "Turn the filter on")
+        lang.t("panels-turn-the-filter-on-tip")
     };
     if w::icon_button(
         ui,
@@ -454,7 +454,7 @@ fn effect_row(
             at(0.0),
             ("fx.up", id.0),
             "expand_less",
-            lang.pick("上へ（後から掛かる）", "Move up (applied later)"),
+            lang.t("panels-move-up-applied-later-tip"),
             false,
             can_edit && index + 1 < count,
             14.0,
@@ -472,7 +472,7 @@ fn effect_row(
             at(20.0),
             ("fx.down", id.0),
             "expand_more",
-            lang.pick("下へ（先に掛かる）", "Move down (applied earlier)"),
+            lang.t("panels-move-down-applied-earlier-tip"),
             false,
             can_edit && index > 0,
             14.0,
@@ -490,7 +490,7 @@ fn effect_row(
             at(40.0),
             ("fx.remove", id.0),
             "close",
-            lang.pick("フィルターを削除", "Remove the filter"),
+            lang.t("panels-remove-the-filter-tip"),
             false,
             can_edit,
             13.0,
@@ -585,7 +585,7 @@ fn anchor_row(
     x += 19.0;
     let buttons = selected || hover;
     let right = row.right() - 4.0 - if buttons { 20.0 } else { 0.0 };
-    let count = lang.pick(format!("{readers} 段が読む"), format!("read by {readers}"));
+    let count = lang.f("panels-read-by", &[("readers", &readers)]);
     let count_w =
         (w::text_width(&painter, &count, t::LABEL_DIM) + 6.0).min((right - x - 40.0).max(0.0));
     let name_rect = Rect::from_min_max(
@@ -626,7 +626,7 @@ fn anchor_row(
             Rect::from_min_size(pos2(right, row.top() + 1.0), vec2(20.0, row.height() - 2.0)),
             ("fx.anchor.remove", id.0),
             "close",
-            lang.pick("アンカーを外す", "Remove the anchor"),
+            lang.t("panels-remove-the-anchor-tip"),
             false,
             can_edit,
             13.0,

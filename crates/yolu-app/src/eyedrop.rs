@@ -175,10 +175,7 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
     let Some(hit) = pick(&model.geometry, &view, p) else {
         app.refuse(
             Source::Eyedropper,
-            lang.pick(
-                "ポインタの下にモデルがありません",
-                "Nothing of the model under the pointer",
-            ),
+            lang.t("eyedrop-nothing-of-the-model-under"),
         );
         return false;
     };
@@ -187,10 +184,7 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
     else {
         app.refuse(
             Source::Eyedropper,
-            lang.pick(
-                "この面にはテクスチャセットがありません",
-                "No texture set for this surface",
-            ),
+            lang.t("eyedrop-no-texture-set-for-this"),
         );
         return false;
     };
@@ -199,13 +193,7 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
         (doc.width(), doc.height())
     };
     let Some((x, y)) = texel_of(hit.uv, w, h) else {
-        app.refuse(
-            Source::Eyedropper,
-            lang.pick(
-                "この面の UV はテクスチャの外です",
-                "This surface's UV is outside the texture",
-            ),
-        );
+        app.refuse(Source::Eyedropper, lang.t("eyedrop-this-surface-s-uv-is"));
         return false;
     };
     pick_texel(app, set, x, y)
@@ -367,10 +355,7 @@ fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reade
     if read.is_empty() {
         app.refuse(
             Source::Eyedropper,
-            lang.pick(
-                "そこには何もありません（透明）。",
-                "Nothing to pick there (transparent).",
-            ),
+            lang.t("eyedrop-nothing-to-pick-there-transparent"),
         );
         return false;
     }
@@ -386,10 +371,10 @@ fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reade
             }
             names.push(channel_name(lang, &app.session.doc, *channel));
         }
-        let joined = names.join(lang.pick("・", ", "));
+        let joined = names.join(lang.t("eyedrop-text"));
         app.info(
             Source::Eyedropper,
-            format!("{} {joined}", lang.pick("取得:", "Picked")),
+            format!("{} {joined}", lang.t("eyedrop-picked")),
         );
     } else {
         let px = read[0].1;
@@ -399,7 +384,7 @@ fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reade
             Source::Eyedropper,
             format!(
                 "{} R {} G {} B {}",
-                lang.pick("取得:", "Picked"),
+                lang.t("eyedrop-picked"),
                 px.r,
                 px.g,
                 px.b
@@ -444,10 +429,7 @@ pub fn options(ui: &mut Ui, app: &mut AppState, r: Rect, x: f32) {
         "options.eyedropper.all-layers",
         all_layers_label(lang),
         app.eyedrop.all_layers,
-        Some(lang.pick(
-            "選んだレイヤーでなく、チャンネルの合成から取る",
-            "Pick from the composite instead of the selected layer",
-        )),
+        Some(lang.t("eyedrop-pick-from-the-composite-instead-tip")),
         true,
     );
     crate::screen_pick::options(ui, app, r, x + width + 8.0);
@@ -462,10 +444,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
         "props.eyedropper.all-layers",
         all_layers_label(lang),
         app.eyedrop.all_layers,
-        Some(lang.pick(
-            "選んだレイヤーでなく、チャンネルの合成から取る",
-            "Pick from the composite instead of the selected layer",
-        )),
+        Some(lang.t("eyedrop-pick-from-the-composite-instead-tip")),
         true,
     ) {
         app.eyedrop.all_layers = v;
@@ -474,7 +453,7 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, _ctx: &egui::Cont
 }
 
 fn all_layers_label(lang: Lang) -> &'static str {
-    lang.pick("全レイヤーを対象", "Sample All Layers")
+    lang.t("eyedrop-sample-all-layers")
 }
 
 /// 機能の表の行（スポイトの印の見本は前の文書を読んだもの。文書のバージョンは別の文書と同じ値になりうるので、文書を替えたら捨てる）。

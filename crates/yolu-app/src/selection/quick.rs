@@ -42,10 +42,9 @@ impl AppState {
         self.info(
             Source::Selection,
             if want {
-                self.lang.pick("クイックマスク", "Quick Mask")
+                self.lang.t("selection-quick-mask")
             } else {
-                self.lang
-                    .pick("クイックマスクを終えました。", "Quick Mask off.")
+                self.lang.t("selection-quick-mask-off")
             },
         );
     }

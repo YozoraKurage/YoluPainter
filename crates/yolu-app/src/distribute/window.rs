@@ -26,66 +26,36 @@ const MAX_NAMES: usize = 40;
 /// 種類の名前。
 pub fn label(lang: Lang, removal: Removal) -> &'static str {
     match removal {
-        Removal::PsdOriginals => lang.pick("PSD の原本", "Original PSDs"),
-        Removal::UnusedShelf => lang.pick("使っていないアセット", "Unused assets"),
-        Removal::SourcePaths => lang.pick("素材の出どころのパス", "Asset source paths"),
-        Removal::ModelReference => lang.pick("モデルの参照", "Model reference"),
-        Removal::MeshMaps => lang.pick("メッシュマップ", "Mesh maps"),
-        Removal::UnityValues => lang.pick("Unity のマテリアルの値", "Unity material values"),
-        Removal::SavedSelections => lang.pick("覚えた選択範囲", "Remembered selections"),
-        Removal::StaleEntries => lang.pick("古いサムネイルなど", "Old thumbnail and state"),
-        Removal::UnknownEntries => lang.pick("知らないエントリ", "Unknown entries"),
+        Removal::PsdOriginals => lang.t("distribute-original-psds"),
+        Removal::UnusedShelf => lang.t("distribute-unused-assets"),
+        Removal::SourcePaths => lang.t("distribute-asset-source-paths"),
+        Removal::ModelReference => lang.t("distribute-model-reference"),
+        Removal::MeshMaps => lang.t("distribute-mesh-maps"),
+        Removal::UnityValues => lang.t("distribute-unity-material-values"),
+        Removal::SavedSelections => lang.t("distribute-remembered-selections"),
+        Removal::StaleEntries => lang.t("distribute-old-thumbnail-and-state"),
+        Removal::UnknownEntries => lang.t("distribute-unknown-entries"),
     }
 }
 
 /// 種類のツールチップ（なぜ除くか。説明はここに置く）。
 pub fn tooltip(lang: Lang, removal: Removal) -> &'static str {
     match removal {
-        Removal::PsdOriginals => lang.pick(
-            "取り込んだ PSD の原本のバイト列。写しには入れません",
-            "The original bytes of imported PSDs. They are left out of the copy",
-        ),
-        Removal::UnusedShelf => lang.pick(
-            "どのレイヤーからも、見た目の設定からも使われていないアセット（画像・スマート素材・ブラシ）。使っているアセットは残します",
-            "Project assets (images, smart assets and brushes) that no layer or look setting uses. Assets in use stay",
-        ),
-        Removal::SourcePaths => lang.pick(
-            "素材を取り込んだ元のファイルやフォルダーの場所。使っている素材は残し、出どころだけを外します。テキストのフォントの場所はファイル名だけにします",
-            "Where the assets were imported from. Assets in use stay; only their source is dropped. The location of a text layer's font file is cut to its file name",
-        ),
-        Removal::ModelReference => lang.pick(
-            "開いていたモデルの場所と Unity のモデルの GUID、モデルのポーズ、Live Link で開いたモデルの記録（FBX や Unity のプロジェクトの場所）",
-            "The location of the model that was open, the Unity model GUID, the model's pose and the record of a model opened over Live Link (FBX and Unity project locations)",
-        ),
-        Removal::MeshMaps => lang.pick(
-            "モデルの形から焼いたマップ。Generator が使うマップは、開いたあとにモデルから焼き直します",
-            "Maps baked from the model's shape. Maps that generators use are baked again from the model after opening",
-        ),
-        Removal::UnityValues => lang.pick(
-            "Live Link で Unity のマテリアルから受けた値。見た目の設定は残ります",
-            "Values received from Unity materials over Live Link. Look settings stay",
-        ),
-        Removal::SavedSelections => lang.pick(
-            "名前を付けて残した選択範囲。除くと、写しの形式が 7 になり、古い版（0.3.x のスタンドアロン版・0.4.x までの Unity 版）も形式としては読めます。ほかの中身の版によっては開けません（今の選択範囲は残ります）",
-            "Selections saved under a name. Without them the copy is written in format 7, which older versions (standalone 0.3.x and the Unity version up to 0.4.x) accept as a format; they may still fail to open it, depending on the versions of its other contents (the current selection stays)",
-        ),
-        Removal::StaleEntries => lang.pick(
-            "Unity 版が残したサムネイル・ブラシの設定など。スタンドアロン版は更新しません",
-            "Thumbnail, brush settings and similar entries left by the Unity version. The standalone version does not update them",
-        ),
-        Removal::UnknownEntries => lang.pick(
-            "このアプリが知らないエントリ（新しい版が書いたものなど）",
-            "Entries this app does not know (for example written by a newer version)",
-        ),
+        Removal::PsdOriginals => lang.t("distribute-the-original-bytes-of-imported-tip"),
+        Removal::UnusedShelf => lang.t("distribute-project-assets-images-smart-assets-tip"),
+        Removal::SourcePaths => lang.t("distribute-where-the-assets-were-imported-tip"),
+        Removal::ModelReference => lang.t("distribute-the-location-of-the-model-tip"),
+        Removal::MeshMaps => lang.t("distribute-maps-baked-from-the-model-tip"),
+        Removal::UnityValues => lang.t("distribute-values-received-from-unity-materials-tip"),
+        Removal::SavedSelections => lang.t("distribute-selections-saved-under-a-name-tip"),
+        Removal::StaleEntries => lang.t("distribute-thumbnail-brush-settings-and-similar-tip"),
+        Removal::UnknownEntries => lang.t("distribute-entries-this-app-does-not-tip"),
     }
 }
 
 /// 「保存…」のツールチップ。
 fn save_tooltip(lang: Lang) -> &'static str {
-    lang.pick(
-        "保存先を選びます。開いている作業用のファイルとは別の名前で、チェックした物を除いた写しを書きます",
-        "Choose where to save. A copy without the checked things is written under a name other than the open working file",
-    )
+    lang.t("distribute-choose-where-to-save-a-tip")
 }
 
 /// ウィンドウの 1 行。
@@ -124,13 +94,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
     let visible = items.len().min(MAX_ROWS);
     let height = window::HEADER_HEIGHT + 8.0 + visible as f32 * ROW_HEIGHT + 10.0 + FOOTER;
-    let title = lang.pick("配布用に保存", "Save for Distribution");
+    let title = lang.t("distribute-save-for-distribution");
     let spec = Spec {
         title,
         icon: Some("save"),
         size: vec2(420.0, height),
         modal: true,
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
+        close_label: lang.t("distribute-close-window"),
     };
     let id = Id::new(("yolu.window", WINDOW));
     let mut offset = app.ui.distribute_window_offset;
@@ -195,13 +165,13 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let mut x = footer.right() - 14.0;
         let buttons = [
             (
-                lang.pick("やめる", "Cancel"),
+                lang.t("distribute-cancel"),
                 false,
                 None,
                 DistributeAction::CancelWindow,
             ),
             (
-                lang.pick("保存…", "Save…"),
+                lang.t("distribute-save"),
                 true,
                 Some(save_tooltip(lang)),
                 DistributeAction::ChooseFile,
@@ -247,9 +217,7 @@ pub fn show_replace(ctx: &egui::Context, app: &mut AppState) {
     let lang = app.lang;
     let spec = ListSpec {
         id: CONFIRM,
-        title: lang
-            .pick("置き換えるファイル", "File to Replace")
-            .into(),
+        title: lang.t("distribute-file-to-replace").into(),
         icon: "warning",
         modal: true,
         width: 460.0,
@@ -262,23 +230,17 @@ pub fn show_replace(ctx: &egui::Context, app: &mut AppState) {
         rows: vec![Row::text(path.display().to_string(), false)],
         buttons: vec![
             Button {
-                label: lang.pick("やめる", "Cancel").into(),
+                label: lang.t("distribute-cancel").into(),
                 primary: false,
                 tooltip: None,
             },
             Button {
-                label: lang.pick("置き換える", "Replace").into(),
+                label: lang.t("distribute-replace").into(),
                 primary: true,
-                tooltip: Some(
-                    lang.pick(
-                        "同じ名前のファイルを、書き出す写しに置き換えます。前のファイルは残しません",
-                        "Replaces the file with the copy. The previous file is not kept",
-                    )
-                    .into(),
-                ),
+                tooltip: Some(lang.t("distribute-replaces-the-file-with-the-tip").into()),
             },
         ],
-        close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
+        close_label: lang.t("distribute-close-window").into(),
     };
     let mut offset = app.ui.distribute_replace_offset;
     let mut scroll = 0.0;

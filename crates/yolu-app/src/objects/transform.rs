@@ -42,9 +42,9 @@ pub enum Kind {
 impl Kind {
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
-            Kind::Grab => lang.pick("移動", "Move"),
-            Kind::Rotate => lang.pick("回転", "Rotate"),
-            Kind::Scale => lang.pick("拡縮", "Scale"),
+            Kind::Grab => lang.t("objects-move"),
+            Kind::Rotate => lang.t("objects-rotate"),
+            Kind::Scale => lang.t("objects-scale"),
         }
     }
 }
@@ -537,7 +537,7 @@ impl Transform {
             Constraint::Axis { axis, local } => {
                 let a = axis_letter(axis);
                 if local {
-                    lang.pick(format!(" ローカル {a}"), format!(" Local {a}"))
+                    lang.f("objects-local", &[("a", &a)])
                 } else {
                     format!(" {a}")
                 }
@@ -549,7 +549,7 @@ impl Transform {
                     axis_letter((axis + 1) % 3).max(axis_letter((axis + 2) % 3))
                 );
                 if local {
-                    lang.pick(format!(" ローカル {p}"), format!(" Local {p}"))
+                    lang.f("objects-local-2", &[("p", &p)])
                 } else {
                     format!(" {p}")
                 }
@@ -717,11 +717,12 @@ impl Transform {
             return Ok(None);
         };
         let lang = app.lang;
-        let what = lang.pick("パスを動かせません", "Cannot move the path");
-        let model =
-            app.view3d.full_model().cloned().ok_or_else(|| {
-                lang.with_reason(what, lang.pick("モデルがありません", "no model"))
-            })?;
+        let what = lang.t("objects-cannot-move-the-path");
+        let model = app
+            .view3d
+            .full_model()
+            .cloned()
+            .ok_or_else(|| lang.with_reason(what, lang.t("objects-no-model")))?;
         let tolerance = rebind_tolerance(&model.geometry, path);
         let mut points = Vec::with_capacity(path.points.len());
         for (i, ((p, at), normal)) in path.points.iter().zip(world).zip(normals).enumerate() {
@@ -731,10 +732,7 @@ impl Transform {
             let off = || {
                 lang.with_reason(
                     what,
-                    lang.pick(
-                        format!("{} 番目の点が面に乗りません", i + 1),
-                        format!("point {} is not on the surface", i + 1),
-                    ),
+                    lang.f("objects-point-is-not-on-the", &[("i", &(i + 1))]),
                 )
             };
             let hit = model
@@ -819,21 +817,14 @@ fn target(app: &AppState, kind: Kind) -> Result<What, String> {
         return Err(crate::lang::refusals::during_stroke(lang).to_owned());
     }
     if !app.view3d.visible || app.view3d.view_rect.is_none() || app.view3d.model.is_none() {
-        return Err(refuse(
-            lang.pick("3D ビューが見えていません", "the 3D View is not shown"),
-        ));
+        return Err(refuse(lang.t("objects-the-3d-view-is-not")));
     }
     match app.mode {
-        EditorMode::Paint => Err(refuse(lang.pick(
-            "編集かポーズのモードで使います",
-            "used in Edit or Pose mode",
-        ))),
+        EditorMode::Paint => Err(refuse(lang.t("objects-used-in-edit-or-pose"))),
         EditorMode::Edit => {
             let o = super::selected(app).ok_or_else(|| refuse(super::nothing_selected(lang)))?;
             if matches!(o, Object::Point { .. }) && kind != Kind::Grab {
-                return Err(refuse(
-                    lang.pick("点は移動だけです", "points can only be moved"),
-                ));
+                return Err(refuse(lang.t("objects-points-can-only-be-moved")));
             }
             if let Some(reason) = app.read_only_reason() {
                 return Err(crate::lang::refusals::read_only_set(lang, reason));
@@ -847,7 +838,7 @@ fn target(app: &AppState, kind: Kind) -> Result<What, String> {
             .as_ref()
             .and_then(|s| s.selected)
             .map(What::Bone)
-            .ok_or_else(|| refuse(lang.pick("ボーンを選んでいません", "no bone is selected"))),
+            .ok_or_else(|| refuse(lang.t("objects-no-bone-is-selected"))),
     }
 }
 
@@ -860,7 +851,7 @@ pub fn request(app: &mut AppState, kind: Kind) {
                 format!("{}できません", kind.name(lang)),
                 format!("Cannot {}", kind.name(lang).to_lowercase()),
             ),
-            lang.pick("ほかの操作の途中です", "another operation is in progress"),
+            lang.t("objects-another-operation-is-in-progress"),
         );
         app.refuse(Source::Edit, text);
         return;
@@ -1037,8 +1028,8 @@ pub fn step(app: &mut AppState, input: &Input) -> Step {
         // 負の倍率は形もボーンも持たない: 前の量のままにして理由を出す
         let lang = app.lang;
         let text = lang.with_reason(
-            lang.pick("拡縮できません", "Cannot scale"),
-            lang.pick("負の倍率は使えません", "a negative factor cannot be used"),
+            lang.t("objects-cannot-scale"),
+            lang.t("objects-a-negative-factor-cannot-be"),
         );
         app.refuse(Source::Edit, text);
     }
@@ -1125,20 +1116,11 @@ pub fn start_requested(ctx: &egui::Context, app: &mut AppState) {
         app.refuse(Source::Edit, text);
     };
     if crate::pie::dragging(app) || ctx.input(|i| i.pointer.any_down()) || app.ui.popup.is_some() {
-        refuse_with(
-            app,
-            lang.pick("ほかの操作の途中です", "another operation is in progress"),
-        );
+        refuse_with(app, lang.t("objects-another-operation-is-in-progress"));
         return;
     }
     if app.ui.view3d_viewport != Some(ctx.viewport_id()) {
-        refuse_with(
-            app,
-            lang.pick(
-                "3D ビューが別のウィンドウにあります",
-                "the 3D View is in another window",
-            ),
-        );
+        refuse_with(app, lang.t("objects-the-3d-view-is-in"));
         return;
     }
     let pointer = ctx
@@ -1329,10 +1311,7 @@ pub fn reset(app: &mut AppState, kind: Kind) {
         EditorMode::Paint => {}
         EditorMode::Pose => {
             let Some(bone) = app.view3d.pose.session.as_ref().and_then(|s| s.selected) else {
-                let text = lang.with_reason(
-                    what,
-                    lang.pick("ボーンを選んでいません", "no bone is selected"),
-                );
+                let text = lang.with_reason(what, lang.t("objects-no-bone-is-selected"));
                 app.refuse(Source::Pose, text);
                 return;
             };
@@ -1359,10 +1338,7 @@ pub fn reset(app: &mut AppState, kind: Kind) {
                 return;
             };
             let Object::Shape(target) = o else {
-                let text = lang.with_reason(
-                    what,
-                    lang.pick("既定の置き場がありません", "it has no default placement"),
-                );
+                let text = lang.with_reason(what, lang.t("objects-it-has-no-default-placement"));
                 app.refuse(Source::Edit, text);
                 return;
             };

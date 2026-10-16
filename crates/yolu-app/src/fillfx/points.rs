@@ -244,8 +244,8 @@ fn begin(
                 app.refuse(
                     NoticeSource::FillLayer,
                     app.lang.with_reason(
-                        app.lang.pick("点を追加できません", "Cannot add a point"),
-                        app.lang.pick("点は 64 まで", "up to 64 points"),
+                        app.lang.t("fillfx-cannot-add-a-point"),
+                        app.lang.t("fillfx-up-to-64-points"),
                     ),
                 );
                 return true;
@@ -381,9 +381,8 @@ pub fn delete_point(app: &mut AppState, layer: LayerId, channel: Channel, index:
         app.refuse(
             NoticeSource::FillLayer,
             app.lang.with_reason(
-                app.lang
-                    .pick("点を削除できません", "Cannot delete the point"),
-                app.lang.pick("最後の点", "it is the last point"),
+                app.lang.t("fillfx-cannot-delete-the-point"),
+                app.lang.t("fillfx-it-is-the-last-point"),
             ),
         );
         return false;

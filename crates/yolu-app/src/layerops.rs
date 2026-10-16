@@ -92,26 +92,26 @@ pub const LOCK_FLAGS: [LayerLocks; 4] = [
 
 pub fn lock_name(lang: Lang, flag: LayerLocks) -> &'static str {
     if flag == LayerLocks::TRANSPARENCY {
-        lang.pick("透明部分", "Transparent pixels")
+        lang.t("layerops-transparent-pixels")
     } else if flag == LayerLocks::PIXELS {
-        lang.pick("画素", "Image pixels")
+        lang.t("layerops-image-pixels")
     } else if flag == LayerLocks::POSITION {
-        lang.pick("位置", "Position")
+        lang.t("layerops-position")
     } else {
-        lang.pick("すべて", "All")
+        lang.t("layerops-all")
     }
 }
 
 /// メニューの項目名（見出しが無いので、何をするかを言い切る「〜をロック」。プロパティの「ロック」の行などは、種類の名前だけの `lock_name`）。
 pub fn menu_lock_name(lang: Lang, flag: LayerLocks) -> &'static str {
     if flag == LayerLocks::TRANSPARENCY {
-        lang.pick("透明部分をロック", "Lock Transparent Pixels")
+        lang.t("layerops-lock-transparent-pixels")
     } else if flag == LayerLocks::PIXELS {
-        lang.pick("画素をロック", "Lock Image Pixels")
+        lang.t("layerops-lock-image-pixels")
     } else if flag == LayerLocks::POSITION {
-        lang.pick("位置をロック", "Lock Position")
+        lang.t("layerops-lock-position")
     } else {
-        lang.pick("すべてをロック", "Lock All")
+        lang.t("layerops-lock-all")
     }
 }
 
@@ -128,27 +128,21 @@ pub fn lock_names(lang: Lang, locks: LayerLocks) -> Vec<&'static str> {
 pub fn merge_notes_text(lang: Lang, notes: u8) -> String {
     let mut parts: Vec<&str> = Vec::new();
     if notes & 1 != 0 {
-        parts.push(lang.pick(
-            "フィルター・ジェネレーターを画素に焼いた",
-            "Filters and generators baked into pixels",
-        ));
+        parts.push(lang.t("layerops-filters-and-generators-baked-into"));
     }
     if notes & 2 != 0 {
-        parts.push(lang.pick("パスは画素になった", "Paths became pixels"));
+        parts.push(lang.t("layerops-paths-became-pixels"));
     }
     if notes & 4 != 0 {
-        parts.push(lang.pick("隠した子は除いた", "Hidden children dropped"));
+        parts.push(lang.t("layerops-hidden-children-dropped"));
     }
     if notes & 8 != 0 {
-        parts.push(lang.pick(
-            "無効のチャンネルの画素は除いた",
-            "Pixels of disabled channels dropped",
-        ));
+        parts.push(lang.t("layerops-pixels-of-disabled-channels-dropped"));
     }
     if notes & 16 != 0 {
-        parts.push(lang.pick("テキストは画素になった", "Text became pixels"));
+        parts.push(lang.t("layerops-text-became-pixels"));
     }
-    parts.join(lang.pick("・", "; "))
+    parts.join(lang.t("layerops-text"))
 }
 
 impl AppState {
@@ -292,7 +286,7 @@ impl AppState {
             MergeOp::Layers(ids) => self.session.doc.merge_layers(ids, tolerance),
             MergeOp::Group(id) => self.session.doc.merge_group(*id, tolerance),
             MergeOp::Visible => {
-                let name = self.lang.pick("結合", "Merged");
+                let name = self.lang.t("layerops-merged");
                 self.session.doc.merge_visible(name, tolerance)
             }
         };
@@ -327,10 +321,7 @@ impl AppState {
             .map(|l| l.name().to_owned())
             .unwrap_or_default();
         // 丸めの差の画素数は載せない（見た目が許容差を超えて変わるときは、結合の前に確認のウィンドウがチャンネルごとに見せる）
-        let mut text = lang.pick(
-            format!("結合しました: {name}"),
-            format!("Merged into {name}"),
-        );
+        let mut text = lang.f("layerops-merged-into", &[("name", &name)]);
         let notes = merge_notes_text(lang, report.notes);
         if notes.is_empty() {
             self.info(Source::Layer, text);
@@ -352,10 +343,7 @@ impl AppState {
     /// 確認のウィンドウの「やめる」。
     pub(crate) fn cancel_merge(&mut self) {
         if self.layer_ops.merge_confirm.take().is_some() {
-            self.info(
-                Source::Layer,
-                self.lang.pick("結合をやめました。", "Merge cancelled."),
-            );
+            self.info(Source::Layer, self.lang.t("layerops-merge-cancelled"));
         }
     }
 
@@ -413,10 +401,7 @@ impl AppState {
         if removed >= self.session.doc.layers().len() {
             self.refuse(
                 Source::Layer,
-                self.lang.pick(
-                    "最後のレイヤーは消せません。",
-                    "Cannot delete the last layer.",
-                ),
+                self.lang.t("layerops-cannot-delete-the-last-layer"),
             );
             return Ok(());
         }
@@ -466,23 +451,20 @@ impl AppState {
         self.session.doc.change_layer_locks(ids, flag, on)?;
         let lang = self.lang;
         let what = if flag.bits() == 15 {
-            lang.pick("すべてのロック", "all locks").to_owned()
+            lang.t("layerops-all-locks").to_owned()
         } else {
             let mut names = lock_names(lang, flag);
             if flag.contains(LayerLocks::ALL) {
                 names.push(lock_name(lang, LayerLocks::ALL));
             }
-            names.join(lang.pick("、", ", "))
+            names.join(lang.t("layerops-text-2"))
         };
         self.info(
             Source::Layer,
             if on {
-                lang.pick(format!("ロックしました: {what}"), format!("Locked: {what}"))
+                lang.f("layerops-locked", &[("what", &what)])
             } else {
-                lang.pick(
-                    format!("ロックを外しました: {what}"),
-                    format!("Unlocked: {what}"),
-                )
+                lang.f("layerops-unlocked", &[("what", &what)])
             },
         );
         Ok(())
@@ -547,10 +529,7 @@ impl AppState {
         if targets.is_empty() {
             self.refuse(
                 Source::Transform,
-                lang.pick(
-                    "動かす画素のあるレイヤーがありません。",
-                    "No layer with pixels to move.",
-                ),
+                lang.t("layerops-no-layer-with-pixels-to"),
             );
             return Ok(false);
         }
@@ -558,12 +537,9 @@ impl AppState {
             self.refuse(
                 Source::Transform,
                 if self.session.doc.selection().is_some() {
-                    lang.pick(
-                        "選択範囲の中に動かす画素がありません。",
-                        "No pixels to move inside the selection.",
-                    )
+                    lang.t("layerops-no-pixels-to-move-inside")
                 } else {
-                    lang.pick("動かす画素がありません。", "No pixels to move.")
+                    lang.t("layerops-no-pixels-to-move")
                 },
             );
             return Ok(false);
@@ -585,7 +561,7 @@ impl AppState {
             Xform::Move { dx, dy } => (
                 Affine2D::translation(dx as f64, dy as f64),
                 Resampling::Bilinear,
-                lang.pick("移動しました。", "Moved."),
+                lang.t("layerops-moved"),
             ),
             Xform::Rotate90 { clockwise } => {
                 let degrees = if clockwise { -90.0 } else { 90.0 };
@@ -593,12 +569,9 @@ impl AppState {
                     Affine2D::from_parts(about(degrees), (0.0, 0.0), degrees, (1.0, 1.0))?,
                     self.transform.resampling,
                     if clockwise {
-                        lang.pick("時計回りに 90° 回転しました。", "Rotated 90° clockwise.")
+                        lang.t("layerops-rotated-90-clockwise")
                     } else {
-                        lang.pick(
-                            "反時計回りに 90° 回転しました。",
-                            "Rotated 90° counter-clockwise.",
-                        )
+                        lang.t("layerops-rotated-90-counter-clockwise")
                     },
                 )
             }
@@ -611,9 +584,9 @@ impl AppState {
                 )?,
                 self.transform.resampling,
                 if horizontal {
-                    lang.pick("左右反転しました。", "Flipped horizontally.")
+                    lang.t("layerops-flipped-horizontally")
                 } else {
-                    lang.pick("上下反転しました。", "Flipped vertically.")
+                    lang.t("layerops-flipped-vertically")
                 },
             ),
             Xform::Numeric {
@@ -624,23 +597,16 @@ impl AppState {
                 sy,
             } => {
                 if sx == 0.0 || sy == 0.0 {
-                    self.refuse(
-                        Source::Transform,
-                        lang.pick("拡大率は 0 にできません。", "Scale must not be 0%."),
-                    );
+                    self.refuse(Source::Transform, lang.t("layerops-scale-must-not-be-0"));
                     return Ok(false);
                 }
                 (
                     Affine2D::from_parts(about(degrees), (dx, dy), degrees, (sx, sy))?,
                     self.transform.resampling,
-                    lang.pick("変形しました。", "Transformed."),
+                    lang.t("layerops-transformed"),
                 )
             }
-            Xform::Affine(t) => (
-                t,
-                self.transform.resampling,
-                lang.pick("変形しました。", "Transformed."),
-            ),
+            Xform::Affine(t) => (t, self.transform.resampling, lang.t("layerops-transformed")),
         };
         // テキストレイヤーは画素でなく値（基準の点・回転・サイズ）を動かして描き直す。ほかのレイヤーと一緒なら 1 回の Undo にまとめる
         let (texts, pixels): (Vec<LayerId>, Vec<LayerId>) = targets.iter().partition(|id| {
@@ -658,11 +624,8 @@ impl AppState {
                 self.refuse(
                     Source::Transform,
                     lang.with_reason(
-                        lang.pick("テキストレイヤーは動かせません", "Cannot move a text layer"),
-                        lang.pick(
-                            "選択範囲の中だけは動かせない",
-                            "it cannot move only inside a selection",
-                        ),
+                        lang.t("layerops-cannot-move-a-text-layer"),
+                        lang.t("layerops-it-cannot-move-only-inside"),
                     ),
                 );
                 return Ok(false);
@@ -692,13 +655,7 @@ impl AppState {
                     Err(reason) => {
                         self.refuse(
                             Source::Transform,
-                            lang.with_reason(
-                                lang.pick(
-                                    "テキストレイヤーを動かせません",
-                                    "Cannot move a text layer",
-                                ),
-                                reason,
-                            ),
+                            lang.with_reason(lang.t("layerops-cannot-move-a-text-layer-2"), reason),
                         );
                         return Ok(false);
                     }
@@ -723,7 +680,7 @@ impl AppState {
             if changed {
                 done
             } else {
-                lang.pick("変わりませんでした。", "Nothing changed.")
+                lang.t("layerops-nothing-changed")
             },
         );
         Ok(changed)

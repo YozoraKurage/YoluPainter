@@ -20,6 +20,7 @@ mod disk_cache;
 mod effects;
 mod fillfx;
 mod frame_pacing;
+mod ftl_keys;
 mod guide_keys;
 mod island_variation;
 mod liltoon_io;

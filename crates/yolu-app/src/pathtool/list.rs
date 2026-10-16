@@ -51,7 +51,7 @@ impl ListOp {
 pub fn display_name(lang: Lang, entries: &[LayerPathEntry], index: usize) -> String {
     match entries.get(index) {
         Some(e) if !e.name.is_empty() => e.name.clone(),
-        _ => format!("{} {}", lang.pick("パス", "Path"), index + 1),
+        _ => format!("{} {}", lang.t("pathtool-path"), index + 1),
     }
 }
 
@@ -60,7 +60,7 @@ fn copy_name(lang: Lang, name: &str) -> String {
     if name.is_empty() {
         return String::new();
     }
-    let full = lang.pick(format!("{name} のコピー"), format!("{name} copy"));
+    let full = lang.f("pathtool-copy", &[("name", &name)]);
     clip_name(&full)
 }
 
@@ -139,10 +139,7 @@ impl AppState {
         if let ListOp::Copy(id) = op {
             if let Some(e) = self.path_entries().iter().find(|e| e.id() == id) {
                 self.path.clipboard = Some(e.clone());
-                self.info(
-                    Source::Path,
-                    lang.pick("パスをコピーしました。", "Path copied."),
-                );
+                self.info(Source::Path, lang.t("pathtool-path-copied"));
             }
             return;
         }
@@ -159,10 +156,7 @@ impl AppState {
         let find = |entries: &[LayerPathEntry], id: u128| entries.iter().position(|e| e.id() == id);
         let clipboard = self.path.clipboard.clone();
         let no_clipboard = |app: &mut AppState| {
-            app.refuse(
-                Source::Path,
-                lang.pick("コピーしたパスがありません", "No path has been copied"),
-            );
+            app.refuse(Source::Path, lang.t("pathtool-no-path-has-been-copied"));
         };
         // (新しい一覧, 選ぶパス)
         let (next, select): (Vec<LayerPathEntry>, Option<u128>) = match op {
@@ -326,28 +320,19 @@ impl AppState {
 
 fn too_many(lang: Lang) -> String {
     lang.with_reason(
-        lang.pick("パスを追加できません", "Cannot add a path"),
-        lang.pick(
-            "1 つのレイヤーのパスは 256 本までです",
-            "a layer holds up to 256 paths",
-        ),
+        lang.t("pathtool-cannot-add-a-path"),
+        lang.t("pathtool-a-layer-holds-up-to"),
     )
 }
 
 /// 設定・位置を写せない理由。
 fn mismatch(lang: Lang, to: &LayerPath, from: &LayerPath) -> String {
     let why = if to.is_canvas() != from.is_canvas() {
-        lang.pick(
-            "キャンバスのパスとモデルの上のパスの間では写せません",
-            "paths on the canvas and on the model do not share them",
-        )
+        lang.t("pathtool-paths-on-the-canvas-and")
     } else {
-        lang.pick(
-            "別のモデルで描かれたパスです",
-            "the path was drawn on another model",
-        )
+        lang.t("pathtool-the-path-was-drawn-on")
     };
-    lang.with_reason(lang.pick("貼り付けられません", "Cannot paste"), why)
+    lang.with_reason(lang.t("pathtool-cannot-paste"), why)
 }
 
 impl From<ListOp> for PathAction {

@@ -24,7 +24,7 @@ pub const ADVANCE: f32 = 22.0;
 
 /// アイコンの名前（ツールチップ・読み上げ）。
 pub fn name(lang: Lang) -> &'static str {
-    lang.pick("定規", "Ruler")
+    lang.t("rulers-ruler")
 }
 
 /// 定規を持つか・1 つでも表示しているか。定規が無ければ None。
@@ -221,7 +221,7 @@ pub fn menu_entries(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
     };
     vec![
         Entry::item(
-            l.pick("表示", "Show"),
+            l.t("rulers-show"),
             Action::Ruler(RulerAction::SetAllVisible {
                 owner: id,
                 visible: !any_visible,
@@ -230,23 +230,17 @@ pub fn menu_entries(app: &AppState, id: LayerId) -> Vec<Entry<Action>> {
         .checked(any_visible)
         .enabled(free),
         Entry::submenu(
-            l.pick("表示の範囲", "Visible In"),
+            l.t("rulers-visible-in"),
             vec![
-                scope_item(l.pick("すべてのレイヤー", "All Layers"), RulerScope::All),
-                scope_item(
-                    l.pick("同じグループの中", "Within the Same Group"),
-                    RulerScope::Group,
-                ),
-                scope_item(
-                    l.pick("選んでいるときだけ", "Only While Selected"),
-                    RulerScope::Selected,
-                ),
+                scope_item(l.t("rulers-all-layers"), RulerScope::All),
+                scope_item(l.t("rulers-within-the-same-group"), RulerScope::Group),
+                scope_item(l.t("rulers-only-while-selected"), RulerScope::Selected),
             ],
         )
         .enabled(free),
         Entry::Separator,
         Entry::item(
-            l.pick("定規を削除", "Delete Rulers"),
+            l.t("rulers-delete-rulers"),
             Action::Ruler(RulerAction::Delete {
                 owner: id,
                 ids: rulers.iter().map(|r| r.id).collect(),

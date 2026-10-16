@@ -142,10 +142,7 @@ impl AppState {
     fn preview_template(&mut self, id: &str, selected: &[u32]) -> Named {
         let lang = self.lang;
         let Some(template) = ExportTemplate::built_in_by_id(id) else {
-            return Err(lang.pick(
-                format!("書き出しのテンプレート「{id}」はありません。"),
-                format!("No export template \"{id}\"."),
-            ));
+            return Err(lang.f("export-no-export-template", &[("id", &id)]));
         };
         let indices = self.exportable_sets(&mut Vec::new(), Some(selected));
         let has_occlusion: Vec<bool> = indices

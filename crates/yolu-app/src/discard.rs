@@ -68,15 +68,15 @@ pub fn window_id() -> Id {
 /// ボタンの名前（変更を確認・変更を破棄・キャンセル）。
 pub fn labels(lang: Lang) -> [&'static str; 3] {
     [
-        lang.pick("変更を確認", "Review Changes"),
-        lang.pick("変更を破棄", "Discard Changes"),
-        lang.pick("キャンセル", "Cancel"),
+        lang.t("discard-review-changes"),
+        lang.t("discard-discard-changes"),
+        lang.t("discard-cancel"),
     ]
 }
 
 /// 走っている仕事だけの問いの、終わるボタンの名前。
 pub fn quit_label(lang: Lang) -> &'static str {
-    lang.pick("終わる", "Quit")
+    lang.t("discard-quit")
 }
 
 const SIZE: egui::Vec2 = vec2(440.0, 150.0);
@@ -92,7 +92,7 @@ pub fn show(ctx: &egui::Context, lang: Lang, ask: &Ask) -> Option<Choice> {
         icon: None,
         size: SIZE,
         modal: true,
-        close_label: lang.pick("閉じる", "Close"),
+        close_label: lang.t("discard-close"),
     };
     let esc = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape));
     let enter = ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Enter));

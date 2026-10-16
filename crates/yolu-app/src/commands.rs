@@ -141,9 +141,9 @@ pub fn label_of(id: &str, lang: Lang) -> &'static str {
 /// 「複製」の名前（レイヤーを選んでいるときの言い方。選んでいなければ「レイヤーを複製」）。
 pub fn duplicate_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
     if layer.is_some_and(|id| app.session.doc.layer(id).is_some()) {
-        app.lang.pick("複製", "Duplicate")
+        app.lang.t("commands-duplicate")
     } else {
-        app.lang.pick("レイヤーを複製", "Duplicate Layer")
+        app.lang.t("commands-duplicate-layer")
     }
 }
 
@@ -151,7 +151,7 @@ pub fn duplicate_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
 pub fn merge_down_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
     let l = app.lang;
     let Some(layer) = layer.and_then(|id| app.session.doc.layer(id)) else {
-        return l.pick("レイヤーを結合", "Merge Layers");
+        return l.t("commands-merge-layers");
     };
     let members = app
         .session
@@ -159,11 +159,11 @@ pub fn merge_down_name(app: &AppState, layer: Option<LayerId>) -> &'static str {
         .topmost_of(&app.selected_layers())
         .unwrap_or_default();
     if members.len() > 1 {
-        l.pick("レイヤーを結合", "Merge Layers")
+        l.t("commands-merge-layers")
     } else if layer.is_group() {
-        l.pick("グループを結合", "Merge Group")
+        l.t("commands-merge-group")
     } else {
-        l.pick("下のレイヤーと結合", "Merge Down")
+        l.t("commands-merge-down")
     }
 }
 

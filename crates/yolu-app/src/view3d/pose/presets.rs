@@ -25,7 +25,7 @@ use crate::view3d::model::ViewError;
 
 /// 名前を付けないで保存したときの名前。
 pub fn default_name(lang: Lang) -> &'static str {
-    lang.pick("ポーズ", "Pose")
+    lang.t("view3d-pose")
 }
 
 /// 項目を骨に対応させられなかった理由。
@@ -62,34 +62,15 @@ pub struct Skipped {
 impl Skipped {
     pub fn describe(&self, lang: Lang) -> String {
         let reason = match self.reason {
-            SkipReason::NotFound => lang.pick("ボーンがありません", "Bone not found"),
-            SkipReason::Ambiguous => lang.pick(
-                "同じ名前のボーンが複数あります",
-                "Several bones share the name",
-            ),
-            SkipReason::MirrorNotFound => {
-                lang.pick("対になるボーンがありません", "No mirrored bone")
-            }
-            SkipReason::MirrorAmbiguous => lang.pick(
-                "対になる名前のボーンが複数あります",
-                "Several bones share the mirrored name",
-            ),
-            SkipReason::MirrorAsymmetric => lang.pick(
-                "左右の休みの形が鏡像ではありません",
-                "Rest poses are not mirror images",
-            ),
-            SkipReason::Overlap => lang.pick(
-                "同じボーンへの項目が重なっています",
-                "Two entries target the same bone",
-            ),
-            SkipReason::ShapeNotFound => {
-                lang.pick("BlendShape がありません", "BlendShape not found")
-            }
-            SkipReason::ShapeAmbiguous => lang.pick(
-                "同じ名前の BlendShape が複数あります",
-                "Several BlendShapes share the name",
-            ),
-            SkipReason::TakeNotFound => lang.pick("テイクがありません", "Take not found"),
+            SkipReason::NotFound => lang.t("view3d-bone-not-found"),
+            SkipReason::Ambiguous => lang.t("view3d-several-bones-share-the-name"),
+            SkipReason::MirrorNotFound => lang.t("view3d-no-mirrored-bone"),
+            SkipReason::MirrorAmbiguous => lang.t("view3d-several-bones-share-the-mirrored"),
+            SkipReason::MirrorAsymmetric => lang.t("view3d-rest-poses-are-not-mirror"),
+            SkipReason::Overlap => lang.t("view3d-two-entries-target-the-same"),
+            SkipReason::ShapeNotFound => lang.t("view3d-blendshape-not-found"),
+            SkipReason::ShapeAmbiguous => lang.t("view3d-several-blendshapes-share-the-name"),
+            SkipReason::TakeNotFound => lang.t("view3d-take-not-found"),
         };
         format!("{}: {} ({reason})", self.preset, self.path)
     }
@@ -305,16 +286,10 @@ pub fn save_preset(app: &mut AppState, name: &str) -> Option<u32> {
     match app.view3d.pose.pose_presets.add(name, entries) {
         Ok(id) => {
             if !unsaved.is_empty() {
-                let names = unsaved.join(lang.pick("・", ", "));
+                let names = unsaved.join(lang.t("view3d-text"));
                 app.warn(
                     Source::Pose,
-                    lang.with_reason(
-                        lang.pick(
-                            "同じ名前のボーンがあるので、保存できないボーンがあります",
-                            "Some bones are not saved because bones share a name",
-                        ),
-                        names,
-                    ),
+                    lang.with_reason(lang.t("view3d-some-bones-are-not-saved"), names),
                 );
             }
             Some(id)
@@ -345,23 +320,14 @@ pub fn overwrite_preset(app: &mut AppState, id: u32) -> bool {
                 .get(id)
                 .map(|p| p.name.clone())
                 .unwrap_or_default();
-            let mut text = lang.pick(
-                format!("ポーズ {name} を今のポーズで上書きしました"),
-                format!("Overwrote pose {name} with the current pose"),
-            );
+            let mut text = lang.f("view3d-overwrote-pose-with-the-current", &[("name", &name)]);
             if unsaved.is_empty() {
                 app.info(Source::Pose, text);
             } else {
                 // 上書きしたが、保存できないボーンがある: 気をつけること
-                let names = unsaved.join(lang.pick("・", ", "));
-                text += lang.pick("。", ". ");
-                text += &lang.with_reason(
-                    lang.pick(
-                        "同じ名前のボーンがあるので、保存できないボーンがあります",
-                        "Some bones are not saved because bones share a name",
-                    ),
-                    names,
-                );
+                let names = unsaved.join(lang.t("view3d-text"));
+                text += lang.t("view3d-text-2");
+                text += &lang.with_reason(lang.t("view3d-some-bones-are-not-saved"), names);
                 app.warn(Source::Pose, text);
             }
             true
@@ -381,10 +347,7 @@ pub fn rename_preset(app: &mut AppState, id: u32, name: &str) -> bool {
         Err(e) => {
             app.fail(
                 Source::Pose,
-                lang.with_reason(
-                    lang.pick("名前を変えられません", "Cannot rename the pose"),
-                    e.describe(lang),
-                ),
+                lang.with_reason(lang.t("view3d-cannot-rename-the-pose"), e.describe(lang)),
             );
             false
         }
@@ -404,10 +367,7 @@ pub fn delete_preset(app: &mut AppState, id: u32) -> bool {
         Err(e) => {
             app.fail(
                 Source::Pose,
-                lang.with_reason(
-                    lang.pick("ポーズを消せません", "Cannot delete the pose"),
-                    e.describe(lang),
-                ),
+                lang.with_reason(lang.t("view3d-cannot-delete-the-pose"), e.describe(lang)),
             );
             false
         }
@@ -438,13 +398,10 @@ pub fn apply_preset(app: &mut AppState, id: u32, mirror: bool) -> bool {
     let tail = {
         let mut t = String::new();
         if mirror {
-            t += lang.pick("（左右反転）", " (mirrored)");
+            t += lang.t("view3d-mirrored");
         }
         if skipped > 0 {
-            t += &lang.pick(
-                format!("（飛ばしたボーン {skipped} 件）"),
-                format!(" (skipped bones: {skipped})"),
-            );
+            t += &lang.f("view3d-skipped-bones", &[("skipped", &skipped)]);
         }
         t
     };
@@ -459,19 +416,16 @@ pub fn apply_preset(app: &mut AppState, id: u32, mirror: bool) -> bool {
         Ok(()) if nothing_fits => {
             app.refuse(
                 Source::Pose,
-                lang.pick(
-                    format!("ポーズ {name} に合うボーンがありません{tail}"),
-                    format!("No bone fits pose {name}{tail}"),
+                lang.f(
+                    "view3d-no-bone-fits-pose",
+                    &[("name", &name), ("tail", &tail)],
                 ),
             );
             false
         }
         Ok(()) => {
             // 飛ばしたボーンがあれば気をつけること
-            let text = lang.pick(
-                format!("ポーズ {name} を当てました{tail}"),
-                format!("Applied pose {name}{tail}"),
-            );
+            let text = lang.f("view3d-applied-pose", &[("name", &name), ("tail", &tail)]);
             if skipped > 0 {
                 app.warn(Source::Pose, text);
             } else {
