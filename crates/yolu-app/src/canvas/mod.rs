@@ -914,6 +914,11 @@ fn nav_name(app: &AppState) -> &'static str {
     }
 }
 
+/// このボタンを今押しているか（無ければ偽）。
+fn button_down(ui: &Ui, button: Option<PointerButton>) -> bool {
+    button.is_some_and(|b| ui.input(|i| i.pointer.button_down(b.into())))
+}
+
 /// ペンの押しのボタン（サイドボタンは右ボタン、ペン先は左ボタン）。
 fn pen_button(s: &PenSample) -> PointerButton {
     if s.barrel {
@@ -1412,16 +1417,14 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     }
     // 表示を動かしている押しのボタンを離したのを取りこぼしたときも終える。ペンが回す・拡縮している間は、egui のポインタが押していなくても
     // 続ける（ペンが離したときに終える）
-    let down =
-        |b: Option<PointerButton>| b.is_some_and(|b| ui.input(|i| i.pointer.button_down(b.into())));
-    if !down(app.canvas.nav_button) && !nav::pen_driven(app) {
+    if !button_down(ui, app.canvas.nav_button) && !nav::pen_driven(app) {
         app.canvas.rotating = None;
         app.canvas.zooming = None;
         app.canvas.panning = false;
         app.canvas.nav_button = None;
     }
     // 離したのを取りこぼした押しは、クローンの元にしない（離した所が分からない。3D と同じ）
-    if !down(app.canvas.clone_press.map(|(_, b)| b)) && !nav::pen_driven(app) {
+    if !button_down(ui, app.canvas.clone_press.map(|(_, b)| b)) && !nav::pen_driven(app) {
         app.canvas.clone_press = None;
     }
     crate::stencil::settle(app, ui.input(|i| i.pointer.any_down()));
