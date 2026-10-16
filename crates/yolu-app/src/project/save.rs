@@ -508,10 +508,7 @@ fn work(request: Request) -> Finished {
         );
     }
     if built.pose_overwritten {
-        text += &lang.pick(
-            " 読めなかったポーズを、今のポーズで置き換えました。".to_owned(),
-            " Replaced the unreadable pose with the current pose.".to_owned(),
-        );
+        text += lang.t("project-replaced-the-unreadable-pose-with");
     }
     let unsaved = crate::view3d::pose::stored::unsaved_note(lang, &capture.pose_unsaved);
     let caveat = !capture.left_out.is_empty()

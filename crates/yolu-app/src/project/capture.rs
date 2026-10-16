@@ -18,7 +18,7 @@ use yolu_core::mesh_maps::BakedMeshMap;
 use yolu_core::Document;
 use yolu_io::{composite_pngs, shelf::Shelf, DocumentSource, Project, SetSpec};
 
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::newproject::relative_model_path;
 use crate::sets::MaterialRef;
 use crate::state::AppState;
@@ -121,10 +121,9 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         Some(set) => set.id.clone(),
         None => {
             let quoted = quoted_names(lang, &left_out);
-            let have = if left_out.len() == 1 { "has" } else { "have" };
-            return Err(lang.pick(
-                format!("{quoted}は保存したことが無く、読めません"),
-                format!("{quoted} cannot be read and {have} never been saved"),
+            return Err(lang.f(
+                "project-cannot-be-read-and-have",
+                &[("quoted", &quoted), ("count", &Count(left_out.len()))],
             ));
         }
     };
@@ -163,14 +162,11 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
 
 /// セットの名前を、言語ごとの引用の形に並べる（日本語は「A」「B」、英語は "A", "B"）。
 pub(crate) fn quoted_names(lang: Lang, names: &[String]) -> String {
-    lang.pick(
-        names.iter().map(|n| format!("「{n}」")).collect::<String>(),
-        names
-            .iter()
-            .map(|n| format!("\"{n}\""))
-            .collect::<Vec<_>>()
-            .join(", "),
-    )
+    names
+        .iter()
+        .map(|n| lang.quote(n))
+        .collect::<Vec<_>>()
+        .join(lang.t("project-quoted-names-separator"))
 }
 
 /// 読めないため保存に入れなかったセットの知らせ（1 文。無ければ空）。

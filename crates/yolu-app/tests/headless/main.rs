@@ -29,6 +29,7 @@ mod mcp_server;
 mod new_layer_position;
 mod no_developer_words;
 mod no_instruction_text;
+mod no_literal_pick;
 mod notice_rules;
 mod overlap_uv;
 mod pose_saved;

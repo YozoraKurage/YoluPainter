@@ -42,3 +42,11 @@ project-overwrote-unreadable-look-settings = 読めなかった見た目の設�
 project-text-3 = 、
 project-replaced-unreadable-remembered-selections = 読めなかった覚えた選択範囲の項目を置き換えました
 project-cannot-save-to = { $file }に保存できません
+project-notes-with-a-stop = {" "}{ $notes }
+project-notes-separator = {" "}
+project-could-not-delete-old-backups = {" "}古い退避 { $n } 件を消せませんでした（{ $reason }）。
+project-cannot-be-read-and-have = { $count ->
+       *[other] { $quoted }は保存したことが無く、読めません
+    }
+project-quoted-names-separator = {""}
+project-replaced-the-unreadable-pose-with = {" "}読めなかったポーズを、今のポーズで置き換えました。

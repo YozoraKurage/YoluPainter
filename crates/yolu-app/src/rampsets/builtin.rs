@@ -2,6 +2,7 @@
 //! 不透明度はすべて 1（PSD の刻みに乗る）。最初の組「基本」だけは、メインの色とサブの色（描画色）から作る見本を含む。
 
 use crate::engine::Rgba8;
+use crate::lang::Lang;
 use yolu_core::generator::{ColorStop, OpacityStop, Preset, Ramp};
 
 /// 組み込みの 1 つ（名前は日本語・英語）。
@@ -36,19 +37,17 @@ fn ramp(stops: &[(f64, [u8; 3])]) -> Ramp {
     Ramp::new(colors, vec![opacity(0.0), opacity(1.0)], None).expect("組み込みのランプ")
 }
 
-fn item(ja: &'static str, en: &'static str, ramp: Ramp) -> Builtin {
-    Builtin { ja, en, ramp }
+fn item(name: fn(Lang) -> &'static str, ramp: Ramp) -> Builtin {
+    Builtin {
+        ja: name(Lang::Ja),
+        en: name(Lang::En),
+        ramp,
+    }
 }
 
 /// 暗い所を青みの沈んだ色へ、明るい所を暖かい淡い色へ寄せた 3 色（影が黒く潰れず、色が濁らない陰影用）。
-fn shade(
-    ja: &'static str,
-    en: &'static str,
-    shadow: [u8; 3],
-    mid: [u8; 3],
-    light: [u8; 3],
-) -> Builtin {
-    item(ja, en, ramp(&[(0.0, shadow), (0.5, mid), (1.0, light)]))
+fn shade(name: fn(Lang) -> &'static str, shadow: [u8; 3], mid: [u8; 3], light: [u8; 3]) -> Builtin {
+    item(name, ramp(&[(0.0, shadow), (0.5, mid), (1.0, light)]))
 }
 
 /// f32 の色(straight の RGBA 0〜1)を、アルファを 255 にした 8 ビットの色にする（RGB だけを見る）。
@@ -61,74 +60,64 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
     let (main, sub) = (opaque_rgba8(main), opaque_rgba8(sub));
     vec![
         BuiltinGroup {
-            ja: "基本",
-            en: "Basic",
+            ja: Lang::Ja.t("rampsets-basic"),
+            en: Lang::En.t("rampsets-basic"),
             items: vec![
-                item("黒→白", "Black to White", Ramp::default()),
+                item(|l| l.t("rampsets-black-to-white"), Ramp::default()),
                 item(
-                    "白→黒",
-                    "White to Black",
+                    |l| l.t("rampsets-white-to-black"),
                     Ramp::preset(Preset::WhiteBlack, main, sub),
                 ),
                 item(
-                    "メイン→サブ",
-                    "Main to Sub",
+                    |l| l.t("rampsets-main-to-sub"),
                     Ramp::preset(Preset::ForegroundBackground, main, sub),
                 ),
                 item(
-                    "メイン→透明",
-                    "Main to Transparent",
+                    |l| l.t("rampsets-main-to-transparent"),
                     Ramp::preset(Preset::ForegroundTransparent, main, sub),
                 ),
                 item(
-                    "暖→寒",
-                    "Warm to Cool",
+                    |l| l.t("rampsets-warm-to-cool"),
                     Ramp::preset(Preset::WarmCool, main, sub),
                 ),
             ],
         },
         BuiltinGroup {
-            ja: "陰影",
-            en: "Shading",
+            ja: Lang::Ja.t("rampsets-shading"),
+            en: Lang::En.t("rampsets-shading"),
             items: vec![
                 shade(
-                    "陰影（赤）",
-                    "Shade (Red)",
+                    |l| l.t("rampsets-shade-red"),
                     [58, 36, 72],
                     [196, 78, 80],
                     [255, 226, 200],
                 ),
                 shade(
-                    "陰影（黄）",
-                    "Shade (Yellow)",
+                    |l| l.t("rampsets-shade-yellow"),
                     [70, 56, 62],
                     [214, 170, 72],
                     [255, 246, 208],
                 ),
                 shade(
-                    "陰影（緑）",
-                    "Shade (Green)",
+                    |l| l.t("rampsets-shade-green"),
                     [34, 52, 64],
                     [84, 150, 96],
                     [236, 250, 208],
                 ),
                 shade(
-                    "陰影（青）",
-                    "Shade (Blue)",
+                    |l| l.t("rampsets-shade-blue"),
                     [28, 32, 70],
                     [72, 120, 200],
                     [222, 238, 255],
                 ),
                 shade(
-                    "陰影（紫）",
-                    "Shade (Purple)",
+                    |l| l.t("rampsets-shade-purple"),
                     [40, 30, 70],
                     [130, 90, 180],
                     [246, 226, 255],
                 ),
                 shade(
-                    "陰影（桃）",
-                    "Shade (Pink)",
+                    |l| l.t("rampsets-shade-pink"),
                     [66, 36, 70],
                     [226, 120, 150],
                     [255, 236, 236],
@@ -136,62 +125,65 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
             ],
         },
         BuiltinGroup {
-            ja: "色味",
-            en: "Tones",
+            ja: Lang::Ja.t("rampsets-tones"),
+            en: Lang::En.t("rampsets-tones"),
             items: vec![
                 shade(
-                    "セピア",
-                    "Sepia",
+                    |l| l.t("rampsets-sepia"),
                     [36, 22, 10],
                     [160, 110, 70],
                     [255, 235, 200],
                 ),
                 shade(
-                    "青と橙",
-                    "Teal and Orange",
+                    |l| l.t("rampsets-teal-and-orange"),
                     [16, 40, 84],
                     [128, 120, 124],
                     [255, 190, 110],
                 ),
                 shade(
-                    "夕焼け",
-                    "Sunset",
+                    |l| l.t("rampsets-sunset"),
                     [30, 10, 60],
                     [200, 40, 80],
                     [255, 200, 80],
                 ),
                 shade(
-                    "深緑",
-                    "Forest",
+                    |l| l.t("rampsets-forest"),
                     [4, 20, 12],
                     [40, 120, 70],
                     [190, 255, 190],
                 ),
-                shade("氷", "Ice", [6, 12, 48], [90, 170, 230], [255, 255, 255]),
                 shade(
-                    "桜",
-                    "Blossom",
+                    |l| l.t("rampsets-ice"),
+                    [6, 12, 48],
+                    [90, 170, 230],
+                    [255, 255, 255],
+                ),
+                shade(
+                    |l| l.t("rampsets-blossom"),
                     [62, 34, 60],
                     [232, 142, 170],
                     [255, 244, 240],
                 ),
                 shade(
-                    "砂漠",
-                    "Desert",
+                    |l| l.t("rampsets-desert"),
                     [52, 34, 40],
                     [204, 130, 72],
                     [252, 232, 176],
                 ),
-                shade("海", "Sea", [8, 24, 56], [30, 130, 160], [214, 246, 240]),
+                shade(
+                    |l| l.t("rampsets-sea"),
+                    [8, 24, 56],
+                    [30, 130, 160],
+                    [214, 246, 240],
+                ),
             ],
         },
         BuiltinGroup {
-            ja: "空と光",
-            en: "Sky and Light",
+            ja: Lang::Ja.t("rampsets-sky-and-light"),
+            en: Lang::En.t("rampsets-sky-and-light"),
             items: vec![
                 item(
-                    "朝",
-                    "Morning",
+                    |l| l.t("rampsets-morning"),
                     ramp(&[
                         (0.0, [44, 52, 98]),
                         (0.4375, [226, 150, 150]),
@@ -199,8 +191,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "昼",
-                    "Noon",
+                    |l| l.t("rampsets-noon"),
                     ramp(&[
                         (0.0, [30, 86, 170]),
                         (0.59375, [118, 190, 240]),
@@ -208,8 +199,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "夕",
-                    "Evening",
+                    |l| l.t("rampsets-evening"),
                     ramp(&[
                         (0.0, [40, 30, 84]),
                         (0.34375, [170, 70, 110]),
@@ -218,8 +208,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "夜",
-                    "Night",
+                    |l| l.t("rampsets-night"),
                     ramp(&[
                         (0.0, [4, 6, 24]),
                         (0.59375, [30, 44, 110]),
@@ -227,8 +216,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "月明かり",
-                    "Moonlight",
+                    |l| l.t("rampsets-moonlight"),
                     ramp(&[
                         (0.0, [10, 14, 36]),
                         (0.5, [70, 96, 150]),
@@ -236,8 +224,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "木漏れ日",
-                    "Dappled Light",
+                    |l| l.t("rampsets-dappled-light"),
                     ramp(&[
                         (0.0, [24, 44, 40]),
                         (0.5, [120, 160, 80]),
@@ -247,12 +234,11 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
             ],
         },
         BuiltinGroup {
-            ja: "特殊",
-            en: "Special",
+            ja: Lang::Ja.t("rampsets-special"),
+            en: Lang::En.t("rampsets-special"),
             items: vec![
                 item(
-                    "虹",
-                    "Rainbow",
+                    |l| l.t("rampsets-rainbow"),
                     ramp(&[
                         (0.0, [200, 40, 70]),
                         (0.1875, [240, 150, 40]),
@@ -263,8 +249,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "熱",
-                    "Heat",
+                    |l| l.t("rampsets-heat"),
                     ramp(&[
                         (0.0, [8, 0, 40]),
                         (0.3125, [150, 20, 90]),
@@ -274,8 +259,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "金属",
-                    "Metal",
+                    |l| l.t("rampsets-metal"),
                     ramp(&[
                         (0.0, [30, 32, 38]),
                         (0.3125, [150, 156, 166]),
@@ -285,8 +269,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "ネオン",
-                    "Neon",
+                    |l| l.t("rampsets-neon"),
                     ramp(&[
                         (0.0, [10, 0, 40]),
                         (0.5, [210, 40, 200]),
@@ -294,8 +277,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "フィルム",
-                    "Film",
+                    |l| l.t("rampsets-film"),
                     ramp(&[
                         (0.0, [20, 30, 36]),
                         (0.5, [150, 140, 110]),
@@ -303,8 +285,7 @@ pub fn groups(main: [f32; 4], sub: [f32; 4]) -> Vec<BuiltinGroup> {
                     ]),
                 ),
                 item(
-                    "二色分け",
-                    "Duotone",
+                    |l| l.t("rampsets-duotone"),
                     ramp(&[(0.0, [24, 28, 90]), (1.0, [255, 210, 120])]),
                 ),
             ],

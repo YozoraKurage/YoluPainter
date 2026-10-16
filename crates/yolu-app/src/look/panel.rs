@@ -18,7 +18,7 @@ use yolu_core::look::{LookKind, LookValue, PlaneSource, TextureSource};
 use yolu_core::ChannelKind;
 
 use super::fields::{self, copy_mode, mirror_mode, specular_mode};
-use super::liltoon::{self, Kind, RenderMode, SlotDefault, SlotUse, SLOTS};
+use super::liltoon::{self, Kind, Label, RenderMode, SlotDefault, SlotUse, SLOTS};
 use super::{LightingPreset, LookOp, Section};
 use crate::lang::Lang;
 use crate::m2::channel_name;
@@ -315,8 +315,7 @@ fn sub(
     app: &mut AppState,
     rows: &mut Rows,
     key: &'static str,
-    ja: &str,
-    en: &str,
+    title: fn(Lang) -> &'static str,
     section: Section,
 ) -> bool {
     let lang = app.lang;
@@ -325,7 +324,7 @@ fn sub(
         app,
         rows,
         key,
-        lang.pick(ja, en),
+        title(lang),
         Some(lang.t("look-reset-this-section")),
     );
     if reset && !app.is_stroking() {
@@ -493,10 +492,7 @@ fn choice_prop(
     let at = liltoon::number(app.session.doc.drawn_look(), name)
         .round()
         .max(0.0) as usize;
-    let mut value = options
-        .get(at)
-        .map_or("?", |o| lang.pick(o.0, o.1))
-        .to_owned();
+    let mut value = options.get(at).map_or("?", |o| o.get(lang)).to_owned();
     let (label, mut tip) = marked(app, name, prop.label(lang));
     if !choice_drawn(name, at) {
         value = format!("{value}{}", lang.t("look-not-drawn"));
@@ -547,7 +543,7 @@ fn color_row(
     rows: &mut Rows,
     name: &'static str,
     label: Option<&str>,
-    alpha: Option<(&str, &str)>,
+    alpha: Option<fn(Lang) -> &'static str>,
     enabled: bool,
 ) {
     let Some(prop) = liltoon::prop(name) else {
@@ -673,9 +669,9 @@ fn color_row(
             }));
         }
     }
-    if let Some((ja, en)) = alpha {
+    if let Some(alpha_label) = alpha {
         let spec = SliderSpec::new(
-            lang.pick(ja, en),
+            alpha_label(lang),
             0.0,
             1.0,
             NumberFormat {
@@ -698,7 +694,7 @@ fn color_row(
 }
 
 /// lilToon の「不透明度」（`LocalizedPropertyAlpha`）の名前。
-const ALPHA: Option<(&str, &str)> = Some(("不透明度", "Alpha"));
+const ALPHA: Option<fn(Lang) -> &'static str> = Some(|l| l.t("look-alpha"));
 
 /// ベクトルの成分の行（色調補正の HSVG など）。
 #[allow(clippy::too_many_arguments)]
@@ -972,6 +968,15 @@ fn default_name(lang: Lang, d: SlotDefault) -> &'static str {
     }
 }
 
+/// 「〜で描く」に入れる既定の名前（英語は文の中なので小文字）。
+fn drawn_name(lang: Lang, d: SlotDefault) -> String {
+    let name = default_name(lang, d);
+    match lang {
+        Lang::Ja => name.to_owned(),
+        Lang::En => name.to_lowercase(),
+    }
+}
+
 fn source_name(app: &AppState, slot: &liltoon::Slot, source: Option<&TextureSource>) -> String {
     let lang = app.lang;
     match source {
@@ -1079,15 +1084,9 @@ fn slot_row(
                 tip += &format!("\n{}", missing_text(lang, *why));
             } else if yields {
                 value = default_name(lang, slot.default).into();
-                tip += &lang.pick(
-                    format!(
-                        "\nUnity ではテクスチャが空（{}で描く）",
-                        default_name(lang, slot.default)
-                    ),
-                    format!(
-                        "\nThe texture is empty in Unity (drawn {})",
-                        default_name(lang, slot.default).to_lowercase()
-                    ),
+                tip += &lang.f(
+                    "look-the-texture-is-empty-in",
+                    &[("default", &drawn_name(lang, slot.default))],
                 );
             }
         }
@@ -1100,15 +1099,9 @@ fn slot_row(
     if slot_over_received_limit(&app.session.doc, name) {
         // 3D ビューが持つ Unity のテクスチャも 16 枚まで（スロットの並びで先のものから）。超えた分は割り当てのない既定で描く
         value = format!("{value}{}", lang.t("look-not-drawn"));
-        tip += &lang.pick(
-            format!(
-                "\n3D ビューで描かない: Unity のテクスチャは 16 枚まで（{}で描く）",
-                default_name(lang, slot.default)
-            ),
-            format!(
-                "\nNot drawn in the 3D View: up to 16 Unity textures (drawn {})",
-                default_name(lang, slot.default).to_lowercase()
-            ),
+        tip += &lang.f(
+            "look-not-drawn-in-the-3d-2",
+            &[("default", &drawn_name(lang, slot.default))],
         );
     }
     let row = rows.row(t::ROW_HEIGHT, 4.0);
@@ -1202,7 +1195,7 @@ fn texture_color(
     slot: &'static str,
     label: &str,
     color: &'static str,
-    alpha: Option<(&str, &str)>,
+    alpha: Option<fn(Lang) -> &'static str>,
     enabled: bool,
 ) {
     slot_row(ui, app, rows, slot, Some(label), enabled);
@@ -1263,8 +1256,7 @@ fn base(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.base",
-        "基本設定",
-        "Base Setting",
+        |l| l.t("look-base-setting"),
         Section::Base,
     ) {
         return;
@@ -1291,8 +1283,7 @@ fn lighting(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.lighting",
-        "ライティング・明るさ設定",
-        "Lighting",
+        |l| l.t("look-lighting"),
         Section::Lighting,
     ) {
         return;
@@ -1321,27 +1312,22 @@ fn lighting(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         2,
         4.0,
     );
-    for (b, preset, ja, en) in [
-        (buttons[0], LightingPreset::Default, "通常", "Default"),
+    for (i, (b, preset, label)) in [
+        (
+            buttons[0],
+            LightingPreset::Default,
+            lang.t("look-default-2"),
+        ),
         (
             buttons[1],
             LightingPreset::SemiMonochrome,
-            "半モノクロ",
-            "Semi-monochrome",
+            lang.t("look-semi-monochrome"),
         ),
-    ] {
-        if w::button(
-            ui,
-            b,
-            ("look.preset", ja),
-            lang.pick(ja, en),
-            false,
-            free,
-            None,
-            None,
-        )
-        .clicked()
-        {
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        if w::button(ui, b, ("look.preset", i), label, false, free, None, None).clicked() {
             app.apply(look_action(LookOp::LightingPreset(preset)));
         }
     }
@@ -1379,8 +1365,7 @@ fn uv(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.uv",
-        "UV設定",
-        "UV Setting",
+        |l| l.t("look-uv-setting"),
         Section::Uv,
     ) {
         return;
@@ -1396,8 +1381,7 @@ fn main_color(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.main",
-        "メインカラー / 透過設定",
-        "Main Color / Alpha",
+        |l| l.t("look-main-color-alpha-2"),
         Section::Main,
     ) {
         return;
@@ -1602,7 +1586,7 @@ fn decal_rows(
         rows,
         &format!("look.mirror.{prefix}"),
         lang.t("look-mirror-mode"),
-        MIRROR[mirror].pick(lang),
+        MIRROR[mirror].get(lang),
         &format!(
             "{}, {}, {}",
             p("IsLeftOnly"),
@@ -1624,7 +1608,7 @@ fn decal_rows(
         rows,
         &format!("look.copy.{prefix}"),
         lang.t("look-copy-mode"),
-        COPY[copy].pick(lang),
+        COPY[copy].get(lang),
         &format!("{}, {}", p("ShouldCopy"), p("ShouldFlipCopy")),
         free,
     ) {
@@ -1639,13 +1623,17 @@ fn decal_rows(
     // scale & offset → 大きさと位置（lilToon の欄と同じ換算）
     let mut next = fields::decal_shown(liltoon::value(&look, st), copy > 0);
     let mut changed = false;
-    for (k, (ja, en), lo) in [
-        (0, ("X座標", "Position X"), if copy > 0 { 0.5 } else { 0.0 }),
-        (1, ("Y座標", "Position Y"), 0.0),
-        (2, ("X軸サイズ", "Scale X"), -1.0),
-        (3, ("Y軸サイズ", "Scale Y"), -1.0),
+    for (k, name, lo) in [
+        (
+            0,
+            lang.t("look-position-x"),
+            if copy > 0 { 0.5 } else { 0.0 },
+        ),
+        (1, lang.t("look-position-y"), 0.0),
+        (2, lang.t("look-scale-x-2"), -1.0),
+        (3, lang.t("look-scale-y-2"), -1.0),
     ] {
-        let (label, tip) = marked(app, st, lang.pick(ja, en));
+        let (label, tip) = marked(app, st, name);
         let spec = SliderSpec::new(
             &label,
             lo,
@@ -1669,32 +1657,22 @@ fn decal_rows(
     }
 }
 
-/// 日英の名前 1 つ。
-#[derive(Clone, Copy)]
-struct Name(&'static str, &'static str);
-
-impl Name {
-    fn pick(self, lang: Lang) -> &'static str {
-        lang.pick(self.0, self.1)
-    }
-}
-
-const MIRROR: [Name; 5] = [
-    Name("通常", "Normal"),
-    Name("反転", "Flip"),
-    Name("左のみ", "Left Only"),
-    Name("右のみ", "Right Only"),
-    Name("右のみ・反転", "Flip Right Only"),
+const MIRROR: [Label; 5] = [
+    Label::new(|l| l.t("look-normal")),
+    Label::new(|l| l.t("look-flip")),
+    Label::new(|l| l.t("look-left-only-2")),
+    Label::new(|l| l.t("look-right-only-2")),
+    Label::new(|l| l.t("look-flip-right-only")),
 ];
-const COPY: [Name; 3] = [
-    Name("通常", "Normal"),
-    Name("左右対称", "Symmetry"),
-    Name("反転", "Flip"),
+const COPY: [Label; 3] = [
+    Label::new(|l| l.t("look-normal")),
+    Label::new(|l| l.t("look-symmetry")),
+    Label::new(|l| l.t("look-flip")),
 ];
-const SPECULAR: [Name; 3] = [
-    Name("無効", "None"),
-    Name("リアル", "Realistic"),
-    Name("トゥーン", "Toon"),
+const SPECULAR: [Label; 3] = [
+    Label::new(|l| l.t("look-none-2")),
+    Label::new(|l| l.t("look-realistic")),
+    Label::new(|l| l.t("look-toon")),
 ];
 
 /// アルファマスクの中身（lilToon の欄: マスク・反転・透明度・Cutoff。スケールとオフセットはこの 2 つから決まる）。
@@ -1764,8 +1742,7 @@ fn shadow(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.shadow",
-        "影設定",
-        "Shadow",
+        |l| l.t("look-shadow-2"),
         Section::Shadow,
     ) {
         return;
@@ -1907,8 +1884,7 @@ fn rim_shade(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.rimshade",
-        "リムシェード",
-        "RimShade",
+        |l| l.t("look-rimshade"),
         Section::RimShade,
     ) {
         return;
@@ -1945,8 +1921,7 @@ fn emission(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.emission",
-        "発光設定",
-        "Emission",
+        |l| l.t("look-emission-2"),
         Section::Emission,
     ) {
         return;
@@ -2011,8 +1986,7 @@ fn normal_map(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.normal",
-        "ノーマルマップ設定",
-        "Normal Map",
+        |l| l.t("look-normal-map-2"),
         Section::Normal,
     ) {
         return;
@@ -2100,8 +2074,7 @@ fn backlight(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.backlight",
-        "逆光ライト",
-        "Backlight",
+        |l| l.t("look-backlight"),
         Section::Backlight,
     ) {
         return;
@@ -2145,8 +2118,7 @@ fn reflection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.reflection",
-        "光沢設定",
-        "Reflections",
+        |l| l.t("look-reflections"),
         Section::Reflection,
     ) {
         return;
@@ -2202,7 +2174,7 @@ fn reflection(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
             rows,
             "look.specular",
             &label,
-            SPECULAR[mode].pick(lang),
+            SPECULAR[mode].get(lang),
             "_ApplySpecular, _SpecularToon",
             free,
         ) {
@@ -2307,8 +2279,7 @@ fn matcap(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.matcap",
-        "マットキャップ設定",
-        "MatCap",
+        |l| l.t("look-matcap-3"),
         Section::MatCap,
     ) {
         return;
@@ -2369,8 +2340,7 @@ fn rim(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.rim",
-        "リムライト設定",
-        "Rim Light",
+        |l| l.t("look-rim-light-2"),
         Section::Rim,
     ) {
         return;
@@ -2426,8 +2396,7 @@ fn glitter(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.glitter",
-        "ラメ設定",
-        "Glitter",
+        |l| l.t("look-glitter-2"),
         Section::Glitter,
     ) {
         return;
@@ -2520,15 +2489,15 @@ fn glitter_params(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) 
         liltoon::number(&look, "_GlitterSensitivity"),
     );
     let mut changed = false;
-    let specs: [(&str, &str, f32, f32); 5] = [
-        ("サイズ X", "Scale X", 0.0, 10.0),
-        ("サイズ Y", "Scale Y", 0.0, 10.0),
-        ("パーティクルサイズ", "Particle Size", 0.0, 2.0),
-        ("密度", "Density", 0.001, 1.0),
-        ("感度", "Sensitivity", 0.0, 100.0),
+    let specs: [(&str, f32, f32); 5] = [
+        (lang.t("look-scale-x"), 0.0, 10.0),
+        (lang.t("look-scale-y"), 0.0, 10.0),
+        (lang.t("look-particle-size"), 0.0, 2.0),
+        (lang.t("look-density"), 0.001, 1.0),
+        (lang.t("look-sensitivity"), 0.0, 100.0),
     ];
-    for (k, (ja, en, lo, hi)) in specs.into_iter().enumerate() {
-        let (label, tip) = marked(app, "_GlitterParams1", lang.pick(ja, en));
+    for (k, (name, lo, hi)) in specs.into_iter().enumerate() {
+        let (label, tip) = marked(app, "_GlitterParams1", name);
         let spec = SliderSpec::new(
             &label,
             lo,
@@ -2561,8 +2530,7 @@ fn outline(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.outline",
-        "輪郭線設定",
-        "Outline",
+        |l| l.t("look-outline-2"),
         Section::Outline,
     ) {
         return;
@@ -2675,8 +2643,7 @@ fn distance_fade(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
         app,
         rows,
         "look.distancefade",
-        "距離フェード",
-        "Distance Fade",
+        |l| l.t("look-distance-fade"),
         Section::DistanceFade,
     ) {
         return;
@@ -2777,7 +2744,7 @@ pub fn entries(app: &AppState, choice: LookChoice) -> Vec<Entry<Action>> {
                 .enumerate()
                 .map(|(i, o)| {
                     let mut e = Entry::item(
-                        lang.pick(o.0, o.1),
+                        o.get(lang),
                         look_action(LookOp::Value {
                             name,
                             value: LookValue::Float(i as f32),
@@ -2804,7 +2771,7 @@ pub fn entries(app: &AppState, choice: LookChoice) -> Vec<Entry<Action>> {
                 .iter()
                 .enumerate()
                 .map(|(i, n)| {
-                    Entry::item(n.pick(lang), look_action(fields::specular_op(i)))
+                    Entry::item(n.get(lang), look_action(fields::specular_op(i)))
                         .radio(current == i)
                         .enabled(free)
                 })
@@ -2825,7 +2792,7 @@ pub fn entries(app: &AppState, choice: LookChoice) -> Vec<Entry<Action>> {
                 .iter()
                 .enumerate()
                 .map(|(i, n)| {
-                    Entry::item(n.pick(lang), look_action(fields::mirror_op(prefix, i)))
+                    Entry::item(n.get(lang), look_action(fields::mirror_op(prefix, i)))
                         .radio(current == i)
                         .enabled(free)
                 })
@@ -2837,7 +2804,7 @@ pub fn entries(app: &AppState, choice: LookChoice) -> Vec<Entry<Action>> {
             COPY.iter()
                 .enumerate()
                 .map(|(i, n)| {
-                    Entry::item(n.pick(lang), look_action(fields::copy_op(prefix, i)))
+                    Entry::item(n.get(lang), look_action(fields::copy_op(prefix, i)))
                         .radio(current == i)
                         .enabled(free)
                 })

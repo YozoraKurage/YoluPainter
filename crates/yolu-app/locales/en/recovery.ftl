@@ -56,3 +56,10 @@ recovery-close = Close
 recovery-discard-generation = Discard Generation
 recovery-cancel = Cancel
 recovery-deletes-this-generation-permanently-saved-tip = Deletes this generation permanently. Saved .ylp files stay
+recovery-sets-count = { $count } { $count ->
+        [one] set
+       *[other] sets
+    }
+recovery-damaged-generation-cannot-be-read = { $reason ->
+       *[other] Damaged generation (cannot be read)
+    }

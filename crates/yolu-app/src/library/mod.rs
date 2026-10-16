@@ -400,10 +400,7 @@ impl LibraryState {
         let Some(folder) = self.folder.clone() else {
             self.stale = false;
             self.listed = true;
-            self.problem = Some(Unreadable::pair(
-                "ライブラリの場所がありません",
-                "No library location",
-            ));
+            self.problem = Some(Unreadable::keyed(|l| l.t("library-no-library-location")));
             return;
         };
         self.stale = false;
@@ -428,7 +425,7 @@ impl LibraryState {
             });
         if spawned.is_err() {
             self.listed = true;
-            self.problem = Some(Unreadable::pair("一覧を読めません", "Cannot read the list"));
+            self.problem = Some(Unreadable::keyed(|l| l.t("library-cannot-read-the-list")));
             return;
         }
         self.run = Some(ListingRun { folder, rx, cancel });
@@ -441,7 +438,7 @@ impl LibraryState {
             Ok(r) => r,
             Err(std::sync::mpsc::TryRecvError::Empty) => return false,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Err(Unreadable::pair("一覧を読めません", "Cannot read the list"))
+                Err(Unreadable::keyed(|l| l.t("library-cannot-read-the-list")))
             }
         };
         let run = self.run.take().expect("上で確かめた");

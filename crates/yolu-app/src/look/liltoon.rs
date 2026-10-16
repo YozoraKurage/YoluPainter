@@ -20,7 +20,7 @@ pub enum Kind {
     /// 範囲の無い数（`Float`。欄は `min`〜`max` で動かす）。
     Number { min: f32, max: f32 },
     /// 選ぶ（値は番号）。名前は日英。
-    Choice(&'static [(&'static str, &'static str)]),
+    Choice(&'static [Label]),
     /// 色（`hdr` なら 1 を超えてよい）。
     Color { hdr: bool },
     /// 角度（`[lilAngle]`。値はラジアン、欄は −180〜180 度）。
@@ -31,6 +31,46 @@ pub enum Kind {
     Vector,
 }
 
+/// 表（const）の画面の名前。文は `locales/<言語>/look.ftl` にあり、表は引き方（`|l| l.t("キー")`）を持つ。
+#[derive(Clone, Copy)]
+pub enum Label {
+    /// .ftl の文。
+    Text(fn(Lang) -> &'static str),
+    /// 言語によらない名前（Unity のプロパティの名前そのもの）。
+    Name(&'static str),
+}
+
+impl Label {
+    pub const fn new(text: fn(Lang) -> &'static str) -> Label {
+        Label::Text(text)
+    }
+
+    pub fn get(self, lang: Lang) -> &'static str {
+        match self {
+            Label::Text(text) => text(lang),
+            Label::Name(name) => name,
+        }
+    }
+}
+
+impl std::fmt::Debug for Label {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Label({:?}, {:?})",
+            self.get(Lang::Ja),
+            self.get(Lang::En)
+        )
+    }
+}
+
+/// 同じ名前か（日英の文が同じ）。
+impl PartialEq for Label {
+    fn eq(&self, other: &Label) -> bool {
+        Lang::ALL.iter().all(|l| self.get(*l) == other.get(*l))
+    }
+}
+
 /// 1 つのプロパティ。
 #[derive(Clone, Copy, Debug)]
 pub struct Prop {
@@ -38,71 +78,82 @@ pub struct Prop {
     /// 既定（数は x。色はガンマの空間の RGBA）。
     pub default: [f32; 4],
     pub kind: Kind,
-    pub ja: &'static str,
-    pub en: &'static str,
+    pub label: Label,
 }
 
 impl Prop {
     pub fn label(&self, lang: Lang) -> &'static str {
-        lang.pick(self.ja, self.en)
+        self.label.get(lang)
     }
 }
 
-const BLEND: &[(&str, &str)] = &[
-    ("通常", "Normal"),
-    ("加算", "Add"),
-    ("スクリーン", "Screen"),
-    ("乗算", "Multiply"),
+const BLEND: &[Label] = &[
+    Label::new(|l| l.t("look-normal")),
+    Label::new(|l| l.t("look-add")),
+    Label::new(|l| l.t("look-screen")),
+    Label::new(|l| l.t("look-multiply")),
 ];
-pub const CULL: &[(&str, &str)] = &[
-    ("Off（両面を描画）", "Off"),
-    ("Front（裏面のみ描画）", "Front"),
-    ("Back（前面のみ描画）", "Back"),
+pub const CULL: &[Label] = &[
+    Label::new(|l| l.t("look-off-2")),
+    Label::new(|l| l.t("look-front")),
+    Label::new(|l| l.t("look-back")),
 ];
-const ALPHA_MASK: &[(&str, &str)] = &[
-    ("None", "None"),
-    ("置き換え", "Replace"),
-    ("乗算", "Multiply"),
-    ("加算", "Add"),
-    ("減算", "Subtract"),
+const ALPHA_MASK: &[Label] = &[
+    Label::new(|l| l.t("look-none")),
+    Label::new(|l| l.t("look-replace")),
+    Label::new(|l| l.t("look-multiply")),
+    Label::new(|l| l.t("look-add")),
+    Label::new(|l| l.t("look-subtract")),
 ];
-const SHADOW_MASK: &[(&str, &str)] = &[("強度", "Strength"), ("平面化", "Flat"), ("SDF", "SDF")];
-const SHADOW_COLOR_TYPE: &[(&str, &str)] = &[("通常", "Normal"), ("LUT", "LUT")];
-const EMISSION_UV: &[(&str, &str)] = &[
-    ("UV0", "UV0"),
-    ("UV1", "UV1"),
-    ("UV2", "UV2"),
-    ("UV3", "UV3"),
-    ("リム", "Rim"),
+const SHADOW_MASK: &[Label] = &[
+    Label::new(|l| l.t("look-strength")),
+    Label::new(|l| l.t("look-flat-2")),
+    Label::new(|l| l.t("look-sdf")),
 ];
-const LAYER_UV: &[(&str, &str)] = &[
-    ("UV0", "UV0"),
-    ("UV1", "UV1"),
-    ("UV2", "UV2"),
-    ("UV3", "UV3"),
-    ("MatCap", "MatCap"),
+const SHADOW_COLOR_TYPE: &[Label] = &[
+    Label::new(|l| l.t("look-normal")),
+    Label::new(|l| l.t("look-lut")),
 ];
-const UV4: &[(&str, &str)] = &[
-    ("UV0", "UV0"),
-    ("UV1", "UV1"),
-    ("UV2", "UV2"),
-    ("UV3", "UV3"),
+const EMISSION_UV: &[Label] = &[
+    Label::new(|l| l.t("look-uv0")),
+    Label::new(|l| l.t("look-uv1")),
+    Label::new(|l| l.t("look-uv2")),
+    Label::new(|l| l.t("look-uv3")),
+    Label::new(|l| l.t("look-rim")),
 ];
-const UV2: &[(&str, &str)] = &[("UV0", "UV0"), ("UV1", "UV1")];
-const OUTLINE_VERTEX: &[(&str, &str)] = &[
-    ("None", "None"),
-    ("R -> Width", "R -> Width"),
-    ("RGBA -> Normal & Width", "RGBA -> Normal & Width"),
+const LAYER_UV: &[Label] = &[
+    Label::new(|l| l.t("look-uv0")),
+    Label::new(|l| l.t("look-uv1")),
+    Label::new(|l| l.t("look-uv2")),
+    Label::new(|l| l.t("look-uv3")),
+    Label::new(|l| l.t("look-matcap-2")),
 ];
-const DISTANCE_FADE_MODE: &[(&str, &str)] = &[("頂点", "Vertex"), ("座標", "Position")];
+const UV4: &[Label] = &[
+    Label::new(|l| l.t("look-uv0")),
+    Label::new(|l| l.t("look-uv1")),
+    Label::new(|l| l.t("look-uv2")),
+    Label::new(|l| l.t("look-uv3")),
+];
+const UV2: &[Label] = &[
+    Label::new(|l| l.t("look-uv0")),
+    Label::new(|l| l.t("look-uv1")),
+];
+const OUTLINE_VERTEX: &[Label] = &[
+    Label::new(|l| l.t("look-none")),
+    Label::new(|l| l.t("look-r-width")),
+    Label::new(|l| l.t("look-rgba-normal-width")),
+];
+const DISTANCE_FADE_MODE: &[Label] = &[
+    Label::new(|l| l.t("look-vertex")),
+    Label::new(|l| l.t("look-position")),
+];
 
 const fn f(
     name: &'static str,
     default: f32,
     min: f32,
     max: f32,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> Prop {
     Prop {
         name,
@@ -112,8 +163,7 @@ const fn f(
             max,
             power: 1.0,
         },
-        ja,
-        en,
+        label: Label::Text(label),
     }
 }
 
@@ -122,8 +172,7 @@ const fn p3(
     default: f32,
     min: f32,
     max: f32,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> Prop {
     Prop {
         name,
@@ -133,8 +182,7 @@ const fn p3(
             max,
             power: 3.0,
         },
-        ja,
-        en,
+        label: Label::Text(label),
     }
 }
 
@@ -143,41 +191,36 @@ const fn n(
     default: f32,
     min: f32,
     max: f32,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> Prop {
     Prop {
         name,
         default: [default, 0.0, 0.0, 0.0],
         kind: Kind::Number { min, max },
-        ja,
-        en,
+        label: Label::Text(label),
     }
 }
 
-const fn t(name: &'static str, default: f32, ja: &'static str, en: &'static str) -> Prop {
+const fn t(name: &'static str, default: f32, label: fn(Lang) -> &'static str) -> Prop {
     Prop {
         name,
         default: [default, 0.0, 0.0, 0.0],
         kind: Kind::Toggle,
-        ja,
-        en,
+        label: Label::Text(label),
     }
 }
 
 const fn e(
     name: &'static str,
     default: f32,
-    options: &'static [(&'static str, &'static str)],
-    ja: &'static str,
-    en: &'static str,
+    options: &'static [Label],
+    label: fn(Lang) -> &'static str,
 ) -> Prop {
     Prop {
         name,
         default: [default, 0.0, 0.0, 0.0],
         kind: Kind::Choice(options),
-        ja,
-        en,
+        label: Label::Text(label),
     }
 }
 
@@ -185,15 +228,13 @@ const fn c(
     name: &'static str,
     default: [f32; 4],
     hdr: bool,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> Prop {
     Prop {
         name,
         default,
         kind: Kind::Color { hdr },
-        ja,
-        en,
+        label: Label::Text(label),
     }
 }
 
@@ -202,18 +243,16 @@ const fn v(name: &'static str, default: [f32; 4]) -> Prop {
         name,
         default,
         kind: Kind::Vector,
-        ja: name,
-        en: name,
+        label: Label::Name(name),
     }
 }
 
-const fn a(name: &'static str, ja: &'static str, en: &'static str) -> Prop {
+const fn a(name: &'static str, label: fn(Lang) -> &'static str) -> Prop {
     Prop {
         name,
         default: [0.0; 4],
         kind: Kind::Angle,
-        ja,
-        en,
+        label: Label::Text(label),
     }
 }
 
@@ -222,176 +261,93 @@ const fn lod(name: &'static str) -> Prop {
         name,
         default: [0.0; 4],
         kind: Kind::Lod,
-        ja: "LOD",
-        en: "LOD",
+        label: Label::Text(|l| l.t("look-lod")),
     }
 }
 
 const BASE: &[Prop] = &[
-    f(
-        "_Cutoff",
-        0.5,
-        -0.001,
-        1.001,
-        "Cutoff（完全透明にする範囲）",
-        "Cutoff",
-    ),
-    e("_Cull", 2.0, CULL, "Cull Mode", "Cull Mode"),
-    t(
-        "_FlipNormal",
-        0.0,
-        "裏面の法線を反転",
-        "Flip Backface Normal",
-    ),
-    f(
-        "_BackfaceForceShadow",
-        0.0,
-        0.0,
-        1.0,
-        "裏面を影にする",
-        "Backface Force Shadow",
-    ),
-    c("_BackfaceColor", [0.0, 0.0, 0.0, 0.0], true, "色", "Color"),
-    t("_Invisible", 0.0, "非表示", "Invisible"),
-    f(
-        "_AAStrength",
-        1.0,
-        0.0,
-        1.0,
-        "アンチエイリアスシェーディング",
-        "Anti-aliasing shading",
-    ),
+    f("_Cutoff", 0.5, -0.001, 1.001, |l| l.t("look-cutoff")),
+    e("_Cull", 2.0, CULL, |l| l.t("look-cull-mode")),
+    t("_FlipNormal", 0.0, |l| l.t("look-flip-backface-normal")),
+    f("_BackfaceForceShadow", 0.0, 0.0, 1.0, |l| {
+        l.t("look-backface-force-shadow")
+    }),
+    c("_BackfaceColor", [0.0, 0.0, 0.0, 0.0], true, |l| {
+        l.t("look-color-2")
+    }),
+    t("_Invisible", 0.0, |l| l.t("look-invisible")),
+    f("_AAStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-anti-aliasing-shading")
+    }),
 ];
 
 const LIGHTING: &[Prop] = &[
-    f(
-        "_LightMinLimit",
-        0.05,
-        0.0,
-        1.0,
-        "明るさの下限",
-        "Lower brightness limit",
-    ),
-    f(
-        "_LightMaxLimit",
-        1.0,
-        0.0,
-        10.0,
-        "明るさの上限",
-        "Upper brightness limit",
-    ),
-    f(
-        "_MonochromeLighting",
-        0.0,
-        0.0,
-        1.0,
-        "ライトのモノクロ化",
-        "Monochrome Lighting",
-    ),
-    f(
-        "_ShadowEnvStrength",
-        0.0,
-        0.0,
-        1.0,
-        "影色への環境光影響度",
-        "Environment strength on shadow color",
-    ),
-    f("_AsUnlit", 0.0, 0.0, 1.0, "Unlit化", "As Unlit"),
+    f("_LightMinLimit", 0.05, 0.0, 1.0, |l| {
+        l.t("look-lower-brightness-limit")
+    }),
+    f("_LightMaxLimit", 1.0, 0.0, 10.0, |l| {
+        l.t("look-upper-brightness-limit")
+    }),
+    f("_MonochromeLighting", 0.0, 0.0, 1.0, |l| {
+        l.t("look-monochrome-lighting")
+    }),
+    f("_ShadowEnvStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-environment-strength-on-shadow-color")
+    }),
+    f("_AsUnlit", 0.0, 0.0, 1.0, |l| l.t("look-as-unlit")),
     v("_LightDirectionOverride", [0.001, 0.002, 0.001, 0.0]),
 ];
 
 const UV: &[Prop] = &[
     v("_MainTex_ST", [1.0, 1.0, 0.0, 0.0]),
     v("_MainTex_ScrollRotate", [0.0; 4]),
-    t(
-        "_ShiftBackfaceUV",
-        0.0,
-        "裏面のUVをずらす",
-        "Shift Backface UV",
-    ),
+    t("_ShiftBackfaceUV", 0.0, |l| l.t("look-shift-backface-uv")),
 ];
 
 /// メインカラー 2nd・3rd の同じ形の値（`_Use<名>Tex`・`_Color<n>`・`_<名>Tex…`）。
 macro_rules! layer {
-    ($l:literal, $n:literal, $ja:literal, $en:literal) => {
+    ($l:literal, $n:literal, $label:expr) => {
         [
-            t(concat!("_Use", $l, "Tex"), 0.0, $ja, $en),
-            c(concat!("_Color", $n), [1.0; 4], true, "色", "Color"),
+            t(concat!("_Use", $l, "Tex"), 0.0, $label),
+            c(concat!("_Color", $n), [1.0; 4], true, |l| {
+                l.t("look-color-2")
+            }),
             v(concat!("_", $l, "Tex_ST"), [1.0, 1.0, 0.0, 0.0]),
-            a(concat!("_", $l, "TexAngle"), "角度", "Angle"),
-            e(
-                concat!("_", $l, "Tex_UVMode"),
-                0.0,
-                LAYER_UV,
-                "UV Mode",
-                "UV Mode",
-            ),
-            e(
-                concat!("_", $l, "Tex_Cull"),
-                0.0,
-                CULL,
-                "Cull Mode",
-                "Cull Mode",
-            ),
-            t(
-                concat!("_", $l, "TexIsMSDF"),
-                0.0,
-                "MSDFテクスチャ",
-                "MSDF Texture",
-            ),
-            f(
-                concat!("_", $l, "EnableLighting"),
-                1.0,
-                0.0,
-                1.0,
-                "ライトの明るさを反映",
-                "Enable Lighting",
-            ),
-            e(
-                concat!("_", $l, "TexBlendMode"),
-                0.0,
-                BLEND,
-                "合成モード",
-                "Blending Mode",
-            ),
-            e(
-                concat!("_", $l, "TexAlphaMode"),
-                0.0,
-                ALPHA_MASK,
-                "透過モード",
-                "Transparent Mode",
-            ),
-            t(
-                concat!("_", $l, "TexIsDecal"),
-                0.0,
-                "デカール化",
-                "As Decal",
-            ),
-            t(
-                concat!("_", $l, "TexIsLeftOnly"),
-                0.0,
-                "Left Only",
-                "Left Only",
-            ),
-            t(
-                concat!("_", $l, "TexIsRightOnly"),
-                0.0,
-                "Right Only",
-                "Right Only",
-            ),
-            t(concat!("_", $l, "TexShouldCopy"), 0.0, "Copy", "Copy"),
-            t(
-                concat!("_", $l, "TexShouldFlipMirror"),
-                0.0,
-                "Flip Mirror",
-                "Flip Mirror",
-            ),
-            t(
-                concat!("_", $l, "TexShouldFlipCopy"),
-                0.0,
-                "Flip Copy",
-                "Flip Copy",
-            ),
+            a(concat!("_", $l, "TexAngle"), |l| l.t("look-angle")),
+            e(concat!("_", $l, "Tex_UVMode"), 0.0, LAYER_UV, |l| {
+                l.t("look-uv-mode")
+            }),
+            e(concat!("_", $l, "Tex_Cull"), 0.0, CULL, |l| {
+                l.t("look-cull-mode")
+            }),
+            t(concat!("_", $l, "TexIsMSDF"), 0.0, |l| {
+                l.t("look-msdf-texture")
+            }),
+            f(concat!("_", $l, "EnableLighting"), 1.0, 0.0, 1.0, |l| {
+                l.t("look-enable-lighting")
+            }),
+            e(concat!("_", $l, "TexBlendMode"), 0.0, BLEND, |l| {
+                l.t("look-blending-mode")
+            }),
+            e(concat!("_", $l, "TexAlphaMode"), 0.0, ALPHA_MASK, |l| {
+                l.t("look-transparent-mode")
+            }),
+            t(concat!("_", $l, "TexIsDecal"), 0.0, |l| {
+                l.t("look-as-decal")
+            }),
+            t(concat!("_", $l, "TexIsLeftOnly"), 0.0, |l| {
+                l.t("look-left-only")
+            }),
+            t(concat!("_", $l, "TexIsRightOnly"), 0.0, |l| {
+                l.t("look-right-only")
+            }),
+            t(concat!("_", $l, "TexShouldCopy"), 0.0, |l| l.t("look-copy")),
+            t(concat!("_", $l, "TexShouldFlipMirror"), 0.0, |l| {
+                l.t("look-flip-mirror")
+            }),
+            t(concat!("_", $l, "TexShouldFlipCopy"), 0.0, |l| {
+                l.t("look-flip-copy")
+            }),
             v(concat!("_", $l, "TexDecalAnimation"), [1.0, 1.0, 1.0, 30.0]),
             v(concat!("_", $l, "TexDecalSubParam"), [1.0, 1.0, 0.0, 1.0]),
             v(concat!("_", $l, "DistanceFade"), [0.1, 0.01, 0.0, 0.0]),
@@ -399,800 +355,432 @@ macro_rules! layer {
     };
 }
 
-const MAIN2ND: [Prop; 19] = layer!("Main2nd", "2nd", "メインカラー2nd", "Main Color 2nd");
-const MAIN3RD: [Prop; 19] = layer!("Main3rd", "3rd", "メインカラー3rd", "Main Color 3rd");
+const MAIN2ND: [Prop; 19] = layer!("Main2nd", "2nd", |l| l.t("look-main-color-2nd"));
+const MAIN3RD: [Prop; 19] = layer!("Main3rd", "3rd", |l| l.t("look-main-color-3rd"));
 
 const MAIN: &[Prop] = &[
-    c("_Color", [1.0, 1.0, 1.0, 1.0], true, "色", "Color"),
+    c("_Color", [1.0, 1.0, 1.0, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
     v("_MainTexHSVG", [0.0, 1.0, 1.0, 1.0]),
-    e(
-        "_AlphaMaskMode",
-        0.0,
-        ALPHA_MASK,
-        "アルファマスク",
-        "Alpha Mask",
-    ),
+    e("_AlphaMaskMode", 0.0, ALPHA_MASK, |l| {
+        l.t("look-alpha-mask")
+    }),
     v("_AlphaMask_ST", [1.0, 1.0, 0.0, 0.0]),
-    n("_AlphaMaskScale", 1.0, -1.0, 1.0, "Scale", "Scale"),
-    n("_AlphaMaskValue", 0.0, -1.0, 1.0, "Offset", "Offset"),
+    n("_AlphaMaskScale", 1.0, -1.0, 1.0, |l| l.t("look-scale")),
+    n("_AlphaMaskValue", 0.0, -1.0, 1.0, |l| l.t("look-offset")),
 ];
 
 const SHADOW: &[Prop] = &[
-    t("_UseShadow", 0.0, "影", "Shadow"),
-    e(
-        "_ShadowMaskType",
-        0.0,
-        SHADOW_MASK,
-        "マスクタイプ",
-        "Mask Type",
-    ),
-    f("_ShadowStrength", 1.0, 0.0, 1.0, "強度", "Strength"),
+    t("_UseShadow", 0.0, |l| l.t("look-shadow")),
+    e("_ShadowMaskType", 0.0, SHADOW_MASK, |l| {
+        l.t("look-mask-type")
+    }),
+    f("_ShadowStrength", 1.0, 0.0, 1.0, |l| l.t("look-strength")),
     lod("_ShadowStrengthMaskLOD"),
-    f("_ShadowFlatBorder", 1.0, -2.0, 2.0, "範囲", "Border"),
-    f("_ShadowFlatBlur", 1.0, 0.001, 2.0, "ぼかし", "Blur"),
-    e(
-        "_ShadowColorType",
-        0.0,
-        SHADOW_COLOR_TYPE,
-        "カラータイプ",
-        "Color Type",
-    ),
-    c(
-        "_ShadowColor",
-        [0.82, 0.76, 0.85, 1.0],
-        false,
-        "影色1",
-        "1st Color",
-    ),
-    f("_ShadowBorder", 0.5, 0.0, 1.0, "範囲", "Border"),
-    f("_ShadowBlur", 0.1, 0.0, 1.0, "ぼかし", "Blur"),
-    f(
-        "_ShadowNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    f(
-        "_ShadowReceive",
-        0.0,
-        0.0,
-        1.0,
-        "影を受け取る",
-        "Receive Shadow",
-    ),
-    c(
-        "_Shadow2ndColor",
-        [0.68, 0.66, 0.79, 1.0],
-        false,
-        "影色2",
-        "2nd Color",
-    ),
-    f("_Shadow2ndBorder", 0.15, 0.0, 1.0, "範囲", "Border"),
-    f("_Shadow2ndBlur", 0.1, 0.0, 1.0, "ぼかし", "Blur"),
-    f(
-        "_Shadow2ndNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    f(
-        "_Shadow2ndReceive",
-        0.0,
-        0.0,
-        1.0,
-        "影を受け取る",
-        "Receive Shadow",
-    ),
-    c(
-        "_Shadow3rdColor",
-        [0.0, 0.0, 0.0, 0.0],
-        false,
-        "影色3",
-        "3rd Color",
-    ),
-    f("_Shadow3rdBorder", 0.25, 0.0, 1.0, "範囲", "Border"),
-    f("_Shadow3rdBlur", 0.1, 0.0, 1.0, "ぼかし", "Blur"),
-    f(
-        "_Shadow3rdNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    f(
-        "_Shadow3rdReceive",
-        0.0,
-        0.0,
-        1.0,
-        "影を受け取る",
-        "Receive Shadow",
-    ),
-    c(
-        "_ShadowBorderColor",
-        [1.0, 0.1, 0.0, 1.0],
-        false,
-        "境界の色",
-        "Border Color",
-    ),
-    f(
-        "_ShadowBorderRange",
-        0.08,
-        0.0,
-        1.0,
-        "境界の幅",
-        "Border Range",
-    ),
-    f(
-        "_ShadowMainStrength",
-        0.0,
-        0.0,
-        1.0,
-        "コントラスト",
-        "Contrast",
-    ),
+    f("_ShadowFlatBorder", 1.0, -2.0, 2.0, |l| l.t("look-border")),
+    f("_ShadowFlatBlur", 1.0, 0.001, 2.0, |l| l.t("look-blur")),
+    e("_ShadowColorType", 0.0, SHADOW_COLOR_TYPE, |l| {
+        l.t("look-color-type")
+    }),
+    c("_ShadowColor", [0.82, 0.76, 0.85, 1.0], false, |l| {
+        l.t("look-1st-color")
+    }),
+    f("_ShadowBorder", 0.5, 0.0, 1.0, |l| l.t("look-border")),
+    f("_ShadowBlur", 0.1, 0.0, 1.0, |l| l.t("look-blur")),
+    f("_ShadowNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    f("_ShadowReceive", 0.0, 0.0, 1.0, |l| {
+        l.t("look-receive-shadow")
+    }),
+    c("_Shadow2ndColor", [0.68, 0.66, 0.79, 1.0], false, |l| {
+        l.t("look-2nd-color")
+    }),
+    f("_Shadow2ndBorder", 0.15, 0.0, 1.0, |l| l.t("look-border")),
+    f("_Shadow2ndBlur", 0.1, 0.0, 1.0, |l| l.t("look-blur")),
+    f("_Shadow2ndNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    f("_Shadow2ndReceive", 0.0, 0.0, 1.0, |l| {
+        l.t("look-receive-shadow")
+    }),
+    c("_Shadow3rdColor", [0.0, 0.0, 0.0, 0.0], false, |l| {
+        l.t("look-3rd-color")
+    }),
+    f("_Shadow3rdBorder", 0.25, 0.0, 1.0, |l| l.t("look-border")),
+    f("_Shadow3rdBlur", 0.1, 0.0, 1.0, |l| l.t("look-blur")),
+    f("_Shadow3rdNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    f("_Shadow3rdReceive", 0.0, 0.0, 1.0, |l| {
+        l.t("look-receive-shadow")
+    }),
+    c("_ShadowBorderColor", [1.0, 0.1, 0.0, 1.0], false, |l| {
+        l.t("look-border-color")
+    }),
+    f("_ShadowBorderRange", 0.08, 0.0, 1.0, |l| {
+        l.t("look-border-range")
+    }),
+    f("_ShadowMainStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-contrast")
+    }),
     lod("_ShadowBlurMaskLOD"),
     lod("_ShadowBorderMaskLOD"),
-    t(
-        "_ShadowPostAO",
-        0.0,
-        "影範囲設定を無視して適用",
-        "Ignore border properties",
-    ),
+    t("_ShadowPostAO", 0.0, |l| {
+        l.t("look-ignore-border-properties")
+    }),
     v("_ShadowAOShift", [1.0, 0.0, 1.0, 0.0]),
     v("_ShadowAOShift2", [1.0, 0.0, 1.0, 0.0]),
 ];
 
 const RIM_SHADE: &[Prop] = &[
-    t("_UseRimShade", 0.0, "リムシェード", "RimShade"),
-    c("_RimShadeColor", [0.5, 0.5, 0.5, 1.0], false, "色", "Color"),
-    f(
-        "_RimShadeNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    f("_RimShadeBorder", 0.5, 0.0, 1.0, "範囲", "Border"),
-    f("_RimShadeBlur", 1.0, 0.0, 1.0, "ぼかし", "Blur"),
-    p3(
-        "_RimShadeFresnelPower",
-        1.0,
-        0.01,
-        50.0,
-        "リムライトの細さ",
-        "Fresnel Power",
-    ),
+    t("_UseRimShade", 0.0, |l| l.t("look-rimshade")),
+    c("_RimShadeColor", [0.5, 0.5, 0.5, 1.0], false, |l| {
+        l.t("look-color-2")
+    }),
+    f("_RimShadeNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    f("_RimShadeBorder", 0.5, 0.0, 1.0, |l| l.t("look-border")),
+    f("_RimShadeBlur", 1.0, 0.0, 1.0, |l| l.t("look-blur")),
+    p3("_RimShadeFresnelPower", 1.0, 0.01, 50.0, |l| {
+        l.t("look-fresnel-power")
+    }),
 ];
 
 const EMISSION: &[Prop] = &[
-    t("_UseEmission", 0.0, "発光テクスチャ", "Emission"),
-    c("_EmissionColor", [1.0, 1.0, 1.0, 1.0], true, "色", "Color"),
+    t("_UseEmission", 0.0, |l| l.t("look-emission")),
+    c("_EmissionColor", [1.0, 1.0, 1.0, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
     v("_EmissionMap_ST", [1.0, 1.0, 0.0, 0.0]),
     v("_EmissionMap_ScrollRotate", [0.0; 4]),
-    e(
-        "_EmissionMap_UVMode",
-        0.0,
-        EMISSION_UV,
-        "UV Mode",
-        "UV Mode",
-    ),
-    f(
-        "_EmissionMainStrength",
-        0.0,
-        0.0,
-        1.0,
-        "メインカラーの強度",
-        "Main Color Power",
-    ),
-    f("_EmissionBlend", 1.0, 0.0, 1.0, "Blend", "Blend"),
+    e("_EmissionMap_UVMode", 0.0, EMISSION_UV, |l| {
+        l.t("look-uv-mode")
+    }),
+    f("_EmissionMainStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-main-color-power")
+    }),
+    f("_EmissionBlend", 1.0, 0.0, 1.0, |l| l.t("look-blend")),
     v("_EmissionBlendMask_ST", [1.0, 1.0, 0.0, 0.0]),
     v("_EmissionBlendMask_ScrollRotate", [0.0; 4]),
-    e(
-        "_EmissionBlendMode",
-        1.0,
-        BLEND,
-        "合成モード",
-        "Blending Mode",
-    ),
-    f(
-        "_EmissionFluorescence",
-        0.0,
-        0.0,
-        1.0,
-        "蛍光",
-        "Fluorescence",
-    ),
-    t("_UseEmission2nd", 0.0, "発光テクスチャ2nd", "Emission 2nd"),
-    c(
-        "_Emission2ndColor",
-        [1.0, 1.0, 1.0, 1.0],
-        true,
-        "色",
-        "Color",
-    ),
+    e("_EmissionBlendMode", 1.0, BLEND, |l| {
+        l.t("look-blending-mode")
+    }),
+    f("_EmissionFluorescence", 0.0, 0.0, 1.0, |l| {
+        l.t("look-fluorescence")
+    }),
+    t("_UseEmission2nd", 0.0, |l| l.t("look-emission-2nd")),
+    c("_Emission2ndColor", [1.0, 1.0, 1.0, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
     v("_Emission2ndMap_ST", [1.0, 1.0, 0.0, 0.0]),
     v("_Emission2ndMap_ScrollRotate", [0.0; 4]),
-    e(
-        "_Emission2ndMap_UVMode",
-        0.0,
-        EMISSION_UV,
-        "UV Mode",
-        "UV Mode",
-    ),
-    f(
-        "_Emission2ndMainStrength",
-        0.0,
-        0.0,
-        1.0,
-        "メインカラーの強度",
-        "Main Color Power",
-    ),
-    f("_Emission2ndBlend", 1.0, 0.0, 1.0, "Blend", "Blend"),
+    e("_Emission2ndMap_UVMode", 0.0, EMISSION_UV, |l| {
+        l.t("look-uv-mode")
+    }),
+    f("_Emission2ndMainStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-main-color-power")
+    }),
+    f("_Emission2ndBlend", 1.0, 0.0, 1.0, |l| l.t("look-blend")),
     v("_Emission2ndBlendMask_ST", [1.0, 1.0, 0.0, 0.0]),
     v("_Emission2ndBlendMask_ScrollRotate", [0.0; 4]),
-    e(
-        "_Emission2ndBlendMode",
-        1.0,
-        BLEND,
-        "合成モード",
-        "Blending Mode",
-    ),
-    f(
-        "_Emission2ndFluorescence",
-        0.0,
-        0.0,
-        1.0,
-        "蛍光",
-        "Fluorescence",
-    ),
+    e("_Emission2ndBlendMode", 1.0, BLEND, |l| {
+        l.t("look-blending-mode")
+    }),
+    f("_Emission2ndFluorescence", 0.0, 0.0, 1.0, |l| {
+        l.t("look-fluorescence")
+    }),
 ];
 
 const NORMAL: &[Prop] = &[
-    t("_UseBumpMap", 0.0, "ノーマルマップ", "Normal Map"),
+    t("_UseBumpMap", 0.0, |l| l.t("look-normal-map")),
     v("_BumpMap_ST", [1.0, 1.0, 0.0, 0.0]),
-    f("_BumpScale", 1.0, -10.0, 10.0, "Scale", "Scale"),
-    t("_UseBump2ndMap", 0.0, "ノーマルマップ2nd", "Normal Map 2nd"),
+    f("_BumpScale", 1.0, -10.0, 10.0, |l| l.t("look-scale")),
+    t("_UseBump2ndMap", 0.0, |l| l.t("look-normal-map-2nd")),
     v("_Bump2ndMap_ST", [1.0, 1.0, 0.0, 0.0]),
-    f("_Bump2ndScale", 1.0, -10.0, 10.0, "Scale", "Scale"),
-    e("_Bump2ndMap_UVMode", 0.0, UV4, "UV Mode", "UV Mode"),
-    t("_UseAnisotropy", 0.0, "異方性反射", "Anisotropy"),
+    f("_Bump2ndScale", 1.0, -10.0, 10.0, |l| l.t("look-scale")),
+    e("_Bump2ndMap_UVMode", 0.0, UV4, |l| l.t("look-uv-mode")),
+    t("_UseAnisotropy", 0.0, |l| l.t("look-anisotropy")),
     v("_AnisotropyTangentMap_ST", [1.0, 1.0, 0.0, 0.0]),
-    f("_AnisotropyScale", 1.0, -1.0, 1.0, "Scale", "Scale"),
+    f("_AnisotropyScale", 1.0, -1.0, 1.0, |l| l.t("look-scale")),
     v("_AnisotropyScaleMask_ST", [1.0, 1.0, 0.0, 0.0]),
-    t("_Anisotropy2Reflection", 0.0, "反射", "Reflection"),
-    f(
-        "_AnisotropyTangentWidth",
-        1.0,
-        0.0,
-        10.0,
-        "タンジェント方向の幅",
-        "Tangent Width",
-    ),
-    f(
-        "_AnisotropyBitangentWidth",
-        1.0,
-        0.0,
-        10.0,
-        "バイタンジェント方向の幅",
-        "Bitangent Width",
-    ),
-    f("_AnisotropyShift", 0.0, -10.0, 10.0, "Offset", "Offset"),
-    f(
-        "_AnisotropyShiftNoiseScale",
-        0.0,
-        -1.0,
-        1.0,
-        "ノイズの強度",
-        "Noise Strength",
-    ),
-    f(
-        "_AnisotropySpecularStrength",
-        1.0,
-        0.0,
-        10.0,
-        "強度",
-        "Strength",
-    ),
-    f(
-        "_Anisotropy2ndTangentWidth",
-        1.0,
-        0.0,
-        10.0,
-        "タンジェント方向の幅",
-        "Tangent Width",
-    ),
-    f(
-        "_Anisotropy2ndBitangentWidth",
-        1.0,
-        0.0,
-        10.0,
-        "バイタンジェント方向の幅",
-        "Bitangent Width",
-    ),
-    f("_Anisotropy2ndShift", 0.0, -10.0, 10.0, "Offset", "Offset"),
-    f(
-        "_Anisotropy2ndShiftNoiseScale",
-        0.0,
-        -1.0,
-        1.0,
-        "ノイズの強度",
-        "Noise Strength",
-    ),
-    f(
-        "_Anisotropy2ndSpecularStrength",
-        0.0,
-        0.0,
-        10.0,
-        "強度",
-        "Strength",
-    ),
+    t("_Anisotropy2Reflection", 0.0, |l| l.t("look-reflection")),
+    f("_AnisotropyTangentWidth", 1.0, 0.0, 10.0, |l| {
+        l.t("look-tangent-width")
+    }),
+    f("_AnisotropyBitangentWidth", 1.0, 0.0, 10.0, |l| {
+        l.t("look-bitangent-width")
+    }),
+    f("_AnisotropyShift", 0.0, -10.0, 10.0, |l| l.t("look-offset")),
+    f("_AnisotropyShiftNoiseScale", 0.0, -1.0, 1.0, |l| {
+        l.t("look-noise-strength")
+    }),
+    f("_AnisotropySpecularStrength", 1.0, 0.0, 10.0, |l| {
+        l.t("look-strength")
+    }),
+    f("_Anisotropy2ndTangentWidth", 1.0, 0.0, 10.0, |l| {
+        l.t("look-tangent-width")
+    }),
+    f("_Anisotropy2ndBitangentWidth", 1.0, 0.0, 10.0, |l| {
+        l.t("look-bitangent-width")
+    }),
+    f("_Anisotropy2ndShift", 0.0, -10.0, 10.0, |l| {
+        l.t("look-offset")
+    }),
+    f("_Anisotropy2ndShiftNoiseScale", 0.0, -1.0, 1.0, |l| {
+        l.t("look-noise-strength")
+    }),
+    f("_Anisotropy2ndSpecularStrength", 0.0, 0.0, 10.0, |l| {
+        l.t("look-strength")
+    }),
     v("_AnisotropyShiftNoiseMask_ST", [1.0, 1.0, 0.0, 0.0]),
-    t("_Anisotropy2MatCap", 0.0, "マットキャップ", "MatCap"),
-    t(
-        "_Anisotropy2MatCap2nd",
-        0.0,
-        "マットキャップ2nd",
-        "MatCap 2nd",
-    ),
+    t("_Anisotropy2MatCap", 0.0, |l| l.t("look-matcap")),
+    t("_Anisotropy2MatCap2nd", 0.0, |l| l.t("look-matcap-2nd")),
 ];
 
 const BACKLIGHT: &[Prop] = &[
-    t("_UseBacklight", 0.0, "逆光ライト", "Backlight"),
-    c(
-        "_BacklightColor",
-        [0.85, 0.8, 0.7, 1.0],
-        true,
-        "色",
-        "Color",
-    ),
+    t("_UseBacklight", 0.0, |l| l.t("look-backlight")),
+    c("_BacklightColor", [0.85, 0.8, 0.7, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
     v("_BacklightColorTex_ST", [1.0, 1.0, 0.0, 0.0]),
-    f(
-        "_BacklightMainStrength",
-        0.0,
-        0.0,
-        1.0,
-        "メインカラーの強度",
-        "Main Color Power",
-    ),
-    t(
-        "_BacklightReceiveShadow",
-        1.0,
-        "影を受け取る",
-        "Receive Shadow",
-    ),
-    t(
-        "_BacklightBackfaceMask",
-        1.0,
-        "裏面で無効化",
-        "Backface Mask",
-    ),
-    f(
-        "_BacklightNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    f("_BacklightBorder", 0.35, 0.0, 1.0, "範囲", "Border"),
-    f("_BacklightBlur", 0.05, 0.0, 1.0, "ぼかし", "Blur"),
-    n(
-        "_BacklightDirectivity",
-        5.0,
-        0.0,
-        20.0,
-        "指向性",
-        "Directivity",
-    ),
-    f(
-        "_BacklightViewStrength",
-        1.0,
-        0.0,
-        1.0,
-        "視線方向の影響度",
-        "View direction strength",
-    ),
+    f("_BacklightMainStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-main-color-power")
+    }),
+    t("_BacklightReceiveShadow", 1.0, |l| {
+        l.t("look-receive-shadow")
+    }),
+    t("_BacklightBackfaceMask", 1.0, |l| l.t("look-backface-mask")),
+    f("_BacklightNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    f("_BacklightBorder", 0.35, 0.0, 1.0, |l| l.t("look-border")),
+    f("_BacklightBlur", 0.05, 0.0, 1.0, |l| l.t("look-blur")),
+    n("_BacklightDirectivity", 5.0, 0.0, 20.0, |l| {
+        l.t("look-directivity")
+    }),
+    f("_BacklightViewStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-view-direction-strength")
+    }),
 ];
 
 const REFLECTION: &[Prop] = &[
-    t("_UseReflection", 0.0, "反射", "Reflection"),
-    f("_Smoothness", 1.0, 0.0, 1.0, "滑らかさ", "Smoothness"),
+    t("_UseReflection", 0.0, |l| l.t("look-reflection")),
+    f("_Smoothness", 1.0, 0.0, 1.0, |l| l.t("look-smoothness")),
     v("_SmoothnessTex_ST", [1.0, 1.0, 0.0, 0.0]),
-    f("_GSAAStrength", 0.0, 0.0, 1.0, "GSAA", "GSAA"),
-    f("_Metallic", 0.0, 0.0, 1.0, "金属度", "Metallic"),
+    f("_GSAAStrength", 0.0, 0.0, 1.0, |l| l.t("look-gsaa")),
+    f("_Metallic", 0.0, 0.0, 1.0, |l| l.t("look-metallic")),
     v("_MetallicGlossMap_ST", [1.0, 1.0, 0.0, 0.0]),
-    c("_ReflectionColor", [1.0; 4], true, "色", "Color"),
+    c("_ReflectionColor", [1.0; 4], true, |l| l.t("look-color-2")),
     v("_ReflectionColorTex_ST", [1.0, 1.0, 0.0, 0.0]),
-    f("_Reflectance", 0.04, 0.0, 1.0, "反射率", "Reflectance"),
-    t("_ApplySpecular", 1.0, "Apply Specular", "Apply Specular"),
-    t("_SpecularToon", 1.0, "Specular Toon", "Specular Toon"),
-    f(
-        "_SpecularNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    f("_SpecularBorder", 0.5, 0.0, 1.0, "範囲", "Border"),
-    f("_SpecularBlur", 0.0, 0.0, 1.0, "ぼかし", "Blur"),
-    t(
-        "_ApplyReflection",
-        0.0,
-        "環境光の反射",
-        "Environment Reflections",
-    ),
-    f(
-        "_ReflectionNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    t(
-        "_ReflectionApplyTransparency",
-        1.0,
-        "透明度を適用",
-        "Apply Transparency",
-    ),
-    e(
-        "_ReflectionBlendMode",
-        1.0,
-        BLEND,
-        "合成モード",
-        "Blending Mode",
-    ),
+    f("_Reflectance", 0.04, 0.0, 1.0, |l| l.t("look-reflectance")),
+    t("_ApplySpecular", 1.0, |l| l.t("look-apply-specular")),
+    t("_SpecularToon", 1.0, |l| l.t("look-specular-toon")),
+    f("_SpecularNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    f("_SpecularBorder", 0.5, 0.0, 1.0, |l| l.t("look-border")),
+    f("_SpecularBlur", 0.0, 0.0, 1.0, |l| l.t("look-blur")),
+    t("_ApplyReflection", 0.0, |l| {
+        l.t("look-environment-reflections")
+    }),
+    f("_ReflectionNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    t("_ReflectionApplyTransparency", 1.0, |l| {
+        l.t("look-apply-transparency")
+    }),
+    e("_ReflectionBlendMode", 1.0, BLEND, |l| {
+        l.t("look-blending-mode")
+    }),
 ];
 
 /// マットキャップ（1st・2nd）の同じ形の値。
 macro_rules! matcap {
-    ($m:literal, $ja:literal, $en:literal) => {
+    ($m:literal, $label:expr) => {
         [
-            t(concat!("_Use", $m), 0.0, $ja, $en),
-            c(concat!("_", $m, "Color"), [1.0; 4], true, "色", "Color"),
+            t(concat!("_Use", $m), 0.0, $label),
+            c(concat!("_", $m, "Color"), [1.0; 4], true, |l| {
+                l.t("look-color-2")
+            }),
             v(concat!("_", $m, "Tex_ST"), [1.0, 1.0, 0.0, 0.0]),
-            t(
-                concat!("_", $m, "ZRotCancel"),
-                1.0,
-                "Z軸回転キャンセル",
-                "Z-axis rotation cancellation",
-            ),
-            t(
-                concat!("_", $m, "Perspective"),
-                1.0,
-                "パース補正",
-                "Fix Perspective",
-            ),
-            f(
-                concat!("_", $m, "MainStrength"),
-                0.0,
-                0.0,
-                1.0,
-                "メインカラーの強度",
-                "Main Color Power",
-            ),
-            f(
-                concat!("_", $m, "NormalStrength"),
-                1.0,
-                0.0,
-                1.0,
-                "ノーマルマップ強度",
-                "Normal Map Strength",
-            ),
-            f(concat!("_", $m, "Blend"), 1.0, 0.0, 1.0, "Blend", "Blend"),
+            t(concat!("_", $m, "ZRotCancel"), 1.0, |l| {
+                l.t("look-z-axis-rotation-cancellation")
+            }),
+            t(concat!("_", $m, "Perspective"), 1.0, |l| {
+                l.t("look-fix-perspective")
+            }),
+            f(concat!("_", $m, "MainStrength"), 0.0, 0.0, 1.0, |l| {
+                l.t("look-main-color-power")
+            }),
+            f(concat!("_", $m, "NormalStrength"), 1.0, 0.0, 1.0, |l| {
+                l.t("look-normal-map-strength")
+            }),
+            f(concat!("_", $m, "Blend"), 1.0, 0.0, 1.0, |l| {
+                l.t("look-blend")
+            }),
             v(concat!("_", $m, "BlendMask_ST"), [1.0, 1.0, 0.0, 0.0]),
-            f(
-                concat!("_", $m, "EnableLighting"),
-                1.0,
-                0.0,
-                1.0,
-                "ライトの明るさを反映",
-                "Enable Lighting",
-            ),
-            f(
-                concat!("_", $m, "ShadowMask"),
-                0.0,
-                0.0,
-                1.0,
-                "影部分で無効化",
-                "Shadow Mask",
-            ),
-            t(
-                concat!("_", $m, "BackfaceMask"),
-                0.0,
-                "裏面で無効化",
-                "Backface Mask",
-            ),
-            f(concat!("_", $m, "Lod"), 0.0, 0.0, 10.0, "ぼかし", "Blur"),
-            e(
-                concat!("_", $m, "BlendMode"),
-                1.0,
-                BLEND,
-                "合成モード",
-                "Blending Mode",
-            ),
-            t(
-                concat!("_", $m, "ApplyTransparency"),
-                1.0,
-                "透明度を適用",
-                "Apply Transparency",
-            ),
-            t(
-                concat!("_", $m, "CustomNormal"),
-                0.0,
-                "カスタムノーマルマップ",
-                "Custom normal map",
-            ),
+            f(concat!("_", $m, "EnableLighting"), 1.0, 0.0, 1.0, |l| {
+                l.t("look-enable-lighting")
+            }),
+            f(concat!("_", $m, "ShadowMask"), 0.0, 0.0, 1.0, |l| {
+                l.t("look-shadow-mask")
+            }),
+            t(concat!("_", $m, "BackfaceMask"), 0.0, |l| {
+                l.t("look-backface-mask")
+            }),
+            f(concat!("_", $m, "Lod"), 0.0, 0.0, 10.0, |l| {
+                l.t("look-blur")
+            }),
+            e(concat!("_", $m, "BlendMode"), 1.0, BLEND, |l| {
+                l.t("look-blending-mode")
+            }),
+            t(concat!("_", $m, "ApplyTransparency"), 1.0, |l| {
+                l.t("look-apply-transparency")
+            }),
+            t(concat!("_", $m, "CustomNormal"), 0.0, |l| {
+                l.t("look-custom-normal-map")
+            }),
             v(concat!("_", $m, "BumpMap_ST"), [1.0, 1.0, 0.0, 0.0]),
-            f(
-                concat!("_", $m, "BumpScale"),
-                1.0,
-                -10.0,
-                10.0,
-                "Scale",
-                "Scale",
-            ),
+            f(concat!("_", $m, "BumpScale"), 1.0, -10.0, 10.0, |l| {
+                l.t("look-scale")
+            }),
         ]
     };
 }
 
-const MATCAP1: [Prop; 18] = matcap!("MatCap", "マットキャップ", "MatCap");
-const MATCAP2: [Prop; 18] = matcap!("MatCap2nd", "マットキャップ2nd", "MatCap 2nd");
+const MATCAP1: [Prop; 18] = matcap!("MatCap", |l| l.t("look-matcap"));
+const MATCAP2: [Prop; 18] = matcap!("MatCap2nd", |l| l.t("look-matcap-2nd"));
 
 const RIM: &[Prop] = &[
-    t("_UseRim", 0.0, "リムライト", "Rim Light"),
-    c("_RimColor", [0.66, 0.5, 0.48, 1.0], true, "色", "Color"),
+    t("_UseRim", 0.0, |l| l.t("look-rim-light")),
+    c("_RimColor", [0.66, 0.5, 0.48, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
     v("_RimColorTex_ST", [1.0, 1.0, 0.0, 0.0]),
-    f(
-        "_RimMainStrength",
-        0.0,
-        0.0,
-        1.0,
-        "メインカラーの強度",
-        "Main Color Power",
-    ),
-    f(
-        "_RimEnableLighting",
-        1.0,
-        0.0,
-        1.0,
-        "ライトの明るさを反映",
-        "Enable Lighting",
-    ),
-    f(
-        "_RimShadowMask",
-        0.5,
-        0.0,
-        1.0,
-        "影部分で無効化",
-        "Shadow Mask",
-    ),
-    t("_RimBackfaceMask", 1.0, "裏面で無効化", "Backface Mask"),
-    t(
-        "_RimApplyTransparency",
-        1.0,
-        "透明度を適用",
-        "Apply Transparency",
-    ),
-    e("_RimBlendMode", 1.0, BLEND, "合成モード", "Blending Mode"),
-    f(
-        "_RimDirStrength",
-        0.0,
-        0.0,
-        1.0,
-        "ライト方向の影響度",
-        "Light direction strength",
-    ),
-    f(
-        "_RimDirRange",
-        0.0,
-        -1.0,
-        1.0,
-        "直接光の幅",
-        "Direct light width",
-    ),
-    f("_RimBorder", 0.5, 0.0, 1.0, "範囲", "Border"),
-    f("_RimBlur", 0.65, 0.0, 1.0, "ぼかし", "Blur"),
-    f(
-        "_RimIndirRange",
-        0.0,
-        -1.0,
-        1.0,
-        "間接光の幅",
-        "Indirect light width",
-    ),
-    c("_RimIndirColor", [1.0, 1.0, 1.0, 1.0], true, "色", "Color"),
-    f("_RimIndirBorder", 0.5, 0.0, 1.0, "範囲", "Border"),
-    f("_RimIndirBlur", 0.1, 0.0, 1.0, "ぼかし", "Blur"),
-    f(
-        "_RimNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    p3(
-        "_RimFresnelPower",
-        3.5,
-        0.01,
-        50.0,
-        "リムライトの細さ",
-        "Fresnel Power",
-    ),
+    f("_RimMainStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-main-color-power")
+    }),
+    f("_RimEnableLighting", 1.0, 0.0, 1.0, |l| {
+        l.t("look-enable-lighting")
+    }),
+    f("_RimShadowMask", 0.5, 0.0, 1.0, |l| l.t("look-shadow-mask")),
+    t("_RimBackfaceMask", 1.0, |l| l.t("look-backface-mask")),
+    t("_RimApplyTransparency", 1.0, |l| {
+        l.t("look-apply-transparency")
+    }),
+    e("_RimBlendMode", 1.0, BLEND, |l| l.t("look-blending-mode")),
+    f("_RimDirStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-light-direction-strength")
+    }),
+    f("_RimDirRange", 0.0, -1.0, 1.0, |l| {
+        l.t("look-direct-light-width")
+    }),
+    f("_RimBorder", 0.5, 0.0, 1.0, |l| l.t("look-border")),
+    f("_RimBlur", 0.65, 0.0, 1.0, |l| l.t("look-blur")),
+    f("_RimIndirRange", 0.0, -1.0, 1.0, |l| {
+        l.t("look-indirect-light-width")
+    }),
+    c("_RimIndirColor", [1.0, 1.0, 1.0, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
+    f("_RimIndirBorder", 0.5, 0.0, 1.0, |l| l.t("look-border")),
+    f("_RimIndirBlur", 0.1, 0.0, 1.0, |l| l.t("look-blur")),
+    f("_RimNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    p3("_RimFresnelPower", 3.5, 0.01, 50.0, |l| {
+        l.t("look-fresnel-power")
+    }),
 ];
 
 const GLITTER: &[Prop] = &[
-    t("_UseGlitter", 0.0, "ラメ", "Glitter"),
-    e("_GlitterUVMode", 0.0, UV2, "UV Mode", "UV Mode"),
-    c("_GlitterColor", [1.0; 4], true, "色", "Color"),
+    t("_UseGlitter", 0.0, |l| l.t("look-glitter")),
+    e("_GlitterUVMode", 0.0, UV2, |l| l.t("look-uv-mode")),
+    c("_GlitterColor", [1.0; 4], true, |l| l.t("look-color-2")),
     v("_GlitterColorTex_ST", [1.0, 1.0, 0.0, 0.0]),
-    e("_GlitterColorTex_UVMode", 0.0, UV4, "UV Mode", "UV Mode"),
-    f(
-        "_GlitterMainStrength",
-        0.0,
-        0.0,
-        1.0,
-        "メインカラーの強度",
-        "Main Color Power",
-    ),
-    f(
-        "_GlitterEnableLighting",
-        1.0,
-        0.0,
-        1.0,
-        "ライトの明るさを反映",
-        "Enable Lighting",
-    ),
-    f(
-        "_GlitterShadowMask",
-        0.0,
-        0.0,
-        1.0,
-        "影部分で無効化",
-        "Shadow Mask",
-    ),
-    t("_GlitterBackfaceMask", 0.0, "裏面で無効化", "Backface Mask"),
-    t(
-        "_GlitterApplyTransparency",
-        1.0,
-        "透明度を適用",
-        "Apply Transparency",
-    ),
+    e("_GlitterColorTex_UVMode", 0.0, UV4, |l| l.t("look-uv-mode")),
+    f("_GlitterMainStrength", 0.0, 0.0, 1.0, |l| {
+        l.t("look-main-color-power")
+    }),
+    f("_GlitterEnableLighting", 1.0, 0.0, 1.0, |l| {
+        l.t("look-enable-lighting")
+    }),
+    f("_GlitterShadowMask", 0.0, 0.0, 1.0, |l| {
+        l.t("look-shadow-mask")
+    }),
+    t("_GlitterBackfaceMask", 0.0, |l| l.t("look-backface-mask")),
+    t("_GlitterApplyTransparency", 1.0, |l| {
+        l.t("look-apply-transparency")
+    }),
     v("_GlitterParams1", [256.0, 256.0, 0.16, 50.0]),
-    f(
-        "_GlitterScaleRandomize",
-        0.0,
-        0.0,
-        1.0,
-        "ランダム化 (Size)",
-        "Randomize (Size)",
-    ),
-    n(
-        "_GlitterSensitivity",
-        0.25,
-        0.25,
-        100.0,
-        "感度",
-        "Sensitivity",
-    ),
+    f("_GlitterScaleRandomize", 0.0, 0.0, 1.0, |l| {
+        l.t("look-randomize-size")
+    }),
+    n("_GlitterSensitivity", 0.25, 0.25, 100.0, |l| {
+        l.t("look-sensitivity")
+    }),
     v("_GlitterParams2", [0.25, 0.0, 0.0, 0.0]),
-    f(
-        "_GlitterNormalStrength",
-        1.0,
-        0.0,
-        1.0,
-        "ノーマルマップ強度",
-        "Normal Map Strength",
-    ),
-    n(
-        "_GlitterPostContrast",
-        1.0,
-        0.0,
-        10.0,
-        "コントラスト（後処理）",
-        "Post Contrast",
-    ),
+    f("_GlitterNormalStrength", 1.0, 0.0, 1.0, |l| {
+        l.t("look-normal-map-strength")
+    }),
+    n("_GlitterPostContrast", 1.0, 0.0, 10.0, |l| {
+        l.t("look-post-contrast")
+    }),
 ];
 
 const OUTLINE: &[Prop] = &[
-    c("_OutlineColor", [0.6, 0.56, 0.73, 1.0], true, "色", "Color"),
+    c("_OutlineColor", [0.6, 0.56, 0.73, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
     v("_OutlineTex_ST", [1.0, 1.0, 0.0, 0.0]),
     v("_OutlineTex_ScrollRotate", [0.0; 4]),
     v("_OutlineTexHSVG", [0.0, 1.0, 1.0, 1.0]),
-    c(
-        "_OutlineLitColor",
-        [1.0, 0.2, 0.0, 0.0],
-        true,
-        "色",
-        "Color",
-    ),
-    t(
-        "_OutlineLitApplyTex",
-        0.0,
-        "メインカラーから色を取得",
-        "Get color from Main",
-    ),
-    n("_OutlineLitScale", 10.0, -20.0, 20.0, "Scale", "Scale"),
-    n("_OutlineLitOffset", -8.0, -20.0, 20.0, "Offset", "Offset"),
-    t(
-        "_OutlineLitShadowReceive",
-        0.0,
-        "影を受け取る",
-        "Receive Shadow",
-    ),
-    f(
-        "_OutlineEnableLighting",
-        1.0,
-        0.0,
-        1.0,
-        "ライトの明るさを反映",
-        "Enable Lighting",
-    ),
-    f(
-        "_OutlineWidth",
-        0.08,
-        0.0,
-        1.0,
-        "マスクと太さ",
-        "Mask & Width",
-    ),
-    f(
-        "_OutlineFixWidth",
-        0.5,
-        0.0,
-        1.0,
-        "距離に応じた太さ補正",
-        "Fix width by distance",
-    ),
-    e(
-        "_OutlineVertexR2Width",
-        0.0,
-        OUTLINE_VERTEX,
-        "頂点カラー",
-        "Vertex Color",
-    ),
-    t(
-        "_OutlineDeleteMesh",
-        0.0,
-        "太さ0の頂点を削除",
-        "Remove zero width vertices",
-    ),
-    n("_OutlineZBias", 0.0, -1.0, 1.0, "Z Bias", "Z Bias"),
+    c("_OutlineLitColor", [1.0, 0.2, 0.0, 0.0], true, |l| {
+        l.t("look-color-2")
+    }),
+    t("_OutlineLitApplyTex", 0.0, |l| {
+        l.t("look-get-color-from-main")
+    }),
+    n("_OutlineLitScale", 10.0, -20.0, 20.0, |l| l.t("look-scale")),
+    n("_OutlineLitOffset", -8.0, -20.0, 20.0, |l| {
+        l.t("look-offset")
+    }),
+    t("_OutlineLitShadowReceive", 0.0, |l| {
+        l.t("look-receive-shadow")
+    }),
+    f("_OutlineEnableLighting", 1.0, 0.0, 1.0, |l| {
+        l.t("look-enable-lighting")
+    }),
+    f("_OutlineWidth", 0.08, 0.0, 1.0, |l| l.t("look-mask-width")),
+    f("_OutlineFixWidth", 0.5, 0.0, 1.0, |l| {
+        l.t("look-fix-width-by-distance")
+    }),
+    e("_OutlineVertexR2Width", 0.0, OUTLINE_VERTEX, |l| {
+        l.t("look-vertex-color")
+    }),
+    t("_OutlineDeleteMesh", 0.0, |l| {
+        l.t("look-remove-zero-width-vertices")
+    }),
+    n("_OutlineZBias", 0.0, -1.0, 1.0, |l| l.t("look-z-bias")),
 ];
 
 const DISTANCE_FADE: &[Prop] = &[
-    c(
-        "_DistanceFadeColor",
-        [0.0, 0.0, 0.0, 1.0],
-        true,
-        "色",
-        "Color",
-    ),
+    c("_DistanceFadeColor", [0.0, 0.0, 0.0, 1.0], true, |l| {
+        l.t("look-color-2")
+    }),
     v("_DistanceFade", [0.1, 0.01, 0.0, 0.0]),
-    e(
-        "_DistanceFadeMode",
-        0.0,
-        DISTANCE_FADE_MODE,
-        "モード",
-        "Mode",
-    ),
-    c("_DistanceFadeRimColor", [0.0; 4], true, "色", "Color"),
-    p3(
-        "_DistanceFadeRimFresnelPower",
-        5.0,
-        0.01,
-        50.0,
-        "リムライトの細さ",
-        "Fresnel Power",
-    ),
+    e("_DistanceFadeMode", 0.0, DISTANCE_FADE_MODE, |l| {
+        l.t("look-mode")
+    }),
+    c("_DistanceFadeRimColor", [0.0; 4], true, |l| {
+        l.t("look-color-2")
+    }),
+    p3("_DistanceFadeRimFresnelPower", 5.0, 0.01, 50.0, |l| {
+        l.t("look-fresnel-power")
+    }),
 ];
 
 /// 節ごとのプロパティ（インスペクターの節の並び。既定に戻す単位）。
@@ -1297,15 +885,14 @@ pub struct Slot {
     pub name: &'static str,
     pub default: SlotDefault,
     pub usage: SlotUse,
-    pub ja: &'static str,
-    pub en: &'static str,
+    pub label: Label,
     /// 書き出しのファイルの名前の末尾（`<名前>_<末尾>.png`）。
     pub suffix: &'static str,
 }
 
 impl Slot {
     pub fn label(&self, lang: Lang) -> &'static str {
-        lang.pick(self.ja, self.en)
+        self.label.get(lang)
     }
 }
 
@@ -1313,16 +900,14 @@ const fn s(
     name: &'static str,
     default: SlotDefault,
     usage: SlotUse,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
     suffix: &'static str,
 ) -> Slot {
     Slot {
         name,
         default,
         usage,
-        ja,
-        en,
+        label: Label::Text(label),
         suffix,
     }
 }
@@ -1334,304 +919,266 @@ pub const SLOTS: &[Slot] = &[
         "_MainTex",
         SlotDefault::White,
         SlotUse::Color,
-        "メインカラー",
-        "Main Color",
+        |l| l.t("look-main-color"),
         "Main",
     ),
     s(
         "_MainColorAdjustMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "色調補正のマスク",
-        "Color Adjust Mask",
+        |l| l.t("look-color-adjust-mask"),
         "MainAdjustMask",
     ),
     s(
         "_AlphaMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "アルファマスク",
-        "Alpha Mask",
+        |l| l.t("look-alpha-mask"),
         "AlphaMask",
     ),
     s(
         "_BumpMap",
         SlotDefault::Bump,
         SlotUse::Normal,
-        "ノーマルマップ",
-        "Normal Map",
+        |l| l.t("look-normal-map"),
         "Normal",
     ),
     s(
         "_ShadowStrengthMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "影の強度マスク",
-        "Shadow Strength Mask",
+        |l| l.t("look-shadow-strength-mask"),
         "ShadowStrengthMask",
     ),
     s(
         "_ShadowBorderMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "AO Map",
-        "AO Map",
+        |l| l.t("look-ao-map"),
         "ShadowBorderMask",
     ),
     s(
         "_ShadowBlurMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "ぼかし量マスク",
-        "Blur Mask",
+        |l| l.t("look-blur-mask"),
         "ShadowBlurMask",
     ),
     s(
         "_ShadowColorTex",
         SlotDefault::Black,
         SlotUse::Color,
-        "影色1",
-        "1st Shadow Color",
+        |l| l.t("look-1st-shadow-color"),
         "ShadowColor",
     ),
     s(
         "_Shadow2ndColorTex",
         SlotDefault::Black,
         SlotUse::Color,
-        "影色2",
-        "2nd Shadow Color",
+        |l| l.t("look-2nd-shadow-color"),
         "Shadow2ndColor",
     ),
     s(
         "_Shadow3rdColorTex",
         SlotDefault::Black,
         SlotUse::Color,
-        "影色3",
-        "3rd Shadow Color",
+        |l| l.t("look-3rd-shadow-color"),
         "Shadow3rdColor",
     ),
     s(
         "_EmissionMap",
         SlotDefault::White,
         SlotUse::Color,
-        "発光テクスチャ",
-        "Emission",
+        |l| l.t("look-emission"),
         "Emission",
     ),
     s(
         "_EmissionBlendMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "発光のマスク",
-        "Emission Mask",
+        |l| l.t("look-emission-mask"),
         "EmissionMask",
     ),
     s(
         "_Emission2ndMap",
         SlotDefault::White,
         SlotUse::Color,
-        "発光テクスチャ2nd",
-        "Emission 2nd",
+        |l| l.t("look-emission-2nd"),
         "Emission2nd",
     ),
     s(
         "_Emission2ndBlendMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "発光2nd のマスク",
-        "Emission 2nd Mask",
+        |l| l.t("look-emission-2nd-mask"),
         "Emission2ndMask",
     ),
     s(
         "_MatCapTex",
         SlotDefault::White,
         SlotUse::Image,
-        "マットキャップ",
-        "MatCap",
+        |l| l.t("look-matcap"),
         "MatCap",
     ),
     s(
         "_MatCapBlendMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "マットキャップのマスク",
-        "MatCap Mask",
+        |l| l.t("look-matcap-mask"),
         "MatCapMask",
     ),
     s(
         "_MatCap2ndTex",
         SlotDefault::White,
         SlotUse::Image,
-        "マットキャップ2nd",
-        "MatCap 2nd",
+        |l| l.t("look-matcap-2nd"),
         "MatCap2nd",
     ),
     s(
         "_MatCap2ndBlendMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "マットキャップ2nd のマスク",
-        "MatCap 2nd Mask",
+        |l| l.t("look-matcap-2nd-mask"),
         "MatCap2ndMask",
     ),
     s(
         "_RimColorTex",
         SlotDefault::White,
         SlotUse::Color,
-        "リムライトの色",
-        "Rim Light Color",
+        |l| l.t("look-rim-light-color"),
         "RimColor",
     ),
     s(
         "_OutlineTex",
         SlotDefault::White,
         SlotUse::Color,
-        "輪郭線の色",
-        "Outline Color",
+        |l| l.t("look-outline-color"),
         "OutlineColor",
     ),
     s(
         "_OutlineWidthMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "輪郭線の太さ",
-        "Outline Width",
+        |l| l.t("look-outline-width"),
         "OutlineWidth",
     ),
     s(
         "_Main2ndTex",
         SlotDefault::White,
         SlotUse::Color,
-        "メインカラー2nd",
-        "Main Color 2nd",
+        |l| l.t("look-main-color-2nd"),
         "Main2nd",
     ),
     s(
         "_Main2ndBlendMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "メインカラー2nd のマスク",
-        "Main Color 2nd Mask",
+        |l| l.t("look-main-color-2nd-mask"),
         "Main2ndMask",
     ),
     s(
         "_Main3rdTex",
         SlotDefault::White,
         SlotUse::Color,
-        "メインカラー3rd",
-        "Main Color 3rd",
+        |l| l.t("look-main-color-3rd"),
         "Main3rd",
     ),
     s(
         "_Main3rdBlendMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "メインカラー3rd のマスク",
-        "Main Color 3rd Mask",
+        |l| l.t("look-main-color-3rd-mask"),
         "Main3rdMask",
     ),
     s(
         "_Bump2ndMap",
         SlotDefault::Bump,
         SlotUse::Normal,
-        "ノーマルマップ2nd",
-        "Normal Map 2nd",
+        |l| l.t("look-normal-map-2nd"),
         "Normal2nd",
     ),
     s(
         "_Bump2ndScaleMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "ノーマルマップ2nd のマスク",
-        "Normal Map 2nd Mask",
+        |l| l.t("look-normal-map-2nd-mask"),
         "Normal2ndMask",
     ),
     s(
         "_RimShadeMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "リムシェードのマスク",
-        "RimShade Mask",
+        |l| l.t("look-rimshade-mask"),
         "RimShadeMask",
     ),
     s(
         "_BacklightColorTex",
         SlotDefault::White,
         SlotUse::Color,
-        "逆光ライトの色",
-        "Backlight Color",
+        |l| l.t("look-backlight-color"),
         "BacklightColor",
     ),
     s(
         "_SmoothnessTex",
         SlotDefault::White,
         SlotUse::Mask,
-        "滑らかさ",
-        "Smoothness",
+        |l| l.t("look-smoothness"),
         "Smoothness",
     ),
     s(
         "_MetallicGlossMap",
         SlotDefault::White,
         SlotUse::Mask,
-        "金属度",
-        "Metallic",
+        |l| l.t("look-metallic"),
         "Metallic",
     ),
     s(
         "_ReflectionColorTex",
         SlotDefault::White,
         SlotUse::Color,
-        "光沢の色",
-        "Reflection Color",
+        |l| l.t("look-reflection-color"),
         "ReflectionColor",
     ),
     s(
         "_GlitterColorTex",
         SlotDefault::White,
         SlotUse::Color,
-        "ラメの色",
-        "Glitter Color",
+        |l| l.t("look-glitter-color"),
         "GlitterColor",
     ),
     s(
         "_AnisotropyTangentMap",
         SlotDefault::Bump,
         SlotUse::Normal,
-        "異方性反射のノーマルマップ",
-        "Anisotropy Tangent Map",
+        |l| l.t("look-anisotropy-tangent-map"),
         "AnisotropyTangent",
     ),
     s(
         "_AnisotropyScaleMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "異方性反射のマスク",
-        "Anisotropy Mask",
+        |l| l.t("look-anisotropy-mask"),
         "AnisotropyMask",
     ),
     s(
         "_AnisotropyShiftNoiseMask",
         SlotDefault::White,
         SlotUse::Mask,
-        "異方性反射のノイズ",
-        "Anisotropy Noise",
+        |l| l.t("look-anisotropy-noise"),
         "AnisotropyNoise",
     ),
     s(
         "_MatCapBumpMap",
         SlotDefault::Bump,
         SlotUse::Normal,
-        "マットキャップのノーマルマップ",
-        "MatCap Normal Map",
+        |l| l.t("look-matcap-normal-map"),
         "MatCapNormal",
     ),
     s(
         "_MatCap2ndBumpMap",
         SlotDefault::Bump,
         SlotUse::Normal,
-        "マットキャップ2nd のノーマルマップ",
-        "MatCap 2nd Normal Map",
+        |l| l.t("look-matcap-2nd-normal-map"),
         "MatCap2ndNormal",
     ),
 ];

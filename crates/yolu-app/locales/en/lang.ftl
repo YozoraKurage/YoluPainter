@@ -14,13 +14,13 @@ lang-too-many-layers = Too many layers
 lang-no-mask = No mask
 lang-name-not-allowed = Name not allowed
 lang-target-is-not-a-group = Target is not a group
-lang-the-name-is-too-long = The name is too long (up to { $MAX_SAVED_NAME_CHARS } characters).
+lang-the-name-is-too-long = The name is too long (up to { $max_saved_name_chars } characters).
 lang-a-saved-selection-with-that = A saved selection with that name exists.
 lang-cannot-merge = Cannot merge
 lang-merge-changes-the-appearance-beyond = Merge changes the appearance beyond the tolerance
 lang-cannot-bake-an-inactive-effect = Cannot bake an inactive effect
 lang-invalid-value = Invalid value
-lang-the-ylp-format-is-not = The .ylp format { $value } is not supported (saved by { $app } { $version }; maximum { $MAX_FORMAT })
+lang-the-ylp-format-is-not = The .ylp format { $value } is not supported (saved by { $app } { $version }; maximum { $max_format })
 lang-file-or-folder-not-found = File or folder not found
 lang-access-denied = Access denied
 lang-file-already-exists = File already exists
@@ -122,7 +122,7 @@ lang-cannot-save-the-pose = Cannot save the pose
 lang-not-while-drawing = Not while drawing.
 lang-cannot-rotate-during-a-stroke = Cannot rotate during a stroke or drag.
 lang-this-texture-set-is-read = This texture set is read-only
-lang-a-project-has-at-most = A project has at most { $MAX_SETS } texture sets
+lang-a-project-has-at-most = A project has at most { $max_sets } texture sets
 lang-the-file-does-not-exist = The file does not exist
 lang-a-save-is-in-progress = A save is in progress
 lang-assets-are-full = Assets are full
@@ -132,3 +132,102 @@ lang-already-closed = Already closed
 lang-not-closed = Not closed
 lang-no-such-point = No such point
 lang-this-layer-s-path-is = This layer's path is of the other kind (2D or 3D)
+lang-invalid-json = Invalid JSON: { $e }
+
+## Texts for core and yolu-io diagnostics: Japanese passes the diagnostic through; English is a short sentence (`text` is the diagnostic)
+
+lang-invalid-or-unsupported-project-data = { $text ->
+       *[other] Invalid or unsupported project data
+    }
+lang-another-save-is-in-progress = { $text ->
+       *[other] Another save is in progress
+    }
+lang-backup-location-is-not-a = { $text ->
+       *[other] Backup location is not a folder
+    }
+lang-backup-location-is-a-link = { $text ->
+       *[other] Backup location is a link
+    }
+lang-save-lock-file-is-a = { $text ->
+       *[other] Save lock file is a link
+    }
+lang-the-file-name-must-end = { $text ->
+       *[other] The file name must end with .ylp
+    }
+lang-a-file-appeared-at-the = { $text ->
+       *[other] A file appeared at the save target; not overwritten
+    }
+lang-the-save-target-was-deleted = { $text ->
+       *[other] The save target was deleted or moved outside; not overwritten
+    }
+lang-the-opened-ylp-was-replaced = { $text ->
+       *[other] The opened .ylp was replaced by a save; this copy can no longer be read
+    }
+lang-save-target-or-backup-changed = { $text ->
+       *[other] Save target or backup changed
+    }
+lang-not-a-readable-psd-damaged = { $text ->
+       *[other] Not a readable PSD (damaged or unsupported)
+    }
+lang-image-sides-must-be-1 = Image sides must be 1 to 8192
+lang-psb-files-cannot-be-imported = PSB files cannot be imported
+lang-no-layers-a-flattened-image = No layers (a flattened image only)
+lang-a-texture-set-s-size = A texture set's size is one of { $sizes }
+lang-sizes-separator = ,{" "}
+lang-color-mixing-in-a-fill = { $text ->
+       *[other] Color mixing in a fill gradient cannot be saved to .ylp
+    }
+
+## Texts for core and yolu-io diagnostics: Japanese passes the diagnostic through; English is a short sentence (`text` is the diagnostic)
+
+lang-no-layer-below = { $text ->
+       *[other] No layer below
+    }
+lang-the-layer-below-is-a = { $text ->
+       *[other] The layer below is a group
+    }
+lang-the-layer-below-is-an = { $text ->
+       *[other] The layer below is an adjustment layer
+    }
+lang-a-layer-is-hidden = { $text ->
+       *[other] A layer is hidden
+    }
+lang-the-target-is-a-group = { $text ->
+       *[other] The target is a group
+    }
+lang-not-a-group = { $text ->
+       *[other] Not a group
+    }
+lang-the-group-is-empty = { $text ->
+       *[other] The group is empty
+    }
+lang-no-visible-layers = { $text ->
+       *[other] No visible layers
+    }
+lang-layers-have-different-parent-groups = { $text ->
+       *[other] Layers have different parent groups
+    }
+lang-the-merged-layer-would-have = { $text ->
+       *[other] The merged layer would have too many rulers
+    }
+lang-a-project-exceeds-the-layer = { $text ->
+       *[other] A project exceeds the Layer memory budget
+    }
+lang-the-whole-exceeds-the-layer = { $text ->
+       *[other] The whole exceeds the Layer memory budget
+    }
+lang-groups-are-nested-too-deeply-2 = { $text ->
+       *[other] Groups are nested too deeply
+    }
+lang-the-canvas-edge-exceeds-the = { $text ->
+       *[other] The canvas edge exceeds the limit (8192)
+    }
+lang-too-many-layers-limit-2048 = { $text ->
+       *[other] Too many layers (limit 2048)
+    }
+lang-size-count-or-memory-limit = { $text ->
+       *[other] Size, count or memory limit exceeded
+    }
+lang-unsupported-value-or-operation = { $text ->
+       *[other] Unsupported value or operation
+    }

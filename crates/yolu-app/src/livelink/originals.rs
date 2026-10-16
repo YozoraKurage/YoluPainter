@@ -50,10 +50,10 @@ impl OriginalMark {
     pub fn tooltip(&self, lang: Lang, set: (u32, u32)) -> String {
         let mut lines = Vec::new();
         if self.converted {
-            lines.push(lang.pick(
-                "リニアのテクスチャを sRGB の画素へ直しています".to_owned(),
-                "Converted from a linear texture to sRGB pixels".to_owned(),
-            ));
+            lines.push(
+                lang.t("livelink-converted-from-a-linear-texture-tip")
+                    .to_owned(),
+            );
         }
         if let Some((w, h)) = self.resized_from {
             lines.push(lang.f(
@@ -267,22 +267,23 @@ pub fn layers_note(lang: Lang, set: &str, layers: &PsdLayers) -> Option<String> 
         }
         Some(text)
     };
-    let parts: Vec<String> = [
-        (ImportAction::Dropped, "落とす物", "dropped"),
-        (ImportAction::Changed, "変わる物", "changed"),
-    ]
-    .into_iter()
-    .filter_map(|(action, ja, en)| {
-        names(action).map(|list| lang.pick(format!("{ja}（{list}）"), format!("{en} ({list})")))
-    })
-    .collect();
+    let parts: Vec<String> = [ImportAction::Dropped, ImportAction::Changed]
+        .into_iter()
+        .filter_map(|action| {
+            names(action).map(|list| match action {
+                ImportAction::Dropped => lang.f("livelink-dropped-list", &[("list", &list)]),
+                _ => lang.f("livelink-changed-list", &[("list", &list)]),
+            })
+        })
+        .collect();
     if parts.is_empty() {
         return None;
     }
     let file = lang.quote(&file_name(&layers.path));
-    Some(lang.pick(
-        format!("{set}: {file}の取り込みで{}", parts.join("・")),
-        format!("{set}: importing {file}, {}", parts.join(", ")),
+    let parts = parts.join(lang.t("livelink-parts-separator"));
+    Some(lang.f(
+        "livelink-importing-the-file",
+        &[("set", &set), ("file", &file), ("parts", &parts)],
     ))
 }
 

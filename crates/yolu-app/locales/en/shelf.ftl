@@ -55,3 +55,20 @@ shelf-is-not-a-smart-asset = { $name } is not a smart asset, so it cannot be exp
 shelf-exported = Exported
 shelf-cannot-export-to = Cannot export to { $target }
 shelf-added-to-the-project-s-2 = Added { $added } to the project's assets.
+shelf-layer-count = { $n } { $n ->
+        [one] layer
+       *[other] layers
+    }
+shelf-were-already-in-the-project = { $existing } { $existing ->
+        [one] was
+       *[other] were
+    } already in the project's assets.
+shelf-cannot-save-to-the-project = Cannot save to the project's assets
+shelf-cannot-import-into-the-project = Cannot import into the project's assets
+shelf-cannot-change-the-project-s-2 = Cannot change the project's assets
+shelf-cannot-remove-from-the-project = Cannot remove from the project's assets
+shelf-cannot-place-the-asset = Cannot place the asset
+shelf-cannot-import-from-the-library = Cannot import from the library
+shelf-cannot-add-to-the-library = Cannot add to the library
+shelf-cannot-remove-from-the-library = Cannot remove from the library
+shelf-cannot-save-as-a-material = Cannot save as a material

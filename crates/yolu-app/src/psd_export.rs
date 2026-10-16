@@ -509,18 +509,22 @@ pub fn note_columns(lang: Lang, note: &ExportNote) -> (String, String) {
             max_diff,
         } => {
             // 展開した理由の語（使っていないものは出さない）
-            let (ja, en) = match cause {
-                GradientExpansion::Curve => ("カーブ", "Curve"),
-                GradientExpansion::Mixing => ("混色", "Mixing"),
-                GradientExpansion::CurveAndMixing => ("カーブ・混色", "Curve/mixing"),
+            let cause = match cause {
+                GradientExpansion::Curve => lang.t("psd_export-curve"),
+                GradientExpansion::Mixing => lang.t("psd_export-mixing"),
+                GradientExpansion::CurveAndMixing => lang.t("psd_export-curve-mixing"),
             };
             (
                 format!(
                     "{}: {}",
                     adjustment_name(lang, AdjustmentType::GradientMap),
-                    lang.pick(
-                        format!("{ja} → 停止点 色 {colors}・不透明度 {opacities}"),
-                        format!("{en} → stops: {colors} color, {opacities} opacity")
+                    lang.f(
+                        "psd_export-stops-color-opacity",
+                        &[
+                            ("cause", &cause),
+                            ("colors", &colors),
+                            ("opacities", &opacities)
+                        ]
                     )
                 ),
                 lang.f("psd_export-max-diff", &[("max_diff", &max_diff)]),

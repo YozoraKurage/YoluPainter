@@ -18,7 +18,7 @@ use yolu_io::smart::SmartFile;
 use super::image as png;
 use super::{PendingWrite, REFUSAL_PNG, REFUSAL_PNG_SIZE, REFUSAL_UNSUPPORTED};
 use crate::engine::{LayerId, LayerKind};
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::notice::{Kind as NoticeKind, Source};
 use crate::shelf::{
     image_as_material, is_builtin, smart_material_from, stage_library_file, stage_library_image,
@@ -100,12 +100,9 @@ fn count_note(lang: Lang, added: usize, existing: usize) -> String {
         parts.push(lang.f("library-added-to-the-library", &[("added", &added)]));
     }
     if existing > 0 {
-        parts.push(lang.pick(
-            format!("{existing} 件はすでにライブラリにありました。"),
-            format!(
-                "{existing} {} already in the library.",
-                if existing == 1 { "was" } else { "were" }
-            ),
+        parts.push(lang.f(
+            "library-were-already-in-the-library",
+            &[("existing", &Count(existing))],
         ));
     }
     parts.join(lang.t("library-text"))

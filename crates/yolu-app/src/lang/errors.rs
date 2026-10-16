@@ -36,24 +36,26 @@ fn lock_list(lang: Lang, lock: yolu_core::LayerLocks) -> String {
     crate::layerops::lock_names(lang, lock).join(lang.t("lang-text"))
 }
 
-/// 設定の予算で断った理由（yolu-io の `OVER_LAYER_PIXELS_*`）の英語。どの予算かだけを言う（数は出さない）。
-pub(crate) fn budget_text(text: &str) -> Option<&'static str> {
-    if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
-        Some("A project exceeds the Layer memory budget")
-    } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
-        Some("The whole exceeds the Layer memory budget")
-    } else if text.contains("グループの入れ子の上限") {
-        Some("Groups are nested too deeply")
-    } else if text.contains("キャンバスの辺の上限") {
-        Some("The canvas edge exceeds the limit (8192)")
-    } else if text.contains("レイヤーの数の上限") {
-        Some("Too many layers (limit 2048)")
-    } else {
-        None
-    }
-}
-
 impl Lang {
+    /// 設定の予算で断った理由のうち、どの予算かを言う文（yolu-io の理由の文で見分ける。数は出さない）。日本語は yolu-io の文、
+    /// 英語は短い文。どの予算か分からなければ None。
+    pub(crate) fn budget_reason(self, text: &str) -> Option<String> {
+        let key = if text.contains(yolu_io::OVER_LAYER_PIXELS_DOCUMENT) {
+            self.f("lang-a-project-exceeds-the-layer", &[("text", &text)])
+        } else if text.contains(yolu_io::OVER_LAYER_PIXELS_TOTAL) {
+            self.f("lang-the-whole-exceeds-the-layer", &[("text", &text)])
+        } else if text.contains("グループの入れ子の上限") {
+            self.f("lang-groups-are-nested-too-deeply-2", &[("text", &text)])
+        } else if text.contains("キャンバスの辺の上限") {
+            self.f("lang-the-canvas-edge-exceeds-the", &[("text", &text)])
+        } else if text.contains("レイヤーの数の上限") {
+            self.f("lang-too-many-layers-limit-2048", &[("text", &text)])
+        } else {
+            return None;
+        };
+        Some(key)
+    }
+
     pub fn core_error(self, error: &CoreError) -> String {
         crate::crash::problem(self.core_error_text(error))
     }
@@ -102,16 +104,15 @@ impl Lang {
             }
             CoreError::InvalidArgument(Reason::SelectionNameTooLong) => self.f(
                 "lang-the-name-is-too-long",
-                &[("MAX_SAVED_NAME_CHARS", &yolu_core::MAX_SAVED_NAME_CHARS)],
+                &[("max_saved_name_chars", &yolu_core::MAX_SAVED_NAME_CHARS)],
             ),
             CoreError::InvalidArgument(Reason::SavedSelectionNameExists) => {
                 self.t("lang-a-saved-selection-with-that").into()
             }
             // core の文（「できない: 〜」のようにコロンでつないだ形）は、何が（なぜ）の 1 つの文に組み直す
-            CoreError::MergeRefused(reason) => self.with_reason(
-                self.t("lang-cannot-merge"),
-                self.pick(reason.to_string(), merge_refusal(*reason).to_owned()),
-            ),
+            CoreError::MergeRefused(reason) => {
+                self.with_reason(self.t("lang-cannot-merge"), self.merge_refusal(*reason))
+            }
             CoreError::MergeAppearance(report) => self.with_reason(
                 self.t("lang-merge-changes-the-appearance-beyond"),
                 report.max_visible_difference.to_string(),
@@ -141,62 +142,56 @@ impl Lang {
         match error {
             Error::Core(e) => self.core_error(e),
             Error::Io(e) => self.file_error(e),
-            Error::Json(e) => self.pick(error.to_string(), format!("Invalid JSON: {e}")),
-            Error::InvalidData(text) => {
-                self.pick(text.clone(), "Invalid or unsupported project data".into())
-            }
+            // 日本語は yolu-io が作った診断をそのまま出し（.ftl は `{ $text }`）、英語は種類ごとの短い文（.ftl は
+            // `{ $text -> *[other] 英語の文 }`。`text` は日英で引数の組を揃えるための印で、英語の文には出ない）
+            Error::Json(e) => self.f("lang-invalid-json", &[("e", e)]),
+            Error::InvalidData(text) => self.f(
+                "lang-invalid-or-unsupported-project-data",
+                &[("text", text)],
+            ),
             // 設定の予算で断ったものは、どの予算かを英語でも言う（yolu-io の理由の文で見分ける）
-            Error::Budget(text) => self.pick(
-                text.clone(),
-                budget_text(text)
-                    .unwrap_or("Size, count or memory limit exceeded")
-                    .into(),
-            ),
-            Error::Unwritable(what) => self.pick(
-                what.to_string(),
-                match what {
-                    Unwritable::GeneratorRampMixing => {
-                        "Color mixing in a fill gradient cannot be saved to .ylp".into()
-                    }
-                },
-            ),
+            Error::Budget(text) => self
+                .budget_reason(text)
+                .unwrap_or_else(|| self.f("lang-size-count-or-memory-limit", &[("text", text)])),
+            Error::Unwritable(what) => match what {
+                Unwritable::GeneratorRampMixing => self.f(
+                    "lang-color-mixing-in-a-fill",
+                    &[("text", &what.to_string())],
+                ),
+            },
             // 保存の衝突のうち、保存先が外で変わったのではない理由（yolu-io の store.rs）は言い分ける。
             // 別の保存がロックを持っているのは待ち、前の版の置き場とロックの場所の不具合は保存先の周りの事情
             Error::SaveConflict(text) if text.contains("進行中") => {
-                self.pick(text.clone(), "Another save is in progress".into())
+                self.f("lang-another-save-is-in-progress", &[("text", text)])
             }
             Error::SaveConflict(text)
                 if text.contains("バックアップ先がフォルダーではありません") =>
             {
-                self.pick(text.clone(), "Backup location is not a folder".into())
+                self.f("lang-backup-location-is-not-a", &[("text", text)])
             }
             Error::SaveConflict(text) if text.contains("バックアップ先がシンボリックリンク") => {
-                self.pick(text.clone(), "Backup location is a link".into())
+                self.f("lang-backup-location-is-a-link", &[("text", text)])
             }
             Error::SaveConflict(text) if text.contains("ロックのファイル") => {
-                self.pick(text.clone(), "Save lock file is a link".into())
+                self.f("lang-save-lock-file-is-a", &[("text", text)])
             }
             // 保存先の名前（.ylp で終わらない）と、保存の直前に外から作られた新規の保存先
             Error::SaveConflict(text) if text.contains(".ylp で終わっていません") => {
-                self.pick(text.clone(), "The file name must end with .ylp".into())
+                self.f("lang-the-file-name-must-end", &[("text", text)])
             }
-            Error::SaveConflict(text) if text.contains("外部で作られました") => self.pick(
-                text.clone(),
-                "A file appeared at the save target; not overwritten".into(),
-            ),
+            Error::SaveConflict(text) if text.contains("外部で作られました") => {
+                self.f("lang-a-file-appeared-at-the", &[("text", text)])
+            }
             // 保存先が、開いたあとで外で消された・動かされた（変わったのとは言い分ける）
-            Error::SaveConflict(text) if text.contains("外部で消されています") => self
-                .pick(
-                    text.clone(),
-                    "The save target was deleted or moved outside; not overwritten".into(),
-                ),
+            Error::SaveConflict(text) if text.contains("外部で消されています") => {
+                self.f("lang-the-save-target-was-deleted", &[("text", text)])
+            }
             // 開いた .ylp の古い版の写し（置換の規則が POSIX でないファイルシステムで、保存が置き換えるために手放した）
-            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_RELEASED) => self.pick(
-                text.clone(),
-                "The opened .ylp was replaced by a save; this copy can no longer be read".into(),
-            ),
+            Error::SaveConflict(text) if text.contains(yolu_io::SOURCE_RELEASED) => {
+                self.f("lang-the-opened-ylp-was-replaced", &[("text", text)])
+            }
             Error::SaveConflict(text) => {
-                self.pick(text.clone(), "Save target or backup changed".into())
+                self.f("lang-save-target-or-backup-changed", &[("text", text)])
             }
             Error::UnsupportedFormat {
                 format,
@@ -208,7 +203,7 @@ impl Lang {
                     ("value", &format),
                     ("app", &app),
                     ("version", &version),
-                    ("MAX_FORMAT", &yolu_io::MAX_FORMAT),
+                    ("max_format", &yolu_io::MAX_FORMAT),
                 ],
             ),
         }
@@ -244,14 +239,10 @@ impl Lang {
         crate::crash::problem(match error {
             MeshMapError::Refused(why) => self.reason(*why).into(),
             // スレッドの束の失敗は OS・rayon の文（英語ならそのまま）
-            MeshMapError::Threads(why) => self.pick(
-                why.clone(),
-                if why.is_ascii() {
-                    why.clone()
-                } else {
-                    GENERIC_REASON.into()
-                },
-            ),
+            MeshMapError::Threads(why) if self == Lang::Ja || why.is_ascii() => why.clone(),
+            MeshMapError::Threads(why) => {
+                self.f("lang-unsupported-value-or-operation", &[("text", why)])
+            }
         })
     }
 
@@ -504,26 +495,28 @@ fn clipboard_refusal(reason: yolu_core::ClipboardRefusal) -> &'static str {
     }
 }
 
-fn merge_refusal(reason: yolu_core::MergeRefusal) -> &'static str {
-    use yolu_core::MergeRefusal::*;
-    match reason {
-        NoLayerBelow => "No layer below",
-        LayerBelowIsGroup => "The layer below is a group",
-        LayerBelowIsAdjustment => "The layer below is an adjustment layer",
-        HiddenLayer => "A layer is hidden",
-        IsGroup => "The target is a group",
-        NotGroup => "Not a group",
-        EmptyGroup => "The group is empty",
-        NothingVisible => "No visible layers",
-        DifferentGroups => "Layers have different parent groups",
-        TooManyRulers => "The merged layer would have too many rulers",
-    }
-}
-
-/// 英語の文がまだ無い理由の、一般の英語の文。
-const GENERIC_REASON: &str = "Unsupported value or operation";
-
 impl Lang {
+    /// 統合を断った理由。日本語は core の文（`MergeRefusal` の `Display`）、英語は種類ごとの短い文。
+    fn merge_refusal(self, reason: yolu_core::MergeRefusal) -> String {
+        use yolu_core::MergeRefusal::*;
+        let text = reason.to_string();
+        match reason {
+            NoLayerBelow => self.f("lang-no-layer-below", &[("text", &text)]),
+            LayerBelowIsGroup => self.f("lang-the-layer-below-is-a", &[("text", &text)]),
+            LayerBelowIsAdjustment => self.f("lang-the-layer-below-is-an", &[("text", &text)]),
+            HiddenLayer => self.f("lang-a-layer-is-hidden", &[("text", &text)]),
+            IsGroup => self.f("lang-the-target-is-a-group", &[("text", &text)]),
+            NotGroup => self.f("lang-not-a-group", &[("text", &text)]),
+            EmptyGroup => self.f("lang-the-group-is-empty", &[("text", &text)]),
+            NothingVisible => self.f("lang-no-visible-layers", &[("text", &text)]),
+            DifferentGroups => self.f(
+                "lang-layers-have-different-parent-groups",
+                &[("text", &text)],
+            ),
+            TooManyRulers => self.f("lang-the-merged-layer-would-have", &[("text", &text)]),
+        }
+    }
+
     pub fn surface_error(self, error: &yolu_core::geometry::SurfaceStrokeError) -> String {
         crate::crash::problem(self.surface_error_text(error))
     }
@@ -791,9 +784,9 @@ pub fn library_known_error(lang: Lang, e: &yolu_io::Error) -> Option<String> {
     } else if has(REFUSAL_UNSUPPORTED) {
         lang.t("lang-png-and-ylsmart-only")
     } else if has(REFUSAL_PNG_SIZE) {
-        lang.pick(REFUSAL_PNG_SIZE, "Image sides must be 1 to 8192")
+        lang.t("lang-image-sides-must-be-1")
     } else if has(REFUSAL_PNG) {
-        lang.pick(REFUSAL_PNG, "Not a readable PNG")
+        lang.t("lang-not-a-readable-png")
     } else {
         return None;
     };
@@ -855,14 +848,10 @@ pub fn rebind_error(lang: Lang, error: RebindError) -> String {
 /// 取り込めない理由（画面の言語。レイヤーの名前は利用者の名前なのでそのまま）。
 pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
     match why {
-        CopyRefusal::Malformed(text) => lang.pick(
-            text.clone(),
-            "Not a readable PSD (damaged or unsupported)".into(),
-        ),
-        CopyRefusal::LargeDocument => lang.pick(
-            "PSB 形式は取り込めません".into(),
-            "PSB files cannot be imported".into(),
-        ),
+        CopyRefusal::Malformed(text) => {
+            lang.f("lang-not-a-readable-psd-damaged", &[("text", text)])
+        }
+        CopyRefusal::LargeDocument => lang.t("lang-psb-files-cannot-be-imported").into(),
         CopyRefusal::ColorFormat { depth, mode } => {
             let name = crate::psd_import::color_mode_name(lang, *mode);
             lang.f(
@@ -870,10 +859,7 @@ pub fn psd_copy_refusal(lang: Lang, why: &CopyRefusal) -> String {
                 &[("name", &name), ("depth", &depth)],
             )
         }
-        CopyRefusal::NoLayers => lang.pick(
-            "レイヤーがありません（統合画像だけの PSD）".into(),
-            "No layers (a flattened image only)".into(),
-        ),
+        CopyRefusal::NoLayers => lang.t("lang-no-layers-a-flattened-image").into(),
         CopyRefusal::TooManyLayers { count, limit } => lang.f(
             "lang-too-many-layers-limit",
             &[("value", &count), ("limit", &limit)],

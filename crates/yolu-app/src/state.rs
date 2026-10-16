@@ -771,7 +771,7 @@ impl Action {
 
 /// 画面の状態の全部。
 pub struct AppState {
-    /// 画面の言語（文言は `lang.pick("日本語", "English")`）。
+    /// 画面の言語（文言は `lang.t("キー")`・引数のある文は `lang.f("キー", …)` で、`locales/<言語>/*.ftl` から引く）。
     pub lang: Lang,
     /// M2 の画面の状態（レイヤーの種類・チャンネル・全部入りのブラシ）。
     pub m2: M2State,

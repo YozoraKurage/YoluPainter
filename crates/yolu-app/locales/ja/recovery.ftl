@@ -56,3 +56,5 @@ recovery-close = 閉じる
 recovery-discard-generation = 世代を捨てる
 recovery-cancel = やめる
 recovery-deletes-this-generation-permanently-saved-tip = この世代を消します。元に戻せません。保存した .ylp は残ります
+recovery-sets-count = { $count } セット
+recovery-damaged-generation-cannot-be-read = { $reason }

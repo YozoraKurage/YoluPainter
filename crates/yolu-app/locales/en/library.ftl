@@ -17,3 +17,12 @@ library-layer-not-found = Layer not found
 library-removed-from-the-library = Removed from the library
 library-not-a-fill-layer = Not a fill layer
 library-it-uses-images = It uses images
+library-cannot-read-the-list = Cannot read the list
+library-not-a-readable-png = Not a readable PNG
+library-image-sides-must-be-1 = Image sides must be 1 to 8192
+library-wrong-format = Wrong format
+library-too-large = Too large
+library-were-already-in-the-library = { $existing } { $existing ->
+        [one] was
+       *[other] were
+    } already in the library.

@@ -88,3 +88,7 @@ psd_export-has-filters-or-generators = "{ $name }" has filters or generators
 psd_export-has-an-anchor = "{ $name }" has an anchor
 psd_export-has-a-path = "{ $name }" has a path
 psd_export-is-a-text-layer = "{ $name }" is a text layer
+psd_export-curve = Curve
+psd_export-mixing = Mixing
+psd_export-curve-mixing = Curve/mixing
+psd_export-stops-color-opacity = { $cause } → stops: { $colors } color, { $opacities } opacity

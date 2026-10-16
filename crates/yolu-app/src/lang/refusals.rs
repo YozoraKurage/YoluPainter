@@ -24,26 +24,16 @@ pub fn read_only_set(lang: Lang, reason: &str) -> String {
 pub fn set_limit(lang: Lang) -> String {
     lang.f(
         "lang-a-project-has-at-most",
-        &[("MAX_SETS", &crate::newproject::MAX_SETS)],
+        &[("max_sets", &crate::newproject::MAX_SETS)],
     )
 }
 
 /// テクスチャセットの大きさが選べる値でない（新規・構成のウィンドウの下の帯）。
 pub fn set_size(lang: Lang) -> String {
-    lang.pick(
-        format!(
-            "セットの大きさは {} のどれかです",
-            crate::newproject::RESOLUTIONS
-                .map(|r| r.to_string())
-                .join("・")
-        ),
-        format!(
-            "A texture set's size is one of {}",
-            crate::newproject::RESOLUTIONS
-                .map(|r| r.to_string())
-                .join(", ")
-        ),
-    )
+    let sizes = crate::newproject::RESOLUTIONS
+        .map(|r| r.to_string())
+        .join(lang.t("lang-sizes-separator"));
+    lang.f("lang-a-texture-set-s-size", &[("sizes", &sizes)])
 }
 
 /// 最近開いたプロジェクトのファイルが無い（開かずに断る理由）。

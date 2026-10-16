@@ -51,14 +51,14 @@ pub fn sorted(notes: &[ImportNote]) -> Vec<&ImportNote> {
 fn summary(lang: Lang, notes: &[ImportNote]) -> String {
     let count = |a: ImportAction| notes.iter().filter(|n| n.action == a).count();
     let mut parts = Vec::new();
-    for (action, ja, en) in [
-        (ImportAction::Dropped, "落とす", "Drop"),
-        (ImportAction::Changed, "変わる", "Change"),
-        (ImportAction::Ignored, "無視", "Ignore"),
+    for (action, name) in [
+        (ImportAction::Dropped, lang.t("psd_import-drop")),
+        (ImportAction::Changed, lang.t("psd_import-change")),
+        (ImportAction::Ignored, lang.t("psd_import-ignore")),
     ] {
         let n = count(action);
         if n > 0 {
-            parts.push(format!("{} {n}", lang.pick(ja, en)));
+            parts.push(format!("{name} {n}"));
         }
     }
     parts.join(" · ")
@@ -211,19 +211,15 @@ fn blend_name(lang: Lang, key: &str) -> String {
 pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
     use ImportFeature as F;
     let keys = keys(note);
-    let plain = |ja: &str, en: &str| -> String { lang.pick(ja, en).into() };
     match note.feature {
-        F::GlobalMask => plain("全体マスク", "Global mask"),
+        F::GlobalMask => lang.t("psd_import-global-mask").into(),
         F::ImageResources => lang.f("psd_import-image-resources", &[("note", &note.count)]),
-        F::ColorProfile => plain("sRGB 以外のカラープロファイル", "Non-sRGB color profile"),
-        F::PixelAspect => plain("画素の縦横比", "Pixel aspect ratio"),
-        F::ColorModeData => plain("色モードデータ", "Color mode data"),
+        F::ColorProfile => lang.t("psd_import-non-srgb-color-profile").into(),
+        F::PixelAspect => lang.t("psd_import-pixel-aspect-ratio").into(),
+        F::ColorModeData => lang.t("psd_import-color-mode-data").into(),
         F::DocumentTags => lang.f("psd_import-document-tags", &[("note", &note.count)]),
-        F::ExtraChannel => plain(
-            "統合画像の追加チャンネル",
-            "Extra channel in the merged image",
-        ),
-        F::LayerInfoTail => plain("レイヤー情報の余り", "Trailing layer data"),
+        F::ExtraChannel => lang.t("psd_import-extra-channel-in-the-merged").into(),
+        F::LayerInfoTail => lang.t("psd_import-trailing-layer-data").into(),
         F::CompositeDiffers {
             max_diff,
             differing,
@@ -252,24 +248,21 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             };
             lang.f("psd_import-merged-image-not-compared", &[("why", &why)])
         }
-        F::LayerIds => plain("レイヤー ID の欠落・重複", "Missing or duplicate layer IDs"),
-        F::LayerName => plain("レイヤー名の文字", "Layer name characters"),
-        F::LayerNameTruncated => plain("長すぎるレイヤー名", "Layer name too long"),
-        F::LayerEffects => plain("レイヤー効果", "Layer effects"),
-        F::BlendIf => plain("ブレンド条件", "Blend If"),
-        F::FillOpacity => plain("塗りの不透明度", "Fill opacity"),
-        F::ClippedBlend => plain(
-            "クリップしたレイヤーのグループ合成",
-            "Blend clipped layers as group",
-        ),
-        F::InteriorBlend => plain("内部効果のグループ合成", "Blend interior effects as group"),
-        F::Knockout => plain("ノックアウト", "Knockout"),
-        F::TransparencyShapes => plain("透明部分が形を決める設定", "Transparency shapes layer"),
-        F::ChannelRestrictions => plain("チャンネルの合成制限", "Channel restrictions"),
-        F::SmartObject => plain("スマートオブジェクトの元", "Smart object source"),
-        F::TextLayer => plain("テキストのデータ", "Text data"),
-        F::VectorMask => plain("ベクターマスク", "Vector mask"),
-        F::FillSettings => plain("塗りつぶしの設定", "Fill settings"),
+        F::LayerIds => lang.t("psd_import-missing-or-duplicate-layer-ids").into(),
+        F::LayerName => lang.t("psd_import-layer-name-characters").into(),
+        F::LayerNameTruncated => lang.t("psd_import-layer-name-too-long").into(),
+        F::LayerEffects => lang.t("psd_import-layer-effects").into(),
+        F::BlendIf => lang.t("psd_import-blend-if").into(),
+        F::FillOpacity => lang.t("psd_import-fill-opacity").into(),
+        F::ClippedBlend => lang.t("psd_import-blend-clipped-layers-as-group").into(),
+        F::InteriorBlend => lang.t("psd_import-blend-interior-effects-as-group").into(),
+        F::Knockout => lang.t("psd_import-knockout").into(),
+        F::TransparencyShapes => lang.t("psd_import-transparency-shapes-layer").into(),
+        F::ChannelRestrictions => lang.t("psd_import-channel-restrictions").into(),
+        F::SmartObject => lang.t("psd_import-smart-object-source").into(),
+        F::TextLayer => lang.t("psd_import-text-data").into(),
+        F::VectorMask => lang.t("psd_import-vector-mask").into(),
+        F::FillSettings => lang.t("psd_import-fill-settings").into(),
         F::UnsupportedAdjustment => {
             let names = named(lang, &keys, adjustment_name);
             lang.f("psd_import-adjustment-layer", &[("names", &names)])
@@ -278,21 +271,21 @@ pub fn feature_text(lang: Lang, note: &ImportNote) -> String {
             let names = named(lang, &keys, blend_name);
             lang.f("psd_import-blend-mode", &[("names", &names)])
         }
-        F::MaskFlags => plain("マスクのフラグ", "Mask flags"),
-        F::MaskFeather => plain("マスクのぼかし", "Mask feather"),
-        F::MaskDefault => plain("マスクの既定値", "Mask default value"),
-        F::MaskWithoutPixels => plain("画素のないマスク", "Mask without pixels"),
-        F::UserAndVectorMask => plain("ユーザーマスクとベクターマスク", "User and vector mask"),
-        F::OutsideCanvas => plain("キャンバス外の画素", "Pixels outside the canvas"),
-        F::MaskOutsideCanvas => plain("キャンバス外のマスク", "Mask outside the canvas"),
-        F::GroupPixels => plain("グループ自身の画素", "Group pixels"),
-        F::MissingChannels => plain("RGB チャンネルの不足", "Missing RGB channels"),
-        F::LayerChannels => plain("レイヤーの追加チャンネル", "Extra layer channels"),
-        F::LayerMetadata => plain("レイヤーのメタデータ", "Layer metadata"),
-        F::LayerColorLabel => plain("色ラベル", "Color label"),
-        F::CollapsedGroup => plain("グループの開閉", "Group open state"),
-        F::LayerLockBits => plain("ロックのビット", "Lock bits"),
-        F::LayerFlags => plain("レイヤーのフラグ", "Layer flags"),
+        F::MaskFlags => lang.t("psd_import-mask-flags").into(),
+        F::MaskFeather => lang.t("psd_import-mask-feather").into(),
+        F::MaskDefault => lang.t("psd_import-mask-default-value").into(),
+        F::MaskWithoutPixels => lang.t("psd_import-mask-without-pixels").into(),
+        F::UserAndVectorMask => lang.t("psd_import-user-and-vector-mask").into(),
+        F::OutsideCanvas => lang.t("psd_import-pixels-outside-the-canvas").into(),
+        F::MaskOutsideCanvas => lang.t("psd_import-mask-outside-the-canvas").into(),
+        F::GroupPixels => lang.t("psd_import-group-pixels").into(),
+        F::MissingChannels => lang.t("psd_import-missing-rgb-channels").into(),
+        F::LayerChannels => lang.t("psd_import-extra-layer-channels").into(),
+        F::LayerMetadata => lang.t("psd_import-layer-metadata").into(),
+        F::LayerColorLabel => lang.t("psd_import-color-label").into(),
+        F::CollapsedGroup => lang.t("psd_import-group-open-state").into(),
+        F::LayerLockBits => lang.t("psd_import-lock-bits").into(),
+        F::LayerFlags => lang.t("psd_import-layer-flags").into(),
     }
 }
 

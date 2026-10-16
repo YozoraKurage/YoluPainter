@@ -42,3 +42,15 @@ project-overwrote-unreadable-look-settings = Overwrote unreadable look settings
 project-text-3 = ,{" "}
 project-replaced-unreadable-remembered-selections = Replaced unreadable remembered selections
 project-cannot-save-to = Cannot save to { $file }
+project-notes-with-a-stop = {" "}{ $notes }.
+project-notes-separator = ;{" "}
+project-could-not-delete-old-backups = {" "}Could not delete { $n } old { $n ->
+        [one] backup
+       *[other] backups
+    } ({ $reason }).
+project-cannot-be-read-and-have = { $quoted } cannot be read and { $count ->
+        [one] has
+       *[other] have
+    } never been saved
+project-quoted-names-separator = ,{" "}
+project-replaced-the-unreadable-pose-with = {" "}Replaced the unreadable pose with the current pose.

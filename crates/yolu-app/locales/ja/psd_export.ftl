@@ -88,3 +88,7 @@ psd_export-has-filters-or-generators = 「{ $name }」にフィルターかジ�
 psd_export-has-an-anchor = 「{ $name }」にアンカーがあります
 psd_export-has-a-path = 「{ $name }」にパスがあります
 psd_export-is-a-text-layer = 「{ $name }」はテキストレイヤーです
+psd_export-curve = カーブ
+psd_export-mixing = 混色
+psd_export-curve-mixing = カーブ・混色
+psd_export-stops-color-opacity = { $cause } → 停止点 色 { $colors }・不透明度 { $opacities }

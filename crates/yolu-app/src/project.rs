@@ -35,7 +35,7 @@ pub use session::Session;
 const MESH_MAP_LIMIT_BYTES: usize = 512 * 1024 * 1024;
 
 use crate::engine::{Channel, Document, TileCoord};
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::notice::{Kind as NoticeKind, Source};
 use crate::sets::TextureSets;
 use crate::shelf::ShelfState;
@@ -500,10 +500,10 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
         .map(|n| state.lang.project_note(n))
         .collect();
     if !notes.is_empty() {
-        text += &state.lang.pick(
-            format!(" {}", notes.join(" ")),
-            format!(" {}.", notes.join("; ")),
-        );
+        let notes = notes.join(state.lang.t("project-notes-separator"));
+        text += &state
+            .lang
+            .f("project-notes-with-a-stop", &[("notes", &notes)]);
     }
     let view_model = project.view_model();
     let livelink = project.livelink();
@@ -680,12 +680,9 @@ fn backup_text(lang: Lang, path: &Path, report: &yolu_io::SaveReport) -> String 
     if let Some(first) = report.prune_failures.first() {
         let n = report.prune_failures.len();
         let reason = lang.file_error(&first.error);
-        text += &lang.pick(
-            format!(" 古い退避 {n} 件を消せませんでした（{reason}）。"),
-            format!(
-                " Could not delete {n} old backup{} ({reason}).",
-                if n == 1 { "" } else { "s" }
-            ),
+        text += &lang.f(
+            "project-could-not-delete-old-backups",
+            &[("n", &Count(n)), ("reason", &reason)],
         );
     }
     text

@@ -41,17 +41,17 @@ impl SetsError {
         match self {
             SetsError::TooMany => lang.f(
                 "rampsets-at-most-gradients-of-your",
-                &[("MAX_USER", &MAX_USER)],
+                &[("max_user", &MAX_USER)],
             ),
-            SetsError::Name => lang.pick("名前が空です".to_owned(), "The name is empty".to_owned()),
-            SetsError::Index => lang.pick(
-                "組み込みのものは変えられません".to_owned(),
-                "Built-in gradients cannot be changed".to_owned(),
-            ),
-            SetsError::Unreadable(ja, en) => lang.pick(
-                format!("ファイルが読めないままなので、グラデーションを保存できません（{ja}）。"),
-                format!("Cannot save the gradients because the file is still unreadable ({en})."),
-            ),
+            SetsError::Name => lang.t("rampsets-the-name-is-empty").to_owned(),
+            SetsError::Index => lang.t("rampsets-built-in-gradients-cannot-be").to_owned(),
+            SetsError::Unreadable(ja, en) => {
+                let why = lang.pick(ja, en);
+                lang.f(
+                    "rampsets-cannot-save-the-gradients-because",
+                    &[("why", why)],
+                )
+            }
             SetsError::Store(e) => lang.with_reason(
                 lang.t("rampsets-cannot-save-the-gradients"),
                 e.describe(lang),

@@ -193,8 +193,7 @@ struct TemplateMask {
     /// この機能が入のときに作る（"outline" は輪郭線のシェーダー）。
     toggle: &'static str,
     slot: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    label: liltoon::Label,
     kind: ChannelKind,
     space: ColorSpace,
     default: Rgba8,
@@ -206,14 +205,12 @@ const CLEAR: Rgba8 = Rgba8::new(0, 0, 0, 0);
 const fn mask(
     toggle: &'static str,
     slot: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> TemplateMask {
     TemplateMask {
         toggle,
         slot,
-        ja,
-        en,
+        label: liltoon::Label::new(label),
         kind: ChannelKind::Scalar,
         space: ColorSpace::Linear,
         default: WHITE,
@@ -223,14 +220,12 @@ const fn mask(
 const fn layer(
     toggle: &'static str,
     slot: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    label: fn(Lang) -> &'static str,
 ) -> TemplateMask {
     TemplateMask {
         toggle,
         slot,
-        ja,
-        en,
+        label: liltoon::Label::new(label),
         kind: ChannelKind::Color,
         space: ColorSpace::Srgb,
         default: CLEAR,
@@ -240,92 +235,50 @@ const fn layer(
 /// ひな形が作るチャンネル（インスペクターの節の並び）。色のレイヤー（影色・メインカラー 2nd・3rd）は何も描いていない所を透明にして、
 /// 描いた所だけが効くようにする（影色のテクスチャは A でメインカラーと混ぜる。2nd・3rd は A で重ねる）。
 const TEMPLATE: &[TemplateMask] = &[
-    layer(
-        "_UseMain2ndTex",
-        "_Main2ndTex",
-        "メインカラー2nd",
-        "Main Color 2nd",
-    ),
-    layer(
-        "_UseMain3rdTex",
-        "_Main3rdTex",
-        "メインカラー3rd",
-        "Main Color 3rd",
-    ),
-    mask(
-        "_UseShadow",
-        "_ShadowStrengthMask",
-        "影の強度",
-        "Shadow Strength",
-    ),
-    layer("_UseShadow", "_ShadowColorTex", "影色", "Shadow Color"),
-    mask("_UseShadow", "_ShadowBorderMask", "AO", "AO"),
-    mask(
-        "_UseRimShade",
-        "_RimShadeMask",
-        "リムシェードのマスク",
-        "RimShade Mask",
-    ),
-    mask(
-        "_UseEmission",
-        "_EmissionBlendMask",
-        "発光のマスク",
-        "Emission Mask",
-    ),
-    mask(
-        "_UseEmission2nd",
-        "_Emission2ndBlendMask",
-        "発光2nd のマスク",
-        "Emission 2nd Mask",
-    ),
-    mask(
-        "_UseAnisotropy",
-        "_AnisotropyScaleMask",
-        "異方性反射のマスク",
-        "Anisotropy Mask",
-    ),
-    mask(
-        "_UseBacklight",
-        "_BacklightColorTex",
-        "逆光ライトのマスク",
-        "Backlight Mask",
-    ),
-    mask(
-        "_UseReflection",
-        "_ReflectionColorTex",
-        "光沢のマスク",
-        "Reflection Mask",
-    ),
-    mask(
-        "_UseMatCap",
-        "_MatCapBlendMask",
-        "マットキャップのマスク",
-        "MatCap Mask",
-    ),
-    mask(
-        "_UseMatCap2nd",
-        "_MatCap2ndBlendMask",
-        "マットキャップ2nd のマスク",
-        "MatCap 2nd Mask",
-    ),
-    mask(
-        "_UseRim",
-        "_RimColorTex",
-        "リムライトのマスク",
-        "Rim Light Mask",
-    ),
-    mask(
-        "_UseGlitter",
-        "_GlitterColorTex",
-        "ラメのマスク",
-        "Glitter Mask",
-    ),
-    mask(
-        "outline",
-        "_OutlineWidthMask",
-        "輪郭線の太さ",
-        "Outline Width",
-    ),
+    layer("_UseMain2ndTex", "_Main2ndTex", |l| {
+        l.t("look-main-color-2nd")
+    }),
+    layer("_UseMain3rdTex", "_Main3rdTex", |l| {
+        l.t("look-main-color-3rd")
+    }),
+    mask("_UseShadow", "_ShadowStrengthMask", |l| {
+        l.t("look-shadow-strength")
+    }),
+    layer("_UseShadow", "_ShadowColorTex", |l| {
+        l.t("look-shadow-color")
+    }),
+    mask("_UseShadow", "_ShadowBorderMask", |l| l.t("look-ao")),
+    mask("_UseRimShade", "_RimShadeMask", |l| {
+        l.t("look-rimshade-mask")
+    }),
+    mask("_UseEmission", "_EmissionBlendMask", |l| {
+        l.t("look-emission-mask")
+    }),
+    mask("_UseEmission2nd", "_Emission2ndBlendMask", |l| {
+        l.t("look-emission-2nd-mask")
+    }),
+    mask("_UseAnisotropy", "_AnisotropyScaleMask", |l| {
+        l.t("look-anisotropy-mask")
+    }),
+    mask("_UseBacklight", "_BacklightColorTex", |l| {
+        l.t("look-backlight-mask")
+    }),
+    mask("_UseReflection", "_ReflectionColorTex", |l| {
+        l.t("look-reflection-mask")
+    }),
+    mask("_UseMatCap", "_MatCapBlendMask", |l| {
+        l.t("look-matcap-mask")
+    }),
+    mask("_UseMatCap2nd", "_MatCap2ndBlendMask", |l| {
+        l.t("look-matcap-2nd-mask")
+    }),
+    mask("_UseRim", "_RimColorTex", |l| l.t("look-rim-light-mask")),
+    mask("_UseGlitter", "_GlitterColorTex", |l| {
+        l.t("look-glitter-mask")
+    }),
+    mask("outline", "_OutlineWidthMask", |l| {
+        l.t("look-outline-width")
+    }),
 ];
 
 /// ひな形の機能の入切（"outline" は輪郭線のシェーダー）。
@@ -351,7 +304,7 @@ const TEMPLATE_TOGGLES: &[&str] = &[
 pub fn paint_channel_spec(slot: &liltoon::Slot, lang: Lang) -> Option<ChannelInfo> {
     if let Some(t) = TEMPLATE.iter().find(|t| t.slot == slot.name) {
         return Some(ChannelInfo {
-            name: lang.pick(t.ja, t.en).to_owned(),
+            name: t.label.get(lang).to_owned(),
             kind: t.kind,
             color_space: t.space,
             default: t.default,
@@ -641,13 +594,7 @@ pub fn apply_template(doc: &mut Document, lang: Lang) -> Result<usize, CoreError
                 );
                 continue;
             }
-            let channel = add(
-                d,
-                lang.pick(mask.ja, mask.en),
-                mask.kind,
-                mask.space,
-                mask.default,
-            )?;
+            let channel = add(d, mask.label.get(lang), mask.kind, mask.space, mask.default)?;
             look.textures
                 .insert(mask.slot.into(), TextureSource::Channel(channel));
         }

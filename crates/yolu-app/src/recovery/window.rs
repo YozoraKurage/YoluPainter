@@ -257,9 +257,10 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
                 Align::Right,
             );
             let tooltip = match (&row.problem, row.time_ms) {
-                (Some(reason), _) => {
-                    lang.pick(reason.clone(), "Damaged generation (cannot be read)".into())
-                }
+                (Some(reason), _) => lang.f(
+                    "recovery-damaged-generation-cannot-be-read",
+                    &[("reason", reason)],
+                ),
                 (None, Some(ms)) => text::utc_text(ms),
                 (None, None) => String::new(),
             };

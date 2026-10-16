@@ -51,11 +51,8 @@ fn broken(kind: ItemKind, why: Unreadable) -> LibInfo {
 
 fn problem(p: png::Problem) -> Unreadable {
     match p {
-        png::Problem::Unreadable => Unreadable::pair("PNG として読めません", "Not a readable PNG"),
-        png::Problem::Size => Unreadable::pair(
-            "画像の 1 辺は 1〜8192 です",
-            "Image sides must be 1 to 8192",
-        ),
+        png::Problem::Unreadable => Unreadable::keyed(|l| l.t("library-not-a-readable-png")),
+        png::Problem::Size => Unreadable::keyed(|l| l.t("library-image-sides-must-be-1")),
     }
 }
 
@@ -80,11 +77,11 @@ pub fn probe(target: &Target, limits: Limits, cache: Option<&Cache>, cancel: &Ca
 
 /// 壊れたファイル・形式が違うファイルの短い理由（診断の本文は日本語で、英語の画面には出せない）。
 pub(crate) fn wrong_format() -> Unreadable {
-    Unreadable::pair("形式が合いません", "Wrong format")
+    Unreadable::keyed(|l| l.t("library-wrong-format"))
 }
 
 fn too_large() -> Unreadable {
-    Unreadable::pair("大きすぎます", "Too large")
+    Unreadable::keyed(|l| l.t("library-too-large"))
 }
 
 fn hashed(target: &Target, limits: Limits, cancel: &Cancel) -> Result<String, Unreadable> {

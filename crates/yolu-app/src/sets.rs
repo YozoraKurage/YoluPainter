@@ -219,12 +219,9 @@ fn next_uid() -> u32 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-/// 最初のセットの名前。
-pub const FIRST_SET_NAME: &str = "テクスチャセット 1";
-
 /// 最初のセットの名前（言語ごと）。
 pub fn first_set_name(lang: crate::lang::Lang) -> &'static str {
-    lang.pick(FIRST_SET_NAME, "Texture Set 1")
+    lang.t("sets-texture-set-1")
 }
 
 impl TextureSets {
@@ -865,7 +862,7 @@ impl AppState {
         if self.session.sets.len() >= crate::newproject::MAX_SETS {
             return Err(lang.f(
                 "sets-a-project-has-at-most",
-                &[("MAX_SETS", &crate::newproject::MAX_SETS)],
+                &[("max_sets", &crate::newproject::MAX_SETS)],
             ));
         }
         let groups = self

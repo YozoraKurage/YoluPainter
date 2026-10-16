@@ -39,7 +39,7 @@ use yolu_io::{NativeValue, Project, Resource};
 use crate::engine::{Channel, CoreError, Document, LayerId};
 use crate::jobs::CloseJob;
 use crate::jobs::JobSpec;
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::library::cache::{Cache, Cached};
 use crate::library::service::{Cancel, Service, Work};
 use crate::notice::{Kind as NoticeKind, Source};
@@ -462,7 +462,15 @@ impl Unreadable {
         }
     }
 
-    /// 言語ごとの文。
+    /// 言語ごとの文（`|l| l.t("キー")` で、.ftl の文を両方の言語で引く）。
+    pub fn keyed(text: impl Fn(Lang) -> &'static str) -> Unreadable {
+        Unreadable {
+            ja: text(Lang::Ja).to_owned(),
+            en: text(Lang::En).to_owned(),
+        }
+    }
+
+    /// 言語ごとの文（呼ぶ側が言語ごとに作った文）。
     pub fn pair(ja: &str, en: &str) -> Unreadable {
         Unreadable {
             ja: ja.to_owned(),
@@ -1153,11 +1161,7 @@ pub(crate) fn describe(
     match (kind, info) {
         (ItemKind::Image, _) => size(image_size.0, image_size.1),
         (ItemKind::SmartMaterial, Some(i)) if i.width > 0 => {
-            let mut text = format!(
-                "{} {}",
-                i.layers,
-                lang.pick("レイヤー", if i.layers == 1 { "layer" } else { "layers" }),
-            );
+            let mut text = lang.f("shelf-layer-count", &[("n", &Count(i.layers))]);
             if !builtin {
                 text += &format!(" · {}", size(i.width, i.height));
             }
@@ -2172,9 +2176,9 @@ impl AppState {
                 self.session.mark_modified();
                 let n = result.layers.len();
                 let mut text = format!(
-                    "{}: {name}（{n} {}",
+                    "{}: {name}（{}",
                     lang.t("shelf-placed"),
-                    lang.pick("レイヤー", if n == 1 { "layer" } else { "layers" })
+                    lang.f("shelf-layer-count", &[("n", &Count(n))])
                 );
                 // 同梱の素材は大きさに依らない（画素が無い）ので、変えたとは言わない
                 text += &resized_note(lang, &material, result.resampled && !builtin);
@@ -2392,12 +2396,9 @@ fn kept_note(lang: Lang, added: usize, existing: usize) -> String {
         parts.push(lang.f("shelf-added-to-the-project-s-2", &[("added", &added)]));
     }
     if existing > 0 {
-        parts.push(lang.pick(
-            format!("{existing} 件はすでにアセットにありました。"),
-            format!(
-                "{existing} {} already in the project's assets.",
-                if existing == 1 { "was" } else { "were" }
-            ),
+        parts.push(lang.f(
+            "shelf-were-already-in-the-project",
+            &[("existing", &Count(existing))],
         ));
     }
     parts.join(lang.t("shelf-text"))
@@ -2435,32 +2436,18 @@ impl Attempt {
     /// 「〜できません」の文（句点なし）。
     pub(crate) fn what(self, lang: Lang, name: Option<&str>) -> String {
         let Some(name) = name else {
-            return lang
-                .pick(
-                    match self {
-                        Attempt::ShelfSave => "アセットに保存できません",
-                        Attempt::ShelfImport => "アセットに読み込めません",
-                        Attempt::ShelfChange => "アセットを変えられません",
-                        Attempt::ShelfRemove => "アセットから消せません",
-                        Attempt::Place => "素材を置けません",
-                        Attempt::LibraryUse => "ライブラリから取り込めません",
-                        Attempt::LibraryAdd => "ライブラリに入れられません",
-                        Attempt::LibraryRemove => "ライブラリから消せません",
-                        Attempt::MaterialSave => "マテリアルとして保存できません",
-                    },
-                    match self {
-                        Attempt::ShelfSave => "Cannot save to the project's assets",
-                        Attempt::ShelfImport => "Cannot import into the project's assets",
-                        Attempt::ShelfChange => "Cannot change the project's assets",
-                        Attempt::ShelfRemove => "Cannot remove from the project's assets",
-                        Attempt::Place => "Cannot place the asset",
-                        Attempt::LibraryUse => "Cannot import from the library",
-                        Attempt::LibraryAdd => "Cannot add to the library",
-                        Attempt::LibraryRemove => "Cannot remove from the library",
-                        Attempt::MaterialSave => "Cannot save as a material",
-                    },
-                )
-                .to_owned();
+            return match self {
+                Attempt::ShelfSave => lang.t("shelf-cannot-save-to-the-project"),
+                Attempt::ShelfImport => lang.t("shelf-cannot-import-into-the-project"),
+                Attempt::ShelfChange => lang.t("shelf-cannot-change-the-project-s-2"),
+                Attempt::ShelfRemove => lang.t("shelf-cannot-remove-from-the-project"),
+                Attempt::Place => lang.t("shelf-cannot-place-the-asset"),
+                Attempt::LibraryUse => lang.t("shelf-cannot-import-from-the-library"),
+                Attempt::LibraryAdd => lang.t("shelf-cannot-add-to-the-library"),
+                Attempt::LibraryRemove => lang.t("shelf-cannot-remove-from-the-library"),
+                Attempt::MaterialSave => lang.t("shelf-cannot-save-as-a-material"),
+            }
+            .to_owned();
         };
         let q = lang.quote(name);
         match lang {
@@ -2504,6 +2491,25 @@ fn resized_note(lang: Lang, material: &SmartMaterial, resampled: bool) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_smart_materials_description_says_the_layer_count_once() {
+        let info = |layers| Inspected {
+            width: 8,
+            height: 4,
+            layers,
+            ..Inspected::bare(None)
+        };
+        for (lang, one, three) in [
+            (Lang::Ja, "1 レイヤー · 8 × 4", "3 レイヤー"),
+            (Lang::En, "1 layer · 8 × 4", "3 layers"),
+        ] {
+            let one_layer = describe(lang, ItemKind::SmartMaterial, Some(&info(1)), (0, 0), false);
+            assert_eq!(one_layer, one);
+            let builtin = describe(lang, ItemKind::SmartMaterial, Some(&info(3)), (0, 0), true);
+            assert_eq!(builtin, three);
+        }
+    }
 
     #[test]
     fn thumbnails_fit_the_long_side() {

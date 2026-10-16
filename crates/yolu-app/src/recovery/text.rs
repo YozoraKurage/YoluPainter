@@ -5,7 +5,7 @@ use std::time::Duration;
 use yolu_io::StoreError;
 
 use super::{RecoveryError, Usage};
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 
 /// 復旧から開いたプロジェクトの名前（保存していない）。
 pub fn recovered_name(lang: Lang) -> &'static str {
@@ -35,9 +35,9 @@ impl Lang {
             StoreError::Changed(_) => "The recovery folder was changed outside".into(),
             StoreError::Busy => "Another writer is using the recovery folder".into(),
             StoreError::Corrupt(_) => "Damaged generation".into(),
-            StoreError::Budget(why) => crate::lang::budget_text(why)
-                .unwrap_or("Size limit exceeded")
-                .into(),
+            StoreError::Budget(why) => self
+                .budget_reason(why)
+                .unwrap_or_else(|| "Size limit exceeded".into()),
             StoreError::InvalidArgument(_) => "Invalid setting".into(),
         }
     }
@@ -169,14 +169,7 @@ impl Lang {
     }
 
     pub fn sets_text(self, count: usize) -> String {
-        self.pick(
-            format!("{count} セット"),
-            if count == 1 {
-                "1 set".to_owned()
-            } else {
-                format!("{count} sets")
-            },
-        )
+        self.f("recovery-sets-count", &[("count", &Count(count))])
     }
 }
 

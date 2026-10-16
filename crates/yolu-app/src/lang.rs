@@ -273,7 +273,6 @@ mod catalog;
 mod errors;
 pub mod refusals;
 pub use catalog::{reason_key, Arg, Count};
-pub(crate) use errors::budget_text;
 pub use errors::{
     brush_import_error, library_io_error, library_known_error, path_error, psd_copy_refusal,
     psd_copy_refusal_tooltip, rebind_error, shelf_io_error,

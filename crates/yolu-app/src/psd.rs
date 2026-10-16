@@ -164,10 +164,11 @@ enum Failure {
 }
 
 impl Failure {
-    fn message(ja: impl Into<String>, en: impl Into<String>) -> Self {
+    /// 言語ごとの文（呼ぶ側が言語ごとに .ftl の文から作る）。
+    fn keyed(text: impl Fn(Lang) -> String) -> Self {
         Self::Message {
-            ja: ja.into(),
-            en: en.into(),
+            ja: text(Lang::Ja),
+            en: text(Lang::En),
         }
     }
 
@@ -222,21 +223,14 @@ fn overrun_text(lang: Lang, over: &Overrun) -> String {
             "psd-too-many-layers-limit",
             &[("value", &count), ("limit", &limit)],
         ),
-        Overrun::Memory { layer } if layer.is_empty() => lang.pick(
-            "画素の予算を超えました".into(),
-            "Pixel budget exceeded".into(),
-        ),
+        Overrun::Memory { layer } if layer.is_empty() => lang.t("psd-pixel-budget-exceeded").into(),
         Overrun::Memory { layer } => {
             lang.f("psd-layer-memory-budget-exceeded-at", &[("layer", &layer)])
         }
-        Overrun::Extra => lang.pick(
-            "レイヤーの付加情報が予算を超えました".into(),
-            "Layer extra data exceeds the budget".into(),
-        ),
-        Overrun::FileSize { layer } if layer.is_empty() => lang.pick(
-            "PSD が 2 GiB を超えます".into(),
-            "The PSD would exceed 2 GiB".into(),
-        ),
+        Overrun::Extra => lang.t("psd-layer-extra-data-exceeds-the").into(),
+        Overrun::FileSize { layer } if layer.is_empty() => {
+            lang.t("psd-the-psd-would-exceed-2").into()
+        }
         Overrun::FileSize { layer } => {
             lang.f("psd-writing-would-make-the-psd", &[("layer", &layer)])
         }
@@ -1269,18 +1263,14 @@ fn write_failure(path: &Path, e: psd::WriteError) -> Failure {
     use psd::WriteError as W;
     match e {
         W::NotAFile if path.file_name().is_none() => {
-            Failure::message("ファイル名がありません", "The file has no name")
+            Failure::keyed(|l| l.t("psd-the-file-has-no-name").into())
         }
-        W::NotAFile => Failure::message(
-            format!(
-                "{}は通常のファイルではありません",
-                Lang::Ja.quote(&path.display().to_string())
-            ),
-            format!(
-                "{} is not a regular file",
-                Lang::En.quote(&path.display().to_string())
-            ),
-        ),
+        W::NotAFile => Failure::keyed(|l| {
+            l.f(
+                "psd-is-not-a-regular-file",
+                &[("path", &l.quote(&path.display().to_string()))],
+            )
+        }),
         W::CreateTemp { source, .. } | W::Sync { source, .. } | W::Rewind { source, .. } => {
             Failure::File(source)
         }
@@ -1288,10 +1278,7 @@ fn write_failure(path: &Path, e: psd::WriteError) -> Failure {
         W::ReadBack(e) if is_cancel(&e) => Failure::Canceled,
         W::ReadBack(e) => Failure::Unreadable(e),
         W::Compare(e) => read_failure(e),
-        W::Mismatch => Failure::message(
-            "書いたファイルの読み戻しが一致しません",
-            "The written file does not read back identically",
-        ),
+        W::Mismatch => Failure::keyed(|l| l.t("psd-the-written-file-does-not").into()),
         W::Commit(e) => Failure::File(e),
         W::Exists => Failure::File(std::io::ErrorKind::AlreadyExists.into()),
     }
@@ -1348,10 +1335,9 @@ fn stage_bytes(path: &Path, bytes: &[u8]) -> Result<psd::Staged, Failure> {
         |out| out.write_all(bytes).map_err(Failure::File),
         |temp| {
             if std::fs::read(temp).map_err(Failure::File)? != bytes {
-                return Err(Failure::message(
-                    "書いたファイルの読み戻しが一致しません",
-                    "The written file does not read back identically",
-                ));
+                return Err(Failure::keyed(|l| {
+                    l.t("psd-the-written-file-does-not").into()
+                }));
             }
             Ok(())
         },
@@ -2574,7 +2560,7 @@ mod tests {
         // 書き終えてから、確かめで失敗する（確かめの途中の取消も同じ）
         for failure in [
             Failure::Canceled,
-            Failure::message("読み戻せません", "Cannot read back"),
+            Failure::keyed(|_| "Cannot read back".into()),
         ] {
             let mut failure = Some(failure);
             let err = stage(
