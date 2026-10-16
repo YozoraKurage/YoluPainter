@@ -45,10 +45,10 @@ fn groups(app: &AppState) -> [Vec<Item>; 3] {
     // 描けない・コピーできない・マスクを足せない理由（押せないボタンのツールチップに添える）
     let (paint_reason, copy_reason, mask_reason) = reasons(app);
     let named = |name: &str, reason: &Option<String>| match reason {
-        Some(r) => {
-            let (open, close) = lang.pick(("（", "）"), (" (", ")"));
-            format!("{name}{open}{r}{close}")
-        }
+        Some(r) => lang.f(
+            "selection-name-with-reason",
+            &[("name", &name), ("reason", r)],
+        ),
         None => name.to_owned(),
     };
     // 消去のキーは、今のモードで効くときだけ添える（編集のモードの Delete は選んだ物を消す）

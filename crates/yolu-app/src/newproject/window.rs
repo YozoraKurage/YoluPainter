@@ -1267,7 +1267,7 @@ fn draw_confirm(ui: &mut Ui, frame: &Frame, plan: &Plan, lang: Lang, actions: &m
             r,
             &lang.f(
                 "newproject-and-more",
-                &[("CARD_ROWS", &(plan.rows.len() - CARD_ROWS))],
+                &[("card_rows", &(plan.rows.len() - CARD_ROWS))],
             ),
             t::LABEL_DIM,
             Align::Left,

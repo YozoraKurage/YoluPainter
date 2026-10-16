@@ -595,7 +595,7 @@ fn free_name(path: &Path) -> PathBuf {
 fn broken_message(lang: Lang, why: &str) -> String {
     lang.f(
         "keyconfig-cannot-read-the-key-settings",
-        &[("FILE_NAME", &FILE_NAME), ("why", &why)],
+        &[("file_name", &FILE_NAME), ("why", &why)],
     )
 }
 

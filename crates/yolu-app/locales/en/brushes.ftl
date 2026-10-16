@@ -65,7 +65,7 @@ brushes-text-tip = ,{" "}
 brushes-carried-over-tip = Carried over:{" "}
 brushes-not-represented-tip = Not represented:{" "}
 brushes-importing-brushes = Importing brushes
-brushes-at-most-brushes = At most { $MAX_USER_BRUSHES } brushes.
+brushes-at-most-brushes = At most { $max_user_brushes } brushes.
 brushes-cannot-import-the-brushes = Cannot import the brushes
 brushes-importing-brushes-2 = Importing brushes: { $value }
 brushes-canceling-the-import = Canceling the import…
@@ -79,7 +79,7 @@ brushes-import-canceled-already-imported = Import canceled ({ $n } already impor
 brushes-the-import-stopped-2 = {"."} The import stopped
 brushes-could-not-be-imported = {"."} { $skipped } could not be imported
 brushes-text-2 = {"."}{" "}
-brushes-at-most-brushes-2 = {"."} At most { $MAX_USER_BRUSHES } brushes
+brushes-at-most-brushes-2 = {"."} At most { $max_user_brushes } brushes
 brushes-cannot-save-the-brushes = Cannot save the brushes
 brushes-pen = Pen
 brushes-brush = Brush
@@ -120,3 +120,19 @@ brushes-unknown-image = Unknown image "{ $n }"
 brushes-cannot-read-the-image = Cannot read the image "{ $short }"
 brushes-the-written-file-did-not = The written file did not read back the same
 brushes-too-many-files = Too many files
+brushes-cannot-save-the-brush = Cannot save the brush
+brushes-out-of-brush-numbers = Out of brush numbers.
+brushes-brush-added = Brush added: { $name }
+brushes-group-duplicated = Group duplicated: { $name }
+brushes-brushes-added = { $n } brushes added.
+brushes-brush-deleted = Brush deleted: { $name }
+brushes-cannot-delete-the-brush = Cannot delete the brush
+brushes-brush-file-deleted = Brush file deleted: { $name }
+brushes-imported-brushes = Imported { $n } { $n ->
+        [one] brush
+       *[other] brushes
+    } ({ $last_file })
+brushes-imported-brushes-2 = Imported { $n } { $n ->
+        [one] brush
+       *[other] brushes
+    } ({ $files } files)

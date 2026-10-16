@@ -57,7 +57,7 @@ impl Problem {
             ProblemReason::Unreadable => lang.t("automation-the-file-cannot-be-read").to_owned(),
             ProblemReason::TooMany => lang.f(
                 "automation-at-most-actions",
-                &[("MAX_ACTIONS", &MAX_ACTIONS)],
+                &[("max_actions", &MAX_ACTIONS)],
             ),
         };
         lang.with_reason(
@@ -91,7 +91,7 @@ impl StoreError {
             StoreError::NoFolder => lang.t("automation-there-is-no-settings-folder").to_owned(),
             StoreError::TooMany => lang.f(
                 "automation-at-most-actions",
-                &[("MAX_ACTIONS", &MAX_ACTIONS)],
+                &[("max_actions", &MAX_ACTIONS)],
             ),
             StoreError::NameTaken => lang.t("automation-an-action-with-the-same").to_owned(),
             StoreError::BadName(e) => e.message.pick(super::ops_lang(lang)).to_owned(),

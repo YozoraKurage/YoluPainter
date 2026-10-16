@@ -89,3 +89,5 @@ view3d-frame-of = { $name }のフレーム { $frame }
 view3d-posed-from = { $head } をポーズにしました。
 view3d-cannot-pose-from = { $head } をポーズにできません
 view3d-selection-cancelled = 選択の途中をやめました。
+view3d-no-bone-fits-the-pose = ファイルのポーズに合うボーンがありません。
+view3d-pose-restored = ポーズを戻しました。

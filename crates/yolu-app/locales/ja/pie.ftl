@@ -10,3 +10,5 @@ pie-is-not-available = { $what }は使えません
 pie-cannot-run-the-commands = 命令を実行できません
 pie-the-json-cannot-be-read = JSON を読めません
 pie-recording-is-in-progress = 記録中です
+pie-mode = モード
+pie-view = 視点

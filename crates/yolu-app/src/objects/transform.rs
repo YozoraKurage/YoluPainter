@@ -47,6 +47,14 @@ impl Kind {
             Kind::Scale => lang.t("objects-scale"),
         }
     }
+
+    /// 「移動できません」・"Cannot move"（断りの文の「何が」）。
+    fn cannot(self, lang: Lang) -> String {
+        lang.f(
+            "objects-cannot-do",
+            &[("name", &super::english_lowercase(lang, self.name(lang)))],
+        )
+    }
 }
 
 /// 軸の決め方。`local` は物の向きの軸。
@@ -808,10 +816,7 @@ impl Transform {
 /// G/R/S を当てるもの（断るときは理由の文）。
 fn target(app: &AppState, kind: Kind) -> Result<What, String> {
     let lang = app.lang;
-    let what = lang.pick(
-        format!("{}できません", kind.name(lang)),
-        format!("Cannot {}", kind.name(lang).to_lowercase()),
-    );
+    let what = kind.cannot(lang);
     let refuse = |reason: &str| lang.with_reason(&what, reason);
     if app.is_stroking() {
         return Err(crate::lang::refusals::during_stroke(lang).to_owned());
@@ -847,10 +852,7 @@ pub fn request(app: &mut AppState, kind: Kind) {
     if crate::pie::dragging(app) || super::transforming(app) {
         let lang = app.lang;
         let text = lang.with_reason(
-            lang.pick(
-                format!("{}できません", kind.name(lang)),
-                format!("Cannot {}", kind.name(lang).to_lowercase()),
-            ),
+            kind.cannot(lang),
             lang.t("objects-another-operation-is-in-progress"),
         );
         app.refuse(Source::Edit, text);
@@ -1106,13 +1108,7 @@ pub fn start_requested(ctx: &egui::Context, app: &mut AppState) {
     };
     let lang = app.lang;
     let refuse_with = |app: &mut AppState, reason: &str| {
-        let text = lang.with_reason(
-            lang.pick(
-                format!("{}できません", kind.name(lang)),
-                format!("Cannot {}", kind.name(lang).to_lowercase()),
-            ),
-            reason,
-        );
+        let text = lang.with_reason(kind.cannot(lang), reason);
         app.refuse(Source::Edit, text);
     };
     if crate::pie::dragging(app) || ctx.input(|i| i.pointer.any_down()) || app.ui.popup.is_some() {
@@ -1291,18 +1287,11 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, popup: &mut PopupState) -> 
 /// Alt+G/R/S: 選んだ物の位置・回転・大きさを既定へ（形はモデルの外形に合わせた置き場、ボーンはファイルの形。1 回の取り消し）。
 pub fn reset(app: &mut AppState, kind: Kind) {
     let lang = app.lang;
-    let what = lang.pick(
-        match kind {
-            Kind::Grab => "位置を戻せません",
-            Kind::Rotate => "回転を戻せません",
-            Kind::Scale => "大きさを戻せません",
-        },
-        match kind {
-            Kind::Grab => "Cannot reset the position",
-            Kind::Rotate => "Cannot reset the rotation",
-            Kind::Scale => "Cannot reset the scale",
-        },
-    );
+    let what = match kind {
+        Kind::Grab => lang.t("objects-cannot-reset-the-position"),
+        Kind::Rotate => lang.t("objects-cannot-reset-the-rotation"),
+        Kind::Scale => lang.t("objects-cannot-reset-the-scale"),
+    };
     if app.is_stroking() || super::transforming(app) || crate::pie::dragging(app) {
         app.refuse(Source::Edit, crate::lang::refusals::during_stroke(lang));
         return;

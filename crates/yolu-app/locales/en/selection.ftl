@@ -120,3 +120,4 @@ selection-remember-the-current-selection-under-tip = Remember the current select
 selection-no-selection-tip = No selection
 selection-rename-tip = Rename
 selection-remove-tip = Remove:
+selection-name-with-reason = { $name } ({ $reason })

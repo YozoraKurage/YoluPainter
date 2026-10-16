@@ -177,7 +177,7 @@ fn every_tool_lists_its_sub_tools_with_the_current_one_marked_in_both_languages(
                     let list = st(&h).subtool_list(tool).expect("プリセットのツール");
                     let current = list.current();
                     for b in fields::builtins(tool) {
-                        let name = lang.pick(b.ja, b.en);
+                        let name = (b.name)(lang);
                         assert!(!in_panel(&h, name).is_empty(), "{lang:?} {tool:?}: {name}");
                         assert_eq!(
                             row_selected(&h, name),

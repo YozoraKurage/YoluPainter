@@ -84,20 +84,24 @@ impl Refusal {
             Refusal::Newer(_) => lang.t("toolset-the-tool-layout-file-is").into(),
             Refusal::Unreadable => lang.t("toolset-the-tool-layout-file-could").into(),
             Refusal::TooManyTools => {
-                lang.f("toolset-at-most-tools", &[("MAX_TOOLS", &super::MAX_TOOLS)])
+                lang.f("toolset-at-most-tools", &[("max_tools", &super::MAX_TOOLS)])
             }
             Refusal::TooManyGroups => lang.f(
                 "toolset-at-most-groups-per-tool",
-                &[("MAX_GROUPS", &super::MAX_GROUPS)],
+                &[("max_groups", &super::MAX_GROUPS)],
             ),
             Refusal::TooManyBrushes => lang.f(
                 "toolset-at-most-brushes-per-group",
-                &[("MAX_GROUP_BRUSHES", &super::MAX_GROUP_BRUSHES)],
+                &[("max_group_brushes", &super::MAX_GROUP_BRUSHES)],
             ),
-            Refusal::LastOfKind(tool) => lang.pick(
-                format!("{}ツールは 1 つ残します", tool.name_in(lang)),
-                format!("one {} tool stays", tool.name_in(lang).to_lowercase()),
-            ),
+            Refusal::LastOfKind(tool) => {
+                // 英語の文の中では名前を小文字にする
+                let name = match lang {
+                    Lang::Ja => tool.name_in(lang).to_owned(),
+                    Lang::En => tool.name_in(lang).to_lowercase(),
+                };
+                lang.f("toolset-one-tool-stays", &[("name", &name)])
+            }
             Refusal::NoGroups => lang.t("toolset-this-tool-has-no-brush").into(),
             Refusal::AlreadyPlaced(tool) => lang.f(
                 "toolset-is-already-in-the-toolbar",

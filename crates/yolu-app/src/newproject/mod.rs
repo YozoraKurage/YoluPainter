@@ -557,9 +557,9 @@ impl AppState {
                     match self.remove_sets(&uids) {
                         Ok(names) => self.info(
                             Source::Project,
-                            lang.pick(
-                                format!("テクスチャセットを消しました: {}。", names.join("・")),
-                                format!("Removed texture sets: {}.", names.join(", ")),
+                            lang.f(
+                                "newproject-removed-texture-sets",
+                                &[("names", &names.join(lang.t("newproject-name-separator")))],
                             ),
                         ),
                         Err(e) => self.refuse(Source::Project, e),

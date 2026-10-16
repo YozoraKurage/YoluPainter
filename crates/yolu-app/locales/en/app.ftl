@@ -45,3 +45,5 @@ app-import-psd = Import PSD
 app-more-not-imported-one-psd = { $more } more not imported (one PSD at a time).
 app-yolupainter-is-saving = YoluPainter is saving
 app-return-to-dock = Return to Dock
+app-sentence-already-ended = {" "}
+app-sentence-not-ended = .{" "}

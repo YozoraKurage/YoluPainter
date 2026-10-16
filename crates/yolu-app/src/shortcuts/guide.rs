@@ -19,7 +19,6 @@ pub const END: &str = "<!-- keymap:end -->";
 pub fn tables(lang: Lang) -> String {
     let app = AppState::new_in(32, 32, lang);
     let map = keymap::default_map();
-    let (open, close) = lang.pick(("（", "）"), (" (", ")"));
     let mut out = String::new();
     for scope in Scope::ALL {
         let section = Section::of_scope(scope);
@@ -38,7 +37,10 @@ pub fn tables(lang: Lang) -> String {
             }
             let mut name = command_name(&app, group.0);
             if let Some(when) = when_label(lang, bindings[0].when) {
-                name = format!("{name}{open}{when}{close}");
+                name = lang.f(
+                    "shortcuts-name-with-note",
+                    &[("name", &name), ("note", &when)],
+                );
             }
             let keys: Vec<String> = bindings
                 .iter()

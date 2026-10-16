@@ -89,3 +89,5 @@ view3d-frame-of = frame { $frame } of { $name }
 view3d-posed-from = Posed from { $head }.
 view3d-cannot-pose-from = Cannot pose from { $head }
 view3d-selection-cancelled = Selection cancelled.
+view3d-no-bone-fits-the-pose = No bone fits the pose in the file.
+view3d-pose-restored = Pose restored.

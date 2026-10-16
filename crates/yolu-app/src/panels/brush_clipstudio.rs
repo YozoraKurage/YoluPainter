@@ -10,6 +10,7 @@ use yolu_io::brushes::clipstudio::Missing;
 
 use crate::brushes::clipstudio::{Listing, Row, RowState};
 use crate::brushes::BrushAction;
+use crate::lang::Count;
 use crate::state::{ui_store, Action, AppState, UiSlot};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
@@ -98,10 +99,7 @@ fn summary(app: &AppState) -> (String, bool, Option<String>) {
         return (text.into(), true, tip);
     }
     let n = listing.rows.len();
-    let mut text = lang.pick(
-        format!("サブツール {n} 個"),
-        format!("{n} sub tool{}", if n == 1 { "" } else { "s" }),
-    );
+    let mut text = lang.f("panels-n-sub-tools", &[("n", &Count(n))]);
     if csp.is_busy() {
         text.push_str(lang.t("panels-loading"));
     } else if listing.truncated {

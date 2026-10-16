@@ -844,8 +844,7 @@ impl AppState {
         true
     }
 
-    fn brush_notice(&mut self, kind: crate::notice::Kind, ja: String, en: String) {
-        let text = self.lang.pick(ja, en);
+    fn brush_notice(&mut self, kind: crate::notice::Kind, text: String) {
         self.notify(kind, crate::notice::Source::Brush, text);
     }
 
@@ -925,8 +924,8 @@ impl AppState {
                 let reason = e.describe(self.lang);
                 self.brush_notice(
                     crate::notice::Kind::Error,
-                    Lang::Ja.with_reason("ブラシを保存できません", &reason),
-                    Lang::En.with_reason("Cannot save the brush", &reason),
+                    self.lang
+                        .with_reason(self.lang.t("brushes-cannot-save-the-brush"), &reason),
                 );
                 false
             }
@@ -1080,8 +1079,10 @@ impl AppState {
         if self.brushes.lib.user_count() >= MAX_USER_BRUSHES {
             self.brush_notice(
                 crate::notice::Kind::Refusal,
-                format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
-                format!("At most {MAX_USER_BRUSHES} brushes."),
+                self.lang.f(
+                    "brushes-at-most-brushes",
+                    &[("max_user_brushes", &MAX_USER_BRUSHES)],
+                ),
             );
             return None;
         }
@@ -1093,8 +1094,7 @@ impl AppState {
         let Some(id) = lib.take_id(|id| store.is_some_and(|s| s.is_taken(id))) else {
             self.brush_notice(
                 crate::notice::Kind::Refusal,
-                "ブラシの番号を使い切りました。".into(),
-                "Out of brush numbers.".into(),
+                self.lang.t("brushes-out-of-brush-numbers").into(),
             );
             return None;
         };
@@ -1224,8 +1224,7 @@ impl AppState {
         // 知らせを先に（保存できなければ、その理由が知らせを上書きする）
         self.brush_notice(
             crate::notice::Kind::Info,
-            format!("ブラシを追加しました: {name}"),
-            format!("Brush added: {name}"),
+            self.lang.f("brushes-brush-added", &[("name", &name)]),
         );
         // ブラシのファイルを書けなかったなら、並びは書かない（同じ理由で書けず、知らせを上書きするだけ）
         if self.brush_persist(key) {
@@ -1328,8 +1327,10 @@ impl AppState {
         if source.brushes.len() > room {
             return self.brush_notice(
                 crate::notice::Kind::Refusal,
-                format!("ブラシは {MAX_USER_BRUSHES} 個までです。"),
-                format!("At most {MAX_USER_BRUSHES} brushes."),
+                lang.f(
+                    "brushes-at-most-brushes",
+                    &[("max_user_brushes", &MAX_USER_BRUSHES)],
+                ),
             );
         }
         let name = lang.f("brushes-copy", &[("name_in", &source.name_in(lang))]);
@@ -1370,8 +1371,7 @@ impl AppState {
                 .unwrap_or_default();
             self.brush_notice(
                 crate::notice::Kind::Info,
-                format!("グループを複製しました: {name}"),
-                format!("Group duplicated: {name}"),
+                lang.f("brushes-group-duplicated", &[("name", &name)]),
             );
         }
         self.toolset_persist();
@@ -1479,15 +1479,13 @@ impl AppState {
                     .unwrap_or_default();
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシを追加しました: {name}"),
-                    format!("Brush added: {name}"),
+                    lang.f("brushes-brush-added", &[("name", &name)]),
                 );
             } else {
                 let n = added.len();
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシを {n} 個追加しました。"),
-                    format!("{n} brushes added."),
+                    lang.f("brushes-brushes-added", &[("n", &n)]),
                 );
             }
         }
@@ -1568,8 +1566,7 @@ impl AppState {
                 }
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシを削除しました: {name}"),
-                    format!("Brush deleted: {name}"),
+                    lang.f("brushes-brush-deleted", &[("name", &name)]),
                 );
                 self.toolset_persist();
             }
@@ -1609,8 +1606,7 @@ impl AppState {
                         let reason = e.describe(lang);
                         return self.brush_notice(
                             crate::notice::Kind::Error,
-                            Lang::Ja.with_reason("ブラシを消せません", &reason),
-                            Lang::En.with_reason("Cannot delete the brush", &reason),
+                            lang.with_reason(lang.t("brushes-cannot-delete-the-brush"), &reason),
                         );
                     }
                 }
@@ -1632,8 +1628,7 @@ impl AppState {
                 let name = entry.name;
                 self.brush_notice(
                     crate::notice::Kind::Info,
-                    format!("ブラシのファイルを削除しました: {name}"),
-                    format!("Brush file deleted: {name}"),
+                    lang.f("brushes-brush-file-deleted", &[("name", &name)]),
                 );
                 if placed {
                     self.toolset_persist();

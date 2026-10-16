@@ -424,10 +424,10 @@ pub fn clipping_name(lang: crate::lang::Lang) -> &'static str {
 /// クリッピングのボタンのツールチップ（押せないときは名前に理由を添える。試験・読み上げの名前も同じ）。
 pub fn clipping_tooltip(lang: crate::lang::Lang, reason: Option<&str>) -> String {
     match reason {
-        Some(reason) => {
-            let (open, close) = lang.pick(("（", "）"), (" (", ")"));
-            format!("{}{open}{reason}{close}", clipping_name(lang))
-        }
+        Some(reason) => lang.f(
+            "panels-name-with-reason",
+            &[("name", &clipping_name(lang)), ("reason", &reason)],
+        ),
         None => clipping_name(lang).to_owned(),
     }
 }

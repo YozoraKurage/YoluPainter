@@ -34,12 +34,12 @@ shortcuts-this-key-cannot-be-changed-tip = このキーは変えられません
 shortcuts-add-key-tip = キーを追加
 shortcuts-this-button-cannot-be-changed-tip = このボタンは変えられません
 shortcuts-left-button = 左ボタン
-shortcuts-conflicts-with = { $open }{ $other }{ $close }とぶつかります
+shortcuts-conflicts-with = 「{ $other }」とぶつかります
 shortcuts-conflicts-with-painting = 描く操作とぶつかります
 shortcuts-reset-to-default-tip = 既定に戻す
-shortcuts-same-key-as-tip = { $open }{ $name }{ $close }（{ $section }）と同じキー
-shortcuts-in-mode-takes-this-key-tip = { $mine }のモードでは、{ $section }の{ $open }{ $name }{ $close }より先に取ります
-shortcuts-in-mode-takes-this-key-2-tip = { $section }のモードでは{ $open }{ $name }{ $close }が先に取ります
+shortcuts-same-key-as-tip = 「{ $name }」（{ $section }）と同じキー
+shortcuts-in-mode-takes-this-key-tip = { $mine }のモードでは、{ $section }の「{ $name }」より先に取ります
+shortcuts-in-mode-takes-this-key-2-tip = { $section }のモードでは「{ $name }」が先に取ります
 shortcuts-top = 上
 shortcuts-top-right = 右上
 shortcuts-right = 右
@@ -64,3 +64,9 @@ shortcuts-action-combination-mode =
     | 操作 | 組み合わせ | 効くモード |
     |---|---|---|
     {""}
+shortcuts-name-with-note = { $name }（{ $note }）
+shortcuts-right-button = 右ボタン
+shortcuts-middle-button = 中ボタン
+shortcuts-back-button = 戻るボタン
+shortcuts-forward-button = 進むボタン
+shortcuts-released-without-moving = { $button }を動かさずに離す

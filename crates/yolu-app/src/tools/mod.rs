@@ -50,8 +50,8 @@ pub struct ToolDef {
     pub tool: Tool,
     /// アイコン（`tools/<id>`）と、保存するファイルの名前。
     pub id: &'static str,
-    pub ja: &'static str,
-    pub en: &'static str,
+    /// 言語ごとの名前（`.ftl` の文）。
+    pub name: fn(Lang) -> &'static str,
     pub key: &'static str,
     /// ツールの帯で、このツールの前に区切りを入れる。
     pub starts_group: bool,
@@ -90,15 +90,13 @@ fn no_options(_: &mut Ui, _: &mut AppState, _: Rect, _: f32) {}
 const fn def(
     tool: Tool,
     id: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    name: fn(Lang) -> &'static str,
     key: &'static str,
 ) -> ToolDef {
     ToolDef {
         tool,
         id,
-        ja,
-        en,
+        name,
         key,
         starts_group: false,
         region: false,
@@ -180,26 +178,26 @@ impl ToolDef {
     }
 
     pub fn name(&self, lang: Lang) -> &'static str {
-        lang.pick(self.ja, self.en)
+        (self.name)(lang)
     }
 }
 
 /// 全部のツール（`Tool::ALL` の並び）。
 pub static TOOLS: [ToolDef; 19] = [
-    def(Tool::Brush, "brush", "ブラシ", "Brush", "B")
+    def(Tool::Brush, "brush", |l| l.t("tools-brush"), "B")
         .paints()
         .sized()
         .paint_channels()
         .sub(SubTools::Brushes)
         .ui(brushes::props, brushes::options),
-    def(Tool::Eraser, "eraser", "消しゴム", "Eraser", "E")
+    def(Tool::Eraser, "eraser", |l| l.t("tools-eraser"), "E")
         .paints()
         .erases()
         .sized()
         .paint_channels()
         .sub(SubTools::Erasers)
         .ui(brushes::props, brushes::options),
-    def(Tool::Fill, "fill", "バケツ", "Fill", "G")
+    def(Tool::Fill, "fill", |l| l.t("tools-fill"), "G")
         .region()
         .one_shot()
         .paint_channels()
@@ -209,8 +207,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::Gradient,
         "gradient",
-        "グラデーション",
-        "Gradient",
+        |l| l.t("tools-gradient"),
         "Shift+G",
     )
     .paint_channels()
@@ -218,13 +215,13 @@ pub static TOOLS: [ToolDef; 19] = [
     .surface(Surface::Screen)
     .sub(SubTools::Presets)
     .ui(gradient::props::body, gradient::props::options),
-    def(Tool::Shape, "shape", "図形", "Shape", "U")
+    def(Tool::Shape, "shape", |l| l.t("tools-shape"), "U")
         .paint_channels()
         .canvas(CanvasKind::Drafting)
         .surface(Surface::Screen)
         .sub(SubTools::Presets)
         .ui(drafting::props::shape_props, drafting::props::options),
-    def(Tool::Ruler, "ruler", "定規", "Ruler", "Shift+U")
+    def(Tool::Ruler, "ruler", |l| l.t("tools-ruler"), "Shift+U")
         .canvas(CanvasKind::Drafting)
         .surface(Surface::Screen)
         .sub(SubTools::Presets)
@@ -232,8 +229,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::PolygonFill,
         "polygon-fill",
-        "ポリゴン塗りつぶし",
-        "Polygon Fill",
+        |l| l.t("tools-polygon-fill"),
         "4",
     )
     .region()
@@ -244,8 +240,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::Eyedropper,
         "eyedropper",
-        "スポイト",
-        "Eyedropper",
+        |l| l.t("tools-eyedropper"),
         "I",
     )
     .one_shot()
@@ -256,8 +251,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::SelectRect,
         "select-rectangle",
-        "長方形選択",
-        "Rectangle Select",
+        |l| l.t("tools-rectangle-select"),
         "M",
     )
     .group()
@@ -270,8 +264,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::SelectEllipse,
         "select-ellipse",
-        "楕円形選択",
-        "Ellipse Select",
+        |l| l.t("tools-ellipse-select"),
         "Shift+M",
     )
     .select()
@@ -280,7 +273,7 @@ pub static TOOLS: [ToolDef; 19] = [
     .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
-    def(Tool::Lasso, "lasso", "なげなわ", "Lasso", "L")
+    def(Tool::Lasso, "lasso", |l| l.t("tools-lasso"), "L")
         .select()
         .paint_channels()
         .canvas(CanvasKind::Selection)
@@ -290,8 +283,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::Polygon,
         "select-polygon",
-        "多角形選択",
-        "Polygon Select",
+        |l| l.t("tools-polygon-select"),
         "Shift+L",
     )
     .select()
@@ -300,7 +292,7 @@ pub static TOOLS: [ToolDef; 19] = [
     .surface(Surface::Screen)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
-    def(Tool::Wand, "magic-wand", "自動選択", "Magic Wand", "W")
+    def(Tool::Wand, "magic-wand", |l| l.t("tools-magic-wand"), "W")
         .select()
         .paint_channels()
         .canvas(CanvasKind::Selection)
@@ -310,8 +302,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::IdSelect,
         "id-select",
-        "ID の色で選択",
-        "ID Color Select",
+        |l| l.t("tools-id-color-select"),
         "Shift+W",
     )
     .region()
@@ -322,8 +313,7 @@ pub static TOOLS: [ToolDef; 19] = [
     def(
         Tool::SelectPen,
         "select-pen",
-        "選択ペン",
-        "Selection Pen",
+        |l| l.t("tools-selection-pen"),
         "S",
     )
     .select()
@@ -333,13 +323,13 @@ pub static TOOLS: [ToolDef; 19] = [
     .surface(Surface::Cover)
     .sub(SubTools::Tools(&SELECTION_TOOLS))
     .ui(selection::props::body, selection::props::select_options),
-    def(Tool::Move, "move", "移動・変形", "Move / Transform", "V")
+    def(Tool::Move, "move", |l| l.t("tools-move-transform"), "V")
         .group()
         .canvas(CanvasKind::Transform)
         .cursor(Cursor::Transform)
         .sub(SubTools::Presets)
         .ui(transform::props::body, transform::props::options),
-    def(Tool::Liquify, "liquify", "ゆがみ", "Liquify", "")
+    def(Tool::Liquify, "liquify", |l| l.t("tools-liquify"), "")
         .canvas(CanvasKind::Transform)
         .cursor(Cursor::Transform)
         .sub(SubTools::Presets)
@@ -347,7 +337,7 @@ pub static TOOLS: [ToolDef; 19] = [
             transform::props::liquify_body,
             transform::props::liquify_options,
         ),
-    def(Tool::Path, "path", "パス", "Path", "P")
+    def(Tool::Path, "path", |l| l.t("tools-path"), "P")
         .path()
         .paint_channels()
         .canvas(CanvasKind::Path)
@@ -355,7 +345,7 @@ pub static TOOLS: [ToolDef; 19] = [
         .cursor(Cursor::Path)
         .sub(SubTools::Single)
         .ui(path_props::body, path_props::options),
-    def(Tool::Text, "text", "テキスト", "Text", "T")
+    def(Tool::Text, "text", |l| l.t("tools-text"), "T")
         .canvas(CanvasKind::Text)
         .cursor(Cursor::Text)
         .sub(SubTools::Single)
@@ -414,9 +404,13 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), TOOLS.len());
         for def in &TOOLS {
-            assert!(!def.ja.is_empty() && !def.en.is_empty(), "{}", def.id);
             assert!(
-                !def.en
+                !(def.name)(Lang::Ja).is_empty() && !(def.name)(Lang::En).is_empty(),
+                "{}",
+                def.id
+            );
+            assert!(
+                !(def.name)(Lang::En)
                     .chars()
                     .any(|c| ('\u{3000}'..='\u{9fff}').contains(&c)),
                 "{}",

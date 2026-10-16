@@ -869,3 +869,12 @@ panels-shadows-2 = Shadows
 panels-tone-mapping = Tone Mapping
 panels-exposure = Exposure
 panels-reset = Reset
+panels-n-sub-tools = { $n } { $n ->
+        [one] sub tool
+       *[other] sub tools
+    }
+panels-name-with-reason = { $name } ({ $reason })
+panels-editing-layer = Editing layer
+panels-all-visible-layers = All visible layers
+panels-reference-layers = Reference layers
+panels-close-gap = Close gap

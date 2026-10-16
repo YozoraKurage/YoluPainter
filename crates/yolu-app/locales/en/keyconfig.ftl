@@ -1,6 +1,6 @@
 # Screen text (keyconfig). Keys are "keyconfig-" plus a short name from the English text; tooltip keys end in -tip.
 
-keyconfig-cannot-read-the-key-settings = Cannot read the key settings ({ $FILE_NAME }), so the default keys are used ({ $why }). The file is kept.
+keyconfig-cannot-read-the-key-settings = Cannot read the key settings ({ $file_name }), so the default keys are used ({ $why }). The file is kept.
 keyconfig-skipped-unreadable-or-unknown-item = Skipped { $skipped } unreadable or unknown item(s) (actions, keys, combinations or pie items) in the key settings.
 keyconfig-bad-format = bad format: { $why }
 keyconfig-unsupported-version = unsupported version ({ $version })

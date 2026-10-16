@@ -10,3 +10,5 @@ pie-is-not-available = { $what } is not available
 pie-cannot-run-the-commands = Cannot run the commands
 pie-the-json-cannot-be-read = the JSON cannot be read
 pie-recording-is-in-progress = Recording is in progress
+pie-mode = Mode
+pie-view = View

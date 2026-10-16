@@ -33,3 +33,11 @@ region-stroke-cancelled = Stroke cancelled.
 region-erased-2 = erased.
 region-filled-3 = filled.
 region-no-triangle-of-this-texture-2 = No triangle of this texture set under the pointer.
+region-nothing-of-the-model-under = Nothing of the model under the pointer
+region-no-id-color-at-that = No ID color at that face
+region-outside-the-canvas = Outside the canvas
+region-no-part-there = No part there
+region-n-manual-colors = { $count } manual { $count ->
+        [one] color
+       *[other] colors
+    }

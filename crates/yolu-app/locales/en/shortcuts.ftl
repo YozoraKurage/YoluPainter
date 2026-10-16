@@ -34,12 +34,12 @@ shortcuts-this-key-cannot-be-changed-tip = This key cannot be changed
 shortcuts-add-key-tip = Add Key
 shortcuts-this-button-cannot-be-changed-tip = This button cannot be changed
 shortcuts-left-button = Left Button
-shortcuts-conflicts-with = Conflicts with { $open }{ $other }{ $close }
+shortcuts-conflicts-with = Conflicts with “{ $other }”
 shortcuts-conflicts-with-painting = Conflicts with painting
 shortcuts-reset-to-default-tip = Reset to Default
-shortcuts-same-key-as-tip = Same key as { $open }{ $name }{ $close } ({ $section })
-shortcuts-in-mode-takes-this-key-tip = In { $mine } mode, takes this key before { $open }{ $name }{ $close } ({ $section })
-shortcuts-in-mode-takes-this-key-2-tip = In { $section } mode, { $open }{ $name }{ $close } takes this key first
+shortcuts-same-key-as-tip = Same key as “{ $name }” ({ $section })
+shortcuts-in-mode-takes-this-key-tip = In { $mine } mode, takes this key before “{ $name }” ({ $section })
+shortcuts-in-mode-takes-this-key-2-tip = In { $section } mode, “{ $name }” takes this key first
 shortcuts-top = Top
 shortcuts-top-right = Top Right
 shortcuts-right = Right
@@ -64,3 +64,9 @@ shortcuts-action-combination-mode =
     | Action | Combination | Mode |
     |---|---|---|
     {""}
+shortcuts-name-with-note = { $name } ({ $note })
+shortcuts-right-button = Right Button
+shortcuts-middle-button = Middle Button
+shortcuts-back-button = Back Button
+shortcuts-forward-button = Forward Button
+shortcuts-released-without-moving = { $button } Released without Moving

@@ -34,10 +34,26 @@ pub enum PieItem {
 /// パイの名前。
 #[derive(Clone, Debug, PartialEq)]
 pub enum PieName {
-    /// 最初からあるパイ（日本語・英語）。
-    Builtin(&'static str, &'static str),
+    /// 最初からあるパイ。
+    Builtin(BuiltinPie),
     /// 利用者が付けた名前。
     User(String),
+}
+
+/// 最初からあるパイ。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuiltinPie {
+    Mode,
+    View,
+}
+
+impl BuiltinPie {
+    pub fn name(self, lang: Lang) -> &'static str {
+        match self {
+            BuiltinPie::Mode => lang.t("pie-mode"),
+            BuiltinPie::View => lang.t("pie-view"),
+        }
+    }
 }
 
 /// パイ 1 つ。
@@ -55,7 +71,7 @@ pub struct PieMenu {
 impl PieMenu {
     pub fn name(&self, lang: Lang) -> String {
         match &self.name {
-            PieName::Builtin(ja, en) => lang.pick(*ja, *en).to_owned(),
+            PieName::Builtin(builtin) => builtin.name(lang).to_owned(),
             PieName::User(name) => name.clone(),
         }
     }
@@ -110,7 +126,7 @@ pub fn builtin() -> Vec<PieMenu> {
     vec![
         PieMenu {
             id: "mode".into(),
-            name: PieName::Builtin("モード", "Mode"),
+            name: PieName::Builtin(BuiltinPie::Mode),
             command: Some("mode.pie"),
             // 上: 編集、右: ポーズ、左: ペイント
             slots: [
@@ -126,7 +142,7 @@ pub fn builtin() -> Vec<PieMenu> {
         },
         PieMenu {
             id: "view".into(),
-            name: PieName::Builtin("視点", "View"),
+            name: PieName::Builtin(BuiltinPie::View),
             command: Some("view3d.pie"),
             // 上・右上（正面）・右・右下（正投影）・下・左下（収める）・左・左上（背面）
             slots: [

@@ -10,6 +10,7 @@ use yolu_core::{LiquifyMode, RulerKind};
 use super::{Builtin, Field, Kind, Value};
 use crate::drafting::Figure;
 use crate::gradient::End;
+use crate::lang::Lang;
 use crate::region::color::{Distance, Reference};
 use crate::state::{AppState, Tool};
 use crate::transform::advanced::Kind as TransformKind;
@@ -455,37 +456,32 @@ pub const TOOLS: [Tool; 8] = [
 
 const fn builtin(
     id: &'static str,
-    ja: &'static str,
-    en: &'static str,
+    name: fn(Lang) -> &'static str,
     with: &'static [(&'static str, Value)],
 ) -> Builtin {
-    Builtin { id, ja, en, with }
+    Builtin { id, name, with }
 }
 
 static FILL_BUILTINS: [Builtin; 5] = [
     builtin(
         "similar-colors",
-        "近い色",
-        "Similar colors",
+        |l| l.t("subtool-similar-colors"),
         &[("by_color", Value::Bool(true))],
     ),
     builtin(
         "triangle",
-        "三角形",
-        "Triangle",
+        |l| l.t("subtool-triangle"),
         &[("kind", Value::Choice("triangle"))],
     ),
     builtin(
         "mesh-part",
-        "メッシュの塊",
-        "Mesh Part",
+        |l| l.t("subtool-mesh-part"),
         &[("kind", Value::Choice("mesh_part"))],
     ),
-    builtin("uv-island", "UV アイランド", "UV Island", &[]),
+    builtin("uv-island", |l| l.t("subtool-uv-island"), &[]),
     builtin(
         "material",
-        "マテリアル",
-        "Material",
+        |l| l.t("subtool-material"),
         &[("kind", Value::Choice("material"))],
     ),
 ];
@@ -493,43 +489,37 @@ static FILL_BUILTINS: [Builtin; 5] = [
 static POLYGON_FILL_BUILTINS: [Builtin; 4] = [
     builtin(
         "triangle",
-        "三角形",
-        "Triangle",
+        |l| l.t("subtool-triangle"),
         &[("kind", Value::Choice("triangle"))],
     ),
     builtin(
         "mesh-part",
-        "メッシュの塊",
-        "Mesh Part",
+        |l| l.t("subtool-mesh-part"),
         &[("kind", Value::Choice("mesh_part"))],
     ),
-    builtin("uv-island", "UV アイランド", "UV Island", &[]),
+    builtin("uv-island", |l| l.t("subtool-uv-island"), &[]),
     builtin(
         "material",
-        "マテリアル",
-        "Material",
+        |l| l.t("subtool-material"),
         &[("kind", Value::Choice("material"))],
     ),
 ];
 
 static GRADIENT_BUILTINS: [Builtin; 4] = [
-    builtin("linear", "線形・透明へ", "Linear to transparent", &[]),
+    builtin("linear", |l| l.t("subtool-linear-to-transparent"), &[]),
     builtin(
         "linear-sub",
-        "線形・サブの色へ",
-        "Linear to sub color",
+        |l| l.t("subtool-linear-to-sub-color"),
         &[("end", Value::Choice("sub"))],
     ),
     builtin(
         "radial",
-        "放射・透明へ",
-        "Radial to transparent",
+        |l| l.t("subtool-radial-to-transparent"),
         &[("shape", Value::Choice("radial"))],
     ),
     builtin(
         "radial-sub",
-        "放射・サブの色へ",
-        "Radial to sub color",
+        |l| l.t("subtool-radial-to-sub-color"),
         &[
             ("shape", Value::Choice("radial")),
             ("end", Value::Choice("sub")),
@@ -538,45 +528,39 @@ static GRADIENT_BUILTINS: [Builtin; 4] = [
 ];
 
 static SHAPE_BUILTINS: [Builtin; 3] = [
-    builtin("line", "直線", "Line", &[]),
+    builtin("line", |l| l.t("subtool-line"), &[]),
     builtin(
         "rectangle",
-        "長方形",
-        "Rectangle",
+        |l| l.t("subtool-rectangle"),
         &[("figure", Value::Choice("rectangle"))],
     ),
     builtin(
         "ellipse",
-        "楕円",
-        "Ellipse",
+        |l| l.t("subtool-ellipse"),
         &[("figure", Value::Choice("ellipse"))],
     ),
 ];
 
 static RULER_BUILTINS: [Builtin; 7] = [
-    builtin("line", "直線定規", "Straight Ruler", &[]),
+    builtin("line", |l| l.t("subtool-straight-ruler"), &[]),
     builtin(
         "parallel",
-        "平行線",
-        "Parallel",
+        |l| l.t("subtool-parallel"),
         &[("kind", Value::Choice("parallel"))],
     ),
     builtin(
         "concentric",
-        "同心円",
-        "Concentric",
+        |l| l.t("subtool-concentric"),
         &[("kind", Value::Choice("concentric"))],
     ),
     builtin(
         "perspective-1",
-        "パース（1 点）",
-        "Perspective (1 Point)",
+        |l| l.t("subtool-perspective-1-point"),
         &[("kind", Value::Choice("perspective"))],
     ),
     builtin(
         "perspective-2",
-        "パース（2 点）",
-        "Perspective (2 Points)",
+        |l| l.t("subtool-perspective-2-points"),
         &[
             ("kind", Value::Choice("perspective")),
             ("two_points", Value::Bool(true)),
@@ -584,14 +568,12 @@ static RULER_BUILTINS: [Builtin; 7] = [
     ),
     builtin(
         "symmetry-lines",
-        "対称定規",
-        "Symmetry Ruler",
+        |l| l.t("subtool-symmetry-ruler"),
         &[("kind", Value::Choice("symmetry"))],
     ),
     builtin(
         "symmetry-rotation",
-        "回転対称",
-        "Rotational Symmetry",
+        |l| l.t("subtool-rotational-symmetry"),
         &[
             ("kind", Value::Choice("symmetry")),
             ("line_symmetry", Value::Bool(false)),
@@ -603,60 +585,56 @@ static RULER_BUILTINS: [Builtin; 7] = [
 static EYEDROPPER_BUILTINS: [Builtin; 2] = [
     builtin(
         "layer",
-        "選んだレイヤー",
-        "Selected Layer",
+        |l| l.t("subtool-selected-layer"),
         &[("all_layers", Value::Bool(false))],
     ),
-    builtin("all", "全レイヤー", "All Layers", &[]),
+    builtin("all", |l| l.t("subtool-all-layers"), &[]),
 ];
 
 static MOVE_BUILTINS: [Builtin; 4] = [
-    builtin("affine", "通常", "Normal", &[]),
-    builtin("free", "自由", "Free", &[("kind", Value::Choice("free"))]),
+    builtin("affine", |l| l.t("subtool-normal"), &[]),
+    builtin(
+        "free",
+        |l| l.t("subtool-free"),
+        &[("kind", Value::Choice("free"))],
+    ),
     builtin(
         "perspective",
-        "遠近",
-        "Perspective",
+        |l| l.t("subtool-perspective"),
         &[("kind", Value::Choice("perspective"))],
     ),
     builtin(
         "mesh",
-        "メッシュ",
-        "Mesh",
+        |l| l.t("subtool-mesh"),
         &[("kind", Value::Choice("mesh"))],
     ),
 ];
 
 static LIQUIFY_BUILTINS: [Builtin; 6] = [
-    builtin("push", "プッシュ", "Push", &[]),
+    builtin("push", |l| l.t("subtool-push"), &[]),
     builtin(
         "clockwise",
-        "右回転",
-        "Twirl Right",
+        |l| l.t("subtool-twirl-right"),
         &[("mode", Value::Choice("clockwise"))],
     ),
     builtin(
         "counter-clockwise",
-        "左回転",
-        "Twirl Left",
+        |l| l.t("subtool-twirl-left"),
         &[("mode", Value::Choice("counter_clockwise"))],
     ),
     builtin(
         "pinch",
-        "縮小",
-        "Pinch",
+        |l| l.t("subtool-pinch"),
         &[("mode", Value::Choice("pinch"))],
     ),
     builtin(
         "expand",
-        "膨張",
-        "Expand",
+        |l| l.t("subtool-expand"),
         &[("mode", Value::Choice("expand"))],
     ),
     builtin(
         "restore",
-        "戻す",
-        "Restore",
+        |l| l.t("subtool-restore"),
         &[("mode", Value::Choice("restore"))],
     ),
 ];

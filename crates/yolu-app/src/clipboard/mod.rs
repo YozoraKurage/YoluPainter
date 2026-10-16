@@ -322,8 +322,11 @@ fn pasted_text(lang: crate::lang::Lang, name: &str, notes: &[String]) -> String 
     if notes.is_empty() {
         return head;
     }
-    let (open, separator, close) = lang.pick(("（", "、", "）"), (" (", ", ", ")"));
-    format!("{head}{open}{}{close}", notes.join(separator))
+    let notes = notes.join(lang.t("clipboard-note-separator"));
+    lang.f(
+        "clipboard-pasted-with-notes",
+        &[("head", &head), ("notes", &notes)],
+    )
 }
 
 /// コピー・カットした知らせ（出どころと大きさ）。

@@ -64,3 +64,4 @@ m2-normal-files = Normal files: { $file_direction }
 m2-cancelled = Cancelled.
 m2-cannot-paint-on-this-layer = Cannot paint on this layer
 m2-no-layer-to-paint = No layer to paint
+m2-the-channel-is-off-on = The { $channel } channel is off on this layer.

@@ -243,8 +243,10 @@ pub(crate) fn mouse_name(lang: Lang, index: u8) -> String {
         "stencil" => lang.t("shortcuts-stencil"),
         _ => lang.t("shortcuts-selection"),
     };
-    let (open, close) = lang.pick(("（", "）"), (" (", ")"));
-    format!("{}{open}{place}{close}", g.operation.label(lang))
+    lang.f(
+        "shortcuts-name-with-note",
+        &[("name", &g.operation.label(lang)), ("note", &place)],
+    )
 }
 
 /// 修飾なしの 1 つのキーだけを受けるまとまり（押している間だけ効くキーと、途中の操作のキー）。
@@ -1180,17 +1182,10 @@ fn draw_line(
             };
             let conflict = app.keys.combo_conflict(index);
             let tip = conflict.map(|c| match c {
-                keyconfig::ComboConflict::With(other) => {
-                    let (open, close) = lang.pick(("「", "」"), ("“", "”"));
-                    lang.f(
-                        "shortcuts-conflicts-with",
-                        &[
-                            ("open", &open),
-                            ("other", &mouse_name(lang, other)),
-                            ("close", &close),
-                        ],
-                    )
-                }
+                keyconfig::ComboConflict::With(other) => lang.f(
+                    "shortcuts-conflicts-with",
+                    &[("other", &mouse_name(lang, other))],
+                ),
                 keyconfig::ComboConflict::Painting => {
                     lang.t("shortcuts-conflicts-with-painting").to_owned()
                 }
@@ -1299,53 +1294,34 @@ pub fn tool_mode_entries(app: &AppState, command: &'static str) -> Vec<Entry<Act
 /// 「同じキー」のツールチップ（相手の名前と区分）。
 fn same_key_tip(app: &AppState, other: GroupKey) -> String {
     let lang = app.lang;
-    let (open, close) = lang.pick(("「", "」"), ("“", "”"));
     let name = command_name(app, other.0);
     let section = Section::of_scope(other.1).label(lang);
     lang.f(
         "shortcuts-same-key-as-tip",
-        &[
-            ("open", &open),
-            ("name", &name),
-            ("close", &close),
-            ("section", &section),
-        ],
+        &[("name", &name), ("section", &section)],
     )
 }
 
 /// 取る側（モードの段）の「先に取る」のツールチップ。
 fn takes_tip(app: &AppState, group: GroupKey, other: GroupKey) -> String {
     let lang = app.lang;
-    let (open, close) = lang.pick(("「", "」"), ("“", "”"));
     let name = command_name(app, other.0);
     let mine = Section::of_scope(group.1).label(lang);
     let section = Section::of_scope(other.1).label(lang);
     lang.f(
         "shortcuts-in-mode-takes-this-key-tip",
-        &[
-            ("mine", &mine),
-            ("section", &section),
-            ("open", &open),
-            ("name", &name),
-            ("close", &close),
-        ],
+        &[("mine", &mine), ("section", &section), ("name", &name)],
     )
 }
 
 /// 「先に取る」のツールチップ（モードの段の同じキーが先に取る。ぶつかりではない）。
 fn first_tip(app: &AppState, other: GroupKey) -> String {
     let lang = app.lang;
-    let (open, close) = lang.pick(("「", "」"), ("“", "”"));
     let name = command_name(app, other.0);
     let section = Section::of_scope(other.1).label(lang);
     lang.f(
         "shortcuts-in-mode-takes-this-key-2-tip",
-        &[
-            ("section", &section),
-            ("open", &open),
-            ("name", &name),
-            ("close", &close),
-        ],
+        &[("section", &section), ("name", &name)],
     )
 }
 

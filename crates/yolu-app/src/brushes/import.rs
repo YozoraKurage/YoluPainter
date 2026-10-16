@@ -21,7 +21,7 @@ use super::{
 use crate::features::{Feature, PollStage};
 use crate::jobs::CloseJob;
 use crate::jobs::{JobCard, JobSpec, Polled, Worker};
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::notice::Source;
 use crate::state::Tool;
 use crate::state::{Action, AppState, DialogRequest, MAX_RADIUS};
@@ -319,7 +319,7 @@ impl AppState {
                 Source::Brush,
                 lang.f(
                     "brushes-at-most-brushes",
-                    &[("MAX_USER_BRUSHES", &super::MAX_USER_BRUSHES)],
+                    &[("max_user_brushes", &super::MAX_USER_BRUSHES)],
                 ),
             );
             return;
@@ -550,22 +550,14 @@ impl AppState {
             return lang.t("brushes-the-import-stopped").into();
         }
         let mut text = if r.files <= 1 {
-            lang.pick(
-                format!("ブラシを {n} 個取り込みました（{}）", r.last_file),
-                format!(
-                    "Imported {n} brush{} ({})",
-                    if n == 1 { "" } else { "es" },
-                    r.last_file
-                ),
+            lang.f(
+                "brushes-imported-brushes",
+                &[("n", &Count(n)), ("last_file", &r.last_file)],
             )
         } else {
-            lang.pick(
-                format!("ブラシを {n} 個取り込みました（{} ファイル）", r.files),
-                format!(
-                    "Imported {n} brush{} ({} files)",
-                    if n == 1 { "" } else { "es" },
-                    r.files
-                ),
+            lang.f(
+                "brushes-imported-brushes-2",
+                &[("n", &Count(n)), ("files", &r.files)],
             )
         };
         if canceled {
@@ -592,7 +584,7 @@ impl AppState {
         if r.capped {
             text.push_str(&lang.f(
                 "brushes-at-most-brushes-2",
-                &[("MAX_USER_BRUSHES", &super::MAX_USER_BRUSHES)],
+                &[("max_user_brushes", &super::MAX_USER_BRUSHES)],
             ));
         }
         if let Some(e) = &r.save_error {

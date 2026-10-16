@@ -45,3 +45,5 @@ app-import-psd = PSD を読み込む
 app-more-not-imported-one-psd = ほか { $more } 件は取り込みません（PSD は 1 つずつ）。
 app-yolupainter-is-saving = YoluPainter が保存しています
 app-return-to-dock = ドックに戻す
+app-sentence-already-ended = {""}
+app-sentence-not-ended = 。

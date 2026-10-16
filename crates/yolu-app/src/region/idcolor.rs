@@ -21,7 +21,7 @@ use yolu_core::mesh_maps::{
 use yolu_core::SelectionMask;
 
 use super::tools::{Hover, Where};
-use crate::lang::Lang;
+use crate::lang::{Count, Lang};
 use crate::m2::read_only_message;
 use crate::notice::Source;
 use crate::selection::{combine_name, combine_of};
@@ -276,7 +276,6 @@ fn changed(lang: Lang) -> &'static str {
 /// ポインタの下の ID の色。取れなければ理由。
 fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Result<u32, String> {
     let lang = app.lang;
-    let none = |s: &'static str, e: &'static str| lang.pick(s, e).to_owned();
     match w {
         Where::Surface(rect) => {
             let Some((model, material)) = app.region_model() else {
@@ -285,10 +284,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
             let view = app.view3d.camera.view(rect.width(), rect.height());
             let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
             let Some(hit) = pick(&model.geometry, &view, p) else {
-                return Err(none(
-                    "ポインタの下にモデルがありません",
-                    "Nothing of the model under the pointer",
-                ));
+                return Err(lang.t("region-nothing-of-the-model-under").to_owned());
             };
             if hit.material != material {
                 let name = model.material_name(hit.material as usize, lang);
@@ -296,10 +292,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
             }
             match try_get_at_uv(map, hit.uv.x as f64, hit.uv.y as f64) {
                 Ok(Some(rgb)) => Ok(rgb),
-                _ => Err(none(
-                    "その面には ID の色がありません",
-                    "No ID color at that face",
-                )),
+                _ => Err(lang.t("region-no-id-color-at-that").to_owned()),
             }
         }
         Where::Canvas(view) => {
@@ -309,11 +302,11 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
                 || x >= app.session.doc.width() as f64
                 || y >= app.session.doc.height() as f64
             {
-                return Err(none("キャンバスの外です", "Outside the canvas"));
+                return Err(lang.t("region-outside-the-canvas").to_owned());
             }
             match try_get(map, x.floor() as i64, y.floor() as i64) {
                 Ok(Some(rgb)) => Ok(rgb),
-                _ => Err(none("そこには部品がありません", "No part there")),
+                _ => Err(lang.t("region-no-part-there").to_owned()),
             }
         }
     }
@@ -471,12 +464,7 @@ pub fn parse_rgb(s: &str) -> Option<u32> {
 
 /// 手動の ID の色の状態（個数。色は文書の状態で、.ylp に保存される）。
 pub fn manual_state_line(lang: Lang, count: usize) -> Option<String> {
-    (count > 0).then(|| {
-        lang.pick(
-            format!("手動の色 {count} 個"),
-            format!("{count} manual color{}", if count == 1 { "" } else { "s" }),
-        )
-    })
+    (count > 0).then(|| lang.f("region-n-manual-colors", &[("count", &Count(count))]))
 }
 
 #[cfg(test)]

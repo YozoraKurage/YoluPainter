@@ -1453,13 +1453,7 @@ impl AppState {
             && !layer.is_channel_enabled(channel)
         {
             let channel = channel_name(lang, &self.session.doc, channel);
-            return Some(lang.pick(
-                format!(
-                    "このレイヤーは{}チャンネルが無効です。",
-                    lang.quote(&channel)
-                ),
-                format!("The {channel} channel is off on this layer."),
-            ));
+            return Some(lang.f("m2-the-channel-is-off-on", &[("channel", &channel)]));
         }
         None
     }

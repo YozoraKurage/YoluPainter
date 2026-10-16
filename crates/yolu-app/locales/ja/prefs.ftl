@@ -82,3 +82,7 @@ prefs-settings = 設定
 prefs-close = 閉じる
 prefs-search-settings = 設定を探す
 prefs-clear-search-tip = 検索を消す
+prefs-quoted-name-separator = {""}
+prefs-edits-since-the-last-save = 最後に保存した後の編集は保存できません
+prefs-has-never-been-saved = { $names }は保存したことが無いため、保存に入りません
+prefs-texture-set-is-now-read = テクスチャセット{ $names }を読むだけにしました

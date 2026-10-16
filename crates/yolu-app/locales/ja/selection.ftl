@@ -120,3 +120,4 @@ selection-remember-the-current-selection-under-tip = 今の選択範囲を、こ
 selection-no-selection-tip = 選択範囲なし
 selection-rename-tip = 名前を変える
 selection-remove-tip = 消す:
+selection-name-with-reason = { $name }（{ $reason }）

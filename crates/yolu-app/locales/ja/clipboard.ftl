@@ -16,3 +16,5 @@ clipboard-os-clipboard-unavailable = OS のクリップボードを使えませ�
 clipboard-os-clipboard-is-busy = OS のクリップボードが使用中です
 clipboard-cannot-convert-the-os-clipboard = OS のクリップボードの画像を扱えません
 clipboard-os-clipboard-is-not-responding = OS のクリップボードが応答しません
+clipboard-note-separator = 、
+clipboard-pasted-with-notes = { $head }（{ $notes }）

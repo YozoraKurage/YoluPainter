@@ -460,35 +460,32 @@ impl AppState {
             return;
         }
         // どのセットか・保存できないものを、短い理由として添える
-        let ja = |v: &[String]| v.iter().map(|n| format!("「{n}」")).collect::<String>();
-        let en = |v: &[String]| {
-            let quoted: Vec<String> = v.iter().map(|n| format!("\"{n}\"")).collect();
-            quoted.join(", ")
+        // 名前を引用符で囲んで並べる（日本語は続けて、英語は「, 」で区切る）
+        let quoted = |v: &[String]| {
+            v.iter()
+                .map(|n| lang.quote(n))
+                .collect::<Vec<_>>()
+                .join(lang.t("prefs-quoted-name-separator"))
         };
-        let (mut ja_why, mut en_why): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        let mut why: Vec<String> = Vec::new();
         if names.len() > unsaved.len() {
-            ja_why.push("最後に保存した後の編集は保存できません".to_owned());
-            en_why.push("Edits since the last save cannot be saved".to_owned());
+            why.push(lang.t("prefs-edits-since-the-last-save").to_owned());
         }
         if !unsaved.is_empty() {
-            ja_why.push(format!(
-                "{}は保存したことが無いため、保存に入りません",
-                ja(&unsaved)
-            ));
-            en_why.push(format!(
-                "{} has never been saved, so it will be left out of the save",
-                en(&unsaved)
+            why.push(lang.f(
+                "prefs-has-never-been-saved",
+                &[("names", &quoted(&unsaved))],
             ));
         }
         // 「何を（なぜ）」の 1 文のあとに、保存で失うものを文で続ける
         let mut text = lang.with_reason(
-            lang.pick(
-                format!("テクスチャセット{}を読むだけにしました", ja(&names)),
-                format!("Texture set {} is now read-only", en(&names)),
+            lang.f(
+                "prefs-texture-set-is-now-read",
+                &[("names", &quoted(&names))],
             ),
             reason,
         );
-        for why in lang.pick(ja_why, en_why) {
+        for why in why {
             text += lang.t("prefs-text");
             text += &why;
             text += lang.t("prefs-text-2");

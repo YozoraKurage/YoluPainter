@@ -177,18 +177,12 @@ pub fn restore_from_project(app: &mut AppState) -> Option<String> {
             lang.t("view3d-cannot-restore-the-pose"),
             lang.view_error(&e),
         ),
-        Ok(()) if nothing_fits => lang.pick(
-            "ファイルのポーズに合うボーンがありません。".to_owned(),
-            "No bone fits the pose in the file.".to_owned(),
-        ),
+        Ok(()) if nothing_fits => lang.t("view3d-no-bone-fits-the-pose").to_owned(),
         Ok(()) if skipped > 0 => lang.f(
             "view3d-pose-restored-unmatched-items",
             &[("skipped", &skipped)],
         ),
-        Ok(()) => lang.pick(
-            "ポーズを戻しました。".to_owned(),
-            "Pose restored.".to_owned(),
-        ),
+        Ok(()) => lang.t("view3d-pose-restored").to_owned(),
     })
 }
 

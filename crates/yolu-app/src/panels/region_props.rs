@@ -636,26 +636,29 @@ fn part_color(
 fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     use crate::region::color::{Distance, Reference};
     let lang = app.lang;
-    for (value, ja, en) in [
-        (Reference::Editing, "編集しているレイヤー", "Editing layer"),
-        (Reference::Visible, "全部のレイヤー", "All visible layers"),
-        (Reference::Marked, "参照レイヤー", "Reference layers"),
+    for (value, id, label) in [
+        (
+            Reference::Editing,
+            "編集しているレイヤー",
+            lang.t("panels-editing-layer"),
+        ),
+        (
+            Reference::Visible,
+            "全部のレイヤー",
+            lang.t("panels-all-visible-layers"),
+        ),
+        (
+            Reference::Marked,
+            "参照レイヤー",
+            lang.t("panels-reference-layers"),
+        ),
     ] {
         let current = if app.region.sample_all {
             Reference::Visible
         } else {
             app.region.color.reference
         };
-        if toggle_row(
-            ui,
-            rows,
-            ja,
-            lang.pick(ja, en),
-            current == value,
-            None,
-            true,
-        ) == Some(true)
-        {
+        if toggle_row(ui, rows, id, label, current == value, None, true) == Some(true) {
             app.apply(Action::Region(RegionAction::Reference(value)));
         }
     }
@@ -675,19 +678,17 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             Distance::Rgb
         })));
     }
-    for (id, ja, en, value, min, max) in [
+    for (id, label, value, min, max) in [
         (
             "bucket.gap",
-            "隙間閉じ",
-            "Close gap",
+            lang.t("panels-close-gap"),
             app.region.color.gap as f32,
             0.0,
             32.0,
         ),
         (
             "bucket.margin",
-            "領域の拡縮",
-            "Area scaling",
+            lang.t("panels-area-scaling"),
             app.region.color.margin as f32,
             -200.0,
             200.0,
@@ -697,7 +698,7 @@ fn bucket_properties(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
             ui,
             rows,
             id,
-            lang.pick(ja, en),
+            label,
             value,
             (min, max),
             NumberFormat::int(" px"),

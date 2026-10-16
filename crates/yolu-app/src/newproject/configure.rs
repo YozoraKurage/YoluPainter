@@ -233,7 +233,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
         let Some(name) = clean_name(&d.name) else {
             return Err(lang.f(
                 "newproject-a-texture-set-name-is",
-                &[("MAX_NAME", &MAX_NAME)],
+                &[("max_name", &MAX_NAME)],
             ));
         };
         let upper = name.to_uppercase();
@@ -583,29 +583,22 @@ pub(super) fn apply(
         text += &format!(" {note}");
     }
     if !removed_names.is_empty() {
-        text += &lang.pick(
-            format!(" 消したセット: {}。", removed_names.join("・")),
-            format!(" Removed: {}.", removed_names.join(", ")),
-        );
+        let names = removed_names.join(lang.t("newproject-name-separator"));
+        text += &lang.f("newproject-removed", &[("names", &names)]);
     }
     if !resized.is_empty() {
         text += &lang.f("newproject-resized", &[("resized", &resized.len())]);
     }
     if !dropped.is_empty() {
-        let list = |sep: &str, unit: &dyn Fn(usize) -> String| {
-            dropped
-                .iter()
-                .map(|(name, n)| format!("{name} {}", unit(*n)))
-                .collect::<Vec<_>>()
-                .join(sep)
-        };
+        let list = dropped
+            .iter()
+            .map(|(name, n)| format!("{name} {}", lang.f("newproject-count-unit", &[("n", n)])))
+            .collect::<Vec<_>>()
+            .join(lang.t("newproject-name-separator"));
         text += " ";
         text += &lang.with_reason(
             lang.t("newproject-some-remembered-selections-were-lost"),
-            lang.pick(
-                list("・", &|n| format!("{n} 件")),
-                list(", ", &|n| n.to_string()),
-            ),
+            list,
         );
     }
     let not_in_model = app.session.model.is_some() && missing > 0;

@@ -1548,27 +1548,30 @@ fn gaps_message(lang: Lang, gaps: usize) -> String {
 fn rebind_message(lang: Lang, reports: &[rebind::PathReport]) -> String {
     let count = |outcome: rebind::Outcome| reports.iter().filter(|r| r.outcome == outcome).count();
     let mut parts: Vec<String> = Vec::new();
-    for (outcome, ja, en) in [
-        (rebind::Outcome::Redrawn, "描き直し", "redrawn"),
-        (rebind::Outcome::Rasterized, "画素にし", "rasterized"),
-        (rebind::Outcome::KeptLocked, "残し", "kept"),
+    for outcome in [
+        rebind::Outcome::Redrawn,
+        rebind::Outcome::Rasterized,
+        rebind::Outcome::KeptLocked,
     ] {
         let n = count(outcome);
         if n == 0 {
             continue;
         }
-        parts.push(lang.pick(
-            format!("{n} 本を{ja}"),
-            if parts.is_empty() {
-                format!("{n} path(s) {en}")
-            } else {
-                format!("{n} {en}")
-            },
-        ));
+        // 英語は、最初の 1 つだけ「path(s)」を付ける
+        parts.push(match (outcome, parts.is_empty()) {
+            (rebind::Outcome::Redrawn, true) => lang.f("pathtool-n-paths-redrawn", &[("n", &n)]),
+            (rebind::Outcome::Redrawn, false) => lang.f("pathtool-n-redrawn", &[("n", &n)]),
+            (rebind::Outcome::Rasterized, true) => {
+                lang.f("pathtool-n-paths-rasterized", &[("n", &n)])
+            }
+            (rebind::Outcome::Rasterized, false) => lang.f("pathtool-n-rasterized", &[("n", &n)]),
+            (_, true) => lang.f("pathtool-n-paths-kept", &[("n", &n)]),
+            (_, false) => lang.f("pathtool-n-kept", &[("n", &n)]),
+        });
     }
-    let mut text = lang.pick(
-        format!("モデルを差し替えて、パス {}ました。", parts.join("、")),
-        format!("After the model change, {}.", parts.join(", ")),
+    let mut text = lang.f(
+        "pathtool-after-the-model-change",
+        &[("parts", &parts.join(lang.t("pathtool-part-separator")))],
     );
     let first = reports
         .iter()

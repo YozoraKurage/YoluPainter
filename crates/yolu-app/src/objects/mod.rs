@@ -558,6 +558,14 @@ fn object_name(lang: Lang, o: Object) -> &'static str {
     }
 }
 
+/// 英語の文の中では名前を小文字にする（日本語の名前は変えない）。
+pub(super) fn english_lowercase(lang: Lang, name: &str) -> String {
+    match lang {
+        Lang::Ja => name.to_owned(),
+        Lang::En => name.to_lowercase(),
+    }
+}
+
 /// 選んでいる物が無いときの断り。
 fn nothing_selected(lang: Lang) -> &'static str {
     lang.t("objects-nothing-is-selected")
@@ -599,9 +607,9 @@ impl AppState {
 /// 選んだ物を消す（今の消す口を使う。消せない物は理由を知らせる）。
 fn delete(app: &mut AppState, o: Object) {
     let lang = app.lang;
-    let what = lang.pick(
-        format!("{}を削除できません", object_name(lang, o)),
-        format!("Cannot delete the {}", object_name(lang, o).to_lowercase()),
+    let what = lang.f(
+        "objects-cannot-delete-the",
+        &[("name", &english_lowercase(lang, object_name(lang, o)))],
     );
     match o {
         Object::Shape(Target::Projection(_)) => {

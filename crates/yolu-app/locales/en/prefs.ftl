@@ -82,3 +82,7 @@ prefs-settings = Settings
 prefs-close = Close
 prefs-search-settings = Search Settings
 prefs-clear-search-tip = Clear Search
+prefs-quoted-name-separator = ,{" "}
+prefs-edits-since-the-last-save = Edits since the last save cannot be saved
+prefs-has-never-been-saved = { $names } has never been saved, so it will be left out of the save
+prefs-texture-set-is-now-read = Texture set { $names } is now read-only

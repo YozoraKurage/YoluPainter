@@ -16,3 +16,5 @@ clipboard-os-clipboard-unavailable = OS clipboard unavailable
 clipboard-os-clipboard-is-busy = OS clipboard is busy
 clipboard-cannot-convert-the-os-clipboard = Cannot convert the OS clipboard image
 clipboard-os-clipboard-is-not-responding = OS clipboard is not responding
+clipboard-note-separator = ,{" "}
+clipboard-pasted-with-notes = { $head } ({ $notes })

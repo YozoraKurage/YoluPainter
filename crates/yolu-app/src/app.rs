@@ -1617,10 +1617,12 @@ impl YoluApp {
         let more = std::mem::take(&mut self.psd_drop_more);
         let lang = self.state.lang;
         let message = &self.state.message;
-        let joint = lang.pick(
-            if message.ends_with('。') { "" } else { "。" },
-            if message.ends_with('.') { " " } else { ". " },
-        );
+        let ended = lang.pick(message.ends_with('。'), message.ends_with('.'));
+        let joint = if ended {
+            lang.t("app-sentence-already-ended")
+        } else {
+            lang.t("app-sentence-not-ended")
+        };
         // 取り込みの知らせに添える（取り込まなかった物がある: 気をつけること）
         let extra = lang.f("app-more-not-imported-one-psd", &[("more", &more)]);
         self.state.amend(
