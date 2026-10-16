@@ -347,10 +347,10 @@ fn export_confirm(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.export.confirm_offset;
+    let mut offset = app.ui.export_confirm_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.export.confirm_offset = offset;
+    app.ui.export_confirm_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Export(ExportAction::ConfirmReplace)),
         Some(_) => app.apply(Action::Export(ExportAction::CancelConfirm)),
@@ -409,10 +409,10 @@ fn export_report(ctx: &egui::Context, app: &mut AppState) {
         }],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.export.report_offset;
+    let mut offset = app.ui.export_report_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.export.report_offset = offset;
+    app.ui.export_report_offset = offset;
     if reply.is_some() {
         app.apply(Action::Export(ExportAction::DismissReport));
     }
@@ -477,10 +477,10 @@ fn psd_confirm(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.psd.confirm_offset;
+    let mut offset = app.ui.psd_confirm_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.psd.confirm_offset = offset;
+    app.ui.psd_confirm_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Psd(PsdAction::ConfirmReplace)),
         Some(_) => app.apply(Action::Psd(PsdAction::CancelConfirm)),
@@ -535,10 +535,10 @@ fn merge_confirm(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.layer_ops.confirm_offset;
+    let mut offset = app.ui.layer_ops_confirm_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.layer_ops.confirm_offset = offset;
+    app.ui.layer_ops_confirm_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::M2(crate::m2::Edit::ConfirmMerge)),
         Some(_) => app.apply(Action::M2(crate::m2::Edit::CancelMerge)),
@@ -576,10 +576,10 @@ fn psd_report(ctx: &egui::Context, app: &mut AppState) {
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
     let tips: Vec<Option<String>> = report.lines.iter().map(|l| l.tooltip.clone()).collect();
-    let mut offset = app.psd.report_offset;
+    let mut offset = app.ui.psd_report_offset;
     let mut scroll = 0.0;
     let reply = show_list_with(ctx, &spec, &tips, &mut offset, &mut scroll);
-    app.psd.report_offset = offset;
+    app.ui.psd_report_offset = offset;
     if reply.is_some() {
         app.apply(Action::Psd(PsdAction::DismissReport));
     }

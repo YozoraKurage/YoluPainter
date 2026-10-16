@@ -1410,10 +1410,10 @@ fn remove_confirm(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset: Vec2 = app.np.remove_offset;
+    let mut offset: Vec2 = app.ui.np_remove_offset;
     let mut scroll = 0.0;
     let reply = crate::windows::show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.np.remove_offset = offset;
+    app.ui.np_remove_offset = offset;
     match reply {
         Some(crate::windows::Reply::Button(1)) => app.np_apply(NpAction::ConfirmRemove),
         Some(_) => app.np_apply(NpAction::CancelRemove),

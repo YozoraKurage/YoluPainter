@@ -57,7 +57,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         close_label: lang.pick("閉じる", "Close"),
     };
     let id = window_id();
-    let mut offset = app.sel.dialog_offset;
+    let mut offset = app.ui.sel_dialog_offset;
     let mut apply = enter;
     let mut cancel = false;
     let closed = window::show(ctx, id, &spec, &mut offset, esc, |ui, frame| {
@@ -123,7 +123,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             cancel = true;
         }
     });
-    app.sel.dialog_offset = offset;
+    app.ui.sel_dialog_offset = offset;
     app.sel.dialog = Some(dialog);
     if apply {
         app.apply(Action::Sel(SelAction::Ui(SelUiOp::ApplyAmount)));

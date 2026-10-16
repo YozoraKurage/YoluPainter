@@ -28,7 +28,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use egui::Vec2;
 use yolu_core::export::{
     build, channel_image, ExportError as CalcError, ExportImage, ExportImageKind, ExportScalar,
     ExportTemplate,
@@ -158,8 +157,6 @@ pub struct ExportState {
     pub padding: i32,
     pub confirm: Option<Confirm>,
     pub report: Option<Report>,
-    pub confirm_offset: Vec2,
-    pub report_offset: Vec2,
     /// 書き出しのウィンドウ（形・書き出す先）。
     pub window: window::WindowState,
     job: Option<Job>,
@@ -195,8 +192,6 @@ impl Default for ExportState {
             padding: -1,
             confirm: None,
             report: None,
-            confirm_offset: Vec2::ZERO,
-            report_offset: Vec2::ZERO,
             window: window::WindowState::default(),
             job: None,
             finished: None,

@@ -121,14 +121,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     };
     let window_id = id();
     let finished = editor::begin_frame(ctx, app, app.prefs.shows(Category::Shortcuts));
-    let mut offset = app.prefs.offset;
+    let mut offset = app.ui.prefs_offset;
     let mut out = Out::default();
     let mut esc = false;
     let closed = window::show(ctx, window_id, &spec, &mut offset, false, |ui, frame| {
         esc = take_escape(ui, app, frame.rect, finished);
         body(ui, app, frame.body, &mut out);
     });
-    app.prefs.offset = offset;
+    app.ui.prefs_offset = offset;
     app.prefs.dragging = out.dragging || out.gpu_dragging;
     for request in out.requests {
         match request {

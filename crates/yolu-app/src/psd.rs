@@ -24,7 +24,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use egui::Vec2;
 use yolu_core::{Channel, Document};
 use yolu_io::psd::{
     self, CopyOptions, CopyOutcome, CopyRefusal, ExportControl, ExportError, ExportMode,
@@ -367,23 +366,19 @@ impl NotesConfirm {
 #[derive(Default)]
 pub struct PsdState {
     pub report: Option<Report>,
-    pub report_offset: Vec2,
     /// 取り込んだ PSD の場所（同じファイルへ書き出すときに確かめる）。
     imported: Vec<PathBuf>,
     /// 置き換えるかの確かめ。
     pub confirm: Option<Replace>,
-    pub confirm_offset: Vec2,
     /// 取り込みの確かめ（無視・落とす・変わるもの）の待ち。読んだ文書をここに持ち、「取り込む」で入れる。
     pub import_check: Option<crate::psd_import::ImportCheck>,
     pub import_window: crate::psd_import::CheckWindow,
     /// 書き出しの設定と、そのウィンドウ。
     pub export: ExportSettings,
     pub options_open: bool,
-    pub options_offset: Vec2,
     pub options_scroll: f32,
     /// 書く前の確かめ（焼く・丸める・落とす）の待ち。
     pub notes_confirm: Option<NotesConfirm>,
-    pub notes_offset: Vec2,
     job: Option<Job>,
     /// 試験用: 次の仕事を、取消が来るまで始めずに止めておく（始めるときに下ろす）。
     #[doc(hidden)]

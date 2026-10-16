@@ -7,7 +7,6 @@
 
 use std::collections::HashSet;
 
-use egui::Vec2;
 use yolu_core::{Affine2D, LayerLocks, LayerMergeReport, Resampling};
 
 use crate::engine::{Channel, CoreError, LayerId, LayerKind};
@@ -54,7 +53,6 @@ pub(crate) const JOB: JobSpec = JobSpec {
 pub struct LayerOpsState {
     pub selection: LayerSelection,
     pub merge_confirm: Option<MergeConfirm>,
-    pub confirm_offset: Vec2,
 }
 
 /// レイヤーの変形（動かす対象は選んでいるレイヤー。グループなら中身のラスターレイヤーごと。選択範囲があればその中身と選択範囲）。

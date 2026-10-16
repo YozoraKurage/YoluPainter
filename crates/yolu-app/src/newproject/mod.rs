@@ -426,7 +426,6 @@ pub struct NpState {
     pub generation: u64,
     /// テクスチャセットのパネルの「消す」の確かめを待っているセット（uid）。
     pub remove_confirm: Option<Vec<u32>>,
-    pub remove_offset: Vec2,
 }
 
 impl std::fmt::Debug for NpState {

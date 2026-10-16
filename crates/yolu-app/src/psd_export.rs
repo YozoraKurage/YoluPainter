@@ -76,7 +76,7 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
         close_label,
     };
     let id = Id::new(("yolu.window", OPTIONS));
-    let mut offset = app.psd.options_offset;
+    let mut offset = app.ui.psd_options_offset;
     let mut scroll = app.psd.options_scroll;
     let mut actions: Vec<PsdAction> = Vec::new();
     let mut esc = false;
@@ -162,7 +162,7 @@ pub fn show_options(ctx: &egui::Context, app: &mut AppState) {
             }
         }
     });
-    app.psd.options_offset = offset;
+    app.ui.psd_options_offset = offset;
     app.psd.options_scroll = scroll;
     if (closed || esc) && actions.is_empty() {
         actions.push(PsdAction::CancelExportOptions);
@@ -343,10 +343,10 @@ pub fn show_confirm(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.psd.notes_offset;
+    let mut offset = app.ui.psd_notes_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.psd.notes_offset = offset;
+    app.ui.psd_notes_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Psd(PsdAction::ConfirmWrite)),
         Some(_) => app.apply(Action::Psd(PsdAction::CancelWrite)),

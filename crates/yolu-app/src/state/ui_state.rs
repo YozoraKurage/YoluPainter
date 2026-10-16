@@ -61,4 +61,25 @@ pub struct UiState {
     /// 更新の初回の問いのウィンドウと、更新の準備のウィンドウの位置（`update::window`）。
     pub update_ask_offset: egui::Vec2,
     pub update_ready_offset: egui::Vec2,
+    /// 書き出しの置き換えの確かめと、書き終えた結果のウィンドウの位置（`windows`）。
+    pub export_confirm_offset: egui::Vec2,
+    pub export_report_offset: egui::Vec2,
+    /// PSD の読み書きの結果・置き換えの確かめ・書き出しの設定・書く前の確かめのウィンドウの位置（`windows`・`psd_export`）。
+    pub psd_report_offset: egui::Vec2,
+    pub psd_confirm_offset: egui::Vec2,
+    pub psd_options_offset: egui::Vec2,
+    pub psd_notes_offset: egui::Vec2,
+    /// 配布用に保存のウィンドウと、置き換えの確かめのウィンドウの位置（`distribute::window`）。
+    pub distribute_window_offset: egui::Vec2,
+    pub distribute_replace_offset: egui::Vec2,
+    /// テクスチャセットを消す確かめのウィンドウの位置（`newproject::window`）。
+    pub np_remove_offset: egui::Vec2,
+    /// レイヤーの統合の確かめのウィンドウの位置（`windows`）。
+    pub layer_ops_confirm_offset: egui::Vec2,
+    /// 設定のウィンドウの見出しをドラッグして動かした量（画面の真ん中からの。`prefs::window`）。
+    pub prefs_offset: egui::Vec2,
+    /// 選択範囲の量のウィンドウを見出しで動かした量（開くたびに戻す。`selection::dialog`）。
+    pub sel_dialog_offset: egui::Vec2,
+    /// 選択範囲の帯をドラッグでずらした量（初めの位置から。選択範囲を外すと戻る。`selection::bar`）。
+    pub sel_bar_offset: egui::Vec2,
 }

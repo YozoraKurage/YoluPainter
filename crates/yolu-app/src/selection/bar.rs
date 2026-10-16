@@ -256,7 +256,7 @@ fn clamp_into(p: Pos2, size: Vec2, area: Rect) -> Pos2 {
 /// 帯を描いて、押されたボタンの操作を当てる（`area` は表示域）。
 pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView, area: Rect) {
     if app.session.doc.selection().is_none() {
-        app.sel.bar_offset = Vec2::ZERO;
+        app.ui.sel_bar_offset = Vec2::ZERO;
         return;
     }
     if !visible(app) {
@@ -272,8 +272,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView, area: Rect) {
     let groups = groups(app);
     let size = bar_size(&groups);
     let home = default_position(bounds, size, area);
-    let at = clamp_into(home + app.sel.bar_offset, size, area);
-    app.sel.bar_offset = at - home;
+    let at = clamp_into(home + app.ui.sel_bar_offset, size, area);
+    app.ui.sel_bar_offset = at - home;
     let lang = app.lang;
     let mut clicked: Option<Action> = None;
     let mut dragged = Vec2::ZERO;
@@ -349,7 +349,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView, area: Rect) {
                 }
             }
         });
-    app.sel.bar_offset += dragged;
+    app.ui.sel_bar_offset += dragged;
     if let Some(action) = clicked {
         app.apply(action);
     }

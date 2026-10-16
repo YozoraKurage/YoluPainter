@@ -241,8 +241,6 @@ pub struct SelState {
     pub radius: u32,
     pub edge_lock: bool,
     pub dialog: Option<AmountDialog>,
-    /// ウィンドウを見出しで動かした量。
-    pub dialog_offset: egui::Vec2,
     pub drag: Option<ShapeDrag>,
     /// 3D ビューで画面の上に引いている形と、打っている多角形の点（表示域の画面の点。`view3d::select`）。
     pub view3d: crate::view3d::select::Draft,
@@ -286,8 +284,6 @@ pub struct SelState {
     pub saved_window: Option<saved::SavedWindow>,
     /// 縁の点線を流す（試験は止めて、同じ絵を撮る）。
     pub animate: bool,
-    /// 帯をドラッグでずらした量（初めの位置から。選択範囲を外すと戻る）。
-    pub bar_offset: egui::Vec2,
     /// 最後に描いたとき、縁を一部しか描かなかったか（縁が多すぎて打ち切った・1 画面の上限を超えた）。
     pub edge_partial: bool,
     outline: Option<OutlineCache>,
@@ -317,7 +313,6 @@ impl Default for SelState {
             radius: 5,
             edge_lock: false,
             dialog: None,
-            dialog_offset: egui::Vec2::ZERO,
             drag: None,
             view3d: Default::default(),
             polygon: Vec::new(),
@@ -341,7 +336,6 @@ impl Default for SelState {
             pen_budget: pen::PEN_BUDGET_BYTES,
             saved_window: None,
             animate: true,
-            bar_offset: egui::Vec2::ZERO,
             edge_partial: false,
             outline: None,
             bounds: None,
@@ -813,7 +807,7 @@ impl AppState {
                         radius: self.sel.radius,
                         edge_lock: self.sel.edge_lock,
                     });
-                    self.sel.dialog_offset = egui::Vec2::ZERO;
+                    self.ui.sel_dialog_offset = egui::Vec2::ZERO;
                 }
             }
             SelUiOp::ApplyAmount => {

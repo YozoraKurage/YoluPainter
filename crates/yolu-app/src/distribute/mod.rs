@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use egui::Vec2;
 use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
 use crate::dialog::places::Place;
@@ -144,11 +143,9 @@ pub struct Progress {
 pub struct DistributeState {
     /// 準備が済んだ写しとウィンドウの選び（書き込みが済むか、やめるまで持つ）。
     window: Option<Window>,
-    pub window_offset: Vec2,
     pub window_scroll: f32,
     /// 置き換えを確かめている保存先。
     pub replace: Option<PathBuf>,
-    pub replace_offset: Vec2,
     job: Option<Job>,
     /// 試験用: 次の準備を、取消が来るまで始めずに止めておく。
     #[doc(hidden)]

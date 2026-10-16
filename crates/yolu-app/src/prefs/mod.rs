@@ -181,8 +181,6 @@ pub struct PrefsState {
     gpu_memory_before_drag: Option<GpuMemory>,
     /// 右の欄のずらした量（中身が欄に収まらないとき、共通のスクロールで送る。区分を移すと 0 に戻す）。
     scroll: f32,
-    /// ウィンドウの見出しをドラッグして動かした量（画面の真ん中からの）。
-    offset: egui::Vec2,
     /// 前のフレームに、右の欄がショートカットの表だったか（離れたとき・閉じたときに、割り当て待ちとパイの項目選びをやめる）。
     shortcuts_shown: bool,
     /// 前のフレームに開いていたか（閉じたフレームに、ぶつかるキーを保存していないことを知らせる）。
@@ -217,7 +215,6 @@ impl Default for PrefsState {
             pen_input_row: cfg!(windows),
             gpu_memory_before_drag: None,
             scroll: 0.0,
-            offset: egui::Vec2::ZERO,
             shortcuts_shown: false,
             was_open: false,
             side_scroll: 0.0,

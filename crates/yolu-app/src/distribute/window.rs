@@ -133,7 +133,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
     };
     let id = Id::new(("yolu.window", WINDOW));
-    let mut offset = app.distribute.window_offset;
+    let mut offset = app.ui.distribute_window_offset;
     let mut scroll = app.distribute.window_scroll;
     let mut actions: Vec<DistributeAction> = Vec::new();
     let mut esc = false;
@@ -227,7 +227,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         }
     });
-    app.distribute.window_offset = offset;
+    app.ui.distribute_window_offset = offset;
     app.distribute.window_scroll = scroll;
     if (closed || esc) && actions.is_empty() {
         actions.push(DistributeAction::CancelWindow);
@@ -280,10 +280,10 @@ pub fn show_replace(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.distribute.replace_offset;
+    let mut offset = app.ui.distribute_replace_offset;
     let mut scroll = 0.0;
     let reply = show_list(ctx, &spec, &mut offset, &mut scroll);
-    app.distribute.replace_offset = offset;
+    app.ui.distribute_replace_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Distribute(DistributeAction::ConfirmReplace)),
         Some(_) => app.apply(Action::Distribute(DistributeAction::CancelReplace)),
