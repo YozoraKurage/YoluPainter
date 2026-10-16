@@ -259,7 +259,7 @@ fn same_split_shape(
 }
 
 /// ドックの見た目（Unity 版のパネルの見出し: 地は PanelHeader、選んだタブは PanelBg、境目は Border）。
-fn dock_style(style: &egui::Style) -> egui_dock::Style {
+pub fn dock_style(style: &egui::Style) -> egui_dock::Style {
     let mut s = egui_dock::Style::from_egui(style);
     s.dock_area_padding = None;
     s.main_surface_border_stroke = egui::Stroke::NONE;
@@ -298,7 +298,7 @@ fn dock_style(style: &egui::Style) -> egui_dock::Style {
 
 /// ドックの描き方（メインウィンドウと別ウィンドウで同じ）。タブは閉じない（閉じるとキャンバスを失う）・足すボタンを出さない・右クリックは
 /// アプリのメニュー（egui_dock の組み込みのメニューは切る）。
-fn dock_area(dock: &mut DockState<Tab>, id: Id, style: egui_dock::Style) -> DockArea<'_, Tab> {
+pub fn dock_area(dock: &mut DockState<Tab>, id: Id, style: egui_dock::Style) -> DockArea<'_, Tab> {
     // 浮かせたウィンドウの閉じるボタンは出さない。egui_dock 0.21 は代わりの名前を案内するが、その名前の関数はまだ無いので、古い名前を使う
     #[allow(deprecated)]
     let area = DockArea::new(dock).show_window_close_buttons(false);

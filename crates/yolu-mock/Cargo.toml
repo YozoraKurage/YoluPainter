@@ -1,0 +1,27 @@
+[package]
+name = "yolu-mock"
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "mock"
+path = "src/main.rs"
+
+# 開発用。配布のビルド（`-p yolu-app -p yolu-cli`）にも、ライセンスの照合（`--package yolu-app --include-cli`）にも入らない。
+# 依存の指定は yolu-app と同じ（機能の組み合わせが変わると、依存のビルドが別になる）。新しい crate は足さない。
+[dependencies]
+yolu-app = { path = "../yolu-app" }
+yolu-core.workspace = true
+yolu-gpu.workspace = true
+eframe = { version = "0.36", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "accesskit"] }
+egui = "0.36"
+egui_dock = { version = "0.21", features = ["serde"] }
+egui_kittest = { version = "0.36", features = ["wgpu", "snapshot", "eframe"] }   # 画面に出す描画器（wgpu）で 1 枚撮って PNG にする
+
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { version = "0.30", default-features = false, features = ["x11"] }   # 本体と同じく、ウィンドウは X11 で開く
+
+[dev-dependencies]
+png = "0.18"   # 撮った PNG を読み戻して、空でないことを見る（yolu-app・yolu-io が使うバージョンと同じ）

@@ -9,6 +9,9 @@ targets = [
     "aarch64-unknown-linux-gnu",
     "aarch64-apple-darwin",
 ]
+# 開発用のモック（yolu-mock。配らない・publish = false）は、依存ごと調べない。撮るのに egui_kittest を通常の依存で持つので、テストだけで
+# 使う物（画像の比べの dify が使う colored、MPL-2.0）が配る物と同じ扱いで当たる。配る物は `cargo xtask preflight` が正
+exclude = ["yolu-mock"]
 
 [advisories]
 yanked = "deny"

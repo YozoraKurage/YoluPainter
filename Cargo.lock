@@ -5162,6 +5162,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "yolu-mock"
+version = "0.6.1"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui_dock",
+ "egui_kittest",
+ "png",
+ "winit",
+ "yolu-app",
+ "yolu-core",
+ "yolu-gpu",
+]
+
+[[package]]
 name = "yolu-model"
 version = "0.6.1"
 dependencies = [
