@@ -53,8 +53,8 @@ fn slider(
     } else {
         value
     };
-    // `w::slider` が部品の id にする値と同じ（欄ごとに違う）
-    let owner = ui.make_persistent_id(key);
+    // `w::slider` が部品の id にする値と同じ（欄ごとに違う）。同じ欄かを比べるだけなので、id の値で持つ
+    let owner = ui.make_persistent_id(key).value();
     let target = app.text_target();
     let out = w::slider(ui, at, key, current as f32, &spec);
     if !deferred {

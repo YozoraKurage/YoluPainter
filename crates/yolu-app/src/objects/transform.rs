@@ -1131,7 +1131,7 @@ pub fn start_requested(ctx: &egui::Context, app: &mut AppState) {
         );
         return;
     }
-    if app.view3d.viewport != Some(ctx.viewport_id()) {
+    if app.ui.view3d_viewport != Some(ctx.viewport_id()) {
         refuse_with(
             app,
             lang.pick(

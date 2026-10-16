@@ -166,8 +166,6 @@ pub struct View3dState {
     pub visible: bool,
     /// 最後に描いた 3D ビューの表示域（画面の点。パイから「収める」ときの縦横の比・G/R/S の線と札）。
     pub view_rect: Option<egui::Rect>,
-    /// 最後に 3D ビューを描いたウィンドウ（G/R/S は、このウィンドウのキーとポインタで動かす）。
-    pub viewport: Option<egui::ViewportId>,
 }
 
 impl View3dState {

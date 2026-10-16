@@ -262,7 +262,6 @@ pub struct NpWindow {
     // 画面
     pub offset: Vec2,
     pub list_scroll: f32,
-    pub dropdown: Option<(Dropdown, crate::ui::menu::PopupState)>,
     pub confirm_offset: Vec2,
 }
 
@@ -286,7 +285,6 @@ impl NpWindow {
             error: None,
             offset: Vec2::ZERO,
             list_scroll: 0.0,
-            dropdown: None,
             confirm_offset: Vec2::ZERO,
         }
     }
@@ -605,7 +603,7 @@ impl AppState {
                     win.reload = false;
                     win.materials = None;
                     win.start_loading(self, path);
-                    win.dropdown = None;
+                    self.ui.np_dropdown = None;
                 }
             }
             NpAction::ClearModel => {
@@ -750,6 +748,7 @@ impl AppState {
             win.start_loading(self, path);
         }
         self.np.window = Some(win);
+        self.ui.np_dropdown = None;
     }
 
     /// 構成のウィンドウを開く。`model` があればそのモデルに替える下書きで開く。
@@ -782,6 +781,7 @@ impl AppState {
             win.start_loading(self, path);
         }
         self.np.window = Some(win);
+        self.ui.np_dropdown = None;
     }
 
     /// FBX を開く。何も触っていないプロジェクトなら、その FBX で新規プロジェクトを作るウィンドウ。作業のあるプロジェクトなら、構成のウィンドウで

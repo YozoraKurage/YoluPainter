@@ -2753,7 +2753,7 @@ fn dd_item(h: &H, label: &str) -> Rect {
         .np()
         .window
         .as_ref()
-        .and_then(|w| w.dropdown.as_ref())
+        .and(st(h).ui().np_dropdown.as_ref())
         .expect("ドロップダウンが開いている")
         .1
         .rect;
@@ -2842,7 +2842,7 @@ fn ctrl_n_asks_then_the_window_creates_with_the_chosen_template_and_resolution()
     click(&mut h, at);
     assert_eq!(st(&h).np().window.as_ref().unwrap().resolution, 1024);
     assert!(
-        st(&h).np().window.as_ref().unwrap().dropdown.is_none(),
+        st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_none(),
         "選んだら閉じる"
     );
     h.get_by_label("PBR（すべてのチャンネル）").click();
@@ -2889,15 +2889,40 @@ fn escape_closes_the_window_and_enter_creates() {
     run_np(&mut h, NpAction::OpenNew);
     h.get_by_label("2048 × 2048").click();
     h.run();
-    assert!(st(&h).np().window.as_ref().unwrap().dropdown.is_some());
+    assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_some());
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(
-        st(&h).np().window.is_some() && st(&h).np().window.as_ref().unwrap().dropdown.is_none()
-    );
+    assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_none());
     h.get_by_label("キャンセル").click();
     h.run();
     assert!(st(&h).np().window.is_none());
+}
+
+#[test]
+fn a_dropdown_left_open_when_the_window_closes_is_closed_when_the_window_opens_again() {
+    let mut h = gui();
+    run_np(&mut h, NpAction::OpenNew);
+    h.get_by_label("2048 × 2048").click();
+    h.run();
+    assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_some());
+    // ドロップダウンを開いたまま、ウィンドウの外から閉じる
+    run_np(&mut h, NpAction::Close);
+    assert!(st(&h).np().window.is_none());
+    run_np(&mut h, NpAction::OpenNew);
+    assert!(
+        st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_none(),
+        "開き直した新規プロジェクトのウィンドウのドロップダウンは閉じている"
+    );
+    h.get_by_label("2048 × 2048").click();
+    h.run();
+    assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_some());
+    run_np(&mut h, NpAction::Close);
+    run_np(&mut h, NpAction::OpenConfigure);
+    assert!(st(&h).np().window.as_ref().is_some_and(|w| w.configure));
+    assert!(
+        st(&h).ui().np_dropdown.is_none(),
+        "構成のウィンドウもドロップダウンを閉じて開く"
+    );
 }
 
 #[test]
@@ -3221,7 +3246,7 @@ fn the_file_menu_opens_the_configuration_and_a_row_edits_removes_and_applies() {
     let sizes: Vec<_> = h.get_all_by_label("512").map(|n| n.rect()).collect();
     assert!(sizes.len() >= 3, "セットごとの大きさ: {sizes:?}");
     click(&mut h, sizes[1].center());
-    assert!(st(&h).np().window.as_ref().unwrap().dropdown.is_some());
+    assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_some());
     let at = dd_item(&h, "1024 × 1024").center();
     click(&mut h, at);
     assert_eq!(

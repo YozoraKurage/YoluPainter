@@ -225,13 +225,13 @@ pub enum ColorSource {
 }
 
 /// スライダーを動かしている間の値。同じ値のスライダーはオプションバー・ツールプロパティ・レイヤーのプロパティに同時に出るので、
-/// どの欄の値かを `key`（値の名前。出ている欄みんなが動かしている値を見せる）と `owner`（動かしている欄の部品の id。
+/// どの欄の値かを `key`（値の名前。出ている欄みんなが動かしている値を見せる）と `owner`（動かしている欄の部品の id の値。
 /// 当てる・捨てるのはこの欄だけ。動かしていないほかの欄が消さない）で持つ。`target` は動かし始めたときの当て先
 /// （途中でレイヤーが替わったら、別のレイヤーには当てない）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Pending {
     pub key: &'static str,
-    pub owner: egui::Id,
+    pub owner: u64,
     pub target: Target,
     pub value: f64,
 }

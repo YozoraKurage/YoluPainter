@@ -126,7 +126,7 @@ impl View3dSlot {
         ui.advance_cursor_after_rect(full);
         let content = full;
         app.view3d.view_rect = Some(content);
-        app.view3d.viewport = Some(ui.ctx().viewport_id());
+        app.ui.view3d_viewport = Some(ui.ctx().viewport_id());
         crate::objects::transform::settle(app);
         let response = ui.interact(content, ui.id().with("view3d"), Sense::click_and_drag());
         app.rulers

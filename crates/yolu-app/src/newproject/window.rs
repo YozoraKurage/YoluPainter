@@ -32,6 +32,9 @@ const SET_ROW: f32 = 26.0;
 const LIST_ROWS: usize = 6;
 const CARD_ROWS: usize = 8;
 
+/// 開いているドロップダウン（`UiState::np_dropdown`。描く間だけ取り出す）。
+type OpenDropdown = Option<(Dropdown, PopupState)>;
+
 fn main_id() -> Id {
     Id::new("yolu.newproject")
 }
@@ -170,11 +173,12 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let Some(mut win) = app.np.window.take() else {
         return;
     };
+    let mut dropdown = app.ui.np_dropdown.take();
     let v = view(app, &win);
     let lang = v.lang;
     let configure = win.configure;
     // 文字を打っている間のキーは、その欄に任せる。確かめの一覧が出ているときは、そのウィンドウの取消・決定
-    let keys_free = !ctx.egui_wants_keyboard_input() && win.dropdown.is_none();
+    let keys_free = !ctx.egui_wants_keyboard_input() && dropdown.is_none();
     let (enter, esc) = if keys_free {
         ctx.input_mut(|i| {
             (
@@ -196,7 +200,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     let mut offset = win.offset;
     let locked_confirm = win.confirm.is_some();
     let closed = window::show(ctx, main_id(), &spec, &mut offset, false, |ui, frame| {
-        draw(ui, frame, &mut win, &v, &mut actions);
+        draw(ui, frame, &mut win, &mut dropdown, &v, &mut actions);
     });
     win.offset = offset;
     // 一覧が開いていればその Esc は一覧の分（メニューが自分で見る）。確かめの一覧が出ていれば Esc は確かめをやめる
@@ -223,14 +227,22 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     if win.is_loading() {
         ctx.request_repaint_after(std::time::Duration::from_millis(50));
     }
-    dropdown_popup(ctx, &mut win, &v, &mut actions);
+    dropdown_popup(ctx, &mut dropdown, &win, &v, &mut actions);
     app.np.window = Some(win);
+    app.ui.np_dropdown = dropdown;
     for a in actions {
         app.np_apply(a);
     }
 }
 
-fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut Vec<NpAction>) {
+fn draw(
+    ui: &mut Ui,
+    frame: &Frame,
+    win: &mut NpWindow,
+    dropdown: &mut OpenDropdown,
+    v: &View,
+    actions: &mut Vec<NpAction>,
+) {
     let lang = v.lang;
     let locked = win.confirm.is_some();
     let body = frame.body;
@@ -264,7 +276,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
             0.0,
         );
         if r.clicked() {
-            open_dropdown(ui, win, Dropdown::Template, b);
+            open_dropdown(ui, dropdown, Dropdown::Template, b);
         }
         y += ROW + GAP;
     }
@@ -582,7 +594,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
 
     // テクスチャセット
     if win.configure {
-        draw_drafts(ui, win, v, left, width, &mut y, locked, actions);
+        draw_drafts(ui, win, dropdown, v, left, width, &mut y, locked, actions);
     } else if !v.groups.is_empty() {
         draw_materials(ui, win, v, left, width, &mut y, locked, actions);
     }
@@ -613,7 +625,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
             0.0,
         );
         if r.clicked() {
-            open_dropdown(ui, win, Dropdown::Resampling, b);
+            open_dropdown(ui, dropdown, Dropdown::Resampling, b);
         }
         if v.sizes_changing {
             let at = Rect::from_min_size(pos2(c.right() - 24.0, y), vec2(24.0, ROW));
@@ -637,7 +649,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
             0.0,
         );
         if r.clicked() {
-            open_dropdown(ui, win, Dropdown::Resolution, b);
+            open_dropdown(ui, dropdown, Dropdown::Resolution, b);
         }
     }
     y += ROW + GAP;
@@ -663,7 +675,7 @@ fn draw(ui: &mut Ui, frame: &Frame, win: &mut NpWindow, v: &View, actions: &mut 
         0.0,
     );
     if r.clicked() {
-        open_dropdown(ui, win, Dropdown::Normal, b);
+        open_dropdown(ui, dropdown, Dropdown::Normal, b);
     }
     y += ROW + GAP;
 
@@ -875,6 +887,7 @@ fn draw_materials(
 fn draw_drafts(
     ui: &mut Ui,
     win: &mut NpWindow,
+    dropdown: &mut OpenDropdown,
     v: &View,
     left: f32,
     width: f32,
@@ -995,7 +1008,7 @@ fn draw_drafts(
             0.0,
         );
         if r.clicked() {
-            open_dropdown(&child, win, Dropdown::DraftSize(i), b);
+            open_dropdown(&child, dropdown, Dropdown::DraftSize(i), b);
         }
         // マテリアル
         let (shown_material, material_tip) = match d.material.and_then(|g| v.groups.get(g)) {
@@ -1035,7 +1048,7 @@ fn draw_drafts(
             0.0,
         );
         if r.clicked() {
-            open_dropdown(&child, win, Dropdown::DraftMaterial(i), b);
+            open_dropdown(&child, dropdown, Dropdown::DraftMaterial(i), b);
         }
         // 消す
         let last = count <= 1;
@@ -1088,8 +1101,8 @@ fn draw_drafts(
     *y += ROW + GAP;
 }
 
-fn open_dropdown(ui: &Ui, win: &mut NpWindow, kind: Dropdown, anchor: Rect) {
-    win.dropdown = Some((
+fn open_dropdown(ui: &Ui, dropdown: &mut OpenDropdown, kind: Dropdown, anchor: Rect) {
+    *dropdown = Some((
         kind,
         PopupState::new(ui.ctx(), anchor).with_min_width(anchor.width()),
     ));
@@ -1190,8 +1203,14 @@ fn dropdown_entries(win: &NpWindow, v: &View, kind: Dropdown) -> Vec<Entry<NpAct
     }
 }
 
-fn dropdown_popup(ctx: &egui::Context, win: &mut NpWindow, v: &View, actions: &mut Vec<NpAction>) {
-    let Some((kind, mut state)) = win.dropdown.take() else {
+fn dropdown_popup(
+    ctx: &egui::Context,
+    dropdown: &mut OpenDropdown,
+    win: &NpWindow,
+    v: &View,
+    actions: &mut Vec<NpAction>,
+) {
+    let Some((kind, mut state)) = dropdown.take() else {
         return;
     };
     let entries = dropdown_entries(win, v, kind);
@@ -1202,7 +1221,7 @@ fn dropdown_popup(ctx: &egui::Context, win: &mut NpWindow, v: &View, actions: &m
         &entries,
         &[],
     ) {
-        PopupOutcome::Open | PopupOutcome::Step(_) => win.dropdown = Some((kind, state)),
+        PopupOutcome::Open | PopupOutcome::Step(_) => *dropdown = Some((kind, state)),
         PopupOutcome::Chosen(action) => actions.push(action),
         PopupOutcome::Close => {}
     }

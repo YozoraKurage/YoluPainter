@@ -82,4 +82,9 @@ pub struct UiState {
     pub sel_dialog_offset: egui::Vec2,
     /// 選択範囲の帯をドラッグでずらした量（初めの位置から。選択範囲を外すと戻る。`selection::bar`）。
     pub sel_bar_offset: egui::Vec2,
+    /// 最後に 3D ビューを描いたウィンドウ（G/R/S は、このウィンドウのキーとポインタで動かす。`panels::view3d` が入れる）。
+    pub view3d_viewport: Option<egui::ViewportId>,
+    /// 新規プロジェクト・構成のウィンドウで開いているドロップダウン（`newproject::window`）。ウィンドウを開くとき
+    /// （`NpWindow` を作るとき）とモデルを選び直したときに閉じる。
+    pub np_dropdown: Option<(crate::newproject::Dropdown, crate::ui::menu::PopupState)>,
 }
