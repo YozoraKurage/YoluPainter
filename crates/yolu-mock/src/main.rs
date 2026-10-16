@@ -2,7 +2,7 @@
 //!
 //!   cargo run -p yolu-mock -- --list
 //!   cargo run -p yolu-mock -- --panel layers [--lang ja|en] [--size 360x720] [--scene empty|layers]
-//!   cargo run -p yolu-mock -- --sketch example-layers-b [--png out.png]
+//!   cargo run -p yolu-mock -- --sketch layers-c [--png out.png]
 //!   cargo run -p yolu-mock -- --gallery [--png out.png]
 //!
 //! - `--list`: 本物のパネル（ドックのタブ。`panel <名前>`）・下書き（`sketch <名前>`）・見本帳（`gallery`）を 1 行に 1 つ出して終わる。

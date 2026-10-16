@@ -136,7 +136,7 @@ fn list_names_the_panels_the_sketches_and_the_gallery() {
         .collect();
     assert_eq!(panels, PANELS, "タブの名前と順は前と同じ");
     let sketches = sketch_names();
-    for want in ["example-layers-a", "example-layers-b"] {
+    for want in ["example-layers-a", "layers-c"] {
         assert!(sketches.iter().any(|s| s == want), "{want}");
     }
     assert!(lines.iter().any(|l| l == "gallery"));
@@ -235,7 +235,7 @@ fn capturing_writes_nothing_to_the_users_folders() {
     std::fs::create_dir_all(&outputs).unwrap();
     for (i, args) in [
         &["--gallery"][..],
-        &["--sketch", "example-layers-b"],
+        &["--sketch", "layers-c"],
         &["--panel", "assets"],
     ]
     .iter()

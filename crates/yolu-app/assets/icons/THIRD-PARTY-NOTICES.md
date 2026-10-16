@@ -23,6 +23,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `blur_on` | fluent | `blur` | regular |
 | `check` | fluent | `checkmark` | regular |
 | `chevron_right` | fluent | `chevron_right` | regular |
+| `clip_below` | phosphor | `selection-foreground` | regular |
 | `close` | fluent | `dismiss` | regular |
 | `color_square` | fluent | `square` | regular |
 | `content_copy` | fluent | `copy` | regular |

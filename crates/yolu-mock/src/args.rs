@@ -240,21 +240,13 @@ mod tests {
     #[test]
     fn the_sketch_options_are_read() {
         let options = show(&[
-            "--sketch",
-            "example-layers-b",
-            "--png",
-            "out.png",
-            "--lang",
-            "en",
-            "--size",
-            "300x600",
-            "--scale",
-            "2",
+            "--sketch", "layers-c", "--png", "out.png", "--lang", "en", "--size", "300x600",
+            "--scale", "2",
         ]);
         assert_eq!(
             options,
             Options {
-                target: Target::Sketch("example-layers-b"),
+                target: Target::Sketch("layers-c"),
                 png: Some(PathBuf::from("out.png")),
                 lang: Lang::En,
                 size: [300.0, 600.0],

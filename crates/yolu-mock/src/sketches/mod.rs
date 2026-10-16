@@ -6,7 +6,7 @@
 use crate::page::Draw;
 
 mod example_layers_a;
-mod example_layers_b;
+mod layers_c;
 pub(crate) mod layers_common;
 
 /// 登録した下書き 1 つ。
@@ -25,9 +25,9 @@ pub const SKETCHES: &[Sketch] = &[
         draw: example_layers_a::draw,
     },
     Sketch {
-        name: "example-layers-b",
-        title: ("レイヤー", "Layers"),
-        draw: example_layers_b::draw,
+        name: "layers-c",
+        title: ("レイヤーの欄（案 C）", "Layers (option C)"),
+        draw: layers_c::draw,
     },
 ];
 

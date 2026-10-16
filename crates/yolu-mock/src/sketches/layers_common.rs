@@ -1,4 +1,4 @@
-//! レイヤーの欄の下書き（A・B）が共通で使う、ダミーの行と、行・操作の帯の描き方。部品は `yolu_app::ui::widgets` の物だけ。
+//! レイヤーの欄の下書き（A・C）が共通で使う、ダミーの行と、行・操作の帯の描き方。部品は `yolu_app::ui::widgets` の物だけ。
 
 use egui::{pos2, vec2, Color32, Painter, Rect, Sense, Ui};
 use yolu_app::ui::theme as t;

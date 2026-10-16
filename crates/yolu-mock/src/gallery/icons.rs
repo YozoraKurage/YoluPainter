@@ -69,6 +69,7 @@ pub const NAMES: &[&str] = &[
     "accessibility",
     "anchor",
     "auto_awesome",
+    "clip_below",
     "tools/brush",
     "tools/brush_selected",
     "tools/eraser",

@@ -119,8 +119,8 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
 フォントを変更して配る場合は、予約されたフォント名などの条件を再確認する。
 Fluent UI System Icons と Phosphor Icons は MIT。
 [既存のアイコンの表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/icons/THIRD-PARTY-NOTICES.md) も app の全文束に含める。
-アイコン 118 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
-Phosphor はブラシ・グラデーション・長方形選択・楕円選択・多角形選択・選択ペン・ID 選択・アンカーと、スナップのアイコンの磁石に使っている。
+アイコン 119 個は下表のクレート件数には含めない。各 PNG と Fluent・Phosphor の元の名前・太さの対応は上の表記に記載する。
+Phosphor はブラシ・グラデーション・長方形選択・楕円選択・多角形選択・選択ペン・ID 選択・アンカー・クリッピングと、スナップのアイコンの磁石に使っている。
 
 ### 同梱の画面のフォント（BIZ UDPGothic）
 
