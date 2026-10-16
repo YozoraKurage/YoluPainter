@@ -103,3 +103,69 @@ pub fn sweep(ctx: &Context) {
         .0
         .retain(|_, held| held.owner.strong_count() > 0);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Color32, ColorImage};
+
+    fn allocated(ctx: &Context) -> usize {
+        ctx.tex_manager().read().num_allocated()
+    }
+
+    #[test]
+    fn sweep_frees_only_the_textures_whose_slot_was_dropped() {
+        let ctx = Context::default();
+        let before = allocated(&ctx);
+        let image = || ColorImage::new([2, 2], vec![Color32::WHITE; 4]);
+        let kept = UiSlot::new();
+        let dropped = UiSlot::new();
+        let _ = load_texture(&ctx, &kept, "kept", image(), TextureOptions::LINEAR);
+        let _ = load_texture(&ctx, &dropped, "dropped", image(), TextureOptions::LINEAR);
+        assert_eq!(allocated(&ctx), before + 2);
+        // 印が生きている間は、何度 sweep しても捨てない
+        sweep(&ctx);
+        sweep(&ctx);
+        assert!(texture(&ctx, &kept).is_some() && texture(&ctx, &dropped).is_some());
+        assert_eq!(allocated(&ctx), before + 2);
+        // 印を捨てても、sweep までは残る
+        drop(dropped);
+        assert_eq!(Store::of(&ctx).lock().0.len(), 2);
+        sweep(&ctx);
+        assert_eq!(Store::of(&ctx).lock().0.len(), 1);
+        assert_eq!(
+            allocated(&ctx),
+            before + 1,
+            "捨てた印のテクスチャを解放する"
+        );
+        assert!(texture_id(&ctx, &kept).is_some());
+        drop(kept);
+        sweep(&ctx);
+        assert_eq!(Store::of(&ctx).lock().0.len(), 0);
+        assert_eq!(allocated(&ctx), before);
+    }
+
+    #[test]
+    fn a_slot_holds_one_value_and_a_different_type_replaces_it() {
+        let ctx = Context::default();
+        let slot = UiSlot::new();
+        let store = Store::of(&ctx);
+        *store.lock().get_or_default::<u32>(&slot) = 7;
+        assert_eq!(store.lock().get::<u32>(&slot).copied(), Some(7));
+        assert!(
+            store.lock().get::<String>(&slot).is_none(),
+            "型が違えば None"
+        );
+        store.lock().get_or_default::<String>(&slot).push('a');
+        assert!(
+            store.lock().get::<u32>(&slot).is_none(),
+            "型の違う物を置き直す"
+        );
+        assert_eq!(store.lock().0.len(), 1);
+        // 写しの表も、同じ Context の表も、同じ物を指す
+        assert_eq!(
+            Store::of(&ctx).lock().get::<String>(&slot).cloned(),
+            Some("a".to_string())
+        );
+    }
+}
