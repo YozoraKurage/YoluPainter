@@ -17,6 +17,7 @@ use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
 
+pub mod key;
 mod outbox;
 mod services;
 mod ui_state;

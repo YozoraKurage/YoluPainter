@@ -25,6 +25,8 @@ use crate::lang::Lang;
 use crate::state::{Action, AppState, Tool};
 use crate::toolkeys::ToolKeyMode;
 
+mod key_egui;
+
 // ───────── キーボードの割り当て ─────────
 
 /// 割り当てが効く条件。
