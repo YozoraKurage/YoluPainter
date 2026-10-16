@@ -1034,79 +1034,179 @@ fn texture(
                 .and_then(|r| r.picks.first().copied().flatten())
         }
     };
-    let invert = row.on(TEXTURE_REVERSE);
-    let tone = texture_tone(row);
+    let (texture, events) = paper(
+        row,
+        &MAIN_TEXTURE,
+        pick,
+        &format!("{name} texture"),
+        library,
+        budget,
+    )?;
+    for event in events {
+        let note = match event {
+            TextureEvent::Missing => SutNote::TextureMissing,
+            TextureEvent::Proprietary => SutNote::ProprietaryImage,
+            TextureEvent::Guessed => SutNote::TextureGuessed,
+            TextureEvent::Mode => SutNote::TextureMode,
+            TextureEvent::Mapped => {
+                mapped.push(SutMapped::Texture);
+                continue;
+            }
+            TextureEvent::Rotated => {
+                mapped.push(SutMapped::TextureRotation);
+                continue;
+            }
+            TextureEvent::Toned => {
+                mapped.push(SutMapped::TextureTone);
+                SutNote::TextureToneApprox
+            }
+            TextureEvent::Preview => SutNote::PreviewImage,
+            TextureEvent::EachTip => SutNote::TextureEachTip,
+        };
+        let note = Unrepresented::ClipStudio(note);
+        if !(event.once() && notes.contains(&note)) {
+            notes.push(note);
+        }
+    }
+    brush.texture = texture;
+    Ok(())
+}
+
+/// 紙質の列の名前（主は `Texture…`、2 つ目は `DualTexture…`）。画像の参照の列は呼び手が読む。
+struct TextureColumns {
+    reverse: &'static [&'static str],
+    brightness: &'static [&'static str],
+    contrast: &'static [&'static str],
+    density: &'static [&'static str],
+    scale: &'static [&'static str],
+    mode: &'static [&'static str],
+    rotate: &'static [&'static str],
+    each_tip: &'static [&'static str],
+}
+
+const MAIN_TEXTURE: TextureColumns = TextureColumns {
+    reverse: TEXTURE_REVERSE,
+    brightness: TEXTURE_BRIGHTNESS,
+    contrast: TEXTURE_CONTRAST,
+    density: TEXTURE_DENSITY,
+    scale: TEXTURE_SCALE,
+    mode: TEXTURE_MODE,
+    rotate: TEXTURE_ROTATE,
+    each_tip: TEXTURE_EACH_TIP,
+};
+
+/// 紙質を写すときに出た事（出た順。呼び手が自分の知らせ・写せた項目へ直す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TextureEvent {
+    /// 素材を決められない・画像を取り出せない（質感なし）。
+    Missing,
+    /// 素材の画像が CLIP STUDIO 独自の入れ物にだけある素材がファイルにある（`Missing` の後だけ）。
+    Proprietary,
+    /// 素材を並びで当てた（推定）。
+    Guessed,
+    /// 合わせ方に同じ物が無い（乗算にした）。
+    Mode,
+    /// 質感を写した。
+    Mapped,
+    /// 回転を写した。
+    Rotated,
+    /// 明るさ・コントラストを画像へ焼き込んだ。
+    Toned,
+    /// 画像は素材のプレビューから取った。
+    Preview,
+    /// 描点ごとに適用（写さない）。
+    EachTip,
+}
+
+impl TextureEvent {
+    /// 1 つのブラシで 1 度だけ知らせる事（筆先と質感で同じ知らせになる）。
+    fn once(self) -> bool {
+        matches!(self, TextureEvent::Proprietary | TextureEvent::Preview)
+    }
+}
+
+/// 決めた素材 `pick`（None は決められない）から紙質を作る（主と 2 つ目で同じ処理）: 画像（濃度反転・明るさとコントラストを焼き込む）・
+/// 濃度・拡大率・合わせ方・回転を、列 `cols` から読む。
+fn paper(
+    row: &Row,
+    cols: &TextureColumns,
+    pick: Option<Pick>,
+    label: &str,
+    library: &mut Library<'_>,
+    budget: &mut Budget,
+) -> Result<(Option<PaperTexture>, Vec<TextureEvent>), Fault> {
+    let mut events = Vec::new();
+    let invert = row.on(cols.reverse);
+    let tone = texture_tone(row, cols);
     let found = match pick {
         Some((index, by_order)) => library
-            .texture(index, &format!("{name} texture"), invert, tone, budget)?
+            .texture(index, label, invert, tone, budget)?
             .map(|(image, preview)| (image, preview, by_order)),
         None => None,
     };
     let Some((image, preview, guessed)) = found else {
-        notes.push(Unrepresented::ClipStudio(SutNote::TextureMissing));
-        let note = Unrepresented::ClipStudio(SutNote::ProprietaryImage);
-        if library.any_proprietary()? && !notes.contains(&note) {
-            notes.push(note);
+        events.push(TextureEvent::Missing);
+        if library.any_proprietary()? {
+            events.push(TextureEvent::Proprietary);
         }
-        return Ok(());
+        return Ok((None, events));
     };
     if guessed {
-        notes.push(Unrepresented::ClipStudio(SutNote::TextureGuessed));
+        events.push(TextureEvent::Guessed);
     }
-    let depth = percent(row, TEXTURE_DENSITY).map_or(1.0, |d| d.clamp(0.0, 1.0));
+    let depth = percent(row, cols.density).map_or(1.0, |d| d.clamp(0.0, 1.0));
     let scale = row
-        .first_number(TEXTURE_SCALE)
+        .first_number(cols.scale)
         .map(ratio)
         .filter(|s| *s > 0.0)
         .unwrap_or(1.0)
         .clamp(0.05, 64.0);
     // 合わせ方: 列が無ければ乗算（今まで通り）。同じ名前のモードがあれば写し、無ければ乗算にして知らせる
-    let mode = match row.first_number(TEXTURE_MODE) {
+    let mode = match row.first_number(cols.mode) {
         None => yolu_core::TextureMode::Multiply,
         Some(value) => texture_mode(value).unwrap_or_else(|| {
-            notes.push(Unrepresented::ClipStudio(SutNote::TextureMode));
+            events.push(TextureEvent::Mode);
             yolu_core::TextureMode::Multiply
         }),
     };
     // 回転は度（反時計回りは未確認。0 は回さない）。画像は回さず、読む位置を回す
     let angle = row
-        .first_number(TEXTURE_ROTATE)
+        .first_number(cols.rotate)
         .filter(|v| v.is_finite() && *v != 0.0)
         .map_or(0.0, |v| v.rem_euclid(360.0));
-    brush.texture = Some(PaperTexture {
+    events.push(TextureEvent::Mapped);
+    if angle != 0.0 {
+        events.push(TextureEvent::Rotated);
+    }
+    if !tone.is_none() {
+        events.push(TextureEvent::Toned);
+    }
+    if preview {
+        events.push(TextureEvent::Preview);
+    }
+    if row.on(cols.each_tip) {
+        events.push(TextureEvent::EachTip);
+    }
+    let texture = PaperTexture {
         image,
         depth,
         scale,
         mode,
         angle,
-    });
-    mapped.push(SutMapped::Texture);
-    if angle != 0.0 {
-        mapped.push(SutMapped::TextureRotation);
-    }
-    if !tone.is_none() {
-        mapped.push(SutMapped::TextureTone);
-        notes.push(Unrepresented::ClipStudio(SutNote::TextureToneApprox));
-    }
-    if preview && !notes.contains(&Unrepresented::ClipStudio(SutNote::PreviewImage)) {
-        notes.push(Unrepresented::ClipStudio(SutNote::PreviewImage));
-    }
-    if row.on(TEXTURE_EACH_TIP) {
-        notes.push(Unrepresented::ClipStudio(SutNote::TextureEachTip));
-    }
-    Ok(())
+    };
+    Ok((Some(texture), events))
 }
 
 /// 質感の明るさ・コントラスト（どちらも -100〜100 の整数に収める）。両方 0（か列が無い）なら補正なし。
-fn texture_tone(row: &Row) -> Tone {
+fn texture_tone(row: &Row, cols: &TextureColumns) -> Tone {
     let value = |names: &[&str]| {
         row.first_number(names)
             .filter(|v| v.is_finite())
             .map_or(0, |v| v.round().clamp(-100.0, 100.0) as i32)
     };
     Tone {
-        brightness: value(TEXTURE_BRIGHTNESS),
-        contrast: value(TEXTURE_CONTRAST),
+        brightness: value(cols.brightness),
+        contrast: value(cols.contrast),
     }
 }
 
@@ -1142,39 +1242,81 @@ fn flip_method(value: f64) -> Option<(bool, FlipRule)> {
     }
 }
 
-/// 筆先の繰り返し方法を写す。2 枚以上のときは並びの選び方になる。列が無い・知らない値は、乱数にして知らせる。
-/// 1 枚のときは、止まる設定（一巡のみ・ランダムに一巡）だけが効く（ほかは何枚目を選んでも同じ筆先）。
-/// 止まる設定は、1 枚を並び（`images`）へ移して、最初のダブのあとを置かないようにする。
-fn tip_order(
+/// 筆先の繰り返し方法と反転の写し先（主の筆先と 2 つ目の筆先）。
+struct TipTarget<'a> {
+    image: &'a mut Option<Arc<BrushTip>>,
+    images: &'a mut Vec<Arc<BrushTip>>,
+    selection: &'a mut TipSelection,
+    flip_x: (&'a mut bool, &'a mut FlipRule),
+    flip_y: (&'a mut bool, &'a mut FlipRule),
+}
+
+/// 繰り返し方法と反転を写すときに出た事（出た順。呼び手が自分の知らせ・写せた項目へ直す）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TipEvent {
+    /// 繰り返し方法を写した。
+    Order,
+    /// 繰り返し方法を写したが、近い動き（折り返し・ランダムに一巡）。
+    OrderApprox,
+    /// 繰り返し方法を読めなかった（列が無い・知らない値。ランダムのまま）。
+    OrderUnknown,
+    /// 反転を写した。
+    Flip,
+    /// 反転が知らない値（反転しない）。
+    FlipUnknown,
+}
+
+/// 筆先の繰り返し方法（列 `order`）と左右・上下の反転（列 `reverse`）を写す（主と 2 つ目で同じ処理）。2 枚以上のときは並びの選び方に
+/// なる。列が無い・知らない値は、乱数にして知らせる。1 枚のときは、止まる設定（一巡のみ・ランダムに一巡）だけが効く（ほかは何枚目を
+/// 選んでも同じ筆先）。止まる設定は、1 枚を並び（`images`）へ移して、最初のダブのあとを置かないようにする。反転は筆先の画像にだけ効く
+/// （丸い筆先は反転しても同じ）。
+fn tip_order_and_flips(
     row: &Row,
-    brush: &mut Brush,
-    notes: &mut Vec<Unrepresented>,
-    mapped: &mut Vec<SutMapped>,
-) {
-    let single = brush.tip.images.is_empty() && brush.tip.image.is_some();
-    if !single && brush.tip.images.len() < 2 {
-        return;
-    }
-    let method = row.first_number(PATTERN_ORDER).and_then(repeat_method);
-    if single {
-        // 1 枚の一巡のみ・ランダムに一巡は同じ動き（最初のダブだけ）なので、近い動きの知らせは要らない
-        if let Some((selection @ (TipSelection::Once | TipSelection::Shuffle), _)) = method {
-            brush.tip.images = brush.tip.image.take().into_iter().collect();
-            brush.tip.selection = selection;
-            mapped.push(SutMapped::TipOrder);
-        }
-        return;
-    }
-    match method {
-        Some((selection, approximate)) => {
-            brush.tip.selection = selection;
-            mapped.push(SutMapped::TipOrder);
-            if approximate {
-                notes.push(Unrepresented::ClipStudio(SutNote::TipOrderApprox));
+    order: &[&str],
+    reverse: [&[&str]; 2],
+    t: TipTarget<'_>,
+) -> Vec<TipEvent> {
+    let mut events = Vec::new();
+    let single = t.images.is_empty() && t.image.is_some();
+    if single || t.images.len() >= 2 {
+        let method = row.first_number(order).and_then(repeat_method);
+        if single {
+            // 1 枚の一巡のみ・ランダムに一巡は同じ動き（最初のダブだけ）なので、近い動きの知らせは要らない
+            if let Some((selection @ (TipSelection::Once | TipSelection::Shuffle), _)) = method {
+                *t.images = t.image.take().into_iter().collect();
+                *t.selection = selection;
+                events.push(TipEvent::Order);
+            }
+        } else {
+            match method {
+                Some((selection, approximate)) => {
+                    *t.selection = selection;
+                    events.push(TipEvent::Order);
+                    if approximate {
+                        events.push(TipEvent::OrderApprox);
+                    }
+                }
+                None => events.push(TipEvent::OrderUnknown),
             }
         }
-        None => notes.push(Unrepresented::ClipStudio(SutNote::TipOrder)),
     }
+    if t.image.is_some() || !t.images.is_empty() {
+        for (columns, (fixed, rule)) in reverse.into_iter().zip([t.flip_x, t.flip_y]) {
+            let Some(value) = row.first_number(columns) else {
+                continue;
+            };
+            let Some((always, method)) = flip_method(value) else {
+                events.push(TipEvent::FlipUnknown);
+                continue;
+            };
+            if !always && method == FlipRule::Fixed {
+                continue;
+            }
+            (*fixed, *rule) = (always, method);
+            events.push(TipEvent::Flip);
+        }
+    }
+    events
 }
 
 /// 筆先の繰り返し方法・左右上下の反転・先端同士の比較暗を写す。
@@ -1184,29 +1326,30 @@ fn tip_rules(
     notes: &mut Vec<Unrepresented>,
     mapped: &mut Vec<SutMapped>,
 ) {
-    tip_order(row, brush, notes, mapped);
-    // 反転は筆先の画像にだけ効く（丸い筆先は反転しても同じ）
-    if brush.tip.image.is_some() || !brush.tip.images.is_empty() {
-        for (columns, vertical) in [(PATTERN_REVERSE_H, false), (PATTERN_REVERSE_V, true)] {
-            let Some(value) = row.first_number(columns) else {
-                continue;
-            };
-            let Some((always, rule)) = flip_method(value) else {
-                notes.push(Unrepresented::ClipStudio(SutNote::TipFlip));
-                continue;
-            };
-            if !always && rule == FlipRule::Fixed {
-                continue;
+    let tip = &mut brush.tip;
+    let events = tip_order_and_flips(
+        row,
+        PATTERN_ORDER,
+        [PATTERN_REVERSE_H, PATTERN_REVERSE_V],
+        TipTarget {
+            image: &mut tip.image,
+            images: &mut tip.images,
+            selection: &mut tip.selection,
+            flip_x: (&mut tip.flip_x, &mut tip.flip_x_rule),
+            flip_y: (&mut tip.flip_y, &mut tip.flip_y_rule),
+        },
+    );
+    for event in events {
+        match event {
+            TipEvent::Order => mapped.push(SutMapped::TipOrder),
+            TipEvent::OrderApprox => notes.push(Unrepresented::ClipStudio(SutNote::TipOrderApprox)),
+            TipEvent::OrderUnknown => notes.push(Unrepresented::ClipStudio(SutNote::TipOrder)),
+            TipEvent::Flip => {
+                if !mapped.contains(&SutMapped::TipFlip) {
+                    mapped.push(SutMapped::TipFlip);
+                }
             }
-            let tip = &mut brush.tip;
-            if vertical {
-                (tip.flip_y, tip.flip_y_rule) = (always, rule);
-            } else {
-                (tip.flip_x, tip.flip_x_rule) = (always, rule);
-            }
-            if !mapped.contains(&SutMapped::TipFlip) {
-                mapped.push(SutMapped::TipFlip);
-            }
+            TipEvent::FlipUnknown => notes.push(Unrepresented::ClipStudio(SutNote::TipFlip)),
         }
     }
     // 先端同士の比較暗は、丸い筆先でも、重なるダブに効く

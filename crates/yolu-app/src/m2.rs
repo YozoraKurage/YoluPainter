@@ -1325,6 +1325,8 @@ impl AppState {
             BrushOp::DualTip(id) => {
                 if let Some(d) = &mut b.dual {
                     d.tip = id.and_then(yolu_core::builtin_tip);
+                    // 2 つ目の複数の筆先が残っていると、1 枚の選びが効かない（主の Tip と同じ）
+                    d.tips.clear();
                 }
             }
             BrushOp::DualMode(mode) => {
@@ -2004,6 +2006,37 @@ mod tests {
             let stroke = s.begin_paint_stroke(id, eraser).unwrap();
             s.session.doc.cancel_stroke(stroke);
         }
+    }
+
+    #[test]
+    fn picking_a_second_tip_replaces_the_second_tips_a_brush_already_has() {
+        use crate::brushes::sample::{render, SampleSpec};
+        let mut s = app();
+        let tip = |id| yolu_core::builtin_tip(id).unwrap();
+        s.m2.brush.dual = Some(DualBrush {
+            tips: vec![tip("charcoal"), tip("dots")],
+            ..DualBrush::default()
+        });
+        s.m2_ui(UiOp::Brush(BrushOp::DualTip(Some("noisy-disc"))));
+        let d = s.m2.brush.dual.as_ref().unwrap();
+        assert!(d.tips.is_empty(), "並びが残ると選んだ筆先が使われない");
+        assert_eq!(d.tip.as_ref().unwrap().name(), tip("noisy-disc").name());
+        // 描くのも、最初から 1 枚だけのデュアルと同じ
+        let one = Brush {
+            dual: Some(DualBrush {
+                tip: Some(tip("noisy-disc")),
+                ..DualBrush::default()
+            }),
+            ..Brush::default()
+        };
+        let spec = SampleSpec::row(false);
+        let mut chosen = s.m2.brush.clone();
+        chosen.dual.as_mut().unwrap().tip = Some(tip("noisy-disc"));
+        assert_eq!(render(&chosen, spec).unwrap(), render(&one, spec).unwrap());
+        // 選び直さなかった並び付きのデュアルは、1 枚のものと違う見え方になる（上の比べが空振りでない）
+        let mut kept = one.clone();
+        kept.dual.as_mut().unwrap().tips = vec![tip("charcoal"), tip("dots")];
+        assert_ne!(render(&kept, spec).unwrap(), render(&one, spec).unwrap());
     }
 
     #[test]

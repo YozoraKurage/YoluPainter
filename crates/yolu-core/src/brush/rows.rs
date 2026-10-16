@@ -1474,6 +1474,28 @@ unsafe fn texture_scale<V: Slice32>(g: &Grain<'_>, depth: f32, base: f32, px: V:
     }
 }
 
+/// 乗算でない紙の質感: 値 c（主は天井、2 つ目は溜まりへ置く覆い）と質感の値 grain を合わせ方 mode で合わせ、深さ depth で c との間を取る。
+#[inline(always)]
+pub(super) fn paper_blend(mode: DualBrushMode, c: f32, grain: f32, depth: f32) -> f32 {
+    c + (combine32(mode, c, grain) - c) * depth
+}
+
+/// 2 つ目の溜まりへ置く覆い c に、2 つ目の紙の質感 tex（深さ depth、行の読み grain）の画素 x の値を掛ける。主の天井と同じ式・同じ関数:
+/// 乗算は c × (1 − 深さ × (1 − 質感))（[`texture_scale_one`] の倍率 1）、ほかは [`paper_blend`]。
+#[inline]
+pub(super) fn dual_textured(
+    tex: &PaperTexture,
+    grain: &Grain<'_>,
+    depth: f32,
+    c: f32,
+    x: i64,
+) -> f32 {
+    match tex.mode.as_blend() {
+        None => c * texture_scale_one(grain, depth, 1.0, x),
+        Some(mode) => paper_blend(mode, c, grain_one(grain, x), depth),
+    }
+}
+
 /// 画素ごとの式の、乗算の紙の質感の係数（[`texture_row`] の 1 画素と同じ値）。
 pub(super) fn texture_scale_one(g: &Grain<'_>, depth: f32, base: f32, px: i64) -> f32 {
     // SAFETY: 1 本のレーンは CPU の前提を持たない
@@ -1839,8 +1861,8 @@ pub(super) fn dual_cover_shape<'a>(shape: &DualShape<'a>) -> DabShape<'a> {
         flow_scale: 1.0,
         tip: shape.tip,
         plain: false,
-        flip_x: false,
-        flip_y: false,
+        flip_x: shape.flip_x,
+        flip_y: shape.flip_y,
         texture: None,
         texture_density: 1.0,
         dual: None,
@@ -1877,6 +1899,12 @@ unsafe fn dual_rows<V: Slice32>(
         if shape.flow != 1.0 {
             let flow = shape.flow as f32;
             cov[lo..hi].iter_mut().for_each(|v| *v *= flow);
+        }
+        if let Some(tex) = shape.texture {
+            let (grain, depth) = (Grain::new(tex, py), tex.depth as f32);
+            for (i, v) in cov[lo..hi].iter_mut().enumerate() {
+                *v = dual_textured(tex, &grain, depth, *v, xs.0 + (lo + i) as i64);
+            }
         }
         if cells.is_none() {
             if !cov[lo..hi].iter().any(|&c| c > 0.0) {

@@ -394,11 +394,22 @@ impl StrokeState {
         let ts = self.tile_size;
         for (t, x0, x1, y0, y1) in bounds {
             for py in y0..=y1 {
+                // 2 つ目の紙の質感は、写した先の文書の画素で読む（主の質感と同じくキャンバスに固定）
+                let grain = shape.texture.map(|tex| (tex, rows::Grain::new(tex, py)));
                 for px in x0..=x1 {
                     let (ox, oy) = t.inverse(px as f64 + 0.5, py as f64 + 0.5);
                     let mut coverage = shape.coverage_at(ox - shape.x, oy - shape.y);
                     if shape.flow != 1.0 {
                         coverage *= shape.flow;
+                    }
+                    if let Some((tex, g)) = &grain {
+                        coverage = f64::from(rows::dual_textured(
+                            tex,
+                            g,
+                            tex.depth as f32,
+                            coverage as f32,
+                            px,
+                        ));
                     }
                     if coverage <= 0.0 {
                         continue;

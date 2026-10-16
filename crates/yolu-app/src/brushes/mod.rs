@@ -221,21 +221,34 @@ pub fn canonical(brush: &Brush) -> Brush {
         symmetry: CanvasSymmetry::default(),
         model_symmetry: None,
         // 散布効果は保存と同じ f32 の精度に丸める
-        spray: brush.spray.map(|s| yolu_core::Spray {
-            size: f(s.size),
-            density: f(s.density),
-            bias: f(s.bias),
-            angle: f(s.angle),
-            random_angle: s.random_angle.map(f),
-            ..s
-        }),
+        spray: brush.spray.map(spray_f32),
         // デュアルブラシのバージョン 8 の値は保存と同じ f32 の精度に丸める（今までの値は f64 のまま書く）
         dual: brush.dual.clone().map(|d| yolu_core::DualBrush {
             flow: f(d.flow),
             angle_random: f(d.angle_random),
+            texture: d.texture.clone().map(|t| yolu_core::PaperTexture {
+                depth: f(t.depth),
+                scale: f(t.scale),
+                angle: f(t.angle),
+                ..t
+            }),
+            spray: d.spray.map(spray_f32),
             ..d
         }),
         ..brush.clone()
+    }
+}
+
+/// 散布効果を保存と同じ f32 の精度に丸める（主と 2 つ目の散布）。
+fn spray_f32(s: yolu_core::Spray) -> yolu_core::Spray {
+    let f = |v: f64| v as f32 as f64;
+    yolu_core::Spray {
+        size: f(s.size),
+        density: f(s.density),
+        bias: f(s.bias),
+        angle: f(s.angle),
+        random_angle: s.random_angle.map(f),
+        ..s
     }
 }
 

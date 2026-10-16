@@ -77,7 +77,9 @@ use crate::brush::{
     InputResponse, Item, PendingDab, ShapeCoverage, SprayFrame, StampControls, SurfaceDabLook,
     TexelMetric, TipRun, DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
-use crate::brush::{lifted_link, DualLook, DualRun};
+use crate::brush::{
+    dual_spot, dual_textured_at, lifted_link, DualLook, DualPlace, DualRun, DualTips,
+};
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
     StencilPoint, Stroke, SymmetryTransform,
@@ -293,13 +295,28 @@ impl DualCells {
     }
 }
 
+/// 並べて、まだ置いていない 2 つ目のダブ。
+#[derive(Clone, Copy)]
+struct QueuedDual {
+    /// 画面の点。
+    at: Vec2,
+    /// 線の長さ。
+    arc: f64,
+    /// 並べた区間の線の向き（散布の粒子の向きの「線の方向」）。
+    direction: f64,
+    /// その時の画面の大きさ（まだ面に当たっていなければ None）。
+    scale: Option<f32>,
+    look: DualLook,
+}
+
 /// デュアルブラシ（2D と同じく、同じ道筋に自分の間隔・散布・数で 2 つ目のダブを先に並べ、テクセルごとの最大を溜める）。
 struct DualState {
     random: NetRandom,
     /// 2 つ目のダブの見え方の進み（2D と同じ [`DualRun`]）。
     run: DualRun,
-    /// 並べて、まだ置いていない 2 つ目のダブ: 画面の点・線の長さ・その時の画面の大きさ・見え方。
-    pending: VecDeque<(Vec2, f64, Option<f32>, DualLook)>,
+    /// 2 つ目の筆先の選び・反転・散布の進み（2D と同じ [`DualTips`]）。
+    tips: DualTips,
+    pending: VecDeque<QueuedDual>,
     /// 2 つ目の筆先の半径（モデルの単位。大きさは筆圧・ゆらぎ・入り抜きの影響を受けない）。
     world_radius: f32,
     cells: DualCells,
@@ -358,6 +375,7 @@ impl DualState {
         brush.dual.as_ref().map(|d| DualState {
             random: NetRandom::new(brush.seed ^ DUAL_STREAM),
             run: DualRun::new(brush),
+            tips: DualTips::new(brush),
             pending: VecDeque::new(),
             world_radius: self::world_radius(geometry, d.radius, width),
             cells: DualCells::default(),
@@ -990,14 +1008,26 @@ impl SurfaceStroke {
         if self.dual.is_none() {
             return;
         }
-        for (ScreenDab { at, arc, .. }, look) in duals {
+        for (
+            ScreenDab {
+                at, arc, direction, ..
+            },
+            look,
+        ) in duals
+        {
             let scale = pick(&self.geometry, &self.view, at)
                 .filter(|h| self.material.is_none_or(|m| m == h.material))
                 .map(|h| self.view.world_radius_to_screen(h.position, 1.0))
                 .filter(|s| s.is_finite() && *s > 0.0)
                 .or(self.screen_scale);
             if let Some(d) = self.dual.as_mut() {
-                d.pending.push_back((at, arc, scale, look));
+                d.pending.push_back(QueuedDual {
+                    at,
+                    arc,
+                    direction,
+                    scale,
+                    look,
+                });
             }
         }
     }
@@ -1368,51 +1398,86 @@ impl SurfaceStroke {
         let Some(dual_brush) = self.brush.dual.clone() else {
             return Ok(());
         };
-        while let Some(&(at, arc, dual_scale, look)) =
-            self.dual.as_ref().and_then(|d| d.pending.front())
-        {
-            if arc > limit {
+        while let Some(&q) = self.dual.as_ref().and_then(|d| d.pending.front()) {
+            if q.arc > limit {
                 break;
             }
-            let world = {
+            let (world, count) = {
                 let d = self.dual.as_mut().expect("デュアルブラシ");
                 d.pending.pop_front();
-                d.world_radius
+                (d.world_radius, d.tips.count(&dual_brush))
             };
-            for _ in 0..dual_brush.count {
-                let (mut x, mut y) = (at.x as f64, self.up(at.y));
-                if dual_brush.scatter > 0.0 {
+            for _ in 0..count {
+                let (mut x, mut y) = (q.at.x as f64, self.up(q.at.y));
+                // 散布効果の間は、旧形の散布・数を使わない（主と同じ）
+                if dual_brush.scatter > 0.0 && dual_brush.spray.is_none() {
                     let reach =
-                        dual_scale.map_or(0.0, |s| (s * world) as f64) * 2.0 * dual_brush.scatter;
+                        q.scale.map_or(0.0, |s| (s * world) as f64) * 2.0 * dual_brush.scatter;
                     let r = &mut self.dual.as_mut().expect("デュアルブラシ").random;
                     x += (r.next_double() * 2.0 - 1.0) * reach;
                     y += (r.next_double() * 2.0 - 1.0) * reach;
                 }
-                let Some(s) = dual_scale.or(scale) else {
-                    continue;
-                };
-                let center = if x == at.x as f64 && dual_brush.scatter <= 0.0 {
-                    at
-                } else {
-                    Vec2::new(x as f32, self.down(y))
-                };
                 // 影響元・サイズの連動の係数（使わなければ 1 で、今までの大きさのまま）
-                let size = dual_brush.dab_radius(&look, link) / dual_brush.radius;
-                let radius = if size != 1.0 {
-                    (world as f64 * size) as f32
-                } else {
-                    world
-                };
+                let size = dual_brush.dab_radius(&q.look, link) / dual_brush.radius;
                 if size > 0.0 {
-                    self.dual_dab(doc, &dual_brush, center, s, radius, &look)?;
+                    self.place_dual(
+                        doc,
+                        &dual_brush,
+                        &q,
+                        dual_spot(x, y, q.direction),
+                        size,
+                        scale,
+                    )?;
                 }
             }
         }
         Ok(())
     }
 
+    /// 並べた 2 つ目のダブ q の 1 つ（旧形の散布の後。`spot` は y を上向きにした画面の点、`size` は設定の半径に掛ける係数）: 2D と同じ
+    /// 関数で筆先・反転・散布の粒子を決め、面に当たる大きさがあれば置く（大きさが無くても乱数は 2D と同じだけ進める）。
+    fn place_dual(
+        &mut self,
+        doc: &Document,
+        dual_brush: &crate::DualBrush,
+        q: &QueuedDual,
+        spot: PendingDab,
+        size: f64,
+        scale: Option<f32>,
+    ) -> Result<(), SurfaceStrokeError> {
+        let d = self.dual.as_mut().expect("デュアルブラシ");
+        // 粒子の枠: 位置は画面の点、大きさは設定の半径に掛ける係数（文書の画素 1 は 1 / 設定の半径）
+        let frame = SprayFrame {
+            reach: q.scale.map_or(0.0, |s| (s * d.world_radius) as f64),
+            ratio: 1.0,
+            radius: 1.0 / dual_brush.radius,
+            min_radius: 0.0,
+        };
+        let world = d.world_radius;
+        let Some(place) = d.tips.place(dual_brush, &spot, size, frame) else {
+            return Ok(());
+        };
+        let Some(s) = q.scale.or(scale) else {
+            return Ok(());
+        };
+        let moved =
+            (dual_brush.scatter > 0.0 && dual_brush.spray.is_none()) || place.angle.is_some();
+        let center = if place.x == q.at.x as f64 && !moved {
+            q.at
+        } else {
+            Vec2::new(place.x as f32, self.down(place.y))
+        };
+        let radius = if place.radius != 1.0 {
+            (world as f64 * place.radius) as f32
+        } else {
+            world
+        };
+        self.dual_dab(doc, dual_brush, center, s, radius, &q.look, &place)
+    }
+
     /// 2 つ目の筆先のダブ 1 つ: 画面の上の形（2D と同じ式、筆圧・ゆらぎなし）で投影の画素の覆いを出し（面の向きでは弱めない）、
     /// テクセルごとの最大を溜める。対称の写しにも置く。作れなかったら（主のダブと同じく）ストロークを取り消す `Err`。
+    #[allow(clippy::too_many_arguments)]
     fn dual_dab(
         &mut self,
         doc: &Document,
@@ -1421,13 +1486,22 @@ impl SurfaceStroke {
         scale: f32,
         world: f32,
         look: &DualLook,
+        place: &DualPlace<'_>,
     ) -> Result<(), SurfaceStrokeError> {
         if !(at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height) {
             return Ok(());
         }
         let hit = pick(&self.geometry, &self.view, at)
             .filter(|h| self.material.is_none_or(|m| m == h.material));
-        let shape = dual_brush.dab_shape_look(0.0, 0.0, (scale * world) as f64, look);
+        let shape = dual_brush.dab_shape_look(
+            &DualPlace {
+                x: 0.0,
+                y: 0.0,
+                radius: (scale * world) as f64,
+                ..*place
+            },
+            look,
+        );
         let flow = if look.flow != 1.0 {
             dual_brush.flow * look.flow
         } else {
@@ -1448,13 +1522,18 @@ impl SurfaceStroke {
         if let Some(why) = result.refusal {
             return Err(SurfaceStrokeError::Dab(why));
         }
+        let paper = dual_brush.paper();
         if let Some(d) = self.dual.as_mut() {
             for p in &result.pixels {
-                let c = if flow != 1.0 {
+                let mut c = if flow != 1.0 {
                     p.coverage * flow
                 } else {
                     p.coverage
                 };
+                // 2 つ目の紙の質感は、2D と同じくテクセルの文書の画素の位置で読む
+                if let Some(tex) = paper {
+                    c = dual_textured_at(tex, c, p.x as i64, p.y as i64);
+                }
                 d.cells.raise(p.x, p.y, c);
             }
             self.dual_bytes = d.cells.bytes();

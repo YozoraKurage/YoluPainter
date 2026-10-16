@@ -228,7 +228,13 @@ fn key_with(brush: &Brush, spec: SampleSpec, print: &mut dyn FnMut(&Arc<BrushTip
         .iter()
         .chain(&preview.tip.images)
         .chain(preview.texture.iter().map(|t| &t.image))
-        .chain(preview.dual.iter().filter_map(|d| d.tip.as_ref()));
+        .chain(preview.dual.iter().filter_map(|d| d.tip.as_ref()))
+        .chain(
+            preview
+                .dual
+                .iter()
+                .flat_map(|d| d.tips.iter().chain(d.texture.iter().map(|t| &t.image))),
+        );
     for tip in tips {
         print(tip).hash(&mut hasher);
     }
@@ -830,6 +836,42 @@ mod tests {
             assert_eq!(k, key_of(&br, spec), "{i}");
         }
         assert!(cache.tip_prints.0.len() <= MAX_TIP_PRINTS);
+    }
+
+    #[test]
+    fn second_tips_and_second_textures_with_other_pixels_get_other_keys() {
+        use crate::engine::{DualBrush, PaperTexture};
+        let tip =
+            |pixels: [u8; 4]| Arc::new(BrushTip::new("取り込み", 2, 2, pixels.to_vec()).unwrap());
+        let (a, b) = (tip([0, 255, 255, 0]), tip([255, 0, 0, 255]));
+        let spec = SampleSpec::row(false);
+        type Put = fn(&mut DualBrush, Arc<BrushTip>);
+        let places: [(&str, Put); 2] = [
+            ("dual tips", |d, t| d.tips = vec![t]),
+            ("dual texture", |d, t| {
+                d.texture = Some(PaperTexture::new(t, 0.5))
+            }),
+        ];
+        for (place, put) in places {
+            let make = |t: &Arc<BrushTip>| {
+                let mut d = DualBrush::default();
+                put(&mut d, t.clone());
+                Brush {
+                    dual: Some(d),
+                    ..Brush::default()
+                }
+            };
+            assert_ne!(
+                key_of(&make(&a), spec),
+                key_of(&make(&b), spec),
+                "{place}: 画素だけが違う"
+            );
+            assert_eq!(
+                key_of(&make(&a), spec),
+                key_of(&make(&tip([0, 255, 255, 0])), spec),
+                "{place}: 中身が同じなら同じ鍵"
+            );
+        }
     }
 
     #[test]

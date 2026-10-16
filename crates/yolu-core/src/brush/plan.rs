@@ -59,6 +59,34 @@ pub(crate) struct DabPlan<'a> {
 const FLIP_STREAM: i32 = 0x27D4_EB2F;
 const SHUFFLE_STREAM: i32 = 0x1656_67B1;
 
+/// 筆先の反転のしかた（左右・上下ごとの規則と、規則が [`FlipRule::Fixed`] のときの値）。主の筆先（[`TipShape`]）と 2 つ目の筆先
+/// （[`DualBrush`]）が同じ形で渡す。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FlipRules {
+    pub x: FlipRule,
+    pub y: FlipRule,
+    pub fixed_x: bool,
+    pub fixed_y: bool,
+}
+
+impl FlipRules {
+    /// どちらかの軸がランダムか（ランダムな反転の乱数の列が要るか）。
+    fn random(&self) -> bool {
+        self.x == FlipRule::Random || self.y == FlipRule::Random
+    }
+}
+
+impl TipShape {
+    pub(crate) fn flip_rules(&self) -> FlipRules {
+        FlipRules {
+            x: self.flip_x_rule,
+            y: self.flip_y_rule,
+            fixed_x: self.flip_x,
+            fixed_y: self.flip_y,
+        }
+    }
+}
+
 /// 筆先の選びと反転と散布の、ストロークごとの進み（2D のストロークと 3D の面のストロークが 1 つずつ持つ）。
 /// 今までの乱数の列（ゆらぎ・色・影響元・デュアル・筆先の乱数選び）は引かない。ランダムな反転と並べ替えは、自分の列だけを引く。
 #[derive(Clone, Debug)]
@@ -76,15 +104,46 @@ pub(crate) struct TipRun {
 
 impl TipRun {
     pub(crate) fn new(brush: &Brush) -> TipRun {
-        let random_flip =
-            brush.tip.flip_x_rule == FlipRule::Random || brush.tip.flip_y_rule == FlipRule::Random;
+        TipRun::seeded(brush.seed, brush.tip.flip_rules(), SprayRun::new(brush))
+    }
+
+    /// 種 seed（反転と並べ替えの列はこの種に混ぜる）・反転のしかた・散布の進みから（2 つ目の筆先は自分の種で作る）。
+    pub(crate) fn seeded(seed: i32, rules: FlipRules, spray: SprayRun) -> TipRun {
         TipRun {
             k: 0,
-            seed: brush.seed,
-            flips: random_flip.then(|| NetRandom::new(brush.seed ^ FLIP_STREAM)),
+            seed,
+            flips: rules.random().then(|| NetRandom::new(seed ^ FLIP_STREAM)),
             order: None,
-            spray: SprayRun::new(brush),
+            spray,
         }
+    }
+
+    /// ダブ 1 つの筆先と反転（左右・上下）: 並び `list` が空なら `image`、空でなければ `selection` で選ぶ（`Random` は `random` から 1 つ
+    /// 引く）。並びを使い切った（一巡のみ・ランダムに一巡）ら None（置かない）。反転は選んだ後に決める。
+    pub(crate) fn pick<'a>(
+        &mut self,
+        image: Option<&'a BrushTip>,
+        list: &'a [Arc<BrushTip>],
+        selection: TipSelection,
+        rules: FlipRules,
+        random: &mut NetRandom,
+    ) -> Option<(Option<&'a BrushTip>, bool, bool)> {
+        let mut reversed = false;
+        let tip = if list.is_empty() {
+            image
+        } else {
+            let i = match selection {
+                TipSelection::Random => random.next_below(list.len() as i32) as usize,
+                selection => {
+                    let (i, back) = self.next_index(selection, list.len())?;
+                    reversed = back;
+                    i
+                }
+            };
+            Some(list[i].as_ref())
+        };
+        let (flip_x, flip_y) = self.flips(rules, reversed);
+        Some((tip, flip_x, flip_y))
     }
 
     /// 並びの長さ n の筆先から、次のダブの番号と、折り返しで戻る向きか（`PingPong` だけ）。置く筆先が無ければ None
@@ -135,14 +194,14 @@ impl TipRun {
     }
 
     /// ダブ 1 つの反転（左右・上下）。`reversed` は折り返しで戻る向きか。ランダムは、軸ごとに列から 1 つ引く（左右、上下の順）。
-    fn flips(&mut self, tip: &TipShape, reversed: bool) -> (bool, bool) {
+    fn flips(&mut self, rules: FlipRules, reversed: bool) -> (bool, bool) {
         let mut one = |rule: FlipRule, fixed: bool| match rule {
             FlipRule::Fixed => fixed,
             FlipRule::OnFold => reversed,
             FlipRule::Random => self.flips.as_mut().map_or(fixed, |r| r.next_double() < 0.5),
         };
-        let x = one(tip.flip_x_rule, tip.flip_x);
-        let y = one(tip.flip_y_rule, tip.flip_y);
+        let x = one(rules.x, rules.fixed_x);
+        let y = one(rules.y, rules.fixed_y);
         (x, y)
     }
 }
@@ -322,23 +381,14 @@ impl Brush {
         if c.flow != 1.0 {
             flow_scale *= c.flow;
         }
-        let mut reversed = false;
-        let tip: Option<&BrushTip> = match self.tip_list() {
-            None => self.tip.image.as_deref(),
-            Some(list) => {
-                let i = match self.tip.selection {
-                    TipSelection::Random => random.next_below(list.len() as i32) as usize,
-                    selection => {
-                        // 並びを使い切った（一巡のみ・ランダムに一巡）あとは、何も置かない
-                        let (i, back) = tips.next_index(selection, list.len())?;
-                        reversed = back;
-                        i
-                    }
-                };
-                Some(list[i].as_ref())
-            }
-        };
-        let (flip_x, flip_y) = tips.flips(&self.tip, reversed);
+        // 並びを使い切った（一巡のみ・ランダムに一巡）あとは、何も置かない
+        let (tip, flip_x, flip_y) = tips.pick(
+            self.tip.image.as_deref(),
+            self.tip_list().unwrap_or(&[]),
+            self.tip.selection,
+            self.tip.flip_rules(),
+            random,
+        )?;
         Some(DabPlan {
             x,
             y,
@@ -440,31 +490,34 @@ impl StrokeAssist {
 impl DualBrush {
     /// 2 つ目の筆先のダブの形（中心 x・y、半径 radius は呼び手の単位。2D の溜まりと同じく、丸も回転の式で測る）に、そのダブの見え方
     /// （向きの足し・真円率の係数）を当てたもの（3D の面の 2 つ目のダブ）。
-    pub(crate) fn dab_shape_look(
-        &self,
-        x: f64,
-        y: f64,
-        radius: f64,
+    pub(crate) fn dab_shape_look<'a>(
+        &'a self,
+        place: &DualPlace<'a>,
         look: &DualLook,
-    ) -> DabShape<'_> {
-        rows::dual_cover_shape(&dual_shape(self, x, y, radius, AntiAlias::None, look))
+    ) -> DabShape<'a> {
+        rows::dual_cover_shape(&dual_shape(self, place, AntiAlias::None, look))
     }
 }
 
-/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。level はアンチエイリアスの段（2D。ダブの座標は描く先の画素）、look はそのダブの
-/// 見え方（向きの足し・真円率と濃度の係数）。
+/// 2 つ目の筆先のダブの形（C# の DualDabAt の式）。place はダブの置き方（中心・半径・筆先・反転・散布の粒子の向き）、level はアンチエイリアス
+/// の段（2D。ダブの座標は描く先の画素）、look はそのダブの見え方（向きの足し・真円率と濃度の係数）。
 pub(super) fn dual_shape<'a>(
     dual: &'a DualBrush,
-    x: f64,
-    y: f64,
-    radius: f64,
+    place: &DualPlace<'a>,
     level: AntiAlias,
     look: &DualLook,
 ) -> DualShape<'a> {
-    let mut angle = dual.angle * std::f64::consts::PI / 180.0;
-    if look.turn != 0.0 {
-        angle += look.turn;
-    }
+    let angle = match place.angle {
+        // 散布の粒子は、粒子の向きで置く（主の粒子と同じ）
+        Some(angle) => angle,
+        None => {
+            let mut angle = dual.angle * std::f64::consts::PI / 180.0;
+            if look.turn != 0.0 {
+                angle += look.turn;
+            }
+            angle
+        }
+    };
     let roundness = if look.roundness != 1.0 {
         f64_max(0.01, dual.roundness * look.roundness)
     } else {
@@ -472,7 +525,7 @@ pub(super) fn dual_shape<'a>(
     };
     let (cos, sin) = cos_sin(angle);
     let (mut aspect_x, mut aspect_y) = (1.0, 1.0);
-    if let Some(t) = &dual.tip {
+    if let Some(t) = place.tip {
         if t.width() >= t.height() {
             aspect_y = t.height() as f64 / t.width() as f64;
         } else {
@@ -480,16 +533,19 @@ pub(super) fn dual_shape<'a>(
         }
     }
     let mut shape = DualShape {
-        x,
-        y,
-        radius,
+        x: place.x,
+        y: place.y,
+        radius: place.radius,
         cos,
         sin,
         roundness,
         hardness: dual.hardness,
         aspect_x,
         aspect_y,
-        tip: dual.tip.as_deref(),
+        tip: place.tip,
+        flip_x: place.flip_x,
+        flip_y: place.flip_y,
+        texture: dual.paper(),
         edge: Edge::OFF,
         flow: if look.flow != 1.0 {
             dual.flow * look.flow

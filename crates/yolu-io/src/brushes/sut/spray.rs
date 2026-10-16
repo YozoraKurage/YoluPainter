@@ -52,6 +52,31 @@ pub(super) const KNOWN: &[&[&str]] = &[
     DENSITY_EFFECTOR,
 ];
 
+/// 散布効果の列の名前（主は `Brush…`、2 つ目は `Dual…`）。
+pub(super) struct SprayColumns {
+    pub flag: &'static [&'static str],
+    pub size: &'static [&'static str],
+    pub size_unit: &'static [&'static str],
+    pub link_size: &'static [&'static str],
+    pub density: &'static [&'static str],
+    pub bias: &'static [&'static str],
+    pub rotation: &'static [&'static str],
+    pub rotation_effector: &'static [&'static str],
+    pub rotation_random: &'static [&'static str],
+}
+
+const MAIN: SprayColumns = SprayColumns {
+    flag: FLAG,
+    size: SIZE,
+    size_unit: SIZE_UNIT,
+    link_size: LINK_SIZE,
+    density: DENSITY,
+    bias: BIAS,
+    rotation: ROTATION,
+    rotation_effector: ROTATION_EFFECTOR,
+    rotation_random: ROTATION_RANDOM,
+};
+
 /// 散布効果を写す。写せたら `SutMapped::Spray` と、近い動きの知らせ（[`SprayNote`]）。写せなければ何もしない（旗の知らせは
 /// `unrepresented_flags` が出す）。
 pub(super) fn spray(
@@ -60,15 +85,35 @@ pub(super) fn spray(
     notes: &mut Vec<Unrepresented>,
     mapped: &mut Vec<SutMapped>,
 ) {
-    if !row.on(FLAG) || row.on(SIZE_UNIT) {
+    let Some((s, approx)) = read(row, &MAIN) else {
         return;
+    };
+    brush.spray = Some(s);
+    mapped.push(SutMapped::Spray);
+    for (target, columns) in [
+        (SutTarget::SpraySize, SIZE_EFFECTOR),
+        (SutTarget::SprayDensity, DENSITY_EFFECTOR),
+    ] {
+        effector(brush, row, target, columns, notes, mapped);
     }
-    let (Some(size), Some(density)) = (row.first_number(SIZE), row.first_number(DENSITY)) else {
-        return;
+    for note in approx {
+        notes.push(Unrepresented::ClipStudio(SutNote::SprayApprox(note)));
+    }
+}
+
+/// 散布効果の列 `cols` を読む（主と 2 つ目で同じ処理）。旗が切・写せない（粒子サイズ・粒子密度が無い・粒子密度が 1 未満・単位が画素でない）
+/// なら None。写せたら、散布と近い動きの知らせ（粒子密度はいつも、散布偏向・向きは当たるとき）。
+pub(super) fn read(row: &Row, cols: &SprayColumns) -> Option<(Spray, Vec<SprayNote>)> {
+    if !row.on(cols.flag) || row.on(cols.size_unit) {
+        return None;
+    }
+    let (Some(size), Some(density)) = (row.first_number(cols.size), row.first_number(cols.density))
+    else {
+        return None;
     };
     // 密度 0 は「粒子を置かない」かもしれず、1 に収めると見た目が変わるので、1 未満は写さない。
     if !(size.is_finite() && size > 0.0 && density.is_finite() && density >= 1.0) {
-        return;
+        return None;
     }
     let number = |columns, scale: f64, lo: f64, hi: f64, missing: f64| {
         let v = row.first_number(columns).map_or(missing, |v| v / scale);
@@ -78,15 +123,15 @@ pub(super) fn spray(
             missing
         }
     };
-    let flags = row.first_number(ROTATION_EFFECTOR).unwrap_or(0.0);
+    let flags = row.first_number(cols.rotation_effector).unwrap_or(0.0);
     let flags = if flags.is_finite() && flags >= 0.0 {
         flags as u32
     } else {
         0
     };
-    let random_angle =
-        (flags & ROTATION_RANDOM_BIT != 0).then(|| number(ROTATION_RANDOM, 100.0, 0.0, 1.0, 1.0));
-    let bias = number(BIAS, 100.0, -1.0, 1.0, 0.0);
+    let random_angle = (flags & ROTATION_RANDOM_BIT != 0)
+        .then(|| number(cols.rotation_random, 100.0, 0.0, 1.0, 1.0));
+    let bias = number(cols.bias, 100.0, -1.0, 1.0, 0.0);
     // 向きを足すビットが 1 つだけのときそれを使う（複数は選べないので足さずに知らせる）
     let mut directions = ROTATION_DIRECTIONS
         .iter()
@@ -99,32 +144,25 @@ pub(super) fn spray(
     let known = ROTATION_DIRECTIONS
         .iter()
         .fold(known, |k, (bit, _)| k | bit);
-    brush.spray = Some(Spray {
+    let spray = Spray {
         size: size.min(MAX_SPRAY_SIZE),
-        link_size: row.on(LINK_SIZE),
+        link_size: row.on(cols.link_size),
         density: density.min(100.0),
         bias,
-        angle: number(ROTATION, 1.0, -360.0, 360.0, 0.0),
+        angle: number(cols.rotation, 1.0, -360.0, 360.0, 0.0),
         direction,
         random_angle,
-    });
-    mapped.push(SutMapped::Spray);
-    for (target, columns) in [
-        (SutTarget::SpraySize, SIZE_EFFECTOR),
-        (SutTarget::SprayDensity, DENSITY_EFFECTOR),
-    ] {
-        effector(brush, row, target, columns, notes, mapped);
-    }
-    let mut approx = |note| notes.push(Unrepresented::ClipStudio(SutNote::SprayApprox(note)));
-    approx(SprayNote::Density);
+    };
+    let mut approx = vec![SprayNote::Density];
     if bias != 0.0 {
-        approx(SprayNote::Bias);
+        approx.push(SprayNote::Bias);
     }
     let extra = flags & !known != 0;
     if extra
         || (direction == SprayDirection::None
             && flags & !(ROTATION_RANDOM_BIT | ROTATION_PLAIN_BIT) != 0)
     {
-        approx(SprayNote::Direction);
+        approx.push(SprayNote::Direction);
     }
+    Some((spray, approx))
 }

@@ -153,6 +153,28 @@ impl SprayFrame {
     }
 }
 
+/// 粒子を置くときに読む設定: 散布の設定、筆圧・傾き・速度の係数（[`StampControls::spray`] の値。使わなければ 1）と影響元（ランダムを
+/// 引くか）、散布全体の向き（度。[`SprayDirection::Whole`] が足す筆先の角度）。主のブラシと 2 つ目の筆先が同じ関数に渡す。
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SprayUse<'a> {
+    pub spray: &'a Spray,
+    pub factor: f64,
+    pub influence: &'a Influence,
+    pub whole: f64,
+}
+
+impl SprayUse<'_> {
+    /// 影響元を持たない散布（2 つ目の筆先）。`whole` は散布全体の向き（度）。
+    pub(crate) fn plain(spray: &Spray, whole: f64) -> SprayUse<'_> {
+        SprayUse {
+            spray,
+            factor: 1.0,
+            influence: &Influence::OFF,
+            whole,
+        }
+    }
+}
+
 /// ストロークの散布の進み（2D のストロークと 3D の面のストロークが 1 つずつ持つ）。
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SprayRun {
@@ -162,30 +184,39 @@ pub(crate) struct SprayRun {
 
 impl SprayRun {
     pub(crate) fn new(brush: &Brush) -> SprayRun {
+        SprayRun::seeded(brush.spray.is_some(), brush.seed)
+    }
+
+    /// 散布を使うか（`on`）と種 seed から（散布の列は種に混ぜる。2 つ目の筆先は自分の種で作る）。
+    pub(crate) fn seeded(on: bool, seed: i32) -> SprayRun {
         SprayRun {
-            random: brush
-                .spray
-                .is_some()
-                .then(|| NetRandom::new(brush.seed ^ SPRAY_STREAM)),
+            random: on.then(|| NetRandom::new(seed ^ SPRAY_STREAM)),
         }
     }
 
     /// 描点 1 つに置くダブの数（散布が無ければ [`Jitter::count`]、あれば粒子の数）。
     pub(crate) fn count(&mut self, brush: &Brush, c: &StampControls) -> u32 {
-        let (Some(s), Some(r)) = (&brush.spray, self.random.as_mut()) else {
-            return brush.jitter.count;
+        let main = brush.spray.as_ref().map(|spray| SprayUse {
+            spray,
+            factor: c.spray[1],
+            influence: &brush.influences.spray_density,
+            whole: brush.tip.angle,
+        });
+        self.particles(main).unwrap_or(brush.jitter.count)
+    }
+
+    /// 散布 `on`（無ければ None）の、描点 1 つの粒子の数。密度の係数は `on.factor`（とランダムの影響元）。
+    pub(crate) fn particles(&mut self, on: Option<SprayUse<'_>>) -> Option<u32> {
+        let (Some(on), Some(r)) = (on, self.random.as_mut()) else {
+            return None;
         };
-        let inf = &brush.influences.spray_density;
-        let mut f = c.spray[1];
+        let inf = on.influence;
+        let mut f = on.factor;
         if inf.random.on {
             f *= inf.random_factor(r.next_double());
         }
-        let n = (s.density * f * DENSITY_PER_STAMP).round();
-        if n > 0.0 {
-            n as u32
-        } else {
-            0
-        }
+        let n = (on.spray.density * f * DENSITY_PER_STAMP).round();
+        Some(if n > 0.0 { n as u32 } else { 0 })
     }
 
     /// 粒子 1 つの置き方: `plan`（今のダブの置き方）の位置・大きさ・角度を、粒子のものへ差し替える。散布が無ければ `plan` のまま。
@@ -198,11 +229,30 @@ impl SprayRun {
         plan: DabPlan<'a>,
         frame: SprayFrame,
     ) -> Option<DabPlan<'a>> {
-        let (Some(s), Some(r)) = (&brush.spray, self.random.as_mut()) else {
+        let main = brush.spray.as_ref().map(|spray| SprayUse {
+            spray,
+            factor: c.spray[0],
+            influence: &brush.influences.spray_size,
+            whole: brush.tip.angle,
+        });
+        self.place_with(main, dab, plan, frame)
+    }
+
+    /// 粒子 1 つの置き方（[`SprayRun::place`] の中身）: 散布 `on`（無ければ `plan` のまま）の粒子サイズの係数は `on.factor`（とランダムの
+    /// 影響元）、散布全体の向きは `on.whole`。
+    pub(crate) fn place_with<'a>(
+        &mut self,
+        on: Option<SprayUse<'_>>,
+        dab: &PendingDab,
+        plan: DabPlan<'a>,
+        frame: SprayFrame,
+    ) -> Option<DabPlan<'a>> {
+        let (Some(on), Some(r)) = (on, self.random.as_mut()) else {
             return Some(plan);
         };
-        let inf = &brush.influences.spray_size;
-        let mut f = c.spray[0];
+        let s = on.spray;
+        let inf = on.influence;
+        let mut f = on.factor;
         if inf.random.on {
             f *= inf.random_factor(r.next_double());
         }
@@ -220,7 +270,7 @@ impl SprayRun {
         let turn = match s.direction {
             SprayDirection::None => 0.0,
             SprayDirection::Line => dab.direction,
-            SprayDirection::Whole => brush.tip.angle.to_radians(),
+            SprayDirection::Whole => on.whole.to_radians(),
             SprayDirection::Center => (dab.y - y).atan2(dab.x - x),
         };
         let mut angle = s.angle.to_radians() + turn;

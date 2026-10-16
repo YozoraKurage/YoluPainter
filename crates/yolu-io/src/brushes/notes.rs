@@ -512,21 +512,37 @@ pub enum SutDualNote {
     Direction,
     /// 画像の筆先の水平の厚さの向き（画像も回るので写さない）。
     ThicknessDirection,
-    /// 2 つ目の筆先が複数（1 つ目だけを使った）。
+    /// 2 つ目の複数の筆先のうち、使えない素材があった（決められない・画像を取り出せない・数の上限を超えた。使える物だけを使った）。
     Tips,
-    /// 2 つ目の筆先の繰り返し方法・反転（読まない）。
+    /// 2 つ目の筆先の繰り返し方法・反転が知らない値（ランダム・反転なしにした）。
     TipRules,
+    /// 2 つ目の筆先の繰り返し方法を写したが、折り返し・ランダムに一巡は近い動き。
+    TipOrderApprox,
     /// 2 つ目の RGB 値を適用（色は重ねず、アルファだけを重ねる）。
     Rgb,
     /// 2 つ目の連続吹き付け。
     Continuous,
     /// 2 つ目のリボン。
     Ribbon,
-    /// 2 つ目の紙質。
+    /// 2 つ目の紙質の素材を特定できなかった（または画像を取り出せなかった）ので、2 つ目の紙質なし。
     Texture,
-    /// 2 つ目の散布効果（固定点を含む）。
+    /// 2 つ目の紙質の素材を名前で決められず、素材の並びで当てた。
+    TextureGuessed,
+    /// 2 つ目の紙質の適用方法に同じ物が無い（通常・輪郭・高さ・知らない値。乗算にした）。
+    TextureMode,
+    /// 2 つ目の紙質の明るさ・コントラストを、一般的な式で画像へ焼き込んだ。
+    TextureTone,
+    /// 2 つ目の紙質の「描点ごとに適用」（読まない）。
+    TextureEachTip,
+    /// 2 つ目の紙質の「濃度強調」（読まない）。
+    TextureEmphasis,
+    /// 2 つ目の散布効果を写せない（粒子サイズ・粒子密度が無い・粒子密度が 1 未満・単位が画素でない）か、固定点を使う。
     Spray,
-    /// 2 つ目の先端同士の比較暗（重なる 2 つ目のダブで濃い方を残す設定。読まない）。
+    /// 2 つ目の散布効果を写したが、近い動き（主の散布効果と同じ種類）。
+    SprayApprox(SprayNote),
+    /// 2 つ目の紙質濃度・粒子サイズ・粒子密度の影響元（2 つ目のこの 3 項目は影響元を持たない）。
+    Sources,
+    /// 2 つ目の先端同士の比較暗の 2 つ目の列（`DualBlendPatternByDarken2`。何の設定か分からない。読まない）。
     Darken,
     /// 知らない 2 つ目のアンチエイリアスの値（主に従う）。
     AntiAlias(f64),
@@ -635,6 +651,49 @@ pub enum SutNote {
     AntiAliasing(f64),
 }
 
+/// デュアルブラシの 2 つ目の紙質・散布効果の、近い動きと読まない設定の知らせの文。
+fn dual_second_half_texts(note: SutDualNote) -> (String, String) {
+    match note {
+        SutDualNote::TextureGuessed => (
+            "デュアルブラシの 2 つ目の紙質の画像は、素材の名前では決められず、素材の並びで当てた（別の画像かもしれない）".into(),
+            "The dual brush texture image could not be identified by name and was matched by the order of the materials; it may be a different image.".into(),
+        ),
+        SutDualNote::TextureMode => (
+            "デュアルブラシの 2 つ目の紙質の適用方法に同じ物が無いので、乗算にした".into(),
+            "The dual brush texture mode has no matching mode; Multiply is used.".into(),
+        ),
+        SutDualNote::TextureTone => (
+            "デュアルブラシの 2 つ目の紙質の明るさ・コントラストは一般的な式で画像へ焼き込んだ（近い動き。元に戻せない）".into(),
+            "The dual brush texture brightness and contrast are baked into the image with a common formula (a close behavior; it cannot be undone).".into(),
+        ),
+        SutDualNote::TextureEachTip => (
+            "デュアルブラシの 2 つ目の紙質の「描点ごとに適用」は未対応（紙質はキャンバスに固定）".into(),
+            "Apply by each plot of the dual brush texture is not supported (the texture stays fixed to the canvas).".into(),
+        ),
+        SutDualNote::TextureEmphasis => (
+            "デュアルブラシの 2 つ目の紙質の濃度強調は未対応".into(),
+            "Emphasize density of the dual brush texture is not supported.".into(),
+        ),
+        SutDualNote::SprayApprox(SprayNote::Density) => (
+            "デュアルブラシの 2 つ目の散布効果の粒子密度は、粒子の数へ近い換算で写した（近い動き）".into(),
+            "The particle density of the dual brush spraying effect is converted to a number of particles with a close estimate (a close behavior).".into(),
+        ),
+        SutDualNote::SprayApprox(SprayNote::Bias) => (
+            "デュアルブラシの 2 つ目の散布効果の散布偏向は、中心への寄り方を近い式で写した（近い動き）".into(),
+            "The spray deviation of the dual brush is carried over with a close formula for how particles gather to the center (a close behavior).".into(),
+        ),
+        SutDualNote::SprayApprox(SprayNote::Direction) => (
+            "デュアルブラシの 2 つ目の散布効果の粒子の向きの影響元は、知らない旗か複数の向きがあるため、向きは足していない".into(),
+            "The particle direction source of the dual brush spraying effect has an unknown flag or several directions; no direction is added.".into(),
+        ),
+        SutDualNote::Sources => (
+            "デュアルブラシの 2 つ目の紙質濃度・粒子サイズ・粒子密度の影響元は未対応".into(),
+            "The dynamics of the dual brush texture density, particle size and particle density are not supported.".into(),
+        ),
+        _ => unreachable!("デュアルブラシの紙質・散布の知らせだけがここへ来る"),
+    }
+}
+
 impl SutNote {
     /// 筆先と質感の素材・繰り返し方法・反転・明るさとコントラストの知らせの文。
     fn tip_and_texture_texts(&self) -> (String, String) {
@@ -728,12 +787,16 @@ impl SutNote {
                     "The horizontal thickness direction of the dual brush image tip is not carried over.".into(),
                 ),
                 SutDualNote::Tips => (
-                    "デュアルブラシの 2 つ目の筆先が複数あり、1 つ目だけを使った".into(),
-                    "The dual brush has several secondary tips; only the first one is used.".into(),
+                    "デュアルブラシの 2 つ目の筆先に使えない素材があり（特定できない・画像を取り出せない・数の上限を超えた）、使える筆先だけを使った".into(),
+                    "Some secondary tip materials of the dual brush could not be used (not identified, image not extracted, or over the limit); only the usable tips are used.".into(),
                 ),
                 SutDualNote::TipRules => (
-                    "デュアルブラシの 2 つ目の筆先の繰り返し方法・反転は未対応".into(),
-                    "The repeat method and flips of the dual brush secondary tip are not supported.".into(),
+                    "デュアルブラシの 2 つ目の筆先の繰り返し方法・反転が知らない値なので、ランダム・反転なしにした".into(),
+                    "The repeat method or flip of the dual brush secondary tip has an unknown value; random order and no flip are used.".into(),
+                ),
+                SutDualNote::TipOrderApprox => (
+                    "デュアルブラシの 2 つ目の筆先の繰り返し方法（折り返し・ランダムに一巡）は近い動きで写した".into(),
+                    "The repeat method of the dual brush secondary tip (Reverse, One random cycle) is carried over with a close behavior.".into(),
                 ),
                 SutDualNote::Rgb => (
                     "デュアルブラシの「RGB 値を適用」は未対応（アルファだけを重ねる）".into(),
@@ -741,16 +804,23 @@ impl SutNote {
                 ),
                 SutDualNote::Continuous => ("デュアルブラシの連続吹き付けは未対応".into(), "Continuous spraying of the dual brush is not supported.".into()),
                 SutDualNote::Ribbon => ("デュアルブラシのリボンは未対応".into(), "Ribbon of the dual brush is not supported.".into()),
-                SutDualNote::Texture => ("デュアルブラシの紙質は未対応".into(), "The texture of the dual brush is not supported.".into()),
-                SutDualNote::Spray => ("デュアルブラシの散布効果は未対応".into(), "The spraying effect of the dual brush is not supported.".into()),
+                SutDualNote::Texture => (
+                    "デュアルブラシの 2 つ目の紙質の素材を特定できなかった（または画像を取り出せなかった）ので、2 つ目の紙質なし".into(),
+                    "The texture material of the dual brush could not be identified (or its image extracted); the secondary has no texture.".into(),
+                ),
+                SutDualNote::Spray => (
+                    "デュアルブラシの 2 つ目の散布効果は、粒子サイズ・粒子密度の値が無いか、粒子密度が 1 未満か、単位が画素でないか、固定点を使うため、写していない".into(),
+                    "The spraying effect of the dual brush is not carried over: the particle size or density is missing, the density is below 1, the unit is not pixels, or fixed points are used.".into(),
+                ),
                 SutDualNote::Darken => (
-                    "デュアルブラシの先端同士の比較暗は未対応".into(),
-                    "Darken between the dual brush tips is not supported.".into(),
+                    "デュアルブラシの先端同士の比較暗の 2 つ目の列は未対応".into(),
+                    "The second column of darken between the dual brush tips is not supported.".into(),
                 ),
                 SutDualNote::AntiAlias(v) => (
                     format!("デュアルブラシのアンチエイリアス（値 {v}）は知らないので、メインに従う"),
                     format!("The dual brush anti-aliasing (value {v}) is unknown; the main brush's setting is used."),
                 ),
+                note => dual_second_half_texts(note),
             },
             _ => unreachable!("デュアルブラシの知らせだけがここへ来る"),
         };

@@ -347,7 +347,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     if v8 {
         write_color_change(&mut w, &b);
         write_spray(&mut w, &b);
-        write_dual_v8(&mut w, &b);
+        write_dual_v8(&mut w, &mut pending, &b);
     }
     if v7 {
         write_influences(&mut w, &b);
@@ -555,33 +555,40 @@ fn write_color_change(w: &mut Writer, b: &Brush) {
 
 /// 散布効果（バージョン 8。`spray.*`。無いブラシは書かない。粒子サイズと粒子密度はいつも書き、ほかは既定（切・0・なし）なら書かない）。
 fn write_spray(w: &mut Writer, b: &Brush) {
-    let Some(s) = &b.spray else {
-        return;
-    };
-    w.single("spray.size", s.size);
-    if s.link_size {
-        w.bool("spray.link_size", true);
-    }
-    w.single("spray.density", s.density);
-    if s.bias != 0.0 {
-        w.single("spray.bias", s.bias);
-    }
-    if s.angle != 0.0 {
-        w.single("spray.angle", s.angle);
-    }
-    if s.direction != SprayDirection::None {
-        w.line("spray.direction", s.direction.id());
-    }
-    if let Some(r) = s.random_angle {
-        w.single("spray.random_angle", r);
+    if let Some(s) = &b.spray {
+        write_spray_keys(w, "spray", s);
     }
 }
 
-/// デュアルブラシのバージョン 8 の項目（`dual.*`。サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足し）。既定（切・1・主と同じ・0）は書かない。
-fn write_dual_v8(w: &mut Writer, b: &Brush) {
+/// 散布効果の鍵（`<prefix>.size` など。主は `spray`、2 つ目は `dual.spray`）。
+fn write_spray_keys(w: &mut Writer, prefix: &str, s: &Spray) {
+    let key = |name: &str| format!("{prefix}.{name}");
+    w.single(&key("size"), s.size);
+    if s.link_size {
+        w.bool(&key("link_size"), true);
+    }
+    w.single(&key("density"), s.density);
+    if s.bias != 0.0 {
+        w.single(&key("bias"), s.bias);
+    }
+    if s.angle != 0.0 {
+        w.single(&key("angle"), s.angle);
+    }
+    if s.direction != SprayDirection::None {
+        w.line(&key("direction"), s.direction.id());
+    }
+    if let Some(r) = s.random_angle {
+        w.single(&key("random_angle"), r);
+    }
+}
+
+/// デュアルブラシのバージョン 8 の項目（`dual.*`。サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足し・複数の筆先と選び方・反転・
+/// 比較暗・紙の質感・散布効果）。既定（切・1・主と同じ・0・空・ランダム・なし）は書かない。
+fn write_dual_v8(w: &mut Writer, pending: &mut Pending, b: &Brush) {
     let Some(d) = &b.dual else {
         return;
     };
+    write_dual_tips(w, pending, d);
     if d.link_size {
         w.bool("dual.link_size", true);
     }
@@ -602,6 +609,44 @@ fn write_dual_v8(w: &mut Writer, b: &Brush) {
     }
     if d.angle_random != 0.0 {
         w.single("dual.angle_random", d.angle_random);
+    }
+    if let Some(tex) = &d.texture {
+        w.line("dual.texture", pending.token(&tex.image));
+        w.single("dual.texture.depth", tex.depth);
+        w.single("dual.texture.scale", tex.scale);
+        w.line("dual.texture.mode", mode_id(tex.mode));
+        if tex.angle != 0.0 {
+            w.single("dual.texture.angle", tex.angle);
+        }
+    }
+    if let Some(s) = &d.spray {
+        write_spray_keys(w, "dual.spray", s);
+    }
+}
+
+/// 2 つ目の複数の筆先と選び方・反転・比較暗（主の `tip.*` と同じ値の名前）。
+fn write_dual_tips(w: &mut Writer, pending: &mut Pending, d: &DualBrush) {
+    if !d.tips.is_empty() {
+        w.line("dual.tips", pending.list(&d.tips));
+    }
+    if d.selection != TipSelection::Random {
+        w.line("dual.selection", selection_id(d.selection));
+    }
+    for (key, on) in [("dual.flip_x", d.flip_x), ("dual.flip_y", d.flip_y)] {
+        if on {
+            w.bool(key, true);
+        }
+    }
+    for (key, rule) in [
+        ("dual.flip_x_rule", d.flip_x_rule),
+        ("dual.flip_y_rule", d.flip_y_rule),
+    ] {
+        if rule != FlipRule::Fixed {
+            w.line(key, flip_rule_id(rule));
+        }
+    }
+    if d.darken_overlap {
+        w.bool("dual.darken", true);
     }
 }
 
@@ -827,7 +872,8 @@ fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
         || uses_dual_v8(b)
 }
 
-/// デュアルブラシのバージョン 8 の項目（足したモード・サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足しと、デュアルの項目の影響元）を使うか。
+/// デュアルブラシのバージョン 8 の項目（足したモード・サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足し・複数の筆先と選び方・反転・
+/// 比較暗・紙の質感・散布効果と、デュアルの項目の影響元）を使うか。
 fn uses_dual_v8(b: &Brush) -> bool {
     b.dual.as_ref().is_some_and(|d| {
         d.mode.is_extended()
@@ -838,9 +884,23 @@ fn uses_dual_v8(b: &Brush) -> bool {
             || d.angle_rotation
             || d.angle_line
             || d.angle_random != 0.0
+            || uses_dual_tips_texture_spray(d)
     }) || DualItem::ALL
         .into_iter()
         .any(|i| !b.influences.dual(i).is_default())
+}
+
+/// 2 つ目の複数の筆先・選び方・反転・比較暗・紙の質感・散布効果を使うか。
+fn uses_dual_tips_texture_spray(d: &DualBrush) -> bool {
+    !d.tips.is_empty()
+        || d.selection != TipSelection::Random
+        || d.flip_x
+        || d.flip_y
+        || d.flip_x_rule != FlipRule::Fixed
+        || d.flip_y_rule != FlipRule::Fixed
+        || d.darken_overlap
+        || d.texture.is_some()
+        || d.spray.is_some()
 }
 
 /// 散布効果（と、散布の項目の影響元）を使うか。
@@ -883,6 +943,20 @@ fn selection_id(selection: TipSelection) -> &'static str {
         TipSelection::Once => "once",
         TipSelection::Shuffle => "shuffle",
     }
+}
+
+/// 繰り返し方法の名前（バージョン 8 の値をすべて読む。2 つ目の筆先の値はバージョン 8 にしか無い）。
+fn selection(id: &str) -> Option<TipSelection> {
+    [
+        TipSelection::Random,
+        TipSelection::Sequential,
+        TipSelection::PingPong,
+        TipSelection::Hold,
+        TipSelection::Once,
+        TipSelection::Shuffle,
+    ]
+    .into_iter()
+    .find(|s| selection_id(*s) == id)
 }
 
 fn flip_rule_id(rule: FlipRule) -> &'static str {
@@ -1206,6 +1280,9 @@ fn read_texture_and_dual(
         // サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足しはバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
         if version >= 8 {
             read_dual_v8(r, &mut dual)?;
+            read_dual_tips(r, &mut dual, load)?;
+            dual.texture = read_dual_texture(r, load)?;
+            dual.spray = read_spray_keys(r, "dual.spray")?;
         }
         b.dual = Some(dual);
     }
@@ -1355,41 +1432,94 @@ fn read_dual_v8(r: &mut Reader, d: &mut DualBrush) -> Result<(), StoreError> {
 
 /// 散布効果（`spray.*`）を読む。鍵が 1 つでもあれば持ち、無い値は既定（粒子サイズ・粒子密度は [`Spray::default`]）。範囲は core の検査に任せる。
 fn read_spray(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
-    const KEYS: [&str; 7] = [
-        "spray.size",
-        "spray.link_size",
-        "spray.density",
-        "spray.bias",
-        "spray.angle",
-        "spray.direction",
-        "spray.random_angle",
+    b.spray = read_spray_keys(r, "spray")?;
+    Ok(())
+}
+
+/// 散布効果の鍵（`<prefix>.size` など）を読む。鍵が 1 つも無ければ None。
+fn read_spray_keys(r: &mut Reader, prefix: &str) -> Result<Option<Spray>, StoreError> {
+    const NAMES: [&str; 7] = [
+        "size",
+        "link_size",
+        "density",
+        "bias",
+        "angle",
+        "direction",
+        "random_angle",
     ];
-    if !KEYS.iter().any(|k| r.map.contains_key(*k)) {
-        return Ok(());
+    let key = |name: &str| format!("{prefix}.{name}");
+    if !NAMES.iter().any(|n| r.map.contains_key(&key(n))) {
+        return Ok(None);
     }
     let d = Spray::default();
-    let direction = match r.take("spray.direction") {
+    let direction = match r.take(&key("direction")) {
         None => SprayDirection::None,
         Some(id) => SprayDirection::ALL
             .into_iter()
             .find(|v| v.id() == id)
-            .ok_or(StoreError::BadValue("spray.direction".into()))?,
+            .ok_or_else(|| StoreError::BadValue(key("direction")))?,
     };
-    let random_angle = if r.map.contains_key("spray.random_angle") {
-        Some(r.single("spray.random_angle", 0.0)?)
+    let random_angle = if r.map.contains_key(&key("random_angle")) {
+        Some(r.single(&key("random_angle"), 0.0)?)
     } else {
         None
     };
-    b.spray = Some(Spray {
-        size: r.single("spray.size", d.size)?,
-        link_size: r.bool("spray.link_size", false)?,
-        density: r.single("spray.density", d.density)?,
-        bias: r.single("spray.bias", 0.0)?,
-        angle: r.single("spray.angle", 0.0)?,
+    Ok(Some(Spray {
+        size: r.single(&key("size"), d.size)?,
+        link_size: r.bool(&key("link_size"), false)?,
+        density: r.single(&key("density"), d.density)?,
+        bias: r.single(&key("bias"), 0.0)?,
+        angle: r.single(&key("angle"), 0.0)?,
         direction,
         random_angle,
-    });
+    }))
+}
+
+/// 2 つ目の複数の筆先と選び方・反転・比較暗（`dual.tips`・`dual.selection`・`dual.flip_*`・`dual.darken`）を読む。
+fn read_dual_tips(
+    r: &mut Reader,
+    d: &mut DualBrush,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<(), StoreError> {
+    if let Some(list) = r.take("dual.tips") {
+        for token in list.split(',') {
+            d.tips.extend(resolve(token, load)?);
+        }
+    }
+    if let Some(id) = r.take("dual.selection") {
+        d.selection = selection(&id).ok_or(StoreError::BadValue("dual.selection".into()))?;
+    }
+    d.flip_x = r.bool("dual.flip_x", false)?;
+    d.flip_y = r.bool("dual.flip_y", false)?;
+    for (key, rule) in [
+        ("dual.flip_x_rule", &mut d.flip_x_rule),
+        ("dual.flip_y_rule", &mut d.flip_y_rule),
+    ] {
+        if let Some(id) = r.take(key) {
+            *rule = flip_rule(&id).ok_or(StoreError::BadValue(key.into()))?;
+        }
+    }
+    d.darken_overlap = r.bool("dual.darken", false)?;
     Ok(())
+}
+
+/// 2 つ目の紙の質感（`dual.texture`・`dual.texture.*`）を読む。無ければ None。範囲は core の検査に任せる。
+fn read_dual_texture(
+    r: &mut Reader,
+    load: &mut dyn FnMut(&str) -> Result<Arc<BrushTip>, StoreError>,
+) -> Result<Option<PaperTexture>, StoreError> {
+    let Some(image) = r.tip("dual.texture", load)? else {
+        return Ok(None);
+    };
+    let mut texture = PaperTexture::new(image, 0.5);
+    texture.depth = r.single("dual.texture.depth", texture.depth)?;
+    texture.scale = r.single("dual.texture.scale", texture.scale)?;
+    texture.angle = r.single("dual.texture.angle", texture.angle)?;
+    if let Some(mode) = r.take("dual.texture.mode") {
+        texture.mode =
+            texture_mode(&mode).ok_or(StoreError::BadValue("dual.texture.mode".into()))?;
+    }
+    Ok(Some(texture))
 }
 
 /// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。入り抜きの影響先（`assist.taper.*`）はバージョン 8 の項目（バージョン 7 までに
@@ -4314,6 +4444,232 @@ mod tests {
         }
         assert!(matches!(
             decode(&format!("{t}dual.flow=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    /// 2 つ目に複数の筆先・選び方・反転・比較暗・紙の質感・散布効果を入れたブラシ（画像は組み込みの筆先）。
+    fn dual_second_half_brush() -> Brush {
+        Brush {
+            dual: Some(DualBrush {
+                tips: vec![builtin_tip("dots").unwrap(), builtin_tip("rim").unwrap()],
+                selection: TipSelection::PingPong,
+                flip_x: true,
+                flip_y_rule: FlipRule::Random,
+                flip_x_rule: FlipRule::OnFold,
+                darken_overlap: true,
+                texture: Some(PaperTexture {
+                    mode: TextureMode::Overlay,
+                    scale: 2.5,
+                    angle: 30.0,
+                    ..PaperTexture::new(builtin_tip("grain").unwrap(), 0.75)
+                }),
+                spray: Some(Spray {
+                    size: 4.5,
+                    link_size: true,
+                    density: 7.0,
+                    bias: -0.25,
+                    angle: 15.0,
+                    direction: SprayDirection::Center,
+                    random_angle: Some(0.5),
+                }),
+                ..DualBrush::default()
+            }),
+            ..Brush::default()
+        }
+    }
+
+    #[test]
+    fn a_brush_with_the_second_tips_texture_and_spray_is_version_eight_and_round_trips() {
+        let b = dual_second_half_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "dual.tips=dots,rim",
+            "dual.selection=pingpong",
+            "dual.flip_x=1",
+            "dual.flip_x_rule=fold",
+            "dual.flip_y_rule=random",
+            "dual.darken=1",
+            "dual.texture=grain",
+            "dual.texture.depth=0.75",
+            "dual.texture.scale=2.5",
+            "dual.texture.mode=overlay",
+            "dual.texture.angle=30",
+            "dual.spray.size=4.5",
+            "dual.spray.link_size=1",
+            "dual.spray.density=7",
+            "dual.spray.bias=-0.25",
+            "dual.spray.angle=15",
+            "dual.spray.direction=center",
+            "dual.spray.random_angle=0.5",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        // 主の項目には書かない
+        for key in ["\ntexture=", "\nspray.", "tip.darken", "tip.flip_x_rule"] {
+            assert!(!t.contains(key), "{key}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // どれか 1 つだけでもバージョン 8 で、読み戻すと同じ
+        let full = b.dual.clone().unwrap();
+        let plain = DualBrush::default();
+        let singles = [
+            DualBrush {
+                tips: full.tips.clone(),
+                ..plain.clone()
+            },
+            DualBrush {
+                selection: TipSelection::Hold,
+                ..plain.clone()
+            },
+            DualBrush {
+                flip_y: true,
+                ..plain.clone()
+            },
+            DualBrush {
+                flip_x_rule: FlipRule::Random,
+                ..plain.clone()
+            },
+            DualBrush {
+                darken_overlap: true,
+                ..plain.clone()
+            },
+            DualBrush {
+                texture: full.texture.clone(),
+                ..plain.clone()
+            },
+            DualBrush {
+                spray: full.spray,
+                ..plain.clone()
+            },
+        ];
+        for one in singles {
+            let only = Brush {
+                dual: Some(one),
+                ..Brush::default()
+            };
+            let t = text(&user(1, only.clone()));
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+            assert_eq!(decode(&t).unwrap().2, canonical(&only), "{t}");
+        }
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let mut odd = dual_second_half_brush();
+        let d = odd.dual.as_mut().unwrap();
+        d.texture.as_mut().unwrap().depth = 0.123_456_789_012;
+        d.spray.as_mut().unwrap().bias = 0.987_654_321_098;
+        let back = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        let bd = back.dual.as_ref().unwrap();
+        assert_eq!(
+            bd.texture.as_ref().unwrap().depth,
+            0.123_456_789_012f64 as f32 as f64
+        );
+        assert_eq!(bd.spray.unwrap().bias, 0.987_654_321_098f64 as f32 as f64);
+        assert_eq!(back, canonical(&odd));
+    }
+
+    #[test]
+    fn the_second_tips_texture_and_spray_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, dual_second_half_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            assert!(
+                matches!(
+                    decode(&as_old).unwrap_err(),
+                    StoreError::UnknownKey(_) | StoreError::BadValue(_)
+                ),
+                "バージョン {old}"
+            );
+        }
+        let as_seven = text(&user(
+            1,
+            Brush {
+                dual: Some(DualBrush {
+                    darken_overlap: true,
+                    ..DualBrush::default()
+                }),
+                ..Brush::default()
+            },
+        ))
+        .replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(matches!(
+            decode(&as_seven).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "dual.darken"
+        ));
+        // デュアルブラシの無いファイルの、2 つ目の鍵は知らない項目
+        let stray = format!(
+            "{}dual.spray.size=3\n",
+            text(&user(1, color_change_brush()))
+        );
+        assert!(matches!(
+            decode(&stray).unwrap_err(),
+            StoreError::UnknownKey(k) if k == "dual.spray.size"
+        ));
+        // 紙の質感の画像の無い質感の値は知らない項目
+        let orphan = t.replace("dual.texture=grain\n", "");
+        assert!(matches!(
+            decode(&orphan).unwrap_err(),
+            StoreError::UnknownKey(k) if k.starts_with("dual.texture.")
+        ));
+        // 読めない値
+        for (from, to) in [
+            ("dual.selection=pingpong", "dual.selection=bounce"),
+            ("dual.flip_x_rule=fold", "dual.flip_x_rule=always"),
+            ("dual.flip_x=1", "dual.flip_x=2"),
+            ("dual.darken=1", "dual.darken=yes"),
+            ("dual.texture.mode=overlay", "dual.texture.mode=height"),
+            ("dual.texture.depth=0.75", "dual.texture.depth=x"),
+            ("dual.spray.direction=center", "dual.spray.direction=up"),
+            ("dual.spray.density=7", "dual.spray.density=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&t.replace("dual.tips=dots,rim", "dual.tips=dots,nope")).unwrap_err(),
+            StoreError::UnknownTip(_)
+        ));
+        // 範囲の外・NaN・枚数の上限
+        let many = vec!["dots"; 257].join(",");
+        for (from, to) in [
+            (
+                "dual.texture.depth=0.75",
+                "dual.texture.depth=1.5".to_string(),
+            ),
+            (
+                "dual.texture.depth=0.75",
+                "dual.texture.depth=NaN".to_string(),
+            ),
+            (
+                "dual.texture.scale=2.5",
+                "dual.texture.scale=100".to_string(),
+            ),
+            ("dual.spray.density=7", "dual.spray.density=0".to_string()),
+            ("dual.spray.bias=-0.25", "dual.spray.bias=-2".to_string()),
+            ("dual.tips=dots,rim", format!("dual.tips={many}")),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, &to)).unwrap_err(),
+                    StoreError::Invalid(_) | StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}dual.darken=1\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
     }

@@ -266,6 +266,20 @@ impl PaperTexture {
         })
     }
 
+    /// 深さ・倍率・角度の範囲を確かめる（主の質感と 2 つ目の質感で同じ）。
+    pub(crate) fn validate(&self) -> Result<(), CoreError> {
+        require_finite(self.depth, Reason::TextureDepth)?;
+        require_finite(self.scale, Reason::TextureScale)?;
+        require_finite(self.angle, Reason::TextureAngle)?;
+        if !(0.0..=1.0).contains(&self.depth) {
+            return Err(CoreError::InvalidArgument(Reason::TextureDepthRange));
+        }
+        if !(0.05..=64.0).contains(&self.scale) {
+            return Err(CoreError::InvalidArgument(Reason::TextureScaleRange));
+        }
+        Ok(())
+    }
+
     /// 乗算・大きさ 1 の質感。
     pub fn new(image: Arc<BrushTip>, depth: f64) -> PaperTexture {
         PaperTexture {
@@ -381,6 +395,23 @@ pub struct DualBrush {
     pub angle_line: bool,
     /// 向きのランダムの強さ（0〜1。1 で ±180°。0 は無し。主の `jitter.angle` と同じ規則）。
     pub angle_random: f64,
+    /// 順に使う複数の筆先（1〜256 枚）。空でなければ `tip` に代わる（主の [`TipShape::images`] と同じ意味）。
+    pub tips: Vec<Arc<BrushTip>>,
+    /// 複数の筆先から 2 つ目のダブごとに選ぶ方法（主の [`TipShape::selection`] と同じ規則・同じ関数）。
+    pub selection: TipSelection,
+    /// 筆先の画像の左右・上下の反転と、そのしかた（主の [`TipShape::flip_x`]・[`TipShape::flip_x_rule`] などと同じ意味）。
+    pub flip_x: bool,
+    pub flip_y: bool,
+    pub flip_x_rule: FlipRule,
+    pub flip_y_rule: FlipRule,
+    /// 先端同士を比較暗で合成。2 つ目の溜まりはいつも画素ごとに覆いの大きい方を残すので、この旗で描き方は変わらない（取り込みと
+    /// 保存のために持つ）。
+    pub darken_overlap: bool,
+    /// 2 つ目の紙の質感（None は無し）。主の天井と同じ式（[`TextureMode`]）を、2 つ目のダブが溜まりへ置く覆いに掛ける。
+    pub texture: Option<PaperTexture>,
+    /// 2 つ目の散布効果（None は無し）。入っている間、2 つ目のダブは `scatter`・`count` の代わりに粒子の道を通る（主の [`Spray`] と
+    /// 同じ規則・同じ関数。影響元は持たない）。
+    pub spray: Option<Spray>,
 }
 
 impl Default for DualBrush {
@@ -402,6 +433,15 @@ impl Default for DualBrush {
             angle_rotation: false,
             angle_line: false,
             angle_random: 0.0,
+            tips: Vec::new(),
+            selection: TipSelection::Random,
+            flip_x: false,
+            flip_y: false,
+            flip_x_rule: FlipRule::Fixed,
+            flip_y_rule: FlipRule::Fixed,
+            darken_overlap: false,
+            texture: None,
+            spray: None,
         }
     }
 }
@@ -718,15 +758,7 @@ impl Brush {
             return Err(CoreError::InvalidArgument(Reason::Count));
         }
         if let Some(tex) = &self.texture {
-            require_finite(tex.depth, Reason::TextureDepth)?;
-            require_finite(tex.scale, Reason::TextureScale)?;
-            require_finite(tex.angle, Reason::TextureAngle)?;
-            if !(0.0..=1.0).contains(&tex.depth) {
-                return Err(CoreError::InvalidArgument(Reason::TextureDepthRange));
-            }
-            if !(0.05..=64.0).contains(&tex.scale) {
-                return Err(CoreError::InvalidArgument(Reason::TextureScaleRange));
-            }
+            tex.validate()?;
         }
         if t.images.len() > 256 {
             return Err(CoreError::InvalidArgument(Reason::BrushTipSequenceRange));
@@ -872,6 +904,27 @@ impl DualBrush {
         if !(1..=16).contains(&self.count) {
             return Err(CoreError::InvalidArgument(Reason::DualBrushCount));
         }
-        Ok(())
+        if self.tips.len() > 256 {
+            return Err(CoreError::InvalidArgument(Reason::DualBrushTips));
+        }
+        if let Some(tex) = &self.texture {
+            tex.validate()?;
+        }
+        self.spray.as_ref().map_or(Ok(()), Spray::validate)
+    }
+
+    /// 反転のしかた（主の [`TipShape::flip_rules`] と同じ形）。
+    pub(crate) fn flip_rules(&self) -> super::plan::FlipRules {
+        super::plan::FlipRules {
+            x: self.flip_x_rule,
+            y: self.flip_y_rule,
+            fixed_x: self.flip_x,
+            fixed_y: self.flip_y,
+        }
+    }
+
+    /// 溜まりへ掛ける紙の質感（深さ 0 は無しと同じ）。
+    pub(crate) fn paper(&self) -> Option<&PaperTexture> {
+        self.texture.as_ref().filter(|t| t.depth > 0.0)
     }
 }

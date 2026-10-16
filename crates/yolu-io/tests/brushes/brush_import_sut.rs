@@ -3780,7 +3780,7 @@ fn the_four_dual_influences_are_carried() {
 }
 
 #[test]
-fn the_secondary_tip_is_the_referenced_material_and_only_the_first_is_used() {
+fn the_secondary_tips_are_the_referenced_materials() {
     use yolu_io::brushes::SutDualNote;
     let build = |names: &[[&str; 3]]| {
         let cells = dual_cells(&[
@@ -3802,14 +3802,20 @@ fn the_secondary_tip_is_the_referenced_material_and_only_the_first_is_used() {
     assert_eq!((tip.width(), tip.height()), (2, 2));
     assert!(mapped(&b, SutMapped::DualBrush));
     assert!(!has(&b, SutNote::DualApprox(SutDualNote::Tips)));
-    // 複数の筆先は 1 つ目だけ
+    // 複数の筆先は全部を並びに（1 つ目は筆先にも置く）
     let b = build(&[
         ["x/dual_b.png", "c/b", "dual_b"],
         ["x/dual_a.png", "c/a", "dual_a"],
     ]);
     let tip = dual_of(&b).tip.expect("2 つ目の筆先");
     assert_eq!((tip.width(), tip.height()), (1, 1));
-    assert!(has(&b, SutNote::DualApprox(SutDualNote::Tips)));
+    let sizes: Vec<_> = dual_of(&b)
+        .tips
+        .iter()
+        .map(|t| (t.width(), t.height()))
+        .collect();
+    assert_eq!(sizes, [(1, 1), (2, 2)]);
+    assert!(!has(&b, SutNote::DualApprox(SutDualNote::Tips)));
     // 素材を決められなければ、デュアルブラシごと写さずに知らせる
     let b = build(&[["x/unknown.png", "c/u", "unknown"]]);
     assert!(b.brush.dual.is_none());
@@ -3823,12 +3829,6 @@ fn dual_settings_the_engine_does_not_have_are_reported() {
         ("ChangeRGBByDual", int(1), SutDualNote::Rgb),
         ("DualContinuousPlot", int(1), SutDualNote::Continuous),
         ("DualRibbon", int(1), SutDualNote::Ribbon),
-        (
-            "DualPatternReverseHorizontal",
-            int(2),
-            SutDualNote::TipRules,
-        ),
-        ("DualPatternOrderType", int(3), SutDualNote::TipRules),
         ("DualUseSpray", int(1), SutDualNote::Spray),
         ("DualSprayUseFixedPoint", int(1), SutDualNote::Spray),
         (
@@ -3894,7 +3894,9 @@ fn the_dual_notes_have_sentences_in_both_languages() {
 #[test]
 fn the_dual_darken_between_tips_is_reported_when_on() {
     use yolu_io::brushes::SutDualNote;
-    for column in ["DualBlendPatternByDarken", "DualBlendPatternByDarken2"] {
+    // `DualBlendPatternByDarken` は写す（`the_secondary_darken_flag_is_carried_without_a_note`）
+    #[allow(clippy::single_element_loop)]
+    for column in ["DualBlendPatternByDarken2"] {
         let b = one_dual(&dual_cells(&[(column, int(1))]));
         assert!(b.brush.dual.is_some(), "{column}");
         assert!(mapped(&b, SutMapped::DualBrush), "{column}");
@@ -3940,4 +3942,308 @@ fn an_unknown_dual_anti_aliasing_value_is_reported_and_follows_the_main_brush() 
         let b = one_dual(&dual_cells(&[("DualAntiAlias", int(level))]));
         assert!(b.unrepresented.is_empty(), "{level}: {:?}", b.unrepresented);
     }
+}
+
+// ---------------- デュアルブラシの 2 つ目の複数の筆先・繰り返し方法・反転・比較暗・紙質・散布効果 ----------------
+
+/// 2 枚の 2 つ目の筆先（主の `tipped` と同じ 2 つの素材）を持つデュアルブラシに、列を足した 1 本。
+fn dual_tipped(columns: &[(&'static str, i64)]) -> ImportedBrush {
+    let a = png_gray(2, 1, &[0, 0]);
+    let b = png_gray(1, 3, &[0, 0, 0]);
+    let mut cells = dual_cells(&[
+        ("DualUsePatternImage", int(1)),
+        (
+            "DualPatternImageArray",
+            blob(refs(&[
+                ["x/tip_a.png", "c/a", "tip_a"],
+                ["x/tip_b.png", "c/b", "tip_b"],
+            ])),
+        ),
+    ]);
+    cells.extend(columns.iter().map(|&(name, v)| (name, int(v))));
+    let file = SutBuilder::new()
+        .material(Some("tip_a"), material_with_thumbnail(&a))
+        .material(Some("tip_b"), material_with_thumbnail(&b))
+        .brush("Dual", 1, &cells)
+        .build();
+    ok(&file).brushes[0].clone()
+}
+
+#[test]
+fn the_secondary_repeat_methods_and_flips_use_the_main_brushs_table() {
+    use yolu_io::brushes::SutDualNote;
+    // 主の同じ値と同じ選び方・同じ近い動きの知らせ
+    for value in 0..=5 {
+        let main = tipped(&[("BrushPatternOrderType", value)]);
+        let dual = dual_tipped(&[("DualPatternOrderType", value)]);
+        let d = dual_of(&dual);
+        assert_eq!(d.tips.len(), 2, "{value}");
+        assert_eq!(d.selection, main.brush.tip.selection, "{value}");
+        assert_eq!(
+            has(&dual, SutNote::DualApprox(SutDualNote::TipOrderApprox)),
+            has(&main, SutNote::TipOrderApprox),
+            "{value}"
+        );
+        assert!(!has(&dual, SutNote::DualApprox(SutDualNote::TipRules)));
+        // 主の筆先には写さない
+        assert_eq!(dual.brush.tip.selection, yolu_core::TipSelection::Random);
+        dual.brush.validate().unwrap();
+    }
+    for value in 0..=3 {
+        let main = tipped(&[
+            ("BrushPatternReverseHorizontal", value),
+            ("BrushPatternReverseVertical", 3 - value),
+        ]);
+        let dual = dual_tipped(&[
+            ("DualPatternReverseHorizontal", value),
+            ("DualPatternReverseVertical", 3 - value),
+        ]);
+        let (t, d) = (&main.brush.tip, dual_of(&dual));
+        assert_eq!(
+            (d.flip_x, d.flip_x_rule, d.flip_y, d.flip_y_rule),
+            (t.flip_x, t.flip_x_rule, t.flip_y, t.flip_y_rule),
+            "{value}"
+        );
+        assert!(!dual.brush.tip.flip_x && !dual.brush.tip.flip_y);
+    }
+    // 知らない値は、ランダム・反転なしにして知らせる
+    for columns in [
+        vec![("DualPatternOrderType", 9)],
+        vec![("DualPatternReverseHorizontal", 7)],
+    ] {
+        let b = dual_tipped(&columns);
+        let d = dual_of(&b);
+        assert_eq!(d.selection, yolu_core::TipSelection::Random);
+        assert!(!d.flip_x && d.flip_x_rule == yolu_core::FlipRule::Fixed);
+        assert!(
+            has(&b, SutNote::DualApprox(SutDualNote::TipRules)),
+            "{columns:?}"
+        );
+    }
+    // 筆先 1 枚の一巡のみは、主と同じく 1 枚の並びになる
+    let single = one_dual(&dual_cells(&[("DualPatternOrderType", int(4))]));
+    assert!(dual_of(&single).tips.is_empty(), "丸い 2 つ目には効かない");
+    assert!(
+        single.unrepresented.is_empty(),
+        "{:?}",
+        single.unrepresented
+    );
+}
+
+#[test]
+fn the_secondary_darken_flag_is_carried_without_a_note() {
+    let b = one_dual(&dual_cells(&[("DualBlendPatternByDarken", int(1))]));
+    assert!(dual_of(&b).darken_overlap);
+    assert!(!b.brush.tip.darken_overlap, "主の比較暗には写さない");
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    let off = one_dual(&dual_cells(&[("DualBlendPatternByDarken", int(0))]));
+    assert!(!dual_of(&off).darken_overlap);
+}
+
+/// 紙質の素材 1 つ（`grain`）のファイルで、主か 2 つ目の紙質の列を入れた 1 本。
+fn textured_brush(cells: &[(&'static str, rusqlite::types::Value)]) -> ImportedBrush {
+    let png = png_gray(2, 2, &[255, 200, 100, 0]);
+    let file = SutBuilder::new()
+        .material(Some("grain"), material_with_thumbnail(&png))
+        .brush("T", 1, cells)
+        .build();
+    ok(&file).brushes[0].clone()
+}
+
+#[test]
+fn the_secondary_texture_is_read_like_the_main_texture() {
+    use yolu_io::brushes::SutDualNote;
+    let grain = || blob(refs(&[["g/grain.png", "c/grain", "grain"]]));
+    for (mode, reverse, rotate, tone) in [(1, 0, 0, 0), (5, 1, 90, 0), (7, 0, 0, 10)] {
+        let main = textured_brush(&[
+            ("TextureImage", grain()),
+            ("TextureDensity", int(40)),
+            ("TextureScale2", int(200)),
+            ("TextureReverseDensity", int(reverse)),
+            ("TextureRotate", int(rotate)),
+            ("TextureCompositeMode", int(mode)),
+            ("TextureBrightness", int(tone)),
+        ]);
+        let dual = textured_brush(&dual_cells(&[
+            ("DualTextureImage", grain()),
+            ("DualTextureDensity", int(40)),
+            ("DualTextureScale", int(200)),
+            ("DualTextureReverseDensity", int(reverse)),
+            ("DualTextureRotate", int(rotate)),
+            ("DualTextureCompositeMode", int(mode)),
+            ("DualTextureBrightness", int(tone)),
+        ]));
+        let t = main.brush.texture.as_ref().unwrap();
+        let d = dual_of(&dual).texture.expect("2 つ目の紙質");
+        assert_eq!(d.image.alpha(), t.image.alpha(), "{mode}");
+        assert_eq!(
+            (d.depth, d.scale, d.mode, d.angle),
+            (t.depth, t.scale, t.mode, t.angle),
+            "{mode}"
+        );
+        assert!(dual.brush.texture.is_none(), "主の紙質には写さない");
+        assert_eq!(
+            has(&dual, SutNote::DualApprox(SutDualNote::TextureTone)),
+            has(&main, SutNote::TextureToneApprox),
+            "{mode}"
+        );
+        assert!(!has(&dual, SutNote::DualApprox(SutDualNote::Texture)));
+        dual.brush.validate().unwrap();
+    }
+    // 主でも写せない物は知らせる: 同じ物の無い適用方法（輪郭）・濃度強調・描点ごとに適用・紙質濃度の影響元
+    for (column, value, note) in [
+        ("DualTextureCompositeMode", int(4), SutDualNote::TextureMode),
+        (
+            "DualTextureStressDensity",
+            int(1),
+            SutDualNote::TextureEmphasis,
+        ),
+        ("DualTextureForPlot", int(1), SutDualNote::TextureEachTip),
+        (
+            "DualTextureDensityEffector",
+            blob(effector_full(44, 0x10, [20, 0, 0, 0], None, None)),
+            SutDualNote::Sources,
+        ),
+    ] {
+        let b = textured_brush(&dual_cells(&[
+            ("DualTextureImage", grain()),
+            (column, value),
+        ]));
+        assert!(dual_of(&b).texture.is_some(), "{column}");
+        assert!(has(&b, SutNote::DualApprox(note)), "{column}");
+    }
+    let outline = textured_brush(&dual_cells(&[
+        ("DualTextureImage", grain()),
+        ("DualTextureCompositeMode", int(4)),
+    ]));
+    assert_eq!(
+        dual_of(&outline).texture.unwrap().mode,
+        yolu_core::TextureMode::Multiply
+    );
+    // 素材を決められなければ 2 つ目の紙質なしで知らせる（デュアルブラシは写す）
+    let missing = textured_brush(&dual_cells(&[(
+        "DualTextureImage",
+        blob(refs(&[["x/other.png", "c/o", "other"]])),
+    )]));
+    assert!(dual_of(&missing).texture.is_none());
+    assert!(has(&missing, SutNote::DualApprox(SutDualNote::Texture)));
+    assert!(mapped(&missing, SutMapped::DualBrush));
+}
+
+#[test]
+fn the_secondary_spray_is_read_like_the_main_spray() {
+    use yolu_io::brushes::{SprayNote, SutDualNote};
+    let main = one_spray(&spray_cells(&[
+        ("BrushSpraySizeSyncBrushSize", int(1)),
+        ("BrushSprayBias", int(-100)),
+        ("BrushRotationInSpray", real(154.5)),
+        ("BrushRotationEffectorInSpray", int(0xC1)),
+        ("BrushRotationRandomInSpray", int(50)),
+    ]));
+    let dual = one_dual(&dual_cells(&[
+        ("DualUseSpray", int(1)),
+        ("DualSpraySize", real(14.5)),
+        ("DualSpraySizeUnit", int(0)),
+        ("DualSprayDensity", int(4)),
+        ("DualSpraySizeSyncBrushSize", int(1)),
+        ("DualSprayBias", int(-100)),
+        ("DualRotationInSpray", real(154.5)),
+        ("DualRotationEffectorInSpray", int(0xC1)),
+        ("DualRotationRandomInSpray", int(50)),
+    ]));
+    let s = dual_of(&dual).spray.expect("2 つ目の散布効果");
+    assert_eq!(Some(s), main.brush.spray);
+    assert_eq!(s.direction, yolu_core::SprayDirection::Line);
+    assert!(dual.brush.spray.is_none(), "主の散布効果には写さない");
+    for n in [SprayNote::Density, SprayNote::Bias] {
+        assert!(has(&main, SutNote::SprayApprox(n)));
+        assert!(has(&dual, SutNote::DualApprox(SutDualNote::SprayApprox(n))));
+    }
+    assert!(!has(&dual, SutNote::DualApprox(SutDualNote::Spray)));
+    assert!(!mapped(&dual, SutMapped::Spray));
+    dual.brush.validate().unwrap();
+    let base = || {
+        dual_cells(&[
+            ("DualUseSpray", int(1)),
+            ("DualSpraySize", real(10.0)),
+            ("DualSprayDensity", int(5)),
+        ])
+    };
+    // 粒子サイズ・粒子密度の影響元は 2 つ目には無いので知らせる
+    let mut cells = base();
+    cells.push((
+        "DualSprayDensityEffector",
+        blob(effector_full(44, 0x80, [0, 0, 0, 30], None, None)),
+    ));
+    let b = one_dual(&cells);
+    assert!(dual_of(&b).spray.is_some());
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::Sources)));
+    // 写せない（粒子密度が 1 未満）・固定点は、今まで通り知らせる
+    let mut thin = base();
+    thin[4] = ("DualSprayDensity", real(0.5));
+    let b = one_dual(&thin);
+    assert!(dual_of(&b).spray.is_none());
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::Spray)));
+    let mut fixed = base();
+    fixed.push(("DualSprayUseFixedPoint", int(1)));
+    let b = one_dual(&fixed);
+    assert!(dual_of(&b).spray.is_some());
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::Spray)));
+}
+
+#[test]
+fn the_new_dual_notes_have_sentences_in_both_languages() {
+    use yolu_io::brushes::{SprayNote, SutDualNote};
+    for n in [
+        SutDualNote::TipOrderApprox,
+        SutDualNote::TextureGuessed,
+        SutDualNote::TextureMode,
+        SutDualNote::TextureTone,
+        SutDualNote::TextureEachTip,
+        SutDualNote::TextureEmphasis,
+        SutDualNote::SprayApprox(SprayNote::Density),
+        SutDualNote::SprayApprox(SprayNote::Bias),
+        SutDualNote::SprayApprox(SprayNote::Direction),
+        SutDualNote::Sources,
+    ] {
+        let note = Unrepresented::ClipStudio(SutNote::DualApprox(n));
+        let (ja, en) = (note.to_string(), note.english());
+        assert!(
+            !ja.is_empty() && !en.is_empty() && en.is_ascii() && !ja.is_ascii(),
+            "{n:?}"
+        );
+        for text in [&ja, &en] {
+            assert!(!text.chars().any(|c| c.is_control()), "{n:?}");
+        }
+    }
+}
+
+#[test]
+fn a_single_image_secondary_moved_into_its_list_keeps_its_horizontal_thickness_note() {
+    use yolu_io::brushes::SutDualNote;
+    // 一巡のみの 1 枚は筆先から並びへ移るが、画像の 2 つ目なので、水平の厚さで角度を回さず知らせる
+    let cells = dual_cells(&[
+        ("DualUsePatternImage", int(1)),
+        (
+            "DualPatternImageArray",
+            blob(refs(&[["x/dual_a.png", "c/a", "dual_a"]])),
+        ),
+        ("DualPatternOrderType", int(4)),
+        ("DualThickness", int(50)),
+        ("DualVerticalThicknes", int(0)),
+        ("DualRotation", real(10.0)),
+    ]);
+    let file = SutBuilder::new()
+        .material(Some("dual_a"), material_with_thumbnail(&tip_png()))
+        .brush("Dual", 1, &cells)
+        .build();
+    let b = ok(&file).brushes.remove(0);
+    let d = dual_of(&b);
+    assert!(d.tip.is_none() && d.tips.len() == 1);
+    assert_eq!(d.selection, yolu_core::TipSelection::Once);
+    assert_eq!(d.angle, 10.0);
+    assert!(has(
+        &b,
+        SutNote::DualApprox(SutDualNote::ThicknessDirection)
+    ));
 }

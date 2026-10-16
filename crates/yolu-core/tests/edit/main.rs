@@ -18,6 +18,7 @@ mod color_change;
 mod comp2d;
 mod docops;
 mod dual_brush;
+mod dual_tips;
 mod export;
 mod history;
 mod import_tiles;

@@ -13,6 +13,7 @@ mod color_change;
 mod cross_symmetry;
 mod dab_digest;
 mod dual_brush;
+mod dual_tips;
 mod material;
 mod mesh_maps;
 mod min_pixel;

@@ -78,7 +78,10 @@ use std::sync::Arc;
 use glam::DVec2;
 use rayon::prelude::*;
 
-pub(crate) use dual::{lifted_link, step as dual_step, DualLook, DualRun};
+pub(crate) use dual::{
+    lifted_link, spot as dual_spot, step as dual_step, textured_at as dual_textured_at, DualLook,
+    DualPlace, DualRun, DualTips,
+};
 pub use dynamics::{hsv_to_rgb, pen_tilt, rgb_to_hsv};
 pub use edge::AntiAlias;
 pub(crate) use edge::{Edge, TexelMetric};
@@ -99,7 +102,7 @@ pub use settings::{
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};
 pub use spray::{Spray, SprayDirection, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
-pub(crate) use spray::{SprayFrame, SprayRun};
+pub(crate) use spray::{SprayFrame, SprayRun, SprayUse};
 pub use stencil::{
     linear_to_srgb, luminance, BrushStencil, ImageColorSpace, StencilImage, StencilMapping,
     StencilMode, StencilPoint, StencilSample, StencilTexel, StencilTiling,
@@ -333,6 +336,8 @@ struct DualDab {
     x: f64,
     y: f64,
     arc: f64,
+    /// 並べた区間の線の向き（散布の粒子の向きの「線の方向」）。
+    direction: f64,
     /// そのダブの見え方（影響元・向きの足し。[`DualRun::look`]）。
     look: DualLook,
 }
@@ -402,6 +407,8 @@ pub(crate) struct StrokeState {
     /// 2 つ目のダブの見え方の進みと、次の 2 つ目のダブまでの間隔の係数（直前に並べたダブの間隔の影響元）。
     dual_run: DualRun,
     dual_step: f64,
+    /// 2 つ目の筆先の選び・反転・散布の進み。
+    dual_tips: DualTips,
     /// 筆先の選びと反転の進み（順に使うときの番号・ランダムな反転の乱数の列）。
     tips: TipRun,
     // 曲線: 描いた点（curve_from）と、その前の点（curve_before）、まだ描いていない最新の点（curve_to）
@@ -552,6 +559,7 @@ impl StrokeState {
             dual_since_stamp: 0.0,
             dual_run: DualRun::new(&brush),
             dual_step: 1.0,
+            dual_tips: DualTips::new(&brush),
             tips: TipRun::new(&brush),
             curve_points: 0,
             has_curve_before: false,
@@ -820,6 +828,7 @@ impl StrokeState {
                     x: sample.x,
                     y: sample.y,
                     arc: 0.0,
+                    direction: self.direction,
                     look,
                 });
             }
@@ -1054,6 +1063,7 @@ impl StrokeState {
                 x: p.x + (sample.x - p.x) * t,
                 y: p.y + (sample.y - p.y) * t,
                 arc: self.stroke_length + at,
+                direction: self.direction,
                 look,
             });
             self.dual_step = look.spacing;
@@ -1076,14 +1086,16 @@ impl StrokeState {
         let _profile = profile::scope(profile::Stage::Dual);
         let brush = self.brush.clone();
         let dual = brush.dual.as_ref().expect("デュアルブラシ");
+        let frame = SprayFrame::document(dual.radius, 0.0);
         while let Some(&d) = self.dual_pending.front() {
             if d.arc > limit {
                 break;
             }
             self.dual_pending.pop_front();
-            for _ in 0..dual.count {
+            for _ in 0..self.dual_tips.count(dual) {
                 let (mut cx, mut cy) = (d.x, d.y);
-                if dual.scatter > 0.0 {
+                // 散布効果の間は、旧形の散布・数を使わない（主と同じ）
+                if dual.scatter > 0.0 && dual.spray.is_none() {
                     let reach = dual.radius * 2.0 * dual.scatter;
                     let r = self.dual_random.as_mut().expect("デュアルの乱数");
                     cx += (r.next_double() * 2.0 - 1.0) * reach;
@@ -1091,7 +1103,10 @@ impl StrokeState {
                 }
                 let radius = dual.dab_radius(&d.look, link);
                 if radius > 0.0 {
-                    self.dual_dab_at(dual, cx, cy, radius, &d.look)?;
+                    let at = dual_spot(cx, cy, d.direction);
+                    if let Some(place) = self.dual_tips.place(dual, &at, radius, frame) {
+                        self.dual_dab_at(dual, &place, &d.look)?;
+                    }
                 }
             }
         }
@@ -1102,16 +1117,15 @@ impl StrokeState {
     fn dual_dab_at(
         &mut self,
         dual: &DualBrush,
-        x: f64,
-        y: f64,
-        radius: f64,
+        place: &DualPlace<'_>,
         look: &DualLook,
     ) -> Result<(), CoreError> {
+        let (x, y, radius) = (place.x, place.y, place.radius);
         let level = dual.anti_alias.unwrap_or(self.brush.base.anti_alias);
-        let shape = plan::dual_shape(dual, x, y, radius, level, look);
+        let shape = plan::dual_shape(dual, place, level, look);
         let extent = if !shape.edge.is_off() {
             rows::dual_cover_shape(&shape).reach()
-        } else if dual.tip.is_none() {
+        } else if shape.tip.is_none() {
             radius
         } else {
             radius * SQRT_2
@@ -1964,10 +1978,15 @@ struct DualShape<'a> {
     aspect_x: f64,
     aspect_y: f64,
     tip: Option<&'a BrushTip>,
+    /// 筆先の画像の左右・上下の反転（主の [`DabShape::flip_x`] と同じ）。
+    flip_x: bool,
+    flip_y: bool,
     /// 縁のアンチエイリアス（画素。主の筆先と同じ [`DabShape::with_edge`] の値）。
     edge: Edge,
     /// 溜まりへ置く覆いに掛ける濃度（濃度 × 濃度の影響元の係数。1 は掛けない）。
     flow: f64,
+    /// 溜まりへ置く覆いに掛ける紙の質感（[`DualBrush::paper`]）。
+    texture: Option<&'a PaperTexture>,
 }
 
 impl DualShape<'_> {
@@ -2010,6 +2029,8 @@ impl DualShape<'_> {
                 c
             }
             Some(t) => {
+                let u = if self.flip_x { -u } else { u };
+                let v = if self.flip_y { -v } else { v };
                 let c = t.sample(
                     (u / self.aspect_x + 1.0) * 0.5,
                     (v / self.aspect_y + 1.0) * 0.5,
@@ -2587,7 +2608,7 @@ fn apply_at<const SIMPLE: bool>(
         smudge,
     );
     if let Some((mode, grain, depth)) = paper {
-        ceiling += (rows::combine32(mode, ceiling, grain) - ceiling) * depth;
+        ceiling = rows::paper_blend(mode, ceiling, grain, depth);
     }
     if flow <= 0.0 || ceiling <= 0.0 {
         return Ok(false);
