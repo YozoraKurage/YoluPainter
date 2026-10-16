@@ -316,7 +316,7 @@ impl AppState {
 
     /// フォルダを手で選ぶウィンドウを頼む。
     pub(super) fn brush_csp_pick_folder(&mut self) {
-        self.ui.dialog_request = Some(DialogRequest::ClipStudioFolder);
+        self.outbox.dialog_request = Some(DialogRequest::ClipStudioFolder);
     }
 }
 

@@ -1689,7 +1689,7 @@ impl AppState {
                         self.refuse(Source::Assets, why);
                     } else {
                         self.shelf.pending_remove = Some(id);
-                        self.ui.dialog_request = Some(DialogRequest::ShelfRemove);
+                        self.outbox.dialog_request = Some(DialogRequest::ShelfRemove);
                     }
                 }
             }
@@ -1705,14 +1705,14 @@ impl AppState {
             }
             ShelfOp::ImportDialog => {
                 if !self.shelf_refuse_while_saving() {
-                    self.ui.dialog_request = Some(DialogRequest::ShelfImport)
+                    self.outbox.dialog_request = Some(DialogRequest::ShelfImport)
                 }
             }
             ShelfOp::ExportFile { id, path } => self.shelf_export(&id, &path),
             ShelfOp::ExportDialog(id) => {
                 if self.shelf.get(&id).is_some() {
                     self.shelf.export_id = Some(id);
-                    self.ui.dialog_request = Some(DialogRequest::ShelfExport);
+                    self.outbox.dialog_request = Some(DialogRequest::ShelfExport);
                 }
             }
             ShelfOp::ToLibrary(id) => self.library_put(&id),
@@ -1722,10 +1722,12 @@ impl AppState {
             ShelfOp::LibraryAddFiles(paths) => self.library_add_files(&paths),
             ShelfOp::LibraryAddDialog => {
                 if self.library_idle() {
-                    self.ui.dialog_request = Some(DialogRequest::LibraryAdd);
+                    self.outbox.dialog_request = Some(DialogRequest::LibraryAdd);
                 }
             }
-            ShelfOp::LibraryReveal => self.ui.dialog_request = Some(DialogRequest::LibraryReveal),
+            ShelfOp::LibraryReveal => {
+                self.outbox.dialog_request = Some(DialogRequest::LibraryReveal)
+            }
             ShelfOp::LibraryRefresh => self.library.refresh(),
             ShelfOp::SaveAsMaterial(id) => self.library_save_material(id),
         }

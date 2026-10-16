@@ -298,12 +298,12 @@ impl AppState {
                 self.prefs.settings.backups = keep;
             }
             PrefsAction::ChooseLibraryFolder => {
-                self.ui.dialog_request = Some(DialogRequest::PrefsLibraryFolder)
+                self.outbox.dialog_request = Some(DialogRequest::PrefsLibraryFolder)
             }
             PrefsAction::GpuDetails(open) => self.prefs.gpu_details = open,
             PrefsAction::CacheDetails(open) => self.prefs.cache_details = open,
             PrefsAction::ChooseCacheFolder => {
-                self.ui.dialog_request = Some(DialogRequest::PrefsCacheFolder)
+                self.outbox.dialog_request = Some(DialogRequest::PrefsCacheFolder)
             }
             PrefsAction::Set(pref) => match pref {
                 Pref::LiveLinkOnStartup(v) => self.prefs.settings.livelink_on_startup = v,

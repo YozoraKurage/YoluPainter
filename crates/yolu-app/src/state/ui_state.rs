@@ -2,11 +2,11 @@
 
 use std::collections::HashMap;
 
-use super::{DialogRequest, OpenPopup};
+use super::OpenPopup;
 use crate::engine::LayerId;
 use crate::m2::LayerDrag;
 
-/// 画面の一時の状態（前のフレームの結果・開いているポップアップ・ファイルのウィンドウの頼み・知らせの表示・入力の途中。保存しない）。文書を替えると、前の文書を指す物（名前の変更・レイヤーのドラッグ）は
+/// 画面の一時の状態（前のフレームの結果・開いているポップアップ・入力の途中。保存しない）。状態の側から画面への頼みは `Outbox`。文書を替えると、前の文書を指す物（名前の変更・レイヤーのドラッグ）は
 /// `AppState::install_document` が戻す。
 #[derive(Debug, Default)]
 pub struct UiState {
@@ -47,14 +47,8 @@ pub struct UiState {
     pub dock_ops: Vec<crate::detach::DockOp>,
     /// 開いているポップアップ。
     pub popup: Option<OpenPopup>,
-    /// ファイルを選ぶウィンドウを開く頼み（`YoluApp` が開く。テストでは開かない）。
-    pub dialog_request: Option<DialogRequest>,
-    /// 小さな知らせの出し方の状態（どの文をいつから出したか・消したか）。
-    pub toast: crate::toast::Toast,
     /// ログのウィンドウの画面の状態（絞り・選んだ行）。
     pub log_view: crate::panels::log::LogView,
-    /// パネルの並びを初めに戻す頼み（`YoluApp` が次のフレームで当てる）。
-    pub reset_layout: bool,
     /// ショートカットの設定のウィンドウ。
     pub shortcuts: crate::shortcuts::ShortcutWindow,
     /// 筆圧の調整（設定の「ペン」。枠で描いた線と開いたときの調整。調整そのものは `prefs.settings.pressure`）。

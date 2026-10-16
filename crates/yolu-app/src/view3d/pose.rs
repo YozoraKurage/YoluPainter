@@ -891,7 +891,7 @@ pub fn apply_action(app: &mut AppState, action: PoseAction) {
     let result = match action {
         PoseAction::OpenFbx => {
             // ウィンドウは YoluApp が開く（選ばれたら `open_file`）
-            app.ui.dialog_request = Some(DialogRequest::OpenModel);
+            app.outbox.dialog_request = Some(DialogRequest::OpenModel);
             Ok(())
         }
         PoseAction::CancelLoad => Ok(()),
@@ -1184,7 +1184,7 @@ mod tests {
         assert_eq!(app.message, ViewError::Stroking.to_string());
         app.apply(Action::Pose(PoseAction::OpenFbx));
         assert_eq!(
-            app.ui.dialog_request, None,
+            app.outbox.dialog_request, None,
             "描いている間はファイルのウィンドウを頼まない"
         );
         open_file(&mut app, Path::new("読まれない.fbx"));
@@ -1335,7 +1335,7 @@ mod tests {
         let mut app = AppState::new(64, 64);
         // 状態のレイヤーは OS のウィンドウを開かない: 頼みを残すだけ
         app.apply(Action::Pose(PoseAction::OpenFbx));
-        assert_eq!(app.ui.dialog_request, Some(DialogRequest::OpenModel));
+        assert_eq!(app.outbox.dialog_request, Some(DialogRequest::OpenModel));
         assert!(!app.view3d.pose.is_loading());
         // 選ばれたパス（ウィンドウに落としたものも）は、何も触っていないプロジェクトなら新規プロジェクトのウィンドウで読む（3D ビューには、
         // 決めるまで入れない）

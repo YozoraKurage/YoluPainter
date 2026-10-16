@@ -230,7 +230,7 @@ impl AppState {
                     self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
                     return;
                 }
-                self.ui.dialog_request = Some(DialogRequest::ExportDestination);
+                self.outbox.dialog_request = Some(DialogRequest::ExportDestination);
             }
             ExportAction::Destination(path) => self.choose_export_destination(path),
             ExportAction::Run => self.run_export_window(),

@@ -194,14 +194,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, free_right: f32) {
     let now = ctx.input(|i| i.time);
     // フレームの中で、ここまでに書かれた文（`apply` の外の書き込みも）をすぐ出す
     app.flush_message();
-    app.ui.toast.update(now);
-    if !app.ui.toast.is_visible(now) {
+    app.outbox.toast.update(now);
+    if !app.outbox.toast.is_visible(now) {
         return;
     }
     // 1 行で出す（文の中の改行は空白にする）
-    let text = app.ui.toast.text().replace(['\r', '\n'], " ");
-    let kind = app.ui.toast.kind();
-    let opacity = app.ui.toast.opacity(now);
+    let text = app.outbox.toast.text().replace(['\r', '\n'], " ");
+    let kind = app.outbox.toast.kind();
+    let opacity = app.outbox.toast.opacity(now);
     let strip = strip_rect(ctx, free_right);
     if strip.width() < TEXT_INSET + 8.0 {
         return;
@@ -239,14 +239,14 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, free_right: f32) {
             }
         });
     if dismissed {
-        app.ui.toast.dismiss();
+        app.outbox.toast.dismiss();
         return;
     }
     if hovered {
-        app.ui.toast.hold(now);
+        app.outbox.toast.hold(now);
     }
     // 消える時刻（と、うすくなっていく間）に描き直す
-    let remaining = app.ui.toast.remaining(now);
+    let remaining = app.outbox.toast.remaining(now);
     let wait = if remaining > FADE_SECONDS {
         remaining - FADE_SECONDS
     } else {

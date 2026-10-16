@@ -570,7 +570,7 @@ fn it_does_not_start_while_drawing_or_exporting() {
     assert!(!s.export.is_exporting());
     assert_eq!(s.message, "描いている間はできません。");
     s.apply(Action::Export(ExportAction::ChooseDestination));
-    assert_eq!(s.ui.dialog_request, None);
+    assert_eq!(s.outbox.dialog_request, None);
     s.apply(Action::Export(ExportAction::OpenWindow));
     assert!(!s.export.window.open, "描いている間は開かない");
     s.session.doc.end_stroke(stroke).unwrap();
@@ -703,13 +703,16 @@ fn png_bytes(path: &Path) -> Vec<u8> {
 fn the_window_asks_for_one_destination_whatever_the_form() {
     let mut s = two_sets();
     s.apply(Action::Export(ExportAction::ChooseDestination));
-    assert_eq!(s.ui.dialog_request, Some(DialogRequest::ExportDestination));
+    assert_eq!(
+        s.outbox.dialog_request,
+        Some(DialogRequest::ExportDestination)
+    );
     // 描いている間は頼まない
-    s.ui.dialog_request = None;
+    s.outbox.dialog_request = None;
     let layer = s.session.selected_layer.unwrap();
     let stroke = s.begin_paint_stroke(layer, false).unwrap();
     s.apply(Action::Export(ExportAction::ChooseDestination));
-    assert_eq!(s.ui.dialog_request, None);
+    assert_eq!(s.outbox.dialog_request, None);
     assert!(s.message.contains("描いている間"), "{}", s.message);
     s.session.doc.cancel_stroke(stroke);
 }

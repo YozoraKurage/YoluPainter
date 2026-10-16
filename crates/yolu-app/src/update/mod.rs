@@ -946,7 +946,9 @@ impl AppState {
     /// 保存が失敗していれば、その理由（保存の側が書いた message）を残す。短い文を出すのは、保存先のウィンドウを取り消したときだけ。
     pub fn update_finish_save(&mut self) {
         // 保存の仕事が動いているあいだも待つ（裏のスレッドの保存が終わってから、その結果を見て入れる）
-        if !self.services.update.after_save || self.ui.dialog_request.is_some() || self.is_saving()
+        if !self.services.update.after_save
+            || self.outbox.dialog_request.is_some()
+            || self.is_saving()
         {
             return;
         }

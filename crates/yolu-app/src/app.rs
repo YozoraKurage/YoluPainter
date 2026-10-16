@@ -468,7 +468,7 @@ pub struct YoluApp {
     link: LiveLink,
     /// 外からの操作（MCP のクライアント・コマンドライン）を受ける（設定「外からの操作を受ける」が入っている間だけ 127.0.0.1 で待つ）。
     ops: McpServer,
-    /// ファイルのウィンドウ・確認のウィンドウを開くか（eframe のウィンドウだけ。試験では開かず、頼みを `state.dialog_request` に残す）。
+    /// ファイルのウィンドウ・確認のウィンドウを開くか（eframe のウィンドウだけ。テストでは開かず、頼みを `state.outbox.dialog_request` に残す）。
     dialogs: bool,
     /// 終わると決めた（閉じる頼みを二度聞かない）。
     closing: bool,
@@ -1113,8 +1113,8 @@ impl YoluApp {
         }
         // 最近開いたプロジェクトから開く（ウィンドウは開かない）。保存していない変更は、「開く」と同じ問い
         if self.state.ui.discard_ask.is_none() {
-            if let Some(DialogRequest::OpenPath(path)) = self.state.ui.dialog_request.clone() {
-                self.state.ui.dialog_request = None;
+            if let Some(DialogRequest::OpenPath(path)) = self.state.outbox.dialog_request.clone() {
+                self.state.outbox.dialog_request = None;
                 self.discard_then(crate::discard::AfterDiscard::OpenPath(path));
             }
         }
@@ -1122,7 +1122,7 @@ impl YoluApp {
         if !(self.dialogs || self.discard_window) || self.state.ui.discard_ask.is_some() {
             return;
         }
-        match self.state.ui.dialog_request.take() {
+        match self.state.outbox.dialog_request.take() {
             Some(DialogRequest::New) => {
                 // 保存していない変更は先に聞く（ウィンドウを開いてから聞くと、作業を捨てる前にウィンドウの設定が無駄になる）
                 self.discard_then(crate::discard::AfterDiscard::New);
@@ -2068,7 +2068,7 @@ impl YoluApp {
     /// フレームの終わりの `message`: 失敗・断り・警告を記録へ（同じ文なら何もしない）。新しい知らせがあれば、すぐ出すための描き直しを頼む。
     fn finish_message(&mut self, ctx: &egui::Context) {
         self.state.record_message();
-        if self.state.ui.toast.is_pending() {
+        if self.state.outbox.toast.is_pending() {
             ctx.request_repaint();
         }
     }
@@ -2197,12 +2197,12 @@ impl YoluApp {
             self.bring_forward(Tab::View3d);
         }
         self.ensure_pose_tab();
-        if self.state.ui.reset_layout {
+        if self.state.outbox.reset_layout {
             self.dock = default_dock_for(ctx.content_rect().width());
             self.dock_auto = Some(ctx.content_rect().width());
             self.dock_refit = false;
             self.detached.clear();
-            self.state.ui.reset_layout = false;
+            self.state.outbox.reset_layout = false;
         }
         self.state.ui.panels = self.detached.index(&self.dock);
 

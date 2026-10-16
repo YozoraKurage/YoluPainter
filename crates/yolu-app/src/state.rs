@@ -17,8 +17,10 @@ use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
 
+mod outbox;
 mod services;
 mod ui_state;
+pub use outbox::Outbox;
 pub use services::Services;
 pub use ui_state::UiState;
 
@@ -769,10 +771,12 @@ pub struct AppState {
     pub last_notice: Option<crate::notice::Notice>,
     /// 起動してからの注意と失敗（ログのウィンドウが読む）。
     pub notice_log: crate::notice::NoticeLog,
-    /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・開いているポップアップ・知らせの表示など。保存しない）。
+    /// 画面の一時の状態（名前の変更・レイヤーの欄のスクロールとドラッグ・キャンバスの表示域・開いているポップアップなど。保存しない）。
     pub ui: UiState,
     /// 裏で動く仕事の状態（保存・復旧の書き置き・Live Link・外からの操作・更新・クラッシュの報告・使っているメモリ。egui の型を持たない）。
     pub services: Services,
+    /// 状態の側から画面への頼み（ファイルのウィンドウを開く・パネルの並びを戻す・小さな知らせ。egui の型を持たない）。
+    pub outbox: Outbox,
     pub canvas: CanvasInput,
     /// ファイルを選ぶウィンドウを、入り口の種類ごとに前に使った場所から開くための覚え（`dialog::places`。試験の状態は設定のフォルダに書かない）。
     pub places: crate::dialog::places::Places,
@@ -1004,6 +1008,7 @@ impl AppState {
                 ..UiState::default()
             },
             services: Services::default(),
+            outbox: Outbox::default(),
             canvas: CanvasInput::default(),
             places: Default::default(),
             recent_projects: Default::default(),
@@ -1092,7 +1097,7 @@ impl AppState {
             );
             return;
         }
-        self.ui.dialog_request = Some(DialogRequest::OpenPath(path));
+        self.outbox.dialog_request = Some(DialogRequest::OpenPath(path));
     }
 
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
@@ -1467,7 +1472,7 @@ impl AppState {
                 }
             }
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
-            Action::ResetLayout => self.ui.reset_layout = true,
+            Action::ResetLayout => self.outbox.reset_layout = true,
             Action::SelectTool(tool) => {
                 // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
                 self.switch_tool(tool, false);
@@ -1544,7 +1549,7 @@ impl AppState {
                 )) {
                     return;
                 }
-                self.ui.dialog_request = Some(DialogRequest::New)
+                self.outbox.dialog_request = Some(DialogRequest::New)
             }
             Action::NewProject => {
                 if stroking {
@@ -1562,7 +1567,7 @@ impl AppState {
                 ) {
                     return;
                 }
-                self.ui.dialog_request = Some(DialogRequest::Open)
+                self.outbox.dialog_request = Some(DialogRequest::Open)
             }
             Action::SaveProjectAsDialog => {
                 if stroking {
@@ -1574,7 +1579,7 @@ impl AppState {
                 ) {
                     return;
                 }
-                self.ui.dialog_request = Some(DialogRequest::SaveAs)
+                self.outbox.dialog_request = Some(DialogRequest::SaveAs)
             }
             Action::OpenProject(path) => self.open_project(path),
             Action::OpenRecent(path) => self.open_recent(path),
@@ -1598,7 +1603,7 @@ impl AppState {
                     .map(|p| p.path().to_path_buf())
                 {
                     Some(path) => crate::project::save_from(self, &path),
-                    None => self.ui.dialog_request = Some(DialogRequest::SaveAs),
+                    None => self.outbox.dialog_request = Some(DialogRequest::SaveAs),
                 }
             }
             Action::SaveProjectAs(path) => {

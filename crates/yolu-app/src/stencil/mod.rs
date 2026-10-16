@@ -444,7 +444,7 @@ impl AppState {
             return;
         }
         match op {
-            StencilOp::Pick => self.ui.dialog_request = Some(DialogRequest::OpenStencil),
+            StencilOp::Pick => self.outbox.dialog_request = Some(DialogRequest::OpenStencil),
             StencilOp::Load(path) => self.load_stencil(&path),
             StencilOp::Recent(i) => {
                 if let Some(r) = self.stencil.recent.get(i).cloned() {

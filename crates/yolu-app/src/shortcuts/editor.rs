@@ -808,10 +808,10 @@ fn footer(ui: &mut Ui, app: &mut AppState, r: Rect) {
         app.keys_reset_all();
     }
     if button(ui, lang.pick("書き出し…", "Export…"), "export") {
-        app.ui.dialog_request = Some(DialogRequest::KeymapExport);
+        app.outbox.dialog_request = Some(DialogRequest::KeymapExport);
     }
     if button(ui, lang.pick("読み込み…", "Import…"), "import") {
-        app.ui.dialog_request = Some(DialogRequest::KeymapImport);
+        app.outbox.dialog_request = Some(DialogRequest::KeymapImport);
     }
     if app.keys.unsaved || app.keys.has_conflicts() {
         let reason = unsaved_reason(lang);

@@ -544,7 +544,9 @@ impl AppState {
                 self.np_open_model(path);
             }
             NpAction::Close => self.np.window = None,
-            NpAction::ChooseDialog => self.ui.dialog_request = Some(DialogRequest::ProjectModel),
+            NpAction::ChooseDialog => {
+                self.outbox.dialog_request = Some(DialogRequest::ProjectModel)
+            }
             NpAction::CancelReopen => {
                 if self.np.reopening.take().is_some() {
                     self.info(

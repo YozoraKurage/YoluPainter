@@ -1591,7 +1591,7 @@ impl AppState {
                     return;
                 }
                 self.toolset.catalog.pending_delete = Some(key);
-                self.ui.dialog_request = Some(crate::state::DialogRequest::BrushFileDelete);
+                self.outbox.dialog_request = Some(crate::state::DialogRequest::BrushFileDelete);
             }
             BrushAction::DeleteFile(key) => {
                 if self.is_stroking() {

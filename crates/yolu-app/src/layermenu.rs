@@ -162,7 +162,7 @@ impl AppState {
             Op::FillImage { image, mode } => self.new_image_fill(image, mode),
             Op::FillImageDialog(mode) => {
                 if !self.shelf_refuse_while_saving() {
-                    self.ui.dialog_request = Some(DialogRequest::NewFillImage(mode));
+                    self.outbox.dialog_request = Some(DialogRequest::NewFillImage(mode));
                 }
             }
             Op::FillImageFile { path, mode } => {

@@ -134,10 +134,10 @@ pub trait Drive {
         &mut self.app_mut().ui.log_view
     }
     fn toast(&self) -> &yolu_app::toast::Toast {
-        &self.app().ui.toast
+        &self.app().outbox.toast
     }
     fn toast_mut(&mut self) -> &mut yolu_app::toast::Toast {
-        &mut self.app_mut().ui.toast
+        &mut self.app_mut().outbox.toast
     }
     fn usage(&self) -> &yolu_app::usage::Usage {
         &self.app().services.usage
@@ -198,10 +198,10 @@ pub trait Drive {
         self.app_mut().session.rewritten_sets = value;
     }
     fn reset_layout(&self) -> bool {
-        self.app().ui.reset_layout
+        self.app().outbox.reset_layout
     }
     fn set_reset_layout(&mut self, value: bool) {
-        self.app_mut().ui.reset_layout = value;
+        self.app_mut().outbox.reset_layout = value;
     }
     fn quit(&self) -> bool {
         self.app().quit
@@ -273,10 +273,10 @@ pub trait Drive {
         &mut self.app_mut().session.project
     }
     fn dialog_request(&self) -> &Option<yolu_app::state::DialogRequest> {
-        &self.app().ui.dialog_request
+        &self.app().outbox.dialog_request
     }
     fn dialog_request_mut(&mut self) -> &mut Option<yolu_app::state::DialogRequest> {
-        &mut self.app_mut().ui.dialog_request
+        &mut self.app_mut().outbox.dialog_request
     }
     fn view3d(&self) -> &yolu_app::view3d::View3dState {
         &self.app().view3d

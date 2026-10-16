@@ -652,7 +652,7 @@ impl AppState {
                 if let Some(r) = self.toolset.set.lock_refusal() {
                     return self.toolset_refuse(r);
                 }
-                self.ui.dialog_request = Some(crate::state::DialogRequest::ToolsetReset);
+                self.outbox.dialog_request = Some(crate::state::DialogRequest::ToolsetReset);
             }
             ToolsetAction::Reset => {
                 if self.toolset_blocked() {
