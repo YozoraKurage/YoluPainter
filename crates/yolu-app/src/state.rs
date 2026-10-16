@@ -616,6 +616,9 @@ pub enum Action {
     Object(crate::objects::ObjectAction),
     /// ツールのキーの動き方を替える（ショートカットの設定。操作の ID と動き方。キーの設定を保存する）。
     ToolKeyMode(&'static str, crate::toolkeys::ToolKeyMode),
+    /// ヒストリーの行へ移る（文書の履歴の位置。保持された一番古い段の前が 0）。取り消し・やり直しを続けて当てる（ポーズの取り消しと
+    /// 多角形の点は見ない）。
+    HistoryGoTo(usize),
 }
 
 impl Action {
@@ -704,6 +707,7 @@ impl Action {
             Self::View3dNav(..) => "View3dNav",
             Self::Object(..) => "Object",
             Self::ToolKeyMode(..) => "ToolKeyMode",
+            Self::HistoryGoTo(..) => "HistoryGoTo",
         }
     }
 
@@ -733,6 +737,7 @@ impl Action {
                 | Action::ToggleVisible(_)
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
+                | Action::HistoryGoTo(_)
         ) || matches!(self, Action::Ruler(op) if op.edits_document())
             || matches!(self, Action::Fill(op) if op.edits_document())
             || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
@@ -1177,6 +1182,40 @@ impl AppState {
             Some(s) if crate::view3d::pose::owns_undo(self) => s.can_redo(),
             _ => self.session.doc.can_redo(),
         }
+    }
+
+    /// ヒストリーの行へ移る（`Action::HistoryGoTo`）: 文書の保持された位置 `target` まで、取り消し・やり直しを続けて当てる。ポーズの
+    /// 取り消しと打っている多角形の点は見ない（いつも文書の履歴）。移るときは、打っている文字を取り消しと同じく先に打ち終える。位置が
+    /// 履歴の外なら何もしない。
+    fn history_go_to(&mut self, target: usize, stroking: bool) {
+        if stroking {
+            let text = crate::lang::refusals::during_stroke(self.lang);
+            return self.refuse(Source::Edit, text);
+        }
+        let doc = &self.session.doc;
+        if target > doc.undo_count() + doc.redo_count() {
+            return;
+        }
+        if target != doc.undo_count() {
+            self.text_commit();
+        }
+        while target != self.session.doc.undo_count() {
+            let result = if target < self.session.doc.undo_count() {
+                self.session.doc.undo()
+            } else {
+                self.session.doc.redo()
+            };
+            match result {
+                Ok(true) => self.session.mark_modified(),
+                Ok(false) => break,
+                Err(e) => {
+                    let text = self.lang.core_error(&e);
+                    self.notify(crate::notice::Kind::of_core(&e), Source::Edit, text);
+                    break;
+                }
+            }
+        }
+        self.ensure_selection();
     }
 
     pub fn section_open(&self, key: &'static str, default: bool) -> bool {
@@ -1630,6 +1669,7 @@ impl AppState {
                 self.keys.set_tool_mode(command, mode);
                 self.keys_changed();
             }
+            Action::HistoryGoTo(target) => self.history_go_to(target, stroking),
         }
     }
 }

@@ -1,8 +1,10 @@
 //! 現在のテクスチャセットの履歴。位置は保持された最古の段の直前を 0 とする。
 
-use crate::lang::{refusals, Lang};
-use crate::notice::{Kind, Source};
-use crate::{engine::HistoryKind, state::AppState};
+use crate::lang::Lang;
+use crate::{
+    engine::HistoryKind,
+    state::{Action, AppState},
+};
 
 pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
     match kind {
@@ -34,36 +36,9 @@ pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
     }
 }
 
-/// ポーズや未確定の多角形の Undo と区別して、文書の保持された位置へ移動する。
+/// ポーズや未確定の多角形の Undo と区別して、文書の保持された位置へ移動する（`Action::HistoryGoTo`）。
 pub fn go_to(app: &mut AppState, target: usize) {
-    if app.is_stroking() {
-        app.refuse(Source::Edit, refusals::during_stroke(app.lang));
-        return;
-    }
-    if let Some(reason) = app.read_only_reason() {
-        let text = refusals::read_only_set(app.lang, reason);
-        app.refuse(Source::Edit, text);
-        return;
-    }
-    if target > app.session.doc.undo_count() + app.session.doc.redo_count() {
-        return;
-    }
-    while target != app.session.doc.undo_count() {
-        let result = if target < app.session.doc.undo_count() {
-            app.session.doc.undo()
-        } else {
-            app.session.doc.redo()
-        };
-        match result {
-            Ok(true) => app.session.mark_modified(),
-            Ok(false) => break,
-            Err(e) => {
-                app.notify(Kind::of_core(&e), Source::Edit, app.lang.core_error(&e));
-                break;
-            }
-        }
-    }
-    app.ensure_selection();
+    app.apply(Action::HistoryGoTo(target));
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut AppState) {

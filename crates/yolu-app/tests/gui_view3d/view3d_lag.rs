@@ -346,6 +346,27 @@ fn ctrl_z_right_after_the_release_undoes_the_whole_line_in_one_step() {
     assert!(snapshot(&h) == expected, "やり直しで、全部を塗った線が戻る");
 }
 
+/// 離した直後にヒストリーの行を押しても、Ctrl+Z と同じく残りを塗って確定してから戻る（断らない・確定待ちを残さない）。
+#[test]
+fn a_history_row_right_after_the_release_settles_the_line_first() {
+    let (expected, _) = whole(&[&first_line()]);
+    let (mut h, rect) = view(Duration::ZERO);
+    let before = snapshot(&h);
+    leave_leftover(&mut h, rect, &first_line());
+    yolu_app::panels::history::go_to(h.app_mut(), 0);
+    assert!(!stroking(&h), "確定待ちを残さない");
+    assert_eq!(h.doc().undo_count(), 0, "開始位置へ戻った");
+    assert_eq!(h.doc().redo_count(), 1, "確定した線が 1 段");
+    assert!(snapshot(&h) == before, "線が消えた");
+    assert!(
+        !message(&h).contains("描いている"),
+        "断りの文は出ない: {}",
+        message(&h)
+    );
+    yolu_app::panels::history::go_to(h.app_mut(), 1);
+    assert!(snapshot(&h) == expected, "進むと、全部を塗った線が戻る");
+}
+
 /// 保存・モードの切り替え・外からの操作（MCP/CLI の入り口）も、先に確定してから通す（断らない）。
 #[test]
 fn saving_switching_the_mode_and_outside_operations_first_finish_the_leftover() {

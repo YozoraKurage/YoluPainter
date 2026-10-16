@@ -690,6 +690,29 @@ fn undo_and_redo_while_recording_take_the_recorded_steps_off_and_back() {
     assert!(skipped(&s), "描いた線は記録しなかった");
 }
 
+/// ヒストリーの行で戻る・進むのは、取り消し・やり直しを続けたのと同じ: 記録した段を外し、戻す（記録の外の変更の印は出さない）。
+#[test]
+fn history_rows_while_recording_take_the_recorded_steps_off_and_back_like_undo() {
+    let mut s = fixture();
+    start(&mut s);
+    s.act(Action::NewLayer);
+    s.act(Action::M2(Edit::NewGroup));
+    let commands = recorded(&s);
+    assert_eq!(commands.len(), 2);
+    yolu_app::panels::history::go_to(&mut s, 0);
+    assert!(recorded(&s).is_empty());
+    yolu_app::panels::history::go_to(&mut s, 1);
+    assert_eq!(recorded(&s).len(), 1);
+    yolu_app::panels::history::go_to(&mut s, 2);
+    assert_eq!(recorded(&s), commands);
+    assert!(!skipped(&s));
+    // 戻ったあとに新しい操作をすると、戻した段は記録から外れたままで、新しい操作だけが残る（取り消しのあとと同じ）
+    yolu_app::panels::history::go_to(&mut s, 0);
+    s.act(Action::NewLayer);
+    assert_eq!(recorded(&s).len(), 1);
+    assert!(!skipped(&s));
+}
+
 #[test]
 fn recording_only_follows_the_document_it_started_on() {
     let mut s = fixture();

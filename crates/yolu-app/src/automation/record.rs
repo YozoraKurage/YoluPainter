@@ -160,6 +160,8 @@ enum Plan {
     Skip,
     Undo,
     Redo,
+    /// ヒストリーの行で移った（取り消し・やり直しを、前後の取り消しの数の差の段だけ続けたのと同じ）。
+    History,
     Record {
         commands: Vec<Command>,
         creates: Option<Made>,
@@ -263,29 +265,14 @@ pub fn after(app: &mut AppState, pending: Option<Pending>) {
     rec.seen = now;
     match p.plan {
         Plan::Ui | Plan::Skip => rec.skipped = true,
-        Plan::Undo => {
-            if rec.top == Some(p.rev_before) {
-                let linked = rec.redo_top == Some(p.rev_before);
-                if let Some(entry) = rec.pop(now) {
-                    rec.undone.push((entry, linked));
-                    rec.redo_top = Some(now);
-                }
+        Plan::Undo => undo_steps(rec, p.rev_before, now, 1),
+        Plan::Redo => redo_steps(rec, p.rev_before, now, 1),
+        Plan::History => {
+            let undo = doc.undo_count();
+            if undo < p.undo_before {
+                undo_steps(rec, p.rev_before, now, (p.undo_before - undo) as u64);
             } else {
-                // 記録の外の段（描いた線など）を取り消した
-                rec.top = None;
-                rec.redo_top = None;
-            }
-        }
-        Plan::Redo => {
-            if rec.redo_top == Some(p.rev_before) {
-                if let Some((entry, linked)) = rec.undone.pop() {
-                    rec.entries.push(entry);
-                    rec.top = Some(now);
-                    rec.redo_top = linked.then_some(now);
-                }
-            } else {
-                rec.top = None;
-                rec.redo_top = None;
+                redo_steps(rec, p.rev_before, now, (undo - p.undo_before) as u64);
             }
         }
         Plan::Record {
@@ -341,6 +328,47 @@ pub fn after(app: &mut AppState, pending: Option<Pending>) {
                 merge,
             });
             rec.top = Some(now);
+        }
+    }
+}
+
+/// 取り消しを `steps` 段（1 段ずつ取り消しを続けたのと同じに、記録した段を外す）。`rev_before` は操作の前、`now` は後の文書の変更番号。
+/// 取り消し 1 段で変更番号は 1 つ進むので、途中の段の前後は `now` から数える（記録した段の番号とは比べない: 前の段の後と次の段の前を
+/// つなぐだけ）。
+fn undo_steps(rec: &mut Recorder, rev_before: u64, now: u64, steps: u64) {
+    let base = now.saturating_sub(steps);
+    for i in 0..steps {
+        let before = if i == 0 { rev_before } else { base + i };
+        let after = base + i + 1;
+        if rec.top == Some(before) {
+            let linked = rec.redo_top == Some(before);
+            if let Some(entry) = rec.pop(after) {
+                rec.undone.push((entry, linked));
+                rec.redo_top = Some(after);
+            }
+        } else {
+            // 記録の外の段（描いた線など）を取り消した
+            rec.top = None;
+            rec.redo_top = None;
+        }
+    }
+}
+
+/// やり直しを `steps` 段（1 段ずつやり直しを続けたのと同じに、外した段を戻す。番号の数え方は `undo_steps` と同じ）。
+fn redo_steps(rec: &mut Recorder, rev_before: u64, now: u64, steps: u64) {
+    let base = now.saturating_sub(steps);
+    for i in 0..steps {
+        let before = if i == 0 { rev_before } else { base + i };
+        let after = base + i + 1;
+        if rec.redo_top == Some(before) {
+            if let Some((entry, linked)) = rec.undone.pop() {
+                rec.entries.push(entry);
+                rec.top = Some(after);
+                rec.redo_top = linked.then_some(after);
+            }
+        } else {
+            rec.top = None;
+            rec.redo_top = None;
         }
     }
 }
@@ -565,6 +593,7 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
     match action {
         Action::Undo => Plan::Undo,
         Action::Redo => Plan::Redo,
+        Action::HistoryGoTo(_) => Plan::History,
         Action::NewLayer => match above(app, rec) {
             Ok(above) => creating(
                 Command::LayerAdd(layer_add(

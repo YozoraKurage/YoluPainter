@@ -9,7 +9,8 @@ use yolu_app::{
     lang::Lang,
     panels::history::{go_to, show, title},
     sets::MaterialRef,
-    state::AppState,
+    state::{Action, AppState, Tool},
+    textlayer::TextAction,
     Tab,
 };
 
@@ -67,6 +68,29 @@ fn stroke_and_read_only_set_refuse_history_navigation() {
     go_to(&mut app, 0);
     assert_eq!(app.doc().undo_count(), 1);
     assert!(!app.modified());
+}
+
+/// 打っている文字は、取り消しと同じく打ち終えてから移る（打っている途中のまま、その文字のレイヤーを戻さない）。
+#[test]
+fn moving_in_the_history_finishes_the_typed_text_first() {
+    let mut app = AppState::new(256, 256);
+    app.act(Action::SelectTool(Tool::Text));
+    let layers = app.doc().layers().len();
+    app.act(Action::Text(TextAction::Begin { x: 20.0, y: 200.0 }));
+    app.text_typed("abc".into());
+    assert!(app.text().editing.is_some());
+    assert_eq!(app.doc().undo_count(), 1);
+    go_to(&mut app, 0);
+    assert!(app.text().editing.is_none(), "打ち終えてから戻った");
+    assert_eq!(app.doc().layers().len(), layers);
+    go_to(&mut app, 1);
+    let texts: Vec<String> = app
+        .doc()
+        .layers()
+        .iter()
+        .filter_map(|l| l.text().map(|t| t.text.clone()))
+        .collect();
+    assert_eq!(texts, ["abc"], "打った分が 1 段");
 }
 
 #[test]
