@@ -20,6 +20,7 @@
 
 pub mod adjust;
 pub mod capture;
+pub mod drop_point;
 pub mod log;
 #[cfg(target_os = "macos")]
 mod mac_tablet;

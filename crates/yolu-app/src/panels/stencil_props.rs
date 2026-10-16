@@ -138,9 +138,8 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
             Sense::hover()
         },
     );
-    let pointer_over = ui
-        .input(|i| i.pointer.hover_pos())
-        .is_some_and(|p| box_rect.contains(p));
+    let pointer_over =
+        crate::pen::drop_point::drop_point(ui.ctx()).is_some_and(|p| box_rect.contains(p));
     let dragging_file = enabled && ui.input(|i| !i.raw.hovered_files.is_empty()) && pointer_over;
     let hover = shown.live && response.hovered();
     let ctx = ui.ctx().clone();

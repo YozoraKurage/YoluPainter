@@ -1525,9 +1525,13 @@ pub(crate) fn repaint_waker(ctx: &egui::Context) -> Waker {
 }
 
 pub(crate) fn import_dropped(ctx: &egui::Context, state: &mut AppState, grid: Option<Rect>) {
+    // 落としていないフレームでは位置を取らない（ドラッグの間に、OS のカーソルの位置を毎フレーム聞かない）
+    if ctx.input(|i| i.raw.dropped_files.is_empty()) {
+        return;
+    }
     let over_grid = state.library.source == Source::Library
         && grid
-            .zip(ctx.input(|i| i.pointer.latest_pos()))
+            .zip(crate::pen::drop_point::drop_point(ctx))
             .is_some_and(|(r, p)| r.contains(p));
     let dropped: Vec<PathBuf> = ctx.input(|i| {
         i.raw

@@ -1593,8 +1593,7 @@ impl YoluApp {
             return;
         }
         self.import_dropped_psd(&dropped);
-        let over_list = ctx
-            .input(|i| i.pointer.latest_pos())
+        let over_list = crate::pen::drop_point::drop_point(ctx)
             .zip(self.state.ui.brushes_list_rect)
             .is_some_and(|(p, r)| r.contains(p));
         let brushes: Vec<std::path::PathBuf> = dropped
