@@ -335,13 +335,27 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
     // ABR はウィンドウのどこに落としても取り込む。PNG はほかの用途と区別がつかないので、一覧の外では取り込まない
     drop_files(&mut h, outside, &[&png]);
     assert!(!st(&h).is_brush_importing());
+    assert!(
+        !st(&h).message().contains("tip.png"),
+        "{}",
+        st(&h).message()
+    );
+    // 取り込みは別のスレッドで、小さなファイルは落としたフレームのうちに終わることがある。始まったことは、まだ取り込み中か、
+    // もう取り込んだ結果で見る
     drop_files(&mut h, outside, &[&abr]);
-    assert!(st(&h).is_brush_importing());
+    assert!(
+        st(&h).is_brush_importing() || st(&h).brush_entries_in(Group::Imported).len() == 2,
+        "ABR の取り込みが始まらない"
+    );
     wait_import(&mut h);
     assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
     // 一覧の上の PNG は取り込もうとする（PNG として読めなければ、その理由を状態の帯に出す）
     drop_files(&mut h, inside, &[&png]);
-    assert!(st(&h).is_brush_importing());
+    assert!(
+        st(&h).is_brush_importing() || st(&h).message().contains("tip.png"),
+        "一覧の上の PNG の取り込みが始まらない: {}",
+        st(&h).message()
+    );
     wait_import(&mut h);
     assert!(st(&h).message().contains("tip.png"), "{}", st(&h).message());
     assert_eq!(st(&h).brush_entries_in(Group::Imported).len(), 2);
