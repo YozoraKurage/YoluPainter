@@ -8,6 +8,7 @@ use crate::page::Draw;
 mod example_layers_a;
 mod layers_c;
 pub(crate) mod layers_common;
+mod layers_d;
 
 /// 登録した下書き 1 つ。
 pub struct Sketch {
@@ -28,6 +29,11 @@ pub const SKETCHES: &[Sketch] = &[
         name: "layers-c",
         title: ("レイヤーの欄（案 C）", "Layers (option C)"),
         draw: layers_c::draw,
+    },
+    Sketch {
+        name: "layers-d",
+        title: ("レイヤーの欄（案 D）", "Layers (option D)"),
+        draw: layers_d::draw,
     },
 ];
 
