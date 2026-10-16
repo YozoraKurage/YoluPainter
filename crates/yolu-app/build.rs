@@ -1,7 +1,7 @@
 //! Windows の実行ファイルに、アイコンと製品名・版のメタデータ（バージョン情報）を埋める。git の短い ID は全 OS の診断用に埋める。
 //! 製品名と版は、コード署名（SignPath Foundation の条件）が署名する実行ファイルのすべてに求める情報で、インストーラー
 //! （installer/yolupainter.nsi）も同じ値を持つ。版はワークスペースの版（`CARGO_PKG_VERSION`。プレリリースの識別子つき）。
-//! ホストが Linux でも、対象が Windows なら埋める（winresource が windres を探す）。
+//! ホストが Linux でも、対象が Windows なら埋める（winresource が windres を探す）。画面の文の .ftl も埋める（`embed_locales`）。
 
 use std::{env, path::Path};
 
@@ -35,6 +35,7 @@ fn main() {
             }
         }
     }
+    embed_locales();
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
@@ -53,6 +54,35 @@ fn main() {
     if let Err(error) = resource.compile() {
         panic!("Windows のリソース（アイコン・製品名・版）を埋められません: {error}");
     }
+}
+
+/// 画面の文（`locales/<言語>/<モジュール>.ftl`）を `include_str!` で埋める一覧を `OUT_DIR/locales.rs` に書く（言語ごとに
+/// `(モジュール, 文)` の並び。ファイルの名前の順）。フォルダが無ければ空の一覧（存在しない道は rerun-if-changed に渡さない）。
+fn embed_locales() {
+    let root = Path::new(&env::var("CARGO_MANIFEST_DIR").expect("cargo が渡す")).join("locales");
+    if root.is_dir() {
+        println!("cargo:rerun-if-changed={}", root.display());
+    }
+    let mut out = String::new();
+    for (name, dir) in [("JA", "ja"), ("EN", "en")] {
+        let mut files: Vec<_> = std::fs::read_dir(root.join(dir))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|e| e == "ftl"))
+            .collect();
+        files.sort();
+        out.push_str(&format!("pub(super) const {name}: &[(&str, &str)] = &[\n"));
+        for path in files {
+            let module = path.file_stem().unwrap().to_string_lossy().into_owned();
+            let path = path.to_string_lossy().into_owned();
+            out.push_str(&format!("    ({module:?}, include_str!({path:?})),\n"));
+        }
+        out.push_str("];\n");
+    }
+    let target = Path::new(&env::var("OUT_DIR").expect("cargo が渡す")).join("locales.rs");
+    std::fs::write(&target, out).expect("OUT_DIR に書ける");
 }
 
 /// 環境変数で渡された ID として受け取れるか（16 進の 7〜40 文字。`cargo:` の行へそのまま書くので、それ以外は使わない）。

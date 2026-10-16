@@ -1,4 +1,5 @@
-//! 画面の言葉（日本語と英語）。文言は呼ぶ場所に `lang.pick("日本語", "English")` と並べて置く（名前・状態・短い理由だけ。説明はツールチップ）。
+//! 画面の言葉（日本語と英語）。文は `locales/<言語>/<モジュール>.ftl` に置き、呼ぶ場所はキーで引く（`lang.t("キー")`・引数のある文は
+//! `lang.f("キー", &[("名前", &値)])`）。名前・状態・短い理由だけ。説明はツールチップ（キーの終わりが `-tip`）。
 //! 状態は `AppState::lang`。試験は同じ画面で言語を替えて文言を確かめる。
 
 /// 画面の言語。
@@ -18,6 +19,21 @@ impl Lang {
             Lang::Ja => ja,
             Lang::En => en,
         }
+    }
+
+    /// 画面の文（`locales/<言語>/<モジュール>.ftl` のキー）。引数の無い文。
+    pub fn t(self, key: &'static str) -> &'static str {
+        catalog::text(self, key)
+    }
+
+    /// 引数のある文。引数は Rust で書式を済ませた値（`Display`）で渡し、英語の複数形を選ぶ数だけは [`Count`] で渡す。
+    pub fn f(self, key: &'static str, args: &[(&'static str, &dyn Arg)]) -> String {
+        catalog::format_with(self, key, args)
+    }
+
+    /// core の断りの理由の文（キーは [`reason_key`]）。
+    pub fn reason(self, reason: yolu_core::Reason) -> &'static str {
+        catalog::reason(self, reason)
     }
 
     /// 言語の自分の言葉での名前（言語の選択肢に出す）。
@@ -239,8 +255,10 @@ mod tests {
     }
 }
 
+mod catalog;
 mod errors;
 pub mod refusals;
+pub use catalog::{reason_key, Arg, Count};
 pub(crate) use errors::budget_text;
 pub use errors::{
     brush_import_error, library_io_error, library_known_error, path_error, psd_copy_refusal,
