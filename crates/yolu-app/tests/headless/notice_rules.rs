@@ -148,11 +148,15 @@ pub(crate) fn key_uses() -> Vec<(String, usize, String)> {
     for (file, text) in crate::no_instruction_text::production_sources() {
         for head in [".t(", ".f("] {
             for (at, _) in text.match_indices(head) {
-                // `x.t(` の形だけ（`.t(` の前が名前か `)`・`]`・`?` の終わり）
-                let before = text[..at].chars().next_back();
+                // `x.t(` の形だけ（`.t(` の前が、空白を飛ばして名前か `)`・`]`・`?` の終わり）。コメントの行は見ない
+                let before = text[..at].trim_end().chars().next_back();
                 if !before
                     .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | ')' | ']' | '?'))
                 {
+                    continue;
+                }
+                let line_head = text[..at].rfind('\n').map_or(0, |i| i + 1);
+                if text[line_head..at].trim_start().starts_with("//") {
                     continue;
                 }
                 let rest = text[at + head.len()..].trim_start();
