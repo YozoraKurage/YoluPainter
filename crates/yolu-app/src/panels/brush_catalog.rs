@@ -288,7 +288,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         };
         let min = pos2(dock_right + 24.0, screen.top() + 96.0);
         let center = min + vec2(WIDTH, HEIGHT) / 2.0;
-        app.toolset.catalog.offset = center - screen.center();
+        app.ui.toolset_catalog_offset = center - screen.center();
         app.toolset.catalog.placed = true;
     }
     let title = lang.pick("ブラシを追加", "Add Brushes");
@@ -299,7 +299,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         modal: false,
         close_label: lang.pick("閉じる", "Close"),
     };
-    let mut offset: Vec2 = app.toolset.catalog.offset;
+    let mut offset: Vec2 = app.ui.toolset_catalog_offset;
     let mut add = false;
     let closed = window::show(ctx, id(), &spec, &mut offset, false, |ui, frame| {
         let body = frame.body;
@@ -313,7 +313,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         let bar = Rect::from_min_max(pos2(body.left(), body.bottom() - FOOTER), body.max);
         add = footer(ui, app, bar);
     });
-    app.toolset.catalog.offset = offset;
+    app.ui.toolset_catalog_offset = offset;
     if add {
         let items = std::mem::take(&mut app.toolset.catalog.selected);
         app.apply(Action::Brush(BrushAction::AddFrom(items)));

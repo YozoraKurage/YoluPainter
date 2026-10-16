@@ -87,4 +87,25 @@ pub struct UiState {
     /// 新規プロジェクト・構成のウィンドウで開いているドロップダウン（`newproject::window`）。ウィンドウを開くとき
     /// （`NpWindow` を作るとき）とモデルを選び直したときに閉じる。
     pub np_dropdown: Option<(crate::newproject::Dropdown, crate::ui::menu::PopupState)>,
+    /// 書き出しのウィンドウの位置（`export::window`）。
+    pub export_window_offset: egui::Vec2,
+    /// PSD の取り込みの確かめのウィンドウの位置（`psd_import`）。
+    pub psd_import_window_offset: egui::Vec2,
+    /// ブラシの詳細のウィンドウを見出しのドラッグで動かした量（画面の真ん中からの。初めて開いたときに置き場を決める。
+    /// `panels::brush_detail`）。
+    pub brushes_detail_offset: egui::Vec2,
+    /// 「CLIP STUDIO から」のウィンドウの位置（見出しのドラッグでずれた量。`panels::brush_clipstudio`）。
+    pub brushes_csp_offset: egui::Vec2,
+    /// ブラシを追加するウィンドウを見出しのドラッグで動かした量（画面の真ん中からの。初めて開いたときに置き場を決める。
+    /// `panels::brush_catalog`）。
+    pub toolset_catalog_offset: egui::Vec2,
+    /// ライブラリの格子の範囲（このフレームで描いたときだけ入る。ウィンドウに落としたファイルが格子の上かを見る。プロジェクトの
+    /// アセット・チャンネルのタブを開いている間は入らない。`panels::assets`）。
+    pub library_grid_rect: Option<egui::Rect>,
+    /// 前のフレームにブラシの一覧を描いた範囲（描かなかったフレームでは消える。ファイルを落とした所が一覧の上かを見る。
+    /// `panels::brushes`）。
+    pub brushes_list_rect: Option<egui::Rect>,
+    /// 前のフレームのツールの列のボタンの矩形（名前の欄・アイコンの格子を、その右に出す。`toolset::ui`）。ツールの並びを
+    /// 初めに戻すと空にする。
+    pub toolset_slot_rects: Vec<(crate::toolset::SlotId, egui::Rect)>,
 }

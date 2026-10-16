@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use egui::{pos2, vec2, Id, Key, Rect, Vec2};
+use egui::{pos2, vec2, Id, Key, Rect};
 
 use super::list::{FileRow, Preview, SetRow};
 use super::{default_channel_file_name, ExportAction};
@@ -106,11 +106,11 @@ impl ExportForm {
     }
 }
 
-/// ウィンドウの状態（開いているか・動かした量・選んだ出力先・外したセット）。アプリの状態で、.ylp には入れない。
+/// ウィンドウの状態（開いているか・選んだ出力先・外したセット。動かした量は `UiState::export_window_offset`）。アプリの状態で、
+/// .ylp には入れない。
 #[derive(Debug, Default)]
 pub struct WindowState {
     pub open: bool,
-    pub offset: Vec2,
     /// 選んだ PNG のファイル。名前が既定の名前（今のセット・チャンネルの名前）のときは持たず、フォルダだけ覚える
     /// （チャンネルやセットを替えても、名前が追いかける）。
     file: Option<PathBuf>,
@@ -580,7 +580,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         close_label: lang.pick("ウィンドウを閉じる", "Close Window"),
     };
     let id = Id::new(("yolu.window", WINDOW));
-    let mut offset = app.export.window.offset;
+    let mut offset = app.ui.export_window_offset;
     let mut sets_scroll = app.export.window.sets_scroll;
     let mut files_scroll = app.export.window.files_scroll;
     let mut requests: Vec<Request> = Vec::new();
@@ -780,7 +780,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         }
     });
-    app.export.window.offset = offset;
+    app.ui.export_window_offset = offset;
     app.export.window.sets_scroll = sets_scroll;
     app.export.window.files_scroll = files_scroll;
     for request in requests {

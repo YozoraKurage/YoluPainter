@@ -272,7 +272,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         pos2(r.left() + t::PADDING, top),
         pos2(r.right() - t::PADDING, (r.bottom() - FOOTER_H).max(top)),
     );
-    app.library.grid_rect = (source == Source::Library).then_some(grid);
+    app.ui.library_grid_rect = (source == Source::Library).then_some(grid);
     cards(ui, app, &ctx, grid);
     footer(
         ui,
@@ -1514,7 +1514,7 @@ pub fn frame(ctx: &egui::Context, state: &mut AppState) {
     state.shelf_poll();
     state.library_poll();
     // 格子の範囲はこのフレームで描いたときだけ入る（前のフレームの分を取り、今のフレームの描画が入れ直す）
-    let grid = state.library.grid_rect.take();
+    let grid = state.ui.library_grid_rect.take();
     import_dropped(ctx, state, grid);
 }
 

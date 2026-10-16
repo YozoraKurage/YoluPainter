@@ -38,9 +38,8 @@ fn tools(h: &mut H, action: ToolsetAction) {
 /// ツールの列のボタンの矩形（前のフレームに描いた所）。
 fn button(h: &H, slot: SlotId) -> Rect {
     st(h)
-        .toolset()
-        .ui
-        .slot_rects
+        .ui()
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == slot)
         .map(|(_, r)| *r)
@@ -96,7 +95,7 @@ fn the_strip_follows_the_layout_and_its_menu_adds_renames_and_removes_tools() {
     let mut h = app(1280.0, 800.0, 128);
     let brush = st(&h).toolset().set.first_of(Tool::Brush).unwrap();
     // ツールの列のボタンは、ツールの並びの数だけ。押すとツールが替わる
-    assert_eq!(st(&h).toolset().ui.slot_rects.len(), Tool::ALL.len());
+    assert_eq!(st(&h).ui().toolset_slot_rects.len(), Tool::ALL.len());
     let fill = st(&h).toolset().set.first_of(Tool::Fill).unwrap();
     let at = button(&h, fill).center();
     click(&mut h, at);
@@ -112,7 +111,7 @@ fn the_strip_follows_the_layout_and_its_menu_adds_renames_and_removes_tools() {
     let added = st(&h).toolset().set.active().unwrap();
     assert_ne!(added, brush);
     assert_eq!(st(&h).toolset().set.slot_index(added), Some(1));
-    assert_eq!(st(&h).toolset().ui.slot_rects.len(), Tool::ALL.len() + 1);
+    assert_eq!(st(&h).ui().toolset_slot_rects.len(), Tool::ALL.len() + 1);
     // 名前を変更: 列の右に入力欄が出る
     let at = button(&h, added).center();
     right_click(&mut h, at);

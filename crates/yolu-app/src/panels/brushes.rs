@@ -383,7 +383,7 @@ pub(super) fn list_body(ui: &mut Ui, app: &mut AppState, list: Rect, slot: SlotI
         app.brushes.ui.renaming = None;
     }
     w::fill(ui.painter(), list, t::CONTROL_BG);
-    app.brushes.ui.list_rect = Some(list);
+    app.ui.brushes_list_rect = Some(list);
     let content = rows.len() as f32 * ROW_HEIGHT;
     app.brushes.ui.list_content = content;
     // ブラシが替わったあとは、今のブラシの行が見えるところまで送る

@@ -2,7 +2,6 @@
 //! 何を取り込み、何を持たないかの判断は `yolu_io::psd::import_copy`（ここは文にするだけ）。ウィンドウには名前・状態・短い理由だけを書き、
 //! 説明はツールチップに置く。
 
-use egui::Vec2;
 use yolu_io::psd::{ImportAction, ImportDetail, ImportFeature, ImportNote, Unchecked};
 
 use crate::lang::Lang;
@@ -31,12 +30,6 @@ impl ImportCheck {
     pub fn notes(&self) -> &[ImportNote] {
         &self.notes
     }
-}
-
-/// ウィンドウの位置（`PsdState` が持つ）。
-#[derive(Default)]
-pub struct CheckWindow {
-    pub offset: Vec2,
 }
 
 fn rank(action: ImportAction) -> u8 {
@@ -124,10 +117,10 @@ pub fn show_check(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.psd.import_window.offset;
+    let mut offset = app.ui.psd_import_window_offset;
     let mut scroll = 0.0;
     let reply = show_list_with(ctx, &spec, &tips, &mut offset, &mut scroll);
-    app.psd.import_window.offset = offset;
+    app.ui.psd_import_window_offset = offset;
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Psd(PsdAction::ConfirmImport)),
         Some(_) => app.apply(Action::Psd(PsdAction::CancelImport)),

@@ -2632,7 +2632,7 @@ mod ui {
     fn files_dropped_on_the_library_grid_go_to_the_library() {
         let dir = Dir::new("ui-drop");
         let mut h = window(&dir);
-        let grid = st(&h).library().grid_rect.expect("格子を描いている");
+        let grid = st(&h).ui().library_grid_rect.expect("格子を描いている");
         let (png_path, notes) = files_to_drop(&dir, "dropped.png");
         drop_at(&mut h, grid.center(), &[&png_path, &notes]);
         h.app_mut().library_wait();
@@ -2644,7 +2644,7 @@ mod ui {
         // プロジェクトを見せている間は、PNG は取り込まない
         h.get_by_label("プロジェクト").click();
         h.run();
-        assert!(st(&h).library().grid_rect.is_none());
+        assert!(st(&h).ui().library_grid_rect.is_none());
         let again = dir.0.join("outside/again.png");
         std::fs::write(&again, png(2, 2, |_, _| [1, 2, 3, 255])).unwrap();
         drop_at(&mut h, pos2(150.0, 400.0), &[&again]);
@@ -2655,7 +2655,7 @@ mod ui {
     fn a_png_dropped_outside_the_library_grid_is_not_written_to_the_library() {
         let dir = Dir::new("ui-drop-outside");
         let mut h = window(&dir);
-        let grid = st(&h).library().grid_rect.expect("格子を描いている");
+        let grid = st(&h).ui().library_grid_rect.expect("格子を描いている");
         let before = dir.files();
         let (png_path, _) = files_to_drop(&dir, "tip.png");
         // ウィンドウのほかの場所（格子の外）へ落とした PNG は、筆先・ステンシルなどほかの落とし先のもの
@@ -2675,14 +2675,16 @@ mod ui {
         click_tab(&mut h, yolu_app::Tab::Channels);
         h.run();
         assert_eq!(st(&h).library().source, Source::Library);
-        assert!(st(&h).library().grid_rect.is_none(), "格子は描いていない");
+        assert!(
+            st(&h).ui().library_grid_rect.is_none(),
+            "格子は描いていない"
+        );
         h.app_mut().attach_brush_store(dir.0.join("brush-store"));
         h.run();
         let brushes = st(&h).brushes().lib.user_count();
         let list = st(&h)
-            .brushes()
-            .ui
-            .list_rect
+            .ui()
+            .brushes_list_rect
             .expect("ブラシの一覧を描いている");
         drop_at(&mut h, list.center(), &[&png_path]);
         let started = std::time::Instant::now();
@@ -2701,7 +2703,7 @@ mod ui {
         // 棚のタブへ戻って、前の位置（ブラシの一覧があった所）へ落としても、格子の外は書かない
         click_tab(&mut h, yolu_app::Tab::Assets);
         h.run();
-        let grid = st(&h).library().grid_rect.expect("格子を描いている");
+        let grid = st(&h).ui().library_grid_rect.expect("格子を描いている");
         drop_at(
             &mut h,
             pos2(grid.left() + 4.0, grid.top() - 30.0),
@@ -2714,7 +2716,7 @@ mod ui {
     fn a_ylsmart_dropped_outside_the_library_grid_goes_to_the_project_shelf_as_before() {
         let dir = Dir::new("ui-drop-smart");
         let mut h = window(&dir);
-        let grid = st(&h).library().grid_rect.expect("格子を描いている");
+        let grid = st(&h).ui().library_grid_rect.expect("格子を描いている");
         let before = dir.files();
         let smart = dir.0.join("outside-smart.ylsmart");
         std::fs::write(&smart, fixture("raster.ylsmart")).unwrap();

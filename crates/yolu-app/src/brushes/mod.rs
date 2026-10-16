@@ -20,8 +20,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use egui::{Rect, Vec2};
-
 use crate::engine::{
     Brush, BrushEffect, BrushSettings, CanvasSymmetry, ColorDynamics, ColorMix, Influence,
     StrokeAssist, StrokeColorChange, TipColorChange,
@@ -593,12 +591,10 @@ impl Category {
     }
 }
 
-/// ブラシの詳細のウィンドウの状態（開いているか・カテゴリ・位置・スクロール）。
+/// ブラシの詳細のウィンドウの状態（開いているか・カテゴリ・スクロール。位置は `UiState::brushes_detail_offset`）。
 pub struct DetailWindow {
     pub open: bool,
     pub category: Category,
-    /// 見出しのドラッグで動いた量（画面の真ん中からの）。
-    pub offset: Vec2,
     /// 開いたとき、キャンバスの邪魔にならない初めの位置へ置いたか。
     pub placed: bool,
     pub scroll: f32,
@@ -610,7 +606,6 @@ impl Default for DetailWindow {
         DetailWindow {
             open: false,
             category: Category::Shape,
-            offset: Vec2::ZERO,
             placed: false,
             scroll: 0.0,
             content: 0.0,
@@ -630,8 +625,6 @@ pub struct BrushUi {
     /// 右クリックのメニューの対象。
     pub context: Option<BrushKey>,
     pub detail: DetailWindow,
-    /// 前のフレームに一覧を描いた範囲（描かなかったフレームでは消える。ファイルを落とした所が一覧の上かを見る）。
-    pub list_rect: Option<Rect>,
 }
 
 impl Default for BrushUi {
@@ -644,7 +637,6 @@ impl Default for BrushUi {
             rename_started: false,
             context: None,
             detail: DetailWindow::default(),
-            list_rect: None,
         }
     }
 }

@@ -177,7 +177,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         };
         let min = pos2(dock_right + 24.0, screen.top() + 124.0);
         let center = min + vec2(WIDTH, HEIGHT) / 2.0;
-        app.brushes.ui.detail.offset = center - screen.center();
+        app.ui.brushes_detail_offset = center - screen.center();
         app.brushes.ui.detail.placed = true;
     }
     let name = app
@@ -194,7 +194,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         modal: false,
         close_label: lang.pick("閉じる", "Close"),
     };
-    let mut offset: Vec2 = app.brushes.ui.detail.offset;
+    let mut offset: Vec2 = app.ui.brushes_detail_offset;
     let closed = window::show(ctx, id(), &spec, &mut offset, false, |ui, frame| {
         let body = frame.body;
         let side = Rect::from_min_size(body.min, vec2(SIDEBAR, body.height()));
@@ -202,7 +202,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         sidebar(ui, app, side);
         content(ui, app, pane);
     });
-    app.brushes.ui.detail.offset = offset;
+    app.ui.brushes_detail_offset = offset;
     if closed {
         app.brushes.ui.detail.open = false;
     }

@@ -59,8 +59,6 @@ pub struct ToolsetUi {
     /// 右クリックのメニューの対象（ツールの列の空いた所なら None）。
     pub context_slot: Option<SlotId>,
     pub context_group: Option<GroupId>,
-    /// 前のフレームのツールの列のボタンの矩形（名前の欄・アイコンの格子を、その右に出す）。
-    pub slot_rects: Vec<(SlotId, Rect)>,
     /// ツールの列が入りきらないときのスクロール。
     pub strip_scroll: f32,
 }
@@ -396,7 +394,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
         _ => {}
     }
     ui.set_clip_rect(outer);
-    app.toolset.ui.slot_rects = rects;
+    app.ui.toolset_slot_rects = rects;
     rename_overlay(ui.ctx(), app);
     icon_picker(ui.ctx(), app);
 }
@@ -407,9 +405,8 @@ fn rename_overlay(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let Some(button) = app
-        .toolset
         .ui
-        .slot_rects
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == slot)
         .map(|(_, r)| *r)
@@ -462,9 +459,8 @@ fn icon_picker(ctx: &egui::Context, app: &mut AppState) {
         return;
     };
     let Some(button) = app
-        .toolset
         .ui
-        .slot_rects
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == slot)
         .map(|(_, r)| *r)

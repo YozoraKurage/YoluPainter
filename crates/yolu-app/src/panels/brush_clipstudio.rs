@@ -135,7 +135,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         close_label: lang.pick("閉じる", "Close"),
     };
     let mut actions: Vec<BrushAction> = Vec::new();
-    let mut offset: Vec2 = app.brushes.csp.offset;
+    let mut offset: Vec2 = app.ui.brushes_csp_offset;
     let mut scroll = app.brushes.csp.scroll;
     let window_id = id();
     let state = &*app;
@@ -186,7 +186,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         w::hline(&p, footer.left(), footer.right(), footer.top(), t::BORDER);
         draw_footer(ui, footer, window_id, state, &mut actions);
     });
-    app.brushes.csp.offset = offset;
+    app.ui.brushes_csp_offset = offset;
     app.brushes.csp.scroll = scroll;
     for action in actions {
         app.apply(Action::Brush(action));

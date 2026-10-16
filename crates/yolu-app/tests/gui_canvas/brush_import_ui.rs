@@ -327,7 +327,7 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
     let dir = temp_dir("drop");
     let mut h = app(1600.0, 960.0, 128);
     with_store(&mut h, &dir);
-    let list = st(&h).brushes().ui.list_rect.expect("一覧を描いている");
+    let list = st(&h).ui().brushes_list_rect.expect("一覧を描いている");
     let inside = list.center();
     let outside = pos2(900.0, 500.0);
     let abr = write(&dir, "old.abr", &abr_v1());
@@ -419,16 +419,15 @@ fn a_png_dropped_where_the_list_was_is_not_taken_while_another_tab_is_open() {
     let mut h = app(1600.0, 960.0, 128);
     with_store(&mut h, &dir);
     let inside = st(&h)
-        .brushes()
-        .ui
-        .list_rect
+        .ui()
+        .brushes_list_rect
         .expect("一覧を描いている")
         .center();
     let png = write(&dir, "tip.png", b"not even a png");
     // ツールプロパティやブラシサイズのタブを一覧の組へ入れて前に出している間は、一覧を描かないので、前の位置へ落としても取り込まない
     for tab in [Tab::ToolProperties, Tab::BrushSize] {
         put_in_group_of(&mut h, tab, Tab::SubTools);
-        assert!(st(&h).brushes().ui.list_rect.is_none(), "{tab:?}");
+        assert!(st(&h).ui().brushes_list_rect.is_none(), "{tab:?}");
         drop_files(&mut h, inside, &[&png]);
         assert!(!st(&h).is_brush_importing(), "{tab:?}");
         assert!(st(&h).message().is_empty() || !st(&h).message().contains("tip.png"));
@@ -437,9 +436,8 @@ fn a_png_dropped_where_the_list_was_is_not_taken_while_another_tab_is_open() {
     click_tab(&mut h, Tab::SubTools);
     h.run();
     let inside = st(&h)
-        .brushes()
-        .ui
-        .list_rect
+        .ui()
+        .brushes_list_rect
         .expect("一覧を描いている")
         .center();
     drop_files(&mut h, inside, &[&png]);

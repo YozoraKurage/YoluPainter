@@ -253,9 +253,6 @@ pub struct LibraryState {
     /// 選んでいる項目の ID（`library:` + 相対パス、または `brush:` + ブラシの札）。
     pub selected: Option<String>,
     pub scroll: f32,
-    /// ライブラリの格子の範囲（このフレームで描いたときだけ入る。ウィンドウに落としたファイルが格子の上かを見る。
-    /// 棚・チャンネルのタブを開いている間は入らない）。
-    pub grid_rect: Option<egui::Rect>,
     /// 消してよいか確かめている相対パス（確認のウィンドウは `YoluApp` が出す）。
     pub pending_remove: Option<String>,
     /// 項目を見るときの上限（試験で小さくする）。
@@ -290,7 +287,6 @@ impl Default for LibraryState {
             source: Source::Project,
             selected: None,
             scroll: 0.0,
-            grid_rect: None,
             pending_remove: None,
             limits: Limits {
                 read: IMPORT_LIMIT,

@@ -663,7 +663,8 @@ impl AppState {
                 }
                 let initial = self.toolset_initial();
                 self.toolset.set.replace_with(initial);
-                self.toolset.ui = Default::default();
+                // 画面だけの状態と、ツールの列のボタンの矩形（次に描くまで空）を初めに戻す
+                (self.toolset.ui, self.ui.toolset_slot_rects) = Default::default();
                 self.toolset_follow_current();
                 self.brush_after_unplaced();
                 self.info(

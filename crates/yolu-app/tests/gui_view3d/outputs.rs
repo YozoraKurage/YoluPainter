@@ -1557,7 +1557,7 @@ fn the_export_window_below_the_replace_confirm_does_not_take_clicks() {
     h.run();
     // 2 度目: もうあるファイルの確認が出る。書き出しのウィンドウを横へ動かし、確認のウィンドウからはみ出させる
     apply(&mut h, Action::Export(ExportAction::OpenWindow));
-    h.export_mut().window.offset = egui::vec2(-420.0, 0.0);
+    h.ui_mut().export_window_offset = egui::vec2(-420.0, 0.0);
     h.run();
     h.step();
     let at = in_window(&h, "export", "書き出す");

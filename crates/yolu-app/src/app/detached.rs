@@ -144,8 +144,8 @@ impl YoluApp {
         windows.append(&mut self.detached.windows);
         self.detached.windows = windows;
         // 落としたファイルの行き先の矩形は、メインウィンドウで描いた物に戻す（別ウィンドウの分はウィンドウごとに控えた）
-        self.state.brushes.ui.list_rect = self.root_drops.brush_list;
-        self.state.library.grid_rect = self.root_drops.library_grid;
+        self.state.ui.brushes_list_rect = self.root_drops.brush_list;
+        self.state.ui.library_grid_rect = self.root_drops.library_grid;
         grabbed
     }
 
@@ -201,7 +201,7 @@ impl YoluApp {
                 crate::stencil::update_keys(&ctx, &mut self.state);
             }
             // 落としたファイル（ブラシの一覧・ライブラリの格子は、このウィンドウで描いたときだけ）
-            self.state.brushes.ui.list_rect = win.drops.brush_list;
+            self.state.ui.brushes_list_rect = win.drops.brush_list;
             self.open_dropped(&ctx);
             crate::panels::assets::import_dropped(&ctx, &mut self.state, win.drops.library_grid);
             if ctx.input(|i| i.key_pressed(egui::Key::Escape) && i.pointer.primary_down()) {
@@ -210,8 +210,8 @@ impl YoluApp {
             // ほかのウィンドウで開いたポップアップは、このウィンドウを押したら閉じる
             close_foreign_popup(&ctx, &mut self.state);
         }
-        self.state.brushes.ui.list_rect = None;
-        self.state.library.grid_rect = None;
+        self.state.ui.brushes_list_rect = None;
+        self.state.ui.library_grid_rect = None;
         let mates = detach::leaf_mates(&win.dock);
         let lang = self.state.lang;
         let mut tabs = Tabs {
@@ -283,8 +283,8 @@ impl YoluApp {
         };
         win.tab_rects = tabs.tab_rects;
         win.drops = detach::DropRects {
-            brush_list: self.state.brushes.ui.list_rect.take(),
-            library_grid: self.state.library.grid_rect.take(),
+            brush_list: self.state.ui.brushes_list_rect.take(),
+            library_grid: self.state.ui.library_grid_rect.take(),
         };
         // 自分のウィンドウならウィンドウの全体、egui のウィンドウ（試験）ならドックの矩形の外で離したタブ
         let inside = if own { ctx.content_rect() } else { area };

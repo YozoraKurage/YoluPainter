@@ -1595,7 +1595,7 @@ impl YoluApp {
         self.import_dropped_psd(&dropped);
         let over_list = ctx
             .input(|i| i.pointer.latest_pos())
-            .zip(self.state.brushes.ui.list_rect)
+            .zip(self.state.ui.brushes_list_rect)
             .is_some_and(|(p, r)| r.contains(p));
         let brushes: Vec<std::path::PathBuf> = dropped
             .into_iter()
@@ -2154,10 +2154,10 @@ impl YoluApp {
         }
         // 落としたファイル。ブラシの一覧とライブラリの格子の範囲は、前のフレームにメインウィンドウで描いたときだけ入る（棚・チャンネルのタブを
         // 開いている間や、欄を別ウィンドウへ出した後に、前の位置へ落とした PNG を取り込まない。別ウィンドウへ落とした分は、そのウィンドウのパスが受ける）
-        self.state.brushes.ui.list_rect = self.root_drops.brush_list;
+        self.state.ui.brushes_list_rect = self.root_drops.brush_list;
         self.open_dropped(&ctx);
-        self.state.brushes.ui.list_rect = None;
-        self.state.library.grid_rect = self.root_drops.library_grid;
+        self.state.ui.brushes_list_rect = None;
+        self.state.ui.library_grid_rect = self.root_drops.library_grid;
         assets::frame(&ctx, &mut self.state);
         self.handle_requests();
         self.link.poll(&mut self.state);
@@ -2382,8 +2382,8 @@ impl YoluApp {
             .inner;
         // （写すだけ。別ウィンドウが無ければ、このフレームに描いた矩形がそのまま残る）
         self.root_drops = crate::detach::DropRects {
-            brush_list: self.state.brushes.ui.list_rect,
-            library_grid: self.state.library.grid_rect,
+            brush_list: self.state.ui.brushes_list_rect,
+            library_grid: self.state.ui.library_grid_rect,
         };
         // タブの出し入れ（メインウィンドウの外で離したタブ・右クリック・egui_dock が作った浮いたウィンドウ）と、別ウィンドウ。当てるのは全部のウィンドウを描いた後
         let mut events = Vec::new();

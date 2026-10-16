@@ -8,7 +8,6 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use egui::Vec2;
 use yolu_io::brushes::clipstudio as io;
 use yolu_io::brushes::clipstudio::{Missing, Peek, Places};
 use yolu_io::brushes::BrushImportError;
@@ -86,8 +85,7 @@ enum Msg {
 #[derive(Default)]
 pub struct CspState {
     pub open: bool,
-    /// ウィンドウの位置（見出しのドラッグでずれた量）と、一覧のずらした量。
-    pub offset: Vec2,
+    /// 一覧のずらした量（ウィンドウの位置は `UiState::brushes_csp_offset`）。
     pub scroll: f32,
     /// 手で選んだフォルダ（None は既定の場所）。
     pub folder: Option<PathBuf>,

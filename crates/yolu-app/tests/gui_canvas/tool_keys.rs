@@ -197,9 +197,8 @@ fn choosing_a_tool_on_the_toolbar_while_the_key_is_down_cancels_the_return() {
     assert!(st(&h).temp_tool().is_active());
     let fill = st(&h).toolset().set.first_of(Tool::Fill).unwrap();
     let at = st(&h)
-        .toolset()
-        .ui
-        .slot_rects
+        .ui()
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == fill)
         .map(|(_, r)| r.center())
@@ -216,9 +215,8 @@ fn choosing_a_tool_on_the_toolbar_while_the_key_is_down_cancels_the_return() {
     assert!(st(&h).temp_tool().is_active());
     let eraser = st(&h).toolset().set.first_of(Tool::Eraser).unwrap();
     let at = st(&h)
-        .toolset()
-        .ui
-        .slot_rects
+        .ui()
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == eraser)
         .map(|(_, r)| r.center())
@@ -748,9 +746,8 @@ fn snapshot_the_toolbar_dot_and_tip_of_the_tool_that_comes_back_in_both_language
         down(&mut h, Key::E);
         let brush = st(&h).toolset().set.first_of(Tool::Brush).unwrap();
         let at = st(&h)
-            .toolset()
-            .ui
-            .slot_rects
+            .ui()
+            .toolset_slot_rects
             .iter()
             .find(|(s, _)| *s == brush)
             .map(|(_, r)| r.center())

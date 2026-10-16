@@ -232,9 +232,8 @@ fn choosing_a_tool_on_the_toolbar_while_held_in_3d_keeps_that_tool() {
     down(&mut h, Key::E);
     let fill = st(&h).toolset().set.first_of(Tool::Fill).unwrap();
     let at = st(&h)
-        .toolset()
-        .ui
-        .slot_rects
+        .ui()
+        .toolset_slot_rects
         .iter()
         .find(|(s, _)| *s == fill)
         .map(|(_, r)| r.center())

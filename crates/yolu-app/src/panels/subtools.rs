@@ -442,7 +442,7 @@ fn list_section(ui: &mut Ui, app: &mut AppState, tool: Tool, area: Rect, shape: 
             let erasers = tool.def().subtools == SubTools::Erasers;
             if erasers {
                 // 取り込みのファイルを落とす先はブラシの一覧だけ
-                app.brushes.ui.list_rect = None;
+                app.ui.brushes_list_rect = None;
             }
             brushes::footer(ui, app, footer, !erasers);
         }

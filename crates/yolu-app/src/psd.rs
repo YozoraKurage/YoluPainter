@@ -372,7 +372,6 @@ pub struct PsdState {
     pub confirm: Option<Replace>,
     /// 取り込みの確かめ（無視・落とす・変わるもの）の待ち。読んだ文書をここに持ち、「取り込む」で入れる。
     pub import_check: Option<crate::psd_import::ImportCheck>,
-    pub import_window: crate::psd_import::CheckWindow,
     /// 書き出しの設定と、そのウィンドウ。
     pub export: ExportSettings,
     pub options_open: bool,
