@@ -361,7 +361,7 @@ fn unmapped(row: &Row, notes: &mut Vec<Unrepresented>) {
         (set(RGB), SutDualNote::Rgb),
         (set(CONTINUOUS), SutDualNote::Continuous),
         (set(RIBBON), SutDualNote::Ribbon),
-        (set(FIXED_POINT), SutDualNote::Spray),
+        (set(FIXED_POINT), SutDualNote::SprayFixedPoint),
         (set(DARKEN_2), SutDualNote::Darken),
     ] {
         let note = Unrepresented::ClipStudio(SutNote::DualApprox(note));

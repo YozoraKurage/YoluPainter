@@ -536,8 +536,10 @@ pub enum SutDualNote {
     TextureEachTip,
     /// 2 つ目の紙質の「濃度強調」（読まない）。
     TextureEmphasis,
-    /// 2 つ目の散布効果を写せない（粒子サイズ・粒子密度が無い・粒子密度が 1 未満・単位が画素でない）か、固定点を使う。
+    /// 2 つ目の散布効果を写せない（粒子サイズ・粒子密度が無い・粒子密度が 1 未満・単位が画素でない）。
     Spray,
+    /// 2 つ目の散布効果の「固定点を使う」（固定点は写さない。散布そのものは、写せれば写している）。
+    SprayFixedPoint,
     /// 2 つ目の散布効果を写したが、近い動き（主の散布効果と同じ種類）。
     SprayApprox(SprayNote),
     /// 2 つ目の紙質濃度・粒子サイズ・粒子密度の影響元（2 つ目のこの 3 項目は影響元を持たない）。
@@ -809,8 +811,12 @@ impl SutNote {
                     "The texture material of the dual brush could not be identified (or its image extracted); the secondary has no texture.".into(),
                 ),
                 SutDualNote::Spray => (
-                    "デュアルブラシの 2 つ目の散布効果は、粒子サイズ・粒子密度の値が無いか、粒子密度が 1 未満か、単位が画素でないか、固定点を使うため、写していない".into(),
-                    "The spraying effect of the dual brush is not carried over: the particle size or density is missing, the density is below 1, the unit is not pixels, or fixed points are used.".into(),
+                    "デュアルブラシの 2 つ目の散布効果は、粒子サイズ・粒子密度の値が無いか、粒子密度が 1 未満か、単位が画素でないため、写していない".into(),
+                    "The spraying effect of the dual brush is not carried over: the particle size or density is missing, the density is below 1, or the unit is not pixels.".into(),
+                ),
+                SutDualNote::SprayFixedPoint => (
+                    "デュアルブラシの 2 つ目の散布効果の固定点は写していない".into(),
+                    "The fixed point of the spraying effect of the dual brush is not carried over.".into(),
                 ),
                 SutDualNote::Darken => (
                     "デュアルブラシの先端同士の比較暗の 2 つ目の列は未対応".into(),

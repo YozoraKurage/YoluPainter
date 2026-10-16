@@ -3830,7 +3830,11 @@ fn dual_settings_the_engine_does_not_have_are_reported() {
         ("DualContinuousPlot", int(1), SutDualNote::Continuous),
         ("DualRibbon", int(1), SutDualNote::Ribbon),
         ("DualUseSpray", int(1), SutDualNote::Spray),
-        ("DualSprayUseFixedPoint", int(1), SutDualNote::Spray),
+        (
+            "DualSprayUseFixedPoint",
+            int(1),
+            SutDualNote::SprayFixedPoint,
+        ),
         (
             "DualTextureImage",
             blob(refs(&[["x/t.png", "c/t", "t"]])),
@@ -4191,7 +4195,37 @@ fn the_secondary_spray_is_read_like_the_main_spray() {
     fixed.push(("DualSprayUseFixedPoint", int(1)));
     let b = one_dual(&fixed);
     assert!(dual_of(&b).spray.is_some());
-    assert!(has(&b, SutNote::DualApprox(SutDualNote::Spray)));
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::SprayFixedPoint)));
+}
+
+#[test]
+fn the_secondary_sprays_fixed_point_is_reported_apart_from_the_spray_itself() {
+    use yolu_io::brushes::SutDualNote;
+    let mut cells = dual_cells(&[
+        ("DualUseSpray", int(1)),
+        ("DualSpraySize", real(10.0)),
+        ("DualSprayDensity", int(5)),
+    ]);
+    cells.push(("DualSprayUseFixedPoint", int(1)));
+    let b = one_dual(&cells);
+    // 散布は写り、知らせは固定点の 1 つだけ
+    assert!(dual_of(&b).spray.is_some());
+    assert!(has(&b, SutNote::DualApprox(SutDualNote::SprayFixedPoint)));
+    assert!(!has(&b, SutNote::DualApprox(SutDualNote::Spray)));
+    // 近い動きの知らせ（粒子密度の換算）は散布を写したときの知らせで、固定点の知らせと別
+    let rest: Vec<_> = b
+        .unrepresented
+        .iter()
+        .filter(|n| {
+            !matches!(
+                n,
+                Unrepresented::ClipStudio(SutNote::DualApprox(
+                    SutDualNote::SprayApprox(_) | SutDualNote::SprayFixedPoint
+                ))
+            )
+        })
+        .collect();
+    assert!(rest.is_empty(), "{rest:?}");
 }
 
 #[test]
@@ -4208,6 +4242,7 @@ fn the_new_dual_notes_have_sentences_in_both_languages() {
         SutDualNote::SprayApprox(SprayNote::Bias),
         SutDualNote::SprayApprox(SprayNote::Direction),
         SutDualNote::Sources,
+        SutDualNote::SprayFixedPoint,
     ] {
         let note = Unrepresented::ClipStudio(SutNote::DualApprox(n));
         let (ja, en) = (note.to_string(), note.english());

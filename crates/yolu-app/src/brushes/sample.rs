@@ -165,6 +165,9 @@ fn preview_brush(brush: &Brush, spec: SampleSpec) -> Brush {
     }
     if let Some(d) = &mut b.dual {
         d.radius = (d.radius * f).clamp(0.5, 65536.0);
+        if let Some(t) = &mut d.texture {
+            t.scale = (t.scale * f).clamp(0.05, 64.0);
+        }
     }
     b.influences.speed_max = (b.influences.speed_max * f).max(1.0);
     b.effect = match b.effect {
@@ -698,6 +701,50 @@ mod tests {
         huge.base.radius = 128.0;
         let image = render(&huge, SampleSpec::row(false)).unwrap();
         assert!(ink(&image) > 0 && ink(&image) < 340 * 60);
+    }
+
+    #[test]
+    fn the_second_tips_paper_scale_shrinks_with_the_main_one() {
+        use crate::engine::{DualBrush, PaperTexture};
+        let paper = || PaperTexture::new(yolu_core::builtin_tip("grain").unwrap(), 1.0);
+        let mut brush = Brush::default();
+        brush.base.radius = 128.0;
+        brush.texture = Some(paper());
+        brush.dual = Some(DualBrush {
+            texture: Some(paper()),
+            ..Default::default()
+        });
+        let spec = SampleSpec::row(false);
+        let f = fit_scale(256.0, spec.height as f64);
+        assert!(f < 1.0);
+        let shrunk = preview_brush(&brush, spec);
+        let main = shrunk.texture.as_ref().unwrap().scale;
+        let second = shrunk
+            .dual
+            .as_ref()
+            .unwrap()
+            .texture
+            .as_ref()
+            .unwrap()
+            .scale;
+        assert!((main - f).abs() < 1e-9, "{main} {f}");
+        assert_eq!(second, main, "2 つ目の紙質も主と同じ割合で縮む");
+        // 範囲も主と同じ
+        brush.texture.as_mut().unwrap().scale = 0.06;
+        brush.dual.as_mut().unwrap().texture.as_mut().unwrap().scale = 0.06;
+        let clamped = preview_brush(&brush, spec);
+        assert_eq!(clamped.texture.as_ref().unwrap().scale, 0.05);
+        assert_eq!(
+            clamped
+                .dual
+                .as_ref()
+                .unwrap()
+                .texture
+                .as_ref()
+                .unwrap()
+                .scale,
+            0.05
+        );
     }
 
     #[test]
