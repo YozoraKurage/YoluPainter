@@ -41,6 +41,14 @@ pub enum PriorityOp {
         island: usize,
         list: Option<MeshOverlapList>,
     },
+    /// 手で選んでいるときの押下: アイランド（代表の三角形）を一覧 `list` に入れる（もう入っていれば外す）。`replace` なら先に前の押下の
+    /// 選びを取り消す（2D で重なった所を続けて押した）。`canvas` なら 2D の押下（続けて押したときの控えに、当てた結果を残す）。
+    Press {
+        island: usize,
+        list: MeshOverlapList,
+        replace: bool,
+        canvas: bool,
+    },
 }
 
 /// 手でアイランドを選んでいる（どの一覧へ、どのセットで）。
@@ -335,6 +343,12 @@ impl AppState {
                 self.set_island(island, list);
                 return;
             }
+            PriorityOp::Press {
+                island,
+                list,
+                replace,
+                canvas,
+            } => return self.press_island(island, list, replace, canvas),
         };
         let next = match next {
             Ok(p) => p,
@@ -344,6 +358,30 @@ impl AppState {
             }
         };
         self.set_bake_priority(next, None);
+    }
+
+    /// 手で選んでいるときの押下を当てる（`PriorityOp::Press`）。前の選びを取り消せなければ、続けて押したときの控えを捨てて知らせる。
+    fn press_island(&mut self, island: usize, list: MeshOverlapList, replace: bool, canvas: bool) {
+        if replace {
+            match self.session.doc.undo() {
+                Ok(_) => self.session.mark_modified(),
+                Err(e) => {
+                    self.region.cycle = None;
+                    let text = self.lang.core_error(&e);
+                    self.notify(crate::notice::Kind::of_core(&e), Source::Bake, text);
+                    return;
+                }
+            }
+        }
+        let current = self.session.doc.bake_priority();
+        let has = match list {
+            MeshOverlapList::Skip => current.skipped().contains(&island),
+            MeshOverlapList::Prefer => current.preferred().contains(&island),
+        };
+        let changed = self.set_island(island, (!has).then_some(list));
+        if canvas {
+            cycle_applied(self, CycleKind::BakeIsland, changed);
+        }
     }
 
     /// アイランド（代表の三角形）を一覧 `list` に入れる（もう一方からは外す）か、None なら外す。変えたら true。
@@ -542,30 +580,12 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
             (0, false)
         }
     };
-    if undo {
-        match app.session.doc.undo() {
-            Ok(_) => app.session.mark_modified(),
-            Err(e) => {
-                app.region.cycle = None;
-                app.notify(
-                    crate::notice::Kind::of_core(&e),
-                    Source::Bake,
-                    lang.core_error(&e),
-                );
-                return true;
-            }
-        }
-    }
-    let island = found[index].1;
-    let current = app.session.doc.bake_priority();
-    let has = match list {
-        MeshOverlapList::Skip => current.skipped().contains(&island),
-        MeshOverlapList::Prefer => current.preferred().contains(&island),
-    };
-    let changed = app.set_island(island, (!has).then_some(list));
-    if matches!(w, Where::Canvas(_)) {
-        cycle_applied(app, CycleKind::BakeIsland, changed);
-    }
+    app.apply(Action::Bake(BakeAction::Priority(PriorityOp::Press {
+        island: found[index].1,
+        list,
+        replace: undo,
+        canvas: matches!(w, Where::Canvas(_)),
+    })));
     true
 }
 

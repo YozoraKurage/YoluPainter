@@ -531,6 +531,15 @@ impl AppState {
         all
     }
 
+    /// レイヤーの名前を変える（`Action::RenameLayer`。同じ名前なら履歴の段は増えない）。変えられなければ理由を知らせる。
+    pub(crate) fn rename_layer(&mut self, id: LayerId, name: &str) {
+        if let Err(e) = self.session.doc.set_layer_name(id, name) {
+            let text = self.lang.core_error(&e);
+            self.notify(crate::notice::Kind::of_core(&e), Source::Layer, text);
+        }
+        self.session.mark_modified();
+    }
+
     /// 変形を 1 回の Undo で当てる。変わったか。動かすレイヤーや画素が無ければ短い理由で断る（文書は変えない）。
     pub(crate) fn apply_xform(&mut self, x: Xform) -> Result<bool, CoreError> {
         let lang = self.lang;

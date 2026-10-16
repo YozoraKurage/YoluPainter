@@ -621,6 +621,12 @@ pub enum Action {
     HistoryGoTo(usize),
     /// キーの設定とパイメニューを変える（ショートカットの設定。キーの設定を保存する）。
     Keys(crate::keyconfig::KeyEdit),
+    /// レイヤーの名前を変える（名前の欄で決めた、前後の空白を除いた空でない名前）。
+    RenameLayer(LayerId, String),
+    /// テクスチャセットの名前を変える（uid と名前の欄の文字）。
+    RenameSet(u32, String),
+    /// 自由・遠近・格子の変形とゆがみのドラッグを確定する（1 回の Undo）。
+    Warp(crate::transform::advanced::WarpCommit),
 }
 
 impl Action {
@@ -711,6 +717,9 @@ impl Action {
             Self::ToolKeyMode(..) => "ToolKeyMode",
             Self::HistoryGoTo(..) => "HistoryGoTo",
             Self::Keys(..) => "Keys",
+            Self::RenameLayer(..) => "RenameLayer",
+            Self::RenameSet(..) => "RenameSet",
+            Self::Warp(..) => "Warp",
         }
     }
 
@@ -741,6 +750,9 @@ impl Action {
                 | Action::SetBlend(..)
                 | Action::StartRename(_)
                 | Action::HistoryGoTo(_)
+                | Action::RenameLayer(..)
+                | Action::Warp(_)
+                | Action::Region(crate::region::RegionAction::UndoCandidate)
         ) || matches!(self, Action::Ruler(op) if op.edits_document())
             || matches!(self, Action::Fill(op) if op.edits_document())
             || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
@@ -1671,6 +1683,9 @@ impl AppState {
             Action::ToolKeyMode(command, mode) => self.keys_tool_mode(command, mode),
             Action::HistoryGoTo(target) => self.history_go_to(target, stroking),
             Action::Keys(edit) => self.keys_apply(edit),
+            Action::RenameLayer(id, name) => self.rename_layer(id, &name),
+            Action::RenameSet(uid, name) => self.rename_set_apply(uid, &name),
+            Action::Warp(commit) => self.warp_apply(commit),
         }
     }
 }

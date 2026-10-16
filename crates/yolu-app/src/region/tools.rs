@@ -15,7 +15,7 @@ use crate::canvas::view::CanvasView;
 use crate::lang::Lang;
 use crate::m2::{mask_reveals, paint_gate};
 use crate::notice::Source;
-use crate::state::{AppState, StrokeSource, Tool};
+use crate::state::{Action, AppState, StrokeSource, Tool};
 
 /// ポインタを置いた画面（座標の変換が違う）。
 #[derive(Clone, Copy)]
@@ -154,6 +154,18 @@ pub(crate) fn cycle_index(
         stamp: None,
     });
     (index, undo)
+}
+
+/// 前の候補の段を取り消す（`RegionAction::UndoCandidate`）。取り消せなければ、続けて押したときの控えを捨てて知らせる。
+pub(crate) fn undo_candidate(app: &mut AppState) {
+    match app.session.doc.undo() {
+        Ok(_) => app.session.mark_modified(),
+        Err(e) => {
+            app.region.cycle = None;
+            let text = app.lang.core_error(&e);
+            app.notify(crate::notice::Kind::of_core(&e), Source::Fill, text);
+        }
+    }
 }
 
 /// 選び替えの候補を当て終えた（`changed` なら文書に段が積まれた）。次に同じ所を押したとき、文書が変わっていなければこの段を取り消す。
@@ -531,17 +543,10 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
         let keys: Vec<u64> = candidates.iter().map(|(k, _)| *k).collect();
         let (index, undo) = cycle_index(app, CycleKind::Fill, at, &keys, true);
         if undo {
-            match app.session.doc.undo() {
-                Ok(_) => app.session.mark_modified(),
-                Err(e) => {
-                    app.region.cycle = None;
-                    app.notify(
-                        crate::notice::Kind::of_core(&e),
-                        Source::Fill,
-                        lang.core_error(&e),
-                    );
-                    return false;
-                }
+            app.apply(Action::Region(super::RegionAction::UndoCandidate));
+            // 取り消せなかった（控えを捨てた）: 塗り始めない
+            if app.region.cycle.is_none() {
+                return false;
             }
         }
         first = candidates.get(index).map(|(_, t)| *t);

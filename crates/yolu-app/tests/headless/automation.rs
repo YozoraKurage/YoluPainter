@@ -306,6 +306,10 @@ fn every_mappable_layer_operation_replays_to_the_same_document() {
         s.doc_mut().set_layer_name(id, "Renamed").unwrap();
         yolu_app::automation::record::after(s, pending);
     });
+    check("名前の欄", none, |s| {
+        let id = s.selected_layer().unwrap();
+        s.act(Action::RenameLayer(id, "Renamed".into()));
+    });
 }
 
 #[test]

@@ -196,23 +196,14 @@ pub fn before(app: &mut AppState, action: &Action) -> Option<Pending> {
     begin(app, plan)
 }
 
-/// レイヤーの名前を変える前に呼ぶ（名前の変更は、レイヤーの欄が文書へ直に当てる）。
+/// レイヤーの名前を変える前に呼ぶ（`AppState::apply` を通さずに名前を変えるとき。画面の名前の欄は `Action::RenameLayer` を通る）。
 pub fn before_rename(app: &mut AppState, id: LayerId, name: &str) -> Option<Pending> {
     let plan = {
         let rec = app.automation.recorder.as_ref()?;
         if rec.nested || app.session.doc.id() != rec.doc_id {
             Plan::Skip
         } else {
-            match layer_ref(app, rec, id) {
-                Some(layer) => record(
-                    vec![Command::LayerSet(LayerSetArgs {
-                        name: Some(name.to_owned()),
-                        ..layer_set(layer)
-                    })],
-                    None,
-                ),
-                None => Plan::Skip,
-            }
+            plan_rename(app, rec, id, name)
         }
     };
     begin(app, plan)
@@ -594,6 +585,7 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
         Action::Undo => Plan::Undo,
         Action::Redo => Plan::Redo,
         Action::HistoryGoTo(_) => Plan::History,
+        Action::RenameLayer(id, name) => plan_rename(app, rec, *id, name),
         Action::NewLayer => match above(app, rec) {
             Ok(above) => creating(
                 Command::LayerAdd(layer_add(
@@ -693,6 +685,20 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
         | Action::Bake(_) => Plan::Skip,
         // 画面だけの操作（文書を替える操作は、記録の外の文書になるので記録しない）
         _ => Plan::Ui,
+    }
+}
+
+/// レイヤーの名前の変更を、名前を変える命令へ写す（指せないレイヤーなら写さない）。
+fn plan_rename(app: &AppState, rec: &Recorder, id: LayerId, name: &str) -> Plan {
+    match layer_ref(app, rec, id) {
+        Some(layer) => record(
+            vec![Command::LayerSet(LayerSetArgs {
+                name: Some(name.to_owned()),
+                ..layer_set(layer)
+            })],
+            None,
+        ),
+        None => Plan::Skip,
     }
 }
 

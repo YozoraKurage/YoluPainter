@@ -114,6 +114,8 @@ pub enum RegionAction {
     IdPart(usize),
     /// 手動の ID の色の変更（文書を変える。1 回の Undo）。
     IdColor(IdColorOp),
+    /// ポリゴン塗りつぶしで、2D で重なった UV の同じ所を続けて押した: 前の候補の塗りを取り消す（次の候補を塗り直す前）。
+    UndoCandidate,
 }
 
 /// 範囲の種類の名前。
@@ -184,6 +186,7 @@ impl AppState {
             }
             RegionAction::IdPart(i) => r.id.part = i,
             RegionAction::IdColor(op) => self.id_color_edit(op),
+            RegionAction::UndoCandidate => tools::undo_candidate(self),
         }
     }
 

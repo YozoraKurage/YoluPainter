@@ -3,7 +3,7 @@ use super::{handle_points, Bounds, HANDLE_HIT};
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
-    state::{AppState, StrokeSource, Tool},
+    state::{Action, AppState, StrokeSource, Tool},
 };
 use egui::{Modifiers, Painter, Pos2};
 use yolu_core::{Homography, LiquifyDab, LiquifyMode, Warp, WarpMesh};
@@ -66,6 +66,13 @@ pub struct Draft {
     revision: u64,
     targets: Vec<yolu_core::LayerId>,
     input_limit_exceeded: bool,
+}
+/// 自由・遠近・格子の変形とゆがみの確定（`Action::Warp`）: 押したときの文書の変更番号と動かすレイヤー、ドラッグで決めた形。
+#[derive(Clone, Debug, PartialEq)]
+pub struct WarpCommit {
+    pub warp: Warp,
+    pub revision: u64,
+    pub targets: Vec<yolu_core::LayerId>,
 }
 fn quad(b: Bounds) -> [(f64, f64); 4] {
     handle_points(b)[..4].try_into().unwrap()
@@ -257,18 +264,31 @@ pub fn commit(app: &mut AppState) -> bool {
         );
         return true;
     }
-    if app.session.doc.revision() != d.revision
-        || app.transform_targets() != d.targets
-        || !app.can_edit()
-    {
-        return true;
-    }
-    let mut next_dabs = None;
-    let result =
-        if let (Warp::Liquify(dabs), Some(session)) = (&d.warp, &app.transform.advanced.session) {
+    app.apply(Action::Warp(WarpCommit {
+        warp: d.warp,
+        revision: d.revision,
+        targets: d.targets,
+    }));
+    true
+}
+
+impl AppState {
+    /// 自由・遠近・格子の変形とゆがみを確定する（`Action::Warp`。1 回の Undo）。押してから文書・動かすレイヤーが変わった・描いている・
+    /// 読むだけのセットなら何もしない。ゆがみは、続けて当てたダブを始めの写しから描き直す。
+    pub(crate) fn warp_apply(&mut self, d: WarpCommit) {
+        if self.session.doc.revision() != d.revision
+            || self.transform_targets() != d.targets
+            || !self.can_edit()
+        {
+            return;
+        }
+        let mut next_dabs = None;
+        let result = if let (Warp::Liquify(dabs), Some(session)) =
+            (&d.warp, &self.transform.advanced.session)
+        {
             let mut all = session.dabs.clone();
             all.extend_from_slice(dabs);
-            let result = app.session.doc.liquify_from_snapshot_cancellable(
+            let result = self.session.doc.liquify_from_snapshot_cancellable(
                 &d.targets,
                 &all,
                 &session.source,
@@ -279,28 +299,27 @@ pub fn commit(app: &mut AppState) -> bool {
             }
             result
         } else {
-            app.session
+            self.session
                 .doc
                 .warp_layers_cancellable(&d.targets, &d.warp, &mut || false)
         };
-    if let (Some(dabs), Some(session)) = (next_dabs, &mut app.transform.advanced.session) {
-        session.dabs = dabs;
-        session.revision = app.session.doc.revision();
-    }
-    match result {
-        Ok(changed) => {
-            if changed {
-                app.session.mark_modified();
-            }
-            app.transform.forget_bounds();
+        if let (Some(dabs), Some(session)) = (next_dabs, &mut self.transform.advanced.session) {
+            session.dabs = dabs;
+            session.revision = self.session.doc.revision();
         }
-        Err(e) => app.notify(
-            crate::notice::Kind::of_core(&e),
-            Source::Transform,
-            app.lang.core_error(&e),
-        ),
+        match result {
+            Ok(changed) => {
+                if changed {
+                    self.session.mark_modified();
+                }
+                self.transform.forget_bounds();
+            }
+            Err(e) => {
+                let text = self.lang.core_error(&e);
+                self.notify(crate::notice::Kind::of_core(&e), Source::Transform, text);
+            }
+        }
     }
-    true
 }
 pub fn paint(painter: &Painter, view: &CanvasView, app: &mut AppState) -> bool {
     if !matches!(app.tool, Tool::Move | Tool::Liquify) {

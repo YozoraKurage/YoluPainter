@@ -823,6 +823,13 @@ impl AppState {
         report
     }
 
+    /// セットの名前を変える（`Action::RenameSet`）。変えられなければ理由を知らせる。
+    pub(crate) fn rename_set_apply(&mut self, uid: u32, name: &str) {
+        if let Err(e) = self.rename_set(uid, name) {
+            self.refuse(Source::TextureSet, e);
+        }
+    }
+
     /// セットの名前を変える（読むだけのセットは断る）。
     pub fn rename_set(&mut self, uid: u32, name: &str) -> Result<(), String> {
         let name = name.trim();
