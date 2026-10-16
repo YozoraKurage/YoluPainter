@@ -4034,10 +4034,13 @@ fn the_secondary_repeat_methods_and_flips_use_the_main_brushs_table() {
 fn the_secondary_darken_flag_is_carried_without_a_note() {
     let b = one_dual(&dual_cells(&[("DualBlendPatternByDarken", int(1))]));
     assert!(dual_of(&b).darken_overlap);
+    assert!(mapped(&b, SutMapped::DualBrush));
     assert!(!b.brush.tip.darken_overlap, "主の比較暗には写さない");
+    assert!(!mapped(&b, SutMapped::TipDarken));
     assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
     let off = one_dual(&dual_cells(&[("DualBlendPatternByDarken", int(0))]));
     assert!(!dual_of(&off).darken_overlap);
+    assert!(off.unrepresented.is_empty(), "{:?}", off.unrepresented);
 }
 
 /// 紙質の素材 1 つ（`grain`）のファイルで、主か 2 つ目の紙質の列を入れた 1 本。
