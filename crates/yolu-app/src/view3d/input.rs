@@ -201,14 +201,20 @@ fn begin(
         app.refuse(Source::View3d, app.region_missing_reason());
         return;
     }
-    if let Some(reason) = app.read_only_reason() {
-        let text = crate::lang::refusals::read_only_set(app.lang, reason);
-        app.refuse(Source::View3d, text);
+    // 確かめの順は `stroke_gate` の頭（2D のキャンバスの `begin_stroke` と同じ。3D だけの前提が先）。選択ペンのツールの断りは、2D の選択ペンと同じ
+    // 選択範囲の出どころ
+    let refused_as = if app.tool.def().surface == Surface::Cover {
+        Source::Selection
+    } else {
+        Source::Brush
+    };
+    if let Err(reason) = crate::stroke_gate::read_only(app) {
+        app.refuse(refused_as, reason);
         return;
     }
     let pressed = pick(&model.geometry, &view, p);
     if let Some(hit) = &pressed {
-        if refuse_other_set(app, &model, hit) {
+        if refuse_other_set(app, refused_as, &model, hit) {
             return;
         }
     }
@@ -224,14 +230,13 @@ fn begin(
         super::quick::begin(app, &model, rect, at, pressure, source, erase, true);
         return;
     }
-    let Some(layer) = app.session.selected_layer else {
-        app.refuse(Source::View3d, app.lang.t("view3d-no-layer-to-paint-on"));
-        return;
+    let layer = match crate::stroke_gate::layer(app) {
+        Ok(id) => id,
+        Err(reason) => {
+            app.refuse(Source::Brush, reason);
+            return;
+        }
     };
-    if let Some(reason) = app.paint_blocker() {
-        app.refuse(Source::View3d, reason);
-        return;
-    }
     let erase = app.stroke_settings(eraser).erase;
     // Shift: 前のストロークの終点を今の画面へ写した点から、押した点までを直線で描く。前の終点が無い（今のモデルの面でない・カメラの後ろ・
     // ありえない遠さ）ときは、押した点から向きを固定する
@@ -254,6 +259,7 @@ fn begin(
         symmetry,
     }) = open_stroke(
         app,
+        Source::Brush,
         &model,
         rect,
         view,
@@ -283,8 +289,13 @@ fn begin(
     crate::uv_wireframe::overlap::note_surface(app, rect, at);
     if line {
         if from.is_some() {
-            // 前の終点から押した点までの線（押した点も 1 つの入力）
+            // 前の終点から押した点までの線（押した点も 1 つの入力）。線は押した点まで遅れずにまっすぐ届かせる（手ぶれ補正の遅れを詰め、曲線の
+            // 待たせている区間も並べ切って、そこを角にする。続けてなぞる所には補正と曲線が効く。2D のキャンバスと同じ）
             add(app, rect, at, pressure, pen);
+            let closed = app.view3d.input.surface.as_mut().map(|s| s.end_line());
+            if let Some(Err(e)) = closed {
+                abandon(app, &e);
+            }
         }
         // 押した点のぶれを抑える。前の終点が無ければ、最初に動いた向きを 45° 刻みで固定する
         if app.view3d.input.stroke.is_some() {
@@ -294,9 +305,11 @@ fn begin(
     }
 }
 
-/// 押した面が今のテクスチャセットのものでなければ、その知らせを出して true（面に描く・面に定規を作る押しが、ほかのテクスチャセットの面から始めない）。
+/// 押した面が今のテクスチャセットのものでなければ、その断りを `source` の出どころで出して true（面に描く・面に定規を作る押しが、ほかのテクスチャセットの
+/// 面から始めない）。
 pub(super) fn refuse_other_set(
     app: &mut AppState,
+    source: Source,
     model: &ViewModel,
     hit: &yolu_core::geometry::SurfaceHit,
 ) -> bool {
@@ -304,11 +317,7 @@ pub(super) fn refuse_other_set(
         return false;
     }
     let name = model.material_name(hit.material as usize, app.lang);
-    app.refuse(
-        Source::View3d,
-        app.lang
-            .f("view3d-surface-of-another-texture-set", &[("name", &name)]),
-    );
+    app.refuse(source, crate::stroke_gate::other_set_face(app.lang, &name));
     true
 }
 
@@ -331,10 +340,12 @@ pub(super) struct Opened {
 
 /// 面のストロークを始める: 効果（消しゴムは色を塗る側。クローンは元の面の点が要る）・3D と 2D の対称・ステンシル・全部入りのブラシ
 /// （筆先・ゆらぎ・質感・デュアル・入り抜き・手ぶれ補正・曲線も、2D と同じ式で面のダブに効く）で、文書のストロークと面のストロークを始める。
-/// `guided` なら手ぶれ補正と曲線を切る（定規のスナップ・図形の輪郭のような決まった道。2D と同じ）。始められなければ理由を知らせて None。
+/// `guided` なら手ぶれ補正と曲線を切る（定規のスナップ・図形の輪郭のような決まった道。2D と同じ）。始められなければ理由を `source` の出どころで
+/// 知らせて None（確かめの順は `stroke_gate` の頭の 6）。
 #[allow(clippy::too_many_arguments)]
 pub(super) fn open_stroke(
     app: &mut AppState,
+    source: Source,
     model: &ViewModel,
     rect: Rect,
     view: CameraView,
@@ -358,23 +369,26 @@ pub(super) fn open_stroke(
                     destination: app.clone.destination_for(&model.geometry),
                 }),
                 None => {
-                    app.refuse(Source::View3d, app.lang.t("view3d-no-clone-source"));
+                    app.refuse(source, app.lang.t("view3d-no-clone-source"));
                     return None;
                 }
             },
         }
     };
+    if let Err(reason) = crate::stroke_gate::symmetry_effect(
+        app,
+        crate::rulers::Place::View3d,
+        layer,
+        settings.erase,
+    ) {
+        app.refuse(source, reason);
+        return None;
+    }
     // 3D の対称と 2D の対称（UV の平面。3D の写しの後に当てる）。ストロークの始めに固める（途中で設定を変えても、このストロークには効かない）
     let (symmetry, canvas_symmetry) = {
         let active = app.rulers_active_for(crate::rulers::Place::View3d, Some(layer));
         (active.surface_symmetry, active.canvas_symmetry)
     };
-    if (symmetry.is_some() || canvas_symmetry.is_some())
-        && matches!(effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_))
-    {
-        app.refuse(Source::View3d, app.lang.t("view3d-smudge-and-clone-do-not"));
-        return None;
-    }
     // ステンシル: 置き場とカメラはストロークの始めに決める（面のテクセルの点を画面へ写して、そこの画像を読む）
     let (stencil_brush, surface_stencil) = match app.surface_stencil(rect) {
         Ok(Some((brush, surface))) => (Some(brush), Some(surface)),
@@ -382,9 +396,8 @@ pub(super) fn open_stroke(
         Err(e) => {
             app.notify(
                 crate::notice::Kind::of_core(&e),
-                Source::View3d,
-                app.lang
-                    .with_reason(app.lang.t("view3d-cannot-paint"), app.lang.core_error(&e)),
+                source,
+                crate::stroke_gate::cannot_paint(app.lang, &app.lang.core_error(&e)),
             );
             return None;
         }
@@ -400,9 +413,8 @@ pub(super) fn open_stroke(
         Err(e) => {
             app.notify(
                 crate::notice::Kind::of_core(&e),
-                Source::View3d,
-                app.lang
-                    .with_reason(app.lang.t("view3d-cannot-paint"), app.lang.core_error(&e)),
+                source,
+                crate::stroke_gate::cannot_paint(app.lang, &app.lang.core_error(&e)),
             );
             return None;
         }
@@ -432,7 +444,7 @@ pub(super) fn open_stroke(
         }),
         Err(e) => {
             app.session.doc.cancel_stroke(stroke);
-            app.fail(Source::View3d, app.lang.surface_error(&e));
+            app.fail(source, app.lang.surface_error(&e));
             None
         }
     }

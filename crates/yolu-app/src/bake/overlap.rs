@@ -527,7 +527,7 @@ pub fn press(app: &mut AppState, w: Where, at: Pos2) -> bool {
     if let Under::OtherSet(name) = under(app, w, at) {
         app.refuse(
             Source::Bake,
-            crate::region::tools::other_set_face(lang, &name),
+            crate::stroke_gate::other_set_face(lang, &name),
         );
         return true;
     }
@@ -785,7 +785,7 @@ pub fn menu_release(app: &mut AppState, ctx: &egui::Context, w: Where, at: Pos2)
         return;
     }
     if let Under::OtherSet(name) = under(app, w, from) {
-        let text = crate::region::tools::other_set_face(app.lang, &name);
+        let text = crate::stroke_gate::other_set_face(app.lang, &name);
         app.refuse(Source::Fill, text);
         return;
     }

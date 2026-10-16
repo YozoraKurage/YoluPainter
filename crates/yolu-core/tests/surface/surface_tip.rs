@@ -685,6 +685,237 @@ fn the_stabilizer_smooths_3d_input() {
     assert!(end, "離したときに最後の入力の点まで描く");
 }
 
+/// 3D でも直線の終わりに手ぶれ補正の遅れを詰められる（`SurfaceStroke::end_line`）: 詰めた点（角）まで描いてから曲がる。詰めなければ角を切る。
+/// 詰めた後の入力にも補正は効く（長さは画面の点）。
+#[test]
+fn end_line_draws_the_stabilized_3d_pen_to_the_corner() {
+    let draw = |stabilizer: f64, end_line: bool| {
+        let mut b = Brush::from(BrushSettings {
+            radius: 2.0,
+            hardness: 1.0,
+            spacing: 0.1,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        });
+        b.assist.stabilizer = stabilizer;
+        let g = quad();
+        let b = brush_3d(&g, &b);
+        let (mut d, l) = document();
+        let mut stroke = d.begin_brush_stroke(l, &b).unwrap();
+        let mut s = SurfaceStroke::begin_with_options(
+            &mut d,
+            &mut stroke,
+            g,
+            front(),
+            &b.base,
+            Some(0),
+            screen(10.0, 20.0),
+            1.0,
+            SurfaceStrokeOptions::default(),
+        )
+        .unwrap();
+        s.add(&mut d, &mut stroke, screen(150.0, 20.0), 1.0)
+            .unwrap();
+        if end_line {
+            s.end_line().unwrap();
+        }
+        // 角から上へ、左右に揺れながら続ける
+        for i in 1..=10 {
+            let x = 150.0 + if i % 2 == 0 { 6.0 } else { -6.0 };
+            s.add(&mut d, &mut stroke, screen(x, 20.0 + 8.0 * i as f64), 1.0)
+                .unwrap();
+        }
+        s.finish(&mut d, &mut stroke).unwrap();
+        d.end_stroke(stroke).unwrap();
+        bytes(&d, l)
+    };
+    // 角の画素のまわり（文書の点 (150, 20)。行は下から）
+    let corner = |px: &[u8]| {
+        (147..=150usize)
+            .flat_map(|x| (18..=21usize).map(move |y| (x, y)))
+            .any(|(x, y)| px[(y * W as usize + x) * 4 + 3] > 0)
+    };
+    let plain = draw(0.0, false);
+    assert!(corner(&plain), "補正 0 は角まで描く");
+    assert!(!corner(&draw(40.0, false)), "詰めなければ角を切る");
+    let caught = draw(40.0, true);
+    assert!(corner(&caught), "詰めると角まで描く");
+    assert_ne!(caught, plain, "続きには補正が効く");
+    assert_eq!(draw(0.0, true), plain, "補正 0 では何もしない");
+}
+
+/// 曲線を入れたブラシの 3D の直線の終わり（`SurfaceStroke::end_line`）: 待たせている曲線の区間は、続きの点で形が決まるので、そのままでは続きの向きへ
+/// 膨らむ。直線の終わりで並べ切れば、補正 0 でも 40 でも、角までの直線は曲線を切ったときと同じ画素で、まっすぐ。角からは曲線を始め直し、まっすぐな続きは
+/// 曲線を切ったときと同じ画素になる（欠け・折れ・二重の点が出ない）。
+#[test]
+fn end_line_keeps_a_curved_3d_line_straight_and_restarts_the_curve_at_the_corner() {
+    // 水平な直線 (10,64) → (150,64) の後、角からまっすぐ続ける: 真上（曲がり角 90°）と、左上へ戻る向き（135°）
+    let up: Vec<(f64, f64)> = (1..=8).map(|i| (150.0, 64.0 + 6.0 * i as f64)).collect();
+    let back: Vec<(f64, f64)> = (1..=8)
+        .map(|i| (150.0 - 5.0 * i as f64, 64.0 + 5.0 * i as f64))
+        .collect();
+    let draw = |curve: bool, stabilizer: f64, end_line: bool, tail: &[(f64, f64)]| {
+        let mut b = Brush::from(BrushSettings {
+            radius: 2.0,
+            hardness: 1.0,
+            spacing: 0.1,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        });
+        b.assist.curve = curve;
+        b.assist.stabilizer = stabilizer;
+        let g = quad();
+        let b = brush_3d(&g, &b);
+        let (mut d, l) = document();
+        let mut stroke = d.begin_brush_stroke(l, &b).unwrap();
+        let mut s = SurfaceStroke::begin_with_options(
+            &mut d,
+            &mut stroke,
+            g,
+            front(),
+            &b.base,
+            Some(0),
+            screen(10.0, 64.0),
+            1.0,
+            SurfaceStrokeOptions::default(),
+        )
+        .unwrap();
+        s.add(&mut d, &mut stroke, screen(150.0, 64.0), 1.0)
+            .unwrap();
+        if end_line {
+            s.end_line().unwrap();
+        }
+        s.paint_queued(&mut d, &mut stroke, usize::MAX).unwrap();
+        let during = bytes(&d, l);
+        for &(x, y) in tail {
+            s.add(&mut d, &mut stroke, screen(x, y), 1.0).unwrap();
+        }
+        s.finish(&mut d, &mut stroke).unwrap();
+        d.end_stroke(stroke).unwrap();
+        (during, bytes(&d, l))
+    };
+    // 線の中心（アルファの重みつき）の、直線 y = 64 からのずれの、列ごとの最大（行は下から）
+    let bend = |px: &[u8]| -> f64 {
+        (20..=140usize)
+            .map(|x| {
+                let (sum, weighted) = (0..H as usize).fold((0.0, 0.0), |(s, w), y| {
+                    let a = px[(y * W as usize + x) * 4 + 3] as f64;
+                    (s + a, w + a * (y as f64 + 0.5))
+                });
+                (weighted / sum - 64.0).abs()
+            })
+            .fold(0.0, f64::max)
+    };
+    let (_, straight) = draw(false, 0.0, false, &[]);
+    let base = bend(&straight);
+    assert!(base < 0.6, "曲線なしの直線の中心のずれ {base}");
+    // 直線の終わりを呼ばなければ（補正 0）、待たせている区間は続きの点で形が決まり、直線が曲がる
+    let (_, bulged) = draw(true, 0.0, false, &up);
+    assert!(
+        bend(&bulged) > base + 1.0,
+        "呼ばなければ膨らむ ({})",
+        bend(&bulged)
+    );
+    for stabilizer in [0.0, 40.0] {
+        let (during, _) = draw(true, stabilizer, true, &up);
+        let (cut_during, _) = draw(false, stabilizer, true, &up);
+        assert_eq!(
+            during, cut_during,
+            "補正 {stabilizer}: 直線の終わりで、角までの直線は曲線を切ったときと同じ画素"
+        );
+        assert!(
+            bend(&during) < base + 0.2,
+            "補正 {stabilizer}: 直線がまっすぐ ({})",
+            bend(&during)
+        );
+        for (name, tail) in [("真上", &up), ("戻る向き", &back)] {
+            // 続きもまっすぐ（曲線を切ったときと同じ画素）。前の直線の向きを引き継げば、角の後の最初の区間が曲がって違う画素になる
+            assert_eq!(
+                draw(true, stabilizer, true, tail).1,
+                draw(false, stabilizer, true, tail).1,
+                "補正 {stabilizer}・{name}: 角からの続きは曲線を切ったときと同じ画素"
+            );
+        }
+        // 押してすぐ離したときは、直線の終わりを呼んでも呼ばなくても同じ
+        assert_eq!(
+            draw(true, stabilizer, true, &[]).1,
+            draw(true, stabilizer, false, &[]).1,
+            "補正 {stabilizer}: 続きが無ければ変わらない"
+        );
+    }
+}
+
+/// 3D の直線の終わり（`SurfaceStroke::end_line`）の角に、余分なダブ（二重の点）が出ない: 流量の低い透明なブラシは、重なったダブの数が濃さに出る
+/// （硬いブラシは重なりで飽和する）。曲線を入れても切っても同じ画素なら、ダブの数は変わらない。
+#[test]
+fn end_line_places_no_extra_3d_dab_at_the_corner_with_a_translucent_brush() {
+    let up: Vec<(f64, f64)> = (1..=8).map(|i| (150.0, 64.0 + 6.0 * i as f64)).collect();
+    let back: Vec<(f64, f64)> = (1..=8)
+        .map(|i| (150.0 - 5.0 * i as f64, 64.0 + 5.0 * i as f64))
+        .collect();
+    let draw = |curve: bool, stabilizer: f64, tail: &[(f64, f64)]| {
+        let mut b = Brush::from(BrushSettings {
+            radius: 2.0,
+            hardness: 0.5,
+            spacing: 0.25,
+            flow: 0.1,
+            color: Rgba8::new(0, 0, 0, 255),
+            ..BrushSettings::default()
+        });
+        b.assist.curve = curve;
+        b.assist.stabilizer = stabilizer;
+        let g = quad();
+        let b = brush_3d(&g, &b);
+        let (mut d, l) = document();
+        let mut stroke = d.begin_brush_stroke(l, &b).unwrap();
+        let mut s = SurfaceStroke::begin_with_options(
+            &mut d,
+            &mut stroke,
+            g,
+            front(),
+            &b.base,
+            Some(0),
+            screen(10.0, 64.0),
+            1.0,
+            SurfaceStrokeOptions::default(),
+        )
+        .unwrap();
+        s.add(&mut d, &mut stroke, screen(150.0, 64.0), 1.0)
+            .unwrap();
+        s.end_line().unwrap();
+        for &(x, y) in tail {
+            s.add(&mut d, &mut stroke, screen(x, y), 1.0).unwrap();
+        }
+        s.finish(&mut d, &mut stroke).unwrap();
+        d.end_stroke(stroke).unwrap();
+        bytes(&d, l)
+    };
+    for stabilizer in [0.0, 40.0] {
+        for (name, tail) in [
+            ("真上", &up),
+            ("戻る向き", &back),
+            ("続き無し", &Vec::new()),
+        ] {
+            let curved = draw(true, stabilizer, tail);
+            assert_eq!(
+                curved,
+                draw(false, stabilizer, tail),
+                "補正 {stabilizer}・{name}: 曲線を入れても切っても同じ濃さ（ダブの数が同じ）"
+            );
+            // 濃さが飽和していない（余分なダブがあれば、濃さに出る）。角のまわり（文書の点 (150, 64)。行は下から）
+            let corner = (148..=150usize)
+                .flat_map(|x| (62..=65usize).map(move |y| (x, y)))
+                .map(|(x, y)| curved[(y * W as usize + x) * 4 + 3])
+                .max()
+                .unwrap();
+            assert!(
+                (30..200).contains(&corner),
+                "補正 {stabilizer}・{name}: 角の濃さ {corner} は重なりで飽和していない"
+            );
+        }
+    }
+}
+
 /// 3D でも入り抜きが効く: 線の始めと終わりは細く、抜きの長さの内のダブは、線が伸びるか離すまで待つ（長さは画面の点）。
 #[test]
 fn taper_in_and_out_thin_the_3d_stroke_ends() {

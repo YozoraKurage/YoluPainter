@@ -1,6 +1,5 @@
 //! 色バケツの処理待ちと塗り残しの入力。確定までは文書も履歴も変更しない。
 use super::color::{self, Reference, Request};
-use crate::m2::paint_gate;
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
@@ -138,7 +137,7 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
     if refuse_busy(app) {
         return;
     }
-    let layer = match paint_gate(app) {
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(id) => id,
         Err(e) => {
             app.refuse(Source::Fill, e);
@@ -212,7 +211,7 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
             let layer = job.layer;
             let mut finished = app.region.job.take().unwrap();
             let style = std::mem::replace(&mut finished.style, Style::capture(app, layer));
-            match paint_gate(app) {
+            match crate::stroke_gate::paint(app) {
                 Ok(now) if now == layer => apply(app, layer, style, result),
                 _ => app.warn(Source::Fill, app.lang.t("region-fill-cancelled")),
             }
@@ -229,7 +228,7 @@ pub fn begin(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
     if refuse_busy(app) {
         return false;
     }
-    if let Err(e) = paint_gate(app) {
+    if let Err(e) = crate::stroke_gate::paint(app) {
         app.refuse(Source::Fill, e);
         return false;
     }
@@ -255,7 +254,7 @@ pub fn begin_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
     if refuse_busy(app) {
         return false;
     }
-    if let Err(e) = paint_gate(app) {
+    if let Err(e) = crate::stroke_gate::paint(app) {
         app.refuse(Source::Fill, e);
         return false;
     }

@@ -321,6 +321,20 @@ impl ScreenStrokeSampler {
         Ok(())
     }
 
+    /// 直線の終わり: 待たせている区間を [`ScreenStrokeSampler::finish_points`] と同じく描き切り、そこを角にして続ける（次の区間は、この点から
+    /// 曲線を始め直す。前の区間の向きを引き継がない）。続きの点は、またこの点から曲線で結ぶ。曲線でなければ待たせている区間は無いので、何も
+    /// 変わらない。
+    pub fn end_line(
+        &mut self,
+        gaps: impl FnMut(Vec2) -> SegmentGaps,
+        out: &mut Vec<ScreenDab>,
+        dual: &mut impl DualSink,
+    ) -> Result<(), TooManyDabs> {
+        self.finish_points(gaps, out, dual)?;
+        self.has_before = false;
+        Ok(())
+    }
+
     /// previous → held の区間（前は before、後は next で向きを決める）に、画面の間隔でダブを置く（C# の PaintSurfaceSegment）。
     fn segment(
         &mut self,

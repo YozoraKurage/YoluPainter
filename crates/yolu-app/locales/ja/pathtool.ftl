@@ -12,7 +12,6 @@ pathtool-the-path-was-drawn-on = 別のモデルで描かれたパスです
 pathtool-cannot-paste = 貼り付けられません
 pathtool-no-model = モデルがありません
 pathtool-a-path-cannot-be-drawn = パスはマスクに描けません
-pathtool-no-layer-to-paint-on = 描くレイヤーがありません。
 pathtool-this-layer-has-a-path = このレイヤーにはモデルの上のパスがあります
 pathtool-this-layer-has-a-canvas = このレイヤーにはキャンバスのパスがあります
 pathtool-the-path-was-drawn-on-2 = 別のモデルで描かれたパスです

@@ -1431,57 +1431,6 @@ impl AppState {
             }
         }
     }
-
-    /// 描くレイヤーが描ける状態か（描けないときの短い理由）。
-    pub fn paint_blocker(&self) -> Option<String> {
-        let id = self.session.selected_layer?;
-        let layer = self.session.doc.layer(id)?;
-        let lang = self.lang;
-        if self.m2.edit_mask {
-            return None;
-        }
-        if layer.kind() != LayerKind::Raster {
-            return Some(lang.with_reason(
-                lang.t("m2-cannot-paint-on-this-layer"),
-                layer_kind_label(lang, layer.kind()),
-            ));
-        }
-        let channel = self.m2.paint_channel;
-        // マテリアルで塗るなら、無効のチャンネルは core が有効にする
-        if !self.mat.enabled
-            && layer.surface(channel).is_some()
-            && !layer.is_channel_enabled(channel)
-        {
-            let channel = channel_name(lang, &self.session.doc, channel);
-            return Some(lang.f("m2-the-channel-is-off-on", &[("channel", &channel)]));
-        }
-        None
-    }
-}
-
-/// 読むだけのテクスチャセットなら、その短い理由（文書を変えるツールの入口で断る文。ステータスバーへ）。
-pub(crate) fn read_only_message(app: &AppState) -> Option<String> {
-    app.read_only_reason()
-        .map(|reason| crate::lang::refusals::read_only_set(app.lang, reason))
-}
-
-/// 塗る・消すの前に確かめること（描けないときは短い理由）。返すのは塗るレイヤー。
-pub(crate) fn paint_gate(app: &AppState) -> Result<LayerId, String> {
-    let lang = app.lang;
-    if let Some(message) = read_only_message(app) {
-        return Err(message);
-    }
-    let Some(layer) = app
-        .session
-        .selected_layer
-        .filter(|id| app.session.doc.layer(*id).is_some())
-    else {
-        return Err(lang.t("m2-no-layer-to-paint").into());
-    };
-    if let Some(reason) = app.paint_blocker() {
-        return Err(reason);
-    }
-    Ok(layer)
 }
 
 /// マスクの「塗る」は白（見せる）、「消す」は黒（隠す）。白・黒はマスクのサムネイルの色なので、反転したマスクでは書く値を逆にする。
@@ -1937,24 +1886,6 @@ mod tests {
                 .tile_count()
                 > 0
         );
-    }
-
-    #[test]
-    fn blocked_painting_names_the_reason() {
-        let mut s = app();
-        s.apply(Action::M2(Edit::NewGroup));
-        assert!(s.paint_blocker().unwrap().contains("グループ"));
-        s.lang = Lang::En;
-        assert!(s.paint_blocker().unwrap().contains("Group"));
-        s.apply(Action::NewLayer);
-        let id = s.session.selected_layer.unwrap();
-        s.apply(Action::M2(Edit::ChannelEnabled {
-            id,
-            channel: Channel::Color,
-            enabled: false,
-        }));
-        assert!(s.paint_blocker().is_some());
-        assert!(s.begin_paint_stroke(id, false).is_err());
     }
 
     #[test]

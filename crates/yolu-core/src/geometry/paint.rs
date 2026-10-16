@@ -949,6 +949,17 @@ impl SurfaceStroke {
         self.queue.iter().take_while(|d| self.paintable(d)).count()
     }
 
+    /// 手ぶれ補正の筆を、最後の入力の点まで動かす（離したときと同じ詰め方）。補正が無い・もう届いている・離した後は何もしない。
+    fn catch_up(&mut self) -> Result<(), SurfaceStrokeError> {
+        if self.end.is_none()
+            && self.brush.assist.stabilizer > 0.0
+            && self.pen.at != self.last_input.at
+        {
+            self.move_pen(self.last_input.at, self.last_input)?;
+        }
+        Ok(())
+    }
+
     /// 離したとき（塗らない形）: 手ぶれ補正の筆を最後の入力の点まで描き、待たせている最後の区間を並べて、抜きの終わりの長さを決める。
     /// 残りのダブは塗らずに待ち行列に残す（呼ぶ側が [`SurfaceStroke::paint_queued_until`] などでフレームごとに塗り、
     /// [`SurfaceStroke::queued`] が 0 になったら文書のストロークを確定する）。2 回目からは何もしない。
@@ -956,9 +967,25 @@ impl SurfaceStroke {
         if self.end.is_some() {
             return Ok(());
         }
-        if self.brush.assist.stabilizer > 0.0 && self.pen.at != self.last_input.at {
-            self.move_pen(self.last_input.at, self.last_input)?;
+        self.catch_up()?;
+        self.close_held(false)?;
+        self.end = Some(self.sampler.length());
+        Ok(())
+    }
+
+    /// 直線の終わり（Shift の直線の押した点）: 手ぶれ補正の筆を最後の入力の点まで動かし、待たせている曲線の区間も並べ切って、そこを角にして
+    /// 続ける（次の区間は、その点から曲線を始め直す）。ストロークは続き、続きの入力にはまた補正と曲線が効く。補正も曲線も無い・離した後は何も変わらない。
+    /// 並べたダブは、ほかの入力と同じく待ち行列で塗る。
+    pub fn end_line(&mut self) -> Result<(), SurfaceStrokeError> {
+        if self.end.is_some() {
+            return Ok(());
         }
+        self.catch_up()?;
+        self.close_held(true)
+    }
+
+    /// 待たせている最後の区間を並べる。`corner` なら、そこを角にして曲線を始め直す（[`SurfaceStroke::end_line`]）。
+    fn close_held(&mut self, corner: bool) -> Result<(), SurfaceStrokeError> {
         let mut points = Vec::new();
         let gaps = self.gaps();
         let mut duals = DualLooks {
@@ -967,12 +994,14 @@ impl SurfaceStroke {
             height: self.view.height,
             out: Vec::new(),
         };
-        self.sampler
-            .finish_points(gaps, &mut points, &mut duals)
-            .map_err(|_| SurfaceStrokeError::TooManyDabs)?;
+        let closed = if corner {
+            self.sampler.end_line(gaps, &mut points, &mut duals)
+        } else {
+            self.sampler.finish_points(gaps, &mut points, &mut duals)
+        };
+        closed.map_err(|_| SurfaceStrokeError::TooManyDabs)?;
         let duals = duals.out;
         self.enqueue(points, duals);
-        self.end = Some(self.sampler.length());
         Ok(())
     }
 

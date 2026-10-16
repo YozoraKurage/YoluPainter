@@ -666,13 +666,12 @@ impl AppState {
             self.refuse(Source::Path, lang.t("pathtool-a-path-cannot-be-drawn"));
             return None;
         }
-        let Some(layer) = self
-            .session
-            .selected_layer
-            .filter(|id| self.session.doc.layer(*id).is_some())
-        else {
-            self.refuse(Source::Path, lang.t("pathtool-no-layer-to-paint-on"));
-            return None;
+        let layer = match crate::stroke_gate::selected(self) {
+            Ok(id) => id,
+            Err(reason) => {
+                self.refuse(Source::Path, reason);
+                return None;
+            }
         };
         let existing = self.path_layer().map(|(_, p)| p.clone());
         // 一覧のパスはどれも同じ側（2D か 3D）。編集を抜けて新しいパスを始めるときも、レイヤーの一覧の側で断る。

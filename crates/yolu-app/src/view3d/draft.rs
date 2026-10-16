@@ -82,7 +82,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
             }
         }
         DraftKind::Figure => {
-            if let Err(reason) = crate::m2::paint_gate(app) {
+            if let Err(reason) = crate::stroke_gate::paint(app) {
                 app.refuse(Source::Ruler, reason);
                 return;
             }
@@ -98,7 +98,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
             return;
         };
         // ブラシと同じく、ほかのテクスチャセットの面からは始めない
-        if refuse_other_set(app, &model, &hit) {
+        if refuse_other_set(app, Source::Ruler, &model, &hit) {
             return;
         }
         Some(hit)
@@ -265,7 +265,7 @@ fn figure(app: &mut AppState, rect: Rect, a: DVec2, b: DVec2) {
     if app.is_stroking() {
         return;
     }
-    let layer = match crate::m2::paint_gate(app) {
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(id) => id,
         Err(e) => {
             app.refuse(Source::Ruler, e);
@@ -313,7 +313,17 @@ fn outline_stroke(
         mut stroke,
         mut surface,
         ..
-    }) = open_stroke(app, &model, rect, view, layer, false, true, input(first))
+    }) = open_stroke(
+        app,
+        Source::Ruler,
+        &model,
+        rect,
+        view,
+        layer,
+        false,
+        true,
+        input(first),
+    )
     else {
         return;
     };

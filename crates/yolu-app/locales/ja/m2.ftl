@@ -62,6 +62,3 @@ m2-height-normal-on = ハイト → ノーマルをオンにしました。
 m2-height-normal-off = ハイト → ノーマルをオフにしました。
 m2-normal-files = ノーマルのファイル: { $file_direction }
 m2-cancelled = 取り消しました。
-m2-cannot-paint-on-this-layer = このレイヤーには描けません
-m2-no-layer-to-paint = 塗るレイヤーがありません
-m2-the-channel-is-off-on = このレイヤーは「{ $channel }」チャンネルが無効です。

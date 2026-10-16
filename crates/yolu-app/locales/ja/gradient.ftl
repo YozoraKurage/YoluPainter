@@ -2,7 +2,6 @@
 
 gradient-gradient-cancelled = グラデーションをやめました。
 gradient-the-current-material-is-the = 現在のマテリアルを終点にしました
-gradient-no-layer-to-paint-on = 描くレイヤーがありません。
 gradient-only-a-paint-layer-or = ペイントレイヤーかマスクだけにグラデーションを塗れます
 gradient-gradient-applied = グラデーションを塗りました
 gradient-nothing-to-paint-there = 塗る所がありません

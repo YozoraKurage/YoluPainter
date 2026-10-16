@@ -330,10 +330,11 @@ fn begin_any(
         return began;
     }
     let first = stroke_start(app, view, p, shift);
+    // 手ぶれ補正と曲線を切るのは、定規にスナップした決まった道だけ（3D ビューと同じ）。Shift の直線で始めたストロークも、続けてなぞる所には効かせる
     let snapped = app
         .canvas_ruler_constraint(view, app.session.selected_layer, p)
         .is_some();
-    begin_stroke(app, source, eraser, rect, shift || snapped, first)
+    begin_stroke(app, source, eraser, rect, snapped, first)
 }
 
 /// ストロークの最初の点（文書の座標。`first_point` が最初に足す点と同じ）。Shift で前の終点があれば、そこから線を引くので前の終点、なければ
@@ -361,33 +362,40 @@ fn begin_stroke(
     guided: bool,
     first: (f64, f64),
 ) -> bool {
-    if let Some(reason) = app.read_only_reason() {
-        let text = crate::lang::refusals::read_only_set(app.lang, reason);
-        app.refuse(Source::Canvas, text);
+    // 確かめの順は `stroke_gate` の頭（3D ビューの `view3d::input::begin` と同じ）
+    if let Err(reason) = crate::stroke_gate::read_only(app) {
+        app.refuse(Source::Brush, reason);
         return false;
     }
     // クイックマスクが入っていれば、ブラシ・消しゴムは選択ペン・選択消しとして働く
     if let Some(began) = crate::selection::quick::begin(app, source, eraser) {
         return began;
     }
-    let Some(layer) = app.session.selected_layer else {
-        app.refuse(Source::Canvas, app.lang.t("canvas-no-layer-to-paint-on"));
-        return false;
+    let layer = match crate::stroke_gate::layer(app) {
+        Ok(id) => id,
+        Err(reason) => {
+            app.refuse(Source::Brush, reason);
+            return false;
+        }
     };
-    if let Some(reason) = app.paint_blocker() {
-        app.refuse(Source::Canvas, reason);
+    let settings = app.stroke_settings(eraser);
+    if let Err(reason) = crate::stroke_gate::symmetry_effect(
+        app,
+        crate::rulers::Place::Canvas,
+        layer,
+        settings.erase,
+    ) {
+        app.refuse(Source::Brush, reason);
         return false;
     }
-    let settings = app.stroke_settings(eraser);
     // ステンシルの置き場はストロークの始めに決める（ストロークの間は変えない）
     let stencil = match app.canvas_stencil(rect) {
         Ok(s) => s,
         Err(e) => {
             app.notify(
                 crate::notice::Kind::of_core(&e),
-                Source::Canvas,
-                app.lang
-                    .with_reason(app.lang.t("canvas-cannot-paint"), app.lang.core_error(&e)),
+                Source::Brush,
+                crate::stroke_gate::cannot_paint(app.lang, &app.lang.core_error(&e)),
             );
             return false;
         }
@@ -438,9 +446,8 @@ fn begin_stroke(
         Err(e) => {
             app.notify(
                 crate::notice::Kind::of_core(&e),
-                Source::Canvas,
-                app.lang
-                    .with_reason(app.lang.t("canvas-cannot-paint"), app.lang.core_error(&e)),
+                Source::Brush,
+                crate::stroke_gate::cannot_paint(app.lang, &app.lang.core_error(&e)),
             );
             false
         }
@@ -635,9 +642,31 @@ fn first_point(
             );
         }
         add_point(app, view, p, pressure, tilt, rotation, time);
+        if has_previous {
+            // 直線は押した点まで遅れずにまっすぐ届かせる（手ぶれ補正の遅れを詰め、曲線の待たせている区間も描き切って、そこを角にする。
+            // 続けてなぞる所には補正と曲線が効く。3D ビューと同じ）
+            end_line(app);
+        }
         app.canvas.shift_hold = Some(ShiftHold::new(view.to_canvas(p), has_previous));
     } else {
         add_point(app, view, p, pressure, tilt, rotation, time);
+    }
+}
+
+/// 直線の終わり: 手ぶれ補正の筆を、最後に足した点まで描き、待たせている曲線の区間も描き切る（ストロークは続く）。失敗したら core が取り消した
+/// ストロークの札を手放して知らせる（`add_point` と同じ）。
+fn end_line(app: &mut AppState) {
+    let Some(stroke) = app.session.stroke.as_mut() else {
+        return;
+    };
+    if let Err(e) = stroke.end_line(&mut app.session.doc) {
+        app.session.stroke = None;
+        app.canvas.stroke = None;
+        app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Canvas,
+            app.lang.core_error(&e),
+        );
     }
 }
 

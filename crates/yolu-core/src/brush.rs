@@ -949,28 +949,64 @@ impl StrokeState {
         self.brush.assist.taper(arc, end)
     }
 
-    /// 入力の終わり: 手ぶれ補正の筆を最後の入力の点まで描き、待たせている曲線の区間と抜きのダブを置く（C# の FinishInput）。
-    pub(crate) fn finish_input(
+    /// 手ぶれ補正の筆を、最後の入力の点まで描く（遅れを詰める。ストロークは続き、次の入力からまた糸の長さだけ遅れて付いていく）。補正が無い・もう
+    /// 届いているときは何もしない。
+    pub(crate) fn catch_up(
         &mut self,
         surface: &mut Surface,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        let mut any = false;
         if self.has_pen
             && self.brush.assist.stabilizer > 0.0
             && (self.pen.x != self.last_input.x || self.pen.y != self.last_input.y)
         {
             self.pen = self.last_input;
-            any |= self.add_pen_point(surface, self.last_input, changed)?;
+            return self.add_pen_point(surface, self.last_input, changed);
         }
-        if self.curve_points == 2 {
-            // 最後の区間: その先は無いので、終わりの点の向こうへ折り返した点で向きを決める
-            let (f, t) = (self.curve_from, self.curve_to);
-            let (end_x, end_y) = curve::reflect(f.x, f.y, t.x, t.y);
-            any |= self.draw_curve_segment(surface, end_x, end_y, changed)?;
-            self.curve_points = 1;
-        }
+        Ok(false)
+    }
+
+    /// 入力の終わり: 手ぶれ補正の筆を最後の入力の点まで描き（[`StrokeState::catch_up`]）、待たせている曲線の区間と抜きのダブを置く（C# の FinishInput）。
+    pub(crate) fn finish_input(
+        &mut self,
+        surface: &mut Surface,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        let mut any = self.catch_up(surface, changed)?;
+        any |= self.close_curve_segment(surface, changed)?;
         any |= self.flush_pending(surface, f64::INFINITY, Some(self.stroke_length), changed)?;
+        Ok(any)
+    }
+
+    /// 待たせている曲線の区間を、その先の向きを終わりの点の向こうへ折り返した点で決めて描く（待たせている区間が無ければ何もしない）。
+    /// 区間の終わりの点は、次の区間の始まりとして残る。
+    fn close_curve_segment(
+        &mut self,
+        surface: &mut Surface,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        if self.curve_points != 2 {
+            return Ok(false);
+        }
+        // 最後の区間: その先は無いので、終わりの点の向こうへ折り返した点で向きを決める
+        let (f, t) = (self.curve_from, self.curve_to);
+        let (end_x, end_y) = curve::reflect(f.x, f.y, t.x, t.y);
+        let any = self.draw_curve_segment(surface, end_x, end_y, changed)?;
+        self.curve_points = 1;
+        Ok(any)
+    }
+
+    /// 直線の終わり（Shift の直線の押した点）: 手ぶれ補正の筆をその点まで描き、待たせている曲線の区間も描き切って、そこを角にして続ける
+    /// （次の区間は、この点から曲線を始め直す。前の直線の向きを引き継がない）。ストロークは続き、続きの入力にはまた補正と曲線が効く。
+    /// 確定のときの詰め方（[`StrokeState::finish_input`]）と同じ区間の描き方で、抜きの終わりの長さは決めない。
+    pub(crate) fn end_line(
+        &mut self,
+        surface: &mut Surface,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        let mut any = self.catch_up(surface, changed)?;
+        any |= self.close_curve_segment(surface, changed)?;
+        self.has_curve_before = false;
         Ok(any)
     }
 

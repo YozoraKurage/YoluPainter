@@ -54,7 +54,7 @@ pub fn select_menu(app: &AppState) -> Vec<Entry<Action>> {
     }
     v.push(Entry::Separator);
     // 選択範囲を使う操作（選択範囲の下のボタンの帯と同じ。塗る・コピーできるレイヤーでなければ押せない）
-    let paintable = free && any && app.paint_blocker().is_none();
+    let paintable = free && any && crate::stroke_gate::blocker(app).is_none();
     let copyable = free
         && any
         && app

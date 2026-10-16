@@ -16,7 +16,7 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
         crate::rulers::canvas::press(app, view, pos, source, m);
         return;
     }
-    if let Err(reason) = crate::m2::paint_gate(app) {
+    if let Err(reason) = crate::stroke_gate::paint(app) {
         app.refuse(Source::Ruler, reason);
         return;
     }
@@ -66,7 +66,7 @@ pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     if app.is_stroking() {
         return;
     }
-    let layer = match crate::m2::paint_gate(app) {
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(id) => id,
         Err(e) => {
             app.refuse(Source::Ruler, e);

@@ -160,9 +160,12 @@ impl AppState {
     /// グラデーションを塗るレイヤーとマスクを描くか（塗れなければ理由を知らせて None）。
     pub(crate) fn gradient_target(&mut self) -> Option<(yolu_core::LayerId, bool)> {
         let lang = self.lang;
-        let Some(id) = self.session.selected_layer else {
-            self.refuse(Source::Gradient, lang.t("gradient-no-layer-to-paint-on"));
-            return None;
+        let id = match crate::stroke_gate::selected(self) {
+            Ok(id) => id,
+            Err(reason) => {
+                self.refuse(Source::Gradient, reason);
+                return None;
+            }
         };
         let masked = self.m2.edit_mask;
         let kind = self.session.doc.layer(id).map(|l| l.kind());

@@ -150,6 +150,23 @@ impl Stroke {
     pub fn add_sample(&mut self, doc: &mut Document, sample: BrushSample) -> Result<(), CoreError> {
         doc.stroke_add(self.id, sample)
     }
+    /// 直線の終わり: 手ぶれ補正の筆を、ここまでの最後の入力の点まで描き、待たせている曲線の区間も描き切って、そこを角にして続ける（確定のときと
+    /// 同じ詰め方・区間の描き方で、ストロークは続く。次の区間は、その点から曲線を始め直す）。決まった点（Shift の直線の押した点）までまっすぐに
+    /// 届かせたい入力の後に呼ぶ。続きの入力には、また補正と曲線が効く。補正も曲線も無いブラシでは何も変わらない。失敗したら、このストロークは
+    /// 取り消してから返す。
+    pub fn end_line(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        match &doc.active {
+            Some(a) if a.id == self.id => {}
+            _ => return Err(CoreError::NoActiveStroke),
+        }
+        if doc.triangle_fill.is_some() {
+            return Ok(());
+        }
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.end_line(surface, changed)
+        })
+        .map(|_| ())
+    }
     /// このストロークが使うブラシ（始めたときに写して固定したもの）。3D の面のダブが、大きさと硬さの筆圧をストロークと同じ応え
     /// （最小値と曲線）で決めるのに使う。終わったストロークは断る。
     pub fn brush(&self, doc: &Document) -> Result<std::sync::Arc<Brush>, CoreError> {

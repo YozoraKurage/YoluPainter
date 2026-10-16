@@ -17,7 +17,7 @@ impl AppState {
         if self.session.doc.selection().is_none() {
             return Err(self.no_selection_text());
         }
-        let layer = crate::m2::paint_gate(self)?;
+        let layer = crate::stroke_gate::paint(self)?;
         let result = if self.m2.edit_mask {
             let reveal = crate::m2::mask_reveals(self, layer, erase);
             self.session.doc.fill_mask(layer, 1.0, None, reveal)

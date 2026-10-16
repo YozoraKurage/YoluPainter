@@ -12,7 +12,6 @@ pathtool-the-path-was-drawn-on = the path was drawn on another model
 pathtool-cannot-paste = Cannot paste
 pathtool-no-model = No model
 pathtool-a-path-cannot-be-drawn = A path cannot be drawn on a mask
-pathtool-no-layer-to-paint-on = No layer to paint on.
 pathtool-this-layer-has-a-path = This layer has a path on the model
 pathtool-this-layer-has-a-canvas = This layer has a canvas path
 pathtool-the-path-was-drawn-on-2 = The path was drawn on another model

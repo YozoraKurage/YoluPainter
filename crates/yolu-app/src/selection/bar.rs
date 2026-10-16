@@ -172,7 +172,7 @@ fn reasons(app: &AppState) -> (Option<String>, Option<String>, Option<String>) {
         let none = lang.t("selection-no-layer-is-selected").to_owned();
         return (Some(none.clone()), Some(none.clone()), Some(none));
     };
-    let paint = app.paint_blocker();
+    let paint = crate::stroke_gate::blocker(app);
     let masked = app.m2.edit_mask && layer.mask().is_some();
     let copy = (!masked && !matches!(layer.kind(), LayerKind::Raster | LayerKind::Fill))
         .then(|| lang.t("selection-this-layer-has-no-pixels").to_owned());

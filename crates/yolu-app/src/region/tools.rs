@@ -12,10 +12,10 @@ use yolu_core::{CoreError, Document, LayerId, SelectionMask, TriangleFill};
 
 use super::kind_name;
 use crate::canvas::view::CanvasView;
-use crate::lang::Lang;
-use crate::m2::{mask_reveals, paint_gate};
+use crate::m2::mask_reveals;
 use crate::notice::Source;
 use crate::state::{Action, AppState, StrokeSource, Tool};
+use crate::stroke_gate::other_set_face;
 
 /// ポインタを置いた画面（座標の変換が違う）。
 #[derive(Clone, Copy)]
@@ -339,18 +339,12 @@ fn other_set(app: &mut AppState, name: &str) {
     app.refuse(Source::Fill, other_set_face(app.lang, name));
 }
 
-/// ポインタの下の面がほかのテクスチャセット（`name`）のものだという断り。
-pub(crate) fn other_set_face(lang: Lang, name: &str) -> String {
-    let name = lang.quote(name);
-    lang.f("region-this-face-belongs-to-another", &[("name", &name)])
-}
-
 // ───────── バケツ ─────────
 
 /// バケツ: 押した所の範囲を（今の選択範囲の内側だけ）塗る。1 回の Undo。
 pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
     let lang = app.lang;
-    let layer = match paint_gate(app) {
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(l) => l,
         Err(m) => {
             app.refuse(Source::Fill, m);
@@ -501,7 +495,7 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
         needs_model(app);
         return false;
     }
-    let layer = match paint_gate(app) {
+    let layer = match crate::stroke_gate::paint(app) {
         Ok(l) => l,
         Err(m) => {
             app.refuse(Source::Fill, m);

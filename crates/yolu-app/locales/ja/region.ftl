@@ -26,7 +26,6 @@ region-material = マテリアル
 region-texture-set-is-not-in = 今のテクスチャセット「{ $name }」はこのモデルにありません。
 region-no-triangle-of-this-texture = ポインタの下にこのテクスチャセットの三角形がありません
 region-this-surface-s-uv-is = この面の UV はテクスチャの外です
-region-this-face-belongs-to-another = ほかのテクスチャセット{ $name }の面です。
 region-erased = を消しました。
 region-filled-2 = を塗りました。
 region-stroke-cancelled = ストロークを取り消しました。

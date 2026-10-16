@@ -22,7 +22,6 @@ use yolu_core::SelectionMask;
 
 use super::tools::{Hover, Where};
 use crate::lang::{Count, Lang};
-use crate::m2::read_only_message;
 use crate::notice::Source;
 use crate::selection::{combine_name, combine_of};
 use crate::state::key::PointerButton;
@@ -288,7 +287,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
             };
             if hit.material != material {
                 let name = model.material_name(hit.material as usize, lang);
-                return Err(super::tools::other_set_face(lang, &name));
+                return Err(crate::stroke_gate::other_set_face(lang, &name));
             }
             match try_get_at_uv(map, hit.uv.x as f64, hit.uv.y as f64) {
                 Ok(Some(rgb)) => Ok(rgb),
@@ -316,7 +315,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
 pub fn select_by_id(app: &mut AppState, w: Where, at: Pos2) {
     let lang = app.lang;
     // 読むだけのセットは選択範囲も変えない（変えても、Undo が読むだけのセットで断られて戻せない）
-    if let Some(message) = read_only_message(app) {
+    if let Err(message) = crate::stroke_gate::read_only(app) {
         app.refuse(Source::Selection, message);
         return;
     }

@@ -26,7 +26,6 @@ region-material = Material
 region-texture-set-is-not-in = Texture set “{ $name }” is not in this model.
 region-no-triangle-of-this-texture = No triangle of this texture set under the pointer
 region-this-surface-s-uv-is = This surface's UV is outside the texture
-region-this-face-belongs-to-another = This face belongs to another texture set, { $name }.
 region-erased = {" "}erased.
 region-filled-2 = {" "}filled.
 region-stroke-cancelled = Stroke cancelled.

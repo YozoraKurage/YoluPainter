@@ -173,14 +173,6 @@ fn assert_painted(s: &Seen, before: &Seen, what: &str) {
     assert!(!s.stroking, "{what}: 描き終えた");
 }
 
-/// ブラシ・消しゴムの描き始めの断りの出どころ。
-fn paint_source(view: View) -> Source {
-    match view {
-        View::Canvas => Source::Canvas,
-        View::View3d => Source::View3d,
-    }
-}
-
 fn set_tool(h: &mut H, tool: Tool) {
     h.act(Action::SelectTool(tool));
     h.run();
@@ -239,9 +231,10 @@ fn off_model(h: &H, rect: Rect) -> Pos2 {
 
 // ───────── D1〜D24 ─────────
 
-/// D1 描き始めの確かめの順。
-/// - 2D: 読むだけ → クイックマスク → レイヤー無し → `paint_blocker` → ステンシル → クローン
-/// - 3D: モデル → テクスチャセット → 読むだけ → 面とほかのセット → クイックマスク → レイヤー無し → `paint_blocker` → 定規 → 効果・対称・ステンシル
+/// D1 描き始めの確かめの順（`stroke_gate` の頭）。
+/// - 2D: 読むだけ → クイックマスク → レイヤー（古い選びも）→ 描けないレイヤー → 対称と指先・クローン → ステンシル → core
+/// - 3D: モデル → テクスチャセット → 読むだけ → ほかのセットの面 → クイックマスク → レイヤー（古い選びも）→ 描けないレイヤー → クローンの元 →
+///   対称と指先・クローン → ステンシル → core。3D だけの前提（モデル・テクスチャセット）の断りは `Source::View3d`、ほかは 2D と同じ `Source::Brush`
 #[test]
 fn d01_the_order_of_the_checks_before_a_stroke() {
     for view in VIEWS {
@@ -256,7 +249,7 @@ fn d01_the_order_of_the_checks_before_a_stroke() {
         assert_refused(
             &seen(&h),
             &before,
-            paint_source(view),
+            Source::Brush,
             &text,
             &format!("{view:?}"),
         );
@@ -311,26 +304,17 @@ fn d01_the_order_of_the_checks_before_a_stroke() {
             .map(|i| c + egui::vec2(i as f32 * 6.0, 0.0))
             .collect();
         pen_stroke(&mut h, &points, Modifiers::NONE);
-        let text = match view {
-            View::Canvas => read_only_text(&h, "テスト"),
-            View::View3d => h.app().region_missing_reason(),
+        let (source, text) = match view {
+            View::Canvas => (Source::Brush, read_only_text(&h, "テスト")),
+            View::View3d => (Source::View3d, h.app().region_missing_reason()),
         };
-        assert_refused(
-            &seen(&h),
-            &before,
-            paint_source(view),
-            &text,
-            &format!("{view:?}"),
-        );
+        assert_refused(&seen(&h), &before, source, &text, &format!("{view:?}"));
     }
 }
 
 /// D2 「レイヤーが無い」の文。
-/// - 2D: ブラシは `canvas-no-layer-to-paint-on`（`Source::Canvas`）
-/// - 3D: ブラシは `view3d-no-layer-to-paint-on`（`Source::View3d`）。図形は 2D・3D とも `paint_gate` の `m2-no-layer-to-paint`（`Source::Ruler`）、
-///   グラデーションは 2D・3D とも `gradient-no-layer-to-paint-on`、パスは 2D・3D とも `pathtool-no-layer-to-paint-on`（`Source::Path`）
-///
-/// キー 5 つ（canvas・view3d・pathtool・gradient・m2）がこの 1 本に全部出る。
+/// - 2D・3D とも: どのツールも `stroke_gate-no-layer-to-paint-on`（「描くレイヤーがありません。」）。出どころはツールの物（ブラシは `Source::Brush`、
+///   図形は `Source::Ruler`、グラデーションは `Source::Gradient`、パスは `Source::Path`）
 #[test]
 fn d02_the_words_for_no_layer_to_paint_on() {
     for view in VIEWS {
@@ -343,18 +327,17 @@ fn d02_the_words_for_no_layer_to_paint_on() {
             let points = line(&h, view, rect);
             pen_stroke(&mut h, &points, Modifiers::NONE);
             let lang = h.lang();
-            let (source, key) = match (tool, view) {
-                (Tool::Brush, View::Canvas) => (Source::Canvas, "canvas-no-layer-to-paint-on"),
-                (Tool::Brush, View::View3d) => (Source::View3d, "view3d-no-layer-to-paint-on"),
-                (Tool::Shape, _) => (Source::Ruler, "m2-no-layer-to-paint"),
-                (Tool::Gradient, _) => (Source::Gradient, "gradient-no-layer-to-paint-on"),
-                _ => (Source::Path, "pathtool-no-layer-to-paint-on"),
+            let source = match tool {
+                Tool::Brush => Source::Brush,
+                Tool::Shape => Source::Ruler,
+                Tool::Gradient => Source::Gradient,
+                _ => Source::Path,
             };
             assert_refused(
                 &seen(&h),
                 &before,
                 source,
-                lang.t(key),
+                lang.t("stroke_gate-no-layer-to-paint-on"),
                 &format!("{view:?} {tool:?}"),
             );
         }
@@ -363,8 +346,8 @@ fn d02_the_words_for_no_layer_to_paint_on() {
 
 /// D3 「ほかのテクスチャセットの面」の文（3D だけの断り）。
 /// - 2D: 面を押さないので、この断りは無い（どこにでも描く）
-/// - 3D: 描く・定規は `view3d-surface-of-another-texture-set`（名前はそのまま、`Source::View3d`）。範囲（バケツ）は `region-this-face-belongs-to-another`
-///   （`Lang::quote` つき、`Source::Fill`）
+/// - 3D: 描く・定規・範囲（バケツ）とも `stroke_gate-this-face-belongs-to-another`（名前は `Lang::quote` で包む）。出どころはツールの物
+///   （ブラシは `Source::Brush`、定規は `Source::Ruler`、バケツは `Source::Fill`）
 #[test]
 fn d03_the_words_for_a_face_of_another_texture_set() {
     use crate::view3d_rulers::two_materials;
@@ -380,19 +363,15 @@ fn d03_the_words_for_a_face_of_another_texture_set() {
         let at = on_b(&h, rect);
         pen_stroke(&mut h, &[at, at + egui::vec2(20.0, 4.0)], Modifiers::NONE);
         let lang = h.lang();
-        let (source, text) = match tool {
-            Tool::Fill => (
-                Source::Fill,
-                lang.f(
-                    "region-this-face-belongs-to-another",
-                    &[("name", &lang.quote("b"))],
-                ),
-            ),
-            _ => (
-                Source::View3d,
-                lang.f("view3d-surface-of-another-texture-set", &[("name", &"b")]),
-            ),
+        let source = match tool {
+            Tool::Brush => Source::Brush,
+            Tool::Ruler => Source::Ruler,
+            _ => Source::Fill,
         };
+        let text = lang.f(
+            "stroke_gate-this-face-belongs-to-another",
+            &[("name", &lang.quote("b"))],
+        );
         assert_refused(&seen(&h), &before, source, &text, &format!("3D {tool:?}"));
     }
     // 2D: 同じ文書のキャンバスでは、どこを押しても今のセットに描く
@@ -408,17 +387,21 @@ fn d03_the_words_for_a_face_of_another_texture_set() {
     assert_painted(&seen(&h), &before, "2D");
 }
 
-/// D4 Shift の直線で、手ぶれ補正と曲線を切るか。
-/// - 2D: `begin_stroke(…, shift || snapped, …)` で切る（Shift で始めたストロークは、続けてなぞった所も補正しない）
-/// - 3D: `open_stroke(…, constraint.is_some(), …)`。Shift だけでは切らない（続けてなぞった所に補正が効く）
+/// D4 Shift の直線と手ぶれ補正。
+/// - 2D・3D とも: 手ぶれ補正と曲線を切るのは定規にスナップしたときだけ。Shift で始めたストロークも、続けてなぞった所には補正が効く
+///   （補正 0 と 40 で画素が違う）。前の終点から押した点までの直線は、補正の遅れを詰めて押した点まで届く（押した点のまわりのインクが補正 0 より
+///   減らない。詰めないと、続きのなぞりへ角を切って押した点まで届かない）
+/// - 曲線を入れたブラシでも、直線はまっすぐ押した点まで届く（待たせている曲線の区間を押した点で描き切り、そこを角にする）。続きがまっすぐ
+///   （画面の縦）なら、曲線を入れても切っても全体が同じ画素（補正 0 と 40 の両方）。直線が曲がる・角の後の区間が前の直線の向きを引きずると違う画素になる
 ///
 /// 対照として、Shift 無しでは 2D・3D とも補正 0 と 40 で画素が違う（補正がこの道に効いている）ことも見る。
 #[test]
-fn d04_a_shift_line_turns_off_the_stabilizer_in_2d_but_not_in_3d() {
+fn d04_a_shift_line_reaches_the_pressed_point_and_the_rest_is_stabilized() {
     for view in VIEWS {
         let shot = |stabilizer: f64| {
             let (mut h, rect) = scene(view);
-            // 1 本目（前の終点を作る）は補正なし
+            // 1 本目（前の終点を作る）は補正なし。この場面のブラシは曲線を切っている（曲線を入れた場面は下の `vertical`）
+            assert!(!h.m2_mut().brush.assist.curve, "{view:?}");
             let a = spot(&h, view, rect, -0.6, -0.4);
             pen_stroke(&mut h, &[a, a + egui::vec2(2.0, 0.0)], Modifiers::NONE);
             h.m2_mut().brush.assist.stabilizer = stabilizer;
@@ -432,11 +415,24 @@ fn d04_a_shift_line_turns_off_the_stabilizer_in_2d_but_not_in_3d() {
                 .collect();
             pen_stroke(&mut h, &path, Modifiers::SHIFT);
             assert_eq!(h.doc().undo_count(), 2, "{view:?}: {}", h.message());
+            let (bx, by) = texel(&h, view, rect, b);
             let doc = h.doc();
-            doc.composite(doc.bounds()).unwrap()
+            let w = doc.width() as i64;
+            let pixels = doc.composite(doc.bounds()).unwrap();
+            // 押した点の画素のまわり（半径 2.5）のインクの画素の数
+            let near_b = pixels
+                .chunks(4)
+                .enumerate()
+                .filter(|(i, p)| {
+                    let (x, y) = (*i as i64 % w, *i as i64 / w);
+                    let (dx, dy) = ((x - bx as i64) as f64, (y - by as i64) as f64);
+                    p[3] > 0 && (dx * dx + dy * dy).sqrt() <= 2.5
+                })
+                .count();
+            (pixels, near_b)
         };
-        let plain = shot(0.0);
-        let stabilized = shot(40.0);
+        let (plain, plain_near) = shot(0.0);
+        let (stabilized, stabilized_near) = shot(40.0);
         // 対照: Shift 無しでは、2D も 3D も補正 0 と 40 で画素が違う（補正がこの短い道に効いていること）
         let free = |stabilizer: f64| {
             let (mut h, rect) = scene(view);
@@ -456,9 +452,36 @@ fn d04_a_shift_line_turns_off_the_stabilizer_in_2d_but_not_in_3d() {
             free(0.0) != free(40.0),
             "{view:?}: Shift 無しなら補正が効く"
         );
-        match view {
-            View::Canvas => assert!(plain == stabilized, "2D: Shift の直線は補正を切る"),
-            View::View3d => assert!(plain != stabilized, "3D: Shift だけでは補正を切らない"),
+        assert!(
+            plain != stabilized,
+            "{view:?}: Shift の直線の続きにも補正が効く"
+        );
+        assert!(plain_near > 0, "{view:?}: 補正 0 は押した点まで描く");
+        assert!(
+            stabilized_near >= plain_near,
+            "{view:?}: 補正 40 でも直線は押した点まで届く（{stabilized_near} と補正 0 の {plain_near}）"
+        );
+        // 曲線を入れたブラシ: Shift の直線の後、押した点から画面の縦へまっすぐ続ける。曲線を切ったときと同じ画素なら、直線も角の後もまっすぐ
+        let vertical = |curve: bool, stabilizer: f64| {
+            let (mut h, rect) = scene(view);
+            let a = spot(&h, view, rect, -0.6, -0.4);
+            pen_stroke(&mut h, &[a, a + egui::vec2(2.0, 0.0)], Modifiers::NONE);
+            h.m2_mut().brush.assist.curve = curve;
+            h.m2_mut().brush.assist.stabilizer = stabilizer;
+            let b = spot(&h, view, rect, 0.0, 0.0);
+            let path: Vec<Pos2> = (0..14)
+                .map(|i| b + egui::vec2(0.0, i as f32 * 4.0))
+                .collect();
+            pen_stroke(&mut h, &path, Modifiers::SHIFT);
+            assert_eq!(h.doc().undo_count(), 2, "{view:?}: {}", h.message());
+            let doc = h.doc();
+            doc.composite(doc.bounds()).unwrap()
+        };
+        for stabilizer in [0.0, 40.0] {
+            assert!(
+                vertical(false, stabilizer) == vertical(true, stabilizer),
+                "{view:?}: 補正 {stabilizer}: 曲線を入れても、Shift の直線とその続きは曲線を切ったときと同じ画素"
+            );
         }
     }
 }
@@ -589,8 +612,7 @@ fn d06_the_edit_mode_press_with_the_mouse_paints_nothing_in_both_views() {
 }
 
 /// D7 開始が core に断られたときの文。
-/// - 2D: `canvas-cannot-paint` + 理由（`Source::Canvas`）
-/// - 3D: `view3d-cannot-paint` + 理由（`Source::View3d`）。文は同じ「描けません」で、出どころだけが違う
+/// - 2D・3D とも: `stroke_gate-cannot-paint` + 理由（`Source::Brush`）
 #[test]
 fn d07_a_start_refused_by_the_core_says_cannot_paint_from_each_view() {
     for view in VIEWS {
@@ -605,14 +627,12 @@ fn d07_a_start_refused_by_the_core_says_cannot_paint_from_each_view() {
         pen_stroke(&mut h, &points, Modifiers::NONE);
         let s = seen(&h);
         let lang = h.lang();
-        let key = match view {
-            View::Canvas => "canvas-cannot-paint",
-            View::View3d => "view3d-cannot-paint",
-        };
         let (kind, source, text) = s.notice.clone().expect("断りの知らせ");
         assert_eq!(kind, Kind::Refusal, "{view:?}");
-        assert_eq!(source, paint_source(view), "{view:?}");
-        let what = lang.t(key).trim_end_matches(['。', '.']);
+        assert_eq!(source, Source::Brush, "{view:?}");
+        let what = lang
+            .t("stroke_gate-cannot-paint")
+            .trim_end_matches(['。', '.']);
         assert!(
             text.starts_with(what) && text.len() > what.len() + 3,
             "{view:?}: 「描けません」+ 理由: {text}"
@@ -672,7 +692,7 @@ fn d08_no_model() {
 
 /// D9 クローンの元が無いとき。
 /// - 2D: 断らない（ブラシの offset のまま写す）
-/// - 3D: `view3d-no-clone-source` を断る
+/// - 3D: `view3d-no-clone-source` を断る（ブラシの描き始めの断りなので `Source::Brush`）
 #[test]
 fn d09_clone_without_a_source() {
     for view in VIEWS {
@@ -701,7 +721,7 @@ fn d09_clone_without_a_source() {
                 assert_refused(
                     &s,
                     &before,
-                    Source::View3d,
+                    Source::Brush,
                     lang.t("view3d-no-clone-source"),
                     "3D",
                 );
@@ -711,8 +731,7 @@ fn d09_clone_without_a_source() {
 }
 
 /// D10 対称とぼかし・指先・クローン（同じ 2D の縦の対称定規で）。
-/// - 2D: 開始が core に断られ、`canvas-cannot-paint` + 理由
-/// - 3D: `open_stroke` が先に `view3d-smudge-and-clone-do-not` を断る
+/// - 2D・3D とも: core の前に `stroke_gate::symmetry_effect` が `stroke_gate-smudge-and-clone-do-not` を断る（`Source::Brush`）
 #[test]
 fn d10_smudge_with_symmetry() {
     for view in VIEWS {
@@ -724,25 +743,14 @@ fn d10_smudge_with_symmetry() {
         let before = seen(&h);
         let points = line(&h, view, rect);
         pen_stroke(&mut h, &points, Modifiers::NONE);
-        let s = seen(&h);
         let lang = h.lang();
-        match view {
-            View::Canvas => {
-                let (_, source, text) = s.notice.clone().expect("2D: 断りの知らせ");
-                assert_eq!(source, Source::Canvas);
-                let what = lang.t("canvas-cannot-paint").trim_end_matches(['。', '.']);
-                assert!(text.starts_with(what), "2D: {text}");
-                assert_eq!(s.strokes, before.strokes);
-                assert_eq!(s.ink, before.ink);
-            }
-            View::View3d => assert_refused(
-                &s,
-                &before,
-                Source::View3d,
-                lang.t("view3d-smudge-and-clone-do-not"),
-                "3D",
-            ),
-        }
+        assert_refused(
+            &seen(&h),
+            &before,
+            Source::Brush,
+            lang.t("stroke_gate-smudge-and-clone-do-not"),
+            &format!("{view:?}"),
+        );
     }
 }
 
@@ -858,9 +866,11 @@ fn d13_a_pen_touch_while_a_mouse_stroke_is_still_down() {
             View::Canvas => {
                 // ペンの押しは `begin_any` へ進み、core が「描いている最中」で断る（今の値）
                 let lang = h.lang();
-                let what = lang.t("canvas-cannot-paint").trim_end_matches(['。', '.']);
+                let what = lang
+                    .t("stroke_gate-cannot-paint")
+                    .trim_end_matches(['。', '.']);
                 let n = during.notice.clone().expect("2D: ペンの押しの知らせ");
-                assert_eq!((n.0, n.1), (Kind::Refusal, Source::Canvas), "2D: {n:?}");
+                assert_eq!((n.0, n.1), (Kind::Refusal, Source::Brush), "2D: {n:?}");
                 assert!(n.2.starts_with(what), "2D: {}", n.2);
                 assert_eq!(s.strokes, 1, "2D: マウスの 1 本だけ");
             }
@@ -1367,12 +1377,12 @@ fn d23_a_gradient_released_after_the_set_became_read_only() {
 }
 
 /// D24 選んでいるレイヤーが文書に無いとき（古い選び）。
-/// - 2D: `begin_stroke` は `selected_layer` が `Some` かだけを見て、`paint_blocker` も素通しする。core が `LayerNotFound` で断り、`canvas-cannot-paint` + 理由
-/// - 3D: ブラシは同じ式で `view3d-cannot-paint` + 理由。図形は 2D・3D とも `paint_gate` が `m2-no-layer-to-paint` で断る
+/// - 2D・3D とも: どのツールも `stroke_gate::selected` が、レイヤーを選んでいないときと同じ `stroke_gate-no-layer-to-paint-on` で断る
+///   （出どころはツールの物。ブラシは `Source::Brush`、図形は `Source::Ruler`、グラデーションは `Source::Gradient`、パスは `Source::Path`）
 #[test]
 fn d24_a_selected_layer_that_is_no_longer_in_the_document() {
     for view in VIEWS {
-        for tool in [Tool::Brush, Tool::Shape] {
+        for tool in [Tool::Brush, Tool::Shape, Tool::Gradient, Tool::Path] {
             let (mut h, rect) = scene(view);
             set_tool(&mut h, tool);
             let gone = h.doc_mut().add_layer("消すレイヤー").unwrap();
@@ -1383,31 +1393,20 @@ fn d24_a_selected_layer_that_is_no_longer_in_the_document() {
             let before = seen(&h);
             let points = line(&h, view, rect);
             pen_stroke(&mut h, &points, Modifiers::NONE);
-            let s = seen(&h);
-            let what = format!("{view:?} {tool:?}");
+            let source = match tool {
+                Tool::Brush => Source::Brush,
+                Tool::Shape => Source::Ruler,
+                Tool::Gradient => Source::Gradient,
+                _ => Source::Path,
+            };
             let lang = h.lang();
-            match tool {
-                Tool::Brush => {
-                    let key = match view {
-                        View::Canvas => "canvas-cannot-paint",
-                        View::View3d => "view3d-cannot-paint",
-                    };
-                    let (kind, source, text) = s.notice.clone().expect("知らせ");
-                    assert_eq!(kind, Kind::Error, "{what}: core の LayerNotFound は失敗");
-                    assert_eq!(source, paint_source(view), "{what}");
-                    let head = lang.t(key).trim_end_matches(['。', '.']);
-                    assert!(text.starts_with(head), "{what}: {text}");
-                    assert_eq!(s.strokes, before.strokes, "{what}");
-                    assert_eq!(s.ink, before.ink, "{what}");
-                }
-                _ => assert_refused(
-                    &s,
-                    &before,
-                    Source::Ruler,
-                    lang.t("m2-no-layer-to-paint"),
-                    &what,
-                ),
-            }
+            assert_refused(
+                &seen(&h),
+                &before,
+                source,
+                lang.t("stroke_gate-no-layer-to-paint-on"),
+                &format!("{view:?} {tool:?}"),
+            );
         }
     }
 }

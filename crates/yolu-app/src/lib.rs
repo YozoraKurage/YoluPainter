@@ -83,6 +83,7 @@ pub mod shell;
 pub mod shortcuts;
 pub mod state;
 pub mod stencil;
+pub mod stroke_gate;
 pub mod subtool;
 pub mod textlayer;
 pub mod titlebar;

@@ -2,7 +2,6 @@
 
 gradient-gradient-cancelled = Gradient cancelled.
 gradient-the-current-material-is-the = The current material is the end
-gradient-no-layer-to-paint-on = No layer to paint on.
 gradient-only-a-paint-layer-or = Only a paint layer or a mask takes a gradient
 gradient-gradient-applied = Gradient applied
 gradient-nothing-to-paint-there = Nothing to paint there

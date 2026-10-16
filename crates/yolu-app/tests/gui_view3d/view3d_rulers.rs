@@ -785,7 +785,7 @@ fn a_ruler_is_not_made_from_a_face_of_another_texture_set_but_is_from_the_curren
     assert!(
         st(&h)
             .message()
-            .contains("ほかのテクスチャセット（b）の面です。"),
+            .contains("ほかのテクスチャセット「b」の面です。"),
         "{}",
         st(&h).message()
     );
