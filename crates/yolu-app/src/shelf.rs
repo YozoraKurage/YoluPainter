@@ -43,7 +43,7 @@ use crate::lang::Lang;
 use crate::library::cache::{Cache, Cached};
 use crate::library::service::{Cancel, Service, Work};
 use crate::notice::{Kind as NoticeKind, Source};
-use crate::state::{AppState, DialogRequest, Waker};
+use crate::state::{ui_store, AppState, DialogRequest, UiSlot, Waker};
 
 /// 棚の素材のメモリの予算（Unity 版の既定は RAM の 1/16 を 256〜4096 MiB に収めた値。ここでは固定）。
 pub const SHELF_BUDGET: u64 = 512 * 1024 * 1024;
@@ -195,7 +195,8 @@ impl Block {
 enum Thumb {
     None,
     Pending(Picture),
-    Ready(TextureHandle),
+    /// GPU へ上げた（画素は手放した。テクスチャは画面の側の `ui_store` にある）。
+    Ready(UiSlot),
 }
 
 /// サムネイルの画素（straight RGBA8。画像の上の行から）。別のスレッドで作り、画面のスレッドで GPU へ上げる。ディスクのキャッシュへも
@@ -243,11 +244,19 @@ impl Inspected {
                     rgba: Vec::new(),
                 },
             );
-            let handle = ctx.load_texture(name, picture.into_image(), TextureOptions::LINEAR);
-            self.thumb = Thumb::Ready(handle);
+            let slot = UiSlot::new();
+            let handle = ui_store::load_texture(
+                ctx,
+                &slot,
+                name,
+                picture.into_image(),
+                TextureOptions::LINEAR,
+            );
+            self.thumb = Thumb::Ready(slot);
+            return Some(handle);
         }
         match &self.thumb {
-            Thumb::Ready(h) => Some(h.clone()),
+            Thumb::Ready(slot) => ui_store::texture(ctx, slot),
             _ => None,
         }
     }

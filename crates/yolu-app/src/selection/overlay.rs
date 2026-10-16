@@ -3,6 +3,9 @@
 //! 量のあるタイルごとに、表示に近い大きさの絵（量 × 色の濃さ）を 1 枚の絵にして、文書と同じ写し（拡大・パン・回転・反転）で描く。
 //! 見えているタイルだけを作る。1 面が同じ量のタイルは絵を作らず、色だけの四角で描く。選択範囲が変わったら見えているタイルを
 //! 中身の写しで見比べ、変わった絵だけを作り直す（呼ぶ側が変わったタイルを知っていれば、そのタイルだけ）。
+//!
+//! どのタイルを何で描くか（1 面の量か、テクスチャの中身のハッシュか）は重ねの状態が持ち、テクスチャは画面の側の `ui_store`
+//! に、重ねの印（`TileOverlay::screen`）の物として置く。`clear` は印を替えるので、前のテクスチャはフレームの終わりに捨てられる。
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hasher;
@@ -13,6 +16,10 @@ use egui::{pos2, Color32, ColorImage, Mesh, Painter, Shape, TextureHandle, Textu
 use crate::canvas::display::CanvasDisplay;
 use crate::canvas::view::CanvasView;
 use crate::engine::{SelectionMask, TileCoord};
+use crate::state::{ui_store, UiSlot};
+
+/// 画面の側に置くタイルのテクスチャ（重ねの印ごと）。
+type Textures = HashMap<TileCoord, TextureHandle>;
 
 /// 絵を持つタイルの数の上限（これを超えて見えているぶんは描かない）。
 const MAX_TEXTURES: usize = 1500;
@@ -27,10 +34,8 @@ pub struct Tint {
 enum Slot {
     /// 1 面が同じ量（0 でない）。
     Solid(u8),
-    Texture {
-        hash: u64,
-        handle: TextureHandle,
-    },
+    /// テクスチャで描く（中身のハッシュ。テクスチャは画面の側に `screen` の物として置く）。
+    Texture { hash: u64 },
 }
 
 /// 重ね表示のタイルの絵（選択範囲か色が変わったときだけ作り直す）。
@@ -41,6 +46,8 @@ pub struct TileOverlay {
     tint: Option<Tint>,
     /// 試験が見る: 絵を作った・作り直した数の累計。
     uploads: u64,
+    /// 画面の側のタイルのテクスチャの持ち主の印（`clear` で替える）。
+    screen: UiSlot,
 }
 
 impl TileOverlay {
@@ -57,11 +64,12 @@ impl TileOverlay {
         self.uploads
     }
 
-    /// 全部捨てる。
+    /// 全部捨てる（画面の側のテクスチャは、印を替えるのでフレームの終わりに捨てられる）。
     pub fn clear(&mut self) {
         self.slots.clear();
         self.last = None;
         self.tint = None;
+        self.screen = UiSlot::new();
     }
 
     /// 文書の上に重ねて描く。`changed` は呼ぶ側が知っている、前のフレームから量が変わったタイル（知らなければ None で、見えている
@@ -109,10 +117,14 @@ impl TileOverlay {
         let same_mask = self.last.as_ref().is_some_and(|l| l.same_as(mask));
         let same_tint = self.tint == Some(tint);
         let stale = !same_mask || !same_tint;
+        let store = ui_store::Store::of(painter.ctx());
+        let mut held = store.lock();
+        let textures = held.get_or_default::<Textures>(&self.screen);
         if stale {
-            // 見えなくなった・量の無くなったタイルの絵は捨てる（見えるようになったら作る）
+            // 見えなくなった・量の無くなったタイルのテクスチャは捨てる（見えるようになったら作る）
             let keep: HashSet<TileCoord> = coords.iter().copied().collect();
             self.slots.retain(|c, _| keep.contains(c));
+            textures.retain(|c, _| keep.contains(c));
         }
         let full = stale && (changed.is_none() || !same_tint);
         let mut buf = vec![0u8; (ts * ts) as usize];
@@ -122,7 +134,7 @@ impl TileOverlay {
                 Some(_) => full || (stale && changed.is_some_and(|h| h.contains(c))),
             };
             if need {
-                self.rebuild(painter.ctx(), mask, *c, tint, &mut buf, name);
+                self.rebuild(painter.ctx(), textures, mask, *c, tint, &mut buf, name);
             }
         }
         self.last = Some(mask.clone());
@@ -156,7 +168,10 @@ impl TileOverlay {
                     mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
                     painter.add(Shape::mesh(mesh));
                 }
-                Slot::Texture { handle, .. } => {
+                Slot::Texture { .. } => {
+                    let Some(handle) = textures.get(c) else {
+                        continue;
+                    };
                     CanvasDisplay::quad(
                         painter,
                         handle.id(),
@@ -179,9 +194,12 @@ impl TileOverlay {
         }
     }
 
+    /// タイル `coord` を作り直す。`textures` は画面の側のこの重ねのテクスチャ（`slots` のテクスチャのタイルと同じ並び）。
+    #[allow(clippy::too_many_arguments)]
     fn rebuild(
         &mut self,
         ctx: &egui::Context,
+        textures: &mut Textures,
         mask: &SelectionMask,
         coord: TileCoord,
         tint: Tint,
@@ -190,18 +208,20 @@ impl TileOverlay {
     ) {
         if mask.copy_tile(coord, buf).is_err() {
             self.slots.remove(&coord);
+            textures.remove(&coord);
             return;
         }
         let first = buf[0];
         if first != 0 && buf.iter().all(|&a| a == first) {
             self.slots.insert(coord, Slot::Solid(first));
+            textures.remove(&coord);
             return;
         }
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         hasher.write(buf);
         let hash = hasher.finish();
-        if let Some(Slot::Texture { hash: old, .. }) = self.slots.get(&coord) {
-            if *old == hash {
+        if let Some(Slot::Texture { hash: old }) = self.slots.get(&coord) {
+            if *old == hash && textures.contains_key(&coord) {
                 return;
             }
         }
@@ -212,8 +232,8 @@ impl TileOverlay {
         let pixels: Vec<Color32> = buf.iter().map(|&a| tinted(tint, a)).collect();
         let image = ColorImage::new([ts, ts], pixels);
         self.uploads += 1;
-        match self.slots.get_mut(&coord) {
-            Some(Slot::Texture { hash: h, handle }) => {
+        match (self.slots.get_mut(&coord), textures.get_mut(&coord)) {
+            (Some(Slot::Texture { hash: h }), Some(handle)) => {
                 handle.set(image, TextureOptions::NEAREST);
                 *h = hash;
             }
@@ -223,7 +243,8 @@ impl TileOverlay {
                     image,
                     TextureOptions::NEAREST,
                 );
-                self.slots.insert(coord, Slot::Texture { hash, handle });
+                self.slots.insert(coord, Slot::Texture { hash });
+                textures.insert(coord, handle);
             }
         }
     }

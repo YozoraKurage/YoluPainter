@@ -5,23 +5,24 @@
 use egui::epaint::Vertex;
 use egui::{
     pos2, Color32, ColorImage, Context, Mesh, Painter, Pos2, Rect, Shape, Stroke, TextureFilter,
-    TextureHandle, TextureId, TextureOptions, TextureWrapMode,
+    TextureId, TextureOptions, TextureWrapMode,
 };
 use yolu_core::brush::luminance;
 use yolu_core::{StencilMode, StencilTiling};
 
 use super::{Preview, StencilFrame, StencilState};
+use crate::state::{ui_store, UiSlot};
 
-/// 重ね表示の絵（作った鍵と一緒に覚える）。鍵が変わったときだけ作り直す。
+/// 重ね表示のテクスチャを作った鍵と、テクスチャの印（テクスチャは画面の側の `ui_store` にある）。鍵が変わったときだけ作り直す。
 pub struct OverlayTexture {
     key: (u64, StencilMode, bool, StencilTiling),
-    handle: TextureHandle,
+    slot: UiSlot,
 }
 
-/// 見本の絵。
+/// 見本のテクスチャを作った画像の番号と、テクスチャの印。
 pub struct ThumbTexture {
     id: u64,
-    handle: TextureHandle,
+    slot: UiSlot,
 }
 
 fn color_image(preview: &Preview, mode: Option<(StencilMode, bool)>) -> ColorImage {
@@ -53,8 +54,9 @@ impl StencilState {
         let image = self.image.as_ref()?;
         let mode = yolu_core::BrushStencil::resolve(self.mode, &image.image);
         let key = (image.id, mode, self.invert, self.tiling);
-        if let Some(t) = self.overlay.as_ref().filter(|t| t.key == key) {
-            return Some(t.handle.id());
+        let made = self.overlay.as_ref().filter(|t| t.key == key);
+        if let Some(id) = made.and_then(|t| ui_store::texture_id(ctx, &t.slot)) {
+            return Some(id);
         }
         let (rx, ry) = repeats(self.tiling);
         let options = TextureOptions {
@@ -67,33 +69,35 @@ impl StencilState {
             },
             mipmap_mode: None,
         };
-        let handle = ctx.load_texture(
+        let slot = UiSlot::new();
+        let handle = ui_store::load_texture(
+            ctx,
+            &slot,
             "stencil-overlay",
             color_image(image.preview(), Some((mode, self.invert))),
             options,
         );
-        let id = handle.id();
-        self.overlay = Some(OverlayTexture { key, handle });
-        Some(id)
+        self.overlay = Some(OverlayTexture { key, slot });
+        Some(handle.id())
     }
 
     /// プロパティの欄の見本の絵（元の画像の見た目）。
     pub fn thumb_texture(&mut self, ctx: &Context) -> Option<TextureId> {
         let image = self.image.as_ref()?;
-        if let Some(t) = self.thumb.as_ref().filter(|t| t.id == image.id) {
-            return Some(t.handle.id());
+        let made = self.thumb.as_ref().filter(|t| t.id == image.id);
+        if let Some(id) = made.and_then(|t| ui_store::texture_id(ctx, &t.slot)) {
+            return Some(id);
         }
-        let handle = ctx.load_texture(
+        let slot = UiSlot::new();
+        let handle = ui_store::load_texture(
+            ctx,
+            &slot,
             "stencil-thumb",
             color_image(image.thumb(), None),
             TextureOptions::LINEAR,
         );
-        let id = handle.id();
-        self.thumb = Some(ThumbTexture {
-            id: image.id,
-            handle,
-        });
-        Some(id)
+        self.thumb = Some(ThumbTexture { id: image.id, slot });
+        Some(handle.id())
     }
 
     /// 重ね表示の絵を作ったか（試験用）。
