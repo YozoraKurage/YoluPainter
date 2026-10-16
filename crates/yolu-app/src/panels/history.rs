@@ -48,7 +48,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
     }
     let mut target = None;
     let row_height = ui.spacing().interact_size.y;
-    egui::ScrollArea::vertical().show_rows(ui, row_height, count + 1, |ui, rows| {
+    let area = egui::ScrollArea::vertical().show_rows(ui, row_height, count + 1, |ui, rows| {
         // 描いている間も、行は描き始める前の見た目のまま（押せないことは、下で本当の `can_edit` で守る）
         let can_edit = app.can_edit();
         let shown =
@@ -82,6 +82,7 @@ pub fn show(ui: &mut egui::Ui, app: &mut AppState) {
             }
         });
     });
+    crate::ui::scroll::pan_area(ui, &area);
     if let Some(position) = target {
         go_to(app, position);
     }

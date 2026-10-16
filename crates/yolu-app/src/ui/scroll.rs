@@ -9,11 +9,12 @@
 //! 使い方（呼ぶ側が持つのは、ずらす量 `offset` だけ）:
 //! 1. 行を並べる前に [`Scroll::begin`]（ホイールを受けて範囲に収める。ホイールを別に決める欄は [`Scroll::new`]）
 //! 2. `offset` の分だけずらして行を描く。つまみが乗る幅は [`Scroll::reserved`]（あふれるときだけ 10 点）
-//! 3. 行を描いたあとに [`Scroll::end`]（つまみの操作を受けて `offset` を動かし、つまみを重ねて描く。egui の `ScrollArea` と同じく、
-//!    掴んで動かした分は次のフレームの行に出る）
+//! 3. 行を描いたあとに [`Scroll::end`]（つまみの操作と、右ボタンを押したまま動かす操作を受けて `offset` を動かし、つまみを重ねて描く。
+//!    egui の `ScrollArea` と同じく、動かした分は次のフレームの行に出る。開いているメニューの中は [`Scroll::end_menu`]）
 
 use egui::{lerp, pos2, remap, remap_clamp, Id, Rect, Sense, Ui};
 
+use super::right_drag;
 use super::theme as t;
 
 /// 掴める幅（右の縁。egui の `ScrollStyle::thin` の `bar_width`）。広がったつまみの太さでもある。
@@ -101,15 +102,28 @@ impl Scroll {
         Rect::from_min_max(pos2(grab.left(), top), pos2(grab.right(), top + length))
     }
 
-    /// つまみの操作を受けて `offset` を動かし、つまみを重ねて描く（行を描いたあとに呼ぶ）。`id` は欄ごとに別の値。
-    /// 掴んでいる間だけ true を返す。
+    /// つまみの操作と、右ボタンを押したまま動かす操作（[`super::right_drag`]。中身がポインタについて来る向き）を受けて `offset` を
+    /// 動かし、つまみを重ねて描く（行を描いたあとに呼ぶ）。`id` は欄ごとに別の値。掴んでいる間だけ true を返す。
     pub fn end(
         &self,
         ui: &mut Ui,
         id: impl std::hash::Hash + std::fmt::Debug,
         offset: &mut f32,
     ) -> bool {
-        let id = Id::new(id);
+        self.finish(ui, Id::new(id), offset, true)
+    }
+
+    /// [`Scroll::end`] から、右ボタンを押したまま動かす操作を除いた物（開いているメニューの中の一覧）。
+    pub fn end_menu(
+        &self,
+        ui: &mut Ui,
+        id: impl std::hash::Hash + std::fmt::Debug,
+        offset: &mut f32,
+    ) -> bool {
+        self.finish(ui, Id::new(id), offset, false)
+    }
+
+    fn finish(&self, ui: &mut Ui, id: Id, offset: &mut f32, pan: bool) -> bool {
         if !self.needed() {
             ui.data_mut(|d| d.remove::<f32>(grab_id(id)));
             return false;
@@ -117,9 +131,14 @@ impl Scroll {
         let grab = self.grab_rect();
         let response = ui.interact(grab, id, Sense::click_and_drag());
         response.widget_info(|| egui::WidgetInfo::new(egui::WidgetType::ScrollBar));
-        let dragging = response.dragged() || response.is_pointer_button_down_on();
+        // つまみと溝は左ボタン（ペンの接触・指も egui では左ボタン）だけで掴む。右ボタンは一覧の右ドラッグ
+        let by_left = {
+            super::widgets::pressed_by_primary(&response);
+            super::widgets::press_started_by_primary(&response)
+        };
+        let dragging = by_left && (response.dragged() || response.is_pointer_button_down_on());
         let handle = self.handle_rect(*offset);
-        if let Some(pointer) = response.interact_pointer_pos() {
+        if let Some(pointer) = response.interact_pointer_pos().filter(|_| by_left) {
             // 押した位置: つまみの上ならそのままつかみ、溝ならつまみの中心がポインタに来る所へ移して掴む
             let start = ui
                 .data(|d| d.get_temp::<f32>(grab_id(id)))
@@ -145,6 +164,14 @@ impl Scroll {
         } else {
             ui.data_mut(|d| d.remove::<f32>(grab_id(id)));
         }
+        // 右ボタンを押したまま動かす: 毎フレームのポインタの縦の動きの分、逆向きにずらし、範囲に収める
+        // （ポインタを上へ 50 動かすと `offset` が 50 増え、下の行が見えてくる）。名乗るのは見えている範囲だけ
+        if pan {
+            if let Some(drag) = right_drag::drag(ui, id, self.view.intersect(ui.clip_rect())) {
+                *offset = (*offset - drag.delta.y).clamp(0.0, self.max);
+                ui.ctx().request_repaint();
+            }
+        }
         // 見た目: 乗せる・掴むと広がる（egui の `ScrollArea` の thin と同じ）
         let near = response.hovered() || dragging;
         let grow = ui.ctx().animate_bool_responsive(id.with("grow"), near);
@@ -152,7 +179,7 @@ impl Scroll {
         let handle = self.handle_rect(*offset);
         let over_handle = response.hovered()
             && ui.input(|i| i.pointer.latest_pos().is_some_and(|p| handle.contains(p)));
-        let color = if response.is_pointer_button_down_on() {
+        let color = if dragging {
             HANDLE_ACTIVE
         } else if over_handle {
             HANDLE_HOVER
@@ -181,5 +208,23 @@ impl Scroll {
             ui.ctx().request_repaint();
         }
         dragging
+    }
+}
+
+/// egui の `ScrollArea` の一覧に、右ボタンを押したまま動かす操作を効かせる（`show` の戻り値を渡す）。持ち主の決め方と動きの式は
+/// [`Scroll::end`] と同じ。ずらした量は次のフレームから効く（`ScrollArea` の記憶を書き換える）。
+pub fn pan_area<R>(ui: &Ui, out: &egui::scroll_area::ScrollAreaOutput<R>) {
+    let max = out.content_size.y - out.inner_rect.height();
+    if max <= 0.0 {
+        return;
+    }
+    if let Some(drag) = right_drag::drag(ui, out.id, out.inner_rect.intersect(ui.clip_rect())) {
+        let mut state = out.state;
+        let next = (state.offset.y - drag.delta.y).clamp(0.0, max);
+        if next != state.offset.y {
+            state.offset.y = next;
+            state.store(ui.ctx(), out.id);
+        }
+        ui.ctx().request_repaint();
     }
 }

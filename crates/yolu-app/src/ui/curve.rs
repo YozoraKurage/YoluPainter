@@ -168,13 +168,9 @@ pub fn curve_editor_with(
         )
     };
     let pointer = ui.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos()));
-    let (pressed, secondary, down) = ui.input(|i| {
-        (
-            i.pointer.primary_pressed(),
-            i.pointer.secondary_pressed(),
-            i.pointer.primary_down(),
-        )
-    });
+    let (pressed, down) = ui.input(|i| (i.pointer.primary_pressed(), i.pointer.primary_down()));
+    // 点の削除は右クリック（動かさずに離したとき）。押した瞬間にしない: 一覧の中では右ドラッグが一覧のスクロールになるため
+    let secondary = response.secondary_clicked();
     let mut result: Option<Curve> = None;
     if enabled && drag.is_none() && (pressed || secondary) && response.hovered() {
         if let Some(m) = pointer {

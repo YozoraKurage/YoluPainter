@@ -68,7 +68,7 @@ impl Report {
             .open(&mut open)
             .default_width(650.0)
             .show(ctx, |ui| {
-                egui::ScrollArea::vertical()
+                let area = egui::ScrollArea::vertical()
                     .max_height(400.0)
                     .show(ui, |ui| {
                         ui.add(
@@ -77,6 +77,7 @@ impl Report {
                                 .font(egui::TextStyle::Monospace),
                         );
                     });
+                crate::ui::scroll::pan_area(ui, &area);
                 if let Some(error) = &self.error {
                     ui.label(error);
                 }

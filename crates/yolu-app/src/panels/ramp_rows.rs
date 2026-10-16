@@ -411,7 +411,7 @@ fn sets_rows(
     let cell_w = (list.width() - gap * (cols as f32 - 1.0)) / cols as f32;
     let mut clicked: Option<usize> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-        egui::ScrollArea::vertical()
+        let area = egui::ScrollArea::vertical()
             .id_salt((p.key, "ramp.sets.scroll"))
             .max_height(height)
             .auto_shrink([false, false])
@@ -466,6 +466,7 @@ fn sets_rows(
                     }
                 }
             });
+        crate::ui::scroll::pan_area(ui, &area);
     });
     if let Some(index) = clicked {
         p.sets.selected = Some(index);

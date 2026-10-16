@@ -6,6 +6,7 @@ pub mod menu;
 pub mod numfield;
 pub mod pie;
 pub mod ramp;
+pub mod right_drag;
 pub mod scroll;
 pub mod settle;
 pub mod theme;

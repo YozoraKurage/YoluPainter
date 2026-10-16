@@ -321,6 +321,42 @@ pub fn enabled_scope<R>(
 
 // ───────── 押せる部品 ─────────
 
+/// この部品を押した最初のボタンが左ボタン（ペンの接触・指も、egui では左ボタンのポインタ）で、いま押している間か。値を動かす部品は、
+/// 右ボタンの押し（一覧の右ドラッグのスクロール・右クリック）では動かさない。押し始めのボタンは部品ごとに覚える（左ボタンで動かして
+/// いる途中に右ボタンを押しても、右ボタンを押したまま別の所で左ボタンを押しても、押し始めのボタンのまま）。
+pub fn pressed_by_primary(response: &egui::Response) -> bool {
+    let ctx = &response.ctx;
+    let id = response.id.with("by_primary");
+    let touched = response.is_pointer_button_down_on() || response.interact_pointer_pos().is_some();
+    if touched {
+        let (primary, secondary, primary_down, origin) = ctx.input(|i| {
+            (
+                i.pointer.button_pressed(egui::PointerButton::Primary),
+                i.pointer.button_pressed(egui::PointerButton::Secondary),
+                i.pointer.primary_down(),
+                i.pointer.press_origin(),
+            )
+        });
+        if origin.is_some_and(|o| response.rect.contains(o)) {
+            if primary {
+                ctx.data_mut(|d| d.insert_temp(id, true));
+            } else if secondary && !primary_down {
+                ctx.data_mut(|d| d.insert_temp(id, false));
+            }
+        }
+    }
+    response.is_pointer_button_down_on() && press_started_by_primary(response)
+}
+
+/// この部品の直近の押しが、左ボタンで始まったか（押していなければ、直近の押しについて）。右ボタンで始めたドラッグの離しを「値を決めた」にしない
+/// ために、離したフレームにも読める。
+pub fn press_started_by_primary(response: &egui::Response) -> bool {
+    response
+        .ctx
+        .data(|d| d.get_temp::<bool>(response.id.with("by_primary")))
+        .unwrap_or(true)
+}
+
 fn interact(ui: &mut Ui, r: Rect, id: Id, enabled: bool, sense: Sense) -> Response {
     ui.interact(r, id, if enabled { sense } else { Sense::hover() })
 }
@@ -1173,6 +1209,7 @@ pub fn slider(
     let on_box = two && press_origin.is_some_and(|o| box_rect.contains(o));
     let in_inset = two && press_origin.is_some_and(|o| o.x > track.right() && o.y > track.top());
     let (start_id, cancel_id) = (id.with("start"), id.with("cancelled"));
+    let by_primary = pressed_by_primary(&response);
     let start_edit =
         enabled && ((two && on_box && response.clicked()) || (!two && response.double_clicked()));
     if start_edit {
@@ -1187,7 +1224,7 @@ pub fn slider(
             d.insert_temp(edit_id.with("focus"), true);
         });
         ui.ctx().request_repaint();
-    } else if enabled && response.is_pointer_button_down_on() && !on_box && !in_inset {
+    } else if enabled && by_primary && !on_box && !in_inset {
         let cancelled = ui.data(|d| d.get_temp::<bool>(cancel_id)).unwrap_or(false);
         if !cancelled {
             // 押し始めの値を覚える（Esc で戻す先）
@@ -1230,7 +1267,9 @@ pub fn slider(
     // Esc で止めたドラッグは「決めた」ではない（呼び手が、まとめていた変更を確定せずに捨てられるように released にしない）
     if enabled
         && !escaped
-        && ((response.drag_stopped() || response.clicked()) && !on_box && !in_inset)
+        && ((response.drag_stopped() && press_started_by_primary(&response) || response.clicked())
+            && !on_box
+            && !in_inset)
     {
         out.released = true;
     }

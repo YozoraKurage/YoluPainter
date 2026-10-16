@@ -245,7 +245,7 @@ pub(super) fn group_tabs(ui: &mut Ui, r: Rect, app: &mut AppState, slot: SlotId)
                 if response.double_clicked() && editable {
                     app.apply(Action::Tools(ToolsetAction::StartRenameGroup(group)));
                 }
-                if response.drag_started() && editable {
+                if response.drag_started_by(egui::PointerButton::Primary) && editable {
                     app.toolset.ui.start_drag(Dragged::Group(group));
                 }
                 if response.secondary_clicked() {
@@ -509,7 +509,7 @@ fn brush_row(
     if response.double_clicked() || response.triple_clicked() {
         app.apply(Action::Brush(BrushAction::StartRename(key)));
     }
-    if response.drag_started() {
+    if response.drag_started_by(egui::PointerButton::Primary) {
         app.toolset.ui.start_drag(Dragged::Brush(key));
     }
     if response.secondary_clicked() {

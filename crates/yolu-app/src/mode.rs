@@ -320,11 +320,25 @@ pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
 /// 編集・ポーズのモードのツールの帯（選択・移動・回転・拡縮）。`bottom` は使える下の端。
 pub fn edit_strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
     let lang = app.lang;
+    let area = Rect::from_min_max(r.min, pos2(r.right(), bottom));
+    // 右ボタンを帯で押し始めて動かしたら、ポインタの下のツールを選ぶ（帯の外・ツールの間では選ばない。戻れば選ぶ）。ポインタの下の
+    // ツールが替わった時だけ選ぶ。G/R/S の最中は選ばない（帯は変形の種類を光らせているため）
+    let strip_id = ui.make_persistent_id("mode.strip.right");
+    let right = crate::ui::right_drag::drag(ui, strip_id, area.intersect(ui.clip_rect()))
+        .filter(|_| app.objects.transform.is_none())
+        .map(|d| d.pos)
+        .filter(|p| area.contains(*p));
     let mut y = r.top() + 6.0;
     for tool in EditTool::ALL {
         let at = Rect::from_min_size(pos2(r.left() + 5.0, y), vec2(r.width() - 10.0, 32.0));
         if at.bottom() > bottom {
             break;
+        }
+        let now = right.filter(|p| at.contains(*p)).map(|_| tool);
+        if crate::ui::right_drag::entered(ui, strip_id.with(tool.key()), now).is_some()
+            && EditTool::shown(app) != tool
+        {
+            app.apply(Action::Mode(ModeAction::Tool(tool)));
         }
         if w::icon_button(
             ui,

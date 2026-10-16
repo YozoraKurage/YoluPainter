@@ -763,7 +763,7 @@ fn card_cell(
         t::LABEL_SMALL.with_color(if selected { Color32::WHITE } else { t::TEXT }),
         Align::Center,
     );
-    if response.clicked() || response.drag_started() {
+    if response.clicked() || response.drag_started_by(egui::PointerButton::Primary) {
         select(app, card);
     }
     if response.double_clicked() {
@@ -781,7 +781,7 @@ fn card_cell(
         }
     }
     // 利用者のブラシは、レイヤーへ置けないので、引かない
-    if response.drag_started() && card.brush.is_none() {
+    if response.drag_started_by(egui::PointerButton::Primary) && card.brush.is_none() {
         response.dnd_set_drag_payload(ShelfDrag {
             id: card.id.clone(),
             kind: card.kind,

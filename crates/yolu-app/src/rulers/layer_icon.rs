@@ -80,7 +80,7 @@ pub fn show(
     w::icon(ui.painter(), at, "tools/ruler", color, 16.0);
     let tip = name(lang);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, tip));
-    if response.drag_started() && enabled {
+    if response.drag_started_by(egui::PointerButton::Primary) && enabled {
         app.rulers.icon_drag = Some(IconDrag {
             from: id,
             over: None,

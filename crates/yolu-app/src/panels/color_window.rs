@@ -602,7 +602,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
             let response = ui.interact(wheel, wheel_id, Sense::click_and_drag());
             // 押した所が輪なら色相、中の四角なら彩度と明度（ドラッグの間は押したほうのまま）
             let mode_id = wheel_id.with("mode");
-            if response.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed()) {
+            if w::pressed_by_primary(&response) && ui.input(|i| i.pointer.any_pressed()) {
                 let origin = ui.input(|i| i.pointer.press_origin());
                 let mode = origin
                     .map(|o| {
@@ -617,7 +617,7 @@ pub fn show(ctx: &Context, sources: &Sources<'_>) -> Option<String> {
                     .unwrap_or(0);
                 ui.data_mut(|d| d.insert_temp(mode_id, mode));
             }
-            let wheel_down = response.is_pointer_button_down_on();
+            let wheel_down = w::pressed_by_primary(&response);
             let mut picked = false;
             if wheel_down {
                 let mode: u8 = ui.data(|d| d.get_temp(mode_id).unwrap_or(0));

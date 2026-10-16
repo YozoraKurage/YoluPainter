@@ -72,7 +72,7 @@ fn pick(ui: &mut Ui, app: &mut AppState, response: &Response, color: &Swatch) {
 
 pub fn show(ui: &mut Ui, app: &mut AppState) {
     let lang = app.lang;
-    egui::ScrollArea::vertical()
+    let area = egui::ScrollArea::vertical()
         .id_salt("colorsets.scroll")
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -316,4 +316,5 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
                         });
                 });
         });
+    crate::ui::scroll::pan_area(ui, &area);
 }

@@ -1052,7 +1052,7 @@ fn layer_row(
     // ダブルクリックで名前・右クリックのメニュー・ドラッグで並べ替え
     if response.clicked() {
         click_row(ui, app, id, rows);
-    } else if response.drag_started() {
+    } else if response.drag_started_by(egui::PointerButton::Primary) {
         if !in_selection {
             app.select_single_layer(id);
         }
@@ -1072,7 +1072,7 @@ fn layer_row(
     if response.secondary_clicked() {
         open_layer_menu(app, ctx, id, in_selection, response.interact_pointer_pos());
     }
-    if response.dragged() {
+    if response.dragged_by(egui::PointerButton::Primary) {
         update_drag(ui, app, list, rows, layout, id);
     }
     if response.drag_stopped() {

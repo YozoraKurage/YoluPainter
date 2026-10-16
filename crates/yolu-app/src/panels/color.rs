@@ -258,7 +258,7 @@ fn marker(p: &egui::Painter, at: Pos2, radius: f32) {
 
 fn sv_square(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures, r: Rect, id: &str) {
     let response = ui.interact(r, ui.make_persistent_id(id), Sense::click_and_drag());
-    if response.is_pointer_button_down_on() {
+    if w::pressed_by_primary(&response) {
         if let Some(p) = response.interact_pointer_pos() {
             app.color.pick_sv(
                 (p.x - r.left()) / r.width(),
@@ -324,8 +324,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
         let response = ui.interact(wheel, id, Sense::click_and_drag());
         // 押した所が輪なら色相、中の四角なら彩度と明度（ドラッグの間は押したほうのまま）
         let mode_id = id.with("mode");
-        if response.drag_started()
-            || (response.is_pointer_button_down_on() && ui.input(|i| i.pointer.any_pressed()))
+        if response.drag_started_by(egui::PointerButton::Primary)
+            || (w::pressed_by_primary(&response) && ui.input(|i| i.pointer.any_pressed()))
         {
             let origin = ui.input(|i| i.pointer.press_origin());
             let mode = origin
@@ -341,7 +341,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
                 .unwrap_or(0);
             ui.data_mut(|d| d.insert_temp(mode_id, mode));
         }
-        if response.is_pointer_button_down_on() {
+        if w::pressed_by_primary(&response) {
             let mode: u8 = ui.data(|d| d.get_temp(mode_id).unwrap_or(0));
             if let Some(p) = response.interact_pointer_pos() {
                 match mode {
@@ -411,7 +411,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
             ui.make_persistent_id("color.hue"),
             Sense::click_and_drag(),
         );
-        if response.is_pointer_button_down_on() {
+        if w::pressed_by_primary(&response) {
             if let Some(p) = response.interact_pointer_pos() {
                 app.color
                     .set_hue((1.0 - (p.y - hue.top()) / hue.height()).clamp(0.0, 1.0));

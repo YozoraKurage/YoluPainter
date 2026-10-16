@@ -32,6 +32,7 @@ mod numfield;
 mod prefs;
 mod psd_drop;
 mod recovery_ui;
+mod right_drag;
 mod rulers_ui;
 mod save_close;
 mod scroll;

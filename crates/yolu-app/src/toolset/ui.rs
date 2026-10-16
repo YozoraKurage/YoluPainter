@@ -301,7 +301,7 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
         if response.clicked() {
             app.apply(Action::Tools(ToolsetAction::Select(*slot)));
         }
-        if response.drag_started() {
+        if response.drag_started_by(egui::PointerButton::Primary) {
             app.toolset.ui.start_drag(Dragged::Slot(*slot));
         }
         if response.secondary_clicked() {
@@ -346,6 +346,23 @@ pub fn strip(ui: &mut Ui, app: &mut AppState, r: Rect, bottom: f32) {
             }
         }
         y += step;
+    }
+    // 右ボタンを帯で押し始めて動かしたら、ポインタの下のツールを選ぶ（帯の外・ツールの間では選ばない。戻れば選ぶ）。ポインタの下の
+    // ツールが替わった時だけ選ぶ。描いている最中は選ばない
+    {
+        let id = ui.make_persistent_id("tool.strip.right");
+        let drag = crate::ui::right_drag::drag(ui, id, area.intersect(ui.clip_rect()));
+        let under = drag
+            .filter(|_| !app.is_stroking())
+            .map(|d| d.pos)
+            .filter(|pos| area.contains(*pos))
+            .and_then(|pos| rects.iter().find(|(_, at)| at.contains(pos)))
+            .map(|(slot, _)| *slot);
+        if let Some(slot) = crate::ui::right_drag::entered(ui, id, under) {
+            if app.toolset.set.active() != Some(slot) {
+                app.apply(Action::Tools(ToolsetAction::Select(slot)));
+            }
+        }
     }
     gap_marks.push((None, y - 1.0));
     // ツールを列の最後より下へ落とす
