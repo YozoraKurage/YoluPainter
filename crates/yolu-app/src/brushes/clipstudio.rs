@@ -35,8 +35,8 @@ pub struct Row {
     pub size: u64,
     pub state: RowState,
     pub selected: bool,
-    /// 筆先の見本の絵（描くときに作る。ウィンドウを閉じると捨てる）。
-    pub texture: Option<egui::TextureHandle>,
+    /// 筆先の見本のテクスチャの印（描くときに作る。ウィンドウを閉じる・探し直すと、一覧ごと捨てる）。
+    pub texture: Option<crate::state::UiSlot>,
 }
 
 /// 探した結果。

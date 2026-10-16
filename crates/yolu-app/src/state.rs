@@ -20,10 +20,13 @@ use crate::view3d::View3dState;
 pub mod key;
 mod outbox;
 mod services;
+mod ui_slot;
 mod ui_state;
+pub mod ui_store;
 mod waker;
 pub use outbox::Outbox;
 pub use services::Services;
+pub use ui_slot::UiSlot;
 pub use ui_state::UiState;
 pub use waker::Waker;
 

@@ -139,7 +139,7 @@ fn search(ui: &mut Ui, rows: &mut Rows, app: &mut AppState, lang: Lang) {
 /// Krita の筆先の格子（検索の欄と、見本の格子）。読み込みが終わるまでは、薄い空のマスを並べる。
 pub fn krita_section(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
     let lang = app.lang;
-    app.brushes.krita.poll(ctx);
+    app.brushes.krita.poll(&super::assets::repaint_waker(ctx));
     rows.space(5.0);
     group_label(ui, rows, "Krita");
     let ready = app.brushes.krita.is_ready();

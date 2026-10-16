@@ -1519,7 +1519,7 @@ pub fn frame(ctx: &egui::Context, state: &mut AppState) {
 }
 
 /// 別のスレッドの仕事が終わったときに、この画面を描き直させる口。
-fn repaint_waker(ctx: &egui::Context) -> Waker {
+pub(crate) fn repaint_waker(ctx: &egui::Context) -> Waker {
     let ctx = ctx.clone();
     Waker::new(move || ctx.request_repaint())
 }

@@ -201,7 +201,7 @@ fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     let ctx = ui.ctx().clone();
     // 同梱の Krita は、種類を開いたときに読む（別のスレッド。できたら描き直す）
     if app.toolset.catalog.kind == Kind::Krita {
-        app.brushes.krita.poll(&ctx);
+        app.brushes.krita.poll(&super::assets::repaint_waker(&ctx));
     }
     let search = Rect::from_min_size(
         pos2(pane.left() + 10.0, pane.top() + 6.0),

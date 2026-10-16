@@ -19,7 +19,7 @@ use yolu_app::engine::Brush;
 use yolu_app::lang::Lang;
 use yolu_app::m2::{BrushOp, UiOp};
 use yolu_app::m2_menu::{self, Popup};
-use yolu_app::state::{Action, AppState, Tool};
+use yolu_app::state::{Action, AppState, Tool, Waker};
 use yolu_app::toolset::{ToolsetAction, MAX_GROUP_BRUSHES};
 
 fn temp_dir(name: &str) -> PathBuf {
@@ -895,9 +895,9 @@ fn headless_a_pat_adds_its_patterns_to_the_texture_choices_and_they_survive_a_re
 fn headless_krita_tips_can_be_searched_by_name_and_picked_and_picking_a_builtin_clears_a_hose() {
     let dir = temp_dir("krita");
     let mut s = state(&dir);
-    let ctx = egui::Context::default();
+    let waker = Waker::new(|| {});
     // 既定（試験）は、初めて出すときにその場で読む
-    s.brushes_mut().krita.poll(&ctx);
+    s.brushes_mut().krita.poll(&waker);
     assert!(s.brushes().krita.is_ready());
     let all = s.brushes().krita.matches();
     assert_eq!(all.len(), store::krita().brushes.len());
@@ -984,11 +984,12 @@ fn headless_krita_tips_can_be_searched_by_name_and_picked_and_picking_a_builtin_
 #[test]
 fn headless_krita_tips_load_in_the_background_and_samples_are_drawn_off_the_screen_thread() {
     let ctx = egui::Context::default();
+    let waker = Waker::new(|| {});
     // Krita の格子: 始めた直後はまだ（別のスレッド）。できたら全部そろう
     let mut tips = KritaTips::default();
     tips.load_in_background();
-    assert!(!tips.poll(&ctx), "始めた直後は読み込み中");
-    tips.wait_ready(&ctx);
+    assert!(!tips.poll(&waker), "始めた直後は読み込み中");
+    tips.wait_ready(&waker);
     assert!(tips.is_ready());
     assert_eq!(tips.matches().len(), 76);
     assert!(tips.texture(&ctx, 0).is_some());

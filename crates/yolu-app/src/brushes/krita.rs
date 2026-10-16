@@ -7,17 +7,23 @@
 
 use std::sync::mpsc::{channel, Receiver};
 
-use egui::{ColorImage, TextureHandle, TextureId, TextureOptions};
+use egui::{Color32, ColorImage, TextureId, TextureOptions};
 use yolu_core::BrushTip;
 
 use super::store::krita;
 use crate::engine::TipShape;
+use crate::state::{ui_store, UiSlot, Waker};
 
 /// 筆先の見本の大きさ（画素）。
 pub const THUMB: usize = 48;
 
 /// 筆先の見本（白地に黒。画像の先端は縦横比を保って長い辺を枠に合わせる。`None` は縁がやわらかい丸）。
 pub fn thumbnail(tip: Option<&BrushTip>) -> ColorImage {
+    ColorImage::new([THUMB, THUMB], thumbnail_pixels(tip))
+}
+
+/// 筆先の見本の画素（`THUMB` × `THUMB`、上の行から。中身は [`thumbnail`] と同じ）。
+pub fn thumbnail_pixels(tip: Option<&BrushTip>) -> Vec<Color32> {
     let n = THUMB;
     let mut pixels = Vec::with_capacity(n * n);
     for y in 0..n {
@@ -40,12 +46,10 @@ pub fn thumbnail(tip: Option<&BrushTip>) -> ColorImage {
                     ((0.95 - d) / 0.4).clamp(0.0, 1.0)
                 }
             };
-            pixels.push(egui::Color32::from_gray(
-                (255.0 * (1.0 - coverage)).round() as u8
-            ));
+            pixels.push(Color32::from_gray((255.0 * (1.0 - coverage)).round() as u8));
         }
     }
-    ColorImage::new([n, n], pixels)
+    pixels
 }
 
 /// 格子の 1 つ。
@@ -53,13 +57,15 @@ struct Item {
     name: String,
     /// 名前の検索に使う小文字（ID のファイル名も含める）。
     haystack: String,
-    image: ColorImage,
-    texture: Option<TextureHandle>,
+    /// 見本の画素（[`thumbnail_pixels`]）。
+    pixels: Vec<Color32>,
+    /// 見本のテクスチャの印（初めて出すときに作る）。
+    texture: Option<UiSlot>,
 }
 
 enum Load {
     NotStarted,
-    Loading(Receiver<Vec<(String, String, ColorImage)>>),
+    Loading(Receiver<Vec<(String, String, Vec<Color32>)>>),
     Ready(Vec<Item>),
 }
 
@@ -82,7 +88,7 @@ impl Default for KritaTips {
 }
 
 /// 同梱の筆先 76 個の格子の中身（名前・検索の文字・見本）。
-fn load_items() -> Vec<(String, String, ColorImage)> {
+fn load_items() -> Vec<(String, String, Vec<Color32>)> {
     krita()
         .brushes
         .iter()
@@ -97,20 +103,20 @@ fn load_items() -> Vec<(String, String, ColorImage)> {
             (
                 b.name.clone(),
                 format!("{} {file}", b.name).to_lowercase(),
-                thumbnail(tip),
+                thumbnail_pixels(tip),
             )
         })
         .collect()
 }
 
-fn ready(items: Vec<(String, String, ColorImage)>) -> Load {
+fn ready(items: Vec<(String, String, Vec<Color32>)>) -> Load {
     Load::Ready(
         items
             .into_iter()
-            .map(|(name, haystack, image)| Item {
+            .map(|(name, haystack, pixels)| Item {
                 name,
                 haystack,
-                image,
+                pixels,
                 texture: None,
             })
             .collect(),
@@ -123,8 +129,9 @@ impl KritaTips {
         self.background = true;
     }
 
-    /// 格子を出すとき: 読み込みを始めていなければ始め、終わっていれば受ける。読み終えたら true。
-    pub fn poll(&mut self, ctx: &egui::Context) -> bool {
+    /// 格子を出すとき: 読み込みを始めていなければ始め、終わっていれば受ける。読み終えたら true。別のスレッドで読み終えたら
+    /// `waker` で描き直しを頼む。
+    pub fn poll(&mut self, waker: &Waker) -> bool {
         match &self.load {
             Load::NotStarted if !self.background => {
                 self.load = ready(load_items());
@@ -132,12 +139,12 @@ impl KritaTips {
             }
             Load::NotStarted => {
                 let (tx, rx) = channel();
-                let ctx = ctx.clone();
+                let waker = waker.clone();
                 let spawned = std::thread::Builder::new()
                     .name("yolu-krita-tips".into())
                     .spawn(move || {
                         let _ = tx.send(load_items());
-                        ctx.request_repaint();
+                        waker.wake();
                     });
                 self.load = match spawned {
                     Ok(_) => Load::Loading(rx),
@@ -183,27 +190,36 @@ impl KritaTips {
         }
     }
 
-    /// 見本の絵（初めて出すときに作る）。
+    /// 見本のテクスチャ（初めて出すときに作る。テクスチャは画面の側の `ui_store` に置く）。
     pub fn texture(&mut self, ctx: &egui::Context, index: usize) -> Option<TextureId> {
         let Load::Ready(items) = &mut self.load else {
             return None;
         };
         let item = items.get_mut(index)?;
-        let handle = item.texture.get_or_insert_with(|| {
-            ctx.load_texture(
-                format!("krita-tip-{index}"),
-                item.image.clone(),
-                TextureOptions::LINEAR,
-            )
-        });
+        if let Some(id) = item
+            .texture
+            .as_ref()
+            .and_then(|s| ui_store::texture_id(ctx, s))
+        {
+            return Some(id);
+        }
+        let slot = UiSlot::new();
+        let handle = ui_store::load_texture(
+            ctx,
+            &slot,
+            format!("krita-tip-{index}"),
+            ColorImage::new([THUMB, THUMB], item.pixels.clone()),
+            TextureOptions::LINEAR,
+        );
+        item.texture = Some(slot);
         Some(handle.id())
     }
 
     /// 試験用: 読み終わるまで待つ。
     #[doc(hidden)]
-    pub fn wait_ready(&mut self, ctx: &egui::Context) {
+    pub fn wait_ready(&mut self, waker: &Waker) {
         let start = std::time::Instant::now();
-        while !self.poll(ctx) && start.elapsed() < std::time::Duration::from_secs(60) {
+        while !self.poll(waker) && start.elapsed() < std::time::Duration::from_secs(60) {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
     }

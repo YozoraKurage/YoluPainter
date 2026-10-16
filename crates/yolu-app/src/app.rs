@@ -2748,6 +2748,8 @@ impl eframe::App for YoluApp {
         self.apply_compositing();
         self.apply_gpu_memory();
         self.frame(ui);
+        // 状態の側が捨てた印のテクスチャ・描いた形を捨てる（前に状態の側で捨てていたのと同じフレームのうちに）
+        crate::state::ui_store::sweep(ui.ctx());
         // このフレームの中で始めた保存も、次のフレームを待たずに OS の終了を待たせる印へ伝える
         self.mark_saving();
         // 押していないのに残った 3D の塗りの切り替えのドラッグの印は下ろす（欄が描かれなくなった間に離したとき）

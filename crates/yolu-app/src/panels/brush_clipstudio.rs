@@ -10,7 +10,7 @@ use yolu_io::brushes::clipstudio::Missing;
 
 use crate::brushes::clipstudio::{Listing, Row, RowState};
 use crate::brushes::BrushAction;
-use crate::state::{Action, AppState};
+use crate::state::{ui_store, Action, AppState, UiSlot};
 use crate::ui::scroll::Scroll;
 use crate::ui::theme as t;
 use crate::ui::widgets::{self as w, Align};
@@ -64,11 +64,15 @@ fn thumbnail(ctx: &egui::Context, row: &mut Row) {
         .flat_map(|a| [t::TEXT.r(), t::TEXT.g(), t::TEXT.b(), *a])
         .collect();
     let image = egui::ColorImage::from_rgba_unmultiplied([side, side], &rgba);
-    row.texture = Some(ctx.load_texture(
+    let slot = UiSlot::new();
+    let _ = ui_store::load_texture(
+        ctx,
+        &slot,
         format!("csp-tip-{}", row.path.display()),
         image,
         TextureOptions::LINEAR,
-    ));
+    );
+    row.texture = Some(slot);
 }
 
 /// 状態の 1 行（短い名前・状態・理由だけ）と、注意の色にするか。
@@ -228,9 +232,13 @@ fn draw_list(
             vec2(THUMB, THUMB),
         );
         w::fill(&cp, thumb, t::CONTROL_BG);
-        if let Some(texture) = &row.texture {
+        if let Some(texture) = row
+            .texture
+            .as_ref()
+            .and_then(|s| ui_store::texture_id(ui.ctx(), s))
+        {
             cp.image(
-                texture.id(),
+                texture,
                 thumb,
                 Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                 Color32::WHITE,
