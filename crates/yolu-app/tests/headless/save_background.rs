@@ -617,18 +617,17 @@ fn recovery_does_not_start_a_write_while_saving() {
     });
     let mut s = AppState::new_in(128, 128, Lang::Ja);
     s.recovery_mut().set_space_probe(Some(probe));
-    s.recovery_mut()
-        .enable(
-            dir.file("recovery"),
-            RecoverySettings {
-                interval_seconds: 15,
-                strokes_between: 0,
-                generations_to_keep: 3,
-                directory: None,
-                ..RecoverySettings::default()
-            },
-        )
-        .unwrap();
+    s.recovery_enable(
+        dir.file("recovery"),
+        RecoverySettings {
+            interval_seconds: 15,
+            strokes_between: 0,
+            generations_to_keep: 3,
+            directory: None,
+            ..RecoverySettings::default()
+        },
+    )
+    .unwrap();
     s.act(Action::SaveProjectAs(path.clone()));
     s.wait_save();
     s.save_mut().background = true;

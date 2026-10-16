@@ -165,8 +165,7 @@ fn session(root: &Path) -> AppState {
     let mut state = AppState::new_in(SIZE, SIZE, Lang::Ja);
     state.recovery_mut().set_space_probe(Some(plenty()));
     state
-        .recovery_mut()
-        .enable(
+        .recovery_enable(
             root.to_path_buf(),
             RecoverySettings {
                 interval_seconds: 15,
@@ -511,7 +510,7 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         assert_eq!(held.len(), 1, "{held:?}");
         // 開いた世代を復旧のウィンドウで捨てる（落ちた実行のプールごと消える）
         s2.recovery_apply(RecoveryAction::OpenWindow);
-        let rows = &s2.recovery().window.as_ref().unwrap().rows;
+        let rows = &s2.ui().recovery_window.as_ref().unwrap().rows;
         assert_eq!(rows.len(), 1);
         let pool = rows[0].pool.clone();
         s2.recovery_apply(RecoveryAction::Select(0));

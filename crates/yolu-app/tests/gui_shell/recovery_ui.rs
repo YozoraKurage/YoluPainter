@@ -83,7 +83,7 @@ fn write_after(s: &mut AppState, from: Instant) -> Instant {
 fn crashed_root(dir: &TempDir, count: usize, saved_as: Option<&Path>) {
     let mut s = AppState::new(64, 64);
     s.recovery_mut().set_space_probe(Some(plenty()));
-    s.recovery_mut().enable(dir.root(), settings()).unwrap();
+    s.recovery_enable(dir.root(), settings()).unwrap();
     let mut t = Instant::now();
     for i in 0..count {
         paint(&mut s, 10.0 + 10.0 * i as f64);
@@ -126,7 +126,7 @@ fn started_with(
 ) -> Harness<'static, YoluApp> {
     let mut state = AppState::new_in(64, 64, lang);
     state.recovery_mut().set_space_probe(Some(plenty()));
-    state.recovery_mut().enable(dir.root(), settings).unwrap();
+    state.recovery_enable(dir.root(), settings).unwrap();
     app_with(state)
 }
 
@@ -134,7 +134,7 @@ fn window(h: &Harness<'_, YoluApp>) -> Rect {
     yolu_app::windows::window_rect(&h.ctx, "recovery").expect("復旧のウィンドウを描いた")
 }
 fn rows(h: &Harness<'_, YoluApp>) -> usize {
-    h.recovery().window.as_ref().map_or(0, |w| w.rows.len())
+    h.ui().recovery_window.as_ref().map_or(0, |w| w.rows.len())
 }
 fn button_in(h: &Harness<'_, YoluApp>, label: &str, area: Rect) -> Rect {
     rect_of(h, label, |r| area.contains(r.center()))
@@ -197,7 +197,7 @@ fn a_crash_opens_the_window_at_the_next_start_with_one_row_per_generation() {
     assert!(!is_disabled(&h, "開く"));
     assert!(!is_disabled(&h, "捨てる"));
     // 新しい行（上）が選ばれている
-    assert_eq!(h.recovery().window.as_ref().unwrap().selected, Some(0));
+    assert_eq!(h.ui().recovery_window.as_ref().unwrap().selected, Some(0));
     // 説明の文は画面に置かない（名前・状態・短い理由だけ）
     assert!(texts.iter().all(|t| t.chars().count() <= 24), "{texts:?}");
 }
@@ -219,13 +219,16 @@ fn opening_the_selected_generation_from_the_window_recovers_it_as_untitled() {
         .max_by(|a, b| a.top().total_cmp(&b.top()))
         .unwrap();
     click(&mut h, second.center());
-    assert_eq!(h.recovery().window.as_ref().unwrap().selected, Some(1));
+    assert_eq!(h.ui().recovery_window.as_ref().unwrap().selected, Some(1));
     let open = button_in(&h, "開く", area).center();
     click(&mut h, open);
     let s = h.app();
     assert_eq!(s.project_name(), "名称未設定（復旧）");
     assert!(s.modified());
-    assert!(s.recovery().window.is_none(), "開いたらウィンドウを閉じる");
+    assert!(
+        s.ui().recovery_window.is_none(),
+        "開いたらウィンドウを閉じる"
+    );
     assert!(s.message().starts_with("復旧しました"), "{}", s.message());
     assert_eq!(
         std::fs::read(&original).unwrap(),
@@ -259,14 +262,14 @@ fn discarding_asks_first_and_the_confirm_is_a_separate_modal_window() {
     let area = window(&h);
     let discard = button_in(&h, "捨てる", area).center();
     click(&mut h, discard);
-    assert!(h.recovery().window.as_ref().unwrap().confirm.is_some());
+    assert!(h.ui().recovery_window.as_ref().unwrap().confirm.is_some());
     let modal =
         yolu_app::windows::window_rect(&h.ctx, "recovery-discard").expect("確認のウィンドウ");
     assert_eq!(rows(&h), 2, "確かめるまで消さない");
     // やめる
     let cancel = button_in(&h, "やめる", modal).center();
     click(&mut h, cancel);
-    assert!(h.recovery().window.as_ref().unwrap().confirm.is_none());
+    assert!(h.ui().recovery_window.as_ref().unwrap().confirm.is_none());
     assert_eq!(rows(&h), 2);
     // 捨てる
     click(&mut h, discard);
@@ -274,7 +277,7 @@ fn discarding_asks_first_and_the_confirm_is_a_separate_modal_window() {
     let confirm = button_in(&h, "捨てる", modal).center();
     click(&mut h, confirm);
     assert_eq!(rows(&h), 1);
-    assert!(h.recovery().window.as_ref().unwrap().confirm.is_none());
+    assert!(h.ui().recovery_window.as_ref().unwrap().confirm.is_none());
     // 最後の 1 つを捨てると、一覧は空（何も書かない。空の欄の文言を置かない）で、開く・捨てるは押せない
     click(&mut h, discard);
     let modal = yolu_app::windows::window_rect(&h.ctx, "recovery-discard").unwrap();
@@ -359,13 +362,13 @@ fn the_window_closes_with_the_button_the_close_icon_and_escape() {
     let mut h = started(&dir, Lang::Ja);
     let close = button_in(&h, "閉じる", window(&h)).center();
     click(&mut h, close);
-    assert!(h.recovery().window.is_none());
+    assert!(h.ui().recovery_window.is_none());
     h.app_mut().recovery_apply(RecoveryAction::OpenWindow);
     h.run();
     assert_eq!(rows(&h), 1, "閉じても世代は残り、開き直せる");
     let x = h.get_by_label("ウィンドウを閉じる").rect().center();
     click(&mut h, x);
-    assert!(h.recovery().window.is_none());
+    assert!(h.ui().recovery_window.is_none());
     h.app_mut().recovery_apply(RecoveryAction::OpenWindow);
     h.run();
     move_to(&h, window(&h).center());
@@ -378,7 +381,7 @@ fn the_window_closes_with_the_button_the_close_icon_and_escape() {
         modifiers: Modifiers::NONE,
     });
     h.run();
-    assert!(h.recovery().window.is_none());
+    assert!(h.ui().recovery_window.is_none());
 }
 
 #[test]
@@ -413,14 +416,14 @@ fn the_window_opens_from_the_file_menu_and_the_item_needs_a_running_recovery() {
     let dir = TempDir::new("menu");
     let mut h = started(&dir, Lang::Ja);
     assert!(
-        h.recovery().window.is_none(),
+        h.ui().recovery_window.is_none(),
         "落ちていなければ自動では出ない"
     );
     let at = menu_title(&h, "ファイル").center();
     click(&mut h, at);
     let item = popup_item(&h, "復旧…").center();
     click(&mut h, item);
-    assert!(h.recovery().window.is_some());
+    assert!(h.ui().recovery_window.is_some());
     h.run();
     window(&h);
     // 復旧を動かしていないアプリでは、押せない
@@ -661,7 +664,7 @@ fn closing_the_app_cleanly_writes_the_last_changes_and_removes_the_mark() {
     h.state_mut().on_exit();
     // 次の起動は落ちたとは見ず、世代は残っている
     let again = started(&dir, Lang::Ja);
-    assert!(again.recovery().window.is_none());
+    assert!(again.ui().recovery_window.is_none());
     let mut again = again;
     again.app_mut().recovery_apply(RecoveryAction::OpenWindow);
     again.run();
@@ -710,7 +713,7 @@ fn the_window_looks_the_same_in_both_languages() {
             2 << 30,
             Some(180 << 30),
         );
-        state.recovery_mut().window = Some(window);
+        state.ui_mut().recovery_window = Some(window);
         let mut h = app_with(state);
         shot(
             &mut h,
@@ -736,12 +739,11 @@ fn the_details_open_to_the_limit_slider_and_a_custom_amount_is_marked_in_both_la
             Some(180 << 30),
         );
         window.details = true;
-        state.recovery_mut().window = Some(window);
+        state.ui_mut().recovery_window = Some(window);
         state.recovery_mut().set_space_probe(Some(plenty()));
         let dir = TempDir::new("details-shot");
         state
-            .recovery_mut()
-            .enable(
+            .recovery_enable(
                 dir.root(),
                 RecoverySettings {
                     disk: DiskBudget::Gib(12),
@@ -795,7 +797,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
         })
         .center();
         click(&mut h, details);
-        assert!(h.recovery().window.as_ref().unwrap().details);
+        assert!(h.ui().recovery_window.as_ref().unwrap().details);
         assert!(window(&h).height() > area.height());
         assert_eq!(disk(&h), DiskBudget::Auto);
         // スライダーを動かしている間は選びを変えず（世代を消さない）、離したときに指定した量にする
@@ -810,7 +812,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
         h.step();
         h.step();
         assert_eq!(disk(&h), DiskBudget::Auto, "動かしている途中は当てない");
-        assert!(h.recovery().window.as_ref().unwrap().drag_gib.is_some());
+        assert!(h.ui().recovery_window.as_ref().unwrap().drag_gib.is_some());
         release(&h, to, egui::PointerButton::Primary);
         h.run();
         let DiskBudget::Gib(n) = disk(&h) else {
@@ -821,7 +823,7 @@ fn the_disk_amount_is_chosen_with_the_level_names_and_the_details_slider_gives_a
             RecoverySettings::load(&file).unwrap().0.disk,
             DiskBudget::Gib(n)
         );
-        assert!(h.recovery().window.as_ref().unwrap().drag_gib.is_none());
+        assert!(h.ui().recovery_window.as_ref().unwrap().drag_gib.is_none());
         assert!(
             h.query_by_label(lang.pick("指定", "Custom")).is_some(),
             "指定した量の印が選択肢の末尾に出る"
@@ -843,7 +845,7 @@ fn the_used_amount_is_one_short_text_and_its_tooltip_breaks_it_down() {
         let mut h = started(&dir, lang);
         let area = window(&h);
         let (usage, cap, free) = {
-            let w = h.recovery().window.as_ref().unwrap();
+            let w = h.ui().recovery_window.as_ref().unwrap();
             (w.usage, w.cap, w.free)
         };
         assert!(usage.crashed > 0 && usage.own < usage.total(), "{usage:?}");

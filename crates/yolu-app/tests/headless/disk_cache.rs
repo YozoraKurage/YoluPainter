@@ -296,15 +296,14 @@ pub(crate) fn make_unreadable(s: &AppState, set: usize, cache: &Path) {
 fn with_recovery(root: PathBuf, lang: Lang) -> AppState {
     let mut s = AppState::new_in(256, 128, lang);
     s.recovery_mut().set_space_probe(Some(plenty()));
-    s.recovery_mut()
-        .enable(
-            root,
-            RecoverySettings {
-                directory: None,
-                ..RecoverySettings::default()
-            },
-        )
-        .unwrap();
+    s.recovery_enable(
+        root,
+        RecoverySettings {
+            directory: None,
+            ..RecoverySettings::default()
+        },
+    )
+    .unwrap();
     s
 }
 
@@ -625,7 +624,7 @@ fn a_checkpoint_leaves_out_a_never_saved_unreadable_set_and_restores_the_readabl
     drop(s);
     let mut next = with_recovery(root, Lang::Ja);
     assert!(
-        next.recovery().window.is_some(),
+        next.ui().recovery_window.is_some(),
         "落ちた体の起動でウィンドウが出る"
     );
     next.recovery_apply(RecoveryAction::Open);

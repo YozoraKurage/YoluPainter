@@ -6,7 +6,7 @@ use crate::livelink::{LinkRequest, LinkView};
 pub struct Services {
     /// .ylp の保存（裏のスレッドの仕事と進み具合。画面のスレッドは頼みと結果の受けだけ）。
     pub save: crate::project::SaveState,
-    /// 復旧用の世代の書き置きと復旧のウィンドウ（`recovery`。動かすまでは何もしない）。
+    /// 復旧用の世代の書き置き（`recovery`。動かすまでは何もしない。ウィンドウの状態は `UiState::recovery_window`）。
     pub recovery: crate::recovery::RecoveryState,
     /// Live Link の様子（毎フレーム `LiveLink` から写す。状態の帯とメニューが読む）。
     pub link: LinkView,

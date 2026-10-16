@@ -629,7 +629,7 @@ impl YoluApp {
     /// `start_recovery` の、復旧の設定のファイル（`recovery.conf`）の場所を渡せる形。
     pub fn start_recovery_with(&mut self, conf: Option<std::path::PathBuf>) {
         let lang = self.state.lang;
-        let note = match self.state.services.recovery.start_from(conf) {
+        let note = match self.state.recovery_start_from(conf) {
             Ok(problems) => problems.first().map(|p| lang.recovery_settings_problem(p)),
             Err(e) => Some(lang.recovery_unavailable(&e)),
         };

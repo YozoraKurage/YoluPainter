@@ -317,7 +317,7 @@ fn the_recovery_checkpoint_carries_the_look_and_opening_it_brings_the_look_back(
     let dir = Dir::new("recovery");
     let root = dir.0.join("recovery");
     let mut s = AppState::new_in(32, 32, Lang::Ja);
-    s.recovery_mut().enable(root.clone(), settings()).unwrap();
+    s.recovery_enable(root.clone(), settings()).unwrap();
     s.act(Action::Look(LookOp::Template));
     s.act(Action::Look(LookOp::Value {
         name: "_ShadowBorder",
@@ -343,9 +343,9 @@ fn the_recovery_checkpoint_carries_the_look_and_opening_it_brings_the_look_back(
     assert!(s.recovery().is_idle());
     drop(s);
     let mut s2 = AppState::new_in(32, 32, Lang::Ja);
-    s2.recovery_mut().enable(root, settings()).unwrap();
+    s2.recovery_enable(root, settings()).unwrap();
     assert!(
-        s2.recovery().window.is_some(),
+        s2.ui().recovery_window.is_some(),
         "落ちた体の起動は復旧のウィンドウを出す"
     );
     s2.recovery_apply(RecoveryAction::Open);
@@ -400,7 +400,7 @@ fn the_recovery_checkpoint_carries_the_received_values_even_when_saving_them_is_
     let dir = Dir::new("recovery-received");
     let root = dir.0.join("recovery");
     let mut s = AppState::new_in(32, 32, Lang::Ja);
-    s.recovery_mut().enable(root.clone(), settings()).unwrap();
+    s.recovery_enable(root.clone(), settings()).unwrap();
     // 保存の設定は切（.ylp には書かない）。復旧は開いていた時の見た目に戻すので、設定によらず書く
     s.prefs_mut().settings.livelink_keep_values = false;
     s.doc_mut()
@@ -432,7 +432,7 @@ fn the_recovery_checkpoint_carries_the_received_values_even_when_saving_them_is_
     assert!(s.recovery().is_idle());
     drop(s);
     let mut s2 = AppState::new_in(32, 32, Lang::Ja);
-    s2.recovery_mut().enable(root, settings()).unwrap();
+    s2.recovery_enable(root, settings()).unwrap();
     s2.recovery_apply(RecoveryAction::Open);
     assert!(s2.message().starts_with("復旧しました"), "{}", s2.message());
     let r = s2.doc().received_look().expect("受けた値が戻る");

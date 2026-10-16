@@ -194,9 +194,7 @@ fn child_crash() {
             })));
         let root = std::env::temp_dir().join(format!("yolu-crash-writer-{}", stamp()));
         state
-            .services
-            .recovery
-            .enable(root.clone(), crate::recovery::RecoverySettings::default())
+            .recovery_enable(root.clone(), crate::recovery::RecoverySettings::default())
             .unwrap();
         let layer = state.session.selected_layer.unwrap();
         let brush = state.stroke_settings(false);
@@ -497,7 +495,7 @@ fn app_menu_indicator_and_recovery_open_the_same_report() {
             h.state_mut().state.services.crash.request.take(),
             Some(window::Request::Folder)
         );
-        h.state_mut().state.services.recovery.window = Some(Default::default());
+        h.state_mut().state.ui.recovery_window = Some(Default::default());
         h.run();
         h.get_by_label(lang.pick("クラッシュの報告", "Crash Report"))
             .click();

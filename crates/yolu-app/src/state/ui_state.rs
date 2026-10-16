@@ -62,4 +62,9 @@ pub struct UiState {
     /// 保存していない変更の問い（アプリの中のウィンドウ。聞いている間だけ Some。`discard`）。開いている間は、キーの割り当て・キャンバスの入力を止める
     /// （`windows::modal_open`）ので、後ろの文書は変わらない。
     pub discard_ask: Option<crate::discard::Ask>,
+    /// 復旧のウィンドウ（世代の一覧・選び・捨てる前の確かめ・位置。開いている間だけ Some。書き置きそのものは `services.recovery`）。
+    pub recovery_window: Option<crate::recovery::window::WindowState>,
+    /// 更新の初回の問いのウィンドウと、更新の準備のウィンドウの位置（`update::window`）。
+    pub update_ask_offset: egui::Vec2,
+    pub update_ready_offset: egui::Vec2,
 }

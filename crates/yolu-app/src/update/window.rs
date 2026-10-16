@@ -65,9 +65,9 @@ fn ask(ctx: &egui::Context, app: &mut AppState) {
         ],
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.services.update.ask_offset;
+    let mut offset = app.ui.update_ask_offset;
     let reply = show_list(ctx, &spec, &mut offset, &mut 0.0);
-    app.services.update.ask_offset = offset;
+    app.ui.update_ask_offset = offset;
     // 閉じる・Esc は「いいえ」（選ばずに通信はしない。ヘルプのメニューでいつでも変えられる）
     match reply {
         Some(Reply::Button(1)) => app.apply(Action::Update(UpdateAction::Answer(true))),
@@ -147,9 +147,9 @@ fn ready(ctx: &egui::Context, app: &mut AppState) {
         buttons,
         close_label: lang.pick("ウィンドウを閉じる", "Close Window").into(),
     };
-    let mut offset = app.services.update.ready_offset;
+    let mut offset = app.ui.update_ready_offset;
     let reply = show_list(ctx, &spec, &mut offset, &mut 0.0);
-    app.services.update.ready_offset = offset;
+    app.ui.update_ready_offset = offset;
     let run = |save| Action::Update(UpdateAction::Run { save });
     match (reply, modified) {
         (Some(Reply::Button(1)), _) => app.apply(run(false)),

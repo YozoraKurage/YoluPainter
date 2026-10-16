@@ -427,9 +427,8 @@ mod tests {
             || app.distribute.replace.is_some()
             || app.services.update.window_open()
             || app
-                .services
-                .recovery
-                .window
+                .ui
+                .recovery_window
                 .as_ref()
                 .is_some_and(|w| w.confirm.is_some())
             || app.np.window.is_some()
@@ -657,7 +656,7 @@ mod tests {
             }),
             ("recovery", |dir| {
                 let mut s = AppState::new(32, 32);
-                s.services.recovery.window = Some(crate::recovery::window::WindowState {
+                s.ui.recovery_window = Some(crate::recovery::window::WindowState {
                     confirm: Some(crate::recovery::Row {
                         pool: dir.to_path_buf(),
                         id: "1".into(),

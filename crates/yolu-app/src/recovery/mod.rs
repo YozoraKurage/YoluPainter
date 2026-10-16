@@ -14,7 +14,7 @@
 //! 最新と落ちた実行ごとの最新は残す）、もう 1 つは書く前の空きの守り（`space`。書くと空きが残す量を割るなら、書かずに理由を出す。
 //! 描くのは止めない）。使っている量は復旧のウィンドウに出す。
 //!
-//! 試験では `RecoveryState::enable` に一時フォルダを渡して使う（何もしなければ復旧は動かず、ディスクに触れない）。
+//! テストでは `AppState::recovery_enable` に一時フォルダを渡して使う（何もしなければ復旧は動かず、ディスクに触れない）。
 
 mod capture;
 mod pool;
@@ -145,9 +145,8 @@ struct Active {
 /// 復旧のウィンドウの確かめ（キーの割り当てを止める）。
 pub(crate) const JOB: JobSpec = JobSpec {
     modal: Some(|app| {
-        app.services
-            .recovery
-            .window
+        app.ui
+            .recovery_window
             .as_ref()
             .is_some_and(|w| w.confirm.is_some())
     }),
@@ -159,7 +158,6 @@ pub(crate) const JOB: JobSpec = JobSpec {
 pub struct RecoveryState {
     settings: RecoverySettings,
     active: Option<Active>,
-    pub window: Option<window::WindowState>,
     open_request: Option<OpenRequest>,
     /// 復旧から開いた文書の、元の .ylp の名前（以降の書き置きの一覧に出す）。
     recovered_from: Option<String>,
@@ -278,7 +276,7 @@ impl RecoveryState {
             a.writer.set_fault(fault);
         }
     }
-    /// 設定のファイル（画面で間隔・世代の数を替えたとき書く先）。`start_default` が決めるが、試験は直に渡せる。
+    /// 設定のファイル（画面で間隔・世代の数を替えたとき書く先）。`AppState::recovery_start_from` が決めるが、テストは直に渡せる。
     pub fn set_settings_path(&mut self, path: Option<PathBuf>) {
         self.settings_path = path;
     }
@@ -286,13 +284,13 @@ impl RecoveryState {
         self.open_request.take()
     }
 
-    /// 復旧を始める（置き場の根・設定）。前の実行が落ちていて保存していない作業の世代が残っていれば、復旧のウィンドウを開いた
-    /// 状態にする。始められなければ Err（復旧は動かない）。返すのは、前の実行の後片付けで気づいたこと。
-    pub fn enable(
+    /// 復旧を始める（置き場の根・設定。`AppState::recovery_enable` から）。始められなければ Err（復旧は動かない）。返すのは、
+    /// 前の実行の後片付けで気づいたことと、前の実行が落ちていて保存していない作業の世代が残っていたか。
+    fn enable(
         &mut self,
         root: PathBuf,
         settings: RecoverySettings,
-    ) -> Result<Vec<Problem>, RecoveryError> {
+    ) -> Result<(Vec<Problem>, bool), RecoveryError> {
         self.settings_unreadable = false;
         self.keep_chosen = false;
         self.disk_chosen = false;
@@ -303,7 +301,7 @@ impl RecoveryState {
         &mut self,
         root: PathBuf,
         settings: RecoverySettings,
-    ) -> Result<Vec<Problem>, RecoveryError> {
+    ) -> Result<(Vec<Problem>, bool), RecoveryError> {
         self.settings = settings;
         let started = pool::start(&root, self.keep(), self.quota_limits().as_ref())?;
         let mut problems = Vec::new();
@@ -329,22 +327,13 @@ impl RecoveryState {
             epoch: 0,
             force: false,
         });
-        if !started.crashed.is_empty() {
-            self.window = Some(window::WindowState::default());
-            self.refresh_window();
-        }
-        Ok(problems)
+        Ok((problems, !started.crashed.is_empty()))
     }
 
-    /// 起動の設定（設定のファイルと置き場）から始める。設定のフォルダが決まらない・始められないときは復旧を使わず、理由を返す。
-    pub fn start_default(&mut self) -> Result<Vec<Problem>, RecoveryError> {
-        self.start_from(RecoverySettings::path())
-    }
-
-    /// `start_default` の、設定のファイル（`recovery.conf`）の場所を渡せる形。置き場の既定は、そのファイルと同じフォルダの
+    /// 設定のファイル（`recovery.conf`）から始める（`AppState::recovery_start_from` から）。置き場の既定は、そのファイルと同じフォルダの
     /// `recovery`。ファイルを読めないときは、既定の間隔で動くが、世代は整理せず（選んだ数が分からない）、ファイルにも書かない
-    /// （選んだ置き場・数を既定で上書きしない）。理由は `Problem::Unreadable` で返す。
-    pub fn start_from(&mut self, conf: Option<PathBuf>) -> Result<Vec<Problem>, RecoveryError> {
+    /// （選んだ置き場・数を既定で上書きしない）。理由は `Problem::Unreadable` で返す。返す物は `enable` と同じ。
+    fn start_from(&mut self, conf: Option<PathBuf>) -> Result<(Vec<Problem>, bool), RecoveryError> {
         self.settings_path = conf.clone();
         self.settings_unreadable = false;
         self.keep_chosen = false;
@@ -369,24 +358,9 @@ impl RecoveryState {
                 "settings folder unknown",
             ))
         })?;
-        problems.extend(self.enable_with(root, settings)?);
-        Ok(problems)
-    }
-
-    /// 一覧を読み直す（ウィンドウが開いていれば）。選んでいた世代が残っていればそのまま、無ければ新しい読める世代を選ぶ。
-    pub(crate) fn refresh_window(&mut self) {
-        let Some(active) = self.active.as_ref() else {
-            return;
-        };
-        let rows = pool::list(&active.root, Some(active.session.dir()));
-        let usage = quota::usage(&active.root, Some(active.session.dir()));
-        let limits = self.limits();
-        let cap = limits.cap(&active.root, usage.total());
-        let free = limits.space(&active.root).map(|d| d.available);
-        if let Some(w) = self.window.as_mut() {
-            w.set_rows(rows);
-            w.set_usage(usage, cap, free);
-        }
+        let (found, crashed) = self.enable_with(root, settings)?;
+        problems.extend(found);
+        Ok((problems, crashed))
     }
 
     /// 次にフレームを起こすまでの時間（変更があって書くのを待っているとき・書き込みが動いているとき）。
@@ -406,6 +380,59 @@ impl RecoveryState {
 }
 
 impl AppState {
+    /// 復旧を始める（置き場の根・設定）。前の実行が落ちていて保存していない作業の世代が残っていれば、復旧のウィンドウを開いた
+    /// 状態にする。始められなければ Err（復旧は動かない）。返すのは、前の実行の後片付けで気づいたこと。
+    pub fn recovery_enable(
+        &mut self,
+        root: PathBuf,
+        settings: RecoverySettings,
+    ) -> Result<Vec<Problem>, RecoveryError> {
+        let (problems, crashed) = self.services.recovery.enable(root, settings)?;
+        self.recovery_offer_crashed(crashed);
+        Ok(problems)
+    }
+
+    /// 起動の設定（設定のファイルと置き場）から始める。設定のフォルダが決まらない・始められないときは復旧を使わず、理由を返す。
+    pub fn recovery_start_default(&mut self) -> Result<Vec<Problem>, RecoveryError> {
+        self.recovery_start_from(RecoverySettings::path())
+    }
+
+    /// `recovery_start_default` の、設定のファイル（`recovery.conf`）の場所を渡せる形（読めないときの扱いは `RecoveryState::start_from`）。
+    /// 前の実行が落ちていて保存していない作業の世代が残っていれば、復旧のウィンドウを開いた状態にする。
+    pub fn recovery_start_from(
+        &mut self,
+        conf: Option<PathBuf>,
+    ) -> Result<Vec<Problem>, RecoveryError> {
+        let (problems, crashed) = self.services.recovery.start_from(conf)?;
+        self.recovery_offer_crashed(crashed);
+        Ok(problems)
+    }
+
+    /// 前の実行の世代が残っていた（`crashed`）なら、復旧のウィンドウを開いて一覧を入れる。
+    fn recovery_offer_crashed(&mut self, crashed: bool) {
+        if crashed {
+            self.ui.recovery_window = Some(window::WindowState::default());
+            self.recovery_refresh_window();
+        }
+    }
+
+    /// 一覧を読み直す（復旧のウィンドウが開いていれば）。選んでいた世代が残っていればそのまま、無ければ新しい読める世代を選ぶ。
+    fn recovery_refresh_window(&mut self) {
+        let recovery = &self.services.recovery;
+        let Some(active) = recovery.active.as_ref() else {
+            return;
+        };
+        let rows = pool::list(&active.root, Some(active.session.dir()));
+        let usage = quota::usage(&active.root, Some(active.session.dir()));
+        let limits = recovery.limits();
+        let cap = limits.cap(&active.root, usage.total());
+        let free = limits.space(&active.root).map(|d| d.available);
+        if let Some(w) = self.ui.recovery_window.as_mut() {
+            w.set_rows(rows);
+            w.set_usage(usage, cap, free);
+        }
+    }
+
     /// 1 フレームの見張り（書き込みの結果を受ける・変わったか見る・書く頃なら材料を取って頼む）。返すのは次に起こしたい時間。
     pub fn recovery_tick(&mut self) -> Option<Duration> {
         self.recovery_tick_at(Instant::now())
@@ -571,7 +598,7 @@ impl AppState {
         }
         // ウィンドウが開いていれば、増えた世代を一覧に足す
         if landed {
-            self.services.recovery.refresh_window();
+            self.recovery_refresh_window();
         }
     }
 
@@ -671,7 +698,7 @@ impl AppState {
             }
             // 間に合わなかったときは、書き込みが終わる前に印を消さない（落ちた体のまま。次の起動が世代を見つける）
         }
-        self.services.recovery.window = None;
+        self.ui.recovery_window = None;
     }
 
     /// 復旧の操作を当てる。
@@ -682,23 +709,19 @@ impl AppState {
         }
         match action {
             A::OpenWindow => {
-                self.services
-                    .recovery
-                    .window
-                    .get_or_insert_with(Default::default);
-                self.services.recovery.refresh_window();
+                self.ui.recovery_window.get_or_insert_with(Default::default);
+                self.recovery_refresh_window();
             }
-            A::CloseWindow => self.services.recovery.window = None,
+            A::CloseWindow => self.ui.recovery_window = None,
             A::Select(i) => {
-                if let Some(w) = self.services.recovery.window.as_mut() {
+                if let Some(w) = self.ui.recovery_window.as_mut() {
                     w.select(i);
                 }
             }
             A::Open => {
                 let Some(row) = self
-                    .services
-                    .recovery
-                    .window
+                    .ui
+                    .recovery_window
                     .as_ref()
                     .and_then(|w| w.selected_row())
                     .cloned()
@@ -727,12 +750,12 @@ impl AppState {
                 }
             }
             A::Discard => {
-                if let Some(w) = self.services.recovery.window.as_mut() {
+                if let Some(w) = self.ui.recovery_window.as_mut() {
                     w.confirm = w.selected_row().cloned();
                 }
             }
             A::CancelDiscard => {
-                if let Some(w) = self.services.recovery.window.as_mut() {
+                if let Some(w) = self.ui.recovery_window.as_mut() {
                     w.confirm = None;
                 }
             }
@@ -762,7 +785,7 @@ impl AppState {
                 self.recovery_enforce_now();
             }
             A::DiskDetails(open) => {
-                if let Some(w) = self.services.recovery.window.as_mut() {
+                if let Some(w) = self.ui.recovery_window.as_mut() {
                     w.details = open;
                 }
             }
@@ -781,7 +804,7 @@ impl AppState {
         ) {
             quota::enforce(&a.root, &limits, Some(a.session.dir()), pool::now_ms());
         }
-        self.services.recovery.refresh_window();
+        self.recovery_refresh_window();
     }
 
     fn recovery_save_settings(&mut self) {
@@ -827,11 +850,11 @@ impl AppState {
                 self.services.recovery.recovered_from = Some(info.project_path)
                     .filter(|p| !p.is_empty())
                     .or_else(|| Some(info.title).filter(|t| !t.is_empty()));
-                self.services.recovery.window = None;
+                self.ui.recovery_window = None;
             }
             Err(error) => {
                 self.fail(Source::Recovery, self.lang.recovery_cannot_open(&error));
-                if let Some(w) = self.services.recovery.window.as_mut() {
+                if let Some(w) = self.ui.recovery_window.as_mut() {
                     w.error = Some(self.message.clone());
                 }
             }
@@ -840,9 +863,8 @@ impl AppState {
 
     fn recovery_discard_confirmed(&mut self) {
         let Some(row) = self
-            .services
-            .recovery
-            .window
+            .ui
+            .recovery_window
             .as_mut()
             .and_then(|w| w.confirm.take())
         else {
@@ -882,12 +904,12 @@ impl AppState {
             Ok(()) => {}
             Err(error) => {
                 self.fail(Source::Recovery, self.lang.recovery_error(&error));
-                if let Some(w) = self.services.recovery.window.as_mut() {
+                if let Some(w) = self.ui.recovery_window.as_mut() {
                     w.error = Some(self.message.clone());
                 }
             }
         }
-        self.services.recovery.refresh_window();
+        self.recovery_refresh_window();
     }
 }
 

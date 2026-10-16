@@ -514,18 +514,17 @@ fn plenty() -> SpaceProbe {
 fn session(root: &Path) -> AppState {
     let mut s = AppState::new_in(64, 64, Lang::Ja);
     s.recovery_mut().set_space_probe(Some(plenty()));
-    s.recovery_mut()
-        .enable(
-            root.to_path_buf(),
-            RecoverySettings {
-                interval_seconds: 15,
-                strokes_between: 0,
-                generations_to_keep: 3,
-                directory: None,
-                ..RecoverySettings::default()
-            },
-        )
-        .unwrap();
+    s.recovery_enable(
+        root.to_path_buf(),
+        RecoverySettings {
+            interval_seconds: 15,
+            strokes_between: 0,
+            generations_to_keep: 3,
+            directory: None,
+            ..RecoverySettings::default()
+        },
+    )
+    .unwrap();
     s
 }
 fn write_after(s: &mut AppState, from: Instant) {

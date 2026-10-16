@@ -94,8 +94,7 @@ fn window(lang: Lang, root: &std::path::Path, device: Arc<Mutex<Option<Device>>>
     state.recovery_mut().set_space_probe(Some(probe));
     // 間隔は長く（GPU を失ったときに「急いで」書くことを確かめる。時間では書かれない）
     state
-        .recovery_mut()
-        .enable(
+        .recovery_enable(
             root.to_path_buf(),
             RecoverySettings {
                 interval_seconds: 3600,
@@ -157,10 +156,12 @@ fn offered_rows(root: &std::path::Path) -> usize {
         })
     });
     next.recovery_mut().set_space_probe(Some(probe));
-    next.recovery_mut()
-        .enable(root.to_path_buf(), RecoverySettings::default())
+    next.recovery_enable(root.to_path_buf(), RecoverySettings::default())
         .unwrap();
-    next.recovery().window.as_ref().map_or(0, |w| w.rows.len())
+    next.ui()
+        .recovery_window
+        .as_ref()
+        .map_or(0, |w| w.rows.len())
 }
 
 /// 失った知らせを入れて、フレームを進める。フレームには戻らずに終える（終了コードが返る）。
@@ -405,12 +406,11 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_gpu_was_lost() {
         })
     });
     next.recovery_mut().set_space_probe(Some(probe));
-    next.recovery_mut()
-        .enable(root.clone(), RecoverySettings::default())
+    next.recovery_enable(root.clone(), RecoverySettings::default())
         .unwrap();
     let offered = next
-        .recovery()
-        .window
+        .ui()
+        .recovery_window
         .as_ref()
         .expect("落ちた体と同じに、復旧のウィンドウが開く");
     assert_eq!(offered.rows.len(), 1);
@@ -437,10 +437,9 @@ fn the_next_start_offers_the_checkpoint_taken_when_the_gpu_was_lost() {
     });
     again.recovery_mut().set_space_probe(Some(probe));
     again
-        .recovery_mut()
-        .enable(clean_root, RecoverySettings::default())
+        .recovery_enable(clean_root, RecoverySettings::default())
         .unwrap();
-    assert!(again.recovery().window.is_none());
+    assert!(again.ui().recovery_window.is_none());
 }
 
 /// 書き置きの書き込みが終わらない（遅いディスク・止まったネットワークドライブ）ときも、GPU を失って終える処理は期限で返る。急いで取る側と、

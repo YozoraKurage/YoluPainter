@@ -110,7 +110,7 @@ pub fn row_name(lang: Lang, row: &Row) -> String {
 
 /// ウィンドウを描く（開いていれば）。押されたものは `Action::Recovery` として当てる。
 pub fn show(ctx: &egui::Context, app: &mut AppState) {
-    if app.services.recovery.window.is_none() {
+    if app.ui.recovery_window.is_none() {
         return;
     }
     let lang = app.lang;
@@ -119,7 +119,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
         app.services.recovery.settings().generations_to_keep,
         app.services.recovery.settings().disk,
     );
-    let Some(state) = app.services.recovery.window.as_ref() else {
+    let Some(state) = app.ui.recovery_window.as_ref() else {
         return;
     };
     let rows = state.rows.clone();
@@ -510,7 +510,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
             }
         }
     });
-    if let Some(state) = app.services.recovery.window.as_mut() {
+    if let Some(state) = app.ui.recovery_window.as_mut() {
         state.offset = offset;
         state.scroll = scroll;
         state.drag_gib = drag_gib;
@@ -527,9 +527,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
 /// 捨てる前の確かめ（開いている間は下のウィンドウを触れない）。
 fn discard_confirm(ctx: &egui::Context, app: &mut AppState) {
     let Some(row) = app
-        .services
-        .recovery
-        .window
+        .ui
+        .recovery_window
         .as_ref()
         .and_then(|w| w.confirm.clone())
     else {

@@ -61,7 +61,7 @@ const GIB: u64 = 1 << 30;
 fn session_with(root: &Path, s: RecoverySettings, lang: Lang) -> AppState {
     let mut state = AppState::new_in(64, 64, lang);
     state.recovery_mut().set_space_probe(Some(plenty()));
-    state.recovery_mut().enable(root.to_path_buf(), s).unwrap();
+    state.recovery_enable(root.to_path_buf(), s).unwrap();
     state
 }
 fn session(root: &Path) -> AppState {
@@ -567,8 +567,8 @@ fn headless_a_crash_shows_the_recovery_window_at_the_next_start_and_a_clean_clos
     // 次の起動: 落ちていたのでウィンドウが開き、世代の一覧がある（時刻・セットの数・名前）
     let s2 = session(&dir.root());
     let window = s2
-        .recovery()
-        .window
+        .ui()
+        .recovery_window
         .as_ref()
         .expect("落ちた体の起動でウィンドウが出る");
     assert_eq!(window.rows.len(), 1);
@@ -586,10 +586,10 @@ fn headless_a_crash_shows_the_recovery_window_at_the_next_start_and_a_clean_clos
     let mut s2 = s2;
     s2.recovery_shutdown();
     let mut s3 = session(&dir.root());
-    assert!(s3.recovery().window.is_none(), "前の実行は落ちていない");
+    assert!(s3.ui().recovery_window.is_none(), "前の実行は落ちていない");
     s3.recovery_apply(RecoveryAction::OpenWindow);
     assert_eq!(
-        s3.recovery().window.as_ref().unwrap().rows.len(),
+        s3.ui().recovery_window.as_ref().unwrap().rows.len(),
         1,
         "落ちたときの世代は、捨てるまで残る（正しく閉じた実行の世代は設定の数だけ）"
     );
@@ -601,9 +601,9 @@ fn headless_a_crash_shows_the_recovery_window_at_the_next_start_and_a_clean_clos
     write_after(&mut s, Instant::now());
     s.recovery_shutdown();
     let mut next = session(&clean.root());
-    assert!(next.recovery().window.is_none());
+    assert!(next.ui().recovery_window.is_none());
     next.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &next.recovery().window.as_ref().unwrap().rows;
+    let rows = &next.ui().recovery_window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 1);
     assert!(!rows[0].crashed, "正しく閉じたプール");
 }
@@ -618,7 +618,7 @@ fn headless_a_clean_close_writes_the_last_changes_first() {
     s.recovery_shutdown();
     let mut next = session(&dir.root());
     next.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &next.recovery().window.as_ref().unwrap().rows;
+    let rows = &next.ui().recovery_window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 2, "閉じる前の最後の世代も残る");
     next.recovery_apply(RecoveryAction::Select(0));
     next.recovery_apply(RecoveryAction::Open);
@@ -637,11 +637,11 @@ fn headless_a_crash_with_everything_saved_or_nothing_written_is_not_announced() 
     crash(s);
     let mut s2 = session(&dir.root());
     assert!(
-        s2.recovery().window.is_none(),
+        s2.ui().recovery_window.is_none(),
         "保存済みなのでウィンドウは出さない"
     );
     s2.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &s2.recovery().window.as_ref().unwrap().rows;
+    let rows = &s2.ui().recovery_window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 1, "でも一覧には残り、手で開ける");
     assert!(rows[0].crashed);
     // 最初の書き置きの前に落ちた
@@ -651,7 +651,7 @@ fn headless_a_crash_with_everything_saved_or_nothing_written_is_not_announced() 
     s.recovery_tick_at(Instant::now());
     crash(s);
     let s2 = session(&early.root());
-    assert!(s2.recovery().window.is_none());
+    assert!(s2.ui().recovery_window.is_none());
     let pools = std::fs::read_dir(early.root()).unwrap().count();
     assert_eq!(pools, 1, "世代の無いプールは片付けて、この実行のものだけ");
 }
@@ -670,14 +670,17 @@ fn headless_opening_a_generation_is_untitled_recovered_and_never_writes_the_orig
     crash(s);
 
     let mut s2 = session(&dir.root());
-    let row = s2.recovery().window.as_ref().unwrap().rows[0].clone();
+    let row = s2.ui().recovery_window.as_ref().unwrap().rows[0].clone();
     assert_eq!(row.name, "作品.ylp", "元の .ylp の名前");
     s2.recovery_apply(RecoveryAction::Open);
     assert_eq!(s2.project_name(), "名称未設定（復旧）");
     assert!(s2.modified(), "保存していない");
     let project = s2.project().as_ref().unwrap();
     assert!(!project.is_file(), "元の .ylp にはつながない");
-    assert!(s2.recovery().window.is_none(), "開いたらウィンドウを閉じる");
+    assert!(
+        s2.ui().recovery_window.is_none(),
+        "開いたらウィンドウを閉じる"
+    );
     assert!(s2.message().starts_with("復旧しました"), "{}", s2.message());
     assert_ne!(pixel_in(s2.doc(), 10), [0, 0, 0, 0]);
     assert_ne!(
@@ -768,7 +771,7 @@ fn headless_a_damaged_generation_is_listed_with_a_reason_and_refused_without_cha
     crash(s);
 
     let mut s2 = session(&dir.root());
-    let window = s2.recovery().window.as_ref().unwrap();
+    let window = s2.ui().recovery_window.as_ref().unwrap();
     assert_eq!(window.rows.len(), 2);
     assert!(
         window.rows.iter().all(|r| r.problem.is_none()),
@@ -784,7 +787,7 @@ fn headless_a_damaged_generation_is_listed_with_a_reason_and_refused_without_cha
         "{}",
         s2.message()
     );
-    assert!(s2.recovery().window.as_ref().unwrap().error.is_some());
+    assert!(s2.ui().recovery_window.as_ref().unwrap().error.is_some());
     s2.recovery_apply(RecoveryAction::Select(1));
     s2.recovery_apply(RecoveryAction::Open);
     assert_ne!(s2.doc().id(), doc_id);
@@ -802,7 +805,7 @@ fn headless_a_generation_missing_its_content_is_listed_as_unreadable_and_can_be_
     crash(s);
     let mut s2 = session(&dir.root());
     // 落ちた体でも、読める世代が 1 つも無ければウィンドウは出さない…ことはなく、読めない世代を理由つきで見せる
-    let window = s2.recovery().window.as_ref().expect("世代は残っている");
+    let window = s2.ui().recovery_window.as_ref().expect("世代は残っている");
     assert_eq!(window.rows.len(), 1);
     assert!(window.rows[0].problem.is_some());
     assert_eq!(window.selected, None, "読める世代が無ければ何も選ばない");
@@ -814,7 +817,7 @@ fn headless_a_generation_missing_its_content_is_listed_as_unreadable_and_can_be_
     );
     s2.recovery_apply(RecoveryAction::Discard);
     s2.recovery_apply(RecoveryAction::ConfirmDiscard);
-    assert!(s2.recovery().window.as_ref().unwrap().rows.is_empty());
+    assert!(s2.ui().recovery_window.as_ref().unwrap().rows.is_empty());
 }
 
 #[test]
@@ -831,35 +834,35 @@ fn headless_discarding_asks_first_and_removes_only_that_generation() {
     write_after(&mut s, t + Duration::from_secs(100));
     crash(s);
     let mut s2 = session(&dir.root());
-    assert_eq!(s2.recovery().window.as_ref().unwrap().rows.len(), 2);
+    assert_eq!(s2.ui().recovery_window.as_ref().unwrap().rows.len(), 2);
     s2.recovery_apply(RecoveryAction::Select(0));
     s2.recovery_apply(RecoveryAction::Discard);
     assert!(
-        s2.recovery().window.as_ref().unwrap().confirm.is_some(),
+        s2.ui().recovery_window.as_ref().unwrap().confirm.is_some(),
         "確かめる"
     );
     assert_eq!(
-        s2.recovery().window.as_ref().unwrap().rows.len(),
+        s2.ui().recovery_window.as_ref().unwrap().rows.len(),
         2,
         "確かめるまで消さない"
     );
     s2.recovery_apply(RecoveryAction::CancelDiscard);
-    assert!(s2.recovery().window.as_ref().unwrap().confirm.is_none());
-    assert_eq!(s2.recovery().window.as_ref().unwrap().rows.len(), 2);
+    assert!(s2.ui().recovery_window.as_ref().unwrap().confirm.is_none());
+    assert_eq!(s2.ui().recovery_window.as_ref().unwrap().rows.len(), 2);
     s2.recovery_apply(RecoveryAction::Discard);
     s2.recovery_apply(RecoveryAction::ConfirmDiscard);
-    let window = s2.recovery().window.as_ref().unwrap();
+    let window = s2.ui().recovery_window.as_ref().unwrap();
     assert_eq!(window.rows.len(), 1);
     assert_eq!(window.selected, Some(0), "残った世代を選ぶ");
     s2.recovery_apply(RecoveryAction::Discard);
     s2.recovery_apply(RecoveryAction::ConfirmDiscard);
-    assert!(s2.recovery().window.as_ref().unwrap().rows.is_empty());
+    assert!(s2.ui().recovery_window.as_ref().unwrap().rows.is_empty());
     // 置き場には、この実行のプールだけが残る。保存した .ylp はそのまま
     assert_eq!(std::fs::read_dir(dir.root()).unwrap().count(), 1);
     assert_eq!(hash(&original), before);
     // 次の起動は、もう知らせることが無い
     s2.recovery_shutdown();
-    assert!(session(&dir.root()).recovery().window.is_none());
+    assert!(session(&dir.root()).ui().recovery_window.is_none());
 }
 
 #[test]
@@ -871,7 +874,7 @@ fn headless_discarding_this_sessions_own_generation_lets_the_writer_carry_on() {
     paint(&mut s, 20.0);
     let t = write_after(&mut s, t + Duration::from_secs(100));
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = s.recovery().window.as_ref().unwrap().rows.clone();
+    let rows = s.ui().recovery_window.as_ref().unwrap().rows.clone();
     assert_eq!(rows.len(), 2);
     assert!(rows.iter().all(|r| r.own));
     s.recovery_apply(RecoveryAction::Select(0)); // 最新（current）
@@ -905,7 +908,7 @@ fn headless_other_folders_in_the_recovery_root_are_never_touched() {
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    assert_eq!(s.recovery().window.as_ref().unwrap().rows.len(), 1);
+    assert_eq!(s.ui().recovery_window.as_ref().unwrap().rows.len(), 1);
     for i in 0..4 {
         paint(&mut s, 20.0 + 5.0 * i as f64);
         write_after(&mut s, t + Duration::from_secs(100 * (i + 1)));
@@ -936,10 +939,10 @@ fn headless_two_running_windows_do_not_touch_each_other_and_a_crash_is_only_foun
     write_after(&mut a, Instant::now());
     // a が動いているあいだに始めた b は、a を「落ちた」とも「閉じた」とも見ない
     let mut b = session(&dir.root());
-    assert!(b.recovery().window.is_none());
+    assert!(b.ui().recovery_window.is_none());
     b.recovery_apply(RecoveryAction::OpenWindow);
     assert!(
-        b.recovery().window.as_ref().unwrap().rows.is_empty(),
+        b.ui().recovery_window.as_ref().unwrap().rows.is_empty(),
         "動いている相手の世代は一覧に出さない"
     );
     b.recovery_shutdown();
@@ -950,7 +953,7 @@ fn headless_two_running_windows_do_not_touch_each_other_and_a_crash_is_only_foun
     crash(a);
     let c = session(&dir.root());
     assert_eq!(
-        c.recovery().window.as_ref().unwrap().rows.len(),
+        c.ui().recovery_window.as_ref().unwrap().rows.len(),
         2,
         "a が落ちたのは、a が終わってから分かる"
     );
@@ -976,7 +979,7 @@ fn headless_closed_sessions_keep_the_chosen_number_of_generations_in_total_but_c
     let rows = |root: &Path| {
         let mut s = session_with(root, settings(15, 3, 0), Lang::Ja);
         s.recovery_apply(RecoveryAction::OpenWindow);
-        let rows = s.recovery().window.as_ref().unwrap().rows.clone();
+        let rows = s.ui().recovery_window.as_ref().unwrap().rows.clone();
         s.recovery_shutdown();
         rows
     };
@@ -1147,9 +1150,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
         let dir = TempDir::new("measure");
         let mut s = AppState::new(size, size);
         s.recovery_mut().set_space_probe(Some(plenty()));
-        s.recovery_mut()
-            .enable(dir.root(), settings(15, 3, 0))
-            .unwrap();
+        s.recovery_enable(dir.root(), settings(15, 3, 0)).unwrap();
         let (mut doc, _) = yolu_app::state::blank_document(size, size);
         doc.set_source_budget_bytes(2 << 30).unwrap();
         doc.set_stroke_budget_bytes(1 << 30).unwrap();
@@ -1345,8 +1346,8 @@ fn headless_the_recovered_name_follows_the_document_until_it_is_saved() {
     let t = write_after(&mut s2, t + Duration::from_secs(100));
     s2.recovery_apply(RecoveryAction::OpenWindow);
     let mine = s2
-        .recovery()
-        .window
+        .ui()
+        .recovery_window
         .as_ref()
         .unwrap()
         .rows
@@ -1362,8 +1363,8 @@ fn headless_the_recovered_name_follows_the_document_until_it_is_saved() {
     write_after(&mut s2, t + Duration::from_secs(100));
     s2.recovery_apply(RecoveryAction::OpenWindow);
     let names: Vec<String> = s2
-        .recovery()
-        .window
+        .ui()
+        .recovery_window
         .as_ref()
         .unwrap()
         .rows
@@ -1381,11 +1382,11 @@ fn headless_an_open_window_gains_new_generations_and_its_confirm_blocks_the_keys
     paint(&mut s, 10.0);
     let t = write_after(&mut s, Instant::now());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    assert_eq!(s.recovery().window.as_ref().unwrap().rows.len(), 1);
+    assert_eq!(s.ui().recovery_window.as_ref().unwrap().rows.len(), 1);
     s.recovery_apply(RecoveryAction::Select(0));
     paint(&mut s, 20.0);
     write_after(&mut s, t + Duration::from_secs(100));
-    let window = s.recovery().window.as_ref().unwrap();
+    let window = s.ui().recovery_window.as_ref().unwrap();
     assert_eq!(window.rows.len(), 2, "書き置きが増えたら一覧にも出る");
     assert_eq!(
         window.selected_row().map(|r| r.id.clone()),
@@ -1535,7 +1536,7 @@ fn seed_closed_generations(root: &Path, count: usize) {
 fn listed_generations(root: &Path) -> usize {
     let mut s = session_with(root, settings(15, 1000, 0), Lang::Ja);
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let count = s.recovery().window.as_ref().unwrap().rows.len();
+    let count = s.ui().recovery_window.as_ref().unwrap().rows.len();
     s.recovery_shutdown();
     count
 }
@@ -1553,7 +1554,7 @@ fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generat
         let bytes_before = std::fs::read(&conf).unwrap();
         let mut s = AppState::new_in(64, 64, lang);
         s.recovery_mut().set_space_probe(Some(plenty()));
-        let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
+        let problems = s.recovery_start_from(Some(conf.clone())).unwrap();
         assert!(
             matches!(problems.first(), Some(Problem::Unreadable(_))),
             "{problems:?}"
@@ -1571,7 +1572,7 @@ fn headless_unreadable_settings_start_with_the_defaults_without_trimming_generat
         assert!(s.recovery().is_enabled());
         s.recovery_apply(RecoveryAction::OpenWindow);
         assert_eq!(
-            s.recovery().window.as_ref().unwrap().rows.len(),
+            s.ui().recovery_window.as_ref().unwrap().rows.len(),
             5,
             "起動で整理しない"
         );
@@ -1616,7 +1617,7 @@ fn headless_a_number_chosen_in_the_window_while_the_settings_are_unreadable_appl
     std::fs::write(&conf, [0xff, 0xfe, 0xfd]).unwrap(); // UTF-8 ではない
     let mut s = AppState::new_in(64, 64, Lang::En);
     s.recovery_mut().set_space_probe(Some(plenty()));
-    let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
+    let problems = s.recovery_start_from(Some(conf.clone())).unwrap();
     assert!(matches!(problems[0], Problem::Unreadable(_)));
     s.recovery_apply(RecoveryAction::SetKeep(2));
     s.recovery_shutdown();
@@ -1643,7 +1644,7 @@ fn headless_readable_settings_choose_the_folder_and_are_saved_beside_it() {
     .unwrap();
     let mut s = AppState::new_in(64, 64, Lang::Ja);
     s.recovery_mut().set_space_probe(Some(plenty()));
-    let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
+    let problems = s.recovery_start_from(Some(conf.clone())).unwrap();
     assert!(problems.is_empty(), "{problems:?}");
     assert_eq!(
         (
@@ -1664,8 +1665,7 @@ fn headless_readable_settings_choose_the_folder_and_are_saved_beside_it() {
     let mut s = AppState::new_in(64, 64, Lang::Ja);
     s.recovery_mut().set_space_probe(Some(plenty()));
     assert!(s
-        .recovery_mut()
-        .start_from(Some(fresh.0.join("recovery.conf")))
+        .recovery_start_from(Some(fresh.0.join("recovery.conf")))
         .unwrap()
         .is_empty());
     assert!(s
@@ -1689,10 +1689,7 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
     std::fs::create_dir(pool.join("crashed")).unwrap();
     let mut s2 = AppState::new_in(64, 64, Lang::Ja);
     s2.recovery_mut().set_space_probe(Some(plenty()));
-    let problems = s2
-        .recovery_mut()
-        .enable(dir.root(), settings(15, 3, 0))
-        .unwrap();
+    let problems = s2.recovery_enable(dir.root(), settings(15, 3, 0)).unwrap();
     assert!(
         matches!(problems.first(), Some(Problem::PreviousRun(_))),
         "{problems:?}"
@@ -1709,8 +1706,8 @@ fn headless_a_previous_run_marker_that_cannot_be_settled_is_reported_and_its_gen
     );
     // 世代を見せない方へは倒さない: ウィンドウが出て、世代を開ける
     let window = s2
-        .recovery()
-        .window
+        .ui()
+        .recovery_window
         .as_ref()
         .expect("落ちた実行の世代があるのでウィンドウを出す");
     assert_eq!(window.rows.len(), 1);
@@ -1938,7 +1935,7 @@ fn crashed_run(root: &Path, count: usize) {
 fn rows_of(root: &Path) -> Vec<yolu_app::recovery::Row> {
     let mut s = session_with(root, settings(15, 1000, 0), Lang::Ja);
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = s.recovery().window.as_ref().unwrap().rows.clone();
+    let rows = s.ui().recovery_window.as_ref().unwrap().rows.clone();
     s.recovery_shutdown();
     rows
 }
@@ -2200,8 +2197,8 @@ fn headless_choosing_a_smaller_amount_removes_old_generations_everywhere_but_eac
     s.recovery_mut().set_disk_cap(Some(1));
     s.recovery_apply(RecoveryAction::SetDisk(DiskBudget::Low));
     let after: Vec<(std::path::PathBuf, String)> = s
-        .recovery()
-        .window
+        .ui()
+        .recovery_window
         .as_ref()
         .unwrap()
         .rows
@@ -2221,9 +2218,9 @@ fn headless_choosing_a_smaller_amount_removes_old_generations_everywhere_but_eac
         RecoverySettings::load(&conf).unwrap().0.disk,
         DiskBudget::Low
     );
-    assert_eq!(s.recovery().window.as_ref().unwrap().cap, 1);
+    assert_eq!(s.ui().recovery_window.as_ref().unwrap().cap, 1);
     assert_eq!(
-        s.recovery().window.as_ref().unwrap().usage.total(),
+        s.ui().recovery_window.as_ref().unwrap().usage.total(),
         used(&root)
     );
     // 残った世代は、共有の中身ごと開ける
@@ -2249,9 +2246,9 @@ fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_th
     s.recovery_mut().set_space_probe(Some(plenty()));
     s.recovery_mut().set_disk_cap(Some(1));
     let conf = dir.0.join("recovery.conf");
-    assert!(s.recovery_mut().start_from(Some(conf)).unwrap().is_empty());
+    assert!(s.recovery_start_from(Some(conf)).unwrap().is_empty());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let rows = &s.recovery().window.as_ref().unwrap().rows;
+    let rows = &s.ui().recovery_window.as_ref().unwrap().rows;
     assert_eq!(rows.len(), 1, "落ちた実行の最新だけが残る");
     assert!(rows[0].crashed);
     s.recovery_shutdown();
@@ -2264,11 +2261,11 @@ fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_th
     let mut s = AppState::new_in(64, 64, Lang::Ja);
     s.recovery_mut().set_space_probe(Some(plenty()));
     s.recovery_mut().set_disk_cap(Some(1));
-    let problems = s.recovery_mut().start_from(Some(conf.clone())).unwrap();
+    let problems = s.recovery_start_from(Some(conf.clone())).unwrap();
     assert!(matches!(problems.first(), Some(Problem::Unreadable(_))));
     s.recovery_apply(RecoveryAction::OpenWindow);
     assert_eq!(
-        s.recovery().window.as_ref().unwrap().rows.len(),
+        s.ui().recovery_window.as_ref().unwrap().rows.len(),
         4,
         "起動で消さない"
     );
@@ -2285,7 +2282,7 @@ fn headless_a_started_run_trims_what_the_limit_no_longer_allows_but_not_while_th
     assert_eq!(generations(&s), 2);
     s.recovery_apply(RecoveryAction::SetDisk(DiskBudget::Standard));
     assert!(
-        s.recovery().window.as_ref().unwrap().rows.len() <= 2,
+        s.ui().recovery_window.as_ref().unwrap().rows.len() <= 2,
         "選んだ量で、この実行のあいだ整理する"
     );
     assert_eq!(
@@ -2325,10 +2322,10 @@ fn headless_the_disk_amount_is_chosen_saved_clamped_and_read_back() {
     // 「詳しく」の開け閉めは設定に書かない（ウィンドウの中だけ）
     s.recovery_apply(RecoveryAction::OpenWindow);
     s.recovery_apply(RecoveryAction::DiskDetails(true));
-    assert!(s.recovery().window.as_ref().unwrap().details);
+    assert!(s.ui().recovery_window.as_ref().unwrap().details);
     let before = std::fs::read(&file).unwrap();
     s.recovery_apply(RecoveryAction::DiskDetails(false));
-    assert!(!s.recovery().window.as_ref().unwrap().details);
+    assert!(!s.ui().recovery_window.as_ref().unwrap().details);
     assert_eq!(std::fs::read(&file).unwrap(), before);
     // 自動の上限は、空きに合わせて小さくなる（空き 4 GiB なら、復旧が使える量の 10%）
     let mut s = session(&dir.root());
@@ -2348,7 +2345,7 @@ fn headless_the_window_counts_what_recovery_uses_by_the_kind_of_session() {
     paint(&mut s, 10.0);
     write_after(&mut s, Instant::now());
     s.recovery_apply(RecoveryAction::OpenWindow);
-    let window = s.recovery().window.as_ref().unwrap();
+    let window = s.ui().recovery_window.as_ref().unwrap();
     let usage = window.usage;
     assert!(
         usage.own > 0 && usage.crashed > 0 && usage.closed > 0,
@@ -2365,5 +2362,5 @@ fn headless_the_window_counts_what_recovery_uses_by_the_kind_of_session() {
     let before = usage.total();
     paint(&mut s, 30.0);
     write_after(&mut s, Instant::now() + Duration::from_secs(1000));
-    assert!(s.recovery().window.as_ref().unwrap().usage.total() > before);
+    assert!(s.ui().recovery_window.as_ref().unwrap().usage.total() > before);
 }

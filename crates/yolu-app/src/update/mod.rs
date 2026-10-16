@@ -30,7 +30,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, TryRecvError};
 use std::sync::Arc;
 
-use egui::Vec2;
 use yolu_update::{
     merge_channels, release_page, sha256, Asset, AvailableUpdate, Error, Transport, UpdateClient,
     Version, BETA_UPDATER_URL, LINUX_ARCHIVE, LINUX_ARM_ARCHIVE, MACOS_ARCHIVE, UPDATER_URL,
@@ -203,7 +202,6 @@ pub struct UpdateState {
     config: Option<PathBuf>,
     /// 初回の問いを出している。
     asking: bool,
-    pub(crate) ask_offset: Vec2,
     transport: Factory,
     staging: Option<PathBuf>,
     launcher: Launcher,
@@ -217,7 +215,6 @@ pub struct UpdateState {
     ready_open: bool,
     /// 別の起動が動いていて、更新を始められなかった（準備のウィンドウが理由を出す。押し直すか「あとで」で消える）。
     pub(crate) ready_blocked: bool,
-    pub(crate) ready_offset: Vec2,
     /// 保存してから入れる、の保存の結果待ち。
     after_save: bool,
     /// 更新のために終わる（終了の確かめを聞き直さない）。
@@ -267,7 +264,6 @@ impl UpdateState {
             beta: false,
             config: None,
             asking: false,
-            ask_offset: Vec2::ZERO,
             transport: Arc::new(|link| Box::new(HttpTransport::new(link))),
             staging: launch::staging_dir(),
             launcher: Arc::new(launch::run_installer),
@@ -279,7 +275,6 @@ impl UpdateState {
             ready_wanted: false,
             ready_open: false,
             ready_blocked: false,
-            ready_offset: Vec2::ZERO,
             after_save: false,
             quitting: false,
         }

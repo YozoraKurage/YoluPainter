@@ -269,9 +269,7 @@ mod tests {
         if mode != "no" {
             state.services.recovery.set_space_probe(Some(space_probe()));
             state
-                .services
-                .recovery
-                .enable(
+                .recovery_enable(
                     dir.join("recovery"),
                     RecoverySettings {
                         interval_seconds: 3600,
@@ -405,15 +403,9 @@ mod tests {
     fn offered_rows(root: &Path) -> usize {
         let mut next = AppState::new_in(64, 64, Lang::En);
         next.services.recovery.set_space_probe(Some(space_probe()));
-        next.services
-            .recovery
-            .enable(root.to_path_buf(), RecoverySettings::default())
+        next.recovery_enable(root.to_path_buf(), RecoverySettings::default())
             .unwrap();
-        next.services
-            .recovery
-            .window
-            .as_ref()
-            .map_or(0, |w| w.rows.len())
+        next.ui.recovery_window.as_ref().map_or(0, |w| w.rows.len())
     }
 
     #[test]
