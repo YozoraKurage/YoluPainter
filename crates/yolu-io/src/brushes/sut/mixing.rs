@@ -8,7 +8,7 @@
 //!
 //! 方式は core の [`MixMode`] へ: 色混ぜ = 混ぜる、色重ね = 重ねる、にじみ = 伸ばす。**値は 1 対 1 で写さず、エンジンの式の値へ換算する**
 //! （[`convert`]）。エンジンの絵の具の量・色延びは「打点ごとの荷の更新の割合」で、CLIP STUDIO のものとは単位が違う（同じ数でも線が違う）。
-//! 換算は、色混ぜ・色重ね・にじみの 3 通りを同じ線（同じ下地の帯の上の直線）で描き比べて決めた。表の元は `docs/BRUSH_IMPORT.md`。
+//! 換算は方式ごとの近似の式（値は 1 対 1 で写らない）。
 
 use yolu_core::brush::{MixBlur, MixMode, MixSpace, MAX_MIX_BLUR, MAX_MIX_CORRECTION};
 use yolu_core::Brush;
@@ -31,7 +31,7 @@ pub(super) struct Converted {
 
 /// 色延びを、エンジンの「打点ごとに荷に残る割合」へ（`exp(−κ · 間隔 / 色延び)`。間隔は直径に対する割合）。色延び 0 は荷を引きずらない。
 /// 荷が下の色を覚えている**距離**が色延びで決まり、打点の間隔によらない形にしてある（打点ごとの割合のまま写すと、間隔を変えただけで引きずる
-/// 距離が変わる）。κ は 1 点の描き比べで当てはめた。
+/// 距離が変わる）。κ は近似の換算の定数。
 fn persistence(kappa: f64, stretch: f64, spacing: f64) -> f64 {
     if stretch <= 0.0 {
         0.0
@@ -40,8 +40,7 @@ fn persistence(kappa: f64, stretch: f64, spacing: f64) -> f64 {
     }
 }
 
-/// 換算（`spacing` はブラシの間隔、直径に対する割合）。式の定数は 1 点の描き比べで当てはめた
-/// （docs/BRUSH_IMPORT.md の表）。ほかの値は、両端（0 と 1）が自然な向きになる形での外挿で、比べていない。
+/// 近似の換算（`spacing` はブラシの間隔、直径に対する割合）。両端（0 と 1）が自然な向きになる形にしてある。
 pub(super) fn convert(
     mode: MixMode,
     space: MixSpace,
@@ -50,7 +49,7 @@ pub(super) fn convert(
     stretch: f64,
     spacing: f64,
 ) -> Converted {
-    // 絵の具濃度は、50 で全部置く・それ未満で薄くなる（外挿。濃度を変えた線とは比べていない）
+    // 絵の具濃度は、50 で全部置く・それ未満で薄くなる（近似）
     let density_dab = (density * 2.0).min(1.0);
     match mode {
         // 色混ぜ: 打点ごとの置く色は、荷（描く色と下の色の記憶の混ざり）にほぼ寄せる。荷に占める描く色の釣り合い（色混ぜの釣り合い
