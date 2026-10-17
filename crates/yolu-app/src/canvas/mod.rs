@@ -153,7 +153,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
         } else if let Some(icon) = app.tool.def().cursor.icon(app, &view, hover) {
             ui.ctx().set_cursor_icon(icon);
         } else if let Some(p) = hover {
-            let radius = (app.brush.radius * view.pixel_size()).max(1.5);
+            let radius = (screen_brush_radius(app, view.pixel_size())).max(1.5);
             painter.circle_stroke(p, radius, Stroke::new(3.0, Color32::from_black_alpha(140)));
             painter.circle_stroke(p, radius, Stroke::new(1.2, Color32::from_white_alpha(230)));
             let model = app.canvas_model_symmetry();
@@ -173,6 +173,15 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
         }
     }
     draw_corner(ui, app, rect, free);
+}
+
+/// ブラシの円の半径（画面の点）。画面上のサイズで指定のブラシは、設定の大きさが画面の点なので、表示倍率に依らない。
+fn screen_brush_radius(app: &AppState, pixel_size: f32) -> f32 {
+    if app.m2.brush.controls.size_by_screen {
+        app.brush.radius
+    } else {
+        app.brush.radius * pixel_size
+    }
 }
 
 /// クローンの元の印（十字）。描いていないあいだは、決めた元の点（クローンのブラシのときだけ）。描いている間は、今写している元の点
@@ -416,11 +425,18 @@ fn begin_stroke(
             app.m2.brush.effect = BrushEffect::Clone { offset };
         }
     }
-    let result = if guided {
-        app.begin_guided_canvas_stroke(layer, eraser, stencil)
-    } else {
-        app.begin_canvas_stroke(layer, eraser, stencil)
-    };
+    // 画面上のサイズで指定のブラシは、始めの表示倍率（画素 1 が画面で何点か）で半径を固める
+    let scale = app
+        .view
+        .view(rect, app.session.doc.width(), app.session.doc.height())
+        .pixel_size() as f64;
+    let result = app.with_stroke_scale(scale, |app| {
+        if guided {
+            app.begin_guided_canvas_stroke(layer, eraser, stencil)
+        } else {
+            app.begin_canvas_stroke(layer, eraser, stencil)
+        }
+    });
     if result.is_err() {
         // 始められなかったときは、決めた offset も戻す（次のストロークの始めで決め直す）
         if let Some((clone, effect)) = restore {
@@ -532,7 +548,12 @@ fn add_point(
             app.canvas.stroke_points += 1;
             // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
             if app.tool.paints() {
-                let radius = app.brush.radius as f64;
+                // 画面上のサイズで指定のブラシは、設定の大きさが画面の点（文書の画素へは今の表示倍率で直す）
+                let radius = if app.m2.brush.controls.size_by_screen {
+                    app.brush.radius as f64 / (view.pixel_size() as f64).max(1e-6)
+                } else {
+                    app.brush.radius as f64
+                };
                 app.note_overlap_canvas(x, y, radius);
             }
         }
@@ -1692,5 +1713,19 @@ mod tests {
             "{kept:?}"
         );
         assert_eq!(app.session.doc.undo_count(), 1);
+    }
+
+    /// ブラシのカーソルの円の半径: 通常は半径 × 画素の画面の大きさ、画面上のサイズで指定のブラシは、表示倍率に依らず設定の大きさ（画面の点）。
+    #[test]
+    fn the_cursor_circle_follows_the_screen_size_brush_at_every_zoom() {
+        let mut app = AppState::new(64, 64);
+        app.brush.radius = 12.0;
+        for pixel_size in [0.5f32, 1.0, 4.0] {
+            assert_eq!(screen_brush_radius(&app, pixel_size), 12.0 * pixel_size);
+        }
+        app.m2.brush.controls.size_by_screen = true;
+        for pixel_size in [0.5f32, 1.0, 4.0] {
+            assert_eq!(screen_brush_radius(&app, pixel_size), 12.0);
+        }
     }
 }

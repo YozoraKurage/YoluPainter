@@ -43,6 +43,7 @@ commands-swap-main-and-sub-colors = メインとサブの色を入れ替え
 commands-default-colors = 初期設定の色
 commands-smaller-brush = ブラシを小さく
 commands-larger-brush = ブラシを大きく
+commands-erase-mode = 消すモード
 commands-projection-handles = 投影のハンドル
 commands-delete-gradient-point = グラデーションの点を削除
 commands-delete-path-point = パスの点を削除

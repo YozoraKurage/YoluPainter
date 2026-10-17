@@ -162,16 +162,16 @@ fn grain() -> PaperTexture {
 #[test]
 fn several_secondary_tips_and_their_flips_match_2d() {
     for (selection, x_rule, y_rule) in [
-        (TipSelection::Sequential, FlipRule::Fixed, FlipRule::Fixed),
+        (TipSelection::Sequential, FlipRule::Off, FlipRule::Off),
         (TipSelection::PingPong, FlipRule::OnFold, FlipRule::Random),
-        (TipSelection::Random, FlipRule::Random, FlipRule::Fixed),
-        (TipSelection::Hold, FlipRule::Fixed, FlipRule::Random),
+        (TipSelection::Random, FlipRule::Random, FlipRule::On),
+        (TipSelection::Hold, FlipRule::Off, FlipRule::Random),
     ] {
         let b = with_new(DualBrush {
             tips: two_tips(),
             selection,
-            flip_x_rule: x_rule,
-            flip_y_rule: y_rule,
+            flip_x: x_rule,
+            flip_y: y_rule,
             ..DualBrush::default()
         });
         let what = format!("複数の筆先 {selection:?} {x_rule:?}/{y_rule:?}");
@@ -225,7 +225,7 @@ fn every_new_item_together_matches_2d() {
     let b = with_new(DualBrush {
         tips: two_tips(),
         selection: TipSelection::PingPong,
-        flip_x_rule: FlipRule::OnFold,
+        flip_x: FlipRule::OnFold,
         darken_overlap: true,
         texture: Some(grain()),
         spray: Some(Spray {

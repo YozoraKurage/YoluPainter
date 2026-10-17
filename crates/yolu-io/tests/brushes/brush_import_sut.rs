@@ -970,39 +970,26 @@ fn the_four_flip_methods_are_carried_for_each_axis() {
     use yolu_core::FlipRule as R;
     let tip = |b: &ImportedBrush| {
         let t = &b.brush.tip;
-        (t.flip_x, t.flip_x_rule, t.flip_y, t.flip_y_rule)
+        (t.flip_x, t.flip_y)
     };
-    for (value, expected) in [
-        (0, (false, R::Fixed)),
-        (1, (true, R::Fixed)),
-        (2, (false, R::Random)),
-        (3, (false, R::OnFold)),
-    ] {
+    for (value, expected) in [(0, R::Off), (1, R::On), (2, R::Random), (3, R::OnFold)] {
         let h = tipped(&[("BrushPatternReverseHorizontal", value)]);
-        assert_eq!(
-            tip(&h),
-            (expected.0, expected.1, false, R::Fixed),
-            "{value}"
-        );
+        assert_eq!(tip(&h), (expected, R::Off), "{value}");
         let v = tipped(&[("BrushPatternReverseVertical", value)]);
-        assert_eq!(
-            tip(&v),
-            (false, R::Fixed, expected.0, expected.1),
-            "{value}"
-        );
+        assert_eq!(tip(&v), (R::Off, expected), "{value}");
         assert_eq!(mapped(&h, SutMapped::TipFlip), value != 0, "{value}");
         assert!(!has(&h, SutNote::TipFlip));
     }
     // 知らない値は反転せずに知らせる
     let odd = tipped(&[("BrushPatternReverseHorizontal", 7)]);
-    assert_eq!(tip(&odd), (false, R::Fixed, false, R::Fixed));
+    assert_eq!(tip(&odd), (R::Off, R::Off));
     assert!(has(&odd, SutNote::TipFlip) && !mapped(&odd, SutMapped::TipFlip));
     // 1 枚の筆先にも、丸い筆先でない限り効く。丸い筆先には写さない（反転しても同じ）
     let round = SutBuilder::new()
         .brush("Round", 1, &[("BrushPatternReverseHorizontal", int(1))])
         .build();
     let round = &ok(&round).brushes[0];
-    assert!(!round.brush.tip.flip_x && !mapped(round, SutMapped::TipFlip));
+    assert!(round.brush.tip.flip_x == R::Off && !mapped(round, SutMapped::TipFlip));
 }
 
 #[test]
@@ -1181,6 +1168,115 @@ fn every_input_of_an_influence_is_mapped_with_its_minimum() {
     }
     assert_eq!(b.unrepresented.len(), 2, "{:?}", b.unrepresented);
     assert_eq!(b.brush.tip.roundness, 1.0);
+}
+
+/// 影響元の BLOB の 11 番目の整数（傾きの最大値、%）を書き換える（頭が 44 バイト以上のとき）。
+fn with_tilt_max(mut bytes: Vec<u8>, percent: u32) -> Vec<u8> {
+    bytes[40..44].copy_from_slice(&percent.to_be_bytes());
+    bytes
+}
+
+fn tilt_brush(bytes: Vec<u8>) -> ImportedBrush {
+    let file = SutBuilder::new()
+        .brush("Tilt", 1, &[("BrushSizeEffector", blob(bytes))])
+        .build();
+    ok(&file).brushes.remove(0)
+}
+
+#[test]
+fn the_tilt_maximum_is_read_from_the_eleventh_integer_of_the_influence() {
+    let tilt = 0x20u32;
+    let rising = [(0.0, 0.0), (1.0, 1.0)];
+    // 傾きの曲線を決められない注記は、このテストの関心の外なので、曲線を持たせて出さない。
+    // 60%: 傾きの応えの最大値になる（最小値 25% は変わらない）。曲線を持っていても読める
+    let curve = [(0.0, 0.0), (0.5, 0.8), (1.0, 1.0)];
+    for tilt_curve in [Some(&rising[..]), Some(&curve[..])] {
+        let b = tilt_brush(with_tilt_max(
+            effector_full(44, tilt, [0, 25, 0, 0], None, tilt_curve),
+            60,
+        ));
+        let r = &b.brush.influences.size.tilt.response;
+        assert!(b.brush.influences.size.tilt.on);
+        assert_eq!((r.min(), r.max()), (0.25, 0.6));
+        assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+        // 曲線は直立を入力 1 へ反転して持つので、上がりの曲線は 入力 0 で最大値・入力 1 で最小値 になる。応えは 最小値 + (最大値 − 最小値) × 曲線
+        assert!((r.apply(0.0) - 0.6).abs() < 1e-9 && (r.apply(1.0) - 0.25).abs() < 1e-9);
+        if tilt_curve == Some(&curve[..]) {
+            assert!((r.apply(0.5) - (0.25 + 0.35 * 0.8)).abs() < 1e-9);
+        }
+    }
+    // 100%: 既定のまま（知らせない）。0 は頭の 0 埋めと見分けられないので、読まずに 100% のまま（知らせない）
+    for percent in [100, 0] {
+        let b = tilt_brush(with_tilt_max(
+            effector_full(44, tilt, [0, 25, 0, 0], None, Some(&rising)),
+            percent,
+        ));
+        assert_eq!(
+            b.brush.influences.size.tilt.response.max(),
+            1.0,
+            "{percent}"
+        );
+        assert!(
+            b.unrepresented.is_empty(),
+            "{percent}: {:?}",
+            b.unrepresented
+        );
+    }
+    // 100% を超える値・11 番目の整数の無い頭（40 バイト）は、100% にして知らせる
+    for bytes in [
+        with_tilt_max(
+            effector_full(44, tilt, [0, 25, 0, 0], None, Some(&rising)),
+            150,
+        ),
+        effector(40, tilt, 0, &[]),
+    ] {
+        let b = tilt_brush(bytes);
+        assert!(b.brush.influences.size.tilt.on);
+        assert_eq!(b.brush.influences.size.tilt.response.max(), 1.0);
+        assert!(
+            has(&b, SutNote::TiltMax(SutTarget::Size)),
+            "{:?}",
+            b.unrepresented
+        );
+    }
+    // 傾きを使わない影響元は、最大値を読まない（知らせない）
+    let b = tilt_brush(with_tilt_max(
+        effector_full(44, 0x10, [30, 0, 0, 0], None, None),
+        150,
+    ));
+    assert!(!b.brush.influences.size.tilt.on && b.unrepresented.is_empty());
+    // 最大値は筆圧・速さ・ランダムの応えには入らない
+    assert_eq!(b.brush.influences.size.pressure.response.max(), 1.0);
+}
+
+#[test]
+fn the_size_on_screen_column_turns_on_the_brush_that_is_sized_on_the_screen() {
+    for (value, on) in [(1, true), (0, false)] {
+        let file = SutBuilder::new()
+            .brush(
+                "Screen",
+                1,
+                &[
+                    ("BrushSize", real(40.0)),
+                    ("BrushSizeSyncViewScale", int(value)),
+                ],
+            )
+            .build();
+        let b = &ok(&file).brushes[0];
+        assert_eq!(b.brush.controls.size_by_screen, on, "{value}");
+        assert_eq!(b.mapped.contains(&SutMapped::SizeByScreen), on, "{value}");
+        assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+        assert_eq!(
+            b.brush.base.radius, 20.0,
+            "直径 40 → 半径 20（値は変えない）"
+        );
+    }
+    // 列の無いファイルは、切のまま
+    let file = SutBuilder::new()
+        .brush("Plain", 1, &[("BrushSize", real(40.0))])
+        .build();
+    let b = &ok(&file).brushes[0];
+    assert!(!b.brush.controls.size_by_screen && !b.mapped.contains(&SutMapped::SizeByScreen));
 }
 
 #[test]
@@ -1393,6 +1489,7 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::CurveSimplified(SutTarget::Opacity, SutInput::Pressure),
         SutNote::CurveSimplified(SutTarget::MixDensity, SutInput::Tilt),
         SutNote::TiltCurve(SutTarget::Flow),
+        SutNote::TiltMax(SutTarget::Size),
         SutNote::StartEndDetail,
         SutNote::StabilizerStrength,
         SutNote::ThicknessDirection,
@@ -4189,12 +4286,11 @@ fn the_secondary_repeat_methods_and_flips_use_the_main_brushs_table() {
             ("DualPatternReverseVertical", 3 - value),
         ]);
         let (t, d) = (&main.brush.tip, dual_of(&dual));
-        assert_eq!(
-            (d.flip_x, d.flip_x_rule, d.flip_y, d.flip_y_rule),
-            (t.flip_x, t.flip_x_rule, t.flip_y, t.flip_y_rule),
-            "{value}"
+        assert_eq!((d.flip_x, d.flip_y), (t.flip_x, t.flip_y), "{value}");
+        assert!(
+            dual.brush.tip.flip_x == yolu_core::FlipRule::Off
+                && dual.brush.tip.flip_y == yolu_core::FlipRule::Off
         );
-        assert!(!dual.brush.tip.flip_x && !dual.brush.tip.flip_y);
     }
     // 知らない値は、ランダム・反転なしにして知らせる
     for columns in [
@@ -4204,7 +4300,7 @@ fn the_secondary_repeat_methods_and_flips_use_the_main_brushs_table() {
         let b = dual_tipped(&columns);
         let d = dual_of(&b);
         assert_eq!(d.selection, yolu_core::TipSelection::Random);
-        assert!(!d.flip_x && d.flip_x_rule == yolu_core::FlipRule::Fixed);
+        assert!(d.flip_x == yolu_core::FlipRule::Off);
         assert!(
             has(&b, SutNote::DualApprox(SutDualNote::TipRules)),
             "{columns:?}"

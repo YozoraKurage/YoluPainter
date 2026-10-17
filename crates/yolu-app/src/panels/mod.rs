@@ -5,6 +5,7 @@ pub mod brush_catalog;
 pub mod brush_clipstudio;
 pub mod brush_detail;
 pub mod brush_props;
+pub mod brush_rows;
 pub mod brushes;
 pub mod channels;
 pub mod color;

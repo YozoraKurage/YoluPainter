@@ -32,29 +32,32 @@ pub const STRAIGHT: [CurvePoint; 2] =
 /// 曲線の点の数の上限。
 pub const MAX_CURVE_POINTS: usize = Curve::MAX_POINTS;
 
-/// 入力 1 つの応え（最小値と曲線）。作るときに検査するので、持っている値はいつも範囲の中。
+/// 入力 1 つの応え（最小値・最大値・曲線）。作るときに検査するので、持っている値はいつも範囲の中。
 #[derive(Clone, Debug, PartialEq)]
 pub struct InputResponse {
     min: f64,
+    /// 入力 1 のときの係数（0〜1。既定 1）。傾きの影響元の「最大値」。
+    max: f64,
     /// 直線でない曲線（直線は None）。
     curve: Option<Curve>,
 }
 
 impl Default for InputResponse {
-    /// 最小値 0・直線（入力をそのまま使う）。
+    /// 最小値 0・最大値 1・直線（入力をそのまま使う）。
     fn default() -> Self {
         InputResponse::IDENTITY
     }
 }
 
 impl InputResponse {
-    /// 最小値 0・直線（入力をそのまま返す）。
+    /// 最小値 0・最大値 1・直線（入力をそのまま返す）。
     pub const IDENTITY: InputResponse = InputResponse {
         min: 0.0,
+        max: 1.0,
         curve: None,
     };
 
-    /// 最小値（0〜1）と曲線の点（空か 2 点の直線は直線）から作る。範囲外・有限でない値・形の合わない曲線は断る。
+    /// 最小値（0〜1）と曲線の点（空か 2 点の直線は直線）から作る。最大値は 1。範囲外・有限でない値・形の合わない曲線は断る。
     pub fn new(min: f64, curve: Vec<CurvePoint>) -> Result<InputResponse, CoreError> {
         InputResponse::build(min, curve, 0.0)
     }
@@ -71,52 +74,73 @@ impl InputResponse {
         } else {
             Curve::new(curve).map_err(|_| CoreError::InvalidArgument(Reason::InputCurveRange))?
         };
-        InputResponse::build_from_curve(min, curve, lo)
+        InputResponse::assemble(min, 1.0, curve, lo)
     }
 
-    /// 最小値（0〜1）と、検査済みの曲線から作る（編集の部品が返した曲線をそのまま入れる口。直線は直線として扱う）。
+    /// 最小値（0〜1）と、検査済みの曲線から作る（編集の部品が返した曲線をそのまま入れる口。直線は直線として扱う。最大値は 1）。
     pub fn from_curve(min: f64, curve: Curve) -> Result<InputResponse, CoreError> {
-        InputResponse::build_from_curve(min, curve, 0.0)
+        InputResponse::assemble(min, 1.0, curve, 0.0)
     }
 
-    fn build_from_curve(min: f64, curve: Curve, lo: f64) -> Result<InputResponse, CoreError> {
-        require_finite(min, Reason::InputMinimum)?;
+    /// 最小値（lo〜1）・最大値（0〜1）・検査済みの曲線から作る。
+    fn assemble(min: f64, max: f64, curve: Curve, lo: f64) -> Result<InputResponse, CoreError> {
+        require_finite(min, Reason::InputBound)?;
         if !(lo..=1.0).contains(&min) {
             return Err(CoreError::InvalidArgument(if lo < 0.0 {
                 Reason::InputMinimumSignedRange
             } else {
-                Reason::InputMinimumRange
+                Reason::InputBoundRange
             }));
+        }
+        require_finite(max, Reason::InputBound)?;
+        if !(0.0..=1.0).contains(&max) {
+            return Err(CoreError::InvalidArgument(Reason::InputBoundRange));
         }
         Ok(InputResponse {
             min,
+            max,
             curve: (!curve.is_identity()).then_some(curve),
         })
     }
 
-    /// 最小値だけを変えた写し（曲線はそのまま。最小値は 0〜1）。
+    /// 最小値だけを変えた写し（曲線と最大値はそのまま。最小値は 0〜1）。
     pub fn with_min(&self, min: f64) -> Result<InputResponse, CoreError> {
-        InputResponse::new(min, self.curve().to_vec())
+        InputResponse::assemble(min, self.max, self.curve_shape(), 0.0)
     }
 
-    /// 最小値だけを変えた写し（曲線はそのまま。最小値は −1〜1。色相・彩度・明度の影響元）。
+    /// 最小値だけを変えた写し（曲線と最大値はそのまま。最小値は −1〜1。色相・彩度・明度の影響元）。
     pub fn with_min_signed(&self, min: f64) -> Result<InputResponse, CoreError> {
-        InputResponse::new_signed(min, self.curve().to_vec())
+        InputResponse::assemble(min, self.max, self.curve_shape(), -1.0)
     }
 
-    /// 曲線だけを変えた写し（最小値はそのまま。負の最小値も通る）。
+    /// 最大値だけを変えた写し（最小値と曲線はそのまま。最大値は 0〜1。傾きの影響元の「最大値」: 係数は 最小値 + (最大値 − 最小値) × 曲線(x)）。
+    pub fn with_max(&self, max: f64) -> Result<InputResponse, CoreError> {
+        InputResponse::assemble(self.min, max, self.curve_shape(), -1.0)
+    }
+
+    /// 曲線だけを変えた写し（最小値と最大値はそのまま。負の最小値も通る）。
     pub fn with_curve(&self, curve: Vec<CurvePoint>) -> Result<InputResponse, CoreError> {
-        InputResponse::build(self.min, curve, -1.0)
+        let curve = if curve.is_empty() {
+            Curve::identity()
+        } else {
+            Curve::new(curve).map_err(|_| CoreError::InvalidArgument(Reason::InputCurveRange))?
+        };
+        InputResponse::assemble(self.min, self.max, curve, -1.0)
     }
 
-    /// 検査済みの曲線へ差し替えた写し（最小値はそのまま。編集の部品が返した曲線を入れる）。
+    /// 検査済みの曲線へ差し替えた写し（最小値と最大値はそのまま。編集の部品が返した曲線を入れる）。
     pub fn with_curve_shape(&self, curve: Curve) -> Result<InputResponse, CoreError> {
-        InputResponse::build_from_curve(self.min, curve, -1.0)
+        InputResponse::assemble(self.min, self.max, curve, -1.0)
     }
 
     /// 入力 0 のときの係数（0〜1）。
     pub fn min(&self) -> f64 {
         self.min
+    }
+
+    /// 入力 1 のときの係数（0〜1。既定 1）。
+    pub fn max(&self) -> f64 {
+        self.max
     }
 
     /// 曲線の点（直線は空）。
@@ -137,19 +161,19 @@ impl InputResponse {
         }
     }
 
-    /// 最小値 0・直線か（このとき [`InputResponse::apply`] は入力をそのまま返す）。
+    /// 最小値 0・最大値 1・直線か（このとき [`InputResponse::apply`] は入力をそのまま返す）。
     pub fn is_identity(&self) -> bool {
-        self.min == 0.0 && self.curve.is_none()
+        self.min == 0.0 && self.max == 1.0 && self.curve.is_none()
     }
 
     /// 持っている値を確かめ直す（作るときに検査するので、ふつうは通る。検査を通らない値は作れない）。
     pub fn validate(&self) -> Result<(), CoreError> {
-        InputResponse::new(self.min, self.curve().to_vec()).map(|_| ())
+        InputResponse::assemble(self.min, self.max, self.curve_shape(), 0.0).map(|_| ())
     }
 
     /// [`InputResponse::validate`] の、最小値が −1〜1 の形（色相・彩度・明度の影響元）。
     pub fn validate_signed(&self) -> Result<(), CoreError> {
-        InputResponse::new_signed(self.min, self.curve().to_vec()).map(|_| ())
+        InputResponse::assemble(self.min, self.max, self.curve_shape(), -1.0).map(|_| ())
     }
 
     /// 入力 x（0〜1）の係数。恒等なら x そのもの。
@@ -163,10 +187,15 @@ impl InputResponse {
             Some(curve) => curve.value_unchecked(p),
             None => p,
         };
-        self.min + (1.0 - self.min) * shaped
+        if self.max == 1.0 {
+            // 最大値が 1 の応えは、最大値を持つ前の式のまま（浮動小数の演算も同じ）
+            self.min + (1.0 - self.min) * shaped
+        } else {
+            self.min + (self.max - self.min) * shaped
+        }
     }
 
-    /// 最小値と曲線の点を、画面の精度（f32）に丸めた写し（保存して読み戻しても同じ値になる形）。丸めて範囲を外れるときは元のまま。
+    /// 最小値・最大値と曲線の点を、画面の精度（f32）に丸めた写し（保存して読み戻しても同じ値になる形）。丸めて範囲を外れるときは元のまま。
     pub fn rounded_to_f32(&self) -> InputResponse {
         let f = |v: f64| v as f32 as f64;
         let points = self
@@ -177,7 +206,9 @@ impl InputResponse {
                 y: f(p.y),
             })
             .collect();
-        InputResponse::new_signed(f(self.min), points).unwrap_or_else(|_| self.clone())
+        InputResponse::new_signed(f(self.min), points)
+            .and_then(|r| r.with_max(f(self.max)))
+            .unwrap_or_else(|_| self.clone())
     }
 }
 

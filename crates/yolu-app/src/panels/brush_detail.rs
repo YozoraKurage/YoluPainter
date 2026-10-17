@@ -17,7 +17,7 @@ use crate::ui::window::{self, Spec};
 const WIDTH: f32 = 640.0;
 const HEIGHT: f32 = 540.0;
 const SIDEBAR: f32 = 168.0;
-const CATEGORY_HEIGHT: f32 = 30.0;
+const CATEGORY_HEIGHT: f32 = 22.0;
 const SAMPLE_HEIGHT: f32 = 62.0;
 const TITLE_HEIGHT: f32 = 26.0;
 
@@ -36,7 +36,7 @@ fn sidebar(ui: &mut Ui, app: &mut AppState, pane: Rect) {
         pane.bottom(),
         t::BORDER,
     );
-    let current = app.brushes.ui.detail.category;
+    let current = app.brushes.ui.detail.category.first_page();
     for (i, category) in Category::ALL.iter().enumerate() {
         let row = Rect::from_min_size(
             pos2(pane.left(), pane.top() + 6.0 + i as f32 * CATEGORY_HEIGHT),
@@ -48,7 +48,8 @@ fn sidebar(ui: &mut Ui, app: &mut AppState, pane: Rect) {
             ui.make_persistent_id(("brush.category", i)),
             Sense::click(),
         );
-        let on = *category == current;
+        // 見出し（ブラシ形状・2-ブラシ形状）は中身を持たないので、印は付けない（押すと最初の子へ移る）
+        let on = !category.is_group() && *category == current;
         let p = ui.painter();
         if on {
             w::fill(p, row, t::ACCENT_SOFT);
@@ -60,24 +61,25 @@ fn sidebar(ui: &mut Ui, app: &mut AppState, pane: Rect) {
         } else if response.hovered() {
             w::fill(p, row, t::CONTROL_HOVER);
         }
-        w::icon(
-            p,
-            Rect::from_min_size(pos2(row.left() + 8.0, row.top()), vec2(20.0, row.height())),
-            category.icon(),
-            if on { Color32::WHITE } else { t::TEXT_DIM },
-            15.0,
-        );
-        let shown = w::fit(p, name, row.width() - 40.0, t::LABEL);
+        let x = row.left()
+            + 12.0
+            + if category.parent().is_some() {
+                14.0
+            } else {
+                0.0
+            };
+        let shown = w::fit(p, name, row.right() - x - 6.0, t::LABEL);
         w::text(
             p,
-            Rect::from_min_max(pos2(row.left() + 34.0, row.top()), row.max),
+            Rect::from_min_max(pos2(x, row.top()), row.max),
             &shown,
             t::LABEL.with_color(if on { Color32::WHITE } else { t::TEXT }),
             Align::Left,
         );
         response.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, on, name));
-        if response.clicked() && !on {
-            app.brushes.ui.detail.category = *category;
+        let target = category.first_page();
+        if response.clicked() && target != current {
+            app.brushes.ui.detail.category = target;
             app.brushes.ui.detail.scroll = 0.0;
         }
     }
@@ -86,7 +88,7 @@ fn sidebar(ui: &mut Ui, app: &mut AppState, pane: Rect) {
 fn content(ui: &mut Ui, app: &mut AppState, pane: Rect) {
     let lang = app.lang;
     let ctx = ui.ctx().clone();
-    let category = app.brushes.ui.detail.category;
+    let category = app.brushes.ui.detail.category.first_page();
     // 上: 今の設定の見本
     let sample = Rect::from_min_size(
         pos2(pane.left() + 10.0, pane.top() + 10.0),

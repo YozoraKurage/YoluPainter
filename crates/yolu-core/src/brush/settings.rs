@@ -4,7 +4,7 @@
 //!
 //! 既定値はどれも C# の既定値と同じで、`Brush::simple(settings, switches)`（`Brush::from(settings)` は既定の切り替え）は M1 の丸いブラシと
 //! バイト単位で同じストロークになる。
-//! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]。ダブごとのしかたは [`FlipRule`]）、筆先の繰り返し方法の折り返し・
+//! C# に無いもの（拡張）: 筆先の反転（[`TipShape::flip_x`]・[`TipShape::flip_y`]。なし・反転・ランダム・折り返し時に反転の 1 つの列挙 [`FlipRule`]）、筆先の繰り返し方法の折り返し・
 //! 繰り返さない・一巡のみ・ランダムに一巡（[`TipSelection`]）、ダブの重なりの比較暗（[`TipShape::darken_overlap`]）、紙の質感のモード（[`TextureMode`] の
 //! 乗算以外）と回転（[`PaperTexture::angle`]）。どれも既定では C# と同じ。
 
@@ -58,7 +58,37 @@ pub struct Brush {
     pub model_symmetry: Option<Arc<ModelSymmetry>>,
     /// 散布効果（None は無し）。入っている間、描点のダブは [`Jitter::scatter`]・[`Jitter::count`] の代わりに粒子の道を通る（[`Spray`]）。
     pub spray: Option<Spray>,
+    /// ブラシと一緒に覚える、ツールプロパティに出す行の名前（ブラシの詳細の行の名前。何が行かは画面の側が決め、描き方には関わらないので、
+    /// core は文字列を見ない）。None は、そのブラシの既定の行（画面の側が決める。前の形のブラシはこれ）。
+    pub shown_rows: Option<Vec<String>>,
 }
+
+/// 表示倍率（画面の点 ÷ 文書の画素）の下限と上限の外の値は、そのまま割ると半径が範囲を外れるので、ここへ収める。
+const MIN_VIEW_SCALE: f64 = 1.0 / 65536.0;
+const MAX_VIEW_SCALE: f64 = 65536.0;
+
+impl Brush {
+    /// ストロークを始める表示倍率 `scale`（文書の画素 1 が画面で何点か。2D のキャンバスは表示の倍率、3D の面は始めの点の下の
+    /// 画素 1 つの大きさ）での、そのストロークのブラシ。[`Controls::size_by_screen`] が切なら、`self` と同じ。入りなら、ブラシの大きさ（半径）を
+    /// 画面の点の値として、文書の画素へ直した半径（`半径 ÷ scale`。0 より大きく 65536 まで）にする。ストロークの始めに 1 回だけ呼び、その後は
+    /// 渡した値を変えない（途中の表示の拡大・縮小は効かない）。表示倍率の受け渡しはこの 1 か所（補正の「表示倍率による調整」もここの値を使う）。
+    /// 有限でない・0 以下の倍率は 1 とみなす。
+    pub fn at_view_scale(&self, scale: f64) -> Brush {
+        let mut brush = self.clone();
+        if self.controls.size_by_screen {
+            let scale = if scale.is_finite() && scale > 0.0 {
+                scale.clamp(MIN_VIEW_SCALE, MAX_VIEW_SCALE)
+            } else {
+                1.0
+            };
+            brush.base.radius = (self.base.radius / scale).clamp(MIN_VIEW_RADIUS, 65536.0);
+        }
+        brush
+    }
+}
+
+/// 画面上のサイズで指定の半径の下限（文書の画素。ブラシの設定の範囲の「0 より大きい」を満たす小ささ）。
+const MIN_VIEW_RADIUS: f64 = 1e-6;
 
 impl From<BrushSettings> for Brush {
     /// 既定の筆圧の切り替え（大きさと不透明度。[`PressureSwitches::default`]）の簡単なブラシ。
@@ -97,15 +127,28 @@ pub enum TipSelection {
     Shuffle,
 }
 
-/// 筆先の画像の反転のしかた（1 つの軸ごと）。`Fixed` は [`TipShape::flip_x`]・[`TipShape::flip_y`] の値（なし・いつも反転）に従う。
+/// 筆先の画像の反転のしかた（1 つの軸ごと。CLIP STUDIO PAINT の「左右反転」「上下反転」の 4 つの選びに当たる）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FlipRule {
+    /// 反転しない。
     #[default]
-    Fixed,
+    Off,
+    /// いつも反転する。
+    On,
     /// ダブごとに反転するかを乱数で決める。引く乱数は、ほかの乱数の列（ゆらぎ・色・筆先の選び・影響元・デュアル）と別の列。
     Random,
     /// 折り返しで戻る向きのダブだけ反転する（[`TipSelection::PingPong`] のときだけ起こる）。
     OnFold,
+}
+
+impl FlipRule {
+    /// すべての反転のしかた（並びは画面の選びの順）。
+    pub const ALL: [FlipRule; 4] = [
+        FlipRule::Off,
+        FlipRule::On,
+        FlipRule::Random,
+        FlipRule::OnFold,
+    ];
 }
 
 /// 筆先の形（Photoshop の「ブラシ先端のシェイプ」）。
@@ -123,13 +166,10 @@ pub struct TipShape {
     pub roundness: f64,
     /// 線の向きを角度に足す（毛の筆先・カリグラフィー）。
     pub follow_direction: bool,
-    /// 拡張（C# に無い）: 筆先の画像を左右に反転する（回す前の筆先の横の軸で）。丸い筆先には効かない。
-    pub flip_x: bool,
-    /// 拡張（C# に無い）: 筆先の画像を上下に反転する。
-    pub flip_y: bool,
-    /// 拡張: 左右・上下の反転のしかた（`Fixed` は上の `flip_x`・`flip_y` に従う）。
-    pub flip_x_rule: FlipRule,
-    pub flip_y_rule: FlipRule,
+    /// 拡張（C# に無い）: 筆先の画像を左右に反転するしかた（回す前の筆先の横の軸で）。丸い筆先には効かない。
+    pub flip_x: FlipRule,
+    /// 拡張（C# に無い）: 筆先の画像を上下に反転するしかた。
+    pub flip_y: FlipRule,
     /// 拡張: 1 本のストロークの中で、ダブが重なる所は足していかずに、覆いの大きい方を残す（CLIP STUDIO PAINT の「ブラシ先端同士を比較暗で合成」）。
     pub darken_overlap: bool,
 }
@@ -143,10 +183,8 @@ impl Default for TipShape {
             angle: 0.0,
             roundness: 1.0,
             follow_direction: false,
-            flip_x: false,
-            flip_y: false,
-            flip_x_rule: FlipRule::Fixed,
-            flip_y_rule: FlipRule::Fixed,
+            flip_x: FlipRule::Off,
+            flip_y: FlipRule::Off,
             darken_overlap: false,
         }
     }
@@ -399,11 +437,9 @@ pub struct DualBrush {
     pub tips: Vec<Arc<BrushTip>>,
     /// 複数の筆先から 2 つ目のダブごとに選ぶ方法（主の [`TipShape::selection`] と同じ規則・同じ関数）。
     pub selection: TipSelection,
-    /// 筆先の画像の左右・上下の反転と、そのしかた（主の [`TipShape::flip_x`]・[`TipShape::flip_x_rule`] などと同じ意味）。
-    pub flip_x: bool,
-    pub flip_y: bool,
-    pub flip_x_rule: FlipRule,
-    pub flip_y_rule: FlipRule,
+    /// 筆先の画像の左右・上下の反転のしかた（主の [`TipShape::flip_x`]・[`TipShape::flip_y`] と同じ意味）。
+    pub flip_x: FlipRule,
+    pub flip_y: FlipRule,
     /// 先端同士を比較暗で合成。2 つ目の溜まりはいつも画素ごとに覆いの大きい方を残すので、この旗で描き方は変わらない（取り込みと
     /// 保存のために持つ）。
     pub darken_overlap: bool,
@@ -435,10 +471,8 @@ impl Default for DualBrush {
             angle_random: 0.0,
             tips: Vec::new(),
             selection: TipSelection::Random,
-            flip_x: false,
-            flip_y: false,
-            flip_x_rule: FlipRule::Fixed,
-            flip_y_rule: FlipRule::Fixed,
+            flip_x: FlipRule::Off,
+            flip_y: FlipRule::Off,
             darken_overlap: false,
             texture: None,
             spray: None,
@@ -598,6 +632,10 @@ pub struct Controls {
     /// 間隔は公称の大きさで決まるので変わらない。縁のアンチエイリアスの小さなダブの広げと濃さは、この下限の後の大きさに掛かる。切（既定）は
     /// 今までと同じストローク。
     pub min_one_pixel: bool,
+    /// 拡張: 画面上のサイズで指定（CLIP STUDIO PAINT の「画面上のサイズで指定」）。入れると、ブラシの大きさ（半径）は文書の画素でなく画面の点で
+    /// 決める値になり、ストロークの始めに 半径 = 画面上の大きさ ÷ 表示倍率（[`Brush::at_view_scale`]）の文書の画素へ直して固定する（途中で
+    /// 表示を拡大・縮小しても、そのストロークは変えない）。切（既定）は今までと同じストローク。
+    pub size_by_screen: bool,
 }
 
 /// 線の補助（画素。0 は切）。
@@ -916,10 +954,8 @@ impl DualBrush {
     /// 反転のしかた（主の [`TipShape::flip_rules`] と同じ形）。
     pub(crate) fn flip_rules(&self) -> super::plan::FlipRules {
         super::plan::FlipRules {
-            x: self.flip_x_rule,
-            y: self.flip_y_rule,
-            fixed_x: self.flip_x,
-            fixed_y: self.flip_y,
+            x: self.flip_x,
+            y: self.flip_y,
         }
     }
 

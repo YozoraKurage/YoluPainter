@@ -632,13 +632,131 @@ fn headless_a_pressure_response_is_saved_with_the_brush_and_loads_into_the_live_
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// ツールプロパティに出す行（目）・画面上のサイズで指定・傾きの最大値は、ブラシと一緒にバージョン 9 のファイルへ保存し、読み戻す。
+/// 使わないブラシ（と古いバージョンのファイル）は目の印を持たず、既定の行（今までのツールプロパティの行）で開く。
+#[test]
+fn headless_the_eyes_the_screen_size_and_the_tilt_maximum_are_saved_with_the_brush_and_old_files_open_with_the_default_rows(
+) {
+    use yolu_app::brushes::rows::{self, Row};
+    use yolu_app::engine::InputResponse;
+    let dir = temp_dir("eyes");
+    let mut s = AppState::new(64, 64);
+    s.attach_brush_store(dir.clone());
+    select(&mut s, b("chalk"));
+    assert_eq!(
+        s.m2().brush.shown_rows,
+        None,
+        "初めは印を持たない（既定の行）"
+    );
+    for row in Row::ALL {
+        assert_eq!(
+            rows::is_shown(&s.m2().brush, row),
+            row.default_shown(),
+            "{row:?}"
+        );
+    }
+    // 最低 1 ピクセルの目を入れ、直径の目を切る。画面上のサイズで指定と傾きの最大値も
+    rows::set_shown(&mut s.m2_mut().brush, Row::MinOnePixel, true);
+    rows::set_shown(&mut s.m2_mut().brush, Row::Size, false);
+    s.m2_mut().brush.controls.size_by_screen = true;
+    s.m2_mut().brush.influences.size.tilt.on = true;
+    s.m2_mut().brush.influences.size.tilt.response = InputResponse::new(0.2, vec![])
+        .unwrap()
+        .with_max(0.6)
+        .unwrap();
+    s.brush_sync();
+    assert!(
+        s.brush_is_modified(b("chalk")),
+        "目の印も設定の一部（変更あり）"
+    );
+    s.act(Action::Brush(BrushAction::Add));
+    let key = s.brushes().lib.current();
+    let files = store::BrushStore::new(dir.clone());
+    let text = std::fs::read_to_string(files.path_of(user_id(key))).unwrap();
+    assert!(text.starts_with("yolupainter-brush 9\n"), "{text}");
+    // 目の印を持たないブラシは、画面上のサイズ・傾きの最大値も使わないので、古いバージョンのまま
+    select(&mut s, b("blur"));
+    s.act(Action::Brush(BrushAction::Add));
+    let plain = s.brushes().lib.current();
+    let text = std::fs::read_to_string(files.path_of(user_id(plain))).unwrap();
+    assert!(!text.starts_with("yolupainter-brush 9\n"), "{text}");
+    assert!(!text.contains("rows.shown"), "{text}");
+    // 起動し直すと戻る。選べば今の設定に入り、ほかのブラシへ替えると、そのブラシの目になる
+    let mut back = AppState::new(64, 64);
+    back.attach_brush_store(dir.clone());
+    assert!(
+        back.brushes().problems.is_empty(),
+        "{}",
+        back.brushes().problems.len()
+    );
+    select(&mut back, key);
+    assert!(rows::is_shown(&back.m2().brush, Row::MinOnePixel));
+    assert!(!rows::is_shown(&back.m2().brush, Row::Size));
+    assert!(back.m2().brush.controls.size_by_screen);
+    let tilt = &back.m2().brush.influences.size.tilt.response;
+    assert_eq!(
+        (tilt.min(), tilt.max()),
+        (f64::from(0.2f32), f64::from(0.6f32))
+    );
+    assert!(!back.brush_is_modified(key));
+    select(&mut back, plain);
+    assert_eq!(back.m2().brush.shown_rows, None);
+    assert!(rows::is_shown(&back.m2().brush, Row::Size));
+    assert!(!rows::is_shown(&back.m2().brush, Row::MinOnePixel));
+    assert!(!back.m2().brush.controls.size_by_screen);
+    // 元の設定へ戻す: 目も戻る（直径は出ない・最低 1 ピクセルは出る）
+    select(&mut back, key);
+    rows::set_shown(&mut back.m2_mut().brush, Row::Size, true);
+    back.brush_sync();
+    assert!(back.brush_is_modified(key));
+    back.act(Action::Brush(BrushAction::Revert(key)));
+    assert!(!rows::is_shown(&back.m2().brush, Row::Size));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// バージョン 8 までのファイル（目の印の行が無い）は、そのまま読めて、既定の行で開く。ファイルは触らない。
+#[test]
+fn headless_a_version_eight_brush_file_opens_with_the_default_rows_and_is_left_alone() {
+    use yolu_app::brushes::rows::{self, Row};
+    let dir = temp_dir("v8");
+    let body = "yolupainter-brush 8\nname=old\ngroup=pen\ninfluence.size.pressure.on=1\ninfluence.size.pressure.min=0.25\n";
+    std::fs::write(dir.join("brush-00000001.ylbrush"), body).unwrap();
+    let mut s = AppState::new(64, 64);
+    s.attach_brush_store(dir.clone());
+    assert!(
+        s.brushes().problems.is_empty(),
+        "{}",
+        s.brushes().problems.len()
+    );
+    let key = *group_keys(&s, Group::Pen)
+        .iter()
+        .find(|k| matches!(k, BrushKey::User(_)))
+        .expect("読めた");
+    select(&mut s, key);
+    assert_eq!(s.m2().brush.shown_rows, None);
+    for row in Row::ALL {
+        assert_eq!(
+            rows::is_shown(&s.m2().brush, row),
+            row.default_shown(),
+            "{row:?}"
+        );
+    }
+    assert!(!s.m2().brush.controls.size_by_screen);
+    assert!(!s.brush_is_modified(key));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("brush-00000001.ylbrush")).unwrap(),
+        body
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_knows_version_one() {
     // バージョン 1 しか読めない古いアプリは、バージョン 2 のファイルを「新しい形式」として理由つきで読み飛ばす（このアプリの読み手で、まだ無いバージョン 9 を同じ形で確かめる）
     let dir = temp_dir("future-version");
     std::fs::write(
         dir.join("brush-00000001.ylbrush"),
-        "yolupainter-brush 9\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 10\nname=future\ngroup=pen\npressure.size.min=0.5\n",
     )
     .unwrap();
     let mut s = AppState::new(64, 64);
@@ -650,7 +768,7 @@ fn headless_a_brush_with_a_pressure_response_is_left_alone_by_an_app_that_only_k
     ));
     assert_eq!(
         std::fs::read_to_string(dir.join("brush-00000001.ylbrush")).unwrap(),
-        "yolupainter-brush 9\nname=future\ngroup=pen\npressure.size.min=0.5\n",
+        "yolupainter-brush 10\nname=future\ngroup=pen\npressure.size.min=0.5\n",
         "触らない"
     );
     std::fs::remove_dir_all(dir).unwrap();
@@ -673,7 +791,7 @@ fn headless_broken_brush_files_are_skipped_and_the_reason_is_shown_in_both_langu
     .unwrap();
     std::fs::write(
         folder.join("brush-00000065.ylbrush"),
-        "yolupainter-brush 9\nname=future\n",
+        "yolupainter-brush 10\nname=future\n",
     )
     .unwrap();
     let newer = std::fs::read(folder.join("brush-00000065.ylbrush")).unwrap();
@@ -761,7 +879,7 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
     let good = s.brushes().lib.current();
     assert_eq!(user_id(good), 1);
     // 読めたブラシの番号のすぐ後ろに、新しい版・壊れた・大きすぎる・フォルダの 3 種類を置く
-    let newer = b"yolupainter-brush 9\nname=future\n".to_vec();
+    let newer = b"yolupainter-brush 10\nname=future\n".to_vec();
     std::fs::write(dir.join("brush-00000002.ylbrush"), &newer).unwrap();
     std::fs::write(dir.join("brush-00000003.ylbrush"), "ごみ").unwrap();
     std::fs::write(dir.join("brush-00000004.ylbrush"), vec![b'a'; 70_000]).unwrap();
@@ -798,7 +916,7 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
     let next = taken.last().unwrap() + 1;
     std::fs::write(
         dir.join(format!("brush-{next:08x}.ylbrush")),
-        "yolupainter-brush 9\nname=late\n",
+        "yolupainter-brush 10\nname=late\n",
     )
     .unwrap();
     back.act(Action::Brush(BrushAction::Add));
@@ -806,7 +924,7 @@ fn headless_a_new_brush_never_takes_the_number_of_a_file_that_was_not_read() {
     assert_eq!(id, next + 1, "置かれたファイルを飛ばす");
     assert_eq!(
         std::fs::read(dir.join(format!("brush-{next:08x}.ylbrush"))).unwrap(),
-        b"yolupainter-brush 9\nname=late\n"
+        b"yolupainter-brush 10\nname=late\n"
     );
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -68,10 +68,15 @@ pub enum Gap {
     PostCorrection,
     VectorTools,
     TipFlip,
+    TiltMax,
+    SettingsTable,
+    AntiAliasing,
+    LengthUnit,
+    IntervalType,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 52] = [
+    pub const ALL: [Gap; 57] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -124,6 +129,11 @@ impl Gap {
         Gap::PostCorrection,
         Gap::VectorTools,
         Gap::TipFlip,
+        Gap::TiltMax,
+        Gap::SettingsTable,
+        Gap::AntiAliasing,
+        Gap::LengthUnit,
+        Gap::IntervalType,
     ];
 
     /// ファイルに書く名前。
@@ -177,6 +187,11 @@ impl Gap {
             Gap::BlendMode => "blend-mode",
             Gap::PressureCurve => "pressure-curve",
             Gap::TiltCurve => "tilt-curve",
+            Gap::TiltMax => "tilt-max",
+            Gap::SettingsTable => "settings-table",
+            Gap::AntiAliasing => "anti-aliasing",
+            Gap::LengthUnit => "length-unit",
+            Gap::IntervalType => "interval-type",
             Gap::StartEndDetail => "start-end-detail",
             Gap::StabilizerStrength => "stabilizer-strength",
             Gap::PostCorrection => "post-correction",
@@ -239,6 +254,11 @@ impl Gap {
             Gap::BlendMode => lang.t("brushes-blend-mode"),
             Gap::PressureCurve => lang.t("brushes-pressure-curve"),
             Gap::TiltCurve => lang.t("brushes-tilt-curve"),
+            Gap::TiltMax => lang.t("brushes-tilt-max"),
+            Gap::SettingsTable => lang.t("brushes-settings-table"),
+            Gap::AntiAliasing => lang.t("brushes-anti-aliasing"),
+            Gap::LengthUnit => lang.t("brushes-length-unit"),
+            Gap::IntervalType => lang.t("brushes-interval-type"),
             Gap::StartEndDetail => lang.t("brushes-start-end-speed-and-ratio"),
             Gap::StabilizerStrength => lang.t("brushes-stabilization-strength"),
             Gap::PostCorrection => lang.t("brushes-post-correction"),
@@ -323,12 +343,13 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::CurveSimplified(_, SutInput::Tilt) => Gap::TiltCurve,
             SutNote::CurveSimplified(..) => Gap::PressureCurve,
             SutNote::TiltCurve(_) => Gap::TiltCurve,
+            SutNote::TiltMax(_) => Gap::TiltMax,
             SutNote::StartEndDetail => Gap::StartEndDetail,
             SutNote::StabilizerStrength => Gap::StabilizerStrength,
-            SutNote::SettingsMissing
-            | SutNote::AntiAliasing(_)
-            | SutNote::LengthUnit
-            | SutNote::IntervalType(_) => Gap::PresetSettings,
+            SutNote::SettingsMissing => Gap::SettingsTable,
+            SutNote::AntiAliasing(_) => Gap::AntiAliasing,
+            SutNote::LengthUnit => Gap::LengthUnit,
+            SutNote::IntervalType(_) => Gap::IntervalType,
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
             // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
@@ -341,7 +362,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 23] = [
+pub const MAPPED_ALL: [SutMapped; 24] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -353,6 +374,7 @@ pub const MAPPED_ALL: [SutMapped; 23] = [
     SutMapped::AngleSource,
     SutMapped::ThicknessDirection,
     SutMapped::MinOnePixel,
+    SutMapped::SizeByScreen,
     SutMapped::ColorMixing,
     SutMapped::AntiAliasing,
     SutMapped::Speed,
@@ -381,6 +403,7 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::AngleSource => "angle-source",
         SutMapped::ThicknessDirection => "thickness-direction",
         SutMapped::MinOnePixel => "min-one-pixel",
+        SutMapped::SizeByScreen => "size-by-screen",
         SutMapped::ColorMixing => "color-mixing",
         SutMapped::AntiAliasing => "anti-aliasing",
         SutMapped::Speed => "speed",
@@ -477,6 +500,24 @@ mod tests {
             );
         }
         assert_eq!(Gap::from_id("no-such-gap"), None);
+    }
+
+    #[test]
+    fn settings_notes_of_a_sut_fold_to_their_own_items_and_the_old_name_is_still_read() {
+        let one = |note| of_note(&Unrepresented::ClipStudio(note));
+        assert_eq!(one(SutNote::SettingsMissing), Some(Gap::SettingsTable));
+        assert_eq!(one(SutNote::AntiAliasing(9.0)), Some(Gap::AntiAliasing));
+        assert_eq!(one(SutNote::LengthUnit), Some(Gap::LengthUnit));
+        assert_eq!(one(SutNote::IntervalType(9.0)), Some(Gap::IntervalType));
+        // ABR の読めないブラシの設定は、前の名前の項目のまま。前のファイルの `preset-settings` も読み続ける
+        assert_eq!(
+            of_note(&Unrepresented::PresetsUnreadable(
+                yolu_io::brushes::Fault::NotPng
+            )),
+            Some(Gap::PresetSettings)
+        );
+        assert_eq!(Gap::from_id("preset-settings"), Some(Gap::PresetSettings));
+        assert_eq!(Gap::PresetSettings.id(), "preset-settings");
     }
 
     #[test]

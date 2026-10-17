@@ -96,13 +96,14 @@ fn draw_late_options(case: &mut Case, r: &mut Rng) {
         ]);
         let rule = |r: &mut Rng| {
             r.pick(&[
-                crate::FlipRule::Fixed,
+                crate::FlipRule::Off,
+                crate::FlipRule::On,
                 crate::FlipRule::Random,
                 crate::FlipRule::OnFold,
             ])
         };
-        case.brush.tip.flip_x_rule = rule(r);
-        case.brush.tip.flip_y_rule = rule(r);
+        case.brush.tip.flip_x = rule(r);
+        case.brush.tip.flip_y = rule(r);
     }
 }
 
@@ -149,8 +150,15 @@ fn random_case(seed: u64) -> Case {
             "rim",
             "rounded-square",
         ]));
-        b.tip.flip_x = r.chance(0.3);
-        b.tip.flip_y = r.chance(0.3);
+        let flip = |on: bool| {
+            if on {
+                crate::FlipRule::On
+            } else {
+                crate::FlipRule::Off
+            }
+        };
+        b.tip.flip_x = flip(r.chance(0.3));
+        b.tip.flip_y = flip(r.chance(0.3));
     }
     if r.chance(0.3) {
         b.jitter.size = 0.3;

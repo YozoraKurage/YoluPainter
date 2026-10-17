@@ -43,6 +43,7 @@ commands-swap-main-and-sub-colors = Swap Main and Sub Colors
 commands-default-colors = Default Colors
 commands-smaller-brush = Smaller Brush
 commands-larger-brush = Larger Brush
+commands-erase-mode = Erase Mode
 commands-projection-handles = Projection Handles
 commands-delete-gradient-point = Delete Gradient Point
 commands-delete-path-point = Delete Path Point

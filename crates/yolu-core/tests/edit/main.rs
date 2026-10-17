@@ -39,4 +39,5 @@ mod taper_start;
 mod taper_targets;
 mod text_layer;
 mod tip_rules;
+mod view_scale;
 mod warp;

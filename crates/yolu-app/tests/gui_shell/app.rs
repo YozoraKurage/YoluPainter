@@ -506,13 +506,31 @@ fn color_panel_picks_hex_swap_and_wheel() {
 fn properties_tabs_and_pen_toggles() {
     use egui_kittest::kittest::Queryable;
     let mut h = app(1600.0, 900.0, 256);
-    // 筆圧の切り替えは左のサブツールのパネル（ツールプロパティ）にある（オプションバーには直径と不透明度だけ）
+    // 筆圧の使い分けは、左のサブツールのパネル（ツールプロパティ）の行の「影響元」のボタンから開くウィンドウにある（オプションバーには直径と不透明度だけ）
     let in_panel = |r: egui::Rect| r.left() < 390.0 && r.top() > 80.0;
-    let pen = rect_of(&h, "筆圧で直径を変える", in_panel);
-    click(&mut h, pen.center());
+    let button = |h: &egui_kittest::Harness<'_, yolu_app::YoluApp>, n: usize| {
+        let mut found: Vec<egui::Rect> = h
+            .query_all_by_label("影響元")
+            .map(|node| node.rect())
+            .filter(|r| in_panel(*r))
+            .collect();
+        found.sort_by(|a, b| a.top().total_cmp(&b.top()));
+        found[n]
+    };
+    let pressure = |h: &mut egui_kittest::Harness<'_, yolu_app::YoluApp>, row: usize| {
+        let at = button(h, row).center();
+        click(h, at);
+        let window =
+            yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_rows::dynamics_id())
+                .expect("影響元設定のウィンドウ");
+        let toggle = rect_of(h, "筆圧", |r| window.contains(r.center()));
+        click(h, toggle.center());
+    };
+    // 上から 直径・不透明度・流量
+    pressure(&mut h, 0);
     assert!(!h.brush().pressure.size);
-    let flow = rect_of(&h, "筆圧で流量を変える", in_panel);
-    click(&mut h, flow.center());
+    assert!(!h.brush().pressure.flow, "流量は初めは筆圧を使わない");
+    pressure(&mut h, 2);
     assert!(h.brush().pressure.flow);
     // 右のプロパティはレイヤーのタブから始まる。タブはレイヤーとステンシルの 2 つだけ（ブラシのタブも、マテリアルのタブも、筆先の形のアルファの
     // タブも無い。マテリアルは別のパネル、筆先の形は詳細のウィンドウの「形状」）

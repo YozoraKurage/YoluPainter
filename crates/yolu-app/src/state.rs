@@ -552,6 +552,8 @@ pub enum Action {
     DefaultColors,
     BrushSmaller,
     BrushLarger,
+    /// 消すモードを入れる・切る（入っている間は、今のブラシの形のまま消す。ブラシには保存しない）。
+    ToggleEraseMode,
     ToggleColorWheel,
     /// 3D ビューに試しの立方体を読む（3D ビューの空の状態のボタンと試験の口。メニューには置かない）。
     LoadDemoModel,
@@ -686,6 +688,7 @@ impl Action {
             Self::DefaultColors => "DefaultColors",
             Self::BrushSmaller => "BrushSmaller",
             Self::BrushLarger => "BrushLarger",
+            Self::ToggleEraseMode => "ToggleEraseMode",
             Self::ToggleColorWheel => "ToggleColorWheel",
             Self::LoadDemoModel => "LoadDemoModel",
             Self::FrameModel => "FrameModel",
@@ -1322,8 +1325,10 @@ impl AppState {
 
     /// 今のツールで描くブラシの設定（ペンの消しゴムの端なら消す）。
     pub fn stroke_settings(&self, pen_eraser: bool) -> BrushSettings {
-        self.brush
-            .settings(self.color.main, self.tool.erases() || pen_eraser)
+        self.brush.settings(
+            self.color.main,
+            self.tool.erases() || pen_eraser || self.m2.erase_mode,
+        )
     }
 
     /// 操作を当てる（`message` に書かれた文は、前と同じ文でも新しい知らせとして出る）。描いている最中は、表示と色の操作のほかは断る（離した後の残りを塗っている間は、先に確定する）。
@@ -1562,14 +1567,13 @@ impl AppState {
             }
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
             Action::ResetLayout => self.outbox.reset_layout = true,
-            Action::SelectTool(tool) => {
-                // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
-                self.switch_tool(tool, false);
-            }
+            // 描くツールを選んだら、ペイントのモードへ（`switch_to`）
+            Action::SelectTool(tool) => _ = self.switch_tool(tool, false),
             Action::SwapColors => self.color.swap(),
             Action::DefaultColors => self.color.defaults(),
             Action::BrushSmaller => self.brush.radius = (self.brush.radius / 1.15).max(0.5),
             Action::BrushLarger => self.brush.radius = (self.brush.radius * 1.15).min(MAX_RADIUS),
+            Action::ToggleEraseMode => self.m2.erase_mode = !self.m2.erase_mode,
             Action::ToggleColorWheel => self.color.wheel = !self.color.wheel,
             Action::LoadDemoModel => {
                 if stroking {

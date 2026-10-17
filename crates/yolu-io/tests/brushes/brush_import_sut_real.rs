@@ -13,7 +13,7 @@ fn summary(b: &ImportedBrush) -> String {
         "r={:.1} op={:.2} fl={:.2} hd={:.2} sp={:.2} rn={:.2} ang={:.1} tips={} tex={} \
          prs={}{}{} tilt={}{}{} jit_ang={:.2} taper={:.0}/{:.0} stab={:.0} \
          clr=tip{}/sub{:.2}/stroke{}/{} clr_inf={}{}{}{} spray={} spray_inf={}{} \
-         dual={} dual_inf={}{}{}{} dual2={} | notes: {}",
+         dual={} dual_inf={}{}{}{} dual2={} scr={} tilt_max={:.2} | notes: {}",
         s.radius,
         s.opacity,
         s.flow,
@@ -71,13 +71,11 @@ fn summary(b: &ImportedBrush) -> String {
         u8::from(br.influences.dual_spacing.is_on()),
         u8::from(br.influences.dual_thickness.is_on()),
         br.dual.as_ref().map_or("-".to_string(), |d| format!(
-            "tips{}/{:?}/{}{}{:?}{:?}/dk{}/tex{}/spray{}",
+            "tips{}/{:?}/{:?}{:?}/dk{}/tex{}/spray{}",
             d.tips.len(),
             d.selection,
-            u8::from(d.flip_x),
-            u8::from(d.flip_y),
-            d.flip_x_rule,
-            d.flip_y_rule,
+            d.flip_x,
+            d.flip_y,
             u8::from(d.darken_overlap),
             d.texture.as_ref().map_or("-".to_string(), |t| format!(
                 "{:.2}/{:.2}/{:?}/{:.0}",
@@ -91,6 +89,8 @@ fn summary(b: &ImportedBrush) -> String {
                 p.bias
             ))
         )),
+        u8::from(br.controls.size_by_screen),
+        br.influences.size.tilt.response.max(),
         notes.join(", ")
     )
 }

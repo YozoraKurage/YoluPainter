@@ -356,7 +356,7 @@ fn headless_a_sut_is_imported_with_its_tip_pressure_and_the_item_names_it_could_
         (e.baseline.influences.size.pressure.response.min() - 0.2).abs() < 1e-6,
         "保存の精度（f32）に丸まる"
     );
-    // 表せなかった項目は名前の一覧（並びは項目の順）。プレビューの解像度・吹き付け・傾きの曲線（枠の無い頭なので直線にした）
+    // 表せなかった項目は名前の一覧（並びは項目の順）。プレビューの解像度・散布効果・傾きの曲線（枠の無い頭なので直線にした）
     let meta = e.import.as_ref().expect("出どころ");
     assert_eq!(meta.source, "CLIP STUDIO SUT");
     assert_eq!(
@@ -364,7 +364,7 @@ fn headless_a_sut_is_imported_with_its_tip_pressure_and_the_item_names_it_could_
         [Gap::ImageResolution, Gap::Spray, Gap::TiltCurve]
     );
     let names = |lang| -> Vec<&'static str> { meta.gaps.iter().map(|g| g.name(lang)).collect() };
-    assert_eq!(names(Lang::Ja), ["画像の解像度", "吹き付け", "傾きの曲線"]);
+    assert_eq!(names(Lang::Ja), ["画像の解像度", "散布効果", "傾きの曲線"]);
     assert_eq!(names(Lang::En), ["Image resolution", "Spray", "Tilt curve"]);
     // 保存して読み戻しても同じ（筆先の画像は置き場に 1 枚）
     assert_eq!((brush_files(&dir), image_files(&dir)), (1, 1));
@@ -459,13 +459,10 @@ fn headless_a_sut_with_a_dual_brush_and_version_eight_settings_is_saved_as_versi
     // 取り込んだ直後のブラシが、バージョン 8 の鍵の要る設定を全部持っている
     let (t, d) = (&got.tip, got.dual.as_ref().expect("2 つ目"));
     assert_eq!((t.images.len(), t.selection), (2, TipSelection::Hold));
-    assert_eq!(
-        (t.flip_x, t.flip_x_rule, t.flip_y_rule),
-        (false, FlipRule::OnFold, FlipRule::Random)
-    );
+    assert_eq!((t.flip_x, t.flip_y), (FlipRule::OnFold, FlipRule::Random));
     assert!(t.darken_overlap);
     assert_eq!((d.tips.len(), d.selection), (2, TipSelection::Once));
-    assert_eq!(d.flip_x_rule, FlipRule::Random);
+    assert_eq!(d.flip_x, FlipRule::Random);
     assert!(d.darken_overlap && d.texture.is_some() && d.spray.is_some());
     // 書いたファイルはバージョン 8
     assert_eq!(brush_files(&dir), 1);

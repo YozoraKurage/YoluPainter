@@ -1,5 +1,5 @@
 //! 2D のキャンバスと 3D ビューの入力を揃える: 3D の Shift + 押しの直線（マウスもペンも。前の終点から、前が無ければ 45° 刻みの固定）・Ctrl（ペンは描かず、
-//! マウスは描く）・タッチの力が筆圧になること・バケツの近い色・クローンの設定（揃える・全レイヤーから）が 2D と 3D で一つであること。
+//! マウスは描く）・タッチの力が筆圧になること・バケツの近い色・クローンの設定（揃える・全レイヤーを読む）が 2D と 3D で一つであること。
 //! 実際の入力（マウスのイベント・ペンの点・Touch）を流して確かめる。
 use crate::common;
 use crate::common::drive::Drive;
@@ -565,7 +565,7 @@ fn select_clone(h: &mut H) {
 fn open_effect_detail(h: &mut H) {
     let ui = &mut h.brushes_mut().ui;
     ui.detail.open = true;
-    ui.detail.category = yolu_app::brushes::Category::Effect;
+    ui.detail.category = yolu_app::brushes::Category::Ink;
     ui.detail.scroll = 0.0;
     h.run();
 }

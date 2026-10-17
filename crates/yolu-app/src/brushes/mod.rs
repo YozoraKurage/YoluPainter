@@ -13,6 +13,7 @@ pub mod gaps;
 pub mod images;
 pub mod import;
 pub mod krita;
+pub mod rows;
 pub mod sample;
 pub mod store;
 
@@ -30,6 +31,7 @@ use crate::state::{AppState, BrushState, Tool};
 use crate::toolset::{GroupId, SlotId};
 
 pub use gaps::Gap;
+pub use rows::{Category, Row};
 use yolu_io::brushes::SutMapped;
 
 /// 利用者のブラシの数の上限（ファイルとメモリを抑える。起動のときに読むファイルの数の上限と同じ。ABR 1 本のプリセットが
@@ -185,13 +187,15 @@ pub fn canonical(brush: &Brush) -> Brush {
         seed: 0,
         // 混ぜ方が切のブラシは、混ぜの値と絵の具の量・濃さの影響元を持たない（書かないので、読み戻しても同じ形）
         influences: {
-            let mut i = brush.influences.rounded_to_f32();
+            let mut i = tilt_max_only(brush.influences.rounded_to_f32());
             if !brush.mix.is_active() {
                 i.mix_paint = Influence::OFF;
                 i.mix_density = Influence::OFF;
             }
             i
         },
+        // ツールプロパティに出す行の目の印: 知らない名前を落として行の並びにし、初めの形（前のツールプロパティの行）なら持たない
+        shown_rows: rows::normalize(brush.shown_rows.as_deref()),
         mix: if brush.mix.is_active() {
             brush.mix.rounded_to_f32()
         } else {
@@ -235,6 +239,34 @@ pub fn canonical(brush: &Brush) -> Brush {
         }),
         ..brush.clone()
     }
+}
+
+/// 最大値を持てるのは傾きの入力だけ（保存は傾きの最大値だけを書く）。ほかの入力の最大値は 1 にそろえる。
+fn tilt_max_only(mut influences: yolu_core::Influences) -> yolu_core::Influences {
+    use yolu_core::brush::Input;
+    let fix = |influence: &mut Influence| {
+        for input in [Input::Pressure, Input::Speed, Input::Random] {
+            let use_ = influence.input_mut(input);
+            if use_.response.max() != 1.0 {
+                if let Ok(response) = use_.response.with_max(1.0) {
+                    use_.response = response;
+                }
+            }
+        }
+    };
+    for item in yolu_core::brush::Item::ALL {
+        fix(influences.get_mut(item));
+    }
+    for item in yolu_core::ColorItem::ALL {
+        fix(influences.color_mut(item));
+    }
+    for item in yolu_core::SprayItem::ALL {
+        fix(influences.spray_mut(item));
+    }
+    for item in yolu_core::DualItem::ALL {
+        fix(influences.dual_mut(item));
+    }
+    influences
 }
 
 /// 散布効果を保存と同じ f32 の精度に丸める（主と 2 つ目の散布）。
@@ -528,69 +560,6 @@ pub fn clean_name(name: &str) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// 詳細のウィンドウのカテゴリ（今の `brush_props` の全部の欄をこの 11 に分ける）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Category {
-    Shape,
-    Stroke,
-    /// 筆圧（大きさ・不透明度・流量・硬さの、切り替え・最小値・曲線）。
-    Pressure,
-    /// 入り抜き・フェード・ペンの傾き・回転・速さ。
-    Dynamics,
-    Jitter,
-    Texture,
-    Dual,
-    Color,
-    /// 色の混ぜ（厚塗り。混ぜ方・絵の具の量と濃さ・色延び・下地・筆圧）。
-    Mix,
-    Effect,
-}
-
-impl Category {
-    pub const ALL: [Category; 10] = [
-        Category::Shape,
-        Category::Stroke,
-        Category::Pressure,
-        Category::Dynamics,
-        Category::Jitter,
-        Category::Texture,
-        Category::Dual,
-        Category::Color,
-        Category::Mix,
-        Category::Effect,
-    ];
-
-    pub fn name(self, lang: Lang) -> &'static str {
-        match self {
-            Category::Shape => lang.t("brushes-shape"),
-            Category::Stroke => lang.t("brushes-stroke"),
-            Category::Pressure => lang.t("brushes-pen-pressure"),
-            Category::Dynamics => lang.t("brushes-taper-pen"),
-            Category::Jitter => lang.t("brushes-jitter"),
-            Category::Texture => lang.t("brushes-texture"),
-            Category::Dual => lang.t("brushes-dual-brush-2"),
-            Category::Color => lang.t("brushes-color-dynamics"),
-            Category::Mix => lang.t("brushes-color-mixing-2"),
-            Category::Effect => lang.t("brushes-effect"),
-        }
-    }
-
-    pub fn icon(self) -> &'static str {
-        match self {
-            Category::Shape => "shapes",
-            Category::Stroke => "ink_stroke",
-            Category::Pressure => "stylus",
-            Category::Dynamics => "tune",
-            Category::Jitter => "data_scatter",
-            Category::Texture => "texture",
-            Category::Dual => "content_copy",
-            Category::Color => "palette",
-            Category::Mix => "paint_brush",
-            Category::Effect => "blur_on",
-        }
-    }
-}
-
 /// ブラシの詳細のウィンドウの状態（開いているか・カテゴリ・スクロール。位置は `UiState::brushes_detail_offset`）。
 pub struct DetailWindow {
     pub open: bool,
@@ -599,16 +568,22 @@ pub struct DetailWindow {
     pub placed: bool,
     pub scroll: f32,
     pub content: f32,
+    /// 影響元設定のウィンドウを開いている行（開いていなければ None。行が影響元を持つとき、行の右のボタンで開く）。
+    pub dynamics: Option<Row>,
+    /// 影響元設定のウィンドウの初めの位置を決めたか。
+    pub dynamics_placed: bool,
 }
 
 impl Default for DetailWindow {
     fn default() -> Self {
         DetailWindow {
             open: false,
-            category: Category::Shape,
+            category: Category::Size,
             placed: false,
             scroll: 0.0,
             content: 0.0,
+            dynamics: None,
+            dynamics_placed: false,
         }
     }
 }

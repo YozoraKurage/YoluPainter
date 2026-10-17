@@ -727,7 +727,7 @@ fn english_docks_menus_and_layer_kinds_have_no_japanese_gpu() {
         h.run();
         assert_english(&h, category.name(Lang::En), &[]);
     }
-    h.brushes_mut().ui.detail.category = Category::Effect;
+    h.brushes_mut().ui.detail.category = Category::Ink;
     for kind in EffectKind::ALL {
         apply(&mut h, Action::M2Ui(UiOp::Brush(BrushOp::Effect(kind))));
         assert_english(&h, kind.name(Lang::En), &[]);

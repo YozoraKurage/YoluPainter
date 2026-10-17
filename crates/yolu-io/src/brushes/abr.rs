@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yolu_core::{
-    brush::MAX_FADE, Brush, BrushSettings, BrushTip, DualBrush, DualBrushMode, Influences,
-    InputResponse, PaperTexture, PressureSwitches, TextureMode,
+    brush::MAX_FADE, Brush, BrushSettings, BrushTip, DualBrush, DualBrushMode, FlipRule,
+    Influences, InputResponse, PaperTexture, PressureSwitches, TextureMode,
 };
 
 use super::descriptor::{self, Object, Value};
@@ -486,8 +486,8 @@ fn preset(
     b.tip.angle = angle.unwrap_or(0.0).clamp(-180.0, 180.0);
     b.tip.roundness = clamp01(roundness.unwrap_or(100.0), 100.0).max(0.01);
     b.base.spacing = (spacing.unwrap_or(25.0) / 100.0).clamp(0.01, 4.0);
-    b.tip.flip_x = shape.bool("flipX") == Some(true);
-    b.tip.flip_y = shape.bool("flipY") == Some(true);
+    b.tip.flip_x = flip_rule(shape.bool("flipX") == Some(true));
+    b.tip.flip_y = flip_rule(shape.bool("flipY") == Some(true));
 
     if preset.bool("useTipDynamics") == Some(true) {
         let size = preset.object("szVr");
@@ -879,6 +879,15 @@ fn control(
         setting,
         control: ControlKind::from_code(code),
     });
+}
+
+/// 反転の有無（ABR は固定の入切だけ）を筆先の反転の規則にする。
+fn flip_rule(on: bool) -> FlipRule {
+    if on {
+        FlipRule::On
+    } else {
+        FlipRule::Off
+    }
 }
 
 fn clamp01(value: f64, scale: f64) -> f64 {

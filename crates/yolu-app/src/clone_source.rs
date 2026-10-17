@@ -217,6 +217,7 @@ pub fn active(app: &AppState) -> bool {
     app.mode.paints()
         && app.tool.paints()
         && !app.tool.erases()
+        && !app.m2.erase_mode
         && matches!(app.m2.brush.effect, BrushEffect::Clone { .. })
 }
 

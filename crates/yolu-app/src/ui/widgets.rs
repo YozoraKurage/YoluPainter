@@ -988,6 +988,8 @@ pub struct SliderSpec<'a> {
     pub track_inset: f32,
     /// 溝の位置と値の曲線（Unity の `PowerSlider` と同じ: 溝の位置は値の 1/power 乗に比例。1 なら等間隔）。
     pub power: f32,
+    /// テスト・読み上げのための部品の名前。見える名前（`label`）が空で、名前を溝の外に出す行（ブラシの詳細）が付ける。
+    pub access_name: Option<&'a str>,
 }
 
 impl<'a> SliderSpec<'a> {
@@ -1001,7 +1003,13 @@ impl<'a> SliderSpec<'a> {
             enabled: true,
             track_inset: 0.0,
             power: 1.0,
+            access_name: None,
         }
+    }
+    /// 見えない部品の名前（見える名前が空のとき）。
+    pub fn named(mut self, name: &'a str) -> Self {
+        self.access_name = Some(name);
+        self
     }
     pub fn tooltip(mut self, tip: &'a str) -> Self {
         self.tooltip = Some(tip);
@@ -1341,7 +1349,7 @@ pub fn slider(
             text(p, inner, &shown, t::VALUE.with_color(color), Align::Right);
         }
     }
-    let label = spec.label;
+    let label = spec.access_name.unwrap_or(spec.label);
     let current = out.value as f64;
     response.widget_info(|| WidgetInfo::slider(enabled, current, label));
     let _ = with_tooltip(response, spec.tooltip);

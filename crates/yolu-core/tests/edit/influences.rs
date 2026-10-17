@@ -104,6 +104,73 @@ fn a_tilt_minimum_and_curve_set_the_size_like_a_fixed_radius() {
 }
 
 #[test]
+fn a_tilt_maximum_maps_the_tilt_between_the_minimum_and_the_maximum() {
+    let (min, max) = (0.2, 0.7);
+    let response = InputResponse::new(min, vec![])
+        .unwrap()
+        .with_max(max)
+        .unwrap();
+    assert_eq!((response.min(), response.max()), (min, max));
+    let mut b = round();
+    b.influences.size.tilt = InputUse {
+        on: true,
+        response: response.clone(),
+    };
+    // 傾きの量 t のとき 入力 x = 1 − t。係数は 最小値 + (最大値 − 最小値) × x（寝かせきった x=0 で最小値、直立の x=1 で最大値）
+    for tilt in [
+        DVec2::ZERO,
+        DVec2::new(0.6, 0.2),
+        DVec2::new(0.0, 1.4),
+        DVec2::new(1.2, 1.2),
+    ] {
+        let upright = 1.0 - pen_tilt::amount(tilt.x, tilt.y);
+        let mut fixed = round();
+        fixed.base.radius = 10.0 * (min + (max - min) * upright);
+        assert_eq!(
+            dot(&b, 1.0, tilt),
+            dot(&fixed, 1.0, DVec2::ZERO),
+            "{tilt:?}"
+        );
+    }
+    // 直立（傾きなし）は最大値の大きさ。最大値 1 の応えは、最大値を持つ前と同じ画素
+    let mut fixed = round();
+    fixed.base.radius = 10.0 * max;
+    assert_eq!(dot(&b, 1.0, DVec2::ZERO), dot(&fixed, 1.0, DVec2::ZERO));
+    let tilted = DVec2::new(0.6, 0.2);
+    let mut full = round();
+    full.influences.size.tilt = InputUse {
+        on: true,
+        response: InputResponse::new(min, vec![]).unwrap(),
+    };
+    let mut full_max = full.clone();
+    full_max.influences.size.tilt.response = response.with_max(1.0).unwrap();
+    assert_eq!(dot(&full, 1.0, tilted), dot(&full_max, 1.0, tilted));
+    // 最大値は曲線のあとに効く: 係数 = 最小値 + (最大値 − 最小値) × 曲線(x)
+    let curve = vec![
+        yolu_core::generator::CurvePoint { x: 0.0, y: 0.0 },
+        yolu_core::generator::CurvePoint { x: 0.5, y: 0.8 },
+        yolu_core::generator::CurvePoint { x: 1.0, y: 1.0 },
+    ];
+    let shaped = InputResponse::new(min, curve)
+        .unwrap()
+        .with_max(max)
+        .unwrap();
+    let upright = 1.0 - pen_tilt::amount(tilted.x, tilted.y);
+    let mut curved = round();
+    curved.influences.size.tilt = InputUse {
+        on: true,
+        response: shaped.clone(),
+    };
+    let mut fixed = round();
+    fixed.base.radius = 10.0 * shaped.apply(upright);
+    assert_eq!(dot(&curved, 1.0, tilted), dot(&fixed, 1.0, DVec2::ZERO));
+    // 範囲の外・有限でない最大値は作れない
+    for bad in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+        assert!(response.with_max(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
 fn the_hardness_follows_the_tilt_like_a_fixed_hardness() {
     let tilt = DVec2::new(0.0, 0.7);
     let upright = 1.0 - pen_tilt::amount(tilt.x, tilt.y);

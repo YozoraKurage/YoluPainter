@@ -59,14 +59,11 @@ pub(crate) struct DabPlan<'a> {
 pub(crate) const FLIP_STREAM: i32 = 0x27D4_EB2F;
 pub(crate) const SHUFFLE_STREAM: i32 = 0x1656_67B1;
 
-/// 筆先の反転のしかた（左右・上下ごとの規則と、規則が [`FlipRule::Fixed`] のときの値）。主の筆先（[`TipShape`]）と 2 つ目の筆先
-/// （[`DualBrush`]）が同じ形で渡す。
+/// 筆先の反転のしかた（左右・上下ごと）。主の筆先（[`TipShape`]）と 2 つ目の筆先（[`DualBrush`]）が同じ形で渡す。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct FlipRules {
     pub x: FlipRule,
     pub y: FlipRule,
-    pub fixed_x: bool,
-    pub fixed_y: bool,
 }
 
 impl FlipRules {
@@ -79,10 +76,8 @@ impl FlipRules {
 impl TipShape {
     pub(crate) fn flip_rules(&self) -> FlipRules {
         FlipRules {
-            x: self.flip_x_rule,
-            y: self.flip_y_rule,
-            fixed_x: self.flip_x,
-            fixed_y: self.flip_y,
+            x: self.flip_x,
+            y: self.flip_y,
         }
     }
 }
@@ -195,13 +190,14 @@ impl TipRun {
 
     /// ダブ 1 つの反転（左右・上下）。`reversed` は折り返しで戻る向きか。ランダムは、軸ごとに列から 1 つ引く（左右、上下の順）。
     fn flips(&mut self, rules: FlipRules, reversed: bool) -> (bool, bool) {
-        let mut one = |rule: FlipRule, fixed: bool| match rule {
-            FlipRule::Fixed => fixed,
+        let mut one = |rule: FlipRule| match rule {
+            FlipRule::Off => false,
+            FlipRule::On => true,
             FlipRule::OnFold => reversed,
-            FlipRule::Random => self.flips.as_mut().map_or(fixed, |r| r.next_double() < 0.5),
+            FlipRule::Random => self.flips.as_mut().is_some_and(|r| r.next_double() < 0.5),
         };
-        let x = one(rules.x, rules.fixed_x);
-        let y = one(rules.y, rules.fixed_y);
+        let x = one(rules.x);
+        let y = one(rules.y);
         (x, y)
     }
 }

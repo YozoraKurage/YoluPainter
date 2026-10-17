@@ -162,14 +162,13 @@ fn the_repeat_methods_pick_the_three_tips_in_the_same_order_as_in_2d_on_the_surf
 }
 
 /// 左半分の筆先 2 枚。反転すると、ダブの中心の右側が塗れる。
-fn left_halves(rule: FlipRule, fixed: bool, selection: TipSelection, seed: i32) -> Brush {
+fn left_halves(rule: FlipRule, selection: TipSelection, seed: i32) -> Brush {
     let mut b = base(1.5);
     b.seed = seed;
     let left = tip("left", |x, _| x < 8);
     b.tip.images = vec![left.clone(), left.clone(), left];
     b.tip.selection = selection;
-    b.tip.flip_x = fixed;
-    b.tip.flip_x_rule = rule;
+    b.tip.flip_x = rule;
     b
 }
 
@@ -181,18 +180,8 @@ fn flip_rules_choose_the_side_per_dab_on_the_surface() {
         let row = busiest_row(&a);
         (0..n).map(|k| halves(&a, row, k)).collect()
     };
-    let none = side(&left_halves(
-        FlipRule::Fixed,
-        false,
-        TipSelection::Sequential,
-        0,
-    ));
-    let always = side(&left_halves(
-        FlipRule::Fixed,
-        true,
-        TipSelection::Sequential,
-        0,
-    ));
+    let none = side(&left_halves(FlipRule::Off, TipSelection::Sequential, 0));
+    let always = side(&left_halves(FlipRule::On, TipSelection::Sequential, 0));
     assert!(none.iter().all(|&h| h == none[0]));
     assert!(none[0] != (true, true) && none[0] != (false, false));
     assert_eq!(
@@ -203,7 +192,6 @@ fn flip_rules_choose_the_side_per_dab_on_the_surface() {
     let random = |seed: i32| {
         side(&left_halves(
             FlipRule::Random,
-            false,
             TipSelection::Sequential,
             seed,
         ))
@@ -218,12 +206,7 @@ fn flip_rules_choose_the_side_per_dab_on_the_surface() {
     let flipped: Vec<bool> = seen.iter().flatten().map(|&h| h != none[0]).collect();
     assert!(flipped.contains(&true) && flipped.contains(&false));
     // 折り返しの戻り: 0 1 2 1 0 1 2 のうち、戻る向き（3・4 番目）だけ反転
-    let fold = side(&left_halves(
-        FlipRule::OnFold,
-        false,
-        TipSelection::PingPong,
-        0,
-    ));
+    let fold = side(&left_halves(FlipRule::OnFold, TipSelection::PingPong, 0));
     for (k, h) in fold.iter().enumerate() {
         let back = matches!(k, 3 | 4);
         assert_eq!(*h != none[0], back, "{k} 番目");

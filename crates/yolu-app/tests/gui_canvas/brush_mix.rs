@@ -1,5 +1,5 @@
-//! 色の混ぜ（厚塗りのブラシ）の画面と組み込み: 詳細のウィンドウの「色の混ぜ」の節（混ぜ方の排他の切り替え・スライダー・全レイヤーから・
-//! 筆圧・既定に戻す・効かない理由）、組み込みの厚塗りの筆 3 つ（筆のグループ・見本の線・版 3 で保存して読み戻す）、
+//! 色の混ぜ（厚塗りのブラシ）の画面と組み込み: 詳細のウィンドウの「インク」の混ぜの行（混ぜ方の選び・スライダー・全レイヤーから・
+//! 影響元・既定に戻す・効かない理由）、組み込みの厚塗りの筆 3 つ（筆のグループ・見本の線・バージョン 3 で保存して読み戻す）、
 //! 「全レイヤーから」で下のレイヤーの色を拾う（アプリの入口から）、日英。
 use crate::common;
 use crate::common::drive::Drive;
@@ -9,7 +9,7 @@ use egui::{pos2, Key, Modifiers, Pos2, Rect};
 use egui_kittest::kittest::{NodeT, Queryable};
 use egui_kittest::Harness;
 use yolu_app::brushes::sample::{self, SampleSpec};
-use yolu_app::brushes::{store, BrushAction, BrushKey, Category, Group};
+use yolu_app::brushes::{store, BrushAction, BrushKey, Category, Group, Row};
 use yolu_app::engine::{Channel, ColorMix, DVec2, MixGround, MixMode, Rgba8};
 use yolu_app::lang::Lang;
 use yolu_app::m2::UiOp;
@@ -42,6 +42,29 @@ fn open_detail(h: &mut H, category: Category) {
 fn detail_rect(h: &H) -> Rect {
     yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
         .expect("ブラシの詳細のウィンドウを描いている")
+}
+
+/// 混ぜ方の選び（今の名前の箱を押して、メニューから選ぶ）。
+fn choose_mix(h: &mut H, current: &str, item: &str) {
+    h.get_by_label(format!("混ぜ方: {current}").as_str())
+        .click();
+    h.run();
+    let at = popup_item(h, item).center();
+    click(h, at);
+}
+
+/// 影響元設定のウィンドウの中の部品（上から順）。
+fn in_dynamics(h: &H, label: &str) -> Vec<(Rect, bool)> {
+    let window =
+        yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_rows::dynamics_id())
+            .expect("影響元設定のウィンドウを描いている");
+    let mut found: Vec<(Rect, bool)> = h
+        .query_all_by_label(label)
+        .map(|n| (n.rect(), n.accesskit_node().is_disabled()))
+        .filter(|(r, _)| window.contains(r.center()))
+        .collect();
+    found.sort_by(|a, b| a.0.top().total_cmp(&b.0.top()));
+    found
 }
 
 /// ウィンドウの右側の欄の部品（左のカテゴリの同じ名前と区別する）。上から順に。
@@ -195,15 +218,15 @@ fn the_thick_paint_samples_draw_over_a_picture_so_the_mixing_shows() {
 // ───────── 詳細のウィンドウの節 ─────────
 
 #[test]
-fn the_mix_category_switches_the_mode_exclusively_and_enables_the_sliders() {
+fn the_mix_rows_switch_the_mode_and_enable_the_sliders() {
     let mut h = app(1600.0, 1000.0, 128);
-    open_detail(&mut h, Category::Mix);
+    open_detail(&mut h, Category::Ink);
     let window = detail_rect(&h);
-    // 左のカテゴリに名前がある
+    // 左の区分にインクがある
     assert!(
-        h.query_all_by_label("色の混ぜ")
+        h.query_all_by_label("インク")
             .any(|n| window.contains(n.rect().center())),
-        "色の混ぜ"
+        "インク"
     );
     assert_eq!(st(&h).m2().brush.mix, ColorMix::default());
     // なし: スライダーは触れない（理由はツールチップ。画面に注記は出さない）
@@ -211,22 +234,20 @@ fn the_mix_category_switches_the_mode_exclusively_and_enables_the_sliders() {
         assert!(disabled(&h, label), "{label}");
     }
     // 混ぜる
-    let mix = in_pane(&h, "混ぜる");
-    click(&mut h, mix.center());
+    choose_mix(&mut h, "なし", "混ぜる");
     assert_eq!(st(&h).m2().brush.mix.mode, MixMode::Mix);
     assert!(st(&h).brush_is_modified(b("standard")));
     for label in ["絵の具の量", "絵の具の濃さ", "色延び", "全レイヤーから"] {
         assert!(!disabled(&h, label), "{label}");
     }
-    // 伸ばすへ（排他）
-    let smear = in_pane(&h, "伸ばす");
-    click(&mut h, smear.center());
+    // 伸ばすへ（選びなので、ほかの値へ替わる）
+    choose_mix(&mut h, "混ぜる", "伸ばす");
     assert_eq!(st(&h).m2().brush.mix.mode, MixMode::Smear);
-    // もう一度押すと、なしへ
-    click(&mut h, smear.center());
+    // なしへ
+    choose_mix(&mut h, "伸ばす", "なし");
     assert_eq!(st(&h).m2().brush.mix.mode, MixMode::Off);
     // スライダー（左の端 0%・右の端 100%。真ん中あたりで約 50%）
-    click(&mut h, mix.center());
+    choose_mix(&mut h, "なし", "混ぜる");
     let amount = in_pane(&h, "絵の具の量");
     click(
         &mut h,
@@ -253,31 +274,30 @@ fn the_mix_category_switches_the_mode_exclusively_and_enables_the_sliders() {
     assert_eq!(st(&h).m2().brush.mix.ground, MixGround::Composite);
     click(&mut h, all.center());
     assert_eq!(st(&h).m2().brush.mix.ground, MixGround::Layer);
-    // 既定に戻す
-    let reset = h.get_by_label("色の混ぜを既定に戻す").rect().center();
+    // 既定に戻す（インクの区分）
+    let reset = h.get_by_label("インクを既定に戻す").rect().center();
     click(&mut h, reset);
     assert_eq!(st(&h).m2().brush.mix, ColorMix::default());
 }
 
 #[test]
-fn the_mix_pressure_items_follow_their_switch_and_edit_the_response() {
+fn the_mix_dynamics_follow_their_switch_and_edit_the_response() {
     let mut h = app(1600.0, 1000.0, 128);
     h.act(Action::Brush(BrushAction::Select(b("gouache"))));
     h.run();
-    open_detail(&mut h, Category::Mix);
-    // 筆圧を使わない間は、最小と曲線は触れない
-    assert!(disabled(&h, "最小"));
+    open_detail(&mut h, Category::Ink);
+    // 絵の具の量の影響元（行の右のボタン）。筆圧を使わない間は、最小値は触れない
+    h.brushes_mut().ui.detail.dynamics = Some(Row::MixPaint);
+    h.run();
+    h.run();
+    assert!(in_dynamics(&h, "最小値")[0].1);
     assert!(!st(&h).m2().brush.influences.mix_paint.pressure.on);
-    let toggles = pane_nodes(&h, "筆圧を使う");
-    assert!(
-        !toggles.is_empty(),
-        "量の筆圧（濃さは下にスクロールして出る）"
-    );
-    click(&mut h, toggles[0].center());
+    let toggle = in_dynamics(&h, "筆圧")[0].0;
+    click(&mut h, toggle.center());
     assert!(st(&h).m2().brush.influences.mix_paint.pressure.on);
     assert!(!st(&h).m2().brush.influences.mix_density.pressure.on);
-    assert!(!pane_nodes(&h, "最小").is_empty());
-    let minimum = pane_nodes(&h, "最小")[0];
+    assert!(!in_dynamics(&h, "最小値")[0].1);
+    let minimum = in_dynamics(&h, "最小値")[0].0;
     click(
         &mut h,
         pos2(minimum.left() + minimum.width() * 0.4, minimum.center().y),
@@ -303,7 +323,7 @@ fn the_mix_pressure_items_follow_their_switch_and_edit_the_response() {
         "濃さの応えは変わらない"
     );
     // 切ると、切り替えだけが戻る（応えは残る）
-    click(&mut h, toggles[0].center());
+    click(&mut h, toggle.center());
     assert!(!st(&h).m2().brush.influences.mix_paint.pressure.on);
     assert_eq!(
         st(&h).m2().brush.influences.mix_paint.pressure.response,
@@ -312,23 +332,32 @@ fn the_mix_pressure_items_follow_their_switch_and_edit_the_response() {
 }
 
 #[test]
-fn the_mix_section_says_why_it_does_not_apply_by_disabling_instead_of_a_note() {
+fn the_mix_rows_say_why_they_do_not_apply_by_disabling_instead_of_a_note() {
     let mut h = app(1600.0, 1000.0, 128);
-    open_detail(&mut h, Category::Mix);
-    let mix = in_pane(&h, "混ぜる");
-    click(&mut h, mix.center());
+    open_detail(&mut h, Category::Ink);
+    choose_mix(&mut h, "なし", "混ぜる");
     assert!(!disabled(&h, "絵の具の量"));
     // 効果のブラシ
     h.act(Action::Brush(BrushAction::Select(b("smudge"))));
     h.run();
-    open_detail(&mut h, Category::Mix);
-    assert!(disabled(&h, "混ぜる") && disabled(&h, "伸ばす"));
+    open_detail(&mut h, Category::Ink);
+    assert!(disabled(&h, "混ぜ方: なし"));
     assert!(disabled(&h, "絵の具の量"));
     // 消しゴム
     h.act(Action::Brush(BrushAction::Select(b("soft-eraser"))));
     h.run();
-    open_detail(&mut h, Category::Mix);
-    assert!(disabled(&h, "混ぜる"));
+    open_detail(&mut h, Category::Ink);
+    assert!(disabled(&h, "混ぜ方: なし"));
+    // 消すモードの間は、ブラシのツールでも混ぜは効かない
+    h.act(Action::Brush(BrushAction::Select(b("oil"))));
+    h.run();
+    open_detail(&mut h, Category::Ink);
+    assert!(!disabled(&h, "絵の具の量"));
+    h.act(Action::ToggleEraseMode);
+    h.run();
+    assert!(disabled(&h, "絵の具の量"));
+    h.act(Action::ToggleEraseMode);
+    h.run();
     // 画面に注記の文を置かない（使い方の文・説明の段落）。名前と状態だけ
     let window = detail_rect(&h);
     for n in h.query_all_by_label_contains("します") {
@@ -341,16 +370,15 @@ fn the_mix_section_says_why_it_does_not_apply_by_disabling_instead_of_a_note() {
 }
 
 #[test]
-fn the_mix_section_is_in_english_without_japanese() {
+fn the_mix_rows_are_in_english_without_japanese() {
     let mut h = app(1600.0, 1000.0, 128);
     language(&mut h, Lang::En);
     h.act(Action::Brush(BrushAction::Select(b("oil"))));
     h.run();
-    open_detail(&mut h, Category::Mix);
+    open_detail(&mut h, Category::Ink);
     let window = detail_rect(&h);
     for label in [
-        "Mix",
-        "Smear",
+        "Mixing: Mix",
         "Paint amount",
         "Paint density",
         "Color stretch",
@@ -362,7 +390,7 @@ fn the_mix_section_is_in_english_without_japanese() {
             "{label}"
         );
     }
-    assert!(h.query_all_by_label("Color Mixing").next().is_some());
+    assert!(h.query_all_by_label("Ink").next().is_some());
     let has_japanese = |t: &str| {
         t.chars().any(|c| {
             ('\u{3040}'..='\u{30ff}').contains(&c) || ('\u{4e00}'..='\u{9fff}').contains(&c)
@@ -378,17 +406,17 @@ fn the_mix_section_is_in_english_without_japanese() {
 }
 
 #[test]
-fn snapshot_brush_detail_mix() {
+fn snapshot_brush_detail_ink_mix() {
     let mut h = app(1600.0, 1000.0, 128);
     h.act(Action::Brush(BrushAction::Select(b("oil"))));
-    open_detail(&mut h, Category::Mix);
+    open_detail(&mut h, Category::Ink);
     let rect = detail_rect(&h);
-    crate::common::shot::clean_region(&mut h, "brushes_detail_mix", rect);
+    crate::common::shot::clean_region(&mut h, "brushes_detail_ink_mix", rect);
     language(&mut h, Lang::En);
     h.act(Action::Brush(BrushAction::Select(b("mixer"))));
-    open_detail(&mut h, Category::Mix);
+    open_detail(&mut h, Category::Ink);
     let rect = detail_rect(&h);
-    crate::common::shot::clean_region(&mut h, "brushes_detail_mix_english", rect);
+    crate::common::shot::clean_region(&mut h, "brushes_detail_ink_mix_english", rect);
 }
 
 #[test]

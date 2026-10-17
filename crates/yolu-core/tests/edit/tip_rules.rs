@@ -216,7 +216,7 @@ fn jittered(selection: TipSelection, rule: FlipRule) -> Brush {
     // 左右に対称な筆先は 1 枚目だけ。2 枚目は上下だけ見る
     b.tip.images[1] = tip("b", |x, _| (2..14).contains(&x));
     b.tip.selection = selection;
-    b.tip.flip_x_rule = rule;
+    b.tip.flip_x = rule;
     b.jitter.size = 0.3;
     b.jitter.angle = 0.0;
     b.jitter.opacity = 0.3;
@@ -229,19 +229,18 @@ fn jittered(selection: TipSelection, rule: FlipRule) -> Brush {
 fn a_random_flip_draws_from_its_own_stream_and_leaves_the_other_random_draws_alone() {
     // 左右に対称な筆先なら、ランダムな反転の有無で絵は変わらない（ゆらぎ・散布・筆先の乱数選びの列を引く数が同じ）
     for selection in [TipSelection::Random, TipSelection::Sequential] {
-        let plain = bytes(&ten_dabs(&jittered(selection, FlipRule::Fixed)));
+        let plain = bytes(&ten_dabs(&jittered(selection, FlipRule::Off)));
         let flipped = bytes(&ten_dabs(&jittered(selection, FlipRule::Random)));
         assert!(plain.chunks_exact(4).any(|p| p[3] > 0));
         assert_eq!(plain, flipped, "{selection:?}");
     }
 }
 
-fn left_only(rule: FlipRule, fixed: bool, seed: i32) -> Brush {
+fn left_only(rule: FlipRule, seed: i32) -> Brush {
     let mut b = base(1.5);
     b.seed = seed;
     b.tip.images = vec![left_half(), left_half()];
-    b.tip.flip_x = fixed;
-    b.tip.flip_x_rule = rule;
+    b.tip.flip_x = rule;
     b
 }
 
@@ -259,13 +258,13 @@ fn flipped_left_to_right(d: &Document, n: usize) -> Vec<bool> {
 fn flips_are_none_always_or_decided_per_dab_by_the_seed() {
     let n = 10;
     // なし・いつも反転（今までのとおり）
-    let d = ten_dabs(&left_only(FlipRule::Fixed, false, 0));
+    let d = ten_dabs(&left_only(FlipRule::Off, 0));
     assert_eq!(flipped_left_to_right(&d, n), vec![false; n]);
-    let d = ten_dabs(&left_only(FlipRule::Fixed, true, 0));
+    let d = ten_dabs(&left_only(FlipRule::On, 0));
     assert_eq!(flipped_left_to_right(&d, n), vec![true; n]);
     // ランダム: 種で決まり、反転するダブとしないダブが混ざる
     let random = |seed: i32| {
-        let d = ten_dabs(&left_only(FlipRule::Random, false, seed));
+        let d = ten_dabs(&left_only(FlipRule::Random, seed));
         flipped_left_to_right(&d, n)
     };
     let mut seen = std::collections::HashSet::new();
@@ -277,15 +276,6 @@ fn flips_are_none_always_or_decided_per_dab_by_the_seed() {
     assert!(seen.len() > 1, "種が変われば反転も変わる");
     let all: Vec<bool> = seen.iter().flatten().copied().collect();
     assert!(all.contains(&true) && all.contains(&false), "両方出る");
-    // ランダムなときは、固定の値（フラグ）は見ない
-    assert_eq!(
-        ten_dabs(&left_only(FlipRule::Random, true, 3))
-            .composite(yolu_core::Rect::new(0, 0, W, H))
-            .unwrap(),
-        ten_dabs(&left_only(FlipRule::Random, false, 3))
-            .composite(yolu_core::Rect::new(0, 0, W, H))
-            .unwrap()
-    );
 }
 
 #[test]
@@ -294,7 +284,7 @@ fn flip_on_fold_flips_only_the_dabs_that_walk_back() {
     let mut b = base(1.5);
     b.tip.images = vec![left_half(), left_half(), left_half()];
     b.tip.selection = TipSelection::PingPong;
-    b.tip.flip_x_rule = FlipRule::OnFold;
+    b.tip.flip_x = FlipRule::OnFold;
     let d = ten_dabs(&b);
     let got = flipped_left_to_right(&d, 10);
     let expected = [
@@ -318,7 +308,7 @@ fn the_vertical_flip_follows_the_same_rules() {
     // 下半分の筆先: 反転すると上半分だけ塗れる
     let mut b = base(1.5);
     b.tip.images = vec![lower_half(), lower_half()];
-    b.tip.flip_y = true;
+    b.tip.flip_y = FlipRule::On;
     let d = ten_dabs(&b);
     for k in 0..10 {
         let x = X0 + STEP * k as f64;
@@ -327,8 +317,7 @@ fn the_vertical_flip_follows_the_same_rules() {
             "{k}"
         );
     }
-    b.tip.flip_y = false;
-    b.tip.flip_y_rule = FlipRule::Random;
+    b.tip.flip_y = FlipRule::Random;
     b.seed = 5;
     let d = ten_dabs(&b);
     let up: Vec<bool> = (0..10)

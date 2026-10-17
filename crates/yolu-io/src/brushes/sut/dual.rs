@@ -381,8 +381,8 @@ fn tip_rules(row: &Row, d: &mut DualBrush, approx: &mut impl FnMut(SutDualNote))
             image: &mut d.tip,
             images: &mut d.tips,
             selection: &mut d.selection,
-            flip_x: (&mut d.flip_x, &mut d.flip_x_rule),
-            flip_y: (&mut d.flip_y, &mut d.flip_y_rule),
+            flip_x: &mut d.flip_x,
+            flip_y: &mut d.flip_y,
         },
     );
     for event in events {

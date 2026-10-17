@@ -63,7 +63,7 @@ pub fn begin(app: &mut AppState, source: StrokeSource, eraser: bool) -> Option<b
         );
         return Some(false);
     }
-    let erase = eraser || app.tool.erases();
+    let erase = eraser || app.tool.erases() || app.m2.erase_mode;
     if !pen::begin(app, source, erase, true) {
         return Some(false);
     }

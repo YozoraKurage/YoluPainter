@@ -252,20 +252,33 @@ pub enum BrushOp {
     /// 取り込んだ模様（模様から作ったブラシの質感の画像）を紙の質感にする。
     PatternTexture(crate::brushes::BrushKey),
     TextureMode(TextureMode),
+    /// 2 つ目の紙の質感の画像（None は無し）・取り込んだ模様・合わせ方。
+    DualTexture(Option<&'static str>),
+    DualPatternTexture(crate::brushes::BrushKey),
+    DualTextureMode(TextureMode),
     DualTip(Option<&'static str>),
     DualMode(DualBrushMode),
     DualEnabled(bool),
     /// 縁のアンチエイリアス（基本の値 `AppState::brush` に持つ）。
     AntiAlias(AntiAlias),
+    /// 色の混ぜの混ぜ方（なし・混ぜる・伸ばす）。
+    MixMode(yolu_core::MixMode),
+    /// 筆先の繰り返し方法（6 種）。
+    TipRepeat(yolu_core::TipSelection),
+    /// 筆先の左右・上下の反転のしかた（なし・反転・ランダム・折り返し時に反転）。
+    FlipX(yolu_core::FlipRule),
+    FlipY(yolu_core::FlipRule),
+    /// 色の変化を当てる描画色。
+    ColorTarget(yolu_core::ColorTarget),
 }
 
-/// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。
+/// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。主の質感も 2 つ目の質感も同じ。
 fn put_texture_image(
-    brush: &mut Brush,
+    slot: &mut Option<PaperTexture>,
     prefs: TexturePrefs,
     image: std::sync::Arc<yolu_core::BrushTip>,
 ) {
-    brush.texture = Some(match brush.texture.take() {
+    *slot = Some(match slot.take() {
         Some(t) => PaperTexture { image, ..t },
         None => PaperTexture {
             image,
@@ -275,6 +288,17 @@ fn put_texture_image(
             angle: 0.0,
         },
     });
+}
+
+/// 紙の質感を「なし」にする（また選んだとき同じ値から始めるよう、深さ・スケール・合わせ方を覚える）。
+fn clear_texture(slot: &mut Option<PaperTexture>, prefs: &mut TexturePrefs) {
+    if let Some(t) = slot.take() {
+        *prefs = TexturePrefs {
+            depth: t.depth,
+            scale: t.scale,
+            mode: t.mode,
+        };
+    }
 }
 
 /// 効果のブラシの種類。
@@ -415,6 +439,16 @@ pub struct M2State {
     /// マテリアルのパネルのスクロールと、前のフレームの中身の高さ。
     pub material_scroll: f32,
     pub material_content: f32,
+    /// 消すモード: 入っている間は、今のブラシの形のまま消す（ブラシには保存せず、ツールを替えても残る。ペンの消しゴムの端と同じく、
+    /// ストロークの始めに消す側として固める）。
+    pub erase_mode: bool,
+    /// ストロークを始めるときの表示倍率（文書の画素 1 が画面で何点か。2D のキャンバスと 3D の面が、ストロークを始める間だけ入れる。
+    /// None は 1）。画面上のサイズで指定（`Controls::size_by_screen`）のブラシは、ここで半径を固める（`Brush::at_view_scale`）。
+    pub stroke_scale: Option<f64>,
+    /// 色の変化の「ブラシ先端色の変化」「ストロークごとのランダム変化」を切ったときに値を覚えておく場所（入れ直すと同じ値から始まる。
+    /// ブラシには保存しない）。
+    pub color_tip_stash: yolu_core::TipColorChange,
+    pub color_stroke_stash: yolu_core::StrokeColorChange,
 }
 
 impl Default for M2State {
@@ -440,6 +474,10 @@ impl Default for M2State {
             props_content: 0.0,
             material_scroll: 0.0,
             material_content: 0.0,
+            erase_mode: false,
+            stroke_scale: None,
+            color_tip_stash: yolu_core::TipColorChange::default(),
+            color_stroke_stash: yolu_core::StrokeColorChange::default(),
         }
     }
 }
@@ -530,6 +568,40 @@ pub fn texture_mode_label(lang: Lang, mode: TextureMode) -> &'static str {
         TextureMode::LinearBurn => blend_label(lang, BlendMode::LinearBurn),
         TextureMode::HardMix => blend_label(lang, BlendMode::HardMix),
     }
+}
+
+/// 筆先の繰り返し方法の選び（画面の選びの順）と名前。
+pub fn tip_repeats(lang: Lang) -> [(yolu_core::TipSelection, &'static str); 6] {
+    use yolu_core::TipSelection as S;
+    [
+        (S::Sequential, lang.t("brushrows-repeat-repeat")),
+        (S::PingPong, lang.t("brushrows-repeat-ping-pong")),
+        (S::Hold, lang.t("brushrows-repeat-hold")),
+        (S::Random, lang.t("brushrows-repeat-random")),
+        (S::Once, lang.t("brushrows-repeat-once")),
+        (S::Shuffle, lang.t("brushrows-repeat-shuffle")),
+    ]
+}
+
+/// 筆先の反転のしかたの選び（画面の選びの順）と名前。
+pub fn flip_rules(lang: Lang) -> [(yolu_core::FlipRule, &'static str); 4] {
+    use yolu_core::FlipRule as F;
+    [
+        (F::Off, lang.t("brushrows-flip-none")),
+        (F::On, lang.t("brushrows-flip-always")),
+        (F::Random, lang.t("brushrows-flip-random")),
+        (F::OnFold, lang.t("brushrows-flip-on-fold")),
+    ]
+}
+
+/// 色の変化を当てる描画色の選び（画面の選びの順）と名前。
+pub fn color_targets(lang: Lang) -> [(yolu_core::ColorTarget, &'static str); 3] {
+    use yolu_core::ColorTarget as T;
+    [
+        (T::Main, lang.t("brushrows-target-main")),
+        (T::MainAndSub, lang.t("brushrows-target-main-and-sub")),
+        (T::Sub, lang.t("brushrows-target-sub")),
+    ]
 }
 
 /// アンチエイリアスの段の名前。
@@ -1444,23 +1516,41 @@ impl AppState {
                     .and_then(|e| e.baseline.texture.as_ref())
                     .map(|t| t.image.clone());
                 if let Some(image) = image {
-                    put_texture_image(b, self.m2.texture_prefs, image);
+                    put_texture_image(&mut b.texture, self.m2.texture_prefs, image);
                 }
             }
-            BrushOp::Texture(None) => {
-                if let Some(t) = &b.texture {
-                    self.m2.texture_prefs = TexturePrefs {
-                        depth: t.depth,
-                        scale: t.scale,
-                        mode: t.mode,
-                    };
-                }
-                b.texture = None;
-            }
+            BrushOp::Texture(None) => clear_texture(&mut b.texture, &mut self.m2.texture_prefs),
             BrushOp::Texture(Some(id)) => {
                 if let Some(image) = yolu_core::builtin_tip(id) {
-                    put_texture_image(b, self.m2.texture_prefs, image);
+                    put_texture_image(&mut b.texture, self.m2.texture_prefs, image);
                 }
+            }
+            BrushOp::DualPatternTexture(key) => {
+                let image = self
+                    .brushes
+                    .lib
+                    .entry(key)
+                    .and_then(|e| e.baseline.texture.as_ref())
+                    .map(|t| t.image.clone());
+                if let (Some(d), Some(image)) = (&mut b.dual, image) {
+                    put_texture_image(&mut d.texture, self.m2.texture_prefs, image);
+                }
+            }
+            BrushOp::DualTexture(None) => {
+                if let Some(d) = &mut b.dual {
+                    clear_texture(&mut d.texture, &mut self.m2.texture_prefs);
+                }
+            }
+            BrushOp::DualTexture(Some(id)) => {
+                if let (Some(d), Some(image)) = (&mut b.dual, yolu_core::builtin_tip(id)) {
+                    put_texture_image(&mut d.texture, self.m2.texture_prefs, image);
+                }
+            }
+            BrushOp::DualTextureMode(mode) => {
+                if let Some(t) = b.dual.as_mut().and_then(|d| d.texture.as_mut()) {
+                    t.mode = mode;
+                }
+                self.m2.texture_prefs.mode = mode;
             }
             BrushOp::TextureMode(mode) => {
                 if let Some(t) = &mut b.texture {
@@ -1489,6 +1579,11 @@ impl AppState {
                     d.mode = mode;
                 }
             }
+            BrushOp::MixMode(mode) => b.mix.mode = mode,
+            BrushOp::TipRepeat(selection) => b.tip.selection = selection,
+            BrushOp::FlipX(rule) => b.tip.flip_x = rule,
+            BrushOp::FlipY(rule) => b.tip.flip_y = rule,
+            BrushOp::ColorTarget(target) => b.color.target = target,
             // 基本の値なので先に当てた
             BrushOp::AntiAlias(_) => {}
         }
@@ -1510,7 +1605,23 @@ impl AppState {
         if brush.base.erase {
             brush.effect = BrushEffect::Paint;
         }
-        brush
+        // 画面上のサイズで指定: ストロークの始めの表示倍率で半径を固める（表示倍率の受け渡しはこの 1 か所）
+        match self.m2.stroke_scale {
+            Some(scale) => brush.at_view_scale(scale),
+            None => brush,
+        }
+    }
+
+    /// ストロークを始める間だけ表示倍率（文書の画素 1 が画面で何点か）を入れて、`start` を呼ぶ（2D のキャンバスと 3D の面の始め）。
+    pub fn with_stroke_scale<T>(
+        &mut self,
+        scale: f64,
+        start: impl FnOnce(&mut AppState) -> T,
+    ) -> T {
+        self.m2.stroke_scale = Some(scale);
+        let out = start(self);
+        self.m2.stroke_scale = None;
+        out
     }
 
     /// 描き始める（マスクを選んでいればマスク、そうでなければ描くチャンネル）。

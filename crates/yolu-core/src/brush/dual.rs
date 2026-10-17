@@ -370,7 +370,7 @@ mod tests {
     fn main_sequence(
         tips: &[Arc<BrushTip>],
         selection: TipSelection,
-        rules: [(FlipRule, bool); 2],
+        rules: [FlipRule; 2],
         n: usize,
     ) -> Vec<Option<(Option<usize>, bool, bool)>> {
         let main = Brush {
@@ -378,10 +378,8 @@ mod tests {
             tip: TipShape {
                 images: tips.to_vec(),
                 selection,
-                flip_x_rule: rules[0].0,
-                flip_x: rules[0].1,
-                flip_y_rule: rules[1].0,
-                flip_y: rules[1].1,
+                flip_x: rules[0],
+                flip_y: rules[1],
                 ..TipShape::default()
             },
             ..Brush::default()
@@ -402,16 +400,14 @@ mod tests {
     fn dual_sequence(
         tips: &[Arc<BrushTip>],
         selection: TipSelection,
-        rules: [(FlipRule, bool); 2],
+        rules: [FlipRule; 2],
         n: usize,
     ) -> Vec<Option<(Option<usize>, bool, bool)>> {
         let b = dual_brush(DualBrush {
             tips: tips.to_vec(),
             selection,
-            flip_x_rule: rules[0].0,
-            flip_x: rules[0].1,
-            flip_y_rule: rules[1].0,
-            flip_y: rules[1].1,
+            flip_x: rules[0],
+            flip_y: rules[1],
             ..DualBrush::default()
         });
         let d = b.dual.as_ref().unwrap();
@@ -431,10 +427,10 @@ mod tests {
         // 反転の並びが主と同じ（同じ関数・同じ乱数の列を通る）
         let tips = four_tips();
         let flips = [
-            [(FlipRule::Fixed, false), (FlipRule::Fixed, false)],
-            [(FlipRule::Fixed, true), (FlipRule::Fixed, false)],
-            [(FlipRule::Random, false), (FlipRule::Random, false)],
-            [(FlipRule::OnFold, false), (FlipRule::Fixed, true)],
+            [FlipRule::Off, FlipRule::Off],
+            [FlipRule::On, FlipRule::Off],
+            [FlipRule::Random, FlipRule::Random],
+            [FlipRule::OnFold, FlipRule::On],
         ];
         for selection in [
             TipSelection::Random,
@@ -454,7 +450,7 @@ mod tests {
         let got = dual_sequence(
             &tips,
             TipSelection::PingPong,
-            [(FlipRule::OnFold, false), (FlipRule::Fixed, false)],
+            [FlipRule::OnFold, FlipRule::Off],
             8,
         );
         let indices: Vec<usize> = got.iter().map(|g| g.unwrap().0.unwrap()).collect();

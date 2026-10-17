@@ -38,7 +38,7 @@ use yolu_core::glam::{DVec2, Vec2, Vec3};
 use super::held::Held;
 use super::model::ViewModel;
 use super::{gizmo, pacing, Nav};
-use crate::engine::{BrushEffect, Tilt};
+use crate::engine::{BrushEffect, BrushSettings, Tilt};
 use crate::features::Feature;
 use crate::gesture::{self, ZoomDrag};
 use crate::input::{on_top, Item, Owner, Phase, PointerSample, Press, PressCtx, Stream};
@@ -212,7 +212,7 @@ fn begin(
         return;
     }
     if app.sel.quick {
-        let erase = eraser || app.tool.erases();
+        let erase = eraser || app.tool.erases() || app.m2.erase_mode;
         super::quick::begin(app, &model, rect, at, pressure, source, erase, true);
         return;
     }
@@ -388,7 +388,13 @@ pub(super) fn open_stroke(
             return None;
         }
     };
-    let mut brush = app.stroke_brush(eraser);
+    // 画面上のサイズで指定のブラシは、始めの点の下の面で、文書の画素 1（ブラシの半径の単位）が画面で何点かで半径を固める
+    let scale = screen_points_per_pixel(app, model, &view, input.at);
+    let mut brush = app.with_stroke_scale(scale, |app| app.stroke_brush(eraser));
+    let settings = BrushSettings {
+        radius: brush.base.radius,
+        ..settings
+    };
     brush.stencil = stencil_brush;
     if guided {
         brush.assist.stabilizer = 0.0;
@@ -433,6 +439,36 @@ pub(super) fn open_stroke(
             app.fail(source, app.lang.surface_error(&e));
             None
         }
+    }
+}
+
+/// 押した点の下の面で、文書の画素 1（ブラシの半径の単位）が画面で何点か（見つからない・使えない値は 1）。画面上のサイズで指定のブラシが、
+/// ストロークの始めに半径を固めるのに使う（2D のキャンバスは表示の倍率）。
+fn screen_points_per_pixel(
+    app: &AppState,
+    model: &ViewModel,
+    view: &CameraView,
+    at: yolu_core::glam::Vec2,
+) -> f64 {
+    match pick(&model.geometry, view, at) {
+        Some(hit) => points_per_pixel_at(app, model, view, hit.position),
+        None => 1.0,
+    }
+}
+
+/// [`screen_points_per_pixel`] の、面の点（モデルの空間）が分かっているとき。
+fn points_per_pixel_at(
+    app: &AppState,
+    model: &ViewModel,
+    view: &CameraView,
+    position: Vec3,
+) -> f64 {
+    let one = world_radius(&model.geometry, 1.0, app.session.doc.width());
+    let points = f64::from(view.world_radius_to_screen(position, one));
+    if points.is_finite() && points > 0.0 {
+        points
+    } else {
+        1.0
     }
 }
 
@@ -1764,11 +1800,13 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
     let Some(hit) = pick(&model.geometry, &view, local(rect, pointer)) else {
         return false;
     };
-    let radius = world_radius(
-        &model.geometry,
-        app.brush.radius as f64,
-        app.session.doc.width(),
-    );
+    // 画面上のサイズで指定のブラシは、設定の大きさが画面の点（ポインタの下の面で、文書の画素へ直す）
+    let radius_px = if app.m2.brush.controls.size_by_screen {
+        app.brush.radius as f64 / points_per_pixel_at(app, model, &view, hit.position)
+    } else {
+        app.brush.radius as f64
+    };
+    let radius = world_radius(&model.geometry, radius_px, app.session.doc.width());
     let screen_radius = view.world_radius_to_screen(hit.position, radius);
     if !(screen_radius > 0.0 && screen_radius.is_finite()) {
         return false;

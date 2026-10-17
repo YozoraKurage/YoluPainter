@@ -96,6 +96,8 @@ pub struct UiState {
     /// ブラシの詳細のウィンドウを見出しのドラッグで動かした量（画面の真ん中からの。初めて開いたときに置き場を決める。
     /// `panels::brush_detail`）。
     pub brushes_detail_offset: egui::Vec2,
+    /// 影響元設定のウィンドウの位置（見出しのドラッグでずれた量。`panels::brush_rows`）。
+    pub brushes_dynamics_offset: egui::Vec2,
     /// 「CLIP STUDIO から」のウィンドウの位置（見出しのドラッグでずれた量。`panels::brush_clipstudio`）。
     pub brushes_csp_offset: egui::Vec2,
     /// ブラシを追加するウィンドウを見出しのドラッグで動かした量（画面の真ん中からの。初めて開いたときに置き場を決める。

@@ -14,7 +14,7 @@ use brush_files::corpus::{self, Case};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use yolu_core::{BrushTip, TextureMode};
+use yolu_core::{BrushTip, FlipRule, TextureMode};
 use yolu_io::brushes::{import_bytes, Fault, FileKind, ImportedBrush, Unrepresented};
 
 fn bits(v: f64) -> String {
@@ -104,7 +104,7 @@ fn settings(b: &ImportedBrush, file_notes: usize) -> String {
         )
     });
     // C# が注記にする、Rust が core の拡張へ写したもの
-    let mapped = (br.tip.flip_x || br.tip.flip_y) as usize
+    let mapped = (br.tip.flip_x != FlipRule::Off || br.tip.flip_y != FlipRule::Off) as usize
         + br.controls.rotation_angle as usize
         + br.texture
             .as_ref()

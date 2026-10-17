@@ -22,6 +22,10 @@ pub(super) struct Effector {
     /// 入力ごとの最小値を符号つきの整数として読んだもの（−1〜1。色相・彩度・明度の影響元は −100 まで取る。`minimums` は負の数を 0〜1 に
     /// 丸めた値で、読み方を変えない）。
     pub signed_minimums: [f64; 4],
+    /// 傾きの最大値（ヘッダーの 11 番目の整数の %。1 = 100%。100% を超える値もそのまま。ヘッダーが 11 個の整数に満たなければ None）。
+    /// 0 は、ヘッダーの 0 埋めと見分けられない。実物の .sut では、ブラシサイズが 150（傾きの最大値を 100 に替えると 100 になる）、
+    /// 不透明度は 500、ブラシ濃度は 100 のまま。
+    pub tilt_max: Option<f64>,
     /// ヘッダーと読めた曲線のあとに残ったバイト数（速さ・ランダムの曲線が付くと 44 バイト伸びる。0 なら曲線は付いていない）。
     pub trailing: usize,
     /// 曲線の点（x・y とも 0〜1 を期待するが、ここでは丸めない）。並びはファイルのまま。どの曲線がどの入力のものかは
@@ -100,6 +104,7 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
             .map_or(0.0, |&v| (v as i32 as f64 / 100.0).clamp(-1.0, 1.0))
     };
     let signed_minimums = [signed(3), signed(4), signed(5), signed(6)];
+    let tilt_max = ints.get(10).map(|&v| v as f64 / 100.0);
     let slots = (header == 44 || header == 48).then(|| [ints[8] as usize, ints[9] as usize]);
     let mut curves = Vec::new();
     // ヘッダーと、最後まで読めた曲線のあとに残ったバイト数
@@ -119,6 +124,7 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
                     flags,
                     minimums,
                     signed_minimums,
+                    tilt_max,
                     trailing: rest,
                     curves,
                     slots,
@@ -139,6 +145,7 @@ pub(super) fn parse_effector(bytes: &[u8]) -> Option<Effector> {
         flags,
         minimums,
         signed_minimums,
+        tilt_max,
         trailing: rest,
         curves,
         slots,

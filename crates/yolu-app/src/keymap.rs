@@ -2343,6 +2343,7 @@ mod tests {
             once,
             [
                 "bake.open",
+                "brush.erase_mode",
                 "fill.toggle_handles",
                 "mode.pie",
                 "view3d.pie",

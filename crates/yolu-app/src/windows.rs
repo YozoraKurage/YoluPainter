@@ -248,6 +248,8 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     }
     bake::window::show(ctx, app);
     crate::panels::brush_detail::show(ctx, app);
+    // 影響元設定のウィンドウは、詳細のウィンドウの行からも、ツールプロパティの行からも開く
+    crate::panels::brush_rows::dynamics_window(ctx, app);
     crate::panels::brush_catalog::show(ctx, app);
     crate::panels::brush_clipstudio::show(ctx, app);
     crate::newproject::window::show(ctx, app);

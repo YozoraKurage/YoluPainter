@@ -3,7 +3,7 @@
 
 use crate::engine::{
     AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, LayerId,
-    LayerSetId, NormalYDirection, TextureMode,
+    LayerSetId, MixMode, NormalYDirection, TextureMode,
 };
 use crate::lang::Lang;
 use crate::m2::layersets::{self, LayerSetEdit};
@@ -99,6 +99,18 @@ pub enum Popup {
     TextFont,
     /// ブラシの縁のアンチエイリアス（なし・弱・中・強）。
     AntiAlias,
+    /// 色の混ぜの混ぜ方（なし・混ぜる・伸ばす）。
+    MixMode,
+    /// 筆先の繰り返し方法（6 種）。
+    TipRepeat,
+    /// 筆先の左右・上下の反転のしかた（4 種）。
+    FlipX,
+    FlipY,
+    /// 色の変化を当てる描画色（3 種）。
+    ColorTarget,
+    /// 2 つ目の紙の質感の画像と合わせ方。
+    DualTexture,
+    DualTextureMode,
     /// パスのブラシの縁のアンチエイリアス。
     PathAntiAlias,
     /// レイヤーのパネルの頭のドロップダウン（今のレイヤーセットを選ぶ）。
@@ -127,6 +139,28 @@ fn tips(
             )
             .radio(on),
         );
+    }
+    v
+}
+
+/// 紙の質感の画像の一覧: なし・組み込みの質感・取り込んだ模様（組み込みの後ろ）。主の質感も 2 つ目の質感も同じ並び。
+fn texture_entries(
+    app: &AppState,
+    texture: Option<&yolu_core::PaperTexture>,
+    op: fn(Option<&'static str>) -> BrushOp,
+    pattern_op: fn(crate::brushes::BrushKey) -> BrushOp,
+) -> Vec<Entry<Action>> {
+    let current = texture.map(|t| &*t.image);
+    let mut v = tips(app, current, app.lang.t("m2_menu-none"), op);
+    let patterns = patterns(app);
+    if !patterns.is_empty() {
+        v.push(Entry::Separator);
+        for (key, name, image) in patterns {
+            v.push(
+                Entry::item(name, Action::M2Ui(UiOp::Brush(pattern_op(key))))
+                    .radio(current.is_some_and(|t| *t == *image)),
+            );
+        }
     }
     v
 }
@@ -200,24 +234,82 @@ fn channel_kind_entries(channel: Channel, info: &ChannelInfo, free: bool) -> Vec
         .collect()
 }
 
+/// 選びの並び（値と名前）を、今の値に印を付けた項目にする。
+fn choices<T: Copy + PartialEq>(
+    options: impl IntoIterator<Item = (T, &'static str)>,
+    current: Option<T>,
+    action: impl Fn(T) -> Action,
+) -> Vec<Entry<Action>> {
+    options
+        .into_iter()
+        .map(|(value, name)| Entry::item(name, action(value)).radio(current == Some(value)))
+        .collect()
+}
+
+/// ブラシの選びの並び。
+fn brush_choices<T: Copy + PartialEq>(
+    options: impl IntoIterator<Item = (T, &'static str)>,
+    current: Option<T>,
+    op: impl Fn(T) -> BrushOp,
+) -> Vec<Entry<Action>> {
+    choices(options, current, |value| {
+        Action::M2Ui(UiOp::Brush(op(value)))
+    })
+}
+
+/// サブツールの行の右クリックのメニュー（名前の変更・複製・設定の登録・元に戻す・削除）。
+fn sub_tool_context_entries(app: &AppState) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let free = !app.is_stroking();
+    let Some((tool, key)) = app.subtools.ui.context else {
+        return Vec::new();
+    };
+    let user = key.is_user();
+    let modified = app.subtool_is_modified(tool, key);
+    vec![
+        Entry::item(
+            lang.t("m2_menu-rename"),
+            Action::SubTool(SubToolAction::StartRename(tool, key)),
+        )
+        .enabled(free && user),
+        Entry::item(
+            lang.t("m2_menu-duplicate"),
+            Action::SubTool(SubToolAction::Duplicate(tool, key)),
+        )
+        .enabled(free),
+        Entry::item(
+            lang.t("m2_menu-register-these-settings"),
+            Action::SubTool(SubToolAction::Register(tool, key)),
+        )
+        .enabled(free && user && modified),
+        Entry::item(
+            lang.t("m2_menu-revert"),
+            Action::SubTool(SubToolAction::Revert(tool, key)),
+        )
+        .enabled(free && modified),
+        Entry::Separator,
+        Entry::item(
+            lang.t("m2_menu-delete"),
+            Action::SubTool(SubToolAction::Delete(tool, key)),
+        )
+        .enabled(free && user),
+    ]
+}
+
 /// 項目の並び。
 pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
     match popup {
-        Popup::Resampling => [
-            yolu_core::Resampling::Bilinear,
-            yolu_core::Resampling::Nearest,
-        ]
-        .into_iter()
-        .map(|mode| {
-            Entry::item(
-                crate::transform::resampling_name(lang, mode),
-                Action::M2Ui(UiOp::Resampling(mode)),
-            )
-            .radio(app.transform.resampling == mode)
-        })
-        .collect(),
+        Popup::Resampling => choices(
+            [
+                yolu_core::Resampling::Bilinear,
+                yolu_core::Resampling::Nearest,
+            ]
+            .map(|mode| (mode, crate::transform::resampling_name(lang, mode))),
+            Some(app.transform.resampling),
+            |mode| Action::M2Ui(UiOp::Resampling(mode)),
+        ),
         Popup::Pref(choice) => crate::prefs::entries(app, choice),
         Popup::ExportForm => crate::export::window::form_entries(app),
         Popup::Look(choice) => crate::look::panel::entries(app, choice),
@@ -265,118 +357,91 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::ToolStripContext => crate::toolset::ui::strip_menu(app),
         Popup::GroupContext => crate::toolset::ui::group_menu(app),
         Popup::CatalogContext => crate::panels::brush_catalog::context_menu(app),
-        Popup::SubToolContext => {
-            let Some((tool, key)) = app.subtools.ui.context else {
-                return Vec::new();
-            };
-            let user = key.is_user();
-            let modified = app.subtool_is_modified(tool, key);
-            vec![
-                Entry::item(
-                    lang.t("m2_menu-rename"),
-                    Action::SubTool(SubToolAction::StartRename(tool, key)),
-                )
-                .enabled(free && user),
-                Entry::item(
-                    lang.t("m2_menu-duplicate"),
-                    Action::SubTool(SubToolAction::Duplicate(tool, key)),
-                )
-                .enabled(free),
-                Entry::item(
-                    lang.t("m2_menu-register-these-settings"),
-                    Action::SubTool(SubToolAction::Register(tool, key)),
-                )
-                .enabled(free && user && modified),
-                Entry::item(
-                    lang.t("m2_menu-revert"),
-                    Action::SubTool(SubToolAction::Revert(tool, key)),
-                )
-                .enabled(free && modified),
-                Entry::Separator,
-                Entry::item(
-                    lang.t("m2_menu-delete"),
-                    Action::SubTool(SubToolAction::Delete(tool, key)),
-                )
-                .enabled(free && user),
-            ]
-        }
-        Popup::Effect => {
-            let current = EffectKind::of(&app.m2.brush.effect);
-            EffectKind::ALL
-                .iter()
-                .map(|k| {
-                    Entry::item(k.name(lang), Action::M2Ui(UiOp::Brush(BrushOp::Effect(*k))))
-                        .radio(current == *k)
-                })
-                .collect()
-        }
+        Popup::SubToolContext => sub_tool_context_entries(app),
+        Popup::Effect => brush_choices(
+            EffectKind::ALL.map(|k| (k, k.name(lang))),
+            Some(EffectKind::of(&app.m2.brush.effect)),
+            BrushOp::Effect,
+        ),
         Popup::Tip => tips(
             app,
             app.m2.brush.tip.image.as_deref(),
             lang.t("m2_menu-round-hardness"),
             BrushOp::Tip,
         ),
-        Popup::Texture => {
-            let current = app.m2.brush.texture.as_ref().map(|t| &*t.image);
-            let mut v = tips(app, current, lang.t("m2_menu-none"), BrushOp::Texture);
-            // 取り込んだ模様は、組み込みの質感の後ろに並べる
-            let patterns = patterns(app);
-            if !patterns.is_empty() {
-                v.push(Entry::Separator);
-                for (key, name, image) in patterns {
-                    v.push(
-                        Entry::item(
-                            name,
-                            Action::M2Ui(UiOp::Brush(BrushOp::PatternTexture(key))),
-                        )
-                        .radio(current.is_some_and(|t| *t == *image)),
-                    );
-                }
-            }
-            v
-        }
+        Popup::Texture => texture_entries(
+            app,
+            app.m2.brush.texture.as_ref(),
+            BrushOp::Texture,
+            BrushOp::PatternTexture,
+        ),
+        Popup::DualTexture => texture_entries(
+            app,
+            app.m2.brush.dual.as_ref().and_then(|d| d.texture.as_ref()),
+            BrushOp::DualTexture,
+            BrushOp::DualPatternTexture,
+        ),
         Popup::DualTip => tips(
             app,
             app.m2.brush.dual.as_ref().and_then(|d| d.tip.as_deref()),
             lang.t("m2_menu-round-hardness"),
             BrushOp::DualTip,
         ),
-        Popup::TextureMode => {
-            let current = app.m2.brush.texture.as_ref().map(|t| t.mode);
-            TextureMode::ALL
-                .iter()
-                .map(|m| {
-                    Entry::item(
-                        texture_mode_label(lang, *m),
-                        Action::M2Ui(UiOp::Brush(BrushOp::TextureMode(*m))),
-                    )
-                    .radio(current == Some(*m))
-                })
-                .collect()
-        }
-        Popup::AntiAlias => AntiAlias::ALL
-            .iter()
-            .map(|a| {
-                Entry::item(
-                    anti_alias_label(lang, *a),
-                    Action::M2Ui(UiOp::Brush(BrushOp::AntiAlias(*a))),
-                )
-                .radio(app.brush.anti_alias == *a)
-            })
-            .collect(),
-        Popup::DualMode => {
-            let current = app.m2.brush.dual.as_ref().map(|d| d.mode);
-            DualBrushMode::ALL
-                .iter()
-                .map(|m| {
-                    Entry::item(
-                        dual_mode_label(lang, *m),
-                        Action::M2Ui(UiOp::Brush(BrushOp::DualMode(*m))),
-                    )
-                    .radio(current == Some(*m))
-                })
-                .collect()
-        }
+        Popup::TextureMode => brush_choices(
+            TextureMode::ALL.map(|m| (m, texture_mode_label(lang, m))),
+            app.m2.brush.texture.as_ref().map(|t| t.mode),
+            BrushOp::TextureMode,
+        ),
+        Popup::DualTextureMode => brush_choices(
+            TextureMode::ALL.map(|m| (m, texture_mode_label(lang, m))),
+            app.m2
+                .brush
+                .dual
+                .as_ref()
+                .and_then(|d| d.texture.as_ref())
+                .map(|t| t.mode),
+            BrushOp::DualTextureMode,
+        ),
+        Popup::AntiAlias => brush_choices(
+            AntiAlias::ALL.map(|a| (a, anti_alias_label(lang, a))),
+            Some(app.brush.anti_alias),
+            BrushOp::AntiAlias,
+        ),
+        Popup::MixMode => brush_choices(
+            [
+                (MixMode::Off, lang.t("m2_menu-none")),
+                (MixMode::Mix, lang.t("panels-mix")),
+                (MixMode::Layer, lang.t("panels-mix-layer")),
+                (MixMode::Smear, lang.t("panels-smear")),
+            ],
+            Some(app.m2.brush.mix.mode),
+            BrushOp::MixMode,
+        ),
+        Popup::TipRepeat => brush_choices(
+            m2::tip_repeats(lang),
+            Some(app.m2.brush.tip.selection),
+            BrushOp::TipRepeat,
+        ),
+        Popup::FlipX => brush_choices(
+            m2::flip_rules(lang),
+            Some(app.m2.brush.tip.flip_x),
+            BrushOp::FlipX,
+        ),
+        Popup::FlipY => brush_choices(
+            m2::flip_rules(lang),
+            Some(app.m2.brush.tip.flip_y),
+            BrushOp::FlipY,
+        ),
+        Popup::ColorTarget => brush_choices(
+            m2::color_targets(lang),
+            Some(app.m2.brush.color.target),
+            BrushOp::ColorTarget,
+        ),
+        Popup::DualMode => brush_choices(
+            DualBrushMode::ALL.map(|m| (m, dual_mode_label(lang, m))),
+            app.m2.brush.dual.as_ref().map(|d| d.mode),
+            BrushOp::DualMode,
+        ),
         Popup::NewChannel => [ChannelKind::Color, ChannelKind::Scalar, ChannelKind::Normal]
             .iter()
             .map(|k| {

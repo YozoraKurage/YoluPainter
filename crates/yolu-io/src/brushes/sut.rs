@@ -67,6 +67,8 @@ const THICKNESS: &[&str] = &["brushthickness"];
 const THICKNESS_DIRECTION: &[&str] = &["brushverticalthicknes", "brushverticalthickness"];
 // 最低 1 ピクセル（1 がオン）
 const AT_LEAST_ONE_PIXEL: &[&str] = &["brushatleast1pixel"];
+// 画面上のサイズで指定（1 がオン。1 項目ずつ変えた書き出しの比べで、1 になることを確かめた）
+const SIZE_SYNC_VIEW_SCALE: &[&str] = &["brushsizesyncviewscale"];
 // ブラシサイズの単位（0 が px。環境設定の単位を替えても .sut の列は変わらないので、0 以外は来ない見込み）
 const SIZE_UNIT: &[&str] = &["brushsizeunit"];
 const ROTATION: &[&str] = &["brushrotation"];
@@ -153,6 +155,7 @@ const KNOWN: &[&[&str]] = &[
     THICKNESS,
     THICKNESS_DIRECTION,
     AT_LEAST_ONE_PIXEL,
+    SIZE_SYNC_VIEW_SCALE,
     SIZE_UNIT,
     ROTATION,
     USE_PATTERN,
@@ -533,9 +536,21 @@ fn effector(
             (e.minimums[index], InputResponse::new)
         };
         let response = make(min, points).or_else(|_| make(min, Vec::new()));
-        let Ok(response) = response else {
+        let Ok(mut response) = response else {
             continue;
         };
+        if input == Input::Tilt {
+            // 傾きの最大値（こちらは 0〜100%）。読めない・100% を超える値は 100% にして知らせる（ヘッダーの 0 埋めと見分けられない 0 は
+            // 値として読まない）
+            match e.tilt_max {
+                // 0 は、ヘッダーの 0 埋めと見分けられない（値としては読まず、100% のまま）
+                Some(0.0) => {}
+                Some(max) if max <= 1.0 => {
+                    response = response.with_max(max).unwrap_or(response);
+                }
+                _ => notes.push(Unrepresented::ClipStudio(SutNote::TiltMax(target))),
+            }
+        }
         *influence.input_mut(input) = InputUse { on: true, response };
         let item = match input {
             Input::Pressure => SutMapped::Pressure,
@@ -1254,16 +1269,16 @@ fn repeat_method(value: f64) -> Option<(TipSelection, bool)> {
     }
 }
 
-/// 反転（`BrushPatternReverseHorizontal`・`…Vertical`）の値から、エンジンの反転のしかた（いつも反転するか、ルールか）。知らない値は None。
-fn flip_method(value: f64) -> Option<(bool, FlipRule)> {
+/// 反転（`BrushPatternReverseHorizontal`・`…Vertical`）の値から、エンジンの反転のしかた。知らない値は None。
+fn flip_method(value: f64) -> Option<FlipRule> {
     if value.fract() != 0.0 {
         return None;
     }
     match value as i64 {
-        0 => Some((false, FlipRule::Fixed)),
-        1 => Some((true, FlipRule::Fixed)),
-        2 => Some((false, FlipRule::Random)),
-        3 => Some((false, FlipRule::OnFold)),
+        0 => Some(FlipRule::Off),
+        1 => Some(FlipRule::On),
+        2 => Some(FlipRule::Random),
+        3 => Some(FlipRule::OnFold),
         _ => None,
     }
 }
@@ -1273,8 +1288,8 @@ struct TipTarget<'a> {
     image: &'a mut Option<Arc<BrushTip>>,
     images: &'a mut Vec<Arc<BrushTip>>,
     selection: &'a mut TipSelection,
-    flip_x: (&'a mut bool, &'a mut FlipRule),
-    flip_y: (&'a mut bool, &'a mut FlipRule),
+    flip_x: &'a mut FlipRule,
+    flip_y: &'a mut FlipRule,
 }
 
 /// 繰り返し方法と反転を写すときに出た事（出た順。呼び手が自分の知らせ・写せた項目へ直す）。
@@ -1327,18 +1342,18 @@ fn tip_order_and_flips(
         }
     }
     if t.image.is_some() || !t.images.is_empty() {
-        for (columns, (fixed, rule)) in reverse.into_iter().zip([t.flip_x, t.flip_y]) {
+        for (columns, rule) in reverse.into_iter().zip([t.flip_x, t.flip_y]) {
             let Some(value) = row.first_number(columns) else {
                 continue;
             };
-            let Some((always, method)) = flip_method(value) else {
+            let Some(method) = flip_method(value) else {
                 events.push(TipEvent::FlipUnknown);
                 continue;
             };
-            if !always && method == FlipRule::Fixed {
+            if method == FlipRule::Off {
                 continue;
             }
-            (*fixed, *rule) = (always, method);
+            *rule = method;
             events.push(TipEvent::Flip);
         }
     }
@@ -1361,8 +1376,8 @@ fn tip_rules(
             image: &mut tip.image,
             images: &mut tip.images,
             selection: &mut tip.selection,
-            flip_x: (&mut tip.flip_x, &mut tip.flip_x_rule),
-            flip_y: (&mut tip.flip_y, &mut tip.flip_y_rule),
+            flip_x: &mut tip.flip_x,
+            flip_y: &mut tip.flip_y,
         },
     );
     for event in events {
@@ -1516,6 +1531,10 @@ fn brush_from_row(
     if row.on(AT_LEAST_ONE_PIXEL) {
         brush.controls.min_one_pixel = true;
         mapped.push(SutMapped::MinOnePixel);
+    }
+    if row.on(SIZE_SYNC_VIEW_SCALE) {
+        brush.controls.size_by_screen = true;
+        mapped.push(SutMapped::SizeByScreen);
     }
     start_end(row, &mut brush, &mut notes, &mut mapped);
     stabilizer(row, &mut brush, &mut notes, &mut mapped);

@@ -1058,7 +1058,8 @@ fn texture_modes_flips_and_rotation_map_to_the_core_extensions() {
             b.unrepresented
         );
         assert!(
-            b.brush.tip.flip_x && !b.brush.tip.flip_y,
+            b.brush.tip.flip_x == yolu_core::FlipRule::On
+                && b.brush.tip.flip_y == yolu_core::FlipRule::Off,
             "筆先の反転は core の拡張で表す"
         );
         assert!(

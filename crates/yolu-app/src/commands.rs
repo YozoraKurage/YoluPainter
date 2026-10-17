@@ -497,6 +497,12 @@ pub static COMMANDS: &[Command] = &[
         |l| l.t("commands-larger-brush"),
         || Action::BrushLarger,
     ),
+    // 消すモード（既定のキーは無い。設定の画面で割り当てる）。切り替えは、押したままの繰り返しで出たり消えたりしない
+    no_repeat(press_named(
+        "brush.erase_mode",
+        |l| l.t("commands-erase-mode"),
+        || Action::ToggleEraseMode,
+    )),
     // 切り替えは、押したままの繰り返しで出たり消えたりしない
     no_repeat(press_named(
         "fill.toggle_handles",
@@ -1039,8 +1045,9 @@ mod tests {
         // 既定のキーが無い Press: 液化（ツールの帯から）・モードを 1 つずつ選ぶ操作（ドロップダウン・パイ・メニューから）・視点のパイと
         // その中身（設定で割り当てる）・メッシュマップをベイクするウィンドウ（帯のボタンとセットの右クリックから。設定で割り当てる）・
         // 書き出しのウィンドウ（Ctrl+Shift+E は表示レイヤーの結合が使っているので、設定で割り当てる）
-        const NO_DEFAULT_KEY: [&str; 14] = [
+        const NO_DEFAULT_KEY: [&str; 15] = [
             "bake.open",
+            "brush.erase_mode",
             "file.export",
             "tool.liquify",
             "mode.paint",
@@ -1104,11 +1111,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 87);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 88);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 125);
+        assert_eq!(COMMANDS.len(), 126);
     }
 }

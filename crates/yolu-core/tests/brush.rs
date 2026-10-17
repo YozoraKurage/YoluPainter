@@ -13,8 +13,8 @@ use yolu_core::brush::{curve, pen_tilt, set_parallel_dab_pixels};
 use yolu_core::glam::DVec2;
 use yolu_core::{
     builtin_presets, builtin_tip, Brush, BrushEffect, BrushPixel, BrushSample, BrushSettings,
-    BrushTip, Channel, ColorDynamics, CoreError, Document, DualBrush, DualBrushMode, LayerId,
-    PaperTexture, Rgba8, RowOrder, TextureMode, TipSelection,
+    BrushTip, Channel, ColorDynamics, CoreError, Document, DualBrush, DualBrushMode, FlipRule,
+    LayerId, PaperTexture, Rgba8, RowOrder, TextureMode, TipSelection,
 };
 
 const BLACK: Rgba8 = Rgba8::new(0, 0, 0, 255);
@@ -2209,8 +2209,9 @@ fn flipping_mirrors_the_tip_image() {
         let (mut d, l) = canvas(64);
         let mut b = fixed();
         b.tip.image = Some(tip.clone());
-        b.tip.flip_x = flip_x;
-        b.tip.flip_y = flip_y;
+        let rule = |on: bool| if on { FlipRule::On } else { FlipRule::Off };
+        b.tip.flip_x = rule(flip_x);
+        b.tip.flip_y = rule(flip_y);
         b.tip.angle = angle;
         paint(&mut d, l, &b, &[sample(32.0, 32.0)]);
         d
@@ -2234,8 +2235,8 @@ fn flipping_mirrors_the_tip_image() {
     b.tip.roundness = 0.5;
     b.tip.angle = 20.0;
     paint(&mut r1, l1, &b, &[sample(32.0, 32.0)]);
-    b.tip.flip_x = true;
-    b.tip.flip_y = true;
+    b.tip.flip_x = FlipRule::On;
+    b.tip.flip_y = FlipRule::On;
     paint(&mut r2, l2, &b, &[sample(32.0, 32.0)]);
     assert_eq!(all(&r1), all(&r2));
 }

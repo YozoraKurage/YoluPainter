@@ -8,20 +8,27 @@ This page covers brushes and the eraser, pen pressure, lines, shapes and rulers,
 
 The brush (`B`) and the eraser (`E`) paint on the 2D Canvas and on the 3D View. The eraser uses the eraser you last selected in the eraser list. What they paint on is the painting channel of the layer selected in the Layers panel (or its mask, if the mask is selected).
 
-In the Tool Properties panel on the left, you can change Size, Opacity, Hardness, Flow, Spacing and Stabilizer right away. `[` and `]` also change the size. The Brush Size panel below it is a set of preset diameters (it has circles only for the brush, the eraser and the Selection Pen). The adjustment button (Brush Details) opens a window that holds all the settings, grouped as follows. You can move it and keep it open while you paint.
+The Tool Properties panel on the left lists the rows whose eye button is on in Brush Details (initially Size, Opacity, Flow, Hardness, Spacing and Stabilizer). `[` and `]` also change the size. The Brush Size panel below it is a set of preset diameters (it has circles only for the brush, the eraser and the Selection Pen). The button at the top right of the sample (Brush Details) opens a window that holds all the settings, grouped as follows. You can move it and keep it open while you paint.
+
+The eye button at the left end of each row in Brush Details decides whether the row also appears in Tool Properties (each brush remembers its own). A row that has dynamics (Size, Opacity, Flow, Hardness, Roundness, Texture depth, Paint amount and density, and the color-change items such as Hue) has a dynamics button on its right. It opens a small window named after the row, where you choose which of pressure, tilt, speed and random to use, each one's minimum (tilt also has a maximum) and curve. The dynamics button of a Tool Properties row opens the same window.
 
 | Category | Contents |
 |---|---|
-| Shape | The tip (round, a built-in image, or an imported image), hardness, anti-aliasing (None, Weak, Medium, Strong; smooths the jagged pixels of the edge), roundness, angle, follow direction, flip |
-| Stroke | Size, spacing, flow, opacity, stabilizer, curve. The 3D settings are in [GUIDE_3D.md](GUIDE_3D.md) |
-| Pen Pressure | For each of size, opacity, flow and hardness: whether pressure is used, its minimum, and its curve |
-| Taper & Pen | Taper, fade, pen tilt and rotation, speed |
-| Jitter, Texture, Dual Brush, Color Dynamics | Scatter, paper texture, a second tip layered on the first, changes in hue, saturation and brightness |
-| Color Mixing, Effect | Picking up and mixing the colors underneath (used by the oil, gouache and mixer brushes); Blur, Smudge and Clone |
+| Brush size | Size, Specify by size on screen, At least 1 pixel, size jitter |
+| Ink | Opacity, flow, the settings for picking up and mixing the colors underneath (used by the oil, gouache and mixer brushes), Effect (Blur, Smudge and Clone) |
+| Color change | Hue, saturation, value and sub color of the tip, Randomize per stroke, change target, background color jitter |
+| Anti-aliasing | None, Weak, Medium, Strong (smooths the jagged pixels of the edge) |
+| Brush shape | Brush tip (the tip image, hardness, roundness, angle, follow direction, repeat method, flip), spray, stroke (spacing; the 3D settings are in [GUIDE_3D.md](GUIDE_3D.md)), paper |
+| 2nd brush shape | A second tip layered on the first (tip, spray, stroke, paper) |
+| Erase | Erase mode |
+| Stabilization | Stabilizer, curve |
+| Taper | Taper, fade, what the taper applies to |
+
+While Erase under Erase is on (you can also assign a key to the Erase Mode command), the Brush tool erases with the current brush as it is. It is not saved in the brush and stays when you switch tools.
 
 The settings are specified in [BRUSH.md](../BRUSH.md) (Japanese).
 
-The Clone brush copies from the point you `Alt`-click (release without moving), starting with the next stroke. This works the same on the 2D Canvas and in the 3D View (if you move before releasing, the 2D Canvas rotates the view and the 3D View snap-orbits). A cross marks the source; on the 2D Canvas it moves to the point being copied while you paint. With Aligned on, the offset to the source is set at the start point of the next stroke after you set the source, and later strokes keep the same offset (a stroke cancelled with `Esc` or a stroke that changed nothing does not set it; the next stroke does). The offset that was set carries on after switching to the eraser and back or choosing the brush again. With Aligned off, every stroke starts on the source. All layers reads the stack of visible layers. These two settings are shared by 2D and 3D. Switching documents or texture sets forgets the source. On the 2D Canvas without a source, the brush copies with Offset X and Offset Y under Effect. Once a source is set on the 2D Canvas, these fields show the offset that was set, and an offset set from the source does not mark the brush as modified (an offset you change in the fields does). With Aligned off, and while only the 3D View is shown, the fields do not decide the offset and are dimmed.
+The Clone brush copies from the point you `Alt`-click (release without moving), starting with the next stroke. This works the same on the 2D Canvas and in the 3D View (if you move before releasing, the 2D Canvas rotates the view and the 3D View snap-orbits). A cross marks the source; on the 2D Canvas it moves to the point being copied while you paint. With Aligned on, the offset to the source is set at the start point of the next stroke after you set the source, and later strokes keep the same offset (a stroke cancelled with `Esc` or a stroke that changed nothing does not set it; the next stroke does). The offset that was set carries on after switching to the eraser and back or choosing the brush again. With Aligned off, every stroke starts on the source. Read all layers reads the stack of visible layers. These two settings are shared by 2D and 3D. Switching documents or texture sets forgets the source. On the 2D Canvas without a source, the brush copies with Offset X and Offset Y under Ink. Once a source is set on the 2D Canvas, these fields show the offset that was set, and an offset set from the source does not mark the brush as modified (an offset you change in the fields does). With Aligned off, and while only the 3D View is shown, the fields do not decide the offset and are dimmed.
 
 With any tool selected, the right button temporarily acts as the eyedropper: in 2D, press it (while you hold it, the swatch follows the pointer, and the color where you release is picked); in 3D, release it without moving. With Polygon Fill, the right button opens the island menu (`Alt` is a view control). While you paint, the controls in the panels do nothing when pressed. They keep the look they had before the stroke and do not turn gray.
 
@@ -49,13 +56,13 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 
 ## Tuning how the pen feels
 
-- **Pressure**: the pen button in the Size, Opacity, Hardness and Flow rows of Tool Properties turns pressure on or off for that setting. The minimum (the value at zero pressure) and the curve are set in Pen Pressure in Brush Details. When a finger or pen arrives as touch input and sends a force, that force becomes the pressure (on the 2D Canvas and in the 3D View alike, through the Pen Pressure adjustment below).
+- **Pressure**: the dynamics button in the Size, Opacity, Flow and Hardness rows of Tool Properties opens the dynamics window, where you turn pressure on or off for that setting and set the minimum (the value at zero pressure) and the curve. When a finger or pen arrives as touch input and sends a force, that force becomes the pressure (on the 2D Canvas and in the 3D View alike, through the Pen Pressure adjustment below).
 - **Differences between pens**: Pen Pressure under Pen in Edit → Settings… sets a low limit, a high limit and a curve. Draw a few strokes at your usual strength and press Auto, and the settings are worked out from the pressure of the strokes you drew. This is a per-device setting and is stored neither in documents nor in brushes.
 - **Tablets on Windows**: on Windows, the pen's pressure, tilt, rotation, eraser end and side buttons are read through Windows Ink by default. On a machine where a driver such as Wacom's provides WinTab, you can switch to WinTab with Pen input under Pen in Edit → Settings… (when WinTab is unavailable, Windows Ink stays in use).
 - **Tablets on Mac**: on Mac, the app reads the pressure, tilt, eraser end and side buttons that drivers such as Wacom and XP-Pen send as standard macOS events (experimental). Turn it on or off with Tablet pressure (experimental) under Pen in Edit → Settings… (on by default; when off, the pen draws like a mouse).
 - **Delay before a line appears**: by default, the screen update is presented without waiting for the vertical sync, which shortens the delay between the pen input and the line appearing on screen. If screen tearing bothers you, turn on VSync under Display in Edit → Settings… (the delay gets longer; it takes effect from the next start).
 - **Stabilizer**: Stabilizer in Tool Properties (0 to 200 px) is the length of the string that pulls the brush. 0 turns it off.
-- **Taper**: the settings that thin the start and end of a stroke are in Taper & Pen in Brush Details.
+- **Taper**: the settings that thin the start and end of a stroke are under Taper in Brush Details.
 - **In the 3D View too**: Stabilizer, taper, jitter and the other settings apply to strokes in the 3D View with the same formulas. The stabilizer and taper lengths (px) are measured in screen points in the 3D View ([GUIDE_3D.md](GUIDE_3D.md)).
 
 ## Lines, shapes and rulers

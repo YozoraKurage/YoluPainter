@@ -662,7 +662,7 @@ fn headless_the_app_reads_the_sub_tool_folder_next_to_its_settings_and_reports_a
 #[test]
 fn the_option_bar_and_the_tool_properties_show_the_same_values() {
     let mut h = app(1600.0, 900.0, 128);
-    // ブラシ: 直径と不透明度は両方に、硬さ・流量・間隔・筆圧はツールプロパティだけ
+    // ブラシ: 直径と不透明度は両方に、硬さ・流量・間隔・手ぶれ補正はツールプロパティだけ
     h.brush_mut().radius = 20.0;
     h.brush_mut().opacity = 0.5;
     h.run();
@@ -676,7 +676,7 @@ fn the_option_bar_and_the_tool_properties_show_the_same_values() {
             assert_eq!(n.accesskit_node().numeric_value(), Some(value), "{label}");
         }
     }
-    for label in ["硬さ", "流量", "間隔", "筆圧で直径を変える"] {
+    for label in ["硬さ", "流量", "間隔", "手ぶれ補正"] {
         assert!(
             in_panel(&h, label).len() == 1,
             "{label} はツールプロパティに"

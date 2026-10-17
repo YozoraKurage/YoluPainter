@@ -1,6 +1,6 @@
 //! 2D のキャンバスのクローンの元: クローンのブラシで Alt + 左を動かさずに離すと、そこが元になる（動かせば表示を回すだけ）。次のストロークは、始めの点で
 //! `offset = 元 − 始めの点` を決めて元から写す（揃えるなら以後は同じ offset、揃えないならストロークごとに決め直す）。「ずれ」の欄はそれを表示する欄で、
-//! 元から決めた offset はブラシの「変えた」に数えない。「揃える」「全レイヤーから」は 3D ビューと同じ設定。実際の入力（マウスのイベント）を流して確かめる。
+//! 元から決めた offset はブラシの「変えた」に数えない。「揃える」「全レイヤーを読む」は 3D ビューと同じ設定。実際の入力（マウスのイベント）を流して確かめる。
 use crate::common;
 use crate::common::drive::Drive;
 
@@ -353,7 +353,7 @@ fn select_builtin_clone(h: &mut H) {
 fn open_effect_detail(h: &mut H) {
     let ui = &mut h.brushes_mut().ui;
     ui.detail.open = true;
-    ui.detail.category = Category::Effect;
+    ui.detail.category = Category::Ink;
     ui.detail.scroll = 0.0;
     h.run();
 }
@@ -457,15 +457,15 @@ fn the_canvas_shows_aligned_and_all_layers_and_the_toggles_reach_the_2d_stroke()
     let mut h = clone_app();
     select_builtin_clone(&mut h);
     open_effect_detail(&mut h);
-    // 2D だけを出していても、揃える・全レイヤーからが並ぶ（前は 3D を出しているときだけ「揃える」が出た）
+    // 2D だけを出していても、揃える・全レイヤーを読むが並ぶ（前は 3D を出しているときだけ「揃える」が出た）
     let _ = h.get_by_role_and_label(Role::CheckBox, "揃える");
     let all = h
-        .get_by_role_and_label(Role::CheckBox, "全レイヤーから")
+        .get_by_role_and_label(Role::CheckBox, "全レイヤーを読む")
         .rect();
     assert!(!h.clone().all_layers);
     click(&mut h, all.center());
     assert!(h.clone().all_layers, "画面の切り替えが共有の設定を変える");
-    // 2D のストロークも「全レイヤーから」を使う（合成の参照元を凍結する）
+    // 2D のストロークも「全レイヤーを読む」を使う（合成の参照元を凍結する）
     h.brushes_mut().ui.detail.open = false;
     h.run();
     alt_click(&mut h, 60.0, 60.0);

@@ -116,6 +116,25 @@ fn drop_files(h: &mut H, at: egui::Pos2, files: &[&PathBuf]) {
     h.step();
 }
 
+/// 詳細のウィンドウの欄を、その名前の部品が見える所まで送る（筆先の格子はブラシ先端の区分の終わりにある）。
+fn scroll_to(h: &mut H, label: &str) {
+    let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
+        .expect("ブラシの詳細のウィンドウを描いている");
+    let view = Rect::from_min_max(
+        pos2(window.left() + 168.0, window.top() + 140.0),
+        window.max,
+    );
+    for _ in 0..40 {
+        let r = h.get_by_label(label).rect();
+        if view.contains(r.center()) {
+            return;
+        }
+        let step = r.center().y - view.center().y;
+        h.brushes_mut().ui.detail.scroll += step;
+        h.run();
+    }
+}
+
 /// 名前のマスの「選んでいる」印（アクセシビリティの木の切り替え）。同じ名前の部品（プロパティの欄と詳細のウィンドウの同じ格子）が
 /// 全部同じ印のときだけ、その値を返す（食い違えば None）。部品が無くても None。
 fn marked(h: &H, label: &str) -> Option<bool> {
@@ -364,7 +383,7 @@ fn dropping_brush_files_imports_them_and_a_png_only_when_dropped_on_the_list() {
 fn the_krita_grid_in_the_shape_category_filters_by_name_and_picks_a_tip() {
     let mut h = app(1600.0, 960.0, 128);
     h.brushes_mut().ui.detail.open = true;
-    h.brushes_mut().ui.detail.category = Category::Shape;
+    h.brushes_mut().ui.detail.category = Category::Tip;
     h.run();
     h.run();
     assert!(st(&h).brushes().krita.is_ready());
@@ -391,6 +410,7 @@ fn the_krita_grid_in_the_shape_category_filters_by_name_and_picks_a_tip() {
     h.brushes_mut().krita.search.clear();
     h.run();
     let name = krita.brushes[hidden].name.clone();
+    scroll_to(&mut h, name.as_str());
     h.get_by_label(name.as_str()).click();
     h.run();
     assert_eq!(
@@ -450,7 +470,7 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
     let mut h = app(1600.0, 960.0, 128);
     with_store(&mut h, &dir);
     h.brushes_mut().ui.detail.open = true;
-    h.brushes_mut().ui.detail.category = Category::Shape;
+    h.brushes_mut().ui.detail.category = Category::Tip;
     h.run();
     h.run();
     let round = "丸（硬さ）";
@@ -507,13 +527,13 @@ fn only_the_cell_of_the_current_tip_is_marked_in_the_shape_grid() {
 fn the_flip_fields_are_on_for_a_hose_as_well_as_for_a_single_image() {
     let mut h = app(1600.0, 960.0, 128);
     h.brushes_mut().ui.detail.open = true;
-    h.brushes_mut().ui.detail.category = Category::Shape;
+    h.brushes_mut().ui.detail.category = Category::Tip;
     h.run();
     h.run();
-    // 反転の欄（プロパティの欄のアルファのタブと詳細のウィンドウに 1 つずつ）。全部が同じ有効・無効のときだけ値を返す
+    // 反転の欄（詳細のウィンドウの選びの箱「左右反転: 値」）。全部が同じ有効・無効のときだけ値を返す
     let flip_x = |h: &H| {
         let all: Vec<bool> = h
-            .query_all_by_label("左右反転")
+            .query_all_by_label_contains("左右反転")
             .map(|n| !n.accesskit_node().is_disabled())
             .collect();
         assert!(!all.is_empty(), "反転の欄が無い");
@@ -545,11 +565,13 @@ fn the_flip_fields_are_on_for_a_hose_as_well_as_for_a_single_image() {
         assert!(flip_x(&h), "{what}で反転の欄が無効");
     }
     // 反転が入ったままホースを選んでも、欄から外せる（押すと反転が外れる）
-    h.m2_mut().brush.tip.flip_x = true;
+    h.m2_mut().brush.tip.flip_x = yolu_core::FlipRule::On;
     h.run();
-    h.get_all_by_label("左右反転").next().unwrap().click();
+    h.get_all_by_label("左右反転: 反転").next().unwrap().click();
     h.run();
-    assert!(!st(&h).m2().brush.tip.flip_x);
+    let at = popup_item(&h, "なし").center();
+    click(&mut h, at);
+    assert_eq!(st(&h).m2().brush.tip.flip_x, yolu_core::FlipRule::Off);
 }
 
 fn imported_panel(lang: Lang, dir: &Path) -> H {

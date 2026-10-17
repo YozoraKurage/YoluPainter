@@ -253,20 +253,20 @@ fn assert_brush_fields_enabled(h: &mut H, lang: Lang) {
     h.run();
     for (category, labels) in [
         (
-            Category::Shape,
+            Category::Tip,
             lang.pick(["真円率", "角度"], ["Roundness", "Angle"]),
         ),
         (
-            Category::Stroke,
+            Category::Stabilization,
             lang.pick(["手ぶれ補正", "曲線"], ["Stabilizer", "Curve"]),
         ),
         (
-            Category::Dynamics,
-            lang.pick(["入り", "抜き"], ["Taper in", "Taper out"]),
+            Category::Taper,
+            lang.pick(["入りの長さ", "抜きの長さ"], ["Start length", "End length"]),
         ),
         (
-            Category::Jitter,
-            lang.pick(["サイズ", "散布"], ["Size", "Scatter"]),
+            Category::Spray,
+            lang.pick(["散布", "数"], ["Scatter", "Count"]),
         ),
     ] {
         open_brush_detail(h, category);
@@ -522,7 +522,7 @@ fn hardness_says_it_has_no_effect_with_an_image_tip() {
     for lang in Lang::ALL {
         let reason = lang.pick("画像の筆先では効きません", "No effect on an image tip");
         let hardness = lang.pick("硬さ", "Hardness");
-        let minimum = lang.pick("最小", "Minimum");
+        let minimum = lang.pick("最小値", "Minimum");
         // 丸い筆先: 有効・理由なし
         let mut h = brush_app(lang, true);
         assert!(!is_disabled(&h, hardness), "{lang:?}");
@@ -532,28 +532,27 @@ fn hardness_says_it_has_no_effect_with_an_image_tip() {
         h.run();
         assert!(is_disabled(&h, hardness), "{lang:?}");
         assert!(tooltip_shows(&mut h, hardness, reason), "{lang:?}");
-        // ブラシの詳細の形状
-        open_brush_detail(&mut h, Category::Shape);
+        // ブラシの詳細のブラシ先端
+        open_brush_detail(&mut h, Category::Tip);
         let found = pane_field(&h, hardness);
         assert_brush_field(&mut h, lang, found, hardness, reason, true);
-        // 筆圧: 硬さの項目（最後）の最小は、画像の筆先が理由
-        open_brush_detail(&mut h, Category::Pressure);
-        // 硬さの項目は一番下なので、見えるところまで送る
-        h.brushes_mut().ui.detail.scroll = 1000.0;
+        // 硬さの影響元のウィンドウ: 最小値は、画像の筆先が理由
+        h.brushes_mut().ui.detail.dynamics = Some(yolu_app::brushes::Row::Hardness);
         h.run();
-        let window = yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_detail::id())
-            .expect("ブラシの詳細のウィンドウ");
+        h.run();
+        let window =
+            yolu_app::ui::window::last_rect(&h.ctx, yolu_app::panels::brush_rows::dynamics_id())
+                .expect("影響元設定のウィンドウ");
         let last = h
             .query_all_by_label(minimum)
-            .filter(|n| window.contains(n.rect().center()))
-            .max_by(|a, b| a.rect().top().total_cmp(&b.rect().top()))
-            .expect("最小の欄");
+            .find(|n| window.contains(n.rect().center()))
+            .expect("最小値の欄");
         let found = (last.rect(), last.accesskit_node().is_disabled());
         assert_brush_field(&mut h, lang, found, minimum, reason, true);
     }
 }
 
-/// 消しゴムのときのクローンの「全レイヤーから」「揃える」は、ずれの欄と同じく消しゴムが理由。
+/// 消しゴムのときのクローンの「全レイヤーを読む」「揃える」は、ずれの欄と同じく消しゴムが理由。
 #[test]
 fn the_clone_toggles_say_the_eraser_is_the_reason() {
     use yolu_app::brushes::Category;
@@ -564,9 +563,9 @@ fn the_clone_toggles_say_the_eraser_is_the_reason() {
         h.m2_mut().brush.effect = BrushEffect::Clone {
             offset: yolu_app::engine::DVec2::new(8.0, 0.0),
         };
-        open_brush_detail(&mut h, Category::Effect);
+        open_brush_detail(&mut h, Category::Ink);
         for label in [
-            lang.pick("全レイヤーから", "All layers"),
+            lang.pick("全レイヤーを読む", "Read all layers"),
             lang.pick("揃える", "Aligned"),
         ] {
             let found = pane_field(&h, label);
@@ -588,7 +587,7 @@ fn the_aligned_reason_names_the_key_that_sets_the_clone_source() {
         h.m2_mut().brush.effect = BrushEffect::Clone {
             offset: yolu_app::engine::DVec2::new(8.0, 0.0),
         };
-        open_brush_detail(&mut h, Category::Effect);
+        open_brush_detail(&mut h, Category::Ink);
         let label = lang.pick("揃える", "Aligned");
         let found = pane_field(&h, label);
         assert_brush_field(&mut h, lang, found, label, reason, true);

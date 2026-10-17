@@ -585,8 +585,8 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
             offset: Default::default(),
         },
     );
-    // クローンの欄は、ブラシの詳細のウィンドウの「効果」のカテゴリ
-    open_detail(&mut h, yolu_app::brushes::Category::Effect);
+    // クローンの欄は、ブラシの詳細のウィンドウの「インク」のカテゴリ
+    open_detail(&mut h, yolu_app::brushes::Category::Ink);
     let disabled = |h: &Harness<'_, YoluApp>, label: &str| {
         h.get_by_role_and_label(Role::CheckBox, label)
             .accesskit_node()
@@ -594,7 +594,7 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     };
     // 元が無いあいだは、揃えるは薄い（状態の文は出さない）
     assert!(disabled(&h, "揃える"));
-    assert!(!disabled(&h, "全レイヤーから"));
+    assert!(!disabled(&h, "全レイヤーを読む"));
     assert!(h.query_by_label("元がありません").is_none());
     assert!(h.query_by_label("元を決めました").is_none());
     // Alt クリックで元を決めると、揃えるが使える（詳細のウィンドウがモデルに重ならないよう、押す間は閉じる）
@@ -606,20 +606,20 @@ fn the_clone_toggles_show_their_state_by_being_dim_and_say_it_in_no_sentence() {
     release_with(&h, source, Modifiers::ALT);
     h.run();
     assert!(h.clone().source.is_some());
-    open_detail(&mut h, yolu_app::brushes::Category::Effect);
+    open_detail(&mut h, yolu_app::brushes::Category::Ink);
     assert!(!disabled(&h, "揃える"));
     assert!(h.query_by_label("元を決めました").is_none());
     // マスクを描くあいだは、全レイヤーから読めない（描いているマスクだけを読む）ので、切った表示で薄い
     h.clone_mut().all_layers = true;
     h.run();
-    assert!(!disabled(&h, "全レイヤーから"));
+    assert!(!disabled(&h, "全レイヤーを読む"));
     let layer = h.selected_layer().expect("レイヤー");
     h.doc_mut().add_layer_mask(layer).unwrap();
     h.app_mut().set_edit_mask(true);
     h.run();
-    assert!(disabled(&h, "全レイヤーから"));
+    assert!(disabled(&h, "全レイヤーを読む"));
     assert_eq!(
-        h.get_by_role_and_label(Role::CheckBox, "全レイヤーから")
+        h.get_by_role_and_label(Role::CheckBox, "全レイヤーを読む")
             .accesskit_node()
             .toggled(),
         Some(egui::accesskit::Toggled::False)
@@ -840,4 +840,98 @@ fn mouse_speed_in_3d_does_not_depend_on_how_many_events_arrive_per_frame() {
     // 速さは実際に効いている: 倍の速さで動かすと絵が変わる
     let fast = run(&mut h, 1, 2.0);
     assert!(fast != one, "{fast} != {one}");
+}
+
+/// 消すモード: 3D のビューでも、入っている間は今のブラシで消す（描いた面の画素が透明に戻り、1 回の Undo で戻る）。切ると、また描ける。
+#[test]
+fn the_erase_mode_erases_with_the_current_brush_in_3d() {
+    let (mut h, rect) = cube_view();
+    {
+        let b = h.brush_mut();
+        b.radius = 12.0;
+        b.hardness = 1.0;
+        b.pressure.size = false;
+        b.pressure.opacity = false;
+    }
+    fill_island(&mut h, 0, 0, |_, _| Rgba8::new(40, 120, 200, 255));
+    let covered = |h: &Harness<'_, YoluApp>| -> usize {
+        let (w, hh) = (SIZE / 3, SIZE / 2);
+        (10..hh - 10)
+            .flat_map(|y| (10..w - 10).map(move |x| (x, y)))
+            .filter(|&(x, y)| alpha_at(h, x, y)[3] > 0)
+            .count()
+    };
+    let full = covered(&h);
+    assert!(full > 1000, "塗り済みの面: {full}");
+    let before = snapshot(&h);
+    h.m2_mut().erase_mode = true;
+    // 手前（−Z）の面を横切る
+    drag_world(
+        &mut h,
+        rect,
+        Vec3::new(-0.2, 0.0, -0.5),
+        Vec3::new(0.2, 0.0, -0.5),
+        8,
+    );
+    assert!(message(&h).is_empty(), "{}", message(&h));
+    assert_eq!(h.doc().undo_count(), 1);
+    let erased = covered(&h);
+    assert!(erased < full, "線の下の画素が消えた: {full} -> {erased}");
+    key(&h, Key::Z, Modifiers::COMMAND);
+    h.run();
+    assert_eq!(snapshot(&h), before, "1 回の Undo で戻る");
+    // 切ると、消さずに描く（塗り済みの面は変わらず、覆いが減らない）
+    h.m2_mut().erase_mode = false;
+    drag_world(
+        &mut h,
+        rect,
+        Vec3::new(-0.2, 0.0, -0.5),
+        Vec3::new(0.2, 0.0, -0.5),
+        8,
+    );
+    assert!(covered(&h) >= full);
+}
+
+/// 画面上のサイズで指定: 3D のビューでは、カメラを引くほど文書の画素での半径が大きくなり（画面での大きさは同じ）、切ると文書の画素の大きさのまま。
+#[test]
+fn a_brush_sized_on_screen_covers_more_of_the_texture_when_the_camera_is_farther() {
+    let covered_at = |size_by_screen: bool, distance_scale: f32| -> usize {
+        let (mut h, rect) = cube_view();
+        h.view3d_mut().camera.distance *= distance_scale;
+        h.run();
+        h.m2_mut().brush.controls.size_by_screen = size_by_screen;
+        {
+            let b = h.brush_mut();
+            b.radius = if size_by_screen { 20.0 } else { 8.0 };
+            b.hardness = 1.0;
+            b.spacing = 0.1;
+            b.pressure.size = false;
+            b.pressure.opacity = false;
+        }
+        drag_world(
+            &mut h,
+            rect,
+            Vec3::new(-0.2, 0.0, -0.5),
+            Vec3::new(0.2, 0.0, -0.5),
+            8,
+        );
+        assert!(message(&h).is_empty(), "{}", message(&h));
+        (0..SIZE)
+            .flat_map(|y| (0..SIZE).map(move |x| (x, y)))
+            .filter(|&(x, y)| alpha_at(&h, x, y)[3] > 0)
+            .count()
+    };
+    let near = covered_at(true, 1.0);
+    let far = covered_at(true, 2.0);
+    assert!(
+        near > 0 && far > near * 3 / 2,
+        "引くほど広く覆う: 近 {near} / 遠 {far}"
+    );
+    // 切ると、カメラの距離によらず（文書の画素の半径のまま）ほぼ同じ広さ
+    let near_fixed = covered_at(false, 1.0);
+    let far_fixed = covered_at(false, 2.0);
+    assert!(
+        far_fixed * 10 < near_fixed * 13 && near_fixed * 10 < far_fixed * 13 * 2,
+        "近 {near_fixed} / 遠 {far_fixed}"
+    );
 }

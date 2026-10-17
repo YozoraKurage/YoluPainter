@@ -415,6 +415,8 @@ pub enum SutMapped {
     ThicknessDirection,
     /// 最低 1 ピクセル。
     MinOnePixel,
+    /// 画面上のサイズで指定（ブラシの大きさを画面の点で決める）。
+    SizeByScreen,
     /// 色の混ぜ。
     ColorMixing,
     /// アンチエイリアス。
@@ -456,6 +458,7 @@ impl SutMapped {
             Self::AngleSource => ("角度の影響元", "angle source"),
             Self::ThicknessDirection => ("厚さの向き", "thickness direction"),
             Self::MinOnePixel => ("最低 1 ピクセル", "at least 1 pixel"),
+            Self::SizeByScreen => ("画面上のサイズで指定", "size on screen"),
             Self::ColorMixing => ("色の混ぜ", "color mixing"),
             Self::AntiAliasing => ("アンチエイリアス", "anti-aliasing"),
             Self::Speed => ("速さ", "speed"),
@@ -643,6 +646,8 @@ pub enum SutNote {
     CurveSimplified(SutTarget, SutInput),
     /// 傾きの曲線を決められず（影響元の頭の枠が読めない・曲線と合わない）、直立で 1・寝かせきって 0 の直線にした。
     TiltCurve(SutTarget),
+    /// 傾きの最大値が 100% を超える（こちらは 100% まで）か、読めない（ヘッダーに無い）ので、100% にした。
+    TiltMax(SutTarget),
     /// 入り抜きの長さだけを写した。速さに応じた長さ・割合（`BrushInOutBySpeed`・`BrushInRatio`・`BrushOutRatio`）は読まない。
     StartEndDetail,
     /// 手ぶれ補正の強さ（段階）を、糸の長さ（画素）へ 1 対 1 で写した（換算は推定）。
@@ -762,6 +767,27 @@ impl SutNote {
                 "The tip and per-stroke hue changes are added together (whether the sum has a limit was not verified; a close behavior).".into(),
             ),
             _ => unreachable!("色の変化の知らせだけがここへ来る"),
+        }
+    }
+
+    /// 傾きの影響元の知らせの文。
+    fn tilt_texts(&self) -> (String, String) {
+        match self {
+            Self::TiltCurve(target) => {
+                let (tja, ten) = target.texts();
+                (
+                    format!("{tja}の傾きの曲線を決められず、直立で 1・寝かせきって 0 の直線にした"),
+                    format!("The pen tilt curve for {ten} could not be determined; a straight line from 1 (upright) to 0 (flat) is used."),
+                )
+            }
+            Self::TiltMax(target) => {
+                let (tja, ten) = target.texts();
+                (
+                    format!("{tja}の傾きの最大値は 100% までしか写せない（100% を超える・読めない値は 100% にした）"),
+                    format!("The pen tilt maximum for {ten} is kept up to 100% only (a larger or unreadable value is set to 100%)."),
+                )
+            }
+            _ => unreachable!("傾きの知らせだけがここへ来る"),
         }
     }
 
@@ -977,13 +1003,7 @@ impl SutNote {
                     format!("The {ien} curve for {ten} was resampled to 16 points (it had more)."),
                 )
             }
-            Self::TiltCurve(target) => {
-                let (tja, ten) = target.texts();
-                (
-                    format!("{tja}の傾きの曲線を決められず、直立で 1・寝かせきって 0 の直線にした"),
-                    format!("The pen tilt curve for {ten} could not be determined; a straight line from 1 (upright) to 0 (flat) is used."),
-                )
-            }
+            Self::TiltCurve(_) | Self::TiltMax(_) => self.tilt_texts(),
             Self::StartEndDetail => (
                 "入り抜きは長さ・影響先・最小値を写した（速さに応じた長さ・割合は読まない）".into(),
                 "Start and end taper keeps the lengths, targets and minimums (speed-dependent lengths and ratios are not read).".into(),

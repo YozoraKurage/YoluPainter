@@ -168,7 +168,7 @@ fn the_secondary_flips_mirror_its_tip() {
     let flipped = dot(&dualed(DualBrush {
         tip: Some(left_half()),
         radius: 10.0,
-        flip_x: true,
+        flip_x: FlipRule::On,
         ..DualBrush::default()
     }));
     assert!(painted(&plain) > 0 && painted(&flipped) > 0);
@@ -178,7 +178,7 @@ fn the_secondary_flips_mirror_its_tip() {
     // ランダムな反転は、決まった種で同じバイト、反転しない線とは違う
     let random = dualed(DualBrush {
         tip: Some(left_half()),
-        flip_x_rule: FlipRule::Random,
+        flip_x: FlipRule::Random,
         ..DualBrush::default()
     });
     let a = stroke(&random);
@@ -282,8 +282,8 @@ fn undo_and_redo_of_a_stroke_with_every_new_item_restore_the_exact_bytes() {
     let b = dualed(DualBrush {
         tips: vec![builtin_tip("dots").unwrap(), left_half()],
         selection: TipSelection::PingPong,
-        flip_x_rule: FlipRule::OnFold,
-        flip_y_rule: FlipRule::Random,
+        flip_x: FlipRule::OnFold,
+        flip_y: FlipRule::Random,
         darken_overlap: true,
         texture: Some(PaperTexture {
             mode: TextureMode::Overlay,
