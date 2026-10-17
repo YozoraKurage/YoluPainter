@@ -366,7 +366,9 @@ fn a_distribution_copy_of_a_big_project_keeps_the_split_document() {
     let a = painted(7, 6);
     small().scoped(|| {
         let p = project_of(&[(SET_A, &a)]);
-        let copy = p.for_distribution(writer(), &Removal::ALL).unwrap();
+        let copy = p
+            .for_distribution(writer(), &Removal::ALL, &p.unused_resources(&Removal::ALL))
+            .unwrap();
         assert!(copy.sets()[0].document.is_split());
         let path = dir.path("copy.ylp");
         SaveTarget::create(&path).unwrap().save(&copy).unwrap();

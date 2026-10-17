@@ -1,8 +1,9 @@
 //! 配布用の写し: 開いている .ylp から、作った人が気づかないまま残る物を除いた写しを作る。
 //!
 //! .ylp は販売物に含まれることがある。作業用のファイルには、取り込んだ PSD の原本・どのレイヤーにも使われていない棚の素材・取り込んだ元のパス・モデルの
-//! 場所・焼いたメッシュマップ・Unity のマテリアルの値・古い状態のエントリ・知らないエントリが残るので、写しを書くときに種類ごとに除く
-//! （[`Removal`]。目録は [`Project::distribution_inventory`]、写しは [`Project::for_distribution`]）。作業用のファイルは変えない。
+//! 場所・焼いたメッシュマップ・Unity のマテリアルの値・古い状態のエントリ・知らないエントリが残るので、写しを書くときに除く
+//! （アセット以外は種類ごと＝[`Removal`]、アセットは 1 つずつ＝ID の集まり。目録は [`Project::distribution_inventory`]、写しは
+//! [`Project::for_distribution`]）。作業用のファイルは変えない。
 //!
 //! 写しは今のファイルと同じ形式（形式 7。名前を付けて残した選択範囲を残す写しは 8。正本の版は変えない）で、除くのは次の物だけ。除くものは、Unity 版（0.2.0）の読み手がどれも無くてよい（PSD の原本・
 //! 状態のエントリ・派生のエントリ）か、索引と合わせて書き直す（棚）物だけで、`resources.json` の並びにある物は並びと中身が必ず揃う（並びが
@@ -11,8 +12,9 @@
 //! Unity 版の読み手のコードと形式の決まりを読んで確かめたもので、Unity では開いていない。スタンドアロン版では、写しを読み直す試験で確かめる。
 //!
 //! - PSD の原本: `sets/<ID>/imported-original.psd`。
-//! - 使っていない棚の物: どのセットのレイヤー（正本の ID の項目）からも、見た目の設定（`look.json`）からも指されない `resources.json` の項目と中身。
-//!   使っているかは [`Project::used_resource_ids`] の 1 か所で決める。
+//! - アセット: 呼び出し側が ID で選んだ `resources.json` の項目と中身（使っている物も選べる。選ばれた物を指すレイヤー・見た目の設定は、写しでは
+//!   「無い物」として開く）。使っているかは [`Project::used_resource_ids`] の 1 か所で決め、目録の [`ShelfItem::used`] と、既定の選び
+//!   （[`Project::unused_resources`] ＝使っていない物）に使う。
 //! - 出どころのパス: 棚の項目の `origin` のうち `file`（絶対のパス）・`unityAsset`（Assets の中のパス）・`library`（置き場の相対パス）を `none` に。
 //!   使っている棚の項目は残し、出どころだけを外す。内蔵（`builtIn`）はキーと版だけでパスではないので残す。テキストレイヤーのフォントのファイル
 //!   （`font_kind` 1）の `font_path`（絶対のパス。利用者が入れたフォントは、場所にユーザー名を含みうる）は、ディレクトリを外してファイル名だけにする
@@ -36,7 +38,7 @@ use crate::{
     check, guid,
     package::{Blob, Files},
     project::{json, read_view, required, writer_json},
-    shelf::write_index,
+    shelf::{write_index, ResourceKind},
     NativeDocument, NativeValue, Project, Resource, Result, TextureSet, WriterInfo,
 };
 use serde_json::Value;
@@ -47,8 +49,6 @@ use std::collections::{BTreeSet, HashMap};
 pub enum Removal {
     /// 取り込んだ PSD の原本（`imported-original.psd`）。
     PsdOriginals,
-    /// どのレイヤーからも使われていない棚の物。
-    UnusedShelf,
     /// 棚の物の出どころのパス。
     SourcePaths,
     /// モデルの参照（`view.json`・`pose.json`・`livelink.json`）。
@@ -66,9 +66,8 @@ pub enum Removal {
 }
 impl Removal {
     /// 全部の種類（ウィンドウに並べる順）。
-    pub const ALL: [Removal; 9] = [
+    pub const ALL: [Removal; 8] = [
         Removal::PsdOriginals,
-        Removal::UnusedShelf,
         Removal::SourcePaths,
         Removal::ModelReference,
         Removal::MeshMaps,
@@ -85,16 +84,36 @@ impl Removal {
 pub struct Found {
     pub removal: Removal,
     pub names: Vec<String>,
+    /// この種類で除く・書き直すエントリの長さの合計（バイト）。
+    pub bytes: u64,
+}
+
+/// アセット 1 つ（写しに含めるか外すかを 1 つずつ選べる）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShelfItem {
+    /// 索引の ID（[`Project::for_distribution`] の `excluded_resources` に渡すもの）。
+    pub id: String,
+    pub kind: ResourceKind,
+    pub name: String,
+    /// 中身のバイト数。
+    pub bytes: u64,
+    /// どれかのセットのレイヤーか見た目の設定が指しているか（[`Project::used_resource_ids`] と同じ集め方）。
+    pub used: bool,
 }
 
 /// 写しで除ける物の目録（当たるものが 1 つもない種類は含まない）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Inventory {
     pub found: Vec<Found>,
+    /// アセット（索引の並び）。
+    pub shelf: Vec<ShelfItem>,
 }
 impl Inventory {
     pub fn is_empty(&self) -> bool {
-        self.found.is_empty()
+        self.found.is_empty() && self.shelf.is_empty()
+    }
+    pub fn shelf_item(&self, id: &str) -> Option<&ShelfItem> {
+        self.shelf.iter().find(|i| i.id == id)
     }
     /// 当たる種類（`Removal::ALL` の順）。
     pub fn kinds(&self) -> Vec<Removal> {
@@ -252,40 +271,29 @@ impl Project {
         references.used
     }
 
-    /// 写しで除ける物の目録。当たる物が無い種類は含まない。何も変えない。`remove` は利用者が選んでいる除く種類: 使っているかは、除いた後に残る
-    /// 見た目の設定（Unity の値を除くなら、その中の割り当ては数えない）で決まるので、使っていない棚の物の名前はこれで変わる（残す種類を選べば、
-    /// 写しでも残る物と一致する）。ほかの種類は、選びに依らずプロジェクトにあるもの。
-    pub fn distribution_inventory(&self, remove: &[Removal]) -> Inventory {
-        let mut found = Vec::new();
-        let mut add = |removal: Removal, names: Vec<String>| found.push(Found { removal, names });
-        let sets_with = |has: &dyn Fn(&TextureSet) -> bool| -> Vec<String> {
-            self.sets
-                .iter()
-                .filter(|s| has(s))
-                .map(|s| s.name.clone())
-                .collect()
-        };
-        let psd = sets_with(&|s| {
-            self.files
-                .contains_key(&set_entry(&s.id, IMPORTED_ORIGINAL))
-        });
-        if !psd.is_empty() {
-            add(Removal::PsdOriginals, psd);
-        }
+    /// アセットの目録（`remove` を除いた形で、使っているかを決める）。
+    fn shelf_items(&self, remove: &[Removal]) -> Vec<ShelfItem> {
         // 除けない見た目の設定（読めないもの）は除かずに数える（使っている物を見落とさない）
         let after = self
             .stripped_files(remove)
             .unwrap_or_else(|_| self.original.files.clone());
         let used = self.used_in(&after);
-        let unused: Vec<String> = self
-            .resources
+        self.resources
             .iter()
-            .filter(|r| !used.contains(&r.id))
-            .map(|r| r.name.clone())
-            .collect();
-        if !unused.is_empty() {
-            add(Removal::UnusedShelf, unused);
-        }
+            .filter_map(|r| {
+                Some(ShelfItem {
+                    id: r.id.clone(),
+                    kind: ResourceKind::parse(&r.kind)?,
+                    name: r.name.clone(),
+                    bytes: self.files.get(&r.entry).map_or(0, Blob::len),
+                    used: used.contains(&r.id),
+                })
+            })
+            .collect()
+    }
+
+    /// 出どころのパスを持つアセットの名前と、テキストレイヤーのフォントのファイル名。
+    fn source_path_names(&self) -> Vec<String> {
         let mut paths: Vec<String> = self
             .resources
             .iter()
@@ -303,11 +311,53 @@ impl Project {
                 }
             }
         }
+        paths
+    }
+
+    /// 写しで除ける物の目録。当たる物が無い種類は含まない。何も変えない。`remove` は利用者が選んでいる除く種類: 使っているかは、除いた後に残る
+    /// 見た目の設定（Unity の値を除くなら、その中の割り当ては数えない）で決まるので、使っていない棚の物の名前はこれで変わる（残す種類を選べば、
+    /// 写しでも残る物と一致する）。ほかの種類は、選びに依らずプロジェクトにあるもの。
+    pub fn distribution_inventory(&self, remove: &[Removal]) -> Inventory {
+        let mut found = Vec::new();
+        let len_of = |name: &str| self.files.get(name).map_or(0, Blob::len);
+        let mut add = |removal: Removal, names: Vec<String>, bytes: u64| {
+            found.push(Found {
+                removal,
+                names,
+                bytes,
+            })
+        };
+        let sets_with = |has: &dyn Fn(&TextureSet) -> bool| -> Vec<String> {
+            self.sets
+                .iter()
+                .filter(|s| has(s))
+                .map(|s| s.name.clone())
+                .collect()
+        };
+        let psd = sets_with(&|s| {
+            self.files
+                .contains_key(&set_entry(&s.id, IMPORTED_ORIGINAL))
+        });
+        if !psd.is_empty() {
+            let bytes = self
+                .sets
+                .iter()
+                .map(|s| len_of(&set_entry(&s.id, IMPORTED_ORIGINAL)))
+                .sum();
+            add(Removal::PsdOriginals, psd, bytes);
+        }
+        let shelf = self.shelf_items(remove);
+        let paths = self.source_path_names();
         if !paths.is_empty() {
-            add(Removal::SourcePaths, paths);
+            // 書き直すエントリ: アセットの索引（フォントの場所を持つセットの正本は、名前だけの違いなので数えない）
+            add(Removal::SourcePaths, paths, len_of("resources.json"));
         }
         if let Some(names) = self.model_reference() {
-            add(Removal::ModelReference, names);
+            let bytes = ["view.json", crate::pose::ENTRY, crate::livelink::ENTRY]
+                .into_iter()
+                .map(len_of)
+                .sum();
+            add(Removal::ModelReference, names, bytes);
         }
         let maps = sets_with(&|s| {
             let prefix = set_entry(&s.id, "");
@@ -316,7 +366,13 @@ impl Project {
                 .any(|n| n.strip_prefix(&prefix).is_some_and(is_mesh_map))
         });
         if !maps.is_empty() {
-            add(Removal::MeshMaps, maps);
+            let bytes = self
+                .files
+                .iter()
+                .filter(|(n, _)| split_set(n).is_some_and(|(_, leaf)| is_mesh_map(leaf)))
+                .map(|(_, b)| b.len())
+                .sum();
+            add(Removal::MeshMaps, maps, bytes);
         }
         let received = sets_with(&|s| {
             self.files
@@ -324,7 +380,12 @@ impl Project {
                 .is_some_and(|b| b.bytes().is_ok_and(|b| crate::look::has_received(&b)))
         });
         if !received.is_empty() {
-            add(Removal::UnityValues, received);
+            let bytes = self
+                .sets
+                .iter()
+                .map(|s| len_of(&set_entry(&s.id, crate::look::ENTRY)))
+                .sum();
+            add(Removal::UnityValues, received, bytes);
         }
         let remembered = sets_with(&|s| {
             let prefix = set_entry(&s.id, "");
@@ -334,7 +395,16 @@ impl Project {
             })
         });
         if !remembered.is_empty() {
-            add(Removal::SavedSelections, remembered);
+            let bytes = self
+                .files
+                .iter()
+                .filter(|(n, _)| {
+                    split_set(n)
+                        .is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf))
+                })
+                .map(|(_, b)| b.len())
+                .sum();
+            add(Removal::SavedSelections, remembered, bytes);
         }
         let stale: Vec<String> = STALE_ROOT
             .iter()
@@ -342,12 +412,27 @@ impl Project {
             .map(|n| (*n).to_owned())
             .collect();
         if !stale.is_empty() {
-            add(Removal::StaleEntries, stale);
+            let bytes = stale.iter().map(|n| len_of(n)).sum();
+            add(Removal::StaleEntries, stale, bytes);
         }
         if !self.unknown.is_empty() {
-            add(Removal::UnknownEntries, self.unknown.clone());
+            let bytes = self.unknown.iter().map(|n| len_of(n)).sum();
+            add(Removal::UnknownEntries, self.unknown.clone(), bytes);
         }
-        Inventory { found }
+        Inventory { found, shelf }
+    }
+
+    /// 既定で写しから外すアセット: 使っていない物の ID（`remove` は目録と同じ。Unity の値を除くなら、その中の割り当てだけが指す物も使っていない）。
+    pub fn unused_resources(&self, remove: &[Removal]) -> BTreeSet<String> {
+        let after = self
+            .stripped_files(remove)
+            .unwrap_or_else(|_| self.original.files.clone());
+        let used = self.used_in(&after);
+        self.resources
+            .iter()
+            .filter(|r| !used.contains(&r.id))
+            .map(|r| r.id.clone())
+            .collect()
     }
 
     /// モデルの参照（`view.json` のモデルの場所・Unity のモデルの GUID・レンダラーの目と、Live Link で開いたモデルの記録 `livelink.json`）が
@@ -414,20 +499,22 @@ impl Project {
         self.rebuild_at(files)
     }
 
-    /// 配布用の写し: `remove` の種類を除いた形式 7 のプロジェクト。このプロジェクトは変えない。`savedBy` は writer にする。書いたものは読み直して
-    /// 検証する（索引にある物は中身が揃う）。形式 7 だけ（旧形式は先に upgraded）。
-    pub fn for_distribution(&self, writer: WriterInfo, remove: &[Removal]) -> Result<Self> {
+    /// 配布用の写し: `remove` の種類と、`excluded_resources`（アセットの ID。使っている物も外せる。プロジェクトに無い ID は無視する）を除いた形式 7 の
+    /// プロジェクト。このプロジェクトは変えない。`savedBy` は writer にする。書いたものは読み直して検証する（索引にある物は中身が揃う）。
+    /// 形式 7 だけ（旧形式は先に upgraded）。
+    pub fn for_distribution(
+        &self,
+        writer: WriterInfo,
+        remove: &[Removal],
+        excluded_resources: &BTreeSet<String>,
+    ) -> Result<Self> {
         check(
             self.is_current(),
             "配布用の写しを作る前にupgradedで形式7へ移行してください",
         )?;
         let on = |r: Removal| remove.contains(&r);
         let mut files = self.stripped_files(remove)?;
-        self.write_shelf(
-            &mut files,
-            on(Removal::UnusedShelf),
-            on(Removal::SourcePaths),
-        )?;
+        self.write_shelf(&mut files, excluded_resources, on(Removal::SourcePaths))?;
         if on(Removal::SourcePaths) {
             self.strip_font_paths(&mut files)?;
         }
@@ -537,13 +624,17 @@ impl Project {
         Ok(())
     }
 
-    /// 棚の索引と中身を、使っていない物（`drop_unused`）と出どころのパス（`clear_paths`）を除いて書き直す（変わらなければ元のバイト列のまま）。
-    fn write_shelf(&self, files: &mut Files, drop_unused: bool, clear_paths: bool) -> Result<()> {
-        let used = self.used_in(files);
+    /// アセットの索引と中身を、外す物（`excluded`）と出どころのパス（`clear_paths`）を除いて書き直す（変わらなければ元のバイト列のまま）。
+    fn write_shelf(
+        &self,
+        files: &mut Files,
+        excluded: &BTreeSet<String>,
+        clear_paths: bool,
+    ) -> Result<()> {
         let mut kept: Vec<Resource> = Vec::with_capacity(self.resources.len());
         let mut cleared = false;
         for r in &self.resources {
-            if drop_unused && !used.contains(&r.id) {
+            if excluded.contains(&r.id) {
                 continue;
             }
             let mut r = r.clone();

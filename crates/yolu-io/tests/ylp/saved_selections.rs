@@ -269,11 +269,17 @@ fn unrelated_edits_keep_the_saved_selection_entries_byte_for_byte() {
         .into_iter()
         .filter(|r| *r != yolu_io::Removal::SavedSelections)
         .collect();
-    let copy = edited.for_distribution(writer(), &keep).unwrap();
+    let copy = edited
+        .for_distribution(writer(), &keep, &edited.unused_resources(&keep))
+        .unwrap();
     assert_eq!(copy.saved_selections(A).unwrap().items.len(), 1);
     assert_eq!(format_of(&copy), 8);
     let stripped = edited
-        .for_distribution(writer(), &yolu_io::Removal::ALL)
+        .for_distribution(
+            writer(),
+            &yolu_io::Removal::ALL,
+            &edited.unused_resources(&yolu_io::Removal::ALL),
+        )
         .unwrap();
     assert!(stripped.saved_selections(A).unwrap().items.is_empty());
     assert_eq!(format_of(&stripped), 7);

@@ -1,6 +1,7 @@
 //! 配布用に保存（ファイルのメニュー）: 今のプロジェクトの写しを、作った人が気づかないまま残る物（取り込んだ PSD の原本・使っていない棚の素材・
-//! 出どころのパス・モデルの参照・メッシュマップ・Unity の値・古い状態・知らないエントリ）を除いて別のファイルに書く。除く物は書く前のウィンドウ
-//! （`window`）に種類ごとに並べ、種類ごとに外せる（既定は全部除く）。何を除くかの判断と写しの組み立ては `yolu_io::Project::for_distribution`
+//! 出どころのパス・モデルの参照・メッシュマップ・Unity の値・古い状態・知らないエントリ）を除いて別のファイルに書く。書く前のウィンドウ
+//! （`window`）に並べ、写しに含める物にチェックを入れる。アセットは種類ごとの区分に 1 つずつ並べ（既定は使っている物を含め、使っていない物を外す）、
+//! アセット以外は種類ごとに 1 行（既定は全部含めない）。何を除くかの判断と写しの組み立ては `yolu_io::Project::for_distribution`
 //! （ここは仕事の運びとウィンドウの状態だけ）。
 //!
 //! - **開いているものは変えない**: 文書・プロジェクト・未保存の印・Undo・開いているファイルのどれも変えない。始めるときに、描いていない区切りで
@@ -20,6 +21,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use std::collections::BTreeSet;
+
+use yolu_io::shelf::ResourceKind;
 use yolu_io::{BackupKeep, Inventory, Project, Removal, SaveTarget};
 
 use crate::dialog::places::Place;
@@ -47,8 +51,12 @@ fn thread(name: &str) -> std::thread::Builder {
 pub enum DistributeAction {
     /// ファイルのメニュー「配布用に保存…」: 準備を始める。
     Start,
-    /// ウィンドウで、種類ごとに除く・残すを切り替える。
+    /// ウィンドウで、アセット以外の種類を写しに含める・含めないを切り替える。
     Toggle(Removal),
+    /// ウィンドウで、アセット 1 つを写しに含める・含めないを切り替える（ID はアセットの項目の ID）。
+    ToggleResource(String),
+    /// ウィンドウで、アセットの 1 つの種類（画像・スマート素材…）のアセット全部を写しに含める（`true`）・外す（`false`）。
+    SetKind(ResourceKind, bool),
     /// ウィンドウの「やめる」。
     CancelWindow,
     /// ウィンドウの「保存…」: 保存先を選ぶウィンドウを頼む。
@@ -74,28 +82,60 @@ pub struct Prepared {
 /// 書く前のウィンドウの状態。
 pub struct Window {
     prepared: Arc<Prepared>,
-    selected: Vec<Removal>,
+    /// 写しに含める、アセット以外の種類（含めない種類は写しから除く）。
+    kept: BTreeSet<Removal>,
+    /// 写しに含めるアセットの ID（プロジェクトにあってここに無い物は、写しから外す）。
+    kept_resources: BTreeSet<String>,
     inventory: Inventory,
     /// ウィンドウを出しているか（書いている間・除く物が無いとき・保存先を選んでいる間の、ウィンドウなしの流れでは出さない）。
     visible: bool,
 }
 
 impl Window {
+    /// 既定: アセット以外は全部含めず、アセットは使っている物を含め、使っていない物を外す（使っているかは、アセット以外を全部除いたときの目録で決める）。
     fn new(prepared: Prepared) -> Self {
-        let selected = Removal::ALL.to_vec();
-        let inventory = prepared.project.distribution_inventory(&selected);
+        let remove = Removal::ALL.to_vec();
+        let inventory = prepared.project.distribution_inventory(&remove);
+        let kept_resources = inventory
+            .shelf
+            .iter()
+            .filter(|i| i.used)
+            .map(|i| i.id.clone())
+            .collect();
         Self {
             prepared: Arc::new(prepared),
-            selected,
+            kept: BTreeSet::new(),
+            kept_resources,
             inventory,
             visible: false,
         }
     }
-    /// 除く種類の選び（既定は全部）。
-    pub fn selected(&self) -> &[Removal] {
-        &self.selected
+    /// 写しに含める、アセット以外の種類か。
+    pub fn includes(&self, removal: Removal) -> bool {
+        self.kept.contains(&removal)
     }
-    /// 今の選びでの目録（当たる物が無い種類は含まない）。
+    /// 写しに含めるアセットか。
+    pub fn includes_resource(&self, id: &str) -> bool {
+        self.kept_resources.contains(id)
+    }
+    /// 写しから除く種類（含めない種類。`Removal::ALL` の並び）。
+    pub fn removed(&self) -> Vec<Removal> {
+        Removal::ALL
+            .into_iter()
+            .filter(|r| !self.kept.contains(r))
+            .collect()
+    }
+    /// 写しから外すアセットの ID（プロジェクトにあって、含めない物）。
+    pub fn excluded_resources(&self) -> BTreeSet<String> {
+        self.prepared
+            .project
+            .resources()
+            .iter()
+            .filter(|r| !self.kept_resources.contains(&r.id))
+            .map(|r| r.id.clone())
+            .collect()
+    }
+    /// 今の選びでの目録（当たる物が無い種類は含まない。アセットの「使っている」は、除く種類の選びで決まる）。
     pub fn inventory(&self) -> &Inventory {
         &self.inventory
     }
@@ -144,6 +184,8 @@ pub struct DistributeState {
     /// 準備が済んだ写しとウィンドウの選び（書き込みが済むか、やめるまで持つ）。
     window: Option<Window>,
     pub window_scroll: f32,
+    /// ウィンドウでたたんでいるアセットの種類（画面の状態。写しには関わらない）。
+    pub folded: Vec<ResourceKind>,
     /// 置き換えを確かめている保存先。
     pub replace: Option<PathBuf>,
     job: Option<Job>,
@@ -272,20 +314,45 @@ impl AppState {
                 let Some(window) = self.distribute.window.as_mut() else {
                     return;
                 };
-                match window.selected.iter().position(|r| *r == removal) {
-                    Some(at) => {
-                        window.selected.remove(at);
-                    }
-                    None => {
-                        window.selected.push(removal);
-                        window.selected.sort();
-                    }
+                if !window.kept.remove(&removal) {
+                    window.kept.insert(removal);
                 }
                 // 使っているかは、除いた後に残る見た目の設定で決まる（目録と写しが食い違わない）
                 window.inventory = window
                     .prepared
                     .project
-                    .distribution_inventory(&window.selected);
+                    .distribution_inventory(&window.removed());
+            }
+            DistributeAction::ToggleResource(id) => {
+                let Some(window) = self.distribute.window.as_mut() else {
+                    return;
+                };
+                // プロジェクトにある物だけ（古い ID を受けても、写しの選びに無い物を足さない）
+                if window.inventory.shelf_item(&id).is_none() {
+                    return;
+                }
+                if !window.kept_resources.remove(&id) {
+                    window.kept_resources.insert(id);
+                }
+            }
+            DistributeAction::SetKind(kind, include) => {
+                let Some(window) = self.distribute.window.as_mut() else {
+                    return;
+                };
+                let ids: Vec<String> = window
+                    .inventory
+                    .shelf
+                    .iter()
+                    .filter(|i| i.kind == kind)
+                    .map(|i| i.id.clone())
+                    .collect();
+                for id in ids {
+                    if include {
+                        window.kept_resources.insert(id);
+                    } else {
+                        window.kept_resources.remove(&id);
+                    }
+                }
             }
             DistributeAction::CancelWindow => {
                 if self.distribute.job.is_none() {
@@ -461,7 +528,8 @@ impl AppState {
         };
         window.visible = false;
         let prepared = window.prepared.clone();
-        let remove = window.selected.clone();
+        let remove = window.removed();
+        let excluded = window.excluded_resources();
         let park = std::mem::take(&mut self.distribute.park_write);
         let target = path.clone();
         let spawned = Worker::spawn_on(
@@ -472,8 +540,16 @@ impl AppState {
                     crate::windows::park_until_canceled(flag.flag());
                 }
                 let _ = tx.send(
-                    write(&prepared, &remove, &target, replacing, lang, flag.flag())
-                        .map(Output::Written),
+                    write(
+                        &prepared,
+                        &remove,
+                        &excluded,
+                        &target,
+                        replacing,
+                        lang,
+                        flag.flag(),
+                    )
+                    .map(Output::Written),
                 );
             },
         );
@@ -525,6 +601,7 @@ impl AppState {
                 } else {
                     window.visible = true;
                     self.distribute.window_scroll = 0.0;
+                    self.distribute.folded.clear();
                 }
                 self.distribute.window = Some(window);
                 self.clear_message();
@@ -619,11 +696,12 @@ fn build(
     })
 }
 
-/// ウィンドウの選びで種類を除いた写しを、`dest` へ書く（別のスレッドで動かす）。モデルの参照を残すなら、保存先からの相対に付け直す。
+/// ウィンドウの選びで種類とアセットを除いた写しを、`dest` へ書く（別のスレッドで動かす）。モデルの参照を残すなら、保存先からの相対に付け直す。
 /// 書くのは検証した一時ファイルから 1 回の置き換え（退避は作らない）。置き換えるのは、確かめを終えた .ylp として読める既存のファイルだけ。
 fn write(
     prepared: &Prepared,
     remove: &[Removal],
+    excluded: &BTreeSet<String>,
     dest: &Path,
     replacing: bool,
     lang: Lang,
@@ -642,7 +720,7 @@ fn write(
         _ => &prepared.project,
     };
     let copy = source
-        .for_distribution(crate::project::writer(), remove)
+        .for_distribution(crate::project::writer(), remove, excluded)
         .map_err(io)?;
     if cancel.load(Ordering::Relaxed) {
         return Err(Failure::Canceled);

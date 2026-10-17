@@ -476,7 +476,13 @@ fn the_recovery_generation_and_the_distribution_copy_keep_the_colors() {
             same_colors(&back, doc.id_colors());
             assert!(!back.can_undo());
             // 配布用の写し（モデルの参照・派生物などを除いても、色は正本の一部として残る）
-            let copy = project.for_distribution(writer(), &Removal::ALL).unwrap();
+            let copy = project
+                .for_distribution(
+                    writer(),
+                    &Removal::ALL,
+                    &project.unused_resources(&Removal::ALL),
+                )
+                .unwrap();
             same_colors(&copy.sets()[0].document.to_core().unwrap(), doc.id_colors());
             let path = dir.path(&format!("copy-{big}.ylp"));
             SaveTarget::create(&path).unwrap().save(&copy).unwrap();

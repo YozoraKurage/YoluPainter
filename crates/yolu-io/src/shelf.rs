@@ -22,6 +22,17 @@ pub enum ResourceKind {
     Material,
 }
 impl ResourceKind {
+    /// 索引の `kind` の文字列から。知らない種別は `None`。
+    pub fn parse(text: &str) -> Option<Self> {
+        Some(match text {
+            "image" => Self::Image,
+            "smartMaterial" => Self::SmartMaterial,
+            "smartMask" => Self::SmartMask,
+            "brush" => Self::Brush,
+            "material" => Self::Material,
+            _ => return None,
+        })
+    }
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Image => "image",

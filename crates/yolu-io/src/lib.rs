@@ -24,7 +24,7 @@ pub mod shelf;
 pub mod smart;
 mod store;
 pub use archive::{Archive, MAX_ENTRY_BYTES, MAX_TOTAL_BYTES};
-pub use distribution::{Found, Inventory, Removal, IMPORTED_ORIGINAL};
+pub use distribution::{Found, Inventory, Removal, ShelfItem, IMPORTED_ORIGINAL};
 pub use generation::{
     generation_time_ms, utc_stamp, CommitOptions, Committed, Fault, Files, Footprint, Generation,
     GenerationFootprint, GenerationInfo, GenerationStore, LowSpace, RecoveryInfo, SpaceGuard,

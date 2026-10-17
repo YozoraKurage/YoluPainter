@@ -23,10 +23,10 @@ use yolu_app::state::{Action, AppState, DialogRequest};
 use yolu_app::YoluApp;
 use yolu_core::look::{LookKind, LookValue, MaterialLook, ReceivedLook};
 use yolu_core::mesh_maps::MeshMapKind;
-use yolu_core::Rgba8;
+use yolu_core::{Channel, Document, EffectInputs, ImageColorSpace, ImageId, ImageInput, Rgba8};
 use yolu_io::{
-    shelf::Shelf, Archive, GenerationStore, MaterialRef, NativeDocument, Project, Removal,
-    SaveTarget, SetSpec, Thresholds, WriterInfo, INFO_NAME,
+    composite_pngs, shelf::Shelf, Archive, GenerationStore, MaterialRef, NativeDocument, Project,
+    Removal, SaveTarget, SetSpec, Thresholds, WriterInfo, INFO_NAME,
 };
 
 /// 試験ごとの一時フォルダ（終わったら消す）。
@@ -341,7 +341,6 @@ fn headless_the_copy_has_no_leftovers_and_nothing_that_is_open_changes() {
         kinds(&s),
         [
             Removal::PsdOriginals,
-            Removal::UnusedShelf,
             Removal::SourcePaths,
             Removal::ModelReference,
             Removal::MeshMaps,
@@ -349,11 +348,12 @@ fn headless_the_copy_has_no_leftovers_and_nothing_that_is_open_changes() {
             Removal::UnknownEntries
         ]
     );
-    assert_eq!(
-        s.distribute().window().unwrap().selected(),
-        Removal::ALL,
-        "既定は全部除く"
-    );
+    let window = s.distribute().window().unwrap();
+    assert_eq!(window.removed(), Removal::ALL, "既定は、どの種類も含めない");
+    // アセットは 2 つとも使っていないので、既定は外す
+    assert_eq!(window.inventory().shelf.len(), 2);
+    assert!(window.inventory().shelf.iter().all(|i| !i.used));
+    assert!(window.excluded_resources().len() == 2);
     assert!(s.distribute().window_visible());
     let dest = dir.path("Work-dist.ylp");
     s.act(Action::Distribute(DistributeAction::Save(dest.clone())));
@@ -492,12 +492,11 @@ fn headless_the_toggles_keep_what_is_unchecked_and_the_copy_matches_a_plain_save
     s.act(Action::Distribute(DistributeAction::Toggle(
         Removal::MeshMaps,
     )));
-    assert!(!s
+    assert!(s
         .distribute()
         .window()
         .unwrap()
-        .selected()
-        .contains(&Removal::PsdOriginals));
+        .includes(Removal::PsdOriginals));
     let dest = dir.path("Keep.ylp");
     s.act(Action::Distribute(DistributeAction::Save(dest.clone())));
     s.wait_distribute();
@@ -511,10 +510,17 @@ fn headless_the_toggles_keep_what_is_unchecked_and_the_copy_matches_a_plain_save
     assert!(!copy.contains_key("thumbnail.png") && !copy.contains_key("extra.dat"));
     // 全部の切り替えを外した写しは、いつもの保存と同じ中身（保存の並びと食い違わない）。いつもの保存は同じフォルダの別の名前へ
     start(&mut s);
-    for removal in s.distribute().window().unwrap().selected().to_vec() {
+    for removal in s.distribute().window().unwrap().removed() {
         s.act(Action::Distribute(DistributeAction::Toggle(removal)));
     }
-    assert!(s.distribute().window().unwrap().selected().is_empty());
+    include_all_assets(&mut s);
+    assert!(s.distribute().window().unwrap().removed().is_empty());
+    assert!(s
+        .distribute()
+        .window()
+        .unwrap()
+        .excluded_resources()
+        .is_empty());
     let plain = dir.path("Plain-copy.ylp");
     s.act(Action::Distribute(DistributeAction::Save(plain.clone())));
     s.wait_distribute();
@@ -693,14 +699,42 @@ fn headless_a_project_with_nothing_to_remove_goes_straight_to_the_file_and_engli
 
 // ───────── いつもの保存と同じ組み立て（状態ごと）・ウィンドウなしの流れの断り・復旧 ─────────
 
-/// ウィンドウを開いて、`keep` の種類は残す選びにして、`dest` へ書く（除く物が無くウィンドウなしで保存先に進む流れも通す）。
+/// アセットを全部、写しに含める選びにする（ウィンドウを開いているとき）。
+fn include_all_assets(s: &mut AppState) {
+    let mut kinds = Vec::new();
+    for item in &s
+        .distribute()
+        .window()
+        .expect("ウィンドウがある")
+        .inventory()
+        .shelf
+    {
+        if !kinds.contains(&item.kind) {
+            kinds.push(item.kind);
+        }
+    }
+    for kind in kinds {
+        s.act(Action::Distribute(DistributeAction::SetKind(kind, true)));
+    }
+}
+
+/// ウィンドウを開いて、`keep` の種類は写しに含める選びにして、`dest` へ書く（除く物が無くウィンドウなしで保存先に進む流れも通す）。
+/// アセットは既定（使っている物を含め、使っていない物を外す）のまま。
 fn write_copy(s: &mut AppState, dest: &Path, keep: &[Removal]) {
+    write_copy_with(s, dest, keep, false);
+}
+
+/// `write_copy` で、`all_assets` ならアセットも全部含める。
+fn write_copy_with(s: &mut AppState, dest: &Path, keep: &[Removal], all_assets: bool) {
     start(s);
     for removal in keep {
         let window = s.distribute().window().expect("ウィンドウがある");
-        if window.selected().contains(removal) {
+        if !window.includes(*removal) {
             s.act(Action::Distribute(DistributeAction::Toggle(*removal)));
         }
+    }
+    if all_assets {
+        include_all_assets(s);
     }
     *s.dialog_request_mut() = None;
     s.act(Action::Distribute(DistributeAction::Save(
@@ -719,7 +753,7 @@ fn write_copy(s: &mut AppState, dest: &Path, keep: &[Removal]) {
 fn assert_copy_matches_plain_save(s: &mut AppState, dir: &TempDir, sub: &str) {
     std::fs::create_dir_all(dir.path(sub)).unwrap();
     let copy = dir.path(&format!("{sub}/Copy.ylp"));
-    write_copy(s, &copy, &Removal::ALL);
+    write_copy_with(s, &copy, &Removal::ALL, true);
     let plain = dir.path(&format!("{sub}/Plain.ylp"));
     s.act(Action::SaveProjectAs(plain.clone()));
     assert!(s.message().starts_with("保存しました"), "{}", s.message());
@@ -780,7 +814,7 @@ fn headless_a_changed_shelf_is_written_like_a_plain_save_and_the_unused_items_go
         entries.keys()
     );
     let kept = dir.path("Kept.ylp");
-    write_copy(&mut s, &kept, &[Removal::UnusedShelf]);
+    write_copy_with(&mut s, &kept, &[], true);
     assert_eq!(
         Project::read(&std::fs::read(&kept).unwrap())
             .unwrap()
@@ -1502,27 +1536,24 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
     let texts = window_texts(&h, "distribute");
     for want in [
         "配布用に保存",
+        // アセットの種類の区分と、その中のアセット（使っていない物は「未使用」の印）
+        "画像",
+        "Scratch",
+        "Rust",
+        "未使用",
+        // アセット以外の種類（1 行ずつ）
         "PSD の原本",
-        "使っていないアセット",
         "素材の出どころのパス",
         "モデルの参照",
         "メッシュマップ",
         "古いサムネイルなど",
         "知らないエントリ",
-        // 名前（セット・棚の素材・モデルのファイル・エントリ）
-        "Body",
-        "Scratch",
-        "Rust",
-        "Prop.fbx",
-        "thumbnail.png",
-        "brush.json",
-        "extra.dat",
         "やめる",
         "保存…",
     ] {
         assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
     }
-    // 0 件の種類は出ない（Unity の値は無い）。数・容量・説明の文も出さない
+    // 0 件の種類は出ない（Unity の値は無い）。説明の文・開発用の数は出さない（大きさは KB・MB で短く）
     assert!(
         !texts.iter().any(|t| t == "Unity のマテリアルの値"),
         "{texts:?}"
@@ -1535,20 +1566,19 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
         );
     }
     crate::common::shot::window_shot(&mut h, "distribute", "distribute_window");
-    // 切り替え: 外すと残る種類になる（既定は全部）
+    // 切り替え: チェックを入れると写しに含める種類になる（既定は、どの種類も含めない）
     let all = Removal::ALL.to_vec();
-    assert_eq!(h.distribute().window().unwrap().selected(), all);
+    assert_eq!(h.distribute().window().unwrap().removed(), all);
     let at = in_window(&h, "distribute", "PSD の原本");
     click(&mut h, at);
-    assert!(!h
+    assert!(h
         .distribute()
         .window()
         .unwrap()
-        .selected()
-        .contains(&Removal::PsdOriginals));
+        .includes(Removal::PsdOriginals));
     let at = in_window(&h, "distribute", "PSD の原本");
     click(&mut h, at);
-    assert_eq!(h.distribute().window().unwrap().selected(), all);
+    assert_eq!(h.distribute().window().unwrap().removed(), all);
     // 「保存…」は保存先を選ぶウィンドウを頼む（ウィンドウは開いたまま）
     let at = in_window(&h, "distribute", "保存…");
     click(&mut h, at);
@@ -1561,8 +1591,9 @@ fn the_window_lists_the_things_per_kind_with_names_and_toggles_them() {
     let texts = window_texts(&h, "distribute");
     for want in [
         "Save for Distribution",
+        "Images",
+        "Unused",
         "Original PSDs",
-        "Unused assets",
         "Asset source paths",
         "Model reference",
         "Mesh maps",
@@ -1641,12 +1672,11 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
         kinds(&s)
     );
     assert!(
-        s.distribute()
+        !s.distribute()
             .window()
             .unwrap()
-            .selected()
-            .contains(&Removal::SavedSelections),
-        "既定は除く"
+            .includes(Removal::SavedSelections),
+        "既定は含めない"
     );
     // 既定（除く）: 写しは形式 7 で、残した選択範囲のエントリが無い。今の選択範囲は絵の一部として残る
     let dest = dir.path("Dist.ylp");
@@ -1675,4 +1705,304 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
         assert!(!yolu_app::distribute::window::label(lang, Removal::SavedSelections).is_empty());
         assert!(!yolu_app::distribute::window::tooltip(lang, Removal::SavedSelections).is_empty());
     }
+}
+
+// ───────── アセットを 1 つずつ含める・外す ─────────
+
+const ASSET_SET: &str = "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0";
+/// アセットの名前（1・2 は塗りつぶしレイヤーが読む＝使っている。3・4 はどこからも使っていない）。
+const ASSET_NAMES: [&str; 4] = ["Skin", "Cloth", "Hair", "Mask"];
+
+fn image_id(n: u32) -> ImageId {
+    ImageId(u128::from_str_radix(&rid(n).replace('-', ""), 16).unwrap())
+}
+
+/// アセットの画像が 4 つ（`ASSET_NAMES`）の .ylp をディスクに作る。塗りつぶしレイヤーが 1 と 2 を（色と高さで）読む。
+fn four_assets(path: &Path) {
+    let mut doc = Document::new(64, 64).unwrap();
+    let mut inputs = EffectInputs::new();
+    for n in [1, 2] {
+        inputs = inputs.with_image(
+            image_id(n),
+            ImageInput::new(2, 2, pixels(n), ImageColorSpace::Srgb).unwrap(),
+        );
+    }
+    doc.set_effect_inputs(inputs).unwrap();
+    let layer = doc
+        .add_fill_layer(
+            "塗り",
+            &[
+                (Channel::Color, Rgba8::new(10, 20, 30, 255)),
+                (Channel::Height, Rgba8::new(255, 255, 255, 255)),
+            ],
+            None,
+        )
+        .unwrap();
+    doc.set_fill_image(layer, Channel::Color, Some(image_id(1)))
+        .unwrap();
+    doc.set_fill_image(layer, Channel::Height, Some(image_id(2)))
+        .unwrap();
+    let base = Project::create(
+        writer(),
+        &[SetSpec {
+            id: ASSET_SET.into(),
+            name: "Body".into(),
+            material: MaterialRef::Material {
+                name: "Body".into(),
+                asset: None,
+            },
+            document: Some(NativeDocument::from_core(&doc).unwrap().into()),
+            composites: composite_pngs(&doc).unwrap(),
+        }],
+        ASSET_SET,
+    )
+    .unwrap();
+    let mut shelf = Shelf::new(1 << 30);
+    for (i, name) in ASSET_NAMES.iter().enumerate() {
+        let n = i as u32 + 1;
+        shelf
+            .add_image(
+                &rid(n),
+                name,
+                &pixels(n),
+                2,
+                2,
+                "srgb",
+                serde_json::json!({"type":"none"}),
+            )
+            .unwrap();
+    }
+    let project = base.with_shelf(&shelf, writer()).unwrap();
+    std::fs::write(path, project.to_bytes().unwrap()).unwrap();
+}
+
+fn ids_of(path: &Path) -> Vec<String> {
+    Project::read(&std::fs::read(path).unwrap())
+        .unwrap()
+        .resources()
+        .iter()
+        .map(|r| r.id.clone())
+        .collect()
+}
+
+fn open_assets(dir: &TempDir) -> (AppState, PathBuf) {
+    let path = dir.path("Assets.ylp");
+    four_assets(&path);
+    let mut s = AppState::new(32, 32);
+    s.bake_mut().backend = BakeBackend::Cpu;
+    s.act(Action::OpenProject(path.clone()));
+    assert!(
+        s.project().as_ref().is_some_and(|p| p.is_file()),
+        "{}",
+        s.message()
+    );
+    assert_eq!(s.shelf().resources().len(), 4, "{}", s.message());
+    (s, path)
+}
+
+fn write_to(s: &mut AppState, dest: &Path) {
+    *s.dialog_request_mut() = None;
+    s.act(Action::Distribute(DistributeAction::Save(
+        dest.to_path_buf(),
+    )));
+    s.wait_distribute();
+    assert!(
+        s.message().starts_with("配布用に保存しました"),
+        "{}",
+        s.message()
+    );
+}
+
+#[test]
+fn headless_the_assets_start_with_the_used_ones_and_each_can_be_included_or_left_out() {
+    let dir = TempDir::new("assets");
+    let (mut s, path) = open_assets(&dir);
+    let before = std::fs::read(&path).unwrap();
+    start(&mut s);
+    let window = s.distribute().window().unwrap();
+    // 既定: 使っている 2 つを含め、使っていない 2 つを外す
+    let shelf = &window.inventory().shelf;
+    assert_eq!(
+        shelf
+            .iter()
+            .map(|i| (i.name.as_str(), i.used))
+            .collect::<Vec<_>>(),
+        [
+            ("Skin", true),
+            ("Cloth", true),
+            ("Hair", false),
+            ("Mask", false)
+        ]
+    );
+    assert!(shelf.iter().all(|i| i.bytes > 0));
+    for n in 1..=4 {
+        assert_eq!(window.includes_resource(&rid(n)), n <= 2, "{n}");
+    }
+    assert_eq!(
+        window.excluded_resources(),
+        [rid(3), rid(4)].into_iter().collect()
+    );
+    // 1 行ずつの切り替え
+    s.act(Action::Distribute(DistributeAction::ToggleResource(rid(3))));
+    assert!(s.distribute().window().unwrap().includes_resource(&rid(3)));
+    s.act(Action::Distribute(DistributeAction::ToggleResource(rid(3))));
+    assert!(!s.distribute().window().unwrap().includes_resource(&rid(3)));
+    // プロジェクトに無い ID は無視する
+    s.act(Action::Distribute(DistributeAction::ToggleResource(rid(
+        99,
+    ))));
+    assert!(!s.distribute().window().unwrap().includes_resource(&rid(99)));
+    // 区分の一括（種類は画像）: 全部含める・全部外す
+    let kind = s.distribute().window().unwrap().inventory().shelf[0].kind;
+    s.act(Action::Distribute(DistributeAction::SetKind(kind, true)));
+    assert!((1..=4).all(|n| s.distribute().window().unwrap().includes_resource(&rid(n))));
+    s.act(Action::Distribute(DistributeAction::SetKind(kind, false)));
+    assert!((1..=4).all(|n| !s.distribute().window().unwrap().includes_resource(&rid(n))));
+    // 既定のまま 1 つ（使っていない物）を足して書く: 使っている 2 つとその 1 つだけが写しのアセットに入る
+    s.act(Action::Distribute(DistributeAction::CancelWindow));
+    start(&mut s);
+    s.act(Action::Distribute(DistributeAction::ToggleResource(rid(3))));
+    let one = dir.path("One.ylp");
+    write_to(&mut s, &one);
+    assert_eq!(ids_of(&one), [rid(1), rid(2), rid(3)]);
+    // 既定のまま書いた写しは、使っている 2 つだけ（今までの既定と同じ結果）
+    start(&mut s);
+    let usual = dir.path("Usual.ylp");
+    write_to(&mut s, &usual);
+    assert_eq!(ids_of(&usual), [rid(1), rid(2)]);
+    // 外した物の中身は、写しのどこにも無い
+    let copy = read_entries(&usual);
+    let original = read_entries(&path);
+    let index = Project::read(&std::fs::read(&path).unwrap()).unwrap();
+    for r in index
+        .resources()
+        .iter()
+        .filter(|r| [rid(3), rid(4)].contains(&r.id))
+    {
+        assert!(original.contains_key(&r.entry) && !copy.contains_key(&r.entry));
+    }
+    // 開いているファイルと、開いているプロジェクトのアセットは変わらない
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(s.shelf().resources().len(), 4);
+}
+
+#[test]
+fn headless_a_used_asset_left_out_still_writes_a_copy_that_opens_with_the_asset_missing() {
+    let dir = TempDir::new("in-use");
+    let (mut s, _path) = open_assets(&dir);
+    start(&mut s);
+    // 使っているアセット（1）を外し、使っていない 1 つ（3）を含める
+    s.act(Action::Distribute(DistributeAction::ToggleResource(rid(1))));
+    s.act(Action::Distribute(DistributeAction::ToggleResource(rid(3))));
+    let dest = dir.path("Gap.ylp");
+    write_to(&mut s, &dest);
+    assert_eq!(ids_of(&dest), [rid(2), rid(3)]);
+    // 開き直せる: 知らせは失敗でなく、アセットはその 2 つ、レイヤーは残る
+    let mut t = AppState::new(32, 32);
+    t.bake_mut().backend = BakeBackend::Cpu;
+    t.act(Action::OpenProject(dest.clone()));
+    assert!(
+        t.project().as_ref().is_some_and(|p| p.is_file()),
+        "{}",
+        t.message()
+    );
+    assert_eq!(
+        t.shelf()
+            .resources()
+            .iter()
+            .map(|r| r.id.clone())
+            .collect::<Vec<_>>(),
+        [rid(2), rid(3)]
+    );
+    // 画像が無いと効果の入力がそろわないので、そのセットは読むだけで開く（保存した合成を見せる。断らず、落ちない）。
+    // 編集できるセットのままにはならない（描いて保存すると、欠けた画像を指したまま残るため）
+    let reason = t
+        .sets()
+        .current()
+        .read_only
+        .clone()
+        .expect("読むだけで開く");
+    assert!(reason.contains("プロジェクトに画像が無い"), "{reason}");
+    assert!(t.message().starts_with("開きました"), "{}", t.message());
+    assert_eq!(t.doc().layers().len(), 1);
+    // 見せる画像は、書いた時点の合成の PNG（画像のあった見た目）
+    let shown = t
+        .doc()
+        .composite_channel(Channel::Color, t.doc().bounds())
+        .unwrap();
+    let before = s
+        .doc()
+        .composite_channel(Channel::Color, s.doc().bounds())
+        .unwrap();
+    assert_eq!(shown[..4], before[..4]);
+}
+
+fn assets_window(dir: &TempDir) -> Harness<'static, YoluApp> {
+    let path = dir.path("Assets.ylp");
+    four_assets(&path);
+    let mut h = app(1280.0, 800.0, 32);
+    apply(&mut h, Action::OpenProject(path));
+    apply(&mut h, Action::Distribute(DistributeAction::Start));
+    settle(&mut h);
+    h
+}
+
+#[test]
+fn the_asset_rows_toggle_one_by_one_the_kind_row_toggles_all_and_folds() {
+    let dir = TempDir::new("rows");
+    let mut h = assets_window(&dir);
+    let texts = window_texts(&h, "distribute");
+    for want in ["画像", "Skin", "Cloth", "Hair", "Mask", "未使用"] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    assert_eq!(
+        texts.iter().filter(|t| *t == "未使用").count(),
+        2,
+        "使っていない 2 つだけに印"
+    );
+    // 1 行ずつ: 名前の行を押すと含める・外すが替わる
+    let included = |h: &Harness<'_, YoluApp>, n: u32| {
+        h.distribute().window().unwrap().includes_resource(&rid(n))
+    };
+    assert!(included(&h, 1) && included(&h, 2) && !included(&h, 3));
+    let at = in_window(&h, "distribute", "Hair");
+    click(&mut h, at);
+    assert!(included(&h, 3) && !included(&h, 4));
+    let at = in_window(&h, "distribute", "Skin");
+    click(&mut h, at);
+    assert!(
+        !included(&h, 1) && included(&h, 2),
+        "使っているアセットも外せる"
+    );
+    crate::common::shot::window_shot(&mut h, "distribute", "distribute_window_assets");
+    // 区分の行: 一部だけのときは押すと全部含める。全部のときは押すと全部外す
+    let at = in_window(&h, "distribute", "画像");
+    click(&mut h, at);
+    assert!((1..=4).all(|n| included(&h, n)));
+    click(&mut h, at);
+    assert!((1..=4).all(|n| !included(&h, n)));
+    // たたむと、アセットの行が消える（含める・外すは変わらない）。もう一度で戻る
+    let at = in_window(&h, "distribute", "閉じる");
+    click(&mut h, at);
+    let texts = window_texts(&h, "distribute");
+    assert!(texts.iter().any(|t| t == "画像"), "{texts:?}");
+    assert!(
+        !texts.iter().any(|t| t == "Skin" || t == "Mask"),
+        "{texts:?}"
+    );
+    let at = in_window(&h, "distribute", "開く");
+    click(&mut h, at);
+    let texts = window_texts(&h, "distribute");
+    assert!(texts.iter().any(|t| t == "Skin"), "{texts:?}");
+    // 英語
+    h.set_lang(Lang::En);
+    h.run();
+    let texts = window_texts(&h, "distribute");
+    for want in ["Images", "Skin", "Unused"] {
+        assert!(texts.iter().any(|t| t == want), "{want}: {texts:?}");
+    }
+    for t in &texts {
+        assert_plain("distribute window", t);
+    }
+    crate::common::shot::window_shot(&mut h, "distribute", "distribute_window_assets_english");
 }

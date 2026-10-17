@@ -15,7 +15,7 @@ Save to a `.ylp` with "Save" (`Ctrl+S`) and "Save As…" (`Ctrl+Shift+S`) in the
 
 ## Save for distribution
 
-"Save for Distribution…" in the File menu writes a copy of the open project to a different file, leaving out what a `.ylp` can carry without its author noticing. The kinds that can be left out (the original PSD, unused assets, source paths of assets, model references, mesh maps, Unity material values, saved selections and so on) are listed in the window, and turning a switch off keeps that kind. Your working file does not change. What is removed, and compatibility, are described in [SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md) (in Japanese).
+"Save for Distribution…" in the File menu writes a copy of the open project to a different file, leaving out what a `.ylp` can carry without its author noticing. The kinds that can be left out (the original PSD, unused assets, source paths of assets, model references, mesh maps, Unity material values, saved selections and so on) are listed in the window, and what is checked goes into the copy. Assets are chosen one by one; by default only the assets in use are included. Your working file does not change. What is removed, and compatibility, are described in [SAVE_FOR_DISTRIBUTION.md](../SAVE_FOR_DISTRIBUTION.md) (in Japanese).
 
 ## Do not lose work in a crash
 
