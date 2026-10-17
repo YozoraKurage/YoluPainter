@@ -52,6 +52,7 @@
 
 use crate::Reason;
 mod color_change;
+mod continuous;
 mod correction;
 pub mod curve;
 mod dual;
@@ -68,6 +69,7 @@ mod presets;
 pub mod profile;
 pub mod random;
 pub(crate) mod refer;
+pub(crate) mod ribbon;
 mod rows;
 mod settings;
 mod sources;
@@ -84,6 +86,8 @@ use std::sync::Arc;
 use glam::DVec2;
 use rayon::prelude::*;
 
+pub(crate) use continuous::ContinuousClock;
+pub use continuous::{CONTINUOUS_INTERVAL, MAX_CONTINUOUS_PER_INPUT};
 pub(crate) use correction::{plan as correction_plan, PostPoint, Sweep};
 pub use correction::{PostCorrection, StabilizerSpeed, MAX_POST_STRENGTH};
 pub(crate) use dual::{
@@ -466,6 +470,8 @@ pub(crate) struct StrokeState {
     sweep: Sweep,
     /// 後補正のブラシの、ここまでの入力（描き直しのストロークと、後補正の無いブラシは None）。
     post: Option<PostInputs>,
+    /// 連続吹き付けの時計（連続吹き付けが効くブラシだけ。[`continuous`]）。
+    continuous: Option<ContinuousClock>,
 }
 
 /// 後補正のために覚える入力の点と、Shift の直線の角（角の後の最初の点の番号）。
@@ -631,6 +637,7 @@ impl StrokeState {
             kind,
             sweep: Sweep::default(),
             post: brush.assist.post.active().then(PostInputs::default),
+            continuous: brush.continuous_active().then(ContinuousClock::default),
             brush: Arc::new(brush),
         }
     }
@@ -746,6 +753,12 @@ impl StrokeState {
             + self.source_bytes()
             + self.refer.as_ref().map_or(0, |r| r.bytes())
             + self.post_bytes()
+            + self.pending_bytes()
+    }
+
+    /// 抜き・入りのために待たせているダブのバイト。連続吹き付けは止めて押している間も待たせるダブを増やすので、予算に数える。
+    fn pending_bytes(&self) -> u64 {
+        (self.pending.len() * std::mem::size_of::<PendingDab>()) as u64
     }
 
     /// はみ出し防止の参照の重なりを渡す（最初のダブの前だけ。[`crate::Stroke::use_reference_layers`]）。
@@ -793,7 +806,11 @@ impl StrokeState {
     /// はみ出し防止の作業に使ってよいバイト（ストロークの予算の残り）。
     fn refer_room(&self) -> u64 {
         self.budgets.stroke.saturating_sub(
-            self.rollback_bytes + self.effect.scratch + self.source_bytes() + self.post_bytes(),
+            self.rollback_bytes
+                + self.effect.scratch
+                + self.source_bytes()
+                + self.post_bytes()
+                + self.pending_bytes(),
         )
     }
 
@@ -817,14 +834,17 @@ impl StrokeState {
     }
 
     /// 入力の点を 1 つ足す（C# の Add）。changed に、画素の変わったタイルを足す。画素が変わったら true。描いている間に付ける
-    /// 水彩境界は、この入力が触った範囲を最後に計算し直す。
+    /// 水彩境界は、この入力が触った範囲を最後に計算し直す。連続吹き付けのブラシは、この入力で距離のダブを置かなかったとき、
+    /// 時刻のダブを足す（[`continuous`]）。
     pub(crate) fn add(
         &mut self,
         surface: &mut Surface,
         sample: BrushSample,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        let any = self.add_sample(surface, sample, changed)?;
+        let before = self.dabs;
+        let mut any = self.add_sample(surface, sample, changed)?;
+        any |= self.add_continuous(surface, sample.time, before, changed)?;
         Ok(self.flush_water_edge(surface, changed)? | any)
     }
 
@@ -1128,6 +1148,8 @@ impl StrokeState {
         self.dabs += 1;
         if self.brush.assist.taper_out > 0.0 || self.taper_start.holds(&self.brush.assist) {
             self.pending.push_back(dab);
+            // 待たせたダブも 1 回のストロークの予算に数える（超えたらストロークを取り消す）
+            self.ensure_budget(self.rollback_bytes)?;
             return Ok(false);
         }
         let factor = self.taper(dab.arc, f64::INFINITY);
@@ -1298,6 +1320,19 @@ impl StrokeState {
             else {
                 continue;
             };
+            if self.tips.ribbon.is_some() {
+                // リボン: この描点の帯（筆先の境で分けた帯ごとに 1 つのダブ）を写す。間隔は距離のダブの間隔と同じ
+                let gap = f64_max(0.01, s.radius * 2.0 * s.spacing);
+                let pieces = self
+                    .tips
+                    .ribbon_pieces(&brush, index, dab.arc, plan.radius, gap)?;
+                for piece in &pieces {
+                    let part = brush.ribbon_plan(&plan, piece, dab.direction);
+                    let shape = brush.dab_shape(&part, &c).with_edge(s.anti_alias);
+                    any |= self.dab(surface, &brush, &shape, changed)?;
+                }
+                continue;
+            }
             let shape = brush.dab_shape(&plan, &c).with_edge(s.anti_alias);
             any |= self.dab(surface, &brush, &shape, changed)?;
         }
@@ -2451,6 +2486,8 @@ pub(crate) struct DabShape<'a> {
     pub dual: Option<DualBrushMode>,
     /// 縁のアンチエイリアス（帯の幅はダブの座標の単位。[`DabShape::with_edge`]。既定は今の式）。
     pub edge: Edge,
+    /// リボンの帯（[`ribbon`]。筆先の画像を線の向きの範囲だけ、画像の位置をずらして写す。None は普通のダブ）。
+    pub ribbon: Option<ribbon::RibbonCut>,
 }
 
 /// 紙の質感の深さに、質感の濃さの影響元の係数を掛けたもの（係数 1 は深さそのもの。演算を挟まない）。
@@ -2485,6 +2522,12 @@ impl<'a> DabShape<'a> {
     /// ダブが届く、中心からの距離（丸は半径、筆先の画像は回した四角の外接円の √2 × 半径）。2D のダブの外接の箱と、3D の面のダブが
     /// 投影の画素を集める画面の円は、この半径。
     pub(crate) fn reach(&self) -> f64 {
+        if let Some(r) = self.ribbon {
+            // 帯の範囲の四角の角（画像の縦は半径 × 真円率 × aspect_y。帯の小さなダブは広げない）
+            let along = r.lo.abs().max(r.hi.abs());
+            let across = self.roundness * self.aspect_y;
+            return self.radius * (along * along + across * across).sqrt() + 1e-6;
+        }
         if self.edge.is_off() {
             return if self.tip.is_none() {
                 self.radius
@@ -2579,7 +2622,8 @@ impl<'a> DabShape<'a> {
                 let rho = e.band * 0.5;
                 let fu = if tu < rho { rho / tu } else { 1.0 };
                 let fv = if tv < rho { rho / tv } else { 1.0 };
-                if fu != 1.0 || fv != 1.0 {
+                // リボンの帯は広げない（範囲と画像の位置は半径の単位なので、広げると帯の継ぎ目がずれる）
+                if (fu != 1.0 || fv != 1.0) && self.ribbon.is_none() {
                     self.radius *= fu;
                     self.roundness = self.roundness * fv / fu;
                 }
@@ -2597,10 +2641,13 @@ impl<'a> DabShape<'a> {
         ShapeCoverage(rows::Shape32::new(self))
     }
 
-    /// 筆先の画像の縦横比（長い辺が直径にかかる）。
+    /// 筆先の画像の縦横比（長い辺が直径にかかる）。リボンの帯は、画像の高さを直径に当てる（線の向きの長さは 半径 × 幅 ÷ 高さ × 2）。
     fn with_aspect(mut self) -> Self {
         if let Some(t) = self.tip {
-            if t.width() >= t.height() {
+            if self.ribbon.is_some() {
+                self.aspect_x = t.width() as f64 / t.height() as f64;
+                self.aspect_y = 1.0;
+            } else if t.width() >= t.height() {
                 self.aspect_y = t.height() as f64 / t.width() as f64;
             } else {
                 self.aspect_x = t.width() as f64 / t.height() as f64;

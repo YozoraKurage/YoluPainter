@@ -207,6 +207,11 @@ impl ScreenStrokeSampler {
         self.length
     }
 
+    /// 最後に測った線の向き（ラジアン。連続吹き付けの時刻のダブが使う）。
+    pub(crate) fn direction(&self) -> f64 {
+        self.direction
+    }
+
     /// 新しい入力の点（[`ScreenStrokeSampler::add_point`] の、位置と筆圧だけで、ダブの位置と筆圧だけを返す形）。
     pub fn add(
         &mut self,

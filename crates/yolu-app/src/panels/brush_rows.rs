@@ -10,7 +10,7 @@ use egui::{pos2, vec2, Id, Rect, Ui, Vec2};
 
 use super::properties::open_popup;
 use crate::brushes::rows::{self, Category, Dynamics, Row};
-use crate::engine::{BrushEffect, ChannelKind, Influence, MixGround, MixMode};
+use crate::engine::{BrushEffect, ChannelKind, Influence, MixBlur, MixGround, MixMode, MixSpace};
 use crate::lang::Lang;
 use crate::m2::{
     self, anti_alias_label, dual_mode_label, texture_mode_label, tip_display, BrushOp, EffectKind,
@@ -292,6 +292,10 @@ pub fn visible(app: &AppState, row: Row) -> bool {
         Row::ProjectionAngleStart | Row::ProjectionAngleEnd => {
             app.view3d.paintable_on_screen() && app.view3d.projection.angle_falloff
         }
+        // 色混ぜの拡張の行は、混ぜ方を選んでいるときだけ（なしの間は効かない行を並べない）
+        Row::MixSpace | Row::MixCorrection | Row::MixBlur | Row::MixBlurLinked | Row::MixLoad => {
+            app.m2.brush.mix.is_active()
+        }
         _ => true,
     }
 }
@@ -412,6 +416,8 @@ pub fn show(ui: &mut Ui, app: &mut AppState, ctx: &egui::Context, row: Row, at: 
         }
         Category::DualPaper => dual_paper_rows(ui, app, ctx, row, at, env),
         Category::Erase => erase_rows(ui, app, ctx, row, at, env),
+        Category::WaterEdge => water_edge_rows(ui, app, ctx, row, at, env),
+        Category::ReferenceLines => refer_rows(ui, app, ctx, row, at, env),
         Category::Stabilization => stabilization_rows(ui, app, ctx, row, at, env),
         Category::Taper => taper_rows(ui, app, ctx, row, at, env),
         // 見出しの区分に行は無い
@@ -525,6 +531,9 @@ fn ink_rows(
     match row {
         Row::MixMode | Row::MixPaint | Row::MixDensity | Row::MixStretch | Row::MixGround => {
             mix_rows(ui, app, ctx, row, at, env)
+        }
+        Row::MixSpace | Row::MixCorrection | Row::MixBlur | Row::MixBlurLinked | Row::MixLoad => {
+            mix_more_rows(ui, app, ctx, row, at, env)
         }
         Row::EffectKind
         | Row::EffectBlur
@@ -714,6 +723,108 @@ fn mix_rows(
             Out::default()
         }
     }
+}
+
+/// 固定のにじむ強さを入れたときの初めの値（画素）。大きさに連動する形から固定へ替えるとき、この値から始める。
+const FIXED_MIX_BLUR: f64 = 2.0;
+
+/// インクの色混ぜの拡張の行（混色モード・輝度の補正・にじむ強さと連動・描き始めの絵の具の量）。
+fn mix_more_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    ctx: &egui::Context,
+    row: Row,
+    at: &mut At,
+    env: Env,
+) -> Out {
+    let Env { lang, live, .. } = env;
+    let off = mix_unavailable(app, lang)
+        .or_else(|| (!app.m2.brush.mix.is_active()).then(|| lang.t("panels-mixing-is-off")));
+    let mix = app.m2.brush.mix.clone();
+    let smear = off.is_none() && mix.mode == MixMode::Smear;
+    match row {
+        Row::MixSpace => {
+            let label = m2::mix_spaces(lang)
+                .into_iter()
+                .find(|(s, _)| *s == mix.space)
+                .map_or("", |(_, l)| l);
+            if let Some(anchor) = dropdown(ui, at, row, lang, label, off, off.is_none() && live) {
+                open_popup(app, ctx, Popup::MixSpace, anchor, anchor.width());
+            }
+        }
+        Row::MixCorrection => {
+            let label = m2::mix_corrections(lang)
+                .into_iter()
+                .find(|(c, _)| *c == mix.correction)
+                .map_or("", |(_, l)| l);
+            // 輝度の補正は知覚的のときだけ働く
+            let reason = off.or_else(|| {
+                (mix.space != MixSpace::Perceptual)
+                    .then(|| lang.t("panels-available-only-when-the-color-tip"))
+            });
+            if let Some(anchor) =
+                dropdown(ui, at, row, lang, label, reason, reason.is_none() && live)
+            {
+                open_popup(app, ctx, Popup::MixCorrection, anchor, anchor.width());
+            }
+        }
+        Row::MixBlur => {
+            let (value, fixed) = match mix.blur {
+                MixBlur::Fixed(v) => (v, true),
+                _ => (FIXED_MIX_BLUR, false),
+            };
+            let (v, out) = slider(
+                ui,
+                at,
+                row,
+                lang,
+                value as f32,
+                (0.0, yolu_core::MAX_MIX_BLUR as f32),
+                NumberFormat {
+                    decimals: 1,
+                    trim: true,
+                    suffix: " px",
+                },
+                off,
+                smear && fixed && live,
+                None,
+            );
+            if let Some(v) = v {
+                app.m2.brush.mix.blur =
+                    MixBlur::Fixed((v as f64).clamp(0.0, yolu_core::MAX_MIX_BLUR));
+            }
+            return out;
+        }
+        Row::MixBlurLinked => {
+            let linked = !matches!(mix.blur, MixBlur::Fixed(_));
+            if let Some(v) = toggle(ui, at, row, lang, linked, off, smear && live) {
+                app.m2.brush.mix.blur = if v {
+                    MixBlur::Linked
+                } else {
+                    MixBlur::Fixed(FIXED_MIX_BLUR)
+                };
+            }
+        }
+        Row::MixLoad => {
+            let (v, out) = percent(
+                ui,
+                at,
+                row,
+                lang,
+                mix.load,
+                (0.0, 1.0),
+                off,
+                off.is_none() && live,
+                None,
+            );
+            if let Some(v) = v {
+                app.m2.brush.mix.load = v;
+            }
+            return out;
+        }
+        other => debug_assert!(false, "{other:?}: この区分の関数に描く手が無い"),
+    }
+    Out::default()
 }
 
 /// インクの効果（ぼかし・指先・クローン）の行。
@@ -1411,6 +1522,24 @@ fn stroke_rows(
             }
             out
         }
+        Row::Continuous => {
+            // 後補正が入っている間は効かない（行も触れない）
+            let brush = &app.m2.brush;
+            let enabled = live && !brush.assist.post.on;
+            if let Some(v) = toggle(ui, at, row, lang, brush.tip.continuous, None, enabled) {
+                app.m2.brush.tip.continuous = v;
+            }
+            Out::default()
+        }
+        Row::Ribbon => {
+            // 散布効果が入り・筆先が円形の間は効かない（行も触れない）
+            let brush = &app.m2.brush;
+            let enabled = live && brush.spray.is_none() && !hardness_applies(app);
+            if let Some(v) = toggle(ui, at, row, lang, brush.tip.ribbon, None, enabled) {
+                app.m2.brush.tip.ribbon = v;
+            }
+            Out::default()
+        }
         Row::DarkenOverlap => {
             if let Some(v) = toggle(
                 ui,
@@ -1781,6 +1910,183 @@ fn erase_rows(
             Out::default()
         }
     }
+}
+
+/// 水彩境界の行（色のチャンネルを色で塗るブラシだけに効く。切の間は、入り切り以外の行は触れない）。
+fn water_edge_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    _ctx: &egui::Context,
+    row: Row,
+    at: &mut At,
+    env: Env,
+) -> Out {
+    let Env { lang, live, .. } = env;
+    let reason = mix_unavailable(app, lang);
+    let edge = app.m2.brush.water_edge;
+    let usable = live && reason.is_none();
+    let on = usable && edge.is_some();
+    let shown = edge.unwrap_or_default();
+    let px = NumberFormat {
+        decimals: 1,
+        trim: true,
+        suffix: " px",
+    };
+    let set = |app: &mut AppState, f: &dyn Fn(&mut yolu_core::WaterEdge)| {
+        if let Some(e) = app.m2.brush.water_edge.as_mut() {
+            f(e);
+        }
+    };
+    match row {
+        Row::WaterEdge => {
+            if let Some(v) = toggle(ui, at, row, lang, edge.is_some(), reason, usable) {
+                app.m2.brush.water_edge = v.then(yolu_core::WaterEdge::default);
+            }
+        }
+        Row::WaterEdgeWidth | Row::WaterEdgeBlur => {
+            let (value, range, enabled) = if row == Row::WaterEdgeWidth {
+                (
+                    shown.width,
+                    (
+                        yolu_core::brush::MIN_WATER_EDGE_WIDTH,
+                        yolu_core::brush::MAX_WATER_EDGE_WIDTH,
+                    ),
+                    on,
+                )
+            } else {
+                // ぼかし幅はドラッグ後に処理のときだけ効く
+                (
+                    shown.blur,
+                    (0.0, yolu_core::brush::MAX_WATER_EDGE_BLUR),
+                    on && shown.after_stroke,
+                )
+            };
+            let (v, out) = slider(
+                ui,
+                at,
+                row,
+                lang,
+                value as f32,
+                (range.0 as f32, range.1 as f32),
+                px,
+                reason,
+                enabled,
+                None,
+            );
+            if let Some(v) = v {
+                let v = (v as f64).clamp(range.0, range.1);
+                if row == Row::WaterEdgeWidth {
+                    set(app, &|e| e.width = v);
+                } else {
+                    set(app, &|e| e.blur = v);
+                }
+            }
+            return out;
+        }
+        Row::WaterEdgeOpacity | Row::WaterEdgeDarkness => {
+            let value = if row == Row::WaterEdgeOpacity {
+                shown.opacity
+            } else {
+                shown.darkness
+            };
+            let (v, out) = percent(ui, at, row, lang, value, (0.0, 1.0), reason, on, None);
+            if let Some(v) = v {
+                if row == Row::WaterEdgeOpacity {
+                    set(app, &|e| e.opacity = v);
+                } else {
+                    set(app, &|e| e.darkness = v);
+                }
+            }
+            return out;
+        }
+        Row::WaterEdgeAfterStroke => {
+            if let Some(v) = toggle(ui, at, row, lang, shown.after_stroke, reason, on) {
+                set(app, &|e| e.after_stroke = v);
+            }
+        }
+        other => debug_assert!(false, "{other:?}: この区分の関数に描く手が無い"),
+    }
+    Out::default()
+}
+
+/// はみ出し防止の行（切の間は、入り切り以外の行は触れない。領域拡縮の量と方法は、領域拡縮が入りのときだけ）。
+fn refer_rows(
+    ui: &mut Ui,
+    app: &mut AppState,
+    ctx: &egui::Context,
+    row: Row,
+    at: &mut At,
+    env: Env,
+) -> Out {
+    let Env { lang, live, .. } = env;
+    let r = app.m2.brush.reference_lines;
+    let on = live && r.enabled;
+    match row {
+        Row::ReferLines => {
+            if let Some(v) = toggle(ui, at, row, lang, r.enabled, None, live) {
+                app.m2.brush.reference_lines.enabled = v;
+            }
+        }
+        Row::ReferMargin => {
+            let (v, out) = slider(
+                ui,
+                at,
+                row,
+                lang,
+                r.margin as f32,
+                (0.0, yolu_core::MAX_REFERENCE_MARGIN as f32),
+                NumberFormat {
+                    decimals: 1,
+                    trim: true,
+                    suffix: "%",
+                },
+                None,
+                on,
+                None,
+            );
+            if let Some(v) = v {
+                app.m2.brush.reference_lines.margin =
+                    (v as f64).clamp(0.0, yolu_core::MAX_REFERENCE_MARGIN);
+            }
+            return out;
+        }
+        Row::ReferExpand => {
+            if let Some(v) = toggle(ui, at, row, lang, r.expand, None, on) {
+                app.m2.brush.reference_lines.expand = v;
+            }
+        }
+        Row::ReferAmount => {
+            let max = yolu_core::MAX_REFERENCE_EXPAND as f32;
+            let (v, out) = slider(
+                ui,
+                at,
+                row,
+                lang,
+                r.amount as f32,
+                (-max, max),
+                NumberFormat::int(" px"),
+                None,
+                on && r.expand,
+                None,
+            );
+            if let Some(v) = v {
+                app.m2.brush.reference_lines.amount =
+                    (v.round() as f64).clamp(-max as f64, max as f64);
+            }
+            return out;
+        }
+        Row::ReferMode => {
+            let label = m2::expand_modes(lang)
+                .into_iter()
+                .find(|(m, _)| *m == r.mode)
+                .map_or("", |(_, l)| l);
+            if let Some(anchor) = dropdown(ui, at, row, lang, label, None, on && r.expand) {
+                open_popup(app, ctx, Popup::ReferMode, anchor, anchor.width());
+            }
+        }
+        other => debug_assert!(false, "{other:?}: この区分の関数に描く手が無い"),
+    }
+    Out::default()
 }
 
 /// 補正の行。

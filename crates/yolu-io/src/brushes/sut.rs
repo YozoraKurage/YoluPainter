@@ -162,6 +162,9 @@ const PATTERN_REVERSE_H: &[&str] = &["brushpatternreversehorizontal"];
 const PATTERN_REVERSE_V: &[&str] = &["brushpatternreversevertical"];
 // ブラシ先端同士を比較暗で合成（旗。先端が重なるとき濃い方を残す）
 const BLEND_DARKEN: &[&str] = &["brushblendpatternbydarken"];
+// 連続吹き付け・リボン（旗。1 がオン）
+const CONTINUOUS_PLOT: &[&str] = &["brushcontinuousplot"];
+const RIBBON: &[&str] = &["brushribbon"];
 // アンチエイリアス（整数。0 なし・1 弱・2 中・3 強。1 項目ずつ変えた書き出しの比べで決まった）。デュアルブラシの
 // `DualAntiAlias` は `dual` が読む
 const ANTI_ALIAS: &[&str] = &["antialias"];
@@ -249,6 +252,8 @@ const KNOWN: &[&[&str]] = &[
     PATTERN_REVERSE_V,
     BLEND_DARKEN,
     ANTI_ALIAS,
+    CONTINUOUS_PLOT,
+    RIBBON,
 ];
 
 /// 割合の設定（0〜100 の百分率か 0〜1 の割合か列によって混ざるので、1 より大きければ百分率として見る）。
@@ -1474,6 +1479,30 @@ fn tip_rules(
         brush.tip.darken_overlap = true;
         mapped.push(SutMapped::TipDarken);
     }
+    // リボン: 旗を写す（丸い筆先・散布効果のときはエンジンが効かせない。CLIP STUDIO でも選べない組み合わせ）
+    if row.on(RIBBON) {
+        brush.tip.ribbon = true;
+        mapped.push(SutMapped::Ribbon);
+    }
+}
+
+/// 連続吹き付け（`BrushContinuousPlot`）: 旗を写す。後補正も入っていれば、このアプリでは同時に効かないので切で写して知らせる
+/// （補正の列を読んだ後に呼ぶ）。
+fn continuous_plot(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    if !row.on(CONTINUOUS_PLOT) {
+        return;
+    }
+    if brush.assist.post.on {
+        notes.push(Unrepresented::ClipStudio(SutNote::ContinuousWithPost));
+        return;
+    }
+    brush.tip.continuous = true;
+    mapped.push(SutMapped::Continuous);
 }
 
 /// 水彩境界: 旗が立っていれば、幅・透明度影響・明度影響・ドラッグ後に処理・ぼかし幅を写す（無い列は [`WaterEdge::default`]）。
@@ -1660,6 +1689,7 @@ fn brush_from_row(
     }
     start_end(row, &mut brush, &mut notes, &mut mapped);
     stabilizer(row, &mut brush, &mut notes, &mut mapped);
+    continuous_plot(row, &mut brush, &mut notes, &mut mapped);
 
     mixing::color_mixing(row, &mut brush, &mut notes, &mut mapped);
     color::color_change(row, &mut brush, &mut notes, &mut mapped);

@@ -36,6 +36,7 @@ mod brush_import_ui;
 mod brush_menu;
 mod brush_mix;
 mod brush_rows;
+mod brush_stroke_extras;
 mod brushes;
 mod canvas_gpu;
 mod clipboard;

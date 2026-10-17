@@ -53,6 +53,8 @@ pub(crate) struct DabPlan<'a> {
     /// 筆先の画像の左右・上下の反転（[`FlipRule`] をこのダブで決めたもの）。
     pub flip_x: bool,
     pub flip_y: bool,
+    /// リボンの帯（[`super::ribbon`]。リボンでなければ None）。
+    pub ribbon: Option<super::ribbon::RibbonCut>,
 }
 
 /// ランダムな反転の乱数の列と、並べ替えの乱数の列の種へ混ぜる値（ゆらぎ・色・影響元・デュアルの列と重ならない）。
@@ -95,11 +97,17 @@ pub(crate) struct TipRun {
     order: Option<Vec<usize>>,
     /// 散布効果の粒子の進み（散布の乱数の列）。
     pub spray: SprayRun,
+    /// リボンの進み（リボンが効く主の筆先だけ。[`super::ribbon`]）。
+    pub ribbon: Option<super::ribbon::RibbonRun>,
 }
 
 impl TipRun {
     pub(crate) fn new(brush: &Brush) -> TipRun {
-        TipRun::seeded(brush.seed, brush.tip.flip_rules(), SprayRun::new(brush))
+        let mut run = TipRun::seeded(brush.seed, brush.tip.flip_rules(), SprayRun::new(brush));
+        if brush.ribbon_active() {
+            run.ribbon = Some(super::ribbon::RibbonRun::new(brush.seed));
+        }
+        run
     }
 
     /// 種 seed（反転と並べ替えの列はこの種に混ぜる）・反転のしかた・散布の進みから（2 つ目の筆先は自分の種で作る）。
@@ -110,6 +118,7 @@ impl TipRun {
             flips: rules.random().then(|| NetRandom::new(seed ^ FLIP_STREAM)),
             order: None,
             spray,
+            ribbon: None,
         }
     }
 
@@ -123,22 +132,37 @@ impl TipRun {
         rules: FlipRules,
         random: &mut NetRandom,
     ) -> Option<(Option<&'a BrushTip>, bool, bool)> {
+        let (index, flip_x, flip_y) = self.pick_index(list.len(), selection, rules, random)?;
+        let tip = match index {
+            None => image,
+            Some(i) => Some(list[i].as_ref()),
+        };
+        Some((tip, flip_x, flip_y))
+    }
+
+    /// [`TipRun::pick`] の、筆先を並びの番号で返す形（長さ `n` の並び。空なら None の番号で `image`）。
+    pub(crate) fn pick_index(
+        &mut self,
+        n: usize,
+        selection: TipSelection,
+        rules: FlipRules,
+        random: &mut NetRandom,
+    ) -> Option<(Option<usize>, bool, bool)> {
         let mut reversed = false;
-        let tip = if list.is_empty() {
-            image
+        let index = if n == 0 {
+            None
         } else {
-            let i = match selection {
-                TipSelection::Random => random.next_below(list.len() as i32) as usize,
+            Some(match selection {
+                TipSelection::Random => random.next_below(n as i32) as usize,
                 selection => {
-                    let (i, back) = self.next_index(selection, list.len())?;
+                    let (i, back) = self.next_index(selection, n)?;
                     reversed = back;
                     i
                 }
-            };
-            Some(list[i].as_ref())
+            })
         };
         let (flip_x, flip_y) = self.flips(rules, reversed);
-        Some((tip, flip_x, flip_y))
+        Some((index, flip_x, flip_y))
     }
 
     /// 並びの長さ n の筆先から、次のダブの番号と、折り返しで戻る向きか（`PingPong` だけ）。置く筆先が無ければ None
@@ -377,6 +401,22 @@ impl Brush {
         if c.flow != 1.0 {
             flow_scale *= c.flow;
         }
+        // リボン: 筆先と反転は帯ごとに決め（[`super::ribbon`]）、向きは線の向きだけ（呼び手が帯の置き方にする）
+        if tips.ribbon.is_some() {
+            return Some(DabPlan {
+                x,
+                y,
+                radius,
+                angle: dab.direction,
+                roundness,
+                opacity_scale,
+                flow_scale,
+                tip: None,
+                flip_x: false,
+                flip_y: false,
+                ribbon: None,
+            });
+        }
         // 並びを使い切った（一巡のみ・ランダムに一巡）あとは、何も置かない
         let (tip, flip_x, flip_y) = tips.pick(
             self.tip.image.as_deref(),
@@ -396,6 +436,7 @@ impl Brush {
             tip,
             flip_x,
             flip_y,
+            ribbon: None,
         })
     }
 
@@ -416,13 +457,14 @@ impl Brush {
             opacity_scale: plan.opacity_scale,
             flow_scale: plan.flow_scale,
             tip: plan.tip,
-            plain: plan.angle == 0.0 && plan.roundness == 1.0,
+            plain: plan.angle == 0.0 && plan.roundness == 1.0 && plan.ribbon.is_none(),
             flip_x: plan.flip_x,
             flip_y: plan.flip_y,
             texture: self.texture.as_ref().filter(|t| t.depth > 0.0),
             texture_density: c.texture_density,
             dual: self.dual.as_ref().map(|d| d.mode),
             edge: Edge::OFF,
+            ribbon: plan.ribbon,
         }
         .with_aspect()
     }

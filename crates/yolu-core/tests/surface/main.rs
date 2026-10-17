@@ -18,6 +18,7 @@ mod material;
 mod mesh_maps;
 mod min_pixel;
 mod overlap_priority;
+mod ribbon_continuous;
 mod spray;
 mod stencil;
 mod surface_correction;

@@ -584,6 +584,8 @@ pub(super) struct Shape32<'a> {
     aa: Option<Aa32>,
     /// 画像の筆先の小さなダブの濃さ（1 は掛けない）。
     density: f32,
+    /// リボンの帯の範囲 [lo, hi) と画像の中心（線の向き、半径の単位。[`super::ribbon`]）。
+    ribbon: Option<(f32, f32, f32)>,
 }
 
 /// 丸の縁のアンチエイリアスの f32 の値（[`super::edge`] の式。ダブで 1 つ）。
@@ -688,6 +690,9 @@ impl<'a> Shape32<'a> {
             tip: s.tip,
             aa,
             density,
+            ribbon: s
+                .ribbon
+                .map(|r| (r.lo as f32, r.hi as f32, r.center as f32)),
         }
     }
 }
@@ -962,6 +967,15 @@ unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Opt
             V::add(V::mul(nsin, dx), V::mul(cos, dy)),
             V::splat(c.squash),
         );
+        // リボンの帯: 範囲 [lo, hi) の外は 0、画像は帯の位置へずらす
+        let window = match c.ribbon {
+            Some((lo, hi, center)) => {
+                let out = V::or(V::lt(u, V::splat(lo)), V::ge(u, V::splat(hi)));
+                u = V::sub(u, V::splat(center));
+                Some(out)
+            }
+            None => None,
+        };
         if c.flip_x {
             u = V::neg(u);
         }
@@ -970,11 +984,15 @@ unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Opt
         }
         let tu = V::mul(V::add(V::div(u, V::splat(c.aspect_x)), one), half);
         let tv = V::mul(V::add(V::div(v, V::splat(c.aspect_y)), one), half);
-        // [0, 1]² の外は 0
-        let outside = V::or(
-            V::or(V::lt(tu, zero), V::lt(tv, zero)),
-            V::or(V::gt(tu, one), V::gt(tv, one)),
-        );
+        // [0, 1]² の外は 0（リボンの帯は、横は範囲で決め、横の端は端の画素を延ばして読む）
+        let outside = match window {
+            None => V::or(
+                V::or(V::lt(tu, zero), V::lt(tv, zero)),
+                V::or(V::gt(tu, one), V::gt(tv, one)),
+            ),
+            Some(out) => V::or(out, V::or(V::lt(tv, zero), V::gt(tv, one))),
+        };
+        let clamp_x = window.is_some();
         let (w, h) = (tip.width() as i32, tip.height() as i32);
         let x = V::sub(V::mul(tu, V::splat(w as f32)), half);
         let y = V::sub(V::mul(tv, V::splat(h as f32)), half);
@@ -995,6 +1013,7 @@ unsafe fn cover_block<V: Slice32>(c: &Shape32<'_>, dx: V::F, dy: V::F, live: Opt
         let (mut ta, mut tb, mut tc, mut td) = ([0.0f32; 8], [0.0f32; 8], [0.0f32; 8], [0.0f32; 8]);
         let stride = w as usize;
         let texel = |x: i32, y: i32| {
+            let x = if clamp_x { x.clamp(0, w - 1) } else { x };
             if x < 0 || y < 0 || x >= w || y >= h {
                 0.0
             } else {
@@ -1190,9 +1209,16 @@ fn tip_span(s: &DabShape<'_>, dy: f64) -> Option<(f64, f64)> {
         let (p, q) = ((-reach - b) / a, (reach - b) / a);
         Some(if p < q { (p, q) } else { (q, p) })
     }
-    let reach_u = s.aspect_x * s.radius;
     let reach_v = s.aspect_y * s.radius * s.roundness;
-    let by_u = range(s.cos, s.sin * dy, reach_u);
+    // リボンの帯は、横を範囲 [lo, hi)（半径の単位）で狭める
+    let by_u = match s.ribbon {
+        Some(r) => range(
+            s.cos,
+            s.sin * dy - (r.lo + r.hi) * 0.5 * s.radius,
+            (r.hi - r.lo) * 0.5 * s.radius,
+        ),
+        None => range(s.cos, s.sin * dy, s.aspect_x * s.radius),
+    };
     let by_v = range(-s.sin, s.cos * dy, reach_v);
     let (mut lo, mut hi) = (f64::NEG_INFINITY, f64::INFINITY);
     for (a, b) in [by_u, by_v].into_iter().flatten() {
@@ -1880,6 +1906,7 @@ pub(super) fn dual_cover_shape<'a>(shape: &DualShape<'a>) -> DabShape<'a> {
         texture_density: 1.0,
         dual: None,
         edge: shape.edge,
+        ribbon: None,
     }
 }
 

@@ -72,6 +72,7 @@ mod view3d;
 mod view3d_aniso;
 mod view3d_axes;
 mod view3d_brush;
+mod view3d_continuous;
 mod view3d_draft;
 mod view3d_fx;
 mod view3d_lag;

@@ -67,6 +67,16 @@ fn reset_item(app: &mut AppState, item: Item) {
     brush_rows::set_influence(app, Dynamics::Item(item), default.get(item).clone());
 }
 
+/// 筆先の形を既定に戻すとき、「ストローク」の区分の行（先端同士の比較暗・連続吹き付け・リボン）の値だけを残した筆先の形。
+fn stroke_rows_only(tip: &TipShape) -> TipShape {
+    TipShape {
+        darken_overlap: tip.darken_overlap,
+        continuous: tip.continuous,
+        ribbon: tip.ribbon,
+        ..TipShape::default()
+    }
+}
+
 /// 区分の設定（行の値と、行の影響元）を既定に戻す（見出しの右の「既定に戻す」）。目の印（どの行をツールプロパティに出すか）は変えない。
 pub fn reset_category(app: &mut AppState, category: Category) {
     let defaults = BrushState::default();
@@ -105,12 +115,7 @@ pub fn reset_category(app: &mut AppState, category: Category) {
         Category::Tip => {
             app.brush.hardness = defaults.hardness;
             let brush = &mut app.m2.brush;
-            // 先端同士の比較暗は「ストローク」の区分の行
-            let darken = brush.tip.darken_overlap;
-            brush.tip = TipShape {
-                darken_overlap: darken,
-                ..TipShape::default()
-            };
+            brush.tip = stroke_rows_only(&brush.tip);
             brush.controls.tilt_angle = false;
             brush.controls.rotation_angle = false;
             brush.jitter.angle = 0.0;
@@ -126,6 +131,8 @@ pub fn reset_category(app: &mut AppState, category: Category) {
         Category::Stroke => {
             app.brush.spacing = defaults.spacing;
             app.m2.brush.tip.darken_overlap = false;
+            app.m2.brush.tip.continuous = false;
+            app.m2.brush.tip.ribbon = false;
             app.m2.brush.influences.speed_max = Influences::DEFAULT_SPEED_MAX;
             app.view3d.projection = Default::default();
         }
@@ -165,6 +172,8 @@ pub fn reset_category(app: &mut AppState, category: Category) {
             }
         }
         Category::Erase => app.m2.erase_mode = false,
+        Category::WaterEdge => app.m2.brush.water_edge = None,
+        Category::ReferenceLines => app.m2.brush.reference_lines = Default::default(),
         Category::Stabilization => {
             let a = &mut app.m2.brush.assist;
             (a.stabilizer, a.curve) = (0.0, false);

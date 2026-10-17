@@ -1018,6 +1018,48 @@ fn blending_tips_with_darken_is_carried_for_round_and_image_tips() {
     assert!(round.unrepresented.is_empty());
 }
 
+#[test]
+fn continuous_spraying_and_ribbon_are_carried() {
+    let b = tipped(&[("BrushContinuousPlot", 1), ("BrushRibbon", 1)]);
+    assert!(b.brush.tip.continuous && b.brush.tip.ribbon);
+    assert!(mapped(&b, SutMapped::Continuous) && mapped(&b, SutMapped::Ribbon));
+    assert!(!has(&b, SutNote::ContinuousWithPost));
+    let off = tipped(&[("BrushContinuousPlot", 0), ("BrushRibbon", 0)]);
+    assert!(!off.brush.tip.continuous && !off.brush.tip.ribbon);
+    assert!(!mapped(&off, SutMapped::Continuous) && !mapped(&off, SutMapped::Ribbon));
+    // 丸い筆先のリボンも旗は写す（エンジンが効かせない）
+    let round = SutBuilder::new()
+        .brush("Round", 1, &[("BrushRibbon", int(1))])
+        .build();
+    let round = &ok(&round).brushes[0];
+    assert!(round.brush.tip.ribbon && !round.brush.ribbon_active());
+}
+
+#[test]
+fn continuous_spraying_with_post_correction_is_imported_off_with_a_note() {
+    let set = SutBuilder::new()
+        .brush(
+            "Both",
+            1,
+            &[
+                ("BrushContinuousPlot", int(1)),
+                ("BrushUseRevision", int(1)),
+            ],
+        )
+        .build();
+    let b = &ok(&set).brushes[0];
+    assert!(b.brush.assist.post.on && !b.brush.tip.continuous);
+    assert!(has(b, SutNote::ContinuousWithPost));
+    assert!(!mapped(b, SutMapped::Continuous));
+    assert_eq!(
+        b.unrepresented
+            .iter()
+            .filter(|n| matches!(n, Unrepresented::ClipStudio(SutNote::ContinuousWithPost)))
+            .count(),
+        1
+    );
+}
+
 // ---------------- 影響元 ----------------
 
 fn pressure_curve() -> Vec<(f64, f64)> {

@@ -264,7 +264,7 @@ fn begin(
     note_symmetry(app, &s);
     app.view3d.view.input.surface = Some(s);
     app.view3d.view.input.stroke_points = 1;
-    app.view3d.view.input.last_point = Some(first);
+    remember_point(app, first, at, pressure, pen);
     app.view3d.view.input.last_hit = pick(&model.geometry, &view, local(rect, first));
     app.view3d.view.input.shift_hold = None;
     if !erase {
@@ -537,6 +537,7 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
     if app.view3d.view.input.surface.is_none() || app.view3d.view.input.released {
         return;
     }
+    let raw = at;
     let at = shifted(app, at);
     // 定規のスナップ（ストロークの始めに凍結した寄せ先）
     let at = match app.view3d.view.input.ruler_constraint.as_mut() {
@@ -562,17 +563,72 @@ fn add(app: &mut AppState, rect: Rect, at: Pos2, pressure: f32, pen: PenState) {
     ) {
         Ok(()) => {
             app.view3d.view.input.stroke_points += 1;
-            app.view3d.view.input.last_point = Some(at);
             if hit.is_some() {
                 app.view3d.view.input.last_hit = hit;
             }
             if let Some(outcome) = surface.symmetry_note() {
                 app.warn(Source::View3d, app.lang.mirror_note(outcome));
             }
+            remember_point(app, at, raw, pressure, pen);
             crate::uv_wireframe::overlap::note_surface(app, rect, at);
         }
         Err(e) => abandon(app, &e),
     }
+}
+
+/// 描いているストロークの最後の点 `at`（Shift のぶれの抑え・向きの固定、定規を当てた後）を覚える。連続吹き付けは、点が来ないフレームに、
+/// 当てる前の点 `raw`（2D と同じ。渡すときにまた当てる）と筆圧・傾き・回転を渡す（`crate::input::held`）。
+fn remember_point(app: &mut AppState, at: Pos2, raw: Pos2, pressure: f32, pen: PenState) {
+    let input = &mut app.view3d.view.input;
+    input.last_point = Some(at);
+    input.held = Some(crate::input::HeldPoint::new(
+        raw,
+        pressure,
+        pen.tilt,
+        pen.rotation,
+        pen.time,
+    ));
+}
+
+/// 連続吹き付けのブラシで描いている間: このフレームに新しい点が来なかったら、最後の点の位置・筆圧・傾き・回転で今の時刻の点を 1 つ渡し
+/// （2D と同じ。`crate::input::held`）、次のフレームを頼む。離した後・ほかのブラシは何もしない。
+fn continue_held(app: &mut AppState, ctx: &egui::Context, rect: Rect) {
+    let input = &app.view3d.view.input;
+    if input.surface.is_none() || input.released || app.session.stroke.is_none() {
+        app.view3d.view.input.held = None;
+        return;
+    }
+    let Some(held) = input.held else {
+        return;
+    };
+    let continuous = app
+        .session
+        .stroke
+        .as_ref()
+        .and_then(|s| s.brush(&app.session.doc).ok())
+        .is_some_and(|b| b.continuous_active());
+    if !continuous {
+        return;
+    }
+    ctx.request_repaint();
+    let now = ctx.input(|i| i.time);
+    if let Some(time) = held.time_at(now) {
+        let pen = PenState {
+            tilt: held.tilt,
+            rotation: held.rotation,
+            time,
+        };
+        add(app, rect, held.pos, held.pressure, pen);
+    }
+    if let Some(h) = app.view3d.view.input.held.as_mut() {
+        h.received = Some(now);
+    }
+}
+
+/// フレームごとのストロークの進め: 連続吹き付けの点を渡し（[`continue_held`]）、持ち越したダブを塗る（[`paint_queued`]）。
+fn advance_stroke(app: &mut AppState, ctx: &egui::Context, rect: Rect) {
+    continue_held(app, ctx, rect);
+    paint_queued(app, ctx);
 }
 
 /// 持ち越したダブを、このフレームの分（時間の枠まで）塗る。まだ残れば次のフレームを頼む（動かさずに押しているだけでも塗り進める）。
@@ -1728,7 +1784,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         super::hide::input::cancel(app);
     }
     // 取りこぼしたストロークも、このフレームのうちに塗り始める
-    paint_queued(app, &ctx);
+    advance_stroke(app, &ctx, rect);
     // ペンが回している・パンしている・寄っている間は、egui のポインタが押していなくても続ける（ペンが離したときに終える）
     let pen_press = app.view3d.view.input.pen_press;
     let pen_driven = pen_press.is_some_and(|p| p.owner == Owner::View);

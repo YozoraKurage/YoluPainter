@@ -546,6 +546,9 @@ fn add_point(
             app.canvas.current_end = Some((x, y));
             app.canvas.stroke_time = Some(time);
             app.canvas.stroke_points += 1;
+            app.canvas.held = Some(crate::input::HeldPoint::new(
+                p, pressure, tilt, rotation, time,
+            ));
             // 重なった UV に描いたら、セットごとに 1 度だけ知らせる（片側だけには描けない）
             if app.tool.paints() {
                 // 画面上のサイズで指定のブラシは、設定の大きさが画面の点（文書の画素へは今の表示倍率で直す）
@@ -1470,7 +1473,52 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     if !button_down(ui, app.canvas.clone_press.map(|(_, b)| b)) && !nav::pen_driven(app) {
         app.canvas.clone_press = None;
     }
+    end_frame(ui, app, &ctx, rect, now);
+}
+
+/// フレームの終わり: 連続吹き付けの点を渡し（[`continue_held`]）、ステンシルの動かしを落ち着かせる。
+fn end_frame(ui: &Ui, app: &mut AppState, ctx: &egui::Context, rect: Rect, now: f64) {
+    continue_held(app, ctx, rect, now);
     crate::stencil::settle(app, ui.input(|i| i.pointer.any_down()));
+}
+
+/// 連続吹き付けのブラシで描いている間: このフレームに新しい点が来なかったら、最後の点の位置・筆圧・傾き・回転で今の時刻の点を 1 つ渡し
+/// （`crate::input::held`）、次のフレームを頼む（ペンを止めている間も、時刻で置くダブが進む）。ほかのブラシは何もしない。
+fn continue_held(app: &mut AppState, ctx: &egui::Context, rect: Rect, now: f64) {
+    if app.canvas.stroke.is_none() || app.session.stroke.is_none() {
+        app.canvas.held = None;
+        return;
+    }
+    let Some(held) = app.canvas.held else {
+        return;
+    };
+    let continuous = app
+        .session
+        .stroke
+        .as_ref()
+        .and_then(|s| s.brush(&app.session.doc).ok())
+        .is_some_and(|b| b.continuous_active());
+    if !continuous {
+        return;
+    }
+    ctx.request_repaint();
+    if let Some(time) = held.time_at(now) {
+        let (w_px, h_px) = (app.session.doc.width(), app.session.doc.height());
+        let view = app.view.view(rect, w_px, h_px);
+        add_point(
+            app,
+            &view,
+            held.pos,
+            held.pressure,
+            held.tilt,
+            held.rotation,
+            time,
+        );
+    }
+    // このフレームに受けた点（今渡した点も）は、このフレームの時刻から進める
+    if let Some(h) = app.canvas.held.as_mut() {
+        h.received = Some(now);
+    }
 }
 
 /// 左右反転の印のツールチップ（キーは今のモードの今の割り当て）。

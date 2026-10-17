@@ -451,6 +451,10 @@ pub enum SutMapped {
     Sweep,
     /// 手ぶれ補正の速度による調整と補正タイプ。
     StabilizerSpeed,
+    /// 連続吹き付け。
+    Continuous,
+    /// リボン。
+    Ribbon,
 }
 
 impl SutMapped {
@@ -492,6 +496,8 @@ impl SutMapped {
                 "手ぶれ補正の速度による調整",
                 "stabilization adjustment by speed",
             ),
+            Self::Continuous => ("連続吹き付け", "continuous spraying"),
+            Self::Ribbon => ("リボン", "ribbon"),
         }
     }
 }
@@ -699,6 +705,8 @@ pub enum SutNote {
     SweepApprox,
     /// 角をとがらせるは未対応。
     SharpenCorner,
+    /// 連続吹き付けと後補正が両方入っていた（このアプリでは同時に効かないので、連続吹き付けを切で写した）。
+    ContinuousWithPost,
 }
 
 /// デュアルブラシの 2 つ目の紙質・散布効果の、近い動きと読まない設定の知らせの文。
@@ -1064,6 +1072,10 @@ impl SutNote {
             Self::SharpenCorner => (
                 "角をとがらせるは未対応".into(),
                 "Sharp corners is not supported.".into(),
+            ),
+            Self::ContinuousWithPost => (
+                "連続吹き付けは後補正と同時には効かないので、切で写した".into(),
+                "Continuous spraying does not work together with post correction, so it was imported turned off.".into(),
             ),
             Self::SettingsMissing => (
                 "ブラシの設定の表（Variant）か行の番号の列（VariantID）が無く、設定は既定のまま".into(),

@@ -1,8 +1,7 @@
 //! ブラシの詳細の「区分と行の表」。左の区分の一覧（クリスタのサブツール詳細の並び）と、区分ごとの行（設定 1 つ）を、1 つの表に持つ。
 //! 行は、詳細のウィンドウの欄にも、ツールプロパティのパネルにも出る（どの行をツールプロパティに出すかは、ブラシごとに覚える目の印。
 //! `Brush::shown_rows`）。行を足すときは、[`Row`] に 1 つ足し、`id`・`category`・`default_shown` を決め、`panels::brush_rows` の区分の関数に 1 つ足す
-//! （足し忘れは、全部の行を描いてみるテストが落とす）。区分を足すときは [`Category`] に足す。エンジンの無い区分
-//! （水彩境界・はみ出し防止など）は、エンジンが入るときにここへ足す。
+//! （足し忘れは、全部の行を描いてみるテストが落とす）。区分を足すときは [`Category`] に足す。
 //!
 //! ツールプロパティの行の並びは、詳細の区分の順（区分の中は [`Row::ALL`] の順）。目の印の初めの形（`Brush::shown_rows` が None）は、
 //! 前のツールプロパティが出していた行（[`Row::default_shown`]）。
@@ -31,14 +30,18 @@ pub enum Category {
     DualSpray,
     DualStroke,
     DualPaper,
+    /// 水彩境界。
+    WaterEdge,
     Erase,
     Stabilization,
     Taper,
+    /// はみ出し防止（参照レイヤーの線をはみ出さない）。
+    ReferenceLines,
 }
 
 impl Category {
     /// 左の一覧の並び。
-    pub const ALL: [Category; 17] = [
+    pub const ALL: [Category; 19] = [
         Category::Size,
         Category::Ink,
         Category::ColorChange,
@@ -53,9 +56,11 @@ impl Category {
         Category::DualSpray,
         Category::DualStroke,
         Category::DualPaper,
+        Category::WaterEdge,
         Category::Erase,
         Category::Stabilization,
         Category::Taper,
+        Category::ReferenceLines,
     ];
 
     pub fn name(self, lang: Lang) -> &'static str {
@@ -77,6 +82,8 @@ impl Category {
             Category::Erase => lang.t("brushrows-erase"),
             Category::Stabilization => lang.t("brushrows-stabilization"),
             Category::Taper => lang.t("brushrows-taper"),
+            Category::WaterEdge => lang.t("brushrows-watercolor-edge"),
+            Category::ReferenceLines => lang.t("brushrows-reference-lines"),
         }
     }
 
@@ -161,6 +168,11 @@ pub enum Row {
     MixDensity,
     MixStretch,
     MixGround,
+    MixSpace,
+    MixCorrection,
+    MixBlur,
+    MixBlurLinked,
+    MixLoad,
     EffectKind,
     EffectBlur,
     EffectSmudge,
@@ -206,6 +218,8 @@ pub enum Row {
     ScatterCount,
     // ストローク
     Spacing,
+    Continuous,
+    Ribbon,
     DarkenOverlap,
     SpeedMax,
     ProjectionHidden,
@@ -236,6 +250,13 @@ pub enum Row {
     DualPaperScale,
     DualPaperAngle,
     DualPaperMode,
+    // 水彩境界
+    WaterEdge,
+    WaterEdgeWidth,
+    WaterEdgeOpacity,
+    WaterEdgeDarkness,
+    WaterEdgeAfterStroke,
+    WaterEdgeBlur,
     // 消去
     Erase,
     // 補正
@@ -254,11 +275,17 @@ pub enum Row {
     FadeSize,
     FadeOpacity,
     FadeFlow,
+    // はみ出し防止
+    ReferLines,
+    ReferMargin,
+    ReferExpand,
+    ReferAmount,
+    ReferMode,
 }
 
 impl Row {
     /// 全部の行（区分の中の並び。ツールプロパティも、区分の順に、この並びで出す）。
-    pub const ALL: [Row; 96] = [
+    pub const ALL: [Row; 114] = [
         Row::Size,
         Row::SizeByScreen,
         Row::MinOnePixel,
@@ -272,6 +299,11 @@ impl Row {
         Row::MixDensity,
         Row::MixStretch,
         Row::MixGround,
+        Row::MixSpace,
+        Row::MixCorrection,
+        Row::MixBlur,
+        Row::MixBlurLinked,
+        Row::MixLoad,
         Row::EffectKind,
         Row::EffectBlur,
         Row::EffectSmudge,
@@ -312,6 +344,8 @@ impl Row {
         Row::Scatter,
         Row::ScatterCount,
         Row::Spacing,
+        Row::Continuous,
+        Row::Ribbon,
         Row::DarkenOverlap,
         Row::SpeedMax,
         Row::ProjectionHidden,
@@ -340,6 +374,12 @@ impl Row {
         Row::DualPaperScale,
         Row::DualPaperAngle,
         Row::DualPaperMode,
+        Row::WaterEdge,
+        Row::WaterEdgeWidth,
+        Row::WaterEdgeOpacity,
+        Row::WaterEdgeDarkness,
+        Row::WaterEdgeAfterStroke,
+        Row::WaterEdgeBlur,
         Row::Erase,
         Row::Stabilizer,
         Row::StabilizerBySpeed,
@@ -355,6 +395,11 @@ impl Row {
         Row::FadeSize,
         Row::FadeOpacity,
         Row::FadeFlow,
+        Row::ReferLines,
+        Row::ReferMargin,
+        Row::ReferExpand,
+        Row::ReferAmount,
+        Row::ReferMode,
     ];
 
     /// ファイルに書く名前（ブラシの `rows.shown`）。変えない。
@@ -373,6 +418,11 @@ impl Row {
             Row::MixDensity => "mix.density",
             Row::MixStretch => "mix.stretch",
             Row::MixGround => "mix.all_layers",
+            Row::MixSpace => "mix.space",
+            Row::MixCorrection => "mix.correction",
+            Row::MixBlur => "mix.blur",
+            Row::MixBlurLinked => "mix.blur_linked",
+            Row::MixLoad => "mix.load",
             Row::EffectKind => "effect.kind",
             Row::EffectBlur => "effect.blur",
             Row::EffectSmudge => "effect.smudge",
@@ -413,6 +463,8 @@ impl Row {
             Row::Scatter => "spray.scatter",
             Row::ScatterCount => "spray.count",
             Row::Spacing => "stroke.spacing",
+            Row::Continuous => "stroke.continuous",
+            Row::Ribbon => "stroke.ribbon",
             Row::DarkenOverlap => "stroke.darken",
             Row::SpeedMax => "stroke.speed_max",
             Row::ProjectionHidden => "stroke.projection_hidden",
@@ -441,6 +493,12 @@ impl Row {
             Row::DualPaperScale => "dual.paper.scale",
             Row::DualPaperAngle => "dual.paper.angle",
             Row::DualPaperMode => "dual.paper.mode",
+            Row::WaterEdge => "water_edge",
+            Row::WaterEdgeWidth => "water_edge.width",
+            Row::WaterEdgeOpacity => "water_edge.opacity",
+            Row::WaterEdgeDarkness => "water_edge.darkness",
+            Row::WaterEdgeAfterStroke => "water_edge.after_stroke",
+            Row::WaterEdgeBlur => "water_edge.blur",
             Row::Erase => "erase",
             Row::Stabilizer => "stabilizer",
             Row::StabilizerBySpeed => "stabilizer.by_speed",
@@ -456,6 +514,11 @@ impl Row {
             Row::FadeSize => "fade.size",
             Row::FadeOpacity => "fade.opacity",
             Row::FadeFlow => "fade.flow",
+            Row::ReferLines => "refer",
+            Row::ReferMargin => "refer.margin",
+            Row::ReferExpand => "refer.expand",
+            Row::ReferAmount => "refer.amount",
+            Row::ReferMode => "refer.mode",
         }
     }
 
@@ -476,6 +539,11 @@ impl Row {
             | Row::MixDensity
             | Row::MixStretch
             | Row::MixGround
+            | Row::MixSpace
+            | Row::MixCorrection
+            | Row::MixBlur
+            | Row::MixBlurLinked
+            | Row::MixLoad
             | Row::EffectKind
             | Row::EffectBlur
             | Row::EffectSmudge
@@ -515,6 +583,8 @@ impl Row {
             | Row::FlipY => Category::Tip,
             Row::Scatter | Row::ScatterCount => Category::Spray,
             Row::Spacing
+            | Row::Continuous
+            | Row::Ribbon
             | Row::DarkenOverlap
             | Row::SpeedMax
             | Row::ProjectionHidden
@@ -542,6 +612,12 @@ impl Row {
             | Row::DualPaperScale
             | Row::DualPaperAngle
             | Row::DualPaperMode => Category::DualPaper,
+            Row::WaterEdge
+            | Row::WaterEdgeWidth
+            | Row::WaterEdgeOpacity
+            | Row::WaterEdgeDarkness
+            | Row::WaterEdgeAfterStroke
+            | Row::WaterEdgeBlur => Category::WaterEdge,
             Row::Erase => Category::Erase,
             Row::Stabilizer
             | Row::StabilizerBySpeed
@@ -555,6 +631,11 @@ impl Row {
             Row::TaperIn | Row::TaperOut | Row::FadeSize | Row::FadeOpacity | Row::FadeFlow => {
                 Category::Taper
             }
+            Row::ReferLines
+            | Row::ReferMargin
+            | Row::ReferExpand
+            | Row::ReferAmount
+            | Row::ReferMode => Category::ReferenceLines,
         }
     }
 
@@ -574,6 +655,11 @@ impl Row {
             Row::MixDensity => lang.t("panels-paint-density"),
             Row::MixStretch => lang.t("panels-color-stretch"),
             Row::MixGround => lang.t("panels-all-layers"),
+            Row::MixSpace => lang.t("brushrows-color-mixing-mode"),
+            Row::MixCorrection => lang.t("brushrows-luminance-correction"),
+            Row::MixBlur => lang.t("brushrows-blur-strength"),
+            Row::MixBlurLinked => lang.t("brushrows-blur-strength-link"),
+            Row::MixLoad => lang.t("brushrows-starting-paint"),
             Row::EffectCloneAllLayers => lang.t("brushrows-read-all-layers"),
             Row::EffectKind => lang.t("brushrows-effect"),
             Row::EffectBlur => lang.t("panels-blur-radius"),
@@ -614,6 +700,8 @@ impl Row {
             Row::Scatter => lang.t("panels-scatter"),
             Row::ScatterCount => lang.t("panels-count"),
             Row::Spacing => lang.t("panels-spacing"),
+            Row::Continuous => lang.t("brushrows-continuous-spraying"),
+            Row::Ribbon => lang.t("brushrows-ribbon"),
             Row::DarkenOverlap => lang.t("brushrows-blend-tips-with-darken"),
             Row::SpeedMax => lang.t("panels-full-effect-speed"),
             Row::ProjectionHidden => lang.t("panels-paint-hidden-areas"),
@@ -642,6 +730,12 @@ impl Row {
             Row::DualPaperScale => lang.t("brushrows-2-paper-scale"),
             Row::DualPaperAngle => lang.t("brushrows-2-paper-rotation"),
             Row::DualPaperMode => lang.t("brushrows-2-paper-mode"),
+            Row::WaterEdge => lang.t("brushrows-watercolor-edge"),
+            Row::WaterEdgeWidth => lang.t("brushrows-edge-width"),
+            Row::WaterEdgeOpacity => lang.t("brushrows-edge-opacity"),
+            Row::WaterEdgeDarkness => lang.t("brushrows-edge-darkness"),
+            Row::WaterEdgeAfterStroke => lang.t("brushrows-process-after-stroke"),
+            Row::WaterEdgeBlur => lang.t("brushrows-blur-width"),
             Row::Erase => lang.t("brushrows-erase"),
             Row::Stabilizer => lang.t("panels-stabilizer"),
             Row::StabilizerBySpeed => lang.t("brushrows-stabilize-by-speed"),
@@ -657,6 +751,11 @@ impl Row {
             Row::FadeSize => lang.t("brushrows-size-fade"),
             Row::FadeOpacity => lang.t("brushrows-opacity-fade"),
             Row::FadeFlow => lang.t("brushrows-flow-fade"),
+            Row::ReferLines => lang.t("brushrows-do-not-cross-lines"),
+            Row::ReferMargin => lang.t("brushrows-color-margin"),
+            Row::ReferExpand => lang.t("brushrows-area-scaling"),
+            Row::ReferAmount => lang.t("brushrows-area-scaling-amount"),
+            Row::ReferMode => lang.t("brushrows-area-scaling-mode"),
         }
     }
 

@@ -121,6 +121,11 @@ pub enum Popup {
     LayerSetContext(crate::engine::LayerSetId),
     /// 手ぶれ補正の速度による調整の補正タイプ（2 種）。
     StabilizerSpeedType,
+    /// 色の混ぜの混色モード（標準・知覚的）と輝度の補正（なし〜最高）。
+    MixSpace,
+    MixCorrection,
+    /// はみ出し防止の領域拡縮の方法（3 種）。
+    ReferMode,
 }
 
 fn tips(
@@ -257,6 +262,39 @@ fn brush_choices<T: Copy + PartialEq>(
     choices(options, current, |value| {
         Action::M2Ui(UiOp::Brush(op(value)))
     })
+}
+
+/// 色の混ぜ（混ぜ方・混色モード・輝度の補正）とはみ出し防止の領域拡縮の方法の選び。
+fn mix_choice_entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    match popup {
+        Popup::MixMode => brush_choices(
+            [
+                (MixMode::Off, lang.t("m2_menu-none")),
+                (MixMode::Mix, lang.t("panels-mix")),
+                (MixMode::Layer, lang.t("panels-mix-layer")),
+                (MixMode::Smear, lang.t("panels-smear")),
+            ],
+            Some(app.m2.brush.mix.mode),
+            BrushOp::MixMode,
+        ),
+        Popup::MixSpace => brush_choices(
+            m2::mix_spaces(lang),
+            Some(app.m2.brush.mix.space),
+            BrushOp::MixSpace,
+        ),
+        Popup::MixCorrection => brush_choices(
+            m2::mix_corrections(lang),
+            Some(app.m2.brush.mix.correction),
+            BrushOp::MixCorrection,
+        ),
+        Popup::ReferMode => brush_choices(
+            m2::expand_modes(lang),
+            Some(app.m2.brush.reference_lines.mode),
+            BrushOp::ReferMode,
+        ),
+        _ => Vec::new(),
+    }
 }
 
 /// サブツールの行の右クリックのメニュー（名前の変更・複製・設定の登録・元に戻す・削除）。
@@ -409,16 +447,9 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             Some(app.brush.anti_alias),
             BrushOp::AntiAlias,
         ),
-        Popup::MixMode => brush_choices(
-            [
-                (MixMode::Off, lang.t("m2_menu-none")),
-                (MixMode::Mix, lang.t("panels-mix")),
-                (MixMode::Layer, lang.t("panels-mix-layer")),
-                (MixMode::Smear, lang.t("panels-smear")),
-            ],
-            Some(app.m2.brush.mix.mode),
-            BrushOp::MixMode,
-        ),
+        Popup::MixMode | Popup::MixSpace | Popup::MixCorrection | Popup::ReferMode => {
+            mix_choice_entries(app, popup)
+        }
         Popup::TipRepeat => brush_choices(
             m2::tip_repeats(lang),
             Some(app.m2.brush.tip.selection),

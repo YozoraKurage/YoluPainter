@@ -82,6 +82,30 @@ impl BrushTip {
         )
     }
 
+    /// リボンの帯の読み: [`BrushTip::sample`] の、横（線の向き）の端は端の画素を延ばして読む形（縦の [0,1] の外は 0）。
+    #[inline]
+    pub(crate) fn sample_ribbon(&self, u: f64, v: f64) -> f64 {
+        if v < 0.0 || v > 1.0 {
+            return 0.0;
+        }
+        let x = u * self.width as f64 - 0.5;
+        let y = v * self.height as f64 - 0.5;
+        let (x0, y0) = (x.floor() as i32, y.floor() as i32);
+        let (fx, fy) = (x - x0 as f64, y - y0 as f64);
+        let w = self.width as i32;
+        let at = |x: i32, y: i32| -> f64 {
+            let x = x.clamp(0, w - 1);
+            if y < 0 || y >= self.height as i32 {
+                0.0
+            } else {
+                f64::from(self.alpha[(y * w + x) as usize])
+            }
+        };
+        let top = at(x0, y0) * (1.0 - fx) + at(x0 + 1, y0) * fx;
+        let bottom = at(x0, y0 + 1) * (1.0 - fx) + at(x0 + 1, y0 + 1) * fx;
+        (top * (1.0 - fy) + bottom * fy) / 255.0
+    }
+
     /// 無限に並べた筆先の、画素の座標での覆い（0〜1、双線形。紙の質感）。
     #[inline]
     pub fn sample_tiled(&self, x: f64, y: f64) -> f64 {

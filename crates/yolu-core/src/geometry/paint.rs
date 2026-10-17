@@ -48,6 +48,9 @@
 //! - 手ぶれ補正（引っ張る糸）は入力の点に、入り抜きは描点の線の長さにかける（2D と同じ式）。抜きの長さの内の描点は、線が伸びるか
 //!   離すまで待たせる（待っている描点は [`SurfaceStroke::queued`] に数えない）。
 
+mod continuous;
+mod ribbon;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -513,6 +516,8 @@ pub struct SurfaceStroke {
     post: Option<SurfacePost>,
     /// 離した後の描き直しの入力（区間ごとの整えた入力と、区間の終わりで角にするか）。次に塗るときに、画素を戻して描き直す。
     redraw: Option<Vec<(Vec<SurfaceInput>, bool)>>,
+    /// 連続吹き付けの時計（連続吹き付けが効くブラシだけ。[`crate::brush::ContinuousClock`]）。
+    continuous: Option<crate::brush::ContinuousClock>,
 }
 
 /// 後補正のために覚える、面のストロークの入力と、Shift の直線の角（角の後の最初の入力の番号）と、描き直しで同じ形のストロークを始める設定。
@@ -745,6 +750,9 @@ impl SurfaceStroke {
             dual_bytes: 0,
             post: SurfacePost::new(&stroke_brush, brush, options, input),
             redraw: None,
+            continuous: stroke_brush
+                .continuous_active()
+                .then(|| crate::brush::ContinuousClock::started(input.time)),
             sweep: Sweep::default(),
             brush: stroke_brush,
             stats: SurfaceStrokeStats::default(),
@@ -881,9 +889,12 @@ impl SurfaceStroke {
         } else {
             Some(input.at)
         };
+        let before = self.dabs;
         if let Some(at) = pen {
             self.move_pen(at, input)?;
         }
+        self.add_continuous(input.time, before);
+        self.ensure_held_room(doc)?;
         let over = self.queue.len().saturating_sub(MAX_QUEUED_DABS);
         if over > 0 {
             self.paint_queued(doc, stroke, over)?;
@@ -1430,9 +1441,54 @@ impl SurfaceStroke {
             let Some(plan) = plan else {
                 continue;
             };
+            if self.tips.ribbon.is_some() {
+                self.paint_ribbon(doc, stroke, &dab, &pending, &plan, &controls, index)?;
+                continue;
+            }
             self.paint_plan(doc, stroke, &dab, &pending, &plan, &controls)?;
         }
         Ok(())
+    }
+
+    /// 置き方 `plan` のダブの中心と、その下の面の当たり（散布で動いたダブは、その中心の下の面を当て直す）。
+    fn dab_hit(
+        &self,
+        dab: &QueuedDab,
+        pending: &PendingDab,
+        plan: &DabPlan<'_>,
+    ) -> (Vec2, Option<SurfaceHit>) {
+        if plan.x == pending.x && plan.y == pending.y {
+            (dab.at, dab.hit)
+        } else {
+            let at = Vec2::new(plan.x as f32, self.down(plan.y));
+            let hit = pick(&self.geometry, &self.view, at)
+                .filter(|h| self.material.is_none_or(|m| m == h.material));
+            (at, hit)
+        }
+    }
+
+    /// 塗るときの半径（モデルの単位）: ブラシの半径の換算 × 筆圧の大きさ × 置き方の大きさの係数 `plan_radius`。最低 1 ピクセルのブラシは、
+    /// world_radius がモデル全体で 1 つの換算なので、UV の密度が低い面（テクセルがモデルの単位で大きい面）では plan.radius の下限だけでは
+    /// テクセルの中心に届かない。当てた面 `hit` のテクセルの大きさで、半径をテクセルの半分以上にする。リボンの帯を切る半径も同じ値。
+    fn dab_radius(&self, dab: &QueuedDab, plan_radius: f64, hit: Option<&SurfaceHit>) -> f32 {
+        let mut radius = self.world_radius
+            * if self.pressure_size {
+                fmax(0.001, self.size_pressure(dab.pressure))
+            } else {
+                1.0
+            };
+        if plan_radius != 1.0 {
+            radius *= plan_radius as f32;
+        }
+        if self.brush.controls.min_one_pixel {
+            let texel = hit
+                .and_then(|h| self.geometry.triangles().get(h.triangle as usize))
+                .map_or(0.0, |t| t.texel_size(self.width, self.height));
+            if texel > 0.0 {
+                radius = fmax(radius, MIN_ONE_PIXEL_RADIUS as f32 * texel);
+            }
+        }
+        radius
     }
 
     /// 置き方を決めたダブを塗る。`plan.radius` は大きさの係数（入り抜き・フェード・傾き・速さ・ゆらぎ）。
@@ -1447,16 +1503,7 @@ impl SurfaceStroke {
     ) -> Result<(), SurfaceStrokeError> {
         let _profile = profile::scope(profile::Stage::SurfaceDab);
         let pressure = dab.pressure;
-        // 散布で動いたダブは、その中心の下の面を当て直す
-        let (at, hit) = if plan.x == pending.x && plan.y == pending.y {
-            (dab.at, dab.hit)
-        } else {
-            let at = Vec2::new(plan.x as f32, self.down(plan.y));
-            let hit = pick(&self.geometry, &self.view, at)
-                .filter(|h| self.material.is_none_or(|m| m == h.material));
-            (at, hit)
-        };
-        let size_pressure = self.size_pressure(pressure);
+        let (at, hit) = self.dab_hit(dab, pending, plan);
         let inside =
             at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height;
         // 指先・クローン・色の混ぜの伸ばすは、面の上の中心から読み元を決めるので、中心が塗るセットの面に無いダブは飛ばす
@@ -1469,25 +1516,7 @@ impl SurfaceStroke {
             self.stats.missed += 1;
             return Ok(());
         };
-        let mut radius = self.world_radius
-            * if self.pressure_size {
-                fmax(0.001, size_pressure)
-            } else {
-                1.0
-            };
-        if plan.radius != 1.0 {
-            radius *= plan.radius as f32;
-        }
-        // 最低 1 ピクセル: world_radius はモデル全体で 1 つの換算なので、UV の密度が低い面（テクセルがモデルの単位で大きい面）では、
-        // plan.radius の下限だけではテクセルの中心に届かない。当てた面のテクセルの大きさで、半径をテクセルの半分以上にする
-        if self.brush.controls.min_one_pixel {
-            let texel = hit
-                .and_then(|h| self.geometry.triangles().get(h.triangle as usize))
-                .map_or(0.0, |t| t.texel_size(self.width, self.height));
-            if texel > 0.0 {
-                radius = fmax(radius, MIN_ONE_PIXEL_RADIUS as f32 * texel);
-            }
-        }
+        let radius = self.dab_radius(dab, plan.radius, hit.as_ref());
         let hardness = match controls.hardness_factor {
             Some(f) => (self.hardness as f64 * f) as f32,
             None => self.hardness,

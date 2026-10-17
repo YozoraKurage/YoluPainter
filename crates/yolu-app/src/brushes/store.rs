@@ -15,8 +15,9 @@
 //! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`、水彩境界の `water_edge.*`、
 //! はみ出し防止の `refer.on`・`refer.margin`・`refer.expand`・`refer.amount`・`refer.mode`。
 //! 影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
-//! バージョン 8 までの項目で書けない設定（ツールプロパティに出す行の目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない・手ぶれ補正の速度による調整・はらい・後補正）を使うブラシだけ
-//! `yolupainter-brush 9`（`rows.shown`・`controls.size_by_screen`・`influence.<項目>.tilt.max`・`assist.stabilizer_speed`・`assist.sweep`・`assist.post` と `assist.post.*`。そのほかはバージョン 8 と同じ書き方）。使わないブラシはバージョン 1〜8 のままで、
+//! バージョン 8 までの項目で書けない設定（ツールプロパティに出す行の目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない・手ぶれ補正の速度による調整・はらい・後補正・
+//! 連続吹き付け・リボン）を使うブラシだけ
+//! `yolupainter-brush 9`（`rows.shown`・`controls.size_by_screen`・`influence.<項目>.tilt.max`・`assist.stabilizer_speed`・`assist.sweep`・`assist.post` と `assist.post.*`・`tip.continuous`・`tip.ribbon`。そのほかはバージョン 8 と同じ書き方）。使わないブラシはバージョン 1〜8 のままで、
 //! 今までと同じバイト。バージョン 8 までのファイルにバージョン 9 の鍵があれば、知らない項目として断る。
 //! バージョン 2〜9 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
@@ -75,7 +76,8 @@ pub const HEADER_V7: &str = "yolupainter-brush 7";
 /// このファイルを「新しい形式」として理由つきで読み飛ばす。バージョン 8 の鍵がバージョン 7 までのファイルにあれば、知らない項目として断る。
 pub const HEADER_V8: &str = "yolupainter-brush 8";
 /// バージョン 8 までの項目で書けない物を使うブラシのバージョン。バージョン 9 はバージョン 8 の書き方に、ツールプロパティに出す行の目の印
-/// （`rows.shown`。初めの形でないとき）・画面上のサイズで指定（`controls.size_by_screen=1`）・傾きの最大値（`influence.<項目>.tilt.max`。100% でないとき）を足す。
+/// （`rows.shown`。初めの形でないとき）・画面上のサイズで指定（`controls.size_by_screen=1`）・傾きの最大値（`influence.<項目>.tilt.max`。100% でないとき）・
+/// 連続吹き付け（`tip.continuous=1`）・リボン（`tip.ribbon=1`）を足す。
 /// 使わないブラシはバージョン 1〜8 のままで、今までと同じバイト。バージョン 8 までしか読めない古いアプリは、このファイルを「新しい形式」として
 /// 理由つきで読み飛ばす。バージョン 9 の鍵がバージョン 8 までのファイルにあれば、知らない項目として断る（読み戻しても目の印が初めの形・画面上のサイズで指定が切・
 /// 傾きの最大値が 100% のブラシは、前のバージョンで書くので、前のバージョンのファイルは今までと同じ値で読む）。
@@ -731,10 +733,17 @@ fn write_influences(w: &mut Writer, b: &Brush) {
     }
 }
 
-/// バージョン 9 の項目: 画面上のサイズで指定・ツールプロパティに出す行の目の印（`rows.shown`。行の名前のコンマ区切り。1 つも出さないときは空）。
+/// バージョン 9 の項目: 画面上のサイズで指定・ツールプロパティに出す行の目の印（`rows.shown`。行の名前のコンマ区切り。1 つも出さないときは空）・
+/// 連続吹き付け（`tip.continuous`）・リボン（`tip.ribbon`）。切の項目は書かない。
 fn write_v9(w: &mut Writer, b: &Brush) {
     if b.controls.size_by_screen {
         w.bool("controls.size_by_screen", true);
+    }
+    if b.tip.continuous {
+        w.bool("tip.continuous", true);
+    }
+    if b.tip.ribbon {
+        w.bool("tip.ribbon", true);
     }
     if let Some(rows) = &b.shown_rows {
         w.line("rows.shown", rows.join(","));
@@ -982,12 +991,14 @@ fn uses_mix_v8(b: &Brush) -> bool {
 }
 
 /// バージョン 8 までの項目で書けない物を使うか（使えばバージョン 9 で書く）: 目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない・
-/// ブラシが持つ補正が速度による調整・はらい・後補正を使う。`b` は正規の形（目の印は初めの形なら None）。バージョン 9 にする条件は、ここに `||` で足す。
+/// ブラシが持つ補正が速度による調整・はらい・後補正を使う・連続吹き付け・リボン。`b` は正規の形（目の印は初めの形なら None）。バージョン 9 にする条件は、ここに `||` で足す。
 fn needs_v9(b: &Brush, assist: Option<StrokeAssist>) -> bool {
     b.shown_rows.is_some()
         || b.controls.size_by_screen
         || uses_tilt_max(b)
         || assist.is_some_and(|a| a.uses_correction())
+        || b.tip.continuous
+        || b.tip.ribbon
 }
 
 /// どれかの項目の傾きの最大値が 100% でないか。
@@ -1886,9 +1897,11 @@ fn read_response(
         .map_err(StoreError::Invalid)
 }
 
-/// バージョン 9 の項目（`controls.size_by_screen`・`rows.shown`）を読む。目の印は、行の名前の並び（知らない名前は断る）。
+/// バージョン 9 の項目（`controls.size_by_screen`・`rows.shown`・`tip.continuous`・`tip.ribbon`）を読む。目の印は、行の名前の並び（知らない名前は断る）。
 fn read_v9(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
     b.controls.size_by_screen = r.bool("controls.size_by_screen", false)?;
+    b.tip.continuous = r.bool("tip.continuous", false)?;
+    b.tip.ribbon = r.bool("tip.ribbon", false)?;
     if let Some(text) = r.take("rows.shown") {
         let mut ids = Vec::new();
         for id in text.split(',').filter(|s| !s.is_empty()) {
@@ -5331,6 +5344,54 @@ mod tests {
         assert!(matches!(
             decode(&format!("{t}controls.size_by_screen=1\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
+        ));
+    }
+
+    #[test]
+    fn continuous_spraying_and_ribbon_are_version_nine_and_round_trip() {
+        let mut b = Brush::default();
+        b.tip.continuous = true;
+        b.tip.ribbon = true;
+        b.tip.image = builtin_tip("charcoal");
+        let u = user(1, b.clone());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+        assert!(t.lines().any(|l| l == "tip.continuous=1"), "{t}");
+        assert!(t.lines().any(|l| l == "tip.ribbon=1"), "{t}");
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, u.brush);
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // 切の項目は書かない（片方だけでもバージョン 9）
+        for (continuous, ribbon) in [(true, false), (false, true)] {
+            let mut one = Brush::default();
+            one.tip.continuous = continuous;
+            one.tip.ribbon = ribbon;
+            let t = text(&user(1, one.clone()));
+            assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+            assert_eq!(t.contains("tip.continuous"), continuous);
+            assert_eq!(t.contains("tip.ribbon"), ribbon);
+            assert_eq!(decode(&t).unwrap().2, canonical(&one));
+        }
+        // 両方切のブラシは前のバージョンのまま
+        assert!(text(&user(1, Brush::default())).starts_with("yolupainter-brush 1\n"));
+        // バージョン 8 までのファイルにあれば知らない項目として断る。値は 0 と 1 だけ
+        for key in ["tip.continuous=1", "tip.ribbon=1"] {
+            for older in [8, 1] {
+                let old = format!("yolupainter-brush {older}\nname=a\ngroup=pen\n{key}\n");
+                assert!(
+                    matches!(decode(&old).unwrap_err(), StoreError::UnknownKey(k) if key.starts_with(&k)),
+                    "{older} {key}"
+                );
+            }
+            let bad = t.replace(key, &key.replace("=1", "=2"));
+            if bad != t {
+                assert!(decode(&bad).is_err(), "{key}");
+            }
+        }
+        let bad = text(&u).replace("tip.ribbon=1", "tip.ribbon=yes");
+        assert!(matches!(
+            decode(&bad).unwrap_err(),
+            StoreError::BadValue(k) if k == "tip.ribbon"
         ));
     }
 

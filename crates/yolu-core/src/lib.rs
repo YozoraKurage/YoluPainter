@@ -95,6 +95,7 @@ pub use brush::{
 };
 pub use brush::{ExpandMode, ReferenceLines, MAX_REFERENCE_EXPAND, MAX_REFERENCE_MARGIN};
 pub use brush::{Spray, SprayDirection, SprayItem, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
+pub use brush::{CONTINUOUS_INTERVAL, MAX_CONTINUOUS_PER_INPUT};
 pub use brush::{MAX_MIX_BLUR, MAX_MIX_CORRECTION};
 pub use document::{
     clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,

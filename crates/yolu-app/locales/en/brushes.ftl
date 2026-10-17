@@ -136,3 +136,4 @@ brushes-post-correction-strength = Post correction strength
 brushes-post-correction-bezier = Post correction Bezier curve
 brushes-sweep = Sweep
 brushes-sharp-corners = Sharp corners
+brushes-continuous-spraying = Continuous spraying

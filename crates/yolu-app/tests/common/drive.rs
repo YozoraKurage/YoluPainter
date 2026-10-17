@@ -560,6 +560,8 @@ pub trait DriveApp {
     fn view3d_adapter(&self) -> Option<String>;
     fn view3d_wait_gpu(&self);
     fn set_other_cap(&mut self, cap: u32);
+    /// ペンの点を 1 つ送る（OS のペンの入力と同じ道。次のフレームで読まれる）。
+    fn push_pen(&mut self, sample: yolu_app::pen::PenSample);
     /// ポインタを `at` に置いて、ファイルを落とす（落とした 1 フレームだけ進める。OS のドロップと同じ `dropped_files`）。
     fn drop_files_at(&mut self, at: egui::Pos2, files: &[&std::path::Path]);
 }
@@ -607,6 +609,9 @@ impl DriveApp for Harness<'_, YoluApp> {
     }
     fn set_other_cap(&mut self, cap: u32) {
         self.state_mut().view3d_set_other_cap(cap)
+    }
+    fn push_pen(&mut self, sample: yolu_app::pen::PenSample) {
+        YoluApp::pen(self.state()).push(sample);
     }
     fn drop_files_at(&mut self, at: egui::Pos2, files: &[&std::path::Path]) {
         self.event(egui::Event::PointerMoved(at));

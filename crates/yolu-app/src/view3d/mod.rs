@@ -88,6 +88,8 @@ pub struct SurfaceInput {
     pub previous_end: Option<yolu_core::geometry::SurfaceHit>,
     /// 描いている 3D ストロークの今の終点（画面の点。Shift のぶれの抑え・向きの固定を当てた後）。
     pub last_point: Option<egui::Pos2>,
+    /// 描いている 3D ストロークの最後の入力（連続吹き付けのブラシで、点が来ないフレームに同じ点を渡す。`crate::input::held`）。
+    pub held: Option<crate::input::HeldPoint>,
     /// 描いている 3D ストロークの入力で、面に当たった最後の点（確定すると `previous_end` になる。モデルの外へ出て終えても、面の上の終わりを覚える）。
     pub last_hit: Option<yolu_core::geometry::SurfaceHit>,
     /// Shift で始めたストロークの、押した点のぶれの抑えと向きの固定（画面の点。2D の `CanvasInput::shift_hold` と同じ決まり）。

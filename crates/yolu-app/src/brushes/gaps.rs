@@ -78,10 +78,11 @@ pub enum Gap {
     PostCorrectionBezier,
     Sweep,
     SharpCorners,
+    ContinuousSpraying,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 62] = [
+    pub const ALL: [Gap; 63] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -144,6 +145,7 @@ impl Gap {
         Gap::PostCorrectionBezier,
         Gap::Sweep,
         Gap::SharpCorners,
+        Gap::ContinuousSpraying,
     ];
 
     /// ファイルに書く名前。
@@ -211,6 +213,7 @@ impl Gap {
             Gap::PostCorrectionBezier => "post-correction-bezier",
             Gap::Sweep => "sweep",
             Gap::SharpCorners => "sharp-corners",
+            Gap::ContinuousSpraying => "continuous-spraying",
         }
     }
 
@@ -283,6 +286,7 @@ impl Gap {
             Gap::PostCorrectionBezier => lang.t("brushes-post-correction-bezier"),
             Gap::Sweep => lang.t("brushes-sweep"),
             Gap::SharpCorners => lang.t("brushes-sharp-corners"),
+            Gap::ContinuousSpraying => lang.t("brushes-continuous-spraying"),
         }
     }
 }
@@ -378,6 +382,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::PostCorrectionBezier => Gap::PostCorrectionBezier,
             SutNote::SweepApprox => Gap::Sweep,
             SutNote::SharpenCorner => Gap::SharpCorners,
+            SutNote::ContinuousWithPost => Gap::ContinuousSpraying,
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
             // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
@@ -390,7 +395,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 29] = [
+pub const MAPPED_ALL: [SutMapped; 31] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -420,6 +425,8 @@ pub const MAPPED_ALL: [SutMapped; 29] = [
     SutMapped::PostCorrection,
     SutMapped::Sweep,
     SutMapped::StabilizerSpeed,
+    SutMapped::Continuous,
+    SutMapped::Ribbon,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -454,6 +461,8 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::PostCorrection => "post-correction",
         SutMapped::Sweep => "sweep",
         SutMapped::StabilizerSpeed => "stabilizer-speed",
+        SutMapped::Continuous => "continuous",
+        SutMapped::Ribbon => "ribbon",
     }
 }
 

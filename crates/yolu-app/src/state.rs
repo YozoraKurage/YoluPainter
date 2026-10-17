@@ -384,6 +384,8 @@ pub struct CanvasInput {
     pub stroke_points: usize,
     /// ストロークの最後の入力の時刻（秒。戻さない）。
     pub stroke_time: Option<f64>,
+    /// 描いている 2D ストロークの最後の点（連続吹き付けのブラシで、点が来ないフレームに同じ点を渡す。`crate::input::held`）。
+    pub held: Option<crate::input::HeldPoint>,
     /// 確定した 2D ストロークの終点（文書座標）。
     pub previous_end: Option<(f64, f64)>,
     /// 描いている 2D ストロークの今の終点（文書座標）。確定すると `previous_end` になる。

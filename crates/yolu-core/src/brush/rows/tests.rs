@@ -666,3 +666,72 @@ fn a_huge_finite_texture_angle_reads_like_its_remainder_of_a_full_turn() {
         }
     }
 }
+
+/// リボンの帯（範囲・画像の位置・横の端を延ばす読み）を、まっすぐな線・曲がった線・反転・潰し・複数の筆先・アンチエイリアスで、どの道でも
+/// 画素ごとの式と同じバイトで描く。
+#[test]
+fn ribbon_cuts_paint_the_same_bytes_on_every_level() {
+    let levels = forced::supported();
+    let base = |radius: f64| {
+        let mut b = Brush::from(BrushSettings {
+            radius,
+            hardness: 1.0,
+            spacing: 0.15,
+            color: Rgba8::new(30, 90, 200, 255),
+            ..BrushSettings::default()
+        });
+        b.tip.ribbon = true;
+        b.tip.images = ["grain", "dots", "rim"]
+            .iter()
+            .filter_map(|n| builtin_tip(n))
+            .collect();
+        b.tip.selection = crate::TipSelection::PingPong;
+        b
+    };
+    let mut flipped = base(7.0);
+    flipped.tip.flip_x = crate::FlipRule::OnFold;
+    flipped.tip.flip_y = crate::FlipRule::On;
+    flipped.tip.roundness = 0.6;
+    let mut single = base(12.0);
+    single.tip.images.clear();
+    single.tip.image = builtin_tip("charcoal");
+    let mut tiny = base(1.5);
+    tiny.base.anti_alias = AntiAlias::ALL[AntiAlias::ALL.len() - 1];
+    let mut soft = base(9.0);
+    soft.base.flow = 0.4;
+    soft.base.opacity = 0.7;
+    for (i, brush) in [base(5.0), flipped, single, tiny, soft]
+        .into_iter()
+        .enumerate()
+    {
+        for points in [
+            vec![(4.3, 30.1, 1.0), (72.7, 31.2, 1.0)],
+            vec![
+                (5.3, 7.1, 0.3),
+                (40.7, 33.2, 1.0),
+                (70.25, 12.5, 0.6),
+                (30.0, 58.0, 0.1),
+            ],
+        ] {
+            let case = Case {
+                brush: brush.clone(),
+                size: (77, 64),
+                tile: 16,
+                ground: Ground::Noise,
+                points,
+                selection: i == 1,
+                locked: false,
+                parallel: i % 2 == 0,
+                tight_budget: false,
+                seed: i as u64,
+            };
+            let reference =
+                forced::with_level(Level::Scalar, || per_pixel(|| run(&case))).expect("始められる");
+            assert!(reference.changed, "{i}");
+            for &l in &levels {
+                let got = forced::with_level(l, || run(&case)).expect("始められる");
+                assert_eq!(got.pixels, reference.pixels, "リボン {i} 道 {l:?}");
+            }
+        }
+    }
+}

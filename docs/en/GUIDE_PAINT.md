@@ -18,17 +18,19 @@ The eye button at the left end of each row in Brush Details decides whether the 
 | Ink | Opacity, flow, the settings for picking up and mixing the colors underneath (used by the oil, gouache and mixer brushes), Effect (Blur, Smudge and Clone) |
 | Color change | Hue, saturation, value and sub color of the tip, Randomize per stroke, change target, background color jitter |
 | Anti-aliasing | None, Weak, Medium, Strong (smooths the jagged pixels of the edge) |
-| Brush shape | Brush tip (the tip image, hardness, roundness, angle, follow direction, repeat method, flip), spray, stroke (spacing; the 3D settings are in [GUIDE_3D.md](GUIDE_3D.md)), paper |
+| Brush shape | Brush tip (the tip image, hardness, roundness, angle, follow direction, repeat method, flip), spray, stroke (spacing, continuous spraying, ribbon; the 3D settings are in [GUIDE_3D.md](GUIDE_3D.md)), paper |
 | 2nd brush shape | A second tip layered on the first (tip, spray, stroke, paper) |
+| Watercolor edge | Makes the edge of the line denser and darker (edge width, opacity effect, darkness effect, process after brush stroke, blurring width) |
 | Erase | Erase mode |
 | Stabilization | Stabilizer, stabilize by speed, stabilization mode, sweep, post correction (strength, adjust by speed, adjust by view scale), curve |
 | Taper | Taper, fade, what the taper applies to |
+| Do not cross lines | Do not cross lines of reference layer, color margin, area scaling (amount and mode) |
 
 While Erase under Erase is on (you can also assign a key to the Erase Mode command), the Brush tool erases with the current brush as it is. It is not saved in the brush and stays when you switch tools.
 
 The settings are specified in [BRUSH.md](../BRUSH.md) (Japanese).
 
-A brush imported from CLIP STUDIO with Do not cross lines of reference layer turned on does not paint across the lines of the reference layers (marked with Reference Layer in the right-click menu of the layers, see [GUIDE_LAYERS.md](GUIDE_LAYERS.md)). A stroke drawn across a line paints both sides of it but not the line itself. When no layer is marked, the brush paints as usual (see [BRUSH.md](../BRUSH.md), Japanese).
+A brush with Do not cross lines of reference layer turned on under Do not cross lines (including brushes imported from CLIP STUDIO) does not paint across the lines of the reference layers (marked with Reference Layer in the right-click menu of the layers, see [GUIDE_LAYERS.md](GUIDE_LAYERS.md)). A stroke drawn across a line paints both sides of it but not the line itself. When no layer is marked, the brush paints as usual (see [BRUSH.md](../BRUSH.md), Japanese).
 
 The Clone brush copies from the point you `Alt`-click (release without moving), starting with the next stroke. This works the same on the 2D Canvas and in the 3D View (if you move before releasing, the 2D Canvas rotates the view and the 3D View snap-orbits). A cross marks the source; on the 2D Canvas it moves to the point being copied while you paint. With Aligned on, the offset to the source is set at the start point of the next stroke after you set the source, and later strokes keep the same offset (a stroke cancelled with `Esc` or a stroke that changed nothing does not set it; the next stroke does). The offset that was set carries on after switching to the eraser and back or choosing the brush again. With Aligned off, every stroke starts on the source. Read all layers reads the stack of visible layers. These two settings are shared by 2D and 3D. Switching documents or texture sets forgets the source. On the 2D Canvas without a source, the brush copies with Offset X and Offset Y under Ink. Once a source is set on the 2D Canvas, these fields show the offset that was set, and an offset set from the source does not mark the brush as modified (an offset you change in the fields does). With Aligned off, and while only the 3D View is shown, the fields do not decide the offset and are dimmed.
 
@@ -66,6 +68,8 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 - **Stabilizer**: Stabilizer in Tool Properties (0 to 200 px) is the length of the string that pulls the brush. 0 turns it off.
 - **Post correction**: With Post correction on in the Stabilization page of Brush Details, the line is smoothed of small wobbles and redrawn when you lift the pen (the redraw is one undo step).
 - **Taper**: the settings that thin the start and end of a stroke are under Taper in Brush Details.
+- **Continuous spraying**: with Continuous spraying on in the Stroke page of Brush Details, dabs keep being placed while you hold the pen still, and slower parts of a line get darker (it does not work together with post correction).
+- **Ribbon**: with Ribbon on in the Stroke page, the tip image is copied continuously along the line as one unbroken pattern (only for image tips; it does not work together with the spraying effect).
 - **In the 3D View too**: Stabilizer, taper, jitter and the other settings apply to strokes in the 3D View with the same formulas. The stabilizer and taper lengths (px) are measured in screen points in the 3D View ([GUIDE_3D.md](GUIDE_3D.md)).
 
 ## Lines, shapes and rulers

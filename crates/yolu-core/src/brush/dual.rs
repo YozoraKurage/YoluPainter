@@ -254,6 +254,7 @@ impl DualTips {
             tip,
             flip_x,
             flip_y,
+            ribbon: None,
         };
         let p = self
             .run

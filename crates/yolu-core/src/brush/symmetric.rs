@@ -87,16 +87,29 @@ impl DabShape<'_> {
         let mut u = (self.cos * dx + self.sin * dy) / self.radius;
         let mut v = (-self.sin * dx + self.cos * dy) / (self.radius * self.roundness);
         if let Some(tip) = self.tip {
+            // リボンの帯: 範囲の外は 0、画像は帯の位置へずらし、線の向きの端は端の画素を延ばして読む（行の核と同じ）
+            let ribbon = self.ribbon;
+            if let Some(r) = ribbon {
+                if u < r.lo || u >= r.hi {
+                    return 0.0;
+                }
+                u -= r.center;
+            }
             if self.flip_x {
                 u = -u;
             }
             if self.flip_y {
                 v = -v;
             }
-            let c = tip.sample(
+            let (tu, tv) = (
                 (u / self.aspect_x + 1.0) * 0.5,
                 (v / self.aspect_y + 1.0) * 0.5,
             );
+            let c = if ribbon.is_some() {
+                tip.sample_ribbon(tu, tv)
+            } else {
+                tip.sample(tu, tv)
+            };
             return if self.edge.density != 1.0 {
                 c * self.edge.density
             } else {

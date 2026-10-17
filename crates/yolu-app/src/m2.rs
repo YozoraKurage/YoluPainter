@@ -272,6 +272,11 @@ pub enum BrushOp {
     ColorTarget(yolu_core::ColorTarget),
     /// 手ぶれ補正の速度による調整の補正タイプ（速度による調整を入れたまま替える）。
     StabilizerSpeedType(yolu_core::StabilizerSpeed),
+    /// 色の混ぜの混色モード・輝度の補正（0〜4）。
+    MixSpace(yolu_core::MixSpace),
+    MixCorrection(u8),
+    /// はみ出し防止の領域拡縮の方法。
+    ReferMode(yolu_core::ExpandMode),
 }
 
 /// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。主の質感も 2 つ目の質感も同じ。
@@ -612,6 +617,36 @@ pub fn stabilizer_speed_types(lang: Lang) -> [(yolu_core::StabilizerSpeed, &'sta
     [
         (S::WeakenWhenFast, lang.t("brushrows-weaken-when-fast")),
         (S::SlowOnly, lang.t("brushrows-slow-only")),
+    ]
+}
+
+/// 色の混ぜの混色モードの選び（並びは画面の順）。
+pub fn mix_spaces(lang: Lang) -> [(yolu_core::MixSpace, &'static str); 2] {
+    use yolu_core::MixSpace as S;
+    [
+        (S::Standard, lang.t("brushrows-mix-standard")),
+        (S::Perceptual, lang.t("brushrows-mix-perceptual")),
+    ]
+}
+
+/// 輝度の補正の段（0 なし〜4 最高）の選び。
+pub fn mix_corrections(lang: Lang) -> [(u8, &'static str); 5] {
+    [
+        (0, lang.t("brushrows-correction-none")),
+        (1, lang.t("brushrows-correction-low")),
+        (2, lang.t("brushrows-correction-medium")),
+        (3, lang.t("brushrows-correction-high")),
+        (4, lang.t("brushrows-correction-highest")),
+    ]
+}
+
+/// はみ出し防止の領域拡縮の方法の選び。
+pub fn expand_modes(lang: Lang) -> [(yolu_core::ExpandMode, &'static str); 3] {
+    use yolu_core::ExpandMode as E;
+    [
+        (E::Square, lang.t("brushrows-expand-square")),
+        (E::Round, lang.t("brushrows-expand-round")),
+        (E::Darkest, lang.t("brushrows-expand-darkest")),
     ]
 }
 
@@ -1478,6 +1513,62 @@ impl AppState {
         }
     }
 
+    /// 2 つ目の筆先（デュアルブラシ）の選びを当てる（[`BrushOp`] のデュアルの区分）。
+    fn apply_dual_op(&mut self, op: BrushOp) {
+        let b = &mut self.m2.brush;
+        match op {
+            BrushOp::DualPatternTexture(key) => {
+                let image = self
+                    .brushes
+                    .lib
+                    .entry(key)
+                    .and_then(|e| e.baseline.texture.as_ref())
+                    .map(|t| t.image.clone());
+                if let (Some(d), Some(image)) = (&mut b.dual, image) {
+                    put_texture_image(&mut d.texture, self.m2.texture_prefs, image);
+                }
+            }
+            BrushOp::DualTexture(None) => {
+                if let Some(d) = &mut b.dual {
+                    clear_texture(&mut d.texture, &mut self.m2.texture_prefs);
+                }
+            }
+            BrushOp::DualTexture(Some(id)) => {
+                if let (Some(d), Some(image)) = (&mut b.dual, yolu_core::builtin_tip(id)) {
+                    put_texture_image(&mut d.texture, self.m2.texture_prefs, image);
+                }
+            }
+            BrushOp::DualTextureMode(mode) => {
+                if let Some(t) = b.dual.as_mut().and_then(|d| d.texture.as_mut()) {
+                    t.mode = mode;
+                }
+                self.m2.texture_prefs.mode = mode;
+            }
+            BrushOp::DualEnabled(on) => {
+                if on {
+                    if b.dual.is_none() {
+                        b.dual = Some(self.m2.dual_stash.clone());
+                    }
+                } else if let Some(d) = b.dual.take() {
+                    self.m2.dual_stash = d;
+                }
+            }
+            BrushOp::DualTip(id) => {
+                if let Some(d) = &mut b.dual {
+                    d.tip = id.and_then(yolu_core::builtin_tip);
+                    // 2 つ目の複数の筆先が残っていると、1 枚の選びが効かない（主の Tip と同じ）
+                    d.tips.clear();
+                }
+            }
+            BrushOp::DualMode(mode) => {
+                if let Some(d) = &mut b.dual {
+                    d.mode = mode;
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn apply_brush_op(&mut self, op: BrushOp) {
         if let BrushOp::AntiAlias(level) = op {
             self.brush.anti_alias = level;
@@ -1543,60 +1634,18 @@ impl AppState {
                     put_texture_image(&mut b.texture, self.m2.texture_prefs, image);
                 }
             }
-            BrushOp::DualPatternTexture(key) => {
-                let image = self
-                    .brushes
-                    .lib
-                    .entry(key)
-                    .and_then(|e| e.baseline.texture.as_ref())
-                    .map(|t| t.image.clone());
-                if let (Some(d), Some(image)) = (&mut b.dual, image) {
-                    put_texture_image(&mut d.texture, self.m2.texture_prefs, image);
-                }
-            }
-            BrushOp::DualTexture(None) => {
-                if let Some(d) = &mut b.dual {
-                    clear_texture(&mut d.texture, &mut self.m2.texture_prefs);
-                }
-            }
-            BrushOp::DualTexture(Some(id)) => {
-                if let (Some(d), Some(image)) = (&mut b.dual, yolu_core::builtin_tip(id)) {
-                    put_texture_image(&mut d.texture, self.m2.texture_prefs, image);
-                }
-            }
-            BrushOp::DualTextureMode(mode) => {
-                if let Some(t) = b.dual.as_mut().and_then(|d| d.texture.as_mut()) {
-                    t.mode = mode;
-                }
-                self.m2.texture_prefs.mode = mode;
-            }
             BrushOp::TextureMode(mode) => {
                 if let Some(t) = &mut b.texture {
                     t.mode = mode;
                 }
                 self.m2.texture_prefs.mode = mode;
             }
-            BrushOp::DualEnabled(on) => {
-                if on {
-                    if b.dual.is_none() {
-                        b.dual = Some(self.m2.dual_stash.clone());
-                    }
-                } else if let Some(d) = b.dual.take() {
-                    self.m2.dual_stash = d;
-                }
-            }
-            BrushOp::DualTip(id) => {
-                if let Some(d) = &mut b.dual {
-                    d.tip = id.and_then(yolu_core::builtin_tip);
-                    // 2 つ目の複数の筆先が残っていると、1 枚の選びが効かない（主の Tip と同じ）
-                    d.tips.clear();
-                }
-            }
-            BrushOp::DualMode(mode) => {
-                if let Some(d) = &mut b.dual {
-                    d.mode = mode;
-                }
-            }
+            BrushOp::DualPatternTexture(_)
+            | BrushOp::DualTexture(_)
+            | BrushOp::DualTextureMode(_)
+            | BrushOp::DualEnabled(_)
+            | BrushOp::DualTip(_)
+            | BrushOp::DualMode(_) => self.apply_dual_op(op),
             BrushOp::MixMode(mode) => b.mix.mode = mode,
             BrushOp::TipRepeat(selection) => b.tip.selection = selection,
             BrushOp::FlipX(rule) => b.tip.flip_x = rule,
@@ -1607,6 +1656,11 @@ impl AppState {
                     b.assist.stabilizer_speed = Some(kind);
                 }
             }
+            BrushOp::MixSpace(space) => b.mix.space = space,
+            BrushOp::MixCorrection(level) => {
+                b.mix.correction = level.min(yolu_core::MAX_MIX_CORRECTION)
+            }
+            BrushOp::ReferMode(mode) => b.reference_lines.mode = mode,
             // 基本の値なので先に当てた
             BrushOp::AntiAlias(_) => {}
         }

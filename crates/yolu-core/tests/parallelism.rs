@@ -243,6 +243,21 @@ fn big_brushes() -> Vec<(&'static str, Brush)> {
             ..base(80.0, 0.5, 0.1)
         }),
     ));
+    // リボン（複数の筆先を線の長さに沿って写す）と連続吹き付け（時刻のダブ。入力は 1/100 秒ごとで、遅い所に足される）
+    let mut ribbon = Brush::from(base(60.0, 1.0, 0.1));
+    ribbon.tip.ribbon = true;
+    ribbon.tip.images = vec![
+        builtin_tip("charcoal").unwrap(),
+        builtin_tip("grain").unwrap(),
+    ];
+    ribbon.tip.selection = yolu_core::TipSelection::Sequential;
+    out.push(("ribbon", ribbon));
+    let mut continuous = Brush::from(BrushSettings {
+        flow: 0.3,
+        ..base(70.0, 0.5, 0.4)
+    });
+    continuous.tip.continuous = true;
+    out.push(("continuous", continuous));
     out
 }
 

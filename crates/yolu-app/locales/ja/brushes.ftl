@@ -130,3 +130,4 @@ brushes-post-correction-strength = 後補正の強さ
 brushes-post-correction-bezier = 後補正のベジェ曲線
 brushes-sweep = はらい
 brushes-sharp-corners = 角をとがらせる
+brushes-continuous-spraying = 連続吹き付け

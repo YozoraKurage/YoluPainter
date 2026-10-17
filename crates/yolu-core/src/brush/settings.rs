@@ -183,6 +183,13 @@ pub struct TipShape {
     pub flip_y: FlipRule,
     /// 拡張: 1 本のストロークの中で、ダブが重なる所は足していかずに、覆いの大きい方を残す（CLIP STUDIO PAINT の「ブラシ先端同士を比較暗で合成」）。
     pub darken_overlap: bool,
+    /// 拡張: 連続吹き付け（CLIP STUDIO PAINT の「連続吹き付け」）。ペンを押している間、筆の点が間隔の距離まで動かなくても、時刻の間隔
+    /// （[`super::CONTINUOUS_INTERVAL`]）ごとに今の筆の点へダブを置く（遅い線ほど濃い）。後補正（[`PostCorrection::on`]）が入りなら切として
+    /// 扱う（[`Brush::continuous_active`]）。ストロークの区分の設定なので、筆先の並び・繰り返しと同じくここに持つ。
+    pub continuous: bool,
+    /// 拡張: リボン（CLIP STUDIO PAINT の「リボン」）。筆先の画像を線の長さに沿って続けて写し、1 つの模様にする（[`super::ribbon`]）。
+    /// 散布効果が入り・筆先が丸（画像なし）のときは効かない（[`Brush::ribbon_active`]）。
+    pub ribbon: bool,
 }
 
 impl Default for TipShape {
@@ -197,6 +204,8 @@ impl Default for TipShape {
             flip_x: FlipRule::Off,
             flip_y: FlipRule::Off,
             darken_overlap: false,
+            continuous: false,
+            ribbon: false,
         }
     }
 }
@@ -924,6 +933,19 @@ impl Brush {
             mix_paint: f(&inf.mix_paint),
             mix_density: f(&inf.mix_density),
         }
+    }
+
+    /// 連続吹き付けが効くか（入りで、後補正が切）。後補正は離した後に入力を整えて描き直すので、時刻で置いたダブの位置が描き直しで
+    /// 決まらない。
+    pub fn continuous_active(&self) -> bool {
+        self.tip.continuous && !self.assist.post.on
+    }
+
+    /// リボンが効くか（入りで、筆先に画像があり、散布効果が切）。
+    pub fn ribbon_active(&self) -> bool {
+        self.tip.ribbon
+            && self.spray.is_none()
+            && (self.tip.image.is_some() || !self.tip.images.is_empty())
     }
 
     /// 今のダブで使う筆先の並び（`images` が空でなければそれ、空なら None）。

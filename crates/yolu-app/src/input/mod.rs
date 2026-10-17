@@ -1,9 +1,11 @@
 //! 2D のキャンバスと 3D ビューが共有する入力の段: フレームの入力を 1 本に並べてマウスとペンの点を 1 つの形にする（`Stream`・`PointerSample`）、
 //! 押した点が一番上のビューか（`on_top`）、押しの持ち主（`owner`）。
 
+pub mod held;
 pub mod owner;
 pub mod sample;
 
+pub use held::HeldPoint;
 pub use owner::{owner, Owner, Press, PressCtx};
 pub use sample::{Item, Phase, PointerSample, Stream};
 
