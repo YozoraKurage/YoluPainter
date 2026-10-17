@@ -266,10 +266,10 @@ zip・tar.gz とインストーラーは `xtask` の共通の梱包一覧を使�
 
 | 対象 | app（更新・コマンドライン込み） | cli（app と同じビルド） | update 単独 | xtask | app の全文束 |
 |---|---:|---:|---:|---:|---|
-| Windows MSVC | 262 | 132 | 31 | 49 | 生成成功 |
-| Windows GNU | 260 | 132 | 31 | 49 | 生成成功 |
-| Linux GNU | 328 | 131 | 31 | 54 | 生成成功 |
-| Linux ARM（aarch64） | 326 | 130 | 30 | 52 | 生成成功 |
+| Windows MSVC | 262 | 132 | 31 | 48 | 生成成功 |
+| Windows GNU | 260 | 132 | 31 | 48 | 生成成功 |
+| Linux GNU | 328 | 131 | 31 | 53 | 生成成功 |
+| Linux ARM（aarch64） | 326 | 130 | 30 | 51 | 生成成功 |
 | macOS universal | 255 | — | — | — | 生成成功 |
 
 署名検証に使う `ed25519-dalek`・`curve25519-dalek`・`subtle` は BSD-3-Clause。
@@ -2040,7 +2040,6 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | curve25519-dalek-derive | 0.1.1 | MIT | ○ | ○ | ○ |
 | curve25519-dalek | 4.1.3 | BSD-3-Clause | ○ | ○ | ○ |
 | digest | 0.10.7 | MIT | ○ | ○ | ○ |
-| displaydoc | 0.2.7 | MIT | ○ | ○ | ○ |
 | ed25519-dalek | 2.2.0 | BSD-3-Clause | ○ | ○ | ○ |
 | ed25519 | 2.2.3 | MIT | ○ | ○ | ○ |
 | equivalent | 1.0.2 | MIT | ○ | ○ | ○ |
@@ -2073,13 +2072,13 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 | syn | 2.0.119 | MIT | ○ | ○ | ○ |
 | syn | 3.0.6 | MIT | ○ | ○ | ○ |
 | tar | 0.4.46 | MIT | ○ | ○ | ○ |
-| thiserror-impl | 2.0.21 | MIT | ○ | ○ | ○ |
-| thiserror | 2.0.21 | MIT | ○ | ○ | ○ |
+| typed-path | 0.12.3 | MIT | ○ | ○ | ○ |
 | typenum | 1.20.1 | MIT | ○ | ○ | ○ |
 | unicode-ident | 1.0.26 | MIT AND Unicode-3.0 | ○ | ○ | ○ |
 | version_check | 0.9.5 | MIT | ○ | ○ | ○ |
 | xattr | 1.6.1 | MIT | — | — | ○ |
 | zeroize | 1.9.0 | MIT | ○ | ○ | ○ |
-| zip | 2.4.2 | MIT | ○ | ○ | ○ |
+| zip | 9.0.4 | MIT | ○ | ○ | ○ |
+| zlib-rs | 0.6.8 | Zlib | ○ | ○ | ○ |
 | zmij | 1.0.23 | MIT | ○ | ○ | ○ |
 | zopfli | 0.8.3 | Apache-2.0 | ○ | ○ | ○ |

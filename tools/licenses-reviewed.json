@@ -2141,6 +2141,19 @@
         }
       ]
     },
+    "nix@0.31.3": {
+      "declared": "MIT",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "66e3ee1fa7f909ad3c612d556f2a0cdabcd809ad6e66f3b0605015ac64841b70"
+        }
+      ]
+    },
     "nohash-hasher@0.2.0": {
       "declared": "Apache-2.0 OR MIT",
       "selected": [
@@ -3414,6 +3427,19 @@
         }
       ]
     },
+    "typed-path@0.12.3": {
+      "declared": "MIT OR Apache-2.0",
+      "selected": [
+        "MIT"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ]
+    },
     "typenum@1.20.1": {
       "declared": "MIT OR Apache-2.0",
       "selected": [
@@ -4351,7 +4377,7 @@
         }
       ]
     },
-    "zip@2.4.2": {
+    "zip@9.0.4": {
       "declared": "MIT",
       "selected": [
         "MIT"
@@ -4360,7 +4386,20 @@
       "files": [
         {
           "path": "LICENSE",
-          "sha256": "04dc52136d82400b11df5f474949863a70a5d05d2278dec45b99c479494450a6"
+          "sha256": "58545fed1565e42d687aecec6897d35c6d37ccb71479a137c0deb2203e125c79"
+        }
+      ]
+    },
+    "zlib-rs@0.6.8": {
+      "declared": "Zlib",
+      "selected": [
+        "Zlib"
+      ],
+      "blocked": [],
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "e72111c52b7d96ebe25348dee19f0744f444d3c95ae6b1ecb6ccaecc5bce05ba"
         }
       ]
     },

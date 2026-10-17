@@ -650,7 +650,7 @@ fn check_mcpb_archive(bytes: &[u8], version: &Version) -> Result<()> {
     for index in 0..zip.len() {
         let file = zip.by_index(index)?;
         if file.is_file() {
-            found.push(file.name().to_owned());
+            found.push(file.name()?.into_owned());
         }
     }
     found.sort();
@@ -1029,7 +1029,7 @@ fn archive_names(target: &str, bytes: &[u8]) -> Result<Vec<String>> {
         for index in 0..zip.len() {
             let file = zip.by_index(index)?;
             if file.is_file() {
-                names.push(file.name().to_owned());
+                names.push(file.name()?.into_owned());
             }
         }
     } else {
