@@ -682,7 +682,8 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
         | Action::Psd(_)
         | Action::Project(_)
         | Action::Recovery(_)
-        | Action::Bake(_) => Plan::Skip,
+        | Action::Bake(_)
+        | Action::Draft(_) => Plan::Skip,
         // 画面だけの操作（文書を替える操作は、記録の外の文書になるので記録しない）
         _ => Plan::Ui,
     }

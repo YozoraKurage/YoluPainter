@@ -466,6 +466,47 @@ fn headless_polygon_fill_in_2d_cycles_the_overlapped_islands_on_the_same_spot() 
     assert!(painted(&s, only_p));
 }
 
+/// バケツの仕事の間に重なった所を押すと、選び替えの控えを進める前に「塗りつぶし中」で断る。仕事が済んでから同じ所を押すと、前の候補の
+/// 塗りを取り消して次の候補を塗る（断った押しの分、候補を飛ばしたり重ねて塗ったりしない）。
+#[test]
+fn headless_a_polygon_press_refused_during_a_bucket_job_keeps_the_overlap_cycle() {
+    use yolu_app::notice::{Kind, Source};
+    let (mut s, rect) = with_model(partly());
+    s.set_tool(Tool::PolygonFill);
+    s.region_mut().kind = SurfaceRegionKind::UvIsland;
+    let view = s.view().view(rect, 64, 64);
+    let painted = |s: &AppState, uv: (f32, f32)| {
+        composite_pixel(s.doc(), (uv.0 * 64.0) as u32, (uv.1 * 64.0) as u32)[3] > 0
+    };
+    let (only_p, only_q, both) = ((0.2, 0.2), (0.6, 0.6), (0.4, 0.4));
+    let at = at_uv(&s, rect, both);
+    assert!(begin_polygon(&mut s, Where::Canvas(&view), at));
+    assert!(finish_drag(&mut s, false));
+    assert!(painted(&s, only_p) && !painted(&s, only_q));
+    let steps = s.doc().undo_count();
+    let index = s.region().cycle.as_ref().map(|c| c.index);
+    // 走っているバケツの仕事（終わらない仕事）
+    let layer = s.selected_layer().unwrap();
+    let (job, _tx) = yolu_app::region::bucket::Job::parked(&s, layer);
+    s.region_mut().job = Some(job);
+    *s.last_notice_mut() = None;
+    assert!(!begin_polygon(&mut s, Where::Canvas(&view), at));
+    let notice = s.last_notice().clone().expect("断り");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Refusal));
+    assert_eq!(notice.text, "塗りつぶし中");
+    assert_eq!(
+        s.region().cycle.as_ref().map(|c| c.index),
+        index,
+        "控えは変わらない"
+    );
+    // 仕事が済んだ（取り消した）後: P の塗りを取り消して Q を塗る（段は増えない）
+    s.region_mut().job = None;
+    assert!(begin_polygon(&mut s, Where::Canvas(&view), at));
+    assert!(finish_drag(&mut s, false));
+    assert!(!painted(&s, only_p) && painted(&s, only_q));
+    assert_eq!(s.doc().undo_count(), steps);
+}
+
 /// 開いているアイランドのメニュー（アイランド・見取り図からか・3D からか）。
 fn island_menu(s: &AppState) -> Option<(usize, bool, bool)> {
     match s.popup().as_ref().map(|p| p.kind) {

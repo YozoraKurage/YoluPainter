@@ -3,6 +3,7 @@ use crate::common::drive::Drive;
 use egui::{pos2, vec2, Rect};
 use std::sync::atomic::AtomicBool;
 use yolu_app::{
+    notice::{Kind, Source},
     region::{
         bucket,
         color::{self, Distance, Reference},
@@ -1188,4 +1189,156 @@ mod in_3d {
         let after = touched(vec![(3.5, 7.5), nan, (7.5, 7.5)]);
         assert!(after.amount(7, 7) > 0 && after.amount(12, 7) == 0);
     }
+}
+
+// ───────── 結果を文書へ入れる入口 ─────────
+
+/// その場で塗る小さな文書（16）と、裏の仕事で塗る文書（257）。
+const SIZES: [u32; 2] = [16, 257];
+
+fn by_color(size: u32) -> AppState {
+    let mut s = AppState::new(size, size);
+    s.region_mut().by_color = true;
+    s
+}
+
+/// 結果は 1 回の Undo で、変更の印を付け、塗りつぶしの出どころで知らせる（その場でも裏の仕事でも同じ）。
+#[test]
+fn the_bucket_result_is_one_undo_with_the_fill_notice() {
+    for size in SIZES {
+        let mut s = by_color(size);
+        let before = s.doc().undo_count();
+        bucket::start(&mut s, vec![(1.0, 1.0)]);
+        wait(&mut s);
+        assert_eq!(s.doc().undo_count(), before + 1, "{size}");
+        assert_eq!(
+            s.doc().history().last(),
+            Some(yolu_app::engine::HistoryKind::Brush),
+            "{size}: 段の名前"
+        );
+        assert!(s.modified(), "{size}");
+        let notice = s.last_notice().clone().expect("知らせ");
+        assert_eq!(notice.source, Source::Fill, "{size}");
+        assert_eq!(notice.kind, Kind::Info, "{size}");
+        assert_eq!(notice.text, s.message(), "{size}");
+    }
+}
+
+/// 読むだけのセットは、始めるときに 1 回、塗りつぶしの出どころで断る（仕事を始めない・履歴に積まない）。
+#[test]
+fn a_read_only_set_refuses_the_bucket_at_the_start_with_the_fill_source() {
+    for size in SIZES {
+        let mut s = by_color(size);
+        s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+        bucket::start(&mut s, vec![(1.0, 1.0)]);
+        assert!(s.region().job.is_none(), "{size}");
+        assert_eq!(s.doc().undo_count(), 0, "{size}");
+        assert!(!s.modified(), "{size}");
+        let notice = s.last_notice().clone().expect("断り");
+        assert_eq!(
+            (notice.source, notice.kind),
+            (Source::Fill, Kind::Refusal),
+            "{size}"
+        );
+        assert!(notice.text.contains("読むだけ"), "{}", notice.text);
+    }
+}
+
+/// 裏の仕事の途中で今のセットが読むだけになったら、結果を入れずにやめたと知らせる。セットを替えるのは、仕事の途中は断る
+/// （仕事は元のセットに 1 回の Undo で入る）。
+#[test]
+fn a_set_that_becomes_read_only_or_is_switched_during_the_job_keeps_its_rules() {
+    let mut s = by_color(257);
+    bucket::start(&mut s, vec![(1.0, 1.0)]);
+    assert!(s.region().job.is_some());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    wait(&mut s);
+    assert_eq!(s.doc().undo_count(), 0);
+    let notice = s.last_notice().clone().unwrap();
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Warning));
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    // セットを替える
+    s.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    assert_eq!(s.sets().len(), 2, "{}", s.message());
+    let first = s.sets().iter().next().unwrap().uid;
+    let second = s.sets().iter().nth(1).unwrap().uid;
+    s.act(Action::SelectSet(first));
+    let doc = s.doc().id();
+    let before = s.doc().undo_count();
+    bucket::start(&mut s, vec![(1.0, 1.0)]);
+    assert!(s.region().job.is_some());
+    s.act(Action::SelectSet(second));
+    assert_eq!(s.doc().id(), doc, "仕事の途中はセットを替えない");
+    assert!(s.message().contains("描いている間"), "{}", s.message());
+    wait(&mut s);
+    assert_eq!(s.doc().undo_count(), before + 1);
+}
+
+/// 記録を始める（記録の外の変更の印 `skipped` を見るため。記録のウィンドウは開かない）。
+fn record(s: &mut AppState) {
+    let recorder = yolu_app::automation::record::Recorder::start(s);
+    s.automation_mut().recorder = Some(recorder);
+}
+
+/// 結果は、ほかの操作と同じ入口（`AppState::apply` の `RegionAction::Bucket`）から文書へ入る: 記録中なら、その場で記録しなかった変更の
+/// 印が付く（`apply` の外で文書を変えると、記録のウィンドウが次に見るまで付かない）。
+#[test]
+fn the_bucket_result_goes_through_the_region_action() {
+    for size in SIZES {
+        let mut s = by_color(size);
+        record(&mut s);
+        bucket::start(&mut s, vec![(1.0, 1.0)]);
+        wait(&mut s);
+        assert_eq!(s.doc().undo_count(), 1, "{size}");
+        assert!(
+            s.automation().recorder.as_ref().unwrap().skipped,
+            "{size}: apply を通っていない"
+        );
+    }
+}
+
+/// 操作として直に当てても同じに塗り（1 回の Undo）、文書を変える操作として、読むだけのセットと描いている最中は断る。
+#[test]
+fn the_bucket_action_paints_once_and_refuses_read_only_sets_and_strokes() {
+    let mut s = by_color(16);
+    let layer = s.selected_layer().unwrap();
+    let action = Action::Region(RegionAction::Bucket(Box::new(bucket::BucketFill {
+        layer,
+        mask: SelectionMask::rectangle(s.doc(), 0, 0, 4, 4),
+        style: bucket::Style::capture(&s, layer),
+    })));
+    assert!(action.edits_document());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    s.act(action.clone());
+    assert_eq!(s.doc().undo_count(), 0);
+    assert!(s.message().contains("読むだけ"), "{}", s.message());
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    let brush = s.stroke_settings(false);
+    let stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
+    s.act(action.clone());
+    // 断るのは core（自分のストロークの最中）。文は描いている間の断りと同じ
+    assert_eq!(s.message(), "描いている間はできません。");
+    s.doc_mut().cancel_stroke(stroke);
+    assert_eq!(s.doc().undo_count(), 0);
+    s.act(action);
+    assert_eq!(s.doc().undo_count(), 1);
+    assert!(s.modified());
+    assert!(
+        s.doc()
+            .layer(layer)
+            .unwrap()
+            .pixel(Channel::Color, 1, 1)
+            .unwrap()
+            .a
+            > 0
+    );
+    assert_eq!(
+        s.doc()
+            .layer(layer)
+            .unwrap()
+            .pixel(Channel::Color, 8, 8)
+            .unwrap()
+            .a,
+        0
+    );
 }

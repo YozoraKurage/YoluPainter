@@ -529,3 +529,49 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
         assert!(selection(&h).is_none(), "{label}: 次の Esc で解除");
     }
 }
+
+/// 3D の選択ペンのドラッグ（文書を書かない描いている最中）の間に、バケツ（近い色）の裏の仕事の結果が届いても、結果は塗れて 1 回の Undo
+/// （塗りつぶしの出どころで「塗りました。」）。選択ペンのストロークは、そのあと離して別の 1 回の Undo。
+#[test]
+fn a_bucket_result_that_arrives_during_a_3d_selection_pen_stroke_is_still_filled() {
+    use yolu_app::notice::{Kind, Source};
+    let (mut h, rect) = plate_view(true);
+    tool(&mut h, Tool::SelectPen);
+    brush(&mut h, 4.0, true);
+    let pts = on_plate(&h, rect, &LINE);
+    press_with(&h, pts[0], Modifiers::NONE);
+    h.step();
+    move_to(&h, pts[1]);
+    h.step();
+    assert!(
+        st(&h).is_stroking() && st(&h).view3d().input.cover.is_some(),
+        "選択ペンのドラッグの途中: {}",
+        message(&h)
+    );
+    let before = st(&h).doc().undo_count();
+    let layer = st(&h).selected_layer().unwrap();
+    let (job, tx) = yolu_app::region::bucket::Job::parked(st(&h), layer);
+    h.app_mut().region_mut().job = Some(job);
+    tx.send(Ok(SelectionMask::rectangle(st(&h).doc(), 0, 0, 8, 8)))
+        .unwrap();
+    move_to(&h, pts[2]);
+    h.step();
+    assert!(st(&h).region().job.is_none(), "結果を受けた");
+    assert!(st(&h).is_stroking(), "選択ペンのドラッグは続く");
+    assert_eq!(st(&h).doc().undo_count(), before + 1, "{}", message(&h));
+    let notice = st(&h).last_notice().clone().expect("知らせ");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Info));
+    assert_eq!(notice.text, "塗りました。");
+    let painted = st(&h)
+        .doc()
+        .layer(layer)
+        .unwrap()
+        .pixel(yolu_app::engine::Channel::Color, 1, 1)
+        .unwrap();
+    assert!(painted.a > 0);
+    release_with(&h, pts[2], Modifiers::NONE);
+    h.step();
+    h.run();
+    assert!(!st(&h).is_stroking());
+    assert_eq!(st(&h).doc().undo_count(), before + 2, "{}", message(&h));
+}

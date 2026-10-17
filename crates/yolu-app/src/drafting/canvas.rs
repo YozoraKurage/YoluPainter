@@ -1,9 +1,9 @@
-use super::{endpoints, outline, Drag, Figure};
+use super::{endpoints, outline, DraftOp, Drag, Figure};
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
     state::key::Modifiers,
-    state::{AppState, StrokeSource, Tool},
+    state::{Action, AppState, StrokeSource, Tool},
 };
 use egui::{Color32, Painter, Pos2, Rect, Shape, Stroke};
 use yolu_core::{glam::DVec2, BrushSample, SelectionMask};
@@ -61,8 +61,21 @@ pub fn release(
     }
 }
 
-/// 離したときだけ画素を変更する。範囲は既存の選択量と core で乗算される。
+/// 離したときだけ画素を変更する（ほかの操作と同じ入口、`AppState::apply` の `DraftOp::Figure` から）。範囲は既存の選択量と core で乗算される。
+/// 読むだけのセットは、ここで図形の出どころで断る（通した後は `apply` の読むだけの断りも通る）。
 pub fn paint(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
+    if app.is_stroking() {
+        return;
+    }
+    if let Err(reason) = crate::stroke_gate::read_only(app) {
+        app.refuse(Source::Ruler, reason);
+        return;
+    }
+    app.apply(Action::Draft(DraftOp::Figure { a, b, rect }));
+}
+
+/// `DraftOp::Figure` を当てる: 向かい合う角 a・b の図形を、塗るか輪郭のストロークで描く（1 回の Undo）。
+pub(crate) fn figure(app: &mut AppState, a: DVec2, b: DVec2, rect: Rect) {
     if app.is_stroking() {
         return;
     }

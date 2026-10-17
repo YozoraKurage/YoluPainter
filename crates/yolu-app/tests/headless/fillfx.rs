@@ -950,6 +950,115 @@ fn headless_a_locked_layer_refuses_the_gizmo_and_a_hidden_handle_cancels_a_runni
     s.doc_mut().end_stroke(stroke).unwrap();
 }
 
+/// 読むだけのセットでハンドルを押すと、押下は受け取って 1 回、塗りつぶしレイヤーの出どころで断る。ドラッグの途中でセットを替えると、
+/// 替えた先（読むだけのセットでも）へは何も書かずにドラッグを終え、前のセットにはそこまでの変更が 1 回の Undo で残る。
+#[test]
+fn headless_the_gizmo_refuses_a_read_only_set_once_and_a_switched_set_gets_nothing() {
+    use yolu_app::notice::{Kind as NoticeKind, Source};
+    let (mut s, layer) = planar_cube();
+    let rect = view_rect();
+    let from = gizmo::handle_point(&s, rect, Handle::MoveX).unwrap();
+    // ロックのレイヤー: 動かした最初の書き込みで、塗りつぶしレイヤーの出どころで 1 回断ってドラッグを終える
+    s.doc_mut().set_layer_locks(layer, LayerLocks::ALL).unwrap();
+    *s.last_notice_mut() = None;
+    assert!(gizmo::press(&mut s, rect, from, gizmo::Source::Mouse));
+    gizmo::drag_to(&mut s, rect, from + vec2(30.0, 0.0), false, false);
+    assert!(!gizmo::dragging(&s));
+    let notice = s.last_notice().clone().expect("断り");
+    assert_eq!(notice.source, Source::FillLayer);
+    assert!(notice.text.contains("ロック"), "{}", notice.text);
+    s.doc_mut()
+        .set_layer_locks(layer, LayerLocks::NONE)
+        .unwrap();
+    let steps = s.doc().undo_count();
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    *s.last_notice_mut() = None;
+    assert!(gizmo::press(&mut s, rect, from, gizmo::Source::Mouse));
+    assert!(!gizmo::dragging(&s));
+    let notice = s.last_notice().clone().expect("断り");
+    assert_eq!(
+        (notice.source, notice.kind),
+        (Source::FillLayer, NoticeKind::Refusal)
+    );
+    assert!(notice.text.contains("読むだけ"), "{}", notice.text);
+    assert_eq!(s.doc().undo_count(), steps);
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    // ドラッグの途中でセットを替える（替えた先は読むだけ）
+    s.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    assert_eq!(s.sets().len(), 2, "{}", s.message());
+    let first = s.sets().iter().next().unwrap().uid;
+    let second = s.sets().iter().nth(1).unwrap().uid;
+    s.act(Action::SelectSet(first));
+    s.sets_mut().get_mut(1).unwrap().read_only = Some("理由".into());
+    let start = layer_projection(&s, layer);
+    assert!(gizmo::press(&mut s, rect, from, gizmo::Source::Mouse));
+    gizmo::drag_to(&mut s, rect, from + vec2(30.0, 0.0), false, false);
+    let moved = layer_projection(&s, layer);
+    assert_ne!(moved, start);
+    s.act(Action::SelectSet(second));
+    assert_eq!(s.sets().current_index(), 1, "{}", s.message());
+    let other = (s.doc().revision(), s.doc().undo_count());
+    gizmo::drag_to(&mut s, rect, from + vec2(60.0, 0.0), false, false);
+    assert!(!gizmo::dragging(&s), "前の文書のドラッグは捨てる");
+    gizmo::release(&mut s, true);
+    assert_eq!((s.doc().revision(), s.doc().undo_count()), other);
+    s.act(Action::SelectSet(first));
+    assert_eq!(layer_projection(&s, layer), moved);
+    assert_eq!(s.doc().undo_count(), steps + 1);
+    assert_eq!(
+        s.doc().history().nth(steps),
+        Some(yolu_app::engine::HistoryKind::Fill),
+        "段の名前"
+    );
+}
+
+/// ギズモのドラッグの始まりは、ほかの操作と同じ入口（`AppState::apply` の `FillOp::GrabShape`）: 文書を変える操作として、読むだけのセットと
+/// 描いている最中は始めない。押して始めたドラッグと同じ札で、動かして離すと 1 回の Undo。
+#[test]
+fn headless_the_gizmo_drag_starts_through_the_fill_operation() {
+    let (mut s, layer) = planar_cube();
+    let rect = view_rect();
+    let from = gizmo::handle_point(&s, rect, Handle::MoveX).unwrap();
+    // 押しは apply を通る: 操作の記録は apply の入口（`automation::record::before`）で、記録の外の変更を見て印を付ける。記録を始めて
+    // から文書を apply の外で変えておき、押したその場で印が付けば、押しの操作が apply に渡った（押し自体は文書の変更番号を変えない）
+    let other = s.doc().layers()[0].id();
+    let recorder = yolu_app::automation::record::Recorder::start(&s);
+    s.automation_mut().recorder = Some(recorder);
+    s.doc_mut().set_pixel(other, 0, 0, RED).unwrap();
+    assert!(!s.automation().recorder.as_ref().unwrap().skipped);
+    // 押して始めた札（このテストはこれを操作として当て直す）
+    assert!(gizmo::press(&mut s, rect, from, gizmo::Source::Mouse));
+    assert!(
+        s.automation().recorder.as_ref().unwrap().skipped,
+        "押しが apply を通っていない"
+    );
+    s.automation_mut().recorder = None;
+    let drag = s.fillfx().drag.clone().expect("ドラッグ");
+    gizmo::release(&mut s, false);
+    let action = Action::Fill(FillOp::GrabShape(Box::new(drag)));
+    assert!(action.edits_document());
+    let steps = s.doc().undo_count();
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    s.act(action.clone());
+    assert!(!gizmo::dragging(&s));
+    assert!(s.message().contains("読むだけ"), "{}", s.message());
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    let brush = s.stroke_settings(false);
+    let stroke = s.doc_mut().begin_stroke(other, &brush).unwrap();
+    s.act(action.clone());
+    assert!(!gizmo::dragging(&s));
+    assert!(s.message().contains("描いている間"), "{}", s.message());
+    s.doc_mut().cancel_stroke(stroke);
+    let start = layer_projection(&s, layer);
+    s.act(action);
+    assert!(gizmo::dragging(&s));
+    gizmo::drag_to(&mut s, rect, from + vec2(20.0, 0.0), false, false);
+    gizmo::drag_to(&mut s, rect, from + vec2(40.0, 0.0), false, false);
+    gizmo::release(&mut s, true);
+    assert_ne!(layer_projection(&s, layer), start);
+    assert_eq!(s.doc().undo_count(), steps + 1, "1 回の Undo");
+}
+
 // ───────── グラデーションデカール ─────────
 
 #[test]

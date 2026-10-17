@@ -485,23 +485,30 @@ pub(super) fn samples(from: Pos2, to: Pos2) -> Vec<Pos2> {
         .collect()
 }
 
-/// ポリゴン塗りつぶしを始める。始めたら true（以後 `drag_to` で範囲を足し、`finish_drag` で確定する）。
+/// ポリゴン塗りつぶしを始める。始めたら true（以後 `drag_to` で範囲を足し、`finish_drag` で確定する）。押した所の確かめ（モデル・読むだけ・
+/// 描くレイヤー・ほかのセットの面）と 2D の候補の選び替えはここで済ませ、塗り始めはほかの操作と同じ入口（`AppState::apply` の
+/// `RegionAction::Polygon`）から。
 pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
-    let lang = app.lang;
     if app.region.drag.is_some() {
+        return false;
+    }
+    // 断りは、2D の候補の控え（`cycle_index`）を進める前に（断った押しで控えを書き換えると、次の押しが前の候補を取り消さずに重ねて塗る）。
+    // バケツの仕事の間はバケツと同じ文、ほかの描いている最中は `region_apply` と同じ文
+    if super::bucket::refuse_busy(app) {
+        return false;
+    }
+    if app.is_stroking() {
+        app.refuse(Source::Fill, crate::lang::refusals::during_stroke(app.lang));
         return false;
     }
     if app.region_model().is_none() {
         needs_model(app);
         return false;
     }
-    let layer = match crate::stroke_gate::paint(app) {
-        Ok(l) => l,
-        Err(m) => {
-            app.refuse(Source::Fill, m);
-            return false;
-        }
-    };
+    if let Err(m) = crate::stroke_gate::paint(app) {
+        app.refuse(Source::Fill, m);
+        return false;
+    }
     if let Under::OtherSet(name) = under(app, w, at) {
         other_set(app, &name);
         return false;
@@ -523,6 +530,34 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
     } else {
         app.region.cycle = None;
     }
+    // 候補が無ければ、点の下の今のセットの三角形
+    let first = first.or_else(|| match under(app, w, at) {
+        Under::Triangle(t) => Some(t),
+        _ => None,
+    });
+    app.apply(Action::Region(super::RegionAction::Polygon {
+        first,
+        on_surface: w.is_surface(),
+        at,
+    }));
+    // 最初の範囲で予算を超えたときは、`add_region` が札を手放している（始まっていない）
+    app.region.drag.is_some()
+}
+
+/// `RegionAction::Polygon` を当てる: ポリゴン塗りつぶしの札を取り（ドラッグの間は描いている最中）、最初の範囲 `first` を塗る。続きの範囲の
+/// 追加（`add_region`）と確定・取消（`finish_drag`）は、札を持つドラッグの持ち主だけがする（描いている最中なので `apply` は通らない）。
+pub(super) fn start_polygon(app: &mut AppState, first: Option<u32>, on_surface: bool, at: Pos2) {
+    let lang = app.lang;
+    if app.region.drag.is_some() {
+        return;
+    }
+    let layer = match crate::stroke_gate::paint(app) {
+        Ok(l) => l,
+        Err(m) => {
+            app.refuse(Source::Fill, m);
+            return;
+        }
+    };
     let (opacity, erase, mask) = (app.brush.opacity as f64, app.region.erase, app.m2.edit_mask);
     let fill = if mask {
         let reveal = mask_reveals(app, layer, erase);
@@ -543,7 +578,7 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
                 Source::Fill,
                 lang.core_error(&e),
             );
-            return false;
+            return;
         }
     };
     if !erase && !mask {
@@ -551,17 +586,14 @@ pub fn begin_polygon(app: &mut AppState, w: Where, at: Pos2) -> bool {
     }
     app.region.drag = Some(PolygonDrag {
         fill,
-        on_surface: w.is_surface(),
+        on_surface,
         keys: HashSet::new(),
         last: at,
         erase,
     });
-    match first {
-        Some(t) => add_region(app, t),
-        None => add_region_at(app, w, at),
+    if let Some(t) = first {
+        add_region(app, t);
     }
-    // 最初の範囲で予算を超えたときは、`add_region` が札を手放している（始まっていない）
-    app.region.drag.is_some()
 }
 
 /// ポインタの下の範囲を足す（足した範囲はもう塗ってある）。

@@ -107,6 +107,9 @@ pub enum FillOp {
     },
     /// 選んだ点を消す（最後の 1 つは消さない）。
     DeletePoint,
+    /// 形のギズモのドラッグを始める（前の欄のドラッグにまとめないよう区切り、ドラッグの持ち主の札を置く）。途中の形は札を持つドラッグが
+    /// `gizmo::write_shape` で入れ（離すまで 1 回の Undo にまとめる）、離す・Esc・フォーカスの喪失で `gizmo::release` が終える。
+    GrabShape(Box<gizmo::ShapeDrag>),
     /// 3D ビューのモデルへ画像をデカールとして置く（`at` は画面の点、`rect` は 3D ビューの表示域）。
     PlaceDecal {
         image: ImageId,
@@ -154,6 +157,7 @@ impl FillOp {
                 | FillOp::AddPoints { .. }
                 | FillOp::Points { .. }
                 | FillOp::DeletePoint
+                | FillOp::GrabShape(_)
         )
     }
 }
@@ -442,6 +446,10 @@ impl AppState {
                 }
             }
             FillOp::DeletePoint => points::delete_selected(self),
+            FillOp::GrabShape(drag) => {
+                self.session.doc.end_coalescing(); // 前の欄のドラッグにまとめない
+                self.fillfx.drag = Some(*drag);
+            }
             FillOp::PlaceDecal { image, at, rect } => self.place_decal(image, at, rect),
             FillOp::ImportImage(path) => {
                 // 棚を変える操作は、別のスレッドの保存が終わるまで断る（保存の結果は足した後の棚で丸ごと差し替えるので、

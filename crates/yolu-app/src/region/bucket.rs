@@ -1,10 +1,11 @@
 //! 色バケツの処理待ちと塗り残しの入力。確定までは文書も履歴も変更しない。
 use super::color::{self, Reference, Request};
+use super::RegionAction;
 use crate::notice::Source;
 use crate::{
     canvas::view::CanvasView,
     jobs::{Polled, Worker},
-    state::AppState,
+    state::{Action, AppState},
 };
 use egui::{Context, Pos2, Rect};
 use std::sync::atomic::AtomicBool;
@@ -87,15 +88,20 @@ pub fn request(app: &AppState, layer: LayerId, points: Vec<(f64, f64)>) -> Reque
     }
 }
 
-struct Style {
-    opacity: f64,
-    erase: bool,
-    mask: bool,
-    reveal: bool,
-    channels: Vec<yolu_core::material::ChannelPaint>,
+/// 始めたときの塗り方（押した後に色・不透明度・塗る/消すを替えても、結果はこれで塗る）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct Style {
+    pub opacity: f64,
+    pub erase: bool,
+    /// マスクを描くか。
+    pub mask: bool,
+    /// マスクで見せる側か（`m2::mask_reveals`）。
+    pub reveal: bool,
+    /// 描くチャンネルと値（マテリアルで塗るなら組の全部）。
+    pub channels: Vec<yolu_core::material::ChannelPaint>,
 }
 impl Style {
-    fn capture(app: &AppState, layer: LayerId) -> Self {
+    pub fn capture(app: &AppState, layer: LayerId) -> Self {
         Self {
             opacity: app.brush.opacity as f64,
             erase: app.region.erase,
@@ -105,27 +111,52 @@ impl Style {
         }
     }
 }
-fn apply(
+/// バケツの結果を塗る操作（`RegionAction::Bucket`。文書を変える。1 回の Undo）。範囲は近い色で求めた結果、塗り方は始めたときのもの。
+#[derive(Clone, Debug, PartialEq)]
+pub struct BucketFill {
+    pub layer: LayerId,
+    /// 塗る範囲（写しは同じ中身を指す）。
+    pub mask: SelectionMask,
+    pub style: Style,
+}
+
+/// 求めた結果を文書へ渡す: 範囲はほかの操作と同じ入口（`AppState::apply` の `RegionAction::Bucket`）から塗る。求められなかったら理由を知らせる。
+fn deliver(
     app: &mut AppState,
     layer: LayerId,
     style: Style,
     result: Result<SelectionMask, CoreError>,
 ) {
-    let result = result.and_then(|mask| {
-        if style.mask {
-            app.session
-                .doc
-                .fill_mask(layer, style.opacity, Some(&mask), style.reveal)
-        } else {
-            app.session.doc.fill_material(
-                layer,
-                &style.channels,
-                style.opacity,
-                Some(&mask),
-                style.erase,
-            )
-        }
-    });
+    match result {
+        Ok(mask) => app.apply(Action::Region(RegionAction::Bucket(Box::new(BucketFill {
+            layer,
+            mask,
+            style,
+        })))),
+        Err(e) => app.notify(
+            crate::notice::Kind::of_core(&e),
+            Source::Fill,
+            app.lang.core_error(&e),
+        ),
+    }
+}
+
+/// `RegionAction::Bucket` を当てる: 範囲を始めたときの塗り方で塗り、変わったら変更の印を付けて色を覚え、塗れたか・塗る所が無かったかを知らせる。
+pub(super) fn fill(app: &mut AppState, fill: BucketFill) {
+    let BucketFill { layer, mask, style } = fill;
+    let result = if style.mask {
+        app.session
+            .doc
+            .fill_mask(layer, style.opacity, Some(&mask), style.reveal)
+    } else {
+        app.session.doc.fill_material(
+            layer,
+            &style.channels,
+            style.opacity,
+            Some(&mask),
+            style.erase,
+        )
+    };
     match result {
         Ok(changed) => {
             if changed {
@@ -148,7 +179,7 @@ fn apply(
     }
 }
 
-fn refuse_busy(app: &mut AppState) -> bool {
+pub(super) fn refuse_busy(app: &mut AppState) -> bool {
     if app.region.job.is_some() || app.region.leftover_drag.is_some() {
         app.refuse(Source::Fill, app.lang.t("region-filling"));
         true
@@ -183,7 +214,7 @@ pub fn start(app: &mut AppState, points: Vec<(f64, f64)>) {
         <= if req.options.leftovers { 1024 } else { 65536 }
     {
         let result = color::compute(&app.session.doc, &req, &AtomicBool::new(false));
-        apply(app, layer, style, result);
+        deliver(app, layer, style, result);
         return;
     }
     let snapshot = match app.session.doc.capture_snapshot() {
@@ -236,7 +267,7 @@ pub fn poll(app: &mut AppState, ctx: &Context) {
             let mut finished = app.region.job.take().unwrap();
             let style = std::mem::replace(&mut finished.style, Style::capture(app, layer));
             match crate::stroke_gate::paint(app) {
-                Ok(now) if now == layer => apply(app, layer, style, result),
+                Ok(now) if now == layer => deliver(app, layer, style, result),
                 _ => app.warn(Source::Fill, app.lang.t("region-fill-cancelled")),
             }
         }

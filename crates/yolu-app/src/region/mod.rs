@@ -116,6 +116,15 @@ pub enum RegionAction {
     IdColor(IdColorOp),
     /// ポリゴン塗りつぶしで、2D で重なった UV の同じ所を続けて押した: 前の候補の塗りを取り消す（次の候補を塗り直す前）。
     UndoCandidate,
+    /// バケツ（近い色）の結果を、始めたときの塗り方で塗る（文書を変える。1 回の Undo）。
+    Bucket(Box<bucket::BucketFill>),
+    /// ポリゴン塗りつぶしを始めて、最初の範囲（三角形 `first` を含む範囲）を塗る（離すまで描いている最中。離して 1 回の Undo）。
+    /// `on_surface` は 3D ビューで始めたか、`at` は押した画面の点（続きの範囲の線の始まり）。
+    Polygon {
+        first: Option<u32>,
+        on_surface: bool,
+        at: egui::Pos2,
+    },
 }
 
 /// 範囲の種類の名前。
@@ -131,7 +140,9 @@ pub fn kind_name(lang: Lang, kind: SurfaceRegionKind) -> &'static str {
 impl AppState {
     /// 範囲のツールの操作を当てる（描いている間は断る）。
     pub fn region_apply(&mut self, action: RegionAction) {
-        if self.is_stroking() {
+        // バケツの結果は、文書を書かない描いている最中（選択ペンの被覆・図形・定規・パスのドラッグ）にも塗る（core は自分のストロークの
+        // 最中だけを、同じ「描いている間」の文で断る）
+        if self.is_stroking() && !matches!(action, RegionAction::Bucket(_)) {
             self.refuse(
                 Source::Fill,
                 crate::lang::refusals::during_stroke(self.lang),
@@ -187,6 +198,12 @@ impl AppState {
             RegionAction::IdPart(i) => r.id.part = i,
             RegionAction::IdColor(op) => self.id_color_edit(op),
             RegionAction::UndoCandidate => tools::undo_candidate(self),
+            RegionAction::Bucket(fill) => bucket::fill(self, *fill),
+            RegionAction::Polygon {
+                first,
+                on_surface,
+                at,
+            } => tools::start_polygon(self, first, on_surface, at),
         }
     }
 

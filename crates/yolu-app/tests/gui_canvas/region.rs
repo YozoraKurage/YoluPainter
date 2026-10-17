@@ -2960,3 +2960,144 @@ fn headless_bucket_surface_region_ignores_color_reference_and_gap_but_scales_are
     assert_eq!(s.doc().undo_count(), before + 1);
     assert!(painted(&s, TRI0));
 }
+
+/// ポリゴン塗りつぶし: 離して 1 回の Undo と変更の印。読むだけのセット・ロックのレイヤーは、始めるときに 1 回、塗りつぶしの出どころで断る。
+/// ドラッグの途中はセットを替えない（離すと元のセットに 1 回の Undo）。
+#[test]
+fn headless_polygon_fill_keeps_its_undo_mark_and_refusal_sources() {
+    use yolu_app::notice::{Kind, Source};
+    use yolu_core::LayerLocks;
+    let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
+    s.set_tool(Tool::PolygonFill);
+    let view = canvas_view(&s, rect);
+    let w = Where::Canvas(&view);
+    let (a, b) = (at_uv(&s, rect, TRI0), at_uv(&s, rect, TRI2));
+    assert!(begin_polygon(&mut s, w, a));
+    drag_to(&mut s, w, b);
+    assert!(finish_drag(&mut s, false));
+    assert_eq!(s.doc().undo_count(), 1);
+    assert_eq!(
+        s.doc().history().last(),
+        Some(yolu_app::engine::HistoryKind::Brush),
+        "段の名前"
+    );
+    assert!(s.modified());
+    s.act(Action::Undo);
+    s.set_modified(false);
+    let undo = s.doc().undo_count();
+    // 読むだけのセット
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    *s.last_notice_mut() = None;
+    assert!(!begin_polygon(&mut s, w, a));
+    let notice = s.last_notice().clone().expect("断り");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Refusal));
+    assert!(notice.text.contains("読むだけ"), "{}", notice.text);
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    // ロックのレイヤー
+    let id = s.selected_layer().unwrap();
+    assert_eq!(s.doc().undo_count(), undo);
+    s.doc_mut().set_layer_locks(id, LayerLocks::ALL).unwrap();
+    let locked = s.doc().undo_count();
+    *s.last_notice_mut() = None;
+    assert!(!begin_polygon(&mut s, w, a));
+    let notice = s.last_notice().clone().expect("断り");
+    assert_eq!(notice.source, Source::Fill);
+    assert!(notice.text.contains("ロック"), "{}", notice.text);
+    assert_eq!(s.doc().undo_count(), locked);
+    s.doc_mut().set_layer_locks(id, LayerLocks::NONE).unwrap();
+    assert!(!s.modified() && !s.is_stroking());
+    // ドラッグの途中のセットの切り替え
+    s.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    assert_eq!(s.sets().len(), 2, "{}", s.message());
+    let first = s.sets().iter().next().unwrap().uid;
+    let second = s.sets().iter().nth(1).unwrap().uid;
+    s.act(Action::SelectSet(first));
+    s.sets_mut().get_mut(1).unwrap().read_only = Some("理由".into());
+    let doc = s.doc().id();
+    let undo = s.doc().undo_count();
+    assert!(begin_polygon(&mut s, w, a));
+    s.act(Action::SelectSet(second));
+    assert_eq!(s.doc().id(), doc, "ドラッグの途中はセットを替えない");
+    assert!(finish_drag(&mut s, false));
+    assert_eq!(s.doc().undo_count(), undo + 1);
+}
+
+/// ポリゴン塗りつぶしの始まりは、ほかの操作と同じ入口（`AppState::apply` の `RegionAction::Polygon`）を通る: 記録中なら、最初の範囲を
+/// 塗ったその場で記録しなかった変更の印が付く（`apply` の外で文書を変えると、記録のウィンドウが次に見るまで付かない）。操作として直に
+/// 当てても同じに始まり（離して 1 回の Undo）、読むだけのセットと描いている最中は断る。
+#[test]
+fn headless_polygon_fill_starts_through_the_region_action() {
+    let (mut s, rect) = fill_state(SurfaceRegionKind::UvIsland);
+    s.set_tool(Tool::PolygonFill);
+    let view = canvas_view(&s, rect);
+    let w = Where::Canvas(&view);
+    let a = at_uv(&s, rect, TRI0);
+    let recorder = yolu_app::automation::record::Recorder::start(&s);
+    s.automation_mut().recorder = Some(recorder);
+    assert!(begin_polygon(&mut s, w, a));
+    assert!(
+        s.automation().recorder.as_ref().unwrap().skipped,
+        "apply を通っていない"
+    );
+    assert!(finish_drag(&mut s, false));
+    assert_eq!(s.doc().undo_count(), 1);
+    s.act(Action::Undo);
+    s.automation_mut().recorder = None;
+    // 操作として直に（範囲は、押した所と同じ三角形を含むアイランド）
+    let action = Action::Region(RegionAction::Polygon {
+        first: Some(0),
+        on_surface: false,
+        at: a,
+    });
+    assert!(action.edits_document());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    s.act(action.clone());
+    assert!(s.region().drag.is_none() && !s.is_stroking());
+    assert!(s.message().contains("読むだけ"), "{}", s.message());
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    let layer = s.selected_layer().unwrap();
+    let brush = s.stroke_settings(false);
+    let stroke = s.doc_mut().begin_stroke(layer, &brush).unwrap();
+    s.act(action.clone());
+    assert!(s.region().drag.is_none());
+    assert!(s.message().contains("描いている間"), "{}", s.message());
+    s.doc_mut().cancel_stroke(stroke);
+    let undo = s.doc().undo_count();
+    s.act(action);
+    assert!(s.region().drag.is_some(), "{}", s.message());
+    assert!(painted(&s, TRI0) && painted(&s, TRI1));
+    assert!(finish_drag(&mut s, false));
+    assert_eq!(s.doc().undo_count(), undo + 1);
+}
+
+/// バケツ（近い色）の裏の仕事が走っている間は、ポリゴン塗りつぶしを始めずに、バケツと同じ「塗りつぶし中」で断る（塗りつぶしの出どころ）。
+/// 走っていたバケツの結果は、そのあと 1 回の Undo で入る。
+#[test]
+fn headless_polygon_fill_is_refused_while_a_bucket_job_runs() {
+    use yolu_app::notice::{Kind, Source};
+    let (mut s, rect) = with_model(257);
+    s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
+    s.act(Action::Region(RegionAction::FillRange(
+        SurfaceRegionKind::UvIsland,
+    )));
+    s.region_mut().by_color = true;
+    yolu_app::region::bucket::start(&mut s, vec![(1.0, 1.0)]);
+    assert!(s.region().job.is_some(), "裏の仕事");
+    s.set_tool(Tool::PolygonFill);
+    let view = canvas_view(&s, rect);
+    let a = at_uv(&s, rect, TRI0);
+    *s.last_notice_mut() = None;
+    assert!(!begin_polygon(&mut s, Where::Canvas(&view), a));
+    assert!(s.region().drag.is_none());
+    let notice = s.last_notice().clone().expect("断り");
+    assert_eq!((notice.source, notice.kind), (Source::Fill, Kind::Refusal));
+    assert_eq!(notice.text, "塗りつぶし中");
+    let ctx = egui::Context::default();
+    let start = std::time::Instant::now();
+    while s.region().job.is_some() {
+        assert!(start.elapsed().as_secs() < 20, "処理待ちの上限");
+        yolu_app::region::bucket::poll(&mut s, &ctx);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(s.doc().undo_count(), 1, "{}", s.message());
+}

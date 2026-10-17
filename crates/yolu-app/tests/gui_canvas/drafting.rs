@@ -1233,3 +1233,95 @@ fn a_ruler_without_length_is_not_placed_or_collapsed() {
     assert_eq!(common::rulers::of(&s, layer), placed);
     assert_eq!(s.doc().undo_count(), 1);
 }
+
+/// 図形の塗り・輪郭は 1 回の Undo で変更の印を付ける。読むだけのセット・ロックのレイヤーは、図形の出どころ（定規）で 1 回断る。
+/// 図形のドラッグの途中はセットを替えない（離すと元のセットに描く）。
+#[test]
+fn shapes_keep_their_undo_mark_and_refusal_sources() {
+    use yolu_app::notice::{Kind, Source};
+    use yolu_app::state::key::Modifiers as Keys;
+    for fill in [false, true] {
+        let mut s = state();
+        s.drafting_mut().figure = Figure::Rectangle;
+        s.drafting_mut().fill = fill;
+        drafting::canvas::paint(&mut s, DVec2::splat(10.0), DVec2::splat(50.0), rect());
+        assert_eq!(s.doc().undo_count(), 1, "{fill}");
+        assert_eq!(
+            s.doc().history().last(),
+            Some(yolu_app::engine::HistoryKind::Brush),
+            "{fill}: 段の名前"
+        );
+        assert!(s.modified(), "{fill}");
+        // 読むだけのセット
+        s.doc_mut().clear_history().unwrap();
+        s.set_modified(false);
+        s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+        *s.last_notice_mut() = None;
+        drafting::canvas::paint(&mut s, DVec2::splat(5.0), DVec2::splat(20.0), rect());
+        let notice = s.last_notice().clone().expect("断り");
+        assert_eq!((notice.source, notice.kind), (Source::Ruler, Kind::Refusal));
+        assert!(notice.text.contains("読むだけ"), "{}", notice.text);
+        assert!(!s.doc().can_undo() && !s.modified());
+        s.sets_mut().get_mut(0).unwrap().read_only = None;
+        // ロックのレイヤー
+        let id = s.selected_layer().unwrap();
+        s.doc_mut().set_layer_locks(id, LayerLocks::ALL).unwrap();
+        s.doc_mut().clear_history().unwrap();
+        *s.last_notice_mut() = None;
+        drafting::canvas::paint(&mut s, DVec2::splat(5.0), DVec2::splat(20.0), rect());
+        let notice = s.last_notice().clone().expect("断り");
+        assert_eq!(notice.source, Source::Ruler, "{fill}");
+        assert!(!s.doc().can_undo() && !s.modified());
+        s.doc_mut().set_layer_locks(id, LayerLocks::NONE).unwrap();
+    }
+    // ドラッグの途中のセットの切り替え
+    let mut s = state();
+    s.drafting_mut().figure = Figure::Rectangle;
+    s.act(Action::Project(yolu_app::newproject::NpAction::AddSet));
+    assert_eq!(s.sets().len(), 2, "{}", s.message());
+    let first = s.sets().iter().next().unwrap().uid;
+    let second = s.sets().iter().nth(1).unwrap().uid;
+    s.act(Action::SelectSet(first));
+    s.sets_mut().get_mut(1).unwrap().read_only = Some("理由".into());
+    s.set_tool(Tool::Shape);
+    let doc = s.doc().id();
+    let before = s.doc().undo_count();
+    let view = s.view().view(rect(), s.doc().width(), s.doc().height());
+    let (a, b) = (view.to_screen(10.0, 10.0), view.to_screen(50.0, 50.0));
+    drafting::canvas::press(&mut s, &view, a, StrokeSource::Mouse, Keys::NONE);
+    assert!(s.is_stroking());
+    s.act(Action::SelectSet(second));
+    assert_eq!(s.doc().id(), doc, "図形のドラッグの途中はセットを替えない");
+    drafting::canvas::release(&mut s, &view, b, StrokeSource::Mouse, Keys::NONE, rect());
+    assert_eq!(s.doc().undo_count(), before + 1, "{}", s.message());
+}
+
+/// 図形は、ほかの操作と同じ入口（`AppState::apply` の `DraftOp::Figure`）から描く: 記録中なら、その場で記録しなかった変更の印が付く
+/// （`apply` の外で文書を変えると、記録のウィンドウが次に見るまで付かない）。操作として直に当てても同じに描き、読むだけのセットは断る。
+#[test]
+fn shapes_go_through_the_draft_action() {
+    use yolu_app::drafting::DraftOp;
+    let mut s = state();
+    s.drafting_mut().figure = Figure::Rectangle;
+    let recorder = yolu_app::automation::record::Recorder::start(&s);
+    s.automation_mut().recorder = Some(recorder);
+    drafting::canvas::paint(&mut s, DVec2::splat(10.0), DVec2::splat(50.0), rect());
+    assert_eq!(s.doc().undo_count(), 1);
+    assert!(
+        s.automation().recorder.as_ref().unwrap().skipped,
+        "apply を通っていない"
+    );
+    let action = Action::Draft(DraftOp::Figure {
+        a: DVec2::splat(5.0),
+        b: DVec2::splat(30.0),
+        rect: rect(),
+    });
+    assert!(action.edits_document());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("理由".into());
+    s.act(action.clone());
+    assert_eq!(s.doc().undo_count(), 1);
+    assert!(s.message().contains("読むだけ"), "{}", s.message());
+    s.sets_mut().get_mut(0).unwrap().read_only = None;
+    s.act(action);
+    assert_eq!(s.doc().undo_count(), 2, "{}", s.message());
+}

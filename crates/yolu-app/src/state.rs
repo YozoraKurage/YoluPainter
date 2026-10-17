@@ -634,6 +634,8 @@ pub enum Action {
     RenameSet(u32, String),
     /// 自由・遠近・格子の変形とゆがみのドラッグを確定する（1 回の Undo）。
     Warp(crate::transform::advanced::WarpCommit),
+    /// 図形のツール（2D のキャンバスで離したときの図形を描く。1 回の Undo）。
+    Draft(crate::drafting::DraftOp),
 }
 
 impl Action {
@@ -727,6 +729,7 @@ impl Action {
             Self::RenameLayer(..) => "RenameLayer",
             Self::RenameSet(..) => "RenameSet",
             Self::Warp(..) => "Warp",
+            Self::Draft(..) => "Draft",
         }
     }
 
@@ -760,6 +763,9 @@ impl Action {
                 | Action::RenameLayer(..)
                 | Action::Warp(_)
                 | Action::Region(crate::region::RegionAction::UndoCandidate)
+                | Action::Region(crate::region::RegionAction::Bucket(_))
+                | Action::Region(crate::region::RegionAction::Polygon { .. })
+                | Action::Draft(_)
         ) || matches!(self, Action::Ruler(op) if op.edits_document())
             || matches!(self, Action::Fill(op) if op.edits_document())
             || matches!(self, Action::Sel(crate::selection::SelAction::Saved(op)) if op.edits_document())
@@ -1673,6 +1679,7 @@ impl AppState {
             Action::RenameLayer(id, name) => self.rename_layer(id, &name),
             Action::RenameSet(uid, name) => self.rename_set_apply(uid, &name),
             Action::Warp(commit) => self.warp_apply(commit),
+            Action::Draft(op) => self.draft_apply(op),
         }
     }
 }

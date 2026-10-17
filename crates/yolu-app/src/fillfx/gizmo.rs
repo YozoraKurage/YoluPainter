@@ -14,8 +14,9 @@ use yolu_core::generator::Kind as GeneratorKind;
 use yolu_core::glam::Vec2;
 use yolu_core::{Channel, EffectSettings, FilterId, LayerId, LayerKind, RulerId};
 
+use super::FillOp;
 use crate::notice::Source as NoticeSource;
-use crate::state::AppState;
+use crate::state::{Action, AppState};
 use crate::view3d::shape_gizmo::{self as sg, Handle, Root, Shape, Snap};
 
 /// ギズモが動かしているもの。
@@ -222,6 +223,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
     if handle == Handle::None {
         return false;
     }
+    // 読むだけのセットは、ここで塗りつぶしレイヤーの出どころで断る（通した後は `apply` の読むだけの断りも通る）
     if let Some(reason) = app.read_only_reason() {
         app.refuse(
             NoticeSource::FillLayer,
@@ -229,9 +231,9 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
         );
         return true; // ハンドルを押したので、下のツールで描き始めない
     }
-    app.session.doc.end_coalescing(); // 前の欄のドラッグにまとめない
     let grab = crate::rulers::edit3d::grab_offset(app, &view, t, handle, p);
-    app.fillfx.drag = Some(ShapeDrag {
+    // 始まりは、ほかの操作と同じ入口から（途中の書き込みは札を持つこのドラッグだけが `write_shape` で）
+    app.apply(Action::Fill(FillOp::GrabShape(Box::new(ShapeDrag {
         handle,
         start,
         from: p,
@@ -239,7 +241,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
         target: t,
         source,
         doc_id: app.session.doc.id(),
-    });
+    }))));
     true
 }
 
@@ -289,7 +291,8 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
     }
 }
 
-/// 対象の形を文書へ入れる（`coalesce` なら続けて変える操作として 1 回の Undo にまとめる）。値が範囲外なら理由を知らせて None
+/// 対象の形を文書へ入れる（`coalesce` なら続けて変える操作として 1 回の Undo にまとめる）。ドラッグの持ち主（形のギズモ・編集のモードの
+/// G/R/S）の途中の書き込みの入口で、始まりの確かめ（読むだけ・描いている最中）は持ち主が始めるときに済ませてある。値が範囲外なら理由を知らせて None
 /// （文書は変えない）。対象が無ければ None。入れたら（変わっていれば「変更あり」の印を付けて）Some(Ok)、core が断ったら Some(Err)。
 pub fn write_shape(
     app: &mut AppState,

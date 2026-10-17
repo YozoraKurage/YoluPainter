@@ -10,6 +10,18 @@ use crate::features::Feature;
 use crate::state::{AppState, StrokeSource};
 use yolu_core::glam::DVec2;
 
+/// 図形のツールの、文書を変える操作（`Action::Draft`）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum DraftOp {
+    /// 2D のキャンバスで、文書の座標の向かい合う角 `a`・`b` の図形を描く（塗るか、輪郭をストロークで。1 回の Undo）。`rect` はキャンバスの
+    /// 表示域（ステンシルを重ねる所）。離したときに入力から（テストも同じ道）。
+    Figure {
+        a: DVec2,
+        b: DVec2,
+        rect: egui::Rect,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Figure {
     #[default]
@@ -236,6 +248,13 @@ pub fn outline(figure: Figure, a: DVec2, b: DVec2, corner: f64) -> Vec<DVec2> {
 }
 
 impl AppState {
+    /// 図形のツールの操作を当てる（`Action::Draft`）。
+    pub fn draft_apply(&mut self, op: DraftOp) {
+        match op {
+            DraftOp::Figure { a, b, rect } => canvas::figure(self, a, b, rect),
+        }
+    }
+
     /// 図形と定規のドラッグをやめる（2D のキャンバスと 3D ビューの両方）。何かあったか。
     pub fn drafting_cancel(&mut self) -> bool {
         let surface = self
