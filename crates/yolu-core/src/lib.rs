@@ -86,12 +86,13 @@ pub use brush::{
     builtin_presets, builtin_tip, AntiAlias, Brush, BrushEffect, BrushMappedPixel, BrushPixel,
     BrushPreset, BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics,
     ColorItem, ColorMix, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
-    ImageColorSpace, Influence, Influences, InputResponse, InputUse, Jitter, MixGround, MixMode,
-    PaperTexture, PressureSwitches, StencilImage, StencilMapping, StencilMode, StencilPoint,
-    StencilTiling, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode, TipColorChange,
-    TipSelection, TipShape,
+    ImageColorSpace, Influence, Influences, InputResponse, InputUse, Jitter, MixBlur, MixGround,
+    MixMode, MixSpace, PaperTexture, PressureSwitches, StencilImage, StencilMapping, StencilMode,
+    StencilPoint, StencilTiling, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
+    TipColorChange, TipSelection, TipShape,
 };
 pub use brush::{Spray, SprayDirection, SprayItem, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
+pub use brush::{MAX_MIX_BLUR, MAX_MIX_CORRECTION};
 pub use document::{
     clean_saved_name, Affine2D, CanvasResampling, ClipboardRefusal, ClipboardSource,
     CompositedTile, Document, EffectCounters, Homography, LayerLocks, LayerMergeReport,

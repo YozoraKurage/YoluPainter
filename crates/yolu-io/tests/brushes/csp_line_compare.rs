@@ -1,11 +1,12 @@
 //! 取り込んだ CLIP STUDIO PAINT のブラシ（`.sut`）で描いた線と、CLIP STUDIO PAINT が書き出した画像との差を数で出す（式を合わせる外の基準）。
 //!
 //! データはリポジトリに入れない。置き場は環境変数で受ける（無ければ何もせずに通る）:
-//! - `YOLU_CSP_DIFF_DIR`: 書き出しのフォルダ（直下に `task4/spray`・`task5/{stab,dual}`・`task6/dual2`。各フォルダに `manifest.csv`）
+//! - `YOLU_CSP_DIFF_DIR`: 書き出しのフォルダ（直下に `task4/spray`・`task5/{stab,dual,mix}`・`task6/dual2`。各フォルダに `manifest.csv`）
 //! - `YOLU_CSP_COLOR_DIR`: 色の変化のフォルダ（`manifest.csv` と `.sut`・線の画像）
 //! - `YOLU_CSP_DIFF_OUT`: 差の画像（差の大きさを白黒に。白が差なし）を書くフォルダ（無ければ書かない）
 //!
-//! `cargo test -p yolu-io --test brushes csp_line_compare:: -- --ignored --nocapture` で節ごとの表が出る。ブラシの名前・ファイル名は
+//! `cargo test -p yolu-io --test brushes csp_line_compare:: -- --ignored --nocapture` で節ごとの表が出る。下地混色の節（`task5/mix`）は、色の帯を敷いた面の
+//! 上へ描き（帯は基準の画像の最上段の行を下へ伸ばしたもの）、表の行の下に、線の中心の行の RGB の差（帯ごと）と、帯の中心の色を並べる。ブラシの名前・ファイル名は
 //! コードに写さない（行は manifest から読み、表にだけ出す）。コードに置くのは、比べる画像を描いたときの型（キャンバスの大きさ、
 //! 8 か所のクリックの並び、直線の端）だけで、サイズ・色・間隔・線の座標・筆圧は manifest の note と `.sut` から読む。
 //!
@@ -332,6 +333,8 @@ struct Case {
     setup: Setup,
     /// 描き方の控え（表の最後に出す）。
     how: String,
+    /// 下地（幅 1000・高さ 300 の RGB、上の行から）。あれば、最初のレイヤーをこの絵で塗ってから描く（無ければ透明で、白の上に重ねる）。
+    background: Option<Vec<u8>>,
 }
 
 fn apply_setup(brush: &mut Brush, s: &Setup) {
@@ -509,10 +512,52 @@ impl Painter<'_> {
     }
 }
 
+/// 最初のレイヤーを、RGB（上の行から）の絵で塗る（不透明）。
+fn paint_background(
+    doc: &mut Document,
+    layer: yolu_core::LayerId,
+    rgb: &[u8],
+) -> Result<(), String> {
+    let ts = doc.tile_size();
+    for ty in 0..H.div_ceil(ts) {
+        for tx in 0..W.div_ceil(ts) {
+            let mut bytes = vec![0u8; (ts * ts * 4) as usize];
+            for y in 0..ts {
+                for x in 0..ts {
+                    let (px, py) = (tx * ts + x, ty * ts + y);
+                    if px >= W || py >= H {
+                        continue;
+                    }
+                    // core は左下が原点
+                    let i = (((H - 1 - py) * W + px) * 3) as usize;
+                    let o = ((y * ts + x) * 4) as usize;
+                    bytes[o..o + 4].copy_from_slice(&[rgb[i], rgb[i + 1], rgb[i + 2], 255]);
+                }
+            }
+            doc.import_tile(
+                layer,
+                yolu_core::Channel::Color,
+                yolu_core::TileCoord::new(tx, ty),
+                &bytes,
+            )
+            .map_err(|e| format!("{e:?}"))?;
+        }
+    }
+    Ok(())
+}
+
 /// ブラシで形のとおりに描き、白の上に重ねた RGB（上の行から）を返す。
-fn render(brush: &Brush, shape: &Shape, step_limit: f64) -> Result<Vec<u8>, String> {
+fn render(
+    brush: &Brush,
+    shape: &Shape,
+    step_limit: f64,
+    background: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let mut doc = Document::new(W, H).map_err(|e| format!("{e:?}"))?;
     let layer = doc.add_layer("L").map_err(|e| format!("{e:?}"))?;
+    if let Some(rgb) = background {
+        paint_background(&mut doc, layer, rgb)?;
+    }
     let mut painter = Painter {
         doc,
         layer,
@@ -955,6 +1000,7 @@ fn color_section(dir: &Path) -> Option<Section> {
                 opt(setup.interval_pct)
             ),
             setup,
+            background: None,
         });
     }
     Some(sec)
@@ -1045,6 +1091,7 @@ fn spray_section(dir: &Path) -> Option<Section> {
                 opt(setup.spray_bias)
             ),
             setup,
+            background: None,
         });
     }
     Some(sec)
@@ -1132,6 +1179,98 @@ fn paired_section(name: &'static str, dir: &Path) -> Option<Section> {
             ),
             shape,
             setup: Setup::default(),
+            background: None,
+        });
+    }
+    Some(sec)
+}
+
+/// 下地混色の線の中心（y = 150 の行）の、帯ごとの RGB の差の平均（描いた − 基準の絶対値の、3 チャンネルの平均）。始めの 100 画素（荷が立ち上がる所）と、
+/// 帯の境の前後 40 画素を除いた帯の中、全体。表の最後に足す。
+fn mix_bands(ours: &[u8], reference: &[u8]) -> String {
+    let at = |img: &[u8], x: u32| -> [f64; 3] {
+        let i = ((150 * W + x) * 3) as usize;
+        [
+            f64::from(img[i]),
+            f64::from(img[i + 1]),
+            f64::from(img[i + 2]),
+        ]
+    };
+    let diff = |x: u32| {
+        let (a, b) = (at(ours, x), at(reference, x));
+        (0..3).map(|c| (a[c] - b[c]).abs()).sum::<f64>() / 3.0
+    };
+    let mean = |from: u32, to: u32| (from..to).map(diff).sum::<f64>() / f64::from(to - from);
+    let start = mean(22, 122);
+    // 帯: 白 0〜200・青 200〜400・黄 400〜600・赤 600〜800・灰 800〜960（線の終わりの丸い端を除く）
+    let bands: Vec<String> = [(122, 160), (240, 360), (440, 560), (640, 760), (840, 940)]
+        .iter()
+        .map(|&(a, b)| format!("{:.1}", mean(a, b)))
+        .collect();
+    let overall = mean(22, 960);
+    let probe = |x: u32| {
+        let (a, b) = (at(ours, x), at(reference, x));
+        format!(
+            "{:.0},{:.0},{:.0}/{:.0},{:.0},{:.0}",
+            a[0], a[1], a[2], b[0], b[1], b[2]
+        )
+    };
+    format!(
+        "線の中心の RGB の差 始め{:.1} 白{} 青{} 黄{} 赤{} 灰{} 全体{:.1} | 色(描/基) x=140 {} x=320 {} x=500 {} x=700 {} x=900 {}",
+        start,
+        bands[0],
+        bands[1],
+        bands[2],
+        bands[3],
+        bands[4],
+        overall,
+        probe(140),
+        probe(320),
+        probe(500),
+        probe(700),
+        probe(900)
+    )
+}
+
+/// 下地混色の節: 帯を敷いた面へ、行ごとの `.sut` で同じ直線を描く。帯は、基準の画像の最上段の行（線にかからない）を下まで伸ばしたもの。
+/// 大きさ・描く色・線の座標は、最初の行の note（「ブラシサイズN, 主色#RRGGBB, …線(x0,y0)->(x1,y1)」）から読む。
+fn mix_section(dir: &Path) -> Option<Section> {
+    let rows = read_manifest(dir)?;
+    let base = rows
+        .iter()
+        .find(|r| !r.file.is_empty() && r.note.contains("ブラシサイズ"))?;
+    let setup = Setup {
+        size: number_after(&base.note, "ブラシサイズ"),
+        main: color_after(&base.note, "主色"),
+        ..Setup::default()
+    };
+    let points = parse_path(&base.note)?;
+    let mut sec = Section {
+        name: "下地混色",
+        cases: Vec::new(),
+        skipped: Vec::new(),
+    };
+    for r in rows.iter().filter(|r| !r.file.is_empty()) {
+        let reference = dir.join(&r.screenshot);
+        let Ok(image) = read_reference(&reference) else {
+            sec.skipped
+                .push(format!("{}: 基準の画像が読めない", r.file));
+            continue;
+        };
+        let row0 = &image[..(W * 3) as usize];
+        let background: Vec<u8> = (0..H).flat_map(|_| row0.iter().copied()).collect();
+        sec.cases.push(Case {
+            label: r.file.trim_end_matches(".sut").to_string(),
+            sut: dir.join(&r.file),
+            reference,
+            shape: Shape::Line {
+                from: points[0],
+                to: points[1],
+                pressure: (1.0, 1.0),
+            },
+            how: format!("帯の上の Shift の直線; 直径{}", opt(setup.size)),
+            setup: setup.clone(),
+            background: Some(background),
         });
     }
     Some(sec)
@@ -1161,7 +1300,12 @@ fn run_case(
         .interval_pct
         .map(|p| p / 100.0 * brush.base.radius * 2.0);
     let reference = read_reference(&case.reference)?;
-    let ours = render(&brush, &case.shape, want_gap.unwrap_or(0.0))?;
+    let ours = render(
+        &brush,
+        &case.shape,
+        want_gap.unwrap_or(0.0),
+        case.background.as_deref(),
+    )?;
     let centres = case.shape.centres();
     let skip = (!centres.is_empty() && blank_band_from(&reference, 850)).then_some(850);
     let (stats, diff) = compare(&ours, &reference, skip, &centres);
@@ -1176,7 +1320,11 @@ fn run_case(
         write_gray_png(&dir.join(name), &diff)?;
     }
     let how = format!("{} 入り抜き{:.0}/{:.0}", case.how, taper.0, taper.1);
-    Ok(line(&format!("{}{tag}", case.label), &stats, notes, &how))
+    let mut text = line(&format!("{}{tag}", case.label), &stats, notes, &how);
+    if case.background.is_some() {
+        text.push_str(&format!("\n    {}", mix_bands(&ours, &reference)));
+    }
+    Ok(text)
 }
 
 fn run_section(sec: &Section, out: Option<&Path>) {
@@ -1184,6 +1332,9 @@ fn run_section(sec: &Section, out: Option<&Path>) {
     println!("{}", header());
     for case in &sec.cases {
         for taper_off in [false, true] {
+            if taper_off && case.background.is_some() {
+                continue;
+            }
             match run_case(case, out, sec.name, taper_off) {
                 Ok(l) => println!("{l}"),
                 Err(e) => println!("{:<44} 失敗: {e}", case.label),
@@ -1221,6 +1372,16 @@ fn spray_dots_against_the_reference() {
         return;
     };
     let sec = spray_section(&dir.join("task4/spray")).expect("manifest.csv と散布の行");
+    run_section(&sec, out_dir().as_deref());
+}
+
+#[test]
+#[ignore = "CLIP STUDIO PAINT の書き出しが要る（YOLU_CSP_DIFF_DIR）"]
+fn color_mixing_lines_against_the_reference() {
+    let Some(dir) = env_dir("YOLU_CSP_DIFF_DIR") else {
+        return;
+    };
+    let sec = mix_section(&dir.join("task5/mix")).expect("manifest.csv と下地混色の行");
     run_section(&sec, out_dir().as_deref());
 }
 
@@ -1350,11 +1511,66 @@ fn a_straight_line_paints_on_white_in_top_down_rows() {
         to: (150.0, 50.0),
         pressure: (1.0, 1.0),
     };
-    let px = render(&brush, &shape, 0.0).unwrap();
+    let px = render(&brush, &shape, 0.0, None).unwrap();
     // 上の行から数えて y = 50 の行の中ほどが黒く、上の隅は白
     assert!(darkness(&px[((50 * W + 100) * 3) as usize..][..3]) > 200.0);
     assert!(darkness(&px[..3]) < 1.0);
     assert!(darkness(&px[((250 * W + 100) * 3) as usize..][..3]) < 1.0);
+}
+
+#[test]
+fn a_banded_background_is_painted_top_down_and_the_mixing_brush_reads_it() {
+    use yolu_core::{BrushSettings, ColorMix, MixMode};
+    // 左半分が青・右半分が白の下地（上の行から）
+    let background: Vec<u8> = (0..H)
+        .flat_map(|_| {
+            (0..W).flat_map(|x| {
+                if x < W / 2 {
+                    [0u8, 0, 255]
+                } else {
+                    [255, 255, 255]
+                }
+            })
+        })
+        .collect();
+    let mut brush = Brush::from(BrushSettings {
+        radius: 10.0,
+        hardness: 1.0,
+        spacing: 0.1,
+        ..BrushSettings::default()
+    });
+    brush.base.color = Rgba8::new(255, 0, 0, 255);
+    brush.mix = ColorMix {
+        mode: MixMode::Mix,
+        paint: 0.5,
+        density: 1.0,
+        stretch: 0.0,
+        ..ColorMix::default()
+    };
+    let shape = Shape::Line {
+        from: (100.0, 150.0),
+        to: (300.0, 150.0),
+        pressure: (1.0, 1.0),
+    };
+    let image = render(&brush, &shape, 0.0, Some(&background)).unwrap();
+    let at = |x: u32, y: u32| {
+        let i = ((y * W + x) * 3) as usize;
+        [image[i], image[i + 1], image[i + 2]]
+    };
+    // 線の外は下地のまま（上が青・右が白）。線の上は、青と赤の半々
+    assert_eq!(at(200, 20), [0, 0, 255]);
+    assert_eq!(at(800, 150), [255, 255, 255]);
+    let mixed = at(200, 150);
+    assert!(
+        mixed[0] > 120 && mixed[0] < 135 && mixed[2] > 120 && mixed[2] < 135,
+        "{mixed:?}"
+    );
+    // 帯ごとの差は、同じ画像どうしなら 0
+    let text = mix_bands(&image, &image);
+    assert!(
+        text.contains("始め0.0 白0.0 青0.0 黄0.0 赤0.0 灰0.0 全体0.0"),
+        "{text}"
+    );
 }
 
 #[test]

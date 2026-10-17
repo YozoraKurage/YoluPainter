@@ -57,6 +57,7 @@ pub(crate) mod edge;
 mod effects;
 mod influence;
 mod mix;
+mod mix_space;
 mod mix_stroke;
 mod plan;
 mod presets;
@@ -91,7 +92,7 @@ pub use influence::{
     SprayItem, MAX_CURVE_POINTS, STRAIGHT,
 };
 pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
-pub use mix::{ColorMix, MixGround, MixMode};
+pub use mix::{ColorMix, MixBlur, MixGround, MixMode, MixSpace, MAX_MIX_BLUR, MAX_MIX_CORRECTION};
 pub(crate) use plan::{DabPlan, StampControls, TaperStart, TipRun};
 pub use presets::{builtin_presets, BrushPreset};
 pub use settings::{

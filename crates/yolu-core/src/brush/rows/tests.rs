@@ -5,8 +5,8 @@
 use super::*;
 use crate::math::simd::forced;
 use crate::{
-    builtin_tip, Channel, ColorMix, Document, DualBrush, DualBrushMode, LayerLocks, MixMode,
-    PaperTexture, SelectionMask, TextureMode,
+    builtin_tip, Channel, ColorMix, Document, DualBrush, DualBrushMode, LayerLocks, MixBlur,
+    MixMode, MixSpace, PaperTexture, SelectionMask, TextureMode,
 };
 use glam::DVec2;
 
@@ -228,6 +228,22 @@ fn random_case(seed: u64) -> Case {
                 stretch: r.pick(&[0.0, 0.5, 1.0]),
                 ..ColorMix::default()
             };
+            // 下地混色の拡張: 重ねる・知覚的な混ぜ（輝度の補正 0〜4）・にじむ強さの固定値・筆の初めの絵の具の量
+            if r.chance(0.5) {
+                if r.chance(0.3) {
+                    b.mix.mode = MixMode::Layer;
+                }
+                if r.chance(0.5) {
+                    b.mix.space = MixSpace::Perceptual;
+                    b.mix.correction = r.pick(&[0u8, 1, 2, 3, 4]);
+                }
+                if r.chance(0.4) {
+                    b.mix.blur = MixBlur::Fixed(r.pick(&[0.0, 1.0, 2.5, 5.0, 8.0]));
+                }
+                if r.chance(0.4) {
+                    b.mix.load = r.pick(&[0.0, 0.25, 0.6]);
+                }
+            }
         }
     }
     if r.chance(0.15) {

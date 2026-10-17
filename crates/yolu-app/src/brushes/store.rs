@@ -11,8 +11,9 @@
 //! `mix.<項目>.pressure`・`.min`・`.curve`）は書かない（読むときも、版 7 にあれば知らない項目として断る）。ほかの版 2〜6 の項目は、その鍵のまま書く。
 //! 版 1〜6 で書けるブラシは、今までと同じ鍵・同じバイトで書く。
 //! バージョン 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗、
-//! 質感の回転、色の変化）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
-//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`。影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
+//! 質感の回転、色の変化、色の混ぜの拡張）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
+//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`。
+//! 影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
 //! バージョン 2〜8 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
 //! 取り込んだ画像（`img:<SHA-256>`。画像は `images/<SHA-256>.png` に 1 枚ずつ置く。`images.rs`）。取り込んだブラシには、出どころと
@@ -32,8 +33,9 @@ use super::images;
 use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
     AntiAlias, Brush, BrushEffect, ColorItem, ColorMix, ColorTarget, CoreError, DVec2, DualBrush,
-    DualBrushMode, Influence, Influences, InputResponse, InputUse, MixGround, MixMode,
-    PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode, TipColorChange,
+    DualBrushMode, Influence, Influences, InputResponse, InputUse, MixBlur, MixGround, MixMode,
+    MixSpace, PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
+    TipColorChange,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
@@ -682,6 +684,19 @@ fn write_mix(w: &mut Writer, b: &Brush, v7: bool) {
     w.single("mix.density", m.density);
     w.single("mix.stretch", m.stretch);
     w.line("mix.ground", mix_ground_id(m.ground));
+    // バージョン 8 の項目（既定は書かない）
+    if m.space != MixSpace::Standard {
+        w.line("mix.space", mix_space_id(m.space));
+    }
+    if m.correction != 0 {
+        w.line("mix.correction", m.correction);
+    }
+    if let MixBlur::Fixed(px) = m.blur {
+        w.single("mix.blur", px);
+    }
+    if m.load != 1.0 {
+        w.single("mix.load", m.load);
+    }
     for (name, on, r) in mix_pressure_items(b).into_iter().filter(|_| !v7) {
         if on {
             w.bool(&format!("mix.{name}.pressure"), true);
@@ -842,6 +857,19 @@ fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
         || uses_color_change(b)
         || uses_spray(b)
         || uses_dual_v8(b)
+        || uses_mix_v8(b)
+}
+
+/// 色の混ぜのバージョン 8 の項目（重ねる方式・知覚的な混ぜ・輝度の補正・にじむ強さの固定値・筆の初めの絵の具の量）を使うか。混ぜ方が切なら、
+/// 使っていない（`canonical` が既定へそろえる）。
+fn uses_mix_v8(b: &Brush) -> bool {
+    let m = &b.mix;
+    m.is_active()
+        && (m.mode == MixMode::Layer
+            || m.space != MixSpace::Standard
+            || m.correction != 0
+            || m.blur != MixBlur::Auto
+            || m.load != 1.0)
 }
 
 /// デュアルブラシのバージョン 8 の項目（足したモード・サイズの連動・濃度・2 つ目のアンチエイリアス・向きの足し・複数の筆先と選び方・反転・
@@ -958,6 +986,14 @@ fn mix_mode_id(mode: MixMode) -> &'static str {
         MixMode::Off => "off",
         MixMode::Mix => "mix",
         MixMode::Smear => "smear",
+        MixMode::Layer => "layer",
+    }
+}
+
+fn mix_space_id(space: MixSpace) -> &'static str {
+    match space {
+        MixSpace::Standard => "standard",
+        MixSpace::Perceptual => "perceptual",
     }
 }
 
@@ -1082,7 +1118,7 @@ pub fn decode_user(
     }
     // 色の混ぜは版 3 の項目（版 1・2 のファイルにあれば、知らない項目として断る）。絵の具の量・濃さの筆圧は版 3〜6 の鍵
     if version >= 3 {
-        b.mix = read_mix(&mut r, &mut b.influences, legacy)?;
+        b.mix = read_mix(&mut r, &mut b.influences, legacy, version >= 8)?;
     }
     // 入り抜き・手ぶれ補正は版 4 の項目（版 3 までのファイルにあれば、知らない項目として断る）。版 4 でも、1 つも無ければ持たない
     let assist = if version >= 4 {
@@ -1618,12 +1654,15 @@ fn read_mix(
     r: &mut Reader,
     influences: &mut Influences,
     legacy: bool,
+    v8: bool,
 ) -> Result<ColorMix, StoreError> {
     let mut m = ColorMix::default();
     m.mode = match r.take("mix.mode").as_deref() {
         None | Some("off") => MixMode::Off,
         Some("mix") => MixMode::Mix,
         Some("smear") => MixMode::Smear,
+        // 重ねる方式はバージョン 8 の値（バージョン 7 までのファイルにあれば、読めない値として断る）
+        Some("layer") if v8 => MixMode::Layer,
         Some(_) => return Err(StoreError::BadValue("mix.mode".into())),
     };
     m.paint = r.single("mix.paint", m.paint)?;
@@ -1634,6 +1673,23 @@ fn read_mix(
         Some("composite") => MixGround::Composite,
         Some(_) => return Err(StoreError::BadValue("mix.ground".into())),
     };
+    // バージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
+    if v8 {
+        m.space = match r.take("mix.space").as_deref() {
+            None | Some("standard") => MixSpace::Standard,
+            Some("perceptual") => MixSpace::Perceptual,
+            Some(_) => return Err(StoreError::BadValue("mix.space".into())),
+        };
+        m.correction = r.parse("mix.correction", 0u8)?;
+        m.blur = match r.take("mix.blur") {
+            None => MixBlur::Auto,
+            Some(v) => match v.parse::<f32>() {
+                Ok(px) if px.is_finite() => MixBlur::Fixed(f64::from(px)),
+                _ => return Err(StoreError::BadValue("mix.blur".into())),
+            },
+        };
+        m.load = r.single("mix.load", m.load)?;
+    }
     if legacy {
         for (name, item) in [("paint", Item::MixPaint), ("density", Item::MixDensity)] {
             let on = r.bool(&format!("mix.{name}.pressure"), false)?;
@@ -2288,6 +2344,7 @@ mod tests {
                 density: 0.8,
                 stretch: 0.25,
                 ground: MixGround::Composite,
+                ..ColorMix::default()
             },
             ..Brush::default()
         };
@@ -2458,6 +2515,157 @@ mod tests {
         ));
         assert!(matches!(
             decode(&format!("{v3}mix.paint=0.5\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    /// 下地混色の拡張（バージョン 8 の項目）を全部使うブラシ。
+    fn extended_mixing_brush() -> Brush {
+        let mut b = mixing_brush();
+        b.mix = ColorMix {
+            mode: MixMode::Layer,
+            space: MixSpace::Perceptual,
+            correction: 3,
+            blur: MixBlur::Fixed(5.0),
+            load: 0.4,
+            ..b.mix
+        };
+        b
+    }
+
+    #[test]
+    fn the_extended_mix_items_make_a_version_eight_file_and_round_trip() {
+        let u = user(9, extended_mixing_brush());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for key in [
+            "mix.mode=layer",
+            "mix.space=perceptual",
+            "mix.correction=3",
+            "mix.blur=5",
+            "mix.load=0.4",
+        ] {
+            assert!(t.lines().any(|l| l == key), "{key}\n{t}");
+        }
+        // 影響元はバージョン 7 以上の鍵で書く（バージョン 3 の筆圧の鍵は書かない）
+        assert!(
+            t.lines().any(|l| l == "influence.mix_paint.pressure.on=1"),
+            "{t}"
+        );
+        assert!(!t.contains("mix.paint.pressure"), "{t}");
+        let (_, _, back) = decode(&t).unwrap();
+        assert_eq!(back, u.brush);
+        assert_eq!(text(&UserBrush { brush: back, ..u }), t);
+        // 1 項目だけでもバージョン 8。方式が重ねるのとき、知覚的・補正・にじむ強さ・初めの量が既定なら、それらの鍵は書かない
+        let only_layer = {
+            let mut b = mixing_brush();
+            b.mix.mode = MixMode::Layer;
+            b
+        };
+        let t = text(&user(10, only_layer));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert!(t.lines().any(|l| l == "mix.mode=layer"), "{t}");
+        for key in ["mix.space", "mix.correction", "mix.blur", "mix.load"] {
+            assert!(!t.contains(key), "{key}\n{t}");
+        }
+        for (what, edit) in [
+            (
+                "space",
+                Box::new(|b: &mut Brush| b.mix.space = MixSpace::Perceptual)
+                    as Box<dyn Fn(&mut Brush)>,
+            ),
+            ("correction", Box::new(|b: &mut Brush| b.mix.correction = 1)),
+            (
+                "blur",
+                Box::new(|b: &mut Brush| b.mix.blur = MixBlur::Fixed(2.0)),
+            ),
+            ("load", Box::new(|b: &mut Brush| b.mix.load = 0.5)),
+        ] {
+            let mut b = mixing_brush();
+            edit(&mut b);
+            let t = text(&user(11, b.clone()));
+            assert!(t.starts_with("yolupainter-brush 8\n"), "{what}\n{t}");
+            assert_eq!(decode(&t).unwrap().2, canonical(&b), "{what}");
+        }
+        // バージョン 3 の混ぜる・伸ばすで、新しい値が既定なら、今までのバージョン・今までと同じバイト
+        let t = text(&user(12, mixing_brush()));
+        assert!(t.starts_with("yolupainter-brush 3\n"), "{t}");
+        for key in ["mix.space", "mix.correction", "mix.blur", "mix.load"] {
+            assert!(!t.contains(key), "{key}\n{t}");
+        }
+        // 混ぜ方が切のブラシは、新しい値が何でも持たない（バージョン 1 のまま）
+        let mut off = Brush::default();
+        off.mix.space = MixSpace::Perceptual;
+        off.mix.correction = 2;
+        off.mix.blur = MixBlur::Fixed(3.0);
+        off.mix.load = 0.1;
+        let t = text(&user(13, off));
+        assert!(
+            t.starts_with("yolupainter-brush 1\n") && !t.contains("mix."),
+            "{t}"
+        );
+        // 値は画面の精度（f32）で書き、読み戻しても同じ値
+        let mut odd = extended_mixing_brush();
+        odd.mix.load = 0.123_456_79;
+        odd.mix.blur = MixBlur::Fixed(2.345_678_9);
+        let u = user(14, odd);
+        let back = decode(&text(&u)).unwrap().2;
+        assert_eq!(back.mix.load, 0.123_456_79_f32 as f64);
+        assert_eq!(back.mix.blur, MixBlur::Fixed(2.345_678_9_f32 as f64));
+        assert_eq!(back, u.brush);
+    }
+
+    #[test]
+    fn the_extended_mix_items_are_version_eight_and_are_checked() {
+        let v8 = text(&user(1, extended_mixing_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る（重ねる方式の値は、読めない値として断る）
+        for old in ["yolupainter-brush 3", "yolupainter-brush 7"] {
+            let as_old = v8.replacen("yolupainter-brush 8", old, 1);
+            assert!(decode(&as_old).is_err(), "{old}");
+        }
+        let only_keys = v8.replace("mix.mode=layer", "mix.mode=smear");
+        for old in ["yolupainter-brush 3", "yolupainter-brush 7"] {
+            let as_old = only_keys.replacen("yolupainter-brush 8", old, 1);
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("mix.") || k.starts_with("influence.")),
+                "{old}"
+            );
+        }
+        let as_v7 = v8.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::BadValue(k) if k == "mix.mode"),
+            "重ねる方式はバージョン 7 の値ではない"
+        );
+        let bad = |from: &str, to: &str| decode(&v8.replace(from, to)).unwrap_err();
+        assert!(
+            matches!(bad("mix.space=perceptual", "mix.space=linear"), StoreError::BadValue(k) if k == "mix.space")
+        );
+        assert!(
+            matches!(bad("mix.correction=3", "mix.correction=many"), StoreError::BadValue(k) if k == "mix.correction")
+        );
+        assert!(matches!(
+            bad("mix.correction=3", "mix.correction=5"),
+            StoreError::Invalid(_)
+        ));
+        assert!(
+            matches!(bad("mix.blur=5", "mix.blur=wide"), StoreError::BadValue(k) if k == "mix.blur")
+        );
+        assert!(
+            matches!(bad("mix.blur=5", "mix.blur=NaN"), StoreError::BadValue(k) if k == "mix.blur")
+        );
+        assert!(matches!(
+            bad("mix.blur=5", "mix.blur=9"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("mix.load=0.4", "mix.load=1.5"),
+            StoreError::Invalid(_)
+        ));
+        assert!(
+            matches!(bad("mix.load=0.4", "mix.load=lots"), StoreError::BadValue(k) if k == "mix.load")
+        );
+        assert!(matches!(
+            decode(&format!("{v8}mix.load=0.5\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
     }
@@ -3430,6 +3638,7 @@ mod tests {
             density: 0.8,
             stretch: 0.25,
             ground: MixGround::Composite,
+            ..ColorMix::default()
         };
         b.influences.mix_paint.pressure = InputUse {
             on: true,

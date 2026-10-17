@@ -306,7 +306,11 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::TextureMode => Gap::TextureMode,
             SutNote::TextureEachTip => Gap::TextureEachTip,
             SutNote::Direction | SutNote::ThicknessDirection => Gap::TipDirection,
-            SutNote::ColorMixing { .. } | SutNote::ColorMixingMethod(_) => Gap::ColorMixing,
+            SutNote::ColorMixing { .. }
+            | SutNote::ColorMixingMethod(_)
+            | SutNote::ColorMixingMode(_)
+            | SutNote::LuminanceCorrection(_)
+            | SutNote::MixBlur(_) => Gap::ColorMixing,
             SutNote::PostCorrection => Gap::PostCorrection,
             SutNote::VectorTools => Gap::VectorTools,
             SutNote::Spray | SutNote::SprayApprox(_) => Gap::Spray,

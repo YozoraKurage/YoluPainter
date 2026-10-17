@@ -1323,7 +1323,8 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
     // 色の混ぜの値は、絵の具で混ぜるブラシとして写る（知らせない）
     let mix = &b.brush.mix;
     assert_eq!(mix.mode, yolu_core::brush::MixMode::Mix);
-    assert_eq!((mix.paint, mix.density, mix.stretch), (0.3, 0.2, 0.1));
+    // 値は 1 対 1 でなくエンジンの式の値へ換算される（`only_the_converted_values_...`）。ここは、写って知らせないことだけ見る
+    assert!(mix.paint > 0.0 && mix.density > 0.0 && mix.stretch > 0.0);
     assert_eq!(b.brush.tip.angle, 30.0, "角度は写る");
     assert!(b.brush.controls.tilt_angle, "ペンの向きは写る");
     assert!(!has(b, SutNote::Direction));
@@ -1398,6 +1399,10 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::ColorMixingMethod(1.0),
         SutNote::ColorMixingMethod(2.0),
         SutNote::ColorMixingMethod(7.0),
+        SutNote::ColorMixingMode(5.0),
+        SutNote::LuminanceCorrection(7.0),
+        SutNote::MixBlur(Some(9.0)),
+        SutNote::MixBlur(None),
         SutNote::PostCorrection,
         SutNote::VectorTools,
         SutNote::LengthUnit,
@@ -2886,8 +2891,9 @@ fn the_ink_blend_mode_is_reported_for_every_value_but_normal() {
 }
 
 #[test]
-fn only_the_blend_method_of_color_mixing_equal_to_mixing_is_carried() {
-    // 下地混色の方式: 0 色混ぜ はエンジンの「混ぜる」、1 にじみ・2 色重ね は同じ振る舞いと言えないので写さずに知らせる
+fn the_three_methods_of_color_mixing_are_carried_as_mix_layer_and_smear() {
+    // 下地混色の方式: 0 色混ぜ = 混ぜる、1 にじみ = 伸ばす、2 色重ね = 重ねる。ほかの値は写さずに知らせる
+    use yolu_core::brush::MixMode;
     let mixing = |kind: Option<i64>| {
         let mut cells = vec![
             ("BrushUseWaterColor", int(1)),
@@ -2901,21 +2907,172 @@ fn only_the_blend_method_of_color_mixing_equal_to_mixing_is_carried() {
         }
         one(&cells)
     };
-    for kind in [None, Some(0)] {
+    for (kind, mode) in [
+        (None, MixMode::Mix),
+        (Some(0), MixMode::Mix),
+        (Some(1), MixMode::Smear),
+        (Some(2), MixMode::Layer),
+    ] {
         let b = mixing(kind);
-        assert_eq!(b.brush.mix.mode, yolu_core::brush::MixMode::Mix, "{kind:?}");
-        assert!(mapped(&b, SutMapped::ColorMixing));
-        assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+        assert_eq!(b.brush.mix.mode, mode, "{kind:?}");
+        assert!(mapped(&b, SutMapped::ColorMixing), "{kind:?}");
+        assert!(b.unrepresented.is_empty(), "{kind:?} {:?}", b.unrepresented);
+        assert!(b.brush.validate().is_ok(), "{kind:?}");
     }
-    for kind in [1, 2] {
+    for kind in [3, 7, -1] {
         let b = mixing(Some(kind));
-        assert_eq!(b.brush.mix.mode, yolu_core::brush::MixMode::Off, "{kind}");
+        assert_eq!(b.brush.mix.mode, MixMode::Off, "{kind}");
         assert!(!mapped(&b, SutMapped::ColorMixing));
         assert!(has(&b, SutNote::ColorMixingMethod(kind as f64)), "{kind}");
     }
     // 下地混色が切なら、方式の列があっても知らせない
     let b = one(&[("BrushUseWaterColor", int(0)), ("BrushWaterColor", int(1))]);
     assert!(b.unrepresented.is_empty() && b.mapped.is_empty());
+}
+
+/// 下地混色の列をそろえた 1 つのブラシ（絵の具量・絵の具濃度・色延びと、間隔の種類は 普通 = 直径の 8%）。
+fn mixing_with(extra: &[(&'static str, rusqlite::types::Value)]) -> ImportedBrush {
+    let mut cells = vec![
+        ("BrushUseWaterColor", int(1)),
+        ("BrushUseWaterColor2", int(1)),
+        ("BrushMixColor", int(50)),
+        ("BrushMixAlpha", int(50)),
+        ("BrushMixColorExtension", int(15)),
+        ("BrushAutoIntervalType", int(2)),
+        ("BrushInterval", real(10.0)),
+    ];
+    // 同じ名前の列は、足した方で置き換える
+    cells.retain(|(name, _)| !extra.iter().any(|(e, _)| e == name));
+    cells.extend(extra.iter().cloned());
+    one(&cells)
+}
+
+#[test]
+fn the_values_of_color_mixing_are_converted_to_the_engine_not_copied() {
+    use yolu_core::brush::MixMode;
+    // 絵の具量 50・絵の具濃度 50・色延び 15・間隔 8% の換算の値（換算の式と定数は docs/BRUSH_IMPORT.md の表）
+    let blend = mixing_with(&[("BrushWaterColor", int(0))]);
+    let m = &blend.brush.mix;
+    assert_eq!(m.mode, MixMode::Mix);
+    assert!((m.paint - 0.963).abs() < 0.005, "{}", m.paint);
+    assert!((m.stretch - 0.948).abs() < 0.005, "{}", m.stretch);
+    assert_eq!(m.density, 1.0);
+    // 標準の混ぜは描き始めが薄く立ち上がる（最初の荷の描く色の割合）
+    assert!((m.load - 0.235).abs() < 1e-9, "{}", m.load);
+    let layer = mixing_with(&[("BrushWaterColor", int(2))]);
+    let m = &layer.brush.mix;
+    assert_eq!(m.mode, MixMode::Layer);
+    assert!((m.paint - 0.723).abs() < 0.005, "{}", m.paint);
+    assert_eq!(
+        (m.density, m.load),
+        (1.0, 1.0),
+        "色重ねは濃度が効かず、描く色から始まる"
+    );
+    let smear = mixing_with(&[("BrushWaterColor", int(1))]);
+    let m = &smear.brush.mix;
+    assert_eq!(m.mode, MixMode::Smear);
+    assert!(
+        m.paint < 0.2 && m.stretch < 0.02,
+        "{} {}",
+        m.paint,
+        m.stretch
+    );
+    // 両端: 絵の具量 100 は描く色だけ（エンジンの量 1）、色延び 0 は荷を引きずらない
+    let full = mixing_with(&[("BrushWaterColor", int(0)), ("BrushMixColor", int(100))]);
+    assert_eq!(full.brush.mix.paint, 1.0);
+    let none = mixing_with(&[
+        ("BrushWaterColor", int(0)),
+        ("BrushMixColorExtension", int(0)),
+    ]);
+    assert_eq!(none.brush.mix.stretch, 0.0);
+    // 間隔を広げると、1 打点あたりに残る割合は減る（引きずる距離は同じ）
+    let wide = mixing_with(&[
+        ("BrushWaterColor", int(0)),
+        ("BrushAutoIntervalType", int(1)),
+    ]);
+    assert!(wide.brush.mix.stretch < blend.brush.mix.stretch);
+}
+
+#[test]
+fn the_mixing_mode_and_the_luminance_correction_are_carried_for_the_perceptual_mode_only() {
+    use yolu_core::brush::MixSpace;
+    // 列が無いバージョン（185 列）は標準・なし
+    let old = mixing_with(&[]);
+    assert_eq!(old.brush.mix.space, MixSpace::Standard);
+    assert_eq!(old.brush.mix.correction, 0);
+    let standard = mixing_with(&[
+        ("BrushColorMixingMode", int(0)),
+        ("BrushLMSLinearity", int(4)),
+    ]);
+    assert_eq!(standard.brush.mix.space, MixSpace::Standard);
+    assert_eq!(
+        standard.brush.mix.correction, 0,
+        "輝度の補正は知覚的のときだけ"
+    );
+    for level in 0..=4 {
+        let b = mixing_with(&[
+            ("BrushColorMixingMode", int(1)),
+            ("BrushLMSLinearity", int(level)),
+        ]);
+        assert_eq!(b.brush.mix.space, MixSpace::Perceptual);
+        assert_eq!(i64::from(b.brush.mix.correction), level);
+        assert!(b.unrepresented.is_empty());
+        // 知覚的は描き始めが薄く立ち上がらない
+        assert_eq!(b.brush.mix.load, 1.0);
+    }
+    // 知らない値は標準にして、収めて知らせる
+    let odd = mixing_with(&[("BrushColorMixingMode", int(5))]);
+    assert_eq!(odd.brush.mix.space, MixSpace::Standard);
+    assert!(has(&odd, SutNote::ColorMixingMode(5.0)));
+    let high = mixing_with(&[
+        ("BrushColorMixingMode", int(1)),
+        ("BrushLMSLinearity", int(9)),
+    ]);
+    assert_eq!(high.brush.mix.correction, 4);
+    assert!(has(&high, SutNote::LuminanceCorrection(9.0)));
+}
+
+#[test]
+fn the_blur_strength_is_automatic_or_a_fixed_number_of_pixels_for_the_smear_only() {
+    use yolu_core::brush::MixBlur;
+    let smear = |extra: &[(&'static str, rusqlite::types::Value)]| {
+        let mut cells = vec![("BrushWaterColor", int(1))];
+        cells.extend(extra.iter().cloned());
+        mixing_with(&cells)
+    };
+    // 自動設定（0）と、列が無いバージョンは大きさに連動
+    assert_eq!(smear(&[]).brush.mix.blur, MixBlur::Auto);
+    assert_eq!(
+        smear(&[("BrushBlurLinkSize", int(0)), ("BrushBlur", real(5.0))])
+            .brush
+            .mix
+            .blur,
+        MixBlur::Auto
+    );
+    // 固定値（1）は画素の数
+    let fixed = smear(&[("BrushBlurLinkSize", int(1)), ("BrushBlur", real(5.0))]);
+    assert_eq!(fixed.brush.mix.blur, MixBlur::Fixed(5.0));
+    assert!(fixed.unrepresented.is_empty());
+    // 範囲の外・画素でない単位・値が無い、は収めるか自動設定にして知らせる
+    let big = smear(&[("BrushBlurLinkSize", int(1)), ("BrushBlur", real(30.0))]);
+    assert_eq!(big.brush.mix.blur, MixBlur::Fixed(yolu_core::MAX_MIX_BLUR));
+    assert!(has(&big, SutNote::MixBlur(Some(30.0))));
+    let unit = smear(&[
+        ("BrushBlurLinkSize", int(1)),
+        ("BrushBlur", real(5.0)),
+        ("BrushBlurUnit", int(2)),
+    ]);
+    assert!(has(&unit, SutNote::MixBlur(Some(5.0))));
+    let missing = smear(&[("BrushBlurLinkSize", int(1))]);
+    assert_eq!(missing.brush.mix.blur, MixBlur::Auto);
+    assert!(has(&missing, SutNote::MixBlur(None)));
+    // 混ぜる・重ねるには効かないので、固定値の列があっても持たない
+    let blend = mixing_with(&[
+        ("BrushWaterColor", int(0)),
+        ("BrushBlurLinkSize", int(1)),
+        ("BrushBlur", real(5.0)),
+    ]);
+    assert_eq!(blend.brush.mix.blur, MixBlur::Auto);
 }
 
 #[test]

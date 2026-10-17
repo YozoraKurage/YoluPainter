@@ -48,6 +48,10 @@ pub(super) use color::{mixed32, tally32};
 use effect::{apply_effect_range, BLUR, CLONE, SMUDGE};
 pub(super) use effect::{blur32, mix_effect32, sample32};
 
+/// 知覚的な混ぜの画素ごとの時間の見積もり（ナノ秒。しきい値の換算に使う）。1 スレッドの CPU 時間の計測（`stroke_bench` の混ぜるに混色モードの
+/// 知覚的を足した形。柔らかさ 0.8 の丸、直径 64・200、間隔 10%、全タイルが乱数の画素のレイヤーの上）で、標準の混ぜる 11 に対して 100〜110 ナノ秒 / 画素。
+const PERCEPTUAL_PIXEL_NANOS: i64 = 100;
+
 /// 行の長さの上限（これを超えるタイルの大きさは行の核を使わない。タイルの大きさは 1〜1024）。
 const MAX_ROW: usize = 1024;
 /// 行の覆い・紙の質感の値を、スタックに置く行の長さ（これより長い行はヒープ）。
@@ -424,6 +428,10 @@ pub(super) fn cost_per_pixel(
     no_selection: bool,
     tile_size: usize,
 ) -> i64 {
+    // 知覚的な混ぜは、画素ごとに錐体応答への変換と 8 乗根・sRGB への変換を通る（1 本のレーンで 1 画素ずつ。どの道でも同じ費用）
+    if paint.mix.is_some_and(|m| m.space == MixSpace::Perceptual) {
+        return PERCEPTUAL_PIXEL_NANOS;
+    }
     if simd::level() == Level::Scalar || !eligible(paint, s, no_selection, tile_size) {
         return SCALAR_PIXEL_NANOS;
     }

@@ -16,6 +16,7 @@ pub use evaluate::{evaluate, BoundGenerator, Generated, Options, Output, Target}
 pub use kinds050::{
     IslandVariation, Light, MaskBuilder, MaskCombine, MaskInput, Pattern, PatternShape,
 };
+pub(crate) use mixing::{to_linear, to_srgb};
 pub use mixing::{LuminanceCorrection, MixMode};
 pub(crate) use noisefn::MAX_OCTAVES;
 pub(crate) use noisefn::{sin_cos_deg, value2_gradient};

@@ -557,6 +557,9 @@ pub enum Reason {
     PenPressureRange,
     NoPointToFill,
     PathPointValueRange,
+    PaintLoadRange,
+    LuminanceCorrectionRange,
+    MixBlurRange,
 }
 
 impl Reason {
@@ -1112,6 +1115,9 @@ impl Reason {
             Reason::PenPressureRange => "筆圧の下限・上限",
             Reason::NoPointToFill => "塗る点がない",
             Reason::PathPointValueRange => "点の値が範囲外です",
+            Reason::PaintLoadRange => "初めの絵の具の量（0〜1）",
+            Reason::LuminanceCorrectionRange => "輝度の補正（0〜4）",
+            Reason::MixBlurRange => "にじむ強さ（0〜8 画素）",
         }
     }
 }

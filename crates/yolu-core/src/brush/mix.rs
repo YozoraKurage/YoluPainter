@@ -20,10 +20,17 @@
 //!   変えられる: `A × 係数`、`D × 係数`。
 //! - 混ぜるのは色のチャンネルだけ（データのチャンネル・ノーマル・マスクは値が壊れるので混ぜない）。消しゴムと効果のブラシ
 //!   （ぼかし・指先・クローン）では使わない（設定は残るが効かない）。
+//! - 方式は 3 つ: 混ぜる（[`MixMode::Mix`]）はストロークを始める前の絵を読み、重ねる
+//!   （[`MixMode::Layer`]）は今の面（このストロークが先に置いた分を含む）の同じ画素を読み、伸ばす（[`MixMode::Smear`]）は動きの分だけ後ろを箱で平均して読む。
+//! - 混ぜる色の空間は 2 つ（[`MixSpace`]）: 標準は sRGB の値の補間（これまでのすべて）、知覚的は錐体応答の空間の吸収の混ぜ（[`super::mix_space`]。
+//!   輝度の補正 0〜4 つき）。荷の混ぜ・拾い（4.）も同じ空間で行う。
+//! - 筆の初めの絵の具の量（[`ColorMix::load`]）: 最初の打点の荷のうち、描く色の割合。1（既定）は描く色だけ。小さいと、最初の打点の下の色が混ざった荷から
+//!   始まり、描き進めるにつれて描く色が増える（打点ごとに荷へ描く色が足されるので）。
 //! - 並列に描くダブも順に描くダブも同じ画素になる: 読む枠は打点の前に凍結し、荷の更新に使う平均はタイルごとの合計を
 //!   タイルの順に足したもの（どの経路も同じ足し算の列）。
 
 use super::effects::EffectFrame;
+use super::mix_space;
 use crate::error::CoreError;
 use crate::math::require_finite;
 use crate::types::Rgba8;
@@ -41,12 +48,46 @@ pub enum MixMode {
     /// 展開の図で UV の継ぎ目をまたいで直前の打点の側を読む（箱の平均はなし）。対称（2D・3D）と組むときは、写しごとに動きの向きが違うので
     /// 動きの向きを使わず、同じ画素の周りの箱だけ。
     Smear,
+    /// 重ねる: 今の面（このストロークが先に置いた分を含む）の同じ画素を読み、荷と混ぜて置く。混ぜると違い、置いた色の上に次の打点が重なる
+    /// （重なった画素は、先の打点の色を読んで混ぜ直す）。動きの向きも箱の平均も使わない。
+    Layer,
 }
 
 impl MixMode {
     /// 保存の順。
-    pub const ALL: [MixMode; 3] = [MixMode::Off, MixMode::Mix, MixMode::Smear];
+    pub const ALL: [MixMode; 4] = [MixMode::Off, MixMode::Mix, MixMode::Smear, MixMode::Layer];
 }
+
+/// 混ぜた色を作る空間。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum MixSpace {
+    /// sRGB の値を重みで補間する（これまで）。
+    #[default]
+    Standard,
+    /// 錐体応答の空間で、絵の具のように混ぜる（青と黄が緑になり、白に少量の黄が強く出る）。式は [`super::mix_space`]。
+    Perceptual,
+}
+
+impl MixSpace {
+    /// 保存の順。
+    pub const ALL: [MixSpace; 2] = [MixSpace::Standard, MixSpace::Perceptual];
+}
+
+/// 伸ばすで下地を平均する箱の半径（にじむ強さ）。
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub enum MixBlur {
+    /// ブラシの大きさに連動する: 打点の半径の 1 割（1〜8 画素）。これまでの伸ばす。
+    #[default]
+    Auto,
+    /// 固定の半径（画素。0〜8。0 は 1 画素として扱う）。
+    Fixed(f64),
+}
+
+/// にじむ強さ（箱の半径）の上限（画素）。タイルのつながりを決めるときの、読む範囲の広がり。
+pub const MAX_MIX_BLUR: f64 = 8.0;
+
+/// 輝度の補正の最大の段。
+pub const MAX_MIX_CORRECTION: u8 = mix_space::MAX_LEVEL;
 
 /// 混ぜる下地。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -76,6 +117,14 @@ pub struct ColorMix {
     /// ので、量が多いほど引きずりが長く続く。伸ばすでは、読む位置の遅れの長さにも効く（1 + 2 × 色延び）。
     pub stretch: f64,
     pub ground: MixGround,
+    /// 混ぜる色の空間（既定は標準）。
+    pub space: MixSpace,
+    /// 輝度の補正 0〜4（知覚的のときだけ働く。既定 0）。大きいほど、混ざって暗くなる分が小さい。
+    pub correction: u8,
+    /// にじむ強さ（伸ばすだけに効く。既定は大きさに連動）。
+    pub blur: MixBlur,
+    /// 筆の初めの絵の具の量 0〜1（既定 1）: 最初の打点の荷のうち描く色の割合。
+    pub load: f64,
 }
 
 impl Default for ColorMix {
@@ -86,6 +135,10 @@ impl Default for ColorMix {
             density: 1.0,
             stretch: 0.5,
             ground: MixGround::Layer,
+            space: MixSpace::Standard,
+            correction: 0,
+            blur: MixBlur::Auto,
+            load: 1.0,
         }
     }
 }
@@ -113,6 +166,19 @@ impl ColorMix {
                 return Err(CoreError::InvalidArgument(what));
             }
         }
+        require_finite(self.load, Reason::ColorMix)?;
+        if !(0.0..=1.0).contains(&self.load) {
+            return Err(CoreError::InvalidArgument(Reason::PaintLoadRange));
+        }
+        if self.correction > MAX_MIX_CORRECTION {
+            return Err(CoreError::InvalidArgument(Reason::LuminanceCorrectionRange));
+        }
+        if let MixBlur::Fixed(px) = self.blur {
+            require_finite(px, Reason::ColorMix)?;
+            if !(0.0..=MAX_MIX_BLUR).contains(&px) {
+                return Err(CoreError::InvalidArgument(Reason::MixBlurRange));
+            }
+        }
         Ok(())
     }
 
@@ -123,6 +189,11 @@ impl ColorMix {
             paint: f(self.paint),
             density: f(self.density),
             stretch: f(self.stretch),
+            load: f(self.load),
+            blur: match self.blur {
+                MixBlur::Fixed(px) => MixBlur::Fixed(f(px)),
+                auto => auto,
+            },
             ..self.clone()
         }
     }
@@ -146,6 +217,13 @@ pub(crate) struct MixDab {
     /// 伸ばすで、読む位置のずれ（画素）と、平均の箱の半径（画素。混ぜるは 0）。
     pub shift: (i64, i64),
     pub blur: i64,
+    /// 混ぜる色の空間と、輝度の補正の段（知覚的のときだけ）。
+    pub space: MixSpace,
+    pub level: u8,
+    /// 荷の色の、知覚的な混ぜが読む形（[`mix_space::roots`]。標準では使わない。ダブごとに 1 回だけ作る）。
+    pub carry_root: [f64; 3],
+    /// 筆の初めの絵の具の量（最初の打点だけ 1 未満。ほかの打点は 1）: 荷のうち描く色の割合で、残りは下の色。
+    pub first_load: f64,
 }
 
 /// アルファで重みを付けた補間（straight RGBA、0〜255）: 下地 `ground` と荷 `carry` を、荷の割合 `amount` で混ぜる。重みは
@@ -166,12 +244,102 @@ pub(crate) fn mix_colors(ground: [f64; 4], carry: [f64; 4], amount: f64) -> Opti
     ])
 }
 
+/// [`mix_colors`] の空間つき。知覚的は、重みの比 `wc / (wu + wc)` で錐体応答の空間の混ぜ（輝度の補正は `level`）。アルファは荷のまま。
+pub(crate) fn mix_colors_in(
+    space: MixSpace,
+    level: u8,
+    ground: [f64; 4],
+    carry: [f64; 4],
+    amount: f64,
+) -> Option<[f64; 4]> {
+    if space == MixSpace::Standard {
+        return mix_colors(ground, carry, amount);
+    }
+    let wu = ground[3] * (1.0 - amount);
+    let wc = carry[3] * amount;
+    let w = wu + wc;
+    if w <= 0.0 {
+        return None;
+    }
+    let m = mix_space::mix(
+        [ground[0], ground[1], ground[2]],
+        [carry[0], carry[1], carry[2]],
+        wc / w,
+        level,
+    );
+    Some([m[0], m[1], m[2], carry[3]])
+}
+
 #[inline]
 fn straight(c: Rgba8) -> [f64; 4] {
     [c.r as f64, c.g as f64, c.b as f64, c.a as f64]
 }
 
 impl MixDab {
+    /// 今の打点の値。`first` は最初の打点（筆の初めの絵の具の量が効く）。
+    pub(crate) fn new(
+        mix: &ColorMix,
+        carry: [f64; 4],
+        (paint, density): (f64, f64),
+        shift: (i64, i64),
+        blur: i64,
+        first: bool,
+    ) -> MixDab {
+        MixDab {
+            mode: mix.mode,
+            carry,
+            paint,
+            density,
+            shift,
+            blur,
+            space: mix.space,
+            level: mix.correction,
+            carry_root: if mix.space == MixSpace::Perceptual {
+                mix_space::roots([carry[0], carry[1], carry[2]])
+            } else {
+                [0.0; 3]
+            },
+            first_load: if first { mix.load } else { 1.0 },
+        }
+    }
+
+    /// 知覚的な混ぜの 1 画素: 下地の色 `g`（sRGB の 0〜255）を、荷との重みの比 `t`（荷の側）で混ぜた色。最初の打点で筆の初めの絵の具の量が 1 未満なら、
+    /// 荷はまず下の色と混ざった色（描く色の割合 = `first_load`）になる。
+    pub(crate) fn perceptual_pixel(&self, g: [f64; 3], t: f64) -> [f64; 3] {
+        let carry = [self.carry[0], self.carry[1], self.carry[2]];
+        if self.first_load < 1.0 {
+            let loaded = mix_space::mix(g, carry, self.first_load, mix_space::MAX_LEVEL);
+            return mix_space::mix(g, loaded, t, self.level);
+        }
+        mix_space::mix_roots(
+            g,
+            carry,
+            mix_space::roots(g),
+            self.carry_root,
+            t,
+            self.level,
+        )
+    }
+
+    /// 最初の打点の荷（筆の初めの絵の具の量が 1 未満のとき）: 描く色と下の色 `ground` を、描く色の割合 `first_load` で混ぜたもの。
+    fn first_carry(&self, ground: [f64; 4]) -> [f64; 4] {
+        if self.first_load >= 1.0 {
+            return self.carry;
+        }
+        let rgb = match self.space {
+            MixSpace::Standard => std::array::from_fn(|i| {
+                self.carry[i] * self.first_load + ground[i] * (1.0 - self.first_load)
+            }),
+            MixSpace::Perceptual => mix_space::mix(
+                [ground[0], ground[1], ground[2]],
+                [self.carry[0], self.carry[1], self.carry[2]],
+                self.first_load,
+                mix_space::MAX_LEVEL,
+            ),
+        };
+        [rgb[0], rgb[1], rgb[2], self.carry[3]]
+    }
+
     /// 画素 (px, py) の下地の読み（キャンバスは w × h）: 混ぜるは同じ画素、伸ばすは動きの分だけずらした所の箱の平均（キャンバスの端の外は端の画素）。
     #[inline]
     pub(crate) fn ground_at(&self, frame: &EffectFrame, px: i64, py: i64, w: i64, h: i64) -> Rgba8 {
@@ -199,20 +367,39 @@ impl MixDab {
             tally.rgb[2] / tally.weight,
             255.0 * tally.weight / tally.cover,
         ];
-        mix_colors(ground, self.carry, self.paint).unwrap_or(self.carry)
+        // 荷の拾いは、空間は同じで、混ざって暗くなる補正は掛けない（毎打点の拾いに掛けると、荷が打点ごとに暗くなっていく）
+        let carry = self.first_carry(ground);
+        mix_colors_in(self.space, mix_space::MAX_LEVEL, ground, carry, self.paint)
+            .unwrap_or(self.carry)
     }
 }
 
 /// 次の打点の荷: 前の荷と描く色を、色延びで混ぜる（最初の打点・色延び 0 は描く色そのもの）。アルファは描く色のまま。
-pub(crate) fn next_carry(loaded: Option<[f64; 4]>, draw: Rgba8, stretch: f64) -> [f64; 4] {
+pub(crate) fn next_carry(
+    loaded: Option<[f64; 4]>,
+    draw: Rgba8,
+    stretch: f64,
+    space: MixSpace,
+) -> [f64; 4] {
     let d = straight(draw);
     match loaded {
-        Some(l) if stretch > 0.0 => [
-            l[0] * stretch + d[0] * (1.0 - stretch),
-            l[1] * stretch + d[1] * (1.0 - stretch),
-            l[2] * stretch + d[2] * (1.0 - stretch),
-            d[3],
-        ],
+        Some(l) if stretch > 0.0 => match space {
+            MixSpace::Standard => [
+                l[0] * stretch + d[0] * (1.0 - stretch),
+                l[1] * stretch + d[1] * (1.0 - stretch),
+                l[2] * stretch + d[2] * (1.0 - stretch),
+                d[3],
+            ],
+            MixSpace::Perceptual => {
+                let m = mix_space::mix(
+                    [d[0], d[1], d[2]],
+                    [l[0], l[1], l[2]],
+                    stretch,
+                    mix_space::MAX_LEVEL,
+                );
+                [m[0], m[1], m[2], d[3]]
+            }
+        },
         _ => d,
     }
 }
@@ -264,6 +451,21 @@ impl MixRun {
 mod tests {
     use super::super::rows::{mix_effect32, mixed32, tally32};
     use super::*;
+
+    /// 色の混ぜの打点（混ぜる・標準の空間・最初でない打点）。
+    fn plain_dab(carry: [f64; 4], paint: f64) -> MixDab {
+        MixDab::new(
+            &ColorMix {
+                mode: MixMode::Mix,
+                ..ColorMix::default()
+            },
+            carry,
+            (paint, 1.0),
+            (0, 0),
+            0,
+            false,
+        )
+    }
 
     #[test]
     fn the_default_does_not_mix_and_is_valid() {
@@ -337,14 +539,7 @@ mod tests {
                 0.9,
             ),
         ] {
-            let dab = MixDab {
-                mode: MixMode::Mix,
-                carry: straight(c),
-                paint: amount,
-                density: 1.0,
-                shift: (0, 0),
-                blur: 0,
-            };
+            let dab = plain_dab(straight(c), amount);
             let ours = mixed32(&dab, u).unwrap();
             let theirs = mix_effect32(u, c, amount as f32);
             assert_eq!(ours, theirs, "{u:?} {c:?} {amount}");
@@ -355,24 +550,29 @@ mod tests {
     fn the_carry_drags_the_picked_colour_by_the_stretch() {
         let draw = Rgba8::new(255, 0, 0, 255);
         // 最初の打点・色延び 0 は描く色
-        assert_eq!(next_carry(None, draw, 0.7), [255.0, 0.0, 0.0, 255.0]);
+        assert_eq!(
+            next_carry(None, draw, 0.7, MixSpace::Standard),
+            [255.0, 0.0, 0.0, 255.0]
+        );
         let loaded = Some([0.0, 0.0, 200.0, 255.0]);
-        assert_eq!(next_carry(loaded, draw, 0.0), [255.0, 0.0, 0.0, 255.0]);
+        assert_eq!(
+            next_carry(loaded, draw, 0.0, MixSpace::Standard),
+            [255.0, 0.0, 0.0, 255.0]
+        );
         // 色延び 1 は前の荷のまま（アルファは描く色）
-        assert_eq!(next_carry(loaded, draw, 1.0), [0.0, 0.0, 200.0, 255.0]);
-        assert_eq!(next_carry(loaded, draw, 0.5), [127.5, 0.0, 100.0, 255.0]);
+        assert_eq!(
+            next_carry(loaded, draw, 1.0, MixSpace::Standard),
+            [0.0, 0.0, 200.0, 255.0]
+        );
+        assert_eq!(
+            next_carry(loaded, draw, 0.5, MixSpace::Standard),
+            [127.5, 0.0, 100.0, 255.0]
+        );
     }
 
     #[test]
     fn the_load_becomes_the_mixed_average_and_stays_when_nothing_is_picked() {
-        let dab = MixDab {
-            mode: MixMode::Mix,
-            carry: [255.0, 0.0, 0.0, 255.0],
-            paint: 0.5,
-            density: 1.0,
-            shift: (0, 0),
-            blur: 0,
-        };
+        let dab = plain_dab([255.0, 0.0, 0.0, 255.0], 0.5);
         // 何も拾えない（下地が透明）
         let mut empty = MixTally::default();
         tally32(&mut empty, 1.0, Rgba8::new(9, 9, 9, 0));
@@ -413,14 +613,7 @@ mod tests {
     #[test]
     fn settle_folds_the_dab_into_the_load_and_clears_the_tally() {
         let mut run = MixRun::default();
-        let dab = MixDab {
-            mode: MixMode::Mix,
-            carry: [255.0, 0.0, 0.0, 255.0],
-            paint: 0.0,
-            density: 1.0,
-            shift: (0, 0),
-            blur: 0,
-        };
+        let dab = plain_dab([255.0, 0.0, 0.0, 255.0], 0.0);
         run.dab = Some(dab);
         tally32(&mut run.tally, 1.0, Rgba8::new(0, 255, 0, 255));
         run.settle();

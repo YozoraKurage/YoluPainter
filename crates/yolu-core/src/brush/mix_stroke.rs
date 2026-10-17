@@ -1,11 +1,11 @@
 //! 色の混ぜの、打点の前の仕事（ストロークの側）: 下地を凍結した枠に読み、筆の荷と今の打点の値を決める。画素ごとの式は
 //! [`super::mix`]、画素へ置く道は [`super::apply_at`]（今までと同じ）。
 
-use super::mix::{next_carry, MixDab};
+use super::mix::{next_carry, MixDab, MAX_MIX_BLUR as MAX_BLUR_PX};
 use super::*;
 
 /// 平均の箱の半径の上限（画素）。タイルのつながりを決めるときの、読む範囲の広がり。
-const MAX_MIX_BLUR: i64 = 8;
+const MAX_MIX_BLUR: i64 = MAX_BLUR_PX as i64;
 
 /// 打点の画素の塊（[`StrokeState::begin_mix_regions`]）: 画素を含むタイルがつながったもの。
 pub(super) struct MixRegion {
@@ -125,12 +125,14 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 平均の箱の半径: 伸ばすは打点の半径の 1 割（1〜8 画素）、混ぜるは箱なし。
+    /// 平均の箱の半径: 伸ばすは、大きさに連動なら打点の半径の 1 割（1〜8 画素）、固定ならその画素数（1〜8）、混ぜる・重ねるは箱なし。
     fn mix_blur(&self, size: i64) -> i64 {
-        if self.brush.mix.mode == MixMode::Smear {
-            (((size as f64 / 2.0) * 0.1).round() as i64).clamp(1, MAX_MIX_BLUR)
-        } else {
-            0
+        if self.brush.mix.mode != MixMode::Smear {
+            return 0;
+        }
+        match self.brush.mix.blur {
+            MixBlur::Auto => (((size as f64 / 2.0) * 0.1).round() as i64).clamp(1, MAX_MIX_BLUR),
+            MixBlur::Fixed(px) => (px.round() as i64).clamp(1, MAX_MIX_BLUR),
         }
     }
 
@@ -333,14 +335,17 @@ impl StrokeState {
         } else {
             self.stroke_color
         };
-        MixDab {
-            mode: m.mode,
-            carry: next_carry(self.mix_run.loaded, draw, m.stretch),
-            paint: m.paint * pressure.mix_paint,
-            density: m.density * pressure.mix_density,
+        MixDab::new(
+            m,
+            next_carry(self.mix_run.loaded, draw, m.stretch, m.space),
+            (
+                m.paint * pressure.mix_paint,
+                m.density * pressure.mix_density,
+            ),
             shift,
             blur,
-        }
+            self.mix_run.loaded.is_none(),
+        )
     }
 
     /// 3D の面の伸ばし（指先と同じ写像されたダブ）の打点: 前の打点を荷へ畳み、今の打点の値を決める。読み元は呼び手が決める参照の

@@ -24,6 +24,7 @@ mod color;
 mod db;
 mod dual;
 mod material;
+mod mixing;
 mod spray;
 mod tar;
 
@@ -98,6 +99,13 @@ const WATER_COLOR_KIND: &[&str] = &["brushwatercolor"];
 const MIX_PAINT: &[&str] = &["brushmixcolor"];
 const MIX_DENSITY: &[&str] = &["brushmixalpha"];
 const MIX_STRETCH: &[&str] = &["brushmixcolorextension"];
+// 混色モード（0 標準・1 知覚的。187 列のバージョンにだけある）・輝度の補正（0 なし・1 低・2 中・3 高・4 最高。同じく 187 列のバージョンにだけ）・
+// にじむ強さ（`…LinkSize` 0 自動設定・1 固定値、固定値は `BrushBlur`、単位は `…Unit` 0 が画素）
+const MIX_MODE: &[&str] = &["brushcolormixingmode"];
+const MIX_LUMINANCE: &[&str] = &["brushlmslinearity"];
+const BLUR_LINK_SIZE: &[&str] = &["brushblurlinksize"];
+const BLUR: &[&str] = &["brushblur"];
+const BLUR_UNIT: &[&str] = &["brushblurunit"];
 const WATER_EDGE: &[&str] = &["brushusewateredge"];
 const SPRAY: &[&str] = &["brushusespray"];
 const DUAL: &[&str] = &["usedualbrush"];
@@ -173,6 +181,11 @@ const KNOWN: &[&[&str]] = &[
     MIX_PAINT,
     MIX_DENSITY,
     MIX_STRETCH,
+    MIX_MODE,
+    MIX_LUMINANCE,
+    BLUR_LINK_SIZE,
+    BLUR,
+    BLUR_UNIT,
     WATER_EDGE,
     SPRAY,
     DUAL,
@@ -1372,50 +1385,6 @@ fn tip_rules(
     }
 }
 
-/// 色の混ぜを写す（絵の具の量・濃さの影響元も）。
-fn color_mixing(
-    row: &Row,
-    brush: &mut Brush,
-    notes: &mut Vec<Unrepresented>,
-    mapped: &mut Vec<SutMapped>,
-) {
-    // 色の混ぜ: 混色の旗（BrushUseWaterColor）が立っているときだけ、絵の具量（BrushMixColor）・絵の具濃度（BrushMixAlpha）・色延び
-    // （BrushMixColorExtension）を、0〜100 から 0〜1 にして「絵の具で混ぜる」へ写す（CLIP STUDIO の絵の具量 100 は下の色を拾わない＝
-    // こちらの量 1 と同じ向き）。CLIP STUDIO は混色が切のブラシ（G ペンなど）にも既定の値（50 など）を書くので、値だけでは決めない。
-    // 旗が立っていて写せる値が無いものは知らせる。
-    let (paint, density, stretch) = (
-        row.first_number(MIX_PAINT).unwrap_or(0.0),
-        row.first_number(MIX_DENSITY).unwrap_or(0.0),
-        row.first_number(MIX_STRETCH).unwrap_or(0.0),
-    );
-    let mixing = row.on(WATER_COLOR);
-    // 方式は 0 色混ぜ・1 にじみ・2 色重ね。色混ぜだけがエンジンの「混ぜる」に当たる（にじみ・色重ねは同じ振る舞いと言えないので写さない）
-    let kind = row.first_number(WATER_COLOR_KIND).unwrap_or(0.0);
-    if mixing && kind != 0.0 {
-        notes.push(Unrepresented::ClipStudio(SutNote::ColorMixingMethod(kind)));
-    } else if mixing && (paint > 0.0 || density > 0.0 || stretch > 0.0) {
-        let unit = |v: f64| (v / 100.0).clamp(0.0, 1.0);
-        brush.mix.mode = yolu_core::brush::MixMode::Mix;
-        brush.mix.paint = unit(paint);
-        brush.mix.density = unit(density);
-        brush.mix.stretch = unit(stretch);
-        mapped.push(SutMapped::ColorMixing);
-        // 絵の具の量・濃さの影響元は、混ぜを写せたブラシだけ（混ぜないブラシには効く所が無い）
-        for (target, columns) in [
-            (SutTarget::MixPaint, MIX_PAINT_EFFECTOR),
-            (SutTarget::MixDensity, MIX_DENSITY_EFFECTOR),
-        ] {
-            effector(brush, row, target, columns, notes, mapped);
-        }
-    } else if mixing {
-        notes.push(Unrepresented::ClipStudio(SutNote::ColorMixing {
-            paint,
-            density,
-            stretch,
-        }));
-    }
-}
-
 /// 写せない設定（湿った縁・ベクターのツール・写せなかった散布効果・写せなかったデュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
 fn unrepresented_flags(
     row: &Row,
@@ -1551,7 +1520,7 @@ fn brush_from_row(
     start_end(row, &mut brush, &mut notes, &mut mapped);
     stabilizer(row, &mut brush, &mut notes, &mut mapped);
 
-    color_mixing(row, &mut brush, &mut notes, &mut mapped);
+    mixing::color_mixing(row, &mut brush, &mut notes, &mut mapped);
     color::color_change(row, &mut brush, &mut notes, &mut mapped);
     spray_dual_and_flags(
         row,

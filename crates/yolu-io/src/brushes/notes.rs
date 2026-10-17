@@ -588,8 +588,14 @@ pub enum SutNote {
     Direction,
     /// 厚さの適用方向（水平）は、筆先の画像では写せない（画像も回ってしまう）。
     ThicknessDirection,
-    /// 下地混色の方式（にじみ・色重ね）は、エンジンの「混ぜる」と同じ振る舞いにならないので写さなかった。値は列の番号（1 にじみ・2 色重ね）。
+    /// 下地混色の方式の列の値が 0 色混ぜ・1 にじみ・2 色重ねのどれでもなく、色の混ぜは写さなかった。値は列の番号。
     ColorMixingMethod(f64),
+    /// 混色モード（`BrushColorMixingMode`）の値が 0 標準・1 知覚的のどちらでもなく、標準にした。
+    ColorMixingMode(f64),
+    /// 輝度の補正（`BrushLMSLinearity`）の値が 0〜4 の整数でなく、収めた値で読んだ。
+    LuminanceCorrection(f64),
+    /// にじむ強さの固定値（`BrushBlur`）が読めない・単位が px（0）でない・0〜8 の外で、収めた値（px）で読んだ。値は元の設定。
+    MixBlur(Option<f64>),
     /// 後補正（描いたあとに線を整える）。手ぶれ補正とは別の機能で、エンジンに無い。
     PostCorrection,
     /// ベクターレイヤー向けの設定（ベクター消去・ベクター吸着）。
@@ -893,15 +899,23 @@ impl SutNote {
                 "厚さの適用方向（水平）は筆先の画像では未対応で、垂直のまま".into(),
                 "The horizontal thickness direction is not supported for an image tip; vertical is used.".into(),
             ),
-            Self::ColorMixingMethod(kind) => {
-                let (ja, en) = match *kind as i64 {
-                    1 => ("にじみ", "smear"),
-                    2 => ("色重ね", "layering"),
-                    _ => ("知らない方式", "unknown method"),
-                };
+            Self::ColorMixingMethod(kind) => (
+                format!("下地混色の方式の値 {kind} は読めないので、色の混ぜは写していない"),
+                format!("The color mixing method value {kind} is not understood; color mixing is not carried over."),
+            ),
+            Self::ColorMixingMode(v) => (
+                format!("混色モードの値 {v} は読めないので、標準にした"),
+                format!("The mixing mode value {v} is not understood; the standard mode is used."),
+            ),
+            Self::LuminanceCorrection(v) => (
+                format!("輝度の補正の値 {v} は 0〜4 の整数でないので、収めた値で読んだ"),
+                format!("The luminance correction value {v} is not an integer from 0 to 4; the nearest step is used."),
+            ),
+            Self::MixBlur(v) => {
+                let shown = v.map_or("（値なし）".to_string(), |v| v.to_string());
                 (
-                    format!("下地混色の方式（{ja}）は未対応で、色の混ぜは写していない"),
-                    format!("The color mixing method ({en}) is not supported; color mixing is not carried over."),
+                    format!("にじむ強さの固定値 {shown} は読めない・単位が画素でない・0〜8 の外なので、画素として収めた値（読めなければ自動設定）で読んだ"),
+                    format!("The fixed blur strength {} is unreadable, not in pixels, or outside 0 to 8; it was read as pixels and clamped (automatic if unreadable).", v.map_or("(none)".to_string(), |v| v.to_string())),
                 )
             }
             Self::PostCorrection => (
