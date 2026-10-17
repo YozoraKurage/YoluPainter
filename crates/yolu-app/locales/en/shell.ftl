@@ -58,5 +58,5 @@ shell-add-white-layer-mask = Add White Layer Mask
 shell-add-black-layer-mask = Add Black Layer Mask
 shell-copy-mask = Copy Mask
 shell-paste-to-mask = Paste to Mask
-shell-ui-hidden = The UI is hidden. Press { $key } to bring it back.
+shell-ui-hidden = The UI is hidden. { $key } brings it back.
 shell-ui-hidden-no-key = The UI is hidden.

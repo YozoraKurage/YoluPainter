@@ -38,6 +38,7 @@ pub const NAMES: &[&str] = &[
     "rotate_90_degrees_cw",
     "rotate_90_degrees_ccw",
     "warning",
+    "warning_circle",
     "info",
     "close",
     "lock",
