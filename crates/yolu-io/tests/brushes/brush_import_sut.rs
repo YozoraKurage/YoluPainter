@@ -1434,11 +1434,11 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
     ] {
         assert!(has(b, n.clone()), "{n:?}");
     }
-    assert!(
-        b.unrepresented.contains(&Unrepresented::WetEdges),
-        "ウェットエッジは ABR と同じ注記"
-    );
-    assert_eq!(b.unrepresented.len(), 7);
+    // 水彩境界は写る（.sut ではウェットエッジの注記を出さない。列の無い値は水彩境界の既定）
+    assert!(!b.unrepresented.contains(&Unrepresented::WetEdges));
+    assert!(mapped(b, SutMapped::WaterEdge));
+    assert_eq!(b.brush.water_edge, Some(yolu_core::WaterEdge::default()));
+    assert_eq!(b.unrepresented.len(), 6);
     // 注記の文は両方の言語で空でなく、制御文字を含まない
     for n in &b.unrepresented {
         let (ja, en) = (n.to_string(), n.english());
@@ -1509,6 +1509,8 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::BrushesCapped(7),
         SutNote::MaterialsCapped,
         SutNote::AntiAliasing(5.0),
+        SutNote::WaterEdgeUnit,
+        SutNote::WaterEdgeRange,
     ];
     for n in all {
         let note = Unrepresented::ClipStudio(n.clone());
@@ -4566,4 +4568,65 @@ fn a_single_image_secondary_moved_into_its_list_keeps_its_horizontal_thickness_n
         &b,
         SutNote::DualApprox(SutDualNote::ThicknessDirection)
     ));
+}
+
+#[test]
+fn the_watercolor_edge_columns_map_to_the_water_edge() {
+    use yolu_core::WaterEdge;
+    let b = one(&[
+        ("BrushUseWaterEdge", int(1)),
+        ("BrushWaterEdgeRadius", real(4.5)),
+        ("BrushWaterEdgeRadiusUnit", int(0)),
+        ("BrushWaterEdgeAlphaPower", int(35)),
+        ("BrushWaterEdgeValuePower", int(60)),
+        ("BrushWaterEdgeAfterDrag", int(1)),
+        ("BrushWaterEdgeBlur", real(2.5)),
+        ("BrushWaterEdgeBlurUnit", int(0)),
+    ]);
+    assert_eq!(
+        b.brush.water_edge,
+        Some(WaterEdge {
+            width: 4.5,
+            opacity: 0.35,
+            darkness: 0.6,
+            after_stroke: true,
+            blur: 2.5,
+        })
+    );
+    assert!(mapped(&b, SutMapped::WaterEdge));
+    assert!(b.unrepresented.is_empty(), "{:?}", b.unrepresented);
+    // 旗が切なら、値があっても写さない
+    let b = one(&[
+        ("BrushUseWaterEdge", int(0)),
+        ("BrushWaterEdgeRadius", real(4.5)),
+        ("BrushWaterEdgeAlphaPower", int(35)),
+    ]);
+    assert_eq!(b.brush.water_edge, None);
+    assert!(!mapped(&b, SutMapped::WaterEdge));
+    assert!(b.unrepresented.is_empty());
+    // 単位の列が 0 でなければ画素として読んで知らせる。範囲の外は端へ詰めて知らせる
+    let b = one(&[
+        ("BrushUseWaterEdge", int(1)),
+        ("BrushWaterEdgeRadius", real(3.0)),
+        ("BrushWaterEdgeRadiusUnit", int(2)),
+    ]);
+    assert_eq!(b.brush.water_edge.unwrap().width, 3.0);
+    assert!(has(&b, SutNote::WaterEdgeUnit));
+    assert!(!has(&b, SutNote::WaterEdgeRange));
+    let b = one(&[
+        ("BrushUseWaterEdge", int(1)),
+        ("BrushWaterEdgeBlurUnit", int(1)),
+    ]);
+    assert!(has(&b, SutNote::WaterEdgeUnit));
+    let b = one(&[
+        ("BrushUseWaterEdge", int(1)),
+        ("BrushWaterEdgeRadius", real(50.0)),
+        ("BrushWaterEdgeAlphaPower", int(150)),
+        ("BrushWaterEdgeBlur", real(-1.0)),
+    ]);
+    let e = b.brush.water_edge.unwrap();
+    assert_eq!((e.width, e.opacity, e.blur), (20.0, 1.0, 0.0));
+    assert!(has(&b, SutNote::WaterEdgeRange));
+    assert!(!has(&b, SutNote::WaterEdgeUnit));
+    assert!(b.brush.validate().is_ok());
 }

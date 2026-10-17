@@ -441,6 +441,8 @@ pub enum SutMapped {
     Spray,
     /// デュアルブラシ（2 つ目の筆先・サイズ・連動・濃度・硬さ・間隔・厚さ・向き・合成モード・アンチエイリアス）。
     DualBrush,
+    /// 水彩境界（幅・透明度影響・明度影響・ドラッグ後に処理・ぼかし幅）。
+    WaterEdge,
 }
 
 impl SutMapped {
@@ -474,6 +476,7 @@ impl SutMapped {
             Self::ColorChange => ("色の変化", "color change"),
             Self::Spray => ("散布効果", "spraying effect"),
             Self::DualBrush => ("デュアルブラシ", "dual brush"),
+            Self::WaterEdge => ("水彩境界", "watercolor edge"),
         }
     }
 }
@@ -662,6 +665,10 @@ pub enum SutNote {
     MaterialsCapped,
     /// アンチエイリアスの値（`AntiAlias`）が 0〜3 の整数でなく、写さなかった（なし のまま）。
     AntiAliasing(f64),
+    /// 水彩境界の幅・ぼかし幅の単位の列が 0 でない（0 の意味しか確かめていない）。値は画素として読んだ。
+    WaterEdgeUnit,
+    /// 水彩境界の値が範囲（幅 0.1〜20・透明度影響と明度影響 0〜100・ぼかし幅 0〜20）の外で、範囲の端へ詰めた。
+    WaterEdgeRange,
 }
 
 /// デュアルブラシの 2 つ目の紙質・散布効果の、近い動きと読まない設定の知らせの文。
@@ -1031,6 +1038,14 @@ impl SutNote {
             Self::AntiAliasing(v) => (
                 format!("アンチエイリアスの値 {v} は読めないので、なしにした"),
                 format!("The anti-aliasing value {v} is not understood; none is used."),
+            ),
+            Self::WaterEdgeUnit => (
+                "水彩境界の幅・ぼかし幅の単位が px でない設定は、px として読んだ".into(),
+                "A watercolor edge width or blurring width unit other than pixels was read as pixels.".into(),
+            ),
+            Self::WaterEdgeRange => (
+                "水彩境界の値が範囲の外だったので、範囲の端にした".into(),
+                "A watercolor edge value was out of range and was set to the nearest limit.".into(),
             ),
         }
     }

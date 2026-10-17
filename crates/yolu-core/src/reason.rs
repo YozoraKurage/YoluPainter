@@ -562,6 +562,8 @@ pub enum Reason {
     LuminanceCorrectionRange,
     MixBlurRange,
     MaskSizeDiffersFromCanvas,
+    WaterEdge,
+    WaterEdgeRange,
 }
 
 impl Reason {
@@ -1122,6 +1124,8 @@ impl Reason {
             Reason::LuminanceCorrectionRange => "輝度の補正（0〜4）",
             Reason::MixBlurRange => "にじむ強さ（0〜8 画素）",
             Reason::MaskSizeDiffersFromCanvas => "マスクの大きさがキャンバスと違う",
+            Reason::WaterEdge => "水彩境界",
+            Reason::WaterEdgeRange => "水彩境界（幅 0.1〜20・透明度影響と明度影響 0〜1・ぼかし幅 0〜20）",
         }
     }
 }

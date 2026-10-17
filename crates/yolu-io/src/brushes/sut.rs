@@ -32,10 +32,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use yolu_core::brush::{Input, Item, TaperTargets, MAX_STROKE_ASSIST};
+use yolu_core::brush::{MAX_WATER_EDGE_BLUR, MAX_WATER_EDGE_WIDTH, MIN_WATER_EDGE_WIDTH};
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::{
     AntiAlias, Brush, BrushTip, FlipRule, Influence, Influences, InputResponse, InputUse,
-    PaperTexture, TipSelection,
+    PaperTexture, TipSelection, WaterEdge,
 };
 
 use super::error::{BrushImportError, Fault};
@@ -109,6 +110,14 @@ const BLUR_LINK_SIZE: &[&str] = &["brushblurlinksize"];
 const BLUR: &[&str] = &["brushblur"];
 const BLUR_UNIT: &[&str] = &["brushblurunit"];
 const WATER_EDGE: &[&str] = &["brushusewateredge"];
+// 水彩境界の幅（単位は `…RadiusUnit`。0 だけを見た）・透明度影響と明度影響（0〜100）・ドラッグ後に処理（旗）・ぼかし幅（単位は `…BlurUnit`）
+const WATER_EDGE_RADIUS: &[&str] = &["brushwateredgeradius"];
+const WATER_EDGE_RADIUS_UNIT: &[&str] = &["brushwateredgeradiusunit"];
+const WATER_EDGE_ALPHA: &[&str] = &["brushwateredgealphapower"];
+const WATER_EDGE_VALUE: &[&str] = &["brushwateredgevaluepower"];
+const WATER_EDGE_AFTER_DRAG: &[&str] = &["brushwateredgeafterdrag"];
+const WATER_EDGE_BLUR: &[&str] = &["brushwateredgeblur"];
+const WATER_EDGE_BLUR_UNIT: &[&str] = &["brushwateredgeblurunit"];
 const SPRAY: &[&str] = &["brushusespray"];
 const DUAL: &[&str] = &["usedualbrush"];
 // 入り抜き: 入り・抜きそれぞれの旗・長さ・長さの単位（0 が画素）。影響先は `BrushInOutType`（0 が既定）と、`BrushInOutTarget`（BLOB）。
@@ -190,6 +199,13 @@ const KNOWN: &[&[&str]] = &[
     BLUR,
     BLUR_UNIT,
     WATER_EDGE,
+    WATER_EDGE_RADIUS,
+    WATER_EDGE_RADIUS_UNIT,
+    WATER_EDGE_ALPHA,
+    WATER_EDGE_VALUE,
+    WATER_EDGE_AFTER_DRAG,
+    WATER_EDGE_BLUR,
+    WATER_EDGE_BLUR_UNIT,
     SPRAY,
     DUAL,
     USE_IN,
@@ -1400,16 +1416,62 @@ fn tip_rules(
     }
 }
 
-/// 写せない設定（湿った縁・ベクターのツール・写せなかった散布効果・写せなかったデュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
+/// 水彩境界: 旗が立っていれば、幅・透明度影響・明度影響・ドラッグ後に処理・ぼかし幅を写す（無い列は [`WaterEdge::default`]）。
+/// 幅とぼかし幅は画素として読み、単位の列が 0 でなければ（0 しか確かめていない）知らせる。範囲の外の値は範囲へ詰めて知らせる。
+fn water_edge(
+    row: &Row,
+    brush: &mut Brush,
+    notes: &mut Vec<Unrepresented>,
+    mapped: &mut Vec<SutMapped>,
+) {
+    if !row.on(WATER_EDGE) {
+        return;
+    }
+    let d = WaterEdge::default();
+    let mut clamped = false;
+    // 列の値を範囲へ詰める（無い列は既定。有限でない値は既定にして、詰めたと数える）
+    let mut fit = |columns: &[&str], divisor: f64, lo: f64, hi: f64, default: f64| {
+        let Some(raw) = row.first_number(columns).map(|v| v / divisor) else {
+            return default;
+        };
+        let used = if raw.is_finite() {
+            raw.clamp(lo, hi)
+        } else {
+            default
+        };
+        clamped |= used != raw;
+        used
+    };
+    let edge = WaterEdge {
+        width: fit(
+            WATER_EDGE_RADIUS,
+            1.0,
+            MIN_WATER_EDGE_WIDTH,
+            MAX_WATER_EDGE_WIDTH,
+            d.width,
+        ),
+        opacity: fit(WATER_EDGE_ALPHA, 100.0, 0.0, 1.0, d.opacity),
+        darkness: fit(WATER_EDGE_VALUE, 100.0, 0.0, 1.0, d.darkness),
+        after_stroke: row.on(WATER_EDGE_AFTER_DRAG),
+        blur: fit(WATER_EDGE_BLUR, 1.0, 0.0, MAX_WATER_EDGE_BLUR, d.blur),
+    };
+    if row.on(WATER_EDGE_RADIUS_UNIT) || row.on(WATER_EDGE_BLUR_UNIT) {
+        notes.push(Unrepresented::ClipStudio(SutNote::WaterEdgeUnit));
+    }
+    if clamped {
+        notes.push(Unrepresented::ClipStudio(SutNote::WaterEdgeRange));
+    }
+    brush.water_edge = Some(edge);
+    mapped.push(SutMapped::WaterEdge);
+}
+
+/// 写せない設定（ベクターのツール・写せなかった散布効果・写せなかったデュアルブラシ・色の変化・合成モード）のフラグが立っていれば知らせる。
 fn unrepresented_flags(
     row: &Row,
     spray_mapped: bool,
     dual_mapped: bool,
     notes: &mut Vec<Unrepresented>,
 ) {
-    if row.on(WATER_EDGE) {
-        notes.push(Unrepresented::WetEdges);
-    }
     if row.on(VECTOR_ERASER) || row.on(VECTOR_MAGNET) {
         notes.push(Unrepresented::ClipStudio(SutNote::VectorTools));
     }
@@ -1541,6 +1603,7 @@ fn brush_from_row(
 
     mixing::color_mixing(row, &mut brush, &mut notes, &mut mapped);
     color::color_change(row, &mut brush, &mut notes, &mut mapped);
+    water_edge(row, &mut brush, &mut notes, &mut mapped);
     spray_dual_and_flags(
         row,
         name,

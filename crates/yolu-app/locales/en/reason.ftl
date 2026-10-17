@@ -554,3 +554,5 @@ reason-pen-pressure-range = Unsupported value or operation
 reason-no-point-to-fill = Unsupported value or operation
 reason-path-point-value-range = Unsupported value or operation
 reason-mask-size-differs-from-canvas = Mask size differs from the canvas
+reason-water-edge = watercolor edge
+reason-water-edge-range = Watercolor edge (width 0.1–20, opacity and darkness 0–1, blurring width 0–20)

@@ -82,6 +82,7 @@ pub use adjust::{
     ColorBalance, GradientMap, Posterize, Threshold, ToneChannel, ToneCurves,
 };
 pub use brush::DualItem;
+pub use brush::WaterEdge;
 pub use brush::{
     builtin_presets, builtin_tip, AntiAlias, Brush, BrushEffect, BrushMappedPixel, BrushPixel,
     BrushPreset, BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics,

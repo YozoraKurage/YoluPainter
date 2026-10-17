@@ -31,10 +31,12 @@ pub enum Stage {
     SurfaceGather,
     /// 3D のダブの画素を、文書のストロークへまとめて渡して塗る仕事（`Stroke::apply_dab`。渡す画素の並びの組み立ても含む）。
     SurfaceApply,
+    /// 水彩境界の縁の計算し直し（描いている間の入力ごと・確定の 1 回）。
+    WaterEdge,
 }
 
 impl Stage {
-    pub const ALL: [Stage; 11] = [
+    pub const ALL: [Stage; 12] = [
         Stage::Stamp,
         Stage::Prepare,
         Stage::Pixels,
@@ -46,6 +48,7 @@ impl Stage {
         Stage::SurfaceBuckets,
         Stage::SurfaceGather,
         Stage::SurfaceApply,
+        Stage::WaterEdge,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -60,6 +63,7 @@ impl Stage {
             Stage::SurfaceBuckets => "3D 区画の作り直し",
             Stage::SurfaceGather => "3D 覆いの集め+並べ替え",
             Stage::SurfaceApply => "3D のキャンバスへ塗る",
+            Stage::WaterEdge => "水彩境界",
         }
     }
 }

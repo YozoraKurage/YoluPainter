@@ -12,6 +12,8 @@
 //! - 効果（ぼかし・指先・クローン）は、ダブの前に読む範囲を凍結し（[`effects`]）、覆いの割合でその色へ寄せる。
 //! - 色の混ぜ（厚塗り。拡張: C# に無い）は、効果と同じくダブの前に下地を凍結し、画素ごとに下の色と筆の荷を混ぜた色を、ダブごとの色と同じ道
 //!   （画素ごとの色の積み）で置く（`mix`・`mix_stroke`）。混ぜ方が切のブラシの画素は混ぜを足す前とバイト単位で同じ。
+//! - 水彩境界（拡張: C# に無い）は、ダブを塗った後に、ストロークの覆いから縁の帯を求め、その範囲の画素をストロークの前の色から
+//!   計算し直す（[`water_edge`]。描いている間は入力ごと、ドラッグ後に処理なら確定のときに 1 回）。
 //! - 覆いは float（単精度）で持ち、画素の計算（覆い・天井と流量・覆いの寄せ・画素ごとの色・合成・効果の読み）も f32 の式
 //!   （`rows`。合成は `crate::blend` の Normal とフェード）。ダブの位置・形・筆圧・ゆらぎは倍精度で求め、画素の式へ渡すときに f32 へ丸める。
 //!   回転・傾き・線の向きは libm の三角関数（cos・sin・tan・atan・atan2）を通るので、ダブの形は libm（OS）によって 1 ULP ずれ得る。
@@ -71,6 +73,7 @@ mod spray;
 mod stencil;
 mod symmetric;
 mod tip;
+mod water_edge;
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicI64, Ordering};
@@ -109,6 +112,7 @@ pub use stencil::{
     StencilMode, StencilPoint, StencilSample, StencilTexel, StencilTiling,
 };
 pub use tip::{builtin_tip, BrushTip, BUILTIN_TIPS};
+pub use water_edge::{WaterEdge, MAX_WATER_EDGE_BLUR, MAX_WATER_EDGE_WIDTH, MIN_WATER_EDGE_WIDTH};
 
 use crate::error::CoreError;
 use crate::math::{clamp01, require_finite};
@@ -446,6 +450,8 @@ pub(crate) struct StrokeState {
     surface_look: Option<SurfaceDabLook>,
     /// 3D の対称（[`Brush::model_symmetry`]）の写しを作れなかった最後の理由。
     copy_note: Option<crate::geometry::MirrorOutcome>,
+    /// 水彩境界（効くストロークだけ。[`water_edge`]）。
+    water_edge: Option<water_edge::EdgeRun>,
 }
 
 /// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
@@ -528,6 +534,11 @@ impl StrokeState {
             && brush.effect.is_paint()
             && !brush.base.erase
             && carries_color(kind);
+        // 水彩境界: 色のチャンネルを色で塗るブラシだけ（消しゴム・効果のブラシ・データのチャンネル・マスクでは効かない）
+        let water_edge = brush
+            .water_edge
+            .filter(|_| brush.effect.is_paint() && !brush.base.erase && carries_color(kind))
+            .map(water_edge::EdgeRun::new);
         StrokeState {
             keep_alpha,
             id,
@@ -587,6 +598,7 @@ impl StrokeState {
             selection: None,
             surface_look: None,
             copy_note: None,
+            water_edge,
             brush: Arc::new(brush),
         }
     }
@@ -652,8 +664,19 @@ impl StrokeState {
         }
     }
 
-    /// 入力の点を 1 つ足す（C# の Add）。changed に、画素の変わったタイルを足す。画素が変わったら true。
+    /// 入力の点を 1 つ足す（C# の Add）。changed に、画素の変わったタイルを足す。画素が変わったら true。描いている間に付ける
+    /// 水彩境界は、この入力が触った範囲を最後に計算し直す。
     pub(crate) fn add(
+        &mut self,
+        surface: &mut Surface,
+        sample: BrushSample,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        let any = self.add_sample(surface, sample, changed)?;
+        Ok(self.flush_water_edge(surface, changed)? | any)
+    }
+
+    fn add_sample(
         &mut self,
         surface: &mut Surface,
         sample: BrushSample,
@@ -1002,6 +1025,8 @@ impl StrokeState {
             self.taper_start.finish();
         }
         any |= self.flush_pending(surface, f64::INFINITY, Some(self.stroke_length), changed)?;
+        // 水彩境界: ドラッグ後に処理なら、ここで 1 回だけ縁を付ける（描いている間に付けるなら、残りの範囲を計算し直す）
+        any |= self.finish_water_edge(surface, changed)?;
         Ok(any)
     }
 
@@ -1049,6 +1074,7 @@ impl StrokeState {
             self.taper_start
                 .line_closed((self.last_input.x, self.last_input.y));
         }
+        any |= self.flush_water_edge(surface, changed)?;
         Ok(any)
     }
 
@@ -1291,6 +1317,7 @@ impl StrokeState {
         if min_x > max_x || min_y > max_y {
             return Ok(false);
         }
+        self.edge_mark_box((min_x, max_x), (min_y, max_y));
         if brush
             .stencil
             .as_ref()
@@ -1694,13 +1721,21 @@ impl StrokeState {
     /// 3D の面のダブを 1 つ始める（2D の描点のダブの数のループの 1 回にあたる）: ダブごとの色（色の変化の「描点ごと」）を次の色へ進め、
     /// 塗るダブなら、そのゆらぎの係数を覚える。覚えた係数と紙の質感は、この後の面の画素の塗り（`apply_pixel`・`apply_dab`・
     /// `apply_mapped_dab`）が使う。大きさが 0 で塗らないダブ（`look` が None）も、2D と同じく色の乱数は 1 つ進める。
-    pub(crate) fn begin_surface_dab(&mut self, look: Option<SurfaceDabLook>, color: &[f64; 4]) {
+    /// 描いている間に付ける水彩境界は、前のダブまでに画素ごとに塗った範囲（`apply_pixel`）を、ここで計算し直す。
+    pub(crate) fn begin_surface_dab(
+        &mut self,
+        surface: &mut Surface,
+        look: Option<SurfaceDabLook>,
+        color: &[f64; 4],
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
         if self.tip_colors {
             self.dab_color = self.next_dab_color(color);
         }
         if look.is_some() {
             self.surface_look = look;
         }
+        self.flush_water_edge(surface, changed)
     }
 
     /// 面の画素 (x, y) の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。面のダブを始めていなければ係数 1・質感なし
@@ -1761,6 +1796,7 @@ impl StrokeState {
         };
         let brush = self.brush.clone();
         let pressure = self.shaped_pressure(&brush, pressure);
+        self.edge_mark_pixel(x, y);
         let paint = self.paint(&brush, None);
         let ts = surface.tile_size() as i64;
         let coord = TileCoord::new((x / ts) as u32, (y / ts) as u32);
@@ -1787,8 +1823,23 @@ impl StrokeState {
 
     /// 面のダブを丸ごと塗る（C# の ApplyDab）。効果の読み元は、どの画素を書くより前に凍結する。指先の中心はキャンバスの画素の座標で、
     /// 継ぎ目をまたぐときは呼び手が [`StrokeState::reset_effect_direction`] する。
+    /// 描いている間に付ける水彩境界は、このダブの画素の範囲を最後に計算し直す。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply_dab(
+        &mut self,
+        surface: &mut Surface,
+        pixels: &[BrushPixel],
+        center: DVec2,
+        pressure: f64,
+        points: Option<&[StencilPoint]>,
+        changed: &mut Vec<TileCoord>,
+    ) -> Result<bool, CoreError> {
+        let any = self.apply_surface_dab(surface, pixels, center, pressure, points, changed)?;
+        Ok(self.flush_water_edge(surface, changed)? | any)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn apply_surface_dab(
         &mut self,
         surface: &mut Surface,
         pixels: &[BrushPixel],
@@ -1827,6 +1878,11 @@ impl StrokeState {
         }
         if x1 < x0 {
             return Ok(false);
+        }
+        if self.edge_live() {
+            for p in pixels {
+                self.edge_mark_pixel(p.x, p.y);
+            }
         }
         let brush = self.brush.clone();
         let pressure = self.surface_pressure(brush.pressure_scale(pressure));

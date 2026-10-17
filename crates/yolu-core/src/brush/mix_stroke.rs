@@ -385,9 +385,9 @@ impl StrokeState {
                     source.read_row(py, px, out);
                 } else {
                     let coord = TileCoord::new(tx as u32, ty as u32);
-                    let tile: Option<Pixels> = match (from_start, self.tiles.get(&coord)) {
-                        (true, Some(held)) => held.before_px.clone(),
-                        _ => surface.read(coord)?,
+                    let (tile, now) = match (from_start, self.tiles.get(&coord)) {
+                        (true, Some(held)) => (held.before_px.clone(), false),
+                        _ => (surface.read(coord)?, true),
                     };
                     match &tile {
                         None => {} // 枠は透明で始まる
@@ -401,6 +401,10 @@ impl StrokeState {
                                 *o = Rgba8::from_slice(p);
                             }
                         }
+                    }
+                    // 今の面の、描いている間に付けた水彩境界の縁は、下地に入れない（縁の無い値で読む）
+                    if now {
+                        self.ground_without_edge(coord, row + (px - tx * ts) as usize, out);
                     }
                 }
                 px = end + 1;

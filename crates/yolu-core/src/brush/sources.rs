@@ -184,9 +184,14 @@ impl StrokeState {
                 .before_px
                 .as_ref()
                 .map_or(Rgba8::TRANSPARENT, |t| t.get(at))),
-            _ => surface
-                .tile(coord)
-                .map_or(Ok(Rgba8::TRANSPARENT), |t| t.get(at)),
+            _ => {
+                let mut c = [surface
+                    .tile(coord)
+                    .map_or(Ok(Rgba8::TRANSPARENT), |t| t.get(at))?];
+                // 伸ばすの面のダブ: 描いている間に付けた水彩境界の縁は、下地に入れない（縁の無い値で読む）
+                self.ground_without_edge(coord, at / 4, &mut c);
+                Ok(c[0])
+            }
         }
     }
 
@@ -287,9 +292,16 @@ impl StrokeState {
         if smears {
             self.begin_mapped_mix_dab(self.surface_pressure(self.brush.pressure_scale(pressure)));
         }
+        if self.edge_live() {
+            for p in pixels {
+                self.edge_mark_pixel(p.pixel.x, p.pixel.y);
+            }
+        }
         let result = self.apply_mapped(surface, pixels, pressure, points, changed);
         self.effect.scratch = 0;
-        result
+        let any = result?;
+        // 描いている間に付ける水彩境界（伸ばすの面のダブ）: このダブの画素の範囲を計算し直す
+        Ok(self.flush_water_edge(surface, changed)? | any)
     }
 
     fn apply_mapped(

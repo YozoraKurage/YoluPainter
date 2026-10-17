@@ -453,6 +453,8 @@ pub struct SurfaceStroke {
     /// 大きさ（中心が面に無いダブの見積もりに使う）。
     anti_alias: AntiAlias,
     last_metric: Option<TexelMetric>,
+    /// 水彩境界のストロークか、その幅の換算の係数を文書のストロークへ渡したか。
+    water_edge: WaterEdgeRun,
     spacing: f32,
     /// 大きさを筆圧で変えるか（ストロークのブラシの影響元の筆圧）。
     pressure_size: bool,
@@ -637,9 +639,7 @@ impl SurfaceStroke {
             .influences
             .uses(Input::Random)
             .then(|| NetRandom::new(stroke_brush.seed ^ INFLUENCE_STREAM));
-        let mixes = stroke_brush.mix.is_active()
-            && stroke_brush.effect.is_paint()
-            && !stroke_brush.base.erase;
+        let mixes = stroke_brush.mix.is_active() && paints_color(&stroke_brush);
         // 伸ばすは、対称（3D・2D）と組むと写しごとの読み元が要るので、2D の対称のダブと同じく動きの向きを使わない読み方へ
         let smears = mixes
             && stroke_brush.mix.mode == MixMode::Smear
@@ -671,6 +671,7 @@ impl SurfaceStroke {
             hardness: brush.hardness as f32,
             anti_alias: brush.anti_alias,
             last_metric: None,
+            water_edge: WaterEdgeRun::start(&stroke_brush),
             spacing: brush.spacing as f32,
             pressure_size,
             size_response,
@@ -1356,7 +1357,7 @@ impl SurfaceStroke {
         let Some(hit) = hit else {
             return Ok(());
         };
-        self.stats.dabs += 1;
+        self.count_painted_dab(doc, stroke)?;
         let footprint = self
             .stencil
             .map(|st| st.footprint(&self.geometry, &self.view, &hit, self.width, self.height));
@@ -1706,6 +1707,38 @@ impl SurfaceStroke {
     }
 
     /// ダブの画素（元と 3D の対称の写しを 1 つにしたもの）と、ダブの面の点を作る。at・scale は画面の中心と、モデルの単位 1 の画面の大きさ、radius は
+    /// アンチエイリアスの帯の見積もりと画像の筆先の小さなダブに使う、ダブの中心のテクセルの画面の大きさ（中心が面に無ければ直前の値）。
+    /// 水彩境界の幅の換算も同じ値を覚える（`last_metric`）が、帯の見積もりには水彩境界だけのストロークの値は使わない（None）。
+    fn dab_metric(&mut self, hit: Option<SurfaceHit>) -> Option<TexelMetric> {
+        if self.anti_alias == AntiAlias::None && !self.water_edge.on {
+            return None;
+        }
+        let at_hit = hit.and_then(|h| self.projector.as_ref().and_then(|p| p.metric_at(&h)));
+        if at_hit.is_some() {
+            self.last_metric = at_hit;
+        }
+        at_hit
+            .or(self.last_metric)
+            .filter(|_| self.anti_alias != AntiAlias::None)
+    }
+
+    /// 塗れたダブを数える。水彩境界のストロークは、幅（画面の点）をテクセルへ直す係数を、最初に中心のテクセルの画面の大きさが分かった
+    /// ダブで決めて文書のストロークへ渡す（ストロークの間は固定）。
+    fn count_painted_dab(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+    ) -> Result<(), SurfaceStrokeError> {
+        self.stats.dabs += 1;
+        if self.water_edge.pending {
+            if let Some(k) = self.last_metric.and_then(|m| texels_per_point(&m)) {
+                stroke.set_water_edge_scale(doc, k)?;
+                self.water_edge.pending = false;
+            }
+        }
+        Ok(())
+    }
+
     /// モデルの単位の半径（丸の大きさ・写しを探す距離）。面の点は、中心の下の塗るセットの面の点（hit）か、それが無ければ元の側の画素の点
     /// （[`SurfaceStroke::fallback_hit`]。元の側が何も塗らなければ None）。対称の写しは、その点を写して探す（中心がほかのセット・背景に
     /// あるダブでも、元の側が塗る縁を写しの側にも塗る）。dual はデュアルブラシの合わせ方と溜まり、weighted は面の向きで弱めるか。
@@ -1732,23 +1765,15 @@ impl SurfaceStroke {
                 scale * self.world_radius,
                 self.projection,
             ) {
-                // テクセルの画面の大きさは、アンチエイリアスの段があるストロークだけが持つ（なし は今と同じ大きさ・予算）
+                // テクセルの画面の大きさは、アンチエイリアスの段か水彩境界があるストロークだけが持つ（どちらも無ければ今と同じ大きさ・予算）
                 Ok(p) => {
-                    self.projector = Some(p.with_texel_metrics(self.anti_alias != AntiAlias::None))
+                    let metrics = self.anti_alias != AntiAlias::None || self.water_edge.on;
+                    self.projector = Some(p.with_texel_metrics(metrics))
                 }
                 Err(why) => return (SurfaceDabResult::default().reject(why), hit),
             }
         }
-        // アンチエイリアスの帯の見積もりと画像の筆先の小さなダブ: ダブの中心のテクセルの画面の大きさ（中心が面に無ければ直前の値）
-        let metric = if self.anti_alias == AntiAlias::None {
-            None
-        } else {
-            let at_hit = hit.and_then(|h| self.projector.as_ref().and_then(|p| p.metric_at(&h)));
-            if at_hit.is_some() {
-                self.last_metric = at_hit;
-            }
-            at_hit.or(self.last_metric)
-        };
+        let metric = self.dab_metric(hit);
         let cover = DabCover {
             form: match form {
                 Form::Round { hardness } => CoverForm::Round(
@@ -2312,6 +2337,31 @@ pub fn pick(geometry: &SurfaceGeometry, view: &CameraView, at: Vec2) -> Option<S
         return None;
     }
     geometry.raycast(view.ray(at), true, f32::INFINITY)
+}
+
+/// 色を塗るストローク（消しゴムでも、塗る以外の効果でもない）か。
+fn paints_color(brush: &Brush) -> bool {
+    brush.effect.is_paint() && !brush.base.erase
+}
+
+/// 水彩境界のストロークの状態: 水彩境界を付けるか（色のチャンネルを色で塗るストロークだけ）と、換算の係数をまだ渡していないか。
+#[derive(Clone, Copy)]
+struct WaterEdgeRun {
+    on: bool,
+    pending: bool,
+}
+
+impl WaterEdgeRun {
+    fn start(brush: &Brush) -> WaterEdgeRun {
+        let on = brush.water_edge.is_some() && paints_color(brush);
+        WaterEdgeRun { on, pending: on }
+    }
+}
+
+/// テクセル 1 つの画面の大きさ（面積で揃えた辺の長さ √|det J|）の逆数: 画面の点 1 つのテクセルの数。潰れた値は None。
+fn texels_per_point(m: &TexelMetric) -> Option<f64> {
+    let det = m.xx * m.yy - m.xy * m.xy;
+    (m.usable() && det > 0.0).then(|| 1.0 / det.sqrt().sqrt())
 }
 
 /// ブラシの半径（文書の画素）のモデルの単位での大きさ（筆圧の前。Unity 版と同じ式: max(1e-6, 箱の対角線) × 半径 / 文書の幅。

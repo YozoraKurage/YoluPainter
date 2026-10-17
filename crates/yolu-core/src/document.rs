@@ -274,8 +274,20 @@ impl Stroke {
         look: Option<crate::brush::SurfaceDabLook>,
         color: &[f64; 4],
     ) -> Result<(), CoreError> {
+        doc.with_stroke(self.id, |state, surface, changed| {
+            state.begin_surface_dab(surface, look, color, changed)
+        })
+        .map(|_| ())
+    }
+    /// 3D の面のストローク: 水彩境界の幅・ぼかし幅（画面の点）をテクセルへ直す係数（画面の点 1 つのテクセルの数）。全部のチャンネルで、
+    /// 最初の 1 回だけ覚える。
+    pub(crate) fn set_water_edge_scale(
+        &mut self,
+        doc: &mut Document,
+        texels_per_point: f64,
+    ) -> Result<(), CoreError> {
         doc.with_stroke(self.id, |state, _, _| {
-            state.begin_surface_dab(look, color);
+            state.set_water_edge_scale(texels_per_point);
             Ok(false)
         })
         .map(|_| ())

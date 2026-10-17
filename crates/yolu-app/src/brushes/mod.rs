@@ -224,6 +224,14 @@ pub fn canonical(brush: &Brush) -> Brush {
         model_symmetry: None,
         // 散布効果は保存と同じ f32 の精度に丸める
         spray: brush.spray.map(spray_f32),
+        // 水彩境界も保存と同じ f32 の精度に丸める
+        water_edge: brush.water_edge.map(|e| yolu_core::WaterEdge {
+            width: f(e.width),
+            opacity: f(e.opacity),
+            darkness: f(e.darkness),
+            blur: f(e.blur),
+            ..e
+        }),
         // デュアルブラシのバージョン 8 の値は保存と同じ f32 の精度に丸める（今までの値は f64 のまま書く）
         dual: brush.dual.clone().map(|d| yolu_core::DualBrush {
             flow: f(d.flow),

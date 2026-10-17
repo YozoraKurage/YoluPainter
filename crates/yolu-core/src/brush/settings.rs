@@ -20,6 +20,7 @@ use super::spray::Spray;
 use super::stencil::BrushStencil;
 use super::tip::BrushTip;
 use super::BrushSettings;
+use super::WaterEdge;
 use crate::error::CoreError;
 use crate::geometry::ModelSymmetry;
 use crate::math::require_finite;
@@ -61,6 +62,8 @@ pub struct Brush {
     /// ブラシと一緒に覚える、ツールプロパティに出す行の名前（ブラシの詳細の行の名前。何が行かは画面の側が決め、描き方には関わらないので、
     /// core は文字列を見ない）。None は、そのブラシの既定の行（画面の側が決める。前の形のブラシはこれ）。
     pub shown_rows: Option<Vec<String>>,
+    /// 水彩境界（None は無し。拡張: C# に無い）。色のチャンネルを色で塗るブラシだけに効く（[`WaterEdge`]）。
+    pub water_edge: Option<WaterEdge>,
 }
 
 /// 表示倍率（画面の点 ÷ 文書の画素）の下限と上限の外の値は、そのまま割ると半径が範囲を外れるので、ここへ収める。
@@ -824,6 +827,9 @@ impl Brush {
             d.validate()?;
         }
         self.spray.as_ref().map_or(Ok(()), Spray::validate)?;
+        self.water_edge
+            .as_ref()
+            .map_or(Ok(()), super::WaterEdge::validate)?;
         self.mix.validate()?;
         match self.effect {
             BrushEffect::Paint => {}

@@ -41,3 +41,4 @@ mod text_layer;
 mod tip_rules;
 mod view_scale;
 mod warp;
+mod water_edge;

@@ -32,3 +32,4 @@ mod taper_start;
 mod taper_targets;
 mod tip_rules;
 mod uv_topology;
+mod water_edge;

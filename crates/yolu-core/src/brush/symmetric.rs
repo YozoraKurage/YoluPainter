@@ -252,6 +252,11 @@ impl StrokeState {
             return Err(CoreError::StrokeBudgetExceeded);
         }
         let w = self.width;
+        if self.edge_live() {
+            for &(key, _) in &pixels {
+                self.edge_mark_pixel(key % w, key / w);
+            }
+        }
         if self.mix_on {
             return self.symmetric_mix_dab(surface, brush, s, &pixels, changed);
         }

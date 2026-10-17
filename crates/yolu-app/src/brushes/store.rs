@@ -11,8 +11,8 @@
 //! `mix.<項目>.pressure`・`.min`・`.curve`）は書かない（読むときも、版 7 にあれば知らない項目として断る）。ほかの版 2〜6 の項目は、その鍵のまま書く。
 //! 版 1〜6 で書けるブラシは、今までと同じ鍵・同じバイトで書く。
 //! バージョン 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗、
-//! 質感の回転、色の変化、色の混ぜの拡張）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
-//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`。
+//! 質感の回転、色の変化、色の混ぜの拡張、水彩境界）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
+//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`、水彩境界の `water_edge.*`。
 //! 影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
 //! バージョン 8 までの項目で書けない設定（ツールプロパティに出す行の目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない）を使うブラシだけ
 //! `yolupainter-brush 9`（`rows.shown`・`controls.size_by_screen`・`influence.<項目>.tilt.max`。そのほかはバージョン 8 と同じ書き方）。使わないブラシはバージョン 1〜8 のままで、
@@ -45,6 +45,7 @@ use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CUR
 use yolu_core::generator::CurvePoint;
 use yolu_core::BrushTip;
 use yolu_core::DualItem;
+use yolu_core::WaterEdge;
 use yolu_core::{Spray, SprayDirection, SprayItem};
 use yolu_io::brushes::bundled;
 
@@ -69,7 +70,7 @@ pub const HEADER_V6: &str = "yolupainter-brush 6";
 pub const HEADER_V7: &str = "yolupainter-brush 7";
 /// バージョン 7 までの項目で書けない物を使うブラシのバージョン。バージョン 8 はバージョン 7 の書き方（影響元は `influence.<項目>.<入力>.…`）に、
 /// 入り抜きを掛ける項目と最小値（`assist.taper.<項目>`。既定の大きさだけ・最小値 0 でないとき）と、筆先の繰り返し方法・反転のしかた・
-/// 先端同士の比較暗・質感の回転を足す。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までしか読めない古いアプリは、
+/// 先端同士の比較暗・質感の回転を足す（水彩境界の `water_edge.*` もバージョン 8 の項目）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までしか読めない古いアプリは、
 /// このファイルを「新しい形式」として理由つきで読み飛ばす。バージョン 8 の鍵がバージョン 7 までのファイルにあれば、知らない項目として断る。
 pub const HEADER_V8: &str = "yolupainter-brush 8";
 /// バージョン 8 までの項目で書けない物を使うブラシのバージョン。バージョン 9 はバージョン 8 の書き方に、ツールプロパティに出す行の目の印
@@ -332,6 +333,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     write_texture_and_dual(&mut w, &mut pending, &b);
     write_color_and_controls(&mut w, &b, v7);
     if v8 {
+        write_water_edge(&mut w, &b);
         write_color_change(&mut w, &b);
         write_spray(&mut w, &b);
         write_dual_v8(&mut w, &mut pending, &b);
@@ -543,6 +545,22 @@ fn write_color_change(w: &mut Writer, b: &Brush) {
     }
     if c.target != ColorTarget::Main {
         w.line("color.target", c.target.id());
+    }
+}
+
+/// 水彩境界（バージョン 8 の `water_edge.*`。ドラッグ後に処理が切・ぼかし幅 0 は書かない）。水彩境界の無いブラシは何も書かない。
+fn write_water_edge(w: &mut Writer, b: &Brush) {
+    let Some(e) = &b.water_edge else {
+        return;
+    };
+    w.single("water_edge.width", e.width);
+    w.single("water_edge.opacity", e.opacity);
+    w.single("water_edge.darkness", e.darkness);
+    if e.after_stroke {
+        w.bool("water_edge.after_stroke", true);
+    }
+    if e.blur != 0.0 {
+        w.single("water_edge.blur", e.blur);
     }
 }
 
@@ -885,7 +903,8 @@ fn needs_v7(b: &Brush) -> bool {
 /// バージョン 7 までの項目で書けない物を使うか（使えばバージョン 8 で書く）。入り抜きの影響先が既定（大きさだけ・最小値 0）でないブラシと、
 /// 筆先の繰り返し方法・反転のしかた・先端同士の比較暗・質感の回転を使うブラシ。バージョン 8 にする条件は、ここに `||` で足す。
 fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
-    assist.is_some_and(|a| !a.taper_targets.is_default())
+    b.water_edge.is_some()
+        || assist.is_some_and(|a| !a.taper_targets.is_default())
         || uses_tip_rules(b)
         || uses_color_change(b)
         || uses_spray(b)
@@ -1157,6 +1176,7 @@ pub fn decode_user(
     read_color_and_controls(&mut r, &mut b, version)?;
     // 色の変化はバージョン 8 の項目（バージョン 7 までのファイルにあれば、知らない項目として断る）
     if version >= 8 {
+        read_water_edge(&mut r, &mut b)?;
         read_color_change(&mut r, &mut b)?;
         read_spray(&mut r, &mut b)?;
     }
@@ -1501,6 +1521,24 @@ fn read_dual_v8(r: &mut Reader, d: &mut DualBrush) -> Result<(), StoreError> {
     d.angle_rotation = r.bool("dual.angle_rotation", false)?;
     d.angle_line = r.bool("dual.angle_line", false)?;
     d.angle_random = r.single("dual.angle_random", 0.0)?;
+    Ok(())
+}
+
+/// 水彩境界（`water_edge.*`）を読む。鍵が 1 つも無ければ無し。範囲は core の検査に任せる。
+fn read_water_edge(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    const NAMES: [&str; 5] = ["width", "opacity", "darkness", "after_stroke", "blur"];
+    let key = |name: &str| format!("water_edge.{name}");
+    if !NAMES.iter().any(|n| r.map.contains_key(&key(n))) {
+        return Ok(());
+    }
+    let d = WaterEdge::default();
+    b.water_edge = Some(WaterEdge {
+        width: r.single(&key("width"), d.width)?,
+        opacity: r.single(&key("opacity"), d.opacity)?,
+        darkness: r.single(&key("darkness"), d.darkness)?,
+        after_stroke: r.bool(&key("after_stroke"), false)?,
+        blur: r.single(&key("blur"), 0.0)?,
+    });
     Ok(())
 }
 
@@ -5143,6 +5181,147 @@ mod tests {
         ));
         assert!(matches!(
             decode(&format!("{t}controls.size_by_screen=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    fn water_edge_brush() -> Brush {
+        Brush {
+            water_edge: Some(WaterEdge {
+                width: 4.5,
+                opacity: 0.25,
+                darkness: 0.75,
+                after_stroke: true,
+                blur: 2.5,
+            }),
+            ..Brush::default()
+        }
+    }
+
+    #[test]
+    fn a_brush_with_a_water_edge_is_version_eight_and_round_trips() {
+        let b = water_edge_brush();
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for line in [
+            "water_edge.width=4.5",
+            "water_edge.opacity=0.25",
+            "water_edge.darkness=0.75",
+            "water_edge.after_stroke=1",
+            "water_edge.blur=2.5",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        assert_eq!(d.brush, canonical(&b));
+        assert_eq!(text(&user(1, d.brush)), t, "書き戻しても同じ文");
+        // ドラッグ後に処理が切・ぼかし幅 0 は書かない
+        let plain = Brush {
+            water_edge: Some(WaterEdge::default()),
+            ..Brush::default()
+        };
+        let t = text(&user(1, plain.clone()));
+        let lines: Vec<&str> = t.lines().filter(|l| l.starts_with("water_edge.")).collect();
+        assert_eq!(
+            lines,
+            [
+                "water_edge.width=4",
+                "water_edge.opacity=0.3",
+                "water_edge.darkness=0.3"
+            ],
+            "{t}"
+        );
+        assert_eq!(decode(&t).unwrap().2, canonical(&plain));
+        // f32 に収まらない小数は、保存と同じ精度に丸めた正規の形で一致する
+        let odd = Brush {
+            water_edge: Some(WaterEdge {
+                width: 3.123_456_789_012,
+                ..WaterEdge::default()
+            }),
+            ..Brush::default()
+        };
+        let d = decode(&text(&user(1, odd.clone()))).unwrap().2;
+        assert_eq!(d, canonical(&odd));
+        assert_eq!(
+            d.water_edge.unwrap().width,
+            3.123_456_789_012f64 as f32 as f64
+        );
+    }
+
+    #[test]
+    fn brushes_without_a_water_edge_keep_their_version_and_bytes() {
+        for (what, b, version) in [
+            ("既定", Brush::default(), "1"),
+            ("影響元", influence_brush(), "7"),
+            ("散布", spray_brush(), "8"),
+        ] {
+            let t = text(&user(1, b));
+            assert!(
+                t.starts_with(&format!("yolupainter-brush {version}\n")),
+                "{what}: {t}"
+            );
+            assert!(!t.contains("water_edge"), "{what}: {t}");
+        }
+        for file in [
+            include_str!("../../tests/ylbrush_files/v1.ylbrush"),
+            include_str!("../../tests/ylbrush_files/v6.ylbrush"),
+        ] {
+            let d = decode_user(file, &mut |_| unreachable!()).unwrap();
+            assert!(d.brush.water_edge.is_none());
+        }
+    }
+
+    #[test]
+    fn the_water_edge_items_belong_to_version_eight_and_are_checked() {
+        let t = text(&user(1, water_edge_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in 1..=7 {
+            let as_old = t.replacen(
+                "yolupainter-brush 8",
+                &format!("yolupainter-brush {old}"),
+                1,
+            );
+            let err = decode(&as_old).unwrap_err();
+            // バージョン 7 は影響元の鍵を読めるので、残るのは水彩境界の鍵
+            assert!(
+                match &err {
+                    StoreError::UnknownKey(k) => old < 7 || k.starts_with("water_edge."),
+                    StoreError::BadValue(_) => old < 7,
+                    _ => false,
+                },
+                "バージョン {old}: {err:?}"
+            );
+        }
+        for (from, to) in [
+            ("water_edge.width=4.5", "water_edge.width=NaN"),
+            ("water_edge.after_stroke=1", "water_edge.after_stroke=2"),
+            ("water_edge.opacity=0.25", "water_edge.opacity=x"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::BadValue(_)
+                ),
+                "{to}"
+            );
+        }
+        for (from, to) in [
+            ("water_edge.width=4.5", "water_edge.width=0"),
+            ("water_edge.width=4.5", "water_edge.width=21"),
+            ("water_edge.opacity=0.25", "water_edge.opacity=1.5"),
+            ("water_edge.darkness=0.75", "water_edge.darkness=-1"),
+            ("water_edge.blur=2.5", "water_edge.blur=30"),
+        ] {
+            assert!(
+                matches!(
+                    decode(&t.replace(from, to)).unwrap_err(),
+                    StoreError::Invalid(_)
+                ),
+                "{to}"
+            );
+        }
+        assert!(matches!(
+            decode(&format!("{t}water_edge.blur=1\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
     }

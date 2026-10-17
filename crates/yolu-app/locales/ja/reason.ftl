@@ -554,3 +554,5 @@ reason-pen-pressure-range = 筆圧の下限・上限
 reason-no-point-to-fill = 塗る点がない
 reason-path-point-value-range = 点の値が範囲外です
 reason-mask-size-differs-from-canvas = マスクの大きさがキャンバスと違う
+reason-water-edge = 水彩境界
+reason-water-edge-range = 水彩境界（幅 0.1〜20・透明度影響と明度影響 0〜1・ぼかし幅 0〜20）
