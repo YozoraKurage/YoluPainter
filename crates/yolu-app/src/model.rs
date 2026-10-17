@@ -374,7 +374,7 @@ impl AppState {
     ///   どこにも描かない）。目を閉じたセットのマテリアルは隠す。
     /// - 試しの立方体: 今のセットの文書を貼る（マテリアル 0）。
     pub fn sync_view3d(&mut self) {
-        if self.view3d.input.stroke.is_some() {
+        if self.view3d.view.input.stroke.is_some() {
             return;
         }
         // 今のセットのマテリアルを描き、目を閉じたセットのマテリアルを隠す（付いていなければどこにも描かない）

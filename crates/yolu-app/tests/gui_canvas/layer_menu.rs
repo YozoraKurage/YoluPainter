@@ -1173,8 +1173,8 @@ fn the_menu_the_image_fields_projection_switch_and_place_decal_make_the_same_pro
     use yolu_core::fill_image::Projection;
     let mut s = AppState::new(64, 64);
     s.act(Action::LoadDemoModel);
-    s.view3d_mut().camera.yaw = -40.0;
-    s.view3d_mut().camera.pitch = 15.0;
+    s.view3d_mut().view.camera.yaw = -40.0;
+    s.view3d_mut().view.camera.pitch = 15.0;
     let (_, image) = shelf_image(&mut s, "四色");
     let projection = |s: &AppState| {
         *s.doc()

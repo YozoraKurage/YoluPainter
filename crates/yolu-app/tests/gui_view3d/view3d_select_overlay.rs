@@ -1,7 +1,7 @@
 //! 3D ビューの選択範囲の重ね（egui_kittest。描いた絵を読み出して、重ねだけの差を見る）: 縁（白と黒の点線）を見えている面の上にだけ描くこと・選択範囲が無ければ
 //! 何も描かないこと・取り消しで消えること・変わったタイルだけを上げること・GPU のメモリの予算（3D の絵の取り分）に入らなければ出さずに知らせること・
 //! クイックマスクの赤い重ねと選択ペンの途中の被覆・拡大・縮小しても線が太らないこと・トーンマッピングを通しても白いこと・絵（日英）。
-use crate::common::drive::Drive;
+use crate::common::drive::{Drive, DriveApp};
 use crate::common::*;
 use crate::view3d_brush::{cube_view, press_with, screen_of};
 use crate::view3d_select::{
@@ -216,8 +216,8 @@ fn only_the_tiles_that_changed_are_uploaded_and_the_texture_is_released_with_the
     // 文書 512²（タイル 256²）: 4 枚のタイル
     let mut h = app(1100.0, 760.0, 512);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     h.sel_mut().animate = false;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
@@ -299,7 +299,7 @@ fn two_materials() -> (H, Rect) {
         .unwrap();
         state.view3d_mut().set_model(model);
         state.view3d_mut().material = 0;
-        state.view3d_mut().camera = OrbitCamera {
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -357,8 +357,8 @@ fn many_changed_tiles_uploaded_in_one_go_draw_the_same_as_tile_by_tile() {
     let view = |two_steps: bool| {
         let mut h = app(1100.0, 760.0, 512);
         h.view3d_mut().load_demo();
-        h.view3d_mut().camera.yaw = -40.0;
-        h.view3d_mut().camera.pitch = 15.0;
+        h.view3d_mut().view.camera.yaw = -40.0;
+        h.view3d_mut().view.camera.pitch = 15.0;
         h.sel_mut().animate = false;
         click_tab(&mut h, yolu_app::Tab::View3d);
         h.run();
@@ -462,7 +462,7 @@ fn the_overlay_counts_in_the_bytes_the_view_held_at_its_peak() {
     // 同期の途中で GPU に持っていた絵のバイト（予算を超えていないかの記録）に、重ねの分も入る
     let (mut h, rect) = still_view();
     ellipse_on_front(&mut h, rect);
-    h.view3d_mut().camera.yaw += 3.0;
+    h.view3d_mut().view.camera.yaw += 3.0;
     h.run();
     let s = h.state().view3d_stats().unwrap();
     assert!(s.overlay_bytes > 0 && !s.overlay_skipped, "{s:?}");
@@ -615,7 +615,7 @@ fn the_edge_keeps_its_thickness_when_the_model_is_zoomed_in_or_out() {
     let mut widths = Vec::new();
     for distance_scale in [0.85f32, 1.0, 1.7] {
         let (mut h, rect) = still_view();
-        h.view3d_mut().camera.distance *= distance_scale;
+        h.view3d_mut().view.camera.distance *= distance_scale;
         h.run();
         let base = shot(&mut h);
         ellipse_on_front(&mut h, rect);
@@ -738,7 +738,7 @@ fn measure_frames_with_and_without_the_selection_overlay() {
             let model = ViewModel::new("球", vec![mesh], vec![None], revision).unwrap();
             model.tangents();
             state.view3d_mut().set_model(model);
-            state.view3d_mut().camera = OrbitCamera {
+            state.view3d_mut().view.camera = OrbitCamera {
                 target: Vec3::ZERO,
                 yaw: 20.0,
                 pitch: 10.0,
@@ -748,14 +748,14 @@ fn measure_frames_with_and_without_the_selection_overlay() {
             };
         }
         h.run();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         let frames = |h: &mut H| -> (f64, f64) {
             let (mut wall, mut cpu) = (Vec::new(), Vec::new());
             for frame in 0..60 {
-                h.view3d_mut().camera.yaw += 3.0 + frame as f32 * 0.01;
+                h.view3d_mut().view.camera.yaw += 3.0 + frame as f32 * 0.01;
                 let started = Instant::now();
                 h.step();
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 wall.push(started.elapsed().as_micros() as f64 / 1000.0);
                 cpu.push(h.state().view3d_stats().unwrap().last_prepare_us as f64 / 1000.0);
             }
@@ -773,7 +773,7 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         let apply_ms = started.elapsed().as_micros() as f64 / 1000.0;
         let started = Instant::now();
         h.step();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         let change_ms = started.elapsed().as_micros() as f64 / 1000.0;
         println!(
             "  選択を作る CPU {apply_ms:.2} ms、上げて描くフレーム {change_ms:.2} ms（prepare の CPU {:.2} ms）",
@@ -819,7 +819,7 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         );
         // 解除してから同じ選択範囲を作り直すフレーム（パイプラインは作ってあるので、上げ・ミップ・描きだけ）
         clear_selection(&mut h);
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         h.act(Action::Sel(SelAction::Edit(SelEdit::Ellipse {
             cx: size as f64 * 0.5,
             cy: size as f64 * 0.5,
@@ -829,7 +829,7 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         })));
         let started = Instant::now();
         h.step();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         println!(
             "  作り直すフレーム（2 回目）{:.2} ms（prepare の CPU {:.2} ms）",
             started.elapsed().as_micros() as f64 / 1000.0,
@@ -845,7 +845,7 @@ fn measure_frames_with_and_without_the_selection_overlay() {
             mode: SelectionCombine::Add,
         })));
         h.step();
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         println!(
             "  選択を 1 タイルだけ追加したフレーム {:.2} ms",
             started.elapsed().as_micros() as f64 / 1000.0
@@ -857,15 +857,15 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         for _ in 0..60 {
             let started = Instant::now();
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             still.push(started.elapsed().as_micros() as f64 / 1000.0);
         }
         assert_eq!(h.state().view3d_stats().unwrap().renders, renders);
         for _ in 0..60 {
-            h.view3d_mut().camera.yaw += 0.001;
+            h.view3d_mut().view.camera.yaw += 0.001;
             let started = Instant::now();
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             redrawn.push(started.elapsed().as_micros() as f64 / 1000.0);
         }
         println!(
@@ -995,7 +995,7 @@ fn a_document_wider_than_the_gpu_texture_limit_shows_no_selection_overlay_and_sa
             "{lang:?}: 理由は予算でなく、大きさの上限"
         );
         // 3D の絵は動く（落ちない）
-        h.view3d_mut().camera.yaw += 5.0;
+        h.view3d_mut().view.camera.yaw += 5.0;
         h.run();
         assert!(
             h.state().view3d_stats().unwrap().overlay_skipped,

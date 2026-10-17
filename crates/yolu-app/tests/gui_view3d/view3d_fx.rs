@@ -132,7 +132,7 @@ fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32, yaw: f32, pitch: f32) {
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw,
         pitch,
@@ -247,7 +247,7 @@ fn the_supported_counts_are_listed_ascending_and_always_include_one_and_four() {
         "{supported:?}"
     );
     // 画面の選びは、同じ数だけ押せる
-    assert_eq!(h.view3d().display.supported_sample_counts(), supported);
+    assert_eq!(h.view3d().view.display.supported_sample_counts(), supported);
 }
 
 /// 場面ごとの設定（面の色は一様になるものだけ。縁の中間の値を数えるため）。
@@ -384,11 +384,11 @@ fn the_chosen_count_is_kept_but_lowered_for_the_device_and_for_the_memory_ceilin
     let supported = h.state().view3d_supported_samples().unwrap();
     // 選びは保たれ、描く数だけが下がる
     op(&mut h, Op::Antialias(8));
-    assert_eq!(h.view3d().display.post.antialias, 8);
+    assert_eq!(h.view3d().view.display.post.antialias, 8);
     let want = clamp_samples(8, &supported);
     assert_eq!(h.state().view3d_stats().unwrap().samples, want);
     assert_eq!(
-        h.view3d().display.shown_samples(),
+        h.view3d().view.display.shown_samples(),
         want,
         "画面に出す選びは、使える最大へ下げたもの"
     );
@@ -668,7 +668,7 @@ fn bright_scene(h: &mut Harness<'_, YoluApp>, color: [u8; 3]) {
 fn halo_points(h: &Harness<'_, YoluApp>, gap: f32) -> (egui::Pos2, egui::Pos2) {
     // 板の端の画面上の位置
     let rect = view_rect(h);
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let edge = view.to_screen(Vec3::new(-0.35, 0.0, 0.0)).unwrap();
     let side = if edge.x < rect.width() * 0.5 {
         -1.0
@@ -913,7 +913,7 @@ fn the_default_light_lights_the_front_of_a_model_facing_plus_z_and_not_its_back(
     op(&mut h, Op::Env(yolu_app::view3d::display::EnvKind::None));
     op(&mut h, Op::Antialias(1));
     assert_eq!(
-        h.view3d().display.light_direction(),
+        h.view3d().view.display.light_direction(),
         to_light,
         "新しいウィンドウの光は既定のまま"
     );
@@ -961,7 +961,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
     let path = dir.join("YoluPainter").join("settings.conf");
     let mut h = app_with_settings(&path);
     // 初めは既定（4×・ブルーム切）で、ファイルを作らない
-    assert_eq!(h.view3d().display.post, Display::default().post);
+    assert_eq!(h.view3d().view.display.post, Display::default().post);
     assert!(!path.exists());
     op(&mut h, Op::Antialias(8));
     op(&mut h, Op::Bloom(true));
@@ -978,7 +978,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
         assert!(written.lines().any(|l| l == line), "{line}\n{written}");
     }
     // スライダーをドラッグしているあいだは書かない。離したときの値を書く
-    h.view3d_mut().display.post_dragging = true;
+    h.view3d_mut().view.display.post_dragging = true;
     op(&mut h, Op::BloomStrength(0.5));
     op(&mut h, Op::BloomStrength(0.75));
     assert_eq!(
@@ -986,7 +986,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
         written,
         "ドラッグ中は書かない"
     );
-    h.view3d_mut().display.post_dragging = false;
+    h.view3d_mut().view.display.post_dragging = false;
     h.run();
     let released = std::fs::read_to_string(&path).unwrap();
     assert!(
@@ -996,7 +996,7 @@ fn the_finish_is_written_to_the_settings_file_and_comes_back_at_the_next_start()
     drop(h);
     // 次の起動は、書いた値で始まる。既定に戻すと行が消える（既定は書かない）
     let mut h = app_with_settings(&path);
-    let post = h.view3d().display.post;
+    let post = h.view3d().view.display.post;
     assert_eq!(
         (
             post.antialias,
@@ -1029,11 +1029,11 @@ fn a_settings_file_from_before_the_finish_keeps_every_other_value_and_starts_at_
     assert_eq!(app.prefs().settings.export_padding, 8);
     assert!(!app.prefs().settings.uv_wireframe);
     assert_eq!(
-        app.view3d().display.post,
+        app.view3d().view.display.post,
         Display::default().post,
         "仕上げは既定"
     );
-    assert_eq!(app.view3d().display.post.antialias, 4);
+    assert_eq!(app.view3d().view.display.post.antialias, 4);
     assert_eq!(app.message(), "", "壊れた設定として知らせない");
     // 読んだだけではファイルに触らない
     assert_eq!(std::fs::read_to_string(&path).unwrap(), old);
@@ -1127,11 +1127,11 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     h.run();
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.view3d().display.settings_open);
+    assert!(h.view3d().view.display.settings_open);
     h.get_by_label("画質").click();
     h.run();
     assert_eq!(
-        h.view3d().display.tab,
+        h.view3d().view.display.tab,
         yolu_app::view3d::display::SettingsTab::Quality
     );
     for label in ["切", "4×", "ブルーム", "強さ", "しきい値"] {
@@ -1140,39 +1140,46 @@ fn the_quality_tab_picks_the_count_and_edits_the_bloom_in_both_languages() {
     // 4× を選ぶ・切にする
     h.get_by_label("切").click();
     h.run();
-    assert_eq!(h.view3d().display.post.antialias, 1);
+    assert_eq!(h.view3d().view.display.post.antialias, 1);
     h.get_by_label("4×").click();
     h.run();
-    assert_eq!(h.view3d().display.post.antialias, 4);
+    assert_eq!(h.view3d().view.display.post.antialias, 4);
     // 機材が対応しない数は押せない（選びは変わらない）
     let supported = h.state().view3d_supported_samples().unwrap();
     for n in [2u32, 8] {
         if !supported.contains(&n) {
             h.get_by_label(&format!("{n}×")).click();
             h.run();
-            assert_eq!(h.view3d().display.post.antialias, 4, "{n}× は対応しない");
+            assert_eq!(
+                h.view3d().view.display.post.antialias,
+                4,
+                "{n}× は対応しない"
+            );
         }
     }
     // ブルームの入・切（値の欄は切のあいだ押せない）
-    assert!(!h.view3d().display.post.bloom);
+    assert!(!h.view3d().view.display.post.bloom);
     h.get_by_label("ブルーム").click();
     h.run();
-    assert!(h.view3d().display.post.bloom);
+    assert!(h.view3d().view.display.post.bloom);
     h.get_by_label("ブルーム").click();
     h.run();
-    assert!(!h.view3d().display.post.bloom);
+    assert!(!h.view3d().view.display.post.bloom);
     // 既定に戻すはブルームを戻し、アンチエイリアスは戻さない（画質の選び）
     op(&mut h, Op::Antialias(2));
     op(&mut h, Op::Bloom(true));
     op(&mut h, Op::BloomThreshold(2.0));
     op(&mut h, Op::ResetLighting);
-    let post = h.view3d().display.post;
+    let post = h.view3d().view.display.post;
     assert!(
         !post.bloom && post.bloom_threshold == yolu_app::view3d::display::DEFAULT_BLOOM_THRESHOLD
     );
     assert_eq!(post.antialias, 2);
     // 画像は機材によらず同じ並びで（全部の数を押せる並び・4× を選んだ状態）
-    h.view3d_mut().display.set_supported_samples(&[1, 2, 4, 8]);
+    h.view3d_mut()
+        .view
+        .display
+        .set_supported_samples(&[1, 2, 4, 8]);
     op(&mut h, Op::Antialias(4));
     // 英語
     h.set_lang(yolu_app::lang::Lang::En);

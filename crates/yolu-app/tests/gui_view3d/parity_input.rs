@@ -49,7 +49,7 @@ fn alpha_sum(h: &H) -> u64 {
 pub(crate) fn texel_at(h: &H, rect: Rect, at: Pos2) -> Option<(u32, u32)> {
     let s = h.app();
     let model = s.view3d().model.as_ref()?;
-    let view = s.view3d().camera.view(rect.width(), rect.height());
+    let view = s.view3d().view.camera.view(rect.width(), rect.height());
     let hit = pick(
         &model.geometry,
         &view,
@@ -88,13 +88,14 @@ fn strokes(h: &H) -> usize {
 
 fn last_point(h: &H) -> Pos2 {
     h.view3d()
+        .view
         .input
         .last_point
         .expect("描いているストロークの終点")
 }
 
 fn has_previous_end(h: &H) -> bool {
-    h.view3d().input.previous_end.is_some()
+    h.view3d().view.input.previous_end.is_some()
 }
 
 /// 細い線で見分けやすくする（文書は 256 角）。
@@ -804,6 +805,7 @@ fn a_stroke_that_ends_off_the_model_keeps_its_last_point_on_the_surface_for_the_
     assert_eq!(strokes(&h), 1);
     let end = h
         .view3d()
+        .view
         .input
         .previous_end
         .expect("面の上の最後の点を覚える");
@@ -855,10 +857,10 @@ fn a_previous_end_outside_the_view_still_starts_the_shift_line_on_the_screen() {
         &[a, a + vec2(3.0, 0.0)],
         Modifiers::NONE,
     );
-    let end = h.view3d().input.previous_end.expect("前の終点");
+    let end = h.view3d().view.input.previous_end.expect("前の終点");
     // 寄って右へずらす: 前の終点はカメラの前にあるが、表示域の外
     {
-        let camera = &mut h.view3d_mut().camera;
+        let camera = &mut h.view3d_mut().view.camera;
         camera.target = Vec3::new(0.3, 0.0, -0.5);
         camera.distance = 0.9;
     }

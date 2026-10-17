@@ -409,6 +409,10 @@ pub fn default_mates(tab: Tab) -> Vec<Tab> {
     if tab == Tab::Navigator {
         return vec![Tab::TextureSets];
     }
+    // 足した 3D ビューは、最初の 3D ビューの組へ
+    if let Tab::View3dMore(_) = tab {
+        return vec![Tab::View3d];
+    }
     let dock = crate::app::default_dock();
     let Some(path) = dock.find_tab(&tab) else {
         // 既定の並びに無いタブ（ポーズ）は、レイヤーの組へ（`panels::pose::ensure_tab` と同じ）

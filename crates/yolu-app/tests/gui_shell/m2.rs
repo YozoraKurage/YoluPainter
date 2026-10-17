@@ -1784,8 +1784,8 @@ fn headless_m2_documents_survive_save_and_reopen() {
 fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, egui::Rect) {
     let mut h = app(1100.0, 760.0, doc);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -1794,7 +1794,7 @@ fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, egui::Rect) {
 
 fn cube_stroke(h: &mut Harness<'_, YoluApp>, rect: egui::Rect) {
     use yolu_core::glam::Vec3;
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let at = |p: Vec3| {
         let s = view.to_screen(p).expect("カメラの前");
         pos2(rect.left() + s.x, rect.top() + s.y)
@@ -1969,8 +1969,8 @@ fn figure_window() -> (Harness<'static, YoluApp>, egui::Rect) {
 fn point_on_material(h: &Harness<'_, YoluApp>, rect: egui::Rect, material: i32) -> egui::Pos2 {
     let app = h.app();
     let model = app.view3d().model.as_ref().unwrap();
-    let cam = app.view3d().camera.position();
-    let view = app.view3d().camera.view(rect.width(), rect.height());
+    let cam = app.view3d().view.camera.position();
+    let view = app.view3d().view.camera.view(rect.width(), rect.height());
     model
         .geometry
         .triangles()

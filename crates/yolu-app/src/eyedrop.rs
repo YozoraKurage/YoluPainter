@@ -178,7 +178,7 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
     let Some(model) = app.view3d.model.clone() else {
         return false;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
     let Some(hit) = pick(&model.geometry, &view, p) else {
         app.refuse(
@@ -313,7 +313,7 @@ pub fn sample_canvas(app: &mut AppState, view: &CanvasView, at: Pos2) -> Option<
 /// 3D ビューの `at`（画面の点）の面の、印に出す色。モデルが無い・面に当たらない・テクスチャセットが無い・UV が外は None。
 pub fn sample_surface(app: &mut AppState, rect: Rect, at: Pos2) -> Option<Color32> {
     let model = app.view3d.model.clone()?;
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let hit = pick(
         &model.geometry,
         &view,

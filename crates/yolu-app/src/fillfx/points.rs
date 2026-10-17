@@ -136,7 +136,7 @@ fn put(
 /// 3D ビューの点（表示域の左上から）の下の、今のテクスチャセットの面の、その空間での位置。面が無い・ほかのセットの面なら None。
 fn surface_at(app: &AppState, rect: Rect, at: Pos2, space: PointSpace) -> Option<[f64; 3]> {
     let (model, material) = app.region_model()?;
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
     let hit = yolu_core::geometry::pick(&model.geometry, &view, gui)?;
     if hit.material != material {
@@ -171,7 +171,7 @@ fn world_of(app: &AppState, g: &PointGradient, p: &GradientPoint) -> Option<Vec3
 
 /// 点の印の画面の位置（3D ビュー。見えない点は None）。
 fn screen_points_3d(app: &AppState, rect: Rect, g: &PointGradient) -> Vec<Option<Pos2>> {
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     g.points
         .iter()
         .map(|p| {

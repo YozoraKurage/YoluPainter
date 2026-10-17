@@ -177,7 +177,7 @@ pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
     let Some(s) = shape(app, t) else {
         return Handle::None;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     hit_at(app, t, &s, &view, local(rect, at))
 }
 
@@ -185,7 +185,7 @@ pub fn handle_at(app: &AppState, rect: Rect, at: Pos2) -> Handle {
 pub fn handle_point(app: &AppState, rect: Rect, handle: Handle) -> Option<Pos2> {
     let t = target(app)?;
     let s = shape(app, t)?;
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     if let (Target::Ruler(l, id), Handle::EndA | Handle::EndB) = (t, handle) {
         let r = crate::objects::ruler_of(app, l, id)?;
         let end = if handle == Handle::EndA {
@@ -217,7 +217,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: Source) -> bool {
     let Some(start) = shape(app, t) else {
         return false;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let p = local(rect, at);
     let handle = hit_at(app, t, &start, &view, p);
     if handle == Handle::None {
@@ -266,7 +266,7 @@ pub fn drag_to(app: &mut AppState, rect: Rect, at: Pos2, symmetric: bool, snap: 
         crate::rulers::edit3d::drag_end(app, rect, &d, at);
         return;
     }
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let next = sg::drag(
         d.handle,
         &d.start,
@@ -435,7 +435,7 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) -> H
     let Some(s) = shape(app, t) else {
         return Handle::None;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let hover = match &app.fillfx.drag {
         Some(d) => d.handle,
         None => pointer

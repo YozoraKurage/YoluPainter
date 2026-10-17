@@ -45,7 +45,7 @@ fn view(budget: Duration) -> (H, Rect) {
     let state = h.app_mut();
     state.brush_mut().radius = 3.0;
     state.brush_mut().spacing = 0.2;
-    state.view3d_mut().input.paint_budget = Some(budget);
+    state.view3d_mut().view.input.paint_budget = Some(budget);
     (h, rect)
 }
 
@@ -58,11 +58,12 @@ fn move_all(h: &mut H, points: &[Pos2]) {
 }
 
 fn queued(h: &H) -> Option<usize> {
-    h.view3d().input.surface.as_ref().map(|s| s.queued())
+    h.view3d().view.input.surface.as_ref().map(|s| s.queued())
 }
 
 fn painted_dabs(h: &H) -> usize {
     h.view3d()
+        .view
         .input
         .surface
         .as_ref()
@@ -83,7 +84,7 @@ fn stroking(h: &H) -> bool {
 }
 
 fn released(h: &H) -> bool {
-    h.view3d().input.released
+    h.view3d().view.input.released
 }
 
 /// 離してから、描いている最中でなくなるまでフレームを進める（上限つき）。進んだフレームの数を返す。
@@ -157,7 +158,7 @@ fn a_released_stroke_keeps_painting_one_dab_per_frame_and_commits_once() {
     assert!(released(&h), "離した印");
     assert!(stroking(&h), "残りがあるあいだは描いている最中");
     assert_eq!(h.doc().undo_count(), 0, "まだ確定していない");
-    assert!(h.view3d().input.surface.is_some());
+    assert!(h.view3d().view.input.surface.is_some());
     assert!(!h.app().can_edit(), "ほかの編集は断る");
     let mut before = painted_dabs(&h);
     let mut left = queued(&h).unwrap();
@@ -183,7 +184,7 @@ fn a_released_stroke_keeps_painting_one_dab_per_frame_and_commits_once() {
     }
     assert!(frames > 20, "何フレームにも分けて塗った ({frames})");
     assert!(!stroking(&h));
-    assert!(h.view3d().input.surface.is_none());
+    assert!(h.view3d().view.input.surface.is_none());
     assert!(!released(&h), "確定したら印は下ろす");
     assert_eq!(h.doc().undo_count(), 1, "1 本の線");
     assert!(message(&h).is_empty(), "{}", message(&h));
@@ -212,7 +213,10 @@ fn a_press_during_the_leftover_finishes_it_and_starts_the_next_stroke() {
     h.step();
     assert_eq!(h.doc().undo_count(), 1, "前の線は、押した時に確定した");
     assert!(!released(&h), "新しいストローク");
-    assert!(h.view3d().input.stroke.is_some(), "押しを受けて描き始めた");
+    assert!(
+        h.view3d().view.input.stroke.is_some(),
+        "押しを受けて描き始めた"
+    );
     assert_eq!(painted_dabs(&h), 1, "新しいストロークの押した点のダブ");
     move_all(&mut h, &second[1..]);
     release_with(&h, *second.last().unwrap(), Modifiers::NONE);
@@ -241,7 +245,7 @@ fn escape_before_the_release_still_discards_the_whole_stroke() {
     h.step();
     h.run();
     assert!(!stroking(&h));
-    assert!(h.view3d().input.surface.is_none());
+    assert!(h.view3d().view.input.surface.is_none());
     assert_eq!(h.doc().undo_count(), 0, "Undo に積まない");
     assert!(snapshot(&h) == before, "塗った分も戻る");
 }
@@ -256,7 +260,7 @@ fn escape_after_the_release_keeps_the_line() {
     h.step();
     h.run();
     assert!(!stroking(&h), "確定した");
-    assert!(h.view3d().input.surface.is_none());
+    assert!(h.view3d().view.input.surface.is_none());
     assert_eq!(h.doc().undo_count(), 1, "線は残る");
     assert!(snapshot(&h) == expected, "残りを塗ってから確定");
 }
@@ -310,7 +314,7 @@ fn the_default_time_box_paints_the_same_stroke() {
         let state = h.app_mut();
         state.brush_mut().radius = 3.0;
         state.brush_mut().spacing = 0.2;
-        assert!(state.view3d().input.paint_budget.is_none(), "既定の枠");
+        assert!(state.view3d().view.input.paint_budget.is_none(), "既定の枠");
     }
     let points = path(&h, rect, &first_line());
     press_with(&h, points[0], Modifiers::NONE);
@@ -402,7 +406,7 @@ fn saving_switching_the_mode_and_outside_operations_first_finish_the_leftover() 
 fn the_wheel_right_after_the_release_finishes_the_line_and_zooms() {
     let (mut h, rect) = view(Duration::ZERO);
     leave_leftover(&mut h, rect, &first_line());
-    let distance = h.view3d().camera.distance;
+    let distance = h.view3d().view.camera.distance;
     h.event(Event::PointerMoved(rect.center()));
     h.step();
     h.event(Event::MouseWheel {
@@ -415,7 +419,11 @@ fn the_wheel_right_after_the_release_finishes_the_line_and_zooms() {
     h.run();
     assert!(!stroking(&h), "確定した");
     assert_eq!(h.doc().undo_count(), 1);
-    assert_ne!(h.view3d().camera.distance, distance, "ホイールが効いた");
+    assert_ne!(
+        h.view3d().view.camera.distance,
+        distance,
+        "ホイールが効いた"
+    );
 }
 
 /// ツールのキーの「押している間だけ」も、離した直後から効く（先に確定してから、一時の切り替えを始める）。

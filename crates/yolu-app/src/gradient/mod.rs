@@ -257,6 +257,7 @@ impl AppState {
         self.gradient.pen_down = None;
         let surface = self
             .view3d
+            .view
             .input
             .draft
             .take_if(|d| d.kind == crate::view3d::draft::DraftKind::Gradient)

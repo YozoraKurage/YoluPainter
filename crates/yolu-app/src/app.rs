@@ -15,7 +15,7 @@ use crate::livelink::LiveLink;
 use crate::mcp_server::McpServer;
 use crate::panels::{
     assets, color::ColorTextures, layers, layers::Thumbnails, properties, texture_sets,
-    view3d::View3dHost, view3d::View3dSlot,
+    view3d::View3dHost, view3d::View3dSlots,
 };
 use crate::pen::{PenInput, PenSample};
 use crate::settings::{Problem, Settings};
@@ -59,6 +59,9 @@ pub enum Tab {
     Log,
     /// アクション（操作の記録と再生）。既定の並びには無く、「ウィンドウ」のメニューから開くと（`DockOp::Show`）レイヤーと同じ組の後ろへ入る。
     Actions,
+    /// 足した 3D ビュー（2 つ目から。最初のビューは `View3d`）。3D ビューのタブの並びの右の「+」で足し、× で閉じる。既定の並びには無く、
+    /// 「ウィンドウ」のメニューにも出さない。
+    View3dMore(crate::view3d::ViewId),
 }
 
 impl Tab {
@@ -84,8 +87,16 @@ impl Tab {
         Tab::Actions,
     ];
 
-    /// 保存する名前（並びのファイル `layout.json` に書く。Rust の名前を変えても変わらないよう、ここで決める。足すのは良いが、
-    /// 書き換えると保存済みの並びが「知らないタブ」で捨てられる）。
+    /// 保存する名前（並びのファイル `layout.json` に書く。`key` と同じで、足した 3D ビューだけは「view3d-番号」（番号はタブの名前の数。2 から））。
+    pub fn save_key(self) -> std::borrow::Cow<'static, str> {
+        match self {
+            Tab::View3dMore(id) => format!("{VIEW3D_MORE_PREFIX}{}", id.number()).into(),
+            tab => tab.key().into(),
+        }
+    }
+
+    /// 決まった名前（Rust の名前を変えても変わらないよう、ここで決める。足すのは良いが、書き換えると保存済みの並びが「知らないタブ」で
+    /// 捨てられる）。足した 3D ビューは番号の前の「view3d」（保存には `save_key`）。
     pub fn key(self) -> &'static str {
         match self {
             Tab::SubTools => "subtools",
@@ -106,12 +117,39 @@ impl Tab {
             Tab::Navigator => "navigator",
             Tab::Log => "log",
             Tab::Actions => "actions",
+            Tab::View3dMore(_) => "view3d",
         }
     }
 
-    /// 保存した名前から。知らない名前は None。
+    /// 保存した名前から。知らない名前は None（足した 3D ビューは「view3d-2」から上限の番号まで）。
     pub fn from_key(key: &str) -> Option<Tab> {
+        if let Some(number) = key.strip_prefix(VIEW3D_MORE_PREFIX) {
+            let n: u32 = number.parse().ok()?;
+            // 番号の書き方は 1 通り（「view3d-02」は読まない）
+            if n.to_string() != number || n < 2 || n as usize > crate::view3d::views::MAX_VIEWS {
+                return None;
+            }
+            return Some(Tab::View3dMore(crate::view3d::ViewId(n - 1)));
+        }
         Tab::ALL.into_iter().find(|t| t.key() == key)
+    }
+
+    /// 3D ビューのタブか（最初のビューと足したビュー）。
+    pub fn view3d_id(self) -> Option<crate::view3d::ViewId> {
+        match self {
+            Tab::View3d => Some(crate::view3d::ViewId::FIRST),
+            Tab::View3dMore(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// この 3D ビューのタブ。
+    pub fn of_view3d(id: crate::view3d::ViewId) -> Tab {
+        if id == crate::view3d::ViewId::FIRST {
+            Tab::View3d
+        } else {
+            Tab::View3dMore(id)
+        }
     }
 
     pub fn title(self) -> &'static str {
@@ -139,13 +177,17 @@ impl Tab {
             Tab::ColorSets => lang.t("app-color-sets"),
             Tab::Log => lang.t("app-log"),
             Tab::Actions => lang.t("app-actions"),
+            Tab::View3dMore(_) => lang.t("app-3d-view"),
         }
     }
 }
 
+/// 足した 3D ビューの保存する名前の頭（`Tab::key`）。
+const VIEW3D_MORE_PREFIX: &str = "view3d-";
+
 impl serde::Serialize for Tab {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(self.key())
+        serializer.serialize_str(&self.save_key())
     }
 }
 
@@ -296,7 +338,8 @@ pub fn dock_style(style: &egui::Style) -> egui_dock::Style {
     s
 }
 
-/// ドックの描き方（メインウィンドウと別ウィンドウで同じ）。タブは閉じない（閉じるとキャンバスを失う）・足すボタンを出さない・右クリックは
+/// ドックの描き方（メインウィンドウと別ウィンドウで同じ）。閉じられるのは足した 3D ビューのタブだけ（ほかは `Tabs::is_closeable` が断る。
+/// 閉じるとキャンバスを失う）・egui_dock の足すボタンは出さない（3D ビューの組だけに自前の「+」を置く。`add_view_buttons`）・右クリックは
 /// アプリのメニュー（egui_dock の組み込みのメニューは切る）。
 pub fn dock_area(dock: &mut DockState<Tab>, id: Id, style: egui_dock::Style) -> DockArea<'_, Tab> {
     // 浮かせたウィンドウの閉じるボタンは出さない。egui_dock 0.21 は代わりの名前を案内するが、その名前の関数はまだ無いので、古い名前を使う
@@ -304,11 +347,57 @@ pub fn dock_area(dock: &mut DockState<Tab>, id: Id, style: egui_dock::Style) -> 
     let area = DockArea::new(dock).show_window_close_buttons(false);
     area.id(id)
         .style(style)
-        .show_close_buttons(false)
+        .show_close_buttons(true)
         .show_add_buttons(false)
         .show_leaf_collapse_buttons(false)
         .show_leaf_close_all_buttons(false)
         .tab_context_menus(false)
+}
+
+/// 「+」の幅（点。タブの行の高さと同じ正方形）。
+const ADD_VIEW_WIDTH: f32 = 24.0;
+
+/// メインウィンドウのドックの、3D ビューのタブのある組のタブの行の右端に「+」（3D ビューを足す）を置く。押された組を返す。上限まで足した・
+/// 描いている最中は押せない。
+fn add_view_buttons(
+    ui: &mut Ui,
+    dock: &DockState<Tab>,
+    bar_height: f32,
+    app: &AppState,
+) -> Option<egui_dock::NodePath> {
+    let lang = app.lang;
+    let enabled = app.view3d.next_view_id().is_some() && !crate::view3d::views::busy(app);
+    let mut pressed = None;
+    for (path, leaf) in dock.iter_leaves() {
+        if path.surface != egui_dock::SurfaceIndex::main()
+            || leaf.tab_bar_hidden
+            || !leaf.rect.is_finite()
+            || !leaf.tabs.iter().any(|t| t.view3d_id().is_some())
+        {
+            continue;
+        }
+        let r = Rect::from_min_size(
+            pos2(leaf.rect.right() - ADD_VIEW_WIDTH, leaf.rect.top()),
+            vec2(ADD_VIEW_WIDTH, bar_height),
+        );
+        if !r.is_positive() {
+            continue;
+        }
+        let response = w::icon_button(
+            ui,
+            r,
+            ("view3d.add", path.node.0),
+            "add",
+            lang.t("app-add-3d-view-tip"),
+            false,
+            enabled,
+            16.0,
+        );
+        if response.clicked() {
+            pressed = Some(path);
+        }
+    }
+    pressed
 }
 
 struct Tabs<'a> {
@@ -316,7 +405,7 @@ struct Tabs<'a> {
     display: &'a mut CanvasDisplay,
     thumbs: &'a mut Thumbnails,
     colors: &'a mut ColorTextures,
-    view3d: &'a mut View3dSlot,
+    view3d: &'a mut View3dSlots,
     renderer3d: &'a mut Option<View3dRenderer>,
     pen: &'a [PenSample],
     tab_rects: HashMap<Tab, Rect>,
@@ -339,9 +428,11 @@ impl TabViewer for Tabs<'_> {
     }
 
     fn title(&mut self, tab: &mut Tab) -> WidgetText {
-        RichText::new(tab.title_in(self.app.lang))
-            .font(t::HEADER.font())
-            .into()
+        let title = match tab.view3d_id() {
+            Some(id) => crate::view3d::views::tab_title(self.app, id),
+            None => tab.title_in(self.app.lang).to_owned(),
+        };
+        RichText::new(title).font(t::HEADER.font()).into()
     }
 
     fn ui(&mut self, ui: &mut Ui, tab: &mut Tab) {
@@ -365,9 +456,12 @@ impl TabViewer for Tabs<'_> {
         match tab {
             Tab::Navigator => crate::navigator::show(ui, self.app),
             Tab::Canvas => canvas::show(ui, self.app, self.display, self.pen),
-            Tab::View3d => self
-                .view3d
-                .show(ui, self.app, self.renderer3d.as_mut(), self.pen),
+            Tab::View3d | Tab::View3dMore(_) => {
+                let id = tab.view3d_id().unwrap_or_default();
+                self.view3d
+                    .slot_mut(id)
+                    .show(ui, self.app, self.renderer3d.as_mut(), self.pen, id)
+            }
             Tab::TextureSets => texture_sets::show(ui, self.app),
             Tab::Channels => crate::panels::channels::show(ui, self.app),
             Tab::Layers => layers::show(ui, self.app, self.thumbs),
@@ -421,8 +515,21 @@ impl TabViewer for Tabs<'_> {
         }
     }
 
-    fn is_closeable(&self, _tab: &Tab) -> bool {
-        false
+    /// 閉じられるのは足した 3D ビューだけ（× と中ボタン）。
+    fn is_closeable(&self, tab: &Tab) -> bool {
+        matches!(tab, Tab::View3dMore(_))
+    }
+
+    /// 足した 3D ビューを閉じる: そのビューで描いている・回している途中なら閉じない（ビューの状態は、次のフレームの初めにドックと突き合わせて捨てる）。
+    fn on_close(&mut self, tab: &mut Tab) -> egui_dock::tab_viewer::OnCloseResponse {
+        let busy = tab.view3d_id().is_some_and(|id| {
+            self.app.view3d.active_view() == id && crate::view3d::views::busy(self.app)
+        });
+        if busy {
+            egui_dock::tab_viewer::OnCloseResponse::Ignore
+        } else {
+            egui_dock::tab_viewer::OnCloseResponse::Close
+        }
     }
 
     fn allowed_in_windows(&self, _tab: &mut Tab) -> bool {
@@ -451,7 +558,7 @@ pub struct YoluApp {
     pen_buttons: crate::pen::ButtonMap,
     /// 本物のマウスのボタンがビューを動かしている間の、ペンの浮きとマウスの動きの混ざりを、出どころごとの差にして積む（Windows のメインウィンドウ）。
     pointer_join: crate::pen::PointerJoin,
-    view3d: View3dSlot,
+    view3d: View3dSlots,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
     /// 主の wgpu のデバイスの見張り（実際のウィンドウだけ。`watch_gpu`）。GPU を失ったときの流れは `gpu_lost`。
@@ -888,7 +995,7 @@ impl YoluApp {
             now.uv_wireframe_color = saved.uv_wireframe_color;
         }
         // 3D の仕上げのスライダー（ブルーム）と 3D の塗りの切り替えのスライダーも、ドラッグ中は書かず、離したときの値を書く
-        if self.state.view3d.display.post_dragging {
+        if self.state.view3d.view.display.post_dragging {
             now.view3d_post = saved.view3d_post;
         }
         if self.state.view3d.projection_dragging {
@@ -1007,7 +1114,7 @@ impl YoluApp {
             pacing: crate::pacing::Pacing::default(),
             pen_buttons: crate::pen::ButtonMap::default(),
             pointer_join: crate::pen::PointerJoin::default(),
-            view3d: View3dSlot::default(),
+            view3d: View3dSlots::default(),
             renderer3d: None,
             gpu_watch: None,
             gpu_lost: None,
@@ -1649,7 +1756,9 @@ impl YoluApp {
             .as_ref()
             .map(|r| r.supported_samples().to_vec())
             .unwrap_or_default();
-        self.state.view3d.display.set_supported_samples(&supported);
+        for view in self.state.view3d.views_mut() {
+            view.display.set_supported_samples(&supported);
+        }
         self.gpu_device = rs.map(|rs| rs.device.clone());
         // キャンバスの合成も同じ装置で（使えるときは GPU。使えなければ CPU の表示）
         self.display.attach_render_state(rs.cloned());
@@ -1706,7 +1815,22 @@ impl YoluApp {
 
     /// 最後に描いた 3D ビューの中身の表示域（画面の点。隠れていれば None）。
     pub fn view3d_rect(&self) -> Option<Rect> {
-        self.view3d.content_rect()
+        self.view3d.content_rect(crate::view3d::ViewId::FIRST)
+    }
+
+    /// このビューの 3D の表示域（このフレームで描いていなければ None）。
+    pub fn view3d_rect_of(&self, view: crate::view3d::ViewId) -> Option<Rect> {
+        self.view3d.content_rect(view)
+    }
+
+    /// 描き先を持っている 3D ビュー（テスト用。描き手が無ければ空）。
+    pub fn view3d_target_views(&self) -> Vec<crate::view3d::ViewId> {
+        self.renderer3d.as_ref().map_or_else(Vec::new, |r| {
+            r.target_views()
+                .into_iter()
+                .map(crate::view3d::ViewId)
+                .collect()
+        })
     }
 
     /// 3D ビューの描画の数（上げたタイル・描いた回数。wgpu が無ければ None）。
@@ -2000,6 +2124,86 @@ impl YoluApp {
         self.view3d.set_host(host);
     }
 
+    /// 3D ビューのタブ（メインウィンドウと別ウィンドウのドック）とビューの状態を突き合わせる: タブがあってビューの無いもの（保存した並びから
+    /// 戻した）は足し、タブの無くなったビュー（× で閉じた）は除いて、その描き先と置き場所を捨てる。それから、このフレームにどれかの
+    /// ビューが見ているメッシュマップの種類とユーザーチャンネルを描き手へ渡す。
+    fn sync_view3d_tabs(&mut self) {
+        use crate::view3d::ViewId;
+        let more = |dock: &DockState<Tab>| -> Vec<ViewId> {
+            dock.iter_all_tabs()
+                .filter_map(|(_, t)| match t {
+                    Tab::View3dMore(id) => Some(*id),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut ids = more(&self.dock);
+        for w in &self.detached.windows {
+            ids.extend(more(&w.dock));
+        }
+        for id in &ids {
+            self.state.view3d.insert_view(*id);
+        }
+        for id in self.state.view3d.view_ids() {
+            if id != ViewId::FIRST && !ids.contains(&id) {
+                self.state.view3d.remove_view(id);
+                if let Some(r) = &mut self.renderer3d {
+                    r.drop_view(id.0);
+                }
+            }
+        }
+        self.view3d.retain(|id| ids.contains(&id));
+        if let Some(r) = &mut self.renderer3d {
+            let (maps, users) = crate::view3d::views::frame_shows(&self.state);
+            r.begin_frame(&maps, &users);
+        }
+    }
+
+    /// 今のビューのタブが隠れた（別のタブの裏・閉じた）: ペン・ボタンの離れを受け取れないので、ポインタの印と入力の途中を捨てる。
+    fn drop_hidden_view3d(&mut self) {
+        if self
+            .view3d
+            .content_rect(self.state.view3d.active_view())
+            .is_some()
+        {
+            return;
+        }
+        // 隠れたビューにポインタが乗っている印は残さない
+        self.state
+            .rulers
+            .note_pointer(crate::rulers::Place::View3d, false);
+        self.state.view3d.view.input.drop_presses();
+        // 3D ビューで引いていた選択の形と、打っていた多角形の点も、離したのを受け取れないので何も選ばずに捨てる
+        self.state.sel.view3d.cancel();
+        // 離した後の残りを塗っているストロークは、ビューが隠れると塗り進められないので、その場で塗り終えて確定する（取り残さない）
+        crate::view3d::input::settle(&mut self.state);
+    }
+
+    /// 3D ビューを足して、`path` の組（「+」を押した組）の後ろに入れて前に出す（上限なら何もしない）。
+    fn add_view3d(&mut self, path: egui_dock::NodePath) {
+        let Some(id) = self.state.view3d.add_view() else {
+            return;
+        };
+        let tab = Tab::View3dMore(id);
+        match self.dock.leaf_mut(path) {
+            Ok(leaf) => {
+                leaf.tabs.push(tab);
+                leaf.active = egui_dock::TabIndex(leaf.tabs.len() - 1);
+            }
+            Err(_) => self.dock.push_to_first_leaf(tab),
+        }
+    }
+
+    /// 3D ビューを足す（「+」と同じ。最初のビューの組へ。テスト・外からの操作の口）。足したビュー。
+    pub fn add_view3d_tab(&mut self) -> Option<crate::view3d::ViewId> {
+        let path = self.dock.find_tab(&Tab::View3d).map(|p| p.node_path())?;
+        let before = self.state.view3d.view_count();
+        self.add_view3d(path);
+        (self.state.view3d.view_count() > before)
+            .then(|| self.state.view3d.view_ids().into_iter().max())
+            .flatten()
+    }
+
     /// 1 フレーム（eframe と試験の両方がここを呼ぶ）。フレームの中で `message` に書かれた文（非同期の終わりなど、`apply` の外の書き込みも）は、
     /// 前と同じ文でも新しい知らせとして出る。
     pub fn frame(&mut self, ui: &mut Ui) {
@@ -2076,7 +2280,7 @@ impl YoluApp {
     /// 貼り付けなど・ファイルの落とし・ペンが触れる（動くだけ・離すだけでは確定しない）。ここは全部の部品より先に呼ぶ。パネルの部品・メニュー・
     /// ショートカットの全部が、描いている最中の判定（`is_stroking`）を見る前に済む。
     fn settle_before_input(&mut self, ctx: &egui::Context, pen: &[PenSample]) {
-        if !self.state.view3d.input.released {
+        if !self.state.view3d.view.input.released {
             return;
         }
         let acts = ctx.input(|i| {
@@ -2345,6 +2549,8 @@ impl YoluApp {
                 let r = ui.max_rect();
                 shell::tool_strip(ui, &mut self.state, r);
             });
+        // 3D ビューの並び（ドックのタブ）とビューの状態・描き先を突き合わせ、このフレームに見せるメッシュマップとユーザーチャンネルを描き手へ
+        self.sync_view3d_tabs();
         self.view3d.begin_frame();
         // 描く前のタブの組（egui_dock がタブを浮いたウィンドウへ動かしたとき、戻る先にする）
         let mates = crate::detach::leaf_mates(&self.dock);
@@ -2366,13 +2572,19 @@ impl YoluApp {
                     context: None,
                     windows_allowed: true,
                 };
+                let bar_height = style.tab_bar.height;
                 dock_area(&mut self.dock, Id::new("yolu.dock"), style).show_inside(ui, &mut tabs);
                 self.tab_rects = tabs.tab_rects;
-                detached::DockPass {
+                let pass = detached::DockPass {
                     grabbed: tabs.grabbed,
                     released: tabs.released,
                     context: tabs.context,
+                };
+                // 3D ビューの組のタブの行の右端の「+」: 3D ビューを足して、その組の前に出す
+                if let Some(path) = add_view_buttons(ui, &self.dock, bar_height, &self.state) {
+                    self.add_view3d(path);
                 }
+                pass
             })
             .inner;
         // （写すだけ。別ウィンドウが無ければ、このフレームに描いた矩形がそのまま残る）
@@ -2405,15 +2617,9 @@ impl YoluApp {
         detached::refuse_foreign_drop(&ctx);
         // ツールの列・グループのタブ・ブラシの行をまたぐドラッグは、全部を描いたあとに落とす先へ当てる
         crate::toolset::ui::end_frame(&ctx, &mut self.state);
-        // 3D ビューのタブが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
-        self.state.view3d.visible = self.view3d.content_rect().is_some();
+        // 3D ビューのタブのどれかが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
+        self.state.view3d.visible = self.view3d.any_drawn();
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);
-        // 隠れたビューにポインタが乗っている印は残さない
-        if !self.state.view3d.visible {
-            self.state
-                .rulers
-                .note_pointer(crate::rulers::Place::View3d, false);
-        }
         if !self.state.ui.canvas_visible {
             self.state
                 .rulers
@@ -2427,13 +2633,7 @@ impl YoluApp {
             self.state.canvas.pen_press = None;
             crate::canvas::nav::cancel(&mut self.state);
         }
-        if !self.state.view3d.visible {
-            self.state.view3d.input.drop_presses();
-            // 3D ビューで引いていた選択の形と、打っていた多角形の点も、離したのを受け取れないので何も選ばずに捨てる
-            self.state.sel.view3d.cancel();
-            // 離した後の残りを塗っているストロークは、ビューが隠れると塗り進められないので、その場で塗り終えて確定する（取り残さない）
-            crate::view3d::input::settle(&mut self.state);
-        }
+        self.drop_hidden_view3d();
 
         let bar = bar.unwrap_or(menu::BarOutcome {
             rects: Vec::new(),

@@ -11,7 +11,9 @@ use yolu_core::Channel;
 
 use super::brdf::Curve;
 use super::environment::SkyColors;
+use super::{ViewId, ViewState};
 use crate::lang::Lang;
+use crate::notice::Source;
 use crate::state::{Action, AppState};
 use crate::ui::menu::Entry;
 
@@ -321,7 +323,7 @@ impl Display {
             }
         };
         match op {
-            Op::Shading(s) => self.shading = s,
+            Op::Shading(s) | Op::ShadingOf(_, s) => self.shading = s,
             Op::Env(k) => self.env = k,
             Op::EnvIntensity(v) => self.env_intensity = finite(v, 0.0, 8.0, 1.0),
             Op::EnvRotation(v) => self.env_rotation = finite(v, -180.0, 180.0, 0.0),
@@ -387,7 +389,10 @@ impl Display {
 /// 表示の切り替え（`Action::View3d`）。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Op {
+    /// 今のビューの表示の種類。
     Shading(Shading),
+    /// このビューの表示の種類（ビューの左上のドロップダウンのメニュー。メニューを開いたビューへ当てる）。
+    ShadingOf(super::ViewId, Shading),
     Env(EnvKind),
     EnvIntensity(f32),
     EnvRotation(f32),
@@ -444,48 +449,59 @@ pub const CHANNELS: [Channel; 6] = [
     Channel::Height,
 ];
 
-/// 表示のドロップダウンの項目（Unity 版と同じ並び: マテリアル・中立・チャンネルだけ・メッシュマップ）。
+/// 表示のドロップダウンの項目（Unity 版と同じ並び: マテリアル・中立・チャンネルだけ・メッシュマップ）。メニューを開いたビュー
+/// （`View3dState::shading_menu`）の表示の種類に印を付け、選んだ種類をそのビューへ当てる。チャンネルだけは標準の 6 つの後に、今のセットの
+/// ユーザーチャンネル。メッシュマップは、どれかのセットで焼いてあるものだけ選べる。
 pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
-    let current = app.view3d.display.shading;
+    let view = app.view3d.shading_menu;
+    let current = app
+        .view3d
+        .view_of(view)
+        .map_or(app.view3d.view.display.shading, |v| v.display.shading);
+    let item = |shading: Shading, label: String| {
+        Entry::item(label, Action::View3d(Op::ShadingOf(view, shading))).radio(current == shading)
+    };
     let mut v = vec![
-        Entry::item(
-            shading_label(app, Shading::Material),
-            Action::View3d(Op::Shading(Shading::Material)),
-        )
-        .radio(current == Shading::Material),
-        Entry::item(
-            shading_label(app, Shading::Neutral),
-            Action::View3d(Op::Shading(Shading::Neutral)),
-        )
-        .radio(current == Shading::Neutral),
+        item(Shading::Material, shading_label(app, Shading::Material)),
+        item(Shading::Neutral, shading_label(app, Shading::Neutral)),
         Entry::Separator,
         Entry::Heading(lang.t("view3d-channel-only").to_owned()),
     ];
-    for c in CHANNELS {
-        v.push(
-            Entry::item(
-                shading_label(app, Shading::Channel(c)),
-                Action::View3d(Op::Shading(Shading::Channel(c))),
-            )
-            .radio(current == Shading::Channel(c)),
-        );
+    for c in CHANNELS.into_iter().chain(user_channels(&app.session.doc)) {
+        v.push(item(
+            Shading::Channel(c),
+            shading_label(app, Shading::Channel(c)),
+        ));
     }
     v.push(Entry::Separator);
-    // メッシュマップ: 今のテクスチャセットで焼いてあるものだけ選べる
     v.push(Entry::Heading(lang.t("view3d-mesh-map-only").to_owned()));
-    let maps = &app.session.sets.current().mesh_maps;
     for kind in MeshMapKind::ALL {
         v.push(
-            Entry::item(
-                crate::bake::kind_label(lang, kind),
-                Action::View3d(Op::Shading(Shading::MeshMap(kind))),
+            item(
+                Shading::MeshMap(kind),
+                crate::bake::kind_label(lang, kind).to_owned(),
             )
-            .radio(current == Shading::MeshMap(kind))
-            .enabled(maps.get(kind).is_some()),
+            .enabled(super::views::mesh_map_available(app, kind)),
         );
     }
     v
+}
+
+/// 文書のユーザーチャンネル（番号の順）。
+pub fn user_channels(doc: &yolu_core::Document) -> impl Iterator<Item = Channel> + '_ {
+    (Channel::STANDARD_COUNT..Channel::MAX)
+        .filter_map(Channel::from_index)
+        .filter(|c| doc.channel_info(*c).is_some())
+}
+
+/// タブの見出しに出す、表示の種類の短い名前（マテリアルは「(PBR)」を付けない。メッシュマップは種類の名前だけ）。
+pub fn shading_short_label(app: &AppState, shading: Shading) -> String {
+    match shading {
+        Shading::Material => app.lang.t("view3d-material-short").to_owned(),
+        Shading::MeshMap(k) => crate::bake::kind_label(app.lang, k).to_owned(),
+        other => shading_label(app, other),
+    }
 }
 
 /// 設定のパネルの面の切り替えを描き、視点の面を開いているか（開いていれば内容もここで描いた）を返す。`settings_tabs` の、視点だけを見る形。
@@ -515,19 +531,19 @@ pub fn settings_tabs(
             cell,
             ("view3d.settings.tab", tab as u8),
             tab.label(lang),
-            app.view3d.display.tab == tab,
+            app.view3d.view.display.tab == tab,
             true,
             None,
             None,
         )
         .clicked()
         {
-            app.view3d.display.tab = tab;
-            app.view3d.display.post_dragging = false;
+            app.view3d.view.display.tab = tab;
+            app.view3d.view.display.post_dragging = false;
         }
     }
-    if app.view3d.display.tab != SettingsTab::Navigation {
-        return app.view3d.display.tab;
+    if app.view3d.view.display.tab != SettingsTab::Navigation {
+        return app.view3d.view.display.tab;
     }
     let r = rows.row(22.0, 4.0);
     w::text(
@@ -601,6 +617,81 @@ pub fn settings_tabs(
         navigation::frame_selected(app, view);
     }
     SettingsTab::Navigation
+}
+
+/// 表示の切り替え（`Action::View3d`）を当てる。ユーザーチャンネルを「チャンネルだけ」で見せるときは、3D に持つユーザーチャンネルの配列に
+/// 入るか（`user_channel_room`）を先に確かめ、入らなければ断る（表示は替えない）。
+pub fn apply_display(app: &mut AppState, op: Op) {
+    let target = match op {
+        Op::Shading(s) => Some((app.view3d.active_view(), s)),
+        Op::ShadingOf(id, s) => Some((id, s)),
+        _ => None,
+    };
+    if let Some((id, Shading::Channel(c))) = target {
+        if !c.is_standard() {
+            if let Err(reason) = user_channel_room(app, id, c) {
+                let lang = app.lang;
+                let what = lang.f(
+                    "view3d-cannot-show-channel",
+                    &[(
+                        "name",
+                        &lang.quote(&crate::m2::channel_name(lang, &app.session.doc, c)),
+                    )],
+                );
+                app.refuse(Source::View3d, lang.with_reason(what, reason));
+                return;
+            }
+        }
+    }
+    app.view3d.apply_display(op);
+}
+
+/// ユーザーチャンネル `c`（今のセットの文書の番号）を、ビュー `id` の「チャンネルだけ」で見せられるか: 全部のビューで同時に見せるユーザー
+/// チャンネルが [`look_gpu::SHOWN_USERS`] 個まで、今のセットの配列（lilToon のスロットが読むものと合わせて）が
+/// [`user_layers::MAX_LAYERS`] 個まで、その配列が元の大きさで 3D のユーザーチャンネルの予算（[`user_layers::USER_BUDGET_BYTES`]）に
+/// 入ること。入らなければ理由。
+pub fn user_channel_room(app: &AppState, id: ViewId, c: yolu_core::Channel) -> Result<(), String> {
+    use super::{look_gpu, user_layers};
+    let lang = app.lang;
+    let doc = &app.session.doc;
+    let Some(info) = doc.channel_info(c) else {
+        return Err(lang.t("view3d-the-channel-is-not-in").to_owned());
+    };
+    // ほかのビューが見ている名前（このビューの今の表示は替わるので数えない）
+    let mut names: Vec<String> = Vec::new();
+    let mut views: Vec<&ViewState> = app.view3d.views().filter(|v| v.id != id).collect();
+    views.sort_by_key(|v| v.id);
+    for v in views {
+        if let Shading::Channel(u) = v.display.shading {
+            if let Some(i) = doc.channel_info(u).filter(|_| !u.is_standard()) {
+                if !names.contains(&i.name) {
+                    names.push(i.name.clone());
+                }
+            }
+        }
+    }
+    if !names.contains(&info.name) {
+        if names.len() >= look_gpu::SHOWN_USERS {
+            return Err(lang.f(
+                "view3d-up-to-user-channels-at-once",
+                &[("count", &look_gpu::SHOWN_USERS)],
+            ));
+        }
+        names.push(info.name.clone());
+    }
+    let users = look_gpu::array_users(doc, doc.drawn_look(), &names);
+    if !users.contains(&c) {
+        return Err(lang.f(
+            "view3d-up-to-user-channels-in-3d",
+            &[("count", &user_layers::MAX_LAYERS)],
+        ));
+    }
+    if user_layers::full_bytes([doc.width(), doc.height()], users.len())
+        > user_layers::USER_BUDGET_BYTES
+    {
+        return Err(lang.t("view3d-user-channels-exceed-budget").to_owned());
+    }
+    Ok(())
 }
 
 #[cfg(test)]

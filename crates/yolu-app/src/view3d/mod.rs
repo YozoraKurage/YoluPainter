@@ -25,6 +25,7 @@ pub mod selection_overlay;
 pub mod shape_gizmo;
 pub mod tangents;
 pub mod user_layers;
+pub mod views;
 
 use std::sync::Arc;
 
@@ -124,11 +125,13 @@ impl SurfaceInput {
 /// 描くレイも遮らない）。隠すマテリアルが無ければ同じもの。描いている最中は、どちらも入れ替えない（終わってから）。
 #[derive(Default)]
 pub struct View3dState {
-    /// 見せる形（描画・当たり・カーソルが読む）。
+    /// 見せる形（描画・当たり・カーソルが読む）。全部のビューが同じ形を見る。
     pub model: Option<Arc<ViewModel>>,
-    pub camera: OrbitCamera,
-    /// 今の正投影は、軸の向きに入ったので自動で替えたもの（回して軸から外れたら透視へ戻す。`navigation::after_orbit`）。
-    pub auto_orthographic: bool,
+    /// 今のビュー（入力を受け、キーの視点の操作が効くビュー）の状態。ほかのビューの状態は `parked` に置き、今のビューを替えるときに
+    /// 入れ替える（`views`）。
+    pub view: ViewState,
+    /// 今のビューでないビューの状態（足した順）。
+    parked: Vec<ViewState>,
     /// 描くテクスチャセット（マテリアルの組の番号。負ならどの面にも描かない）。`AppState::sync_view3d` が今のセットから決める。
     pub material: i32,
     /// メモリの予算が足りずに、絵を 3D に見せていないセットのマテリアル（今のセットでないセットだけ。描くたびに `other_sets::finish` が入れる。
@@ -155,9 +158,6 @@ pub struct View3dState {
     /// ポーズだけの入れ替えでは残さない。続けて替わったら、最初の形のまま）。
     replaced: Option<Arc<ViewModel>>,
     revision: u32,
-    pub input: SurfaceInput,
-    /// 表示の設定（マテリアル・中立・チャンネルだけ、光・環境・トーンマッピング）。
-    pub display: display::Display,
     /// ポーズの変更（スキンのあるモデル・ポーズ・ギズモ）。
     pub pose: pose::PoseEditor,
     /// 3D の塗りの切り替え（隠れた所・裏の面・面の向きの弱め・継ぎ目のにじみ）。ストロークの始めに固める。設定のファイルに書く
@@ -165,10 +165,52 @@ pub struct View3dState {
     pub projection: yolu_core::geometry::ProjectionSettings,
     /// 3D の塗りの切り替えのスライダーをドラッグしている（その間は設定のファイルに書かず、離したときの値を書く）。
     pub projection_dragging: bool,
-    /// 3D ビューのタブが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。別のタブの
-    /// 裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
+    /// 表示の種類のメニューを開いたビュー（メニューで選んだ種類を当てるビュー）。
+    pub shading_menu: ViewId,
+    /// 3D ビューのタブのどれかが見えているか（`YoluApp::frame` が描いた後に毎フレーム入れる。次のフレームのキー入力が読む。全部の
+    /// ビューが別のタブの裏にあるあいだは、ポーズのモードでも取り消し・やり直しを画素へ回す）。
     pub visible: bool,
-    /// 最後に描いた 3D ビューの表示域（画面の点。パイから「収める」ときの縦横の比・G/R/S の線と札）。
+}
+
+impl ViewState {
+    /// カメラを、この境界が全部入る既定の向きの位置へ置き直す。手で選んだ正投影は保ち、軸の向きで自動で替えた正投影は透視へ戻す
+    /// （既定の向きは軸の向きではない）。
+    fn reframe(&mut self, bounds: &yolu_core::geometry::Bounds) {
+        let orthographic = self.camera.is_orthographic() && !self.auto_orthographic;
+        self.camera = OrbitCamera::framing(bounds);
+        self.camera.set_orthographic(orthographic);
+        self.auto_orthographic = false;
+    }
+}
+
+/// 3D ビュー 1 つの見分け（0 が最初のビュー。タブの「3D ビュー n」の n は番号 + 1）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ViewId(pub u32);
+
+impl ViewId {
+    /// 最初のビュー（「ウィンドウ」のメニューの 3D ビュー。閉じられない）。
+    pub const FIRST: ViewId = ViewId(0);
+
+    /// タブの名前に出す番号（1 から）。
+    pub fn number(self) -> u32 {
+        self.0 + 1
+    }
+}
+
+/// ビューごとの状態: カメラ・正投影の切り替え・表示の設定（表示の種類はビューごと。光・環境・トーンマッピング・仕上げは全部のビューで同じ値を
+/// 持つ。`View3dState::apply_display`）・表示域・そのビューで始まった入力。モデル・描くセット・塗りの設定・ポーズは全部のビューで共通
+/// （`View3dState` が持つ）。ビューごとに持たせたい物は、ここへ足す（今のビューを替えるとき、まとめて入れ替わる）。
+#[derive(Default)]
+pub struct ViewState {
+    pub id: ViewId,
+    pub camera: OrbitCamera,
+    /// 今の正投影は、軸の向きに入ったので自動で替えたもの（回して軸から外れたら透視へ戻す。`navigation::after_orbit`）。
+    pub auto_orthographic: bool,
+    /// 表示の設定（マテリアル・中立・チャンネルだけ、光・環境・トーンマッピング）。
+    pub display: display::Display,
+    /// このビューで始まった入力の途中の状態（ストロークは始めたビューのカメラで最後まで。途中で今のビューは替えない）。
+    pub input: SurfaceInput,
+    /// 最後に描いた表示域（画面の点。パイから「収める」ときの縦横の比・G/R/S の線と札）。
     pub view_rect: Option<egui::Rect>,
 }
 
@@ -188,7 +230,7 @@ impl View3dState {
     /// モデルを入れ替える（描いている最中なら、終わってから）。カメラはモデル全体が入る位置へ。
     pub fn set_model(&mut self, model: ViewModel) {
         let model = Arc::new(model);
-        if self.input.stroke.is_some() {
+        if self.view.input.stroke.is_some() {
             self.pending = Some(model);
             self.pending_close = false;
             return;
@@ -207,7 +249,11 @@ impl View3dState {
             .as_ref()
             .is_some_and(|m| m.name == model.name && m.triangle_count() == model.triangle_count());
         if !keep_camera {
-            self.reframe(&model.geometry.bounds());
+            // 別のモデルになった: 全部のビューのカメラを、モデル全体が入る位置へ
+            let bounds = model.geometry.bounds();
+            for view in std::iter::once(&mut self.view).chain(self.parked.iter_mut()) {
+                view.reframe(&bounds);
+            }
         }
         self.full = Some(model);
         self.unpainted.clear();
@@ -328,7 +374,7 @@ impl View3dState {
             return;
         }
         self.hidden = hidden;
-        if self.input.stroke.is_none() && self.pending.is_none() {
+        if self.view.input.stroke.is_none() && self.pending.is_none() {
             self.rebuild_shown();
         }
     }
@@ -340,7 +386,7 @@ impl View3dState {
             return;
         }
         self.face_mask = mask;
-        if self.input.stroke.is_none() && self.pending.is_none() {
+        if self.view.input.stroke.is_none() && self.pending.is_none() {
             self.rebuild_shown();
         }
     }
@@ -393,7 +439,7 @@ impl View3dState {
         if target.and_then(|m| m.link_generation) != Some(generation) {
             return;
         }
-        if self.input.stroke.is_some() {
+        if self.view.input.stroke.is_some() {
             self.pending = None;
             self.pending_close = true;
             return;
@@ -416,35 +462,26 @@ impl View3dState {
         self.full.as_ref()
     }
 
-    /// カメラをモデル全体が入る位置へ戻す。
+    /// 今のビューのカメラをモデル全体が入る位置へ戻す。
     pub fn frame_model(&mut self) {
         if let Some(bounds) = self.full.as_ref().map(|m| m.geometry.bounds()) {
-            self.reframe(&bounds);
+            self.view.reframe(&bounds);
         }
-    }
-
-    /// カメラを、この境界が全部入る既定の向きの位置へ置き直す。手で選んだ正投影は保ち、軸の向きで自動で替えた正投影は透視へ戻す
-    /// （既定の向きは軸の向きではない）。
-    fn reframe(&mut self, bounds: &yolu_core::geometry::Bounds) {
-        let orthographic = self.camera.is_orthographic() && !self.auto_orthographic;
-        self.camera = OrbitCamera::framing(bounds);
-        self.camera.set_orthographic(orthographic);
-        self.auto_orthographic = false;
     }
 
     /// ストロークが終わったら、待たせていたモデル・閉じる・隠すを当てる。
     pub(crate) fn stroke_ended(&mut self) {
-        self.input.stroke = None;
-        self.input.released = false;
-        self.input.dab_clock = pacing::DabClock::default();
-        self.input.frame_dabs = 0;
-        self.input.surface = None;
-        self.input.cover = None;
-        self.input.symmetry = None;
-        self.input.last_point = None;
-        self.input.last_hit = None;
-        self.input.shift_hold = None;
-        self.input.ruler_constraint = None;
+        self.view.input.stroke = None;
+        self.view.input.released = false;
+        self.view.input.dab_clock = pacing::DabClock::default();
+        self.view.input.frame_dabs = 0;
+        self.view.input.surface = None;
+        self.view.input.cover = None;
+        self.view.input.symmetry = None;
+        self.view.input.last_point = None;
+        self.view.input.last_hit = None;
+        self.view.input.shift_hold = None;
+        self.view.input.ruler_constraint = None;
         if std::mem::take(&mut self.pending_close) {
             self.full = None;
             self.model = None;

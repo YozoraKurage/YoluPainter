@@ -541,6 +541,54 @@ impl Drive for Harness<'_, YoluApp> {
     }
 }
 
+/// 画面のテスト（`Harness<YoluApp>`）だけの口: ドックの並びとタブの矩形、3D ビューごとの表示域と描き先、3D の描きの数・待ち。
+pub trait DriveApp {
+    fn dock(&self) -> &egui_dock::DockState<yolu_app::Tab>;
+    fn dock_mut(&mut self) -> &mut egui_dock::DockState<yolu_app::Tab>;
+    /// このタブの見出しの真ん中（このフレームに描いたもの）。
+    fn tab_center(&self, tab: &yolu_app::Tab) -> egui::Pos2;
+    fn view3d_rect_of(&self, id: yolu_app::view3d::ViewId) -> Option<egui::Rect>;
+    fn view3d_target_views(&self) -> Vec<yolu_app::view3d::ViewId>;
+    fn add_view3d_tab(&mut self) -> Option<yolu_app::view3d::ViewId>;
+    fn view3d_stats(&self) -> Option<yolu_app::view3d::render::View3dStats>;
+    fn view3d_adapter(&self) -> Option<String>;
+    fn view3d_wait_gpu(&self);
+    fn set_other_cap(&mut self, cap: u32);
+}
+
+impl DriveApp for Harness<'_, YoluApp> {
+    fn dock(&self) -> &egui_dock::DockState<yolu_app::Tab> {
+        &self.state().dock
+    }
+    fn dock_mut(&mut self) -> &mut egui_dock::DockState<yolu_app::Tab> {
+        &mut self.state_mut().dock
+    }
+    fn tab_center(&self, tab: &yolu_app::Tab) -> egui::Pos2 {
+        self.state().tab_rects[tab].center()
+    }
+    fn view3d_rect_of(&self, id: yolu_app::view3d::ViewId) -> Option<egui::Rect> {
+        self.state().view3d_rect_of(id)
+    }
+    fn view3d_target_views(&self) -> Vec<yolu_app::view3d::ViewId> {
+        self.state().view3d_target_views()
+    }
+    fn add_view3d_tab(&mut self) -> Option<yolu_app::view3d::ViewId> {
+        self.state_mut().add_view3d_tab()
+    }
+    fn view3d_stats(&self) -> Option<yolu_app::view3d::render::View3dStats> {
+        self.state().view3d_stats()
+    }
+    fn view3d_adapter(&self) -> Option<String> {
+        self.state().view3d_adapter()
+    }
+    fn view3d_wait_gpu(&self) {
+        self.state().view3d_wait_gpu()
+    }
+    fn set_other_cap(&mut self, cap: u32) {
+        self.state_mut().view3d_set_other_cap(cap)
+    }
+}
+
 impl Drive for AppState {
     fn app(&self) -> &AppState {
         self

@@ -1591,7 +1591,7 @@ impl AppState {
                 self.view3d.frame_model();
             }
             Action::Pose(a) => crate::view3d::pose::apply_action(self, a),
-            Action::View3d(op) => self.view3d.display.apply(op),
+            Action::View3d(op) => crate::view3d::display::apply_display(self, op),
             Action::About => {
                 self.info(
                     Source::Edit,

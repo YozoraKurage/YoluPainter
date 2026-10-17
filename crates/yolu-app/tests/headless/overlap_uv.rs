@@ -67,8 +67,8 @@ fn with_model(model: ViewModel) -> (AppState, Rect) {
     s.bake_mut().backend = BakeBackend::Cpu;
     s.view3d_mut().set_model(model);
     s.view3d_mut().material = 0;
-    s.view3d_mut().camera.yaw = 0.0;
-    s.view3d_mut().camera.pitch = 0.0;
+    s.view3d_mut().view.camera.yaw = 0.0;
+    s.view3d_mut().view.camera.pitch = 0.0;
     (
         s,
         Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0)),
@@ -84,7 +84,7 @@ fn at_uv(s: &AppState, rect: Rect, uv: (f32, f32)) -> Pos2 {
 }
 
 fn at_model(s: &AppState, rect: Rect, p: Vec3) -> Pos2 {
-    let view = s.view3d().camera.view(rect.width(), rect.height());
+    let view = s.view3d().view.camera.view(rect.width(), rect.height());
     let q = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + q.x, rect.top() + q.y)
 }

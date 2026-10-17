@@ -46,7 +46,6 @@ struct Uniforms {
 @group(0) @binding(7) var paint_sampler: sampler;
 @group(0) @binding(8) var env_cube: texture_cube<f32>;
 @group(0) @binding(9) var env_sampler: sampler;
-@group(0) @binding(10) var map_tex: texture_2d<f32>;
 @group(0) @binding(11) var shadow_map: texture_depth_2d;
 @group(0) @binding(12) var shadow_sampler: sampler_comparison;
 
@@ -58,10 +57,17 @@ struct Uniforms {
 @group(1) @binding(4) var emission_tex: texture_2d<f32>;
 @group(1) @binding(5) var height_tex: texture_2d<f32>;
 struct SetParams {
-    // x: 絵を貼る（1）、y: このセットの Normal を法線マップに読む（1）、z: 今のセット（1。焼いたメッシュマップは今のセットの面だけ）
+    // x: 絵を貼る（1）、y: このセットの Normal を法線マップに読む（1）、z: 今のセット（1）
     flags: vec4<f32>,
+    // 「チャンネルだけ」で見るユーザーチャンネル（u.mode.y − 6 番目の名前）の、このセットの配列（user_tex）のレイヤー（無ければ −1）と、
+    // 何も描いていない所の値（チャンネルの既定）
+    user_layer: vec4<f32>,
+    user_default: array<vec4<f32>, 4>,
 };
 @group(1) @binding(6) var<uniform> set_params: SetParams;
+
+// group 2: このセットの焼いたメッシュマップ（メッシュマップだけの表示。無いセットは 1 × 1 の透明 = 市松）
+@group(2) @binding(0) var map_tex: texture_2d<f32>;
 
 struct VsIn {
     @location(0) position: vec3<f32>,
@@ -281,14 +287,22 @@ fn fs_main(f: VsOut) -> @location(0) vec4<f32> {
     if (u.mode.x > 1.5) {
         var c = base_gamma;
         if (u.mode.x > 2.5) {
-            // 焼いたメッシュマップ（乗算済み。覆わないテクセルは透明 = 市松）
-            c = background;
-            if (painted && set_params.flags.z > 0.5) {
-                c = background * (1.0 - tex_map.a) + tex_map.rgb;
-            }
+            // 焼いたメッシュマップ（乗算済み。覆わないテクセル・マップの無いセットは透明 = 市松）
+            c = background * (1.0 - tex_map.a) + tex_map.rgb;
         } else if (painted) {
             let ch = i32(u.mode.y + 0.5);
-            if (ch == 1) {
+            if (ch >= 6) {
+                // ユーザーチャンネル: このセットの配列のレイヤー（持っていなければ市松）。何も描いていない所はチャンネルの既定
+                c = background;
+                let k = ch - 6;
+                if (k < 4) {
+                    let layer = i32(set_params.user_layer[k] + 0.5);
+                    if (set_params.user_layer[k] > -0.5) {
+                        let t = textureSample(user_tex, paint_sampler, f.uv, layer);
+                        c = (t + set_params.user_default[k] * (1.0 - t.a)).rgb;
+                    }
+                }
+            } else if (ch == 1) {
                 c = vec3<f32>(tex_metallic);
             } else if (ch == 2) {
                 c = vec3<f32>(tex_roughness);

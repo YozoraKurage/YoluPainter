@@ -280,7 +280,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
             let Some((model, material)) = app.region_model() else {
                 return Err(app.region_missing_reason());
             };
-            let view = app.view3d.camera.view(rect.width(), rect.height());
+            let view = app.view3d.view.camera.view(rect.width(), rect.height());
             let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
             let Some(hit) = pick(&model.geometry, &view, p) else {
                 return Err(lang.t("region-nothing-of-the-model-under").to_owned());

@@ -5,7 +5,7 @@
 //! 別ウィンドウは、試験の既定（kittest は子の viewport を根の中の egui のウィンドウに埋める）ではメインウィンドウの中の egui のウィンドウに描かれる。別ウィンドウの入力は
 //! `common::viewports` の口で子の viewport を本物の別のパスとして回して確かめる（子ウィンドウの絵は撮らない）。
 use crate::common;
-use crate::common::drive::Drive;
+use crate::common::drive::{Drive, DriveApp};
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1915,4 +1915,35 @@ fn while_the_unsaved_changes_question_is_open_the_3d_view_in_an_outside_window_d
     assert_eq!(h.doc().undo_count(), drawn, "3D ビューに描けない");
     assert!(h.stroke().is_none(), "ストロークも残らない");
     assert!(h.discard_ask().is_some(), "問いは開いたまま");
+}
+
+#[test]
+fn an_added_3d_view_in_an_outside_window_takes_the_input() {
+    use yolu_app::view3d::ViewId;
+    let (mut h, driver) = app_with_viewports();
+    h.view3d_mut().load_demo();
+    h.run();
+    let second = h.add_view3d_tab().expect("3D ビュー 2 を足す");
+    h.run();
+    let id = detach_to(
+        &mut h,
+        &driver,
+        Tab::View3dMore(second),
+        Rect::from_min_size(pos2(1300.0, 0.0), vec2(700.0, 600.0)),
+    );
+    h.run();
+    let c = h
+        .view3d_rect_of(second)
+        .expect("別ウィンドウで 3D ビュー 2 を描いた")
+        .center();
+    // 別ウィンドウの 3D ビュー 2 に描ける（ポインタの乗ったビューが今のビュー）
+    let before = h.doc().undo_count();
+    stroke_in_child(&mut h, &driver, id, c);
+    assert!(
+        h.doc().undo_count() > before,
+        "別ウィンドウの 3D ビュー 2 に描ける"
+    );
+    assert_eq!(h.view3d().active_view(), second);
+    // メインウィンドウの 3D ビューは、そのまま描いている
+    assert!(h.view3d_rect_of(ViewId::FIRST).is_some());
 }

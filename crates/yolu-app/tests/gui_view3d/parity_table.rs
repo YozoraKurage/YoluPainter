@@ -805,7 +805,7 @@ fn d11_the_2d_only_tools() {
 fn d12_the_stroke_ends_on_the_lift_in_2d_and_after_the_queue_in_3d() {
     for view in VIEWS {
         let (mut h, rect) = scene(view);
-        h.view3d_mut().input.paint_budget = Some(std::time::Duration::ZERO);
+        h.view3d_mut().view.input.paint_budget = Some(std::time::Duration::ZERO);
         let a = spot(&h, view, rect, -0.8, 0.0);
         let b = spot(&h, view, rect, 0.8, 0.0);
         let points: Vec<Pos2> = (0..4).map(|i| a + (b - a) * (i as f32 / 3.0)).collect();
@@ -821,7 +821,7 @@ fn d12_the_stroke_ends_on_the_lift_in_2d_and_after_the_queue_in_3d() {
             }
             View::View3d => {
                 assert!(h.app().is_stroking(), "3D: 離した後も持ち越しを塗っている");
-                assert!(h.view3d().input.released);
+                assert!(h.view3d().view.input.released);
                 assert_eq!(h.doc().undo_count(), 0, "3D: まだ確定していない");
                 settle(&mut h);
                 assert_eq!(h.doc().undo_count(), 1, "3D: 塗り終えて確定");
@@ -921,7 +921,7 @@ fn d14_the_right_button_picks_on_a_click_in_both_and_on_a_drag_only_in_2d() {
         let (mut h, rect) = scene(view);
         pattern(&mut h);
         h.color_mut().set_main([0.0, 0.0, 0.0, 1.0]);
-        let yaw = h.view3d().camera.yaw;
+        let yaw = h.view3d().view.camera.yaw;
         let (a, b) = (
             spot(&h, view, rect, -0.5, -0.5),
             spot(&h, view, rect, 0.5, 0.3),
@@ -934,7 +934,7 @@ fn d14_the_right_button_picks_on_a_click_in_both_and_on_a_drag_only_in_2d() {
             }
             View::View3d => {
                 assert_eq!(main_rgb(&h), [0, 0, 0], "3D: 動かしたら取らない");
-                assert_ne!(h.view3d().camera.yaw, yaw, "3D: 回した");
+                assert_ne!(h.view3d().view.camera.yaw, yaw, "3D: 回した");
             }
         }
         assert_eq!(h.doc().undo_count(), 0, "{view:?}: 描かない");
@@ -978,7 +978,7 @@ fn d15_the_pen_side_button_picks_on_a_tap_in_both_and_on_a_drag_only_in_2d() {
         let (mut h, rect) = scene(view);
         pattern(&mut h);
         h.color_mut().set_main([0.0, 0.0, 0.0, 1.0]);
-        let yaw = h.view3d().camera.yaw;
+        let yaw = h.view3d().view.camera.yaw;
         let (a, b) = (
             spot(&h, view, rect, -0.5, -0.5),
             spot(&h, view, rect, 0.5, 0.3),
@@ -990,7 +990,7 @@ fn d15_the_pen_side_button_picks_on_a_tap_in_both_and_on_a_drag_only_in_2d() {
             View::Canvas => assert_eq!(main_rgb(&h), [bx as u8, by as u8, 90], "2D: 離した所の色"),
             View::View3d => {
                 assert_eq!(main_rgb(&h), [0, 0, 0], "3D: なぞったら取らない");
-                assert_ne!(h.view3d().camera.yaw, yaw, "3D: 回した");
+                assert_ne!(h.view3d().view.camera.yaw, yaw, "3D: 回した");
             }
         }
         assert_eq!(h.doc().undo_count(), 0, "{view:?}: 描かない");
@@ -1011,7 +1011,7 @@ fn d16_a_pen_tip_while_the_mouse_middle_button_pans() {
         match view {
             View::Canvas => assert!(h.canvas().panning, "2D: 中ボタンでパンが始まっている"),
             View::View3d => assert!(
-                h.view3d().input.nav.is_some(),
+                h.view3d().view.input.nav.is_some(),
                 "3D: 中ボタンでビューを動かしている"
             ),
         }
@@ -1118,7 +1118,7 @@ fn d17_a_selection_row_moved_to_another_button() {
 fn d18_a_press_while_the_3d_settings_panel_is_open() {
     for view in VIEWS {
         let (mut h, rect) = scene(view);
-        h.view3d_mut().display.settings_open = true;
+        h.view3d_mut().view.display.settings_open = true;
         clear(&mut h);
         let before = seen(&h);
         let points = line(&h, view, rect);
@@ -1279,7 +1279,7 @@ fn a_missed_release_ends_a_3d_mouse_stroke_and_keeps_what_was_drawn() {
 
 /// D20 終わりの点の覚え方（Shift の直線の始め）。
 /// - 2D: 前の終点は文書の座標（`canvas.previous_end`）
-/// - 3D: 前の終点は面の点（`view3d.input.previous_end`）。2D と 3D で別々に覚え、片方の終点はもう片方の Shift の直線に使わない
+/// - 3D: 前の終点は面の点（`view3d.view.input.previous_end`）。2D と 3D で別々に覚え、片方の終点はもう片方の Shift の直線に使わない
 #[test]
 fn d20_each_view_keeps_its_own_previous_end() {
     for view in VIEWS {
@@ -1293,7 +1293,7 @@ fn d20_each_view_keeps_its_own_previous_end() {
             "{view:?}: 2D の終点"
         );
         assert_eq!(
-            h.view3d().input.previous_end.is_some(),
+            h.view3d().view.input.previous_end.is_some(),
             view == View::View3d,
             "{view:?}: 3D の終点"
         );
@@ -1373,7 +1373,7 @@ fn d21_the_pen_in_the_edit_and_pose_modes() {
         assert_eq!(s.ink, before.ink, "{view:?} ポーズ");
         if view == View::View3d {
             assert!(
-                h.view3d().input.pen_press.is_none(),
+                h.view3d().view.input.pen_press.is_none(),
                 "3D ポーズ: ペンの押しを持たない"
             );
         }
@@ -1591,7 +1591,7 @@ fn the_first_mouse_button_keeps_the_view_operation_until_it_is_released() {
     let r = spot(&h, View::View3d, rect, 0.8, 0.8);
     press(&h, r, PointerButton::Secondary);
     h.step();
-    let orbit = h.view3d().input.nav;
+    let orbit = h.view3d().view.input.nav;
     assert!(
         matches!(
             orbit,
@@ -1602,20 +1602,24 @@ fn the_first_mouse_button_keeps_the_view_operation_until_it_is_released() {
     press(&h, r, PointerButton::Middle);
     h.step();
     assert_eq!(
-        h.view3d().input.nav,
+        h.view3d().view.input.nav,
         orbit,
         "3D: 中ボタンを押しても替わらない"
     );
     release(&h, r, PointerButton::Middle);
     h.step();
     assert_eq!(
-        h.view3d().input.nav,
+        h.view3d().view.input.nav,
         orbit,
         "3D: 中ボタンを離しても右ボタンの回しは続く"
     );
     release(&h, r, PointerButton::Secondary);
     h.run();
-    assert_eq!(h.view3d().input.nav, None, "3D: 右ボタンを離したら終わる");
+    assert_eq!(
+        h.view3d().view.input.nav,
+        None,
+        "3D: 右ボタンを離したら終わる"
+    );
 }
 
 /// 範囲の塗りの裏の仕事（文書が 256×256 を超えると、塗りはいつも裏の仕事になる。ボタンを離した後も続く）が動いている間の押し。

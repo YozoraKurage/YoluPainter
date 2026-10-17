@@ -20,8 +20,8 @@ const SIZE: u32 = 256;
 pub(crate) fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1470.0, 760.0, SIZE);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -29,7 +29,7 @@ pub(crate) fn cube_view() -> (Harness<'static, YoluApp>, Rect) {
 }
 
 pub(crate) fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -194,7 +194,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     assert_eq!(message(&h), "クローンの元がありません");
     assert!(!h.doc().can_undo() && !h.app().is_stroking());
     // Alt を押して動かさずに離すと、そこが元になる（カメラは動かない）
-    let yaw = h.view3d().camera.yaw;
+    let yaw = h.view3d().view.camera.yaw;
     let source = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     press_with(&h, source, Modifiers::ALT);
     h.step();
@@ -202,7 +202,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
     h.run();
     assert_eq!(message(&h), "クローンの元を決めました。");
     assert!(h.clone().source.is_some());
-    assert_eq!(h.view3d().camera.yaw, yaw);
+    assert_eq!(h.view3d().view.camera.yaw, yaw);
     // 右の面へ描くと、手前の面の模様が写る
     h.message_mut().clear();
     drag_world(&mut h, rect, dest, Vec3::new(0.5, 0.0, 0.15), 6);
@@ -236,7 +236,7 @@ fn alt_left_drag_does_not_orbit_with_the_clone_brush_and_alt_right_drag_snap_orb
             offset: Default::default(),
         },
     );
-    let before = h.view3d().camera;
+    let before = h.view3d().view.camera;
     let a = rect.center();
     // Alt + 左ドラッグ: 視点は変わらず、元は決めず、描かない
     press_with(&h, a, Modifiers::ALT);
@@ -245,7 +245,7 @@ fn alt_left_drag_does_not_orbit_with_the_clone_brush_and_alt_right_drag_snap_orb
     h.step();
     release_with(&h, a + egui::vec2(60.0, 0.0), Modifiers::ALT);
     h.run();
-    assert_eq!(h.view3d().camera, before, "回らない");
+    assert_eq!(h.view3d().view.camera, before, "回らない");
     assert!(h.clone().source.is_none(), "動かしたクリックは元にしない");
     assert_eq!(h.doc().undo_count(), 0, "描かない");
     // Alt + 右ドラッグ: スナップ回転（元は決めない）
@@ -269,7 +269,7 @@ fn alt_left_drag_does_not_orbit_with_the_clone_brush_and_alt_right_drag_snap_orb
     h.run();
     h.event(Event::ModifiersChanged(Modifiers::NONE));
     h.step();
-    assert_ne!(h.view3d().camera.yaw, before.yaw, "回る");
+    assert_ne!(h.view3d().view.camera.yaw, before.yaw, "回る");
     assert!(h.clone().source.is_none());
 }
 
@@ -714,7 +714,7 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
         h.brush_mut().spacing = 0.05;
         // 持ち越しが残る前提の場合は、1 フレーム 1 ダブの枠（0）にする
         if matches!(how, "one frame" | "focus lost") {
-            h.view3d_mut().input.paint_budget = Some(std::time::Duration::ZERO);
+            h.view3d_mut().view.input.paint_budget = Some(std::time::Duration::ZERO);
         }
         let points: Vec<Pos2> = corners.iter().map(|c| screen_of(&h, rect, *c)).collect();
         let last = *points.last().unwrap();
@@ -725,7 +725,7 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
                 for p in &points[1..] {
                     h.event(Event::PointerMoved(*p));
                     h.run();
-                    let left = h.view3d().input.surface.as_ref().unwrap().queued();
+                    let left = h.view3d().view.input.surface.as_ref().unwrap().queued();
                     assert_eq!(left, 0, "{how}: 持ち越した分は後のフレームで塗り終える");
                 }
                 release_with(&h, last, Modifiers::NONE);
@@ -735,7 +735,7 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
                     h.event(Event::PointerMoved(*p));
                 }
                 h.step();
-                let left = h.view3d().input.surface.as_ref().unwrap().queued();
+                let left = h.view3d().view.input.surface.as_ref().unwrap().queued();
                 assert!(left > 0, "{how}: 試験の前提: 時間の枠を超えて持ち越した");
                 if how == "focus lost" {
                     h.event(Event::WindowFocused(false));
@@ -759,7 +759,7 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
             assert!(frames < 5000, "{how}: 確定しない");
         }
         assert!(
-            h.view3d().input.surface.is_none(),
+            h.view3d().view.input.surface.is_none(),
             "{how}: 塗り終えたら確定"
         );
         h.run();
@@ -897,7 +897,7 @@ fn the_erase_mode_erases_with_the_current_brush_in_3d() {
 fn a_brush_sized_on_screen_covers_more_of_the_texture_when_the_camera_is_farther() {
     let covered_at = |size_by_screen: bool, distance_scale: f32| -> usize {
         let (mut h, rect) = cube_view();
-        h.view3d_mut().camera.distance *= distance_scale;
+        h.view3d_mut().view.camera.distance *= distance_scale;
         h.run();
         h.m2_mut().brush.controls.size_by_screen = size_by_screen;
         {

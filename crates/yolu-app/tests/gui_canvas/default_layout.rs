@@ -23,8 +23,8 @@ fn default_with_cube() -> (H, Rect) {
     {
         let s = h.app_mut();
         s.view3d_mut().load_demo();
-        s.view3d_mut().camera.yaw = -40.0;
-        s.view3d_mut().camera.pitch = 15.0;
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
         s.brush_mut().radius = 14.0;
     }
     h.run();
@@ -38,7 +38,7 @@ fn default_with_cube() -> (H, Rect) {
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     egui::pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -99,7 +99,7 @@ fn each_side_of_the_default_arrangement_paints() {
 fn the_space_key_reaches_the_view_under_the_pointer_on_each_side() {
     let (mut h, rect) = default_with_cube();
     let canvas = canvas_rect(&h);
-    let (pan0, camera0) = (h.view().pan, h.view3d().camera);
+    let (pan0, camera0) = (h.view().pan, h.view3d().view.camera);
     // キャンバスの上
     key_event(&h, Key::Space, true);
     let c = canvas.center();
@@ -108,14 +108,14 @@ fn the_space_key_reaches_the_view_under_the_pointer_on_each_side() {
     h.run();
     let pan = h.view().pan;
     assert_ne!(pan, pan0, "キャンバスの表示が動いた");
-    assert_eq!(h.view3d().camera, camera0, "視点は動かない");
+    assert_eq!(h.view3d().view.camera, camera0, "視点は動かない");
     // 3D ビューの上
     key_event(&h, Key::Space, true);
     let v = rect.center();
     drag(&mut h, &[v, offset(v, 30.0, 0.0), offset(v, 60.0, 20.0)]);
     key_event(&h, Key::Space, false);
     h.run();
-    assert_ne!(h.view3d().camera, camera0, "視点が動いた");
+    assert_ne!(h.view3d().view.camera, camera0, "視点が動いた");
     assert_eq!(h.view().pan, pan, "キャンバスの表示は動かない");
 }
 

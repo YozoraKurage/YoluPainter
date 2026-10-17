@@ -74,7 +74,7 @@ pub(crate) fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> 
         let model =
             ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
         state.view3d_mut().set_model(model);
-        state.view3d_mut().camera = OrbitCamera {
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -82,7 +82,7 @@ pub(crate) fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> 
             model_radius: 1.0,
             ..OrbitCamera::default()
         };
-        state.view3d_mut().camera.set_orthographic(ortho);
+        state.view3d_mut().view.camera.set_orthographic(ortho);
     }
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -438,7 +438,7 @@ pub(crate) fn face_visible(h: &H, face: usize) -> bool {
     let c = corners(face);
     let center = (c[0] + c[3]) * 0.5;
     let normal = (c[1] - c[0]).cross(c[2] - c[0]).normalize();
-    let eye = st(h).view3d().camera.position();
+    let eye = st(h).view3d().view.camera.position();
     let out = if normal.dot(center) > 0.0 {
         normal
     } else {
@@ -468,8 +468,8 @@ fn every_shape_selects_only_the_faces_the_camera_sees_in_perspective_and_orthogr
         ] {
             let (mut h, rect) = cube_view();
             // 立方体を小さく見せる（表示域の隅のアイコンに、囲む多角形の点が重ならないように）
-            h.view3d_mut().camera.distance *= 1.5;
-            h.view3d_mut().camera.set_orthographic(ortho);
+            h.view3d_mut().view.camera.distance *= 1.5;
+            h.view3d_mut().view.camera.set_orthographic(ortho);
             h.run();
             // ブラシの「隠れた所も塗る」「裏の面も塗る」を入れていても、選択範囲は見えている面だけ。見える面の量は、面の向きの弱め（カメラにすれすれの
             // 面を薄くする）を切って 255 を見る
@@ -932,7 +932,7 @@ fn a_face_seen_edge_on_is_faded_by_the_angle_setting_and_the_setting_off_selects
     // 板を横へ 82° 回して見る（面の向きの弱めは 80° から）
     let amounts = |falloff: bool| {
         let (mut h, rect) = plate_view(false);
-        h.view3d_mut().camera.yaw = 82.0;
+        h.view3d_mut().view.camera.yaw = 82.0;
         h.view3d_mut().projection.angle_falloff = falloff;
         h.run();
         tool(&mut h, Tool::SelectRect);
@@ -1080,7 +1080,7 @@ fn the_pen_selects_like_the_mouse_and_a_pen_press_taken_by_the_os_selects_nothin
         let (a, b) = (at(&h, rect, (10.0, 14.0)), at(&h, rect, (41.0, 50.0)));
         pen_pull(&mut h, a, b, true);
         assert!(!select::dragging(st(&h)), "{t:?}");
-        assert!(st(&h).view3d().input.pen_press.is_none(), "{t:?}");
+        assert!(st(&h).view3d().view.input.pen_press.is_none(), "{t:?}");
         assert!(selection(&h).is_none(), "{t:?}: 補った離しでは選ばない");
         assert_eq!(st(&h).doc().undo_count(), 0, "{t:?}");
         pen_pull(&mut h, a, b, false);
@@ -1100,7 +1100,7 @@ fn a_press_during_the_leftover_of_a_released_brush_stroke_finishes_it_before_the
         let s = h.app_mut();
         s.brush_mut().radius = 3.0;
         s.brush_mut().spacing = 0.2;
-        s.view3d_mut().input.paint_budget = Some(std::time::Duration::ZERO);
+        s.view3d_mut().view.input.paint_budget = Some(std::time::Duration::ZERO);
         s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     }
     let (a, b) = (
@@ -1114,7 +1114,7 @@ fn a_press_during_the_leftover_of_a_released_brush_stroke_finishes_it_before_the
     release_with(&h, b, Modifiers::NONE);
     h.step();
     assert!(
-        st(&h).view3d().input.released && st(&h).is_stroking(),
+        st(&h).view3d().view.input.released && st(&h).is_stroking(),
         "確定待ち"
     );
     assert_eq!(st(&h).doc().undo_count(), 0);
@@ -1208,7 +1208,7 @@ fn polygon_points_stay_on_the_screen_while_the_view_orbits_and_starting_in_3d_dr
         PointerButton::Secondary,
     );
     h.run();
-    assert!(st(&h).view3d().camera.yaw != 0.0, "回った");
+    assert!(st(&h).view3d().view.camera.yaw != 0.0, "回った");
     assert_eq!(st(&h).sel().view3d.polygon, before, "画面の同じ所に残る");
     // 2D のキャンバスで打っていた点は、3D で打ち始めると捨てる
     h.sel_mut().polygon.push((5.0, 5.0));

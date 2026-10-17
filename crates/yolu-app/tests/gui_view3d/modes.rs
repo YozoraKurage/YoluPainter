@@ -75,7 +75,7 @@ fn body_point(h: &H, rect: Rect) -> Pos2 {
     let model = app.view3d().model.clone().unwrap();
     let s = app.view3d().pose.session.as_ref().unwrap();
     let n = s.rig.meshes()[0].mesh.triangle_count();
-    let cam = app.view3d().camera.position();
+    let cam = app.view3d().view.camera.position();
     let t = model.geometry.triangles()[..n]
         .iter()
         .find(|t| {
@@ -84,7 +84,7 @@ fn body_point(h: &H, rect: Rect) -> Pos2 {
         })
         .copied()
         .unwrap();
-    let view = app.view3d().camera.view(rect.width(), rect.height());
+    let view = app.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen((t.a + t.b + t.c) / 3.0).unwrap();
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -371,7 +371,7 @@ fn digits_choose_and_escape_a_right_click_or_a_click_in_the_middle_close_the_pie
     release(&h, at + vec2(0.0, 60.0), PointerButton::Secondary);
     h.run();
     assert!(pie_open(&h).is_none());
-    assert!(h.view3d().input.eyedrop.is_none());
+    assert!(h.view3d().view.input.eyedrop.is_none());
     // 真ん中のクリック
     tap_mode_pie(&mut h, at);
     click(&mut h, at);
@@ -403,7 +403,7 @@ fn the_view_pie_turns_the_camera_to_each_axis_and_frames_the_set() {
         open(&mut h);
         let item = pie_item(&h, label);
         click(&mut h, item.center());
-        let camera = h.view3d().camera;
+        let camera = h.view3d().view.camera;
         let (yaw, pitch) = view.orientation();
         assert_eq!(camera.pitch, pitch, "{label}");
         assert!(
@@ -420,16 +420,16 @@ fn the_view_pie_turns_the_camera_to_each_axis_and_frames_the_set() {
     let ortho = pie_item(&h, "正投影");
     click(&mut h, ortho.center());
     assert!(pie_open(&h).is_none());
-    assert!(!h.view3d().camera.is_orthographic());
+    assert!(!h.view3d().view.camera.is_orthographic());
     // 収める: 3D の . と同じ（選んだセットを画面に収める）
-    h.view3d_mut().camera.distance *= 3.0;
-    let mut expected = h.view3d().camera;
+    h.view3d_mut().view.camera.distance *= 3.0;
+    let mut expected = h.view3d().view.camera;
     let bounds = yolu_app::view3d::navigation::selected_bounds(h.view3d()).unwrap();
     expected.frame_bounds(&bounds, rect.width(), rect.height());
     open(&mut h);
     let frame = pie_item(&h, "収める");
     click(&mut h, frame.center());
-    let camera = h.view3d().camera;
+    let camera = h.view3d().view.camera;
     assert!(
         (camera.distance - expected.distance).abs() < 1e-4,
         "{camera:?}"
@@ -575,12 +575,12 @@ fn a_pie_does_not_open_during_a_drag_and_the_drag_goes_on_unchanged() {
     h.step();
     move_to(&h, c + vec2(30.0, 10.0));
     h.step();
-    assert!(h.view3d().input.nav.is_some());
-    let camera = h.view3d().camera;
+    assert!(h.view3d().view.input.nav.is_some());
+    let camera = h.view3d().view.camera;
     key(&h, Key::Tab, Modifiers::CTRL);
     h.step();
     assert!(pie_open(&h).is_none());
-    assert_eq!(h.view3d().camera, camera);
+    assert_eq!(h.view3d().view.camera, camera);
     release(&h, c + vec2(30.0, 10.0), PointerButton::Secondary);
     h.run();
     // 何も押していなければ開く

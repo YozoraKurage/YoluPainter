@@ -564,7 +564,7 @@ mod tests {
         let settings = app.stroke_settings(false);
         let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
         app.session.stroke = Some(stroke);
-        app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
+        app.view3d.view.input.stroke = Some(crate::state::StrokeSource::Mouse);
     }
 
     /// 描き終える（取り消して、3D ビューへ終わりを知らせる）。

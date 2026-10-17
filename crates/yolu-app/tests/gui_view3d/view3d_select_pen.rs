@@ -137,7 +137,7 @@ fn the_selection_pen_in_3d_adds_like_the_2d_pen_seen_straight_on_and_is_one_undo
         h.run();
         assert!(selection(&h) == Some(got), "{ortho}");
         assert!(!st(&h).is_stroking());
-        assert!(st(&h).view3d().input.cover.is_none() && st(&h).sel().pen.is_none());
+        assert!(st(&h).view3d().view.input.cover.is_none() && st(&h).sel().pen.is_none());
         assert!(st(&h).doc().undo_count() == 1);
     }
 }
@@ -256,7 +256,10 @@ fn escape_and_switching_tools_drop_the_stroke_and_focus_loss_and_a_lost_release_
             move_to(&h, *p);
             h.step();
         }
-        assert!(st(&h).view3d().input.cover.is_some(), "{way}: 描いている");
+        assert!(
+            st(&h).view3d().view.input.cover.is_some(),
+            "{way}: 描いている"
+        );
         match way {
             0 => key(&h, Key::Escape, Modifiers::NONE),
             1 => h.act(Action::SelectTool(Tool::Brush)),
@@ -270,7 +273,7 @@ fn escape_and_switching_tools_drop_the_stroke_and_focus_loss_and_a_lost_release_
         h.run();
         assert!(!st(&h).is_stroking(), "{way}");
         assert!(
-            st(&h).view3d().input.cover.is_none() && st(&h).sel().pen.is_none(),
+            st(&h).view3d().view.input.cover.is_none() && st(&h).sel().pen.is_none(),
             "{way}"
         );
         match way {
@@ -300,12 +303,12 @@ fn a_pen_press_taken_by_the_os_ends_the_selection_pen_stroke_at_the_last_point()
         h.state().pen().push(pen_sample(*p, true, i as u32 * 10));
         h.step();
     }
-    assert!(st(&h).view3d().input.cover.is_some());
+    assert!(st(&h).view3d().view.input.cover.is_some());
     h.state().pen().push_lost(pen_sample(pts[3], false, 50));
     h.step();
     h.run();
-    assert!(st(&h).view3d().input.cover.is_none() && st(&h).sel().pen.is_none());
-    assert!(st(&h).view3d().input.pen_press.is_none());
+    assert!(st(&h).view3d().view.input.cover.is_none() && st(&h).sel().pen.is_none());
+    assert!(st(&h).view3d().view.input.pen_press.is_none());
     assert!(selection(&h).is_some(), "最後の位置までを選ぶ");
     assert_eq!(st(&h).doc().undo_count(), 1);
     // 次の押しは新しいストローク
@@ -320,7 +323,7 @@ fn a_selection_pen_press_during_the_leftover_of_a_released_brush_stroke_finishes
         let s = h.app_mut();
         s.brush_mut().radius = 3.0;
         s.brush_mut().spacing = 0.2;
-        s.view3d_mut().input.paint_budget = Some(std::time::Duration::ZERO);
+        s.view3d_mut().view.input.paint_budget = Some(std::time::Duration::ZERO);
         s.color_mut().set_main([1.0, 0.0, 0.0, 1.0]);
     }
     let (a, b) = (
@@ -334,7 +337,7 @@ fn a_selection_pen_press_during_the_leftover_of_a_released_brush_stroke_finishes
     release_with(&h, b, Modifiers::NONE);
     h.step();
     assert!(
-        st(&h).view3d().input.released && st(&h).is_stroking(),
+        st(&h).view3d().view.input.released && st(&h).is_stroking(),
         "確定待ち"
     );
     // ツールは直に替えて、押しが先に確定させる
@@ -378,7 +381,7 @@ fn releasing_the_hold_key_in_the_middle_of_a_3d_selection_pen_stroke_finishes_th
     h.step();
     move_to(&h, pts[1]);
     h.step();
-    assert!(st(&h).view3d().input.cover.is_some());
+    assert!(st(&h).view3d().view.input.cover.is_some());
     key_event(&h, false);
     for _ in 0..20 {
         h.step();
@@ -406,7 +409,7 @@ fn a_read_only_set_and_a_small_work_budget_refuse_and_change_nothing() {
     drag_mods(&mut h, &pts, Modifiers::NONE);
     assert!(message(&h).contains("読めない中身"), "{}", message(&h));
     assert!(selection(&h).is_none());
-    assert!(st(&h).sel().pen.is_none() && st(&h).view3d().input.cover.is_none());
+    assert!(st(&h).sel().pen.is_none() && st(&h).view3d().view.input.cover.is_none());
     // 作業の予算（被覆のタイルの分）に入らない
     let (mut h, rect) = plate_view(true);
     tool(&mut h, Tool::SelectPen);
@@ -498,7 +501,7 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
             }
         }
         assert!(
-            st(&h).view3d().input.stroke.is_some(),
+            st(&h).view3d().view.input.stroke.is_some(),
             "{label}: ストロークの途中"
         );
         key(&h, Key::Escape, Modifiers::NONE);
@@ -507,7 +510,10 @@ fn escape_in_the_middle_of_a_3d_stroke_keeps_the_selection_that_was_there() {
             selection(&h) == kept,
             "{label}: 同じ Esc で前からある選択範囲まで解除しない"
         );
-        assert!(st(&h).view3d().input.stroke.is_none(), "{label}: 捨てた");
+        assert!(
+            st(&h).view3d().view.input.stroke.is_none(),
+            "{label}: 捨てた"
+        );
         if mouse {
             release(&h, pts[2], PointerButton::Primary);
         } else {
@@ -544,7 +550,7 @@ fn a_bucket_result_that_arrives_during_a_3d_selection_pen_stroke_is_still_filled
     move_to(&h, pts[1]);
     h.step();
     assert!(
-        st(&h).is_stroking() && st(&h).view3d().input.cover.is_some(),
+        st(&h).is_stroking() && st(&h).view3d().view.input.cover.is_some(),
         "選択ペンのドラッグの途中: {}",
         message(&h)
     );

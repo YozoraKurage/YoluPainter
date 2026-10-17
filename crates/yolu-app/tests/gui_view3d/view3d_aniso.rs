@@ -80,7 +80,7 @@ fn striped_plane(standard: bool) -> Harness<'static, YoluApp> {
             ViewModel::new("板", vec![plane()], vec![Some("板".to_string())], revision).unwrap();
         model.tangents();
         state.view3d_mut().set_model(model);
-        state.view3d_mut().camera = OrbitCamera {
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 78.0,
             pitch: 0.0,
@@ -224,7 +224,7 @@ fn measure_frames_with_and_without_anisotropy() {
                 ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
             model.tangents();
             state.view3d_mut().set_model(model);
-            state.view3d_mut().camera = OrbitCamera {
+            state.view3d_mut().view.camera = OrbitCamera {
                 target: Vec3::ZERO,
                 yaw,
                 pitch,
@@ -241,7 +241,7 @@ fn measure_frames_with_and_without_anisotropy() {
                 big.run();
                 let mut wall = Vec::new();
                 for frame in 0..24 {
-                    big.view3d_mut().camera.yaw += 0.4 + frame as f32 * 0.001;
+                    big.view3d_mut().view.camera.yaw += 0.4 + frame as f32 * 0.001;
                     let started = Instant::now();
                     big.step();
                     big.state().view3d_wait_gpu();

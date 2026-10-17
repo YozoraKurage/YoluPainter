@@ -806,8 +806,8 @@ mod in_3d {
     fn cube() -> AppState {
         let mut s = app();
         s.view3d_mut().load_demo();
-        s.view3d_mut().camera.yaw = -40.0;
-        s.view3d_mut().camera.pitch = 15.0;
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
         s.set_tool(Tool::Fill);
         s.region_mut().tolerance = 0;
         s.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
@@ -817,6 +817,7 @@ mod in_3d {
     fn screen_of(s: &AppState, p: Vec3) -> egui::Pos2 {
         let view = s
             .view3d()
+            .view
             .camera
             .view(viewport().width(), viewport().height());
         let q = view.to_screen(p).expect("カメラの前");
@@ -827,7 +828,7 @@ mod in_3d {
     fn texel_under(s: &AppState, at: egui::Pos2) -> Option<(u32, u32)> {
         let model = s.view3d().model.as_ref()?;
         let rect = viewport();
-        let view = s.view3d().camera.view(rect.width(), rect.height());
+        let view = s.view3d().view.camera.view(rect.width(), rect.height());
         let hit = pick(
             &model.geometry,
             &view,
@@ -1083,9 +1084,9 @@ mod in_3d {
     ) -> Vec<(f64, f64)> {
         let mut s = AppState::new(size, size);
         s.view3d_mut().load_demo();
-        s.view3d_mut().camera.yaw = -40.0;
-        s.view3d_mut().camera.pitch = 15.0;
-        s.view3d_mut().camera.distance = distance;
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
+        s.view3d_mut().view.camera.distance = distance;
         s.set_tool(Tool::Fill);
         s.region_mut().by_color = true;
         s.region_mut().color.leftovers = true;

@@ -642,7 +642,7 @@ impl AppState {
         if mode != ProjectionMode::Decal {
             return Some(placement::fit_to_bounds(&bounds, mode));
         }
-        let rotation = self.view3d.camera.rotation();
+        let rotation = self.view3d.view.camera.rotation();
         Some(placement::decal_fit(
             &bounds,
             rotation * yolu_core::glam::Vec3::Z,
@@ -687,7 +687,7 @@ impl AppState {
             self.refuse(Source::FillLayer, self.region_missing_reason());
             return;
         };
-        let view = self.view3d.camera.view(rect.width(), rect.height());
+        let view = self.view3d.view.camera.view(rect.width(), rect.height());
         let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
         let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, gui) else {
             self.refuse(Source::FillLayer, lang.t("fillfx-not-on-the-model"));
@@ -883,7 +883,11 @@ pub fn decal_drop(ui: &egui::Ui, app: &mut AppState, content: Rect) {
     };
     let painter = ui.painter_at(content);
     let on_model = app.region_model().is_some_and(|(model, _)| {
-        let view = app.view3d.camera.view(content.width(), content.height());
+        let view = app
+            .view3d
+            .view
+            .camera
+            .view(content.width(), content.height());
         yolu_core::geometry::pick(
             &model.geometry,
             &view,

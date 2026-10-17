@@ -354,7 +354,7 @@ fn screen(rect: Rect, v: Vec2) -> Pos2 {
 
 /// 画面の点の近くの印（近い順。同じ近さなら並びの順）。
 fn hits(app: &AppState, rect: Rect, at: Pos2) -> Vec<Object> {
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let mut near: Vec<(f32, Object)> = markers(app)
         .into_iter()
         .filter_map(|m| {
@@ -459,7 +459,7 @@ pub fn press(app: &mut AppState, rect: Rect, at: Pos2, source: gizmo::Source) ->
 /// 印と、選んだ物の枠・線を 3D ビューへ重ねる（編集のモード）。`pointer` はポインタ（乗せた印を大きくする）。
 pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
     sync(app);
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let painter = ui.painter_at(rect);
     let line = |points: Vec<Pos2>, width: f32| {
         painter.add(EguiShape::line(
@@ -511,7 +511,8 @@ pub fn draw(ui: &Ui, app: &mut AppState, rect: Rect, pointer: Option<Pos2>) {
             }
         }
     }
-    let busy = transforming(app) || app.fillfx.drag.is_some() || app.view3d.input.nav.is_some();
+    let busy =
+        transforming(app) || app.fillfx.drag.is_some() || app.view3d.view.input.nav.is_some();
     let markers = markers(app);
     let hover = pointer.filter(|_| !busy).and_then(|p| {
         markers

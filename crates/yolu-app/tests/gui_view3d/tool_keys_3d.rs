@@ -437,7 +437,7 @@ fn a_pen_press_taken_by_the_os_during_a_3d_hold_tool_drag_lets_the_tool_return()
                 !yolu_app::view3d::draft::dragging(st(&h)),
                 "{label}: ドラッグは残らない"
             );
-            assert!(st(&h).view3d().input.pen_press.is_none(), "{label}");
+            assert!(st(&h).view3d().view.input.pen_press.is_none(), "{label}");
             assert_eq!(
                 crate::common::rulers::total(st(&h)),
                 0,

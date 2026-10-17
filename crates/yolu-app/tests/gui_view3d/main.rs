@@ -25,12 +25,24 @@ pub fn settings_corner(h: &Harness<'_, YoluApp>) -> Rect {
     )
 }
 
+/// 3D ビューの左上の、表示の種類のドロップダウンの矩形（描いていなければ None）。絵の画素を比べる・何も無い所を押すテストは、この中を使わない。
+pub fn view3d_shading_rect(h: &Harness<'_, YoluApp>) -> Option<Rect> {
+    use common::drive::DriveApp;
+    use egui_kittest::kittest::Queryable;
+    let view = h.view3d_rect_of(yolu_app::view3d::ViewId::FIRST)?;
+    h.query_all_by_role(egui::accesskit::Role::ComboBox)
+        .map(|n| n.rect())
+        .find(|r| view.contains(r.center()) && r.top() < view.top() + 40.0)
+        .map(|r| r.expand(2.0))
+}
+
 mod gpu_memory;
 mod liltoon;
 mod liltoon_ortho;
 mod liltoon_panel;
 mod liltoon_reference;
 mod modes;
+mod multiview;
 mod normalset;
 mod objects;
 mod outputs;

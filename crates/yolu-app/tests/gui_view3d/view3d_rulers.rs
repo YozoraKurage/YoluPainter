@@ -22,7 +22,7 @@ fn st(h: &H) -> &AppState {
 }
 
 fn screen(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = st(h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -33,7 +33,7 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 
 fn hit_at(h: &H, rect: Rect, p: Pos2) -> Option<SurfaceHit> {
     let model = st(h).view3d().model.clone()?;
-    let view = st(h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().view.camera.view(rect.width(), rect.height());
     pick(&model.geometry, &view, local(rect, p))
 }
 
@@ -186,7 +186,11 @@ fn a_symmetry_ruler_is_the_plane_of_the_pulled_line_and_the_sight_or_the_x_mirro
     assert!(near3(points(&r).0, pa.position), "鏡は押した面の点を通る");
     assert!(mirror.point.distance(pa.position) < 1e-4);
     // 鏡の面は、画面で引いた線の向きと視線の両方を含む（法線は両方に直交）
-    let view = st(&h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(&h)
+        .view3d()
+        .view
+        .camera
+        .view(rect.width(), rect.height());
     let sight = (pa.position - view.position).normalize();
     let drawn = (b - a).normalized();
     let line = view.rotation * Vec3::X * drawn.x - view.rotation * Vec3::Y * drawn.y;
@@ -266,7 +270,7 @@ fn with_on_layer_off_the_ruler_goes_to_a_new_ruler_layer_and_the_selection_stays
 
 /// 画面の点のうち、最後のストロークの点（凍結した寄せ先を通ったあと）。
 fn last_point(h: &H, rect: Rect) -> DVec2 {
-    let p = st(h).view3d().input.last_point.expect("点");
+    let p = st(h).view3d().view.input.last_point.expect("点");
     DVec2::new((p.x - rect.left()) as f64, (p.y - rect.top()) as f64)
 }
 
@@ -459,19 +463,19 @@ fn special_3d_rulers_do_not_snap_when_the_press_is_off_the_model_but_a_straight_
     press(&h, outside, PointerButton::Primary);
     h.step();
     assert!(
-        st(&h).view3d().input.surface.is_some(),
+        st(&h).view3d().view.input.surface.is_some(),
         "{}",
         st(&h).message()
     );
     assert!(
-        st(&h).view3d().input.ruler_constraint.is_none(),
+        st(&h).view3d().view.input.ruler_constraint.is_none(),
         "モデルの外で押すと、面の点が無いので平行線は寄せない"
     );
     release(&h, outside, PointerButton::Primary);
     h.run();
     // 同じ所の近く（画面で 10 点）を通る直線定規なら、面の点が無くても寄せる
     let to_world = |h: &H, p: Pos2| {
-        let view = st(h).view3d().camera.view(rect.width(), rect.height());
+        let view = st(h).view3d().view.camera.view(rect.width(), rect.height());
         let r = view.ray(local(rect, p));
         r.origin() + r.direction() * 2.0
     };
@@ -492,7 +496,7 @@ fn special_3d_rulers_do_not_snap_when_the_press_is_off_the_model_but_a_straight_
     h.step();
     assert!(
         matches!(
-            st(&h).view3d().input.ruler_constraint,
+            st(&h).view3d().view.input.ruler_constraint,
             Some(Constraint::Line { .. })
         ),
         "直線定規は面の点が無くても、近ければ寄せる"
@@ -755,7 +759,7 @@ pub(crate) fn two_materials() -> (H, Rect) {
         .unwrap();
         state.view3d_mut().set_model(model);
         state.view3d_mut().material = 0;
-        state.view3d_mut().camera = OrbitCamera {
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -892,7 +896,7 @@ fn turning_off_a_snap_stops_the_3d_pulls_of_its_rulers() {
     let pressed = |h: &mut H, at: Pos2| {
         press(h, at, PointerButton::Primary);
         h.step();
-        let c = st(h).view3d().input.ruler_constraint.clone();
+        let c = st(h).view3d().view.input.ruler_constraint.clone();
         release(h, at, PointerButton::Primary);
         h.run();
         c
@@ -927,10 +931,14 @@ fn turning_off_a_snap_stops_the_3d_pulls_of_its_rulers() {
 #[test]
 fn a_straight_3d_ruler_with_an_end_behind_the_camera_still_snaps_near_its_visible_part() {
     let (mut h, rect) = cube_view();
-    let view = st(&h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(&h)
+        .view3d()
+        .view
+        .camera
+        .view(rect.width(), rect.height());
     let right = view.rotation * Vec3::X;
     let behind = view.position - view.forward * 2.0 + right * 0.4;
-    let front = st(&h).view3d().camera.target + right * 0.1;
+    let front = st(&h).view3d().view.camera.target + right * 0.1;
     assert!(view.depth(behind) < 0.0 && view.depth(front) > 0.0);
     let line = Ruler::model(
         yolu_core::RulerId(1),
@@ -965,9 +973,9 @@ fn a_straight_3d_ruler_with_an_end_behind_the_camera_still_snaps_near_its_visibl
 
 fn orthographic() -> (H, Rect) {
     let (mut h, rect) = cube_view();
-    h.view3d_mut().camera.set_orthographic(true);
+    h.view3d_mut().view.camera.set_orthographic(true);
     h.run();
-    assert!(st(&h).view3d().camera.is_orthographic());
+    assert!(st(&h).view3d().view.camera.is_orthographic());
     (h, rect)
 }
 
@@ -993,6 +1001,7 @@ fn in_orthographic_a_3d_ruler_is_made_on_the_faces_pulled_over() {
             let mirror = r.surface_symmetry().unwrap().mirror.unwrap();
             let forward = st(&h)
                 .view3d()
+                .view
                 .camera
                 .view(rect.width(), rect.height())
                 .forward;

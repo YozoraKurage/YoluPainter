@@ -14,7 +14,7 @@ pub fn press(app: &mut AppState, view: &CanvasView, pos: Pos2, source: StrokeSou
     if app.is_stroking()
         || app.tool != Tool::Gradient
         || app.gradient.drag.is_some()
-        || app.view3d.input.draft.is_some()
+        || app.view3d.view.input.draft.is_some()
     {
         return;
     }

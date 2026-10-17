@@ -15,8 +15,8 @@ use yolu_core::glam::Vec3;
 fn cube_view(width: f32, height: f32, doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(width, height, doc);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -25,7 +25,7 @@ fn cube_view(width: f32, height: f32, doc: u32) -> (Harness<'static, YoluApp>, R
 
 /// モデルの空間の点が見える画面の点。
 fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -119,7 +119,7 @@ fn painting_on_the_cube_crosses_the_seam_and_uploads_only_changed_tiles() {
 #[test]
 fn painting_on_the_cube_in_orthographic_crosses_the_seam_and_undoes_in_one_step() {
     let (mut h, rect) = cube_view(1100.0, 760.0, 256);
-    h.view3d_mut().camera.set_orthographic(true);
+    h.view3d_mut().view.camera.set_orthographic(true);
     h.run();
     h.color_mut().set_main([0.85, 0.15, 0.1, 1.0]);
     let from = screen_of(&h, rect, Vec3::new(0.15, 0.1, -0.5));
@@ -136,7 +136,7 @@ fn painting_on_the_cube_in_orthographic_crosses_the_seam_and_undoes_in_one_step(
         })
         .collect();
     drag(&mut h, &points);
-    assert!(h.view3d().camera.is_orthographic());
+    assert!(h.view3d().view.camera.is_orthographic());
     assert_eq!(
         painted_islands(&h),
         [(0, 0), (0, 1)].into_iter().collect(),
@@ -147,7 +147,7 @@ fn painting_on_the_cube_in_orthographic_crosses_the_seam_and_undoes_in_one_step(
     let painted = pixel(&image, from);
     assert!(painted[0] > 120 && painted[1] < 80, "描いた所: {painted:?}");
     // ブラシの円の画面の大きさは、手前の面の点と奥の面の点で同じ
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let near = view.world_radius_to_screen(Vec3::new(0.0, 0.0, -0.5), 0.1);
     let far = view.world_radius_to_screen(Vec3::new(0.0, 0.0, 0.5), 0.1);
     assert!((near - far).abs() < 1e-4, "{near} {far}");
@@ -334,7 +334,7 @@ fn a_dab_uploads_only_the_touched_tiles() {
 fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     let (mut h, rect) = cube_view(1000.0, 700.0, 256);
     let c = rect.center();
-    let cam = h.view3d().camera;
+    let cam = h.view3d().view.camera;
     // 右ドラッグで回す（右へ 100 点で yaw +35°）
     press(&h, c, PointerButton::Secondary);
     h.step();
@@ -342,7 +342,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     h.step();
     release(&h, c + vec2(100.0, 20.0), PointerButton::Secondary);
     h.run();
-    let after = h.view3d().camera;
+    let after = h.view3d().view.camera;
     assert!(
         (after.yaw - cam.yaw - 35.0).abs() < 1e-3,
         "{} → {}",
@@ -358,9 +358,9 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     h.step();
     release(&h, c + vec2(-50.0, 0.0), PointerButton::Middle);
     h.run();
-    assert_ne!(h.view3d().camera.target, after.target);
+    assert_ne!(h.view3d().view.camera.target, after.target);
     // Alt + 右ドラッグでも回す（描かない。閾値を超えたら、右へ動かした向きの隣の軸の視点）
-    let before = h.view3d().camera;
+    let before = h.view3d().view.camera;
     h.event(Event::PointerMoved(c));
     h.event(Event::PointerButton {
         pos: c,
@@ -373,7 +373,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     h.step();
     release(&h, c + vec2(60.0, 0.0), PointerButton::Secondary);
     h.run();
-    let after = h.view3d().camera;
+    let after = h.view3d().view.camera;
     assert_eq!(
         (after.yaw, after.pitch),
         yolu_core::geometry::flicked_orientation(
@@ -384,10 +384,10 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     );
     assert!(!h.doc().can_undo());
     // 軸の視点に切り替えて正投影になったので、透視へ戻してから寄る距離を見る
-    h.view3d_mut().camera.set_orthographic(false);
-    h.view3d_mut().auto_orthographic = false;
+    h.view3d_mut().view.camera.set_orthographic(false);
+    h.view3d_mut().view.auto_orthographic = false;
     // ホイールで寄る（上へ 1 目盛りで約 1/1.2 の距離）
-    let distance = h.view3d().camera.distance;
+    let distance = h.view3d().view.camera.distance;
     move_to(&h, c);
     h.event(Event::MouseWheel {
         unit: egui::MouseWheelUnit::Line,
@@ -396,7 +396,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
         phase: egui::TouchPhase::Move,
     });
     h.run();
-    let d = h.view3d().camera.distance;
+    let d = h.view3d().view.camera.distance;
     assert!(
         (d / distance - (-0.18f32).exp()).abs() < 1e-4,
         "{distance} → {d}"
@@ -406,7 +406,7 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     h.get_by_label("モデル全体が見える位置へ戻す").click();
     h.run();
     // 全体を表示する位置は、モデルを開いた直後と同じ向き（モデルの前、+Z 側から）
-    let camera = h.view3d().camera;
+    let camera = h.view3d().view.camera;
     assert_eq!(camera.yaw, yolu_core::geometry::DEFAULT_YAW);
     assert_eq!(camera.pitch, yolu_core::geometry::DEFAULT_PITCH);
     assert!(camera.position().z > camera.target.z, "前から見る");
@@ -421,7 +421,7 @@ fn a_model_opens_seen_from_its_front() {
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
-    let opened = h.view3d().camera;
+    let opened = h.view3d().view.camera;
     let model = h.view3d().model.clone().expect("モデルを読んだ");
     assert_eq!(
         opened,
@@ -433,11 +433,11 @@ fn a_model_opens_seen_from_its_front() {
         yolu_core::geometry::pick(&model.geometry, &view, center).expect("中央にモデルがある");
     assert!(hit.normal.z > 0.9, "前（+Z）の面が見える: {:?}", hit.normal);
     // 手で回してから全体を表示すると、開いた直後の位置へ戻る
-    h.view3d_mut().camera.yaw = 100.0;
+    h.view3d_mut().view.camera.yaw = 100.0;
     h.view3d_mut().frame_model();
-    assert_eq!(h.view3d().camera, opened);
+    assert_eq!(h.view3d().view.camera, opened);
     // モデルを替えても（別の名前）同じ向き
-    h.view3d_mut().camera.yaw = 100.0;
+    h.view3d_mut().view.camera.yaw = 100.0;
     let revision = h.view3d_mut().next_revision();
     let other = ViewModel::new(
         "別のモデル",
@@ -448,7 +448,7 @@ fn a_model_opens_seen_from_its_front() {
     .unwrap();
     h.view3d_mut().set_model(other);
     h.run();
-    let replaced = h.view3d().camera;
+    let replaced = h.view3d().view.camera;
     assert_eq!((replaced.yaw, replaced.pitch), (opened.yaw, opened.pitch));
     assert!(replaced.position().z > replaced.target.z, "前から見る");
 }
@@ -464,7 +464,7 @@ fn escape_cancels_and_focus_loss_commits_the_surface_stroke() {
     h.step();
     assert!(h.app().is_stroking());
     // 描いている間はホイールでカメラを動かさない
-    let distance = h.view3d().camera.distance;
+    let distance = h.view3d().view.camera.distance;
     h.event(Event::MouseWheel {
         unit: egui::MouseWheelUnit::Line,
         delta: vec2(0.0, 3.0),
@@ -472,7 +472,7 @@ fn escape_cancels_and_focus_loss_commits_the_surface_stroke() {
         phase: egui::TouchPhase::Move,
     });
     h.step();
-    assert_eq!(h.view3d().camera.distance, distance);
+    assert_eq!(h.view3d().view.camera.distance, distance);
     key(&h, Key::Escape, Modifiers::NONE);
     h.step();
     assert!(!h.app().is_stroking());
@@ -543,8 +543,8 @@ fn painting_a_face_without_a_material_names_the_slot_in_the_selected_language() 
         let mut model = two_material_model();
         model.materials[1].key = yolu_protocol::MaterialKey::Unassigned;
         h.state_mut().load_live_link_model(&model).unwrap();
-        h.view3d_mut().camera.yaw = -40.0;
-        h.view3d_mut().camera.pitch = 15.0;
+        h.view3d_mut().view.camera.yaw = -40.0;
+        h.view3d_mut().view.camera.pitch = 15.0;
         h.run();
         let rect = h.state().view3d_rect().unwrap();
         // 右の面はマテリアルの無いスロット。最初のセット（肌）を描いているので、描き始めない
@@ -568,8 +568,8 @@ fn live_link_model_paints_only_its_texture_set_and_waits_for_the_stroke() {
     h.state_mut()
         .load_live_link_model(&two_material_model())
         .unwrap();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     h.run();
     let rect = h.state().view3d_rect().unwrap();
     // 右の面は服（テクスチャセット 1）。肌を描いているので、描き始めない
@@ -603,7 +603,7 @@ fn live_link_model_paints_only_its_texture_set_and_waits_for_the_stroke() {
     };
     h.state_mut().apply_live_link_pose(&pose).unwrap();
     let before = std::sync::Arc::as_ptr(h.view3d().model.as_ref().unwrap());
-    let camera = h.view3d().camera;
+    let camera = h.view3d().view.camera;
     release(&h, side, PointerButton::Primary);
     h.run();
     assert!(!h.view3d().has_pending_model());
@@ -611,7 +611,7 @@ fn live_link_model_paints_only_its_texture_set_and_waits_for_the_stroke() {
     assert_ne!(std::sync::Arc::as_ptr(&now), before);
     assert_eq!(now.geometry.triangles()[0].a.z, -0.75, "ポーズの位置");
     assert_eq!(
-        h.view3d().camera,
+        h.view3d().view.camera,
         camera,
         "同じモデルのポーズではカメラを動かさない"
     );

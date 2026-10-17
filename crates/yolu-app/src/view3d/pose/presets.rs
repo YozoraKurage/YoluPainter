@@ -804,7 +804,7 @@ mod tests {
         let settings = app.stroke_settings(false);
         let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
         app.session.stroke = Some(stroke);
-        app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
+        app.view3d.view.input.stroke = Some(crate::state::StrokeSource::Mouse);
         let undo = session(&app).undo_len();
         assert!(!apply_preset(&mut app, id, false));
         assert_eq!(app.message, ViewError::Stroking.to_string());

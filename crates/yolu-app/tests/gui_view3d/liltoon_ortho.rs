@@ -64,7 +64,7 @@ fn set_model(h: &mut H, meshes: Vec<ModelMesh>) {
 
 /// −Z の側から見るカメラ（正投影なら、同じ距離の透視と注視点の所で同じ大きさ）。
 fn look_at(h: &mut H, distance: f32, ortho: bool) {
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -118,7 +118,7 @@ fn set_look(h: &mut H, look: MaterialLook) {
 /// 世界の点の、ウィンドウの画面の点。
 fn screen(h: &H, world: Vec3) -> Pos2 {
     let rect = h.state().view3d_rect().unwrap();
-    let c = h.view3d().camera;
+    let c = h.view3d().view.camera;
     let s = c
         .view(rect.width(), rect.height())
         .to_screen(world)
@@ -283,13 +283,14 @@ fn the_background_looks_along_the_view_in_orthographic() {
     op(&mut h, Op::EnvBackground(true));
     op(&mut h, Op::EnvBlur(0.0));
     let rect = h.state().view3d_rect().unwrap();
+    // （左上の隅は表示の種類のドロップダウンなので、その下）
     let corners = [
-        rect.min + egui::vec2(10.0, 10.0),
+        rect.min + egui::vec2(10.0, 50.0),
         rect.max - egui::vec2(10.0, 10.0),
         egui::pos2(rect.min.x + 10.0, rect.max.y - 10.0),
     ];
     // 透視: 背景は画素ごとの視線の向き（上と下で空の色が違う）
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         pitch: 20.0,
         ..OrbitCamera::default()
     };
@@ -298,7 +299,7 @@ fn the_background_looks_along_the_view_in_orthographic() {
     let persp: Vec<[u8; 3]> = corners.iter().map(|p| px(&image, *p)).collect();
     assert!(far(persp[0], persp[1]) > 3, "{persp:?}");
     // 正投影: 視線はどこも前の向きなので、背景は 1 つの色（引いて広く見ても。近い面と遠い面の間の点からの向きでは、隅ほど傾く）
-    h.view3d_mut().camera.projection = Projection::Orthographic { height: 40.0 };
+    h.view3d_mut().view.camera.projection = Projection::Orthographic { height: 40.0 };
     h.run();
     let image = h.render().expect("描ける");
     let ortho: Vec<[u8; 3]> = corners.iter().map(|p| px(&image, *p)).collect();

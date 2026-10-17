@@ -541,14 +541,14 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         h.set_tool(Tool::PolygonFill);
         {
             let s = h.app_mut();
-            s.view3d_mut().camera.yaw = 0.0;
-            s.view3d_mut().camera.pitch = 0.0;
+            s.view3d_mut().view.camera.yaw = 0.0;
+            s.view3d_mut().view.camera.pitch = 0.0;
         }
         click_tab(&mut h, yolu_app::Tab::View3d);
         h.run();
         let rect = h.state().view3d_rect().expect("3D のタブを描いた");
         let at = {
-            let v = h.view3d().camera.view(rect.width(), rect.height());
+            let v = h.view3d().view.camera.view(rect.width(), rect.height());
             let q = v
                 .to_screen(yolu_core::glam::Vec3::new(2.0, 1.0, 0.0))
                 .expect("カメラの前");
@@ -571,7 +571,7 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         key(&h, egui::Key::Escape, egui::Modifiers::NONE);
         h.run();
         assert_eq!(island_menu(&h), None);
-        let yaw = h.view3d().camera.yaw;
+        let yaw = h.view3d().view.camera.yaw;
         press(&h, at, egui::PointerButton::Secondary);
         h.step();
         move_to(&h, at + egui::vec2(60.0, 0.0));
@@ -583,6 +583,6 @@ fn right_clicking_an_island_with_the_polygon_fill_opens_its_bake_menu() {
         );
         h.run();
         assert_eq!(island_menu(&h), None, "回しただけ");
-        assert_ne!(h.view3d().camera.yaw, yaw);
+        assert_ne!(h.view3d().view.camera.yaw, yaw);
     }
 }

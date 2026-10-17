@@ -47,3 +47,6 @@ app-yolupainter-is-saving = YoluPainter is saving
 app-return-to-dock = Return to Dock
 app-sentence-already-ended = {" "}
 app-sentence-not-ended = .{" "}
+app-3d-view-numbered = 3D View { $number }
+app-3d-view-titled = { $name } · { $shading }
+app-add-3d-view-tip = Add 3D View

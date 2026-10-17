@@ -28,7 +28,7 @@ use crate::state::{AppState, StrokeSource, Tool};
 
 /// 3D ビューでグラデーション・図形・定規のドラッグの途中か（どれでも true。離す・Esc・フォーカスを失うまで）。
 pub fn dragging(app: &AppState) -> bool {
-    app.view3d.input.draft.is_some()
+    app.view3d.view.input.draft.is_some()
 }
 
 /// ドラッグで決めるもの。
@@ -65,7 +65,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
         _ => return,
     };
     if app.is_stroking()
-        || app.view3d.input.draft.is_some()
+        || app.view3d.view.input.draft.is_some()
         || app.gradient.drag.is_some()
         || app.view3d.model.is_none()
     {
@@ -106,7 +106,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
         None
     };
     let p = screen_point(rect, at);
-    app.view3d.input.draft = Some(SurfaceDraft {
+    app.view3d.view.input.draft = Some(SurfaceDraft {
         kind,
         source,
         start: p,
@@ -121,6 +121,7 @@ pub(super) fn press(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
 pub(super) fn moved(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSource, m: &Modifiers) {
     if let Some(d) = app
         .view3d
+        .view
         .input
         .draft
         .as_mut()
@@ -134,7 +135,7 @@ pub(super) fn moved(app: &mut AppState, rect: Rect, at: Pos2, source: StrokeSour
 
 /// 毎フレーム: 押しているあいだの Shift・Alt は、動かさなくても形に効く（2D と同じ）。
 pub(super) fn modifiers(app: &mut AppState, m: &Modifiers) {
-    if let Some(d) = app.view3d.input.draft.as_mut() {
+    if let Some(d) = app.view3d.view.input.draft.as_mut() {
         d.shift = m.shift;
         d.alt = m.alt;
     }
@@ -148,11 +149,17 @@ pub(super) fn release(
     source: StrokeSource,
     m: &Modifiers,
 ) {
-    if app.view3d.input.draft.is_none_or(|d| d.source != source) {
+    if app
+        .view3d
+        .view
+        .input
+        .draft
+        .is_none_or(|d| d.source != source)
+    {
         return;
     }
     moved(app, rect, at, source, m);
-    if let Some(d) = app.view3d.input.draft.take() {
+    if let Some(d) = app.view3d.view.input.draft.take() {
         apply(app, rect, d);
     }
 }
@@ -160,10 +167,16 @@ pub(super) fn release(
 /// 離したのを取りこぼした（ウィンドウの外で離した・ペンの押しを OS に奪われて補った離し（`AppState::pen_release_lost`）など）: グラデーションは最後の位置で
 /// 離したことにし、図形と定規は何も変えずにやめる（2D と同じ。2D のグラデーションの補った離しも最後の位置で塗る）。この入力（`source`）で始めたドラッグだけ。
 pub(super) fn lost_release(app: &mut AppState, rect: Rect, source: StrokeSource) {
-    if app.view3d.input.draft.is_none_or(|d| d.source != source) {
+    if app
+        .view3d
+        .view
+        .input
+        .draft
+        .is_none_or(|d| d.source != source)
+    {
         return;
     }
-    if let Some(d) = app.view3d.input.draft.take() {
+    if let Some(d) = app.view3d.view.input.draft.take() {
         if d.kind == DraftKind::Gradient {
             apply(app, rect, d);
         }
@@ -172,7 +185,7 @@ pub(super) fn lost_release(app: &mut AppState, rect: Rect, source: StrokeSource)
 
 /// Esc: 途中の形を捨てる（グラデーションは知らせる。2D と同じ）。何かあったか。
 pub(super) fn cancel(app: &mut AppState) -> bool {
-    match app.view3d.input.draft.map(|d| d.kind) {
+    match app.view3d.view.input.draft.map(|d| d.kind) {
         None => false,
         Some(DraftKind::Gradient) => crate::gradient::canvas::cancel(app),
         Some(_) => app.drafting_cancel(),
@@ -362,7 +375,7 @@ fn outline_stroke(
 /// 3D ビューの上に、ドラッグの途中の形（グラデーションの線・図形の輪郭・引いている定規）を描く（2D と同じ見た目）。作った定規は `rulers::draw3d`。
 pub fn paint_overlay(painter: &Painter, app: &AppState, rect: Rect) {
     let screen = |p: DVec2| to_pos(rect, p);
-    let draft = app.view3d.input.draft;
+    let draft = app.view3d.view.input.draft;
     match draft {
         Some(d) if d.kind == DraftKind::Gradient => {
             crate::gradient::canvas::paint_line(painter, screen(d.start), screen(d.current));

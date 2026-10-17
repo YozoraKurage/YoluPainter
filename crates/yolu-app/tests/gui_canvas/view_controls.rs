@@ -53,7 +53,7 @@ fn move_on_circle(h: &mut H, radius: f32, degrees: f32) {
 }
 
 fn camera(h: &H) -> yolu_core::geometry::OrbitCamera {
-    h.view3d().camera
+    h.view3d().view.camera
 }
 
 fn tool(h: &H) -> Tool {
@@ -62,6 +62,7 @@ fn tool(h: &H) -> Tool {
 
 fn nav(h: &H) -> Option<(Nav, PointerButton)> {
     h.view3d()
+        .view
         .input
         .nav
         .map(|(nav, button)| (nav, button.into()))
@@ -70,8 +71,8 @@ fn nav(h: &H) -> Option<(Nav, PointerButton)> {
 fn cube_view() -> (H, Rect) {
     let mut h = app(1100.0, 760.0, 256);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -138,7 +139,7 @@ fn alt_right_drag_in_3d_flicks_to_the_next_axis_view_in_the_dragged_direction() 
         let at = rect.center();
         {
             // 正面
-            let c = &mut h.view3d_mut().camera;
+            let c = &mut h.view3d_mut().view.camera;
             c.yaw = 180.0;
             c.pitch = 0.0;
         }
@@ -170,7 +171,7 @@ fn alt_right_drag_in_3d_turns_once_per_drag_and_the_larger_direction_wins() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
-        let c = &mut h.view3d_mut().camera;
+        let c = &mut h.view3d_mut().view.camera;
         c.yaw = 180.0;
         c.pitch = 0.0;
     }
@@ -223,7 +224,7 @@ fn alt_right_drag_in_3d_starts_from_the_nearest_axis_view_when_the_view_is_off_t
         for (sign, wanted) in [(1.0, right), (-1.0, left)] {
             let (mut h, rect) = cube_view();
             {
-                let c = &mut h.view3d_mut().camera;
+                let c = &mut h.view3d_mut().view.camera;
                 c.yaw = yaw;
                 c.pitch = pitch;
             }
@@ -265,7 +266,7 @@ fn pressing_alt_while_orbiting_with_the_right_button_does_not_switch_to_the_snap
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
-        let c = &mut h.view3d_mut().camera;
+        let c = &mut h.view3d_mut().view.camera;
         c.yaw = 190.0;
         c.pitch = 0.0;
     }
@@ -293,7 +294,7 @@ fn pressing_alt_while_orbiting_with_the_right_button_does_not_switch_to_the_snap
     mods(&mut h, Modifiers::NONE);
     // 逆: Alt を押して右で押し、途中で Alt を離しても、スナップ回転のまま
     {
-        let c = &mut h.view3d_mut().camera;
+        let c = &mut h.view3d_mut().view.camera;
         c.yaw = 180.0;
         c.pitch = 0.0;
     }
@@ -313,7 +314,7 @@ fn flicking_to_the_top_view_keeps_the_view_working_and_the_surface_paintable() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
-        let c = &mut h.view3d_mut().camera;
+        let c = &mut h.view3d_mut().view.camera;
         c.yaw = 180.0;
         c.pitch = 0.0;
     }
@@ -361,8 +362,8 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_does_nothin
         s.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
             offset: Default::default(),
         };
-        s.view3d_mut().camera.yaw = 210.0;
-        s.view3d_mut().camera.pitch = 0.0;
+        s.view3d_mut().view.camera.yaw = 210.0;
+        s.view3d_mut().view.camera.pitch = 0.0;
     }
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     let alt = Modifiers::ALT;
@@ -371,7 +372,7 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_does_nothin
     mods(&mut h, alt);
     mouse(&h, at, PointerButton::Primary, true, alt);
     h.step();
-    assert!(h.view3d().input.clone_press.is_some());
+    assert!(h.view3d().view.input.clone_press.is_some());
     mouse(&h, at, PointerButton::Primary, false, alt);
     h.step();
     mods(&mut h, Modifiers::NONE);
@@ -717,8 +718,8 @@ fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_mo
         s.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
             offset: Default::default(),
         };
-        s.view3d_mut().camera.yaw = 190.0;
-        s.view3d_mut().camera.pitch = 0.0;
+        s.view3d_mut().view.camera.yaw = 190.0;
+        s.view3d_mut().view.camera.pitch = 0.0;
     }
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, 0.5));
     let expected = surface_point_at(&h, rect, at);
@@ -749,7 +750,7 @@ fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_mo
     move_mouse(&mut h, at + vec2(3.0, 1.0));
     assert_eq!(camera(&h), before, "右ドラッグも遊びの内は回さない");
     assert!(
-        h.view3d().input.eyedrop.is_some(),
+        h.view3d().view.input.eyedrop.is_some(),
         "印と取る点が揃う（まだ候補）"
     );
     mouse(
@@ -761,7 +762,7 @@ fn a_small_wobble_of_an_alt_click_or_a_right_click_neither_snaps_the_view_nor_mo
     );
     h.step();
     assert_eq!(camera(&h), before);
-    assert!(h.view3d().input.eyedrop.is_none());
+    assert!(h.view3d().view.input.eyedrop.is_none());
 }
 
 #[test]
@@ -769,8 +770,8 @@ fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
     // 右ドラッグ: 4 点以内の揺れのあと 60 点動かすと、押した所からの 60 点ぶんの回転（遊びの分を引かない）
     let (mut h, rect) = cube_view();
     let at = rect.center();
-    h.view3d_mut().camera.yaw = 190.0;
-    h.view3d_mut().camera.pitch = 0.0;
+    h.view3d_mut().view.camera.yaw = 190.0;
+    h.view3d_mut().view.camera.pitch = 0.0;
     mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
     h.step();
     move_mouse(&mut h, at + vec2(2.0, 1.0));
@@ -780,7 +781,7 @@ fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
     assert!((c.yaw - (190.0 + 60.0 * 0.35)).abs() < 1e-3, "{}", c.yaw);
     assert!(c.pitch.abs() < 1e-3);
     assert!(
-        h.view3d().input.eyedrop.is_none(),
+        h.view3d().view.input.eyedrop.is_none(),
         "動かしたのでスポイトにしない"
     );
     // そのあとは、動いた分ずつ
@@ -795,7 +796,7 @@ fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
     );
     h.step();
     // Alt + 右ドラッグ（スナップ回転）: 同じ。遊びを超えたら、押した所からの動きが全部当たる（最後の 1 つの動きだけでは閾値に届かない）
-    h.view3d_mut().camera.yaw = 190.0;
+    h.view3d_mut().view.camera.yaw = 190.0;
     let alt = Modifiers::ALT;
     mods(&mut h, alt);
     mouse(&h, at, PointerButton::Secondary, true, alt);
@@ -828,7 +829,7 @@ fn right_dragging_from_straight_above_does_not_jump_by_a_degree_first() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
-        let c = &mut h.view3d_mut().camera;
+        let c = &mut h.view3d_mut().view.camera;
         c.yaw = 180.0;
         c.pitch = 90.0;
     }
@@ -856,13 +857,13 @@ fn flying_makes_the_right_button_release_no_longer_a_click() {
     h.color_mut().set_main([0.0, 1.0, 0.0, 1.0]);
     press_right(&mut h, at);
     assert!(
-        h.view3d().input.eyedrop.is_some(),
+        h.view3d().view.input.eyedrop.is_some(),
         "押しただけならスポイトの候補"
     );
     key_event(&mut h, Key::W, true, Modifiers::NONE);
     h.step();
     assert!(
-        h.view3d().input.eyedrop.is_none(),
+        h.view3d().view.input.eyedrop.is_none(),
         "動かしたらスポイトにしない"
     );
     key_event(&mut h, Key::W, false, Modifiers::NONE);
@@ -923,7 +924,7 @@ fn shift_with_the_right_button_and_alt_shift_with_the_right_button_no_longer_pan
     mods(&mut h, Modifiers::SHIFT);
     mouse(&h, at, PointerButton::Secondary, true, Modifiers::SHIFT);
     h.step();
-    assert!(h.view3d().input.eyedrop.is_none());
+    assert!(h.view3d().view.input.eyedrop.is_none());
     mouse(&h, at, PointerButton::Secondary, false, Modifiers::SHIFT);
     h.step();
     mods(&mut h, Modifiers::NONE);

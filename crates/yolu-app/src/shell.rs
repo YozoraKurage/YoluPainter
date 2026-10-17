@@ -705,7 +705,7 @@ pub fn handle_shortcuts(ctx: &egui::Context, app: &mut AppState) {
     let flying = crate::view3d::navigation::flying(app);
     ctx.input_mut(|i| {
         // キーの段 1「途中の操作」: 右を押している間の W/A/S/D/Q/E は視点の移動（表の `Scope::During` の行。下の段へ渡さない）
-        crate::keymap::take_fly_keys(i, &mut app.view3d.input.fly_held, flying);
+        crate::keymap::take_fly_keys(i, &mut app.view3d.view.input.fly_held, flying);
         // ツールのキーを押している間の、そのキーの繰り返しの押し（修飾を先に離したあとも）は、表のほかの割り当てへ渡さない
         crate::toolkeys::swallow_repeats(i, app);
         // コピー・カット・ペースト（X などの修飾なしのキーより先に取る）。画素を変えるカット・ペーストは、ペイントのモードだけ

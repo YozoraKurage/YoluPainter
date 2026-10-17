@@ -494,6 +494,13 @@ pub fn validate_all(dock: &DockState<Tab>, detached: &[&DockState<Tab>]) -> Resu
             *count.entry(*tab).or_insert(0usize) += 1;
         }
     }
+    // 足した 3D ビューは、1 つの見分けにつき 1 つまで
+    if let Some((tab, n)) = count
+        .iter()
+        .find(|(tab, n)| matches!(tab, Tab::View3dMore(_)) && **n > 1)
+    {
+        return Err(format!("タブ {} が {n} つある", tab.save_key()));
+    }
     for tab in Tab::ALL {
         let n = count.get(&tab).copied().unwrap_or(0);
         let optional = OPTIONAL_TABS.contains(&tab);
@@ -707,7 +714,7 @@ pub fn render_full(
                 .map(|d| {
                     let mut item = json!({
                         "dock": serde_json::to_value(normalized(&d.dock, &[])).unwrap_or(Value::Null),
-                        "home": d.home.iter().map(|t| t.key()).collect::<Vec<_>>(),
+                        "home": d.home.iter().map(|t| t.save_key()).collect::<Vec<_>>(),
                     });
                     if let Some(w) = d.window.and_then(FloatRecord::sanitized) {
                         item["window"] = w.to_json();

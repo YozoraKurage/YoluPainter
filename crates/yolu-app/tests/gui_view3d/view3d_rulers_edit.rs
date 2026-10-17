@@ -25,8 +25,8 @@ fn st(h: &H) -> &AppState {
 fn edit_view() -> (H, Rect, LayerId) {
     let mut h = app(1280.0, 860.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.view3d_mut().camera.yaw = 0.0;
-    h.view3d_mut().camera.pitch = 0.0;
+    h.view3d_mut().view.camera.yaw = 0.0;
+    h.view3d_mut().view.camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let layer = st(&h).selected_layer().expect("レイヤー");
@@ -49,7 +49,7 @@ fn edit_view() -> (H, Rect, LayerId) {
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = st(h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -152,8 +152,8 @@ fn the_marker_of_a_3d_ruler_selects_it_with_its_layer_and_its_row_and_2d_or_hidd
     assert_eq!(st(&h).rulers().selected, Some((layer, first.id)));
     assert!(!st(&h).is_stroking());
     assert_eq!(undo_count(&h), steps, "選ぶだけ。文書を変えない");
-    // 何も無い所を押すと外れる
-    click(&mut h, rect.min + vec2(12.0, 12.0));
+    // 何も無い所を押すと外れる（左下の隅。左上は表示の種類のドロップダウン）
+    click(&mut h, egui::pos2(rect.left() + 12.0, rect.bottom() - 12.0));
     assert_eq!(st(&h).objects().selected, None);
 }
 
@@ -578,8 +578,8 @@ fn a_missed_release_ends_a_gizmo_drag_at_the_last_position_in_one_step() {
 fn s_on_one_axis_stretches_a_and_b_along_it_so_the_direction_changes_and_up_stays() {
     let mut h = app(1280.0, 860.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.view3d_mut().camera.yaw = 0.0;
-    h.view3d_mut().camera.pitch = 0.0;
+    h.view3d_mut().view.camera.yaw = 0.0;
+    h.view3d_mut().view.camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     // a→b は up（−Z）と直角でない（面の上の点から斜めの面の点へ引いた直線）
@@ -677,9 +677,9 @@ fn alt_s_does_nothing_to_a_one_point_perspective_and_resizes_a_two_point_one() {
 #[test]
 fn in_orthographic_a_3d_ruler_moves_by_g_and_by_its_arrow() {
     let (mut h, rect, _) = edit_view();
-    h.view3d_mut().camera.set_orthographic(true);
+    h.view3d_mut().view.camera.set_orthographic(true);
     h.run();
-    assert!(st(&h).view3d().camera.is_orthographic());
+    assert!(st(&h).view3d().view.camera.is_orthographic());
     select(&mut h);
     let before = the_ruler(&h);
     let (a0, b0, _) = points(&before);

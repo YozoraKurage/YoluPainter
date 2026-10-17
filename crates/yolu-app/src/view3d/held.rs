@@ -48,8 +48,13 @@ impl Held {
     /// この入力（`source`）が、これを押している最中か。
     pub(super) fn held(self, app: &AppState, source: StrokeSource) -> bool {
         match self {
-            Held::Stroke => app.view3d.input.stroke == Some(source),
-            Held::Draft => app.view3d.input.draft.is_some_and(|d| d.source == source),
+            Held::Stroke => app.view3d.view.input.stroke == Some(source),
+            Held::Draft => app
+                .view3d
+                .view
+                .input
+                .draft
+                .is_some_and(|d| d.source == source),
             Held::Select => {
                 select::dragging(app)
                     && app
@@ -110,7 +115,7 @@ impl Held {
                     .rect
                     .is_some_and(|r| r.source == source && r.surface)
                 {
-                    match app.view3d.input.last_pointer {
+                    match app.view3d.view.input.last_pointer {
                         Some(at) => crate::pathtool::surface::release(app, rect, at, source),
                         None => app.path.rect = None,
                     }

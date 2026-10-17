@@ -450,12 +450,15 @@ fn focus_lost(view: View) -> Replayed {
 /// 3D: 1 フレームに 1 ダブの枠で描いて離し、持ち越しが残っている間に次の線を触れ始める（先に前の線を確定してから、次の線を受ける）。
 fn settle_then_next_press() -> Replayed {
     let (mut h, rect) = open(View::View3d);
-    h.view3d_mut().input.paint_budget = Some(std::time::Duration::ZERO);
+    h.view3d_mut().view.input.paint_budget = Some(std::time::Duration::ZERO);
     let first: Vec<PenSample> = (0..10)
         .map(|i| pen(along(&h, View::View3d, rect, i as f32 / 20.0), 0.9, i * 8))
         .collect();
     feed(&mut h, &first);
-    assert!(h.view3d().input.released, "前提: 離した後も持ち越しが残る");
+    assert!(
+        h.view3d().view.input.released,
+        "前提: 離した後も持ち越しが残る"
+    );
     let second: Vec<PenSample> = (10..20)
         .map(|i| {
             pen(

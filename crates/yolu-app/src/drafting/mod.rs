@@ -259,6 +259,7 @@ impl AppState {
     pub fn drafting_cancel(&mut self) -> bool {
         let surface = self
             .view3d
+            .view
             .input
             .draft
             .take_if(|d| d.kind != crate::view3d::draft::DraftKind::Gradient)

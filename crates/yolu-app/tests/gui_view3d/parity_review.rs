@@ -410,7 +410,7 @@ fn observe_view3d(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation
     );
     output.textures_delta.clear();
     let mut found = Vec::new();
-    if let Some((nav, button)) = app.view3d().input.nav {
+    if let Some((nav, button)) = app.view3d().view.input.nav {
         assert_eq!(PointerButton::from(button), press.button, "{press:?}");
         found.push(match nav {
             Nav::Orbit => Operation::Orbit,
@@ -419,11 +419,11 @@ fn observe_view3d(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation
             Nav::Zoom => Operation::Zoom,
         });
     }
-    if let Some(e) = app.view3d().input.eyedrop {
+    if let Some(e) = app.view3d().view.input.eyedrop {
         assert_eq!(PointerButton::from(e.button), press.button, "{press:?}");
         found.push(Operation::Pick);
     }
-    if let Some((_, button)) = app.view3d().input.clone_press {
+    if let Some((_, button)) = app.view3d().view.input.clone_press {
         assert_eq!(PointerButton::from(button), press.button, "{press:?}");
         found.push(Operation::CloneSource);
     }
@@ -442,9 +442,9 @@ fn observe_view3d(config: &[(u8, Option<Combo>)], press: Press) -> Vec<Operation
     output.textures_delta.clear();
     // 押したボタンを離すと、始めた物は全部終わる（離しの操作は、同じ所で離したので行われる）
     assert!(
-        app.view3d().input.nav.is_none()
-            && app.view3d().input.eyedrop.is_none()
-            && app.view3d().input.clone_press.is_none(),
+        app.view3d().view.input.nav.is_none()
+            && app.view3d().view.input.eyedrop.is_none()
+            && app.view3d().view.input.clone_press.is_none(),
         "{press:?}"
     );
     if found.contains(&Operation::CloneSource) {

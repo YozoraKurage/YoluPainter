@@ -226,7 +226,7 @@ pub fn set_frame(app: &mut AppState, frame: i64) {
 /// 選んでいるテイクとフレームのポーズを、裏の仕事で求め始める（求めている途中のものは取り消す）。描いている最中・続けて変えている
 /// 操作の途中は断る。
 pub fn start(view3d: &mut View3dState) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;

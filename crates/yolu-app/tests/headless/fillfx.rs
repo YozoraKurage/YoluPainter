@@ -793,8 +793,8 @@ fn planar_cube() -> (AppState, LayerId) {
             mode: ProjectionMode::Planar,
         },
     );
-    s.view3d_mut().camera.yaw = -40.0;
-    s.view3d_mut().camera.pitch = 15.0;
+    s.view3d_mut().view.camera.yaw = -40.0;
+    s.view3d_mut().view.camera.pitch = 15.0;
     (s, layer)
 }
 
@@ -1204,8 +1204,8 @@ fn headless_a_world_space_gradient_is_added_fitted_to_the_model_and_every_edit_i
 #[test]
 fn headless_the_gizmo_edits_a_gradients_shape_in_one_undo() {
     let mut s = cube();
-    s.view3d_mut().camera.yaw = -40.0;
-    s.view3d_mut().camera.pitch = 15.0;
+    s.view3d_mut().view.camera.yaw = -40.0;
+    s.view3d_mut().view.camera.pitch = 15.0;
     let rect = view_rect();
     let layer = new_fill(&mut s);
     fill(
@@ -2894,8 +2894,8 @@ fn headless_the_gizmo_edits_a_shape_gradient_generator_in_the_filter_stack_in_on
     use yolu_core::generator::Settings;
     use yolu_core::{EffectSettings, FilterSpec, FilterTarget};
     let mut s = cube();
-    s.view3d_mut().camera.yaw = -40.0;
-    s.view3d_mut().camera.pitch = 15.0;
+    s.view3d_mut().view.camera.yaw = -40.0;
+    s.view3d_mut().view.camera.pitch = 15.0;
     let rect = view_rect();
     let layer = s.selected_layer().unwrap(); // 描くレイヤー（塗りつぶしでないレイヤーにも、スタックの Generator のギズモは出る）
     let filter = s
@@ -2987,7 +2987,7 @@ fn points_of(s: &AppState, layer: LayerId) -> Option<yolu_core::fill_points::Poi
 
 /// 3D ビュー（800 × 600）の、試しの立方体のモデルの中心の画面の点（手前の面に当たる）。
 fn model_center(s: &AppState, rect: Rect) -> egui::Pos2 {
-    let view = s.view3d().camera.view(rect.width(), rect.height());
+    let view = s.view3d().view.camera.view(rect.width(), rect.height());
     let p = view.to_screen(Vec3::ZERO).expect("見える");
     pos2(rect.left() + p.x, rect.top() + p.y)
 }
@@ -3041,8 +3041,8 @@ fn headless_pressing_the_model_adds_a_point_dragging_moves_it_in_one_undo_and_es
 {
     use yolu_app::fillfx::{gizmo::Source, points};
     let mut s = cube();
-    s.view3d_mut().camera.yaw = -40.0;
-    s.view3d_mut().camera.pitch = 15.0;
+    s.view3d_mut().view.camera.yaw = -40.0;
+    s.view3d_mut().view.camera.pitch = 15.0;
     let rect = view_rect();
     let layer = new_fill(&mut s);
     fill(
@@ -3078,7 +3078,7 @@ fn headless_pressing_the_model_adds_a_point_dragging_moves_it_in_one_undo_and_es
     // 印を掴んで動かし、Esc で戻す（履歴に残さない）
     let steps = s.doc().undo_count();
     let before = points_of(&s, layer).unwrap();
-    let view = s.view3d().camera.view(rect.width(), rect.height());
+    let view = s.view3d().view.camera.view(rect.width(), rect.height());
     let mark = {
         let p = before.points[2].position;
         let g = view

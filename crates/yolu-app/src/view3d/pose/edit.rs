@@ -453,7 +453,7 @@ mod tests {
         let settings = app.stroke_settings(false);
         let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
         app.session.stroke = Some(stroke);
-        app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
+        app.view3d.view.input.stroke = Some(crate::state::StrokeSource::Mouse);
         set_field(&mut app, upper, Field::Position(Vec3::X));
         assert_eq!(app.message, super::super::ViewError::Stroking.to_string());
         assert_eq!(local(&app, upper), rest(&app, upper));

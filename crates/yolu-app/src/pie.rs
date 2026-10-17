@@ -241,7 +241,7 @@ pub fn slot_of(app: &AppState, item: &PieItem) -> Slot {
             };
             // 入っている切り替え（今のモード・正投影）には印
             let on = mode == Some(app.mode)
-                || (id == "view3d.ortho" && app.view3d.camera.is_orthographic());
+                || (id == "view3d.ortho" && app.view3d.view.camera.is_orthographic());
             Slot {
                 label,
                 icon: mode.map(EditorMode::icon),
@@ -312,8 +312,8 @@ pub fn dragging(app: &AppState) -> bool {
     app.view3d.pose.drag.is_some()
         || app.fillfx.drag.is_some()
         || app.fillfx.point_drag.is_some()
-        || app.view3d.input.nav.is_some()
-        || app.view3d.input.eyedrop.is_some()
+        || app.view3d.view.input.nav.is_some()
+        || app.view3d.view.input.eyedrop.is_some()
         || app.region.drag.is_some()
         || app.bake.menu_press.is_some()
         || app.canvas.rotating.is_some()
@@ -646,7 +646,7 @@ mod tests {
                 s.label
             );
         }
-        app.view3d.camera.set_orthographic(true);
+        app.view3d.view.camera.set_orthographic(true);
         for (i, item) in view.slots.iter().enumerate() {
             let s = slot_of(&app, item.as_ref().unwrap());
             assert_eq!(s.checked, i == 3, "{}", s.label);
@@ -681,9 +681,9 @@ mod tests {
         // 正投影の切り替え（3D のモデルがあるとき）
         app.view3d.load_demo();
         run(&mut app, &PieItem::Command("view3d.ortho".into()));
-        assert!(app.view3d.camera.is_orthographic());
+        assert!(app.view3d.view.camera.is_orthographic());
         run(&mut app, &PieItem::Command("view3d.ortho".into()));
-        assert!(!app.view3d.camera.is_orthographic());
+        assert!(!app.view3d.view.camera.is_orthographic());
         run(&mut app, &PieItem::Command("no.such".into()));
         assert_eq!(app.message, "操作「no.such」がありません。");
         // 別のパイ: 開く頼み

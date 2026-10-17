@@ -22,7 +22,7 @@ fn view(lang: Lang) -> H {
 }
 
 fn camera(h: &H) -> OrbitCamera {
-    h.view3d().camera
+    h.view3d().view.camera
 }
 
 /// 軸の印の矩形（読み上げの名前で探す）。
@@ -72,13 +72,13 @@ fn pressing_a_ball_looks_from_that_axis_and_the_middle_switches_the_projection()
     let c = camera(&h);
     assert_eq!(c.pitch, 90.0);
     assert!(c.is_orthographic());
-    assert!(h.view3d().auto_orthographic);
+    assert!(h.view3d().view.auto_orthographic);
     // 真ん中: 手で透視へ（自動の印は外れる）、もう一度で正投影
     click(&mut h, r.center());
     assert!(!camera(&h).is_orthographic());
     click(&mut h, r.center());
     assert!(camera(&h).is_orthographic());
-    assert!(!h.view3d().auto_orthographic);
+    assert!(!h.view3d().view.auto_orthographic);
     // 反対の側の小さい丸: 右の視点からは −Z の丸が横に見える。押すと背面の視点
     let at = ball(&h, r, AxisView::Right);
     click(&mut h, at);
@@ -94,7 +94,7 @@ fn pressing_a_ball_looks_from_that_axis_and_the_middle_switches_the_projection()
     );
     // 押しは 3D ビューの描く入力に渡らない（塗っていない・取り消しに積まない）
     assert!(!h.doc().can_undo());
-    assert!(h.view3d().input.stroke.is_none());
+    assert!(h.view3d().view.input.stroke.is_none());
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn the_widget_hides_while_the_settings_panel_is_open() {
     assert!(h.query_by_label("視点の軸").is_some());
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.view3d().display.settings_open);
+    assert!(h.view3d().view.display.settings_open);
     assert!(h.query_by_label("視点の軸").is_none());
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
@@ -210,8 +210,8 @@ fn snapshot_the_cube_in_orthographic_from_above() {
     let mut h = view(Lang::Ja);
     let r = gizmo(&h, Lang::Ja);
     // 斜め上から: 正投影では、奥の辺も手前の辺も同じ長さで、平行な辺は平行に見える
-    h.view3d_mut().camera.yaw = DEFAULT_YAW;
-    h.view3d_mut().camera.pitch = 30.0;
+    h.view3d_mut().view.camera.yaw = DEFAULT_YAW;
+    h.view3d_mut().view.camera.pitch = 30.0;
     click(&mut h, r.center());
     assert!(camera(&h).is_orthographic());
     let content = h.state().view3d_rect().unwrap();

@@ -1,7 +1,7 @@
 //! 3D ビューの表示の写しの塗り広げ（UV の外へ。`view3d::paint` の `set_padding`）: アイランドの中は正本と同じバイト・アイランドの外は書き出しと同じ式で
 //! 塗り広がる・描いたタイルの周りだけの塗り広げ直しが全体の塗り広げと同じ・モデルの UV が替わると覆いを作り直す・離れて見たときの継ぎ目。
 use crate::common;
-use crate::common::drive::Drive;
+use crate::common::drive::{Drive, DriveApp};
 
 use common::*;
 use egui_kittest::Harness;
@@ -66,7 +66,7 @@ fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32, yaw: f32, pitch: f32) {
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw,
         pitch,
@@ -1702,7 +1702,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
         )
         .unwrap();
     h.step();
-    h.state().view3d_wait_gpu();
+    h.view3d_wait_gpu();
     let s = h.state().view3d_stats().unwrap();
     println!(
         "初めての構築: {:.0} ms（同期 {:.0} ms）",
@@ -1728,7 +1728,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
                 }
             }
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             sync.push(h.state().view3d_stats().unwrap().last_sync_us as f64 / 1000.0);
         }
         sync.iter().sum::<f64>() / sync.len() as f64
@@ -1741,7 +1741,7 @@ fn measure_painting_frames_with_and_without_display_padding() {
             h.state_mut().view3d_set_display_padding(texels);
             h.state_mut().view3d_invalidate_paint();
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             results[i].push(frames(&mut h));
         }
     }
@@ -1817,13 +1817,13 @@ fn shape_gradient_scene_on(
                 FilterSpec::new(EffectSettings::generator(settings)).channels(&[Channel::Color]),
             )
             .unwrap();
-        s.view3d_mut().camera.yaw = -40.0;
-        s.view3d_mut().camera.pitch = 15.0;
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
         s.act(Action::Fill(FillOp::EditFilter(Some((layer, filter)))));
     }
     h.run();
     h.step();
-    h.state().view3d_wait_gpu();
+    h.view3d_wait_gpu();
     let rect = h.state().view3d_rect().unwrap();
     let from = gizmo::handle_point(h.app(), rect, Handle::SizeXPos).expect("つまみ");
     (h, from)
@@ -2078,7 +2078,7 @@ fn measure_dragging_the_shape_gradient_gizmo_in_3d() {
         let t = Instant::now();
         f(h);
         let step_ms = t.elapsed().as_secs_f64() * 1000.0;
-        h.state().view3d_wait_gpu();
+        h.view3d_wait_gpu();
         let total_ms = t.elapsed().as_secs_f64() * 1000.0;
         let st = h.state().view3d_stats().unwrap();
         (
@@ -2448,7 +2448,7 @@ fn measure_drag_frames_by_operation() {
                 run += 1;
                 h.run();
                 h.step();
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 let canvas = if both {
                     // CPU なら理由も（GPU を試して落ちたのか、方針か）
                     match h.state().display().fallback() {
@@ -2529,7 +2529,7 @@ fn measure_drag_frames_by_operation() {
                     let edit_ms = t.elapsed().as_secs_f64() * 1000.0;
                     h.step();
                     let step_ms = t.elapsed().as_secs_f64() * 1000.0;
-                    h.state().view3d_wait_gpu();
+                    h.view3d_wait_gpu();
                     let total_ms = t.elapsed().as_secs_f64() * 1000.0;
                     let st = h.state().view3d_stats().unwrap();
                     let breakdown = drag_breakdown();
@@ -2593,7 +2593,7 @@ fn measure_drag_frames_by_operation() {
                 }
                 h.step();
                 let step_ms = t.elapsed().as_secs_f64() * 1000.0;
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 let total_ms = t.elapsed().as_secs_f64() * 1000.0;
                 let st = h.state().view3d_stats().unwrap();
                 let breakdown = drag_breakdown();
@@ -2905,7 +2905,7 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
     drop(pixels);
     let layer = paint_inside_set(&mut h, 1, &keep);
     h.step();
-    h.state().view3d_wait_gpu();
+    h.view3d_wait_gpu();
     const ROUNDS: usize = 3;
     const CHANGES: u32 = 10;
     let mut counter = 0u32;
@@ -2918,11 +2918,11 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
             // 今のセットだけを作るフレームと、そのあとにほかのセットだけを作るフレームを分けて測る
             h.state_mut().view3d_set_show_other_sets(false);
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             let current_build = h.state().view3d_stats().unwrap().last_sync_us as f64 / 1000.0;
             h.state_mut().view3d_set_show_other_sets(true);
             h.step();
-            h.state().view3d_wait_gpu();
+            h.view3d_wait_gpu();
             let s = h.state().view3d_stats().unwrap();
             assert_eq!(s.other_sets, 1, "{s:?}");
             if round == 0 {
@@ -2947,7 +2947,7 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
                     ],
                 );
                 h.step();
-                h.state().view3d_wait_gpu();
+                h.view3d_wait_gpu();
                 sync.push(h.state().view3d_stats().unwrap().last_sync_us as f64 / 1000.0);
             }
             println!("  幅 {texels}: {sync:.1?}");

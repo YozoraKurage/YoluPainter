@@ -478,7 +478,7 @@ pub fn corner_bottom(view: Rect, items: usize) -> f32 {
 /// 別のレイヤー（`egui::Area`）に置くので、下のビューの入力（描く・回す）は、アイコンの上では始まらない。
 pub fn corner_icons(
     ui: &mut Ui,
-    id: &'static str,
+    id: impl std::hash::Hash + std::fmt::Debug + Copy,
     view: Rect,
     items: &[CornerIcon],
 ) -> CornerOutcome {

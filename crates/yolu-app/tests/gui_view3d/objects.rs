@@ -30,8 +30,8 @@ type H = Harness<'static, YoluApp>;
 fn edit_view() -> (H, Rect, LayerId) {
     let mut h = app(1280.0, 860.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.view3d_mut().camera.yaw = 0.0;
-    h.view3d_mut().camera.pitch = 0.0;
+    h.view3d_mut().view.camera.yaw = 0.0;
+    h.view3d_mut().view.camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let app = h.app_mut();
@@ -58,7 +58,7 @@ fn edit_view() -> (H, Rect, LayerId) {
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -147,8 +147,8 @@ fn pressing_markers_selects_objects_and_their_layer_without_painting() {
     assert_eq!(h.objects().hover, Some(point));
     click(&mut h, p);
     assert_eq!(h.objects().selected, Some(point));
-    // 何も無い所で外す
-    click(&mut h, rect.min + vec2(12.0, 12.0));
+    // 何も無い所で外す（左下の隅。左上は表示の種類のドロップダウン）
+    click(&mut h, egui::pos2(rect.left() + 12.0, rect.bottom() - 12.0));
     assert_eq!(h.objects().selected, None);
     // 描かない・文書を変えない
     assert!(!h.app().is_stroking());
@@ -193,7 +193,7 @@ fn g_follows_the_mouse_then_an_axis_and_a_typed_value_and_ends_by_enter_click_es
     assert_eq!(undo_count(&h), undo + 2);
     let app = h.app();
     assert_eq!(app.objects().selected, Some(o));
-    assert!(app.fillfx().drag.is_none() && app.view3d().input.nav.is_none());
+    assert!(app.fillfx().drag.is_none() && app.view3d().view.input.nav.is_none());
     assert!(!app.is_stroking());
     let moved = shape(&h, o);
     // Esc でやめる: 戻して、履歴に残さない
@@ -224,7 +224,7 @@ fn g_follows_the_mouse_then_an_axis_and_a_typed_value_and_ends_by_enter_click_es
     assert_eq!(undo_count(&h), undo + 2);
     let app = h.app();
     assert!(app.popup().is_none(), "右クリックのメニューを開かない");
-    assert!(app.view3d().input.nav.is_none());
+    assert!(app.view3d().view.input.nav.is_none());
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn escape_that_cancels_a_transform_does_not_close_the_3d_settings_or_deselect_pi
     key(&h, Key::A, Modifiers::COMMAND);
     h.run();
     assert!(h.doc().selection().is_some());
-    h.view3d_mut().display.settings_open = true;
+    h.view3d_mut().view.display.settings_open = true;
     select(&mut h, Some(o));
     let before = shape(&h, o);
     let at = marker_at(&h, rect, o);
@@ -249,14 +249,14 @@ fn escape_that_cancels_a_transform_does_not_close_the_3d_settings_or_deselect_pi
     assert_eq!(shape(&h, o), before);
     let app = h.app();
     assert!(
-        app.view3d().display.settings_open,
+        app.view3d().view.display.settings_open,
         "Esc は G/R/S をやめるだけ"
     );
     assert!(app.doc().selection().is_some(), "選択範囲はそのまま");
     // 何も開いていなければ、Esc は今までどおり設定の欄を閉じる
     key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert!(!h.view3d().display.settings_open);
+    assert!(!h.view3d().view.display.settings_open);
 }
 
 #[test]
@@ -435,8 +435,8 @@ fn escape_that_cancels_a_transform_does_not_close_the_color_window() {
     use egui_kittest::kittest::Queryable;
     let mut h = app(1280.0, 1400.0, 256);
     h.state_mut().apply(Action::LoadDemoModel);
-    h.view3d_mut().camera.yaw = 0.0;
-    h.view3d_mut().camera.pitch = 0.0;
+    h.view3d_mut().view.camera.yaw = 0.0;
+    h.view3d_mut().view.camera.pitch = 0.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブ");
@@ -620,7 +620,9 @@ fn the_move_tool_drags_the_selected_object_with_the_mouse_or_the_pen_in_one_undo
     assert!(near(moved.center[1], start_shape.center[1]), "X だけ");
     assert_eq!(undo_count(&h), undo + 1);
     let app = h.app();
-    assert!(app.fillfx().drag.is_none() && app.view3d().input.nav.is_none() && !app.is_stroking());
+    assert!(
+        app.fillfx().drag.is_none() && app.view3d().view.input.nav.is_none() && !app.is_stroking()
+    );
     // Esc でやめる（離しても決めない）
     let at = marker_at(&h, rect, o);
     press(&h, at, PointerButton::Primary);

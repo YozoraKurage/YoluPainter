@@ -298,7 +298,7 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
 
 /// スキンをそのまま読む（試しの人形・試験。UI のスレッドで組む）。
 pub fn load_rig(view3d: &mut View3dState, rig: Rig) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let revision = view3d.next_revision();
@@ -725,7 +725,7 @@ fn push_undo(s: &mut PoseSession, before: Pose) {
 
 /// 1 回で終わる変更（取り消しに 1 つ積む）。
 pub fn set_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
@@ -757,7 +757,7 @@ pub fn restore_pose(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewErro
 
 /// 続けて変える操作を始める（ギズモ・スライダーのドラッグ）。
 pub fn begin_edit(view3d: &mut View3dState) -> Result<(), ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let s = view3d.pose.session.as_mut().ok_or(ViewError::NoPoseModel)?;
@@ -807,7 +807,7 @@ pub fn redo(view3d: &mut View3dState) -> Result<bool, ViewError> {
 }
 
 fn step(view3d: &mut View3dState, back: bool) -> Result<bool, ViewError> {
-    if view3d.input.stroke.is_some() {
+    if view3d.view.input.stroke.is_some() {
         return Err(ViewError::Stroking);
     }
     let Some(s) = view3d.pose.session.as_mut() else {
@@ -1149,7 +1149,7 @@ mod tests {
         let settings = app.stroke_settings(false);
         let stroke = app.session.doc.begin_stroke(layer, &settings).unwrap();
         app.session.stroke = Some(stroke);
-        app.view3d.input.stroke = Some(crate::state::StrokeSource::Mouse);
+        app.view3d.view.input.stroke = Some(crate::state::StrokeSource::Mouse);
         let before = app.view3d.model.clone().unwrap().revision();
         assert!({
             let p = bent(&app, -1.0);

@@ -1155,8 +1155,8 @@ fn t_drag_without_an_image_says_so_and_does_not_paint() {
 fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
     let mut h = app(1100.0, 760.0, doc);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -1165,7 +1165,7 @@ fn cube_view(doc: u32) -> (Harness<'static, YoluApp>, Rect) {
 
 /// モデルの空間の点の、ウィンドウの画面の点。
 fn cube_screen(h: &Harness<'_, YoluApp>, rect: Rect, p: yolu_core::glam::Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -1230,7 +1230,7 @@ fn a_3d_stroke_goes_through_the_stencil_laid_over_the_view_and_undoes_in_one_ste
     // 画像は表示域の高さの 0.9 倍の正方形。白い左半分と黒い右半分の境が、線の真ん中を通るように貼る
     let mid = {
         use yolu_core::glam::Vec3;
-        let view = h.view3d().camera.view(rect.width(), rect.height());
+        let view = h.view3d().view.camera.view(rect.width(), rect.height());
         view.to_screen(Vec3::new(0.0, 0.1, -0.5))
             .expect("カメラの前")
     };
@@ -1408,7 +1408,7 @@ fn t_drag_works_over_the_3d_view_too_and_the_overlay_follows_the_screen() {
         pos2(c.x + 60.0, c.y + 20.0),
         PointerButton::Secondary,
     );
-    assert_ne!(h.view3d().camera.yaw, -40.0);
+    assert_ne!(h.view3d().view.camera.yaw, -40.0);
     assert_eq!((st(&h).center, st(&h).size, st(&h).angle), placement);
     assert!(!h.doc().can_undo(), "ドラッグでは描かない");
     assert!(st(&h).has_overlay_texture());
@@ -1555,7 +1555,7 @@ fn a_second_button_during_a_stencil_drag_starts_nothing_over_the_3d_view_too() {
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
     assert!(!h.app().is_stroking(), "ストロークが始まった");
-    assert!(h.view3d().input.stroke.is_none());
+    assert!(h.view3d().view.input.stroke.is_none());
     release_at(&mut h, c, PointerButton::Primary);
     release_at(&mut h, c, PointerButton::Middle);
     assert!(st(&h).drag.is_none());
@@ -1563,11 +1563,11 @@ fn a_second_button_during_a_stencil_drag_starts_nothing_over_the_3d_view_too() {
     press_with(&mut h, c, PointerButton::Primary, Modifiers::NONE);
     assert!(st(&h).drag.is_some());
     press_with(&mut h, c, PointerButton::Middle, Modifiers::NONE);
-    assert!(h.view3d().input.nav.is_none(), "カメラが動き出した");
-    let yaw = h.view3d().camera.yaw;
+    assert!(h.view3d().view.input.nav.is_none(), "カメラが動き出した");
+    let yaw = h.view3d().view.camera.yaw;
     move_to(&h, pos2(c.x + 30.0, c.y + 10.0));
     h.step();
-    assert_eq!(h.view3d().camera.yaw, yaw);
+    assert_eq!(h.view3d().view.camera.yaw, yaw);
     release_at(&mut h, c, PointerButton::Middle);
     release_at(&mut h, c, PointerButton::Primary);
     assert!(st(&h).drag.is_none());
@@ -1650,7 +1650,7 @@ fn a_pen_over_the_3d_view_moves_the_stencil_with_y_and_paints_through_it_without
     // 白い左半分と黒い右半分の境が、線の真ん中を通るように貼る（マウスの試験と同じ）
     let mid = {
         use yolu_core::glam::Vec3;
-        let view = h.view3d().camera.view(rect.width(), rect.height());
+        let view = h.view3d().view.camera.view(rect.width(), rect.height());
         view.to_screen(Vec3::new(0.0, 0.1, -0.5))
             .expect("カメラの前")
     };

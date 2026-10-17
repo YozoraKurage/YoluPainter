@@ -87,8 +87,8 @@ fn with_model(size: u32) -> (AppState, Rect) {
     let mut s = AppState::new(size, size);
     s.view3d_mut().set_model(two_parts_model());
     s.view3d_mut().material = 0;
-    s.view3d_mut().camera.yaw = 0.0;
-    s.view3d_mut().camera.pitch = 0.0;
+    s.view3d_mut().view.camera.yaw = 0.0;
+    s.view3d_mut().view.camera.pitch = 0.0;
     (
         s,
         Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0)),
@@ -106,7 +106,7 @@ fn at_uv(s: &AppState, rect: Rect, uv: (f32, f32)) -> Pos2 {
 
 /// 3D ビューでモデルの点が見える画面の点。
 fn at_model(s: &AppState, rect: Rect, p: Vec3) -> Pos2 {
-    let view = s.view3d().camera.view(rect.width(), rect.height());
+    let view = s.view3d().view.camera.view(rect.width(), rect.height());
     let q = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + q.x, rect.top() + q.y)
 }
@@ -1809,8 +1809,8 @@ fn model_app_from(mut h: Harness<'static, YoluApp>) -> Harness<'static, YoluApp>
         let s = h.app_mut();
         s.view3d_mut().set_model(two_parts_model());
         s.view3d_mut().material = 0;
-        s.view3d_mut().camera.yaw = 0.0;
-        s.view3d_mut().camera.pitch = 0.0;
+        s.view3d_mut().view.camera.yaw = 0.0;
+        s.view3d_mut().view.camera.pitch = 0.0;
         s.color_mut().set_main([0.9, 0.3, 0.1, 1.0]);
     }
     h.run();

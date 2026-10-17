@@ -300,7 +300,7 @@ fn plate() -> ViewModel {
 
 fn at_model(s: &AppState, p: Vec3) -> Pos2 {
     let r = rect();
-    let view = s.view3d().camera.view(r.width(), r.height());
+    let view = s.view3d().view.camera.view(r.width(), r.height());
     let q = view.to_screen(p).expect("カメラの前");
     pos2(r.left() + q.x, r.top() + q.y)
 }
@@ -319,8 +319,8 @@ fn plate_state_of(size: u32, model: ViewModel) -> AppState {
     )));
     s.view3d_mut().set_model(model);
     s.view3d_mut().material = 0;
-    s.view3d_mut().camera.yaw = 0.0;
-    s.view3d_mut().camera.pitch = 0.0;
+    s.view3d_mut().view.camera.yaw = 0.0;
+    s.view3d_mut().view.camera.pitch = 0.0;
     s
 }
 
@@ -510,8 +510,8 @@ fn headless_3d_reads_the_composite_of_another_texture_set_without_switching() {
     s.set_tool(Tool::Eyedropper);
     // 全体を表示してから向きを決める（frame_model は既定の向き＝モデルの前の +Z 側へ戻す。試しの三角形は -Z 側が表なので、正面から見る）
     s.view3d_mut().frame_model();
-    s.view3d_mut().camera.yaw = 0.0;
-    s.view3d_mut().camera.pitch = 0.0;
+    s.view3d_mut().view.camera.yaw = 0.0;
+    s.view3d_mut().view.camera.pitch = 0.0;
     let current = s.sets().current_index();
     assert_eq!(current, 0);
     let other = 1;
@@ -1040,8 +1040,8 @@ fn three_colors_3d_app() -> (Harness<'static, YoluApp>, [Pos2; 3]) {
         let s = h.app_mut();
         s.view3d_mut().set_model(plate());
         s.view3d_mut().material = 0;
-        s.view3d_mut().camera.yaw = 0.0;
-        s.view3d_mut().camera.pitch = 0.0;
+        s.view3d_mut().view.camera.yaw = 0.0;
+        s.view3d_mut().view.camera.pitch = 0.0;
         let id = s.selected_layer().unwrap();
         // 板の位置 x = 0.2・0.5・0.8 の UV（0.26・0.5・0.74）の、縦は y = 0.5（v = 0.5）のテクセルの近く
         for ((cx, cy), rgb) in [((33, 64), RED), ((64, 64), GREEN), ((94, 64), BLUE)] {
@@ -1061,7 +1061,7 @@ fn three_colors_3d_app() -> (Harness<'static, YoluApp>, [Pos2; 3]) {
     let points = {
         let s = h.app();
         [0.2, 0.5, 0.8].map(|x| {
-            let view = s.view3d().camera.view(rect.width(), rect.height());
+            let view = s.view3d().view.camera.view(rect.width(), rect.height());
             let q = view.to_screen(Vec3::new(x, 0.5, 0.0)).expect("カメラの前");
             pos2(rect.left() + q.x, rect.top() + q.y)
         })
@@ -1124,15 +1124,15 @@ fn a_right_click_in_3d_picks_the_surface_under_the_pointer_with_any_tool_and_lea
         h.act(Action::SelectTool(tool));
         for (at, rgb) in [(a, RED), (b, GREEN), (c, BLUE)] {
             h.color_mut().set_main([0.0, 0.0, 0.0, 1.0]);
-            let camera = h.view3d().camera;
+            let camera = h.view3d().view.camera;
             right_click_3d(&mut h, at, Modifiers::NONE);
             assert_eq!(main_rgb(h.app()), rgb, "{tool:?}: {}", h.message());
             assert_eq!(h.tool(), tool, "ツールは替わらない");
-            assert_eq!(h.view3d().camera, camera, "視点は動かない");
+            assert_eq!(h.view3d().view.camera, camera, "視点は動かない");
         }
     }
     assert!(!h.modified() && !h.doc().can_undo());
-    assert!(h.view3d().input.eyedrop.is_none());
+    assert!(h.view3d().view.input.eyedrop.is_none());
 }
 
 #[test]
@@ -1140,7 +1140,7 @@ fn a_right_drag_in_3d_orbits_without_picking_even_when_it_comes_back_to_the_star
     let (mut h, [_, b, _]) = three_colors_3d_app();
     h.act(Action::SelectTool(Tool::Brush));
     h.color_mut().set_main([0.0, 0.0, 0.0, 1.0]);
-    let before = h.view3d().camera;
+    let before = h.view3d().view.camera;
     h.event(Event::PointerMoved(b));
     h.event(Event::PointerButton {
         pos: b,
@@ -1149,12 +1149,12 @@ fn a_right_drag_in_3d_orbits_without_picking_even_when_it_comes_back_to_the_star
         modifiers: Modifiers::NONE,
     });
     h.step();
-    assert!(h.view3d().input.eyedrop.is_some());
+    assert!(h.view3d().view.input.eyedrop.is_some());
     // 4 点より動かすと回すだけ（スポイトの印は消える）
     h.event(Event::PointerMoved(offset(b, 12.0, 0.0)));
     h.step();
-    assert!(h.view3d().input.eyedrop.is_none());
-    assert_ne!(h.view3d().camera.yaw, before.yaw);
+    assert!(h.view3d().view.input.eyedrop.is_none());
+    assert_ne!(h.view3d().view.camera.yaw, before.yaw);
     // 押した所へ戻して離しても、スポイトにはならない
     h.event(Event::PointerMoved(b));
     h.event(Event::PointerButton {
@@ -1176,7 +1176,7 @@ fn a_right_drag_in_3d_orbits_without_picking_even_when_it_comes_back_to_the_star
     h.step();
     h.event(Event::PointerMoved(offset(b, 2.0, 1.0)));
     h.step();
-    assert!(h.view3d().input.eyedrop.is_some());
+    assert!(h.view3d().view.input.eyedrop.is_some());
     h.event(Event::PointerButton {
         pos: offset(b, 2.0, 1.0),
         button: PointerButton::Secondary,
@@ -1200,7 +1200,7 @@ fn a_right_click_in_3d_with_the_polygon_fill_tool_is_not_the_eyedropper_and_esca
         modifiers: Modifiers::NONE,
     });
     h.step();
-    assert!(h.view3d().input.eyedrop.is_none());
+    assert!(h.view3d().view.input.eyedrop.is_none());
     h.event(Event::PointerButton {
         pos: b,
         button: PointerButton::Secondary,
@@ -1222,7 +1222,7 @@ fn a_right_click_in_3d_with_the_polygon_fill_tool_is_not_the_eyedropper_and_esca
         modifiers: Modifiers::NONE,
     });
     h.step();
-    assert!(h.view3d().input.eyedrop.is_some());
+    assert!(h.view3d().view.input.eyedrop.is_some());
     h.event(Event::Key {
         key: Key::Escape,
         physical_key: None,
@@ -1231,7 +1231,7 @@ fn a_right_click_in_3d_with_the_polygon_fill_tool_is_not_the_eyedropper_and_esca
         modifiers: Modifiers::NONE,
     });
     h.step();
-    assert!(h.view3d().input.eyedrop.is_none());
+    assert!(h.view3d().view.input.eyedrop.is_none());
     h.event(Event::PointerButton {
         pos: b,
         button: PointerButton::Secondary,
@@ -1252,7 +1252,7 @@ fn a_pen_side_button_click_in_3d_picks_like_the_right_click_and_a_slide_only_orb
     assert_eq!(h.tool(), Tool::Brush);
     // 滑らせたら回すだけ（取らない）
     h.color_mut().set_main([0.0, 0.0, 0.0, 1.0]);
-    let before = h.view3d().camera.yaw;
+    let before = h.view3d().view.camera.yaw;
     barrel_frames(
         &mut h,
         &[
@@ -1262,7 +1262,7 @@ fn a_pen_side_button_click_in_3d_picks_like_the_right_click_and_a_slide_only_orb
         ],
     );
     assert_eq!(main_rgb(h.app()), [0, 0, 0]);
-    assert_ne!(h.view3d().camera.yaw, before);
+    assert_ne!(h.view3d().view.camera.yaw, before);
 }
 
 /// 3D でもサイドボタンのペンの押しを OS に奪われて離しが補われたら、色を取らずに取りやめる。次の本物の押しは新しい押しとして取る。
@@ -1272,15 +1272,18 @@ fn a_pen_side_button_press_taken_by_the_os_in_3d_picks_no_color() {
     h.act(Action::SelectTool(Tool::Brush));
     h.color_mut().set_main([0.0, 0.0, 0.0, 1.0]);
     barrel_frames(&mut h, &[(b, true)]);
-    assert!(h.view3d().input.eyedrop.is_some());
+    assert!(h.view3d().view.input.eyedrop.is_some());
     // 補った離し（本物の離しなら、ここで緑を取る）
     h.state().pen().push_lost(barrel_sample(b, false));
     h.step();
     h.run();
     let s = h.app();
     assert_eq!(main_rgb(s), [0, 0, 0], "色は取らない: {}", s.message());
-    assert!(s.view3d().input.eyedrop.is_none(), "見本の途中は残らない");
-    assert!(s.view3d().input.pen_press.is_none());
+    assert!(
+        s.view3d().view.input.eyedrop.is_none(),
+        "見本の途中は残らない"
+    );
+    assert!(s.view3d().view.input.pen_press.is_none());
     // 次の本物の押しは新しい押し
     barrel_frames(&mut h, &[(b, true), (b, false)]);
     assert_eq!(main_rgb(h.app()), GREEN);

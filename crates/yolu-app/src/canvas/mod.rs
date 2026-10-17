@@ -588,7 +588,7 @@ fn finish_stroke_with(app: &mut AppState, cancel: bool, release: Option<&egui::C
     app.canvas.ruler_constraint = None;
     let endpoint = app.canvas.current_end.take();
     // 3D ビューのストロークは 3D ビューの終わらせ方で（持ち越したダブと最後の区間を塗ってから確定する。クイックマスクも）
-    if app.view3d.input.surface.is_some() || app.view3d.input.cover.is_some() {
+    if app.view3d.view.input.surface.is_some() || app.view3d.view.input.cover.is_some() {
         match release {
             Some(ctx) if !cancel => crate::view3d::input::release(app, ctx),
             _ => crate::view3d::input::finish(app, cancel),

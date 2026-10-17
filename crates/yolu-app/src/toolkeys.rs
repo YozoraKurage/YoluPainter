@@ -359,7 +359,7 @@ fn used(app: &AppState, revision: u64) -> bool {
         || app.session.doc.revision() != revision
         || app.canvas.mouse_press.is_some()
         || app.canvas.pen_press.is_some()
-        || app.view3d.input.pen_press.is_some()
+        || app.view3d.view.input.pen_press.is_some()
 }
 
 /// 戻る先のツールへ替える（ツールバーで選ぶのと同じ道。列から消えていたら、そのツールの最初の項目）。

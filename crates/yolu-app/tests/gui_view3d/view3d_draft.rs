@@ -69,7 +69,7 @@ fn visible(h: &H, face: usize) -> bool {
     let c = corners(face);
     let center = (c[0] + c[3]) * 0.5;
     let normal = (c[1] - c[0]).cross(c[2] - c[0]).normalize();
-    let eye = h.view3d().camera.position();
+    let eye = h.view3d().view.camera.position();
     // 立方体の外向きの法線（巻きによらず、中心から外へ）
     let out = if normal.dot(center) > 0.0 {
         normal
@@ -98,7 +98,7 @@ fn message(h: &H) -> String {
 
 /// 世界の点の画面の点（表示域の外の座標系。egui の点）。
 fn screen(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = st(h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -111,7 +111,7 @@ fn local(rect: Rect, p: Pos2) -> DVec2 {
 /// 表示域の画面の点の下の面の点。
 fn hit_at(h: &H, rect: Rect, p: Pos2) -> Option<SurfaceHit> {
     let model = st(h).view3d().model.clone()?;
-    let view = st(h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(h).view3d().view.camera.view(rect.width(), rect.height());
     pick(
         &model.geometry,
         &view,
@@ -202,7 +202,7 @@ fn a_linear_gradient_colors_each_visible_texel_by_its_screen_point_and_undoes_on
 fn a_radial_gradient_in_orthographic_starts_full_at_the_center() {
     let (mut h, rect) = cube_view();
     red(&mut h);
-    h.view3d_mut().camera.set_orthographic(true);
+    h.view3d_mut().view.camera.set_orthographic(true);
     tool(&mut h, Tool::Gradient);
     h.act(Action::Gradient(GradientOp::Shape(GradientShape::Radial)));
     let center = screen(&h, rect, Vec3::new(0.0, 0.0, -0.5));
@@ -347,7 +347,7 @@ fn a_filled_rectangle_counts_four_by_four_points_like_2d_whatever_the_anti_alias
         for anti_alias in [AntiAlias::None, AntiAlias::Strong] {
             let (mut h, rect) = cube_view();
             red(&mut h);
-            h.view3d_mut().camera.set_orthographic(ortho);
+            h.view3d_mut().view.camera.set_orthographic(ortho);
             tool(&mut h, Tool::Shape);
             {
                 let s = h.app_mut();
@@ -437,7 +437,7 @@ fn two_plates() -> (H, Rect) {
         )
         .unwrap();
         state.view3d_mut().set_model(model);
-        state.view3d_mut().camera = OrbitCamera {
+        state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
             pitch: 0.0,
@@ -532,7 +532,7 @@ fn a_lost_release_paints_the_gradient_at_the_last_point_and_drops_shapes_and_rul
             _ => DraftKind::Ruler,
         };
         // ボタンは押していないのに、ドラッグの途中だけが残った（ウィンドウの外で離したなど）
-        h.view3d_mut().input.draft = Some(SurfaceDraft {
+        h.view3d_mut().view.input.draft = Some(SurfaceDraft {
             kind,
             source: StrokeSource::Mouse,
             start: local(rect, a),
@@ -669,7 +669,7 @@ fn an_outline_over_the_budget_is_cancelled_whole_and_locks_and_read_only_sets_re
             "{t:?} {}",
             message(&h)
         );
-        assert!(st(&h).view3d().input.draft.is_none());
+        assert!(st(&h).view3d().view.input.draft.is_none());
         move_to(&h, b);
         release(&h, b, PointerButton::Primary);
         h.run();
@@ -765,7 +765,7 @@ fn a_pen_press_taken_by_the_os_paints_the_gradient_at_the_last_point_and_drops_s
         let (a, b) = front_rect(&h, rect);
         pen_pull_ending(&mut h, a, b, true);
         assert!(!draft::dragging(h.app()), "{t:?}");
-        assert!(st(&h).view3d().input.pen_press.is_none(), "{t:?}");
+        assert!(st(&h).view3d().view.input.pen_press.is_none(), "{t:?}");
         assert_eq!(
             crate::common::rulers::total(st(&h)),
             0,
@@ -810,7 +810,7 @@ fn the_pen_draws_the_same_gradient_shape_and_ruler_as_the_mouse() {
             } else {
                 pull(&mut h, a, b);
             }
-            assert!(st(&h).view3d().input.draft.is_none(), "{t:?} {pen}");
+            assert!(st(&h).view3d().view.input.draft.is_none(), "{t:?} {pen}");
             let layer = st(&h).selected_layer().unwrap();
             (
                 snapshot(&h),
@@ -850,7 +850,7 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
         h.step();
         move_to(&h, b);
         h.step();
-        assert!(st(&h).view3d().input.draft.is_some(), "{way}");
+        assert!(st(&h).view3d().view.input.draft.is_some(), "{way}");
         match way {
             0 => {
                 h.event(Event::Key {
@@ -865,7 +865,7 @@ fn escape_focus_loss_and_switching_tools_drop_the_drag_without_painting() {
             _ => h.act(Action::SelectTool(Tool::Brush)),
         }
         h.step();
-        assert!(st(&h).view3d().input.draft.is_none(), "{way}");
+        assert!(st(&h).view3d().view.input.draft.is_none(), "{way}");
         release(&h, b, PointerButton::Primary);
         h.run();
         assert_eq!(st(&h).doc().undo_count(), 0, "{way}");

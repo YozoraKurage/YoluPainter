@@ -236,7 +236,7 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
     };
     match w {
         Where::Surface(rect) => {
-            let view = app.view3d.camera.view(rect.width(), rect.height());
+            let view = app.view3d.view.camera.view(rect.width(), rect.height());
             match pick(&model.geometry, &view, local(rect, at)) {
                 Some(hit) if hit.material == material => Under::Triangle(hit.triangle),
                 Some(hit) => Under::OtherSet(model.material_name(hit.material as usize, app.lang)),
@@ -284,7 +284,7 @@ pub(crate) fn surface_point(app: &mut AppState, rect: Rect, at: Pos2) -> Result<
     let Some((model, material)) = app.region_model() else {
         return Err(Miss::Nothing);
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let Some(hit) = pick(&model.geometry, &view, local(rect, at)) else {
         return Err(Miss::Nothing);
     };

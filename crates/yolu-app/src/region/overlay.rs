@@ -115,7 +115,7 @@ pub fn paint_surface(
     rect: Rect,
     pointer: Option<egui::Pos2>,
 ) {
-    let busy = app.view3d.input.nav.is_some() || !app.mode.paints();
+    let busy = app.view3d.view.input.nav.is_some() || !app.mode.paints();
     let picking = crate::bake::overlap::highlighting(app);
     if (!app.tool.is_region() && !picking) || busy {
         if app.region.hover.as_ref().is_some_and(|h| h.on_surface) {
@@ -127,7 +127,7 @@ pub fn paint_surface(
     if !crate::bake::overlap::update_hover(app, Where::Surface(rect), pointer) {
         update_hover(app, Where::Surface(rect), pointer);
     }
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let Some(h) = app.region.hover.as_mut().filter(|h| h.on_surface) else {
         return;
     };

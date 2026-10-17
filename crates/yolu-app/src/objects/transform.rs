@@ -410,7 +410,7 @@ impl Transform {
 
     /// 今の量（ポインタか打った値から。`snap` で刻みに合わせる）。
     fn compute(&self, app: &AppState, rect: Rect, snap: bool) -> Value {
-        let view = app.view3d.camera.view(rect.width(), rect.height());
+        let view = app.view3d.view.camera.view(rect.width(), rect.height());
         let local = |p: Pos2| Vec2::new(p.x - rect.left(), p.y - rect.top());
         let (from, now) = (local(self.from), local(self.last));
         let steps = app.objects.steps;
@@ -821,7 +821,7 @@ fn target(app: &AppState, kind: Kind) -> Result<What, String> {
     if app.is_stroking() {
         return Err(crate::lang::refusals::during_stroke(lang).to_owned());
     }
-    if !app.view3d.visible || app.view3d.view_rect.is_none() || app.view3d.model.is_none() {
+    if !app.view3d.visible || app.view3d.view.view_rect.is_none() || app.view3d.model.is_none() {
         return Err(refuse(lang.t("objects-the-3d-view-is-not")));
     }
     match app.mode {
@@ -993,7 +993,7 @@ pub fn step(app: &mut AppState, input: &Input) -> Step {
     let Some(mut t) = app.objects.transform.take() else {
         return Step::Done;
     };
-    let Some(rect) = app.view3d.view_rect else {
+    let Some(rect) = app.view3d.view.view_rect else {
         t.cancel(app);
         return Step::Done;
     };
@@ -1036,7 +1036,7 @@ pub fn step(app: &mut AppState, input: &Input) -> Step {
         app.refuse(Source::Edit, text);
     }
     if let Some(p) = input.pointer {
-        let view = app.view3d.camera.view(rect.width(), rect.height());
+        let view = app.view3d.view.camera.view(rect.width(), rect.height());
         let center = view
             .to_screen(t.pivot)
             .map_or(rect.center(), |s| pos2(rect.left() + s.x, rect.top() + s.y));
@@ -1121,7 +1121,7 @@ pub fn start_requested(ctx: &egui::Context, app: &mut AppState) {
     }
     let pointer = ctx
         .input(|i| i.pointer.latest_pos())
-        .or_else(|| app.view3d.view_rect.map(|r| r.center()))
+        .or_else(|| app.view3d.view.view_rect.map(|r| r.center()))
         .unwrap_or_default();
     match begin(app, kind, pointer, ctx.cumulative_frame_nr()) {
         Ok(()) => {
@@ -1219,7 +1219,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, popup: &mut PopupState) -> 
     if step(app, &input) == Step::Done {
         return false;
     }
-    let (Some(t), Some(rect)) = (app.objects.transform.as_ref(), app.view3d.view_rect) else {
+    let (Some(t), Some(rect)) = (app.objects.transform.as_ref(), app.view3d.view.view_rect) else {
         return false;
     };
     popup.rect = rect;
@@ -1229,7 +1229,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState, popup: &mut PopupState) -> 
             Id::new("yolu.transform"),
         ))
         .with_clip_rect(rect);
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let to = |v: Vec2| pos2(rect.left() + v.x, rect.top() + v.y);
     let center = view.to_screen(t.pivot).map(to);
     // 軸の線（軸は 1 本、面はその 2 本）。物の中心を通して、表示域の端まで

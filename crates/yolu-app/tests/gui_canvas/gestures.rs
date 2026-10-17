@@ -827,8 +827,8 @@ fn cube_view() -> (H, Rect) {
 
 fn cube_view_from(mut h: H) -> (H, Rect) {
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -836,7 +836,7 @@ fn cube_view_from(mut h: H) -> (H, Rect) {
 }
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -855,7 +855,7 @@ fn painted(h: &H) -> usize {
 }
 
 fn camera(h: &H) -> yolu_core::geometry::OrbitCamera {
-    h.view3d().camera
+    h.view3d().view.camera
 }
 
 #[test]
@@ -888,7 +888,7 @@ fn the_pen_tip_paints_the_surface_and_the_side_button_orbits_it() {
             emulate = emulate == Emulate::Yes
         );
         assert!((after.pitch - (before.pitch + d.y * 0.35)).abs() < 1e-3);
-        assert!(h.view3d().input.nav.is_none() && h.view3d().input.pen_press.is_none());
+        assert!(h.view3d().view.input.nav.is_none() && h.view3d().view.input.pen_press.is_none());
     }
 }
 
@@ -1047,7 +1047,7 @@ fn ctrl_and_space_dolly_the_3d_view_for_the_pen_and_the_mouse() {
     release_key(&mut h, Key::Space);
     release_mods(&mut h);
     assert_eq!(strokes(&h), 0);
-    assert!(h.view3d().input.nav.is_none() && h.view3d().input.zoom.is_none());
+    assert!(h.view3d().view.input.nav.is_none() && h.view3d().view.input.zoom.is_none());
 }
 
 #[test]
@@ -1083,11 +1083,11 @@ fn the_3d_pen_press_goes_when_the_window_loses_focus_and_a_started_orbit_ends() 
     let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
     Pen::barrel().down(&mut h, at);
     Pen::barrel().to(&mut h, offset(at, 20.0, 0.0));
-    assert!(h.view3d().input.nav.is_some());
+    assert!(h.view3d().view.input.nav.is_some());
     h.event(Event::WindowFocused(false));
     h.step();
-    assert!(h.view3d().input.nav.is_none());
-    assert!(h.view3d().input.pen_press.is_none());
+    assert!(h.view3d().view.input.nav.is_none());
+    assert!(h.view3d().view.input.pen_press.is_none());
 }
 
 // ───────── 4. サイドボタンを egui の部品に右ボタンとして届ける ─────────
@@ -1312,7 +1312,7 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
         hold(&mut h, Modifiers::ALT);
         touching.down(&mut h, at);
         {
-            let input = &h.view3d().input;
+            let input = &h.view3d().view.input;
             assert!(input.pen_press.is_some());
             assert_eq!(input.nav.is_some(), side_button, "回している");
             assert_eq!(input.clone_press.is_some(), !side_button, "元を決める印");
@@ -1322,7 +1322,7 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
         h.run();
         assert!(!h.view3d().visible, "3D は隠れた");
         {
-            let input = &h.view3d().input;
+            let input = &h.view3d().view.input;
             assert!(input.pen_press.is_none(), "押しの印を捨てた");
             assert!(
                 input.nav.is_none() && input.zoom.is_none(),
@@ -1338,12 +1338,12 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
         assert!(h.view3d().visible);
         h.m2_mut().brush.effect = normal;
         assert!(h.clone().source.is_none(), "元は決まっていない");
-        assert!(h.view3d().input.clone_press.is_none());
+        assert!(h.view3d().view.input.clone_press.is_none());
         // 次に触れた押しは、新しい押しとして描ける
         pen.drag(&mut h, &[at, offset(at, 6.0, 0.0)]);
         assert!(painted(&h) > 0, "描けた {}", emulate == Emulate::Yes);
         assert_eq!(strokes(&h), 1);
-        assert!(h.view3d().input.pen_press.is_none());
+        assert!(h.view3d().view.input.pen_press.is_none());
     }
 }
 
@@ -1449,7 +1449,7 @@ fn while_y_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
         assert_eq!(after.pitch, before.pitch, "{name}: 回さない");
         assert_eq!(after.target, before.target, "{name}: パンしない");
         assert_eq!(strokes(&h), 0, "{name}: 描かない");
-        let input = &h.view3d().input;
+        let input = &h.view3d().view.input;
         assert!(input.nav.is_none() && input.pen_press.is_none(), "{name}");
     }
 }
@@ -1556,7 +1556,7 @@ fn holding_another_mouse_button_while_the_pen_hovers_orbits_by_the_pen_and_never
         mixed: true,
     }
     .run(&mut h, &mut ink, |h| yaws.push(camera(h).yaw));
-    assert!(h.view3d().input.nav.is_some(), "右ボタンの回す");
+    assert!(h.view3d().view.input.nav.is_some(), "右ボタンの回す");
     // ペンが範囲に入った最初の点は動かさず、そのあとペンの動いた分（11 × 8 点）だけ回す
     let after = camera(&h);
     assert!(
@@ -1590,7 +1590,7 @@ fn holding_another_mouse_button_while_the_pen_hovers_orbits_by_the_pen_and_never
         PointerButton::Secondary,
         false,
     );
-    assert!(h.view3d().input.nav.is_none());
+    assert!(h.view3d().view.input.nav.is_none());
     assert_eq!(strokes(&h), 0, "描かない");
     // 離したあとの浮いたペンは、そのまま egui のポインタになる（ペンのホバー）
     let a = offset(b, 50.0, -20.0);
@@ -1653,7 +1653,7 @@ fn holding_the_middle_button_while_the_pen_hovers_pans_like_the_mouse_moving_the
         }
         let moved = camera(&h).target;
         ink.button(&mut h, b, PointerButton::Middle, false);
-        assert!(h.view3d().input.nav.is_none());
+        assert!(h.view3d().view.input.nav.is_none());
         assert_ne!(moved, start, "パンした（mixed {mixed}）");
         moved
     };

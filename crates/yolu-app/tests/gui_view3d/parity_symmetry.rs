@@ -308,7 +308,7 @@ fn a_3d_quick_mask_stroke_past_the_pen_budget_is_dropped_and_leaves_nothing() {
     assert!(st(&h).doc().selection().is_none());
     assert_eq!(st(&h).doc().undo_count(), 0);
     assert!(!st(&h).is_stroking() && st(&h).sel().pen.is_none());
-    assert!(st(&h).view3d().input.cover.is_none());
+    assert!(st(&h).view3d().view.input.cover.is_none());
     assert_eq!(snapshot(&h), layer);
     // 予算を戻せば描ける
     h.sel_mut().pen_budget = yolu_app::selection::pen::PEN_BUDGET_BYTES;
@@ -342,7 +342,7 @@ fn a_quick_mask_stroke_on_the_canvas_is_not_overwritten_by_a_press_in_the_3d_vie
             .is_some_and(|a| a.source == yolu_app::state::StrokeSource::Pen(7)),
         "キャンバスのストロークのまま"
     );
-    assert!(st(&h).view3d().input.cover.is_none());
+    assert!(st(&h).view3d().view.input.cover.is_none());
     assert!(yolu_app::selection::quick::finish(h.app_mut(), true));
     assert_eq!(selected_near(&h, texel), 0);
     assert_eq!(st(&h).doc().undo_count(), 0);
@@ -358,7 +358,7 @@ fn a_quick_mask_stroke_in_3d_is_not_overwritten_by_a_canvas_stroke() {
     let at = screen_of(&h, rect, front);
     press(&h, at, egui::PointerButton::Primary);
     h.step();
-    assert!(st(&h).view3d().input.cover.is_some());
+    assert!(st(&h).view3d().view.input.cover.is_some());
     let began = yolu_app::selection::quick::begin(
         h.app_mut(),
         yolu_app::state::StrokeSource::Pen(9),
@@ -559,7 +559,13 @@ fn a_3d_stroke_refused_midway_takes_back_what_it_had_painted() {
     }
     let (fixed, largest, rollback) = {
         let s = st(&h);
-        let surface = s.view3d().input.surface.as_ref().expect("3D のストローク");
+        let surface = s
+            .view3d()
+            .view
+            .input
+            .surface
+            .as_ref()
+            .expect("3D のストローク");
         (
             surface.projection_fixed_bytes(),
             surface.projection_stats().largest_dab_bytes,

@@ -57,8 +57,8 @@ fn window() -> (Harness<'static, YoluApp>, Rect) {
                 .unwrap();
         }
         s.doc_mut().set_effect_inputs(inputs).unwrap();
-        s.view3d_mut().camera.yaw = -40.0;
-        s.view3d_mut().camera.pitch = 15.0;
+        s.view3d_mut().view.camera.yaw = -40.0;
+        s.view3d_mut().view.camera.pitch = 15.0;
     }
     click_tab(&mut h, Tab::View3d);
     // 右上の組はテクスチャセットが前なので、棚（アセット）のタブを前へ出す
@@ -1042,7 +1042,11 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
     let (mut h, rect) = window();
     let layer = points_layer(&mut h);
     let start = gradient_points(&h, layer);
-    let view = st(&h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(&h)
+        .view3d()
+        .view
+        .camera
+        .view(rect.width(), rect.height());
     let c = view.to_screen(yolu_core::glam::Vec3::ZERO).unwrap();
     let at = pos2(rect.left() + c.x, rect.top() + c.y);
     // 面を押して点を追加し、そのままドラッグ。右の列の欄は、ペンの接触では毎フレームまとめを終えようとする
@@ -1078,6 +1082,7 @@ fn a_pen_drag_on_a_point_in_the_3d_view_is_one_undo_with_the_property_fields_dra
         let p = moved.points[2].position;
         let g = st(&h)
             .view3d()
+            .view
             .camera
             .view(rect.width(), rect.height())
             .to_screen(yolu_core::glam::Vec3::new(
@@ -1353,7 +1358,11 @@ fn clicking_the_model_while_editing_points_adds_a_point_and_delete_removes_it() 
             .len()
     };
     assert_eq!(count(&h), 2);
-    let view = st(&h).view3d().camera.view(rect.width(), rect.height());
+    let view = st(&h)
+        .view3d()
+        .view
+        .camera
+        .view(rect.width(), rect.height());
     let c = view.to_screen(yolu_core::glam::Vec3::ZERO).unwrap();
     let at = pos2(rect.left() + c.x, rect.top() + c.y);
     click(&mut h, at);

@@ -261,7 +261,7 @@ impl crate::state::AppState {
         let pen_view = |p: &Option<crate::input::Press>| {
             p.is_some_and(|p| p.owner == crate::input::Owner::View)
         };
-        (self.view3d.input.nav.is_some() && !pen_view(&self.view3d.input.pen_press))
+        (self.view3d.view.input.nav.is_some() && !pen_view(&self.view3d.view.input.pen_press))
             || (self.canvas.nav_button.is_some() && !pen_view(&self.canvas.pen_press))
     }
 }

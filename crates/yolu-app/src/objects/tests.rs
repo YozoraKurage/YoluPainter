@@ -21,9 +21,9 @@ fn cube() -> AppState {
     let mut app = AppState::new(64, 64);
     app.apply(Action::LoadDemoModel);
     app.view3d.material = 0;
-    app.view3d.camera.yaw = 0.0;
-    app.view3d.camera.pitch = 0.0;
-    app.view3d.view_rect = Some(RECT);
+    app.view3d.view.camera.yaw = 0.0;
+    app.view3d.view.camera.pitch = 0.0;
+    app.view3d.view.view_rect = Some(RECT);
     app.view3d.visible = true;
     app
 }
@@ -57,7 +57,7 @@ fn every_kind(app: &mut AppState) -> LayerId {
 }
 
 fn screen_of(app: &AppState, world: Vec3) -> Pos2 {
-    let v = app.view3d.camera.view(RECT.width(), RECT.height());
+    let v = app.view3d.view.camera.view(RECT.width(), RECT.height());
     let s = v.to_screen(world).expect("カメラの前");
     pos2(RECT.left() + s.x, RECT.top() + s.y)
 }
@@ -657,7 +657,7 @@ fn figure() -> AppState {
     let mut app = AppState::new(64, 64);
     app.apply(Action::Pose(PoseAction::LoadFigure));
     assert!(app.view3d.pose.session.is_some(), "{}", app.message);
-    app.view3d.view_rect = Some(RECT);
+    app.view3d.view.view_rect = Some(RECT);
     app.view3d.visible = true;
     app
 }
@@ -1048,9 +1048,9 @@ fn a_path_turned_on_a_thin_plate_stays_on_the_face_it_was_drawn_on() {
     let mut app = AppState::new(64, 64);
     app.view3d.set_model(thin_plate());
     app.view3d.material = 0;
-    app.view3d.camera.yaw = 0.0;
-    app.view3d.camera.pitch = 0.0;
-    app.view3d.view_rect = Some(RECT);
+    app.view3d.view.camera.yaw = 0.0;
+    app.view3d.view.camera.pitch = 0.0;
+    app.view3d.view.view_rect = Some(RECT);
     app.view3d.visible = true;
     app.apply(Action::SelectTool(Tool::Path));
     for x in [-0.1f32, 0.1] {
@@ -1213,7 +1213,7 @@ fn a_plane_move_keeps_the_excluded_axis_and_a_typed_value_goes_along_the_next_ax
     select(&mut app, Some(o));
     let start = shape(&app, o);
     // 上から見下ろす（XZ の面がポインタの動きを受ける）
-    app.view3d.camera.pitch = 40.0;
+    app.view3d.view.camera.pitch = 40.0;
     // Shift+Y: Y を除いた面（XZ）。ポインタを右上へ動かしても Y は変わらない
     let from = begin(&mut app, Kind::Grab);
     step_keys(&mut app, &[(Key::Y, Modifiers::SHIFT)]);

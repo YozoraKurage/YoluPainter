@@ -305,7 +305,7 @@ pub fn note_surface(app: &mut AppState, rect: egui::Rect, at: Pos2) {
     let Some(model) = app.view3d.model.clone() else {
         return;
     };
-    let view = app.view3d.camera.view(rect.width(), rect.height());
+    let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
     if let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, p) {
         if hit.material == app.view3d.material {

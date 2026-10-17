@@ -30,11 +30,11 @@ fn rect() -> Rect {
 fn harness(preferences: Preferences) -> Harness<'static, Fixture> {
     let mut app = AppState::new(32, 32);
     app.view3d_mut().load_demo();
-    app.view3d_mut().camera = OrbitCamera {
+    app.view3d_mut().view.camera = OrbitCamera {
         yaw: 0.0,
         pitch: 0.0,
         distance: 3.0,
-        ..app.view3d().camera
+        ..app.view3d().view.camera
     };
     app.prefs_mut().settings.navigation = preferences;
     let mut h = common::gpu_thread::builder()
@@ -64,7 +64,7 @@ impl Drive for Harness<'_, Fixture> {
 }
 
 fn camera(h: &Harness<'_, Fixture>) -> OrbitCamera {
-    h.view3d().camera
+    h.view3d().view.camera
 }
 fn project(c: OrbitCamera, p: Vec3) -> Vec2 {
     c.view(640.0, 480.0).to_screen(p).unwrap()
@@ -161,7 +161,7 @@ fn surface_orbit_keeps_the_pressed_point_and_mouse_matches_pen() {
             } else {
                 mouse(&mut h, at + vec2(90.0, 55.0), button, false, mods);
             }
-            assert!(h.view3d().input.navigation.is_none());
+            assert!(h.view3d().view.input.navigation.is_none());
             assert!(!h.doc().can_undo());
             results.push(camera(&h));
         }
@@ -182,14 +182,14 @@ fn surface_orbit_keeps_the_pressed_point_and_mouse_matches_pen() {
 fn snap_orbit_keeps_the_pressed_surface_point_in_place_when_it_flicks_to_the_next_axis_view() {
     // 面の位置を回転の中心にしていても、Alt + ドラッグのスナップ回転は押した面の点を画面の同じ所に保つ（切り替えた向きでも）
     let mut h = harness(prefs(OrbitCenter::Surface, ZoomCenter::View));
-    h.view3d_mut().camera.yaw = 25.0;
+    h.view3d_mut().view.camera.yaw = 25.0;
     let at = pos2(375.0, 215.0);
     let point = hit(&h, at);
     let alt = Modifiers::ALT;
     let d = navigation::FLICK_DISTANCE;
     h.event(Event::ModifiersChanged(alt));
     mouse(&mut h, at, PointerButton::Secondary, true, alt);
-    assert!(h.view3d().input.navigation.is_some());
+    assert!(h.view3d().view.input.navigation.is_some());
     // 閾値の手前では動かない
     h.event(Event::PointerMoved(at + vec2(-(d - 1.0), 0.0)));
     h.step();
@@ -225,7 +225,7 @@ fn snap_orbit_keeps_the_pressed_surface_point_in_place_when_it_flicks_to_the_nex
         near(project(c, point), Vec2::new(at.x, at.y));
         mouse(&mut h, at + m, PointerButton::Secondary, false, alt);
     }
-    assert!(h.view3d().input.navigation.is_none());
+    assert!(h.view3d().view.input.navigation.is_none());
     assert!(!h.doc().can_undo());
 }
 
@@ -233,7 +233,7 @@ fn snap_orbit_keeps_the_pressed_surface_point_in_place_when_it_flicks_to_the_nex
 fn all_centers_and_empty_surface_fallback() {
     for mode in OrbitCenter::ALL {
         let mut h = harness(prefs(mode, ZoomCenter::View));
-        h.view3d_mut().camera.target = Vec3::new(0.2, 0.0, 0.0);
+        h.view3d_mut().view.camera.target = Vec3::new(0.2, 0.0, 0.0);
         let at = pos2(4.0, 4.0); // 面が無い
         let before = camera(&h);
         let pivot = match mode {
@@ -369,7 +369,7 @@ fn cancelled_navigation_drops_its_anchor_and_the_next_press_picks_again() {
     h.event(Event::PointerMoved(at + vec2(20.0, 10.0)));
     h.step();
     key(&mut h, Key::Escape, true, Modifiers::NONE);
-    assert!(h.view3d().input.navigation.is_none());
+    assert!(h.view3d().view.input.navigation.is_none());
     mouse(&mut h, at, PointerButton::Secondary, false, Modifiers::NONE);
     let at = pos2(290.0, 250.0);
     let point = hit(&h, at);
@@ -379,7 +379,7 @@ fn cancelled_navigation_drops_its_anchor_and_the_next_press_picks_again() {
     near(project(camera(&h), point), Vec2::new(at.x, at.y));
     h.event(Event::WindowFocused(false));
     h.step();
-    assert!(h.view3d().input.navigation.is_none());
+    assert!(h.view3d().view.input.navigation.is_none());
 }
 
 #[test]
@@ -452,7 +452,7 @@ fn navigation_settings_work_in_japanese_and_english() {
             .click();
         h.run();
         assert_eq!(
-            h.view3d().camera.target,
+            h.view3d().view.camera.target,
             navigation::selected_bounds(h.view3d()).unwrap().center
         );
     }
@@ -525,11 +525,11 @@ fn settings_panels_and_navigation_do_not_take_the_frame_shortcut() {
     let mut h = harness(Preferences::default());
     h.event(Event::PointerMoved(pos2(300.0, 200.0)));
     let original = camera(&h);
-    h.view3d_mut().display.settings_open = true;
+    h.view3d_mut().view.display.settings_open = true;
     key(&mut h, Key::Period, true, Modifiers::NONE);
     assert_eq!(camera(&h), original);
     key(&mut h, Key::Period, false, Modifiers::NONE);
-    h.view3d_mut().display.settings_open = false;
+    h.view3d_mut().view.display.settings_open = false;
     // ナビゲーション中も視点を置き直さない。
     mouse(
         &mut h,
@@ -638,11 +638,11 @@ fn removing_the_model_during_navigation_releases_the_saved_model() {
         true,
         Modifiers::NONE,
     );
-    assert!(h.view3d().input.navigation.is_some());
+    assert!(h.view3d().view.input.navigation.is_some());
     h.view3d_mut().set_hidden(vec![0]);
     h.step();
-    assert!(h.view3d().input.navigation.is_none());
-    assert!(h.view3d().input.nav.is_none());
+    assert!(h.view3d().view.input.navigation.is_none());
+    assert!(h.view3d().view.input.nav.is_none());
 }
 
 #[test]
@@ -707,7 +707,7 @@ fn review_frame_shortcut_preserves_camera_during_stencil_placement() {
         h.event(Event::PointerMoved(at + vec2(30.0, 20.0)));
         h.step();
         assert!(h.stencil().drag.is_some());
-        assert!(h.view3d().input.nav.is_none());
+        assert!(h.view3d().view.input.nav.is_none());
         if release_y {
             key(&mut h, Key::Y, false, Modifiers::NONE);
         }
@@ -744,7 +744,7 @@ fn alt_right_drag_flicks_into_axis_views_that_turn_orthographic_with_the_setting
             axis_ortho,
             ..Preferences::default()
         });
-        h.view3d_mut().camera.yaw = 25.0;
+        h.view3d_mut().view.camera.yaw = 25.0;
         let size = size_at_target(&h);
         let at = pos2(375.0, 215.0);
         let alt = Modifiers::ALT;
@@ -761,7 +761,7 @@ fn alt_right_drag_flicks_into_axis_views_that_turn_orthographic_with_the_setting
         let c = camera(&h);
         assert_eq!((c.yaw, c.pitch), (-90.0, 0.0));
         assert_eq!(c.is_orthographic(), axis_ortho);
-        assert_eq!(h.view3d().auto_orthographic, axis_ortho);
+        assert_eq!(h.view3d().view.auto_orthographic, axis_ortho);
         assert!((size_at_target(&h) - size).abs() < 1e-3);
         // 同じドラッグの続きでは、もう切り替えない（1 回のドラッグにつき 1 回）
         h.event(Event::PointerMoved(at + vec2(-(d + 1.0), d + 1.0)));
@@ -802,7 +802,7 @@ fn orbiting_off_an_axis_view_undoes_only_the_automatic_orthographic() {
         yolu_core::geometry::AxisView::Front,
     )));
     assert!(camera(&h).is_orthographic());
-    assert!(h.view3d().auto_orthographic);
+    assert!(h.view3d().view.auto_orthographic);
     let at = pos2(320.0, 240.0);
     mouse(&mut h, at, PointerButton::Secondary, true, Modifiers::NONE);
     h.event(Event::PointerMoved(at + vec2(30.0, 0.0)));
@@ -820,7 +820,7 @@ fn orbiting_off_an_axis_view_undoes_only_the_automatic_orthographic() {
         navigation::NavOp::ToggleOrthographic,
     ));
     assert!(camera(&h).is_orthographic());
-    assert!(!h.view3d().auto_orthographic);
+    assert!(!h.view3d().view.auto_orthographic);
     mouse(&mut h, at, PointerButton::Secondary, true, Modifiers::NONE);
     h.event(Event::PointerMoved(at + vec2(-40.0, 25.0)));
     h.step();
@@ -836,7 +836,7 @@ fn orbiting_off_an_axis_view_undoes_only_the_automatic_orthographic() {
     h.act(yolu_app::state::Action::View3dNav(navigation::NavOp::Axis(
         yolu_core::geometry::AxisView::Top,
     )));
-    assert!(camera(&h).is_orthographic() && !h.view3d().auto_orthographic);
+    assert!(camera(&h).is_orthographic() && !h.view3d().view.auto_orthographic);
     // モデル全体の位置へ戻しても、手で選んだ正投影は保つ（既定の斜めの向き）
     h.view3d_mut().frame_model();
     assert!(camera(&h).is_orthographic());
@@ -848,7 +848,7 @@ fn orbiting_off_an_axis_view_undoes_only_the_automatic_orthographic() {
     h.act(yolu_app::state::Action::View3dNav(navigation::NavOp::Axis(
         yolu_core::geometry::AxisView::Left,
     )));
-    assert!(h.view3d().auto_orthographic);
+    assert!(h.view3d().view.auto_orthographic);
     h.view3d_mut().frame_model();
     assert!(!camera(&h).is_orthographic());
     assert!(!h.doc().can_undo());
@@ -858,8 +858,8 @@ fn orbiting_off_an_axis_view_undoes_only_the_automatic_orthographic() {
 fn orthographic_pan_and_pointer_zoom_follow_the_pointer() {
     for at in [pos2(375.0, 215.0), pos2(30.0, 40.0)] {
         let mut h = harness(prefs(OrbitCenter::Surface, ZoomCenter::Pointer));
-        h.view3d_mut().camera.yaw = 25.0;
-        h.view3d_mut().camera.set_orthographic(true);
+        h.view3d_mut().view.camera.yaw = 25.0;
+        h.view3d_mut().view.camera.set_orthographic(true);
         let c = camera(&h);
         let view = c.view(640.0, 480.0);
         // 面が無ければ、注視点と同じ奥行きの点

@@ -941,14 +941,14 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let sent = play(&mut h, vec![pointer(edge), button(edge, true)]);
     assert_eq!(resizes(&sent), vec![ResizeDirection::East], "{sent:?}");
     assert!(
-        h.view3d().input.nav.is_none(),
+        h.view3d().view.input.nav.is_none(),
         "縁の押しで視点の操作が始まった"
     );
     // 縁の押しを持ったまま動かしても、動かさない
     let moved = edge + vec2(-30.0, 12.0);
     play(&mut h, vec![pointer(moved)]);
     assert!(
-        h.view3d().input.nav.is_none(),
+        h.view3d().view.input.nav.is_none(),
         "縁の押しのまま動かして視点を動かした"
     );
     play(&mut h, vec![button(moved, false)]);
@@ -957,11 +957,11 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let sent = play(&mut h, vec![pointer(inner), button(inner, true)]);
     assert!(resizes(&sent).is_empty(), "{sent:?}");
     assert!(
-        h.view3d().input.nav.is_some(),
+        h.view3d().view.input.nav.is_some(),
         "縁の内側で視点の操作が始まらない"
     );
     play(&mut h, vec![button(inner, false), space(false)]);
-    assert!(h.view3d().input.nav.is_none());
+    assert!(h.view3d().view.input.nav.is_none());
 }
 
 /// 右の縁にあるスクロールのつまみは、縁より先に押しを受ける（つまみを掴んで動かせる）。

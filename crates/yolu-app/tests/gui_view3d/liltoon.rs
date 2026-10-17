@@ -74,7 +74,7 @@ fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, distance: f32) {
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -265,7 +265,7 @@ fn the_shadow_follows_lilgetshading_from_lit_to_dark() {
         (0.0, 0.0),
     ] {
         light(&mut h, yaw, pitch);
-        let to_light = h.view3d().display.light_direction();
+        let to_light = h.view3d().view.display.light_direction();
         let image = h.render().expect("描ける");
         let expected = to_bytes(shaded(albedo, Vec3::NEG_Z, to_light));
         assert_close(
@@ -332,7 +332,7 @@ fn a_user_channel_mask_turns_the_shadow_off_where_it_is_black() {
         to_bytes(shaded(
             albedo,
             Vec3::NEG_Z,
-            h.view3d().display.light_direction(),
+            h.view3d().view.display.light_direction(),
         )),
         3,
         "マスク 1",
@@ -424,7 +424,7 @@ fn a_user_channel_mask_keeps_its_value_in_the_smaller_mips() {
         to_bytes(shaded(
             albedo,
             Vec3::NEG_Z,
-            h.view3d().display.light_direction(),
+            h.view3d().view.display.light_direction(),
         )),
         3,
         "遠くのマスク 1",
@@ -1027,7 +1027,7 @@ fn side_of(h: &Harness<'_, YoluApp>, set: usize) -> u32 {
 /// 世界の点が見えている画素。
 fn screen_of(h: &Harness<'_, YoluApp>, world: Vec3) -> Pos2 {
     let area = h.state().view3d_rect().unwrap();
-    let view = h.view3d().camera.view(area.width(), area.height());
+    let view = h.view3d().view.camera.view(area.width(), area.height());
     let p = view.to_screen(world).expect("カメラの前");
     area.min + egui::vec2(p.x, p.y)
 }
@@ -1498,7 +1498,7 @@ fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
     // 標準の見た目のセットだけなら、値を作らない（カメラを回しても）。数は作った回数の合計なので、標準にした後からの増えを見る
     let base = builds(&h);
     for yaw in [0.1f32, 0.2, 0.3] {
-        h.view3d_mut().camera.yaw = yaw;
+        h.view3d_mut().view.camera.yaw = yaw;
         h.run();
     }
     assert_eq!(builds(&h), base);
@@ -1513,7 +1513,7 @@ fn the_liltoon_values_are_built_only_when_the_look_or_document_changes() {
     assert!(after > base);
     let renders = h.state().view3d_stats().unwrap().renders;
     for yaw in [0.4f32, 0.5, 0.6] {
-        h.view3d_mut().camera.yaw = yaw;
+        h.view3d_mut().view.camera.yaw = yaw;
         h.run();
     }
     assert!(
@@ -1618,7 +1618,7 @@ fn measure_frames_standard_and_liltoon() {
         let mesh = cube_sphere(grid, 0.5);
         let triangles: usize = mesh.submeshes.iter().map(|s| s.indices.len() / 3).sum();
         set_model(&mut h, vec![mesh]);
-        h.view3d_mut().camera = OrbitCamera {
+        h.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 20.0,
             pitch: 10.0,
@@ -1640,7 +1640,7 @@ fn measure_frames_standard_and_liltoon() {
                 let (mut wall, mut cpu) = (Vec::new(), Vec::new());
                 let ticks_before = process_cpu_ms();
                 for frame in 0..24 {
-                    h.view3d_mut().camera.yaw += 3.0 + frame as f32 * 0.01;
+                    h.view3d_mut().view.camera.yaw += 3.0 + frame as f32 * 0.01;
                     let started = Instant::now();
                     h.step();
                     h.state().view3d_wait_gpu();

@@ -41,7 +41,7 @@ fn float_pose_tab(h: &mut Harness<'static, YoluApp>) {
 }
 
 fn screen_of(h: &Harness<'_, YoluApp>, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -60,7 +60,7 @@ fn arm_point(h: &Harness<'_, YoluApp>, rect: Rect, from: f32, to: f32) -> (Pos2,
     let model = app.view3d().model.as_ref().unwrap();
     let first = s.rig.meshes()[0].mesh.triangle_count();
     let count = s.rig.meshes()[1].mesh.triangle_count();
-    let cam = app.view3d().camera.position();
+    let cam = app.view3d().view.camera.position();
     for i in first..first + count {
         let r = &rest.triangles()[i];
         let x = (r.a.x + r.b.x + r.c.x) / 3.0;
@@ -329,7 +329,7 @@ fn the_pose_does_not_change_during_a_stroke_and_no_stroke_is_left_behind() {
     // 胴に描き始める
     let s = h.view3d().pose.session.as_ref().unwrap();
     let model = h.view3d().model.clone().unwrap();
-    let cam = h.view3d().camera.position();
+    let cam = h.view3d().view.camera.position();
     let n = s.rig.meshes()[0].mesh.triangle_count();
     let t = model.geometry.triangles()[..n]
         .iter()

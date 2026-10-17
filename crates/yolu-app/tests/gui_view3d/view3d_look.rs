@@ -78,7 +78,7 @@ fn set_model_with(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>, warm: bo
 }
 
 fn look_at(h: &mut Harness<'_, YoluApp>, target: Vec3, distance: f32, yaw: f32, pitch: f32) {
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target,
         yaw,
         pitch,
@@ -1469,7 +1469,7 @@ fn ball_over_floor() -> Harness<'static, YoluApp> {
 /// 世界の点が見えている画素（3D の表示域の左上から測った点を、画像の座標へ）。
 fn screen_of(h: &Harness<'_, YoluApp>, world: Vec3) -> Pos2 {
     let area = h.state().view3d_rect().unwrap();
-    let view = h.view3d().camera.view(area.width(), area.height());
+    let view = h.view3d().view.camera.view(area.width(), area.height());
     let p = view.to_screen(world).expect("カメラの前");
     area.min + egui::vec2(p.x, p.y)
 }
@@ -1622,14 +1622,14 @@ fn a_softer_shadow_has_a_wider_penumbra() {
 // ───────── 右上の隅の表示の切り替えと設定のパネル ─────────
 
 #[test]
-fn the_corner_shading_icon_switches_what_is_shown() {
+fn the_shading_dropdown_switches_what_is_shown() {
     use egui_kittest::kittest::Queryable;
     let mut h = view(1100.0, 760.0, 64);
     h.view3d_mut().load_demo();
     h.run();
-    assert_eq!(h.view3d().display.shading, Shading::Material);
-    // 右上の隅のアイコン（3D の表示: マテリアル (PBR)）を押すと一覧が開き、並びは Unity 版と同じ（マテリアル・中立・チャンネルだけ・メッシュマップ）
-    h.get_by_label("3D の表示: マテリアル (PBR)").click();
+    assert_eq!(h.view3d().view.display.shading, Shading::Material);
+    // 左上の隅のドロップダウン（マテリアル (PBR)）を押すと一覧が開き、並びは Unity 版と同じ（マテリアル・中立・チャンネルだけ・メッシュマップ）
+    h.get_by_label("マテリアル (PBR)").click();
     h.run();
     let body = h.popup().as_ref().expect("一覧が開く").state.rect;
     for label in [
@@ -1649,34 +1649,34 @@ fn the_corner_shading_icon_switches_what_is_shown() {
         );
     }
     // メッシュマップは、今のセットに焼いてあるものだけ選べる（焼いていなければ押しても変わらない）
-    let before = h.view3d().display.shading;
+    let before = h.view3d().view.display.shading;
     let at = popup_item(&h, "アンビエントオクルージョン").center();
     click(&mut h, at);
     h.run();
-    assert_eq!(h.view3d().display.shading, before);
+    assert_eq!(h.view3d().view.display.shading, before);
     if h.popup().is_none() {
-        h.get_by_label("3D の表示: マテリアル (PBR)").click();
+        h.get_by_label("マテリアル (PBR)").click();
         h.run();
     }
     let at = popup_item(&h, "中立").center();
     click(&mut h, at);
     h.run();
-    assert_eq!(h.view3d().display.shading, Shading::Neutral);
+    assert_eq!(h.view3d().view.display.shading, Shading::Neutral);
     assert!(h.popup().is_none());
-    h.get_by_label("3D の表示: 中立").click();
+    h.get_by_label("中立").click();
     h.run();
     let at = popup_item(&h, "ラフネス").center();
     click(&mut h, at);
     h.run();
     assert_eq!(
-        h.view3d().display.shading,
+        h.view3d().view.display.shading,
         Shading::Channel(Channel::Roughness)
     );
     // 英語の画面では英語の名前
     h.set_lang(yolu_app::lang::Lang::En);
     h.act(Action::View3d(Op::Shading(Shading::Material)));
     h.run();
-    assert!(h.query_by_label("3D shading: Material (PBR)").is_some());
+    assert!(h.query_by_label("Material (PBR)").is_some());
 }
 
 #[test]
@@ -1685,46 +1685,46 @@ fn the_settings_panel_edits_lighting_and_closes_outside_or_with_escape() {
     let mut h = view(1100.0, 760.0, 64);
     h.view3d_mut().load_demo();
     h.run();
-    assert!(!h.view3d().display.settings_open);
+    assert!(!h.view3d().view.display.settings_open);
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.view3d().display.settings_open);
+    assert!(h.view3d().view.display.settings_open);
     // 環境の元・トーンマッピングの曲線は、ボタンを押して選ぶ
     h.get_by_label("スタジオ").click();
     h.run();
-    assert_eq!(h.view3d().display.env, EnvKind::Studio);
+    assert_eq!(h.view3d().view.display.env, EnvKind::Studio);
     assert!(h.state().view3d_stats().unwrap().env_bakes >= 1);
     h.get_by_label("ACES").click();
     h.run();
-    assert_eq!(h.view3d().display.tone_map, Curve::Aces);
+    assert_eq!(h.view3d().view.display.tone_map, Curve::Aces);
     // 影のオン・オフ
-    assert!(!h.view3d().display.shadows);
+    assert!(!h.view3d().view.display.shadows);
     h.get_by_label("影").click();
     h.run();
-    assert!(h.view3d().display.shadows);
+    assert!(h.view3d().view.display.shadows);
     // 既定に戻す: 光・環境・影・トーンマッピングだけ（何を見せるかは変えない）
     h.state_mut().apply(Action::View3d(Op::Shading(
         yolu_app::view3d::display::Shading::Neutral,
     )));
     h.get_by_label("既定に戻す").click();
     h.run();
-    let d = h.view3d().display;
+    let d = h.view3d().view.display;
     assert_eq!((d.env, d.tone_map), (EnvKind::Sky, Curve::None));
     assert!(!d.shadows, "影も既定に戻る");
     assert_eq!(d.shading, yolu_app::view3d::display::Shading::Neutral);
     // Esc で閉じる
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.run();
-    assert!(!h.view3d().display.settings_open);
+    assert!(!h.view3d().view.display.settings_open);
     // 開き直して、パネルの外（3D の絵の上）を押すと閉じる（その押しが 3D で描き始め・回し始めにならないことは、
     // `pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting` が確かめる）
     h.get_by_label("光・環境・トーンマッピング").click();
     h.run();
-    assert!(h.view3d().display.settings_open);
+    assert!(h.view3d().view.display.settings_open);
     let rect = h.state().view3d_rect().unwrap();
     click(&mut h, rect.left_top() + egui::vec2(60.0, 300.0));
     h.run();
-    assert!(!h.view3d().display.settings_open);
+    assert!(!h.view3d().view.display.settings_open);
     assert!(!h.doc().can_undo(), "閉じる押しで描かない");
     // 設定のパネルを開いている間、パネルの上のドラッグで描かない
     h.get_by_label("光・環境・トーンマッピング").click();
@@ -1745,20 +1745,20 @@ fn pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting() 
     let open_panel = |h: &mut Harness<'_, YoluApp>| {
         h.get_by_label("光・環境・トーンマッピング").click();
         h.run();
-        assert!(h.view3d().display.settings_open);
+        assert!(h.view3d().view.display.settings_open);
     };
     // 左ボタン: モデルの上を押してパネルを閉じる。その押しは 1 ダブも描かない（Undo の履歴にも入らない）
     open_panel(&mut h);
     press(&h, on_model, egui::PointerButton::Primary);
     h.step();
-    assert!(!h.view3d().display.settings_open, "外の押しで閉じる");
+    assert!(!h.view3d().view.display.settings_open, "外の押しで閉じる");
     assert!(!h.app().is_stroking(), "閉じる押しでストロークが始まらない");
     release(&h, on_model, egui::PointerButton::Primary);
     h.run();
     assert!(!h.doc().can_undo(), "閉じる押しで描かない");
     // 右ボタン: 閉じる押しで回し始めない
     open_panel(&mut h);
-    let yaw = h.view3d().camera.yaw;
+    let yaw = h.view3d().view.camera.yaw;
     press(&h, on_model, egui::PointerButton::Secondary);
     h.step();
     move_to(&h, on_model + egui::vec2(50.0, 0.0));
@@ -1769,11 +1769,11 @@ fn pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting() 
         egui::PointerButton::Secondary,
     );
     h.run();
-    assert!(!h.view3d().display.settings_open);
-    assert_eq!(h.view3d().camera.yaw, yaw, "閉じる押しで回さない");
+    assert!(!h.view3d().view.display.settings_open);
+    assert_eq!(h.view3d().view.camera.yaw, yaw, "閉じる押しで回さない");
     // ホイールは、パネルを開いたままでも使える（寄れる）
     open_panel(&mut h);
-    let distance = h.view3d().camera.distance;
+    let distance = h.view3d().view.camera.distance;
     move_to(&h, on_model);
     h.event(egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Line,
@@ -1783,14 +1783,17 @@ fn pressing_outside_the_settings_panel_closes_it_without_painting_or_orbiting() 
     });
     h.run();
     assert!(
-        h.view3d().camera.distance != distance,
+        h.view3d().view.camera.distance != distance,
         "パネルを開いたままホイールで寄れる"
     );
-    assert!(h.view3d().display.settings_open, "ホイールでは閉じない");
+    assert!(
+        h.view3d().view.display.settings_open,
+        "ホイールでは閉じない"
+    );
     // パネルを閉じたあとの同じ点の押しは描ける（点がモデルの上にあり、閉じていれば描く対照）
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.run();
-    assert!(!h.view3d().display.settings_open);
+    assert!(!h.view3d().view.display.settings_open);
     click(&mut h, on_model);
     assert!(h.doc().can_undo(), "パネルが閉じていれば、同じ押しは描く");
 }
@@ -1856,7 +1859,7 @@ fn a_baked_mesh_map_is_shown_alone_on_the_model_and_falls_back_when_it_is_gone()
     }
     h.run();
     let rect = h.state().view3d_rect().unwrap();
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let at = |x: f32, y: f32| {
         let s = view.to_screen(Vec3::new(x, y, 0.0)).unwrap();
         rect.min + egui::vec2(s.x, s.y)
@@ -1901,7 +1904,7 @@ fn a_baked_mesh_map_is_shown_alone_on_the_model_and_falls_back_when_it_is_gone()
     }
     h.run();
     assert_eq!(
-        h.view3d().display.shading,
+        h.view3d().view.display.shading,
         yolu_app::view3d::display::Shading::Material
     );
 }
@@ -1949,7 +1952,7 @@ fn snapshot_material_balls_metal_and_roughness_steps() {
     let image = h.render().unwrap();
     // 並びの検算: 金属が増えるほど拡散の色（橙）は沈み、粗さが増えるほど映り込みのピークは落ちる
     let area = h.state().view3d_rect().unwrap();
-    let view = h.view3d().camera.view(area.width(), area.height());
+    let view = h.view3d().view.camera.view(area.width(), area.height());
     let at = |i: i32, j: i32| {
         let c = Vec3::new((i as f32 - 2.0) * 1.1, (1.0 - j as f32) * 1.1, 0.0);
         let s = view.to_screen(c).unwrap();
@@ -2020,7 +2023,7 @@ fn snapshot_normal_map_from_a_height_bump() {
     crate::common::shot::region(&mut h, "view3d_normal_map", area);
     // 光の来る向きを変えると、盛り上がりの明るい側が反対になる（法線マップが効いている）
     let rect = h.state().view3d_rect().unwrap();
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let spot = |x: f32| {
         let s = view.to_screen(Vec3::new(x, 0.0, 0.0)).unwrap();
         rect.min + egui::vec2(s.x, s.y)
@@ -2055,8 +2058,8 @@ fn snapshot_settings_panel_and_shading_menu() {
     crate::common::shot::region(&mut h, "view3d_settings_panel", corner);
     h.state_mut().apply(Action::View3d(Op::CloseSettings));
     h.run();
-    let button = h.get_by_label("3D の表示: マテリアル (PBR)").rect();
-    h.get_by_label("3D の表示: マテリアル (PBR)").click();
+    let button = h.get_by_label("マテリアル (PBR)").rect();
+    h.get_by_label("マテリアル (PBR)").click();
     h.run();
     let shown = crate::common::shot::with_popup(&h, button);
     crate::common::shot::region(&mut h, "view3d_shading_menu", shown);
@@ -2170,7 +2173,7 @@ fn measure_painting_frames_with_seventy_thousand_triangles_and_six_channels() {
     let orbit_frames = |h: &mut Harness<'_, YoluApp>| {
         let (mut wall, mut cpu) = (Vec::new(), Vec::new());
         for frame in 0..FRAMES {
-            let yaw = &mut h.view3d_mut().camera.yaw;
+            let yaw = &mut h.view3d_mut().view.camera.yaw;
             *yaw += 3.0 + frame as f32 * 0.01;
             let started = Instant::now();
             h.step();

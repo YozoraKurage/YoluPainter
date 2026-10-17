@@ -508,7 +508,7 @@ fn nothing_in_the_pose_tab_changes_while_stroking() {
     // 胴に描き始める（本物のポインタで）
     let rect = h.state().view3d_rect().unwrap();
     let model = h.view3d().model.clone().unwrap();
-    let cam = h.view3d().camera.position();
+    let cam = h.view3d().view.camera.position();
     let n = session(&h).rig.meshes()[0].mesh.triangle_count();
     let t = model.geometry.triangles()[..n]
         .iter()
@@ -584,7 +584,7 @@ fn a_hide_sets_delete_button_waits_for_the_stroke_and_the_file_stays() {
 // ───────── 面を隠す ─────────
 
 fn screen_of(h: &H, rect: Rect, p: Vec3) -> Pos2 {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let s = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + s.x, rect.top() + s.y)
 }
@@ -596,7 +596,7 @@ fn arm_point(h: &H, rect: Rect) -> Pos2 {
     let model = app.view3d().model.as_ref().unwrap();
     let first = s.rig.meshes()[0].mesh.triangle_count();
     let count = s.rig.meshes()[1].mesh.triangle_count();
-    let cam = app.view3d().camera.position();
+    let cam = app.view3d().view.camera.position();
     for i in first..first + count {
         let t = &model.geometry.triangles()[i];
         let c = (t.a + t.b + t.c) / 3.0;
@@ -638,7 +638,7 @@ fn hiding_a_bones_surfaces_removes_them_from_the_view_and_from_painting() {
     // 隠した面は当たらない: 当たりの幾何にも、スポイトにも無く、そこをなぞっても描かれない
     {
         let app = h.app();
-        let view = app.view3d().camera.view(rect.width(), rect.height());
+        let view = app.view3d().view.camera.view(rect.width(), rect.height());
         let local = yolu_core::glam::Vec2::new(at.x - rect.left(), at.y - rect.top());
         let shown_hit =
             yolu_core::geometry::pick(&app.view3d().model.as_ref().unwrap().geometry, &view, local);
@@ -677,7 +677,7 @@ fn mesh_point(h: &H, rect: Rect, mesh: usize, keep: impl Fn(Vec3) -> bool) -> (P
         .map(|m| m.mesh.triangle_count())
         .sum();
     let count = s.rig.meshes()[mesh].mesh.triangle_count();
-    let cam = app.view3d().camera.position();
+    let cam = app.view3d().view.camera.position();
     for i in first..first + count {
         let t = &full.geometry.triangles()[i];
         let c = (t.a + t.b + t.c) / 3.0;

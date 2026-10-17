@@ -522,8 +522,8 @@ const SIZE: u32 = 256;
 fn cube_view() -> (H, Rect) {
     let mut h = app(1100.0, 760.0, SIZE);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
@@ -531,7 +531,7 @@ fn cube_view() -> (H, Rect) {
 }
 
 fn drag_world(h: &mut H, rect: Rect, from: [f32; 3], to: [f32; 3], points: usize) {
-    let view = h.view3d().camera.view(rect.width(), rect.height());
+    let view = h.view3d().view.camera.view(rect.width(), rect.height());
     let at = |p: [f32; 3]| {
         let s = view
             .to_screen(yolu_core::glam::Vec3::new(p[0], p[1], p[2]))

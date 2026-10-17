@@ -137,7 +137,7 @@ fn local(rect: Rect, p: Pos2) -> Vec2 {
 }
 
 fn camera_view(app: &AppState, rect: Rect) -> CameraView {
-    app.view3d.camera.view(rect.width(), rect.height())
+    app.view3d.view.camera.view(rect.width(), rect.height())
 }
 
 /// 今のギズモの輪（ポーズのモードで、骨を選んでいるとき）。

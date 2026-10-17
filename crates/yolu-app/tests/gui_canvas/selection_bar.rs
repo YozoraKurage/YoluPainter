@@ -524,12 +524,15 @@ fn escape_closes_the_3d_settings_panel_before_the_selection_with_the_canvas_besi
     h.act(Action::View3d(Op::ToggleSettings));
     h.run();
     assert!(
-        st(&h).view3d().display.settings_open,
+        st(&h).view3d().view.display.settings_open,
         "設定のパネルが開いた"
     );
     // Esc はパネルを閉じるだけ
     esc_keeps_the_selection(&mut h, "3D の設定のパネル");
-    assert!(!st(&h).view3d().display.settings_open, "パネルは閉じた");
+    assert!(
+        !st(&h).view3d().view.display.settings_open,
+        "パネルは閉じた"
+    );
     h.run();
     esc_clears_the_selection(&mut h, "パネルを閉じたあと");
 }

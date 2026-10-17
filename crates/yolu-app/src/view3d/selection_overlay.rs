@@ -861,7 +861,7 @@ pub fn input(app: &mut crate::state::AppState, ctx: &egui::Context) -> Option<Ov
         mask,
         cover,
         pixels_per_point: ctx.pixels_per_point(),
-        white: edge_white(&app.view3d.display),
+        white: edge_white(&app.view3d.view.display),
     })
 }
 

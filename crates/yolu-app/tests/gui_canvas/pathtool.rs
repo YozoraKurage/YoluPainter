@@ -1067,8 +1067,8 @@ fn state3d_sized(model: ViewModel, size: u32) -> (AppState, Rect) {
     let mut s = state(size);
     s.view3d_mut().set_model(model);
     s.view3d_mut().material = 0;
-    s.view3d_mut().camera.yaw = 0.0;
-    s.view3d_mut().camera.pitch = 0.0;
+    s.view3d_mut().view.camera.yaw = 0.0;
+    s.view3d_mut().view.camera.pitch = 0.0;
     (
         s,
         Rect::from_min_size(pos2(100.0, 100.0), vec2(600.0, 400.0)),
@@ -1076,7 +1076,7 @@ fn state3d_sized(model: ViewModel, size: u32) -> (AppState, Rect) {
 }
 
 fn at3d(s: &AppState, rect: Rect, p: Vec3) -> Pos2 {
-    let view = s.view3d().camera.view(rect.width(), rect.height());
+    let view = s.view3d().view.camera.view(rect.width(), rect.height());
     let q = view.to_screen(p).expect("カメラの前");
     pos2(rect.left() + q.x, rect.top() + q.y)
 }
@@ -1389,8 +1389,8 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     t.set_selected_layer(Some(layer));
     t.view3d_mut().set_model(two_material_plate());
     t.view3d_mut().material = 0;
-    t.view3d_mut().camera.yaw = 0.0;
-    t.view3d_mut().camera.pitch = 0.0;
+    t.view3d_mut().view.camera.yaw = 0.0;
+    t.view3d_mut().view.camera.pitch = 0.0;
     t.sync_view3d();
     assert_eq!(
         *t.path_fingerprint(&t.view3d().full_model().unwrap().geometry),
@@ -1408,8 +1408,8 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     u.set_selected_layer(Some(layer));
     u.view3d_mut().set_model(flipped_plate());
     u.view3d_mut().material = 0;
-    u.view3d_mut().camera.yaw = 0.0;
-    u.view3d_mut().camera.pitch = 0.0;
+    u.view3d_mut().view.camera.yaw = 0.0;
+    u.view3d_mut().view.camera.pitch = 0.0;
     let undo = u.doc().undo_count();
     click3d(&mut u, rect, Vec3::new(-0.2, 0.8, 0.0));
     assert_eq!(surface_path(&u).points.len(), 3);
@@ -1547,8 +1547,8 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     shape.unwrap();
     // 最初のモデルを受けるとカメラはそのモデルの既定の位置になるので、板（外向きの法線は −Z）を正面から見る向きは受けたあとに決める
     // （同じ名前・同じ三角形のモデルを受け直してもカメラは動かない）
-    s.view3d_mut().camera.yaw = 0.0;
-    s.view3d_mut().camera.pitch = 0.0;
+    s.view3d_mut().view.camera.yaw = 0.0;
+    s.view3d_mut().view.camera.pitch = 0.0;
     assert_eq!(s.sets().len(), 2, "マテリアルごとにセット");
     // 左のセット（今のセット）と右のセットに、それぞれ 3D のパス
     click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
@@ -2193,7 +2193,7 @@ fn occlusion_state() -> (AppState, Rect) {
     // 遮蔽と点の印はモデル・カメラ・点数で決まる。画素への再描画は小さい文書で行う。
     let size = 32;
     let (probe, rect) = state3d_sized(two_material_plate(), size);
-    let camera = probe.view3d().camera.view(rect.width(), rect.height());
+    let camera = probe.view3d().view.camera.view(rect.width(), rect.height());
     let front = if camera.position.z >= 0.0 { 0.5 } else { -0.5 };
     state3d_sized(plate_behind_blocker(front), size)
 }
@@ -3618,14 +3618,14 @@ fn rasterizing_from_the_panel_and_the_layer_menu_removes_the_path() {
 fn view3d_clicks_add_points_and_the_overlay_marks_them() {
     let mut h = app(1280.0, 800.0, 256);
     h.view3d_mut().load_demo();
-    h.view3d_mut().camera.yaw = -40.0;
-    h.view3d_mut().camera.pitch = 15.0;
+    h.view3d_mut().view.camera.yaw = -40.0;
+    h.view3d_mut().view.camera.pitch = 15.0;
     click_tab(&mut h, yolu_app::Tab::View3d);
     key(&h, Key::P, Modifiers::NONE);
     h.run();
     let rect = h.state().view3d_rect().expect("3D のタブを描いた");
     let screen_of = |h: &Harness<'_, YoluApp>, p: Vec3| {
-        let view = h.view3d().camera.view(rect.width(), rect.height());
+        let view = h.view3d().view.camera.view(rect.width(), rect.height());
         let q = view.to_screen(p).expect("カメラの前");
         pos2(rect.left() + q.x, rect.top() + q.y)
     };
@@ -3918,7 +3918,7 @@ fn the_path_tool_text_fits_without_truncation_and_stays_in_the_language() {
             h.run();
             let rect = h.state().view3d_rect().expect("3D のタブを描いた");
             for p in [Vec3::new(0.5, 0.1, -0.3), Vec3::new(0.5, 0.2, 0.2)] {
-                let view = h.view3d().camera.view(rect.width(), rect.height());
+                let view = h.view3d().view.camera.view(rect.width(), rect.height());
                 let q = view.to_screen(p).expect("カメラの前");
                 click(&mut h, pos2(rect.left() + q.x, rect.top() + q.y));
             }
@@ -4173,14 +4173,14 @@ fn review_pictures_of_the_3d_handles_and_depth_and_a_fill_layer() {
     for (lang, tag) in [(Lang::Ja, "ja"), (Lang::En, "en")] {
         let mut h = review_app(lang);
         h.view3d_mut().load_demo();
-        h.view3d_mut().camera.yaw = -40.0;
-        h.view3d_mut().camera.pitch = 15.0;
+        h.view3d_mut().view.camera.yaw = -40.0;
+        h.view3d_mut().view.camera.pitch = 15.0;
         // 中央の表示域は右の列が広い分だけ狭いので、3 つの点が収まるようにカメラを引く
-        h.view3d_mut().camera.distance *= 1.3;
+        h.view3d_mut().view.camera.distance *= 1.3;
         click_tab(&mut h, yolu_app::Tab::View3d);
         let rect = h.state().view3d_rect().expect("3D のタブを描いた");
         let screen_of = |h: &Harness<'_, YoluApp>, p: Vec3| {
-            let view = h.view3d().camera.view(rect.width(), rect.height());
+            let view = h.view3d().view.camera.view(rect.width(), rect.height());
             let q = view.to_screen(p).expect("カメラの前");
             pos2(rect.left() + q.x, rect.top() + q.y)
         };

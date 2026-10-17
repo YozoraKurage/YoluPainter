@@ -229,6 +229,7 @@ pub fn move_to(h: &Harness<'_, YoluApp>, at: Pos2) {
 pub fn lose_the_release_3d(h: &mut Harness<'_, YoluApp>) {
     use drive::Drive;
     h.view3d_mut()
+        .view
         .input
         .mouse_press
         .as_mut()

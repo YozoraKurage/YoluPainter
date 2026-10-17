@@ -3,7 +3,7 @@
 //! 今のセットから遠いセットから持たない（その面は絵の無い描き方で、セットの一覧が印とツールチップで言う）。
 //! 描きは egui_kittest（wgpu のソフトの描画）。絵の読みは光なしの「チャンネルだけ」の表示で値そのまま。
 use crate::common;
-use crate::common::drive::Drive;
+use crate::common::drive::{Drive, DriveApp};
 
 use common::*;
 use egui::Pos2;
@@ -108,7 +108,7 @@ fn scene_grid(n: usize, cols: usize, size: u32) -> Harness<'static, YoluApp> {
         .load_live_link_model(&model_with(n, size, cols, &(0..n).collect::<Vec<_>>(), 1))
         .unwrap();
     h.run();
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -162,7 +162,7 @@ fn switch(h: &mut Harness<'_, YoluApp>, set: usize) {
 /// 世界の点が見えている画素。
 fn screen_of(h: &Harness<'_, YoluApp>, world: Vec3) -> Pos2 {
     let area = h.state().view3d_rect().unwrap();
-    let view = h.view3d().camera.view(area.width(), area.height());
+    let view = h.view3d().view.camera.view(area.width(), area.height());
     let p = view.to_screen(world).expect("カメラの前");
     area.min + egui::vec2(p.x, p.y)
 }
@@ -372,7 +372,7 @@ fn new_pictures_for_the_other_sets_are_built_over_frames_and_the_window_keeps_as
         .apply(Action::View3d(Op::Shading(Shading::Channel(
             Channel::Color,
         ))));
-    h.view3d_mut().camera = OrbitCamera {
+    h.view3d_mut().view.camera = OrbitCamera {
         target: Vec3::ZERO,
         yaw: 0.0,
         pitch: 0.0,
@@ -768,8 +768,15 @@ fn synthetic_map(
     kind: yolu_core::mesh_maps::MeshMapKind,
     f: impl Fn(u32, u32) -> f32,
 ) -> yolu_core::mesh_maps::BakedMeshMap {
+    synthetic_map_sized(kind, 16, f)
+}
+
+fn synthetic_map_sized(
+    kind: yolu_core::mesh_maps::MeshMapKind,
+    size: u32,
+    f: impl Fn(u32, u32) -> f32,
+) -> yolu_core::mesh_maps::BakedMeshMap {
     use yolu_core::mesh_maps::{BakedMeshMap, MeshMapProvenance};
-    let size = 16u32;
     let provenance = MeshMapProvenance {
         kind,
         engine_version: 1,
@@ -1323,6 +1330,94 @@ fn a_budget_mark_does_not_outlive_the_model_or_the_current_set_while_the_3d_view
 }
 
 #[test]
+fn a_mesh_map_view_shows_every_set_with_its_own_baked_map() {
+    use yolu_core::mesh_maps::MeshMapKind;
+    let mut h = scene(3, 64);
+    // セット 0 と 1 にだけ、違う値の AO を焼いてある（セット 2 には無い）
+    for (set, value) in [(0usize, 0.2f32), (1, 0.8)] {
+        h.app_mut()
+            .sets_mut()
+            .get_mut(set)
+            .unwrap()
+            .mesh_maps
+            .put(vec![synthetic_map(
+                MeshMapKind::AmbientOcclusion,
+                move |_, _| value,
+            )]);
+    }
+    h.run();
+    op(
+        &mut h,
+        Op::Shading(Shading::MeshMap(MeshMapKind::AmbientOcclusion)),
+    );
+    // 今のセットでないセットの面にも、そのセットの焼いたマップを出す（無いセットは市松）
+    for current in [0, 1, 2] {
+        switch(&mut h, current);
+        assert_eq!(
+            h.view3d().view.display.shading,
+            Shading::MeshMap(MeshMapKind::AmbientOcclusion),
+            "どれかのセットにマップがあれば、今のセットに無くても戻さない"
+        );
+        assert_close(
+            face(&mut h, 0, 3),
+            [51, 51, 51],
+            3,
+            &format!("今のセット {current}: セット 0"),
+        );
+        assert_close(
+            face(&mut h, 1, 3),
+            [204, 204, 204],
+            3,
+            &format!("今のセット {current}: セット 1"),
+        );
+        let c = face(&mut h, 2, 3);
+        assert!(
+            is_checker(c),
+            "今のセット {current}: マップの無いセット 2 は市松: {c:?}"
+        );
+    }
+    // どのセットにも無くなったら、マテリアルの表示へ戻す
+    for set in [0, 1] {
+        h.app_mut().sets_mut().get_mut(set).unwrap().mesh_maps = Default::default();
+    }
+    h.run();
+    assert_eq!(h.view3d().view.display.shading, Shading::Material);
+}
+
+#[test]
+fn a_mesh_map_keeps_its_full_size_once_its_set_becomes_the_current_one() {
+    use yolu_core::mesh_maps::MeshMapKind;
+    let mut h = scene(2, 64);
+    // ほかのセットの画像は 16 まで縮める（64 → 16 は 2 段）。どちらのセットのマップも 64²
+    h.set_other_cap(16);
+    for set in 0..2 {
+        h.app_mut()
+            .sets_mut()
+            .get_mut(set)
+            .unwrap()
+            .mesh_maps
+            .put(vec![synthetic_map_sized(
+                MeshMapKind::AmbientOcclusion,
+                64,
+                |_, _| 0.5,
+            )]);
+    }
+    h.run();
+    op(
+        &mut h,
+        Op::Shading(Shading::MeshMap(MeshMapKind::AmbientOcclusion)),
+    );
+    let level = |h: &Harness<'_, YoluApp>| h.view3d_stats().unwrap().map_level;
+    assert_eq!(level(&h), 0, "今のセット 0 は元の大きさ");
+    // ほかのセットとして縮めて作った画像を、今のセットになっても使い回さない
+    switch(&mut h, 1);
+    assert_eq!(level(&h), 0, "今のセット 1 も元の大きさ");
+    // 戻したセット 0 も、ほかのセットだったあいだに縮めた画像を使わない
+    switch(&mut h, 0);
+    assert_eq!(level(&h), 0, "戻したセット 0 は元の大きさ");
+}
+
+#[test]
 fn snapshot_sets_in_3d_with_the_farthest_set_left_out_of_the_budget() {
     for lang in yolu_app::lang::Lang::ALL {
         let mut h = scene(3, 256);
@@ -1395,7 +1490,7 @@ fn measure_frames_by_triangles_and_set_count() {
             // 材質 0 の面に別のセットの絵が貼られ、本当のセットの面が 1 つ絵の無い描き方になる）
             h.app_mut().switch_set(0).unwrap();
             h.view3d_mut().material = 0;
-            h.view3d_mut().camera = OrbitCamera {
+            h.view3d_mut().view.camera = OrbitCamera {
                 target: Vec3::ZERO,
                 yaw: 20.0,
                 pitch: 10.0,
@@ -1424,7 +1519,7 @@ fn measure_frames_by_triangles_and_set_count() {
             let mut wall = Vec::new();
             let mut cpu = Vec::new();
             for frame in 0..48 {
-                h.view3d_mut().camera.yaw += 3.0 + frame as f32 * 0.01;
+                h.view3d_mut().view.camera.yaw += 3.0 + frame as f32 * 0.01;
                 let started = Instant::now();
                 h.step();
                 h.state().view3d_wait_gpu();

@@ -22,7 +22,7 @@ use eframe::egui_wgpu::{self, wgpu};
 use wgpu::util::DeviceExt;
 use yolu_core::geometry::{OrbitCamera, Projection};
 use yolu_core::glam::{Mat4, Vec3, Vec4};
-use yolu_core::mesh_maps::BakedMeshMap;
+use yolu_core::mesh_maps::{BakedMeshMap, MeshMapKind};
 use yolu_core::Document;
 
 use super::brdf::{self, Curve};
@@ -295,6 +295,8 @@ struct SceneKey {
     looks: u64,
     /// 選択範囲の重ねの鍵（`OverlayGpu::key`）。
     overlay: u64,
+    /// 「チャンネルだけ」で見るユーザーチャンネルの番号（`view_user`）。
+    user: Option<usize>,
 }
 
 struct Pipelines {
@@ -368,10 +370,34 @@ struct Inflight {
     worker: JoinHandle<()>,
 }
 
-/// 3D で見せる焼いたメッシュマップ（`key` が同じなら作り直さない）。
+/// 3D で見せる焼いたメッシュマップ（`key` が同じなら作り直さない）。`material` はそのセットの面のマテリアル。
 pub struct MeshMapSource<'a> {
     pub key: u64,
+    pub material: i32,
     pub map: &'a BakedMeshMap,
+}
+
+/// GPU に持っている焼いたメッシュマップ 1 枚と、その束ね（group 2）。
+struct HeldMap {
+    key: u64,
+    kind: MeshMapKind,
+    /// ほかのセットのマップとして（`other_cap` まで縮める形で）作ったか。今のセットは元の大きさで作る
+    capped: bool,
+    texture: ImageTexture,
+    bind: wgpu::BindGroup,
+}
+
+/// 1 回の描き（範囲の始め・終わり・束ね・描き方・読むメッシュマップのマテリアル）。
+type MaterialDraw = (u32, u32, Pick, SetDraw, i32);
+
+/// 1 つのビューの描き先（今描いているビューのものは `View3dRenderer` の欄にある）。
+#[derive(Default)]
+struct ViewTargets {
+    target: Option<Target>,
+    hdr_target: Option<HdrTarget>,
+    scene: Option<SceneBuffers>,
+    bloom_chain: Option<BloomChain>,
+    last_key: Option<SceneKey>,
 }
 
 /// 3D ビューの描画（wgpu の装置は eframe と同じもの）。
@@ -452,12 +478,26 @@ pub struct View3dRenderer {
     dummy_cube: wgpu::TextureView,
     _dummy_texture: wgpu::Texture,
     env: EnvState,
-    /// 見せているメッシュマップの絵（`MeshMapSource::key` と一緒）。
-    map: Option<(u64, ImageTexture)>,
+    /// 見せている焼いたメッシュマップの絵（セットと種類ごと。`MeshMapSource::key` で見分ける。束ねは group 2）。どのビューも見ていない
+    /// 種類のものは、フレームの初め（`begin_frame`）に捨てる。
+    maps: Vec<HeldMap>,
     /// 作れなかったメッシュマップの `key`（同じ絵を毎フレーム作り直さない）。
-    map_failed: Option<u64>,
-    /// 絵を入れ替えるたびに増える（束ねと描き直しの鍵）。
-    map_version: u64,
+    map_failed: Vec<u64>,
+    /// メッシュマップの束ね（group 2）の形と、マップの無い面の束ね（1 × 1 の透明 = 市松）。
+    map_layout: wgpu::BindGroupLayout,
+    blank_map_bind: wgpu::BindGroup,
+    /// 今の描きで、マテリアルごとに読むメッシュマップ（`maps` の添え字。無いマテリアルは市松）。
+    map_picks: Vec<(i32, usize)>,
+    /// このフレームに、どれかのビューが見ている焼いたメッシュマップの種類と、「チャンネルだけ」で見ているユーザーチャンネルの名前
+    /// （`begin_frame`。ユーザーチャンネルの配列は、全部のビューの分を同じ持ち物に持つ）。
+    shown_maps: Vec<MeshMapKind>,
+    shown_users: Vec<String>,
+    /// 今の描きのビューが「チャンネルだけ」で見るユーザーチャンネルの、`shown_users` の番号（無ければ None）。
+    view_user: Option<usize>,
+    /// 今描いているビュー（`select_view`）と、ほかのビューの描き先（ビューごとに大きさ・サンプル数が違うので別に持つ。モデル・絵・
+    /// 環境・影は全部のビューで共通）。
+    view: u32,
+    parked_targets: Vec<(u32, ViewTargets)>,
     target: Option<Target>,
     hdr_target: Option<HdrTarget>,
     scene: Option<SceneBuffers>,
@@ -498,13 +538,18 @@ fn make_set_bind(
     look: &LookGpu,
     white: &wgpu::TextureView,
 ) -> wgpu::BindGroup {
-    let flags = [
+    let mut values = vec![
         f32::from(painted),
         f32::from(painted && paint.has(Slot::Normal)),
         f32::from(painted && current),
         0.0,
     ];
-    let bytes: Vec<u8> = flags.iter().flat_map(|v| v.to_le_bytes()).collect();
+    // 「チャンネルだけ」で見るユーザーチャンネルの、このセットの配列のレイヤーと既定の値（`look_gpu::ShownTable`）
+    values.extend(look.shown.layers.map(|l| l as f32));
+    for d in look.shown.defaults {
+        values.extend_from_slice(&d);
+    }
+    let bytes: Vec<u8> = values.iter().flat_map(|v| v.to_le_bytes()).collect();
     let params = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("yolu-3d-set-params"),
         contents: &bytes,
@@ -543,6 +588,22 @@ fn make_set_bind(
         label: Some("yolu-3d-set"),
         layout,
         entries: &entries,
+    })
+}
+
+/// メッシュマップ 1 枚の束ね（group 2）。
+fn make_map_bind(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("yolu-3d-map"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(view),
+        }],
     })
 }
 
@@ -857,6 +918,71 @@ fn paint_sampler_descriptor(anisotropy: u16) -> wgpu::SamplerDescriptor<'static>
     }
 }
 
+/// group 1（面ごとの画像）と group 2（そのセットの焼いたメッシュマップ）の束ねの形。
+fn set_layouts(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::BindGroupLayout) {
+    let d2 = wgpu::TextureViewDimension::D2;
+    // group 1: 面ごとの画像（6 チャンネルのテクスチャ）と、その持ち主のパラメータ（x: 画像を貼る、y: 法線マップを読む）
+    let mut set_entries: Vec<wgpu::BindGroupLayoutEntry> =
+        (0..6).map(|b| texture_entry(b, d2)).collect();
+    set_entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 6,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    });
+    // 7: lilToon の値、8: ユーザーチャンネルの配列、9・10: マットキャップの画像（look_gpu）
+    set_entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 7,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    });
+    set_entries.push(texture_entry(8, wgpu::TextureViewDimension::D2Array));
+    set_entries.push(texture_entry(9, d2));
+    set_entries.push(texture_entry(10, d2));
+    // 11: Unity から受けた、描いていないスロットの画像の配列（look_gpu・received_layers）
+    set_entries.push(texture_entry(11, wgpu::TextureViewDimension::D2Array));
+    // 輪郭線の頂点が太さのマスク（どのチャンネルのことも）と値を読む
+    for e in &mut set_entries {
+        e.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
+    }
+    let set_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("yolu-3d-set"),
+        entries: &set_entries,
+    });
+    // group 2: そのセットの焼いたメッシュマップ（メッシュマップだけの表示で読む。ビューごとに見る種類が違うので、セットの画像の束ねと分ける）
+    let map_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("yolu-3d-map"),
+        entries: &[texture_entry(0, d2)],
+    });
+    (set_layout, map_layout)
+}
+
+/// カメラの値のビット（描き直しの鍵）。
+fn camera_bits(camera: &OrbitCamera) -> [u32; 8] {
+    [
+        camera.target.x.to_bits(),
+        camera.target.y.to_bits(),
+        camera.target.z.to_bits(),
+        camera.yaw.to_bits(),
+        camera.pitch.to_bits(),
+        camera.distance.to_bits(),
+        u32::from(camera.is_orthographic()),
+        match camera.projection {
+            Projection::Orthographic { height } => height.to_bits(),
+            Projection::Perspective => 0,
+        },
+    ]
+}
+
 impl View3dRenderer {
     pub fn new(rs: &egui_wgpu::RenderState) -> View3dRenderer {
         let device = &rs.device;
@@ -898,7 +1024,6 @@ impl View3dRenderer {
         entries.push(paint_sampler_entry);
         entries.push(texture_entry(8, wgpu::TextureViewDimension::Cube));
         entries.push(sampler_entry(9));
-        entries.push(texture_entry(10, d2));
         entries.push(depth_entry(11));
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 12,
@@ -910,47 +1035,11 @@ impl View3dRenderer {
             label: Some("yolu-3d-scene"),
             entries: &entries,
         });
-        // group 1: 面ごとの絵（6 チャンネルのテクスチャ）と、その持ち主のパラメータ（x: 絵を貼る、y: 法線マップを読む）
-        let mut set_entries: Vec<wgpu::BindGroupLayoutEntry> =
-            (0..6).map(|b| texture_entry(b, d2)).collect();
-        set_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 6,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
-        // 7: lilToon の値、8: ユーザーチャンネルの配列、9・10: マットキャップの絵（look_gpu）
-        set_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 7,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
-        set_entries.push(texture_entry(8, wgpu::TextureViewDimension::D2Array));
-        set_entries.push(texture_entry(9, d2));
-        set_entries.push(texture_entry(10, d2));
-        // 11: Unity から受けた、描いていないスロットの絵の配列（look_gpu・received_layers）
-        set_entries.push(texture_entry(11, wgpu::TextureViewDimension::D2Array));
-        // 輪郭線の頂点が太さのマスク（どのチャンネルのことも）と値を読む
-        for e in &mut set_entries {
-            e.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
-        }
-        let set_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("yolu-3d-set"),
-            entries: &set_entries,
-        });
+        let (set_layout, map_layout) = set_layouts(device);
         let scene_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("yolu-3d-scene"),
-                bind_group_layouts: &[Some(&scene_layout), Some(&set_layout)],
+                bind_group_layouts: &[Some(&scene_layout), Some(&set_layout), Some(&map_layout)],
                 immediate_size: 0,
             });
         // 背景は面ごとの絵を読まない（group 1 を束ねなくてよい）
@@ -1218,6 +1307,7 @@ impl View3dRenderer {
             &white_view,
         );
         let overlay = OverlayGpu::new(device, &rs.queue, &scene_layout);
+        let blank_map_bind = make_map_bind(device, &map_layout, paint.blank_view());
         View3dRenderer {
             rs: rs.clone(),
             paint,
@@ -1278,9 +1368,16 @@ impl View3dRenderer {
                 cube: None,
                 version: 0,
             },
-            map: None,
-            map_failed: None,
-            map_version: 0,
+            maps: Vec::new(),
+            map_failed: Vec::new(),
+            map_layout,
+            blank_map_bind,
+            map_picks: Vec::new(),
+            shown_maps: Vec::new(),
+            shown_users: Vec::new(),
+            view_user: None,
+            view: 0,
+            parked_targets: Vec::new(),
             target: None,
             hdr_target: None,
             scene: None,
@@ -1496,7 +1593,93 @@ impl View3dRenderer {
         display: &Display,
         map: Option<&MeshMapSource>,
     ) -> egui::TextureId {
-        self.prepare_sets(doc, model, material, camera, size, display, map, &[])
+        self.prepare_sets(
+            doc,
+            model,
+            material,
+            camera,
+            size,
+            display,
+            map.map(std::slice::from_ref).unwrap_or_default(),
+            &[],
+        )
+    }
+
+    /// このフレームに、どれかのビューが見ている焼いたメッシュマップの種類と、「チャンネルだけ」で見ているユーザーチャンネルの名前
+    /// （`look_gpu::SHOWN_USERS` まで）を入れる。どのビューも見ていない種類のメッシュマップは、ここで捨てる（GPU のメモリを返す）。
+    /// ユーザーチャンネルの配列は、全部のビューが見る分を 1 つの持ち物に持つ（ビューを描くたびに作り直さない）。
+    pub fn begin_frame(&mut self, maps: &[MeshMapKind], users: &[String]) {
+        self.shown_maps = maps.to_vec();
+        self.maps.retain(|m| maps.contains(&m.kind));
+        let users: Vec<String> = users.iter().take(look_gpu::SHOWN_USERS).cloned().collect();
+        if self.shown_users != users {
+            self.shown_users = users;
+        }
+    }
+
+    /// これから描くビュー（描き先をビューごとに持つ。モデル・絵・環境・影は全部のビューで共通）。今のビューの描き先は置いておく。
+    pub fn select_view(&mut self, view: u32) {
+        if self.view == view {
+            return;
+        }
+        let current = ViewTargets {
+            target: self.target.take(),
+            hdr_target: self.hdr_target.take(),
+            scene: self.scene.take(),
+            bloom_chain: self.bloom_chain.take(),
+            last_key: self.last_key.take(),
+        };
+        if current.target.is_some() || current.scene.is_some() {
+            self.parked_targets.push((self.view, current));
+        }
+        let next = self
+            .parked_targets
+            .iter()
+            .position(|(v, _)| *v == view)
+            .map(|i| self.parked_targets.swap_remove(i).1)
+            .unwrap_or_default();
+        self.target = next.target;
+        self.hdr_target = next.hdr_target;
+        self.scene = next.scene;
+        self.bloom_chain = next.bloom_chain;
+        self.last_key = next.last_key;
+        self.view = view;
+    }
+
+    /// 閉じたビューの描き先を捨てる（egui に貼ったテクスチャも返す）。
+    pub fn drop_view(&mut self, view: u32) {
+        if self.view == view {
+            // 今描いているビューの描き先: 捨てて、次に選ぶビューの描き先を待つ
+            if let Some(t) = self.target.take() {
+                self.rs.renderer.write().free_texture(&t.id);
+            }
+            self.hdr_target = None;
+            self.scene = None;
+            self.bloom_chain = None;
+            self.last_key = None;
+            return;
+        }
+        if let Some(i) = self.parked_targets.iter().position(|(v, _)| *v == view) {
+            let (_, targets) = self.parked_targets.swap_remove(i);
+            if let Some(t) = targets.target {
+                self.rs.renderer.write().free_texture(&t.id);
+            }
+        }
+    }
+
+    /// 描き先を持っているビュー（今描いているビューを含む。テスト用）。
+    pub fn target_views(&self) -> Vec<u32> {
+        let mut views: Vec<u32> = self
+            .parked_targets
+            .iter()
+            .filter(|(_, t)| t.target.is_some())
+            .map(|(v, _)| *v)
+            .collect();
+        if self.target.is_some() {
+            views.push(self.view);
+        }
+        views.sort_unstable();
+        views
     }
 
     /// `prepare` に、今のセットでないセット（`others`）の絵を足して見せる。今のセットは文書の大きさのまま、ほかのセットは縮めた段で
@@ -1511,7 +1694,7 @@ impl View3dRenderer {
         camera: &OrbitCamera,
         size: [u32; 2],
         display: &Display,
-        map: Option<&MeshMapSource>,
+        maps: &[MeshMapSource],
         others: &[OtherSet<'_>],
     ) -> egui::TextureId {
         let started = std::time::Instant::now();
@@ -1527,7 +1710,8 @@ impl View3dRenderer {
         self.sync_looks(doc, others, &mut encoder);
         let sync_us = started.elapsed().as_micros() as u64;
         self.sync_environment(display);
-        self.sync_map(display, map, &mut encoder);
+        self.sync_maps(display, maps, material, &mut encoder);
+        self.view_user = self.shown_user_of(doc, display);
         let use_normal_map =
             (self.any_normal_map() || self.looks_want_tangents()) && !display.is_unlit();
         self.ensure_mesh(model, use_normal_map);
@@ -1560,30 +1744,19 @@ impl View3dRenderer {
             VERTEX_FLOATS,
         );
         let key = SceneKey {
-            camera: [
-                camera.target.x.to_bits(),
-                camera.target.y.to_bits(),
-                camera.target.z.to_bits(),
-                camera.yaw.to_bits(),
-                camera.pitch.to_bits(),
-                camera.distance.to_bits(),
-                u32::from(camera.is_orthographic()),
-                match camera.projection {
-                    Projection::Orthographic { height } => height.to_bits(),
-                    Projection::Perspective => 0,
-                },
-            ],
+            camera: camera_bits(camera),
             size,
             model: model.revision(),
             material,
             paint: self.paint_key(material),
             tangents: self.mesh.as_ref().map_or(0, |m| m.tangent_stamp),
             env: self.env.version,
-            map: self.map_version,
+            map: self.maps_key(),
             display: display.key_bits(),
             samples,
             looks: self.looks_key(),
             overlay: self.overlay.key(),
+            user: self.view_user,
         };
         // 絵が変わればミップも鍵の版も変わるので、描かないフレームは何も積んでいない（出さずに捨てる）
         if resized || self.last_key != Some(key) {
@@ -1620,7 +1793,7 @@ impl View3dRenderer {
             env_bakes: self.stats.env_bakes,
             shadow_renders: self.stats.shadow_renders,
             shadow_active: self.shadow_in_use(display),
-            map_level: self.map.as_ref().map_or(0, |(_, t)| t.level()),
+            map_level: self.map_level(material),
             tangents_exact: self.stats.tangents_exact,
             last_prepare_us: started.elapsed().as_micros() as u64,
             last_sync_us: sync_us,
@@ -1731,12 +1904,9 @@ impl View3dRenderer {
         // 今のセットの lilToon のユーザーチャンネルの配列は、標準のチャンネルの絵の残りから（セットごとの上限まで）。ほかのセットより先
         let limit = self.user_limit();
         self.user_budget = remaining;
-        remaining = remaining.saturating_sub(look_gpu::planned_user_bytes(
-            doc,
-            self.paint.planned_level(doc),
-            limit,
-            self.user_budget,
-        ));
+        let shift = self.paint.planned_level(doc);
+        remaining =
+            remaining.saturating_sub(self.planned_users(doc, shift, limit, self.user_budget));
         // Unity から受けた絵の配列も、その残りから（セットごとの上限まで）
         self.received_budget = remaining;
         remaining = remaining.saturating_sub(look_gpu::planned_received_bytes(
@@ -1758,7 +1928,7 @@ impl View3dRenderer {
             let (shift, bytes) = self.paint.estimate(o.doc, self.other_cap);
             let other_limit = limit.min(self.other_cap);
             let need = bytes
-                + look_gpu::planned_user_bytes(o.doc, shift, other_limit, USER_BUDGET_BYTES)
+                + self.planned_users(o.doc, shift, other_limit, USER_BUDGET_BYTES)
                 + look_gpu::planned_received_bytes(o.doc, other_limit, RECEIVED_BUDGET_BYTES);
             if need <= remaining {
                 remaining -= need;
@@ -1949,7 +2119,7 @@ impl View3dRenderer {
             received: self.received_budget,
         };
         self.current_look
-            .sync(doc, &self.paint, budget, &queue, encoder);
+            .sync(doc, &self.paint, budget, &self.shown_users, &queue, encoder);
         self.note_peak();
         // ほかのセットの配列の大きさは、持つかどうかの計画（`sync_sets`）と同じ上限・予算で決まる
         let other_limit = limit.min(self.other_cap);
@@ -1964,7 +2134,8 @@ impl View3dRenderer {
                     users: USER_BUDGET_BYTES,
                     received: RECEIVED_BUDGET_BYTES,
                 };
-                h.look.sync(o.doc, &h.paint, budget, &queue, encoder);
+                h.look
+                    .sync(o.doc, &h.paint, budget, &self.shown_users, &queue, encoder);
                 self.note_peak();
             }
         }
@@ -2373,41 +2544,166 @@ impl View3dRenderer {
         self.stats.env_bakes += 1;
     }
 
-    /// メッシュマップだけを見せるとき、その絵を作る（同じマップなら作り直さない）。
-    fn sync_map(
+    /// メッシュマップだけを見せるとき、セットごとの絵を作る（同じマップなら作り直さない）。今のセットのマップは元の大きさから、
+    /// ほかのセットのマップは、ほかのセットの絵と同じ辺の上限（`other_cap`）まで縮めて持つ。マテリアルごとの読む絵を `map_picks` に。
+    fn sync_maps(
         &mut self,
         display: &Display,
-        source: Option<&MeshMapSource>,
+        sources: &[MeshMapSource],
+        current: i32,
         encoder: &mut wgpu::CommandEncoder,
     ) {
-        let (Shading::MeshMap(_), Some(source)) = (display.shading, source) else {
+        self.map_picks.clear();
+        let Shading::MeshMap(kind) = display.shading else {
             return;
         };
-        if self.map.as_ref().is_some_and(|(k, _)| *k == source.key)
-            || self.map_failed == Some(source.key)
-        {
-            return;
+        // `begin_frame` を通さずに描くとき（テスト）も、見ている種類は捨てない
+        if !self.shown_maps.contains(&kind) {
+            self.shown_maps.push(kind);
         }
-        let rgba = source.map.to_rgba8(false);
-        let size = [source.map.width() as u32, source.map.height() as u32];
-        // メッシュマップはガンマの値のまま見せる（光なしの表示）ので、リニアにしない形式で
-        match self.paint.create_image(&rgba, size, false, encoder) {
-            Some(texture) => {
-                self.map = Some((source.key, texture));
-                self.map_failed = None;
+        // この種類の、もう無いマップ（焼き直した・セットを除いた）を捨てる。同じ種類を見るビューは、同じフレームに同じセットの並びを渡す
+        self.maps
+            .retain(|m| m.kind != kind || sources.iter().any(|s| s.key == m.key));
+        for source in sources {
+            if self.map_failed.contains(&source.key) {
+                continue;
             }
-            None => {
-                // 作れない絵（大きさ 0 など）は覚えて、同じ絵では毎フレーム作り直さない
-                self.map = None;
-                self.map_failed = Some(source.key);
-            }
+            // 今の描きのマテリアル（今のセット）は元の大きさまで、ほかのセットは縮めて。セットを替えて持ち方が変わり、
+            // 大きさが上限を超えるときだけ同じ場所へ作り直す（ここまでに選んだ番号がずれないように）
+            let capped = source.material != current;
+            let long_side = source.map.width().max(source.map.height()) as u32;
+            let held = self.maps.iter().position(|m| m.key == source.key);
+            let at = match held {
+                Some(at) if self.maps[at].capped == capped || long_side <= self.other_cap => at,
+                _ => {
+                    let rgba = source.map.to_rgba8(false);
+                    let size = [source.map.width() as u32, source.map.height() as u32];
+                    let cap = if capped { self.other_cap } else { u32::MAX };
+                    // メッシュマップはガンマの値のまま見せる（光なしの表示）ので、リニアにしない形式で
+                    match self
+                        .paint
+                        .create_image_capped(&rgba, size, false, cap, encoder)
+                    {
+                        Some(texture) => {
+                            let bind =
+                                make_map_bind(&self.rs.device, &self.map_layout, texture.view());
+                            let map = HeldMap {
+                                key: source.key,
+                                kind,
+                                capped,
+                                texture,
+                                bind,
+                            };
+                            match held {
+                                Some(at) => {
+                                    self.maps[at] = map;
+                                    at
+                                }
+                                None => {
+                                    self.maps.push(map);
+                                    self.maps.len() - 1
+                                }
+                            }
+                        }
+                        None => {
+                            // 作れない絵（大きさ 0 など）は覚えて、同じ絵では毎フレーム作り直さない
+                            self.map_failed.push(source.key);
+                            continue;
+                        }
+                    }
+                }
+            };
+            self.map_picks.push((source.material, at));
         }
-        self.map_version += 1;
     }
 
-    /// 束ね（group 0: 環境のキューブ・メッシュマップ・影。面ごとの絵は `ensure_set_binds`）を、変わったときだけ作り直す。
+    /// 「チャンネルだけ」でユーザーチャンネルを見るなら、その名前の番号（全部のビューの名前の並びの中。シェーダーがセットごとの引き方で読む）。
+    fn shown_user_of(&self, doc: &Document, display: &Display) -> Option<usize> {
+        match display.shading {
+            Shading::Channel(c) if !c.is_standard() => doc
+                .channel_info(c)
+                .and_then(|i| self.shown_users.iter().position(|n| *n == i.name)),
+            _ => None,
+        }
+    }
+
+    /// この文書のユーザーチャンネルの配列のバイト数の計画（見せているユーザーチャンネルの名前を添えて）。
+    fn planned_users(&self, doc: &Document, shift: u32, limit: u32, budget: u64) -> u64 {
+        look_gpu::planned_user_bytes(doc, &self.shown_users, shift, limit, budget)
+    }
+
+    /// このマテリアルの面が読むメッシュマップ（`maps` の番号）。
+    fn map_pick(&self, material: i32) -> Option<usize> {
+        self.map_picks
+            .iter()
+            .find(|(m, _)| *m == material)
+            .map(|(_, i)| *i)
+    }
+
+    /// このマテリアルの面が読むメッシュマップの縮めた段（読まなければ 0）。
+    fn map_level(&self, material: i32) -> u32 {
+        self.map_pick(material)
+            .map_or(0, |i| self.maps[i].texture.level())
+    }
+
+    /// マテリアルごとの描き（範囲・束ね・描き方・読むメッシュマップのマテリアル）。隣り合うマテリアルが同じ束ね（画像の無いもの）で、読む
+    /// メッシュマップも同じなら 1 回にまとめる。
+    fn material_draws(&self, display: &Display, current_material: i32) -> Vec<MaterialDraw> {
+        let lil_on = display.shading == Shading::Material;
+        let mut draws: Vec<MaterialDraw> = Vec::new();
+        if let Some(mesh) = &self.mesh {
+            let mut i = 0;
+            while i < mesh.ranges.len() {
+                let material = mesh.ranges[i].material;
+                let pick = self.pick(material, current_material);
+                let start = mesh.ranges[i].start;
+                let mut end = start + mesh.ranges[i].count;
+                i += 1;
+                while i < mesh.ranges.len()
+                    && pick == Pick::Blank
+                    && self.pick(mesh.ranges[i].material, current_material) == pick
+                    && self.map_pick(mesh.ranges[i].material) == self.map_pick(material)
+                {
+                    end += mesh.ranges[i].count;
+                    i += 1;
+                }
+                let mut draw = if lil_on {
+                    self.draw_of(pick)
+                } else {
+                    SetDraw::STANDARD
+                };
+                // 実機は全部入りの 1 本（入切のたびにパイプラインを作り直さない）。ソフトの描画だけ使う機能で作る
+                if !self.software {
+                    draw.spec = look_gpu::LilSpec::ALL;
+                }
+                if draw.lil && draw.invisible {
+                    continue;
+                }
+                draws.push((start, end, pick, draw, material));
+            }
+        }
+        draws
+    }
+
+    /// 今の描きで読むメッシュマップの鍵（描き直しの鍵。マテリアルと絵の組）。
+    fn maps_key(&self) -> u64 {
+        self.map_picks
+            .iter()
+            .fold(0xcbf2_9ce4_8422_2325, |k, (m, i)| {
+                (k ^ (*m as u32 as u64) ^ self.maps[*i].key.rotate_left(17))
+                    .wrapping_mul(0x0000_0100_0000_01b3)
+            })
+    }
+
+    /// このマテリアルの面が読むメッシュマップの束ね（無ければ市松になる透明）。
+    fn map_bind(&self, material: i32) -> &wgpu::BindGroup {
+        self.map_pick(material)
+            .map_or(&self.blank_map_bind, |i| &self.maps[i].bind)
+    }
+
+    /// 束ね（group 0: 環境のキューブ・影。面ごとの絵は `ensure_set_binds`、メッシュマップは `sync_maps`）を、変わったときだけ作り直す。
     fn ensure_bind(&mut self) {
-        let key = (self.env.version, self.map_version, self.shadow_version);
+        let key = (self.env.version, 0, self.shadow_version);
         if self.bind.as_ref().is_some_and(|(_, k)| *k == key) {
             return;
         }
@@ -2427,14 +2723,6 @@ impl View3dRenderer {
         entries.push(wgpu::BindGroupEntry {
             binding: 9,
             resource: wgpu::BindingResource::Sampler(&self.env_sampler),
-        });
-        entries.push(wgpu::BindGroupEntry {
-            binding: 10,
-            resource: wgpu::BindingResource::TextureView(
-                self.map
-                    .as_ref()
-                    .map_or(self.paint.blank_view(), |(_, t)| t.view()),
-            ),
         });
         entries.push(wgpu::BindGroupEntry {
             binding: 11,
@@ -2767,6 +3055,11 @@ impl View3dRenderer {
         let (mode, channel) = match display.shading {
             Shading::Material => (0.0, 0.0),
             Shading::Neutral => (1.0, 0.0),
+            // ユーザーチャンネルは 6 + 名前の番号（セットごとの配列のレイヤーは束ねのパラメータで引く。見せる名前に無ければ市松）
+            Shading::Channel(c) if !c.is_standard() => (
+                2.0,
+                self.view_user.map_or(6 + look_gpu::SHOWN_USERS, |k| 6 + k) as f32,
+            ),
             Shading::Channel(c) => (2.0, Slot::of(c).map_or(0, |s| s.index()) as f32),
             Shading::MeshMap(_) => (3.0, 0.0),
         };
@@ -2931,38 +3224,7 @@ impl View3dRenderer {
         // 仕上げ（ブルーム・露出・トーンマッピング）を通すときは、HDR の描き先へ描く
         let hdr_path = display.uses_hdr_path();
         let samples = self.samples;
-        // マテリアルごとの描き（範囲・束ね・描き方）。隣り合うマテリアルが同じ束ね（絵の無いもの）なら 1 回にまとめる
-        let lil_on = display.shading == Shading::Material;
-        let mut draws: Vec<(u32, u32, Pick, SetDraw)> = Vec::new();
-        if let Some(mesh) = &self.mesh {
-            let mut i = 0;
-            while i < mesh.ranges.len() {
-                let pick = self.pick(mesh.ranges[i].material, current_material);
-                let start = mesh.ranges[i].start;
-                let mut end = start + mesh.ranges[i].count;
-                i += 1;
-                while i < mesh.ranges.len()
-                    && pick == Pick::Blank
-                    && self.pick(mesh.ranges[i].material, current_material) == pick
-                {
-                    end += mesh.ranges[i].count;
-                    i += 1;
-                }
-                let mut draw = if lil_on {
-                    self.draw_of(pick)
-                } else {
-                    SetDraw::STANDARD
-                };
-                // 実機は全部入りの 1 本（入切のたびにパイプラインを作り直さない）。ソフトの描画だけ使う機能で作る
-                if !self.software {
-                    draw.spec = look_gpu::LilSpec::ALL;
-                }
-                if draw.lil && draw.invisible {
-                    continue;
-                }
-                draws.push((start, end, pick, draw));
-            }
-        }
+        let draws = self.material_draws(display, current_material);
         // 半透明はリニアで重ねる（Unity と同じ）。8 bit の描き先なら、2 つ目のパスで sRGB の見え方へ描く。HDR の描き先（トーンマッピング）と、
         // sRGB の見え方を作れない機材（GL）は、ガンマの値のまま同じパスで重ねる
         let is_transparent =
@@ -2970,7 +3232,7 @@ impl View3dRenderer {
         let linear_blend = !hdr_path && self.srgb_views;
         // 要る lilToon のパイプラインを先に作る（描きのパスの中では作れない）
         let mut needed: Vec<LilPipe> = Vec::new();
-        for (_, _, _, d) in &draws {
+        for (_, _, _, d, _) in &draws {
             if !d.lil {
                 continue;
             }
@@ -3004,7 +3266,7 @@ impl View3dRenderer {
         for key in needed {
             self.ensure_lil_pipeline(key);
         }
-        let any_transparent = draws.iter().any(|(_, _, _, d)| is_transparent(d));
+        let any_transparent = draws.iter().any(|(_, _, _, d, _)| is_transparent(d));
         let target = self.target.as_ref().expect("作った");
         let scene = self.scene.as_ref().expect("作った");
         // 解決後の 1 サンプルの絵（仕上げを通すなら HDR、そうでなければ egui が読む 8 bit）と、面を描く先（多サンプルならその色）
@@ -3075,9 +3337,11 @@ impl View3dRenderer {
                 pass.set_bind_group(0, bind, &[]);
                 pass.set_vertex_buffer(0, mesh.buffer.slice(..));
                 // 1. 不透明・カットアウト（Unity の描く順: 不透明 → アルファテスト → 半透明）。輪郭線はその面の後
-                for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| !is_transparent(d))
+                for (start, end, pick, d, material) in
+                    draws.iter().filter(|(_, _, _, d, _)| !is_transparent(d))
                 {
                     pass.set_bind_group(1, set_bind(*pick), &[]);
+                    pass.set_bind_group(2, self.map_bind(*material), &[]);
                     if d.lil {
                         pass.set_pipeline(lil(LilPipe {
                             hdr: hdr_path,
@@ -3108,10 +3372,11 @@ impl View3dRenderer {
                 }
                 // 2. 半透明（HDR の描き先なら同じパスで。モデルの並びの順。面ごとの並べ替えはしない）
                 if !second_pass {
-                    for (start, end, pick, d) in
-                        draws.iter().filter(|(_, _, _, d)| is_transparent(d))
+                    for (start, end, pick, d, material) in
+                        draws.iter().filter(|(_, _, _, d, _)| is_transparent(d))
                     {
                         pass.set_bind_group(1, set_bind(*pick), &[]);
+                        pass.set_bind_group(2, self.map_bind(*material), &[]);
                         pass.set_pipeline(lil(LilPipe {
                             hdr: hdr_path,
                             srgb: false,
@@ -3139,8 +3404,8 @@ impl View3dRenderer {
                 // 3. 選択範囲の重ね（今のセットの面だけ。面と同じ深さで読む。半透明を別のパスで重ねるときは、その半透明の下になる）
                 let current: Vec<(u32, u32)> = draws
                     .iter()
-                    .filter(|(_, _, pick, _)| *pick == Pick::Current)
-                    .map(|(start, end, _, _)| (*start, *end))
+                    .filter(|(_, _, pick, _, _)| *pick == Pick::Current)
+                    .map(|(start, end, _, _, _)| (*start, *end))
                     .collect();
                 self.overlay
                     .draw(&mut pass, bind, &mesh.buffer, &current, hdr_path, samples);
@@ -3187,8 +3452,11 @@ impl View3dRenderer {
                 });
                 pass.set_bind_group(0, bind, &[]);
                 pass.set_vertex_buffer(0, mesh.buffer.slice(..));
-                for (start, end, pick, d) in draws.iter().filter(|(_, _, _, d)| is_transparent(d)) {
+                for (start, end, pick, d, material) in
+                    draws.iter().filter(|(_, _, _, d, _)| is_transparent(d))
+                {
                     pass.set_bind_group(1, set_bind(*pick), &[]);
+                    pass.set_bind_group(2, self.map_bind(*material), &[]);
                     pass.set_pipeline(lil(LilPipe {
                         hdr: false,
                         srgb: true,
