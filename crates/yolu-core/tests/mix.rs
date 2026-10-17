@@ -1717,6 +1717,11 @@ fn the_blur_strength_sets_the_smear_box_and_automatic_follows_the_brush_size() {
     assert_ne!(run(20.0, MixBlur::Auto), run(20.0, MixBlur::Fixed(7.0)));
     // 半径が小さければ 1 画素（下限）
     assert_eq!(run(4.0, MixBlur::Auto), run(4.0, MixBlur::Fixed(1.0)));
+    // 大きさに連動して広い形は半径の 2 割（半径 20 なら 4 画素、半径 60 なら上限の 8 画素、半径 2 なら下限の 1 画素）
+    assert_eq!(run(20.0, MixBlur::Linked), run(20.0, MixBlur::Fixed(4.0)));
+    assert_ne!(run(20.0, MixBlur::Linked), run(20.0, MixBlur::Auto));
+    assert_eq!(run(60.0, MixBlur::Linked), run(60.0, MixBlur::Fixed(8.0)));
+    assert_eq!(run(2.0, MixBlur::Linked), run(2.0, MixBlur::Fixed(1.0)));
     // 混ぜる・重ねるには箱が無いので、固定値は結果を変えない
     for mode in [MixMode::Mix, MixMode::Layer] {
         let with = |blur: MixBlur| {

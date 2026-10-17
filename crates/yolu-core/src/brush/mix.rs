@@ -76,12 +76,18 @@ impl MixSpace {
 /// 伸ばすで下地を平均する箱の半径（にじむ強さ）。
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub enum MixBlur {
-    /// ブラシの大きさに連動する: 打点の半径の 1 割（1〜8 画素）。これまでの伸ばす。
+    /// ブラシの大きさに連動する: 打点の半径の 1 割（1〜8 画素）。これまでの伸ばす（保存済みのブラシの線を変えないために残す）。
     #[default]
     Auto,
     /// 固定の半径（画素。0〜8。0 は 1 画素として扱う）。
     Fixed(f64),
+    /// ブラシの大きさに連動して広い: 打点の半径の 2 割（1〜8 画素）。取り込んだブラシの、大きさに連動するにじみ。
+    Linked,
 }
+
+/// 大きさに連動するにじむ強さの、打点の半径に対する割合（[`MixBlur::Auto`]・[`MixBlur::Linked`]）。
+pub(super) const MIX_BLUR_AUTO_RATIO: f64 = 0.1;
+pub(super) const MIX_BLUR_LINKED_RATIO: f64 = 0.2;
 
 /// にじむ強さ（箱の半径）の上限（画素）。タイルのつながりを決めるときの、読む範囲の広がり。
 pub const MAX_MIX_BLUR: f64 = 8.0;

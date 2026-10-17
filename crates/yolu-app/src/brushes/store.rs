@@ -742,8 +742,10 @@ fn write_mix(w: &mut Writer, b: &Brush, v7: bool) {
     if m.correction != 0 {
         w.line("mix.correction", m.correction);
     }
-    if let MixBlur::Fixed(px) = m.blur {
-        w.single("mix.blur", px);
+    match m.blur {
+        MixBlur::Auto => {}
+        MixBlur::Fixed(px) => w.single("mix.blur", px),
+        MixBlur::Linked => w.line("mix.blur", "linked"),
     }
     if m.load != 1.0 {
         w.single("mix.load", m.load);
@@ -1816,8 +1818,9 @@ fn read_mix(
             Some(_) => return Err(StoreError::BadValue("mix.space".into())),
         };
         m.correction = r.parse("mix.correction", 0u8)?;
-        m.blur = match r.take("mix.blur") {
+        m.blur = match r.take("mix.blur").as_deref() {
             None => MixBlur::Auto,
+            Some("linked") => MixBlur::Linked,
             Some(v) => match v.parse::<f32>() {
                 Ok(px) if px.is_finite() => MixBlur::Fixed(f64::from(px)),
                 _ => return Err(StoreError::BadValue("mix.blur".into())),
@@ -2803,6 +2806,27 @@ mod tests {
             decode(&format!("{v8}mix.load=0.5\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
+    }
+
+    #[test]
+    fn the_linked_blur_is_a_version_eight_value() {
+        // 大きさに連動して広いにじむ強さは `mix.blur=linked`（バージョン 8）。前のバージョンのファイルにあれば断る
+        let mut b = mixing_brush();
+        b.mix.mode = MixMode::Smear;
+        b.mix.blur = MixBlur::Linked;
+        let t = text(&user(1, b.clone()));
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        assert!(t.lines().any(|l| l == "mix.blur=linked"), "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&b));
+        let as_v7 = t.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::UnknownKey(k) if k == "mix.blur"),
+            "{as_v7}"
+        );
+        assert!(decode(&t.replacen("yolupainter-brush 8", "yolupainter-brush 3", 1)).is_err());
+        // 今までの大きさに連動（1 割）は書かない
+        b.mix.blur = MixBlur::Auto;
+        assert!(!text(&user(1, b)).contains("mix.blur"));
     }
 
     #[test]

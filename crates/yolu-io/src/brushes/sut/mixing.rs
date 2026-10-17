@@ -188,9 +188,10 @@ fn mixing_space(row: &Row, brush: &mut Brush, notes: &mut Vec<Unrepresented>) {
     }
 }
 
-/// にじむ強さ（にじみだけに効く）: 自動設定は大きさに連動、固定値は `BrushBlur`（画素）。
+/// にじむ強さ（にじみだけに効く）: 自動設定は大きさに連動して広い形（[`MixBlur::Linked`]）、固定値は `BrushBlur`（画素）。
 fn smear_blur(row: &Row, brush: &mut Brush, notes: &mut Vec<Unrepresented>) {
-    // 列が無ければ自動設定（0 が自動設定、1 が固定値）
+    // 列が無ければ自動設定（0 が自動設定、1 が固定値）。固定値が読めないときも自動設定
+    brush.mix.blur = MixBlur::Linked;
     if row.first_number(BLUR_LINK_SIZE).unwrap_or(0.0) != 1.0 {
         return;
     }

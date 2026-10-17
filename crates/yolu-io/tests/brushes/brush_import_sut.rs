@@ -3139,14 +3139,14 @@ fn the_blur_strength_is_automatic_or_a_fixed_number_of_pixels_for_the_smear_only
         cells.extend(extra.iter().cloned());
         mixing_with(&cells)
     };
-    // 自動設定（0）と、列が無いバージョンは大きさに連動
-    assert_eq!(smear(&[]).brush.mix.blur, MixBlur::Auto);
+    // 自動設定（0）と、列が無いバージョンは大きさに連動して広い形
+    assert_eq!(smear(&[]).brush.mix.blur, MixBlur::Linked);
     assert_eq!(
         smear(&[("BrushBlurLinkSize", int(0)), ("BrushBlur", real(5.0))])
             .brush
             .mix
             .blur,
-        MixBlur::Auto
+        MixBlur::Linked
     );
     // 固定値（1）は画素の数
     let fixed = smear(&[("BrushBlurLinkSize", int(1)), ("BrushBlur", real(5.0))]);
@@ -3163,7 +3163,7 @@ fn the_blur_strength_is_automatic_or_a_fixed_number_of_pixels_for_the_smear_only
     ]);
     assert!(has(&unit, SutNote::MixBlur(Some(5.0))));
     let missing = smear(&[("BrushBlurLinkSize", int(1))]);
-    assert_eq!(missing.brush.mix.blur, MixBlur::Auto);
+    assert_eq!(missing.brush.mix.blur, MixBlur::Linked);
     assert!(has(&missing, SutNote::MixBlur(None)));
     // 混ぜる・重ねるには効かないので、固定値の列があっても持たない
     let blend = mixing_with(&[
