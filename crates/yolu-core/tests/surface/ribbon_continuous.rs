@@ -6,8 +6,9 @@
 use std::sync::Arc;
 
 use yolu_core::geometry::{
-    CameraView, OrbitCamera, SurfaceGeometry, SurfaceInput, SurfaceStroke, SurfaceStrokeError,
-    SurfaceStrokeOptions, SurfaceTriangle, DEFAULT_WELD_TOLERANCE,
+    CameraView, OrbitCamera, ProjectionSettings, SurfaceAlignment, SurfaceGeometry, SurfaceInput,
+    SurfaceStroke, SurfaceStrokeError, SurfaceStrokeOptions, SurfaceTriangle,
+    DEFAULT_WELD_TOLERANCE,
 };
 use yolu_core::glam::{Vec2, Vec3};
 use yolu_core::{
@@ -90,6 +91,15 @@ fn on_quad(g: &SurfaceGeometry, mut b: Brush) -> Brush {
 
 /// 文書の点 (x, y, 時刻) の列を 3D に描いて、塗ったダブの数と画素。
 fn draw(brush: &Brush, points: &[(f64, f64, f64)]) -> (usize, Vec<u8>) {
+    draw_with(brush, points, ProjectionSettings::default())
+}
+
+/// `draw` の、3D の塗りの設定（アライメントなど）を選べる形。
+fn draw_with(
+    brush: &Brush,
+    points: &[(f64, f64, f64)],
+    projection: ProjectionSettings,
+) -> (usize, Vec<u8>) {
     let g = quad();
     let b = on_quad(&g, brush.clone());
     let (mut d, l) = document();
@@ -106,7 +116,10 @@ fn draw(brush: &Brush, points: &[(f64, f64, f64)]) -> (usize, Vec<u8>) {
         &b.base,
         Some(&yolu_core::geometry::MaterialSet::one(0)),
         input(points[0]),
-        SurfaceStrokeOptions::default(),
+        SurfaceStrokeOptions {
+            projection,
+            ..SurfaceStrokeOptions::default()
+        },
     )
     .unwrap();
     for &p in &points[1..] {
@@ -316,4 +329,42 @@ fn dabs_held_for_the_taper_on_the_surface_count_against_the_stroke_budget() {
     assert_eq!(d.undo_count(), 0);
     let (blank, blank_layer) = document();
     assert_eq!(bytes(&d, l), bytes(&blank, blank_layer), "画素は元のまま");
+}
+
+fn tangent_wrap() -> ProjectionSettings {
+    ProjectionSettings {
+        alignment: SurfaceAlignment::TangentWrap,
+        ..ProjectionSettings::default()
+    }
+}
+
+#[test]
+fn tangent_wrap_reads_the_ribbon_band_by_the_same_cover_as_the_camera_alignment() {
+    let line: Vec<(f64, f64, f64)> = (0..=28)
+        .map(|i| (20.0 + 7.0 * i as f64, 48.0, 0.0))
+        .collect();
+    let (_, px) = draw_with(&ribbon(true), &line, tangent_wrap());
+    // カメラの向きの塗りと同じ帯の模様が、線の長さのとおりに続く（抜けが無い）
+    for x in 22..216u32 {
+        let along = x - 20;
+        let got = alpha(&px, x, 48);
+        assert!(got > 0, "x {x}: 抜けが無い");
+        if (2..14).contains(&(along % 16)) {
+            let want = [60u8, 120, 180, 240][((along % 64) / 16) as usize];
+            assert!(got.abs_diff(want) <= 3, "x {x}: {got} ≠ {want}");
+        }
+    }
+    // リボンが切なら別の線
+    assert_ne!(draw_with(&ribbon(false), &line, tangent_wrap()).1, px);
+}
+
+#[test]
+fn tangent_wrap_paints_the_dabs_added_by_holding_the_pen() {
+    for n in [1usize, 7, 30] {
+        let (on, px_on) = draw_with(&soft(true), &held(n), tangent_wrap());
+        assert_eq!(on, 1 + n, "{n}");
+        let (off, px_off) = draw_with(&soft(false), &held(n), tangent_wrap());
+        assert_eq!(off, 1, "{n}");
+        assert!(alpha(&px_on, 60, 40) > alpha(&px_off, 60, 40), "{n}");
+    }
 }

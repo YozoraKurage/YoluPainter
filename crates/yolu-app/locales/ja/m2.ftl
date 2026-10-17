@@ -64,3 +64,5 @@ m2-normal-files = ノーマルのファイル: { $file_direction }
 m2-cancelled = 取り消しました。
 m2-copied-the-mask = マスクをコピーしました。
 m2-no-mask-was-copied = コピーしたマスクがありません。
+m2-alignment-camera = カメラ
+m2-alignment-tangent-wrap = Tangent | Wrap

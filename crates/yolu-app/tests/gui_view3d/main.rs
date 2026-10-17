@@ -70,6 +70,7 @@ mod replay_input;
 mod sets;
 mod tool_keys_3d;
 mod view3d;
+mod view3d_alignment;
 mod view3d_aniso;
 mod view3d_axes;
 mod view3d_brush;

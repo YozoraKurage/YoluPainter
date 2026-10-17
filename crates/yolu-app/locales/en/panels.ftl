@@ -851,3 +851,4 @@ panels-white-mask = White Mask
 panels-black-mask = Black Mask
 panels-add-white-layer-mask-tip = Add White Layer Mask
 panels-add-black-layer-mask-tip = Add Black Layer Mask
+panels-alignment = Alignment

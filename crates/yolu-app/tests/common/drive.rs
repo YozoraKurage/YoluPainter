@@ -553,6 +553,7 @@ pub trait DriveApp {
     fn dock_mut(&mut self) -> &mut egui_dock::DockState<yolu_app::Tab>;
     /// このタブの見出しの真ん中（このフレームに描いたもの）。
     fn tab_center(&self, tab: &yolu_app::Tab) -> egui::Pos2;
+    fn view3d_rect(&self) -> Option<egui::Rect>;
     fn view3d_rect_of(&self, id: yolu_app::view3d::ViewId) -> Option<egui::Rect>;
     fn view3d_target_views(&self) -> Vec<yolu_app::view3d::ViewId>;
     fn add_view3d_tab(&mut self) -> Option<yolu_app::view3d::ViewId>;
@@ -588,6 +589,9 @@ impl DriveApp for Harness<'_, YoluApp> {
     }
     fn tab_center(&self, tab: &yolu_app::Tab) -> egui::Pos2 {
         self.state().tab_rects[tab].center()
+    }
+    fn view3d_rect(&self) -> Option<egui::Rect> {
+        self.view3d_rect_of(yolu_app::view3d::ViewId::FIRST)
     }
     fn view3d_rect_of(&self, id: yolu_app::view3d::ViewId) -> Option<egui::Rect> {
         self.state().view3d_rect_of(id)

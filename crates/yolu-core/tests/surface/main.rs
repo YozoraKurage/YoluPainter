@@ -29,6 +29,7 @@ mod surface_sampling;
 mod surface_screen;
 mod surface_stroke;
 mod surface_symmetry;
+mod surface_tangent;
 mod surface_tip;
 mod taper_start;
 mod taper_targets;

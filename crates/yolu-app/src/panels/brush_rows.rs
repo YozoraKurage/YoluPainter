@@ -285,7 +285,8 @@ pub fn visible(app: &AppState, row: Row) -> bool {
         | Row::EffectCloneY
         | Row::EffectCloneAllLayers
         | Row::EffectCloneAligned => matches!(app.m2.brush.effect, BrushEffect::Clone { .. }),
-        Row::ProjectionHidden
+        Row::ProjectionAlignment
+        | Row::ProjectionHidden
         | Row::ProjectionBackfaces
         | Row::ProjectionFalloff
         | Row::ProjectionBleed => app.view3d.paintable_on_screen(),
@@ -1497,7 +1498,7 @@ fn spray_rows(
 fn stroke_rows(
     ui: &mut Ui,
     app: &mut AppState,
-    _ctx: &egui::Context,
+    ctx: &egui::Context,
     row: Row,
     at: &mut At,
     env: Env,
@@ -1572,8 +1573,24 @@ fn stroke_rows(
             }
             out
         }
+        Row::ProjectionAlignment => {
+            let alignment = app.view3d.projection.alignment;
+            if let Some(anchor) = dropdown(
+                ui,
+                at,
+                row,
+                lang,
+                crate::m2::alignment_label(lang, alignment),
+                None,
+                env.free,
+            ) {
+                open_popup(app, ctx, Popup::ProjectionAlignment, anchor, anchor.width());
+            }
+            Out::default()
+        }
         Row::ProjectionHidden | Row::ProjectionBackfaces | Row::ProjectionFalloff => {
-            let free = env.free;
+            // 隠れた所・面の向きの弱めは、カメラから投影する塗りだけの切り替え
+            let free = env.free && (row == Row::ProjectionBackfaces || camera_aligned(app));
             let p = &mut app.view3d.projection;
             let field = match row {
                 Row::ProjectionHidden => &mut p.paint_hidden,
@@ -1586,7 +1603,8 @@ fn stroke_rows(
             Out::default()
         }
         Row::ProjectionAngleStart | Row::ProjectionAngleEnd | Row::ProjectionBleed => {
-            projection_slider(ui, app, at, row, lang, env.free);
+            let free = env.free && (row == Row::ProjectionBleed || camera_aligned(app));
+            projection_slider(ui, app, at, row, lang, free);
             Out::default()
         }
         other => {
@@ -2426,6 +2444,11 @@ fn background_swatch(ui: &mut Ui, app: &mut AppState, at: &mut At, row: Row, lan
         t::LABEL,
         Align::Left,
     );
+}
+
+/// 3D の塗りが、カメラから投影するアライメントか（隠れた所・面の向きの弱めの行が効くか）。
+fn camera_aligned(app: &AppState) -> bool {
+    app.view3d.projection.alignment == yolu_core::geometry::SurfaceAlignment::Camera
 }
 
 /// 3D の塗りの切り替えのスライダー（面の向きで弱める角度と、継ぎ目のにじみ）。ドラッグしている間は設定のファイルに書かない。

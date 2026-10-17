@@ -47,7 +47,7 @@ pub fn category_body(
             continue;
         }
         // 3D の塗りの切り替えは、3D のビューが出ているときだけ。小さな見出しの下に
-        if matches!(row, Row::ProjectionHidden) && !projection_labelled {
+        if matches!(row, Row::ProjectionAlignment | Row::ProjectionHidden) && !projection_labelled {
             projection_labelled = true;
             rows.space(5.0);
             group_label(ui, rows, "3D");

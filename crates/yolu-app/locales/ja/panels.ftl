@@ -848,3 +848,4 @@ panels-white-mask = 白のマスク
 panels-black-mask = 黒のマスク
 panels-add-white-layer-mask-tip = 白のレイヤーマスクを追加
 panels-add-black-layer-mask-tip = 黒のレイヤーマスクを追加
+panels-alignment = アライメント

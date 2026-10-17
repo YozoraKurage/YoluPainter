@@ -72,6 +72,7 @@ use super::stroke::{
     ScreenDab, ScreenPoint, ScreenStrokeSampler, SegmentGaps, TooManyDabs, SURFACE_DABS_PER_SEGMENT,
 };
 use super::symmetry::{find_copy, union_dabs, CopyHit, MirrorOutcome, MirrorPlane, RadialSymmetry};
+use super::tangent_dab::{foreshortening, SurfaceAlignment, TangentPainter};
 use super::unity::{dot, fmax, magnitude, sqr_magnitude, v2_magnitude as magnitude2};
 use super::{SurfaceGeometry, SurfaceHit};
 use crate::brush::profile;
@@ -443,6 +444,8 @@ pub struct SurfaceStroke {
     projector: Option<SurfaceProjector>,
     /// 対称の写しの投影の塗り（写しの番号 × 2 ＋ 鏡映。使うときに作る）。
     copy_projectors: Vec<Option<SurfaceProjector>>,
+    /// Tangent | Wrap のアライメントの塗り（そのアライメントのストロークの最初に面に当たったダブで作る。そのときは投影の塗りを作らない）。
+    tangent: Option<TangentPainter>,
     /// ダブの時刻（投影の塗りの区画に付けて、全部の投影の塗りで古い区画から捨てる）。
     clock: u64,
     /// モデルの単位 1 が画面で何単位か（直前に塗るセットの面に当たった所の奥行きで）。
@@ -706,6 +709,7 @@ impl SurfaceStroke {
             projection: options.projection.sanitized(),
             projector: None,
             copy_projectors: Vec::new(),
+            tangent: None,
             clock: 0,
             screen_scale: None,
             memory_override: options.projection_memory,
@@ -955,10 +959,16 @@ impl SurfaceStroke {
             .as_ref()
             .zip(self.brush.dual.as_ref())
             .map(|(d, b)| (d.world_radius, b.spacing as f32));
+        let tangent = self.projection.alignment == SurfaceAlignment::TangentWrap;
         move |a| {
+            // Tangent | Wrap はダブの間隔を面に沿った長さで取る（斜めの面では画面の間隔を縮める）
+            let along = |g: f32| match tangent {
+                true => fmax(0.5, g * foreshortening(&geometry, &view, a)),
+                false => g,
+            };
             (
-                gap(&geometry, &view, radius, spacing, scale, a),
-                dual.map(|(r, s)| gap(&geometry, &view, r, s, scale, a)),
+                along(gap(&geometry, &view, radius, spacing, scale, a)),
+                dual.map(|(r, s)| along(gap(&geometry, &view, r, s, scale, a))),
             )
         }
     }
@@ -1506,8 +1516,7 @@ impl SurfaceStroke {
         let inside =
             at.x >= 0.0 && at.x < self.view.width && at.y >= 0.0 && at.y < self.view.height;
         // 指先・クローン・色の混ぜの伸ばすは、面の上の中心から読み元を決めるので、中心が塗るセットの面に無いダブは飛ばす
-        let needs_hit = matches!(self.effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_))
-            || (self.smears && matches!(self.effect, SurfaceEffect::Paint));
+        let needs_hit = self.needs_hit();
         let Some(scale) = dab
             .scale
             .filter(|_| inside && (hit.is_some() || !needs_hit))
@@ -1910,11 +1919,14 @@ impl SurfaceStroke {
     /// ダブの画素（元と 3D の対称の写しを 1 つにしたもの）と、ダブの面の点を作る。at・scale は画面の中心と、モデルの単位 1 の画面の大きさ、radius は
     /// アンチエイリアスの帯の見積もりと画像の筆先の小さなダブに使う、ダブの中心のテクセルの画面の大きさ（中心が面に無ければ直前の値）。
     /// 水彩境界の幅の換算も同じ値を覚える（`last_metric`）が、帯の見積もりには水彩境界だけのストロークの値は使わない（None）。
-    fn dab_metric(&mut self, hit: Option<SurfaceHit>) -> Option<TexelMetric> {
+    fn dab_metric(&mut self, hit: Option<SurfaceHit>, scale: f32) -> Option<TexelMetric> {
         if self.anti_alias == AntiAlias::None && !self.water_edge.on {
             return None;
         }
-        let at_hit = hit.and_then(|h| self.projector.as_ref().and_then(|p| p.metric_at(&h)));
+        let at_hit = hit.and_then(|h| match &self.tangent {
+            Some(t) => t.metric_at(&self.geometry, &self.view, &h, scale),
+            None => self.projector.as_ref().and_then(|p| p.metric_at(&h)),
+        });
         if at_hit.is_some() {
             self.last_metric = at_hit;
         }
@@ -1962,6 +1974,78 @@ impl SurfaceStroke {
         )
     }
 
+    /// 面の上の中心から読み元や展開を決めるストロークか（中心が塗るセットの面に無いダブは飛ばす）。指先・クローン・色の混ぜの伸ばすは読み元を、
+    /// Tangent | Wrap は展開を、中心の面の点から決める。
+    fn needs_hit(&self) -> bool {
+        matches!(self.effect, SurfaceEffect::Smudge | SurfaceEffect::Clone(_))
+            || (self.smears && matches!(self.effect, SurfaceEffect::Paint))
+            || self.projection.alignment == SurfaceAlignment::TangentWrap
+    }
+
+    /// Tangent | Wrap の塗りを（まだなければ）作る。
+    fn ensure_tangent(&mut self) -> Result<(), DabRefusal> {
+        if self.tangent.is_none() {
+            self.tangent = Some(TangentPainter::new(
+                &self.geometry,
+                self.material.as_ref(),
+                self.width,
+                self.height,
+                self.projection,
+            )?);
+        }
+        Ok(())
+    }
+
+    /// 投影の塗りを（まだなければ）作る。
+    fn ensure_projector(&mut self, scale: f32) -> Result<(), DabRefusal> {
+        if self.projector.is_none() {
+            let p = SurfaceProjector::new(
+                self.geometry.clone(),
+                &self.view,
+                self.material.as_ref(),
+                self.width,
+                self.height,
+                scale * self.world_radius,
+                self.projection,
+            )?;
+            // テクセルの画面の大きさは、アンチエイリアスの段か水彩境界があるストロークだけが持つ（どちらも無ければ今と同じ大きさ・予算）
+            let metrics = self.anti_alias != AntiAlias::None || self.water_edge.on;
+            self.projector = Some(p.with_texel_metrics(metrics));
+        }
+        Ok(())
+    }
+
+    /// Tangent | Wrap（`tangent_dab`）のダブ: 中心の面の点の展開で、写しも含めて塗る。中心が塗るセットの面に無いダブは塗らない。
+    fn tangent_dab(
+        &mut self,
+        hit: Option<SurfaceHit>,
+        scale: f32,
+        radius: f32,
+        cover: &DabCover<'_>,
+        total: u64,
+    ) -> (SurfaceDabResult, Option<SurfaceHit>) {
+        let (Some(painter), Some(hit)) = (&self.tangent, hit) else {
+            return (SurfaceDabResult::default(), None);
+        };
+        let room =
+            total.saturating_sub(painter.fixed_bytes() + self.dual_bytes + self.post_bytes());
+        let (result, copies, note) = painter.dab_around(
+            &self.geometry,
+            &self.view,
+            &hit,
+            scale,
+            cover,
+            self.symmetry.as_ref(),
+            radius,
+            room,
+        );
+        self.stats.copies += copies;
+        if note.is_some() {
+            self.symmetry_note = note;
+        }
+        (result, Some(hit))
+    }
+
     /// モデルの単位の半径（丸の大きさ・写しを探す距離）。面の点は、中心の下の塗るセットの面の点（hit）か、それが無ければ元の側の画素の点
     /// （[`SurfaceStroke::fallback_hit`]。元の側が何も塗らなければ None）。対称の写しは、その点を写して探す（中心がほかのセット・背景に
     /// あるダブでも、元の側が塗る縁を写しの側にも塗る）。dual はデュアルブラシの合わせ方と溜まり、weighted は面の向きで弱めるか。
@@ -1978,25 +2062,15 @@ impl SurfaceStroke {
         weighted: bool,
     ) -> (SurfaceDabResult, Option<SurfaceHit>) {
         let screen_radius = scale * radius;
-        if self.projector.is_none() {
-            match SurfaceProjector::new(
-                self.geometry.clone(),
-                &self.view,
-                self.material.as_ref(),
-                self.width,
-                self.height,
-                scale * self.world_radius,
-                self.projection,
-            ) {
-                // テクセルの画面の大きさは、アンチエイリアスの段か水彩境界があるストロークだけが持つ（どちらも無ければ今と同じ大きさ・予算）
-                Ok(p) => {
-                    let metrics = self.anti_alias != AntiAlias::None || self.water_edge.on;
-                    self.projector = Some(p.with_texel_metrics(metrics))
-                }
-                Err(why) => return (SurfaceDabResult::default().reject(why), hit),
-            }
+        let made = if self.projection.alignment == SurfaceAlignment::TangentWrap {
+            self.ensure_tangent()
+        } else {
+            self.ensure_projector(scale)
+        };
+        if let Err(why) = made {
+            return (SurfaceDabResult::default().reject(why), hit);
         }
-        let metric = self.dab_metric(hit);
+        let metric = self.dab_metric(hit, scale);
         let cover = DabCover {
             form: match form {
                 Form::Round { hardness } => CoverForm::Round(
@@ -2018,6 +2092,9 @@ impl SurfaceStroke {
         };
         self.clock += 1;
         let total = self.memory_total(doc);
+        if self.tangent.is_some() {
+            return self.tangent_dab(hit, scale, radius, &cover, total);
+        }
         let room = self.room(total, None);
         let clock = self.clock;
         let mut result = self
@@ -2339,7 +2416,14 @@ impl SurfaceStroke {
         let (width, height) = (self.width, self.height);
         // ウィンドウがアイランドの縁にかかる画素（ウィンドウの中に、塗るセットの UV の外のテクセルがある）。ダブの箱の上の外のテクセルの累積和で数える
         let border: Vec<bool> = {
-            let projector = self.projector.as_ref().expect("ダブがあれば作ってある");
+            let covered = |x: i32, y: i32| match &self.tangent {
+                Some(t) => t.covered(x, y),
+                None => self
+                    .projector
+                    .as_ref()
+                    .expect("ダブがあれば作ってある")
+                    .covered(x, y),
+            };
             let x0 = pixels.iter().map(|p| p.x as i64).min().unwrap_or(0) - r - 1;
             let x1 = pixels.iter().map(|p| p.x as i64).max().unwrap_or(0) + r + 1;
             let y0 = pixels.iter().map(|p| p.y as i64).min().unwrap_or(0) - r - 1;
@@ -2350,7 +2434,7 @@ impl SurfaceStroke {
                 let mut row = 0u32;
                 for i in 0..bw {
                     let (x, y) = (x0 + i as i64, y0 + j as i64);
-                    row += !projector.covered(x as i32, y as i32) as u32;
+                    row += !covered(x as i32, y as i32) as u32;
                     sum[(j + 1) * (bw + 1) + i + 1] = sum[j * (bw + 1) + i + 1] + row;
                 }
             }

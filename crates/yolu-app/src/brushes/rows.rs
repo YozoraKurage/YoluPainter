@@ -222,6 +222,7 @@ pub enum Row {
     Ribbon,
     DarkenOverlap,
     SpeedMax,
+    ProjectionAlignment,
     ProjectionHidden,
     ProjectionBackfaces,
     ProjectionFalloff,
@@ -285,7 +286,7 @@ pub enum Row {
 
 impl Row {
     /// 全部の行（区分の中の並び。ツールプロパティも、区分の順に、この並びで出す）。
-    pub const ALL: [Row; 114] = [
+    pub const ALL: [Row; 115] = [
         Row::Size,
         Row::SizeByScreen,
         Row::MinOnePixel,
@@ -348,6 +349,7 @@ impl Row {
         Row::Ribbon,
         Row::DarkenOverlap,
         Row::SpeedMax,
+        Row::ProjectionAlignment,
         Row::ProjectionHidden,
         Row::ProjectionBackfaces,
         Row::ProjectionFalloff,
@@ -467,6 +469,7 @@ impl Row {
             Row::Ribbon => "stroke.ribbon",
             Row::DarkenOverlap => "stroke.darken",
             Row::SpeedMax => "stroke.speed_max",
+            Row::ProjectionAlignment => "stroke.projection_alignment",
             Row::ProjectionHidden => "stroke.projection_hidden",
             Row::ProjectionBackfaces => "stroke.projection_backfaces",
             Row::ProjectionFalloff => "stroke.projection_falloff",
@@ -587,6 +590,7 @@ impl Row {
             | Row::Ribbon
             | Row::DarkenOverlap
             | Row::SpeedMax
+            | Row::ProjectionAlignment
             | Row::ProjectionHidden
             | Row::ProjectionBackfaces
             | Row::ProjectionFalloff
@@ -704,6 +708,7 @@ impl Row {
             Row::Ribbon => lang.t("brushrows-ribbon"),
             Row::DarkenOverlap => lang.t("brushrows-blend-tips-with-darken"),
             Row::SpeedMax => lang.t("panels-full-effect-speed"),
+            Row::ProjectionAlignment => lang.t("panels-alignment"),
             Row::ProjectionHidden => lang.t("panels-paint-hidden-areas"),
             Row::ProjectionBackfaces => lang.t("panels-paint-back-faces"),
             Row::ProjectionFalloff => lang.t("panels-fade-by-angle"),

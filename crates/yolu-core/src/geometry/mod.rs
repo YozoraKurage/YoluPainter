@@ -29,6 +29,7 @@ pub(crate) mod seam_band;
 mod stencil;
 mod stroke;
 mod symmetry;
+mod tangent_dab;
 pub(crate) mod unity;
 mod uv_grid;
 mod uv_symmetry;
@@ -79,6 +80,7 @@ pub use symmetry::{
     SymmetricSurfaceDab, SymmetryAxis, SymmetryError, MAX_CLOSEST_POINT_NODE_VISITS,
     ON_PLANE_FRACTION,
 };
+pub use tangent_dab::{SurfaceAlignment, FACING_TOLERANCE, MIN_FORESHORTENING};
 pub use unity::{Bounds, Ray};
 pub use uv_grid::UvGrid;
 pub use uv_symmetry::{ModelCopies, ModelSymmetry, UvCopy, MAX_CANVAS_COPY_PIXELS};

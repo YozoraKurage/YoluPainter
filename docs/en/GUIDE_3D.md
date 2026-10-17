@@ -48,8 +48,8 @@ You paint on the model in Paint mode ("Modes" in [GUIDE_START.md](GUIDE_START.md
 
 Brush settings work in the 3D view with the same formulas as on the 2D canvas: Size, Hardness, Anti-aliasing (its band is measured in texture pixels), Flow, Opacity, pressure, image tips (angle, roundness, Flip X and Flip Y, Follow direction), the stroke (Stabilizer, Curve), Taper (fade) and the pen settings (tilt, rotation, speed), Specify by size on screen (decided at the first point from its size on screen), jitter, texture, dual brush, color, Color Dynamics (including Apply per tip), color mixing, erasing, stencils and the effect brushes (Blur, Smudge, Clone).
 
-- The tip shape is laid out on the screen and projected from the camera onto the surface (it is not laid flat along the surface).
-- Dabs are placed every spacing along the stroke length, as in 2D. However densely or sparsely the input points arrive, the stroke's density and the length of a fade stay the same. The spacing comes from the brush size converted to the screen at the depth of the surface where each stretch of the stroke starts.
+- With the "Camera" alignment (the default), the tip shape is laid out on the screen and projected from the camera onto the surface (it is not laid flat along the surface). With "Tangent | Wrap", the tip shape is read by the distance along the surface and laid along it.
+- Dabs are placed every spacing along the stroke length, as in 2D. However densely or sparsely the input points arrive, the stroke's density and the length of a fade stay the same. The spacing comes from the brush size converted to the screen at the depth of the surface where each stretch of the stroke starts (with the "Tangent | Wrap" alignment, the screen spacing shrinks as the surface turns away from the view, so the spacing is measured along the surface).
 - Stabilizer, taper and speed lengths and speeds are measured in screen points in the 3D view (in document pixels on the 2D canvas).
 - The texture is read at the document pixel being painted, so its grain lines up between what you paint in 2D and in 3D.
 - 3D symmetry comes from the document's 3D symmetry ruler (in model space). A line symmetry flips the tip across the mirror plane (with four or more lines, copies rotated around the axis as well), and a rotational symmetry rotates the tip around the axis. The 2D symmetry ruler works too, copying the texture pixels you paint across the canvas ("Painting with symmetry" in [GUIDE_PAINT.md](GUIDE_PAINT.md)). How to make a 3D symmetry ruler is under "Ruler" in "Drag on the screen" below.
@@ -60,6 +60,7 @@ While the 3D view is shown, the brush properties gain a "3D" group.
 
 | Field | What it does |
 |---|---|
+| Alignment | "Camera" (the default) projects the brush shape on the screen onto the surface from the camera. "Tangent \| Wrap" reads the brush shape by distance along the surface, so it wraps over edges and curves at the same size (it also paints the side the camera cannot see and across UV seams; faces that point opposite to the face under the brush center are not painted unless "Paint back faces" is on). While "Tangent \| Wrap" is chosen, "Paint hidden areas" and "Fade by angle" are not used |
 | Paint hidden areas | Also paints surfaces hidden behind nearer ones under the brush |
 | Paint back faces | Also paints faces that point away from the camera |
 | Fade by angle | Paints more lightly where the surface turns away from the view ("Fade start", "Fade end") |

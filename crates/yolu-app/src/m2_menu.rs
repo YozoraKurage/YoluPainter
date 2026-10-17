@@ -126,6 +126,8 @@ pub enum Popup {
     MixCorrection,
     /// はみ出し防止の領域拡縮の方法（3 種）。
     ReferMode,
+    /// 3D の塗りのアライメント（カメラ・Tangent | Wrap）。
+    ProjectionAlignment,
 }
 
 fn tips(
@@ -470,11 +472,7 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             Some(app.m2.brush.color.target),
             BrushOp::ColorTarget,
         ),
-        Popup::StabilizerSpeedType => brush_choices(
-            m2::stabilizer_speed_types(lang),
-            Some(m2::stabilizer_speed_type(&app.m2.brush.assist)),
-            BrushOp::StabilizerSpeedType,
-        ),
+        Popup::StabilizerSpeedType | Popup::ProjectionAlignment => setting_entries(app, popup),
         Popup::DualMode => brush_choices(
             DualBrushMode::ALL.map(|m| (m, dual_mode_label(lang, m))),
             app.m2.brush.dual.as_ref().map(|d| d.mode),
@@ -517,6 +515,23 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::LayerSetOutput(channel) => layer_set_output_entries(app, channel),
         Popup::LayerSetContext(set) => layer_set_context_entries(app, set),
         Popup::ChannelContext(channel) => channel_context_entries(app, channel, free),
+    }
+}
+
+/// 手ぶれ補正の補正タイプと 3D の塗りのアライメントの選び肢（`entries` の続き）。
+fn setting_entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    match popup {
+        Popup::ProjectionAlignment => brush_choices(
+            yolu_core::geometry::SurfaceAlignment::ALL.map(|a| (a, m2::alignment_label(lang, a))),
+            Some(app.view3d.projection.alignment),
+            BrushOp::ProjectionAlignment,
+        ),
+        _ => brush_choices(
+            m2::stabilizer_speed_types(lang),
+            Some(m2::stabilizer_speed_type(&app.m2.brush.assist)),
+            BrushOp::StabilizerSpeedType,
+        ),
     }
 }
 

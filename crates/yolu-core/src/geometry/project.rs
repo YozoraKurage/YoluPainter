@@ -37,6 +37,7 @@ use super::dab::{DabRefusal, SurfaceDabResult, SurfacePixel};
 use super::materials::{admits, MaterialSet};
 use super::query::coverage;
 use super::symmetry::{MirrorPlane, RadialSymmetry};
+use super::tangent_dab::SurfaceAlignment;
 use super::unity::{clamp01, finite2};
 use super::{SurfaceGeometry, SurfaceHit};
 use crate::brush::edge::{self, TexelMetric};
@@ -58,6 +59,8 @@ pub struct ProjectionSettings {
     pub angle_end: f32,
     /// 継ぎ目のにじみ（UV アイランドの縁から外へのテクセルの数。0〜[`MAX_SEAM_BLEED`]）。
     pub seam_bleed: u32,
+    /// ダブの形を読む所（3D のストロークだけが見る。投影の塗りそのものと画面の形の塗りは、いつもカメラ）。
+    pub alignment: SurfaceAlignment,
 }
 
 /// 継ぎ目のにじみの上限（テクセル）。
@@ -72,6 +75,7 @@ impl Default for ProjectionSettings {
             angle_start: 80.0,
             angle_end: 85.0,
             seam_bleed: 2,
+            alignment: SurfaceAlignment::Camera,
         }
     }
 }
@@ -662,7 +666,7 @@ impl ScreenFace {
 
 /// UV のテクセルの空間（画素の単位）での三角形と、重心座標への係数。
 #[derive(Clone, Copy, Debug)]
-struct UvFace {
+pub(super) struct UvFace {
     p0: DVec2,
     p1: DVec2,
     p2: DVec2,
@@ -673,7 +677,7 @@ struct UvFace {
 }
 
 impl UvFace {
-    fn new(t: &super::SurfaceTriangle, width: i32, height: i32) -> Option<UvFace> {
+    pub(super) fn new(t: &super::SurfaceTriangle, width: i32, height: i32) -> Option<UvFace> {
         let scale = DVec2::new(width as f64, height as f64);
         let p0 = t.uv_a.as_dvec2() * scale;
         let p1 = t.uv_b.as_dvec2() * scale;
@@ -699,7 +703,7 @@ impl UvFace {
 
     /// テクセル (x, y) の中心の重心座標（A・B・C）。
     #[inline]
-    fn bary(&self, x: i32, y: i32) -> DVec3 {
+    pub(super) fn bary(&self, x: i32, y: i32) -> DVec3 {
         let dx = (x as f64 + 0.5) - self.p0.x;
         let dy = (y as f64 + 0.5) - self.p0.y;
         let b1 = self.c11 * dx + self.c12 * dy;
@@ -708,15 +712,15 @@ impl UvFace {
     }
 
     #[inline]
-    fn inside(b: DVec3) -> bool {
+    pub(super) fn inside(b: DVec3) -> bool {
         b.x >= -INSIDE_EPSILON && b.y >= -INSIDE_EPSILON && b.z >= -INSIDE_EPSILON
     }
 
-    fn point(&self, b: DVec3) -> DVec2 {
+    pub(super) fn point(&self, b: DVec3) -> DVec2 {
         self.p0 * b.x + self.p1 * b.y + self.p2 * b.z
     }
 
-    fn corner(&self, i: usize) -> DVec2 {
+    pub(super) fn corner(&self, i: usize) -> DVec2 {
         match i {
             0 => self.p0,
             1 => self.p1,
@@ -774,7 +778,7 @@ impl UvFace {
 const FRONT: u8 = 1;
 const TARGET: u8 = 2;
 /// 辺 i（頂点 i → i+1）が UV アイランドの縁（にじみを出す）。
-const SEAM0: u8 = 4;
+pub(super) const SEAM0: u8 = 4;
 
 /// 塗るセットの UV が覆うテクセル（にじみを、ほかの三角形のテクセルへ出さないため）。行ごとに語の境目から始める（行の組ごとに
 /// 並列に埋められるように）。
@@ -843,7 +847,7 @@ const MASK_ROWS: usize = 32;
 impl Shared {
     /// スナップショットに覚えたものがあればそれを、無ければ作って覚える（継ぎ目のにじみと、ぼかしがアイランドの縁で継ぎ目をまたいで読む
     /// 所を決めるのに使う）。
-    fn get(
+    pub(super) fn get(
         geometry: &SurfaceGeometry,
         material: Option<&MaterialSet>,
         width: i32,
@@ -943,8 +947,18 @@ impl Shared {
         }
     }
 
-    fn bytes(&self) -> u64 {
+    pub(super) fn bytes(&self) -> u64 {
         self.mask.as_ref().map_or(0, |m| m.bytes()) + self.seams.len() as u64
+    }
+
+    /// 文書の中のテクセルが、塗るセットのどれかの三角形の UV に入るか。
+    pub(super) fn covered(&self, x: i32, y: i32) -> bool {
+        self.mask.as_ref().is_none_or(|m| m.get(x, y))
+    }
+
+    /// 三角形 i の UV アイランドの縁の辺（`SEAM0 << 辺`。塗るセットの外の三角形は 0）。
+    pub(super) fn seams(&self, i: usize) -> u8 {
+        self.seams.get(i).copied().unwrap_or(0)
     }
 }
 

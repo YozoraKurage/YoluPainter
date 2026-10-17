@@ -277,6 +277,8 @@ pub enum BrushOp {
     MixCorrection(u8),
     /// はみ出し防止の領域拡縮の方法。
     ReferMode(yolu_core::ExpandMode),
+    /// 3D の塗りのアライメント（ブラシではなく 3D の塗りの設定 `view3d.projection` に持つ）。
+    ProjectionAlignment(yolu_core::geometry::SurfaceAlignment),
 }
 
 /// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。主の質感も 2 つ目の質感も同じ。
@@ -655,6 +657,17 @@ pub fn stabilizer_speed_type(assist: &crate::engine::StrokeAssist) -> yolu_core:
     assist
         .stabilizer_speed
         .unwrap_or(yolu_core::StabilizerSpeed::SlowOnly)
+}
+
+/// 3D の塗りのアライメントの名前（製品の呼び名なので「Tangent | Wrap」は訳さない）。
+pub fn alignment_label(
+    lang: Lang,
+    alignment: yolu_core::geometry::SurfaceAlignment,
+) -> &'static str {
+    match alignment {
+        yolu_core::geometry::SurfaceAlignment::Camera => lang.t("m2-alignment-camera"),
+        yolu_core::geometry::SurfaceAlignment::TangentWrap => lang.t("m2-alignment-tangent-wrap"),
+    }
 }
 
 /// アンチエイリアスの段の名前。
@@ -1569,9 +1582,18 @@ impl AppState {
         }
     }
 
+    /// 文書のブラシではなく、基本の値や 3D の塗りの設定を替える op を当てる（当てたら true）。
+    fn apply_setting_op(&mut self, op: BrushOp) -> bool {
+        match op {
+            BrushOp::AntiAlias(level) => self.brush.anti_alias = level,
+            BrushOp::ProjectionAlignment(alignment) => self.view3d.projection.alignment = alignment,
+            _ => return false,
+        }
+        true
+    }
+
     fn apply_brush_op(&mut self, op: BrushOp) {
-        if let BrushOp::AntiAlias(level) = op {
-            self.brush.anti_alias = level;
+        if self.apply_setting_op(op) {
             return;
         }
         let b = &mut self.m2.brush;
@@ -1661,8 +1683,8 @@ impl AppState {
                 b.mix.correction = level.min(yolu_core::MAX_MIX_CORRECTION)
             }
             BrushOp::ReferMode(mode) => b.reference_lines.mode = mode,
-            // 基本の値なので先に当てた
-            BrushOp::AntiAlias(_) => {}
+            // 基本の値・3D の塗りの設定なので先に当てた
+            BrushOp::AntiAlias(_) | BrushOp::ProjectionAlignment(_) => {}
         }
     }
 

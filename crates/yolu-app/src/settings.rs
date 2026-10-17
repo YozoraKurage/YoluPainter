@@ -497,6 +497,7 @@ pub fn setting_name(lang: Lang, key: &str) -> &'static str {
         "view3d_paint_falloff_start" => lang.t("settings-fade-start"),
         "view3d_paint_falloff_end" => lang.t("settings-fade-end"),
         "view3d_paint_seam_bleed" => lang.t("settings-seam-bleed"),
+        "view3d_paint_alignment" => lang.t("settings-alignment"),
         "export_padding" => lang.t("settings-export-padding"),
         "export_form" => lang.t("settings-output-template"),
         "undo_budget_mib" => lang.t("settings-undo-history"),
@@ -573,6 +574,17 @@ fn parse(text: &str) -> (Settings, Vec<Problem>) {
     let (settings, problems, _) = parse_marked(text);
     (settings, problems)
 }
+
+/// 3D の塗りの設定の鍵（`parse_paint` が読む）。
+const PAINT_KEYS: [&str; 7] = [
+    "view3d_paint_hidden",
+    "view3d_paint_backfaces",
+    "view3d_paint_falloff",
+    "view3d_paint_falloff_start",
+    "view3d_paint_falloff_end",
+    "view3d_paint_seam_bleed",
+    "view3d_paint_alignment",
+];
 
 /// `parse` に、言語（`language=ja|en`）を読めたかを添えたもの。読めなかった設定の言語は既定のまま（呼ぶ側が決める）。
 fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
@@ -692,12 +704,7 @@ fn parse_marked(text: &str) -> (Settings, Vec<Problem>, bool) {
                 Some(v) => settings.view3d_post.bloom_threshold = v,
                 None => invalid("view3d_bloom_threshold"),
             },
-            "view3d_paint_hidden"
-            | "view3d_paint_backfaces"
-            | "view3d_paint_falloff"
-            | "view3d_paint_falloff_start"
-            | "view3d_paint_falloff_end"
-            | "view3d_paint_seam_bleed" => {
+            k if PAINT_KEYS.contains(&k) => {
                 if let Some(key) = parse_paint(&mut settings.view3d_paint, key.trim(), value) {
                     invalid(key);
                 }
@@ -805,6 +812,13 @@ fn parse_paint(
         "view3d_paint_falloff_end" => match angle(value) {
             Some(v) => paint.angle_end = v,
             None => return Some("view3d_paint_falloff_end"),
+        },
+        "view3d_paint_alignment" => match yolu_core::geometry::SurfaceAlignment::ALL
+            .into_iter()
+            .find(|a| alignment_key(*a) == value)
+        {
+            Some(a) => paint.alignment = a,
+            None => return Some("view3d_paint_alignment"),
         },
         _ => match value
             .parse::<u32>()
@@ -1038,6 +1052,20 @@ fn write_paint(text: &mut String, paint: &yolu_core::geometry::ProjectionSetting
     if paint.seam_bleed != default.seam_bleed {
         *text += &format!("view3d_paint_seam_bleed={}\n", paint.seam_bleed);
     }
+    if paint.alignment != default.alignment {
+        *text += &format!(
+            "view3d_paint_alignment={}\n",
+            alignment_key(paint.alignment)
+        );
+    }
+}
+
+/// 3D の塗りのアライメントの、設定のファイルの値。
+fn alignment_key(alignment: yolu_core::geometry::SurfaceAlignment) -> &'static str {
+    match alignment {
+        yolu_core::geometry::SurfaceAlignment::Camera => "camera",
+        yolu_core::geometry::SurfaceAlignment::TangentWrap => "tangent_wrap",
+    }
 }
 
 pub fn save(path: &Path, settings: &Settings) -> io::Result<()> {
@@ -1132,6 +1160,7 @@ mod tests {
                 angle_start: 60.0,
                 angle_end: 75.0,
                 seam_bleed: 4,
+                alignment: yolu_core::geometry::SurfaceAlignment::TangentWrap,
             },
             uv_wireframe: true,
             uv_wireframe_color: crate::uv_wireframe::DEFAULT_COLOR,
@@ -1845,6 +1874,13 @@ mod tests {
                 },
                 "view3d_paint_seam_bleed=16",
             ),
+            (
+                ProjectionSettings {
+                    alignment: yolu_core::geometry::SurfaceAlignment::TangentWrap,
+                    ..default
+                },
+                "view3d_paint_alignment=tangent_wrap",
+            ),
         ];
         for (paint, line) in cases {
             let settings = Settings {
@@ -1867,6 +1903,7 @@ mod tests {
             angle_start: 70.0,
             angle_end: 88.0,
             seam_bleed: 5,
+            alignment: yolu_core::geometry::SurfaceAlignment::TangentWrap,
             ..default
         };
         state.view3d.projection = changed;
@@ -1896,7 +1933,7 @@ mod tests {
     #[test]
     fn a_bad_3d_paint_value_resets_only_that_item_and_names_it() {
         use yolu_core::geometry::ProjectionSettings;
-        let text = "language=en\nview3d_paint_hidden=yes\nview3d_paint_backfaces=on\nview3d_paint_falloff=1\nview3d_paint_falloff_start=91\nview3d_paint_falloff_end=nan\nview3d_paint_seam_bleed=17\nexport_padding=8\n";
+        let text = "language=en\nview3d_paint_hidden=yes\nview3d_paint_backfaces=on\nview3d_paint_falloff=1\nview3d_paint_falloff_start=91\nview3d_paint_falloff_end=nan\nview3d_paint_seam_bleed=17\nview3d_paint_alignment=planar\nexport_padding=8\n";
         let (settings, problems) = parse(text);
         assert_eq!(
             settings.view3d_paint,
@@ -1921,7 +1958,8 @@ mod tests {
                 "view3d_paint_falloff",
                 "view3d_paint_falloff_start",
                 "view3d_paint_falloff_end",
-                "view3d_paint_seam_bleed"
+                "view3d_paint_seam_bleed",
+                "view3d_paint_alignment"
             ]
         );
         for lang in Lang::ALL {
@@ -1982,6 +2020,7 @@ mod tests {
             "view3d_paint_falloff_start=60",
             "view3d_paint_falloff_end=75",
             "view3d_paint_seam_bleed=4",
+            "view3d_paint_alignment=tangent_wrap",
             "uv_overlap=on",
             "uv_overlap_color=10,20,30,40",
             "external_ops=on",
