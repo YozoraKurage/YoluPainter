@@ -165,7 +165,7 @@ fn alt_right_drag_in_3d_flicks_to_the_next_axis_view_in_the_dragged_direction() 
 }
 
 #[test]
-fn alt_right_drag_in_3d_keeps_turning_when_the_drag_goes_on_and_the_larger_direction_wins() {
+fn alt_right_drag_in_3d_turns_once_per_drag_and_the_larger_direction_wins() {
     let d = navigation::FLICK_DISTANCE;
     let (mut h, rect) = cube_view();
     let at = rect.center();
@@ -180,24 +180,29 @@ fn alt_right_drag_in_3d_keeps_turning_when_the_drag_goes_on_and_the_larger_direc
         &[
             // 横が大きい斜めは、横に替える（正面 → 右）
             Vec2::new(d + 5.0, 30.0),
-            // 切り替えた所から、まだ閾値の手前
-            Vec2::new(d + 5.0 + d - 1.0, 30.0),
-            // 切り替えた所から閾値を超えたら、もう 1 回替える（右 → 背面）
+            // 同じ向きへ閾値の 2 倍を超えて動かしても、1 回のドラッグでは 2 つ目へ回らない
             Vec2::new(d + 5.0 + d + 1.0, 30.0),
-            // 縦の動きの方が大きければ、下へ（背面 → 上。画面の向きは背面のまま）
-            Vec2::new(d + 5.0 + d + 1.0 + 5.0, 30.0 + d + 1.0),
-            // 同じ向きにさらに: 反対側の横の視点へ、画面を起こしたまま回り込む（上 → 正面）
-            Vec2::new(d + 5.0 + d + 1.0 + 5.0, 30.0 + 2.0 * (d + 1.0)),
-            // 戻す向きへ動かせば、上の向きの隣（正面 → 下）
-            Vec2::new(d + 5.0 + d + 1.0 + 5.0, 30.0 + (d + 1.0)),
+            // 縦へ大きく動かしても、戻す向きへ動かしても替わらない
+            Vec2::new(d + 5.0 + d + 1.0, 30.0 + 2.0 * (d + 1.0)),
+            Vec2::new(-(d + 1.0), 30.0),
         ],
     );
-    assert_eq!(seen[0], (270.0, 0.0));
-    assert_eq!(seen[1], (270.0, 0.0));
-    assert_eq!(seen[2], (360.0, 0.0));
-    assert_eq!(seen[3], (360.0, 90.0));
-    assert_eq!(seen[4], (540.0, 0.0));
-    assert_eq!(seen[5], (540.0, -90.0));
+    assert_eq!(seen, vec![(270.0, 0.0); 4]);
+    assert_eq!(
+        (camera(&h).yaw, camera(&h).pitch),
+        (270.0, 0.0),
+        "離しても 1 回目の視点のまま"
+    );
+    // 続けて回すには、押し直す（1 回のドラッグにつき 1 回）
+    let next = |h: &mut H, m: Vec2| alt_drag_path(h, at, &[m, m * 3.0])[1];
+    // 右 → 背面
+    assert_eq!(next(&mut h, Vec2::new(d + 1.0, 0.0)), (360.0, 0.0));
+    // 縦の動きの方が大きければ、下へ（背面 → 上。画面の向きは背面のまま）
+    assert_eq!(next(&mut h, Vec2::new(5.0, d + 1.0)), (360.0, 90.0));
+    // 同じ向きにさらに: 反対側の横の視点へ、画面を起こしたまま回り込む（上 → 正面）
+    assert_eq!(next(&mut h, Vec2::new(0.0, d + 1.0)), (540.0, 0.0));
+    // 戻す向きへ動かせば、上の向きの隣（正面 → 下）
+    assert_eq!(next(&mut h, Vec2::new(0.0, -(d + 1.0))), (540.0, -90.0));
 }
 
 #[test]

@@ -4,7 +4,8 @@
 //! スナップ回転で軸の視点に切り替えたときに正投影にし（[`enter_axis`]）、回して軸から外れたら元の透視へ戻す（[`after_orbit`]）。手で切り替えた
 //! 投影は、軸から外れても戻さない。
 //!
-//! スナップ回転（Alt + 右ドラッグ）は、ドラッグした向きへ、今の視点から 90° 隣の軸の視点に切り替える（[`Drag::take_flick`]）。
+//! スナップ回転（Alt + 右ドラッグ）は、ドラッグした向きへ、今の視点から 90° 隣の軸の視点に切り替える（[`Drag::take_flick`]）。切り替えは
+//! 1 回のドラッグにつき 1 回（続けて回すには、離して押し直す）。
 
 use std::sync::Arc;
 
@@ -176,7 +177,7 @@ fn zoom_point(model: Option<&ViewModel>, camera: OrbitCamera, rect: Rect, at: Po
     })
 }
 
-/// スナップ回転で、隣の軸の視点へ切り替えるドラッグの長さ（画面の点。押した所、切り替えたあとは切り替えた所から、この長さ以上動かしたら切り替える）。
+/// スナップ回転で、隣の軸の視点へ切り替えるドラッグの長さ（画面の点。押した所からこの長さ以上動かしたら切り替える）。
 pub const FLICK_DISTANCE: f32 = 40.0;
 
 pub struct Drag {
@@ -184,8 +185,10 @@ pub struct Drag {
     /// 回すドラッグが、押した所から遊び（クリックとみなす距離）を超えて動いたか（超えるまで回さない。`rotation_delta`）。
     moved: bool,
     camera: OrbitCamera,
-    /// スナップ回転の、押した所（切り替えた所）からの動き（画面の点）。`FLICK_DISTANCE` 以上になったら隣の軸の視点へ切り替えて 0 に戻す（一度に何倍動いても、切り替えは 1 回）。
+    /// スナップ回転の、押した所からの動き（画面の点）。`FLICK_DISTANCE` 以上になったら隣の軸の視点へ切り替える。
     flick: Vec2,
+    /// このドラッグでスナップ回転を切り替えたか（切り替えは 1 回のドラッグにつき 1 回。離すまで、それ以上の動きでは替えない）。
+    flicked: bool,
     model: Option<Arc<ViewModel>>,
     model_center: Option<Vec3>,
     material: i32,
@@ -207,6 +210,7 @@ impl Drag {
             moved: false,
             camera: state.camera,
             flick: Vec2::ZERO,
+            flicked: false,
             model: state.model.clone(),
             model_center: state.full_model().map(|m| m.geometry.bounds().center),
             material: state.material,
@@ -234,9 +238,12 @@ impl Drag {
         Some(pos - self.at)
     }
 
-    /// スナップ回転の動き (dx, dy) を溜め、押した所（前に切り替えた所）から `FLICK_DISTANCE` 以上になったら、動きの大きい軸の向き
-    /// （横なら右・左、縦なら下・上）を返して溜めを 0 に戻す。
+    /// スナップ回転の動き (dx, dy) を溜め、押した所から `FLICK_DISTANCE` 以上になったら、動きの大きい軸の向き（横なら右・左、縦なら下・上）を
+    /// 1 回だけ返す。切り替えた後は、離すまで何も返さない（行き過ぎた動きや戻す動きで、2 つ目の軸の視点へ回らない）。
     fn take_flick(&mut self, dx: f32, dy: f32) -> Option<Flick> {
+        if self.flicked {
+            return None;
+        }
         self.flick += Vec2::new(dx, dy);
         let horizontal = self.flick.x.abs() >= self.flick.y.abs();
         let along = if horizontal {
@@ -247,7 +254,7 @@ impl Drag {
         if along.abs() < FLICK_DISTANCE {
             return None;
         }
-        self.flick = Vec2::ZERO;
+        self.flicked = true;
         Some(match (horizontal, along > 0.0) {
             (true, true) => Flick::Right,
             (true, false) => Flick::Left,

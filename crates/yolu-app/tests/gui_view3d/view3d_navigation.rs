@@ -200,24 +200,31 @@ fn snap_orbit_keeps_the_pressed_surface_point_in_place_when_it_flicks_to_the_nex
     let c = camera(&h);
     assert_eq!((c.yaw, c.pitch), (-90.0, 0.0));
     near(project(c, point), Vec2::new(at.x, at.y));
-    // 続けて左へ: 正面（yaw -180°）。さらに下へ: 上の視点
+    // 同じドラッグで続けて左へ動かしても、もう切り替えない（1 回のドラッグにつき 1 回）
     h.event(Event::PointerMoved(at + vec2(-2.0 * d - 2.0, 0.0)));
     h.step();
-    let c = camera(&h);
-    assert_eq!((c.yaw, c.pitch), (-180.0, 0.0));
-    near(project(c, point), Vec2::new(at.x, at.y));
-    h.event(Event::PointerMoved(at + vec2(-2.0 * d - 2.0, d + 1.0)));
-    h.step();
-    let c = camera(&h);
-    assert_eq!((c.yaw, c.pitch), (-180.0, 90.0));
-    near(project(c, point), Vec2::new(at.x, at.y));
+    assert_eq!((camera(&h).yaw, camera(&h).pitch), (-90.0, 0.0));
     mouse(
         &mut h,
-        at + vec2(-2.0 * d - 2.0, d + 1.0),
+        at + vec2(-2.0 * d - 2.0, 0.0),
         PointerButton::Secondary,
         false,
         alt,
     );
+    // 押し直して続ける: 左へ正面（yaw -180°）、もう一度押し直して下へ上の視点。中心は、押し直すたびにその時押した面の点
+    for (m, wanted) in [
+        (vec2(-(d + 1.0), 0.0), (-180.0, 0.0)),
+        (vec2(0.0, d + 1.0), (-180.0, 90.0)),
+    ] {
+        let point = hit(&h, at);
+        mouse(&mut h, at, PointerButton::Secondary, true, alt);
+        h.event(Event::PointerMoved(at + m));
+        h.step();
+        let c = camera(&h);
+        assert_eq!((c.yaw, c.pitch), wanted);
+        near(project(c, point), Vec2::new(at.x, at.y));
+        mouse(&mut h, at + m, PointerButton::Secondary, false, alt);
+    }
     assert!(h.view3d().input.navigation.is_none());
     assert!(!h.doc().can_undo());
 }
@@ -756,8 +763,20 @@ fn alt_right_drag_flicks_into_axis_views_that_turn_orthographic_with_the_setting
         assert_eq!(c.is_orthographic(), axis_ortho);
         assert_eq!(h.view3d().auto_orthographic, axis_ortho);
         assert!((size_at_target(&h) - size).abs() < 1e-3);
-        // さらに切り替えても、軸の視点のままで大きさは変わらない
+        // 同じドラッグの続きでは、もう切り替えない（1 回のドラッグにつき 1 回）
         h.event(Event::PointerMoved(at + vec2(-(d + 1.0), d + 1.0)));
+        h.step();
+        assert_eq!((camera(&h).yaw, camera(&h).pitch), (-90.0, 0.0));
+        mouse(
+            &mut h,
+            at + vec2(-(d + 1.0), d + 1.0),
+            PointerButton::Secondary,
+            false,
+            alt,
+        );
+        // 押し直して切り替えても、軸の視点のままで大きさは変わらない
+        mouse(&mut h, at, PointerButton::Secondary, true, alt);
+        h.event(Event::PointerMoved(at + vec2(0.0, d + 1.0)));
         h.step();
         let c = camera(&h);
         assert_eq!((c.yaw, c.pitch), (-90.0, 90.0));
@@ -765,7 +784,7 @@ fn alt_right_drag_flicks_into_axis_views_that_turn_orthographic_with_the_setting
         assert!((size_at_target(&h) - size).abs() < 1e-3);
         mouse(
             &mut h,
-            at + vec2(-(d + 1.0), d + 1.0),
+            at + vec2(0.0, d + 1.0),
             PointerButton::Secondary,
             false,
             alt,
