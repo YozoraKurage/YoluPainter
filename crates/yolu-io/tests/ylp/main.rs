@@ -24,6 +24,7 @@ mod look;
 mod m2_bridge;
 mod manual_id_colors;
 mod materials;
+mod multi_materials;
 mod nesting_native;
 mod path_lists_bridge;
 mod path_pressure;

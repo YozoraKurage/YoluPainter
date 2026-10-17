@@ -175,7 +175,7 @@ fn quad() -> SurfaceGeometry {
     ])
 }
 fn closest(g: &SurfaceGeometry, p: Vec3, max: f32, facing: Vec3) -> Option<SurfaceHit> {
-    g.find_closest_point(p, max, facing, MAX_CLOSEST_POINT_NODE_VISITS, -1)
+    g.find_closest_point(p, max, facing, MAX_CLOSEST_POINT_NODE_VISITS, None)
         .unwrap()
 }
 
@@ -266,7 +266,7 @@ fn the_search_matches_brute_force_on_a_closed_box_and_honours_the_facing() {
 fn the_search_stops_at_its_node_budget() {
     let g = geometry(box_triangles(4, 4, 0));
     assert!(g
-        .find_closest_point(Vec3::ZERO, 10.0, Vec3::ZERO, 1, -1)
+        .find_closest_point(Vec3::ZERO, 10.0, Vec3::ZERO, 1, None)
         .is_err());
     assert!(matches!(
         g.find_closest_point(
@@ -274,7 +274,7 @@ fn the_search_stops_at_its_node_budget() {
             10.0,
             Vec3::ZERO,
             MAX_CLOSEST_POINT_NODE_VISITS,
-            -1
+            None
         ),
         Ok(Some(_))
     ));
@@ -904,7 +904,7 @@ fn copy_hits_list_the_copies_the_dab_would_paint() {
     let hit = pick_from(&g, Vec3::X, EYE);
     let radial = radial_of(4);
     // 別のスロットの花弁は、塗らないのでカーソルにも出さない
-    let hits = copy_hits(&g, &hit, None, Some(&radial), 0.2);
+    let hits = copy_hits(&g, &hit, None, None, Some(&radial), 0.2);
     assert_eq!(hits.len(), 2);
     let dab = build_expanded(
         &g,
@@ -927,7 +927,17 @@ fn copy_hits_list_the_copies_the_dab_would_paint() {
     // 元と同じ位置に落ちる写しは、重複として飛ばす
     let mut positions = vec![hit.position];
     assert_eq!(
-        find_copy(&g, &hit, None, Some(&radial), 0, true, 0.2, &mut positions),
+        find_copy(
+            &g,
+            &hit,
+            None,
+            None,
+            Some(&radial),
+            0,
+            true,
+            0.2,
+            &mut positions
+        ),
         CopyHit::Duplicate
     );
 }

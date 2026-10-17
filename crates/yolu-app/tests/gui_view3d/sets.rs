@@ -183,30 +183,30 @@ fn every_state_of_a_set_has_its_icon() {
             (
                 "00000000-0000-4000-8000-000000000001".into(),
                 "Body".into(),
-                MaterialRef::Material {
+                vec![MaterialRef::Material {
                     name: "Body".into(),
                     asset: None,
-                },
+                }],
                 None,
                 body,
             ),
             (
                 "00000000-0000-4000-8000-000000000002".into(),
                 "Face".into(),
-                MaterialRef::Material {
+                vec![MaterialRef::Material {
                     name: "Face".into(),
                     asset: None,
-                },
+                }],
                 Some("マスクのあるレイヤーがあります".into()),
                 face,
             ),
             (
                 "00000000-0000-4000-8000-000000000003".into(),
                 "Old".into(),
-                MaterialRef::Material {
+                vec![MaterialRef::Material {
                     name: "Old".into(),
                     asset: None,
-                },
+                }],
                 None,
                 old,
             ),
@@ -226,7 +226,7 @@ fn every_state_of_a_set_has_its_icon() {
     let s = h.app();
     assert_eq!(
         s.sets().get(2).unwrap().bound,
-        None,
+        Vec::<u32>::new(),
         "モデルに無い Old は残る"
     );
     assert_eq!(s.set_for_material(2), Some(3));
@@ -250,7 +250,7 @@ fn read_only_sets_refuse_painting_and_layer_edits() {
         vec![(
             "00000000-0000-4000-8000-000000000009".into(),
             "読むだけ".into(),
-            MaterialRef::PendingSlot(0),
+            vec![MaterialRef::PendingSlot(0)],
             Some("フィルターのあるレイヤーがあります".into()),
             doc,
         )],
@@ -618,7 +618,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
     for (i, set) in s.sets().iter().enumerate() {
         assert!(set.read_only.is_none(), "core が持つ中身だけなので描ける");
         assert_eq!(
-            set.material,
+            set.materials[0],
             MaterialRef::PendingSlot(i as u16),
             "形式 6 のスロットの番号"
         );
@@ -880,10 +880,10 @@ fn m2_project(path: &std::path::Path) -> Vec<yolu_io::NativeDocument> {
             yolu_io::SetSpec {
                 id: format!("00000000-0000-4000-8000-00000000010{i}"),
                 name: format!("M2 {i}"),
-                material: yolu_io::MaterialRef::Material {
+                materials: vec![yolu_io::MaterialRef::Material {
                     name: format!("M2 {i}"),
                     asset: None,
-                },
+                }],
                 document: Some(n.clone().into()),
                 composites: yolu_io::composite_pngs(&core).unwrap(),
             }
@@ -996,7 +996,7 @@ fn a_new_project_saves_as_and_then_overwrites_with_a_backup() {
     assert_eq!(saved.sets().len(), 1);
     let set = &saved.sets()[0];
     assert_eq!(set.name, "テクスチャセット 1");
-    assert_eq!(set.material, MaterialRef::PendingSlot(0));
+    assert_eq!(set.materials[0], MaterialRef::PendingSlot(0));
     assert_eq!(set.id, set.document.id(), "新しいセットの ID は文書の ID");
     assert!(backups(&path).is_empty(), "新しく作ったので前の版は無い");
     // 描き足して上書き
@@ -1057,7 +1057,7 @@ fn sets_made_from_a_model_save_their_material_keys() {
     let names: Vec<&str> = saved.sets().iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["Skin", "Unassigned"]);
     assert_eq!(
-        saved.sets()[0].material,
+        saved.sets()[0].materials[0],
         MaterialRef::Material {
             name: "Skin".into(),
             asset: Some(yolu_app::sets::MaterialAsset {
@@ -1066,7 +1066,7 @@ fn sets_made_from_a_model_save_their_material_keys() {
             })
         }
     );
-    assert_eq!(saved.sets()[1].material, MaterialRef::Unassigned);
+    assert_eq!(saved.sets()[1].materials[0], MaterialRef::Unassigned);
     assert_eq!(saved.sets()[1].document.width(), 256);
     // 開き直してモデルを受けると、同じセットに付く（新しいセットは作らない）
     let mut again = app(1280.0, 800.0, 256);

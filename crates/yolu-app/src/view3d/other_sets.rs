@@ -11,8 +11,8 @@ use crate::state::AppState;
 
 /// 3D に見せる、今のセットでないセット 1 つ。
 pub struct OtherSet<'a> {
-    /// このセットが受け持つモデルのマテリアルの番号。
-    pub material: i32,
+    /// このセットが受け持つモデルのマテリアルの組。
+    pub material: yolu_core::geometry::MaterialSet,
     /// セットの文書（しまってあるもの）。
     pub doc: &'a Document,
     /// 持つ優先（小さいほど先。今のセットから並びの上で近い順）。メモリの予算が足りないとき、大きい方から持たない。
@@ -38,7 +38,7 @@ pub fn collect(app: &AppState) -> Vec<OtherSet<'_>> {
             }
             seen.push(doc.id());
             Some(OtherSet {
-                material: set.bound? as i32,
+                material: Some(set.bound_set()).filter(|m| !m.is_empty())?,
                 doc,
                 rank: i.abs_diff(current) as u32,
             })

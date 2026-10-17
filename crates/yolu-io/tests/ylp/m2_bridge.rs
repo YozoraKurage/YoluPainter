@@ -904,10 +904,10 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
     let spec = |id: &str, name: &str, doc: &Document| SetSpec {
         id: id.into(),
         name: name.into(),
-        material: yolu_io::MaterialRef::Material {
+        materials: vec![yolu_io::MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: yolu_io::composite_pngs(doc).unwrap(),
     };
@@ -1292,7 +1292,7 @@ fn edits_to_a_loaded_m2_document_undo_back_to_the_original_bytes_and_save() {
             &[SetSpec {
                 id: "0f1e2d3c-4b5a-4978-8796-a5b4c3d2e1f0".into(),
                 name: "M2".into(),
-                material: yolu_io::MaterialRef::Unassigned,
+                materials: vec![yolu_io::MaterialRef::Unassigned],
                 document: Some(edited.clone().into()),
                 composites: yolu_io::composite_pngs(&core).unwrap(),
             }],
@@ -1358,7 +1358,7 @@ fn a_saved_set_carries_a_composite_png_for_every_channel_in_use() {
     let spec = |doc: &Document, composites| SetSpec {
         id: A.into(),
         name: "合成".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites,
     };

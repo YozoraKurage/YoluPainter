@@ -59,6 +59,7 @@ use glam::{DVec2, Quat, Vec2, Vec3};
 use super::build::FastMap;
 use super::camera::CameraView;
 use super::dab::{DabRefusal, SurfaceBrushBudget, SurfaceDabResult};
+use super::materials::{admits, MaterialSet};
 use super::project::{
     evict_least_recent, CopyTransform, ProjectionSettings, ProjectionStats, RoundCover,
     ScreenCover, SurfaceProjector,
@@ -431,7 +432,7 @@ impl ScreenCover for DabCover<'_> {
 pub struct SurfaceStroke {
     geometry: Arc<SurfaceGeometry>,
     view: CameraView,
-    material: Option<i32>,
+    material: Option<MaterialSet>,
     sampler: ScreenStrokeSampler,
     /// 位置と当たりを決めて、まだ塗っていない描点（古い順）。
     queue: std::collections::VecDeque<QueuedDab>,
@@ -533,15 +534,13 @@ struct SurfacePost {
 fn clone_destination_of(
     options: &SurfaceStrokeOptions,
     geometry: &SurfaceGeometry,
-    material: Option<i32>,
+    material: Option<&MaterialSet>,
 ) -> Result<Option<SurfaceHit>, SurfaceStrokeError> {
     let SurfaceEffect::Clone(c) = options.effect else {
         return Ok(None);
     };
     let t = geometry.triangles().get(c.source.triangle as usize);
-    if c.source.revision != geometry.revision()
-        || t.is_none_or(|t| material.is_some_and(|m| m != t.material))
-    {
+    if c.source.revision != geometry.revision() || t.is_none_or(|t| !admits(material, t.material)) {
         return Err(SurfaceStrokeError::CloneSource);
     }
     Ok(c.destination)
@@ -573,7 +572,7 @@ impl SurfaceStroke {
         geometry: Arc<SurfaceGeometry>,
         view: CameraView,
         brush: &BrushSettings,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         at: Vec2,
         pressure: f32,
     ) -> Result<SurfaceStroke, SurfaceStrokeError> {
@@ -599,7 +598,7 @@ impl SurfaceStroke {
         geometry: Arc<SurfaceGeometry>,
         view: CameraView,
         brush: &BrushSettings,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         at: Vec2,
         pressure: f32,
         stencil: Option<SurfaceStencil>,
@@ -629,7 +628,7 @@ impl SurfaceStroke {
         geometry: Arc<SurfaceGeometry>,
         view: CameraView,
         brush: &BrushSettings,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         at: Vec2,
         pressure: f32,
         options: SurfaceStrokeOptions,
@@ -654,7 +653,7 @@ impl SurfaceStroke {
         geometry: Arc<SurfaceGeometry>,
         view: CameraView,
         brush: &BrushSettings,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         input: SurfaceInput,
         options: SurfaceStrokeOptions,
     ) -> Result<SurfaceStroke, SurfaceStrokeError> {
@@ -700,7 +699,7 @@ impl SurfaceStroke {
         let mut s = SurfaceStroke {
             geometry,
             view,
-            material,
+            material: material.cloned(),
             sampler: ScreenStrokeSampler::with_curve(first, stroke_brush.assist.curve),
             queue: std::collections::VecDeque::new(),
             budget: SurfaceBrushBudget::default(),
@@ -1154,7 +1153,7 @@ impl SurfaceStroke {
             self.geometry.clone(),
             self.view,
             &post.brush,
-            self.material,
+            self.material.as_ref(),
             first,
             options,
         )?;
@@ -1260,7 +1259,7 @@ impl SurfaceStroke {
         ) in duals
         {
             let scale = pick(&self.geometry, &self.view, at)
-                .filter(|h| self.material.is_none_or(|m| m == h.material))
+                .filter(|h| admits(self.material.as_ref(), h.material))
                 .map(|h| self.view.world_radius_to_screen(h.position, 1.0))
                 .filter(|s| s.is_finite() && *s > 0.0)
                 .or(self.screen_scale);
@@ -1321,7 +1320,7 @@ impl SurfaceStroke {
             return dab;
         }
         let hit = pick(&self.geometry, &self.view, p.at)
-            .filter(|h| self.material.is_none_or(|m| m == h.material));
+            .filter(|h| admits(self.material.as_ref(), h.material));
         if let Some(h) = &hit {
             let scale = self.view.world_radius_to_screen(h.position, 1.0);
             if scale.is_finite() && scale > 0.0 {
@@ -1462,7 +1461,7 @@ impl SurfaceStroke {
         } else {
             let at = Vec2::new(plan.x as f32, self.down(plan.y));
             let hit = pick(&self.geometry, &self.view, at)
-                .filter(|h| self.material.is_none_or(|m| m == h.material));
+                .filter(|h| admits(self.material.as_ref(), h.material));
             (at, hit)
         }
     }
@@ -1753,7 +1752,7 @@ impl SurfaceStroke {
             return Ok(());
         }
         let hit = pick(&self.geometry, &self.view, at)
-            .filter(|h| self.material.is_none_or(|m| m == h.material));
+            .filter(|h| admits(self.material.as_ref(), h.material));
         let shape = dual_brush.dab_shape_look(
             &DualPlace {
                 x: 0.0,
@@ -1941,6 +1940,28 @@ impl SurfaceStroke {
         Ok(())
     }
 
+    /// 対称の写し `(copy, reflected)` の点を探す（描くテクスチャセットのマテリアルの組の面だけ）。
+    fn find_copy_of(
+        &self,
+        hit: &SurfaceHit,
+        sym: &SurfaceSymmetrySetup,
+        (copy, reflected): (u32, bool),
+        radius: f32,
+        positions: &mut Vec<Vec3>,
+    ) -> CopyHit {
+        find_copy(
+            &self.geometry,
+            hit,
+            self.material.as_ref(),
+            sym.mirror.as_ref(),
+            sym.radial.as_ref(),
+            copy,
+            reflected,
+            radius,
+            positions,
+        )
+    }
+
     /// モデルの単位の半径（丸の大きさ・写しを探す距離）。面の点は、中心の下の塗るセットの面の点（hit）か、それが無ければ元の側の画素の点
     /// （[`SurfaceStroke::fallback_hit`]。元の側が何も塗らなければ None）。対称の写しは、その点を写して探す（中心がほかのセット・背景に
     /// あるダブでも、元の側が塗る縁を写しの側にも塗る）。dual はデュアルブラシの合わせ方と溜まり、weighted は面の向きで弱めるか。
@@ -1961,7 +1982,7 @@ impl SurfaceStroke {
             match SurfaceProjector::new(
                 self.geometry.clone(),
                 &self.view,
-                self.material,
+                self.material.as_ref(),
                 self.width,
                 self.height,
                 scale * self.world_radius,
@@ -2020,13 +2041,10 @@ impl SurfaceStroke {
                 if (copy == 0 && !reflected) || (reflected && sym.mirror.is_none()) {
                     continue;
                 }
-                let found = match find_copy(
-                    &self.geometry,
+                let found = match self.find_copy_of(
                     &hit,
-                    sym.mirror.as_ref(),
-                    sym.radial.as_ref(),
-                    copy,
-                    reflected,
+                    &sym,
+                    (copy, reflected),
                     radius,
                     &mut positions,
                 ) {

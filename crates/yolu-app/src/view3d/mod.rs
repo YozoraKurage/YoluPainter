@@ -138,8 +138,8 @@ pub struct View3dState {
     pub view: ViewState,
     /// 今のビューでないビューの状態（足した順）。
     parked: Vec<ViewState>,
-    /// 描くテクスチャセット（マテリアルの組の番号。負ならどの面にも描かない）。`AppState::sync_view3d` が今のセットから決める。
-    pub material: i32,
+    /// 描くテクスチャセットのマテリアルの組（空ならどの面にも描かない）。`AppState::sync_view3d` が今のセットから決める。
+    pub material: yolu_core::geometry::MaterialSet,
     /// メモリの予算が足りずに、絵を 3D に見せていないセットのマテリアル（今のセットでないセットだけ。描くたびに `other_sets::finish` が入れる。
     /// テクスチャセットの一覧が印にする）。3D のタブが前に出ていないあいだは描かれず更新されないので、モデルが替わる・閉じる・今のセットの
     /// マテリアルが替わるときに空にする（別のモデルのマテリアルの番号の印を、別のセットの行に残さない）。
@@ -601,7 +601,7 @@ impl View3dState {
     /// 試しの立方体を読む。
     pub fn load_demo(&mut self) {
         let revision = self.next_revision();
-        self.material = 0;
+        self.material = yolu_core::geometry::MaterialSet::one(0);
         self.set_model(ViewModel::demo(revision));
     }
 

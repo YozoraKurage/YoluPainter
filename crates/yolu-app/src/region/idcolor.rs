@@ -110,7 +110,7 @@ impl AppState {
             .triangles()
             .iter()
             .zip(&parts.of_triangle)
-            .filter(|(t, _)| t.material == material)
+            .filter(|(t, _)| material.contains(t.material))
             .map(|(_, p)| *p)
             .collect();
         out.sort_unstable();
@@ -285,7 +285,7 @@ fn color_under(app: &mut AppState, w: Where, at: Pos2, map: &BakedMeshMap) -> Re
             let Some(hit) = pick(&model.geometry, &view, p) else {
                 return Err(lang.t("region-nothing-of-the-model-under").to_owned());
             };
-            if hit.material != material {
+            if !material.contains(hit.material) {
                 let name = model.material_name(hit.material as usize, lang);
                 return Err(crate::stroke_gate::other_set_face(lang, &name));
             }
@@ -412,7 +412,7 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Pos2) {
     }
     let mut tris = Vec::new();
     for (i, t) in model.geometry.triangles().iter().enumerate() {
-        if t.material != material {
+        if !material.contains(t.material) {
             continue;
         }
         let c = (t.uv_a + t.uv_b + t.uv_c) / 3.0;

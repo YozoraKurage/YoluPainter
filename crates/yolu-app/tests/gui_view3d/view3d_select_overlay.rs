@@ -298,7 +298,7 @@ fn two_materials() -> (H, Rect) {
         )
         .unwrap();
         state.view3d_mut().set_model(model);
-        state.view3d_mut().material = 0;
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,
@@ -734,7 +734,7 @@ fn measure_frames_with_and_without_the_selection_overlay() {
         {
             let state = h.app_mut();
             let revision = state.view3d_mut().next_revision();
-            state.view3d_mut().material = 0;
+            state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
             let model = ViewModel::new("球", vec![mesh], vec![None], revision).unwrap();
             model.tangents();
             state.view3d_mut().set_model(model);

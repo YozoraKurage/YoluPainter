@@ -68,7 +68,7 @@ fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
 fn set_model_with(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>, warm: bool) {
     let state = h.app_mut();
     let revision = state.view3d_mut().next_revision();
-    state.view3d_mut().material = 0;
+    state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
     if warm {
         model.tangents();
@@ -1097,7 +1097,7 @@ impl Gate {
 fn swap_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
     let state = h.app_mut();
     let revision = state.view3d_mut().next_revision();
-    state.view3d_mut().material = 0;
+    state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
     state.view3d_mut().set_model(model);
 }

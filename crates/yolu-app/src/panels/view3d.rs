@@ -136,7 +136,7 @@ fn draw_image(
             let id = renderer.prepare_sets(
                 &app.session.doc,
                 &model,
-                app.view3d.material,
+                &app.view3d.material,
                 &app.view3d.view.camera,
                 size,
                 &app.view3d.view.display,

@@ -36,13 +36,13 @@ pub struct PathReport {
 }
 
 /// 文書の中の、`old` に結び付いた 3D のパスを `new` へ付け直す（レイヤーごとに 1 回の Undo）。`material` は新しいモデルでの、この文書の
-/// テクスチャセットのマテリアルの組（モデルに無ければ負）。`hidden` は描き直すときに描かない `new` の面（今のビューで隠している面）。指紋が同じなら何もしない。描き直せないレイヤー（画素・透明度のロックを含む）は
+/// テクスチャセットのマテリアルの組（モデルに無ければ空）。`hidden` は描き直すときに描かない `new` の面（今のビューで隠している面）。指紋が同じなら何もしない。描き直せないレイヤー（画素・透明度のロックを含む）は
 /// 画素にし、すべてのロックのレイヤーだけ残す。
 pub fn rebind_document(
     doc: &mut Document,
     old: &SurfaceGeometry,
     new: &SurfaceGeometry,
-    material: i32,
+    material: &yolu_core::geometry::MaterialSet,
     hidden: Option<&[bool]>,
     lang: Lang,
 ) -> Vec<PathReport> {
@@ -110,7 +110,7 @@ fn redraw_one(
     entries: &[LayerPathEntry],
     old: &SurfaceGeometry,
     new: &SurfaceGeometry,
-    material: i32,
+    material: &yolu_core::geometry::MaterialSet,
     hidden: Option<&[bool]>,
     lang: Lang,
 ) -> Result<Option<String>, String> {

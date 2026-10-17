@@ -428,7 +428,7 @@ fn two_plates() -> (H, Rect) {
     {
         let state = h.app_mut();
         let revision = state.view3d_mut().next_revision();
-        state.view3d_mut().material = 0;
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         let model = ViewModel::new(
             "試験",
             vec![plate(0.0, 1.0, (0.0, 0.5)), plate(-0.6, 0.35, (0.5, 1.0))],

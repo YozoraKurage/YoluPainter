@@ -28,10 +28,10 @@ fn project() -> Project {
     let spec = |id: &str, name: &str| SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::Material {
+        materials: vec![MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(native.clone().into()),
         composites: Vec::new(),
     };
@@ -81,7 +81,7 @@ fn only_a_document_that_uses_them_becomes_format_8_and_it_goes_back_to_7_when_no
     assert_eq!(format_of(&with), 8, "使う文書だけ 8");
     let again = reopened(&with);
     assert_eq!(format_of(&again), 8);
-    assert_eq!(MAX_FORMAT, 8);
+    assert_eq!(yolu_io::SAVED_SELECTIONS_FORMAT, 8);
     // 外側の版は変わらない（名前の決まりは同じ）
     assert_eq!(
         again.original_archive().manifest_version(),
@@ -564,7 +564,7 @@ fn a_newer_format_than_this_reader_knows_is_refused_with_the_writer_and_format_8
     let p = project()
         .with_saved_selections(A, &[item("a", rect(1, 1, 9, 9))])
         .unwrap();
-    // 形式 9 は読まない（書いたアプリを添えて断る。黙って捨てない）
+    // 読める上限より新しい形式は読まない（書いたアプリを添えて断る。黙って捨てない）
     let mut files = p.original_archive().entries().clone();
     let mut info: serde_json::Value =
         serde_json::from_slice(&files["ylp.json"].bytes().unwrap()).unwrap();
@@ -581,12 +581,12 @@ fn a_newer_format_than_this_reader_knows_is_refused_with_the_writer_and_format_8
         other => panic!("{:?}", other.map(|_| ())),
     }
     let text = yolu_io::Error::UnsupportedFormat {
-        format: 9,
+        format: MAX_FORMAT + 1,
         app: "A".into(),
         version: "1".into(),
     }
     .to_string();
-    assert!(text.contains("形式8"), "{text}");
+    assert!(text.contains(&format!("形式{MAX_FORMAT}")), "{text}");
     assert_eq!(format_of(&reopened(&p)), 8);
 }
 

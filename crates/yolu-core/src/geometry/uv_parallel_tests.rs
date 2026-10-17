@@ -73,7 +73,8 @@ fn the_correspondence_the_island_map_and_the_band_are_the_same_built_in_parallel
         g.triangle_count() > 1024,
         "位相の対応の作りが並列に分かれる大きさ"
     );
-    for material in [Some(0), None] {
+    for material in [Some(crate::geometry::MaterialSet::one(0)), None] {
+        let material = material.as_ref();
         let (parallel, in_order) = (
             Parts::new(&g, material, true),
             Parts::new(&g, material, false),
@@ -93,12 +94,12 @@ fn the_correspondence_the_island_map_and_the_band_are_the_same_built_in_parallel
 #[test]
 fn the_band_and_its_refusals_are_the_same_built_in_parallel_or_in_order() {
     let g = atlas(16);
-    let topology = UvTopology::new(g.clone(), Some(0));
+    let topology = UvTopology::new(g.clone(), Some(&crate::geometry::MaterialSet::one(0)));
     let size = 192;
     let islands = Arc::new(
         build_island_map(
             &g,
-            Some(0),
+            Some(&crate::geometry::MaterialSet::one(0)),
             topology.parts(),
             size,
             size,

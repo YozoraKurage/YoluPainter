@@ -130,18 +130,21 @@ impl Preferences {
 
 /// 表示中の、今のテクスチャセットの面の境界。別のセット・隠した面は含まない。
 pub fn selected_bounds(state: &View3dState) -> Option<Bounds> {
-    material_bounds(state.model.as_deref()?, state.material)
+    material_bounds(state.model.as_deref()?, &state.material)
 }
 
-fn material_bounds(model: &ViewModel, material: i32) -> Option<Bounds> {
-    if material < 0 {
+fn material_bounds(
+    model: &ViewModel,
+    material: &yolu_core::geometry::MaterialSet,
+) -> Option<Bounds> {
+    if material.is_empty() {
         return None;
     }
     let mut points = model
         .geometry
         .triangles()
         .iter()
-        .filter(|t| t.material == material)
+        .filter(|t| material.contains(t.material))
         .flat_map(|t| [t.a, t.b, t.c]);
     let mut bounds = Bounds::point(points.next()?);
     for p in points {
@@ -191,7 +194,7 @@ pub struct Drag {
     flicked: bool,
     model: Option<Arc<ViewModel>>,
     model_center: Option<Vec3>,
-    material: i32,
+    material: yolu_core::geometry::MaterialSet,
     preferences: Preferences,
     resolved: Option<Anchor>,
 }
@@ -213,7 +216,7 @@ impl Drag {
             flicked: false,
             model: state.model.clone(),
             model_center: state.full_model().map(|m| m.geometry.bounds().center),
-            material: state.material,
+            material: state.material.clone(),
             preferences,
             resolved: None,
         }
@@ -277,7 +280,7 @@ impl Drag {
             OrbitCenter::TextureSet => self
                 .model
                 .as_deref()
-                .and_then(|m| material_bounds(m, self.material))
+                .and_then(|m| material_bounds(m, &self.material))
                 .map(|b| b.center),
         }
         .unwrap_or(self.camera.target);

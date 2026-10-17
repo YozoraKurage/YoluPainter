@@ -1079,7 +1079,7 @@ fn headless_a_project_with_read_only_sets_is_recovered_and_can_be_saved_somewher
     let spec = |id: String, name: &str, slot: u16, doc: NativeDocument| SetSpec {
         id,
         name: name.into(),
-        material: MaterialRef::PendingSlot(slot),
+        materials: vec![MaterialRef::PendingSlot(slot)],
         document: Some(doc.into()),
         composites: vec![],
     };
@@ -1187,7 +1187,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
                 parts.push((
                     format!("00000000-0000-4000-8000-0000000000{:02x}", 0xc0 + i),
                     format!("セット {i}"),
-                    yolu_app::sets::MaterialRef::PendingSlot(i as u16),
+                    vec![yolu_app::sets::MaterialRef::PendingSlot(i as u16)],
                     None,
                     doc.capture_snapshot().unwrap(),
                 ));
@@ -1197,7 +1197,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
                 (
                     "00000000-0000-4000-8000-0000000000bb".into(),
                     "セット".into(),
-                    yolu_app::sets::MaterialRef::PendingSlot(0),
+                    vec![yolu_app::sets::MaterialRef::PendingSlot(0)],
                     None,
                     doc,
                 ),
@@ -1240,7 +1240,7 @@ fn measure_the_main_thread_cost_of_a_checkpoint() {
             vec![(
                 "00000000-0000-4000-8000-0000000000bb".into(),
                 "セット".into(),
-                yolu_app::sets::MaterialRef::PendingSlot(0),
+                vec![yolu_app::sets::MaterialRef::PendingSlot(0)],
                 None,
                 doc,
             )],
@@ -1740,7 +1740,7 @@ fn two_set_file(dir: &TempDir) -> (PathBuf, String, String) {
     let spec = |id: &str, name: &str, slot: u16, doc: &Document| SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::PendingSlot(slot),
+        materials: vec![MaterialRef::PendingSlot(slot)],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: vec![],
     };

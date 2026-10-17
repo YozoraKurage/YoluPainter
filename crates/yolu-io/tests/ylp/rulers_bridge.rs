@@ -457,7 +457,7 @@ fn a_ylp_keeps_the_rulers_and_the_version() {
     let spec = SetSpec {
         id: "0f0f0f0f-0000-4000-8000-000000000035".into(),
         name: "Set".into(),
-        material: MaterialRef::Unassigned,
+        materials: vec![MaterialRef::Unassigned],
         document: Some(native.clone().into()),
         composites: vec![],
     };

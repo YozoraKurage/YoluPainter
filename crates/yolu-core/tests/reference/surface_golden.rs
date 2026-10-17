@@ -470,7 +470,12 @@ fn step(c: &mut Case, t: &[&str]) {
             let max = c.fl(t[4]);
             let facing = Vec3::new(c.fl(t[5]), c.fl(t[6]), c.fl(t[7]));
             let (visits, material) = (c.int(t[8]), c.int(t[9]));
-            let text = match c.g().find_closest_point(p, max, facing, visits, material) {
+            // C# の material は 0 以上ならその組、負なら全部
+            let set = (material >= 0).then(|| yolu_core::geometry::MaterialSet::one(material));
+            let text = match c
+                .g()
+                .find_closest_point(p, max, facing, visits, set.as_ref())
+            {
                 Err(_) => "closest exceeded".into(),
                 Ok(None) => "closest none".into(),
                 Ok(Some(hit)) => format!("closest {}", hit_text(&hit)),

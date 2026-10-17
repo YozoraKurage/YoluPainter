@@ -13,10 +13,15 @@ use serde::{
 use serde_json::{Map, Value};
 use std::{collections::HashSet, fmt, io::Cursor, sync::Arc};
 
-/// 読める .ylp の形式の上限（8 は、名前を付けて残した選択範囲を使うファイルだけ。ほかのファイルは 7 のまま）。
-pub const MAX_FORMAT: i32 = 8;
+/// 読める .ylp の形式の上限（8 は名前を付けて残した選択範囲を使うファイル、9 はマテリアルを 2 つ以上持つセットのあるファイルだけ。
+/// ほかのファイルは 7 のまま）。
+pub const MAX_FORMAT: i32 = 9;
 /// 名前を付けて残した選択範囲を使うファイルの形式。
 pub const SAVED_SELECTIONS_FORMAT: i32 = 8;
+/// マテリアルを 2 つ以上持つセット（`project.json` の `sets[].materials`）のあるファイルの形式。
+pub const MULTI_MATERIAL_FORMAT: i32 = 9;
+/// 1 つのセットが持てるマテリアルの鍵の数の上限（読み手が断る数）。
+pub const MAX_SET_MATERIALS: usize = 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WriterInfo {
@@ -118,7 +123,8 @@ impl MaterialRef {
 pub struct TextureSet {
     pub id: String,
     pub name: String,
-    pub material: MaterialRef,
+    /// セットのマテリアルの鍵（1 個以上。1 個は `material`、2 個以上は中身の形式 9 の `materials` に書く）。並びはファイルの順。
+    pub materials: Vec<MaterialRef>,
     /// 正本（画素は持たず、要るときに流して読む）。
     pub document: SetDocument,
     pub selection: Option<Selection>,
@@ -128,7 +134,8 @@ pub struct TextureSet {
 pub struct SetSpec {
     pub id: String,
     pub name: String,
-    pub material: MaterialRef,
+    /// セットのマテリアルの鍵（1 個以上。空・同じ鍵の重なりは書くときに断る）。2 個以上のセットがあれば中身の形式 9 で書く。
+    pub materials: Vec<MaterialRef>,
     /// 新しい正本（メモリの正本か core の文書）。None なら元のプロジェクトの同じ ID のセットのエントリをバイト列のまま残す（新しい
     /// セットには要る）。core の文書は全体の正本をメモリに組まずに流して書く（大きければ版 26 で分ける）。
     pub document: Option<DocumentSource>,
@@ -294,7 +301,7 @@ impl Project {
         package.remember_donors(removed.into_iter());
         Self::from_package(package, &known)
     }
-    /// 今の書き手が書く形式（7 か、名前を付けて残した選択範囲を使うファイルの 8）か。旧形式は先に `upgraded` で 7 にする。
+    /// 今の書き手が書く形式（7 か、名前を付けて残した選択範囲を使うファイルの 8・マテリアルを 2 つ以上持つセットのあるファイルの 9）か。旧形式は先に `upgraded` で 7 にする。
     pub(crate) fn is_current(&self) -> bool {
         self.info.format >= 7
     }
@@ -359,7 +366,7 @@ impl Project {
         files.insert("ylp.json".into(), Blob::from(serde_json::to_vec(&info)?));
         self.rebuild(files, 3, &[])
     }
-    /// 形式7の新しいプロジェクトを作る（セットは1〜64、どれも正本が要る）。書いたものは読み直して検証する。
+    /// 形式7の新しいプロジェクトを作る（マテリアルを 2 つ以上持つセットがあれば形式 9。セットは1〜64、どれも正本が要る）。書いたものは読み直して検証する。
     pub fn create(writer: WriterInfo, sets: &[SetSpec], current: &str) -> Result<Self> {
         let w = writer_json(&writer);
         let info = serde_json::json!({"format": 7, "savedBy": w, "createdBy": w});
@@ -372,6 +379,7 @@ impl Project {
                 spec.document.is_some(),
                 format!("新しいセット「{}」に正本がありません", spec.name),
             )?;
+            check_spec_materials(spec)?;
             list.push(set_json(None, spec));
             fresh.extend(put_set_entries(&mut files, spec)?);
         }
@@ -380,6 +388,8 @@ impl Project {
             "project.json".into(),
             Blob::from(serde_json::to_vec(&project)?),
         );
+        // マテリアルを 2 つ以上持つセットがあれば 9（使わなければ 7 のまま）
+        settle_format(&mut files)?;
         Self::from_package(Package::build(files, 3)?, &fresh)
     }
     /// 形式7のセットの並び・名前・マテリアル参照・現在のセットを置き換え、正本と合成を差し替える。旧形式は先にupgradedで
@@ -440,6 +450,7 @@ impl Project {
                 previous.is_some() || spec.document.is_some(),
                 format!("新しいセット「{}」に正本がありません", spec.name),
             )?;
+            check_spec_materials(spec)?;
             list.push(set_json(previous, spec));
             fresh.extend(put_set_entries(&mut files, spec)?);
         }
@@ -758,12 +769,14 @@ impl Project {
             format!("sets/{set_id}/{entry}")
         })
     }
-    /// 形式7のセットのマテリアル参照を置き換える。旧形式は先にupgradedで明示的に移行する。
-    pub fn with_material(&self, set_id: &str, material: MaterialRef) -> Result<Self> {
+    /// 形式7のセットのマテリアル参照を置き換える（1 個以上。2 個以上なら中身の形式 9 の `materials` に書き、1 個に戻せば形式も
+    /// 下がる）。旧形式は先にupgradedで明示的に移行する。
+    pub fn with_materials(&self, set_id: &str, materials: &[MaterialRef]) -> Result<Self> {
         check(
             self.is_current(),
             "マテリアル参照を変える前にupgradedで形式7へ移行してください",
         )?;
+        check_materials(set_id, materials)?;
         let mut files = self.original.files.clone();
         let mut project = json(&required(&files, "project.json")?, 65536)?;
         let set = project["sets"]
@@ -772,15 +785,7 @@ impl Project {
             .iter_mut()
             .find(|set| set["id"].as_str() == Some(set_id))
             .ok_or_else(|| Error::InvalidData("セットがありません".into()))?;
-        // 参照の既知の鍵だけを置換し、将来の拡張項目は保持する。
-        let reference = set["material"].as_object_mut().unwrap();
-        for key in ["name", "guid", "fileId", "unassigned", "slot"] {
-            reference.remove(key);
-        }
-        let Value::Object(replacement) = material.to_json() else {
-            unreachable!()
-        };
-        reference.extend(replacement);
+        put_materials(set, materials);
         files.insert(
             "project.json".into(),
             Blob::from(serde_json::to_vec(&project)?),
@@ -960,8 +965,8 @@ impl Project {
         for s in list {
             let id = id_text(s, "id")?.to_string();
             let name = label(s, "name")?.to_string();
-            let material = MaterialRef::read(&s["material"])?;
-            let unique_material = material.exclusive_key().is_none_or(|k| slots.insert(k));
+            let materials = read_materials(s, info.format)?;
+            let unique_material = claim_materials(&materials, &mut slots);
             check(
                 ids.insert(id.clone()) && names.insert(name.to_uppercase()) && unique_material,
                 "セットのID・名前・排他的なマテリアル参照が重複しています",
@@ -976,7 +981,7 @@ impl Project {
             sets.push(TextureSet {
                 id,
                 name,
-                material,
+                materials,
                 document,
                 selection,
             });
@@ -1041,18 +1046,87 @@ fn set_json(previous: Option<&Value>, spec: &SetSpec) -> Value {
         .unwrap_or_else(|| serde_json::json!({}));
     set["id"] = Value::from(spec.id.as_str());
     set["name"] = Value::from(spec.name.as_str());
-    if !set["material"].is_object() {
-        set["material"] = serde_json::json!({});
-    }
-    let reference = set["material"].as_object_mut().unwrap();
-    for key in ["name", "guid", "fileId", "unassigned", "slot"] {
-        reference.remove(key);
-    }
-    let Value::Object(replacement) = spec.material.to_json() else {
-        unreachable!()
-    };
-    reference.extend(replacement);
+    put_materials(&mut set, &spec.materials);
     set
+}
+/// セットのオブジェクトにマテリアルの鍵を書く: 1 個は `material`（前の `material` の知らないキーは残し、既知の鍵だけを置き換える）、
+/// 2 個以上は中身の形式 9 の `materials`（`material` は書かない。並びの要素は今の鍵だけで作り直す）。使わない方のキーは消す。
+fn put_materials(set: &mut Value, materials: &[MaterialRef]) {
+    let object = set.as_object_mut().expect("セットはオブジェクト");
+    if let [material] = materials {
+        object.remove("materials");
+        if !object.get("material").is_some_and(Value::is_object) {
+            object.insert("material".into(), serde_json::json!({}));
+        }
+        let reference = object["material"].as_object_mut().unwrap();
+        for key in ["name", "guid", "fileId", "unassigned", "slot"] {
+            reference.remove(key);
+        }
+        let Value::Object(replacement) = material.to_json() else {
+            unreachable!()
+        };
+        reference.extend(replacement);
+    } else {
+        object.remove("material");
+        object.insert(
+            "materials".into(),
+            Value::Array(materials.iter().map(MaterialRef::to_json).collect()),
+        );
+    }
+}
+/// セットのマテリアルの鍵がファイルの中で重ならないか（排他の鍵はファイル全体で 1 回、名前だけの鍵も同じセットの中では 1 回）。
+/// 排他の鍵は `slots` に記録する。
+fn claim_materials(materials: &[MaterialRef], slots: &mut HashSet<String>) -> bool {
+    let mut unique = true;
+    for (i, m) in materials.iter().enumerate() {
+        unique &= m.exclusive_key().is_none_or(|k| slots.insert(k)) && !materials[..i].contains(m);
+    }
+    unique
+}
+/// セットのマテリアルの鍵（`material` か、中身の形式 9 からの `materials`）。両方ある・`materials` が 2 個より少ない・形式 8 までの
+/// ファイルの `materials` は断る（黙って片方や 1 つ目だけを読まない）。
+fn read_materials(set: &Value, format: i32) -> Result<Vec<MaterialRef>> {
+    let Some(list) = set.get("materials") else {
+        return Ok(vec![MaterialRef::read(&set["material"])?]);
+    };
+    check(
+        set.get("material").is_none(),
+        "セットに material と materials の両方があります",
+    )?;
+    check(
+        format >= MULTI_MATERIAL_FORMAT,
+        format!("materials は中身の形式 {MULTI_MATERIAL_FORMAT} からです"),
+    )?;
+    let list = list
+        .as_array()
+        .ok_or_else(|| Error::InvalidData("materials が配列ではありません".into()))?;
+    check(
+        (2..=MAX_SET_MATERIALS).contains(&list.len()),
+        "materials の個数が範囲外です（2 個から。1 個は material に書きます）",
+    )?;
+    list.iter().map(MaterialRef::read).collect()
+}
+/// 書くセットのマテリアルの鍵を確かめる（1 個以上・上限まで・同じ鍵を 2 回持たない）。セットをまたぐ排他の鍵の重なりは、書いた後の
+/// 読み直しが断る。
+fn check_spec_materials(spec: &SetSpec) -> Result<()> {
+    check_materials(&spec.name, &spec.materials)
+}
+fn check_materials(set: &str, materials: &[MaterialRef]) -> Result<()> {
+    check(
+        !materials.is_empty(),
+        format!("セット「{set}」にマテリアルの鍵がありません"),
+    )?;
+    check(
+        materials.len() <= MAX_SET_MATERIALS,
+        format!("セット「{set}」のマテリアルの鍵が多すぎます"),
+    )?;
+    check(
+        materials
+            .iter()
+            .enumerate()
+            .all(|(i, m)| !materials[..i].contains(m)),
+        format!("セット「{set}」に同じマテリアルの鍵が重なっています"),
+    )
 }
 /// セットの正本と合成を置く（正本が無ければ何もしない）。
 /// セットの正本と合成を置く（正本が無ければ何もしない）。前の正本のヘッダーと部分は全部消してから置く（古い部分を残さない）。
@@ -1219,8 +1293,9 @@ fn moves_into_set(n: &str) -> bool {
         || n.starts_with("composite/")
         || n.starts_with("meshmap-") && n.ends_with(".bin")
 }
-/// 形式 7 以上の `ylp.json` の形式を、使っている機能に合わせる: 名前を付けて残した選択範囲のエントリが 1 つでもあれば 8、無ければ 7
-/// （使うファイルだけが 8。旧形式は `upgraded` が 7 にする）。変わらなければ `ylp.json` のバイト列に触らない。
+/// 形式 7 以上の `ylp.json` の形式を、使っている機能に合わせる: マテリアルを 2 つ以上持つセット（`materials`）があれば 9、名前を付けて
+/// 残した選択範囲のエントリが 1 つでもあれば 8、どちらも無ければ 7（使うファイルだけが上がる。旧形式は `upgraded` が 7 にする）。変わら
+/// なければ `ylp.json` のバイト列に触らない。
 fn settle_format(files: &mut Files) -> Result<()> {
     let Some(blob) = files.get("ylp.json") else {
         return Ok(());
@@ -1235,7 +1310,15 @@ fn settle_format(files: &mut Files) -> Result<()> {
     let uses = files.keys().any(|n| {
         split_set(n).is_some_and(|(_, leaf)| crate::saved_selections::is_entry_leaf(leaf))
     });
-    let want = if uses {
+    let multi = match files.get("project.json") {
+        Some(b) => json(&b.bytes()?, 65536)?["sets"]
+            .as_array()
+            .is_some_and(|sets| sets.iter().any(|s| s.get("materials").is_some())),
+        None => false,
+    };
+    let want = if multi {
+        i64::from(MULTI_MATERIAL_FORMAT)
+    } else if uses {
         i64::from(SAVED_SELECTIONS_FORMAT)
     } else {
         7

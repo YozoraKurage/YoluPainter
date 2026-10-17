@@ -69,7 +69,7 @@ fn main() {
                     g.clone(),
                     view,
                     &brush.base,
-                    Some(0),
+                    Some(&yolu_core::geometry::MaterialSet::one(0)),
                     start,
                     1.0,
                     SurfaceStrokeOptions::default(),

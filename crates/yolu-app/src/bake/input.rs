@@ -6,6 +6,7 @@
 //! 法線は再現しない）。接線・頂点カラー・マテリアルの識別は渡さない（接空間法線は UV から接線を作り、ID は頂点カラー・素材の識別を
 //! 選べない）。
 
+use yolu_core::geometry::MaterialSet;
 use yolu_core::mesh_maps::{reconstruct_normals, MeshBakeAttributes, MeshBakeInput};
 
 use crate::view3d::model::ViewModel;
@@ -71,13 +72,14 @@ pub fn build_input(model: &ViewModel) -> Result<MeshBakeInput, String> {
     .map_err(|e| e.to_string())
 }
 
-/// マテリアルの組（サブメッシュが指すマテリアル）を使うスロットの番号（通し番号の昇順）。
-pub fn slots_of_material(model: &ViewModel, material: i32) -> Vec<i32> {
+/// テクスチャセットのマテリアルの組（サブメッシュが指すマテリアル）を使うスロットの番号（通し番号の昇順・重なり無し。組の
+/// マテリアルごとのスロットの和）。
+pub fn slots_of_material(model: &ViewModel, material: &MaterialSet) -> Vec<i32> {
     let mut out = Vec::new();
     let mut slot = 0i32;
     for mesh in &model.meshes {
         for sub in &mesh.submeshes {
-            if sub.material == material {
+            if material.contains(sub.material) {
                 out.push(slot);
             }
             slot += 1;
@@ -132,9 +134,14 @@ mod tests {
     #[test]
     fn slots_run_through_renderers_and_submeshes_and_follow_the_material() {
         let m = model(vec![quad(0.0, true, [0, 1]), quad(2.0, true, [1, 0])]);
-        assert_eq!(slots_of_material(&m, 0), [0, 3]);
-        assert_eq!(slots_of_material(&m, 1), [1, 2]);
-        assert!(slots_of_material(&m, 2).is_empty());
+        assert_eq!(slots_of_material(&m, &MaterialSet::one(0)), [0, 3]);
+        assert_eq!(slots_of_material(&m, &MaterialSet::one(1)), [1, 2]);
+        assert!(slots_of_material(&m, &MaterialSet::one(2)).is_empty());
+        // 組のスロットは、マテリアルごとのスロットの和（昇順）
+        assert_eq!(
+            slots_of_material(&m, &MaterialSet::new([1, 0])),
+            [0, 1, 2, 3]
+        );
         let input = build_input(&m).unwrap();
         assert_eq!(input.triangle_count(), 4);
         assert_eq!(input.normal_source(), "authored");

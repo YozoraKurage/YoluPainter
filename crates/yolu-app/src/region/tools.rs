@@ -199,9 +199,10 @@ fn fill_candidates(app: &mut AppState, view: &CanvasView, at: Pos2) -> Vec<(u64,
     let Some(index) = app.region_index().filter(|_| !triangles.is_empty()) else {
         return Vec::new();
     };
+    let set = app.view3d.material.clone();
     let mut out: Vec<(u64, u32)> = Vec::new();
     for t in triangles {
-        let key = index.key(t, kind);
+        let key = index.key_in(t, kind, &set);
         if !out.iter().any(|(k, _)| *k == key) {
             out.push((key, t));
         }
@@ -238,7 +239,7 @@ pub fn under(app: &mut AppState, w: Where, at: Pos2) -> Under {
         Where::Surface(rect) => {
             let view = app.view3d.view.camera.view(rect.width(), rect.height());
             match pick(&model.geometry, &view, local(rect, at)) {
-                Some(hit) if hit.material == material => Under::Triangle(hit.triangle),
+                Some(hit) if material.contains(hit.material) => Under::Triangle(hit.triangle),
                 Some(hit) => Under::OtherSet(model.material_name(hit.material as usize, app.lang)),
                 None => Under::Nothing,
             }
@@ -288,7 +289,7 @@ pub(crate) fn surface_point(app: &mut AppState, rect: Rect, at: Pos2) -> Result<
     let Some(hit) = pick(&model.geometry, &view, local(rect, at)) else {
         return Err(Miss::Nothing);
     };
-    if hit.material != material {
+    if !material.contains(hit.material) {
         return Err(Miss::OtherSet(
             model.material_name(hit.material as usize, app.lang),
         ));
@@ -409,13 +410,13 @@ pub fn bucket(app: &mut AppState, w: Where, at: Pos2) {
             return;
         }
         let kind = app.region.kind;
-        let (Some(index), Some((model, _))) = (app.region_index(), app.region_model()) else {
+        let (Some(index), Some((model, set))) = (app.region_index(), app.region_model()) else {
             return needs_model(app);
         };
         // 種ごとの範囲の和（同じ三角形は 1 回）を 1 つの範囲にする
         let mut region: Vec<u32> = hits
             .iter()
-            .flat_map(|&t| index.region(t, kind).iter().copied())
+            .flat_map(|&t| index.region_in(t, kind, &set).into_owned())
             .collect();
         region.sort_unstable();
         region.dedup();
@@ -607,16 +608,20 @@ fn add_region_at(app: &mut AppState, w: Where, at: Pos2) {
 /// 三角形 `t` を含む範囲を足す。
 fn add_region(app: &mut AppState, t: u32) {
     let kind = app.region.kind;
-    let (Some(index), Some((model, _))) = (app.region_index(), app.region_model()) else {
+    let (Some(index), Some((model, set))) = (app.region_index(), app.region_model()) else {
         return;
     };
     let Some(drag) = app.region.drag.as_mut() else {
         return;
     };
-    if !drag.keys.insert(index.key(t, kind)) {
+    if !drag.keys.insert(index.key_in(t, kind, &set)) {
         return;
     }
-    let triangles = pixel_triangles(&app.session.doc, &model.geometry, index.region(t, kind));
+    let triangles = pixel_triangles(
+        &app.session.doc,
+        &model.geometry,
+        &index.region_in(t, kind, &set),
+    );
     if let Err(e) = drag.fill.add(&mut app.session.doc, &triangles) {
         // core は失敗した塗りを取り消してから返す（予算を超えたなど）。札を手放して知らせる
         app.region.drag = None;
@@ -802,7 +807,8 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Option<Pos2>) {
         app.region.hover = None;
         return;
     };
-    let key = index.key(t, kind);
+    let set = app.view3d.material.clone();
+    let key = index.key_in(t, kind, &set);
     if let Some(h) = app.region.hover.as_mut() {
         if h.id_key.is_none()
             && h.key == key
@@ -814,7 +820,7 @@ pub fn update_hover(app: &mut AppState, w: Where, at: Option<Pos2>) {
             return;
         }
     }
-    let tris = index.region(t, kind).to_vec();
+    let tris = index.region_in(t, kind, &set).into_owned();
     let outline = index.outline(&tris);
     app.region.hover = Some(Hover {
         on_surface: w.is_surface(),

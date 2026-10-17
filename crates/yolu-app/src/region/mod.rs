@@ -208,9 +208,14 @@ impl AppState {
     }
 
     /// 今のモデル（見せる形）と、描くテクスチャセットのマテリアルの組。無ければ None（モデルが無い・今のセットがモデルに無い）。
-    pub fn region_model(&self) -> Option<(Arc<crate::view3d::model::ViewModel>, i32)> {
+    pub fn region_model(
+        &self,
+    ) -> Option<(
+        Arc<crate::view3d::model::ViewModel>,
+        yolu_core::geometry::MaterialSet,
+    )> {
         let model = self.view3d.model.clone()?;
-        (self.view3d.material >= 0).then_some((model, self.view3d.material))
+        (!self.view3d.material.is_empty()).then(|| (model, self.view3d.material.clone()))
     }
 
     /// `region_model` が None の理由（モデルが無い、またはモデルはあるが今のテクスチャセットが付いていない）。3D のブラシと同じ文。
@@ -240,7 +245,7 @@ impl AppState {
         self.region
             .grid
             .clone()
-            .filter(|g| g.is_for(&model.geometry, material))
+            .filter(|g| g.is_for(&model.geometry, &material))
     }
 
     /// 今のセットの UV の格子（モデルかセットが替わるまで作り直さない）。
@@ -250,9 +255,9 @@ impl AppState {
         if !r
             .grid
             .as_ref()
-            .is_some_and(|g| g.is_for(&model.geometry, material))
+            .is_some_and(|g| g.is_for(&model.geometry, &material))
         {
-            r.grid = Some(Arc::new(UvGrid::new(&model.geometry, material)));
+            r.grid = Some(Arc::new(UvGrid::new(&model.geometry, &material)));
         }
         r.grid.clone()
     }

@@ -310,10 +310,10 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
         crate::sets::guid_string(doc.id()),
         "Gone".into(),
         false,
-        MaterialRef::Material {
+        vec![MaterialRef::Material {
             name: "Gone".into(),
             asset: None,
-        },
+        }],
         None,
         doc,
     );
@@ -354,6 +354,63 @@ fn bakes_each_checked_set_with_its_own_slots_and_skips_a_set_outside_the_model()
     let hair = s.session.sets.get(1).unwrap().uid;
     s.apply(bake(BakeAction::Set(hair, false)));
     assert_eq!(s.bakeable_sets(), [0]);
+}
+
+/// セット 0 に 2 つ目のマテリアル（Hair）を移して、Hair のセットを外す（2 つのマテリアルを 1 つのセットに）。
+fn merge_hair_into_first(s: &mut AppState) {
+    let hair = s.session.sets.get(1).unwrap().materials[0].clone();
+    s.session.sets.get_mut(0).unwrap().materials.push(hair);
+    let uid = s.session.sets.get(1).unwrap().uid;
+    s.remove_sets(&[uid]).unwrap();
+    s.bind_model_only();
+}
+
+#[test]
+fn a_set_with_two_materials_bakes_the_union_of_their_slots_and_a_changed_set_makes_its_maps_stale()
+{
+    let mut s = AppState::new(64, 64);
+    s.bake.backend = BakeBackend::Cpu;
+    let _ = s.receive_link_model(&two_quads(1, 0.0));
+    quick(&mut s);
+    merge_hair_into_first(&mut s);
+    assert_eq!(s.session.sets.len(), 1);
+    assert_eq!(s.session.sets.get(0).unwrap().bound, [0, 1]);
+    assert_eq!(s.set_slots(0), Some(vec![0, 1]), "組のスロットの和（昇順）");
+    s.apply(bake(BakeAction::Start));
+    s.wait_bake();
+    let map = s
+        .session
+        .sets
+        .get(0)
+        .unwrap()
+        .mesh_maps
+        .get(MeshMapKind::Position)
+        .unwrap()
+        .clone();
+    assert_eq!(map.provenance().target_slots, [0, 1]);
+    assert_eq!(
+        s.mesh_map_check(0, MeshMapKind::Position).unwrap().state,
+        MeshMapState::Current
+    );
+    // 両方のマテリアルの UV（左右の半分）に焼いてある
+    let at = |u: f64| {
+        let (w, h) = (map.width(), map.height());
+        map.coverage()[(h / 2) * w + (u * w as f64) as usize]
+    };
+    assert!(at(0.25) > 0 && at(0.75) > 0, "組の 2 つのマテリアルの面");
+    // 組から Hair を外すと、焼いたマップは古い（スロットが替わった）
+    s.session.sets.get_mut(0).unwrap().materials.truncate(1);
+    s.bind_model_only();
+    assert_eq!(s.set_slots(0), Some(vec![0]));
+    let check = s.mesh_map_check(0, MeshMapKind::Position).unwrap();
+    assert_eq!(check.state, MeshMapState::Stale);
+    assert_eq!(
+        check.reasons,
+        [MeshMapStaleReason::Slots {
+            baked: vec![0, 1],
+            now: vec![0],
+        }]
+    );
 }
 
 #[test]

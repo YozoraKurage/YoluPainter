@@ -22,10 +22,10 @@ fn spec(id: &str, name: &str) -> SetSpec {
     SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::Material {
+        materials: vec![MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(NativeDocument::from_core(&doc).unwrap().into()),
         composites: Vec::new(),
     }

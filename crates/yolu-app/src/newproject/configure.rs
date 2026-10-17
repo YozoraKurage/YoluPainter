@@ -109,24 +109,25 @@ pub(super) fn draft_op(app: &AppState, win: &mut NpWindow, i: usize, op: DraftOp
                 }
             }
         }
-        DraftOp::Material(group) => {
-            let taken = group.is_some_and(|g| {
-                win.drafts
-                    .iter()
-                    .enumerate()
-                    .any(|(j, d)| j != i && d.material == Some(g))
-            });
-            if taken {
+        DraftOp::Material(group, on) => {
+            let Some(g) = groups.get(group) else {
+                return;
+            };
+            if i >= win.drafts.len() {
                 return;
             }
-            if let Some(d) = win.drafts.get_mut(i) {
-                match group.and_then(|g| groups.get(g)) {
-                    Some(g) => {
-                        d.material = Some(g.index);
-                        d.key = g.key.clone();
-                    }
-                    None => d.material = None,
+            if on {
+                if win.drafts[i].paints(group) {
+                    return;
                 }
+                // ほかの行のマテリアルなら、そこから移す（1 つのマテリアルは 1 つのセットだけ。移した先の行が空になっても行は残す）
+                for d in &mut win.drafts {
+                    d.keys.retain(|(_, m)| *m != Some(group));
+                }
+                let d = &mut win.drafts[i];
+                d.keys.push((g.key.clone(), Some(group)));
+            } else {
+                win.drafts[i].keys.retain(|(_, m)| *m != Some(group));
             }
         }
         DraftOp::Size(w, h) => {
@@ -140,7 +141,48 @@ pub(super) fn draft_op(app: &AppState, win: &mut NpWindow, i: usize, op: DraftOp
     }
 }
 
-/// 足すセットの下書きを作る（`group` がマテリアルの組、None ならどの組にも付けない）。
+/// 新規: マテリアルの組をテクスチャセットにする・しない（`NpAction::Material`）。入れるなら、どの行にも無いときだけ、その組だけの行を
+/// マテリアルの順の所に足す（上限まで）。外すなら、その組を描く行から外し、空になった行は消す。どの行にもマテリアルが残らなくなるなら外さない。
+pub(super) fn choose_new_material(app: &AppState, win: &mut NpWindow, group: usize, on: bool) {
+    let groups = win.groups(app);
+    win.error = None;
+    let Some(g) = groups.get(group) else {
+        return;
+    };
+    let Some(at) = win.drafts.iter().position(|d| d.paints(group)) else {
+        if on {
+            if win.drafts.len() >= MAX_SETS {
+                win.error = Some(crate::lang::refusals::set_limit(app.lang));
+                return;
+            }
+            let draft = new_draft(app, win, Some(g));
+            let at = win
+                .drafts
+                .iter()
+                .position(|d| d.materials().first().is_some_and(|m| *m > group))
+                .unwrap_or(win.drafts.len());
+            win.drafts.insert(at, draft);
+        }
+        return;
+    };
+    if on {
+        return;
+    }
+    let left = win
+        .drafts
+        .iter()
+        .map(|d| d.materials().len())
+        .sum::<usize>();
+    if left <= 1 {
+        return;
+    }
+    win.drafts[at].keys.retain(|(_, m)| *m != Some(group));
+    if win.drafts[at].keys.is_empty() && win.drafts.len() > 1 {
+        win.drafts.remove(at);
+    }
+}
+
+/// 足すセットの下書きを作る（`group` がマテリアルの組、None ならどの組にも付けない = マテリアルなし）。大きさは今の解像度。
 fn new_draft(app: &AppState, win: &NpWindow, group: Option<&super::Group>) -> SetDraft {
     let lang = app.lang;
     let base = match group {
@@ -152,18 +194,13 @@ fn new_draft(app: &AppState, win: &NpWindow, group: Option<&super::Group>) -> Se
         ),
     };
     let name = unique(&base, win.drafts.iter().map(|d| d.name.as_str()));
-    let key = match group {
-        Some(g) => g.key.clone(),
-        None => {
-            let also: Vec<&MaterialRef> = win.drafts.iter().map(|d| &d.key).collect();
-            MaterialRef::PendingSlot(app.unbound_pending_slot(&also))
-        }
-    };
     SetDraft {
         uid: None,
         name,
-        material: group.map(|g| g.index),
-        key,
+        keys: group
+            .map(|g| (g.key.clone(), Some(g.index)))
+            .into_iter()
+            .collect(),
         size: (win.resolution, win.resolution),
         current: (0, 0),
         read_only: false,
@@ -180,7 +217,7 @@ pub(super) fn add_draft(app: &AppState, win: &mut NpWindow) {
     let groups = win.groups(app);
     let free = groups
         .iter()
-        .find(|g| win.drafts.iter().all(|d| d.material != Some(g.index)));
+        .find(|g| win.drafts.iter().all(|d| !d.paints(g.index)));
     let draft = new_draft(app, win, free);
     win.drafts.push(draft);
 }
@@ -190,7 +227,7 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
     win.error = None;
     let groups = win.groups(app);
     for g in &groups {
-        if win.drafts.iter().all(|d| d.material != Some(g.index)) {
+        if win.drafts.iter().all(|d| !d.paints(g.index)) {
             if win.drafts.len() >= MAX_SETS {
                 // 上限で足せなかったマテリアルがある
                 win.error = Some(crate::lang::refusals::set_limit(app.lang));
@@ -206,11 +243,79 @@ pub(super) fn add_unused(app: &AppState, win: &mut NpWindow) {
 pub fn unused_groups(app: &AppState, win: &NpWindow) -> usize {
     win.groups(app)
         .iter()
-        .filter(|g| win.drafts.iter().all(|d| d.material != Some(g.index)))
+        .filter(|g| win.drafts.iter().all(|d| !d.paints(g.index)))
         .count()
 }
 
+/// 下書きのマテリアルの鍵を、セットの鍵にする（今のモデルの組に付いた鍵はその組の鍵、付いていない鍵はそのまま）。空なら、どのマテリアルにも
+/// 付けない仮のスロットの番号（`placed` は、ここまでに並べたセットの鍵）。
+fn set_keys(
+    app: &AppState,
+    d: &SetDraft,
+    groups: &[super::Group],
+    placed: &[MaterialRef],
+) -> Vec<MaterialRef> {
+    let keys: Vec<MaterialRef> = d
+        .keys
+        .iter()
+        .map(|(k, g)| {
+            g.and_then(|g| groups.get(g))
+                .map_or_else(|| k.clone(), |g| g.key.clone())
+        })
+        .collect();
+    if keys.is_empty() {
+        let also: Vec<&MaterialRef> = placed.iter().collect();
+        vec![MaterialRef::PendingSlot(app.unbound_pending_slot(&also))]
+    } else {
+        keys
+    }
+}
+
+/// モデルに無いマテリアルの鍵だけを持つセットの数（どのマテリアルにも付けないセット = マテリアルなしは数えない）。
+fn missing_sets(app: &AppState) -> usize {
+    app.session
+        .sets
+        .iter()
+        .filter(|s| {
+            s.bound.is_empty()
+                && s.materials
+                    .iter()
+                    .any(|m| !matches!(m, MaterialRef::PendingSlot(_)))
+        })
+        .count()
+}
+
+/// 下書きの描くマテリアルの番号（今のモデルの組の番号。昇順）。
+fn bound_of(d: &SetDraft, groups: &[super::Group]) -> Vec<u32> {
+    d.materials()
+        .into_iter()
+        .filter(|g| *g < groups.len())
+        .map(|g| g as u32)
+        .collect()
+}
+
 // ───────── 計画 ─────────
+
+/// 計画の行の真ん中の文字（「→ 割り当てるマテリアルの名前」）と、モデルに無いことの警告の印。
+fn plan_middle(lang: crate::lang::Lang, d: &SetDraft, groups: &[super::Group]) -> (String, bool) {
+    let names: Vec<&str> = d
+        .materials()
+        .into_iter()
+        .filter_map(|g| groups.get(g))
+        .map(|g| g.name.as_str())
+        .collect();
+    if names.is_empty() {
+        (
+            format!("→ {}", lang.t("newproject-not-in-this-model")),
+            true,
+        )
+    } else {
+        (
+            format!("→ {}", crate::sets::materials_label(lang, &names, |_| true)),
+            false,
+        )
+    }
+}
 
 /// 下書きを検めて、適用の計画（消す・大きさ・モデル）と確かめの一覧を作る。断るときは理由。何も変えない。
 pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
@@ -261,8 +366,8 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
     }
     // 同じマテリアルを 2 つのセットが描かない
     for (i, a) in drafts.iter().enumerate() {
-        if let Some(group) = a.material {
-            if let Some(b) = drafts[i + 1..].iter().find(|b| b.material == Some(group)) {
+        for group in a.materials() {
+            if let Some(b) = drafts[i + 1..].iter().find(|b| b.paints(group)) {
                 return Err(lang.f(
                     "newproject-and-paint-the-same-material",
                     &[("name", &a.name.trim()), ("name_2", &b.name.trim())],
@@ -379,13 +484,7 @@ pub(super) fn plan(app: &AppState, win: &NpWindow) -> Result<Plan, String> {
             }
         }
         for d in drafts.iter().filter(|d| d.uid.is_some()) {
-            let (middle, warning) = match d.material.and_then(|g| groups.get(g)) {
-                Some(g) => (format!("→ {}", g.name), false),
-                None => (
-                    format!("→ {}", lang.t("newproject-not-in-this-model")),
-                    true,
-                ),
-            };
+            let (middle, warning) = plan_middle(lang, d, &groups);
             rows.push(PlanRow {
                 left: d.name.trim().to_owned(),
                 middle,
@@ -478,11 +577,15 @@ pub(super) fn apply(
         .as_ref()
         .map(groups_of)
         .unwrap_or_default();
-    // 足す・消す・並べる・名前とマテリアル
+    // 足す・消す・並べる・名前とマテリアル（マテリアルを全部ほかへ移したセットは、どのマテリアルにも付けない鍵のまま残す）
     let mut order: Vec<u32> = Vec::with_capacity(win.drafts.len());
     let mut added: Vec<u32> = Vec::new();
+    let mut placed: Vec<MaterialRef> = Vec::new();
     for (d, doc) in win.drafts.iter().zip(fresh) {
         let name = clean_name(&d.name).expect("計画で検めた");
+        let keys = set_keys(app, d, &groups, &placed);
+        placed.extend(keys.iter().cloned());
+        let bound = bound_of(d, &groups);
         match (d.uid, doc) {
             (Some(uid), _) => {
                 order.push(uid);
@@ -492,27 +595,18 @@ pub(super) fn apply(
                             set.name = name;
                             set.auto_name = false;
                         }
-                        match d.material.and_then(|g| groups.get(g)) {
-                            Some(g) => {
-                                set.material = g.key.clone();
-                                set.bound = Some(g.index as u32);
-                            }
-                            None => set.bound = None,
-                        }
+                        set.materials = keys;
+                        set.bound = bound;
                     }
                 }
             }
             (None, Some(doc)) => {
-                let key = d.key.clone();
                 let i = app
                     .session
                     .sets
-                    .push(guid_string(doc.id()), name, false, key, None, doc);
+                    .push(guid_string(doc.id()), name, false, keys, None, doc);
                 if let Some(set) = app.session.sets.get_mut(i) {
-                    set.bound = d
-                        .material
-                        .and_then(|g| groups.get(g))
-                        .map(|g| g.index as u32);
+                    set.bound = bound;
                     order.push(set.uid);
                     added.push(set.uid);
                 }
@@ -554,12 +648,7 @@ pub(super) fn apply(
     app.np.generation += 1;
     app.np.reopening = None;
     // 知らせ
-    let missing = app
-        .session
-        .sets
-        .iter()
-        .filter(|s| s.bound.is_none())
-        .count();
+    let missing = missing_sets(app);
     // 縮小で外れた覚えた選択範囲（履歴を消すので取り消しでも戻らない）。名前の変更を済ませたあとのセットの名前と数
     let dropped: Vec<(String, usize)> = resized
         .iter()

@@ -42,8 +42,8 @@ pub use package::{
 };
 pub use project::{
     entry_form, FormatInfo, MaterialAsset, MaterialRef, Note, Project, Resource, SetSpec,
-    TextureSet, WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MODEL_PATH_MAX, RESOURCE_ENTRIES,
-    ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
+    TextureSet, WriterInfo, MAX_FORMAT, MAX_PROJECT_SETS, MAX_SET_MATERIALS, MODEL_PATH_MAX,
+    MULTI_MATERIAL_FORMAT, RESOURCE_ENTRIES, ROOT_ENTRIES, SAVED_SELECTIONS_FORMAT, SET_ENTRIES,
 };
 pub use selection::{Selection, SelectionTile};
 use std::fmt;

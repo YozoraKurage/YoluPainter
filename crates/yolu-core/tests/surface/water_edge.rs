@@ -79,7 +79,7 @@ fn draw_3d_on(b: &Brush, scale: u32, cancel: bool, ground: bool) -> Vec<u8> {
         g.clone(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen(x0, y0),
         1.0,
         SurfaceStrokeOptions::default(),

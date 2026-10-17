@@ -193,7 +193,7 @@ fn digest(g: &Arc<SurfaceGeometry>, v: &Variant, threads: usize) -> String {
             g.clone(),
             view,
             &v.brush.base,
-            Some(0),
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
             c + Vec2::new(-r, -r * 0.2),
             0.6,
             v.options,

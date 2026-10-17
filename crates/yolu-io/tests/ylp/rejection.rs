@@ -115,7 +115,10 @@ fn legacy_material_slot_fallback_is_reported() {
     let mut f = files(1);
     f.insert("view.json".into(), b"{\"materialSlot\":-1}".to_vec());
     let p = open(f).unwrap();
-    assert_eq!(p.sets()[0].material, yolu_io::MaterialRef::PendingSlot(0));
+    assert_eq!(
+        p.sets()[0].materials[0],
+        yolu_io::MaterialRef::PendingSlot(0)
+    );
     assert!(p
         .notes()
         .iter()

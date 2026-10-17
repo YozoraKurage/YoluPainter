@@ -74,10 +74,10 @@ fn spec(id: &str, name: &str, doc: &Document) -> SetSpec {
     SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::Material {
+        materials: vec![MaterialRef::Material {
             name: name.into(),
             asset: None,
-        },
+        }],
         document: Some(NativeDocument::from_core(doc).unwrap().into()),
         composites: composite_pngs(doc).unwrap(),
     }
@@ -585,10 +585,10 @@ fn text_project(name: &str, look: Option<Vec<u8>>) -> Project {
         &[SetSpec {
             id: SET_A.into(),
             name: "Body".into(),
-            material: MaterialRef::Material {
+            materials: vec![MaterialRef::Material {
                 name: "Body".into(),
                 asset: None,
-            },
+            }],
             document: Some(native.into()),
             composites: composite_pngs(&doc).unwrap(),
         }],

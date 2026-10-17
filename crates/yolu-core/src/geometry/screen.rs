@@ -25,6 +25,7 @@ use glam::{DVec2, Vec2};
 use super::build::FastMap;
 use super::camera::CameraView;
 use super::dab::DabRefusal;
+use super::materials::{admits, MaterialSet};
 use super::paint::{pick, SurfaceStrokeError};
 use super::project::{AreaCover, ProjectionSettings, SurfaceProjector, SweepPixel};
 use super::SurfaceGeometry;
@@ -48,7 +49,7 @@ pub enum ScreenShape<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScreenCoverSettings<'a> {
     /// 塗るテクスチャセット（None なら全部）。
-    pub material: Option<i32>,
+    pub material: Option<&'a MaterialSet>,
     pub projection: ProjectionSettings,
     pub shape: ScreenShape<'a>,
     /// テクセルごとの画面の位置も持つ（グラデーション）。
@@ -451,7 +452,7 @@ pub fn cover_screen(
     let margin = if edged {
         let texel_at = |p: DVec2| {
             pick(&geometry, view, p.as_vec2())
-                .filter(|h| settings.material.is_none_or(|m| m == h.material))
+                .filter(|h| admits(settings.material, h.material))
                 .and_then(|h| projector.metric_at(&h))
                 .map(|m| m.eigen().0.sqrt())
         };

@@ -280,7 +280,7 @@ pub struct SurfaceCtx {
     /// 編集する形（点を置く・動かす・重ね表示。ポーズを付けた形）。
     pub model: Arc<ViewModel>,
     pub fingerprint: Arc<str>,
-    pub material: i32,
+    pub material: yolu_core::geometry::MaterialSet,
     /// 描く形（休みの形）。ポーズを変えてもテクスチャのパスの絵が変わらないよう、描く・描き直す・ブラシの大きさの換算はこの形で。
     pub render: Arc<yolu_core::geometry::SurfaceGeometry>,
 }
@@ -522,12 +522,12 @@ impl AppState {
         let Some(model) = self.view3d.full_model().cloned() else {
             return Err(self.lang.t("pathtool-no-model").into());
         };
-        if self.view3d.material < 0 {
+        if self.view3d.material.is_empty() {
             return Err(self.region_missing_reason());
         }
         Ok(SurfaceCtx {
             fingerprint: self.path_fingerprint(&model.geometry),
-            material: self.view3d.material,
+            material: self.view3d.material.clone(),
             render: model.rest_geometry().clone(),
             model,
         })
@@ -1525,9 +1525,9 @@ impl AppState {
             }
             // 今のセットは 3D ビューが描くマテリアル（試しの立方体は 0）、ほかのセットは結び付いたマテリアル
             let material = if i == self.session.sets.current_index() {
-                self.view3d.material
+                self.view3d.material.clone()
             } else {
-                set.bound.map_or(-1, |m| m as i32)
+                set.bound_set()
             };
             let doc = self.set_doc_mut(i);
             if doc
@@ -1544,7 +1544,7 @@ impl AppState {
                 doc,
                 old.rest_geometry(),
                 new.rest_geometry(),
-                material,
+                &material,
                 hidden.as_deref(),
                 lang,
             ));

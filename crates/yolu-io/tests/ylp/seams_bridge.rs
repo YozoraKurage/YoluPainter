@@ -133,7 +133,7 @@ fn a_ylp_keeps_the_setting() {
     let spec = SetSpec {
         id: "0f0f0f0f-0000-4000-8000-000000000032".into(),
         name: "Set".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(native.clone().into()),
         composites: vec![],
     };

@@ -104,7 +104,7 @@ fn draw(brush: &Brush, points: &[(f64, f64, f64)]) -> (usize, Vec<u8>) {
         g.clone(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         input(points[0]),
         SurfaceStrokeOptions::default(),
     )
@@ -241,7 +241,7 @@ fn try_draw(
         g.clone(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         input(points[0]),
         SurfaceStrokeOptions::default(),
     )

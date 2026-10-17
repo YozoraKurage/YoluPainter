@@ -39,6 +39,7 @@ pub use yolu_gpu::{BakeAdapter, BakeBackend, BakeRun, FallbackKind, GpuBakeMetho
 pub use maps::MeshMapSet;
 pub use overlay::{MeshMapView, Overlay};
 use yolu_core::export::occlusion_byte;
+use yolu_core::geometry::MaterialSet;
 use yolu_core::mesh_maps::{
     material_identity, MeshBakeBudget, MeshBakeInput, MeshBakeReport, MeshBakeResult,
     MeshBakeSettings, MeshBakeStatus, MeshIdSource, MeshMapCheck, MeshMapExpectation, MeshMapKind,
@@ -697,7 +698,7 @@ impl AppState {
     }
 
     /// セットが付いているモデルのマテリアルの番号（モデルの記録の無い立方体は、今のセットがマテリアル 0）。
-    pub(crate) fn set_material(&self, index: usize) -> Option<i32> {
+    pub(crate) fn set_material(&self, index: usize) -> Option<MaterialSet> {
         let model = self.view3d.full_model()?;
         let set = self.session.sets.get(index)?;
         match &self.session.model {
@@ -707,16 +708,16 @@ impl AppState {
                     return None;
                 }
                 let _ = model;
-                set.bound.map(|m| m as i32)
+                (!set.bound.is_empty()).then(|| set.bound_set())
             }
-            None => (index == self.session.sets.current_index()).then_some(0),
+            None => (index == self.session.sets.current_index()).then(|| MaterialSet::one(0)),
         }
     }
 
-    /// セットが受け持つスロット（モデルに無ければ None）。
+    /// セットが受け持つスロット（組のマテリアルのスロットの和。昇順・重なり無し。モデルに無ければ None）。
     pub fn set_slots(&self, index: usize) -> Option<Vec<i32>> {
         let material = self.set_material(index)?;
-        let slots = input::slots_of_material(self.bake_model()?, material);
+        let slots = input::slots_of_material(self.bake_model()?, &material);
         (!slots.is_empty()).then_some(slots)
     }
 

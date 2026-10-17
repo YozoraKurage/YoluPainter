@@ -463,7 +463,7 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         let spec = |id: &str, name: &str, slot: u16, doc: yolu_io::DocumentSource| SetSpec {
             id: id.to_owned(),
             name: name.into(),
-            material: MaterialRef::PendingSlot(slot),
+            materials: vec![MaterialRef::PendingSlot(slot)],
             document: Some(doc),
             composites: vec![],
         };
@@ -560,7 +560,7 @@ fn two_sets(dir: &TempDir, name: &str) -> (PathBuf, Vec<String>) {
         .map(|(k, doc)| SetSpec {
             id: ids[k].clone(),
             name: format!("セット{k}"),
-            material: MaterialRef::PendingSlot(k as u16),
+            materials: vec![MaterialRef::PendingSlot(k as u16)],
             document: Some(NativeDocument::from_core(doc).unwrap().into()),
             composites: vec![],
         })
@@ -702,7 +702,7 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
             .map(|(k, doc)| SetSpec {
                 id: ids[k].clone(),
                 name: format!("セット{k}"),
-                material: MaterialRef::PendingSlot(k as u16),
+                materials: vec![MaterialRef::PendingSlot(k as u16)],
                 document: Some(NativeDocument::from_core(doc).unwrap().into()),
                 composites: vec![],
             })

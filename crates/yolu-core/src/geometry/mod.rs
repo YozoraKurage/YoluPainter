@@ -15,6 +15,7 @@ mod build;
 mod camera;
 mod cover;
 mod dab;
+mod materials;
 mod model;
 mod paint;
 mod project;
@@ -45,6 +46,7 @@ pub use cover::{CoverParams, CoverPixel, SurfaceCoverStroke};
 pub use dab::{
     DabRefusal, SurfaceBrushBudget, SurfaceDabResult, SurfacePixel, SurfaceVisibilityCache,
 };
+pub use materials::{admits, MaterialSet};
 pub use model::{cube_sphere, demo_cube, model_triangles, ModelMesh, Submesh};
 pub use paint::{
     pick, world_radius, SurfaceCloneSource, SurfaceEffect, SurfaceInput, SurfaceStroke,

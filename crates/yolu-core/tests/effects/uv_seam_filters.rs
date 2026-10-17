@@ -51,7 +51,10 @@ fn model(b: impl Fn(f32, f32) -> Vec2) -> Arc<UvTopology> {
     let mut t = quad(0., 0., |x, y| Vec2::new(0.1 + 0.3 * x, 0.1 + 0.3 * y)).to_vec();
     t.extend(quad(1., 0., b));
     let g = SurfaceGeometry::new(t, 1, DEFAULT_WELD_TOLERANCE).unwrap();
-    Arc::new(UvTopology::new(Arc::new(g), Some(0)))
+    Arc::new(UvTopology::new(
+        Arc::new(g),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
+    ))
 }
 
 fn straight() -> Arc<UvTopology> {
@@ -738,7 +741,10 @@ fn the_same_layout_as_another_object_keeps_the_topology_and_evaluates_nothing_ag
             Vec2::new(0.6 + 0.3 * x, 0.1 + 0.3 * y)
         }));
         let g = SurfaceGeometry::new(t, 1, DEFAULT_WELD_TOLERANCE).unwrap();
-        Arc::new(UvTopology::new(Arc::new(g), Some(0)))
+        Arc::new(UvTopology::new(
+            Arc::new(g),
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
+        ))
     };
     doc.set_effect_inputs(inputs_with(&posed, 1)).unwrap();
     assert!(Arc::ptr_eq(
@@ -788,7 +794,10 @@ fn another_uv_layout_redraws_the_seam_crossing_blur_and_not_the_map_reader() {
     with_model(&mut alone, &rotated);
     assert_ne!(whole(&alone), before);
     // 同じ UV でスロットのマテリアルの組だけが違う位相も別の物
-    let other_material = Arc::new(UvTopology::new(rotated.geometry().clone(), Some(1)));
+    let other_material = Arc::new(UvTopology::new(
+        rotated.geometry().clone(),
+        Some(&yolu_core::geometry::MaterialSet::one(1)),
+    ));
     let settled = evaluated(&doc);
     doc.set_effect_inputs(inputs_with(&other_material, 1))
         .unwrap();

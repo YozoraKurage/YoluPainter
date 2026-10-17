@@ -187,9 +187,7 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
         );
         return false;
     };
-    let Some(set) =
-        (0..app.session.sets.len()).find(|&i| app.set_material(i) == Some(hit.material))
-    else {
+    let Some(set) = (0..app.session.sets.len()).find(|&i| set_paints(app, i, hit.material)) else {
         app.refuse(
             Source::Eyedropper,
             lang.t("eyedrop-no-texture-set-for-this"),
@@ -205,6 +203,11 @@ pub fn pick_surface(app: &mut AppState, rect: Rect, at: Pos2) -> bool {
         return false;
     };
     pick_texel(app, set, x, y)
+}
+
+/// セット `i` が 3D でマテリアル `material` の面を描くか（そのマテリアルを組に持つ）。
+fn set_paints(app: &AppState, i: usize, material: i32) -> bool {
+    app.set_material(i).is_some_and(|s| s.contains(material))
 }
 
 /// 取る元のレイヤー（選んでいるレイヤーだけ。全レイヤーを対象にしているとき・選んでいるのがグループ・レイヤーが無いとき・今のセットでないセットは合成から = None）。
@@ -319,7 +322,7 @@ pub fn sample_surface(app: &mut AppState, rect: Rect, at: Pos2) -> Option<Color3
         &view,
         Vec2::new(at.x - rect.left(), at.y - rect.top()),
     )?;
-    let set = (0..app.session.sets.len()).find(|&i| app.set_material(i) == Some(hit.material))?;
+    let set = (0..app.session.sets.len()).find(|&i| set_paints(app, i, hit.material))?;
     let (w, h) = {
         let doc = app.set_doc(set);
         (doc.width(), doc.height())

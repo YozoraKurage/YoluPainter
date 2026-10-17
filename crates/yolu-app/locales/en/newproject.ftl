@@ -67,7 +67,6 @@ newproject-notices-while-loading-tip = { $notes } notices while loading
 newproject-resampling = Resampling
 newproject-how-a-texture-set-is-tip = How a texture set is resampled when its size changes. Automatic uses area average to shrink and bilinear to enlarge
 newproject-applying-resamples-the-resized-texture-tip = Applying resamples the resized texture sets and clears their undo history (the old size cannot be restored)
-newproject-resolution = Resolution
 newproject-normal-map-format = Normal map format
 newproject-unity-reads-normal-maps-as-tip = Unity reads normal maps as OpenGL. The format is used when exporting files
 newproject-bake-mesh-maps-after-creating = Bake mesh maps after creating
@@ -78,15 +77,11 @@ newproject-the-model-is-not-ready-tip = The model is not ready
 newproject-apply = Apply
 newproject-create = Create
 newproject-texture-sets = Texture Sets
-newproject-meshes = Meshes
-newproject-material-slot-s = { $slots } material slot(s)
-newproject-at-least-one-stays-checked-tip = At least one stays checked
 newproject-read-only-texture-set-tip = Read-only texture set
 newproject-a-new-empty-texture-set-tip = A new, empty texture set
 newproject-texture-set-name-tip = Texture set name
 newproject-size-of-the-new-texture-tip = Size of the new texture set
 newproject-size-of-this-texture-set-tip = Size of this texture set (now { $current } × { $current_2 }). A new size resamples its layers when you apply
-newproject-the-material-this-texture-set = The material this texture set paints (every mesh that uses it)
 newproject-the-material-this-texture-set-2 = The material this texture set paints
 newproject-a-project-keeps-at-least-tip = A project keeps at least one texture set
 newproject-remove-this-texture-set-asked-tip = Remove this texture set (asked again when you apply; its work is lost)
@@ -109,3 +104,9 @@ newproject-name-separator = ,{" "}
 newproject-removed = {" "}Removed: { $names }.
 newproject-count-unit = { $n }
 newproject-removed-texture-sets = Removed texture sets: { $names }.
+newproject-sets-without-a-material-tip = { $empty } { $empty ->
+    [one] set
+   *[other] sets
+} without a material
+newproject-no-material = No material
+newproject-the-materials-this-texture-set-tip = Materials this texture set paints

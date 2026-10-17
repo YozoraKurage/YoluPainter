@@ -303,7 +303,7 @@ fn mirrored_surface(
                 tolerance,
                 plane.reflect_direction(n),
                 super::REBIND_MAX_NODE_VISITS,
-                t.material,
+                Some(&crate::geometry::MaterialSet::one(t.material)),
             )
             .ok()??;
         let tangent = match p.tangent {

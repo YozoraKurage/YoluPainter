@@ -1,13 +1,15 @@
-//! テクスチャセット。Unity 版と同じく、モデルのマテリアル 1 つ = セット 1 つで、文書（yolu-core の `Document`）はセットに 1 つ。
+//! テクスチャセット。Unity 版と同じく、初めはモデルのマテリアル 1 つ = セット 1 つで、文書（yolu-core の `Document`）はセットに 1 つ。
+//! 1 つのセットは複数のマテリアルを持てる（それらの面を同じテクスチャに描く。.ylp の中身の形式 9）。
 //!
 //! 今のセットの文書は `AppState.doc`（キャンバス・レイヤーのパネル・試験が読む所）に置き、ほかのセットの文書は各セットの中にしまう。
 //! 切り替えはこの 2 つを入れ替える（文書を写さない）。Undo・Redo は文書ごと（セットごと）。
 //!
 //! マテリアルの鍵は .ylp の形式 7 の `material` と同じ 3 つの形（名前と、アセットなら GUID と localFileId／マテリアルの無いスロットの
-//! 全部／まだ結び付けていないスロットの番号）。モデルのマテリアルへの照合も Unity 版と同じ順: 識別子（GUID と localFileId）→
+//! 全部／まだ結び付けていないスロットの番号）。セットは鍵を 1 つ以上持つ（どのマテリアルにも結び付けないセットは、モデルのスロットの
+//! 数より後の仮のスロットの番号の鍵）。モデルのマテリアルへの照合は鍵ごとに Unity 版と同じ順: 識別子（GUID と localFileId）→
 //! Unassigned → 名前（大文字小文字まで同じ、次に区別せず）→ スロットの番号。1 つのマテリアルは 1 つのセットだけが持つ。合わない
-//! セットも残し、鍵も変えない（3D に見えないだけ。そのマテリアルを持つモデルに替えればまた付く）。合ったセットの鍵はそのマテリアルの
-//! 鍵に書き換える（スロットの番号や古いアセットの鍵のまま保存しない）。
+//! 鍵も残し、変えない（3D に見えないだけ。そのマテリアルを持つモデルに替えればまた付く）。合った鍵はそのマテリアルの鍵に書き換える
+//! （スロットの番号や古いアセットの鍵のまま保存しない）。
 
 use std::sync::atomic::Ordering;
 
@@ -192,11 +194,12 @@ pub struct TextureSet {
     pub name: String,
     /// 名前をマテリアルから付けたまま（利用者が変えていない。マテリアルに結び付けたとき名前を付け直す）。
     pub auto_name: bool,
-    pub material: MaterialRef,
+    /// マテリアルの鍵（1 個以上。並びは .ylp に書く順）。
+    pub materials: Vec<MaterialRef>,
     /// 目（3D ビューと Unity に見せるか。2D のキャンバスでは隠しても描ける。保存しない）。
     pub visible: bool,
-    /// 今のモデルの、このセットが受け持つマテリアルの番号（モデルが無い・合わなければ None）。
-    pub bound: Option<u32>,
+    /// 今のモデルの、このセットが受け持つマテリアルの番号（昇順・重なり無し。モデルが無い・どの鍵も合わなければ空）。
+    pub bound: Vec<u32>,
     /// 読むだけの理由（core で扱えない中身がある・効果の入力がそろわない）。あれば描く・レイヤーを変える・名前を変えるを断る。
     pub read_only: Option<String>,
     /// 読むだけの理由が、効果の入力（メッシュマップ・モデルのルート・画像）がそろわないこと。入力がそろったら編集できるようになる
@@ -213,6 +216,33 @@ impl TextureSet {
     pub fn is_current(&self) -> bool {
         self.stash.is_none()
     }
+
+    /// 今のモデルで描くマテリアルの組（`bound` を core の組にしたもの。どれにも付いていなければ空）。
+    pub fn bound_set(&self) -> yolu_core::geometry::MaterialSet {
+        yolu_core::geometry::MaterialSet::new(self.bound.iter().map(|m| *m as i32))
+    }
+
+    /// 今のモデルのマテリアル `material` を受け持つか。
+    pub fn binds(&self, material: u32) -> bool {
+        self.bound.contains(&material)
+    }
+}
+
+/// マテリアルの名前の並びの閉じた形（「Face, Ear」。3 つより多い・入りきらなければ「先頭 ほか n」、英語は「先頭 +n」）。`fits` は文字の
+/// 並びが欄に入るか（画面の幅で測る）。
+pub fn materials_label(
+    lang: crate::lang::Lang,
+    names: &[&str],
+    fits: impl Fn(&str) -> bool,
+) -> String {
+    let full = names.join(", ");
+    if names.len() <= 1 || (names.len() <= 3 && fits(&full)) {
+        return full;
+    }
+    lang.f(
+        "sets-materials-and-more",
+        &[("first", &names[0]), ("more", &(names.len() - 1))],
+    )
 }
 
 /// テクスチャセットの並び（上から表示する順）と今のセット。
@@ -232,6 +262,9 @@ fn next_uid() -> u32 {
 pub fn first_set_name(lang: crate::lang::Lang) -> &'static str {
     lang.t("sets-texture-set-1")
 }
+
+/// 開いたセット 1 つ（id・名前・マテリアルの鍵・読むだけの理由・文書）。
+pub type OpenedSet = (String, String, Vec<MaterialRef>, Option<String>, Document);
 
 impl TextureSets {
     /// モデル無しの最初のセット 1 つ（文書は呼ぶ側の `AppState.doc`。鍵はスロット 0 = 最初に読んだモデルの最初のスロットのマテリアル）。
@@ -266,9 +299,9 @@ impl TextureSets {
                 id: guid_string(doc.id()),
                 name: first_set_name(lang).into(),
                 auto_name: true,
-                material: MaterialRef::PendingSlot(0),
+                materials: vec![MaterialRef::PendingSlot(0)],
                 visible: true,
-                bound: None,
+                bound: Vec::new(),
                 read_only: None,
                 waiting_inputs: false,
                 saved: None,
@@ -341,10 +374,7 @@ impl TextureSets {
 
     /// 開いたセットを並べる（id・名前・鍵・読むだけの理由・文書）。返すのは並びと、今のセット（current）の文書。どのセットも
     /// 「開いた時のまま」の印を付ける。
-    pub fn from_parts(
-        parts: Vec<(String, String, MaterialRef, Option<String>, Document)>,
-        current: usize,
-    ) -> (TextureSets, Document) {
+    pub fn from_parts(parts: Vec<OpenedSet>, current: usize) -> (TextureSets, Document) {
         assert!(!parts.is_empty(), "セットが 1 つは要る");
         let current = current.min(parts.len() - 1);
         let mut sets = TextureSets {
@@ -352,9 +382,9 @@ impl TextureSets {
             current,
         };
         let mut current_doc = None;
-        for (i, (id, name, material, read_only, doc)) in parts.into_iter().enumerate() {
+        for (i, (id, name, materials, read_only, doc)) in parts.into_iter().enumerate() {
             let saved = Some((doc.id(), doc.revision()));
-            let index = sets.push(id, name, false, material, read_only, doc);
+            let index = sets.push(id, name, false, materials, read_only, doc);
             sets.list[index].saved = saved;
             if i == current {
                 current_doc = sets.list[index].stash.take().map(|s| s.doc);
@@ -366,15 +396,15 @@ impl TextureSets {
     /// 新しく作ったセットを並べる（id・名前・名前をマテリアルから付けたままか・鍵・文書）。`from_parts` と違い、どのセットも「保存した時のまま」の印を付けない
     /// （ファイルに無いセットなので、保存は正本を書く）。返すのは並びと、最初のセットの文書（今のセット）。
     pub fn from_new_parts(
-        parts: Vec<(String, String, bool, MaterialRef, Document)>,
+        parts: Vec<(String, String, bool, Vec<MaterialRef>, Document)>,
     ) -> (TextureSets, Document) {
         assert!(!parts.is_empty(), "セットが 1 つは要る");
         let mut sets = TextureSets {
             list: Vec::with_capacity(parts.len()),
             current: 0,
         };
-        for (id, name, auto_name, material, doc) in parts {
-            sets.push(id, name, auto_name, material, None, doc);
+        for (id, name, auto_name, materials, doc) in parts {
+            sets.push(id, name, auto_name, materials, None, doc);
         }
         let first = sets.list[0].stash.take().map(|s| s.doc);
         (sets, first.expect("最初のセットの文書"))
@@ -416,26 +446,27 @@ impl TextureSets {
         true
     }
 
-    /// セットを後ろに足す（文書はしまう）。返すのは位置。
+    /// セットを後ろに足す（文書はしまう）。`materials` は 1 個以上の鍵。返すのは位置。
     #[allow(clippy::too_many_arguments)]
     pub fn push(
         &mut self,
         id: String,
         name: String,
         auto_name: bool,
-        material: MaterialRef,
+        materials: Vec<MaterialRef>,
         read_only: Option<String>,
         doc: Document,
     ) -> usize {
+        debug_assert!(!materials.is_empty(), "セットは鍵を 1 つは持つ");
         let uid = next_uid();
         self.list.push(TextureSet {
             uid,
             id,
             name,
             auto_name,
-            material,
+            materials,
             visible: true,
-            bound: None,
+            bound: Vec::new(),
             read_only,
             waiting_inputs: false,
             saved: None,
@@ -459,18 +490,24 @@ pub(crate) fn exclusive_key(material: &MaterialRef) -> Option<String> {
 }
 
 /// セットの鍵をモデルのマテリアルに照合する（Unity 版と同じ順: 識別子 → Unassigned → 名前（同じ、次に大文字小文字を区別せず）→
-/// スロット）。返すのはマテリアルごとのセットの位置。1 つのセットは 1 つのマテリアルにしか付かない。`slots` はスロットごとの
-/// マテリアルの番号（`SceneModel::slots`）。
+/// スロット）。`sets` はセットごとの鍵の並び。照合は鍵ごとで、1 つの鍵は 1 つのマテリアルにしか付かない（1 つのセットは鍵の数だけ
+/// マテリアルを持てる）。同じ順の中では、セットの並び・鍵の並びの順に探す。返すのはマテリアルごとの（セットの位置・鍵の位置）。
+/// `slots` はスロットごとのマテリアルの番号（`SceneModel::slots`）。
 pub fn match_materials(
-    sets: &[&MaterialRef],
+    sets: &[&[MaterialRef]],
     materials: &[LinkKey],
     slots: &[u32],
-) -> Vec<Option<usize>> {
+) -> Vec<Option<(usize, usize)>> {
+    let keys: Vec<(usize, usize, &MaterialRef)> = sets
+        .iter()
+        .enumerate()
+        .flat_map(|(si, ks)| ks.iter().enumerate().map(move |(ki, k)| (si, ki, k)))
+        .collect();
     let mut by_material: Vec<Option<usize>> = vec![None; materials.len()];
-    let mut taken = vec![false; sets.len()];
-    let assign = |by: &mut Vec<Option<usize>>, taken: &mut Vec<bool>, m: usize, s: usize| {
-        by[m] = Some(s);
-        taken[s] = true;
+    let mut taken = vec![false; keys.len()];
+    let assign = |by: &mut Vec<Option<usize>>, taken: &mut Vec<bool>, m: usize, k: usize| {
+        by[m] = Some(k);
+        taken[k] = true;
     };
     // 1. 識別子
     for (mi, m) in materials.iter().enumerate() {
@@ -481,22 +518,22 @@ pub fn match_materials(
         else {
             continue;
         };
-        let found = (0..sets.len()).find(|&si| {
-            !taken[si]
-                && matches!(sets[si], MaterialRef::Material { asset: Some(a), .. }
+        let found = (0..keys.len()).find(|&ki| {
+            !taken[ki]
+                && matches!(keys[ki].2, MaterialRef::Material { asset: Some(a), .. }
                     if a.guid == *guid && a.file_id == *file_id)
         });
-        if let Some(si) = found {
-            assign(&mut by_material, &mut taken, mi, si);
+        if let Some(ki) = found {
+            assign(&mut by_material, &mut taken, mi, ki);
         }
     }
     // 2. マテリアルの無いスロット
     for (mi, m) in materials.iter().enumerate() {
         if by_material[mi].is_none() && *m == LinkKey::Unassigned {
-            if let Some(si) =
-                (0..sets.len()).find(|&si| !taken[si] && *sets[si] == MaterialRef::Unassigned)
+            if let Some(ki) =
+                (0..keys.len()).find(|&ki| !taken[ki] && *keys[ki].2 == MaterialRef::Unassigned)
             {
-                assign(&mut by_material, &mut taken, mi, si);
+                assign(&mut by_material, &mut taken, mi, ki);
             }
         }
     }
@@ -516,29 +553,32 @@ pub fn match_materials(
                     a.to_lowercase() == name.to_lowercase()
                 }
             };
-            let found = (0..sets.len()).find(|&si| {
-                !taken[si] && matches!(sets[si], MaterialRef::Material { name: n, .. } if same(n))
+            let found = (0..keys.len()).find(|&ki| {
+                !taken[ki] && matches!(keys[ki].2, MaterialRef::Material { name: n, .. } if same(n))
             });
-            if let Some(si) = found {
-                assign(&mut by_material, &mut taken, mi, si);
+            if let Some(ki) = found {
+                assign(&mut by_material, &mut taken, mi, ki);
             }
         }
     }
     // 5. まだ結び付けていないスロットの番号
-    for si in 0..sets.len() {
-        let MaterialRef::PendingSlot(n) = sets[si] else {
+    for ki in 0..keys.len() {
+        let MaterialRef::PendingSlot(n) = keys[ki].2 else {
             continue;
         };
-        if taken[si] {
+        if taken[ki] {
             continue;
         }
         if let Some(&mi) = slots.get(*n as usize) {
             if (mi as usize) < materials.len() && by_material[mi as usize].is_none() {
-                assign(&mut by_material, &mut taken, mi as usize, si);
+                assign(&mut by_material, &mut taken, mi as usize, ki);
             }
         }
     }
     by_material
+        .into_iter()
+        .map(|k| k.map(|k| (keys[k].0, keys[k].1)))
+        .collect()
 }
 
 /// モデルにセットを結び付けた結果。
@@ -593,6 +633,19 @@ impl AppState {
         }
     }
 
+    /// セット `index` が今のモデルで受け持つマテリアルの名前（マテリアルの番号の順。モデルが無い・付いていなければ空）。
+    pub fn bound_material_names(&self, index: usize) -> Vec<String> {
+        let (Some(set), Some(model)) = (self.session.sets.get(index), self.session.model.as_ref())
+        else {
+            return Vec::new();
+        };
+        set.bound
+            .iter()
+            .filter_map(|m| model.materials.get(*m as usize))
+            .map(|info| crate::newproject::set_name_for(&info.key))
+            .collect()
+    }
+
     /// 今のセットが読むだけなら、その理由。
     pub fn read_only_reason(&self) -> Option<&str> {
         self.session.sets.current().read_only.as_deref()
@@ -605,10 +658,7 @@ impl AppState {
 
     /// モデルのマテリアルの番号を受け持つセットの位置。
     pub fn set_for_material(&self, material: u32) -> Option<usize> {
-        self.session
-            .sets
-            .iter()
-            .position(|s| s.bound == Some(material))
+        self.session.sets.iter().position(|s| s.binds(material))
     }
 
     /// 今のセットを替える（描いている間は断る）。表示（拡大・回転）と選んだレイヤーはセットごとに覚える。
@@ -762,25 +812,34 @@ impl AppState {
     fn bind_model_to_sets(&mut self, create: bool) -> BindReport {
         let mut report = BindReport::default();
         for s in &mut self.session.sets.list {
-            s.bound = None;
+            s.bound.clear();
         }
         let Some(model) = &self.session.model else {
             return report;
         };
         let keys: Vec<LinkKey> = model.materials.iter().map(|m| m.key.clone()).collect();
         let matched = {
-            let refs: Vec<&MaterialRef> =
-                self.session.sets.list.iter().map(|s| &s.material).collect();
+            let refs: Vec<&[MaterialRef]> = self
+                .session
+                .sets
+                .list
+                .iter()
+                .map(|s| s.materials.as_slice())
+                .collect();
             match_materials(&refs, &keys, &model.slots)
         };
         let infos = model.materials.clone();
-        for (mi, si) in matched.iter().enumerate() {
-            let Some(si) = *si else { continue };
+        // マテリアルの番号の順に見るので、`bound` は昇順になる。合わない鍵は残す（そのマテリアルを持つモデルに替えればまた付く）
+        for (mi, at) in matched.iter().enumerate() {
+            let Some((si, ki)) = *at else { continue };
             let set = &mut self.session.sets.list[si];
-            set.bound = Some(mi as u32);
-            set.material = material_from_link(&keys[mi]);
-            report.matched += 1;
-            if set.auto_name {
+            if set.bound.is_empty() {
+                report.matched += 1;
+            }
+            set.bound.push(mi as u32);
+            set.materials[ki] = material_from_link(&keys[mi]);
+            // 名前はセットの最初の鍵のマテリアルから付ける
+            if set.auto_name && ki == 0 {
                 let base = name_for(&keys[mi]);
                 let others: Vec<String> = self
                     .session
@@ -795,8 +854,8 @@ impl AppState {
                     unique_name(&base, others.iter().map(String::as_str));
             }
         }
-        for (mi, si) in matched.iter().enumerate() {
-            if si.is_some() || !create {
+        for (mi, at) in matched.iter().enumerate() {
+            if at.is_some() || !create {
                 continue;
             }
             // .ylp は 64 セットまで。超えるマテリアルにはセットを作らず、数だけ知らせる（新規プロジェクトのウィンドウと同じ扱い）
@@ -814,11 +873,11 @@ impl AppState {
                 guid_string(doc.id()),
                 name.clone(),
                 true,
-                material_from_link(&keys[mi]),
+                vec![material_from_link(&keys[mi])],
                 None,
                 doc,
             );
-            self.session.sets.list[index].bound = Some(mi as u32);
+            self.session.sets.list[index].bound = vec![mi as u32];
             report.created_sets.push(self.session.sets.list[index].uid);
             report.created.push(name);
         }
@@ -826,7 +885,7 @@ impl AppState {
             .session
             .sets
             .iter()
-            .filter(|s| s.bound.is_none())
+            .filter(|s| s.bound.is_empty())
             .map(|s| s.name.clone())
             .collect();
         report
@@ -895,12 +954,9 @@ impl AppState {
             .as_ref()
             .map(crate::newproject::groups_of)
             .unwrap_or_default();
-        let free = groups.iter().find(|g| {
-            self.session
-                .sets
-                .iter()
-                .all(|s| s.bound != Some(g.index as u32))
-        });
+        let free = groups
+            .iter()
+            .find(|g| self.session.sets.iter().all(|s| !s.binds(g.index as u32)));
         let doc = {
             let like = &self.session.doc;
             crate::newproject::new_set_document(
@@ -921,17 +977,17 @@ impl AppState {
             ),
         };
         let name = unique_name(&base, self.session.sets.iter().map(|s| s.name.as_str()));
-        let key = match free {
+        let key = vec![match free {
             Some(g) => g.key.clone(),
             None => MaterialRef::PendingSlot(self.unbound_pending_slot(&[])),
-        };
+        }];
         let uid_index =
             self.session
                 .sets
                 .push(guid_string(doc.id()), name.clone(), true, key, None, doc);
         let uid = self.session.sets.get(uid_index).expect("足した").uid;
         if let Some(set) = self.session.sets.get_mut(uid_index) {
-            set.bound = free.map(|g| g.index as u32);
+            set.bound = free.map(|g| g.index as u32).into_iter().collect();
         }
         self.session.mark_modified();
         self.switch_set(uid_index)?;
@@ -949,7 +1005,7 @@ impl AppState {
             self.session
                 .sets
                 .iter()
-                .any(|s| s.material == MaterialRef::PendingSlot(n))
+                .any(|s| s.materials.contains(&MaterialRef::PendingSlot(n)))
                 || also.iter().any(|k| **k == MaterialRef::PendingSlot(n))
         };
         let mut slot = self
@@ -1015,47 +1071,66 @@ impl AppState {
         Ok(names)
     }
 
-    /// 2 つのセットが同じ排他の鍵（アセット・Unassigned・仮のスロットの番号）を持たないようにする（保存は重なりを断るので）。
-    /// マテリアルに付いたセットの鍵を残し、ほかのセットの鍵は、Unassigned は名前に、仮のスロットの番号はモデルの外の番号に、
-    /// アセットは名前だけに替える。
+    /// 2 つのセット（と 1 つのセットの 2 つの鍵）が同じ排他の鍵（アセット・Unassigned・仮のスロットの番号）を持たないようにする（保存は
+    /// 重なりを断るので）。マテリアルに付いたセットの鍵を残し、ほかの鍵は、Unassigned は名前に、仮のスロットの番号はモデルの外の番号に、
+    /// アセットは名前だけに替える（名前はセットの名前）。同じセットの中で同じになった名前だけの鍵は 1 つにまとめる。
     pub fn dedupe_set_keys(&mut self) {
         let mut seen = std::collections::HashSet::new();
         let order: Vec<usize> = (0..self.session.sets.len())
-            .filter(|i| self.session.sets.get(*i).is_some_and(|s| s.bound.is_some()))
-            .chain(
-                (0..self.session.sets.len())
-                    .filter(|i| self.session.sets.get(*i).is_some_and(|s| s.bound.is_none())),
-            )
+            .filter(|i| {
+                self.session
+                    .sets
+                    .get(*i)
+                    .is_some_and(|s| !s.bound.is_empty())
+            })
+            .chain((0..self.session.sets.len()).filter(|i| {
+                self.session
+                    .sets
+                    .get(*i)
+                    .is_some_and(|s| s.bound.is_empty())
+            }))
             .collect();
         for i in order {
-            let Some(key) = self
-                .session
-                .sets
-                .get(i)
-                .and_then(|s| exclusive_key(&s.material))
-            else {
-                continue;
-            };
-            if seen.insert(key) {
-                continue;
-            }
-            let (material, name) = {
-                let set = self.session.sets.get(i).expect("範囲内");
-                (set.material.clone(), set.name.clone())
-            };
-            let next = match material {
-                MaterialRef::PendingSlot(_) => {
-                    MaterialRef::PendingSlot(self.unbound_pending_slot(&[]))
+            let count = self.session.sets.get(i).map_or(0, |s| s.materials.len());
+            for k in 0..count {
+                let Some(key) = self
+                    .session
+                    .sets
+                    .get(i)
+                    .and_then(|s| exclusive_key(&s.materials[k]))
+                else {
+                    continue;
+                };
+                if seen.insert(key) {
+                    continue;
                 }
-                MaterialRef::Unassigned | MaterialRef::Material { .. } => {
-                    MaterialRef::Material { name, asset: None }
+                let (material, name) = {
+                    let set = self.session.sets.get(i).expect("範囲内");
+                    (set.materials[k].clone(), set.name.clone())
+                };
+                let next = match material {
+                    MaterialRef::PendingSlot(_) => {
+                        MaterialRef::PendingSlot(self.unbound_pending_slot(&[]))
+                    }
+                    MaterialRef::Unassigned | MaterialRef::Material { .. } => {
+                        MaterialRef::Material { name, asset: None }
+                    }
+                };
+                if let Some(key) = exclusive_key(&next) {
+                    seen.insert(key);
                 }
-            };
-            if let Some(key) = exclusive_key(&next) {
-                seen.insert(key);
+                if let Some(set) = self.session.sets.get_mut(i) {
+                    set.materials[k] = next;
+                }
             }
             if let Some(set) = self.session.sets.get_mut(i) {
-                set.material = next;
+                let mut unique: Vec<MaterialRef> = Vec::with_capacity(set.materials.len());
+                for m in set.materials.drain(..) {
+                    if !unique.contains(&m) {
+                        unique.push(m);
+                    }
+                }
+                set.materials = unique;
             }
         }
     }
@@ -1408,7 +1483,7 @@ mod tests {
             name: "Gone".into(),
             asset: None,
         };
-        let sets = [&orphan, &slot, &hair, &unassigned, &renamed, &a];
+        let sets = [&orphan, &slot, &hair, &unassigned, &renamed, &a].map(std::slice::from_ref);
         let materials = [
             asset("Skin", 'a', 2100000), // 識別子で a
             asset("NewName", 'b', 7),    // 名前が変わっても識別子で renamed
@@ -1419,7 +1494,17 @@ mod tests {
         ];
         let slots = [0, 4, 5];
         let got = match_materials(&sets, &materials, &slots);
-        assert_eq!(got, [Some(5), Some(4), Some(3), Some(2), Some(1), None]);
+        assert_eq!(
+            got,
+            [
+                Some((5, 0)),
+                Some((4, 0)),
+                Some((3, 0)),
+                Some((2, 0)),
+                Some((1, 0)),
+                None
+            ]
+        );
     }
 
     #[test]
@@ -1433,17 +1518,25 @@ mod tests {
             asset: None,
         };
         // 小文字のセットが先にあっても、同じ名前のセットが先に取る
-        let got = match_materials(&[&lower, &upper], &[named("Skin"), named("SKIN")], &[]);
-        assert_eq!(got, [Some(1), Some(0)]);
+        let got = match_materials(
+            &[&lower, &upper].map(std::slice::from_ref),
+            &[named("Skin"), named("SKIN")],
+            &[],
+        );
+        assert_eq!(got, [Some((1, 0)), Some((0, 0))]);
         // 2 つのセットが同じスロットを指しても、1 つだけが付く
         let s0 = MaterialRef::PendingSlot(0);
         let s0b = MaterialRef::PendingSlot(0);
-        let got = match_materials(&[&s0, &s0b], &[named("Body")], &[0]);
-        assert_eq!(got, [Some(0)]);
+        let got = match_materials(
+            &[&s0, &s0b].map(std::slice::from_ref),
+            &[named("Body")],
+            &[0],
+        );
+        assert_eq!(got, [Some((0, 0))]);
         // 識別子の違うアセットは名前で付く（アセットを複製して GUID が変わった など）
         let old = material_from_link(&asset("Body", 'c', 1));
-        let got = match_materials(&[&old], &[asset("Body", 'd', 1)], &[]);
-        assert_eq!(got, [Some(0)]);
+        let got = match_materials(&[std::slice::from_ref(&old)], &[asset("Body", 'd', 1)], &[]);
+        assert_eq!(got, [Some((0, 0))]);
     }
 
     fn info(key: LinkKey, size: u32) -> MaterialInfo {
@@ -1537,8 +1630,11 @@ mod tests {
         assert_eq!(s.session.sets.len(), 2);
         let first = s.session.sets.get(0).unwrap();
         assert_eq!(first.name, "Skin", "自動の名前はマテリアルの名前に付け直す");
-        assert_eq!(first.material, material_from_link(&asset("Skin", 'a', 5)));
-        assert_eq!(first.bound, Some(0));
+        assert_eq!(
+            first.materials[0],
+            material_from_link(&asset("Skin", 'a', 5))
+        );
+        assert_eq!(first.bound, [0]);
         assert_eq!(
             s.session.doc.id(),
             painted,
@@ -1546,9 +1642,90 @@ mod tests {
         );
         assert_eq!(s.session.doc.width(), 64, "大きさも変えない");
         let second = s.session.sets.get(1).unwrap();
-        assert_eq!(second.bound, Some(1));
+        assert_eq!(second.bound, [1]);
         assert_eq!(s.set_doc(1).width(), DEFAULT_DOCUMENT_SIZE);
         assert_eq!(s.set_for_material(1), Some(1));
+    }
+
+    #[test]
+    fn a_set_keeps_the_keys_of_its_materials_and_binds_only_those_the_model_has() {
+        let mut s = AppState::new(64, 64);
+        s.session.model = Some(scene(vec![
+            info(named("Face"), 256),
+            info(named("Ear"), 256),
+            info(named("Body"), 256),
+        ]));
+        s.bind_model();
+        assert_eq!(s.session.sets.len(), 3);
+        // Ear を Face のセットへ移し、Ear のセットを外す
+        let ear = s.session.sets.get(1).unwrap().materials[0].clone();
+        s.session.sets.get_mut(0).unwrap().materials.push(ear);
+        let uid = s.session.sets.get(1).unwrap().uid;
+        s.remove_sets(&[uid]).unwrap();
+        s.bind_model_only();
+        assert_eq!(s.session.sets.get(0).unwrap().bound, [0, 1]);
+        assert_eq!(s.session.sets.current().bound_set().as_slice(), [0, 1]);
+        assert_eq!(s.set_for_material(1), Some(0), "Ear の面はこのセット");
+        assert_eq!(s.bound_material_names(0), ["Face", "Ear"]);
+        // Ear の無いモデルに替える: 組から Ear だけが外れ、鍵は残る（Ear のあるモデルに戻せば付く）
+        s.session.model = Some(scene(vec![
+            info(named("Body"), 256),
+            info(named("Face"), 256),
+        ]));
+        let report = s.bind_model_only();
+        assert!(report.unmatched.is_empty());
+        let face = s.session.sets.get(0).unwrap();
+        assert_eq!(face.bound, [1]);
+        assert_eq!(face.materials.len(), 2, "見つからない鍵も残す");
+        assert_eq!(s.session.sets.get(1).unwrap().bound, [0]);
+        // どれも無いモデル: 全部外れてマテリアルなしの行（描いた物は消さない）
+        s.session.model = Some(scene(vec![info(named("Tail"), 256)]));
+        let report = s.bind_model_only();
+        assert_eq!(report.unmatched, ["Face", "Body"]);
+        assert!(s.session.sets.get(0).unwrap().bound.is_empty());
+        assert_eq!(s.session.sets.len(), 2);
+        // 戻すと、両方にまた付く
+        s.session.model = Some(scene(vec![
+            info(named("Face"), 256),
+            info(named("Ear"), 256),
+            info(named("Body"), 256),
+        ]));
+        s.bind_model_only();
+        assert_eq!(s.session.sets.get(0).unwrap().bound, [0, 1]);
+    }
+
+    #[test]
+    fn the_closed_form_lists_up_to_three_names_and_shortens_the_rest() {
+        let fits = |_: &str| true;
+        assert_eq!(
+            materials_label(crate::lang::Lang::Ja, &["Face"], fits),
+            "Face"
+        );
+        assert_eq!(
+            materials_label(crate::lang::Lang::Ja, &["Face", "Ear"], fits),
+            "Face, Ear"
+        );
+        assert_eq!(
+            materials_label(
+                crate::lang::Lang::Ja,
+                &["Body", "Cloth", "Hair", "Tongue"],
+                fits
+            ),
+            "Body ほか 3"
+        );
+        assert_eq!(
+            materials_label(
+                crate::lang::Lang::En,
+                &["Body", "Cloth", "Hair", "Tongue"],
+                fits
+            ),
+            "Body +3"
+        );
+        // 入りきらなければ、3 つまででも短く
+        assert_eq!(
+            materials_label(crate::lang::Lang::En, &["Face", "Ear"], |_| false),
+            "Face +1"
+        );
     }
 
     #[test]
@@ -1600,9 +1777,9 @@ mod tests {
         assert_eq!(report.created, ["B"]);
         assert_eq!(report.unmatched, ["A"]);
         let a = s.session.sets.get(0).unwrap();
-        assert_eq!(a.bound, None);
+        assert_eq!(a.bound, Vec::<u32>::new());
         assert_eq!(
-            a.material,
+            a.materials[0],
             MaterialRef::Material {
                 name: "A".into(),
                 asset: None
@@ -1613,7 +1790,7 @@ mod tests {
         s.session.model = Some(scene(vec![info(named("A"), 256)]));
         let report = s.bind_model();
         assert_eq!((report.matched, report.created.len()), (1, 0));
-        assert_eq!(s.session.sets.get(0).unwrap().bound, Some(0));
+        assert_eq!(s.session.sets.get(0).unwrap().bound, [0]);
     }
 
     #[test]
@@ -1629,7 +1806,7 @@ mod tests {
             "顔",
             "利用者の付けた名前は残す"
         );
-        assert_eq!(s.session.sets.current().bound, Some(0));
+        assert_eq!(s.session.sets.current().bound, [0]);
     }
 
     // ───────── 今の文書を替える口 ─────────
@@ -1644,7 +1821,7 @@ mod tests {
             guid_string(doc.id()),
             "B".into(),
             false,
-            MaterialRef::Unassigned,
+            vec![MaterialRef::Unassigned],
             None,
             doc,
         );

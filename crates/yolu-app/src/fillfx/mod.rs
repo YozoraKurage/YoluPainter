@@ -693,7 +693,7 @@ impl AppState {
             self.refuse(Source::FillLayer, lang.t("fillfx-not-on-the-model"));
             return;
         };
-        if hit.material != material {
+        if !material.contains(hit.material) {
             let name = model.material_name(hit.material as usize, lang);
             self.refuse(
                 Source::FillLayer,

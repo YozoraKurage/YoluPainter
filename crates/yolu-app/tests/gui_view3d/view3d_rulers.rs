@@ -758,7 +758,7 @@ pub(crate) fn two_materials() -> (H, Rect) {
         )
         .unwrap();
         state.view3d_mut().set_model(model);
-        state.view3d_mut().material = 0;
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
             yaw: 0.0,

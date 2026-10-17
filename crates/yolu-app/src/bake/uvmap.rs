@@ -15,7 +15,7 @@ use egui::{
     pos2, Color32, ColorImage, CursorIcon, Event, Id, PointerButton, Pos2, Rect, Sense, Shape,
     Stroke, TextureHandle, TextureId, TextureOptions, Ui,
 };
-use yolu_core::geometry::SurfaceGeometry;
+use yolu_core::geometry::{MaterialSet, SurfaceGeometry};
 use yolu_core::glam::Vec2;
 use yolu_core::mesh_maps::MeshOverlapPriority;
 
@@ -49,7 +49,7 @@ const SQUARE_BG: Color32 = Color32::from_rgb(0x1B, 0x1B, 0x1E);
 /// 見取り図の中身（モデル・マテリアル・アイランドごと。ウィンドウが出ている間に 1 回作る）。
 pub struct MapData {
     geometry: Arc<SurfaceGeometry>,
-    material: i32,
+    material: MaterialSet,
     islands: Arc<Islands>,
     grid: UvGrid,
     /// このセットの三角形（受けたままの形の番号の昇順）。
@@ -62,10 +62,14 @@ pub struct MapData {
 }
 
 impl MapData {
-    fn new(geometry: Arc<SurfaceGeometry>, material: i32, islands: Arc<Islands>) -> MapData {
+    fn new(
+        geometry: Arc<SurfaceGeometry>,
+        material: MaterialSet,
+        islands: Arc<Islands>,
+    ) -> MapData {
         let triangles = geometry.triangles();
         let tris: Vec<u32> = (0..triangles.len() as u32)
-            .filter(|&i| triangles[i as usize].material == material)
+            .filter(|&i| material.contains(triangles[i as usize].material))
             .collect();
         let involved: HashSet<usize> = tris
             .iter()
@@ -85,7 +89,7 @@ impl MapData {
             ranges.entry(island).or_insert(i..i).end = i + 1;
             edges.push(e);
         }
-        let grid = UvGrid::new(&geometry, material);
+        let grid = UvGrid::new(&geometry, &material);
         MapData {
             geometry,
             material,
@@ -103,13 +107,19 @@ impl MapData {
         Arc::ptr_eq(&self.islands, islands)
     }
 
+    /// この三角形（受けたままの形の番号）は、このセットのマテリアルの面か。
+    fn in_set(&self, triangle: u32) -> bool {
+        self.material
+            .contains(self.geometry.triangles()[triangle as usize].material)
+    }
+
     fn is_for(
         &self,
         geometry: &Arc<SurfaceGeometry>,
-        material: i32,
+        material: &MaterialSet,
         islands: &Arc<Islands>,
     ) -> bool {
-        self.material == material
+        self.material == *material
             && Arc::ptr_eq(&self.geometry, geometry)
             && Arc::ptr_eq(&self.islands, islands)
     }
@@ -139,12 +149,12 @@ impl MapData {
 impl AppState {
     /// ベイクのウィンドウの見取り図の中身（今のモデル・セット。モデルの入力を別のスレッドで作っている間・モデルが無いときは None）。
     pub fn overlap_map(&mut self) -> Option<Arc<MapData>> {
-        let material = self.view3d.material;
+        let material = self.view3d.material.clone();
         let geometry = self
             .view3d
             .full_model()
             .map(|m| m.geometry.clone())
-            .filter(|_| material >= 0)?;
+            .filter(|_| !material.is_empty())?;
         let islands = self.overlap_islands(false)?.ok()?;
         if islands.of().len() != geometry.triangle_count() {
             return None;
@@ -153,7 +163,7 @@ impl AppState {
             .bake
             .map
             .as_ref()
-            .filter(|m| m.is_for(&geometry, material, &islands))
+            .filter(|m| m.is_for(&geometry, &material, &islands))
         {
             return Some(m.clone());
         }
@@ -617,7 +627,7 @@ pub fn draw(
                     .members(i)
                     .iter()
                     .copied()
-                    .filter(|&t| data.geometry.triangles()[t as usize].material == data.material)
+                    .filter(|&t| data.in_set(t))
                     .collect();
                 painter.extend(triangles_mesh(data, &members, &frame, HOVER_FILL, None));
                 let edges = data.edges_of(island);

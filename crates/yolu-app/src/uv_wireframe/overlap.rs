@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use egui::{Color32, ColorImage, Painter, Pos2, Shape, Stroke, TextureOptions};
-use yolu_core::geometry::SurfaceGeometry;
+use yolu_core::geometry::{MaterialSet, SurfaceGeometry};
 use yolu_core::glam::Vec2;
 use yolu_core::mesh_maps::{islands_of, uv_overlap, UvOverlap};
 
@@ -49,7 +49,7 @@ struct Page {
 #[derive(Default)]
 pub struct OverlapState {
     /// 数えた（数えている）元: 幾何・マテリアル・文書の大きさ。
-    key: Option<(Arc<SurfaceGeometry>, i32, u32, u32)>,
+    key: Option<(Arc<SurfaceGeometry>, MaterialSet, u32, u32)>,
     worker: Option<Worker<Option<Result<Built, String>>>>,
     built: Option<Arc<Built>>,
     page: Option<Page>,
@@ -84,12 +84,18 @@ impl OverlapState {
         self.screen_for = None;
     }
 
-    fn start(&mut self, geometry: Arc<SurfaceGeometry>, material: i32, width: u32, height: u32) {
+    fn start(
+        &mut self,
+        geometry: Arc<SurfaceGeometry>,
+        material: MaterialSet,
+        width: u32,
+        height: u32,
+    ) {
         self.clear();
-        self.key = Some((geometry.clone(), material, width, height));
+        self.key = Some((geometry.clone(), material.clone(), width, height));
         self.counts += 1;
         let worker = Worker::spawn("yolu-uv-overlap", move |tx, cancel| {
-            let _ = tx.send(count(&geometry, material, width, height, cancel.flag()));
+            let _ = tx.send(count(&geometry, &material, width, height, cancel.flag()));
         });
         match worker {
             Ok(w) => self.worker = Some(w.cancel_on_drop()),
@@ -102,7 +108,7 @@ impl OverlapState {
 /// 別のスレッドで数える。取り消されたら None。
 fn count(
     geometry: &SurfaceGeometry,
-    material: i32,
+    material: &MaterialSet,
     width: u32,
     height: u32,
     cancel: &std::sync::atomic::AtomicBool,
@@ -119,7 +125,9 @@ fn count(
         }
         slots.push(t.material_slot);
     }
-    let mine: Vec<usize> = (0..n).filter(|&i| tris[i].material == material).collect();
+    let mine: Vec<usize> = (0..n)
+        .filter(|&i| material.contains(tris[i].material))
+        .collect();
     let map = match uv_overlap(&uvs, &mine, width, height, Some(cancel)) {
         Ok(Some(m)) => m,
         Ok(None) => return None,
@@ -197,12 +205,12 @@ impl AppState {
     /// 今のモデル（受けたままの形）・セットのマテリアル・文書の大きさで図を数え直す（元が替わったときだけ）と、数え終わりを受ける。
     /// 毎フレーム呼ぶ。
     pub fn poll_uv_overlap(&mut self) {
-        let material = self.view3d.material;
+        let material = self.view3d.material.clone();
         let target = self
             .view3d
             .full_model()
             .map(|m| m.geometry.clone())
-            .filter(|_| material >= 0);
+            .filter(|_| !material.is_empty());
         let (width, height) = (self.session.doc.width(), self.session.doc.height());
         let s = &mut self.uv_overlap;
         let Some(geometry) = target else {
@@ -213,7 +221,7 @@ impl AppState {
             *m == material
                 && (*w, *h) == (width, height)
                 && (Arc::ptr_eq(held, &geometry)
-                    || super::same_edges_source(held, &geometry, material))
+                    || super::same_edges_source(held, &geometry, &material))
         });
         if !same {
             s.start(geometry, material, width, height);
@@ -308,7 +316,7 @@ pub fn note_surface(app: &mut AppState, rect: egui::Rect, at: Pos2) {
     let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let p = Vec2::new(at.x - rect.left(), at.y - rect.top());
     if let Some(hit) = yolu_core::geometry::pick(&model.geometry, &view, p) {
-        if hit.material == app.view3d.material {
+        if app.view3d.material.contains(hit.material) {
             app.note_overlap_uv(hit.uv);
         }
     }

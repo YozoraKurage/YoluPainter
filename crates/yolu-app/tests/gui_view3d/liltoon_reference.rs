@@ -1659,7 +1659,7 @@ fn render_as(
     {
         let state = h.app_mut();
         let revision = state.view3d_mut().next_revision();
-        state.view3d_mut().material = 0;
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         let model = ViewModel::new(
             "場面",
             scene.meshes.clone(),

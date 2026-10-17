@@ -174,13 +174,13 @@ fn headless_a_request_opens_the_fbx_with_its_pose_sets_by_material_and_originals
         "{names:?}"
     );
     for (i, set) in h.sets().iter().enumerate() {
-        let m = set.bound.expect("付いている") as usize;
+        let m = *set.bound.first().expect("付いている") as usize;
         let expect = material_key(m as u32 + 1);
         let guid = &expect["guid:".len()..expect.len() - "/fileid:2100000".len()];
         assert!(
-            matches!(&set.material, yolu_io::MaterialRef::Material { asset: Some(a), .. } if a.guid == guid && a.file_id == 2_100_000),
+            matches!(&set.materials[0], yolu_io::MaterialRef::Material { asset: Some(a), .. } if a.guid == guid && a.file_id == 2_100_000),
             "{:?}",
-            set.material
+            set.materials[0]
         );
         // 元の絵: 一番下のレイヤー「元の絵」（Skin は PNG の色、Cloth は絵が無いので白）
         let doc = h.app().set_doc(i);
@@ -374,6 +374,54 @@ fn headless_exporting_the_target_writes_an_exported_reply() {
 }
 
 #[test]
+fn headless_a_set_with_two_materials_answers_the_same_image_for_each_of_them() {
+    let mut h = Headless::new("export-multi");
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened);
+    assert_eq!(h.sets().len(), 2);
+    // 2 つ目のマテリアルを 1 つ目のセットへ移し、2 つ目のセットを外す
+    let key = h.sets().get(1).unwrap().materials[0].clone();
+    h.app_mut()
+        .sets_mut()
+        .get_mut(0)
+        .unwrap()
+        .materials
+        .push(key);
+    let uid = h.sets().get(1).unwrap().uid;
+    h.app_mut().remove_sets(&[uid]).unwrap();
+    h.app_mut().bind_model_only();
+    assert_eq!(h.sets().get(0).unwrap().bound, [0, 1]);
+    // 送り直しても、組のマテリアルに新しいセットを作らない
+    let again = h.arm("r2", KEY);
+    h.ex.put(&again);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    assert_eq!(h.sets().len(), 1, "マテリアルを持つセットを組から探す");
+    assert_eq!(h.sets().get(0).unwrap().bound, [0, 1]);
+    let dir = h.app().link_export_dir().unwrap();
+    std::fs::create_dir_all(&dir).unwrap();
+    h.state
+        .act(Action::Export(yolu_app::export::ExportAction::TemplateTo {
+            id: "liltoon".into(),
+            dir,
+            sets: None,
+        }));
+    h.app_mut().wait_export();
+    h.frame();
+    let reply = h.reply();
+    assert_eq!(reply.kind, ReplyKind::Exported, "{}", h.message());
+    let main: Vec<_> = reply
+        .files
+        .iter()
+        .filter(|f| f.property == "_MainTex")
+        .collect();
+    assert_eq!(main.len(), 2, "組のマテリアルごと: {:?}", reply.files);
+    assert_eq!(main[0].path, main[1].path, "同じ画像");
+    assert_eq!(main[0].material, material_key(1));
+    assert_eq!(main[1].material, material_key(2));
+}
+
+#[test]
 fn headless_scene_materials_and_submeshes_without_a_material_get_their_own_sets() {
     let mut h = Headless::new("keys");
     let mut request = h.arm("r1", KEY);
@@ -389,7 +437,7 @@ fn headless_scene_materials_and_submeshes_without_a_material_get_their_own_sets(
     let reply = h.reply();
     assert_eq!(reply.kind, ReplyKind::Opened, "{}", h.message());
     assert_eq!(h.sets().len(), 3, "マテリアルの鍵ごと");
-    let refs: Vec<&yolu_io::MaterialRef> = h.sets().iter().map(|s| &s.material).collect();
+    let refs: Vec<&yolu_io::MaterialRef> = h.sets().iter().map(|s| &s.materials[0]).collect();
     assert!(refs.iter().any(
         |m| matches!(m, yolu_io::MaterialRef::Material { name, asset: None } if name == "Skin")
     ));
@@ -533,7 +581,7 @@ fn headless_saving_and_reopening_gives_the_same_model_and_pose_without_unity() {
     }
     assert_eq!(again.blend_weights, pose.blend_weights);
     assert_eq!(open.sets().len(), 2, "セットは増やさない");
-    assert!(open.sets().iter().all(|s| s.bound.is_some()));
+    assert!(open.sets().iter().all(|s| !s.bound.is_empty()));
     assert!(!open.modified());
     assert!(
         !h.ex.dir.join("unused").exists(),

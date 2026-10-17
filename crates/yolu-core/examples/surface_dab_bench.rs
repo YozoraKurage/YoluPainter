@@ -130,7 +130,7 @@ fn run_3d(case: &Case) -> Outcome {
         case.geometry.clone(),
         case.view,
         &brush.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         SurfaceInput::new(points[0], 1.0),
         SurfaceStrokeOptions::default(),
     )

@@ -5,9 +5,9 @@ use yolu_io::{
     entry_form, mesh_map, pose, saved_selections, MaterialRef, NativeDocument, Project, Selection,
     SetSpec, WriterInfo, ADJUST_VERSION, ANTI_ALIAS_VERSION, BAKE_PRIORITY_VERSION,
     EFFECTS_VERSION, LAYER_SETS_VERSION, MAX_FORMAT, MAX_NATIVE_VERSION, MIXING_VERSION,
-    PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION, RESOURCE_ENTRIES, ROOT_ENTRIES,
-    RULERS_VERSION, SAVED_SELECTIONS_FORMAT, SEAMS_VERSION, SET_ENTRIES, SPLIT_VERSION,
-    TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
+    MULTI_MATERIAL_FORMAT, PATHS_VERSION, POINT_GRADIENT_VERSION, PROCEDURAL_VERSION,
+    RESOURCE_ENTRIES, ROOT_ENTRIES, RULERS_VERSION, SAVED_SELECTIONS_FORMAT, SEAMS_VERSION,
+    SET_ENTRIES, SPLIT_VERSION, TEXT_VERSION, UNITY_NATIVE_VERSION, USER_CHANNELS_VERSION,
 };
 
 const SPEC: &str = include_str!("../../../../docs/YLP_FORMAT.md");
@@ -172,6 +172,7 @@ fn every_version_is_in_the_spec() {
     for (name, value) in [
         ("MAX_FORMAT", MAX_FORMAT),
         ("SAVED_SELECTIONS_FORMAT", SAVED_SELECTIONS_FORMAT),
+        ("MULTI_MATERIAL_FORMAT", MULTI_MATERIAL_FORMAT),
         ("UNITY_NATIVE_VERSION", UNITY_NATIVE_VERSION),
         ("USER_CHANNELS_VERSION", USER_CHANNELS_VERSION),
         ("PROCEDURAL_VERSION", PROCEDURAL_VERSION),
@@ -390,10 +391,10 @@ fn every_entry_the_writer_makes_has_a_form_in_the_spec() {
     let spec = SetSpec {
         id: SET.into(),
         name: "Body".into(),
-        material: MaterialRef::Material {
+        materials: vec![MaterialRef::Material {
             name: "Skin".into(),
             asset: None,
-        },
+        }],
         document: Some(NativeDocument::from_core(&core).unwrap().into()),
         composites: yolu_io::composite_pngs(&core).unwrap(),
     };

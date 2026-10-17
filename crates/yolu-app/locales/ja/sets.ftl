@@ -14,3 +14,4 @@ sets-texture-set = テクスチャセット
 sets-added-the-texture-set = テクスチャセット { $name } を追加しました。
 sets-a-project-keeps-at-least = プロジェクトには少なくとも 1 つのテクスチャセットが要ります。
 sets-texture-set-1 = テクスチャセット 1
+sets-materials-and-more = { $first } ほか { $more }

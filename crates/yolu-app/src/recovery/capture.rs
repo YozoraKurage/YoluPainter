@@ -22,7 +22,7 @@ use super::RecoveryError;
 /// 変わったか見分ける札。2 つが等しければ、書き置きの中身は同じ。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Fingerprint {
-    sets: Vec<(String, u128, u64, String, MaterialRef)>,
+    sets: Vec<(String, u128, u64, String, Vec<MaterialRef>)>,
     current: String,
     title: String,
     /// アセットの棚の素材（ID と名前）。
@@ -35,7 +35,7 @@ pub struct Fingerprint {
 pub(crate) struct SetCapture {
     pub id: String,
     pub name: String,
-    pub material: MaterialRef,
+    pub materials: Vec<MaterialRef>,
     /// 文書の写し（タイルは共有）。読むだけのセットと、開いた・保存した時から変わっていないセットは取らない（開いた時のバイト列のまま）。
     pub snapshot: Option<Arc<Document>>,
 }
@@ -77,7 +77,7 @@ pub(crate) fn fingerprint(state: &AppState) -> Fingerprint {
                     doc.id(),
                     doc.revision(),
                     s.name.clone(),
-                    s.material.clone(),
+                    s.materials.clone(),
                 )
             })
             .collect(),
@@ -139,7 +139,7 @@ pub(crate) fn capture(state: &AppState, recovered_from: Option<&str>) -> Result<
         sets.push(SetCapture {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             snapshot,
         });
     }
@@ -211,7 +211,7 @@ pub(crate) fn build(capture: &Capture) -> Result<Project, RecoveryError> {
         specs.push(SetSpec {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             document,
             composites: Vec::new(),
         });

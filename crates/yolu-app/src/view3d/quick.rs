@@ -41,7 +41,7 @@ pub(super) fn begin(
     let begun = SurfaceCoverStroke::begin(
         model.geometry.clone(),
         camera_view(app, rect),
-        Some(app.view3d.material),
+        Some(&app.view3d.material),
         params,
         app.view3d.projection,
         app.session.doc.width(),

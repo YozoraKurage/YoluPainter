@@ -585,10 +585,10 @@ fn it_does_not_start_while_drawing_or_exporting() {
 #[test]
 fn the_set_materials_uv_triangles_scale_to_the_document() {
     let model = crate::view3d::model::ViewModel::from_live_link(&two_quads(), 1).unwrap();
-    let tris = uv_triangles(&model, 1, 64, 32);
+    let tris = uv_triangles(&model, &yolu_core::geometry::MaterialSet::one(1), 64, 32);
     assert_eq!(tris.len(), 2, "Hair の板の 2 つの三角形");
     assert!(tris.iter().flatten().all(|p| p.x >= 32.0 && p.y <= 32.0));
-    assert!(uv_triangles(&model, 5, 64, 32).is_empty());
+    assert!(uv_triangles(&model, &yolu_core::geometry::MaterialSet::one(5), 64, 32).is_empty());
 }
 
 /// 書き出した画像にも、画面と同じ効果が入る（正本は効果の入力を持たないので、写した文書へ入力を渡し直す）。読むマップが無くて効いていない効果は、

@@ -55,7 +55,7 @@ pub(crate) fn texel_at(h: &H, rect: Rect, at: Pos2) -> Option<(u32, u32)> {
         &view,
         Vec2::new(at.x - rect.left(), at.y - rect.top()),
     )?;
-    (hit.material == s.view3d().material).then_some((
+    s.view3d().material.contains(hit.material).then_some((
         ((hit.uv.x * SIZE as f32) as u32).min(SIZE - 1),
         ((hit.uv.y * SIZE as f32) as u32).min(SIZE - 1),
     ))

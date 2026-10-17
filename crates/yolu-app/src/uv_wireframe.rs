@@ -9,7 +9,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use egui::{Color32, Pos2, Stroke, Ui};
 use yolu_core::{
-    geometry::{SurfaceGeometry, SurfaceTriangle},
+    geometry::{MaterialSet, SurfaceGeometry, SurfaceTriangle},
     glam::Vec2,
 };
 
@@ -27,7 +27,7 @@ pub const DEFAULT_OVERLAP_COLOR: [u8; 4] = overlap::DEFAULT_COLOR;
 pub struct Wireframe {
     /// 辺を作った（または同じ辺になると確かめた）幾何。ポーズで世代が替わるたびに持ち替える。
     geometry: Option<Arc<SurfaceGeometry>>,
-    material: i32,
+    material: MaterialSet,
     /// 辺の上限。通常は `MAX_EDGES`。試験が下げて、超過の経路を確かめる。
     limit: usize,
     edges: Vec<[Vec2; 2]>,
@@ -43,7 +43,7 @@ impl Default for Wireframe {
     fn default() -> Self {
         Wireframe {
             geometry: None,
-            material: -1,
+            material: MaterialSet::default(),
             limit: MAX_EDGES,
             edges: Vec::new(),
             truncated: false,
@@ -56,10 +56,14 @@ impl Default for Wireframe {
 }
 
 /// 同じ UV の辺は一度だけ。上限を超えたら部分的な図を出さない。
-pub fn edges(triangles: &[SurfaceTriangle], material: i32, limit: usize) -> Option<Vec<[Vec2; 2]>> {
+pub fn edges(
+    triangles: &[SurfaceTriangle],
+    material: &MaterialSet,
+    limit: usize,
+) -> Option<Vec<[Vec2; 2]>> {
     let mut seen = HashSet::new();
     let mut edges = Vec::new();
-    for t in triangles.iter().filter(|t| t.material == material) {
+    for t in triangles.iter().filter(|t| material.contains(t.material)) {
         for (mut a, mut b) in [(t.uv_a, t.uv_b), (t.uv_b, t.uv_c), (t.uv_c, t.uv_a)] {
             if !a.is_finite() || !b.is_finite() || a == b {
                 continue;
@@ -87,24 +91,24 @@ pub fn edges(triangles: &[SurfaceTriangle], material: i32, limit: usize) -> Opti
     Some(edges)
 }
 
-/// この `material` の辺が同じになる構造か（三角形の数・どの三角形がどのマテリアルか・この `material` の三角形の UV）。
+/// この `material`（組）の辺が同じになる構造か（三角形の数・どの三角形がどのマテリアルか・この組の三角形の UV）。
 /// 位置は見ない。ポーズで位置だけが替わった世代（`SurfaceGeometry::reposition` は UV・マテリアルが同じものだけを返す）は、
 /// 辺を作り直さずに済む。UV は有限の値だけ（幾何を作るとき、有限でないものは断られる）。
-fn same_edges_source(a: &SurfaceGeometry, b: &SurfaceGeometry, material: i32) -> bool {
+fn same_edges_source(a: &SurfaceGeometry, b: &SurfaceGeometry, material: &MaterialSet) -> bool {
     a.triangle_count() == b.triangle_count()
         && a.triangles().iter().zip(b.triangles()).all(|(x, y)| {
             x.material == y.material
-                && (x.material != material
+                && (!material.contains(x.material)
                     || (x.uv_a == y.uv_a && x.uv_b == y.uv_b && x.uv_c == y.uv_c))
         })
 }
 
 impl Wireframe {
     /// 表示が入のときだけ呼ぶ。辺は、UV・マテリアルの構造が替わったときだけ作る（Arc の世代が替わっただけでは作り直さない）。
-    fn sync(&mut self, geometry: &Arc<SurfaceGeometry>, material: i32) {
+    fn sync(&mut self, geometry: &Arc<SurfaceGeometry>, material: &MaterialSet) {
         if let Some(held) = &self.geometry {
             let same = Arc::ptr_eq(held, geometry);
-            if self.material == material && (same || same_edges_source(held, geometry, material)) {
+            if self.material == *material && (same || same_edges_source(held, geometry, material)) {
                 if !same {
                     // 次の比べを新しい世代から始める。古い世代はここで手放す。
                     self.geometry = Some(geometry.clone());
@@ -117,7 +121,7 @@ impl Wireframe {
             self.builds += 1;
         }
         self.geometry = Some(geometry.clone());
-        self.material = material;
+        self.material = material.clone();
         let built = edges(geometry.triangles(), material, self.limit);
         self.truncated = built.is_none();
         self.edges = built.unwrap_or_default();
@@ -134,7 +138,7 @@ impl Wireframe {
         };
         if !same && self.geometry.is_some() {
             self.geometry = None;
-            self.material = -1;
+            self.material = MaterialSet::default();
             self.edges = Vec::new();
             self.screen = Vec::new();
             self.truncated = false;
@@ -187,7 +191,7 @@ fn tip(app: &AppState) -> String {
 pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView) {
     let target = app.region_model();
     if let (Some((model, material)), true) = (&target, app.prefs.settings.uv_wireframe) {
-        app.uv_wireframe.sync(&model.geometry, *material);
+        app.uv_wireframe.sync(&model.geometry, material);
         app.uv_wireframe
             .project(view, app.session.doc.width(), app.session.doc.height());
         let c = app.prefs.settings.uv_wireframe_color;

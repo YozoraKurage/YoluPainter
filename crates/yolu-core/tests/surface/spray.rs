@@ -82,7 +82,7 @@ fn draw_3d_at(brush: &Brush, pressure: f64) -> Vec<u8> {
         g.clone(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen(x0, y0),
         pressure as f32,
         SurfaceStrokeOptions::default(),

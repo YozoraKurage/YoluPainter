@@ -32,7 +32,7 @@ const COMPOSITE_PARALLEL: usize = 4;
 pub(crate) struct SetCapture {
     pub id: String,
     pub name: String,
-    pub material: MaterialRef,
+    pub materials: Vec<MaterialRef>,
     /// 文書の写し（読むだけのセットは無い。選択範囲・見た目・Unity の値はここから）。
     pub snapshot: Option<Arc<Document>>,
     /// 正本・合成の PNG を作り直すか（開いた時のファイルに無い、または開いた・保存した時から変わった）。
@@ -109,7 +109,7 @@ pub(crate) fn capture(state: &AppState, anchor: PathBuf) -> Result<Capture, Stri
         sets.push(SetCapture {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             snapshot,
             rewrite,
             mark: (doc.id(), doc.revision()),
@@ -246,7 +246,7 @@ pub(crate) fn build(
         specs.push(SetSpec {
             id: set.id.clone(),
             name: set.name.clone(),
-            material: set.material.clone(),
+            materials: set.materials.clone(),
             document,
             composites,
         });

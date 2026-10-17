@@ -37,14 +37,14 @@ Choose File → New Project… (`Ctrl+N`), set the following, and press Create.
 
 - Template: “PBR (all channels)”, “lilToon (Color, Normal, Emission)” or “Color only”. This sets which channels the first layer uses.
 - Mesh: “Choose a model…” lets you pick an FBX, and you can make a texture set for each material of the model. If you do not pick one, you paint in 2D and can choose a model later.
-- Resolution: 512, 1024, 2048, 4096 or 8192.
+- Texture Sets: one row for each texture set to create. When you pick a model, there is a row for each material. Each row sets a name, a size (512, 1024, 2048, 4096 or 8192) and materials. The material list lets you choose several materials; choosing one that another row has moves it from that row. A row left without a material is not created.
 - Normal map format, and “Bake mesh maps after creating”.
 
-To change a project afterwards, use File → Project Configuration…. It adds and removes texture sets, renames them, changes their materials and sizes, replaces or reloads the model, and changes the normal map format.
+To change a project afterwards, use File → Project Configuration…. With the same rows as New Project, it adds and removes texture sets, renames them, changes their materials (several are allowed) and sizes, replaces or reloads the model, and changes the normal map format.
 
 ### Texture sets
 
-A texture set is the picture that goes on one material of the model. A project holds up to 64 of them. Layers, undo history and selections belong to each texture set. In the Texture Sets panel you can switch sets, rename one (double-click), add an empty set (same size and channels as the current one), remove the current set, and hide or show a set in the 3D view and Unity (the eye icon).
+A texture set is the picture that goes on materials of the model. When a texture set is assigned to several materials, the faces of those materials share the same picture. A project holds up to 64 of them. Layers, undo history and selections belong to each texture set. In the Texture Sets panel you can switch sets, rename one (double-click), add an empty set (same size and channels as the current one), remove the current set, and hide or show a set in the 3D view and Unity (the eye icon).
 
 ### Open and save
 

@@ -217,14 +217,14 @@ pub(super) fn cover(
     source: Source,
 ) -> Option<ScreenCoverage> {
     let model = app.view3d.model.clone()?;
-    let material = app.view3d.material;
-    if material < 0 {
+    let material = app.view3d.material.clone();
+    if material.is_empty() {
         app.refuse(source, app.region_missing_reason());
         return None;
     }
     let view = camera_view(app, rect);
     let settings = ScreenCoverSettings {
-        material: Some(material),
+        material: Some(&material),
         projection: ProjectionSettings {
             paint_hidden: false,
             paint_backfaces: false,
@@ -315,7 +315,7 @@ fn outline_stroke(
     let (Some(model), Some(&first)) = (app.view3d.model.clone(), points.first()) else {
         return;
     };
-    if app.view3d.material < 0 {
+    if app.view3d.material.is_empty() {
         app.refuse(Source::Ruler, app.region_missing_reason());
         return;
     }

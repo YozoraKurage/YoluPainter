@@ -755,7 +755,7 @@ impl LiveLink {
                         .session
                         .sets
                         .iter()
-                        .position(|s| s.bound.is_some() && s.material == key)
+                        .position(|s| !s.bound.is_empty() && s.materials.contains(&key))
                 })
                 .flatten();
             let Some(index) = set else {
@@ -964,8 +964,8 @@ impl LiveLink {
                 } else {
                     state.bind_model()
                 };
-                if state.session.sets.current().bound.is_none() {
-                    if let Some(i) = state.session.sets.iter().position(|s| s.bound.is_some()) {
+                if state.session.sets.current().bound.is_empty() {
+                    if let Some(i) = state.session.sets.iter().position(|s| !s.bound.is_empty()) {
                         let _ = state.switch_set(i);
                     }
                 }
@@ -1001,7 +1001,8 @@ impl LiveLink {
             let Some(index) = state.session.sets.index_of(uid) else {
                 continue;
             };
-            let Some(m) = state.session.sets.get(index).and_then(|s| s.bound) else {
+            // 元の画像・身元・受けた見た目は、セットの最初のマテリアル（番号の小さいもの）のものを使う
+            let Some(m) = first_material(state, index) else {
                 continue;
             };
             let m = m as usize;
@@ -1017,12 +1018,11 @@ impl LiveLink {
         // 送り直し: 元の絵のファイルが変わったセット。入れた直後のままなら入れ直し、触ったセットは変えずに知らせる
         let mut changed: Vec<String> = Vec::new();
         for index in 0..state.session.sets.len() {
-            let Some((uid, m, name)) = state
-                .session
-                .sets
-                .get(index)
-                .and_then(|s| s.bound.map(|m| (s.uid, m as usize, s.name.clone())))
-            else {
+            let Some((uid, m, name)) = state.session.sets.get(index).and_then(|s| {
+                s.bound
+                    .first()
+                    .map(|m| (s.uid, *m as usize, s.name.clone()))
+            }) else {
                 continue;
             };
             if fresh_uids.contains(&uid) {
@@ -1089,7 +1089,7 @@ impl LiveLink {
         }
         // 受けた見た目（lilToon の値と、スロットの絵）
         for index in 0..state.session.sets.len() {
-            let Some(m) = state.session.sets.get(index).and_then(|s| s.bound) else {
+            let Some(m) = first_material(state, index) else {
                 continue;
             };
             let Some(material) = request.materials.get(m as usize) else {
@@ -1240,7 +1240,8 @@ impl LiveLink {
     }
 
     /// 書き出しが終わった（Live Link の相手の文書なら、書いた PNG のうちマテリアルのプロパティに当たる物を `exported` の返事にする）。
-    /// `files` は（書いたファイル・セットの uid・lilToon のプロパティ）。
+    /// `files` は（書いたファイル・セットの uid・lilToon のプロパティ）。複数のマテリアルを持つセットの画像は、そのマテリアルごとに同じ
+    /// `path` の項目を並べる（マテリアルの番号の順）。
     pub fn exported(
         &mut self,
         state: &mut AppState,
@@ -1255,24 +1256,26 @@ impl LiveLink {
         let mut reply = Reply::new(&target.request.id, ReplyKind::Exported, VERSION);
         for (image, uid, property) in files {
             let Some(property) = property else { continue };
-            let Some(m) = state.session.sets.by_uid(*uid).and_then(|s| s.bound) else {
+            let Some(set) = state.session.sets.by_uid(*uid) else {
                 continue;
             };
-            let Some(material) = target
-                .request
-                .materials
-                .get(m as usize)
-                .filter(|m| m.key != KEY_NONE)
-            else {
-                continue;
-            };
-            reply.files.push(ExportedFile {
-                material: material.key.clone(),
-                property: property.clone(),
-                path: image.path.to_string_lossy().replace('\\', "/"),
-                srgb: image.srgb,
-                normal_map: image.normal_map,
-            });
+            for m in &set.bound {
+                let Some(material) = target
+                    .request
+                    .materials
+                    .get(*m as usize)
+                    .filter(|m| m.key != KEY_NONE)
+                else {
+                    continue;
+                };
+                reply.files.push(ExportedFile {
+                    material: material.key.clone(),
+                    property: property.clone(),
+                    path: image.path.to_string_lossy().replace('\\', "/"),
+                    srgb: image.srgb,
+                    normal_map: image.normal_map,
+                });
+            }
         }
         if reply.files.is_empty() {
             return;
@@ -1345,6 +1348,16 @@ fn put_original(
 }
 
 /// 頼みを当てずに待つ間か（描いている最中・保存の途中・ほかのモデルの読み込みの間）。
+/// セットの最初のマテリアル（番号の小さいもの。マテリアルを持たないセットは None）。複数のマテリアルを持つセットの元の画像・身元・
+/// 受けた見た目は、これのものを使う。
+fn first_material(state: &AppState, index: usize) -> Option<u32> {
+    state
+        .session
+        .sets
+        .get(index)
+        .and_then(|s| s.bound.first().copied())
+}
+
 fn busy(state: &AppState) -> bool {
     state.is_stroking()
         || state.is_saving()

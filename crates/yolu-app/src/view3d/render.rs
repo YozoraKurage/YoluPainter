@@ -20,7 +20,7 @@ use std::thread::JoinHandle;
 
 use eframe::egui_wgpu::{self, wgpu};
 use wgpu::util::DeviceExt;
-use yolu_core::geometry::{OrbitCamera, Projection};
+use yolu_core::geometry::{MaterialSet, OrbitCamera, Projection};
 use yolu_core::glam::{Mat4, Vec3, Vec4};
 use yolu_core::mesh_maps::{BakedMeshMap, MeshMapKind};
 use yolu_core::Document;
@@ -260,7 +260,7 @@ struct SetBind {
 /// 今のセットでないセットの絵（文書の ID でセットを見分ける。マテリアルは今の割り当て）。
 struct HeldSet {
     doc_id: u128,
-    material: i32,
+    material: MaterialSet,
     paint: Paint,
     /// 見た目の設定の持ち物（lilToon の値・ユーザーチャンネル・マットキャップの絵）。
     look: LookGpu,
@@ -282,7 +282,8 @@ struct SceneKey {
     size: [u32; 2],
     /// モデルの世代（`GpuMesh::model` と同じ）。
     model: u32,
-    material: i32,
+    /// 今のセットのマテリアルの組の鍵（`set_key`）。
+    material: u64,
     /// 今のセットとほかのセットの絵の鍵（`paint_key`）。
     paint: u64,
     tangents: usize,
@@ -370,10 +371,10 @@ struct Inflight {
     worker: JoinHandle<()>,
 }
 
-/// 3D で見せる焼いたメッシュマップ（`key` が同じなら作り直さない）。`material` はそのセットの面のマテリアル。
+/// 3D で見せる焼いたメッシュマップ（`key` が同じなら作り直さない）。`material` はそのセットの面のマテリアルの組。
 pub struct MeshMapSource<'a> {
     pub key: u64,
-    pub material: i32,
+    pub material: MaterialSet,
     pub map: &'a BakedMeshMap,
 }
 
@@ -487,7 +488,7 @@ pub struct View3dRenderer {
     map_layout: wgpu::BindGroupLayout,
     blank_map_bind: wgpu::BindGroup,
     /// 今の描きで、マテリアルごとに読むメッシュマップ（`maps` の添え字。無いマテリアルは市松）。
-    map_picks: Vec<(i32, usize)>,
+    map_picks: Vec<(MaterialSet, usize)>,
     /// このフレームに、どれかのビューが見ている焼いたメッシュマップの種類と、「チャンネルだけ」で見ているユーザーチャンネルの名前
     /// （`begin_frame`。ユーザーチャンネルの配列は、全部のビューの分を同じ持ち物に持つ）。
     shown_maps: Vec<MeshMapKind>,
@@ -1528,7 +1529,7 @@ impl View3dRenderer {
         self.held
             .iter()
             .filter(|h| h.paint.is_built())
-            .map(|h| h.material)
+            .flat_map(|h| h.material.as_slice().iter().copied())
             .collect()
     }
 
@@ -1542,7 +1543,7 @@ impl View3dRenderer {
         let held = self
             .held
             .iter()
-            .find(|h| h.material == material && h.paint.is_built())?;
+            .find(|h| h.material.contains(material) && h.paint.is_built())?;
         let (texels, size) = held.paint.read_level(slot, level)?;
         Some((texels, size, held.paint.level()))
     }
@@ -1565,7 +1566,7 @@ impl View3dRenderer {
     ) -> Option<(Vec<u8>, [u32; 2])> {
         self.held
             .iter()
-            .find(|h| h.material == material && h.paint.is_built())?
+            .find(|h| h.material.contains(material) && h.paint.is_built())?
             .paint
             .read_weight_level(level)
     }
@@ -1600,7 +1601,7 @@ impl View3dRenderer {
         &mut self,
         doc: &Document,
         model: &Arc<ViewModel>,
-        material: i32,
+        material: &MaterialSet,
         camera: &OrbitCamera,
         size: [u32; 2],
         display: &Display,
@@ -1732,7 +1733,7 @@ impl View3dRenderer {
         &mut self,
         doc: &Document,
         model: &Arc<ViewModel>,
-        material: i32,
+        material: &MaterialSet,
         camera: &OrbitCamera,
         size: [u32; 2],
         display: &Display,
@@ -1780,7 +1781,7 @@ impl View3dRenderer {
             camera: camera_bits(camera),
             size,
             model: model.revision(),
-            material,
+            material: set_key(material),
             paint: self.paint_key(material),
             tangents: self.mesh.as_ref().map_or(0, |m| m.tangent_stamp),
             env: self.env.version,
@@ -1881,7 +1882,7 @@ impl View3dRenderer {
         &mut self,
         doc: &Document,
         model: &ViewModel,
-        material: i32,
+        material: &MaterialSet,
         others: &[OtherSet<'_>],
         started: std::time::Instant,
         encoder: &mut wgpu::CommandEncoder,
@@ -1908,7 +1909,7 @@ impl View3dRenderer {
                 self.held.retain(|h| h.doc_id != old_id);
                 self.held.push(HeldSet {
                     doc_id: old_id,
-                    material: -1,
+                    material: MaterialSet::default(),
                     paint: old,
                     look: self.current_look.sibling(&self.rs.device),
                     bind: None,
@@ -1919,16 +1920,16 @@ impl View3dRenderer {
         // 今のセットになった文書は、ほかのセットとしては持たない
         self.held.retain(|h| h.doc_id != id);
         // 表示の写しの塗り広げの元（UV の形が変われば、続く計画と同期が全部を作り直す）
-        let uv = |material: i32| UvSource {
+        let uv = |material: &MaterialSet| UvSource {
             geometry: model.geometry.clone(),
-            material,
+            material: material.clone(),
         };
         self.paint.set_padding(Some(uv(material)));
 
         let shown = model_materials(model);
         let mut want: Vec<&OtherSet<'_>> = others
             .iter()
-            .filter(|o| o.doc.id() != id && o.material != material && shown.contains(&o.material))
+            .filter(|o| holds_other(o, id, material, &shown))
             .collect();
         want.sort_by_key(|o| o.rank);
         let mut remaining = self
@@ -1967,7 +1968,7 @@ impl View3dRenderer {
                 remaining -= need;
                 keep.push(o);
             } else {
-                self.unpainted.push(o.material);
+                self.unpainted.extend_from_slice(o.material.as_slice());
             }
         }
         // 持たなくなったものは、新しい今のセットの絵を作る前に捨てる（GPU のメモリを返す）
@@ -1983,10 +1984,10 @@ impl View3dRenderer {
                     .iter()
                     .find(|o| o.doc.id() == old_id)
                     .expect("持つものだけが残っている");
-                held.material = o.material;
+                held.material = o.material.clone();
                 held.paint.set_budget(u64::MAX);
                 held.paint.set_cap(Some(self.other_cap));
-                held.paint.set_padding(Some(uv(o.material)));
+                held.paint.set_padding(Some(uv(&o.material)));
                 if held.paint.demote(o.doc) {
                     self.demotions += 1;
                 } else if held.paint.needs_rebuild(o.doc) {
@@ -2009,7 +2010,7 @@ impl View3dRenderer {
                     paint.set_budget(u64::MAX);
                     self.held.push(HeldSet {
                         doc_id: o.doc.id(),
-                        material: o.material,
+                        material: o.material.clone(),
                         paint,
                         look: self.current_look.sibling(&self.rs.device),
                         bind: None,
@@ -2018,11 +2019,11 @@ impl View3dRenderer {
                 }
             };
             let held = &mut self.held[at];
-            held.material = o.material;
+            held.material = o.material.clone();
             // ほかのセットは上限だけで縮める（予算は上の計画で見た。今のセットだった絵の予算の値を持ち越さない）
             held.paint.set_budget(u64::MAX);
             held.paint.set_cap(Some(self.other_cap));
-            held.paint.set_padding(Some(uv(o.material)));
+            held.paint.set_padding(Some(uv(&o.material)));
             if held.paint.demote(o.doc) {
                 self.demotions += 1;
             }
@@ -2076,14 +2077,14 @@ impl View3dRenderer {
     }
 
     /// 全部のセットの絵の鍵（絵の中身・作りの世代・持ち主・マテリアルのどれかが変わると変わる。描き直しの鍵）。
-    fn paint_key(&self, material: i32) -> u64 {
+    fn paint_key(&self, material: &MaterialSet) -> u64 {
         let mix = |a: u64, b: u64| (a ^ b).wrapping_mul(0x0000_0100_0000_01b3);
-        let one = |k: u64, p: &Paint, material: i32| {
+        let one = |k: u64, p: &Paint, material: &MaterialSet| {
             [
                 p.uid(),
                 p.version(),
                 p.layout_version(),
-                material as u32 as u64,
+                set_key(material),
                 u64::from(p.is_built()),
             ]
             .into_iter()
@@ -2091,7 +2092,7 @@ impl View3dRenderer {
         };
         let mut key = one(0xcbf2_9ce4_8422_2325, &self.paint, material);
         for h in &self.held {
-            key = one(key, &h.paint, h.material);
+            key = one(key, &h.paint, &h.material);
         }
         key
     }
@@ -2178,8 +2179,7 @@ impl View3dRenderer {
     fn looks_key(&self) -> u64 {
         let mut key = self.current_look.key();
         for h in &self.held {
-            key =
-                (key ^ h.look.key() ^ h.material as u32 as u64).wrapping_mul(0x0000_0100_0000_01b3);
+            key = (key ^ h.look.key() ^ set_key(&h.material)).wrapping_mul(0x0000_0100_0000_01b3);
         }
         key
     }
@@ -2203,14 +2203,14 @@ impl View3dRenderer {
     }
 
     /// このマテリアルの面を描くときの束ね（今のセットの絵・ほかのセットの絵・絵の無い描き方）。
-    fn pick(&self, material: i32, current: i32) -> Pick {
-        if current >= 0 && material == current {
+    fn pick(&self, material: i32, current: &MaterialSet) -> Pick {
+        if current.contains(material) {
             return Pick::Current;
         }
         match self
             .held
             .iter()
-            .position(|h| h.material == material && h.paint.is_built() && h.bind.is_some())
+            .position(|h| h.material.contains(material) && h.paint.is_built() && h.bind.is_some())
         {
             Some(i) => Pick::Held(i),
             None => Pick::Blank,
@@ -2583,7 +2583,7 @@ impl View3dRenderer {
         &mut self,
         display: &Display,
         sources: &[MeshMapSource],
-        current: i32,
+        current: &MaterialSet,
         encoder: &mut wgpu::CommandEncoder,
     ) {
         self.map_picks.clear();
@@ -2603,7 +2603,7 @@ impl View3dRenderer {
             }
             // 今の描きのマテリアル（今のセット）は元の大きさまで、ほかのセットは縮めて。セットを替えて持ち方が変わり、
             // 大きさが上限を超えるときだけ同じ場所へ作り直す（ここまでに選んだ番号がずれないように）
-            let capped = source.material != current;
+            let capped = source.material != *current;
             let long_side = source.map.width().max(source.map.height()) as u32;
             let held = self.maps.iter().position(|m| m.key == source.key);
             let at = match held {
@@ -2646,7 +2646,7 @@ impl View3dRenderer {
                     }
                 }
             };
-            self.map_picks.push((source.material, at));
+            self.map_picks.push((source.material.clone(), at));
         }
     }
 
@@ -2669,19 +2669,25 @@ impl View3dRenderer {
     fn map_pick(&self, material: i32) -> Option<usize> {
         self.map_picks
             .iter()
-            .find(|(m, _)| *m == material)
+            .find(|(m, _)| m.contains(material))
             .map(|(_, i)| *i)
     }
 
-    /// このマテリアルの面が読むメッシュマップの縮めた段（読まなければ 0）。
-    fn map_level(&self, material: i32) -> u32 {
-        self.map_pick(material)
+    /// このマテリアルの組（今のセット）の面が読むメッシュマップの縮めた段（読まなければ 0）。
+    fn map_level(&self, material: &MaterialSet) -> u32 {
+        material
+            .first()
+            .and_then(|m| self.map_pick(m))
             .map_or(0, |i| self.maps[i].texture.level())
     }
 
     /// マテリアルごとの描き（範囲・束ね・描き方・読むメッシュマップのマテリアル）。隣り合うマテリアルが同じ束ね（画像の無いもの）で、読む
     /// メッシュマップも同じなら 1 回にまとめる。
-    fn material_draws(&self, display: &Display, current_material: i32) -> Vec<MaterialDraw> {
+    fn material_draws(
+        &self,
+        display: &Display,
+        current_material: &MaterialSet,
+    ) -> Vec<MaterialDraw> {
         let lil_on = display.shading == Shading::Material;
         let mut draws: Vec<MaterialDraw> = Vec::new();
         if let Some(mesh) = &self.mesh {
@@ -2723,7 +2729,7 @@ impl View3dRenderer {
         self.map_picks
             .iter()
             .fold(0xcbf2_9ce4_8422_2325, |k, (m, i)| {
-                (k ^ (*m as u32 as u64) ^ self.maps[*i].key.rotate_left(17))
+                (k ^ set_key(m) ^ self.maps[*i].key.rotate_left(17))
                     .wrapping_mul(0x0000_0100_0000_01b3)
             })
     }
@@ -3273,7 +3279,7 @@ impl View3dRenderer {
         size: [u32; 2],
         display: &Display,
         use_normal_map: bool,
-        current_material: i32,
+        current_material: &MaterialSet,
     ) {
         let bytes = self.uniform_bytes(camera, size, display, use_normal_map);
         self.rs.queue.write_buffer(&self.uniforms, 0, &bytes);
@@ -3708,6 +3714,24 @@ impl View3dRenderer {
             );
         }
     }
+}
+
+/// マテリアルの組の鍵（描き直しの鍵に混ぜる。マテリアル 1 つの組は、その番号と同じ値）。
+fn set_key(set: &MaterialSet) -> u64 {
+    match set.as_slice() {
+        [one] => *one as u32 as u64,
+        list => list.iter().fold(0x9e37_79b9_7f4a_7c15, |k, m| {
+            (k ^ (*m as u32 as u64)).wrapping_mul(0x0000_0100_0000_01b3)
+        }),
+    }
+}
+
+/// ほかのセットとして持つか: 今のセットの文書でなく、マテリアルが今のセットと重ならず、モデルに面があるマテリアルを持つ。
+fn holds_other(o: &OtherSet<'_>, id: u128, current: &MaterialSet, shown: &[i32]) -> bool {
+    let m = o.material.as_slice();
+    o.doc.id() != id
+        && !m.iter().any(|m| current.contains(*m))
+        && m.iter().any(|m| shown.contains(m))
 }
 
 /// モデルの面が（見せる形に）あるマテリアル（昇順・重ならない）。

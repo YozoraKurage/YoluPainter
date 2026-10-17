@@ -34,6 +34,7 @@ use rayon::prelude::*;
 use super::build::{position_key, FastMap};
 use super::camera::CameraView;
 use super::dab::{DabRefusal, SurfaceDabResult, SurfacePixel};
+use super::materials::{admits, MaterialSet};
 use super::query::coverage;
 use super::symmetry::{MirrorPlane, RadialSymmetry};
 use super::unity::{clamp01, finite2};
@@ -828,7 +829,7 @@ struct Candidate {
 /// カメラによらない、ストロークの間の一覧（対称の写しの投影の塗りと共有し、スナップショットに覚えて次のストロークでも使う）:
 /// 塗るセットの UV が覆うテクセルと、三角形ごとの UV アイランドの縁の辺。
 pub(crate) struct Shared {
-    material: Option<i32>,
+    material: Option<MaterialSet>,
     width: i32,
     height: i32,
     mask: Option<UvMask>,
@@ -844,11 +845,12 @@ impl Shared {
     /// 所を決めるのに使う）。
     fn get(
         geometry: &SurfaceGeometry,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         width: i32,
         height: i32,
     ) -> Arc<Shared> {
-        let same = |s: &Shared| s.material == material && s.width == width && s.height == height;
+        let same =
+            |s: &Shared| s.material.as_ref() == material && s.width == width && s.height == height;
         if let Ok(cache) = geometry.projection_cache.lock() {
             if let Some(s) = cache.iter().find(|s| same(s)) {
                 return s.clone();
@@ -865,14 +867,19 @@ impl Shared {
         shared
     }
 
-    fn new(geometry: &SurfaceGeometry, material: Option<i32>, width: i32, height: i32) -> Shared {
+    fn new(
+        geometry: &SurfaceGeometry,
+        material: Option<&MaterialSet>,
+        width: i32,
+        height: i32,
+    ) -> Shared {
         let triangles = geometry.triangles();
         let tolerance = geometry.weld_tolerance() as f64;
         let seams: Vec<u8> = (0..triangles.len())
             .into_par_iter()
             .with_min_len(1024)
             .map(|i| {
-                if material.is_some_and(|m| m != triangles[i].material) {
+                if !admits(material, triangles[i].material) {
                     0
                 } else {
                     seam_edges(geometry, i, tolerance)
@@ -886,7 +893,7 @@ impl Shared {
             .par_iter()
             .with_min_len(1024)
             .map(|t| {
-                if material.is_some_and(|m| m != t.material) {
+                if !admits(material, t.material) {
                     return None;
                 }
                 let uv = UvFace::new(t, width, height)?;
@@ -928,7 +935,7 @@ impl Shared {
                 }
             });
         Shared {
-            material,
+            material: material.cloned(),
             width,
             height,
             mask: Some(mask),
@@ -959,7 +966,7 @@ impl Layout {
     fn new(
         geometry: &SurfaceGeometry,
         view: &CameraView,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         transform: &CopyTransform,
         bucket: f64,
         settings: &ProjectionSettings,
@@ -983,9 +990,7 @@ impl Layout {
                 if frame.faces_viewer(f.normal, f.k) != frame.flip {
                     flag |= FRONT;
                 }
-                if material.is_none_or(|m| m == t.material)
-                    && (flag & FRONT != 0 || settings.paint_backfaces)
-                {
+                if admits(material, t.material) && (flag & FRONT != 0 || settings.paint_backfaces) {
                     flag |= TARGET;
                 }
                 let lo = f.min.max(DVec2::ZERO);
@@ -1108,7 +1113,7 @@ impl Layout {
 pub struct SurfaceProjector {
     geometry: Arc<SurfaceGeometry>,
     view: CameraView,
-    material: Option<i32>,
+    material: Option<MaterialSet>,
     settings: ProjectionSettings,
     width: i32,
     height: i32,
@@ -1136,7 +1141,7 @@ impl SurfaceProjector {
     pub fn new(
         geometry: Arc<SurfaceGeometry>,
         view: &CameraView,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         width: i32,
         height: i32,
         brush_screen_radius: f32,
@@ -1180,7 +1185,7 @@ impl SurfaceProjector {
         let layout = Arc::new(Layout::new(
             &self.geometry,
             &self.view,
-            self.material,
+            self.material.as_ref(),
             &transform,
             self.layout.bucket,
             &self.settings,
@@ -1190,7 +1195,7 @@ impl SurfaceProjector {
         SurfaceProjector::with_layout(
             self.geometry.clone(),
             self.view,
-            self.material,
+            self.material.as_ref(),
             self.width,
             self.height,
             self.settings,
@@ -1206,7 +1211,7 @@ impl SurfaceProjector {
     fn with_layout(
         geometry: Arc<SurfaceGeometry>,
         view: CameraView,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         width: i32,
         height: i32,
         settings: ProjectionSettings,
@@ -1224,7 +1229,7 @@ impl SurfaceProjector {
         SurfaceProjector {
             geometry,
             view,
-            material,
+            material: material.cloned(),
             settings,
             width,
             height,

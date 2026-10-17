@@ -66,7 +66,7 @@ fn quad(size: f32) -> ModelMesh {
 fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
     let state = h.app_mut();
     let revision = state.view3d_mut().next_revision();
-    state.view3d_mut().material = 0;
+    state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
     model.tangents();
     state.view3d_mut().set_model(model);

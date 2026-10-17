@@ -215,7 +215,7 @@ fn reference_entries(s: &AppState, path: &Path) -> Vec<(String, Vec<u8>)> {
             yolu_io::SetSpec {
                 id: set.id.clone(),
                 name: set.name.clone(),
-                material: set.material.clone(),
+                materials: vec![set.materials[0].clone()],
                 document: Some(yolu_io::DocumentSource::from_core(snapshot).unwrap()),
                 composites: yolu_io::composite_pngs(doc).unwrap(),
             }
@@ -854,7 +854,7 @@ fn timing_of_a_big_document() {
     let spec = yolu_io::SetSpec {
         id: yolu_app::sets::guid_string(snapshot.id()),
         name: "セット".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(source),
         composites: pngs,
     };

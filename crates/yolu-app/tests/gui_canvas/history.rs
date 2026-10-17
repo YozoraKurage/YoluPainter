@@ -108,7 +108,7 @@ fn switching_sets_uses_each_documents_history() {
         "second".into(),
         "second".into(),
         false,
-        MaterialRef::Unassigned,
+        vec![MaterialRef::Unassigned],
         None,
         second,
     );

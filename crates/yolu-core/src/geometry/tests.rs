@@ -272,7 +272,7 @@ fn parallel_rays_and_the_cache_give_the_same_pixels() {
 fn closest_point_respects_facing_and_material() {
     let g = cube();
     let h = g
-        .find_closest_point(Vec3::new(0.1, 0.0, -0.9), 1.0, Vec3::ZERO, 10_000, -1)
+        .find_closest_point(Vec3::new(0.1, 0.0, -0.9), 1.0, Vec3::ZERO, 10_000, None)
         .unwrap()
         .unwrap();
     assert!((h.distance - 0.4).abs() < 1e-6 && (h.position.z + 0.5).abs() < 1e-6);
@@ -283,17 +283,23 @@ fn closest_point_respects_facing_and_material() {
             10.0,
             Vec3::new(0.0, 0.0, 1.0),
             10_000,
-            -1,
+            None,
         )
         .unwrap()
         .unwrap();
     assert!(back.normal.z > 0.5);
     assert!(g
-        .find_closest_point(Vec3::ZERO, 10.0, Vec3::ZERO, 10_000, 5)
+        .find_closest_point(
+            Vec3::ZERO,
+            10.0,
+            Vec3::ZERO,
+            10_000,
+            Some(&crate::geometry::MaterialSet::one(5))
+        )
         .unwrap()
         .is_none());
     assert_eq!(
-        g.find_closest_point(Vec3::ZERO, 10.0, Vec3::ZERO, 0, -1),
+        g.find_closest_point(Vec3::ZERO, 10.0, Vec3::ZERO, 0, None),
         Err(NodeBudgetExceeded)
     );
 }
@@ -362,7 +368,7 @@ fn surface_stroke_paints_across_the_seam_and_undoes_in_one_step() {
         g.clone(),
         view,
         &brush,
-        Some(0),
+        Some(&crate::geometry::MaterialSet::one(0)),
         from,
         1.0,
     )
@@ -412,7 +418,7 @@ fn surface_stroke_skips_other_texture_sets_and_cancels_when_a_dab_does_not_fit_i
         g.clone(),
         view,
         &brush,
-        Some(7),
+        Some(&crate::geometry::MaterialSet::one(7)),
         center,
         1.0,
     )
@@ -627,7 +633,7 @@ mod stencil {
             g,
             view,
             &settings,
-            Some(0),
+            Some(&crate::geometry::MaterialSet::one(0)),
             from,
             1.0,
             surface,

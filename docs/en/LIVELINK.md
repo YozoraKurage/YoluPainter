@@ -188,7 +188,8 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
 - `<n>` counts from 0 per request. A reply to an unreadable request uses the `inbox/` file name (before the extension) as `request`.
 - `exported`: when you export a Live Link target's document, the Output Path in the Export Textures window starts at `target.export_dir` (or the folder you chose later). Of the PNG files written, images of the
   lilToon template (`Main` → `_MainTex`, `Normal` → `_BumpMap`, `Smoothness` → `_SmoothnessTex`, `Metallic` → `_MetallicGlossMap`, `Emission` → `_EmissionMap`) and slot images of
-  the lilToon packing go into `files`. Images without a matching property, and images of the `none` group, are left out.
+  the lilToon packing go into `files`. Images without a matching property, and images of the `none` group, are left out. An image of a texture set with several materials
+  goes in once per material, with the same `path`.
 
 ## How Unity receives replies
 

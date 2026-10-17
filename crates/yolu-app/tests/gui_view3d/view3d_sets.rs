@@ -129,7 +129,7 @@ fn scene_grid(n: usize, cols: usize, size: u32) -> Harness<'static, YoluApp> {
     let s = h.app();
     assert_eq!(s.sets().len(), n);
     for i in 0..n {
-        assert_eq!(s.sets().get(i).unwrap().bound, Some(i as u32), "セット {i}");
+        assert_eq!(s.sets().get(i).unwrap().bound, [i as u32], "セット {i}");
     }
     h
 }
@@ -1192,8 +1192,10 @@ fn a_set_follows_its_material_when_the_model_is_replaced_and_the_materials_chang
         .load_live_link_model(&model_with(3, 256, 3, &[2, 0, 1], 2))
         .unwrap();
     h.run();
-    let bound: Vec<_> = (0..3).map(|i| h.sets().get(i).unwrap().bound).collect();
-    assert_eq!(bound, vec![Some(1), Some(2), Some(0)]);
+    let bound: Vec<_> = (0..3)
+        .map(|i| h.sets().get(i).unwrap().bound.clone())
+        .collect();
+    assert_eq!(bound, [[1], [2], [0]]);
     // ほかのセット（M1・M2）の絵は付き直したマテリアル（2・0）の面に出る。持ち物の記録も付き直した先
     assert_eq!(h.state().view3d_held_materials(), vec![2, 0]);
     for (i, want) in COLORS.iter().take(3).enumerate() {
@@ -1479,7 +1481,7 @@ fn measure_frames_by_triangles_and_set_count() {
             }
             for i in 0..n {
                 let state = h.app_mut();
-                state.sets_mut().get_mut(i).unwrap().bound = Some(i as u32);
+                state.sets_mut().get_mut(i).unwrap().bound = vec![i as u32];
                 state.sets_mut().get_mut(i).unwrap().visible = true;
             }
             let revision = h.view3d_mut().next_revision();
@@ -1489,7 +1491,7 @@ fn measure_frames_by_triangles_and_set_count() {
             // 今のセットを、材質 0 に付いたセット 0 にする（この人形は Live Link のモデルでないので、描くマテリアルは常に 0。今のセットが別だと、
             // 材質 0 の面に別のセットの絵が貼られ、本当のセットの面が 1 つ絵の無い描き方になる）
             h.app_mut().switch_set(0).unwrap();
-            h.view3d_mut().material = 0;
+            h.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
             h.view3d_mut().view.camera = OrbitCamera {
                 target: Vec3::ZERO,
                 yaw: 20.0,

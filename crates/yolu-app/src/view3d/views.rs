@@ -275,12 +275,9 @@ pub fn mesh_map_sources(app: &AppState, kind: MeshMapKind) -> Vec<MeshMapSource<
     let mut out = Vec::new();
     for (i, set) in sets.iter().enumerate() {
         let material = if i == current {
-            app.view3d.material
-        } else if set.visible {
-            match set.bound {
-                Some(m) => m as i32,
-                None => continue,
-            }
+            app.view3d.material.clone()
+        } else if set.visible && !set.bound.is_empty() {
+            set.bound_set()
         } else {
             continue;
         };

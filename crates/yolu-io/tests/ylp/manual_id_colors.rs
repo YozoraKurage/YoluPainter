@@ -220,7 +220,7 @@ fn spec(id: &str, slot: u16, source: DocumentSource) -> SetSpec {
     SetSpec {
         id: id.into(),
         name: format!("セット {slot}"),
-        material: MaterialRef::PendingSlot(slot),
+        materials: vec![MaterialRef::PendingSlot(slot)],
         document: Some(source),
         composites: Vec::new(),
     }

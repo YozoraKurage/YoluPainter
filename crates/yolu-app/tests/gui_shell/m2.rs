@@ -1997,10 +1997,10 @@ fn a_rig_model_paints_each_material_into_its_own_texture_set() {
     h.brush_mut().radius = 3.0;
     assert_eq!(h.sets().len(), 2, "{}", h.message());
     let current = h.sets().current_index();
-    let a = h.sets().current().bound.unwrap() as i32;
+    let a = h.sets().current().bound[0] as i32;
     let b = 1 - a;
     let other = (0..2).find(|i| *i != current).unwrap();
-    assert_eq!(h.sets().get(other).unwrap().bound, Some(b as u32));
+    assert_eq!(h.sets().get(other).unwrap().bound, [b as u32]);
     let tiles = |h: &Harness<'_, YoluApp>, set: usize| {
         let app = h.app();
         app.set_doc(set)
@@ -2027,7 +2027,10 @@ fn a_rig_model_paints_each_material_into_its_own_texture_set() {
     // セットを替えると、描く先のマテリアルも替わり、そちらの文書へ描く
     h.app_mut().switch_set(other).unwrap();
     h.run();
-    assert_eq!(h.view3d().material, b);
+    assert_eq!(
+        h.view3d().material,
+        yolu_core::geometry::MaterialSet::one(b)
+    );
     let at = point_on_material(&h, rect, b);
     click(&mut h, at);
     assert!(tiles(&h, other) > 0, "{}", h.message());

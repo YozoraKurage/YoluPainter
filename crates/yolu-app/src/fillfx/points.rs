@@ -139,7 +139,7 @@ fn surface_at(app: &AppState, rect: Rect, at: Pos2, space: PointSpace) -> Option
     let view = app.view3d.view.camera.view(rect.width(), rect.height());
     let gui = Vec2::new(at.x - rect.left(), at.y - rect.top());
     let hit = yolu_core::geometry::pick(&model.geometry, &view, gui)?;
-    if hit.material != material {
+    if !material.contains(hit.material) {
         return None;
     }
     Some(match space {
@@ -485,7 +485,7 @@ fn screen_points_2d(app: &AppState, view: &CanvasView, g: &PointGradient) -> Vec
                     );
                     let hit = model
                         .geometry
-                        .find_closest_point(at, f32::INFINITY, Vec3::ZERO, 1 << 20, *material)
+                        .find_closest_point(at, f32::INFINITY, Vec3::ZERO, 1 << 20, Some(material))
                         .ok()??;
                     [hit.uv.x as f64, hit.uv.y as f64]
                 }

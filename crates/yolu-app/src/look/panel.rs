@@ -150,7 +150,7 @@ fn received_row(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, free: bool) {
     let Some(received) = app.session.doc.received_look() else {
         return;
     };
-    let live = app.session.sets.current().bound.is_some()
+    let live = !app.session.sets.current().bound.is_empty()
         && app
             .session
             .model

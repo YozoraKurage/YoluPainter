@@ -99,7 +99,7 @@ fn spec(id: &str, name: &str, slot: u16, doc: &Document) -> SetSpec {
     SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::PendingSlot(slot),
+        materials: vec![MaterialRef::PendingSlot(slot)],
         document: Some(DocumentSource::Core(Arc::new(
             doc.capture_snapshot().unwrap(),
         ))),
@@ -615,7 +615,7 @@ fn measure_a_large_document() {
     let spec = SetSpec {
         id: SET_A.into(),
         name: "セット".into(),
-        material: MaterialRef::PendingSlot(0),
+        materials: vec![MaterialRef::PendingSlot(0)],
         document: Some(DocumentSource::Core(snapshot.clone())),
         composites: Vec::new(),
     };
@@ -664,7 +664,7 @@ fn measure_a_large_document() {
     let spec = SetSpec {
         id: SET_A.into(),
         name: "セット".into(),
-        material: MaterialRef::PendingSlot(0),
+        materials: vec![MaterialRef::PendingSlot(0)],
         document: Some(DocumentSource::Core(snap.clone())),
         composites: Vec::new(),
     };

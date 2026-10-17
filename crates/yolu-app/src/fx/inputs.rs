@@ -32,7 +32,7 @@ use std::sync::Arc;
 
 use yolu_core::effects::{ImageId, ImageInput};
 use yolu_core::generator::{self, MapKind, MapState};
-use yolu_core::geometry::UvTopology;
+use yolu_core::geometry::{MaterialSet, UvTopology};
 use yolu_core::mesh_maps::{BakedMeshMap, MeshBakeInput, MeshMapKind, MeshMapState};
 use yolu_core::{
     Document, EffectInputs, InactiveEffect, InactiveReason, InactiveTarget, MapInput, ModelFrame,
@@ -113,9 +113,10 @@ pub struct InputsState {
     pub image_limit: Option<usize>,
     /// 試験用: 文書へ入力を渡した回数。
     pub passed: u64,
-    /// マテリアルの組ごとの UV の位相と、それを作った（または同じ位相と確かめた）モデル。モデルは持ち続ける: 番地や世代の数で比べると、
-    /// 解放されたモデルの番地に別のモデルが作られたときに、前のモデルの位相を使い続ける。持つのは次の同期までの間（毎フレーム見る）。
-    topologies: HashMap<i32, (Arc<ViewModel>, Arc<UvTopology>)>,
+    /// セット（uid）ごとの UV の位相（そのセットのマテリアルの組の三角形）と、それを作った（または同じ位相と確かめた）モデル。モデルは
+    /// 持ち続ける: 番地や世代の数で比べると、解放されたモデルの番地に別のモデルが作られたときに、前のモデルの位相を使い続ける。持つのは
+    /// 次の同期までの間（毎フレーム見る）。
+    topologies: HashMap<u32, (Arc<ViewModel>, Arc<UvTopology>)>,
 }
 
 impl InputsState {
@@ -483,26 +484,27 @@ impl AppState {
         }
     }
 
-    /// セットのマテリアルの組ごとの UV の位相を、今のモデルに合わせる（モデルが替わっても、UV と隣り合わせが同じなら前の物のまま）。
+    /// セットごとの UV の位相を、今のモデルとセットのマテリアルの組に合わせる（モデルが替わっても、UV と隣り合わせが同じで、組が同じ
+    /// なら前の物のまま。組が替われば作り直す）。アイランドの隣り合わせは今のままスロットの中だけ（組の別のマテリアルへはまたがない）。
     fn refresh_topologies(&mut self) {
         let Some(model) = self.view3d.full_model().cloned() else {
             self.fx.inputs.topologies.clear();
             return;
         };
-        let materials: HashSet<i32> = (0..self.session.sets.len())
-            .filter_map(|i| self.set_material(i))
+        let wanted: HashMap<u32, MaterialSet> = (0..self.session.sets.len())
+            .filter_map(|i| Some((self.session.sets.get(i)?.uid, self.set_material(i)?)))
             .collect();
         let held = &mut self.fx.inputs.topologies;
-        held.retain(|m, _| materials.contains(m));
-        for material in materials {
-            match held.get_mut(&material) {
+        held.retain(|uid, (_, t)| wanted.get(uid).is_some_and(|m| t.material() == Some(m)));
+        for (uid, material) in wanted {
+            match held.get_mut(&uid) {
                 Some((made_from, _)) if Arc::ptr_eq(made_from, &model) => {}
                 Some((made_from, topology)) if topology.same_layout(&model.geometry) => {
                     *made_from = model.clone();
                 }
                 _ => {
-                    let topology = UvTopology::new(model.geometry.clone(), Some(material));
-                    held.insert(material, (model.clone(), Arc::new(topology)));
+                    let topology = UvTopology::new(model.geometry.clone(), Some(&material));
+                    held.insert(uid, (model.clone(), Arc::new(topology)));
                 }
             }
         }
@@ -517,8 +519,10 @@ impl AppState {
         needed: &[MeshMapKind],
     ) -> SetKey {
         let topology = self
-            .set_material(index)
-            .and_then(|m| self.fx.inputs.topologies.get(&m))
+            .session
+            .sets
+            .get(index)
+            .and_then(|s| self.fx.inputs.topologies.get(&s.uid))
             .map_or(0, |(_, t)| Arc::as_ptr(t) as usize);
         let Some(set) = self.session.sets.get(index) else {
             return SetKey {
@@ -571,8 +575,10 @@ impl AppState {
         needed: &[MeshMapKind],
     ) -> EffectInputs {
         let topology = self
-            .set_material(index)
-            .and_then(|m| self.fx.inputs.topologies.get(&m))
+            .session
+            .sets
+            .get(index)
+            .and_then(|s| self.fx.inputs.topologies.get(&s.uid))
             .map(|(_, t)| t.clone());
         let mut inputs = EffectInputs::new()
             .with_frame(frame.then(ModelFrame::default))

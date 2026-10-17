@@ -110,7 +110,7 @@ fn the_selection_goes_into_and_out_of_a_project_without_touching_the_rest() {
     let spec = yolu_io::SetSpec {
         id: "5f7f1e2e-8d52-4b8e-9a31-0c0c0c0c0c01".into(),
         name: "Set".into(),
-        material: yolu_io::MaterialRef::Unassigned,
+        materials: vec![yolu_io::MaterialRef::Unassigned],
         document: Some(native.clone().into()),
         composites: Vec::new(),
     };

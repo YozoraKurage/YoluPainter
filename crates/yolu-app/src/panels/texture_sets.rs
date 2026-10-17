@@ -52,16 +52,19 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
         );
     }
     let model = app.session.model.as_ref()?;
-    let Some(material) = set.bound else {
+    if set.bound.is_empty() {
         // 薄い切れた鎖。理由はツールチップ（マテリアルに付いていないセットと、今のモデルに無いマテリアルのセット）
-        let tooltip = match &set.material {
-            crate::sets::MaterialRef::Material { .. } => {
-                app.lang.t("panels-material-not-in-this-model-tip")
-            }
-            _ => app.lang.t("panels-not-assigned-to-a-material-tip"),
+        let named = set
+            .materials
+            .iter()
+            .any(|m| matches!(m, crate::sets::MaterialRef::Material { .. }));
+        let tooltip = if named {
+            app.lang.t("panels-material-not-in-this-model-tip")
+        } else {
+            app.lang.t("panels-not-assigned-to-a-material-tip")
         };
         return look("link_off", t::TEXT_DIM, tooltip.into());
-    };
+    }
     if !set.visible {
         return look(
             "visibility_off",
@@ -69,7 +72,11 @@ pub fn set_state(app: &AppState, index: usize) -> Option<SetLook> {
             app.lang.t("panels-hidden-in-the-3d-view-tip").into(),
         );
     }
-    if app.view3d.unpainted.contains(&(material as i32)) {
+    if set
+        .bound
+        .iter()
+        .any(|m| app.view3d.unpainted.contains(&(*m as i32)))
+    {
         return look(
             "warning",
             t::WARNING,
@@ -279,6 +286,72 @@ fn toolbar_buttons(ui: &mut Ui, app: &mut AppState, bar: Rect) {
     }
 }
 
+/// 行の名前（名前の変更中は入力欄）。複数のマテリアルを持つセットは、名前の右にマテリアルの名前を薄く出す。
+fn set_name(
+    ui: &mut Ui,
+    app: &mut AppState,
+    list: Rect,
+    name_rect: Rect,
+    (uid, name, selected, visible): (u32, &str, bool, bool),
+    material_names: &[String],
+) {
+    let painter = ui.painter_at(list);
+    if app.ui.renaming_set == Some(uid) {
+        let first = !app.ui.rename_set_started;
+        app.ui.rename_set_started = true;
+        let out = w::text_field(ui, name_rect, ("set.rename", uid), name, None, first);
+        if let Some(next) = out.committed {
+            app.apply(Action::RenameSet(uid, next));
+        }
+        if !first && !out.focused {
+            app.ui.renaming_set = None;
+        }
+    } else {
+        let color = if selected {
+            Color32::WHITE
+        } else if !visible {
+            t::TEXT_DIM
+        } else {
+            t::TEXT
+        };
+        let shown = w::fit(&painter, name, name_rect.width(), t::LABEL);
+        w::text(
+            &painter,
+            name_rect,
+            &shown,
+            t::LABEL.with_color(color),
+            Align::Left,
+        );
+        material_names_hint(&painter, app.lang, name_rect, &shown, material_names);
+    }
+}
+
+/// 複数のマテリアルを持つセットだけ、名前の右にマテリアルの名前を薄く（プロジェクト設定の閉じた形と同じ書き方）。
+fn material_names_hint(
+    painter: &egui::Painter,
+    lang: crate::lang::Lang,
+    name_rect: Rect,
+    shown: &str,
+    material_names: &[String],
+) {
+    if material_names.len() <= 1 {
+        return;
+    }
+    let name_w = w::text_width(painter, shown, t::LABEL);
+    let at = Rect::from_min_max(
+        pos2(name_rect.left() + name_w + 10.0, name_rect.top()),
+        name_rect.max,
+    );
+    if at.width() > 8.0 {
+        let names: Vec<&str> = material_names.iter().map(String::as_str).collect();
+        let text = crate::sets::materials_label(lang, &names, |s| {
+            w::text_width(painter, s, t::LABEL_DIM) <= at.width()
+        });
+        let text = w::fit(painter, &text, at.width(), t::LABEL_DIM);
+        w::text(painter, at, &text, t::LABEL_DIM, Align::Left);
+    }
+}
+
 fn set_row(
     ui: &mut Ui,
     app: &mut AppState,
@@ -292,7 +365,8 @@ fn set_row(
         return;
     };
     let (uid, name, visible) = (set.uid, set.name.clone(), set.visible);
-    let material_ref = set.material.clone();
+    let material_refs = set.materials.clone();
+    let material_names = app.bound_material_names(index);
     let selected = texture_row_selected(app, index);
     let doc = app.set_doc(index);
     let resolution = if doc.width() == doc.height() {
@@ -400,35 +474,20 @@ fn set_row(
     }
     w::text(&painter, res_rect, &resolution, t::LABEL_DIM, Align::Right);
 
-    if app.ui.renaming_set == Some(uid) {
-        let first = !app.ui.rename_set_started;
-        app.ui.rename_set_started = true;
-        let out = w::text_field(ui, name_rect, ("set.rename", uid), &name, None, first);
-        if let Some(next) = out.committed {
-            app.apply(Action::RenameSet(uid, next));
-        }
-        if !first && !out.focused {
-            app.ui.renaming_set = None;
-        }
-    } else {
-        let color = if selected {
-            Color32::WHITE
-        } else if !visible {
-            t::TEXT_DIM
-        } else {
-            t::TEXT
-        };
-        let shown = w::fit(&painter, &name, name_rect.width(), t::LABEL);
-        w::text(
-            &painter,
-            name_rect,
-            &shown,
-            t::LABEL.with_color(color),
-            Align::Left,
-        );
-    }
+    set_name(
+        ui,
+        app,
+        list,
+        name_rect,
+        (uid, &name, selected, visible),
+        &material_names,
+    );
     // 行の上のツールチップ: マテリアル（詳しく。状態のアイコンの上ではアイコンの説明が先に出る）
-    let detail = crate::sets::material_tooltip_in(&material_ref, app.lang);
+    let detail = material_refs
+        .iter()
+        .map(|m| crate::sets::material_tooltip_in(m, app.lang))
+        .collect::<Vec<_>>()
+        .join("\n");
     let response = response.on_hover_text(detail);
     response
         .widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, free, selected, &name));

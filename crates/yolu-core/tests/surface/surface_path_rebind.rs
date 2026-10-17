@@ -111,7 +111,8 @@ fn a_path_moves_to_the_same_place_on_another_mesh() {
     let from = geometry(plain(1));
     let to = geometry(board(4, 0.5, 0.5, 0.5, 0, -1, 0.0, false)); // 割り方・UV・三角形の数が違う
     let path = path_on(&from);
-    let rebound = rebind_surface_path(&path, &from, &to, 0).unwrap();
+    let rebound =
+        rebind_surface_path(&path, &from, &to, &yolu_core::geometry::MaterialSet::one(0)).unwrap();
     assert_eq!(rebound.id, path.id);
     assert_eq!(rebound.brush, path.brush);
     assert_eq!(rebound.channel, path.channel);
@@ -153,12 +154,23 @@ fn a_point_without_a_near_surface_of_its_material_is_not_placed() {
     let path = path_on(&from);
     let far = geometry(board(1, 0.0, 0.0, 1.0, 0, -1, 0.5, false));
     assert!(matches!(
-        rebind_surface_path(&path, &from, &far, 0),
+        rebind_surface_path(
+            &path,
+            &from,
+            &far,
+            &yolu_core::geometry::MaterialSet::one(0)
+        ),
         Err(RebindError::NoSurface { point: 0, .. })
     ));
     let near = geometry(board(1, 0.0, 0.0, 1.0, 0, -1, 0.001, false));
     assert!(
-        rebind_surface_path(&path, &from, &near, 0).is_ok(),
+        rebind_surface_path(
+            &path,
+            &from,
+            &near,
+            &yolu_core::geometry::MaterialSet::one(0)
+        )
+        .is_ok(),
         "許す距離（対角線の 1%）より少し近い"
     );
     // 同じ所に別のマテリアルの組の板と、自分の組の裏向きの板: どちらにも置かない
@@ -166,21 +178,45 @@ fn a_point_without_a_near_surface_of_its_material_is_not_placed() {
     both.extend(board(1, 0.0, 0.0, 1.0, 0, 0, 0.0, true));
     let other = geometry(both);
     assert!(
-        rebind_surface_path(&path, &from, &other, 0).is_err(),
+        rebind_surface_path(
+            &path,
+            &from,
+            &other,
+            &yolu_core::geometry::MaterialSet::one(0)
+        )
+        .is_err(),
         "向きの合うのは別の組の板で、自分の組の板は裏向き"
     );
-    let on_other = rebind_surface_path(&path, &from, &other, 1).unwrap();
+    let on_other = rebind_surface_path(
+        &path,
+        &from,
+        &other,
+        &yolu_core::geometry::MaterialSet::one(1),
+    )
+    .unwrap();
     assert!(on_other
         .points
         .iter()
         .all(|p| other.triangles()[p.triangle as usize].material == 1));
     assert_eq!(
-        rebind_surface_path(&path, &from, &other, -1).err(),
+        rebind_surface_path(
+            &path,
+            &from,
+            &other,
+            &yolu_core::geometry::MaterialSet::default()
+        )
+        .err(),
         Some(RebindError::NoMaterial)
     );
     let stranger = path_on(&geometry(plain(2)));
     assert_eq!(
-        rebind_surface_path(&stranger, &from, &other, 1).err(),
+        rebind_surface_path(
+            &stranger,
+            &from,
+            &other,
+            &yolu_core::geometry::MaterialSet::one(1)
+        )
+        .err(),
         Some(RebindError::OtherModel)
     );
 }
@@ -190,7 +226,13 @@ fn the_reason_names_the_point_and_the_distance() {
     let from = geometry(plain(1));
     let path = path_on(&from);
     let far = geometry(board(1, 0.0, 0.0, 1.0, 0, -1, 0.5, false));
-    let e = rebind_surface_path(&path, &from, &far, 0).unwrap_err();
+    let e = rebind_surface_path(
+        &path,
+        &from,
+        &far,
+        &yolu_core::geometry::MaterialSet::one(0),
+    )
+    .unwrap_err();
     let text = e.to_string();
     assert!(text.contains("点 1"), "{text}");
     // 点の指す三角形がモデルに無いとき（前のモデルの指紋は合っていても、点が壊れている）
@@ -198,7 +240,13 @@ fn the_reason_names_the_point_and_the_distance() {
     broken.points[1].triangle = 99;
     let near = geometry(board(1, 0.0, 0.0, 1.0, 0, -1, 0.001, false));
     assert_eq!(
-        rebind_surface_path(&broken, &from, &near, 0).err(),
+        rebind_surface_path(
+            &broken,
+            &from,
+            &near,
+            &yolu_core::geometry::MaterialSet::one(0)
+        )
+        .err(),
         Some(RebindError::MissingTriangle { point: 1 })
     );
 }

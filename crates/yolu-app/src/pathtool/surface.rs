@@ -333,7 +333,7 @@ fn pick_place(app: &AppState, rect: Rect, at: Pos2, ctx: &SurfaceCtx) -> Result<
     let Some(hit) = pick(&shown.geometry, &view, local(rect, at)) else {
         return Err(lang.t("pathtool-not-on-the-model").into());
     };
-    if hit.material != ctx.material {
+    if !ctx.material.contains(hit.material) {
         let name = shown.material_name(hit.material as usize, lang);
         return Err(lang.f(
             "pathtool-surface-of-another-texture-set",

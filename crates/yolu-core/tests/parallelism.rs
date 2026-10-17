@@ -1084,7 +1084,7 @@ fn surface_strokes_are_the_same_whether_the_projection_gathers_on_workers_or_not
                 geometry.clone(),
                 view,
                 &brush.base,
-                Some(0),
+                Some(&yolu_core::geometry::MaterialSet::one(0)),
                 c + Vec2::new(-150.0, -30.0),
                 1.0,
                 SurfaceStrokeOptions::default(),

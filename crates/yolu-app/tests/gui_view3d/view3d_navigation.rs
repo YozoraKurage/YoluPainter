@@ -351,11 +351,11 @@ fn frame_selected_shortcut_is_local_and_respects_missing_selection_and_modifiers
     key(&mut h, Key::Period, true, Modifiers::CTRL);
     assert_eq!(camera(&h), original);
     key(&mut h, Key::Period, false, Modifiers::NONE);
-    h.view3d_mut().material = -1;
+    h.view3d_mut().material = yolu_core::geometry::MaterialSet::default();
     key(&mut h, Key::Period, true, Modifiers::NONE);
     assert_eq!(camera(&h), original);
     key(&mut h, Key::Period, false, Modifiers::NONE);
-    h.view3d_mut().material = 0;
+    h.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     key(&mut h, Key::Period, true, Modifiers::NONE);
     assert_ne!(camera(&h).distance, original.distance);
     assert_eq!(camera(&h).yaw, original.yaw);
@@ -472,7 +472,7 @@ fn texture_set_bounds_and_pivot_follow_only_its_shown_faces() {
     }
     let model = ViewModel::new("Two cubes", vec![first, second], vec![None, None], 7).unwrap();
     h.view3d_mut().set_model(model);
-    h.view3d_mut().material = 1;
+    h.view3d_mut().material = yolu_core::geometry::MaterialSet::one(1);
     let bounds = navigation::selected_bounds(h.view3d()).unwrap();
     assert_eq!(bounds.center, Vec3::new(4.0, 0.0, 0.0));
     assert_eq!(bounds.size(), Vec3::ONE);

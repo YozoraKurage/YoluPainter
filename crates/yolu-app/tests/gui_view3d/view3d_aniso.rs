@@ -75,7 +75,7 @@ fn striped_plane(standard: bool) -> Harness<'static, YoluApp> {
         }
         doc.clear_history().unwrap();
         let revision = state.view3d_mut().next_revision();
-        state.view3d_mut().material = 0;
+        state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         let model =
             ViewModel::new("板", vec![plane()], vec![Some("板".to_string())], revision).unwrap();
         model.tangents();
@@ -219,7 +219,7 @@ fn measure_frames_with_and_without_anisotropy() {
         {
             let state = big.app_mut();
             let revision = state.view3d_mut().next_revision();
-            state.view3d_mut().material = 0;
+            state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
             let model =
                 ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
             model.tangents();

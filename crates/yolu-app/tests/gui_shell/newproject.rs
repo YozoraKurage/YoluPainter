@@ -121,11 +121,11 @@ fn a_project_without_a_model_follows_the_template_resolution_and_normal_format()
         NormalYDirection::DirectX
     );
     assert_eq!(
-        s.sets().current().material,
+        s.sets().current().materials[0],
         MaterialRef::PendingSlot(0),
         "モデルが無ければ仮のスロット 0"
     );
-    assert!(s.sets().current().bound.is_none());
+    assert!(s.sets().current().bound.is_empty());
     assert!(
         s.project().is_none() && !s.modified(),
         "保存していない新しいプロジェクト"
@@ -208,14 +208,14 @@ fn a_model_gives_one_set_per_chosen_material_and_meshes_sharing_a_material_share
         assert_eq!(enabled_channels(s.set_doc(i)).len(), 6, "PBR");
     }
     assert_eq!(
-        s.sets().get(0).unwrap().material,
+        s.sets().get(0).unwrap().materials[0],
         MaterialRef::Material {
             name: "Skin".into(),
             asset: None
         }
     );
-    assert_eq!(s.sets().get(0).unwrap().bound, Some(0));
-    assert_eq!(s.sets().get(1).unwrap().bound, Some(1));
+    assert_eq!(s.sets().get(0).unwrap().bound, [0]);
+    assert_eq!(s.sets().get(1).unwrap().bound, [1]);
     assert!(
         s.sets().iter().all(|x| !x.saved.is_some()),
         "ファイルに無いセット"
@@ -233,29 +233,109 @@ fn a_model_gives_one_set_per_chosen_material_and_meshes_sharing_a_material_share
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// 新規の行の、マテリアルの組の番号（行ごと）。
+fn rows(s: &S) -> Vec<Vec<usize>> {
+    s.np()
+        .window
+        .as_ref()
+        .unwrap()
+        .drafts
+        .iter()
+        .map(|d| d.materials())
+        .collect()
+}
+
 #[test]
 fn at_least_one_material_stays_checked_and_the_choice_is_forgotten_with_the_model() {
     let dir = temp_dir("checks");
     let path = character(&dir, "c.fbx");
     let mut s = S::new(64, 64);
     open_new_with(&mut s, &path);
+    assert_eq!(
+        rows(&s),
+        [vec![0], vec![1], vec![2]],
+        "初めはマテリアルごとに 1 行"
+    );
     np(&mut s, NpAction::Material(0, false));
     np(&mut s, NpAction::Material(1, false));
-    assert_eq!(s.np().window.as_ref().unwrap().materials, Some(vec![2]));
+    assert_eq!(rows(&s), [vec![2]]);
     np(&mut s, NpAction::Material(2, false)); // 最後の 1 つは外せない
-    assert_eq!(s.np().window.as_ref().unwrap().materials, Some(vec![2]));
+    assert_eq!(rows(&s), [vec![2]]);
     np(&mut s, NpAction::Material(0, true));
     np(&mut s, NpAction::Material(1, true));
     assert_eq!(
-        s.np().window.as_ref().unwrap().materials,
-        None,
-        "全部に戻せば既定"
+        rows(&s),
+        [vec![0], vec![1], vec![2]],
+        "入れたマテリアルは、マテリアルの順の所に 1 行ずつ"
     );
     np(&mut s, NpAction::Material(0, false));
-    // モデルを選び直すと、選びは全部に戻る
+    // モデルを選び直すと、行はマテリアルごとの初めの形に戻る
     np(&mut s, NpAction::ChooseModel(path.clone()));
     wait_model(&mut s);
-    assert_eq!(s.np().window.as_ref().unwrap().materials, None);
+    assert_eq!(rows(&s), [vec![0], vec![1], vec![2]]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn two_materials_put_in_one_row_make_one_set_and_an_emptied_row_is_not_created() {
+    let dir = temp_dir("new-merge");
+    let path = character(&dir, "c.fbx");
+    let mut s = S::new(64, 64);
+    open_new_with(&mut s, &path);
+    // Hair を Skin の行へ移す（Hair の行は空になって残り、作るときに捨てる）
+    np(&mut s, NpAction::Draft(0, DraftOp::Material(1, true)));
+    assert_eq!(rows(&s), [vec![0, 1], vec![], vec![2]]);
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(win.drafts.len(), 3, "空になった行も残る");
+        assert_eq!(win.chosen(3), [0, 1, 2]);
+    }
+    // 行ごとの大きさ
+    np(&mut s, NpAction::Draft(0, DraftOp::Size(512, 512)));
+    np(&mut s, NpAction::Draft(2, DraftOp::Size(1024, 1024)));
+    np(&mut s, NpAction::Submit);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    assert_eq!(
+        set_names(&s),
+        ["Skin", "Eye"],
+        "マテリアルの無い行は作らない"
+    );
+    let face = s.sets().get(0).unwrap();
+    assert_eq!(face.bound, [0, 1]);
+    assert_eq!(
+        face.materials,
+        [
+            MaterialRef::Material {
+                name: "Skin".into(),
+                asset: None
+            },
+            MaterialRef::Material {
+                name: "Hair".into(),
+                asset: None
+            }
+        ]
+    );
+    assert!(face.auto_name, "最初のマテリアルの名前のまま");
+    assert_eq!(size_of(&s, 0), (512, 512));
+    assert_eq!(size_of(&s, 1), (1024, 1024));
+    assert_eq!(s.sets().get(1).unwrap().bound, [2]);
+    // 3D で描くのは今のセットの組（Skin と Hair の両方）
+    s.sync_view3d();
+    assert_eq!(
+        s.view3d().material,
+        yolu_core::geometry::MaterialSet::new([0, 1])
+    );
+    // 全部の行を空にすると作れない（理由をウィンドウに出す）
+    np(&mut s, NpAction::OpenNew);
+    np(&mut s, NpAction::ChooseModel(path.clone()));
+    wait_model(&mut s);
+    for g in 0..3 {
+        np(&mut s, NpAction::Draft(g, DraftOp::Material(g, false)));
+    }
+    assert!(rows(&s).iter().all(Vec::is_empty));
+    np(&mut s, NpAction::Submit);
+    let win = s.np().window.as_ref().expect("断ったらウィンドウは残る");
+    assert!(win.error.is_some());
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -445,8 +525,8 @@ fn configuration_opens_with_the_sets_of_the_project() {
     assert_eq!(win.drafts.len(), 3);
     assert_eq!(win.drafts[0].name, "Skin");
     assert_eq!(win.drafts[0].size, (512, 512));
-    assert_eq!(win.drafts[0].material, Some(0));
-    assert_eq!(win.drafts[1].material, Some(1));
+    assert_eq!(win.drafts[0].materials(), [0]);
+    assert_eq!(win.drafts[1].materials(), [1]);
     assert!(!win.drafts[0].resizes());
     assert_eq!(win.normal, NormalYDirection::OpenGL);
     let _ = std::fs::remove_dir_all(dir);
@@ -461,10 +541,9 @@ fn renaming_changing_the_material_and_the_normal_format_apply_without_asking() {
     let uids: Vec<u32> = s.sets().iter().map(|x| x.uid).collect();
     np(&mut s, NpAction::OpenConfigure);
     np(&mut s, NpAction::Draft(0, DraftOp::Name("  肌  ".into())));
-    // Skin のセットを Eye のマテリアルへ、Eye のセットは Skin へ入れ替える（重ならない順に）
-    np(&mut s, NpAction::Draft(2, DraftOp::Material(None)));
-    np(&mut s, NpAction::Draft(0, DraftOp::Material(Some(2))));
-    np(&mut s, NpAction::Draft(2, DraftOp::Material(Some(0))));
+    // Skin のセットを Eye のマテリアルへ、Eye のセットは Skin へ入れ替える（選んだマテリアルはほかのセットから移る）
+    np(&mut s, NpAction::Draft(0, DraftOp::Material(2, true)));
+    np(&mut s, NpAction::Draft(2, DraftOp::Material(0, true)));
     np(&mut s, NpAction::Normal(NormalYDirection::DirectX));
     np(&mut s, NpAction::Submit);
     assert!(
@@ -478,10 +557,10 @@ fn renaming_changing_the_material_and_the_normal_format_apply_without_asking() {
         uids,
         "同じセット（文書）のまま"
     );
-    assert_eq!(s.sets().get(0).unwrap().bound, Some(2));
-    assert_eq!(s.sets().get(2).unwrap().bound, Some(0));
+    assert_eq!(s.sets().get(0).unwrap().bound, [2]);
+    assert_eq!(s.sets().get(2).unwrap().bound, [0]);
     assert_eq!(
-        s.sets().get(0).unwrap().material,
+        s.sets().get(0).unwrap().materials[0],
         MaterialRef::Material {
             name: "Eye".into(),
             asset: None
@@ -526,9 +605,132 @@ fn names_and_materials_that_collide_are_refused_with_a_reason_and_nothing_change
     np(&mut s, NpAction::Draft(1, DraftOp::Name("x".repeat(257))));
     refused(&mut s, "長すぎる名前");
     np(&mut s, NpAction::Draft(1, DraftOp::Name("Hair".into())));
-    // 同じマテリアルを描くのは選べない（メニューも断る）
-    np(&mut s, NpAction::Draft(1, DraftOp::Material(Some(0))));
-    assert_eq!(s.np().window.as_ref().unwrap().drafts[1].material, Some(1));
+    // 同じマテリアルを 2 つのセットが描くことはない（選ぶと、そのマテリアルはほかのセットから移る）
+    np(&mut s, NpAction::Draft(1, DraftOp::Material(0, true)));
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(win.drafts[1].materials(), [0, 1]);
+        assert!(win.drafts[0].materials().is_empty());
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_material_moved_to_another_set_leaves_its_row_without_a_material_until_the_bin_removes_it() {
+    let dir = temp_dir("configure-move");
+    let path = character(&dir, "c.fbx");
+    let mut s = project_from(&path, 512);
+    paint_dot(&mut s, 1, (4, 4), Rgba8::new(9, 8, 7, 255));
+    let uids: Vec<u32> = s.sets().iter().map(|x| x.uid).collect();
+    np(&mut s, NpAction::OpenConfigure);
+    // Hair を Skin のセットへ移す: Hair の行はマテリアルなしで残る
+    np(&mut s, NpAction::Draft(0, DraftOp::Material(1, true)));
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(win.drafts.len(), 3);
+        assert_eq!(win.drafts[0].materials(), [0, 1]);
+        assert!(win.drafts[1].materials().is_empty() && !win.drafts[1].has_missing_key());
+        assert_eq!(yolu_app::newproject::unused_groups(&s, win), 0);
+    }
+    // 取り消すと何も変わらない
+    np(&mut s, NpAction::Close);
+    assert_eq!(s.sets().get(0).unwrap().bound, [0]);
+    assert_eq!(s.sets().get(1).unwrap().bound, [1]);
+    // もう一度移して適用する（消すセットが無いので確かめない）
+    np(&mut s, NpAction::OpenConfigure);
+    np(&mut s, NpAction::Draft(0, DraftOp::Material(1, true)));
+    np(&mut s, NpAction::Submit);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    assert_eq!(set_names(&s), ["Skin", "Hair", "Eye"], "行は残る");
+    assert_eq!(s.sets().iter().map(|x| x.uid).collect::<Vec<_>>(), uids);
+    assert_eq!(s.sets().get(0).unwrap().bound, [0, 1]);
+    assert!(s.sets().get(1).unwrap().bound.is_empty());
+    assert!(
+        matches!(
+            s.sets().get(1).unwrap().materials.as_slice(),
+            [MaterialRef::PendingSlot(_)]
+        ),
+        "どのマテリアルにも付けない鍵: {:?}",
+        s.sets().get(1).unwrap().materials
+    );
+    assert_eq!(
+        pixel_of(&s, 1, (4, 4)),
+        Rgba8::new(9, 8, 7, 255),
+        "描いた物は消えない"
+    );
+    assert_eq!(
+        yolu_app::panels::texture_sets::set_state(&s, 1).map(|l| l.icon),
+        Some("link_off")
+    );
+    // 開き直した構成でも、マテリアルなしの行
+    np(&mut s, NpAction::OpenConfigure);
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(win.drafts[0].materials(), [0, 1]);
+        assert!(win.drafts[1].materials().is_empty() && !win.drafts[1].has_missing_key());
+    }
+    // 消すのはごみ箱（確かめて消す）
+    np(&mut s, NpAction::Draft(1, DraftOp::Remove));
+    np(&mut s, NpAction::Submit);
+    assert!(
+        s.np().window.as_ref().unwrap().confirm.is_some(),
+        "消すときは確かめる"
+    );
+    np(&mut s, NpAction::ConfirmApply);
+    assert_eq!(set_names(&s), ["Skin", "Eye"]);
+    assert_eq!(s.sets().get(0).unwrap().bound, [0, 1]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_set_with_two_materials_saves_as_format_9_and_back_to_format_7_with_one() {
+    let dir = temp_dir("multimat-save");
+    let path = character(&dir, "c.fbx");
+    let mut s = S::new(64, 64);
+    open_new_with(&mut s, &path);
+    np(&mut s, NpAction::Draft(0, DraftOp::Material(1, true)));
+    np(&mut s, NpAction::Resolution(256));
+    np(&mut s, NpAction::Submit);
+    assert_eq!(set_names(&s), ["Skin", "Eye"]);
+    paint_dot(&mut s, 0, (5, 6), Rgba8::new(30, 60, 90, 255));
+    let ylp = dir.join("multi.ylp");
+    s.act(Action::SaveProjectAs(ylp.clone()));
+    assert!(s.message().contains("保存しました"), "{}", s.message());
+    let saved = read_file(&ylp);
+    assert_eq!(saved.info().format, yolu_io::MULTI_MATERIAL_FORMAT);
+    assert_eq!(
+        saved.sets()[0].materials,
+        [
+            MaterialRef::Material {
+                name: "Skin".into(),
+                asset: None
+            },
+            MaterialRef::Material {
+                name: "Hair".into(),
+                asset: None
+            }
+        ]
+    );
+    // 開き直すと同じ組・同じ画素
+    let mut t = S::new(64, 64);
+    t.act(Action::OpenProject(ylp.clone()));
+    wait_reopen(&mut t);
+    assert_eq!(set_names(&t), ["Skin", "Eye"]);
+    assert_eq!(t.sets().get(0).unwrap().bound, [0, 1]);
+    assert_eq!(pixel_of(&t, 0, (5, 6)), Rgba8::new(30, 60, 90, 255));
+    // Hair を自分のセットへ戻すと、どのセットもマテリアルが 1 つになり、形式 7 で書く
+    np(&mut t, NpAction::OpenConfigure);
+    np(&mut t, NpAction::Draft(0, DraftOp::Material(1, false)));
+    np(&mut t, NpAction::AddUnused);
+    np(&mut t, NpAction::Submit);
+    assert!(t.np().window.is_none(), "{:?}", t.message());
+    assert_eq!(set_names(&t), ["Skin", "Eye", "Hair"]);
+    let single = dir.join("single.ylp");
+    t.act(Action::SaveProjectAs(single.clone()));
+    assert!(t.message().contains("保存しました"), "{}", t.message());
+    let saved = read_file(&single);
+    assert_eq!(saved.info().format, 7);
+    assert!(saved.sets().iter().all(|x| x.materials.len() == 1));
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -822,10 +1024,7 @@ fn removing_the_current_set_switches_to_the_next_one() {
     assert_eq!(set_names(&s), ["Skin", "Eye"]);
     assert_eq!(s.sets().current().uid, eye, "並びの次が今のセットになる");
     assert_eq!(s.sets().current_index(), 1);
-    assert_eq!(
-        s.view3d().material,
-        s.sets().current().bound.unwrap() as i32
-    );
+    assert_eq!(s.view3d().material, s.sets().current().bound_set());
     // 最後のセットを消すと、前のセットが今のセット
     let skin = s.sets().get(0).unwrap().uid;
     np(&mut s, NpAction::RemoveSets(vec![eye]));
@@ -863,11 +1062,11 @@ fn adding_a_set_uses_the_open_sets_size_channels_and_normal_format() {
     );
     assert!(!s.doc().can_undo() && s.doc().layers().len() == 1);
     assert_eq!(
-        s.sets().current().material,
+        s.sets().current().materials[0],
         MaterialRef::PendingSlot(1),
         "空いている仮のスロット"
     );
-    assert!(s.sets().current().bound.is_none());
+    assert!(s.sets().current().bound.is_empty());
     assert!(s.modified());
 }
 
@@ -895,8 +1094,8 @@ fn adding_a_set_in_the_window_for_a_material_without_one() {
         let win = s.np().window.as_ref().unwrap();
         let d = win.drafts.last().unwrap();
         assert_eq!(
-            (d.uid, d.name.as_str(), d.material, d.size),
-            (None, "Eye", Some(2), (512, 512))
+            (d.uid, d.name.as_str(), d.materials(), d.size),
+            (None, "Eye", vec![2], (512, 512))
         );
     }
     // もう 1 つ足すとマテリアルの無いセット
@@ -911,8 +1110,14 @@ fn adding_a_set_in_the_window_for_a_material_without_one() {
             .last()
             .unwrap()
             .clone();
-        assert_eq!((d.material, d.name.as_str()), (None, "テクスチャセット 4"));
-        assert!(matches!(d.key, MaterialRef::PendingSlot(_)));
+        assert_eq!(
+            (d.materials(), d.name.as_str()),
+            (vec![], "テクスチャセット 4")
+        );
+        assert!(
+            d.keys.is_empty(),
+            "マテリアルなし（作るときに仮のスロットの番号の鍵）"
+        );
     }
     np(&mut s, NpAction::Draft(3, DraftOp::Size(1024, 1024)));
     np(&mut s, NpAction::Submit);
@@ -922,8 +1127,8 @@ fn adding_a_set_in_the_window_for_a_material_without_one() {
         s.message()
     );
     assert_eq!(set_names(&s), ["Skin", "Hair", "Eye", "テクスチャセット 4"]);
-    assert_eq!(s.sets().get(2).unwrap().bound, Some(2));
-    assert_eq!(s.sets().get(3).unwrap().bound, None);
+    assert_eq!(s.sets().get(2).unwrap().bound, [2]);
+    assert_eq!(s.sets().get(3).unwrap().bound, Vec::<u32>::new());
     assert_eq!(size_of(&s, 3), (1024, 1024));
     assert_eq!(size_of(&s, 2), (512, 512));
     assert_eq!(
@@ -978,9 +1183,10 @@ fn changing_the_model_moves_the_sets_to_the_new_materials_and_keeps_their_pixels
         );
         // 鍵で照合し直す: 大文字小文字を区別せず Skin → skin、名前が同じ Hair → Hair、Eye はモデルに無い
         assert_eq!(
-            win.drafts.iter().map(|d| d.material).collect::<Vec<_>>(),
-            [Some(2), Some(0), None]
+            win.drafts.iter().map(|d| d.materials()).collect::<Vec<_>>(),
+            [vec![2], vec![0], vec![]]
         );
+        assert!(win.drafts[2].has_missing_key(), "Eye の鍵は残る");
         assert_eq!(
             yolu_app::newproject::unused_groups(&s, win),
             1,
@@ -1021,11 +1227,15 @@ fn changing_the_model_moves_the_sets_to_the_new_materials_and_keeps_their_pixels
         uids,
         "セットは同じまま（セットを増やさない）"
     );
-    assert_eq!(s.sets().get(0).unwrap().bound, Some(2));
-    assert_eq!(s.sets().get(1).unwrap().bound, Some(0));
-    assert_eq!(s.sets().get(2).unwrap().bound, None, "モデルに無いセット");
+    assert_eq!(s.sets().get(0).unwrap().bound, [2]);
+    assert_eq!(s.sets().get(1).unwrap().bound, [0]);
     assert_eq!(
-        s.sets().get(0).unwrap().material,
+        s.sets().get(2).unwrap().bound,
+        Vec::<u32>::new(),
+        "モデルに無いセット"
+    );
+    assert_eq!(
+        s.sets().get(0).unwrap().materials[0],
         MaterialRef::Material {
             name: "skin".into(),
             asset: None
@@ -1033,7 +1243,7 @@ fn changing_the_model_moves_the_sets_to_the_new_materials_and_keeps_their_pixels
         "合ったセットの鍵は新しいマテリアルの鍵に書き換える"
     );
     assert_eq!(
-        s.sets().get(2).unwrap().material,
+        s.sets().get(2).unwrap().materials[0],
         MaterialRef::Material {
             name: "Eye".into(),
             asset: None
@@ -1049,14 +1259,17 @@ fn changing_the_model_moves_the_sets_to_the_new_materials_and_keeps_their_pixels
         s.message()
     );
     // 3D は今のセット（Skin → skin）のマテリアル
-    assert_eq!(s.view3d().material, 2);
+    assert_eq!(
+        s.view3d().material,
+        yolu_core::geometry::MaterialSet::one(2)
+    );
     // もう一度開いて、セットの無いマテリアルを足す
     np(&mut s, NpAction::OpenConfigure);
     np(&mut s, NpAction::AddUnused);
     np(&mut s, NpAction::Submit);
     assert!(s.np().window.is_none());
     assert_eq!(set_names(&s), ["Skin", "Hair", "Eye", "Cape"]);
-    assert_eq!(s.sets().get(3).unwrap().bound, Some(1));
+    assert_eq!(s.sets().get(3).unwrap().bound, [1]);
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -1071,15 +1284,15 @@ fn a_cancelled_model_change_leaves_the_project_as_it_was() {
     np(&mut s, NpAction::ConfirmCancel);
     assert!(s.np().window.as_ref().unwrap().confirm.is_none());
     assert_eq!(s.model().as_ref().unwrap().name, "old");
-    assert_eq!(s.sets().get(0).unwrap().bound, Some(0));
+    assert_eq!(s.sets().get(0).unwrap().bound, [0]);
     // 「替えない」で下書きを今のモデルに戻す
     np(&mut s, NpAction::ClearModel);
     {
         let win = s.np().window.as_ref().unwrap();
         assert!(win.model.is_none());
         assert_eq!(
-            win.drafts.iter().map(|d| d.material).collect::<Vec<_>>(),
-            [Some(0), Some(1), Some(2)]
+            win.drafts.iter().map(|d| d.materials()).collect::<Vec<_>>(),
+            [vec![0], vec![1], vec![2]]
         );
     }
     np(&mut s, NpAction::Submit);
@@ -1122,15 +1335,15 @@ fn reloading_the_model_after_it_was_exported_again_keeps_the_sets_on_their_mater
     assert!(s.np().window.is_none());
     assert_eq!(
         s.sets().get(0).unwrap().bound,
-        Some(0),
+        [0],
         "Skin は同じマテリアルのまま"
     );
     assert_eq!(
         s.sets().get(1).unwrap().bound,
-        None,
+        Vec::<u32>::new(),
         "名前が変わった Hair は新しいモデルに無い"
     );
-    assert_eq!(s.sets().get(2).unwrap().bound, Some(2));
+    assert_eq!(s.sets().get(2).unwrap().bound, [2]);
     assert_eq!(
         s.model().as_ref().unwrap().triangles,
         8,
@@ -1173,10 +1386,13 @@ fn a_key_two_sets_would_share_is_made_unique_so_the_project_still_saves() {
     let path = write_fbx(&dir, "c.fbx", &text);
     let mut s = project_from(&path, 512);
     assert_eq!(set_names(&s), ["Skin", "Unassigned"]);
-    assert_eq!(s.sets().get(1).unwrap().material, MaterialRef::Unassigned);
+    assert_eq!(
+        s.sets().get(1).unwrap().materials[0],
+        MaterialRef::Unassigned
+    );
     np(&mut s, NpAction::OpenConfigure);
     // Unassigned のセットをモデルに無いことにして（鍵は Unassigned のまま）、同じ Unassigned のマテリアルに新しいセットを足す
-    np(&mut s, NpAction::Draft(1, DraftOp::Material(None)));
+    s.np_mut().window.as_mut().unwrap().drafts[1].keys[0].1 = None;
     np(&mut s, NpAction::AddDraft);
     {
         let d = s
@@ -1189,8 +1405,8 @@ fn a_key_two_sets_would_share_is_made_unique_so_the_project_still_saves() {
             .unwrap()
             .clone();
         assert_eq!(
-            (d.name.as_str(), d.key.clone()),
-            ("Unassigned 2", MaterialRef::Unassigned)
+            (d.name.as_str(), d.keys.clone()),
+            ("Unassigned 2", vec![(MaterialRef::Unassigned, Some(1))])
         );
     }
     np(&mut s, NpAction::Submit);
@@ -1200,10 +1416,13 @@ fn a_key_two_sets_would_share_is_made_unique_so_the_project_still_saves() {
         s.np().window.as_ref().map(|w| w.error.clone())
     );
     // 同じ鍵を持つのは 1 つだけ（付いたほう）。外れたほうは名前の鍵になる
-    assert_eq!(s.sets().get(2).unwrap().material, MaterialRef::Unassigned);
-    assert_eq!(s.sets().get(2).unwrap().bound, Some(1));
     assert_eq!(
-        s.sets().get(1).unwrap().material,
+        s.sets().get(2).unwrap().materials[0],
+        MaterialRef::Unassigned
+    );
+    assert_eq!(s.sets().get(2).unwrap().bound, [1]);
+    assert_eq!(
+        s.sets().get(1).unwrap().materials[0],
         MaterialRef::Material {
             name: "Unassigned".into(),
             asset: None
@@ -1217,7 +1436,10 @@ fn a_key_two_sets_would_share_is_made_unique_so_the_project_still_saves() {
     t.act(Action::OpenProject(ylp));
     wait_reopen(&mut t);
     assert_eq!(
-        t.sets().iter().map(|x| x.bound).collect::<Vec<_>>(),
+        t.sets()
+            .iter()
+            .map(|x| x.bound.first().copied())
+            .collect::<Vec<_>>(),
         [Some(0), None, Some(1)]
     );
     let _ = std::fs::remove_dir_all(dir);
@@ -1418,8 +1640,8 @@ fn a_new_project_with_a_live_link_model_makes_a_set_for_each_chosen_material() {
     assert_eq!(set_names(&s), ["Skin", "Hair"]);
     assert_eq!(size_of(&s, 0), (512, 512));
     assert_eq!(size_of(&s, 1), (512, 512));
-    assert_eq!(s.sets().get(0).unwrap().bound, Some(0));
-    assert_eq!(s.sets().get(1).unwrap().bound, Some(1));
+    assert_eq!(s.sets().get(0).unwrap().bound, [0]);
+    assert_eq!(s.sets().get(1).unwrap().bound, [1]);
     assert!(
         s.model().as_ref().unwrap().is_link(),
         "Live Link のモデルのまま"
@@ -1430,7 +1652,7 @@ fn a_new_project_with_a_live_link_model_makes_a_set_for_each_chosen_material() {
     np(&mut s, NpAction::Material(0, false));
     np(&mut s, NpAction::Submit);
     assert_eq!(set_names(&s), ["Hair"]);
-    assert_eq!(s.sets().get(0).unwrap().bound, Some(1));
+    assert_eq!(s.sets().get(0).unwrap().bound, [1]);
     // モデルを選べば、その FBX のマテリアル（Live Link のモデルは見せない）
     let dir = temp_dir("link-new");
     let path = character(&dir, "c.fbx");
@@ -1642,7 +1864,7 @@ fn opening_an_fbx_picks_the_window_that_fits_the_project() {
     {
         let win = s.np().window.as_ref().unwrap();
         assert_eq!(win.drafts.len(), 1);
-        assert_eq!(win.drafts[0].material, Some(0));
+        assert_eq!(win.drafts[0].materials(), [0]);
         assert_eq!(
             yolu_app::newproject::unused_groups(&s, win),
             2,
@@ -1652,13 +1874,13 @@ fn opening_an_fbx_picks_the_window_that_fits_the_project() {
     np(&mut s, NpAction::Submit);
     np(&mut s, NpAction::ConfirmApply);
     assert_eq!(
-        s.sets().get(0).unwrap().material,
+        s.sets().get(0).unwrap().materials[0],
         MaterialRef::Material {
             name: "Skin".into(),
             asset: None
         }
     );
-    assert_eq!(s.sets().get(0).unwrap().bound, Some(0));
+    assert_eq!(s.sets().get(0).unwrap().bound, [0]);
     assert_eq!(pixel_of(&s, 0, (1, 1)), Rgba8::new(1, 1, 1, 255));
     // 保存したファイルがあるプロジェクトも触ったことになる
     let mut t = S::new(64, 64);
@@ -1893,7 +2115,10 @@ fn a_saved_project_remembers_the_model_file_and_reads_it_again_when_opened() {
         "モデルのマテリアルにセットを増やさない"
     );
     assert_eq!(
-        t.sets().iter().map(|x| x.bound).collect::<Vec<_>>(),
+        t.sets()
+            .iter()
+            .map(|x| x.bound.first().copied())
+            .collect::<Vec<_>>(),
         [Some(0), Some(1), Some(2)]
     );
     assert_eq!(
@@ -2469,7 +2694,7 @@ fn a_set_added_to_a_saved_project_is_written_and_a_resized_one_too() {
     assert_eq!(size_of(&t, 1), (512, 512));
     // 足したセットの鍵: モデルのスロット（4 つのメッシュ × 1 つのサブメッシュ）より後の、空いている仮のスロット
     assert_eq!(
-        t.sets().get(3).unwrap().material,
+        t.sets().get(3).unwrap().materials[0],
         MaterialRef::PendingSlot(4)
     );
     let _ = std::fs::remove_dir_all(dir);
@@ -2546,9 +2771,13 @@ fn a_project_has_at_most_64_sets_and_a_model_with_more_materials_gives_the_first
             "{:?}",
             win.error
         );
-        assert_eq!(win.materials, None, "選びは変わらない");
+        assert_eq!(
+            win.chosen(70),
+            (0..64).collect::<Vec<_>>(),
+            "選びは変わらない"
+        );
     }
-    // 1 つ外せば別の 1 つを選べる。選びを初めの形へ戻せば「選び直していない」に戻る
+    // 1 つ外せば別の 1 つを選べる。選びを初めの形へ戻せば、行もマテリアルの順に戻る
     np(&mut t, NpAction::Material(0, false));
     np(&mut t, NpAction::Material(64, true));
     {
@@ -2558,12 +2787,15 @@ fn a_project_has_at_most_64_sets_and_a_model_with_more_materials_gives_the_first
     }
     np(&mut t, NpAction::Material(64, false));
     np(&mut t, NpAction::Material(0, true));
-    assert_eq!(t.np().window.as_ref().unwrap().materials, None);
+    assert_eq!(
+        t.np().window.as_ref().unwrap().chosen(70),
+        (0..64).collect::<Vec<_>>()
+    );
     np(&mut t, NpAction::Resolution(512));
     np(&mut t, NpAction::Submit);
     assert_eq!(t.sets().len(), 64, "上限までの最初の 64 マテリアル");
     assert_eq!(t.sets().get(63).unwrap().name, "M63");
-    assert_eq!(t.sets().get(63).unwrap().bound, Some(63));
+    assert_eq!(t.sets().get(63).unwrap().bound, [63]);
     assert!(
         t.message().contains("上限") && t.message().contains('6'),
         "セットにならなかった数を言う: {}",
@@ -2830,17 +3062,20 @@ fn ctrl_n_asks_then_the_window_creates_with_the_chosen_template_and_resolution()
         "作成",
         "キャンセル",
         "PBR（すべてのチャンネル）",
-        "2048 × 2048",
+        "2048",
         "OpenGL（Y+、Unity）",
     ] {
         h.get_by_label(label);
     }
-    // ドロップダウンで選ぶ
-    h.get_by_label("2048 × 2048").click();
+    // ドロップダウンで選ぶ（行の大きさ）
+    h.get_by_label("2048").click();
     h.run();
     let at = dd_item(&h, "1024 × 1024").center();
     click(&mut h, at);
-    assert_eq!(st(&h).np().window.as_ref().unwrap().resolution, 1024);
+    assert_eq!(
+        st(&h).np().window.as_ref().unwrap().drafts[0].size,
+        (1024, 1024)
+    );
     assert!(
         st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_none(),
         "選んだら閉じる"
@@ -2887,7 +3122,7 @@ fn escape_closes_the_window_and_enter_creates() {
     assert_ne!(st(&h).doc().id(), id, "Enter で作る");
     // ドロップダウンを開いているときの Esc は、ドロップダウンだけを閉じる
     run_np(&mut h, NpAction::OpenNew);
-    h.get_by_label("2048 × 2048").click();
+    h.get_by_label("2048").click();
     h.run();
     assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_some());
     key(&h, Key::Escape, Modifiers::NONE);
@@ -2902,7 +3137,7 @@ fn escape_closes_the_window_and_enter_creates() {
 fn a_dropdown_left_open_when_the_window_closes_is_closed_when_the_window_opens_again() {
     let mut h = gui();
     run_np(&mut h, NpAction::OpenNew);
-    h.get_by_label("2048 × 2048").click();
+    h.get_by_label("2048").click();
     h.run();
     assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_some());
     // ドロップダウンを開いたまま、ウィンドウの外から閉じる
@@ -2913,7 +3148,7 @@ fn a_dropdown_left_open_when_the_window_closes_is_closed_when_the_window_opens_a
         st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_none(),
         "開き直した新規プロジェクトのウィンドウのドロップダウンは閉じている"
     );
-    h.get_by_label("2048 × 2048").click();
+    h.get_by_label("2048").click();
     h.run();
     assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_some());
     run_np(&mut h, NpAction::Close);
@@ -2925,8 +3160,44 @@ fn a_dropdown_left_open_when_the_window_closes_is_closed_when_the_window_opens_a
     );
 }
 
+/// 行 `row`（上から）のマテリアルの箱（名前の欄より右の、同じ文字の部品）。
+fn material_box(h: &H, label: &str) -> Rect {
+    let window = yolu_app::newproject::window::last_rect(&h.ctx).expect("ウィンドウ");
+    h.get_all_by_label(label)
+        .map(|n| n.rect())
+        .filter(|r| window.contains(r.center()))
+        .max_by(|a, b| a.left().total_cmp(&b.left()))
+        .unwrap_or_else(|| panic!("{label} がウィンドウに無い"))
+}
+
+/// 開いているドロップダウンのメニューの項目（ボタン）の中心。下に重なった行のマテリアルの箱（同じ名前）と取り違えない。
+fn menu_item(h: &H, label: &str) -> egui::Pos2 {
+    use egui::accesskit::Role;
+    let body = st(h)
+        .ui()
+        .np_dropdown
+        .as_ref()
+        .expect("ドロップダウンが開いている")
+        .1
+        .rect;
+    h.get_all_by_role_and_label(Role::Button, label)
+        .map(|n| n.rect())
+        .find(|r| body.contains(r.center()))
+        .unwrap_or_else(|| panic!("{label} がメニューに無い"))
+        .center()
+}
+
+/// ウィンドウと、開いているドロップダウンを合わせた範囲。
+fn window_and_dropdown(h: &H) -> Rect {
+    let rect = yolu_app::newproject::window::last_rect(&h.ctx).expect("ウィンドウ");
+    match st(h).ui().np_dropdown.as_ref() {
+        Some((_, popup)) => rect.union(popup.rect),
+        None => rect,
+    }
+}
+
 #[test]
-fn the_window_lists_the_materials_with_their_meshes_and_creates_the_checked_ones() {
+fn the_window_lists_one_row_per_material_and_a_row_takes_the_material_of_another() {
     let dir = temp_dir("gui-materials");
     let path = character(&dir, "c.fbx");
     let mut h = gui();
@@ -2938,45 +3209,131 @@ fn the_window_lists_the_materials_with_their_meshes_and_creates_the_checked_ones
         Prep::Ready { .. }
     ));
     let texts = window_texts(&h);
-    for expected in [
-        "c.fbx",
-        "Skin",
-        "Hair",
-        "Eye",
-        "Body, Face",
-        "HairMesh",
-        "EyeMesh",
-    ] {
+    for expected in ["c.fbx", "Skin", "Hair", "Eye", "テクスチャセットを追加"] {
         assert!(texts.iter().any(|t| t == expected), "{expected}: {texts:?}");
     }
+    assert!(
+        !texts.iter().any(|t| t == "解像度"),
+        "大きさは行ごと（解像度の欄は無い）: {texts:?}"
+    );
     shot(&mut h, "newproject_window");
-    // チェックを外す（Eye）→ 作る
-    h.get_by_label("Eye").click();
-    h.run();
-    assert_eq!(
-        st(&h).np().window.as_ref().unwrap().materials,
-        Some(vec![0, 1])
+    // Skin の行のマテリアルの箱を開く: マテリアルごとのチェックの行。ほかの行のマテリアルは右にその行の名前
+    let at = material_box(&h, "Skin").center();
+    click(&mut h, at);
+    assert!(st(&h).ui().np_dropdown.is_some());
+    let at = menu_item(&h, "Hair");
+    click(&mut h, at);
+    {
+        let win = st(&h).np().window.as_ref().unwrap();
+        assert_eq!(win.drafts[0].materials(), [0, 1], "Hair が Skin の行へ移る");
+        assert!(win.drafts[1].materials().is_empty());
+    }
+    assert!(
+        st(&h).ui().np_dropdown.is_some(),
+        "チェックの一覧は選んでも閉じない"
     );
-    // 最後の 1 つは外せない
-    h.get_by_label("Hair").click();
+    key(&h, Key::Escape, Modifiers::NONE);
     h.run();
-    assert_eq!(
-        st(&h).np().window.as_ref().unwrap().materials,
-        Some(vec![0])
+    assert!(st(&h).np().window.is_some() && st(&h).ui().np_dropdown.is_none());
+    let texts = window_texts(&h);
+    assert!(
+        texts.iter().any(|t| t == "Skin, Hair"),
+        "閉じた形: {texts:?}"
     );
-    h.get_by_label("Skin").click();
-    h.run();
-    assert_eq!(
-        st(&h).np().window.as_ref().unwrap().materials,
-        Some(vec![0]),
-        "最後の 1 つは外れない"
-    );
-    h.get_by_label("Hair").click();
-    h.run();
+    assert!(texts.iter().any(|t| t == "マテリアルなし"), "{texts:?}");
     h.get_by_label("作成").click();
     h.run();
-    assert_eq!(set_names(st(&h)), ["Skin", "Hair"]);
+    assert_eq!(
+        set_names(st(&h)),
+        ["Skin", "Eye"],
+        "マテリアルの無い行は作らない"
+    );
+    assert_eq!(st(&h).sets().get(0).unwrap().bound, [0, 1]);
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// ウィンドウとドロップダウンを撮る（直前のポインタを外してから）。
+fn shot_with_dropdown(h: &mut H, name: &str) {
+    let rect = window_and_dropdown(h);
+    h.event(egui::Event::PointerGone);
+    h.step();
+    common::shot::region(h, name, rect);
+}
+
+#[test]
+fn newproject_multimat_screens_in_both_languages() {
+    for lang in Lang::ALL {
+        let tag = lang.pick("ja", "en");
+        let dir = temp_dir(&format!("gui-multimat-{tag}"));
+        let path = character(&dir, "c.fbx");
+        // 新しいプロジェクト: Hair を Skin の行へ移す（Hair の行はマテリアルなし）
+        let mut h = gui();
+        h.app_mut().set_language(lang);
+        run_np(&mut h, NpAction::OpenNew);
+        run_np(&mut h, NpAction::ChooseModel(path.clone()));
+        settle_model(&mut h);
+        // Skin の行の箱を開く（ほかの行のマテリアルは右にその行の名前）。Hair を選ぶと Skin の行へ移る
+        let at = material_box(&h, "Skin").center();
+        click(&mut h, at);
+        assert!(st(&h).ui().np_dropdown.is_some());
+        shot_with_dropdown(&mut h, &format!("newproject_multimat_new_menu_{tag}"));
+        let at = menu_item(&h, "Hair");
+        click(&mut h, at);
+        key(&h, Key::Escape, Modifiers::NONE);
+        h.run();
+        assert_eq!(
+            st(&h).np().window.as_ref().unwrap().drafts[0].materials(),
+            [0, 1]
+        );
+        shot(&mut h, &format!("newproject_multimat_new_{tag}"));
+        let texts = window_texts(&h);
+        assert!(
+            texts
+                .iter()
+                .any(|t| t == lang.pick("マテリアルなし", "No material")),
+            "{texts:?}"
+        );
+        if lang == Lang::En {
+            assert!(texts.iter().all(|t| !has_japanese(t)), "{texts:?}");
+        }
+        h.get_by_label(lang.pick("作成", "Create")).click();
+        h.run();
+        assert_eq!(set_names(st(&h)), ["Skin", "Eye"]);
+        // プロジェクト設定: Eye の行の箱を開く（Skin・Hair は右に Skin のセットの名前）
+        run_np(&mut h, NpAction::OpenConfigure);
+        h.run();
+        let texts = window_texts(&h);
+        assert!(texts.iter().any(|t| t == "Skin, Hair"), "{texts:?}");
+        let at = material_box(&h, "Eye").center();
+        click(&mut h, at);
+        assert!(st(&h).ui().np_dropdown.is_some());
+        shot_with_dropdown(&mut h, &format!("newproject_multimat_configure_menu_{tag}"));
+        key(&h, Key::Escape, Modifiers::NONE);
+        h.run();
+        // Eye を Skin のセットへ移す（Eye のセットはマテリアルなしの行で残る）
+        run_np(&mut h, NpAction::Draft(0, DraftOp::Material(2, true)));
+        let texts = window_texts(&h);
+        assert!(texts.iter().any(|t| t == "Skin, Hair, Eye"), "{texts:?}");
+        shot(&mut h, &format!("newproject_multimat_configure_{tag}"));
+        if lang == Lang::En {
+            assert!(texts.iter().all(|t| !has_japanese(t)), "{texts:?}");
+        }
+        run_np(&mut h, NpAction::Submit);
+        assert!(st(&h).np().window.is_none(), "{}", st(&h).message());
+        assert_eq!(st(&h).sets().get(0).unwrap().bound, [0, 1, 2]);
+        // テクスチャセットの一覧: 名前の右にマテリアルの名前（マテリアルなしのセットは切れた鎖）
+        h.run();
+        let rect = common::shot::group(&h, yolu_app::Tab::TextureSets);
+        common::shot::clean_region(
+            &mut h,
+            &format!("newproject_multimat_texture_sets_{tag}"),
+            rect,
+        );
+        // アプリ全体（言語ごとに別の Harness なので、切り抜きの口で画面の全部を撮る）
+        let screen = h.ctx.content_rect();
+        common::shot::clean_region(&mut h, &format!("newproject_multimat_app_{tag}"), screen);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
 
 #[test]
@@ -3140,7 +3497,7 @@ fn the_window_follows_the_language_without_clipped_or_japanese_text() {
         for expected in [
             lang.pick("テンプレート", "Template"),
             lang.pick("メッシュ", "Mesh"),
-            lang.pick("解像度", "Resolution"),
+            lang.pick("テクスチャセットを追加", "Add Texture Set"),
             lang.pick("ノーマルマップの形式", "Normal map format"),
             lang.pick(
                 "作成後にメッシュマップをベイクする",

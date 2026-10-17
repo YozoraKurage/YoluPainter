@@ -285,13 +285,16 @@ fn d01_the_order_of_the_checks_before_a_stroke() {
         h.act(Action::Pose(yolu_app::view3d::pose::PoseAction::LoadFigure));
         h.run();
         let i = h.sets().current_index();
-        h.sets_mut().get_mut(i).unwrap().bound = None;
+        h.sets_mut().get_mut(i).unwrap().bound = Vec::new();
         h.app_mut().sync_view3d();
         if view == View::Canvas {
             click_tab(&mut h, Tab::Canvas);
         }
         h.run();
-        assert!(h.view3d().material < 0, "今のセットはモデルに付いていない");
+        assert!(
+            h.view3d().material.is_empty(),
+            "今のセットはモデルに付いていない"
+        );
         read_only(&mut h, "テスト");
         clear(&mut h);
         let rect = match view {

@@ -55,7 +55,7 @@ fn texel_of(h: &H, p: Vec3, facing: Vec3) -> (f64, f64) {
     let model = st(h).view3d().model.as_ref().expect("モデル");
     let hit = model
         .geometry
-        .find_closest_point(p, 0.01, facing, 1 << 20, -1)
+        .find_closest_point(p, 0.01, facing, 1 << 20, None)
         .unwrap()
         .expect("面の点");
     (hit.uv.x as f64 * SIZE as f64, hit.uv.y as f64 * SIZE as f64)

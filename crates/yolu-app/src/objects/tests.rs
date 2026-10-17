@@ -20,7 +20,7 @@ const RECT: Rect = Rect {
 fn cube() -> AppState {
     let mut app = AppState::new(64, 64);
     app.apply(Action::LoadDemoModel);
-    app.view3d.material = 0;
+    app.view3d.material = yolu_core::geometry::MaterialSet::one(0);
     app.view3d.view.camera.yaw = 0.0;
     app.view3d.view.camera.pitch = 0.0;
     app.view3d.view.view_rect = Some(RECT);
@@ -1047,7 +1047,7 @@ fn thin_plate() -> crate::view3d::model::ViewModel {
 fn a_path_turned_on_a_thin_plate_stays_on_the_face_it_was_drawn_on() {
     let mut app = AppState::new(64, 64);
     app.view3d.set_model(thin_plate());
-    app.view3d.material = 0;
+    app.view3d.material = yolu_core::geometry::MaterialSet::one(0);
     app.view3d.view.camera.yaw = 0.0;
     app.view3d.view.camera.pitch = 0.0;
     app.view3d.view.view_rect = Some(RECT);

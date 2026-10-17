@@ -562,11 +562,11 @@ impl OpHost for FileHost {
         let mut notes = Vec::new();
         let mut written_ids = Vec::new();
         for (i, slot) in o.sets.iter().enumerate() {
-            let material = base
+            let materials = base
                 .sets()
                 .iter()
                 .find(|s| s.id == slot.id)
-                .map(|s| s.material.clone())
+                .map(|s| s.materials.clone())
                 .ok_or_else(|| internal("セットがファイルにありません"))?;
             let (document, composites) = match (&slot.state, dirty.contains(&i)) {
                 (State::Loaded { doc, .. }, true) => {
@@ -591,7 +591,7 @@ impl OpHost for FileHost {
             specs.push(SetSpec {
                 id: slot.id.clone(),
                 name: slot.name.clone(),
-                material,
+                materials,
                 document,
                 composites,
             });
@@ -652,10 +652,10 @@ mod tests {
             SetSpec {
                 id: id.into(),
                 name: name.into(),
-                material: MaterialRef::Material {
+                materials: vec![MaterialRef::Material {
                     name: name.into(),
                     asset: None,
-                },
+                }],
                 composites: composite_pngs(&doc).unwrap(),
                 document: Some(DocumentSource::from_core(Arc::new(doc)).unwrap()),
             }

@@ -52,6 +52,7 @@ mod liltoon_ortho;
 mod liltoon_panel;
 mod liltoon_reference;
 mod modes;
+mod multimat;
 mod multiview;
 mod normalset;
 mod objects;

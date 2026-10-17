@@ -362,7 +362,7 @@ fn a_budget_refusal_names_the_budget_in_both_languages() {
             &[SetSpec {
                 id: id.clone(),
                 name: "セット".into(),
-                material: yolu_io::MaterialRef::PendingSlot(0),
+                materials: vec![yolu_io::MaterialRef::PendingSlot(0)],
                 document: Some(native.clone().into()),
                 composites: vec![],
             }],

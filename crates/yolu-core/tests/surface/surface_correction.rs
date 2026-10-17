@@ -59,7 +59,7 @@ fn draw(b: &Brush, inputs: &[SurfaceInput]) -> (Vec<u8>, Vec<u8>, Document, Laye
         quad(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         inputs[0],
         SurfaceStrokeOptions::default(),
     )
@@ -173,7 +173,7 @@ fn a_3d_post_corrected_stroke_cancelled_before_the_redraw_leaves_nothing() {
         quad(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         inputs[0],
         SurfaceStrokeOptions::default(),
     )
@@ -207,7 +207,7 @@ fn a_3d_post_corrected_stroke_counts_the_remembered_inputs_in_the_budget() {
         quad(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         inputs[0],
         SurfaceStrokeOptions::default(),
     )
@@ -326,7 +326,7 @@ fn a_3d_post_corrected_redraw_keeps_the_frozen_reference() {
             quad(),
             front(),
             &b.base,
-            Some(0),
+            Some(&yolu_core::geometry::MaterialSet::one(0)),
             inputs[0],
             SurfaceStrokeOptions::default(),
         )
@@ -384,7 +384,7 @@ fn a_3d_redraw_refused_after_the_restart_leaves_nothing() {
         quad(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         inputs[0],
         SurfaceStrokeOptions::default(),
     )

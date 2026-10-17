@@ -1248,7 +1248,7 @@ fn a_project_survives_the_store_and_opens_from_its_entries() {
     let spec = SetSpec {
         id: id.clone(),
         name: "セット".into(),
-        material: MaterialRef::PendingSlot(0),
+        materials: vec![MaterialRef::PendingSlot(0)],
         document: Some(NativeDocument::from_core(&doc).unwrap().into()),
         composites: composite_pngs(&doc).unwrap(),
     };

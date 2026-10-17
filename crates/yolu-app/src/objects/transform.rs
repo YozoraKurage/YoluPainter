@@ -750,7 +750,7 @@ impl Transform {
                     tolerance,
                     facing,
                     REBIND_MAX_NODE_VISITS,
-                    app.view3d.material,
+                    Some(&app.view3d.material),
                 )
                 .map_err(|_| off())?
                 .ok_or_else(off)?;

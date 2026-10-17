@@ -105,7 +105,7 @@ fn set_clone_source(app: &mut AppState, rect: Rect, at: Pos2) {
     };
     let view = camera_view(app, rect);
     match pick(&model.geometry, &view, local(rect, at)) {
-        Some(hit) if hit.material == app.view3d.material => {
+        Some(hit) if app.view3d.material.contains(hit.material) => {
             app.clone.set_source(hit);
             app.info(Source::View3d, app.lang.t("view3d-clone-source-set"));
         }
@@ -182,8 +182,7 @@ fn begin(
     };
     let view = camera_view(app, rect);
     let p = local(rect, at);
-    let material = app.view3d.material;
-    if material < 0 {
+    if app.view3d.material.is_empty() {
         app.refuse(Source::View3d, app.region_missing_reason());
         return;
     }
@@ -299,7 +298,7 @@ pub(super) fn refuse_other_set(
     model: &ViewModel,
     hit: &yolu_core::geometry::SurfaceHit,
 ) -> bool {
-    if hit.material == app.view3d.material {
+    if app.view3d.material.contains(hit.material) {
         return false;
     }
     let name = model.material_name(hit.material as usize, app.lang);
@@ -412,14 +411,14 @@ pub(super) fn open_stroke(
             return None;
         }
     };
-    let material = app.view3d.material;
+    let material = app.view3d.material.clone();
     match SurfaceStroke::begin_input(
         &mut app.session.doc,
         &mut stroke,
         model.geometry.clone(),
         view,
         &settings,
-        Some(material),
+        Some(&material),
         input,
         SurfaceStrokeOptions {
             stencil: surface_stencil,
@@ -1904,7 +1903,7 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
         140,
     );
     // 写しのカーソル（描いている最中は、3D のストローク以外では出さない。クイックマスクは対称を使わない）
-    if app.view3d.material != hit.material
+    if !app.view3d.material.contains(hit.material)
         || app.sel.quick
         || app.tool.def().surface == Surface::Cover
     {
@@ -1914,6 +1913,7 @@ pub fn draw_cursor(ui: &Ui, app: &AppState, rect: Rect, pointer: Pos2) -> bool {
         Some(sym) => copy_hits(
             &model.geometry,
             &hit,
+            Some(&app.view3d.material),
             sym.mirror.as_ref(),
             sym.radial.as_ref(),
             radius,

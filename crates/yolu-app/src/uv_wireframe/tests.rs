@@ -75,19 +75,40 @@ fn unique_uv_edges_keep_seams_and_filter_materials() {
     let a = triangle(Vec2::ZERO, Vec2::X, Vec2::Y, 0);
     let b = triangle(Vec2::Y, Vec2::X, Vec2::ONE, 0);
     let other = triangle(Vec2::ZERO, Vec2::X * 2.0, Vec2::Y, 1);
-    assert_eq!(edges(&[a, b, other], 0, 5).unwrap().len(), 5);
-    assert_eq!(edges(&[a, b, other], 1, 5).unwrap().len(), 3);
+    assert_eq!(
+        edges(&[a, b, other], &yolu_core::geometry::MaterialSet::one(0), 5)
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        edges(&[a, b, other], &yolu_core::geometry::MaterialSet::one(1), 5)
+            .unwrap()
+            .len(),
+        3
+    );
     let seam = triangle(Vec2::ZERO, Vec2::X * 0.5, Vec2::Y, 0);
-    assert_eq!(edges(&[a, seam], 0, 5).unwrap().len(), 5);
-    assert!(edges(&[a, b], 0, 4).is_none());
-    assert_eq!(edges(&[a], -1, 0), Some(vec![]));
+    assert_eq!(
+        edges(&[a, seam], &yolu_core::geometry::MaterialSet::one(0), 5)
+            .unwrap()
+            .len(),
+        5
+    );
+    assert!(edges(&[a, b], &yolu_core::geometry::MaterialSet::one(0), 4).is_none());
+    assert_eq!(
+        edges(&[a], &yolu_core::geometry::MaterialSet::default(), 0),
+        Some(vec![])
+    );
 }
 
 #[test]
 fn degenerate_nonfinite_and_signed_zero_edges_are_safe() {
     let a = triangle(Vec2::ZERO, Vec2::X, Vec2::X, 0);
     let b = triangle(Vec2::new(-0.0, 0.0), Vec2::X, Vec2::NAN, 0);
-    assert_eq!(edges(&[a, b], 0, 1).unwrap(), vec![[Vec2::ZERO, Vec2::X]]);
+    assert_eq!(
+        edges(&[a, b], &yolu_core::geometry::MaterialSet::one(0), 1).unwrap(),
+        vec![[Vec2::ZERO, Vec2::X]]
+    );
 }
 
 #[test]
@@ -95,7 +116,7 @@ fn cache_reuses_edges_and_screen_until_geometry_material_or_view_changes() {
     let t = triangle(Vec2::ZERO, Vec2::X, Vec2::Y, 0);
     let g = geometry(vec![t]);
     let mut cache = Wireframe::default();
-    cache.sync(&g, 0);
+    cache.sync(&g, &yolu_core::geometry::MaterialSet::one(0));
     let rect = Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0));
     let mut app = AppState::new(64, 32);
     for (angle, flip, zoom) in [(0.0, false, 1.0), (90.0, true, 2.0), (15.0, false, 0.5)] {
@@ -106,7 +127,7 @@ fn cache_reuses_edges_and_screen_until_geometry_material_or_view_changes() {
         let view = app.view.view(rect, 64, 32);
         cache.project(&view, 64, 32);
         let saved = cache.screen.as_ptr();
-        cache.sync(&g, 0);
+        cache.sync(&g, &yolu_core::geometry::MaterialSet::one(0));
         cache.project(&view, 64, 32);
         assert_eq!(saved, cache.screen.as_ptr());
         for (edge, screen) in cache.edges.iter().zip(&cache.screen) {
@@ -119,9 +140,9 @@ fn cache_reuses_edges_and_screen_until_geometry_material_or_view_changes() {
         }
     }
     assert_eq!(cache.builds, 1);
-    cache.sync(&g, 2);
+    cache.sync(&g, &yolu_core::geometry::MaterialSet::one(2));
     assert!(cache.edges.is_empty());
-    cache.sync(&g, 0);
+    cache.sync(&g, &yolu_core::geometry::MaterialSet::one(0));
     assert_eq!(cache.edges.len(), 3);
     assert_eq!(cache.builds, 3);
     cache.idle(None);
@@ -134,31 +155,43 @@ fn a_repositioned_geometry_keeps_the_edges_but_changed_uv_or_material_rebuilds_t
     let b = triangle(Vec2::Y, Vec2::X, Vec2::ONE, 1);
     let first = geometry(vec![a, b]);
     let mut cache = Wireframe::default();
-    cache.sync(&first, 0);
+    cache.sync(&first, &yolu_core::geometry::MaterialSet::one(0));
     assert_eq!((cache.builds, cache.edges.len()), (1, 3));
     // 位置だけが替わった世代が続いても、辺は作り直さず、持つ幾何だけ新しい世代へ移る。
     let mut latest = first.clone();
     for revision in 2..8 {
         latest = moved(&latest, revision);
         assert!(!Arc::ptr_eq(&latest, cache.geometry.as_ref().unwrap()));
-        cache.sync(&latest, 0);
+        cache.sync(&latest, &yolu_core::geometry::MaterialSet::one(0));
         assert!(Arc::ptr_eq(&latest, cache.geometry.as_ref().unwrap()));
     }
     assert_eq!(cache.builds, 1);
     // 別のマテリアルの UV が替わっても、いまのマテリアルの辺は変わらない。
     let other_uv = triangle(Vec2::Y, Vec2::X * 3.0, Vec2::ONE, 1);
-    cache.sync(&geometry(vec![a, other_uv]), 0);
+    cache.sync(
+        &geometry(vec![a, other_uv]),
+        &yolu_core::geometry::MaterialSet::one(0),
+    );
     assert_eq!(cache.builds, 1);
     // いまのマテリアルの UV が替われば作り直す。
     let shifted = triangle(Vec2::ZERO, Vec2::X * 2.0, Vec2::Y, 0);
-    cache.sync(&geometry(vec![shifted, b]), 0);
+    cache.sync(
+        &geometry(vec![shifted, b]),
+        &yolu_core::geometry::MaterialSet::one(0),
+    );
     assert_eq!(cache.builds, 2);
     assert!(cache.edges.iter().any(|e| e.contains(&(Vec2::X * 2.0))));
     // 三角形の数・マテリアルの割り当てが替われば作り直す。
-    cache.sync(&geometry(vec![shifted]), 0);
+    cache.sync(
+        &geometry(vec![shifted]),
+        &yolu_core::geometry::MaterialSet::one(0),
+    );
     assert_eq!(cache.builds, 3);
     let reassigned = triangle(Vec2::ZERO, Vec2::X * 2.0, Vec2::Y, 1);
-    cache.sync(&geometry(vec![reassigned]), 0);
+    cache.sync(
+        &geometry(vec![reassigned]),
+        &yolu_core::geometry::MaterialSet::one(0),
+    );
     assert_eq!(cache.builds, 4);
 }
 
@@ -325,17 +358,20 @@ fn the_overlay_uses_the_surface_three_d_paints_even_when_the_link_is_stale() {
         app.lang = lang;
         app.receive_link_model(&link_model()).1.unwrap();
         app.sync_view3d();
-        let bound = app.session.sets.current().bound;
-        assert!(bound.is_some());
-        assert_eq!(app.view3d.material, bound.unwrap() as i32);
+        let bound = app.session.sets.current().bound_set();
+        assert!(!bound.is_empty());
+        assert_eq!(app.view3d.material, bound);
         assert!(frame(&ctx, &mut app) > 0, "つながっているモデルの面");
         // 記録の世代が 3D の世代と合わなくなる（古い世代）。3D は描かない（-1）ので、UV も重ねない。
         app.session.model.as_mut().unwrap().generation += 1;
         app.sync_view3d();
-        assert_eq!(app.view3d.material, -1);
+        assert_eq!(
+            app.view3d.material,
+            yolu_core::geometry::MaterialSet::default()
+        );
         assert!(app.region_model().is_none());
         assert_eq!(
-            app.session.sets.current().bound,
+            app.session.sets.current().bound_set(),
             bound,
             "セットの結び付けは残っている（以前はこれを読んでいた）"
         );

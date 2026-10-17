@@ -348,10 +348,10 @@ pub fn stem(state: &AppState) -> String {
         .unwrap_or_else(|| "Texture".into())
 }
 
-/// セットのマテリアルの UV の三角形（画素の座標。文書の大きさをかける）。
+/// セットのマテリアルの組の UV の三角形（画素の座標。文書の大きさをかける。組のマテリアルの三角形の和）。
 fn uv_triangles(
     model: &crate::view3d::model::ViewModel,
-    material: i32,
+    material: &yolu_core::geometry::MaterialSet,
     width: u32,
     height: u32,
 ) -> Vec<[DVec2; 3]> {
@@ -361,7 +361,7 @@ fn uv_triangles(
         .geometry
         .triangles()
         .iter()
-        .filter(|t| t.material == material)
+        .filter(|t| material.contains(t.material))
         .map(|t| [at(t.uv_a), at(t.uv_b), at(t.uv_c)])
         .collect()
 }
@@ -490,7 +490,7 @@ impl AppState {
                         None
                     }
                     (Some(m), Some(material)) => {
-                        let tris = uv_triangles(m, material, w, h);
+                        let tris = uv_triangles(m, &material, w, h);
                         if tris.is_empty() {
                             notes.push(Note::NoUv(name.clone()));
                             None

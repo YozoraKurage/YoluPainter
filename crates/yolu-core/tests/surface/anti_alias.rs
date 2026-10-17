@@ -130,7 +130,7 @@ fn draw_3d(
         g.clone(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen(x0, y0),
         1.0,
         SurfaceStrokeOptions {
@@ -287,7 +287,7 @@ fn one_dab(view: CameraView, level: AntiAlias, radius: f64, at: Vec2) -> (Vec<u8
         g.clone(),
         view,
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         at,
         1.0,
         SurfaceStrokeOptions::default(),

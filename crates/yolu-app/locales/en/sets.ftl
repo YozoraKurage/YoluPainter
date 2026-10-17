@@ -14,3 +14,4 @@ sets-texture-set = Texture Set
 sets-added-the-texture-set = Added the texture set { $name }.
 sets-a-project-keeps-at-least = A project keeps at least one texture set.
 sets-texture-set-1 = Texture Set 1
+sets-materials-and-more = { $first } +{ $more }

@@ -1383,7 +1383,7 @@ fn convert_space(
                             f32::INFINITY,
                             yolu_core::glam::Vec3::ZERO,
                             1 << 20,
-                            *material,
+                            Some(material),
                         )
                         .ok()
                         .flatten()

@@ -86,7 +86,7 @@ const TRI4: (f32, f32) = (0.58, 0.10); // B
 fn with_model(size: u32) -> (AppState, Rect) {
     let mut s = AppState::new(size, size);
     s.view3d_mut().set_model(two_parts_model());
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     s.view3d_mut().view.camera.yaw = 0.0;
     s.view3d_mut().view.camera.pitch = 0.0;
     (
@@ -687,7 +687,7 @@ fn headless_bucket_says_why_it_cannot_fill() {
 #[test]
 fn headless_a_loaded_model_without_the_current_set_says_so_instead_of_no_model() {
     let (mut s, rect) = with_model(64);
-    s.view3d_mut().material = -1; // モデルはあるが、今のテクスチャセットはモデルのマテリアルに付いていない
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::default(); // モデルはあるが、今のテクスチャセットはモデルのマテリアルに付いていない
     let name = s.sets().current().name.clone();
     let ja = format!("今のテクスチャセット「{name}」はこのモデルにありません。");
     assert_eq!(s.region_missing_reason(), ja);
@@ -776,7 +776,11 @@ fn second_set_state() -> AppState {
     shape.expect("3D に読める");
     let uid = s.sets().iter().nth(1).expect("2 つ目のセット").uid;
     s.act(Action::SelectSet(uid));
-    assert_eq!(s.view3d().material, 1, "2 つ目のセットはマテリアル 1");
+    assert_eq!(
+        s.view3d().material,
+        yolu_core::geometry::MaterialSet::one(1),
+        "2 つ目のセットはマテリアル 1"
+    );
     s
 }
 
@@ -1382,7 +1386,7 @@ fn headless_manual_id_colors_come_back_with_their_model_fingerprint_and_are_kept
     assert!(!again.doc().can_undo());
     // 同じモデルなら指紋が合い、別のモデルのものではない
     again.view3d_mut().set_model(two_parts_model());
-    again.view3d_mut().material = 0;
+    again.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     ready_parts(&mut again);
     assert!(!again.id_colors_foreign());
     // 別のモデルなら、色は残したまま別のモデルのものとして編集を断る
@@ -1424,7 +1428,7 @@ fn headless_changing_only_the_manual_id_colors_of_an_opened_project_is_saved() {
     let mut again = AppState::new(64, 64);
     again.act(Action::OpenProject(path.clone()));
     again.view3d_mut().set_model(two_parts_model());
-    again.view3d_mut().material = 0;
+    again.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     ready_parts(&mut again);
     assert!(!again.modified());
     // 開いたあとに色だけを変える（画素は変えない）
@@ -1808,7 +1812,7 @@ fn model_app_from(mut h: Harness<'static, YoluApp>) -> Harness<'static, YoluApp>
     {
         let s = h.app_mut();
         s.view3d_mut().set_model(two_parts_model());
-        s.view3d_mut().material = 0;
+        s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         s.view3d_mut().view.camera.yaw = 0.0;
         s.view3d_mut().view.camera.pitch = 0.0;
         s.color_mut().set_main([0.9, 0.3, 0.1, 1.0]);
@@ -2915,7 +2919,10 @@ fn the_id_panel_shows_the_part_position_of_the_second_texture_set() {
         s.act(Action::SelectSet(uid));
     }
     h.run();
-    assert_eq!(h.view3d().material, 1);
+    assert_eq!(
+        h.view3d().material,
+        yolu_core::geometry::MaterialSet::one(1)
+    );
     key(&h, Key::W, Modifiers::SHIFT);
     h.run();
     assert_eq!(h.tool(), Tool::IdSelect);

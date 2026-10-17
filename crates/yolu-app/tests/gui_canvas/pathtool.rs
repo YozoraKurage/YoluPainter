@@ -1066,7 +1066,7 @@ fn state3d(model: ViewModel) -> (AppState, Rect) {
 fn state3d_sized(model: ViewModel, size: u32) -> (AppState, Rect) {
     let mut s = state(size);
     s.view3d_mut().set_model(model);
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     s.view3d_mut().view.camera.yaw = 0.0;
     s.view3d_mut().view.camera.pitch = 0.0;
     (
@@ -1182,7 +1182,7 @@ fn headless_3d_refuses_other_texture_sets_the_outside_and_a_2d_path_layer() {
     ))));
     assert_eq!(t.message(), "モデルがありません");
     t.view3d_mut().set_model(two_material_plate());
-    t.view3d_mut().material = -1;
+    t.view3d_mut().material = yolu_core::geometry::MaterialSet::default();
     t.act(Action::Path(PathAction::Point(PointOp::Add(
         Place::Surface {
             triangle: 0,
@@ -1273,7 +1273,7 @@ fn headless_3d_clicking_the_curve_inserts_a_surface_point() {
 fn headless_3d_hidden_materials_do_not_shift_the_triangle_numbers_of_the_path() {
     let (mut s, rect) = state3d(two_material_plate());
     // 右の板（マテリアル 1）のセットで描く
-    s.view3d_mut().material = 1;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(1);
     click3d(&mut s, rect, Vec3::new(0.5, 0.2, 0.0));
     let full = s.view3d().full_model().unwrap().clone();
     let first = surface_path(&s).points[0].triangle;
@@ -1412,7 +1412,7 @@ fn headless_a_path_on_another_model_is_not_edited_and_follows_a_replaced_model()
     assert!(old_alpha > 0);
     // 別の（UV が違う）モデルに入れ替えて、セットを結び付け直す: 位置が近い面へ付け直して描き直す
     s.view3d_mut().set_model(flipped_plate());
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     s.sync_view3d();
     let p = surface_path(&s);
     assert_ne!(p.model_fingerprint, old_print);
@@ -1483,7 +1483,7 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     t.act(Action::SelectTool(Tool::Path));
     t.set_selected_layer(Some(layer));
     t.view3d_mut().set_model(two_material_plate());
-    t.view3d_mut().material = 0;
+    t.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     t.view3d_mut().view.camera.yaw = 0.0;
     t.view3d_mut().view.camera.pitch = 0.0;
     t.sync_view3d();
@@ -1502,7 +1502,7 @@ fn headless_a_3d_path_survives_saving_and_opening_and_binds_only_to_the_same_mod
     u.act(Action::SelectTool(Tool::Path));
     u.set_selected_layer(Some(layer));
     u.view3d_mut().set_model(flipped_plate());
-    u.view3d_mut().material = 0;
+    u.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     u.view3d_mut().view.camera.yaw = 0.0;
     u.view3d_mut().view.camera.pitch = 0.0;
     let undo = u.doc().undo_count();
@@ -1525,8 +1525,14 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
     let g = &old.geometry;
     let p = surface_path(&s);
     let far = rebind_far_model();
-    let report =
-        pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, None, Lang::Ja);
+    let report = pathtool::rebind::rebind_document(
+        s.doc_mut(),
+        g,
+        &far.geometry,
+        &yolu_core::geometry::MaterialSet::one(0),
+        None,
+        Lang::Ja,
+    );
     assert_eq!(report.len(), 1);
     assert_eq!(
         report[0].outcome,
@@ -1545,13 +1551,25 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
     s.doc_mut()
         .set_layer_locks(layer, LayerLocks::PIXELS)
         .unwrap();
-    let report =
-        pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, None, Lang::En);
+    let report = pathtool::rebind::rebind_document(
+        s.doc_mut(),
+        g,
+        &far.geometry,
+        &yolu_core::geometry::MaterialSet::one(0),
+        None,
+        Lang::En,
+    );
     assert_eq!(report[0].outcome, pathtool::rebind::Outcome::Rasterized);
     s.act(Action::Undo);
     s.doc_mut().set_layer_locks(layer, LayerLocks::ALL).unwrap();
-    let report =
-        pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, None, Lang::En);
+    let report = pathtool::rebind::rebind_document(
+        s.doc_mut(),
+        g,
+        &far.geometry,
+        &yolu_core::geometry::MaterialSet::one(0),
+        None,
+        Lang::En,
+    );
     assert_eq!(report[0].outcome, pathtool::rebind::Outcome::KeptLocked);
     assert_eq!(report[0].reason.as_deref(), Some("The layer is locked"));
     assert_eq!(
@@ -1560,7 +1578,15 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
         "そのまま残る"
     );
     // 指紋が同じ（ポーズだけ）なら何もしない
-    assert!(pathtool::rebind::rebind_document(s.doc_mut(), g, g, 0, None, Lang::Ja).is_empty());
+    assert!(pathtool::rebind::rebind_document(
+        s.doc_mut(),
+        g,
+        g,
+        &yolu_core::geometry::MaterialSet::one(0),
+        None,
+        Lang::Ja
+    )
+    .is_empty());
 }
 
 /// 板から遠く離れた別のメッシュ（付け直せない）。
@@ -1802,10 +1828,10 @@ fn headless_a_posed_figure_redraws_its_path_on_the_rest_pose() {
     assert!(s.view3d().pose.session.is_some(), "{}", s.message());
     s.sync_view3d();
     let model = s.view3d().full_model().unwrap().clone();
-    let material = s.view3d().material;
+    let material = s.view3d().material.clone();
     // 描くテクスチャセットの三角形から、離れた 3 つ
     let picks: Vec<u32> = (0..model.geometry.triangle_count() as u32)
-        .filter(|&t| model.geometry.triangles()[t as usize].material == material)
+        .filter(|&t| material.contains(model.geometry.triangles()[t as usize].material))
         .step_by(97)
         .take(3)
         .collect();
@@ -1928,7 +1954,7 @@ fn headless_a_pen_lift_seen_by_the_other_view_does_not_strand_the_drag() {
         // 2D で触れて点を掴み、離したサンプルを 3D が見ても、2D が離したのを受け取って確定する
         let mut t = state(256);
         t.view3d_mut().set_model(two_material_plate());
-        t.view3d_mut().material = 0;
+        t.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         for (x, y) in [(40.0, 40.0), (120.0, 120.0), (200.0, 40.0)] {
             click2d(&mut t, x, y);
         }
@@ -2408,7 +2434,7 @@ fn headless_replacing_the_model_while_a_3d_point_is_held_drops_the_drag() {
     assert!(s.is_stroking());
     // 掴んだまま、UV の違うモデルに入れ替わる: パスは新しいモデルへ付け直し、掴んでいた点の動きは捨てる
     s.view3d_mut().set_model(flipped_plate());
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     s.sync_view3d();
     assert!(
         s.path().drag.is_none() && !s.is_stroking(),
@@ -2430,14 +2456,14 @@ fn headless_replacing_the_model_while_a_3d_point_is_held_drops_the_drag() {
     // 2D の点を掴んでいるあいだの入れ替えは、2D のドラッグに触れない
     let mut t = state(256);
     t.view3d_mut().set_model(two_material_plate());
-    t.view3d_mut().material = 0;
+    t.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     for (x, y) in [(40.0, 40.0), (120.0, 120.0), (200.0, 40.0)] {
         click2d(&mut t, x, y);
     }
     press2d(&mut t, 120.0, 120.0);
     move2d(&mut t, 150.0, 200.0);
     t.view3d_mut().set_model(flipped_plate());
-    t.view3d_mut().material = 0;
+    t.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     t.sync_view3d();
     assert!(
         t.path().drag.is_some_and(|d| !d.surface),
@@ -2469,7 +2495,7 @@ fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_rea
         click3d(&mut s, rect, Vec3::new(-0.7, -0.3, 0.0));
         click3d(&mut s, rect, Vec3::new(-0.3, 0.4, 0.0));
         s.view3d_mut().set_model(rebind_far_model());
-        s.view3d_mut().material = 0;
+        s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         s.sync_view3d();
         assert!(s.path_layer().is_none(), "画素にした");
         assert!(
@@ -2489,7 +2515,7 @@ fn headless_the_model_change_message_counts_the_outcomes_and_names_the_first_rea
         click3d(&mut t, rect, Vec3::new(-0.7, -0.3, 0.0));
         click3d(&mut t, rect, Vec3::new(-0.3, 0.4, 0.0));
         t.view3d_mut().set_model(flipped_plate());
-        t.view3d_mut().material = 0;
+        t.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         t.sync_view3d();
         assert!(t.message().contains(redrawn), "{lang:?}: {}", t.message());
         assert!(
@@ -2649,7 +2675,7 @@ fn headless_a_3d_path_is_renamed_without_the_model_and_without_redrawing() {
     assert_eq!(s.doc().undo_count(), undo + 1);
     assert_eq!(pixels(&s), drawn);
     s.view3d_mut().set_model(flipped_plate());
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     list_op(&mut s, ListOp::Rename(id, "脚".into()));
     assert_eq!(entries(&s)[0].name, "脚", "{}", s.message());
     assert_eq!(s.doc().undo_count(), undo + 2, "1 回ずつの Undo");
@@ -2745,7 +2771,7 @@ fn headless_a_replaced_model_moves_every_path_of_a_list() {
     click3d(&mut s, rect, Vec3::new(-0.2, 0.7, 0.0));
     assert_eq!(entries(&s).len(), 2, "{}", s.message());
     s.view3d_mut().set_model(flipped_plate());
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     s.sync_view3d();
     let print = core_paths::fingerprint(&s.view3d().full_model().unwrap().geometry);
     let list = entries(&s);

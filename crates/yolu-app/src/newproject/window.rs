@@ -10,8 +10,7 @@ use egui::{pos2, vec2, Id, Key, Rect, Sense, Ui, UiBuilder, Vec2};
 
 use super::configure::{resampling_name, unused_groups, ConfirmKind, Plan};
 use super::{
-    size_text, DraftOp, Dropdown, Group, NpAction, NpWindow, Prep, SetDraft, Template, MAX_SETS,
-    RESOLUTIONS,
+    size_text, DraftOp, Dropdown, Group, NpAction, NpWindow, Prep, SetDraft, Template, RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, NormalYDirection};
 use crate::lang::Lang;
@@ -55,10 +54,12 @@ struct View {
     can_reload: bool,
     /// 構成: Live Link のモデル（Unity のシーンのもの。ここでは替えない）。
     link: bool,
-    /// セットの無いマテリアルの組の数（構成）。
+    /// セットの無いマテリアルの組の数。
     unused: usize,
-    /// モデルに無いセットの数（構成）。
+    /// モデルに無いマテリアルの鍵だけを持つセットの数（構成）。
     missing: usize,
+    /// マテリアルを全部ほかのセットへ移した・どのマテリアルにも付けていないセットの数（構成）。
+    empty: usize,
     notes: Vec<String>,
     sizes_changing: bool,
     template_tip: String,
@@ -83,13 +84,22 @@ fn view(app: &AppState, win: &NpWindow) -> View {
             _ => (None, String::new()),
         },
     };
-    let missing = if win.configure && !groups.is_empty() {
-        win.drafts
-            .iter()
-            .filter(|d| d.uid.is_some() && d.material.is_none())
-            .count()
+    let unmatched = |d: &&SetDraft| d.uid.is_some() && d.materials().is_empty();
+    let (missing, empty) = if win.configure && !groups.is_empty() {
+        (
+            win.drafts
+                .iter()
+                .filter(unmatched)
+                .filter(|d| d.has_missing_key())
+                .count(),
+            win.drafts
+                .iter()
+                .filter(unmatched)
+                .filter(|d| !d.has_missing_key())
+                .count(),
+        )
     } else {
-        0
+        (0, 0)
     };
     View {
         lang,
@@ -99,12 +109,9 @@ fn view(app: &AppState, win: &NpWindow) -> View {
             && app.np.model_file.is_some()
             && !app.session.model.as_ref().is_some_and(|m| m.is_link()),
         link: win.configure && app.session.model.as_ref().is_some_and(|m| m.is_link()),
-        unused: if win.configure {
-            unused_groups(app, win)
-        } else {
-            0
-        },
+        unused: unused_groups(app, win),
         missing,
+        empty,
         notes: win.notes().to_vec(),
         sizes_changing: win.drafts.iter().any(SetDraft::resizes),
         template_tip: win.template.tooltip(lang, &app.session.doc),
@@ -128,17 +135,24 @@ fn has_prep_row(win: &NpWindow) -> bool {
     )
 }
 
-/// 状態の行（モデルに無いセット・セットの無いマテリアル・読み込みの知らせ）があるか。
-fn has_summary_row(v: &View) -> bool {
-    v.missing > 0 || v.unused > 0 || !v.notes.is_empty()
+/// マテリアルが今のモデルの組に付かない既存のセットの名前（`missing_key` なら、モデルに無い鍵を持つセット。でなければ、マテリアルなしのセット）。
+fn unmatched_names(win: &NpWindow, missing_key: bool) -> Vec<String> {
+    win.drafts
+        .iter()
+        .filter(|d| {
+            d.uid.is_some() && d.materials().is_empty() && d.has_missing_key() == missing_key
+        })
+        .map(|d| d.name.clone())
+        .collect()
 }
 
-fn list_rows(win: &NpWindow, v: &View) -> usize {
-    if win.configure {
-        win.drafts.len().clamp(1, LIST_ROWS)
-    } else {
-        v.groups.len().min(LIST_ROWS)
-    }
+/// 状態の行（モデルに無いセット・マテリアルなしのセット・セットの無いマテリアル・読み込みの知らせ）があるか。
+fn has_summary_row(v: &View) -> bool {
+    v.missing > 0 || v.empty > 0 || v.unused > 0 || !v.notes.is_empty()
+}
+
+fn list_rows(win: &NpWindow) -> usize {
+    win.drafts.len().clamp(1, LIST_ROWS)
 }
 
 /// ウィンドウの高さ（描く順と同じ積み上げ）。
@@ -154,12 +168,10 @@ fn height(win: &NpWindow, v: &View) -> f32 {
     if has_summary_row(v) {
         h += ROW + GAP;
     }
+    h += 18.0 + list_rows(win) as f32 * SET_ROW + 4.0 + ROW + GAP; // セットの並びと追加
     if win.configure {
-        h += 18.0 + list_rows(win, v) as f32 * SET_ROW + 4.0 + ROW + GAP;
-    } else if !v.groups.is_empty() {
-        h += 18.0 + list_rows(win, v) as f32 * SET_ROW + GAP;
+        h += ROW + GAP; // 補間方法
     }
-    h += ROW + GAP; // 解像度・補間方法
     h += ROW + GAP; // 法線の形式
     if !win.configure {
         h += ROW + GAP; // ベイク
@@ -505,12 +517,7 @@ fn draw(
             *x += r.width() + 10.0;
         };
         if v.missing > 0 {
-            let names: Vec<String> = win
-                .drafts
-                .iter()
-                .filter(|d| d.uid.is_some() && d.material.is_none())
-                .map(|d| d.name.clone())
-                .collect();
+            let names = unmatched_names(win, true);
             chip(
                 ui,
                 &mut x,
@@ -524,11 +531,26 @@ fn draw(
                 &names.join("\n"),
             );
         }
+        if v.empty > 0 {
+            let names = unmatched_names(win, false);
+            chip(
+                ui,
+                &mut x,
+                "empty",
+                "link_off",
+                t::WARNING,
+                &lang.f(
+                    "newproject-sets-without-a-material-tip",
+                    &[("empty", &v.empty)],
+                ),
+                &names.join("\n"),
+            );
+        }
         if v.unused > 0 {
             let names: Vec<String> = v
                 .groups
                 .iter()
-                .filter(|g| win.drafts.iter().all(|d| d.material != Some(g.index)))
+                .filter(|g| win.drafts.iter().all(|d| !d.paints(g.index)))
                 .map(|g| g.name.clone())
                 .collect();
             let text = lang.f(
@@ -581,14 +603,10 @@ fn draw(
         y += ROW + GAP;
     }
 
-    // テクスチャセット
-    if win.configure {
-        draw_drafts(ui, win, dropdown, v, left, width, &mut y, locked, actions);
-    } else if !v.groups.is_empty() {
-        draw_materials(ui, win, v, left, width, &mut y, locked, actions);
-    }
+    // テクスチャセット（新規も構成も同じ行。大きさは行ごと）
+    draw_drafts(ui, win, dropdown, v, left, width, &mut y, locked, actions);
 
-    // 解像度（新規）・補間方法（構成）
+    // 補間方法（構成）
     if win.configure {
         label(&p, y, lang.t("newproject-resampling"), v.sizes_changing);
         let tip = lang.t("newproject-how-a-texture-set-is-tip");
@@ -619,23 +637,8 @@ fn draw(
             ui.interact(at, id.with("resample-warning"), Sense::hover())
                 .on_hover_text(lang.t("newproject-applying-resamples-the-resized-texture-tip"));
         }
-    } else {
-        label(&p, y, lang.t("newproject-resolution"), true);
-        let (r, b) = w::dropdown(
-            ui,
-            control(y),
-            id.with("resolution"),
-            None,
-            &format!("{0} × {0}", win.resolution),
-            None,
-            !locked,
-            0.0,
-        );
-        if r.clicked() {
-            open_dropdown(ui, dropdown, Dropdown::Resolution, b);
-        }
+        y += ROW + GAP;
     }
-    y += ROW + GAP;
 
     // 法線の形式
     label(&p, y, lang.t("newproject-normal-map-format"), true);
@@ -764,91 +767,7 @@ fn list_frame(ui: &mut Ui, area: Rect, scroll: &mut f32, content: f32) -> (Ui, S
     (child, bar)
 }
 
-/// 新規: テクスチャセットにするマテリアルのチェックの一覧（既定は全部。最後の 1 つは外せない）。使うメッシュの名前を右に添える。
-#[allow(clippy::too_many_arguments)]
-fn draw_materials(
-    ui: &mut Ui,
-    win: &mut NpWindow,
-    v: &View,
-    left: f32,
-    width: f32,
-    y: &mut f32,
-    locked: bool,
-    actions: &mut Vec<NpAction>,
-) {
-    let lang = v.lang;
-    let id = main_id();
-    let p = ui.painter().clone();
-    w::text(
-        &p,
-        Rect::from_min_size(pos2(left, *y), vec2(width, 16.0)),
-        lang.t("newproject-texture-sets"),
-        t::HEADER.with_color(t::TEXT_DIM),
-        Align::Left,
-    );
-    *y += 18.0;
-    let visible = v.groups.len().min(LIST_ROWS);
-    let area = Rect::from_min_size(pos2(left, *y), vec2(width, visible as f32 * SET_ROW));
-    let content = v.groups.len() as f32 * SET_ROW;
-    let (mut child, bar) = list_frame(ui, area, &mut win.list_scroll, content);
-    let cp = child.painter().clone();
-    let chosen = win.chosen(v.groups.len());
-    let capped = chosen.len() >= MAX_SETS;
-    for (i, g) in v.groups.iter().enumerate() {
-        let row = Rect::from_min_size(
-            pos2(
-                area.left(),
-                area.top() + i as f32 * SET_ROW - win.list_scroll,
-            ),
-            vec2(area.width() - bar.reserved(), SET_ROW - 2.0),
-        );
-        if row.bottom() < area.top() || row.top() > area.bottom() {
-            continue;
-        }
-        let on = chosen.contains(&g.index);
-        let last = on && chosen.len() == 1;
-        // 上限まで選んでいれば、ほかは選べない（理由はツールチップ）
-        let full = !on && capped;
-        let name_w = (row.width() * 0.5).min(w::text_width(&cp, &g.name, t::LABEL) + 24.0);
-        let detail = format!(
-            "{}\n{}: {}\n{}",
-            g.name,
-            lang.t("newproject-meshes"),
-            g.meshes.join(", "),
-            lang.f("newproject-material-slot-s", &[("slots", &g.slots)]),
-        );
-        let tip = if last {
-            format!(
-                "{}\n{detail}",
-                lang.t("newproject-at-least-one-stays-checked-tip")
-            )
-        } else if full {
-            format!("{}\n{detail}", crate::lang::refusals::set_limit(lang))
-        } else {
-            detail
-        };
-        let next = w::toggle(
-            &mut child,
-            Rect::from_min_size(row.min, vec2(name_w, row.height())),
-            id.with(("material", i)),
-            &g.name,
-            on,
-            Some(&tip),
-            !last && !full && !locked,
-        );
-        if next != on {
-            actions.push(NpAction::Material(g.index, next));
-        }
-        let meshes = g.meshes.join(", ");
-        let at = Rect::from_min_max(pos2(row.left() + name_w + 12.0, row.top()), row.max);
-        let shown = w::fit(&cp, &meshes, at.width(), t::LABEL_SMALL);
-        w::text(&cp, at, &shown, t::LABEL_SMALL, Align::Left);
-    }
-    bar.end(ui, (id, "list-scroll"), &mut win.list_scroll);
-    *y += area.height() + GAP;
-}
-
-/// 構成: セットの並び（名前・大きさ・マテリアル・消す）と「足す」。
+/// セットの並び（名前・大きさ・マテリアル・消す）と「足す」（新規と構成で同じ形）。
 #[allow(clippy::too_many_arguments)]
 fn draw_drafts(
     ui: &mut Ui,
@@ -872,7 +791,7 @@ fn draw_drafts(
         Align::Left,
     );
     *y += 18.0;
-    let visible = list_rows(win, v);
+    let visible = list_rows(win);
     let area = Rect::from_min_size(pos2(left, *y), vec2(width, visible as f32 * SET_ROW));
     let content = win.drafts.len() as f32 * SET_ROW;
     let (mut child, bar) = list_frame(ui, area, &mut win.list_scroll, content);
@@ -966,40 +885,16 @@ fn draw_drafts(
         if r.clicked() {
             open_dropdown(&child, dropdown, Dropdown::DraftSize(i), b);
         }
-        // マテリアル
-        let (shown_material, material_tip) = match d.material.and_then(|g| v.groups.get(g)) {
-            Some(g) => (
-                g.name.clone(),
-                format!(
-                    "{}\n{}: {}",
-                    lang.t("newproject-the-material-this-texture-set"),
-                    lang.t("newproject-meshes"),
-                    g.meshes.join(", ")
-                ),
-            ),
-            None => (
-                if v.groups.is_empty() {
-                    "—".to_owned()
-                } else {
-                    lang.t("newproject-not-in-this-model").to_owned()
-                },
-                lang.t("newproject-the-material-this-texture-set-2")
-                    .to_owned(),
-            ),
-        };
-        let (r, b) = w::dropdown(
+        draw_material_cell(
             &mut child,
+            &cp,
             material,
             id.with(("material", i)),
-            None,
-            &shown_material,
-            Some(&material_tip),
-            !locked && !v.groups.is_empty(),
-            0.0,
+            (i, d),
+            v,
+            !locked,
+            dropdown,
         );
-        if r.clicked() {
-            open_dropdown(&child, dropdown, Dropdown::DraftMaterial(i), b);
-        }
         // 消す
         let last = count <= 1;
         if w::icon_button(
@@ -1042,6 +937,93 @@ fn draw_drafts(
     *y += ROW + GAP;
 }
 
+/// セットの行のマテリアルの欄（複数を選べる。閉じた形は名前の並び、マテリアルが無ければ警告の印と「マテリアルなし」）。
+#[allow(clippy::too_many_arguments)]
+fn draw_material_cell(
+    ui: &mut Ui,
+    cp: &egui::Painter,
+    material: Rect,
+    id: Id,
+    (i, d): (usize, &SetDraft),
+    v: &View,
+    enabled: bool,
+    dropdown: &mut OpenDropdown,
+) {
+    let lang = v.lang;
+    let chosen: Vec<&Group> = d
+        .materials()
+        .into_iter()
+        .filter_map(|g| v.groups.get(g))
+        .collect();
+    let names: Vec<&str> = chosen.iter().map(|g| g.name.as_str()).collect();
+    let empty = chosen.is_empty() && !v.groups.is_empty() && !d.has_missing_key();
+    let shown_material = if chosen.is_empty() {
+        if v.groups.is_empty() {
+            "—".to_owned()
+        } else if empty {
+            String::new()
+        } else {
+            lang.t("newproject-not-in-this-model").to_owned()
+        }
+    } else {
+        crate::sets::materials_label(lang, &names, |s| {
+            w::text_width(cp, s, t::LABEL) <= material.width() - 26.0
+        })
+    };
+    let material_tip = if chosen.is_empty() {
+        lang.t("newproject-the-material-this-texture-set-2")
+            .to_owned()
+    } else {
+        let lines: Vec<String> = chosen
+            .iter()
+            .map(|g| {
+                if g.meshes.is_empty() {
+                    g.name.clone()
+                } else {
+                    format!("{} — {}", g.name, g.meshes.join(", "))
+                }
+            })
+            .collect();
+        format!(
+            "{}\n{}",
+            lang.t("newproject-the-materials-this-texture-set-tip"),
+            lines.join("\n")
+        )
+    };
+    let (r, b) = w::dropdown(
+        ui,
+        material,
+        id,
+        None,
+        &shown_material,
+        Some(&material_tip),
+        enabled && !v.groups.is_empty(),
+        0.0,
+    );
+    if empty {
+        w::icon(
+            cp,
+            Rect::from_min_size(b.min + vec2(5.0, 0.0), vec2(18.0, b.height())),
+            "warning",
+            t::WARNING,
+            14.0,
+        );
+        w::text(
+            cp,
+            Rect::from_min_max(
+                pos2(b.left() + 25.0, b.top()),
+                pos2(b.right() - 22.0, b.bottom()),
+            ),
+            lang.t("newproject-no-material"),
+            t::LABEL.with_color(t::WARNING),
+            Align::Left,
+        );
+    }
+    if r.clicked() {
+        open_dropdown(ui, dropdown, Dropdown::DraftMaterial(i), b);
+    }
+}
+
 fn open_dropdown(ui: &Ui, dropdown: &mut OpenDropdown, kind: Dropdown, anchor: Rect) {
     *dropdown = Some((
         kind,
@@ -1063,13 +1045,6 @@ fn dropdown_entries(win: &NpWindow, v: &View, kind: Dropdown) -> Vec<Entry<NpAct
         Dropdown::Template => Template::ALL
             .iter()
             .map(|t| Entry::item(t.name(lang), NpAction::Template(*t)).radio(*t == win.template))
-            .collect(),
-        Dropdown::Resolution => RESOLUTIONS
-            .iter()
-            .map(|r| {
-                Entry::item(format!("{r} × {r}"), NpAction::Resolution(*r))
-                    .radio(*r == win.resolution)
-            })
             .collect(),
         Dropdown::Normal => [NormalYDirection::OpenGL, NormalYDirection::DirectX]
             .iter()
@@ -1122,23 +1097,22 @@ fn dropdown_entries(win: &NpWindow, v: &View, kind: Dropdown) -> Vec<Entry<NpAct
             .groups
             .iter()
             .map(|g| {
-                let taken = win
-                    .drafts
-                    .iter()
-                    .enumerate()
-                    .any(|(j, d)| j != i && d.material == Some(g.index));
-                let label = if g.meshes.is_empty() {
-                    g.name.clone()
-                } else {
-                    format!("{}  —  {}", g.name, g.meshes.join(", "))
-                };
-                Entry::item(label, NpAction::Draft(i, DraftOp::Material(Some(g.index))))
-                    .radio(
-                        win.drafts
-                            .get(i)
-                            .is_some_and(|d| d.material == Some(g.index)),
-                    )
-                    .enabled(!taken)
+                let mine = win.drafts.get(i).is_some_and(|d| d.paints(g.index));
+                let mut e = Entry::item(
+                    g.name.clone(),
+                    NpAction::Draft(i, DraftOp::Material(g.index, !mine)),
+                )
+                .checked(mine);
+                // ほかのセットのマテリアルは、そのセットの名前を右に（選ぶとこのセットへ移る）
+                if let (false, Some(owner), Entry::Item { shortcut, .. }) =
+                    (mine, win.drafts.iter().find(|d| d.paints(g.index)), &mut e)
+                {
+                    *shortcut = Some(owner.name.trim().to_owned());
+                }
+                if !g.meshes.is_empty() {
+                    e = e.tooltip(g.meshes.join(", "));
+                }
+                e
             })
             .collect(),
     }
@@ -1163,7 +1137,13 @@ fn dropdown_popup(
         &[],
     ) {
         PopupOutcome::Open | PopupOutcome::Step(_) => *dropdown = Some((kind, state)),
-        PopupOutcome::Chosen(action) => actions.push(action),
+        PopupOutcome::Chosen(action) => {
+            // マテリアルの選びはチェックの一覧なので、選んでも閉じない（続けて選べる）
+            if matches!(kind, Dropdown::DraftMaterial(_)) {
+                *dropdown = Some((kind, state));
+            }
+            actions.push(action);
+        }
         PopupOutcome::Close => {}
     }
 }

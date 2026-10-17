@@ -483,7 +483,7 @@ fn the_save_side_check_predicts_what_the_reader_refuses() {
     let spec = crate::SetSpec {
         id: id.clone(),
         name: "一様".into(),
-        material: crate::MaterialRef::PendingSlot(0),
+        materials: vec![crate::MaterialRef::PendingSlot(0)],
         document: Some(DocumentSource::from_core(Arc::new(doc)).unwrap()),
         composites: Vec::new(),
     };
@@ -554,7 +554,7 @@ fn after_a_save_an_unchanged_document_is_reused_without_reading_it_again() {
     let spec = |document: Option<DocumentSource>| crate::SetSpec {
         id: id.clone(),
         name: "見本".into(),
-        material: crate::MaterialRef::PendingSlot(0),
+        materials: vec![crate::MaterialRef::PendingSlot(0)],
         document,
         composites: Vec::new(),
     };

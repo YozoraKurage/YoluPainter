@@ -66,7 +66,7 @@ fn with_model(model: ViewModel) -> (AppState, Rect) {
     let mut s = AppState::new(64, 64);
     s.bake_mut().backend = BakeBackend::Cpu;
     s.view3d_mut().set_model(model);
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     s.view3d_mut().view.camera.yaw = 0.0;
     s.view3d_mut().view.camera.pitch = 0.0;
     (
@@ -185,6 +185,33 @@ fn headless_the_overlap_map_has_the_shared_texels_and_the_edges_of_both_islands(
     let built = wait_overlap(&mut s);
     assert_eq!(s.uv_overlap().counts, 2);
     assert!(built.map.is_empty() && built.edges.is_empty());
+}
+
+#[test]
+fn headless_two_materials_of_one_set_on_the_same_uvs_overlap_and_separate_sets_do_not() {
+    // 同じ UV の 2 つのアイランドを、別々のマテリアル（0・1）に
+    let mut left = quad("左", [-2.0, -1.0], [0.0, 1.0], SQUARE);
+    left.submeshes[0].material = 0;
+    let mut right = quad("右", [1.0, 3.0], [0.0, 2.0], SQUARE);
+    right.submeshes[0].material = 1;
+    let model = ViewModel::new(
+        "二材",
+        vec![left, right],
+        vec![Some("A".into()), Some("B".into())],
+        1,
+    )
+    .expect("モデル");
+    // 別々のセット（マテリアル 0 だけ）: 重ならない
+    let (mut s, _) = with_model(model);
+    let built = wait_overlap(&mut s);
+    assert!(built.map.is_empty(), "セットの外のマテリアルとは重ならない");
+    // 1 つのセットが 2 つとも持つ: 同じテクスチャに描くので重なる
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::new([0, 1]);
+    let built = wait_overlap(&mut s);
+    assert!(built.map.texel_count() > 0);
+    assert_eq!(built.map.triangles(), &[0, 1, 2, 3]);
+    let (x, y) = ((OVERLAP.0 * 64.0) as u32, (OVERLAP.1 * 64.0) as u32);
+    assert!(built.map.contains(x, y));
 }
 
 #[test]

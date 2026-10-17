@@ -82,18 +82,18 @@ pub fn point_of(hit: &SurfaceHit, pressure: f64) -> Result<PathPoint, super::Err
     PathPoint::new(hit.triangle, u, v, pressure)
 }
 
-/// path（from に結び付いたもの）を to の material の組の三角形に置き直す。置けたら新しい指紋のパス（ID・筆・チャンネル・組・筆圧は
+/// path（from に結び付いたもの）を to の material（テクスチャセットのマテリアルの組）の三角形に置き直す。置けたら新しい指紋のパス（ID・筆・チャンネル・組・筆圧は
 /// そのまま）。置けなければ、どの点がなぜ置けなかったか。
 pub fn rebind_surface_path(
     path: &SurfacePath,
     from: &SurfaceGeometry,
     to: &SurfaceGeometry,
-    material: i32,
+    material: &crate::geometry::MaterialSet,
 ) -> Result<SurfacePath, RebindError> {
     if path.model_fingerprint != fingerprint(from) {
         return Err(RebindError::OtherModel);
     }
-    if material < 0 {
+    if material.is_empty() {
         return Err(RebindError::NoMaterial);
     }
     let tolerance = rebind_tolerance(from, path);
@@ -107,7 +107,7 @@ pub fn rebind_surface_path(
                 tolerance,
                 normal,
                 REBIND_MAX_NODE_VISITS,
-                material,
+                Some(material),
             )
             .map_err(|_| RebindError::SearchBudget { point: i })?
             .ok_or(RebindError::NoSurface {

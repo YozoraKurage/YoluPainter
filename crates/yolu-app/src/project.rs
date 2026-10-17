@@ -334,7 +334,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 parts.push((
                     set.id.clone(),
                     set.name.clone(),
-                    set.material.clone(),
+                    set.materials.clone(),
                     None,
                     doc,
                 ))
@@ -362,7 +362,7 @@ fn open_project(state: &mut AppState, project: Project, file: Opened, budget: u6
                 parts.push((
                     set.id.clone(),
                     set.name.clone(),
-                    set.material.clone(),
+                    set.materials.clone(),
                     Some(reason),
                     doc,
                 ));

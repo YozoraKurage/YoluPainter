@@ -742,7 +742,7 @@ fn with_a_material_hidden_the_shown_face_numbers_are_mapped_back_before_picking_
     let skin = h
         .sets()
         .iter()
-        .find(|s| s.bound == Some(0))
+        .find(|s| s.bound == [0])
         .map(|s| s.uid)
         .expect("肌のマテリアルのセット");
     h.app_mut().toggle_set_visible(skin);

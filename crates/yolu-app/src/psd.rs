@@ -1070,7 +1070,7 @@ impl AppState {
                     guid_string(doc.id()),
                     name.clone(),
                     false,
-                    MaterialRef::Material { name, asset: None },
+                    vec![MaterialRef::Material { name, asset: None }],
                     None,
                     doc,
                 );

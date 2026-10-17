@@ -41,7 +41,7 @@ fn draw(b: &Brush, xs: &[f64], end_line_after: Option<usize>) -> Vec<u8> {
         quad(),
         front(),
         &b.base,
-        Some(0),
+        Some(&yolu_core::geometry::MaterialSet::one(0)),
         screen(xs[0], 30.0),
         1.0,
         SurfaceStrokeOptions::default(),

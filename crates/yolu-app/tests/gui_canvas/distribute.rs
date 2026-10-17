@@ -942,7 +942,7 @@ fn read_only_style(path: &Path) -> (String, String) {
     let spec = |id: &str, name: &str, slot: u16, doc: NativeDocument| SetSpec {
         id: id.into(),
         name: name.into(),
-        material: MaterialRef::PendingSlot(slot),
+        materials: vec![MaterialRef::PendingSlot(slot)],
         document: Some(doc.into()),
         composites: vec![],
     };
@@ -1747,10 +1747,10 @@ fn four_assets(path: &Path) {
         &[SetSpec {
             id: ASSET_SET.into(),
             name: "Body".into(),
-            material: MaterialRef::Material {
+            materials: vec![MaterialRef::Material {
                 name: "Body".into(),
                 asset: None,
-            },
+            }],
             document: Some(NativeDocument::from_core(&doc).unwrap().into()),
             composites: composite_pngs(&doc).unwrap(),
         }],

@@ -18,6 +18,7 @@ use glam::Vec2;
 
 use super::camera::CameraView;
 use super::dab::SurfaceDabResult;
+use super::materials::{admits, MaterialSet};
 use super::paint::{gap, pick, world_radius, SurfaceStrokeError};
 use super::project::{ProjectionSettings, SurfaceProjector};
 use super::stroke::{ScreenPoint, ScreenStrokeSampler};
@@ -46,7 +47,7 @@ pub type CoverPixel = (i32, i32, u8);
 pub struct SurfaceCoverStroke {
     geometry: Arc<SurfaceGeometry>,
     view: CameraView,
-    material: Option<i32>,
+    material: Option<MaterialSet>,
     sampler: ScreenStrokeSampler,
     projection: ProjectionSettings,
     projector: Option<SurfaceProjector>,
@@ -66,7 +67,7 @@ impl SurfaceCoverStroke {
     pub fn begin(
         geometry: Arc<SurfaceGeometry>,
         view: CameraView,
-        material: Option<i32>,
+        material: Option<&MaterialSet>,
         params: CoverParams,
         projection: ProjectionSettings,
         width: u32,
@@ -79,7 +80,7 @@ impl SurfaceCoverStroke {
         let mut s = SurfaceCoverStroke {
             geometry,
             view,
-            material,
+            material: material.cloned(),
             sampler: ScreenStrokeSampler::with_curve(ScreenPoint::new(at, pressure), false),
             projection: projection.sanitized(),
             projector: None,
@@ -159,7 +160,7 @@ impl SurfaceCoverStroke {
             return Ok(());
         }
         let hit = pick(&self.geometry, &self.view, at)
-            .filter(|h| self.material.is_none_or(|m| m == h.material));
+            .filter(|h| admits(self.material.as_ref(), h.material));
         if let Some(h) = &hit {
             let scale = self.view.world_radius_to_screen(h.position, 1.0);
             if scale.is_finite() && scale > 0.0 {
@@ -174,7 +175,7 @@ impl SurfaceCoverStroke {
             let projector = SurfaceProjector::new(
                 self.geometry.clone(),
                 &self.view,
-                self.material,
+                self.material.as_ref(),
                 self.width,
                 self.height,
                 scale * self.world_radius,

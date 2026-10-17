@@ -318,7 +318,7 @@ fn plate_state_of(size: u32, model: ViewModel) -> AppState {
         yolu_app::subtool::Key::Builtin("layer"),
     )));
     s.view3d_mut().set_model(model);
-    s.view3d_mut().material = 0;
+    s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
     s.view3d_mut().view.camera.yaw = 0.0;
     s.view3d_mut().view.camera.pitch = 0.0;
     s
@@ -1039,7 +1039,7 @@ fn three_colors_3d_app() -> (Harness<'static, YoluApp>, [Pos2; 3]) {
     {
         let s = h.app_mut();
         s.view3d_mut().set_model(plate());
-        s.view3d_mut().material = 0;
+        s.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         s.view3d_mut().view.camera.yaw = 0.0;
         s.view3d_mut().view.camera.pitch = 0.0;
         let id = s.selected_layer().unwrap();

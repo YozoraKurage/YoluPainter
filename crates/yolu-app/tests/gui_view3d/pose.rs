@@ -447,7 +447,7 @@ fn pose_undo_works_in_a_read_only_texture_set() {
         vec![(
             "00000000-0000-4000-8000-000000000011".into(),
             "読むだけ".into(),
-            MaterialRef::PendingSlot(0),
+            vec![MaterialRef::PendingSlot(0)],
             Some("フィルターのあるレイヤーがあります".into()),
             doc,
         )],

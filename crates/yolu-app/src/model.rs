@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use std::sync::Arc;
 
+use yolu_core::geometry::MaterialSet;
 use yolu_core::skin::Rig;
 use yolu_protocol::{MaterialInfo, MaterialKey, MaterialsUpdate, Model, Pose};
 
@@ -279,8 +280,8 @@ impl AppState {
         let rig = self.view3d.pose.session.as_ref()?.rig.clone();
         self.session.model = Some(SceneModel::from_rig(&rig));
         let report = self.bind_model();
-        if self.session.sets.current().bound.is_none() {
-            if let Some(i) = self.session.sets.iter().position(|s| s.bound.is_some()) {
+        if self.session.sets.current().bound.is_empty() {
+            if let Some(i) = self.session.sets.iter().position(|s| !s.bound.is_empty()) {
                 let _ = self.switch_set(i);
             }
         }
@@ -380,12 +381,12 @@ impl AppState {
         // 今のセットのマテリアルを描き、目を閉じたセットのマテリアルを隠す（付いていなければどこにも描かない）
         let bound = |app: &AppState| {
             (
-                app.session.sets.current().bound.map_or(-1, |m| m as i32),
+                app.session.sets.current().bound_set(),
                 app.session
                     .sets
                     .iter()
                     .filter(|s| !s.visible)
-                    .filter_map(|s| s.bound.map(|m| m as i32))
+                    .flat_map(|s| s.bound.iter().map(|m| *m as i32))
                     .collect::<Vec<_>>(),
             )
         };
@@ -398,7 +399,7 @@ impl AppState {
                 (Some(rig), Some(session)) if rig == SceneModel::rig_id(&session.rig) => {
                     bound(self)
                 }
-                _ => (0, Vec::new()),
+                _ => (MaterialSet::one(0), Vec::new()),
             },
             Some(g)
                 if self
@@ -409,7 +410,7 @@ impl AppState {
             {
                 bound(self)
             }
-            Some(_) => (-1, Vec::new()),
+            Some(_) => (MaterialSet::default(), Vec::new()),
         };
         if self.view3d.material != material {
             // 今のセットが替わると、ほかのセットの顔ぶれが替わる（3D が描かれるまで、前の印を残さない）
@@ -513,8 +514,12 @@ mod tests {
             "最初のセットはスロット 0 のマテリアル 1（Skin）"
         );
         assert_eq!(report.created, ["Unassigned"]);
-        assert_eq!(s.session.sets.current().bound, Some(1));
-        assert_eq!(s.view3d.material, 1, "3D で描くのは今のセットのマテリアル");
+        assert_eq!(s.session.sets.current().bound, [1]);
+        assert_eq!(
+            s.view3d.material,
+            yolu_core::geometry::MaterialSet::one(1),
+            "3D で描くのは今のセットのマテリアル"
+        );
         assert_eq!(s.view3d.model.as_ref().unwrap().triangle_count(), 4);
         // Unassigned のセットの目を閉じると、そのマテリアルの面を 3D から除く
         let unassigned = s.session.sets.get(1).unwrap().uid;
@@ -531,7 +536,7 @@ mod tests {
         s.toggle_set_visible(unassigned);
         assert_eq!(s.view3d.model.as_ref().unwrap().triangle_count(), 4);
         s.switch_set(1).unwrap();
-        assert_eq!(s.view3d.material, 0);
+        assert_eq!(s.view3d.material, yolu_core::geometry::MaterialSet::one(0));
     }
 
     #[test]
@@ -580,7 +585,7 @@ mod tests {
         assert!(s.close_link_model(2));
         assert!(s.session.model.is_none() && s.view3d.model.is_none());
         assert_eq!(s.session.sets.len(), 2);
-        assert!(s.session.sets.iter().all(|x| x.bound.is_none()));
+        assert!(s.session.sets.iter().all(|x| x.bound.is_empty()));
     }
 
     // ───────── ポーズを付けられるモデル（FBX・試しの人形） ─────────
@@ -603,7 +608,12 @@ mod tests {
         load_figure(&mut s);
         // マテリアル（肌・顔）ごとに 1 つ。最初のセットはスロット 0 のマテリアルに付き、もう 1 つは作る
         assert_eq!(s.session.sets.len(), 2, "{}", s.message);
-        let mut bound: Vec<u32> = s.session.sets.iter().filter_map(|x| x.bound).collect();
+        let mut bound: Vec<u32> = s
+            .session
+            .sets
+            .iter()
+            .filter_map(|x| x.bound.first().copied())
+            .collect();
         bound.sort_unstable();
         assert_eq!(bound, [0, 1]);
         let names: Vec<&str> = s.session.sets.iter().map(|x| x.name.as_str()).collect();
@@ -614,27 +624,30 @@ mod tests {
             s.message
         );
         // 3D で描くのは今のセットのマテリアル。セットを替えると描く先も替わる
-        let current = s.session.sets.current().bound.unwrap();
-        assert_eq!(s.view3d.material, current as i32);
+        let current = s.session.sets.current().bound[0];
+        assert_eq!(
+            s.view3d.material,
+            yolu_core::geometry::MaterialSet::one(current as i32)
+        );
         let other = s
             .session
             .sets
             .iter()
-            .position(|x| x.bound != Some(current))
+            .position(|x| x.bound != [current])
             .unwrap();
         s.switch_set(other).unwrap();
-        assert_eq!(
+        assert_eq!(s.view3d.material, s.session.sets.current().bound_set());
+        assert_ne!(
             s.view3d.material,
-            s.session.sets.current().bound.unwrap() as i32
+            yolu_core::geometry::MaterialSet::one(current as i32)
         );
-        assert_ne!(s.view3d.material, current as i32);
         // 目を閉じたセットのマテリアルの面は 3D から除く（受けた形はそのまま）
         let full = s.view3d.full_model().unwrap().triangle_count();
         let closed = s
             .session
             .sets
             .iter()
-            .find(|x| x.bound == Some(current))
+            .find(|x| x.bound == [current])
             .unwrap()
             .uid;
         s.toggle_set_visible(closed);
@@ -644,7 +657,7 @@ mod tests {
             .geometry
             .triangles()
             .iter()
-            .all(|t| t.material == s.view3d.material));
+            .all(|t| s.view3d.material.contains(t.material)));
         assert_eq!(s.view3d.full_model().unwrap().triangle_count(), full);
         // 英語の知らせ
         let mut e = AppState::new(64, 64);
@@ -664,7 +677,7 @@ mod tests {
             uids,
             "名前で照合して、同じセットに付け直す"
         );
-        assert!(s.session.sets.iter().all(|x| x.bound.is_some()));
+        assert!(s.session.sets.iter().all(|x| !x.bound.is_empty()));
         assert!(
             !s.message.contains("新しいテクスチャセット"),
             "{}",
@@ -689,8 +702,8 @@ mod tests {
         assert_eq!(m.materials[0].key, MaterialKey::Unassigned);
         assert_eq!(m.slots, [0]);
         assert_eq!(s.session.sets.len(), 1);
-        assert_eq!(s.session.sets.current().bound, Some(0));
-        assert_eq!(s.view3d.material, 0);
+        assert_eq!(s.session.sets.current().bound, [0]);
+        assert_eq!(s.view3d.material, yolu_core::geometry::MaterialSet::one(0));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -717,8 +730,12 @@ mod tests {
         s.sync_rig_model();
         assert!(s.session.model.is_none());
         assert_eq!(s.session.sets.len(), 2);
-        assert!(s.session.sets.iter().all(|x| x.bound.is_none()));
-        assert_eq!(s.view3d.material, 0, "立方体は今のセットの文書を貼る");
+        assert!(s.session.sets.iter().all(|x| x.bound.is_empty()));
+        assert_eq!(
+            s.view3d.material,
+            yolu_core::geometry::MaterialSet::one(0),
+            "立方体は今のセットの文書を貼る"
+        );
         // Live Link の記録には触らない
         let _ = s.receive_link_model(&model(5));
         s.sync_rig_model();

@@ -258,8 +258,14 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         rig.materials().iter().cloned().map(Some).collect(),
         rest.clone(),
     );
-    if view3d.material < 0 || view3d.material as usize >= model.materials.len().max(1) {
-        view3d.material = 0;
+    if view3d.material.is_empty()
+        || view3d
+            .material
+            .as_slice()
+            .iter()
+            .any(|m| *m as usize >= model.materials.len().max(1))
+    {
+        view3d.material = yolu_core::geometry::MaterialSet::one(0);
     }
     let mut expanded = HashSet::new();
     // 根と、その下の 1 段を開いておく
