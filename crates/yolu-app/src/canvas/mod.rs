@@ -432,7 +432,7 @@ fn begin_stroke(
             if !settings.erase {
                 app.color.remember();
             }
-            app.session.mark_modified();
+            app.session.mark_content_modified();
             true
         }
         Err(e) => {

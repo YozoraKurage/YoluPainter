@@ -54,6 +54,7 @@ mod history;
 mod image_stage_ui;
 mod layer_menu;
 mod layerops;
+mod modified_mark;
 mod pathtool;
 mod pressure_adjust;
 mod ramp_editor;

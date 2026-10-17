@@ -29,8 +29,11 @@ pub struct Session {
     pub save_folder: Option<std::path::PathBuf>,
     /// プロジェクトを替えた回数（新規・開く・作る。`np_project_replaced` が進める）。Live Link の裏の仕事が、始めた時のプロジェクトへだけ入るための目印。
     project_epoch: u64,
-    /// 開いた・保存した後に変えたか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。
+    /// 文書の外の変更（セットの名前・並び・書き出しの設定・アセット・ポーズなど）と、文書の履歴に収まらない編集があったか。消えるのは保存したときだけ。
     modified: bool,
+    /// 文書の中身を変えうる編集（ストローク・Undo・レイヤーの操作）をしたか（[`Session::mark_content_modified`]）。立っていても、文書が保存した所と
+    /// 同じ中身（`Document::is_clean`。画素の変わらないストローク・取り消したストローク・Undo で保存した所へ戻った）なら、変更の印にならない。
+    content_marked: bool,
     /// 新規プロジェクトのウィンドウで、利用者が解像度を選んで作ったプロジェクトか（Live Link の元の絵が、最初のセットを元の絵の大きさで作り直してよいかを
     /// 決める。選んだ大きさは元の絵で上書きしない）。起動時の既定・ファイルの「新規」・開いたプロジェクトでは false。
     pub resolution_chosen: bool,
@@ -42,11 +45,13 @@ pub struct Session {
 impl Session {
     /// 文書 `doc`（選んだレイヤーは `selected_layer`）とテクスチャセット `sets` の、まだファイルの無いプロジェクト `project_name`。
     pub(crate) fn new(
-        doc: Document,
+        mut doc: Document,
         selected_layer: Option<LayerId>,
         sets: TextureSets,
         project_name: String,
     ) -> Session {
+        // できたての文書（最初のレイヤーを足した後）は、保存した所にいる
+        doc.mark_saved();
         Session {
             doc,
             doc_epoch: 0,
@@ -59,6 +64,7 @@ impl Session {
             save_folder: None,
             project_epoch: 0,
             modified: false,
+            content_marked: false,
             resolution_chosen: false,
             rewritten_sets: 0,
         }
@@ -74,15 +80,24 @@ impl Session {
         self.project_epoch
     }
 
-    /// 保存していない変更があるか。
+    /// 保存していない変更があるか（メニューバーの右の「•」。新規・開くの前に捨ててよいかを聞く）。文書の外の変更の印があるか、文書の編集をして
+    /// 今の文書が保存した所と違うとき（Undo・取り消しで保存した所へ戻れば違わない）。
     pub fn is_modified(&self) -> bool {
-        self.modified
+        self.modified || (self.content_marked && !self.doc.is_clean())
     }
 
     /// 今の文書を `doc` に替えて、文書の世代を進める。返すのは前の文書。画面の途中の状態を新しい文書に合わせるのは
     /// `AppState::install_document`。
-    pub(crate) fn install(&mut self, doc: Document) -> Document {
+    pub(crate) fn install(&mut self, mut doc: Document) -> Document {
+        // 入れる文書の今の中身を保存した所とする（読み込んだ直後の整え・しまっていた文書。保存していない変更は、外れるときに文書の外の印へ
+        // 移してある）
+        doc.mark_saved();
         let previous = std::mem::replace(&mut self.doc, doc);
+        // 外れる文書の保存していない変更は、これからは文書の外の印が持つ（しまった文書は、次に出てきたときこの目印を持たない）
+        if self.content_marked && !previous.is_clean() {
+            self.mark_modified();
+        }
+        self.content_marked = false;
         self.doc_epoch = self.doc_epoch.wrapping_add(1);
         previous
     }
@@ -99,21 +114,37 @@ impl Session {
         self.project_epoch += 1;
     }
 
-    /// 保存していない変更がある印を立てる。
+    /// 文書の中身を変えうる編集をした印を立てる（ストロークを始めた・Undo・Redo・レイヤーの操作）。実際に変わったかは文書が答える
+    /// （[`Session::is_modified`]）ので、画素を変えずに終えた・取り消した・Undo で保存した所へ戻したときは変更の印にならない。
+    pub fn mark_content_modified(&mut self) {
+        self.content_marked = true;
+    }
+
+    /// 今の文書のリビジョンが `before`（編集の前に控えた `doc.revision()`）と違えば、文書の中身を変えうる編集をした印を立てる。
+    pub fn mark_content_modified_if_changed(&mut self, before: u64) {
+        if self.doc.revision() != before {
+            self.mark_content_modified();
+        }
+    }
+
+    /// 保存していない変更がある印を立てる（文書の外の変更と、文書の履歴に収まらない編集。Undo で保存した所へ戻っても消えない）。
     pub fn mark_modified(&mut self) {
         self.modified = true;
     }
 
-    /// 今の文書のリビジョンが `before`（編集の前に控えた `doc.revision()`）と違えば、保存していない変更の印を立てる。
+    /// 今の文書のリビジョンが `before`（編集の前に控えた `doc.revision()`）と違えば、保存していない変更の印を立てる（Undo で戻っても消えない印）。
     pub fn mark_modified_if_changed(&mut self, before: u64) {
         if self.doc.revision() != before {
             self.mark_modified();
         }
     }
 
-    /// 保存していない変更の印を下ろす（保存した・開いた・プロジェクトを替えた）。
+    /// 保存していない変更の印を下ろす（保存した・開いた・プロジェクトを替えた）。今の文書もしまった文書も、今の中身を保存した所として覚える。
     pub fn clear_modified(&mut self) {
         self.modified = false;
+        self.content_marked = false;
+        self.doc.mark_saved();
+        self.sets.mark_stashed_saved();
     }
 
     /// プロジェクトの名乗りを初期化する（ファイルとの結び付きを空に、名前を `name` に、保存先のフォルダーを無しに、変更の印を下ろす）。

@@ -316,6 +316,7 @@ impl Document {
     }
     pub(super) fn finish_triangles(&mut self, cancel: bool) -> StrokeResult {
         let state = self.triangle_fill.take().unwrap();
+        self.saved.stroke_ended();
         let index = self.index_of(state.layer).unwrap();
         let mut parts = Vec::new();
         for (target, _, originals) in state.targets {

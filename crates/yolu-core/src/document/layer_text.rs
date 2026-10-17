@@ -275,7 +275,7 @@ impl Document {
         let top = self.undo.last_mut().expect("確かめた");
         self.history_bytes = self.history_bytes - top.cost + cost;
         top.cost = cost;
-        self.revision += 1;
+        self.merge_bump();
         Ok(())
     }
 

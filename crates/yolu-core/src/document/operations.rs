@@ -83,6 +83,7 @@ impl State {
             coalesce: _,
             trim_count: _,
             trimmed_bytes: _,
+            saved: _,
             // 交換しない: `batch` の編集の中かの印は本物の文書のもの（準備用の文書は自分の履歴を作るだけ）
             batching: _,
             // 交換しない: 継ぎ目の設定は専用の段で変える（準備の操作は変えない）
@@ -153,6 +154,7 @@ impl Document {
             coalesce: _,
             trim_count: _,
             trimmed_bytes: _,
+            saved: _,
             // 写さない: 準備用の文書は `batch` の外（本物の文書が `batch` の中でも、準備用の文書は自分の履歴を作ってよい。
             // 本物へは 1 段で交換し、それがまとめの中の 1 段になる）
             batching: _,

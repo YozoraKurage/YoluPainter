@@ -55,6 +55,7 @@ impl Document {
             coalesce: _,
             trim_count: _,
             trimmed_bytes: _,
+            saved: _,
         } = self;
         let mut copy = Document::with_tile_size(*width, *height, *tile_size)?;
         copy.id = *id;

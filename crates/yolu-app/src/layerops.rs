@@ -519,7 +519,7 @@ impl AppState {
             let text = self.lang.core_error(&e);
             self.notify(crate::notice::Kind::of_core(&e), Source::Layer, text);
         }
-        self.session.mark_modified();
+        self.session.mark_content_modified();
     }
 
     /// 変形を 1 回の Undo で当てる。変わったか。動かすレイヤーや画素が無ければ短い理由で断る（文書は変えない）。

@@ -30,6 +30,7 @@ mod min_pixel;
 mod nesting;
 mod ramp_mixing;
 mod rulers;
+mod saved_mark;
 mod selection;
 mod simd_document;
 mod spray;

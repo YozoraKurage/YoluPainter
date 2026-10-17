@@ -285,6 +285,14 @@ impl TextureSets {
     pub fn get_mut(&mut self, index: usize) -> Option<&mut TextureSet> {
         self.list.get_mut(index)
     }
+    /// しまってある文書すべてを、今の中身で保存した所として覚える（今の文書は呼び手が覚える）。
+    pub(crate) fn mark_stashed_saved(&mut self) {
+        for set in &mut self.list {
+            if let Some(stash) = &mut set.stash {
+                stash.doc.mark_saved();
+            }
+        }
+    }
     pub fn current_index(&self) -> usize {
         self.current
     }

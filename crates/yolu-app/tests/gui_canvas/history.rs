@@ -44,11 +44,15 @@ fn rows_move_back_and_forward_in_both_languages() {
         h.run();
         assert_eq!(h.state().doc().undo_count(), 2);
         assert_eq!(h.state().doc().layer(id).unwrap().opacity(), 0.4);
+        assert!(h.state().modified(), "開いたときと違う中身へ移った");
         h.get_by_label(lang.pick("開始位置", "Starting point"))
             .click();
         h.run();
         assert_eq!(h.state().doc().undo_count(), 0);
-        assert!(h.state().modified());
+        assert!(
+            !h.state().modified(),
+            "開いたときと同じ中身へ戻ったので変更ではない"
+        );
         assert!(h.query_by_label("private layer name").is_none());
     }
 }

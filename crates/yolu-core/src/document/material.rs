@@ -259,6 +259,7 @@ impl Document {
     }
     pub(super) fn finish_material(&mut self) -> Result<StrokeResult, CoreError> {
         let first = self.active.take().unwrap();
+        self.saved.stroke_ended();
         self.journal.memo.clear(); // 描き終えた（下の覚えを手放す）
         let result = StrokeResult {
             changed: false,
@@ -335,6 +336,7 @@ impl Document {
         let Some(first) = self.active.take() else {
             return false;
         };
+        self.saved.stroke_ended();
         self.journal.memo.clear(); // 取り消した（下の覚えを手放す）
         let layer = first.layer;
         let index = first.layer_index;

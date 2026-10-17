@@ -1235,7 +1235,7 @@ impl AppState {
                 self.session.doc.redo()
             };
             match result {
-                Ok(true) => self.session.mark_modified(),
+                Ok(true) => self.session.mark_content_modified(),
                 Ok(false) => break,
                 Err(e) => {
                     let text = self.lang.core_error(&e);
@@ -1358,7 +1358,7 @@ impl AppState {
                 match self.session.doc.undo() {
                     Ok(true) => {
                         self.info(Source::Edit, self.lang.t("state-undone"));
-                        self.session.mark_modified();
+                        self.session.mark_content_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1380,7 +1380,7 @@ impl AppState {
                 match self.session.doc.redo() {
                     Ok(true) => {
                         self.info(Source::Edit, self.lang.t("state-redone"));
-                        self.session.mark_modified();
+                        self.session.mark_content_modified();
                     }
                     Ok(false) => {}
                     Err(e) => self.notify(
@@ -1402,7 +1402,7 @@ impl AppState {
                     .add_layer_above(&name, self.session.selected_layer)
                 {
                     self.session.selected_layer = Some(id);
-                    self.session.mark_modified();
+                    self.session.mark_content_modified();
                 }
             }
             Action::DeleteLayer => {
@@ -1418,7 +1418,7 @@ impl AppState {
                             self.lang.core_error(&e),
                         );
                     }
-                    self.session.mark_modified_if_changed(revision);
+                    self.session.mark_content_modified_if_changed(revision);
                     self.ensure_selection();
                     return;
                 }
@@ -1443,7 +1443,7 @@ impl AppState {
                             self.session.selected_layer = start
                                 .map(|i| layers[i.saturating_sub(1).min(layers.len() - 1)].id());
                             self.set_edit_mask(false);
-                            self.session.mark_modified();
+                            self.session.mark_content_modified();
                         }
                         Err(e) => self.notify(
                             crate::notice::Kind::of_core(&e),
@@ -1465,7 +1465,7 @@ impl AppState {
                         .doc
                         .step_layers(&ids, action == Action::LayerUp)
                     {
-                        self.session.mark_modified();
+                        self.session.mark_content_modified();
                     }
                     return;
                 }
@@ -1478,7 +1478,7 @@ impl AppState {
                         let to = if up { i + 1 } else { i.wrapping_sub(1) };
                         if to < siblings.len() {
                             let _ = self.session.doc.move_layer(id, to);
-                            self.session.mark_modified();
+                            self.session.mark_content_modified();
                         }
                     }
                 }
@@ -1489,7 +1489,7 @@ impl AppState {
                 }
                 if let Some(visible) = self.session.doc.layer(id).map(|l| l.visible()) {
                     let _ = self.session.doc.set_layer_visible(id, !visible);
-                    self.session.mark_modified();
+                    self.session.mark_content_modified();
                 }
             }
             Action::SetBlend(id, mode) => {
@@ -1504,7 +1504,7 @@ impl AppState {
                     );
                     return;
                 }
-                self.session.mark_modified();
+                self.session.mark_content_modified();
             }
             Action::StartRename(id) => {
                 self.ui.renaming = Some(id);

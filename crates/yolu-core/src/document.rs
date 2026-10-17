@@ -19,6 +19,7 @@ mod effects;
 mod eval;
 mod layer_path;
 mod layer_sets;
+mod saved_mark;
 pub use layer_sets::{LayerSetInfo, MAX_LAYER_SETS};
 mod layer_text;
 pub(crate) mod locks;
@@ -620,6 +621,8 @@ pub struct Document {
     coalesce: Option<CoalesceKey>,
     trim_count: u64,
     trimmed_bytes: u64,
+    /// 保存した所の目印（[`Document::mark_saved`]・[`Document::is_clean`]）。
+    saved: saved_mark::SavedMark,
     id_counter: u64,
     /// 効果（フィルター・Generator・Anchor・画像・グラデーション）の評価と、外から渡す入力。保存も Undo もしない。
     effects: eval::EffectState,
@@ -707,6 +710,7 @@ impl Document {
             coalesce: None,
             trim_count: 0,
             trimmed_bytes: 0,
+            saved: saved_mark::SavedMark::default(),
             id_counter: 0,
             effects: eval::EffectState::default(),
             batching: false,
@@ -1070,7 +1074,7 @@ impl Document {
                     }
                     _ => unreachable!("まとめる段は同じ種類"),
                 }
-                self.revision += 1;
+                self.merge_bump();
                 return Ok(());
             }
         }
@@ -1402,10 +1406,13 @@ impl Document {
     /// 履歴（Undo・Redo）を消す。
     pub fn clear_history(&mut self) -> Result<(), CoreError> {
         self.ensure_loadable()?;
+        let at_saved = self.saved.is_at(self.undo.len());
         self.clear_history_unchecked();
+        self.saved.history_cleared(at_saved);
         Ok(())
     }
     fn clear_history_unchecked(&mut self) {
+        self.saved.forget_position();
         self.undo.clear();
         self.redo.clear();
         self.history_bytes = 0;
@@ -1513,7 +1520,7 @@ impl Document {
             return Err(e);
         }
         self.redo.push(entry);
-        self.revision += 1;
+        self.history_bump();
         Ok(true)
     }
 
@@ -1529,7 +1536,7 @@ impl Document {
             return Err(e);
         }
         self.undo.push(entry);
-        self.revision += 1;
+        self.history_bump();
         Ok(true)
     }
 
@@ -1537,7 +1544,7 @@ impl Document {
     fn execute(&mut self, mut command: Command, cost: u64) -> Result<(), CoreError> {
         let kind = command.history_kind();
         self.apply(&mut command)?;
-        self.revision += 1;
+        self.history_bump();
         self.push(Entry {
             command,
             cost,
@@ -1548,6 +1555,7 @@ impl Document {
 
     fn push(&mut self, entry: Entry) {
         self.coalesce = None; // 新しい段はまとめを終える
+        self.saved.drop_redo_side(self.undo.len());
         for old in self.redo.drain(..) {
             self.history_bytes -= old.cost;
         }
@@ -1584,14 +1592,18 @@ impl Document {
         }
         self.trim_count += 1;
         self.trimmed_bytes += discarded;
+        let mut dropped_undo = 0;
         while self.history_bytes > self.undo_budget && self.undo.len() > self.minimum_undo_steps {
             let e = self.undo.remove(0);
             self.history_bytes -= e.cost;
+            dropped_undo += 1;
         }
         while self.history_bytes > self.undo_budget && !self.redo.is_empty() {
             let e = self.redo.remove(0);
             self.history_bytes -= e.cost;
         }
+        self.saved
+            .history_trimmed(dropped_undo, self.undo.len() + self.redo.len());
     }
 
     /// 段を当てる（やり直し・最初の実行）。
@@ -2409,6 +2421,7 @@ impl Document {
         match result {
             Ok(any) => {
                 if any {
+                    self.saved.stroke_dab(self.revision);
                     self.revision += 1;
                 }
                 // 画素が変わらなくても、巻き戻し用の写しは育ち得る
@@ -2493,6 +2506,7 @@ impl Document {
                 cost,
             });
         }
+        self.settle_stroke_mark();
         Ok(result)
     }
 
@@ -2536,6 +2550,7 @@ impl Document {
         if restored {
             self.revision += 1;
         }
+        self.settle_stroke_mark();
         true
     }
 
