@@ -168,6 +168,9 @@ pub fn reset_category(app: &mut AppState, category: Category) {
         Category::Stabilization => {
             let a = &mut app.m2.brush.assist;
             (a.stabilizer, a.curve) = (0.0, false);
+            a.stabilizer_speed = None;
+            a.sweep = 0.0;
+            a.post = yolu_core::PostCorrection::default();
         }
         Category::Taper => {
             let brush = &mut app.m2.brush;

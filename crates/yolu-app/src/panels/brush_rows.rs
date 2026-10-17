@@ -1787,7 +1787,7 @@ fn erase_rows(
 fn stabilization_rows(
     ui: &mut Ui,
     app: &mut AppState,
-    _ctx: &egui::Context,
+    ctx: &egui::Context,
     row: Row,
     at: &mut At,
     env: Env,
@@ -1811,6 +1811,83 @@ fn stabilization_rows(
                 app.m2.brush.assist.stabilizer = v as f64;
             }
             out
+        }
+        Row::StabilizerBySpeed => {
+            let on = app.m2.brush.assist.stabilizer_speed.is_some();
+            if let Some(v) = toggle(ui, at, row, lang, on, None, live) {
+                let kind = m2::stabilizer_speed_type(&app.m2.brush.assist);
+                app.m2.brush.assist.stabilizer_speed = v.then_some(kind);
+            }
+            Out::default()
+        }
+        Row::StabilizerSpeedType => {
+            let a = &app.m2.brush.assist;
+            let kind = m2::stabilizer_speed_type(a);
+            let label = m2::stabilizer_speed_types(lang)
+                .into_iter()
+                .find(|(k, _)| *k == kind)
+                .map_or("", |(_, l)| l);
+            let enabled = live && a.stabilizer_speed.is_some();
+            if let Some(anchor) = dropdown(ui, at, row, lang, label, None, enabled) {
+                open_popup(app, ctx, Popup::StabilizerSpeedType, anchor, anchor.width());
+            }
+            Out::default()
+        }
+        Row::Sweep => {
+            let (v, out) = percent(
+                ui,
+                at,
+                row,
+                lang,
+                app.m2.brush.assist.sweep,
+                (0.0, 1.0),
+                None,
+                live,
+                None,
+            );
+            if let Some(v) = v {
+                app.m2.brush.assist.sweep = v;
+            }
+            out
+        }
+        Row::PostCorrection => {
+            let on = app.m2.brush.assist.post.on;
+            if let Some(v) = toggle(ui, at, row, lang, on, None, live) {
+                app.m2.brush.assist.post.on = v;
+            }
+            Out::default()
+        }
+        Row::PostStrength => {
+            let post = app.m2.brush.assist.post;
+            let (v, out) = slider(
+                ui,
+                at,
+                row,
+                lang,
+                post.strength as f32,
+                (0.0, 100.0),
+                NumberFormat::int(""),
+                None,
+                live && post.on,
+                None,
+            );
+            if let Some(v) = v {
+                app.m2.brush.assist.post.strength = v.round().clamp(0.0, 100.0) as f64;
+            }
+            out
+        }
+        Row::PostBySpeed | Row::PostByViewScale => {
+            let post = &mut app.m2.brush.assist.post;
+            let enabled = live && post.on;
+            let field = if row == Row::PostBySpeed {
+                &mut post.by_speed
+            } else {
+                &mut post.by_view_scale
+            };
+            if let Some(v) = toggle(ui, at, row, lang, *field, None, enabled) {
+                *field = v;
+            }
+            Out::default()
         }
         Row::Curve => {
             if let Some(v) = toggle(ui, at, row, lang, app.m2.brush.assist.curve, None, live) {

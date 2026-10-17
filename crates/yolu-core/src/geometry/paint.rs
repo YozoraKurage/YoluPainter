@@ -80,6 +80,7 @@ use crate::brush::{
 use crate::brush::{
     dual_spot, dual_textured_at, lifted_link, DualLook, DualPlace, DualRun, DualTips,
 };
+use crate::brush::{PostPoint, Sweep};
 use crate::{
     Brush, BrushPixel, BrushSettings, CanvasSymmetry, CoreError, Document, DualBrushMode, MixMode,
     StencilPoint, Stroke, SymmetryTransform,
@@ -506,6 +507,56 @@ pub struct SurfaceStroke {
     dual: Option<DualState>,
     dual_bytes: u64,
     pub stats: SurfaceStrokeStats,
+    /// はらいの進み（2D と同じ式。長さは画面の点）。
+    sweep: Sweep,
+    /// 後補正のブラシの、ここまでの入力と始めの設定（描き直しのストロークと、後補正の無いブラシは None）。
+    post: Option<SurfacePost>,
+    /// 離した後の描き直しの入力（区間ごとの整えた入力と、区間の終わりで角にするか）。次に塗るときに、画素を戻して描き直す。
+    redraw: Option<Vec<(Vec<SurfaceInput>, bool)>>,
+}
+
+/// 後補正のために覚える、面のストロークの入力と、Shift の直線の角（角の後の最初の入力の番号）と、描き直しで同じ形のストロークを始める設定。
+struct SurfacePost {
+    inputs: Vec<SurfaceInput>,
+    breaks: Vec<usize>,
+    brush: BrushSettings,
+    options: SurfaceStrokeOptions,
+}
+
+/// クローンの描き込み先の面の点（クローンでなければ None）。元が今のモデルの面でなければ、先に断る（世代違いの当たりで、ダブごとに
+/// 断られ続けるのを避ける）。
+fn clone_destination_of(
+    options: &SurfaceStrokeOptions,
+    geometry: &SurfaceGeometry,
+    material: Option<i32>,
+) -> Result<Option<SurfaceHit>, SurfaceStrokeError> {
+    let SurfaceEffect::Clone(c) = options.effect else {
+        return Ok(None);
+    };
+    let t = geometry.triangles().get(c.source.triangle as usize);
+    if c.source.revision != geometry.revision()
+        || t.is_none_or(|t| material.is_some_and(|m| m != t.material))
+    {
+        return Err(SurfaceStrokeError::CloneSource);
+    }
+    Ok(c.destination)
+}
+
+impl SurfacePost {
+    /// 後補正のブラシなら、押した点を覚えた状態で始める（そうでなければ None）。
+    fn new(
+        stroke_brush: &Brush,
+        brush: &BrushSettings,
+        options: SurfaceStrokeOptions,
+        first: SurfaceInput,
+    ) -> Option<SurfacePost> {
+        stroke_brush.assist.post.active().then(|| SurfacePost {
+            inputs: vec![first],
+            breaks: Vec::new(),
+            brush: *brush,
+            options,
+        })
+    }
 }
 
 impl SurfaceStroke {
@@ -615,19 +666,7 @@ impl SurfaceStroke {
         {
             return Err(SurfaceStrokeError::EffectWithSymmetry);
         }
-        let clone_destination = match options.effect {
-            SurfaceEffect::Clone(c) => {
-                // 元が今のモデルの面でなければ、先に断る（世代違いの当たりで、ダブごとに断られ続けるのを避ける）
-                let t = geometry.triangles().get(c.source.triangle as usize);
-                if c.source.revision != geometry.revision()
-                    || t.is_none_or(|t| material.is_some_and(|m| m != t.material))
-                {
-                    return Err(SurfaceStrokeError::CloneSource);
-                }
-                c.destination
-            }
-            _ => None,
-        };
+        let clone_destination = clone_destination_of(&options, &geometry, material)?;
         let world_radius = world_radius(&geometry, brush.radius, doc.width());
         // 影響元は、文書のストロークのブラシ（始めたときに固定したもの）から取る
         let stroke_brush = stroke.brush(doc)?;
@@ -704,6 +743,9 @@ impl SurfaceStroke {
             dabs: 0,
             dual,
             dual_bytes: 0,
+            post: SurfacePost::new(&stroke_brush, brush, options, input),
+            redraw: None,
+            sweep: Sweep::default(),
             brush: stroke_brush,
             stats: SurfaceStrokeStats::default(),
         };
@@ -815,14 +857,23 @@ impl SurfaceStroke {
             ..input
         };
         self.last_input = input;
+        if let Some(post) = self.post.as_mut() {
+            post.inputs.push(input);
+            // 覚えた入力も 1 回のストロークの予算に数える（2D と同じ。超えたらストロークを取り消す）
+            if self.post_bytes() > self.memory_total(doc) {
+                return Err(CoreError::StrokeBudgetExceeded.into());
+            }
+        }
         let assist = self.brush.assist;
         // 入り抜き: 3 つ目からの入力で（押した点から境を超えて離れて）手で描いた線と分かれば、待たせていたダブが塗れるようになる（待ち行列の順のまま）
         if assist.tapers() {
             self.taper_start.input(point64(input.at), self.dabs);
         }
         let pen = if assist.stabilizer > 0.0 {
+            let length = assist.stabilizer_length(self.pen.speed, self.brush.influences.speed_max);
             assist
                 .pull(
+                    length,
                     (self.pen.at.x as f64, self.pen.at.y as f64),
                     (input.at.x as f64, input.at.y as f64),
                 )
@@ -848,9 +899,16 @@ impl SurfaceStroke {
         } else {
             self.pen.speed
         };
+        let pressure = if self.brush.assist.sweep > 0.0 {
+            let moved = f64::from(magnitude2(at - self.pen.at));
+            self.sweep
+                .pressure(&self.brush.assist, f64::from(input.pressure), moved) as f32
+        } else {
+            input.pressure
+        };
         let point = ScreenPoint {
             at,
-            pressure: input.pressure,
+            pressure,
             tilt: input.tilt,
             rotation: input.rotation,
             speed,
@@ -961,6 +1019,9 @@ impl SurfaceStroke {
         doc: &mut Document,
         stroke: &mut Stroke,
     ) -> Result<bool, SurfaceStrokeError> {
+        if let Some(plan) = self.redraw.take() {
+            self.redraw_now(doc, stroke, plan)?;
+        }
         let Some(&dab) = self.queue.front() else {
             return Ok(false);
         };
@@ -974,7 +1035,9 @@ impl SurfaceStroke {
 
     /// 今塗れる、まだ塗っていないダブの数（抜きのために線の続きを待っているダブは数えない）。
     pub fn queued(&self) -> usize {
-        self.queue.iter().take_while(|d| self.paintable(d)).count()
+        // 後補正の描き直しを待っていれば、少なくとも 1 つ（次に塗る呼び出しが描き直す）
+        let pending = usize::from(self.redraw.is_some());
+        pending.max(self.queue.iter().take_while(|d| self.paintable(d)).count())
     }
 
     /// 手ぶれ補正の筆を、最後の入力の点まで動かす（離したときと同じ詰め方）。補正が無い・もう届いている・離した後は何もしない。
@@ -1002,6 +1065,104 @@ impl SurfaceStroke {
             self.taper_start.finish();
         }
         self.end = Some(self.sampler.length());
+        self.plan_redraw();
+        Ok(())
+    }
+
+    /// 後補正: 覚えた入力を整え、整える点があれば、次に塗るときの描き直しを決める（[`SurfaceStroke::redraw`]）。
+    fn plan_redraw(&mut self) {
+        let Some(post) = self.post.as_ref() else {
+            return;
+        };
+        let correction = &self.brush.assist.post;
+        let points: Vec<PostPoint> = post
+            .inputs
+            .iter()
+            .map(|i| PostPoint {
+                x: f64::from(i.at.x),
+                y: f64::from(i.at.y),
+                pressure: f64::from(i.pressure),
+                time: i.time,
+                tilt: i.tilt,
+                rotation: i.rotation,
+            })
+            .collect();
+        let speed_max = correction
+            .by_speed
+            .then_some(self.brush.influences.speed_max);
+        let Some(plan) = crate::brush::correction_plan(
+            &points,
+            &post.breaks,
+            correction.tolerance(true),
+            speed_max,
+        ) else {
+            return;
+        };
+        self.redraw = Some(
+            plan.into_iter()
+                .map(|(points, corner)| {
+                    let inputs = points
+                        .into_iter()
+                        .map(|p| SurfaceInput {
+                            at: Vec2::new(p.x as f32, p.y as f32),
+                            pressure: p.pressure.clamp(0.0, 1.0) as f32,
+                            tilt: p.tilt,
+                            rotation: p.rotation,
+                            time: p.time,
+                        })
+                        .collect();
+                    (inputs, corner)
+                })
+                .collect(),
+        );
+    }
+
+    /// 描き直し（後補正）: 文書のストロークの画素を描く前へ戻し、同じ設定の面のストロークを整えた入力で始め直して、離したところまで並べる
+    /// （並べたダブは、ほかの入力と同じく待ち行列で塗る）。テスト用の上限（ダブごとの写しの上限・投影の塗りのバイト）は引き継ぐ。
+    fn redraw_now(
+        &mut self,
+        doc: &mut Document,
+        stroke: &mut Stroke,
+        plan: Vec<(Vec<SurfaceInput>, bool)>,
+    ) -> Result<(), SurfaceStrokeError> {
+        let Some(post) = self.post.take() else {
+            return Ok(());
+        };
+        stroke.restart(doc)?;
+        let mut inputs = plan.iter().flat_map(|(points, _)| points.iter());
+        let Some(&first) = inputs.next() else {
+            return Ok(());
+        };
+        let options = SurfaceStrokeOptions {
+            projection_memory: self.memory_override,
+            ..post.options
+        };
+        let mut fresh = SurfaceStroke::begin_input(
+            doc,
+            stroke,
+            self.geometry.clone(),
+            self.view,
+            &post.brush,
+            self.material,
+            first,
+            options,
+        )?;
+        fresh.post = None;
+        fresh.budget = self.budget;
+        let mut skip_first = true;
+        for (points, corner) in &plan {
+            for &input in points {
+                if std::mem::take(&mut skip_first) {
+                    continue;
+                }
+                fresh.add_input(doc, stroke, input)?;
+            }
+            if *corner {
+                fresh.end_line()?;
+            }
+        }
+        fresh.end_input()?;
+        *self = fresh;
         Ok(())
     }
 
@@ -1015,6 +1176,9 @@ impl SurfaceStroke {
         }
         // 入り抜き: 最初の 2 つの入力の直線なら Shift の直線（線全体に入りを掛けず、この線で離せば抜きも掛けない。2D と同じ）
         let straight = self.brush.assist.tapers() && self.taper_start.end_line();
+        if let Some(post) = self.post.as_mut() {
+            post.breaks.push(post.inputs.len());
+        }
         self.catch_up()?;
         self.close_held(true)?;
         if straight {
@@ -1633,6 +1797,14 @@ impl SurfaceStroke {
         })
     }
 
+    /// 後補正のために覚えた入力のバイト（後補正でないストロークは 0）。
+    fn post_bytes(&self) -> u64 {
+        self.post.as_ref().map_or(0, |p| {
+            (p.inputs.capacity() * std::mem::size_of::<SurfaceInput>()
+                + p.breaks.capacity() * std::mem::size_of::<usize>()) as u64
+        })
+    }
+
     /// 投影の塗りに使ってよいバイト（共有の一覧・区画の一覧・覚えた投影の画素の合計。元の側と写しで 1 つ）。
     fn memory_total(&self, doc: &Document) -> u64 {
         self.memory_override.unwrap_or_else(|| {
@@ -1647,6 +1819,7 @@ impl SurfaceStroke {
     fn room(&self, total: u64, except: Option<usize>) -> u64 {
         let clock = self.clock;
         let mut used = self.dual_bytes
+            + self.post_bytes()
             + self.projector.as_ref().map_or(0, |p| {
                 p.shared_bytes()
                     + p.fixed_bytes()
@@ -1671,7 +1844,7 @@ impl SurfaceStroke {
 
     /// 全部の投影の塗りの覚えを、予算から一覧（とデュアルブラシの溜まり）の分を引いた残りに収める（このダブで使った区画は残す）。
     fn evict(&mut self, total: u64) {
-        let lists = self.projection_fixed_bytes() + self.dual_bytes;
+        let lists = self.projection_fixed_bytes() + self.dual_bytes + self.post_bytes();
         let clock = self.clock;
         let mut all: Vec<&mut SurfaceProjector> = self
             .projector

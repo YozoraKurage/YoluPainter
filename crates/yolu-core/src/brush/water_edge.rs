@@ -1050,4 +1050,112 @@ mod tests {
             Err(CoreError::InvalidArgument(Reason::WaterEdge))
         );
     }
+
+    #[test]
+    fn a_post_corrected_stroke_gets_its_edge_from_the_redrawn_line_only() {
+        // 後補正の描き直しの後の縁は、整えた入力を初めから描いた線（後補正なし）と同じ画素。揺れた元の線の縁の印は残らない
+        // （描いている間に付ける縁も、ドラッグ後に処理の縁とぼかし幅も）
+        let wobbly: Vec<crate::BrushSample> = (0..=112)
+            .map(|i| {
+                let y = 48.0 + if (i / 2) % 2 == 0 { 0.6 } else { -0.6 };
+                crate::BrushSample::new(
+                    24.0 + f64::from(i),
+                    y,
+                    1.0,
+                    f64::from(i) / 200.0,
+                    DVec2::ZERO,
+                )
+                .unwrap()
+            })
+            .collect();
+        let draw = |b: &Brush, samples: &[crate::BrushSample]| {
+            let mut d = Document::with_tile_size(160, 96, 32).unwrap();
+            let l = d.add_layer("L").unwrap();
+            let mut s = d.begin_brush_stroke(l, b).unwrap();
+            for p in samples {
+                s.add_sample(&mut d, *p).unwrap();
+            }
+            d.end_stroke(s).unwrap();
+            d.composite(d.bounds()).unwrap()
+        };
+        for (what, edge) in [
+            (
+                "描いている間",
+                WaterEdge {
+                    width: 4.0,
+                    opacity: 0.3,
+                    darkness: 0.6,
+                    after_stroke: false,
+                    blur: 0.0,
+                },
+            ),
+            (
+                "ドラッグ後",
+                WaterEdge {
+                    width: 4.0,
+                    opacity: 0.3,
+                    darkness: 0.6,
+                    after_stroke: true,
+                    blur: 2.0,
+                },
+            ),
+        ] {
+            let mut plain = Brush::simple(
+                BrushSettings {
+                    radius: 12.0,
+                    hardness: 0.7,
+                    spacing: 0.1,
+                    color: crate::Rgba8::new(48, 112, 192, 255),
+                    ..BrushSettings::default()
+                },
+                PressureSwitches::NONE,
+            );
+            plain.water_edge = Some(edge);
+            let mut corrected = plain.clone();
+            corrected.assist.post = crate::PostCorrection {
+                on: true,
+                strength: 10.0, // 許し 1 画素 > 揺れ 0.6
+                by_speed: false,
+                by_view_scale: false,
+                ..crate::PostCorrection::default()
+            };
+            // 整えた入力（描き直しが与える列）
+            let points: Vec<crate::brush::PostPoint> = wobbly
+                .iter()
+                .map(|s| crate::brush::PostPoint {
+                    x: s.x,
+                    y: s.y,
+                    pressure: s.pressure,
+                    time: s.time,
+                    tilt: s.tilt,
+                    rotation: s.rotation,
+                })
+                .collect();
+            let plan = crate::brush::correction_plan(
+                &points,
+                &[],
+                corrected.assist.post.tolerance(false),
+                None,
+            )
+            .expect("揺れは許しより小さいので整える");
+            let fixed: Vec<crate::BrushSample> = plan
+                .into_iter()
+                .flat_map(|(points, _)| points)
+                .map(|p| crate::BrushSample::new(p.x, p.y, p.pressure, p.time, p.tilt).unwrap())
+                .collect();
+            let raw = draw(&plain, &wobbly);
+            let redrawn = draw(&corrected, &wobbly);
+            let from_scratch = draw(&plain, &fixed);
+            assert_ne!(redrawn, raw, "{what}: 描き直した");
+            let differing = redrawn
+                .iter()
+                .zip(&from_scratch)
+                .filter(|(a, b)| a != b)
+                .count();
+            assert_eq!(
+                differing, 0,
+                "{what}: 整えた入力を初めから描いた線と違うバイト"
+            );
+        }
+    }
 }

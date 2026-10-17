@@ -866,7 +866,7 @@ impl AppState {
         yolu_core::geometry::ModelSymmetry::new(grid, &setup).map(std::sync::Arc::new)
     }
 
-    /// 幾何形状に沿って描く。補間と手ぶれ補正だけを切り、入り抜きと筆先の設定は保つ。
+    /// 幾何形状に沿って描く。補間と手ぶれ補正・後補正だけを切り、入り抜きと筆先の設定は保つ。
     pub fn begin_guided_canvas_stroke(
         &mut self,
         id: crate::engine::LayerId,
@@ -879,6 +879,7 @@ impl AppState {
         brush.model_symmetry = self.canvas_model_symmetry_for(Some(id));
         brush.assist.stabilizer = 0.0;
         brush.assist.curve = false;
+        brush.assist.post.on = false;
         let result = self.begin_stroke_with(id, &brush);
         self.sel.stroke_symmetry = result
             .is_ok()

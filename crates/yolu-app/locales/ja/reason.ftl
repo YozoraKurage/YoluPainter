@@ -560,3 +560,5 @@ reason-mask-size-differs-from-canvas = マスクの大きさがキャンバス�
 reason-water-edge = 水彩境界
 reason-water-edge-range = 水彩境界（幅 0.1〜20・透明度影響と明度影響 0〜1・ぼかし幅 0〜20）
 reason-layers-size-differs-from-canvas = 入れるレイヤーの大きさがキャンバスと違う
+reason-sweep-range = はらい（0〜1）
+reason-post-correction-range = 後補正の強さ（0〜100）・表示倍率

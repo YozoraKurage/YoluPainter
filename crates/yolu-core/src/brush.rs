@@ -52,6 +52,7 @@
 
 use crate::Reason;
 mod color_change;
+mod correction;
 pub mod curve;
 mod dual;
 mod dynamics;
@@ -83,6 +84,8 @@ use std::sync::Arc;
 use glam::DVec2;
 use rayon::prelude::*;
 
+pub(crate) use correction::{plan as correction_plan, PostPoint, Sweep};
+pub use correction::{PostCorrection, StabilizerSpeed, MAX_POST_STRENGTH};
 pub(crate) use dual::{
     lifted_link, spot as dual_spot, step as dual_step, textured_at as dual_textured_at, DualLook,
     DualPlace, DualRun, DualTips,
@@ -103,7 +106,8 @@ pub use refer::{ExpandMode, ReferenceLines, MAX_REFERENCE_EXPAND, MAX_REFERENCE_
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
     Jitter, PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
-    TipColorChange, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST, MIN_ONE_PIXEL_RADIUS,
+    TipColorChange, TipSelection, TipShape, MAX_FADE, MAX_STROKE_ASSIST, MAX_SWEEP,
+    MIN_ONE_PIXEL_RADIUS,
 };
 pub use sources::{BrushMappedPixel, BrushSourceTap};
 pub(crate) use sources::{CloneSource, CompositeTile};
@@ -456,6 +460,26 @@ pub(crate) struct StrokeState {
     water_edge: Option<water_edge::EdgeRun>,
     /// はみ出し防止（凍結した参照の重なりと狙いの色。None は効かない）。
     refer: Option<refer::ReferRun>,
+    /// 描く面のチャンネルの種類（描き直しで、同じ形のストロークを作り直す）。
+    kind: ChannelKind,
+    /// はらいの進み。
+    sweep: Sweep,
+    /// 後補正のブラシの、ここまでの入力（描き直しのストロークと、後補正の無いブラシは None）。
+    post: Option<PostInputs>,
+}
+
+/// 後補正のために覚える入力の点と、Shift の直線の角（角の後の最初の点の番号）。
+#[derive(Default)]
+struct PostInputs {
+    points: Vec<BrushSample>,
+    breaks: Vec<usize>,
+}
+
+impl PostInputs {
+    fn bytes(&self) -> u64 {
+        (self.points.capacity() * std::mem::size_of::<BrushSample>()
+            + self.breaks.capacity() * std::mem::size_of::<usize>()) as u64
+    }
 }
 
 /// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
@@ -604,8 +628,74 @@ impl StrokeState {
             copy_note: None,
             water_edge,
             refer: None,
+            kind,
+            sweep: Sweep::default(),
+            post: brush.assist.post.active().then(PostInputs::default),
             brush: Arc::new(brush),
         }
+    }
+
+    /// 描き直しのための、始めたときと同じ形の空のストローク（選択範囲・始めに作った面・ステンシルの色・凍結した合成の参照元・
+    /// はみ出し防止の凍結した参照は引き継ぐ。水彩境界の進みと入力は引き継がない: 水彩境界は描き直しの入力から初めから付け直す）。画素を戻すのは呼び手（[`StrokeState::tiles`] の前の中身）。
+    pub(crate) fn restarted(&mut self) -> StrokeState {
+        let mut fresh = StrokeState::new(
+            self.id,
+            self.layer,
+            self.layer_index,
+            self.channel,
+            self.kind,
+            (*self.brush).clone(),
+            self.budgets,
+            (self.width as u32, self.height as u32, self.tile_size as u32),
+            self.keep_alpha,
+        )
+        .with_selection(self.selection.clone())
+        .with_created_surface(self.created_surface);
+        fresh.stencil_kind = self.stencil_kind;
+        fresh.source = self.source.take();
+        fresh.refer = self.refer.as_ref().map(refer::ReferRun::restarted);
+        fresh.post = None;
+        fresh
+    }
+
+    /// 後補正の描き直しの入力: 覚えた入力の点を区間ごとに整えた列と、区間の終わりで角にするか（[`correction::plan`]）。後補正の無い・
+    /// 描き直しの・整える点の無いストロークは None。覚えた入力は手放す。
+    pub(crate) fn take_post_plan(&mut self) -> Option<Vec<(Vec<BrushSample>, bool)>> {
+        let inputs = self.post.take()?;
+        let post = &self.brush.assist.post;
+        let points: Vec<PostPoint> = inputs
+            .points
+            .iter()
+            .map(|s| PostPoint {
+                x: s.x,
+                y: s.y,
+                pressure: s.pressure,
+                time: s.time,
+                tilt: s.tilt,
+                rotation: s.rotation,
+            })
+            .collect();
+        let speed_max = post.by_speed.then_some(self.brush.influences.speed_max);
+        let plan = correction::plan(&points, &inputs.breaks, post.tolerance(false), speed_max)?;
+        Some(
+            plan.into_iter()
+                .map(|(points, corner)| {
+                    let samples = points
+                        .into_iter()
+                        .map(|p| BrushSample {
+                            x: p.x,
+                            y: p.y,
+                            pressure: clamp01(p.pressure),
+                            time: p.time,
+                            tilt: p.tilt,
+                            rotation: p.rotation,
+                            speed: 0.0,
+                        })
+                        .collect();
+                    (samples, corner)
+                })
+                .collect(),
+        )
     }
 
     /// 文書の今の選択範囲の内側だけに描く（C# の BrushStroke が始めに document.Selection を覚えるのと同じ）。
@@ -652,7 +742,10 @@ impl StrokeState {
     /// 巻き戻しの外でストロークが持っているバイト: 今の効果のダブの枠と、凍結した合成の参照元（C# の effectScratchBytes と
     /// cloneSourceBytes）。タイルの写しなどを数える予算の確かめは、これも足す。
     fn held_bytes(&self) -> u64 {
-        self.effect.scratch + self.source_bytes() + self.refer.as_ref().map_or(0, |r| r.bytes())
+        self.effect.scratch
+            + self.source_bytes()
+            + self.refer.as_ref().map_or(0, |r| r.bytes())
+            + self.post_bytes()
     }
 
     /// はみ出し防止の参照の重なりを渡す（最初のダブの前だけ。[`crate::Stroke::use_reference_layers`]）。
@@ -699,9 +792,14 @@ impl StrokeState {
 
     /// はみ出し防止の作業に使ってよいバイト（ストロークの予算の残り）。
     fn refer_room(&self) -> u64 {
-        self.budgets
-            .stroke
-            .saturating_sub(self.rollback_bytes + self.effect.scratch + self.source_bytes())
+        self.budgets.stroke.saturating_sub(
+            self.rollback_bytes + self.effect.scratch + self.source_bytes() + self.post_bytes(),
+        )
+    }
+
+    /// 後補正のために覚えた入力のバイト（後補正でなければ 0）。
+    fn post_bytes(&self) -> u64 {
+        self.post.as_ref().map_or(0, PostInputs::bytes)
     }
 
     /// 凍結した合成の参照元のバイト（無ければ 0）。
@@ -745,6 +843,11 @@ impl StrokeState {
             ));
         }
         self.last_input = sample;
+        // 後補正: 離したときに整えて描き直すため、入力を覚える（覚えた分も 1 回のストロークの予算に数える）
+        if let Some(post) = self.post.as_mut() {
+            post.points.push(sample);
+            self.ensure_budget(self.rollback_bytes)?;
+        }
         // 入り抜き: 3 つ目からの入力で（押した点から境を超えて離れて）手で描いた線と分かれば、待たせていたダブを、この入力のダブより先に置く
         let mut any = false;
         if self.brush.assist.tapers() && self.taper_start.input((sample.x, sample.y), self.dabs) {
@@ -761,10 +864,14 @@ impl StrokeState {
             self.pen = sample;
             return Ok(self.add_pen_point(surface, sample, changed)? | any);
         }
-        let Some((x, y)) = self
+        let length = self
             .brush
             .assist
-            .pull((self.pen.x, self.pen.y), (sample.x, sample.y))
+            .stabilizer_length(self.last_speed, self.brush.influences.speed_max);
+        let Some((x, y)) =
+            self.brush
+                .assist
+                .pull(length, (self.pen.x, self.pen.y), (sample.x, sample.y))
         else {
             return Ok(any);
         };
@@ -780,6 +887,14 @@ impl StrokeState {
         mut sample: BrushSample,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
+        if self.brush.assist.sweep > 0.0 {
+            let moved = self.last_pen_point.map_or(0.0, |p| {
+                ((sample.x - p.x) * (sample.x - p.x) + (sample.y - p.y) * (sample.y - p.y)).sqrt()
+            });
+            sample.pressure = self
+                .sweep
+                .pressure(&self.brush.assist, sample.pressure, moved);
+        }
         sample.speed = match self.last_pen_point {
             None => 0.0,
             Some(p) => {
@@ -1112,6 +1227,9 @@ impl StrokeState {
     ) -> Result<bool, CoreError> {
         // 入り抜き: 最初の 2 つの入力の直線なら Shift の直線（線全体に入りを掛けず、この線で離せば抜きも掛けない）。待たせていたダブを先に置く
         let straight = self.brush.assist.tapers() && self.taper_start.end_line();
+        if let Some(post) = self.post.as_mut() {
+            post.breaks.push(post.points.len());
+        }
         let mut any = false;
         if straight {
             any |= self.flush_pending(

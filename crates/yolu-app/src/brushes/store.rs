@@ -15,8 +15,8 @@
 //! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`、水彩境界の `water_edge.*`、
 //! はみ出し防止の `refer.on`・`refer.margin`・`refer.expand`・`refer.amount`・`refer.mode`。
 //! 影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
-//! バージョン 8 までの項目で書けない設定（ツールプロパティに出す行の目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない）を使うブラシだけ
-//! `yolupainter-brush 9`（`rows.shown`・`controls.size_by_screen`・`influence.<項目>.tilt.max`。そのほかはバージョン 8 と同じ書き方）。使わないブラシはバージョン 1〜8 のままで、
+//! バージョン 8 までの項目で書けない設定（ツールプロパティに出す行の目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない・手ぶれ補正の速度による調整・はらい・後補正）を使うブラシだけ
+//! `yolupainter-brush 9`（`rows.shown`・`controls.size_by_screen`・`influence.<項目>.tilt.max`・`assist.stabilizer_speed`・`assist.sweep`・`assist.post` と `assist.post.*`。そのほかはバージョン 8 と同じ書き方）。使わないブラシはバージョン 1〜8 のままで、
 //! 今までと同じバイト。バージョン 8 までのファイルにバージョン 9 の鍵があれば、知らない項目として断る。
 //! バージョン 2〜9 を知らない古いアプリは、そのファイルを「新しい形式」として触らずに読み飛ばす）、あとは `key=value` の行（UTF-8、64 KiB まで）。数は Rust の表記のまま書き（読み戻しても
 //! 同じ値）、筆先・質感の画像は札（トークン）で指す: 組み込みの名前（`grain`）、同梱の Krita の筆先の ID（`bundled:krita4/<ファイル>`）、
@@ -38,8 +38,8 @@ use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CH
 use crate::engine::{
     AntiAlias, Brush, BrushEffect, ColorItem, ColorMix, ColorTarget, CoreError, DVec2, DualBrush,
     DualBrushMode, ExpandMode, Influence, Influences, InputResponse, InputUse, MixBlur, MixGround,
-    MixMode, MixSpace, PaperTexture, ReferenceLines, StrokeAssist, StrokeColorChange, TaperTargets,
-    TextureMode, TipColorChange,
+    MixMode, MixSpace, PaperTexture, PostCorrection, ReferenceLines, StabilizerSpeed, StrokeAssist,
+    StrokeColorChange, TaperTargets, TextureMode, TipColorChange,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
@@ -322,7 +322,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
     let b = canonical(&user.brush);
     let assist = carried_assist(user.assist);
     let mut pending = Pending::default();
-    let v9 = needs_v9(&b);
+    let v9 = needs_v9(&b, assist);
     let v8 = needs_v8(&b, assist) || v9;
     let v7 = needs_v7(&b) || v8;
     let mut w = Writer(format!(
@@ -357,6 +357,10 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         // 入り抜きを掛ける項目と最小値（バージョン 8。既定の大きさだけ・最小値 0 は書かない）
         if v8 && !a.taper_targets.is_default() {
             write_taper_targets(&mut w, &a.taper_targets);
+        }
+        // 手ぶれ補正の速度による調整・はらい・後補正（バージョン 9。既定は書かない）
+        if v9 {
+            write_correction(&mut w, &a);
         }
     }
     // バージョン 9 の項目（使うブラシだけ書く）
@@ -737,6 +741,31 @@ fn write_v9(w: &mut Writer, b: &Brush) {
     }
 }
 
+/// バージョン 9 の補正の項目: 手ぶれ補正の速度による調整（`assist.stabilizer_speed`。`fast` すばやく描いたときに弱く補正・`slow` ゆっくり
+/// 描いたときに補正）・はらい（`assist.sweep`。0〜1）・後補正（`assist.post`・`.strength`・`.by_speed`・`.by_view_scale`）。既定の項目は書かない
+/// （後補正は、4 つの値のどれかが既定でなければ 4 つとも書く）。
+fn write_correction(w: &mut Writer, a: &StrokeAssist) {
+    if let Some(kind) = a.stabilizer_speed {
+        w.line("assist.stabilizer_speed", stabilizer_speed_id(kind));
+    }
+    if a.sweep > 0.0 {
+        w.line("assist.sweep", a.sweep);
+    }
+    if !a.post.is_default_setting() {
+        w.bool("assist.post", a.post.on);
+        w.line("assist.post.strength", a.post.strength);
+        w.bool("assist.post.by_speed", a.post.by_speed);
+        w.bool("assist.post.by_view_scale", a.post.by_view_scale);
+    }
+}
+
+fn stabilizer_speed_id(kind: StabilizerSpeed) -> &'static str {
+    match kind {
+        StabilizerSpeed::WeakenWhenFast => "fast",
+        StabilizerSpeed::SlowOnly => "slow",
+    }
+}
+
 /// 筆圧の応え（版 2。既定の項目は書かない）。
 fn write_pressure_responses(w: &mut Writer, b: &Brush) {
     if b.influences.hardness.pressure.on {
@@ -952,10 +981,13 @@ fn uses_mix_v8(b: &Brush) -> bool {
             || m.load != 1.0)
 }
 
-/// バージョン 8 までの項目で書けない物を使うか（使えばバージョン 9 で書く）: 目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない。
-/// `b` は正規の形（目の印は初めの形なら None）。バージョン 9 にする条件は、ここに `||` で足す。
-fn needs_v9(b: &Brush) -> bool {
-    b.shown_rows.is_some() || b.controls.size_by_screen || uses_tilt_max(b)
+/// バージョン 8 までの項目で書けない物を使うか（使えばバージョン 9 で書く）: 目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない・
+/// ブラシが持つ補正が速度による調整・はらい・後補正を使う。`b` は正規の形（目の印は初めの形なら None）。バージョン 9 にする条件は、ここに `||` で足す。
+fn needs_v9(b: &Brush, assist: Option<StrokeAssist>) -> bool {
+    b.shown_rows.is_some()
+        || b.controls.size_by_screen
+        || uses_tilt_max(b)
+        || assist.is_some_and(|a| a.uses_correction())
 }
 
 /// どれかの項目の傾きの最大値が 100% でないか。
@@ -1690,8 +1722,8 @@ fn read_dual_texture(
     Ok(Some(texture))
 }
 
-/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。入り抜きの影響先（`assist.taper.*`）はバージョン 8 の項目（バージョン 7 までに
-/// あれば、知らない項目として断る）。
+/// 入り抜き・手ぶれ補正（`assist.*`）を読む。1 つも無ければ持たない。入り抜きの影響先（`assist.taper.*`）はバージョン 8 の項目、速度による調整・
+/// はらい・後補正（[`write_correction`]）はバージョン 9 の項目（前のバージョンのファイルにあれば、知らない項目として断る）。
 fn read_assist(r: &mut Reader, version: u32) -> Result<Option<StrokeAssist>, StoreError> {
     let keys = ["assist.stabilizer", "assist.taper_in", "assist.taper_out"];
     let present = keys.iter().any(|k| r.map.contains_key(*k));
@@ -1703,13 +1735,45 @@ fn read_assist(r: &mut Reader, version: u32) -> Result<Option<StrokeAssist>, Sto
     } else {
         None
     };
-    Ok((present || targets.is_some()).then_some(StrokeAssist {
+    let mut assist = StrokeAssist {
         stabilizer,
         taper_in,
         taper_out,
         taper_targets: targets.unwrap_or_default(),
         curve: false,
-    }))
+        ..StrokeAssist::default()
+    };
+    let corrected = version >= 9 && read_correction(r, &mut assist)?;
+    Ok((present || targets.is_some() || corrected).then_some(assist))
+}
+
+/// バージョン 9 の補正の項目（[`write_correction`]）を読む（無い項目は既定）。1 つでもあれば true。
+fn read_correction(r: &mut Reader, a: &mut StrokeAssist) -> Result<bool, StoreError> {
+    let keys = [
+        "assist.stabilizer_speed",
+        "assist.sweep",
+        "assist.post",
+        "assist.post.strength",
+        "assist.post.by_speed",
+        "assist.post.by_view_scale",
+    ];
+    let present = keys.iter().any(|k| r.map.contains_key(*k));
+    a.stabilizer_speed = match r.take(keys[0]).as_deref() {
+        None => None,
+        Some("fast") => Some(StabilizerSpeed::WeakenWhenFast),
+        Some("slow") => Some(StabilizerSpeed::SlowOnly),
+        Some(_) => return Err(StoreError::BadValue(keys[0].into())),
+    };
+    a.sweep = r.float(keys[1], 0.0)?;
+    let d = PostCorrection::default();
+    a.post = PostCorrection {
+        on: r.bool(keys[2], d.on)?,
+        strength: r.float(keys[3], d.strength)?,
+        by_speed: r.bool(keys[4], d.by_speed)?,
+        by_view_scale: r.bool(keys[5], d.by_view_scale)?,
+        ..d
+    };
+    Ok(present)
 }
 
 /// 入り抜きを掛ける項目と最小値（`assist.taper.<項目>`）。1 つも無ければ None（既定）。あれば 8 項目とも要る（`off` か 0〜1 の最小値）。
@@ -2965,6 +3029,7 @@ mod tests {
             taper_out: 14.0,
             taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         let u = carrying(assist);
         let t = text(&u);
@@ -3022,6 +3087,7 @@ mod tests {
             taper_out: 0.0,
             taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         }));
         // 版 1〜3 のファイルにあれば知らない項目（今までの版の読み手と同じ断り方）
         for old in [
@@ -3062,7 +3128,8 @@ mod tests {
                 taper_in: 0.0,
                 taper_out: 9.0,
                 taper_targets: Default::default(),
-                curve: false
+                curve: false,
+                ..StrokeAssist::default()
             })
         );
         let none = "yolupainter-brush 4\nname=a\ngroup=pen\n";
@@ -3105,6 +3172,7 @@ mod tests {
             taper_out: 0.0,
             taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         let both = UserBrush {
             assist: Some(assist),
@@ -3187,6 +3255,7 @@ mod tests {
             taper_out: 0.0,
             taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         let u = UserBrush {
             assist: Some(assist),
@@ -3411,6 +3480,7 @@ mod tests {
             taper_out: 40.0,
             taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         let mut u = carrying(assist);
         u.id = 3;
@@ -3869,6 +3939,7 @@ mod tests {
             taper_out: 30.0,
             taper_targets: Default::default(),
             curve: false,
+            ..StrokeAssist::default()
         };
         v.push((
             include_str!("../../tests/ylbrush_files/v4.ylbrush"),
@@ -4108,6 +4179,7 @@ mod tests {
             taper_out: 30.0,
             taper_targets: targets,
             curve: false,
+            ..StrokeAssist::default()
         }
     }
 
@@ -5288,6 +5360,25 @@ mod tests {
         }
     }
 
+    // ───────── バージョン 9: 補正の拡張（手ぶれ補正の速度による調整・はらい・後補正） ─────────
+
+    fn corrected_assist() -> StrokeAssist {
+        StrokeAssist {
+            stabilizer: 12.0,
+            stabilizer_speed: Some(StabilizerSpeed::SlowOnly),
+            sweep: 0.25,
+            post: PostCorrection {
+                on: true,
+                strength: 6.0,
+                by_speed: false,
+                by_view_scale: true,
+                // ストロークの始めの値は保存しない
+                view_scale: 3.0,
+            },
+            ..StrokeAssist::default()
+        }
+    }
+
     #[test]
     fn a_brush_with_a_water_edge_is_version_eight_and_round_trips() {
         let b = water_edge_brush();
@@ -5358,6 +5449,66 @@ mod tests {
         ] {
             let d = decode_user(file, &mut |_| unreachable!()).unwrap();
             assert!(d.brush.water_edge.is_none());
+        }
+    }
+
+    #[test]
+    fn a_brush_that_carries_the_correction_settings_is_version_nine_and_round_trips() {
+        let u = carrying(corrected_assist());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+        for line in [
+            "assist.stabilizer=12",
+            "assist.stabilizer_speed=slow",
+            "assist.sweep=0.25",
+            "assist.post=1",
+            "assist.post.strength=6",
+            "assist.post.by_speed=0",
+            "assist.post.by_view_scale=1",
+        ] {
+            assert!(t.lines().any(|l| l == line), "{line}: {t}");
+        }
+        assert!(!t.contains("view_scale=3"));
+        let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+        let want = StrokeAssist {
+            post: PostCorrection {
+                view_scale: 1.0,
+                ..corrected_assist().post
+            },
+            ..corrected_assist()
+        };
+        assert_eq!(d.assist, Some(want));
+        assert_eq!(
+            text(&UserBrush {
+                assist: d.assist,
+                ..user(1, d.brush)
+            }),
+            t,
+            "書き戻しても同じ文"
+        );
+        // 補正タイプの「すばやく描いたときに弱く補正」、後補正だけ・はらいだけでもバージョン 9
+        for assist in [
+            StrokeAssist {
+                stabilizer: 4.0,
+                stabilizer_speed: Some(StabilizerSpeed::WeakenWhenFast),
+                ..StrokeAssist::default()
+            },
+            StrokeAssist {
+                post: PostCorrection {
+                    on: true,
+                    ..PostCorrection::default()
+                },
+                ..StrokeAssist::default()
+            },
+            StrokeAssist {
+                sweep: 1.0,
+                ..StrokeAssist::default()
+            },
+        ] {
+            let t = text(&carrying(assist));
+            assert!(t.starts_with("yolupainter-brush 9\n"), "{t}");
+            let d = decode_user(&t, &mut |_| unreachable!()).unwrap();
+            assert_eq!(d.assist, Some(assist), "{t}");
         }
     }
 
@@ -5505,6 +5656,72 @@ mod tests {
         );
         assert!(matches!(
             decode(&format!("{v8}refer.on=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    #[test]
+    fn brushes_without_the_correction_settings_keep_their_version_and_bytes() {
+        // 速度による調整・はらい・後補正を使わない入り抜き・手ぶれ補正は、バージョン 4 のまま、補正の鍵を書かない
+        let assist = StrokeAssist {
+            stabilizer: 6.0,
+            ..StrokeAssist::default()
+        };
+        let t = text(&carrying(assist));
+        assert!(t.starts_with("yolupainter-brush 4\n"), "{t}");
+        for key in ["stabilizer_speed", "sweep", "assist.post"] {
+            assert!(!t.contains(key), "{key}");
+        }
+        // 前のバージョンのファイルは、補正の拡張が切で開く
+        let d = decode_user(
+            "yolupainter-brush 4\nname=a\ngroup=pen\nassist.stabilizer=6\n",
+            &mut |_| unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(d.assist, Some(assist));
+        assert!(!d.assist.unwrap().uses_correction());
+    }
+
+    #[test]
+    fn the_correction_settings_belong_to_version_nine_and_are_checked() {
+        let t = text(&carrying(corrected_assist()));
+        // バージョン 8 までのファイルに補正の鍵があれば、知らない項目として断る
+        for older in [8, 4] {
+            let old = t.replacen(
+                "yolupainter-brush 9",
+                &format!("yolupainter-brush {older}"),
+                1,
+            );
+            assert!(
+                matches!(decode(&old).unwrap_err(), StoreError::UnknownKey(_)),
+                "{older}"
+            );
+        }
+        // 読めない値・範囲の外
+        for (from, to, ok) in [
+            (
+                "assist.stabilizer_speed=slow",
+                "assist.stabilizer_speed=fast",
+                true,
+            ),
+            (
+                "assist.stabilizer_speed=slow",
+                "assist.stabilizer_speed=2",
+                false,
+            ),
+            ("assist.sweep=0.25", "assist.sweep=1", true),
+            ("assist.sweep=0.25", "assist.sweep=1.5", false),
+            ("assist.sweep=0.25", "assist.sweep=-0.1", false),
+            ("assist.sweep=0.25", "assist.sweep=NaN", false),
+            ("assist.post=1", "assist.post=2", false),
+            ("assist.post.strength=6", "assist.post.strength=100", true),
+            ("assist.post.strength=6", "assist.post.strength=101", false),
+            ("assist.post.by_speed=0", "assist.post.by_speed=yes", false),
+        ] {
+            assert_eq!(decode(&t.replace(from, to)).is_ok(), ok, "{to}");
+        }
+        assert!(matches!(
+            decode(&format!("{t}assist.sweep=0.5\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
     }

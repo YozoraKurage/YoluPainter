@@ -25,6 +25,7 @@ pub use yolu_core::{Influence, Influences, InputResponse, InputUse, PressureSwit
 pub use yolu_core::{LayerSetId, LayerSetInfo};
 pub use yolu_core::{MaskCopy, MaskPasteResult};
 pub use yolu_core::{MixBlur, MixSpace};
+pub use yolu_core::{PostCorrection, StabilizerSpeed};
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

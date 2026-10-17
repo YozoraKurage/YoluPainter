@@ -300,7 +300,7 @@ fn spray_f32(s: yolu_core::Spray) -> yolu_core::Spray {
     }
 }
 
-/// ブラシが持てる入り抜き・手ぶれ補正（曲線は持たない）。何も無ければ（全部 0）None。範囲は呼ぶ側が検査済みのものを渡す。
+/// ブラシが持てる入り抜き・手ぶれ補正・速度による調整・はらい・後補正（曲線は持たない）。何も無ければ（全部既定）None。範囲は呼ぶ側が検査済みのものを渡す。
 pub fn carried_assist(assist: Option<StrokeAssist>) -> Option<StrokeAssist> {
     let a = assist?;
     let carried = StrokeAssist {
@@ -309,6 +309,13 @@ pub fn carried_assist(assist: Option<StrokeAssist>) -> Option<StrokeAssist> {
         taper_out: a.taper_out,
         taper_targets: a.taper_targets,
         curve: false,
+        stabilizer_speed: a.stabilizer_speed,
+        sweep: a.sweep,
+        // 表示倍率はストロークの始めの値で、ブラシの設定ではない
+        post: yolu_core::PostCorrection {
+            view_scale: 1.0,
+            ..a.post
+        },
     };
     (carried != StrokeAssist::default()).then_some(carried)
 }

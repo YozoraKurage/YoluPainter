@@ -126,3 +126,7 @@ brushes-cannot-delete-the-brush = ブラシを消せません
 brushes-brush-file-deleted = ブラシのファイルを削除しました: { $name }
 brushes-imported-brushes = ブラシを { $n } 個取り込みました（{ $last_file }）
 brushes-imported-brushes-2 = ブラシを { $n } 個取り込みました（{ $files } ファイル）
+brushes-post-correction-strength = 後補正の強さ
+brushes-post-correction-bezier = 後補正のベジェ曲線
+brushes-sweep = はらい
+brushes-sharp-corners = 角をとがらせる

@@ -445,6 +445,12 @@ pub enum SutMapped {
     WaterEdge,
     /// はみ出し防止（参照レイヤーの線をはみ出さない・色の誤差・領域拡縮）。
     ReferenceLines,
+    /// 後補正（強さ・速度による調整・表示倍率による調整）。
+    PostCorrection,
+    /// はらい。
+    Sweep,
+    /// 手ぶれ補正の速度による調整と補正タイプ。
+    StabilizerSpeed,
 }
 
 impl SutMapped {
@@ -480,6 +486,12 @@ impl SutMapped {
             Self::DualBrush => ("デュアルブラシ", "dual brush"),
             Self::WaterEdge => ("水彩境界", "watercolor edge"),
             Self::ReferenceLines => ("はみ出し防止", "do not cross lines"),
+            Self::PostCorrection => ("後補正", "post correction"),
+            Self::Sweep => ("はらい", "sweep"),
+            Self::StabilizerSpeed => (
+                "手ぶれ補正の速度による調整",
+                "stabilization adjustment by speed",
+            ),
         }
     }
 }
@@ -605,7 +617,7 @@ pub enum SutNote {
     LuminanceCorrection(f64),
     /// にじむ強さの固定値（`BrushBlur`）が読めない・単位が px（0）でない・0〜8 の外で、収めた値（px）で読んだ。値は元の設定。
     MixBlur(Option<f64>),
-    /// 後補正（描いたあとに線を整える）。手ぶれ補正とは別の機能で、エンジンに無い。
+    /// 後補正（描いたあとに線を整える）は未対応。今の取り込みは後補正を写す（[`SutMapped::PostCorrection`]）ので出さない。
     PostCorrection,
     /// ベクターレイヤー向けの設定（ベクター消去・ベクター吸着）。
     VectorTools,
@@ -629,7 +641,7 @@ pub enum SutNote {
     /// 入り抜きの影響先のうち、エンジンに同じ項目が無く、写さなかったもの（影響先の番号。間隔・色相・彩度・明度・サブ描画色混合率・粒子・
     /// デュアル側・番号の分からないもの）。写せる項目があれば、そちらだけを写している。
     StartEndTargets(Vec<u32>),
-    /// 手ぶれ補正のうち、写せなかったもの（速度による手ブレ補正）。
+    /// 手ぶれ補正のうち、写せなかったもの（速度による手ブレ補正の補正タイプが知らない値）。
     Stabilizer,
     /// 色の変化の値があるが、切り替え（ブラシ先端色の変化・ストロークごとのランダム変化）が切で、使っていない。
     ColorChange,
@@ -679,6 +691,14 @@ pub enum SutNote {
     ExpandUnit(f64),
     /// はみ出し防止の色の誤差（0〜100）か領域拡縮の量（−100〜100）が範囲の外で、収めた値で読んだ。
     ReferenceRange,
+    /// 後補正の強さを、許しの距離へ近い式で写した（揺れを捨てて曲線で結び直す。同じ線になるか確かめていない）。
+    PostCorrectionStrength,
+    /// 後補正のベジェ曲線は未対応（曲線で結ぶ方法は 1 つ）。
+    PostCorrectionBezier,
+    /// はらいを、筆圧の下がる速さの上限へ近い式で写した。
+    SweepApprox,
+    /// 角をとがらせるは未対応。
+    SharpenCorner,
 }
 
 /// デュアルブラシの 2 つ目の紙質・散布効果の、近い動きと読まない設定の知らせの文。
@@ -992,8 +1012,8 @@ impl SutNote {
                 format!("These start and end taper targets are not supported and were not carried over: {}.", ids.iter().map(|&id| taper_target_name(id).1).collect::<Vec<_>>().join(", ")),
             ),
             Self::Stabilizer => (
-                "手ぶれ補正の速度による調整は未対応".into(),
-                "Stabilization adjustment by speed is not supported.".into(),
+                "手ぶれ補正の速度による調整の補正タイプが読めないので、速度による調整は写していない".into(),
+                "The stabilization mode for adjustment by speed is not understood; adjustment by speed is not carried over.".into(),
             ),
             Self::ColorChange | Self::ColorApprox(_) => self.color_texts(),
             Self::BlendMode => ("合成モードは未対応".into(), "The blend mode is not supported.".into()),
@@ -1026,8 +1046,24 @@ impl SutNote {
                 "Start and end taper keeps the lengths, targets and minimums (speed-dependent lengths and ratios are not read).".into(),
             ),
             Self::StabilizerStrength => (
-                "手ぶれ補正の強さは、段階 1 を糸の長さ 1 画素として写した（換算は推定）".into(),
-                "Stabilization strength maps one level to one pixel of string length (the conversion is an estimate).".into(),
+                "手ぶれ補正の強さは、糸の長さ（画素）へ近い式で写した（換算は推定）".into(),
+                "Stabilization strength is converted to a string length in pixels with a close formula (the conversion is an estimate).".into(),
+            ),
+            Self::PostCorrectionStrength => (
+                "後補正の強さは、揺れを捨てる距離へ近い式で写した（近い動き）".into(),
+                "Post correction strength is converted to the distance of wobbles it removes with a close formula (a close behavior).".into(),
+            ),
+            Self::PostCorrectionBezier => (
+                "後補正のベジェ曲線は未対応".into(),
+                "The Bezier curve option of post correction is not supported.".into(),
+            ),
+            Self::SweepApprox => (
+                "はらいは、筆圧が下がる速さの上限へ近い式で写した（近い動き）".into(),
+                "Taper (sweep) is converted to a limit on how fast pen pressure falls with a close formula (a close behavior).".into(),
+            ),
+            Self::SharpenCorner => (
+                "角をとがらせるは未対応".into(),
+                "Sharp corners is not supported.".into(),
             ),
             Self::SettingsMissing => (
                 "ブラシの設定の表（Variant）か行の番号の列（VariantID）が無く、設定は既定のまま".into(),

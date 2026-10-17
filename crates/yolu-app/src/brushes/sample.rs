@@ -159,6 +159,8 @@ fn preview_brush(brush: &Brush, spec: SampleSpec) -> Brush {
         taper_out: (assist.taper_out * f).min(10_000.0),
         taper_targets: assist.taper_targets,
         curve: assist.curve,
+        // 見本の線は縮めて描くので、長さで決まる補正（速度による調整・はらい・後補正）は当てない
+        ..crate::engine::StrokeAssist::default()
     };
     if let Some(t) = &mut b.texture {
         t.scale = (t.scale * f).clamp(0.05, 64.0);

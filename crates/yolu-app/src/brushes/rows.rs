@@ -2,7 +2,7 @@
 //! 行は、詳細のウィンドウの欄にも、ツールプロパティのパネルにも出る（どの行をツールプロパティに出すかは、ブラシごとに覚える目の印。
 //! `Brush::shown_rows`）。行を足すときは、[`Row`] に 1 つ足し、`id`・`category`・`default_shown` を決め、`panels::brush_rows` の区分の関数に 1 つ足す
 //! （足し忘れは、全部の行を描いてみるテストが落とす）。区分を足すときは [`Category`] に足す。エンジンの無い区分
-//! （水彩境界・はみ出し防止・後補正など）は、エンジンが入るときにここへ足す。
+//! （水彩境界・はみ出し防止など）は、エンジンが入るときにここへ足す。
 //!
 //! ツールプロパティの行の並びは、詳細の区分の順（区分の中は [`Row::ALL`] の順）。目の印の初めの形（`Brush::shown_rows` が None）は、
 //! 前のツールプロパティが出していた行（[`Row::default_shown`]）。
@@ -240,6 +240,13 @@ pub enum Row {
     Erase,
     // 補正
     Stabilizer,
+    StabilizerBySpeed,
+    StabilizerSpeedType,
+    Sweep,
+    PostCorrection,
+    PostStrength,
+    PostBySpeed,
+    PostByViewScale,
     Curve,
     // 入り抜き
     TaperIn,
@@ -251,7 +258,7 @@ pub enum Row {
 
 impl Row {
     /// 全部の行（区分の中の並び。ツールプロパティも、区分の順に、この並びで出す）。
-    pub const ALL: [Row; 89] = [
+    pub const ALL: [Row; 96] = [
         Row::Size,
         Row::SizeByScreen,
         Row::MinOnePixel,
@@ -335,6 +342,13 @@ impl Row {
         Row::DualPaperMode,
         Row::Erase,
         Row::Stabilizer,
+        Row::StabilizerBySpeed,
+        Row::StabilizerSpeedType,
+        Row::Sweep,
+        Row::PostCorrection,
+        Row::PostStrength,
+        Row::PostBySpeed,
+        Row::PostByViewScale,
         Row::Curve,
         Row::TaperIn,
         Row::TaperOut,
@@ -429,6 +443,13 @@ impl Row {
             Row::DualPaperMode => "dual.paper.mode",
             Row::Erase => "erase",
             Row::Stabilizer => "stabilizer",
+            Row::StabilizerBySpeed => "stabilizer.by_speed",
+            Row::StabilizerSpeedType => "stabilizer.speed_type",
+            Row::Sweep => "stabilizer.sweep",
+            Row::PostCorrection => "stabilizer.post",
+            Row::PostStrength => "stabilizer.post_strength",
+            Row::PostBySpeed => "stabilizer.post_by_speed",
+            Row::PostByViewScale => "stabilizer.post_by_view_scale",
             Row::Curve => "stabilizer.curve",
             Row::TaperIn => "taper.in",
             Row::TaperOut => "taper.out",
@@ -522,7 +543,15 @@ impl Row {
             | Row::DualPaperAngle
             | Row::DualPaperMode => Category::DualPaper,
             Row::Erase => Category::Erase,
-            Row::Stabilizer | Row::Curve => Category::Stabilization,
+            Row::Stabilizer
+            | Row::StabilizerBySpeed
+            | Row::StabilizerSpeedType
+            | Row::Sweep
+            | Row::PostCorrection
+            | Row::PostStrength
+            | Row::PostBySpeed
+            | Row::PostByViewScale
+            | Row::Curve => Category::Stabilization,
             Row::TaperIn | Row::TaperOut | Row::FadeSize | Row::FadeOpacity | Row::FadeFlow => {
                 Category::Taper
             }
@@ -615,6 +644,13 @@ impl Row {
             Row::DualPaperMode => lang.t("brushrows-2-paper-mode"),
             Row::Erase => lang.t("brushrows-erase"),
             Row::Stabilizer => lang.t("panels-stabilizer"),
+            Row::StabilizerBySpeed => lang.t("brushrows-stabilize-by-speed"),
+            Row::StabilizerSpeedType => lang.t("brushrows-stabilization-mode"),
+            Row::Sweep => lang.t("brushrows-sweep"),
+            Row::PostCorrection => lang.t("brushrows-post-correction"),
+            Row::PostStrength => lang.t("brushrows-post-strength"),
+            Row::PostBySpeed => lang.t("brushrows-adjust-by-speed"),
+            Row::PostByViewScale => lang.t("brushrows-adjust-by-view-scale"),
             Row::Curve => lang.t("panels-curve"),
             Row::TaperIn => lang.t("brushrows-start-length"),
             Row::TaperOut => lang.t("brushrows-end-length"),

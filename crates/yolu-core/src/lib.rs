@@ -89,9 +89,9 @@ pub use brush::{
     BrushPreset, BrushSample, BrushSettings, BrushSourceTap, BrushStencil, BrushTip, ColorDynamics,
     ColorItem, ColorMix, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
     ImageColorSpace, Influence, Influences, InputResponse, InputUse, Jitter, MixBlur, MixGround,
-    MixMode, MixSpace, PaperTexture, PressureSwitches, StencilImage, StencilMapping, StencilMode,
-    StencilPoint, StencilTiling, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
-    TipColorChange, TipSelection, TipShape,
+    MixMode, MixSpace, PaperTexture, PostCorrection, PressureSwitches, StabilizerSpeed,
+    StencilImage, StencilMapping, StencilMode, StencilPoint, StencilTiling, StrokeAssist,
+    StrokeColorChange, TaperTargets, TextureMode, TipColorChange, TipSelection, TipShape,
 };
 pub use brush::{ExpandMode, ReferenceLines, MAX_REFERENCE_EXPAND, MAX_REFERENCE_MARGIN};
 pub use brush::{Spray, SprayDirection, SprayItem, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};

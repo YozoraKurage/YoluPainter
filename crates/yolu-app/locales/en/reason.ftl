@@ -560,3 +560,5 @@ reason-mask-size-differs-from-canvas = Mask size differs from the canvas
 reason-water-edge = watercolor edge
 reason-water-edge-range = Watercolor edge (width 0.1–20, opacity and darkness 0–1, blurring width 0–20)
 reason-layers-size-differs-from-canvas = The layers to insert differ in size from the canvas
+reason-sweep-range = Sweep (0–1)
+reason-post-correction-range = Post correction strength (0–100) and view scale

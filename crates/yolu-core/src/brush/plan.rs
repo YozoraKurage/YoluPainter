@@ -481,14 +481,15 @@ impl StrokeAssist {
         Some(if min == 0.0 { t } else { min + (1.0 - min) * t })
     }
 
-    /// 手ぶれ補正の糸: 筆 pen が入力 to に引かれて動いた先（糸の長さより近ければ、たるんでいて動かないので None）。
-    pub(crate) fn pull(&self, pen: (f64, f64), to: (f64, f64)) -> Option<(f64, f64)> {
+    /// 手ぶれ補正の糸: 筆 pen が入力 to に、長さ `length` の糸（[`StrokeAssist::stabilizer_length`]）で引かれて動いた先（糸の長さより近ければ、
+    /// たるんでいて動かないので None）。
+    pub(crate) fn pull(&self, length: f64, pen: (f64, f64), to: (f64, f64)) -> Option<(f64, f64)> {
         let (dx, dy) = (to.0 - pen.0, to.1 - pen.1);
         let d = (dx * dx + dy * dy).sqrt();
-        if d <= self.stabilizer {
+        if d <= length {
             return None; // 糸がたるんでいる間は筆は動かない
         }
-        let k = (d - self.stabilizer) / d;
+        let k = (d - length) / d;
         Some((pen.0 + dx * k, pen.1 + dy * k))
     }
 }

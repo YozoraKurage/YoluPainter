@@ -269,6 +269,7 @@ fn the_sample_of_a_brush_without_start_end_keeps_the_drawers_setting_while_a_bru
         taper_out: 0.0,
         taper_targets: Default::default(),
         curve: false,
+        ..StrokeAssist::default()
     };
     h.m2_mut().brush.assist = drawer;
     let taper = SutBuilder::new()

@@ -21,7 +21,7 @@ The eye button at the left end of each row in Brush Details decides whether the 
 | Brush shape | Brush tip (the tip image, hardness, roundness, angle, follow direction, repeat method, flip), spray, stroke (spacing; the 3D settings are in [GUIDE_3D.md](GUIDE_3D.md)), paper |
 | 2nd brush shape | A second tip layered on the first (tip, spray, stroke, paper) |
 | Erase | Erase mode |
-| Stabilization | Stabilizer, curve |
+| Stabilization | Stabilizer, stabilize by speed, stabilization mode, sweep, post correction (strength, adjust by speed, adjust by view scale), curve |
 | Taper | Taper, fade, what the taper applies to |
 
 While Erase under Erase is on (you can also assign a key to the Erase Mode command), the Brush tool erases with the current brush as it is. It is not saved in the brush and stays when you switch tools.
@@ -64,6 +64,7 @@ Add Tool lists Brush, Eraser, and the built-in tools you removed from the toolba
 - **Tablets on Mac**: on Mac, the app reads the pressure, tilt, eraser end and side buttons that drivers such as Wacom and XP-Pen send as standard macOS events (experimental). Turn it on or off with Tablet pressure (experimental) under Pen in Edit → Settings… (on by default; when off, the pen draws like a mouse).
 - **Delay before a line appears**: by default, the screen update is presented without waiting for the vertical sync, which shortens the delay between the pen input and the line appearing on screen. If screen tearing bothers you, turn on VSync under Display in Edit → Settings… (the delay gets longer; it takes effect from the next start).
 - **Stabilizer**: Stabilizer in Tool Properties (0 to 200 px) is the length of the string that pulls the brush. 0 turns it off.
+- **Post correction**: With Post correction on in the Stabilization page of Brush Details, the line is smoothed of small wobbles and redrawn when you lift the pen (the redraw is one undo step).
 - **Taper**: the settings that thin the start and end of a stroke are under Taper in Brush Details.
 - **In the 3D View too**: Stabilizer, taper, jitter and the other settings apply to strokes in the 3D View with the same formulas. The stabilizer and taper lengths (px) are measured in screen points in the 3D View ([GUIDE_3D.md](GUIDE_3D.md)).
 

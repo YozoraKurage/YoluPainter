@@ -31,6 +31,7 @@ pub fn tool_props_and_canvas(h: &Harness<'_, YoluApp>) -> Rect {
 }
 
 mod anti_alias_ui;
+mod brush_correction;
 mod brush_import_ui;
 mod brush_menu;
 mod brush_mix;

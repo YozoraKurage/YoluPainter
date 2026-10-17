@@ -132,3 +132,7 @@ brushes-imported-brushes-2 = Imported { $n } { $n ->
         [one] brush
        *[other] brushes
     } ({ $files } files)
+brushes-post-correction-strength = Post correction strength
+brushes-post-correction-bezier = Post correction Bezier curve
+brushes-sweep = Sweep
+brushes-sharp-corners = Sharp corners

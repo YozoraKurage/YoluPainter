@@ -37,6 +37,7 @@ mod saved_mark;
 mod selection;
 mod simd_document;
 mod spray;
+mod stroke_correction;
 mod taper_start;
 mod taper_targets;
 mod text_layer;

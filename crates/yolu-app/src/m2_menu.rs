@@ -119,6 +119,8 @@ pub enum Popup {
     LayerSetOutput(Channel),
     /// テクスチャセットのパネルのレイヤーセットの行の右クリック。
     LayerSetContext(crate::engine::LayerSetId),
+    /// 手ぶれ補正の速度による調整の補正タイプ（2 種）。
+    StabilizerSpeedType,
 }
 
 fn tips(
@@ -436,6 +438,11 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
             m2::color_targets(lang),
             Some(app.m2.brush.color.target),
             BrushOp::ColorTarget,
+        ),
+        Popup::StabilizerSpeedType => brush_choices(
+            m2::stabilizer_speed_types(lang),
+            Some(m2::stabilizer_speed_type(&app.m2.brush.assist)),
+            BrushOp::StabilizerSpeedType,
         ),
         Popup::DualMode => brush_choices(
             DualBrushMode::ALL.map(|m| (m, dual_mode_label(lang, m))),

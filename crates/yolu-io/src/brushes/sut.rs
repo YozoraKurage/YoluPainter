@@ -32,7 +32,10 @@ mod tar;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use yolu_core::brush::{Input, Item, TaperTargets, MAX_STROKE_ASSIST};
+use yolu_core::brush::{
+    Input, Item, PostCorrection, StabilizerSpeed, TaperTargets, MAX_POST_STRENGTH,
+    MAX_STROKE_ASSIST, MAX_SWEEP,
+};
 use yolu_core::brush::{MAX_WATER_EDGE_BLUR, MAX_WATER_EDGE_WIDTH, MIN_WATER_EDGE_WIDTH};
 use yolu_core::curve::{Curve, CurvePoint};
 use yolu_core::{
@@ -130,11 +133,20 @@ const IN_UNIT: &[&str] = &["brushinlengthunit"];
 const OUT_UNIT: &[&str] = &["brushoutlengthunit"];
 const IN_OUT_TYPE: &[&str] = &["brushinouttype"];
 const IN_OUT_TARGET: &[&str] = &["brushinouttarget"];
-// 手ブレ補正の強さ（画面の値そのまま。0〜100）と、速度による手ブレ補正の旗
+// 手ブレ補正の強さ（画面の値そのまま。0〜100）と、速度による手ブレ補正の旗・補正タイプ（0 すばやく描いたときに弱く補正・1 ゆっくり描いたときに補正）
 const FLICKER: &[&str] = &["flickerreduction"];
 const FLICKER_BY_SPEED: &[&str] = &["flickerreductionbyspeed"];
-// 後補正の旗（強さ・速度・表示倍率・ベジェの列は、後補正をエンジンで表せないので読まない）
+const FLICKER_BY_SPEED_TYPE: &[&str] = &["flickerreductionbyspeedtype"];
+// はらい（画面の値そのまま。0〜100。列名は綴りのまま）
+const STICKNESS: &[&str] = &["stickness"];
+// 後補正の旗・強さ（画面の値そのまま）・速度による調整・表示倍率による調整・ベジェ曲線
 const POST_CORRECTION: &[&str] = &["brushuserevision"];
+const POST_STRENGTH: &[&str] = &["brushrevision"];
+const POST_BY_SPEED: &[&str] = &["brushrevisionbyspeed"];
+const POST_BY_VIEW_SCALE: &[&str] = &["brushrevisionbyviewscale"];
+const POST_BEZIER: &[&str] = &["brushrevisionbezier"];
+// 角をとがらせる（エンジンに無い）
+const SHARPEN_CORNER: &[&str] = &["brushsharpencorner"];
 // ベクターレイヤー向けの旗（ベクター消去・ベクター吸着）。実物の行はふつう両方の列を持つので、列ごとに旗を見る
 const VECTOR_ERASER: &[&str] = &["brushusevectoreraser"];
 const VECTOR_MAGNET: &[&str] = &["brushusevectormagnet"];
@@ -219,7 +231,14 @@ const KNOWN: &[&[&str]] = &[
     IN_OUT_TARGET,
     FLICKER,
     FLICKER_BY_SPEED,
+    FLICKER_BY_SPEED_TYPE,
+    STICKNESS,
     POST_CORRECTION,
+    POST_STRENGTH,
+    POST_BY_SPEED,
+    POST_BY_VIEW_SCALE,
+    POST_BEZIER,
+    SHARPEN_CORNER,
     VECTOR_ERASER,
     VECTOR_MAGNET,
     ROTATION_EFFECTOR,
@@ -724,27 +743,67 @@ fn start_end(
     }
 }
 
-/// 手ぶれ補正: 画面の「手ブレ補正」（`FlickerReduction`。0〜100）を糸の長さ（画素）へ 1 対 1 で写す（換算は測っていないので推定）。
-/// 強さが 0 なら写すものが無い。速度による手ブレ補正（`FlickerReductionBySpeed`）は、強さが 0 でないときだけ表せないと知らせる
-/// （強さ 0 の行にも旗の既定値は入っている）。後補正（`BrushUseRevision` 系）は手ぶれ補正とは別の機能で、エンジンに無いので写さずに
-/// 知らせる（旗が立っているときだけ。強さ・速度・表示倍率の列には、後補正が切でも既定値が入っている。実物の行では速度・表示倍率の旗が 1、ベジェの旗は 0）。
+/// 手ブレ補正の強さ 1 あたりの糸の長さ（画素）。
+pub const STABILIZER_PER_LEVEL: f64 = 1.0;
+
+/// 補正: 画面の「手ブレ補正」（`FlickerReduction`。0〜100）を糸の長さ（画素。強さ × [`STABILIZER_PER_LEVEL`]、換算は近い式）へ、速度による
+/// 手ブレ補正（`FlickerReductionBySpeed`）と補正タイプ（`…Type`）を `assist.stabilizer_speed` へ（強さが 0 なら速度の旗は効かないので写さない。
+/// 強さ 0 の行にも旗の既定値は入っている）。はらい（`Stickness`。0〜100）を `assist.sweep`（0〜1）へ。後補正（`BrushUseRevision`・強さ
+/// `BrushRevision`・`…BySpeed`・`…ByViewScale`）を `assist.post` へ（強さ・速度・表示倍率の列には、後補正が切でも既定値が入っているので、
+/// 旗が立っているときだけ写す。列が無ければ後補正の既定の値）。後補正のベジェ曲線（`BrushRevisionBezier`）と角をとがらせる（`BrushSharpenCorner`）はエンジンに無いので、
+/// 旗が立っていれば知らせる。
 fn stabilizer(
     row: &Row,
     brush: &mut Brush,
     notes: &mut Vec<Unrepresented>,
     mapped: &mut Vec<SutMapped>,
 ) {
+    if row.on(SHARPEN_CORNER) {
+        notes.push(Unrepresented::ClipStudio(SutNote::SharpenCorner));
+    }
     if row.on(POST_CORRECTION) {
-        notes.push(Unrepresented::ClipStudio(SutNote::PostCorrection));
+        // 列が無ければ、後補正を入れたときの既定の値（強さ・速度による調整・表示倍率による調整）で写す
+        let tuned = PostCorrection::default();
+        let flag =
+            |names: &[&str], default: bool| row.first_number(names).map_or(default, |v| v != 0.0);
+        brush.assist.post = PostCorrection {
+            on: true,
+            strength: row
+                .first_number(POST_STRENGTH)
+                .unwrap_or(tuned.strength)
+                .clamp(0.0, MAX_POST_STRENGTH),
+            by_speed: flag(POST_BY_SPEED, tuned.by_speed),
+            by_view_scale: flag(POST_BY_VIEW_SCALE, tuned.by_view_scale),
+            ..tuned
+        };
+        mapped.push(SutMapped::PostCorrection);
+        notes.push(Unrepresented::ClipStudio(SutNote::PostCorrectionStrength));
+        if row.on(POST_BEZIER) {
+            notes.push(Unrepresented::ClipStudio(SutNote::PostCorrectionBezier));
+        }
+    }
+    if let Some(sweep) = row.first_number(STICKNESS).filter(|v| *v > 0.0) {
+        brush.assist.sweep = (sweep / 100.0).clamp(0.0, MAX_SWEEP);
+        mapped.push(SutMapped::Sweep);
+        notes.push(Unrepresented::ClipStudio(SutNote::SweepApprox));
     }
     let Some(level) = row.first_number(FLICKER).filter(|l| *l > 0.0) else {
         return;
     };
-    brush.assist.stabilizer = level.min(MAX_STROKE_ASSIST);
+    brush.assist.stabilizer = (level * STABILIZER_PER_LEVEL).min(MAX_STROKE_ASSIST);
     mapped.push(SutMapped::Stabilizer);
     notes.push(Unrepresented::ClipStudio(SutNote::StabilizerStrength));
     if row.on(FLICKER_BY_SPEED) {
-        notes.push(Unrepresented::ClipStudio(SutNote::Stabilizer));
+        brush.assist.stabilizer_speed = Some(match row.first_number(FLICKER_BY_SPEED_TYPE) {
+            Some(0.0) => StabilizerSpeed::WeakenWhenFast,
+            Some(1.0) => StabilizerSpeed::SlowOnly,
+            // 知らない値は写さずに知らせる
+            _ => {
+                notes.push(Unrepresented::ClipStudio(SutNote::Stabilizer));
+                return;
+            }
+        });
+        mapped.push(SutMapped::StabilizerSpeed);
     }
 }
 

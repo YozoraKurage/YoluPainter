@@ -6,9 +6,9 @@ use std::collections::HashSet;
 
 use yolu_core::glam::DVec2;
 use yolu_core::{
-    Brush, BrushPixel, BrushSettings, CanvasSymmetry, Channel, CoreError, Document, EffectSettings,
-    ExpandMode, FilterSpec, FilterTarget, LayerId, LayerLocks, PressureSwitches, Rect,
-    ReferenceLines, Rgba8, SelectionMask, SymmetryMode,
+    Brush, BrushPixel, BrushSample, BrushSettings, CanvasSymmetry, Channel, CoreError, Document,
+    EffectSettings, ExpandMode, FilterSpec, FilterTarget, LayerId, LayerLocks, PostCorrection,
+    PressureSwitches, Rect, ReferenceLines, Rgba8, SelectionMask, SymmetryMode,
 };
 
 const W: u32 = 240;
@@ -530,4 +530,108 @@ fn spread_pixels_of_a_filtered_reference_layer_are_read_as_lines() {
 fn the_default_color_margin_matches_the_bucket_tolerance() {
     // 値を変えないときに、バケツの「近い色」の初めの許し幅（32）と同じ許し幅で近い色を見る
     assert_eq!(ReferenceLines::default().tolerance(), 32);
+}
+
+/// 線を横切る、y が 2 画素ごとに上下へ 0.6 揺れる入力（1 画素おき、後補正の許し 1 画素より小さな揺れ）。
+fn wobbly_across() -> Vec<BrushSample> {
+    (0..=160)
+        .map(|i| {
+            let y = ROW + if (i / 2) % 2 == 0 { 0.6 } else { -0.6 };
+            BrushSample::new(
+                60.0 + f64::from(i),
+                y,
+                1.0,
+                f64::from(i) / 200.0,
+                DVec2::ZERO,
+            )
+            .unwrap()
+        })
+        .collect()
+}
+
+fn post_corrected(lines: ReferenceLines) -> Brush {
+    let mut b = brush(lines);
+    b.assist.post = PostCorrection {
+        on: true,
+        strength: 10.0, // 許し 1 画素 > 揺れ 0.6
+        by_speed: false,
+        by_view_scale: false,
+        ..PostCorrection::default()
+    };
+    b
+}
+
+/// `marked` を参照の印にして、サンプル列を 1 本のストロークで描く。
+fn draw_samples(
+    d: &mut Document,
+    layer: LayerId,
+    b: &Brush,
+    marked: &[LayerId],
+    at: &[BrushSample],
+) {
+    let marked: HashSet<LayerId> = marked.iter().copied().collect();
+    let mut s = d.begin_brush_stroke(layer, b).unwrap();
+    assert!(s.use_reference_layers(d, &marked, Channel::Color).unwrap());
+    for p in at {
+        s.add_sample(d, *p).unwrap();
+    }
+    d.end_stroke(s).unwrap();
+}
+
+#[test]
+fn a_post_corrected_stroke_is_redrawn_with_the_frozen_reference() {
+    // 後補正は離したときに整えた入力で描き直す。描き直しも、始めに凍結した参照を持ち、線の向こうを塗らない
+    let (mut d, r, p) = scene();
+    draw_samples(&mut d, p, &post_corrected(on()), &[r], &wobbly_across());
+    // 描き直したこと（後補正が無い同じブラシの線とは別の画素）
+    let (mut raw, r2, q) = scene();
+    draw_samples(&mut raw, q, &brush(on()), &[r2], &wobbly_across());
+    assert_ne!(layer_bytes(&d, p), layer_bytes(&raw, q), "描き直した");
+    for y in 34..48 {
+        for x in LINE {
+            assert_eq!(alpha(&d, p, x, y), 0, "線の上の画素 ({x}, {y}) は塗らない");
+        }
+    }
+    assert_eq!(alpha(&d, p, 149, ROW as u32), 255, "線の手前");
+    assert_eq!(alpha(&d, p, 154, ROW as u32), 255, "線の向こう");
+    // 参照のレイヤーそのものに描いても、始めに凍結した参照のまま（描き直しの前に塗った赤で、範囲は変わらない）
+    let (mut e, r3, _) = scene();
+    draw_samples(&mut e, r3, &post_corrected(on()), &[r3], &wobbly_across());
+    let y = ROW as u32;
+    assert_eq!(
+        e.layer(r3).unwrap().pixel(Channel::Color, 151, y).unwrap(),
+        BLACK
+    );
+    assert_eq!(
+        e.layer(r3).unwrap().pixel(Channel::Color, 100, y).unwrap(),
+        Rgba8::new(224, 32, 32, 255)
+    );
+}
+
+/// 参照のある線（`wobbly_across`）を離す前まで描いたときの、ストロークの持つバイト（巻き戻しの写しと、凍結した参照・覚えた入力など）。
+fn held_while_drawing(b: &Brush) -> u64 {
+    let (mut d, r, p) = scene();
+    let marked: HashSet<LayerId> = [r].into_iter().collect();
+    let mut s = d.begin_brush_stroke(p, b).unwrap();
+    s.use_reference_layers(&mut d, &marked, Channel::Color)
+        .unwrap();
+    for q in wobbly_across() {
+        s.add_sample(&mut d, q).unwrap();
+    }
+    let held = d.active_stroke_stats().unwrap().rollback_bytes;
+    d.end_stroke(s).unwrap();
+    held
+}
+
+#[test]
+fn the_stroke_counts_both_the_remembered_inputs_and_the_frozen_reference() {
+    // 後補正の覚えた入力と、はみ出し防止の凍結した参照の両方を持つストロークが数えるバイトは、巻き戻しの写し（どれも同じ線なので同じ）に、
+    // 凍結した参照の分と覚えた入力の分を足した大きさ。どちらかが数えられていなければ合わない
+    // （はみ出し防止が切のブラシでは use_reference_layers は何も凍結しない）
+    let neither = held_while_drawing(&brush(ReferenceLines::default()));
+    let reference = held_while_drawing(&brush(on()));
+    let remembered = held_while_drawing(&post_corrected(ReferenceLines::default()));
+    let both = held_while_drawing(&post_corrected(on()));
+    assert!(reference > neither && remembered > neither);
+    assert_eq!(both, reference + remembered - neither);
 }

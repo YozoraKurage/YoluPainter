@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use glam::DVec2;
 
+use super::correction::{PostCorrection, StabilizerSpeed, MAX_POST_STRENGTH};
 use super::edge::AntiAlias;
 use super::influence::{Influences, Item, PressureSwitches};
 use super::mix::ColorMix;
@@ -75,19 +76,23 @@ const MAX_VIEW_SCALE: f64 = 65536.0;
 
 impl Brush {
     /// ストロークを始める表示倍率 `scale`（文書の画素 1 が画面で何点か。2D のキャンバスは表示の倍率、3D の面は始めの点の下の
-    /// 画素 1 つの大きさ）での、そのストロークのブラシ。[`Controls::size_by_screen`] が切なら、`self` と同じ。入りなら、ブラシの大きさ（半径）を
+    /// 画素 1 つの大きさ）での、そのストロークのブラシ。[`Controls::size_by_screen`] と後補正（[`PostCorrection::on`]）が切なら、`self` と同じ。前者が入りなら、ブラシの大きさ（半径）を
     /// 画面の点の値として、文書の画素へ直した半径（`半径 ÷ scale`。0 より大きく 65536 まで）にする。ストロークの始めに 1 回だけ呼び、その後は
-    /// 渡した値を変えない（途中の表示の拡大・縮小は効かない）。表示倍率の受け渡しはこの 1 か所（補正の「表示倍率による調整」もここの値を使う）。
-    /// 有限でない・0 以下の倍率は 1 とみなす。
+    /// 渡した値を変えない（途中の表示の拡大・縮小は効かない）。表示倍率の受け渡しはこの 1 か所で、後補正の表示倍率による調整もここの値を使う
+    /// （後補正が入りなら [`PostCorrection::view_scale`] に入れる）。有限でない・0 以下の倍率は 1 とみなす。
     pub fn at_view_scale(&self, scale: f64) -> Brush {
         let mut brush = self.clone();
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale.clamp(MIN_VIEW_SCALE, MAX_VIEW_SCALE)
+        } else {
+            1.0
+        };
         if self.controls.size_by_screen {
-            let scale = if scale.is_finite() && scale > 0.0 {
-                scale.clamp(MIN_VIEW_SCALE, MAX_VIEW_SCALE)
-            } else {
-                1.0
-            };
             brush.base.radius = (self.base.radius / scale).clamp(MIN_VIEW_RADIUS, 65536.0);
+        }
+        // 後補正の表示倍率による調整は、許しの距離をこの倍率で画面の点と文書の画素の間で直す（後補正が切のブラシは変えない）
+        if self.assist.post.on {
+            brush.assist.post.view_scale = scale;
         }
         brush
     }
@@ -658,6 +663,12 @@ pub struct StrokeAssist {
     pub taper_targets: TaperTargets,
     /// 道の点（手ぶれ補正の後）を centripetal Catmull-Rom の曲線で結ぶ。区間は次の点が来たとき（最後の区間は確定のとき）に描く。
     pub curve: bool,
+    /// 手ぶれ補正の速度による調整（None は切。糸の長さを直前の筆の速さで変える。[`StabilizerSpeed`]）。
+    pub stabilizer_speed: Option<StabilizerSpeed>,
+    /// はらい（0〜1）: 筆圧が下がるとき、太さなどの筆圧の影響が追いつく速さを抑える（0 は切）。
+    pub sweep: f64,
+    /// 後補正（[`PostCorrection`]）。
+    pub post: PostCorrection,
 }
 
 /// 入り・抜きを掛ける項目と、項目ごとの最小値（0〜1）。項目の係数は `最小値 + (1 − 最小値) × 入り抜きの係数`（入りの先頭と抜きの終わりで最小値、
@@ -760,6 +771,8 @@ pub const MAX_FADE: u32 = 10000;
 pub const MIN_ONE_PIXEL_RADIUS: f64 = 0.5;
 /// 手ぶれ補正・入り抜きの上限（C# の MaxStrokeAssist）。
 pub const MAX_STROKE_ASSIST: f64 = 10000.0;
+/// はらいの上限（100%）。
+pub const MAX_SWEEP: f64 = 1.0;
 
 impl Brush {
     /// C# の BrushSettings.Validate と同じ範囲を確かめる（断ったら何も変えない）。
@@ -787,6 +800,16 @@ impl Brush {
             }
         }
         a.taper_targets.validate()?;
+        require_finite(a.sweep, Reason::StrokeAssistance)?;
+        if !(0.0..=MAX_SWEEP).contains(&a.sweep) {
+            return Err(CoreError::InvalidArgument(Reason::SweepRange));
+        }
+        let post = &a.post;
+        require_finite(post.strength, Reason::StrokeAssistance)?;
+        require_finite(post.view_scale, Reason::StrokeAssistance)?;
+        if !(0.0..=MAX_POST_STRENGTH).contains(&post.strength) || post.view_scale <= 0.0 {
+            return Err(CoreError::InvalidArgument(Reason::PostCorrectionRange));
+        }
         if !(0.01..=1.0).contains(&t.roundness) {
             return Err(CoreError::InvalidArgument(Reason::Roundness));
         }

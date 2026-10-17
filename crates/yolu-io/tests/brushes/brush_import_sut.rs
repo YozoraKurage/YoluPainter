@@ -7,9 +7,12 @@ use crate::brush_files;
 use std::time::{Duration, Instant};
 
 use brush_files::sut::*;
+use yolu_core::brush::MAX_POST_STRENGTH;
+use yolu_core::StabilizerSpeed;
 use yolu_io::brushes::{
     import, import_bytes, BrushImportError, ColorNote, Fault, FileKind, ImportedBrush, ImportedSet,
     SkipReason, Source, SutInput, SutMapped, SutNote, SutTarget, Unrepresented,
+    SUT_STABILIZER_PER_LEVEL,
 };
 
 fn read(bytes: &[u8]) -> Result<ImportedSet, BrushImportError> {
@@ -1428,7 +1431,7 @@ fn settings_the_engine_cannot_represent_are_reported_when_flagged() {
         SutNote::Spray,
         SutNote::DualBrush,
         SutNote::StartEnd,
-        SutNote::PostCorrection,
+        SutNote::PostCorrectionStrength,
         SutNote::ColorChange,
         SutNote::BlendMode,
     ] {
@@ -1514,6 +1517,10 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::ExpandMode(0.0),
         SutNote::ExpandUnit(1.0),
         SutNote::ReferenceRange,
+        SutNote::PostCorrectionStrength,
+        SutNote::PostCorrectionBezier,
+        SutNote::SweepApprox,
+        SutNote::SharpenCorner,
     ];
     for n in all {
         let note = Unrepresented::ClipStudio(n.clone());
@@ -2639,61 +2646,156 @@ fn the_direction_settings_agree_with_the_engines_plan_of_the_dab_angle() {
 }
 
 #[test]
-fn a_stabilizer_strength_becomes_the_string_length_and_post_correction_is_reported_apart() {
-    // 手ブレ補正は `FlickerReduction`（画面の値そのまま）。後補正（`BrushUseRevision`・`BrushRevision`）は手ぶれ補正に写さない
+fn a_stabilizer_strength_becomes_the_string_length_and_its_speed_type_is_carried() {
+    // 手ブレ補正は `FlickerReduction`（画面の値そのまま。糸の長さへの換算は推定）
     let b = one(&[("FlickerReduction", int(30))]);
-    assert_eq!(b.brush.assist.stabilizer, 30.0);
+    assert_eq!(b.brush.assist.stabilizer, 30.0 * SUT_STABILIZER_PER_LEVEL);
     assert!(mapped(&b, SutMapped::Stabilizer));
     assert!(has(&b, SutNote::StabilizerStrength));
-    assert!(!has(&b, SutNote::Stabilizer) && !has(&b, SutNote::PostCorrection));
+    assert!(!has(&b, SutNote::Stabilizer) && b.brush.assist.stabilizer_speed.is_none());
     let b = one(&[("FlickerReduction", int(1_000_000))]);
     assert_eq!(
         b.brush.assist.stabilizer,
         yolu_core::brush::MAX_STROKE_ASSIST
     );
-    // 強さ 0（と、無い・負の値）は写すものが無い。速度による手ブレ補正の旗は、強さ 0 の行にも既定で入るので知らせない
+    // 強さ 0（と、無い・負の値）は写すものが無い。速度による手ブレ補正の旗は、強さ 0 の行にも既定で入るので写さず、知らせない
     for cells in [
         vec![
             ("FlickerReduction", int(0)),
             ("FlickerReductionBySpeed", int(1)),
+            ("FlickerReductionBySpeedType", int(1)),
         ],
         vec![("FlickerReductionBySpeed", int(1))],
         vec![("FlickerReduction", int(-5))],
     ] {
         let b = one(&cells);
         assert_eq!(b.brush.assist.stabilizer, 0.0);
+        assert!(b.brush.assist.stabilizer_speed.is_none());
         assert!(b.mapped.is_empty() && b.unrepresented.is_empty());
     }
-    // 速度による手ブレ補正（旗）は、強さがあるときだけ表せないと知らせる。強さは写る
+    // 速度による手ブレ補正と補正タイプ（0 すばやく描いたときに弱く補正・1 ゆっくり描いたときに補正）
+    for (kind, want) in [
+        (0, StabilizerSpeed::WeakenWhenFast),
+        (1, StabilizerSpeed::SlowOnly),
+    ] {
+        let b = one(&[
+            ("FlickerReduction", int(20)),
+            ("FlickerReductionBySpeed", int(1)),
+            ("FlickerReductionBySpeedType", int(kind)),
+        ]);
+        assert_eq!(b.brush.assist.stabilizer_speed, Some(want));
+        assert!(mapped(&b, SutMapped::StabilizerSpeed) && !has(&b, SutNote::Stabilizer));
+    }
+    // 旗が切なら写さない。知らない補正タイプ（と、無い列）は写さずに知らせる
     let b = one(&[
         ("FlickerReduction", int(20)),
-        ("FlickerReductionBySpeed", int(1)),
+        ("FlickerReductionBySpeed", int(0)),
+        ("FlickerReductionBySpeedType", int(0)),
     ]);
-    assert_eq!(b.brush.assist.stabilizer, 20.0);
-    assert!(has(&b, SutNote::Stabilizer));
-    // 後補正: 旗が立っているときだけ知らせ、強さは手ぶれ補正に入れない（強さ・速度・表示倍率・ベジェの列は読まない）
+    assert!(b.brush.assist.stabilizer_speed.is_none() && !mapped(&b, SutMapped::StabilizerSpeed));
+    for cells in [
+        vec![
+            ("FlickerReduction", int(20)),
+            ("FlickerReductionBySpeed", int(1)),
+            ("FlickerReductionBySpeedType", int(7)),
+        ],
+        vec![
+            ("FlickerReduction", int(20)),
+            ("FlickerReductionBySpeed", int(1)),
+        ],
+    ] {
+        let b = one(&cells);
+        assert!(b.brush.assist.stabilizer_speed.is_none());
+        assert!(has(&b, SutNote::Stabilizer));
+        assert_eq!(b.brush.assist.stabilizer, 20.0 * SUT_STABILIZER_PER_LEVEL);
+    }
+}
+
+#[test]
+fn post_correction_is_carried_with_its_strength_speed_and_view_scale() {
+    // 後補正: 旗が立っているときだけ、強さ（画面の値そのまま）・速度・表示倍率を写す。手ぶれ補正には入れない
     let b = one(&[
         ("BrushUseRevision", int(1)),
         ("BrushRevision", int(6)),
         ("BrushRevisionBySpeed", int(1)),
-        ("BrushRevisionByViewScale", int(1)),
+        ("BrushRevisionByViewScale", int(0)),
+        ("BrushRevisionBezier", int(0)),
+    ]);
+    let post = b.brush.assist.post;
+    assert!(post.on && post.by_speed && !post.by_view_scale);
+    assert_eq!(post.strength, 6.0);
+    assert_eq!(b.brush.assist.stabilizer, 0.0);
+    assert!(mapped(&b, SutMapped::PostCorrection) && !mapped(&b, SutMapped::Stabilizer));
+    assert!(has(&b, SutNote::PostCorrectionStrength));
+    assert!(!has(&b, SutNote::PostCorrection) && !has(&b, SutNote::PostCorrectionBezier));
+    // ベジェ曲線は写さずに知らせる。強さは上限に収める
+    let b = one(&[
+        ("BrushUseRevision", int(1)),
+        ("BrushRevision", int(1000)),
         ("BrushRevisionBezier", int(1)),
     ]);
-    assert_eq!(b.brush.assist.stabilizer, 0.0);
-    assert!(!mapped(&b, SutMapped::Stabilizer));
-    assert!(has(&b, SutNote::PostCorrection));
-    assert_eq!(b.unrepresented.len(), 1, "{:?}", b.unrepresented);
+    assert_eq!(b.brush.assist.post.strength, MAX_POST_STRENGTH);
+    assert!(has(&b, SutNote::PostCorrectionBezier));
+    // 旗が切なら、ほかの列に値があっても何も写さない
     let b = one(&[
         ("BrushUseRevision", int(0)),
         ("BrushRevision", int(30)),
         ("BrushRevisionBySpeed", int(1)),
         ("BrushRevisionByViewScale", int(1)),
+        ("BrushRevisionBezier", int(1)),
     ]);
     assert!(b.unrepresented.is_empty() && b.mapped.is_empty());
-    // 両方あれば、手ぶれ補正は写り、後補正は知らせる
+    assert_eq!(b.brush.assist.post, yolu_core::PostCorrection::default());
+    // 両方あれば、どちらも写る
     let b = one(&[("FlickerReduction", int(5)), ("BrushUseRevision", int(1))]);
-    assert_eq!(b.brush.assist.stabilizer, 5.0);
-    assert!(has(&b, SutNote::PostCorrection) && has(&b, SutNote::StabilizerStrength));
+    assert_eq!(b.brush.assist.stabilizer, 5.0 * SUT_STABILIZER_PER_LEVEL);
+    assert!(b.brush.assist.post.on);
+    assert!(has(&b, SutNote::PostCorrectionStrength) && has(&b, SutNote::StabilizerStrength));
+}
+
+#[test]
+fn a_post_correction_flag_without_the_tuning_columns_uses_the_default_tuning() {
+    // 旗だけが立ち、強さ・速度による調整・表示倍率による調整の列が無い行は、後補正を入れたときの既定の値で写す
+    let b = one(&[("BrushUseRevision", int(1))]);
+    assert_eq!(
+        b.brush.assist.post,
+        yolu_core::PostCorrection {
+            on: true,
+            ..yolu_core::PostCorrection::default()
+        }
+    );
+    assert!(mapped(&b, SutMapped::PostCorrection));
+    // 列がある側はその値、無い側は既定
+    let b = one(&[
+        ("BrushUseRevision", int(1)),
+        ("BrushRevisionBySpeed", int(0)),
+    ]);
+    let post = b.brush.assist.post;
+    assert!(post.on && !post.by_speed);
+    assert_eq!(
+        post.by_view_scale,
+        yolu_core::PostCorrection::default().by_view_scale
+    );
+}
+
+#[test]
+fn the_sweep_is_carried_and_sharp_corners_are_reported() {
+    // はらい（`Stickness`。0〜100）は 0〜1 へ。0 は写さない
+    let b = one(&[("Stickness", int(40))]);
+    assert_eq!(b.brush.assist.sweep, 0.4);
+    assert!(mapped(&b, SutMapped::Sweep) && has(&b, SutNote::SweepApprox));
+    let b = one(&[("Stickness", int(0))]);
+    assert_eq!(b.brush.assist.sweep, 0.0);
+    assert!(b.mapped.is_empty() && b.unrepresented.is_empty());
+    let b = one(&[("Stickness", int(250))]);
+    assert_eq!(b.brush.assist.sweep, 1.0);
+    // 角をとがらせるはエンジンに無いので、旗が立っていれば知らせる（線は変えない）
+    let b = one(&[("BrushSharpenCorner", int(1))]);
+    assert!(has(&b, SutNote::SharpenCorner));
+    assert_eq!(b.brush, one(&[("BrushSharpenCorner", int(0))]).brush);
+    assert!(one(&[("BrushSharpenCorner", int(0))])
+        .unrepresented
+        .is_empty());
 }
 
 #[test]

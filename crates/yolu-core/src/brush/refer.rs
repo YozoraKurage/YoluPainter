@@ -352,6 +352,12 @@ impl ReferRun {
         }
     }
 
+    /// 描き直し（後補正）のストロークへ渡す、同じ凍結した参照の新しい進み（描き直しの前の文書から作り直さないので、元の線は参照に混ざらない。
+    /// 狙いの色は、描き直しの最初のダブでまた決める）。
+    pub(crate) fn restarted(&self) -> ReferRun {
+        ReferRun::new(self.source.clone(), self.lines)
+    }
+
     /// 予算に数えるバイト（覚えた合成と作業の置き場）。
     pub(crate) fn bytes(&self) -> u64 {
         self.source.bytes() + self.work.bytes()

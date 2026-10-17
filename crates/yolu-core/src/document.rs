@@ -322,6 +322,17 @@ impl Stroke {
     pub fn id(&self) -> u64 {
         self.id
     }
+    /// 描き直し（後補正）: ストロークが変えた画素を描く前へ戻し、始めたときと同じ形の空のストロークにする（ストロークの ID・選択範囲・凍結した合成の
+    /// 参照元は同じ。確定すると、描く前からの 1 回の Undo）。3D の面のストロークが、整えた入力で描き直す前に呼ぶ。
+    pub(crate) fn restart(&mut self, doc: &mut Document) -> Result<(), CoreError> {
+        match &doc.active {
+            Some(a) if a.id == self.id && doc.triangle_fill.is_none() => {
+                doc.restart_active_strokes();
+                Ok(())
+            }
+            _ => Err(CoreError::NoActiveStroke),
+        }
+    }
 }
 
 /// ストロークの確定の結果。
@@ -2482,6 +2493,7 @@ impl Document {
         if self.triangle_fill.is_some() {
             return Ok(self.finish_triangles(false));
         }
+        self.redraw_post_corrected(stroke.id)?;
         self.with_stroke(stroke.id, |state, surface, changed| {
             state.finish_input(surface, changed)
         })?;
@@ -2545,6 +2557,70 @@ impl Document {
         }
         self.settle_stroke_mark();
         Ok(result)
+    }
+
+    /// 後補正のブラシのストロークを、整えた入力で描き直す（整える点が無ければ何もしない）。描いている間の画素は戻してから、同じ形の空の
+    /// ストロークへ整えた入力を順に与える（確定は呼び手が続けて行い、描く前からの 1 回の Undo になる）。描き直しが予算などで断られたら、
+    /// ストロークは取り消してから返す。
+    fn redraw_post_corrected(&mut self, id: u64) -> Result<(), CoreError> {
+        let plan = match self.active.as_mut() {
+            Some(a) if a.id == id => a.take_post_plan(),
+            _ => None,
+        };
+        let Some(plan) = plan else {
+            return Ok(());
+        };
+        self.restart_active_strokes();
+        self.with_stroke(id, |state, surface, changed| {
+            let mut any = false;
+            for (points, corner) in &plan {
+                for sample in points {
+                    any |= state.add(surface, *sample, changed)?;
+                }
+                if *corner {
+                    any |= state.end_line(surface, changed)?;
+                }
+            }
+            Ok(any)
+        })
+        .map(|_| ())
+    }
+
+    /// 進行中のストローク（複数のチャンネルなら全部）の画素を描く前へ戻し、始めたときと同じ形の空のストロークにする（描き直しの前）。
+    pub(crate) fn restart_active_strokes(&mut self) {
+        let mut states = std::mem::take(&mut self.material.extra);
+        let Some(first) = self.active.take() else {
+            self.material.extra = states;
+            return;
+        };
+        let first_target = self.active_target;
+        states.insert(0, first);
+        let mut fresh = Vec::with_capacity(states.len());
+        for (i, mut state) in states.into_iter().enumerate() {
+            let target = if i == 0 {
+                first_target
+            } else {
+                Target::Channel(state.channel)
+            };
+            let index = state.layer_index;
+            let mut coords: Vec<TileCoord> = state.tiles.keys().copied().collect();
+            coords.sort();
+            if let Some(surface) = self.target_surface_mut(index, target) {
+                for coord in &coords {
+                    surface.restore(*coord, state.tiles[coord].before.as_ref());
+                }
+            }
+            // ストロークが自分の面を戻した変化（描くレイヤーより下の覚えは、これでは捨てない）
+            self.journal.own = true;
+            for coord in coords {
+                self.mark_target_tile(index, target, coord);
+            }
+            self.journal.own = false;
+            fresh.push(state.restarted());
+        }
+        self.active = Some(fresh.remove(0));
+        self.material.extra = fresh;
+        self.revision += 1;
     }
 
     /// ストロークを取り消す（描く前の画素へ戻す）。札がもう終わっていれば何もしない。

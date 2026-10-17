@@ -568,6 +568,8 @@ pub enum Reason {
     ReferenceExpandRange,
     ReferenceOnlyBeforeFirstDab,
     LayersSizeDiffersFromCanvas,
+    SweepRange,
+    PostCorrectionRange,
 }
 
 impl Reason {
@@ -1134,6 +1136,8 @@ impl Reason {
             Reason::ReferenceExpandRange => "領域拡縮の量（−100〜100 画素）",
             Reason::ReferenceOnlyBeforeFirstDab => "参照レイヤーは、ストロークの最初のダブの前に 1 回だけ決められる",
             Reason::LayersSizeDiffersFromCanvas => "入れるレイヤーの大きさがキャンバスと違う",
+            Reason::SweepRange => "はらい（0〜1）",
+            Reason::PostCorrectionRange => "後補正の強さ（0〜100）・表示倍率",
         }
     }
 }

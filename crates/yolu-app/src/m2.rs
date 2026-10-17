@@ -270,6 +270,8 @@ pub enum BrushOp {
     FlipY(yolu_core::FlipRule),
     /// 色の変化を当てる描画色。
     ColorTarget(yolu_core::ColorTarget),
+    /// 手ぶれ補正の速度による調整の補正タイプ（速度による調整を入れたまま替える）。
+    StabilizerSpeedType(yolu_core::StabilizerSpeed),
 }
 
 /// 紙の質感の画像を替える（今の質感があれば深さ・スケール・合わせ方は残し、無ければ最後に使った設定で付ける）。主の質感も 2 つ目の質感も同じ。
@@ -602,6 +604,22 @@ pub fn color_targets(lang: Lang) -> [(yolu_core::ColorTarget, &'static str); 3] 
         (T::MainAndSub, lang.t("brushrows-target-main-and-sub")),
         (T::Sub, lang.t("brushrows-target-sub")),
     ]
+}
+
+/// 手ぶれ補正の速度による調整の補正タイプの選び。
+pub fn stabilizer_speed_types(lang: Lang) -> [(yolu_core::StabilizerSpeed, &'static str); 2] {
+    use yolu_core::StabilizerSpeed as S;
+    [
+        (S::WeakenWhenFast, lang.t("brushrows-weaken-when-fast")),
+        (S::SlowOnly, lang.t("brushrows-slow-only")),
+    ]
+}
+
+/// 補正タイプの今の値（速度による調整が切なら、入れたときの既定の「ゆっくり描いたときに補正」）。
+pub fn stabilizer_speed_type(assist: &crate::engine::StrokeAssist) -> yolu_core::StabilizerSpeed {
+    assist
+        .stabilizer_speed
+        .unwrap_or(yolu_core::StabilizerSpeed::SlowOnly)
 }
 
 /// アンチエイリアスの段の名前。
@@ -1584,6 +1602,11 @@ impl AppState {
             BrushOp::FlipX(rule) => b.tip.flip_x = rule,
             BrushOp::FlipY(rule) => b.tip.flip_y = rule,
             BrushOp::ColorTarget(target) => b.color.target = target,
+            BrushOp::StabilizerSpeedType(kind) => {
+                if b.assist.stabilizer_speed.is_some() {
+                    b.assist.stabilizer_speed = Some(kind);
+                }
+            }
             // 基本の値なので先に当てた
             BrushOp::AntiAlias(_) => {}
         }

@@ -399,6 +399,7 @@ pub(super) fn open_stroke(
     if guided {
         brush.assist.stabilizer = 0.0;
         brush.assist.curve = false;
+        brush.assist.post.on = false;
     }
     let mut stroke = match app.begin_stroke_with(layer, &brush) {
         Ok(s) => s,

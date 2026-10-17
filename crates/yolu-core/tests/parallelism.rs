@@ -280,6 +280,48 @@ fn large_dabs_of_every_kind_give_the_same_stroke_with_any_number_of_threads() {
     }
 }
 
+/// 補正の拡張（後補正の描き直し・はらい・手ぶれ補正の速度による調整）の大きなダブのストロークも、選択範囲の有無にかかわらず、どのスレッド数でも
+/// 同じバイトで、Undo は描く前のバイト。
+#[test]
+fn corrected_large_dab_strokes_are_the_same_with_any_number_of_threads() {
+    let mut brush = Brush::simple(
+        BrushSettings {
+            radius: 60.0,
+            hardness: 0.6,
+            spacing: 0.1,
+            color: Rgba8::new(200, 60, 30, 255),
+            ..BrushSettings::default()
+        },
+        yolu_core::PressureSwitches::default(),
+    );
+    brush.assist.post = yolu_core::PostCorrection {
+        on: true,
+        strength: 40.0,
+        ..yolu_core::PostCorrection::default()
+    };
+    brush.assist.sweep = 0.5;
+    brush.assist.stabilizer = 8.0;
+    brush.assist.stabilizer_speed = Some(yolu_core::StabilizerSpeed::WeakenWhenFast);
+    for selection in [false, true] {
+        let run = || {
+            let (mut d, l) = canvas(selection);
+            let before = color_hash(&d, l);
+            let mut s = d.begin_brush_stroke(l, &brush).unwrap();
+            for p in path(40.0, 170.0, 520.0, 60) {
+                s.add_sample(&mut d, p).unwrap();
+            }
+            let live = color_hash(&d, l);
+            assert!(d.end_stroke(s).unwrap().changed);
+            let after = color_hash(&d, l);
+            assert_ne!(after, live, "描き直している");
+            assert!(d.undo().unwrap());
+            assert_eq!(color_hash(&d, l), before, "Undo は描く前のバイト");
+            (live, after, d.history_bytes())
+        };
+        same_for_every_degree(&format!("補正 {selection}"), run);
+    }
+}
+
 /// C# の ALargeDabStrokeOnAMaskIsTheSameWithAnyNumberOfThreads: 大きなダブ（半径 85）のマスクへのストロークが、どのスレッド数でも
 /// 同じマスクのバイト・合成・統計・変更の記録で、取消・やり直しも同じ。1 スレッドではワーカーで描かず、複数ではワーカーで描く。
 #[test]

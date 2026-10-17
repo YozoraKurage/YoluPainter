@@ -1085,6 +1085,7 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
         taper_out: 0.0,
         taper_targets: Default::default(),
         curve: true,
+        ..StrokeAssist::default()
     };
     let drawer = s.m2().brush.assist;
     import(&mut s, &[first, second]);
@@ -1111,7 +1112,8 @@ fn headless_a_brush_that_carries_start_end_and_stabilization_applies_them_only_w
             taper_in: 20.0,
             taper_out: 30.0,
             taper_targets: Default::default(),
-            curve: true
+            curve: true,
+            ..StrokeAssist::default()
         }
     );
     // ブラシの設定と比べる印は変わらない（持つ値は「変えた」ことにならない）
@@ -1284,6 +1286,7 @@ fn headless_the_sample_of_a_brush_without_start_end_is_drawn_with_the_drawers_se
         taper_out: 0.0,
         taper_targets: Default::default(),
         curve: false,
+        ..StrokeAssist::default()
     };
     s.m2_mut().brush.assist = drawer;
     import(&mut s, &[first, second]);

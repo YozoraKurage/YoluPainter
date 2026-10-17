@@ -19,3 +19,4 @@ mod brush_import_sut_refer;
 mod csp_edge_compare;
 mod csp_line_compare;
 mod csp_refer_compare;
+mod csp_stab_compare;

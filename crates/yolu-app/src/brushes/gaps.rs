@@ -74,10 +74,14 @@ pub enum Gap {
     LengthUnit,
     IntervalType,
     ReferenceLines,
+    PostCorrectionStrength,
+    PostCorrectionBezier,
+    Sweep,
+    SharpCorners,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 58] = [
+    pub const ALL: [Gap; 62] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -136,6 +140,10 @@ impl Gap {
         Gap::LengthUnit,
         Gap::IntervalType,
         Gap::ReferenceLines,
+        Gap::PostCorrectionStrength,
+        Gap::PostCorrectionBezier,
+        Gap::Sweep,
+        Gap::SharpCorners,
     ];
 
     /// ファイルに書く名前。
@@ -199,6 +207,10 @@ impl Gap {
             Gap::StabilizerStrength => "stabilizer-strength",
             Gap::PostCorrection => "post-correction",
             Gap::VectorTools => "vector-tools",
+            Gap::PostCorrectionStrength => "post-correction-strength",
+            Gap::PostCorrectionBezier => "post-correction-bezier",
+            Gap::Sweep => "sweep",
+            Gap::SharpCorners => "sharp-corners",
         }
     }
 
@@ -267,6 +279,10 @@ impl Gap {
             Gap::StabilizerStrength => lang.t("brushes-stabilization-strength"),
             Gap::PostCorrection => lang.t("brushes-post-correction"),
             Gap::VectorTools => lang.t("brushes-vector-eraser-and-magnet"),
+            Gap::PostCorrectionStrength => lang.t("brushes-post-correction-strength"),
+            Gap::PostCorrectionBezier => lang.t("brushes-post-correction-bezier"),
+            Gap::Sweep => lang.t("brushes-sweep"),
+            Gap::SharpCorners => lang.t("brushes-sharp-corners"),
         }
     }
 }
@@ -358,6 +374,10 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::ExpandMode(_) | SutNote::ExpandUnit(_) | SutNote::ReferenceRange => {
                 Gap::ReferenceLines
             }
+            SutNote::PostCorrectionStrength => Gap::PostCorrectionStrength,
+            SutNote::PostCorrectionBezier => Gap::PostCorrectionBezier,
+            SutNote::SweepApprox => Gap::Sweep,
+            SutNote::SharpenCorner => Gap::SharpCorners,
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
             // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
@@ -370,7 +390,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 26] = [
+pub const MAPPED_ALL: [SutMapped; 29] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -397,6 +417,9 @@ pub const MAPPED_ALL: [SutMapped; 26] = [
     SutMapped::DualBrush,
     SutMapped::WaterEdge,
     SutMapped::ReferenceLines,
+    SutMapped::PostCorrection,
+    SutMapped::Sweep,
+    SutMapped::StabilizerSpeed,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -428,6 +451,9 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::DualBrush => "dual-brush",
         SutMapped::WaterEdge => "water-edge",
         SutMapped::ReferenceLines => "reference-lines",
+        SutMapped::PostCorrection => "post-correction",
+        SutMapped::Sweep => "sweep",
+        SutMapped::StabilizerSpeed => "stabilizer-speed",
     }
 }
 
