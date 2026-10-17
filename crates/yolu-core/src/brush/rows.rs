@@ -390,7 +390,8 @@ pub(super) fn usable(cx: &PixelContext<'_>, s: &DabShape<'_>) -> Option<Level> {
 
 /// 試験だけ: 行の核を使わず、画素ごとの式（`apply_at`）で描く（行の核と画素ごとの式が同じバイトになることを比べる）。
 #[cfg(test)]
-static PER_PIXEL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub(super) static PER_PIXEL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(test)]
 fn per_pixel_forced() -> bool {
@@ -878,6 +879,10 @@ unsafe fn rows<V: Slice32>(
         if let Some(tex) = s.texture {
             let depth = super::texture_depth(tex, s.texture_density) as f32;
             unsafe { texture_row::<V>(tex, depth, opacity_scale, py, xs.0, cov, scale, lo, hi) };
+        }
+        // はみ出し防止: 範囲の外の画素は塗らない（デュアル・質感の後に。画素ごとの式の道と同じ所）
+        if let Some(region) = cx.paint.region {
+            region.mask_row(py, xs.0, cov, lo, hi);
         }
         let scale = if with_texture {
             Scale::Row(&scale[..])

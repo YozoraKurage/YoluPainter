@@ -46,6 +46,7 @@ brushes-tip-image = Tip image
 brushes-tip-order = Tip order
 brushes-texture-rotation = Texture rotation
 brushes-tip-flip = Tip flip
+brushes-reference-lines = Do not cross lines
 brushes-tip-direction = Tip direction
 brushes-color-mixing = Color mixing
 brushes-spray = Spray

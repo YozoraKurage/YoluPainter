@@ -37,6 +37,7 @@ mod pose_saved;
 mod pose_takes;
 mod procedural;
 mod recovery;
+mod reference_lines;
 mod save_background;
 mod saved_selections;
 mod symmetry_seeds;

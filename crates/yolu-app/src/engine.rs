@@ -20,6 +20,7 @@ pub use yolu_core::{
 };
 pub use yolu_core::{AntiAlias, ColorMix, MixGround, MixMode};
 pub use yolu_core::{ColorItem, ColorTarget, StrokeColorChange, TipColorChange};
+pub use yolu_core::{ExpandMode, ReferenceLines};
 pub use yolu_core::{Influence, Influences, InputResponse, InputUse, PressureSwitches};
 pub use yolu_core::{LayerSetId, LayerSetInfo};
 pub use yolu_core::{MaskCopy, MaskPasteResult};

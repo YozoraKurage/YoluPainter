@@ -66,6 +66,7 @@ mod presets;
 #[doc(hidden)]
 pub mod profile;
 pub mod random;
+pub(crate) mod refer;
 mod rows;
 mod settings;
 mod sources;
@@ -98,6 +99,7 @@ pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
 pub use mix::{ColorMix, MixBlur, MixGround, MixMode, MixSpace, MAX_MIX_BLUR, MAX_MIX_CORRECTION};
 pub(crate) use plan::{DabPlan, StampControls, TaperStart, TipRun};
 pub use presets::{builtin_presets, BrushPreset};
+pub use refer::{ExpandMode, ReferenceLines, MAX_REFERENCE_EXPAND, MAX_REFERENCE_MARGIN};
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
     Jitter, PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
@@ -452,6 +454,8 @@ pub(crate) struct StrokeState {
     copy_note: Option<crate::geometry::MirrorOutcome>,
     /// 水彩境界（効くストロークだけ。[`water_edge`]）。
     water_edge: Option<water_edge::EdgeRun>,
+    /// はみ出し防止（凍結した参照の重なりと狙いの色。None は効かない）。
+    refer: Option<refer::ReferRun>,
 }
 
 /// 面の画素の不透明度・流量の係数と、乗算でない紙の質感（合わせ方・質感の値・深さ）。
@@ -599,6 +603,7 @@ impl StrokeState {
             surface_look: None,
             copy_note: None,
             water_edge,
+            refer: None,
             brush: Arc::new(brush),
         }
     }
@@ -647,7 +652,56 @@ impl StrokeState {
     /// 巻き戻しの外でストロークが持っているバイト: 今の効果のダブの枠と、凍結した合成の参照元（C# の effectScratchBytes と
     /// cloneSourceBytes）。タイルの写しなどを数える予算の確かめは、これも足す。
     fn held_bytes(&self) -> u64 {
-        self.effect.scratch + self.source_bytes()
+        self.effect.scratch + self.source_bytes() + self.refer.as_ref().map_or(0, |r| r.bytes())
+    }
+
+    /// はみ出し防止の参照の重なりを渡す（最初のダブの前だけ。[`crate::Stroke::use_reference_layers`]）。
+    pub(crate) fn set_reference(&mut self, source: Arc<refer::ReferSource>) {
+        self.refer = Some(refer::ReferRun::new(source, self.brush.reference_lines));
+    }
+
+    /// 参照の重なりを受けられるか（ブラシがはみ出し防止を使い、まだダブを置いていない）。
+    pub(crate) fn can_take_reference(&self) -> bool {
+        self.brush.reference_lines.enabled
+            && !self.has_sample
+            && !self.effect.started
+            && self.tiles.is_empty()
+            && self.stamp_count == 0
+            && self.refer.is_none()
+    }
+
+    /// はみ出し防止で、面のダブの画素（座標と覆い）のうち塗る物の印（はみ出し防止が無ければ None）。キャンバスの外の画素は塗らない印。
+    fn refer_keep(
+        &mut self,
+        pixels: impl Iterator<Item = (i64, i64, f64)>,
+        center: Option<(f64, f64)>,
+    ) -> Result<Option<Vec<bool>>, CoreError> {
+        let room = self.refer_room();
+        let (w, h) = (self.width, self.height);
+        let Some(refer) = self.refer.as_mut() else {
+            return Ok(None);
+        };
+        let all: Vec<(i64, i64, f64)> = pixels.collect();
+        let inside: Vec<usize> = (0..all.len())
+            .filter(|&i| {
+                let (x, y, _) = all[i];
+                x >= 0 && y >= 0 && x < w && y < h
+            })
+            .collect();
+        let cells: Vec<(i64, i64, f64)> = inside.iter().map(|&i| all[i]).collect();
+        let keep_inside = refer.keep_listed(&cells, center, room)?;
+        let mut keep = vec![false; all.len()];
+        for (k, &i) in keep_inside.iter().zip(&inside) {
+            keep[i] = *k;
+        }
+        Ok(Some(keep))
+    }
+
+    /// はみ出し防止の作業に使ってよいバイト（ストロークの予算の残り）。
+    fn refer_room(&self) -> u64 {
+        self.budgets
+            .stroke
+            .saturating_sub(self.rollback_bytes + self.effect.scratch + self.source_bytes())
     }
 
     /// 凍結した合成の参照元のバイト（無ければ 0）。
@@ -1307,6 +1361,11 @@ impl StrokeState {
         let max_x = ((x + extent - 0.5).floor() as i64).min(w - 1);
         let min_y = ((y - extent - 0.5).ceil() as i64).max(0);
         let max_y = ((y + extent - 0.5).floor() as i64).min(h - 1);
+        // はみ出し防止: 狙いの色は、ストロークの最初のダブの中心（写しではなく元のダブ）で決める
+        let room = self.refer_room();
+        if let Some(r) = self.refer.as_mut() {
+            r.ensure_target(x, y, room)?;
+        }
         if brush.symmetry.enabled() || brush.model_symmetry.is_some() {
             // 写しは元のダブがキャンバスの外でもキャンバスにかかり得る（C# も外接の箱を見る前に分ける）。3D の対称だけで写しの無い
             // ダブ（中心が面に無い）は、普通のダブ
@@ -1327,6 +1386,14 @@ impl StrokeState {
                 Reason::StencilTransformMissingFor2DDabs,
             ));
         }
+        let region = match self.refer.as_mut() {
+            None => None,
+            Some(r) => match r.area((min_x, max_x), (min_y, max_y), (x, y), room)? {
+                refer::DabArea::Nothing => return Ok(false),
+                refer::DabArea::All => None,
+                refer::DabArea::Mask(m) => Some(m),
+            },
+        };
         let prepared = {
             let _profile = profile::scope(profile::Stage::Prepare);
             self.prepare_dab(
@@ -1352,6 +1419,7 @@ impl StrokeState {
                 brush,
                 shape,
                 frame.as_ref(),
+                region.as_ref(),
                 (min_x, max_x),
                 (min_y, max_y),
                 changed,
@@ -1369,6 +1437,7 @@ impl StrokeState {
         brush: &Brush,
         shape: &DabShape<'_>,
         frame: Option<&EffectFrame>,
+        region: Option<&refer::DabRegion>,
         xr: (i64, i64),
         yr: (i64, i64),
         changed: &mut Vec<TileCoord>,
@@ -1397,7 +1466,8 @@ impl StrokeState {
             }
         }
         let spans: &[TileSpan] = spans;
-        let paint = self.paint(brush, frame);
+        let mut paint = self.paint(brush, frame);
+        paint.region = region;
         let parallel = spans.len() > 1
             && rayon::current_num_threads() > 1
             && worth_parallel(
@@ -1451,6 +1521,7 @@ impl StrokeState {
             stencil_kind: self.stencil_kind,
             frame,
             mapped: None,
+            region: None,
             offset_x: self.effect.offset_x,
             offset_y: self.effect.offset_y,
             width: self.width,
@@ -1834,16 +1905,27 @@ impl StrokeState {
         points: Option<&[StencilPoint]>,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        let any = self.apply_surface_dab(surface, pixels, center, pressure, points, changed)?;
+        let any = self.apply_surface_dab(
+            surface,
+            pixels,
+            center,
+            Some(center),
+            pressure,
+            points,
+            changed,
+        )?;
         Ok(self.flush_water_edge(surface, changed)? | any)
     }
 
+    /// [`StrokeState::apply_dab`] の本体（水彩境界の計算し直しは呼び手）。`refer_center` は、はみ出し防止の範囲をたどり始めるダブの中心
+    /// （無ければ塊ごとに覆いの一番大きい画素から。写像されたダブを混ぜずに塗るとき）。
     #[allow(clippy::too_many_arguments)]
-    fn apply_surface_dab(
+    pub(crate) fn apply_surface_dab(
         &mut self,
         surface: &mut Surface,
         pixels: &[BrushPixel],
         center: DVec2,
+        refer_center: Option<DVec2>,
         pressure: f64,
         points: Option<&[StencilPoint]>,
         changed: &mut Vec<TileCoord>,
@@ -1878,6 +1960,42 @@ impl StrokeState {
         }
         if x1 < x0 {
             return Ok(false);
+        }
+        // はみ出し防止: 範囲の外の画素を除いた並びで塗る（並びの順は変えない）
+        let kept: Vec<BrushPixel>;
+        let kept_points: Vec<StencilPoint>;
+        let (pixels, points) = match self.refer_keep(
+            pixels.iter().map(|p| (p.x, p.y, p.coverage)),
+            refer_center.map(|c| (c.x, c.y)),
+        )? {
+            None => (pixels, points),
+            Some(keep) => {
+                kept = pixels
+                    .iter()
+                    .zip(&keep)
+                    .filter_map(|(p, &k)| k.then_some(*p))
+                    .collect();
+                kept_points = points.map_or_else(Vec::new, |v| {
+                    v.iter()
+                        .zip(&keep)
+                        .filter_map(|(p, &k)| k.then_some(*p))
+                        .collect()
+                });
+                if kept.is_empty() {
+                    return Ok(false);
+                }
+                (&kept[..], points.map(|_| &kept_points[..]))
+            }
+        };
+        let (mut x0, mut y0, mut x1, mut y1) = (self.width, self.height, -1i64, -1i64);
+        for p in pixels {
+            if p.x < 0 || p.y < 0 || p.x >= self.width || p.y >= self.height {
+                continue;
+            }
+            x0 = x0.min(p.x);
+            x1 = x1.max(p.x);
+            y0 = y0.min(p.y);
+            y1 = y1.max(p.y);
         }
         if self.edge_live() {
             for p in pixels {
@@ -2401,6 +2519,8 @@ struct Paint<'a> {
     mix: Option<MixDab>,
     /// 面のダブ（[`StrokeState::apply_mapped_dab`]）が先に読んで混ぜた参照の色（画素ごと）。あれば `frame` の代わりに読む。
     mapped: Option<&'a sources::MappedColors>,
+    /// はみ出し防止のダブの範囲（外の画素の覆いを 0 にする）。None は範囲なし。
+    region: Option<&'a refer::DabRegion>,
     offset_x: f64,
     offset_y: f64,
     width: i64,
@@ -2544,6 +2664,10 @@ fn dab_tile_with<const SIMPLE: bool>(
         if let Some(mode) = s.dual {
             // SAFETY: 同上
             unsafe { rows::dual_row::<Scalar1>(mode, dual, &mut cov, lo, hi, row + x0) };
+        }
+        // はみ出し防止: 範囲の外の画素は塗らない（デュアルの後に。デュアルの合わせ方には覆い 0 を持ち上げるものがある）
+        if let Some(region) = cx.paint.region {
+            region.mask_row(py, xs.0, &mut cov, lo, hi);
         }
         // 紙の質感の y の側は行で同じ
         let grain = s.texture.map(|t| (t, rows::Grain::new(t, py)));

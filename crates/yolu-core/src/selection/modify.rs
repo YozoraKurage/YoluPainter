@@ -243,6 +243,11 @@ fn threads() -> usize {
     rayon::current_num_threads().max(1)
 }
 
+/// 半径の円（[`circle`]）の、横のずれごとの縦の半分の高さ（ブラシのはみ出し防止の領域拡縮が同じ円を使う）。
+pub(crate) fn disk_half_heights(radius: i64) -> Vec<usize> {
+    circle(radius)
+}
+
 /// GIMP の円（compute_border）: 横のずれ dx ごとの縦の半分の高さ。
 fn circle(radius: i64) -> Vec<usize> {
     (0..=2 * radius)

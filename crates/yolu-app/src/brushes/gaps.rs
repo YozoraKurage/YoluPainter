@@ -73,10 +73,11 @@ pub enum Gap {
     AntiAliasing,
     LengthUnit,
     IntervalType,
+    ReferenceLines,
 }
 
 impl Gap {
-    pub const ALL: [Gap; 57] = [
+    pub const ALL: [Gap; 58] = [
         Gap::ColorTip,
         Gap::HoseSelection,
         Gap::HoseDimensions,
@@ -134,6 +135,7 @@ impl Gap {
         Gap::AntiAliasing,
         Gap::LengthUnit,
         Gap::IntervalType,
+        Gap::ReferenceLines,
     ];
 
     /// ファイルに書く名前。
@@ -177,6 +179,7 @@ impl Gap {
             Gap::TipOrder => "tip-order",
             Gap::TextureRotation => "texture-rotation",
             Gap::TipFlip => "tip-flip",
+            Gap::ReferenceLines => "reference-lines",
             Gap::TipDirection => "tip-direction",
             Gap::ColorMixing => "color-mixing",
             Gap::Spray => "spray",
@@ -244,6 +247,7 @@ impl Gap {
             Gap::TipOrder => lang.t("brushes-tip-order"),
             Gap::TextureRotation => lang.t("brushes-texture-rotation"),
             Gap::TipFlip => lang.t("brushes-tip-flip"),
+            Gap::ReferenceLines => lang.t("brushes-reference-lines"),
             Gap::TipDirection => lang.t("brushes-tip-direction"),
             Gap::ColorMixing => lang.t("brushes-color-mixing"),
             Gap::Spray => lang.t("brushes-spray"),
@@ -351,6 +355,9 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
             SutNote::LengthUnit => Gap::LengthUnit,
             SutNote::IntervalType(_) => Gap::IntervalType,
             SutNote::WaterEdgeUnit | SutNote::WaterEdgeRange => Gap::PresetSettings,
+            SutNote::ExpandMode(_) | SutNote::ExpandUnit(_) | SutNote::ReferenceRange => {
+                Gap::ReferenceLines
+            }
             // ファイル全体の数。どのブラシの項目でもない（使えなかった筆先・質感は、そのブラシの `TipMissing`・`TextureMissing` が
             // 項目になり、読まなかったブラシは取り込めなかった数に入れる。素材が上限を超えて読み切れなければ、並びで当てる推定をしない
             // ので、そのブラシの筆先・質感が欠けたことは `TipMissing`・`TextureMissing` に出る）
@@ -363,7 +370,7 @@ pub fn of_note(note: &Unrepresented) -> Option<Gap> {
 }
 
 /// 写せた項目（`SutMapped`）の並び。ブラシのファイルへ書く順。
-pub const MAPPED_ALL: [SutMapped; 25] = [
+pub const MAPPED_ALL: [SutMapped; 26] = [
     SutMapped::TipImage,
     SutMapped::Texture,
     SutMapped::Pressure,
@@ -389,6 +396,7 @@ pub const MAPPED_ALL: [SutMapped; 25] = [
     SutMapped::Spray,
     SutMapped::DualBrush,
     SutMapped::WaterEdge,
+    SutMapped::ReferenceLines,
 ];
 
 /// 写せた項目のファイルに書く名前（項目を足すと、ここの対応がコンパイルで止まる）。
@@ -419,6 +427,7 @@ pub fn mapped_id(item: SutMapped) -> &'static str {
         SutMapped::Spray => "spray",
         SutMapped::DualBrush => "dual-brush",
         SutMapped::WaterEdge => "water-edge",
+        SutMapped::ReferenceLines => "reference-lines",
     }
 }
 

@@ -564,6 +564,9 @@ pub enum Reason {
     MaskSizeDiffersFromCanvas,
     WaterEdge,
     WaterEdgeRange,
+    ReferenceMarginRange,
+    ReferenceExpandRange,
+    ReferenceOnlyBeforeFirstDab,
 }
 
 impl Reason {
@@ -1126,6 +1129,9 @@ impl Reason {
             Reason::MaskSizeDiffersFromCanvas => "マスクの大きさがキャンバスと違う",
             Reason::WaterEdge => "水彩境界",
             Reason::WaterEdgeRange => "水彩境界（幅 0.1〜20・透明度影響と明度影響 0〜1・ぼかし幅 0〜20）",
+            Reason::ReferenceMarginRange => "色の誤差（0〜100）",
+            Reason::ReferenceExpandRange => "領域拡縮の量（−100〜100 画素）",
+            Reason::ReferenceOnlyBeforeFirstDab => "参照レイヤーは、ストロークの最初のダブの前に 1 回だけ決められる",
         }
     }
 }

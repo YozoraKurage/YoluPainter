@@ -25,6 +25,7 @@ mod db;
 mod dual;
 mod material;
 mod mixing;
+mod refer;
 mod spray;
 mod tar;
 
@@ -1604,6 +1605,7 @@ fn brush_from_row(
     mixing::color_mixing(row, &mut brush, &mut notes, &mut mapped);
     color::color_change(row, &mut brush, &mut notes, &mut mapped);
     water_edge(row, &mut brush, &mut notes, &mut mapped);
+    refer::reference_lines(row, &mut brush, &mut notes, &mut mapped);
     spray_dual_and_flags(
         row,
         name,
@@ -1647,6 +1649,7 @@ pub(crate) fn read_sut(
         .chain(color::KNOWN)
         .chain(spray::KNOWN)
         .chain(dual::KNOWN)
+        .chain(refer::KNOWN)
         .flat_map(|names| names.iter().copied())
         .collect();
     let mut variants: Option<Variants<'_>> = db.variants(&known)?;

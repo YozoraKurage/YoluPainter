@@ -30,6 +30,7 @@ mod merge_compare;
 mod min_pixel;
 mod nesting;
 mod ramp_mixing;
+mod reference_lines;
 mod rulers;
 mod saved_mark;
 mod selection;

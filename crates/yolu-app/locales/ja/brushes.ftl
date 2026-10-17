@@ -46,6 +46,7 @@ brushes-tip-image = 筆先の画像
 brushes-tip-order = 筆先の順序
 brushes-texture-rotation = 質感の回転
 brushes-tip-flip = 筆先の反転
+brushes-reference-lines = はみ出し防止
 brushes-tip-direction = 筆先の向き
 brushes-color-mixing = 色の混ぜ
 brushes-spray = 散布効果

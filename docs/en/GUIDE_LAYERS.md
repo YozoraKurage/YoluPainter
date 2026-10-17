@@ -50,7 +50,7 @@ The top row of the Layers panel sets the selected layer's blend mode and opacity
 
 Each channel can have different values too. Choose “{channel} only” at the top of the blend mode menu to give that channel its own blend mode and opacity. Which channels a layer is used in is set in Channels in Properties (what the layer holds in a channel is kept when you turn it off).
 
-Reference Layer in the right-click menu marks the layers the Fill tool's Similar colors reads ([GUIDE_PAINT.md](GUIDE_PAINT.md)).
+Reference Layer in the right-click menu marks the layers the Fill tool's Similar colors reads, and the layers whose lines a brush with Do not cross lines of reference layer stays inside ([GUIDE_PAINT.md](GUIDE_PAINT.md)).
 
 ## Using masks
 

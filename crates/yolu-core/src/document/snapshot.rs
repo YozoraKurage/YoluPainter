@@ -12,6 +12,11 @@ impl Document {
     /// 渡して読める。進行中のストロークがあれば断り、元は何も変えない。
     pub fn capture_snapshot(&self) -> Result<Document, CoreError> {
         self.ensure_no_stroke()?;
+        self.snapshot_unchecked()
+    }
+
+    /// [`Document::capture_snapshot`] の、進行中のストロークを断らない形（ストロークの最初のダブの前の、画素がまだ変わっていない時だけに使う）。
+    pub(crate) fn snapshot_unchecked(&self) -> Result<Document, CoreError> {
         // 項目を全部挙げる（`..` を使わない）: `Document` に項目が増えたら、写すか、写さない理由を書くかをここで決める。
         let Document {
             id,

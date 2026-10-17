@@ -13,12 +13,8 @@ pub enum Reference {
     Visible,
     Marked,
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Distance {
-    #[default]
-    Rgb,
-    Perceptual,
-}
+/// 色の差の測り方（core の近い色の比べと同じ。ブラシのはみ出し防止も同じ式を使う）。
+pub use yolu_core::near_color::ColorDistance as Distance;
 #[derive(Clone, Debug)]
 pub struct Options {
     pub reference: Reference,
@@ -52,26 +48,11 @@ pub fn check(cancel: &AtomicBool) -> Result<(), CoreError> {
 #[cfg(test)]
 thread_local! { static COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
 
-/// 赤の平均に応じて重みを変える整数の知覚近似。アルファ差は独立した上限。
+/// 近い色か（式は core の [`yolu_core::near_color::similar`]。赤の平均に応じて重みを変える整数の知覚近似、アルファ差は独立した上限）。
 fn similar(a: Rgba8, b: Rgba8, tolerance: u8, distance: Distance) -> bool {
     #[cfg(test)]
     COMPARISONS.with(|n| n.set(n.get() + 1));
-    if a.a.abs_diff(b.a) > tolerance {
-        return false;
-    }
-    let d = [
-        a.r.abs_diff(b.r) as u64,
-        a.g.abs_diff(b.g) as u64,
-        a.b.abs_diff(b.b) as u64,
-    ];
-    match distance {
-        Distance::Rgb => d.into_iter().max().unwrap() <= tolerance as u64,
-        Distance::Perceptual => {
-            let red = (a.r as u64 + b.r as u64) / 2;
-            (512 + red) * d[0] * d[0] + 1024 * d[1] * d[1] + (767 - red) * d[2] * d[2]
-                <= 2303 * (tolerance as u64).pow(2)
-        }
-    }
+    yolu_core::near_color::similar(a, b, tolerance, distance)
 }
 
 pub struct Request {
@@ -90,58 +71,9 @@ pub struct Request {
     pub set: Option<yolu_core::LayerSetId>,
 }
 
-/// 参照印のあるグループは子孫を含み、親グループの可視性・マスク・不透明度は保つ。
+/// 参照印のあるグループは子孫を含み、親グループの可視性・マスク・不透明度は保つ（core の [`Document::reference_view`]。ブラシのはみ出し防止と同じ合成）。
 fn reference_document(doc: &Document, marked: &HashSet<LayerId>) -> Result<Document, CoreError> {
-    let mut copy = doc.capture_snapshot()?;
-    let mut included = HashSet::new();
-    let mut seen = HashSet::new();
-    // 印とクリッピング下地は子孫も評価する。祖先は器だけを残す。
-    let mut pending: Vec<_> = marked.iter().map(|&id| (id, true)).collect();
-    while let Some((id, descendants)) = pending.pop() {
-        if !seen.insert((id, descendants)) {
-            continue;
-        }
-        let Some(layer) = doc.layer(id) else {
-            continue;
-        };
-        included.insert(id);
-        if descendants && layer.is_group() {
-            pending.extend(
-                doc.layers()
-                    .iter()
-                    .filter(|l| l.parent() == Some(id))
-                    .map(|l| (l.id(), true)),
-            );
-        }
-        if let Some(parent) = layer.parent() {
-            pending.push((parent, false));
-        }
-        if layer.clipping() {
-            // 合成器と同じく、同じ親の下へ辿って最初の非クリッピングレイヤー
-            // （全てクリッピングなら先頭の兄弟）を下地にする。
-            let at = doc.layer_index(id).ok_or(CoreError::LayerNotFound)?;
-            let mut base = None;
-            for below in doc.layers()[..at]
-                .iter()
-                .rev()
-                .filter(|l| l.parent() == layer.parent() && l.layer_set() == layer.layer_set())
-            {
-                base = Some(below.id());
-                if !below.clipping() {
-                    break;
-                }
-            }
-            if let Some(base) = base {
-                pending.push((base, true));
-            }
-        }
-    }
-    for l in doc.layers() {
-        if !included.contains(&l.id()) && l.visible() {
-            copy.set_layer_visible(l.id(), false)?;
-        }
-    }
-    Ok(copy)
+    doc.reference_view(marked)
 }
 
 fn read(doc: &Document, r: &Request, cancel: &AtomicBool) -> Result<Vec<Rgba8>, CoreError> {

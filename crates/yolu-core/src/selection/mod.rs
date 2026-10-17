@@ -29,6 +29,7 @@
 
 use crate::Reason;
 mod modify;
+pub(crate) use modify::disk_half_heights;
 mod shapes;
 
 use std::collections::{HashMap, HashSet};

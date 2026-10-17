@@ -251,7 +251,16 @@ impl StrokeState {
             && !self.brush.base.erase
         {
             let plain: Vec<BrushPixel> = pixels.iter().map(|p| p.pixel).collect();
-            return self.apply_dab(surface, &plain, DVec2::ZERO, pressure, points, changed);
+            let any = self.apply_surface_dab(
+                surface,
+                &plain,
+                DVec2::ZERO,
+                None,
+                pressure,
+                points,
+                changed,
+            )?;
+            return Ok(self.flush_water_edge(surface, changed)? | any);
         }
         let smears = self.mix_on && self.brush.mix.mode == MixMode::Smear;
         if !smears
@@ -291,11 +300,6 @@ impl StrokeState {
         self.effect.scratch = bytes;
         if smears {
             self.begin_mapped_mix_dab(self.surface_pressure(self.brush.pressure_scale(pressure)));
-        }
-        if self.edge_live() {
-            for p in pixels {
-                self.edge_mark_pixel(p.pixel.x, p.pixel.y);
-            }
         }
         let result = self.apply_mapped(surface, pixels, pressure, points, changed);
         self.effect.scratch = 0;
@@ -349,6 +353,20 @@ impl StrokeState {
             }
             mapped.colors.push(self.sample_mapped(surface, p)?);
         }
+        // はみ出し防止: 範囲の外の画素は書かない（読みは全部の画素で済ませた後）
+        let keep = self.refer_keep(
+            pixels
+                .iter()
+                .map(|p| (p.pixel.x, p.pixel.y, p.pixel.coverage)),
+            None,
+        )?;
+        if self.edge_live() {
+            for (i, p) in pixels.iter().enumerate() {
+                if keep.as_ref().is_none_or(|k| k[i]) {
+                    self.edge_mark_pixel(p.pixel.x, p.pixel.y);
+                }
+            }
+        }
         let brush = self.brush.clone();
         let pressure = self.surface_pressure(brush.pressure_scale(pressure));
         let mut paint = self.paint(&brush, None);
@@ -358,6 +376,9 @@ impl StrokeState {
         let mut any = false;
         let mut result = Ok(());
         for (i, p) in pixels.iter().enumerate() {
+            if keep.as_ref().is_some_and(|k| !k[i]) {
+                continue;
+            }
             let d = p.pixel;
             let coord = TileCoord::new((d.x / ts) as u32, (d.y / ts) as u32);
             let local = ((d.y % ts) * ts + d.x % ts) as usize;

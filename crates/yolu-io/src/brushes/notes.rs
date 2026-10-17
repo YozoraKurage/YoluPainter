@@ -443,6 +443,8 @@ pub enum SutMapped {
     DualBrush,
     /// 水彩境界（幅・透明度影響・明度影響・ドラッグ後に処理・ぼかし幅）。
     WaterEdge,
+    /// はみ出し防止（参照レイヤーの線をはみ出さない・色の誤差・領域拡縮）。
+    ReferenceLines,
 }
 
 impl SutMapped {
@@ -477,6 +479,7 @@ impl SutMapped {
             Self::Spray => ("散布効果", "spraying effect"),
             Self::DualBrush => ("デュアルブラシ", "dual brush"),
             Self::WaterEdge => ("水彩境界", "watercolor edge"),
+            Self::ReferenceLines => ("はみ出し防止", "do not cross lines"),
         }
     }
 }
@@ -669,6 +672,13 @@ pub enum SutNote {
     WaterEdgeUnit,
     /// 水彩境界の値が範囲（幅 0.1〜20・透明度影響と明度影響 0〜100・ぼかし幅 0〜20）の外で、範囲の端へ詰めた。
     WaterEdgeRange,
+    /// 領域拡縮の方法（`FillExpandType`）が、確かめた 1 丸く・2 最も濃いピクセルまでのどちらでもない（0 は四角くとして、知らない値は最も濃い
+    /// ピクセルまでとして写した）。値は列の値。
+    ExpandMode(f64),
+    /// 領域拡縮の量の単位（`FillExpandLengthUnit`）が 0（画素）でない。値は画素として読んだ。
+    ExpandUnit(f64),
+    /// はみ出し防止の色の誤差（0〜100）か領域拡縮の量（−100〜100）が範囲の外で、収めた値で読んだ。
+    ReferenceRange,
 }
 
 /// デュアルブラシの 2 つ目の紙質・散布効果の、近い動きと読まない設定の知らせの文。
@@ -1046,6 +1056,18 @@ impl SutNote {
             Self::WaterEdgeRange => (
                 "水彩境界の値が範囲の外だったので、範囲の端にした".into(),
                 "A watercolor edge value was out of range and was set to the nearest limit.".into(),
+            ),
+            Self::ExpandMode(v) => (
+                format!("領域拡縮の方法の値 {v} は確かめていないので、近い方法で写した（0 は四角く、ほかは最も濃いピクセルまで）"),
+                format!("The area scaling mode value {v} is not verified; a close mode is used (0 as square, others as up to the darkest pixel)."),
+            ),
+            Self::ExpandUnit(v) => (
+                format!("領域拡縮の量の単位 {v} は画素でないが、画素として読んだ"),
+                format!("The area scaling unit {v} is not pixels; the amount was read as pixels."),
+            ),
+            Self::ReferenceRange => (
+                "はみ出し防止の色の誤差か領域拡縮の量が範囲の外なので、収めた値で読んだ".into(),
+                "The color margin or area scaling amount is out of range; the nearest value is used.".into(),
             ),
         }
     }

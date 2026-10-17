@@ -245,6 +245,16 @@ pub fn canonical(brush: &Brush) -> Brush {
             spray: d.spray.map(spray_f32),
             ..d
         }),
+        // はみ出し防止が切のブラシは、その値を持たない（書かないので、読み戻しても同じ形）。入っていれば保存と同じ f32 の精度に丸める
+        reference_lines: if brush.reference_lines.enabled {
+            yolu_core::ReferenceLines {
+                margin: f(brush.reference_lines.margin),
+                amount: f(brush.reference_lines.amount),
+                ..brush.reference_lines
+            }
+        } else {
+            yolu_core::ReferenceLines::default()
+        },
         ..brush.clone()
     }
 }

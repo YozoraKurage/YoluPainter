@@ -30,6 +30,57 @@ impl Document {
         }
     }
 
+    pub(super) fn use_reference_layers(
+        &mut self,
+        id: u64,
+        marked: &std::collections::HashSet<LayerId>,
+        channel: Channel,
+    ) -> Result<bool, CoreError> {
+        let active = match &self.active {
+            Some(a) if a.id == id => a,
+            _ => return Err(CoreError::NoActiveStroke),
+        };
+        if !active.brush().reference_lines.enabled {
+            return Ok(false);
+        }
+        let result = (|| {
+            if !self
+                .active
+                .iter()
+                .chain(self.material.extra.iter())
+                .all(|s| s.can_take_reference())
+            {
+                return Err(CoreError::Unsupported(Reason::ReferenceOnlyBeforeFirstDab));
+            }
+            self.require_channel(channel)?;
+            if !marked.iter().any(|&l| self.layer(l).is_some()) {
+                return Ok(None);
+            }
+            let set = self.layers[self.active.as_ref().expect("確かめた").layer_index].set;
+            let view = self.reference_view_now(marked)?;
+            Ok(Some(std::sync::Arc::new(
+                crate::brush::refer::ReferSource::new(view, set, channel),
+            )))
+        })();
+        match result {
+            Ok(None) => Ok(false),
+            Ok(Some(source)) => {
+                self.active
+                    .as_mut()
+                    .expect("確かめた")
+                    .set_reference(source.clone());
+                for state in self.material.extra.iter_mut() {
+                    state.set_reference(source.clone());
+                }
+                Ok(true)
+            }
+            Err(e) => {
+                self.cancel_active_stroke();
+                Err(e)
+            }
+        }
+    }
+
     /// 凍結した合成の参照元のバイトの合計（全チャンネル。ストロークの予算に数える分）。
     pub fn clone_source_bytes(&self) -> u64 {
         self.active

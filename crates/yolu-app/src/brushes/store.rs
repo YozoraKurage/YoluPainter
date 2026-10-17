@@ -11,8 +11,9 @@
 //! `mix.<項目>.pressure`・`.min`・`.curve`）は書かない（読むときも、版 7 にあれば知らない項目として断る）。ほかの版 2〜6 の項目は、その鍵のまま書く。
 //! 版 1〜6 で書けるブラシは、今までと同じ鍵・同じバイトで書く。
 //! バージョン 7 までの項目で書けない設定（筆先の繰り返し方法の折り返し・繰り返さない・一巡のみ・ランダムに一巡、筆先の反転のランダム・折り返し時、先端同士の比較暗、
-//! 質感の回転、色の変化、色の混ぜの拡張、水彩境界）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
-//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`、水彩境界の `water_edge.*`。
+//! 質感の回転、色の変化、色の混ぜの拡張、水彩境界、はみ出し防止）を使うブラシだけ `yolupainter-brush 8`（`tip.selection` の新しい値と `tip.flip_x_rule`・`tip.flip_y_rule`・`tip.darken`・`texture.angle`、
+//! 色の変化の `color.tip.*`・`color.sub_mix`・`color.stroke.*`・`color.target` と `influence.color_*`、色の混ぜの `mix.mode=layer`・`mix.space`・`mix.correction`・`mix.blur`・`mix.load`、水彩境界の `water_edge.*`、
+//! はみ出し防止の `refer.on`・`refer.margin`・`refer.expand`・`refer.amount`・`refer.mode`。
 //! 影響元はバージョン 7 と同じ鍵で書く）。使わないブラシはバージョン 1〜7 のままで、今までと同じバイト。バージョン 7 までのファイルにバージョン 8 の鍵や値があれば、知らない項目として断る。
 //! バージョン 8 までの項目で書けない設定（ツールプロパティに出す行の目の印が初めの形でない・画面上のサイズで指定・傾きの最大値が 100% でない）を使うブラシだけ
 //! `yolupainter-brush 9`（`rows.shown`・`controls.size_by_screen`・`influence.<項目>.tilt.max`。そのほかはバージョン 8 と同じ書き方）。使わないブラシはバージョン 1〜8 のままで、
@@ -36,9 +37,9 @@ use super::images;
 use super::{canonical, carried_assist, Group, ImportMeta, UserBrush, MAX_NAME_CHARS};
 use crate::engine::{
     AntiAlias, Brush, BrushEffect, ColorItem, ColorMix, ColorTarget, CoreError, DVec2, DualBrush,
-    DualBrushMode, Influence, Influences, InputResponse, InputUse, MixBlur, MixGround, MixMode,
-    MixSpace, PaperTexture, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
-    TipColorChange,
+    DualBrushMode, ExpandMode, Influence, Influences, InputResponse, InputUse, MixBlur, MixGround,
+    MixMode, MixSpace, PaperTexture, ReferenceLines, StrokeAssist, StrokeColorChange, TaperTargets,
+    TextureMode, TipColorChange,
 };
 use crate::lang::Lang;
 use yolu_core::brush::{builtin_tip, FlipRule, Input, Item, TipSelection, MAX_CURVE_POINTS};
@@ -337,6 +338,7 @@ pub fn encode(user: &UserBrush) -> Result<Encoded, StoreError> {
         write_color_change(&mut w, &b);
         write_spray(&mut w, &b);
         write_dual_v8(&mut w, &mut pending, &b);
+        write_reference_lines(&mut w, &b);
     }
     if v7 {
         write_influences(&mut w, &b);
@@ -568,6 +570,29 @@ fn write_water_edge(w: &mut Writer, b: &Brush) {
 fn write_spray(w: &mut Writer, b: &Brush) {
     if let Some(s) = &b.spray {
         write_spray_keys(w, "spray", s);
+    }
+}
+
+/// はみ出し防止（`refer.*`。切のブラシは書かない）。
+fn write_reference_lines(w: &mut Writer, b: &Brush) {
+    let l = &b.reference_lines;
+    if !l.enabled {
+        return;
+    }
+    w.bool("refer.on", true);
+    w.single("refer.margin", l.margin);
+    if l.expand {
+        w.bool("refer.expand", true);
+    }
+    w.single("refer.amount", l.amount);
+    w.line("refer.mode", expand_mode_id(l.mode));
+}
+
+fn expand_mode_id(mode: ExpandMode) -> &'static str {
+    match mode {
+        ExpandMode::Square => "square",
+        ExpandMode::Round => "round",
+        ExpandMode::Darkest => "darkest",
     }
 }
 
@@ -907,6 +932,7 @@ fn needs_v7(b: &Brush) -> bool {
 fn needs_v8(b: &Brush, assist: Option<StrokeAssist>) -> bool {
     b.water_edge.is_some()
         || assist.is_some_and(|a| !a.taper_targets.is_default())
+        || b.reference_lines.enabled
         || uses_tip_rules(b)
         || uses_color_change(b)
         || uses_spray(b)
@@ -1181,6 +1207,7 @@ pub fn decode_user(
         read_water_edge(&mut r, &mut b)?;
         read_color_change(&mut r, &mut b)?;
         read_spray(&mut r, &mut b)?;
+        read_reference_lines(&mut r, &mut b)?;
     }
     // 画面上のサイズで指定・目の印はバージョン 9 の項目（バージョン 8 までのファイルにあれば、知らない項目として断る）
     if version >= 9 {
@@ -1541,6 +1568,32 @@ fn read_water_edge(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
         after_stroke: r.bool(&key("after_stroke"), false)?,
         blur: r.single(&key("blur"), 0.0)?,
     });
+    Ok(())
+}
+
+/// はみ出し防止（`refer.*`）を読む。鍵が無ければ切。`refer.on=1` が無いのに ほかの `refer.*`（や `refer.on=0`）があるファイルは、書き戻すと
+/// 同じバイトにならない（切のブラシは何も書かない）ので、知らない項目として断る。
+fn read_reference_lines(r: &mut Reader, b: &mut Brush) -> Result<(), StoreError> {
+    if r.map.get("refer.on").map(String::as_str) != Some("1") {
+        if let Some(key) = r.map.keys().filter(|k| k.starts_with("refer.")).min() {
+            return Err(StoreError::UnknownKey(key.clone()));
+        }
+    }
+    let d = ReferenceLines::default();
+    let mode = match r.take("refer.mode") {
+        None => d.mode,
+        Some(id) => [ExpandMode::Square, ExpandMode::Round, ExpandMode::Darkest]
+            .into_iter()
+            .find(|m| expand_mode_id(*m) == id)
+            .ok_or_else(|| StoreError::BadValue("refer.mode".into()))?,
+    };
+    b.reference_lines = ReferenceLines {
+        enabled: r.bool("refer.on", false)?,
+        margin: r.single("refer.margin", d.margin)?,
+        expand: r.bool("refer.expand", false)?,
+        amount: r.single("refer.amount", d.amount)?,
+        mode,
+    };
     Ok(())
 }
 
@@ -5222,6 +5275,19 @@ mod tests {
         }
     }
 
+    fn refer_brush() -> Brush {
+        Brush {
+            reference_lines: ReferenceLines {
+                enabled: true,
+                margin: 20.0,
+                expand: true,
+                amount: -4.0,
+                mode: ExpandMode::Square,
+            },
+            ..Brush::default()
+        }
+    }
+
     #[test]
     fn a_brush_with_a_water_edge_is_version_eight_and_round_trips() {
         let b = water_edge_brush();
@@ -5346,6 +5412,99 @@ mod tests {
         }
         assert!(matches!(
             decode(&format!("{t}water_edge.blur=1\n")).unwrap_err(),
+            StoreError::DuplicateKey(_)
+        ));
+    }
+
+    #[test]
+    fn reference_lines_make_a_version_eight_file_and_round_trip() {
+        let u = user(21, refer_brush());
+        let t = text(&u);
+        assert!(t.starts_with("yolupainter-brush 8\n"), "{t}");
+        for key in [
+            "refer.on=1",
+            "refer.margin=20",
+            "refer.expand=1",
+            "refer.amount=-4",
+            "refer.mode=square",
+        ] {
+            assert!(t.lines().any(|l| l == key), "{key}\n{t}");
+        }
+        let (_, _, back) = decode(&t).unwrap();
+        assert_eq!(back, u.brush);
+        assert_eq!(text(&UserBrush { brush: back, ..u }), t);
+        // 領域拡縮が切なら `refer.expand` は書かない（量と方法は書く）
+        let mut b = refer_brush();
+        b.reference_lines.expand = false;
+        b.reference_lines.mode = ExpandMode::Darkest;
+        let t = text(&user(22, b.clone()));
+        assert!(!t.contains("refer.expand"), "{t}");
+        assert!(t.lines().any(|l| l == "refer.mode=darkest"), "{t}");
+        assert_eq!(decode(&t).unwrap().2, canonical(&b));
+        // はみ出し防止が切のブラシは、値が何でも書かない（今までのバージョン・今までと同じバイト）
+        let off = Brush {
+            reference_lines: ReferenceLines {
+                enabled: false,
+                margin: 55.0,
+                expand: true,
+                amount: 3.0,
+                mode: ExpandMode::Round,
+            },
+            ..Brush::default()
+        };
+        assert_eq!(text(&user(23, off)), text(&user(23, Brush::default())));
+        // 値は画面の精度（f32）で書き、読み戻しても同じ値
+        let mut odd = refer_brush();
+        odd.reference_lines.margin = 12.345_679;
+        let u = user(24, odd);
+        let back = decode(&text(&u)).unwrap().2;
+        assert_eq!(back.reference_lines.margin, 12.345_679_f32 as f64);
+        assert_eq!(back, u.brush);
+    }
+
+    #[test]
+    fn reference_lines_are_version_eight_and_are_checked() {
+        let v8 = text(&user(1, refer_brush()));
+        // バージョン 7 までのファイルにあれば、知らない項目として断る
+        for old in ["yolupainter-brush 1", "yolupainter-brush 7"] {
+            let as_old = v8.replacen("yolupainter-brush 8", old, 1);
+            assert!(
+                matches!(decode(&as_old).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("refer.") || k.starts_with("influence.")),
+                "{old}"
+            );
+        }
+        let as_v7 = v8.replacen("yolupainter-brush 8", "yolupainter-brush 7", 1);
+        assert!(
+            matches!(decode(&as_v7).unwrap_err(), StoreError::UnknownKey(k) if k.starts_with("refer.")),
+            "バージョン 7 の影響元の鍵は読め、はみ出し防止の鍵で断る"
+        );
+        // 入の印が無いのにほかの鍵がある・入の印が 0 のファイルは、書き戻すと同じバイトにならないので断る
+        for no_on in [
+            v8.replace("refer.on=1\n", ""),
+            v8.replace("refer.on=1", "refer.on=0"),
+        ] {
+            assert!(
+                matches!(decode(&no_on).unwrap_err(), StoreError::UnknownKey(k) if k == "refer.amount"),
+                "{no_on}"
+            );
+        }
+        let bad = |from: &str, to: &str| decode(&v8.replace(from, to)).unwrap_err();
+        assert!(
+            matches!(bad("refer.mode=square", "refer.mode=hex"), StoreError::BadValue(k) if k == "refer.mode")
+        );
+        assert!(matches!(
+            bad("refer.margin=20", "refer.margin=150"),
+            StoreError::Invalid(_)
+        ));
+        assert!(matches!(
+            bad("refer.amount=-4", "refer.amount=101"),
+            StoreError::Invalid(_)
+        ));
+        assert!(
+            matches!(bad("refer.amount=-4", "refer.amount=NaN"), StoreError::BadValue(k) if k == "refer.amount")
+        );
+        assert!(matches!(
+            decode(&format!("{v8}refer.on=1\n")).unwrap_err(),
             StoreError::DuplicateKey(_)
         ));
     }

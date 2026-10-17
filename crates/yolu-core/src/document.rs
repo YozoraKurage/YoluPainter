@@ -240,6 +240,19 @@ impl Stroke {
     pub fn use_composite_clone_source(&mut self, doc: &mut Document) -> Result<(), CoreError> {
         doc.use_composite_clone_source(self.id)
     }
+    /// はみ出し防止（[`Brush::reference_lines`]）の参照の重なりを、印のある参照レイヤー `marked`（グループは子孫も。
+    /// [`Document::reference_view`] と同じ合成）のチャンネル `channel` の合成にする。最初のダブの前にだけ呼べ、写しをここで凍結する
+    /// （この後に参照レイヤーや印が変わっても、このストロークは変わらない）。複数チャンネルのストロークは、どのチャンネルも同じ範囲で塗る。
+    /// ブラシがはみ出し防止を使わない・`marked` に文書のレイヤーが 1 つも無いときは何もせず false（はみ出し防止は効かない）。
+    /// 最初のダブより後・知らないチャンネルは、このストロークを取り消してから返す。
+    pub fn use_reference_layers(
+        &mut self,
+        doc: &mut Document,
+        marked: &std::collections::HashSet<LayerId>,
+        channel: Channel,
+    ) -> Result<bool, CoreError> {
+        doc.use_reference_layers(self.id, marked, channel)
+    }
     /// 写像された面のダブ（3D の面のクローン・指先。C# の ApplyMappedDab）: 画素ごとに、読む場所（画素中心の最大 4 点と重み。UV アイランドの
     /// 継ぎ目の向こうも）を呼び手が決めて渡す。全ての読みをどの画素を書くより前に済ませるので、同じダブの中で先に変えた画素を読まない。
     /// 指先の最初の拾いと面の方向は呼び手が決める。points はステンシルの画素ごとの点（pixels と同じ数）、sampling_bytes は呼び手の

@@ -1645,7 +1645,9 @@ impl AppState {
     /// ここへ来る（`begin_canvas_stroke`）。
     pub fn begin_stroke_with(&mut self, id: LayerId, brush: &Brush) -> Result<Stroke, CoreError> {
         if self.m2.edit_mask {
-            return self.session.doc.begin_brush_mask_stroke(id, brush);
+            let mut stroke = self.session.doc.begin_brush_mask_stroke(id, brush)?;
+            self.use_reference_lines(&mut stroke, brush)?;
+            return Ok(stroke);
         }
         let mut stroke = if self.paints_material() {
             // マテリアルで塗る: 組の全部のチャンネルを同じダブで 1 回のストロークに（レイヤーで無効のチャンネルは有効にする）
@@ -1676,7 +1678,25 @@ impl AppState {
         {
             stroke.use_composite_clone_source(&mut self.session.doc)?;
         }
+        self.use_reference_lines(&mut stroke, brush)?;
         Ok(stroke)
+    }
+
+    /// はみ出し防止のブラシ: 今の文書の参照レイヤーの印（バケツの「参照: 参照レイヤー」と同じ印）の重なりを、最初のダブの前に凍結して渡す
+    /// （読むのはバケツと同じく描くチャンネルの合成）。印が無ければ、はみ出し防止は効かない（ふつうに描く）。
+    fn use_reference_lines(&mut self, stroke: &mut Stroke, brush: &Brush) -> Result<(), CoreError> {
+        if !brush.reference_lines.enabled {
+            return Ok(());
+        }
+        let doc = self.session.doc.id();
+        let marked: std::collections::HashSet<LayerId> = self
+            .region
+            .references
+            .iter()
+            .filter_map(|&(d, id)| (d == doc).then_some(id))
+            .collect();
+        stroke.use_reference_layers(&mut self.session.doc, &marked, self.m2.paint_channel)?;
+        Ok(())
     }
 
     /// 選んでいるレイヤー・チャンネルが消えていれば選び直す。

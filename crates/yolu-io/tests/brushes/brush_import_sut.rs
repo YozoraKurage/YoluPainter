@@ -1511,6 +1511,9 @@ fn every_note_has_a_sentence_in_both_languages() {
         SutNote::AntiAliasing(5.0),
         SutNote::WaterEdgeUnit,
         SutNote::WaterEdgeRange,
+        SutNote::ExpandMode(0.0),
+        SutNote::ExpandUnit(1.0),
+        SutNote::ReferenceRange,
     ];
     for n in all {
         let note = Unrepresented::ClipStudio(n.clone());

@@ -64,6 +64,9 @@ pub struct Brush {
     pub shown_rows: Option<Vec<String>>,
     /// 水彩境界（None は無し。拡張: C# に無い）。色のチャンネルを色で塗るブラシだけに効く（[`WaterEdge`]）。
     pub water_edge: Option<WaterEdge>,
+    /// はみ出し防止（参照レイヤーの線をはみ出さない。既定は切）。印のある参照レイヤーの重なりを、ストロークを始めるときに渡したときだけ効く
+    /// （[`crate::Stroke::use_reference_layers`]）。
+    pub reference_lines: super::refer::ReferenceLines,
 }
 
 /// 表示倍率（画面の点 ÷ 文書の画素）の下限と上限の外の値は、そのまま割ると半径が範囲を外れるので、ここへ収める。
@@ -831,6 +834,7 @@ impl Brush {
             .as_ref()
             .map_or(Ok(()), super::WaterEdge::validate)?;
         self.mix.validate()?;
+        self.reference_lines.validate()?;
         match self.effect {
             BrushEffect::Paint => {}
             BrushEffect::Blur { radius } => {

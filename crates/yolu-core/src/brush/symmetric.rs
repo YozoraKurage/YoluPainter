@@ -195,9 +195,10 @@ impl StrokeState {
         self.copy_note
     }
 
-    /// 写し全部の画素と被覆率（同じ画素は大きい方）を、キャンバスの画素の番号（y × 幅 + x）の順に。
+    /// 写し全部の画素と被覆率（同じ画素は大きい方）を、キャンバスの画素の番号（y × 幅 + x）の順に。はみ出し防止があれば、写しごとに
+    /// 写したダブの中心から範囲を求め、範囲の外の画素は入れない。
     fn symmetric_pixels(
-        &self,
+        &mut self,
         transforms: &[CopyMap],
         x: f64,
         y: f64,
@@ -206,9 +207,21 @@ impl StrokeState {
     ) -> Result<Vec<(i64, f64)>, CoreError> {
         let bounds = symmetric_bounds(transforms, x, y, extent, self.width, self.height)?;
         let mut pixels = Vec::new();
+        let room = self.refer_room();
         for (t, x0, x1, y0, y1) in bounds {
+            let region = match self.refer.as_mut() {
+                None => None,
+                Some(r) => match r.area((x0, x1), (y0, y1), t.map(x, y), room)? {
+                    refer::DabArea::Nothing => continue,
+                    refer::DabArea::All => None,
+                    refer::DabArea::Mask(m) => Some(m),
+                },
+            };
             for py in y0..=y1 {
                 for px in x0..=x1 {
+                    if region.as_ref().is_some_and(|r| !r.contains(px, py)) {
+                        continue;
+                    }
                     let (ox, oy) = t.inverse(px as f64 + 0.5, py as f64 + 0.5);
                     let c = coverage(ox - x, oy - y);
                     if c > 0.0 {

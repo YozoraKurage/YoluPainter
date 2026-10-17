@@ -60,6 +60,7 @@ pub mod material;
 pub mod material_triangles;
 mod math;
 pub mod mesh_maps;
+pub mod near_color;
 pub mod normal;
 pub mod padding;
 pub mod paths;
@@ -92,6 +93,7 @@ pub use brush::{
     StencilPoint, StencilTiling, StrokeAssist, StrokeColorChange, TaperTargets, TextureMode,
     TipColorChange, TipSelection, TipShape,
 };
+pub use brush::{ExpandMode, ReferenceLines, MAX_REFERENCE_EXPAND, MAX_REFERENCE_MARGIN};
 pub use brush::{Spray, SprayDirection, SprayItem, DENSITY_PER_STAMP, MAX_SPRAY_SIZE};
 pub use brush::{MAX_MIX_BLUR, MAX_MIX_CORRECTION};
 pub use document::{

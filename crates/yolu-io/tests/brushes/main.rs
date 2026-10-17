@@ -15,5 +15,7 @@ mod brush_import_hostile;
 mod brush_import_sut;
 mod brush_import_sut_layer;
 mod brush_import_sut_real;
+mod brush_import_sut_refer;
 mod csp_edge_compare;
 mod csp_line_compare;
+mod csp_refer_compare;
