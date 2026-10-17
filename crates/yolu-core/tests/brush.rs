@@ -1225,7 +1225,9 @@ fn tapers_thin_both_ends_and_the_end_waits_for_the_stroke_to_finish() {
     s.assist.taper_out = 30.0;
     let (mut d, l) = doc(128, 64, 16);
     let mut st = d.begin_brush_stroke(l, &s).unwrap();
+    // 入りのあるブラシは、3 つ目の入力で手で描いた線と分かるまでダブを待たせる（2 つの入力の直線は Shift の直線かもしれない）
     st.add_sample(&mut d, sample(10.0, 32.0)).unwrap();
+    st.add_sample(&mut d, sample(60.0, 32.0)).unwrap();
     st.add_sample(&mut d, sample(110.0, 32.0)).unwrap();
     let during = all(&d);
     assert_eq!(

@@ -65,6 +65,7 @@ mod selection_bar;
 mod selection_build;
 mod stencil;
 mod stroke_look;
+mod taper_dot;
 mod text_tool;
 mod tool_keys;
 mod tool_layout_ui;

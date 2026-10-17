@@ -33,6 +33,7 @@ mod rulers;
 mod selection;
 mod simd_document;
 mod spray;
+mod taper_start;
 mod taper_targets;
 mod text_layer;
 mod tip_rules;

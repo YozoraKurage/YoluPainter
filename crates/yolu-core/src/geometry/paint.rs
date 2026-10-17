@@ -75,7 +75,7 @@ use crate::brush::random::NetRandom;
 use crate::brush::{
     combine_dual, AntiAlias, BrushMappedPixel, BrushSourceTap, DabPlan, DabShape, Input,
     InputResponse, Item, PendingDab, ShapeCoverage, SprayFrame, StampControls, SurfaceDabLook,
-    TexelMetric, TipRun, DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
+    TaperStart, TexelMetric, TipRun, DUAL_STREAM, INFLUENCE_STREAM, MIN_ONE_PIXEL_RADIUS,
 };
 use crate::brush::{
     dual_spot, dual_textured_at, lifted_link, DualLook, DualPlace, DualRun, DualTips,
@@ -497,6 +497,9 @@ pub struct SurfaceStroke {
     last_input: SurfaceInput,
     /// 離した時の線の長さ（抜きの終わり）。離すまでは None。
     end: Option<f64>,
+    /// 入り抜きのあるブラシの、ストロークの形（クリック・Shift の直線・手で描いた線）の見極めと、ここまでに並べたダブの数（2D と同じ）。
+    taper_start: TaperStart,
+    dabs: u64,
     /// デュアルブラシ（無ければ None）と、その溜まりのバイト。
     dual: Option<DualState>,
     dual_bytes: u64,
@@ -696,12 +699,14 @@ impl SurfaceStroke {
             pen_time: input.time,
             last_input: input,
             end: None,
+            taper_start: TaperStart::default(),
+            dabs: 0,
             dual,
             dual_bytes: 0,
             brush: stroke_brush,
             stats: SurfaceStrokeStats::default(),
         };
-        // 押した点の描点（と、2 つ目の筆先のダブ）。抜きがあれば、線が伸びるか離すまで待つ
+        // 押した点の描点（と、2 つ目の筆先のダブ）。抜きがあれば、線が伸びるか離すまで待つ（入りがあれば、ストロークの形が決まるまでも）
         let dab = s.locate(ScreenDab {
             at: input.at,
             pressure: input.pressure,
@@ -711,11 +716,25 @@ impl SurfaceStroke {
             rotation: input.rotation,
             speed: 0.0,
         });
+        if s.brush.assist.tapers() {
+            s.begin_taper(point64(input.at));
+        }
+        s.dabs = 1;
         s.queue.push_back(dab);
         s.enqueue_first_dual(dab_at_press(&input));
         // 押した点のダブだけが並んでいる（抜きがあれば待たせる）
         s.paint_queued(doc, stroke, usize::MAX)?;
         Ok(s)
+    }
+
+    /// 入り抜きのあるブラシの、ストロークの形の見極めを始める（押した点が 1 つ目の入力）。クリックの境の半径は、ダブの間隔と同じく画面の点で、
+    /// 押した点の面の奥行きでのブラシの半径（面に当たらなければ 0）。
+    fn begin_taper(&mut self, at: (f64, f64)) {
+        let radius = self
+            .screen_scale
+            .map_or(0.0, |scale| f64::from(scale * self.world_radius));
+        self.taper_start = TaperStart::new(&self.brush.assist, radius);
+        self.taper_start.input(at, 0);
     }
 
     /// 見えない面にも塗る写しの、ダブごとの上限を変える（試験用）。
@@ -796,6 +815,10 @@ impl SurfaceStroke {
         };
         self.last_input = input;
         let assist = self.brush.assist;
+        // 入り抜き: 3 つ目からの入力で（押した点から境を超えて離れて）手で描いた線と分かれば、待たせていたダブが塗れるようになる（待ち行列の順のまま）
+        if assist.tapers() {
+            self.taper_start.input(point64(input.at), self.dabs);
+        }
         let pen = if assist.stabilizer > 0.0 {
             assist
                 .pull(
@@ -871,8 +894,12 @@ impl SurfaceStroke {
         }
     }
 
-    /// 描点が今塗れるか（抜きのある線は、終わりから抜きの長さの内の描点を、線が伸びるか離すまで待たせる）。
+    /// 描点が今塗れるか（抜きのある線は、終わりから抜きの長さの内の描点を、線が伸びるか離すまで待たせる。入りのある線は、ストロークの形が
+    /// 決まるまで、どの描点も待たせる）。
     fn paintable(&self, dab: &QueuedDab) -> bool {
+        if self.taper_start.holds(&self.brush.assist) {
+            return false;
+        }
         let taper = self.brush.assist.taper_out;
         self.end.is_some() || taper <= 0.0 || dab.arc <= self.sampler.length() - taper
     }
@@ -969,19 +996,30 @@ impl SurfaceStroke {
         }
         self.catch_up()?;
         self.close_held(false)?;
+        // 入り抜き: まだ形が分からなければ、押した点からの離れが境の内ならクリック（入り抜きの無い点）、ほかは手で描いた線
+        if self.brush.assist.tapers() {
+            self.taper_start.finish();
+        }
         self.end = Some(self.sampler.length());
         Ok(())
     }
 
     /// 直線の終わり（Shift の直線の押した点）: 手ぶれ補正の筆を最後の入力の点まで動かし、待たせている曲線の区間も並べ切って、そこを角にして
-    /// 続ける（次の区間は、その点から曲線を始め直す）。ストロークは続き、続きの入力にはまた補正と曲線が効く。補正も曲線も無い・離した後は何も変わらない。
+    /// 続ける（次の区間は、その点から曲線を始め直す）。ストロークは続き、続きの入力にはまた補正と曲線が効く。補正も曲線も無いブラシでは線の形は
+    /// 変わらず、離した後は何もしない。押した点と次の 1 つの入力の直後に呼ぶと、入り抜きを掛けない直線になる（2D の `Stroke::end_line` と同じ）。
     /// 並べたダブは、ほかの入力と同じく待ち行列で塗る。
     pub fn end_line(&mut self) -> Result<(), SurfaceStrokeError> {
         if self.end.is_some() {
             return Ok(());
         }
+        // 入り抜き: 最初の 2 つの入力の直線なら Shift の直線（線全体に入りを掛けず、この線で離せば抜きも掛けない。2D と同じ）
+        let straight = self.brush.assist.tapers() && self.taper_start.end_line();
         self.catch_up()?;
-        self.close_held(true)
+        self.close_held(true)?;
+        if straight {
+            self.taper_start.line_closed(point64(self.last_input.at));
+        }
+        Ok(())
     }
 
     /// 待たせている最後の区間を並べる。`corner` なら、そこを角にして曲線を始め直す（[`SurfaceStroke::end_line`]）。
@@ -1024,6 +1062,7 @@ impl SurfaceStroke {
 
     /// 区間のダブの位置を、当たりと画面の大きさを決めて待ち行列の後ろに並べる（2 つ目の筆先のダブも）。
     fn enqueue(&mut self, points: Vec<ScreenDab>, duals: Vec<(ScreenDab, DualLook)>) {
+        self.dabs += points.len() as u64;
         self.queue.reserve(points.len());
         for p in points {
             let dab = self.locate(p);
@@ -1154,9 +1193,8 @@ impl SurfaceStroke {
         let taper = if dab.skip {
             0.0
         } else {
-            brush
-                .assist
-                .taper(dab.arc, self.end.unwrap_or(f64::INFINITY))
+            self.taper_start
+                .factor(&brush.assist, dab.arc, self.end.unwrap_or(f64::INFINITY))
         };
         let controls = brush.stamp_controls(&pending, index, taper, self.influence_random.as_mut());
         // 大きさの係数（入り抜き）。筆圧の大きさとモデルの単位の半径は塗るときに掛ける（今までの 3D の式のまま）
@@ -2280,6 +2318,11 @@ pub fn pick(geometry: &SurfaceGeometry, view: &CameraView, at: Vec2) -> Option<S
 /// 箱の対角線は `brush_scale`（ポーズを付けたスナップショットでも元の形の値）。
 pub fn world_radius(geometry: &SurfaceGeometry, brush_radius: f64, document_width: u32) -> f32 {
     fmax(0.000001, geometry.brush_scale()) * brush_radius as f32 / document_width as f32
+}
+
+/// 画面の点を、入り抜きの見極め（[`TaperStart`]）の座標へ。
+fn point64(at: Vec2) -> (f64, f64) {
+    (f64::from(at.x), f64::from(at.y))
 }
 
 /// 区間の始まりの点でのダブの間隔（面の上の直径 × 間隔を画面に直す。0.5 以上）。面に当たらなければ、直前に面に当たった所の

@@ -28,6 +28,7 @@ mod surface_screen;
 mod surface_stroke;
 mod surface_symmetry;
 mod surface_tip;
+mod taper_start;
 mod taper_targets;
 mod tip_rules;
 mod uv_topology;

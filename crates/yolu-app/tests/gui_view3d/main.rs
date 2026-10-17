@@ -63,6 +63,7 @@ mod view3d_select;
 mod view3d_select_overlay;
 mod view3d_select_pen;
 mod view3d_sets;
+mod view3d_taper;
 
 /// 画面の外枠（`YoluApp`）を直に持つテストも、AppState の欄を運転の口で読み書きする。
 impl common::drive::Drive for YoluApp {

@@ -548,12 +548,19 @@ const TAPER_ITEMS: [(u32, Item); 6] = [
     (1084, Item::MixDensity),
 ];
 
+/// 入り抜きの影響先の列の読み。
+enum StartEndTargets {
+    /// 影響先の列が無い（そのバージョンの描き方は未確認。今まで通り大きさだけとみなす）。
+    Absent,
+    /// オンの項目の「番号・最小値（0〜1）」。空なら、画面の影響先が「なし」で、長さが入っていても入り抜きは掛からない。
+    Listed(Vec<(u32, f64)>),
+}
+
 /// `BrushInOutTarget`（ビッグエンディアンの整数: 12・項目の数・12 のあと、項目ごとに「項目の番号・オン・最小値（%）」）で、オンの項目の
-/// 「番号・最小値（0〜1）」。オンの項目が無ければ空（既定: 大きさだけ。実物の .sut は項目 21 個で、旗はどれも 0 だった）。影響先の列が無い
-/// バージョンも空。読めない・形が違う・旗が 0 か 1 でない・最小値が 0〜100 でない・同じ番号の項目が重なるものは None。
-fn start_end_targets(row: &Row) -> Option<Vec<(u32, f64)>> {
+/// 「番号・最小値（0〜1）」。読めない・形が違う・旗が 0 か 1 でない・最小値が 0〜100 でない・同じ番号の項目が重なるものは None。
+fn start_end_targets(row: &Row) -> Option<StartEndTargets> {
     let Some(blob) = row.first_blob(IN_OUT_TARGET) else {
-        return (!row.is_oversized(IN_OUT_TARGET)).then(Vec::new);
+        return (!row.is_oversized(IN_OUT_TARGET)).then_some(StartEndTargets::Absent);
     };
     let words: Vec<u32> = blob
         .as_chunks::<4>()
@@ -581,11 +588,12 @@ fn start_end_targets(row: &Row) -> Option<Vec<(u32, f64)>> {
             on.push((id, f64::from(min) / 100.0));
         }
     }
-    Some(on)
+    Some(StartEndTargets::Listed(on))
 }
 
 /// 入り抜き: `BrushInOutType` が 0（長さ指定）で長さの単位が画素のものを、`assist.taper_in`・`taper_out` と、掛ける項目・項目ごとの最小値
-/// （`assist.taper_targets`）へ。影響先が全部オフなら大きさだけ（今まで通り）。写せない項目（間隔・色相・彩度・明度・サブ描画色混合率・
+/// （`assist.taper_targets`）へ。影響先が全部オフ（画面の「なし」）なら、入り・抜きの旗と長さがあっても何も写さず、知らせもしない（線は
+/// 細らない）。影響先の列が無ければ大きさだけ。写せない項目（間隔・色相・彩度・明度・サブ描画色混合率・
 /// 粒子・デュアル側・番号の分からないもの）は写さずに知らせ、写せる項目が 1 つも無ければ入り抜きを写さない。パーセント指定・フェード・
 /// 読めない形・単位が合わないものも写さずに知らせる。速さに応じた長さ・割合は読まず、写したときに知らせる。
 fn start_end(
@@ -601,15 +609,20 @@ fn start_end(
     if !sides.iter().any(|(flag, ..)| row.on(flag)) {
         return;
     }
+    let read_targets = start_end_targets(row);
+    if matches!(&read_targets, Some(StartEndTargets::Listed(on)) if on.is_empty()) {
+        // 影響先が「なし」: 指定方法・長さによらず、入り抜きは掛からない
+        return;
+    }
     // 指定方法: 0 長さ指定・1 パーセント指定（線全体の長さが要るが、描いている間は終わりが分からない）・2 フェード（描き始めから最小値へ
     // 向かい、抜きの長さで最小値に達して終わりまで続く。端で細る入り抜きでは表せない）
     let mut refused = row.first_number(IN_OUT_TYPE).is_some_and(|v| v != 0.0);
     let mut targets = TaperTargets::SIZE_ONLY;
     if !refused {
-        match start_end_targets(row) {
+        match read_targets {
             None => refused = true,
-            Some(on) if on.is_empty() => {}
-            Some(on) => {
+            Some(StartEndTargets::Absent) => {}
+            Some(StartEndTargets::Listed(on)) => {
                 let mut taken_targets = TaperTargets::NONE;
                 let mut dropped = Vec::new();
                 for (id, min) in on {

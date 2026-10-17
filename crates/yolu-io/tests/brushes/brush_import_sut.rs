@@ -1974,7 +1974,7 @@ fn start_and_end_lengths_become_the_stroke_taper_in_pixels() {
         ("BrushOutLengthUnit", int(0)),
         ("BrushInOutBySpeed", int(1)),
         ("BrushInRatio", real(30.0)),
-        ("BrushInOutTarget", blob(in_out_targets(&[]))),
+        ("BrushInOutTarget", blob(in_out_targets(&[1001]))),
     ]);
     assert_eq!(
         (b.brush.assist.taper_in, b.brush.assist.taper_out),
@@ -2117,9 +2117,38 @@ fn the_six_taper_targets_that_the_engine_has_are_mapped_with_their_minimums() {
 }
 
 #[test]
-fn a_taper_whose_flags_are_all_off_still_tapers_the_size_only() {
+fn a_taper_whose_targets_are_all_off_is_no_taper_even_with_lengths() {
+    // 影響先が全部オフ（画面の「なし」）: 入り・抜きの旗と長さが入っていても線は細らないので、何も写さず、知らせもしない
+    for extra in [vec![], vec![("BrushInOutType", int(1))]] {
+        let b = tapered(&[], &extra);
+        assert_eq!(
+            (b.brush.assist.taper_in, b.brush.assist.taper_out),
+            (0.0, 0.0)
+        );
+        assert!(b.brush.assist.taper_targets.is_default());
+        assert!(!mapped(&b, SutMapped::StartEnd));
+        assert!(
+            b.unrepresented.is_empty(),
+            "描かない物を「未対応」とは言わない: {:?}",
+            b.unrepresented
+        );
+    }
+}
+
+#[test]
+fn a_taper_without_the_targets_column_tapers_the_size_only() {
     use yolu_core::brush::Item;
-    let b = tapered(&[], &[]);
+    // 影響先の列が無いバージョン: 大きさだけとみなす
+    let b = one(&[
+        ("BrushUseIn", int(1)),
+        ("BrushInLength", real(20.0)),
+        ("BrushUseOut", int(1)),
+        ("BrushOutLength", real(10.0)),
+    ]);
+    assert_eq!(
+        (b.brush.assist.taper_in, b.brush.assist.taper_out),
+        (20.0, 10.0)
+    );
     assert!(b.brush.assist.taper_targets.is_default());
     assert_eq!(target_min(&b, Item::Size), Some(0.0));
     assert!(mapped(&b, SutMapped::StartEnd));

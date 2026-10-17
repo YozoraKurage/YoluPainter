@@ -92,7 +92,7 @@ pub use influence::{
 };
 pub(crate) use influence::{InputValues, PressureScale, INFLUENCE_STREAM};
 pub use mix::{ColorMix, MixGround, MixMode};
-pub(crate) use plan::{DabPlan, StampControls, TipRun};
+pub(crate) use plan::{DabPlan, StampControls, TaperStart, TipRun};
 pub use presets::{builtin_presets, BrushPreset};
 pub use settings::{
     Brush, BrushEffect, ColorDynamics, ColorTarget, Controls, DualBrush, DualBrushMode, FlipRule,
@@ -386,6 +386,9 @@ pub(crate) struct StrokeState {
     last_speed: f64,
     stroke_length: f64,
     pending: VecDeque<PendingDab>,
+    /// 入り抜きのあるブラシの、ストロークの形（クリック・Shift の直線・手で描いた線）の見極めと、ここまでに並べたダブの数。
+    taper_start: TaperStart,
+    dabs: u64,
     random: NetRandom,
     /// 影響元のランダムの乱数の列（どの項目もランダムを使わなければ None で、1 つも引かない）。
     influence_random: Option<NetRandom>,
@@ -547,6 +550,8 @@ impl StrokeState {
             last_speed: 0.0,
             stroke_length: 0.0,
             pending: VecDeque::new(),
+            taper_start: TaperStart::new(&brush.assist, brush.base.radius),
+            dabs: 0,
             stroke_color,
             dab_color: stroke_color,
             color_random,
@@ -662,21 +667,31 @@ impl StrokeState {
             ));
         }
         self.last_input = sample;
+        // 入り抜き: 3 つ目からの入力で（押した点から境を超えて離れて）手で描いた線と分かれば、待たせていたダブを、この入力のダブより先に置く
+        let mut any = false;
+        if self.brush.assist.tapers() && self.taper_start.input((sample.x, sample.y), self.dabs) {
+            any = self.flush_pending(
+                surface,
+                self.stroke_length - self.brush.assist.taper_out,
+                None,
+                changed,
+            )?;
+        }
         let stabilizer = self.brush.assist.stabilizer;
         if stabilizer <= 0.0 || !self.has_pen {
             self.has_pen = true;
             self.pen = sample;
-            return self.add_pen_point(surface, sample, changed);
+            return Ok(self.add_pen_point(surface, sample, changed)? | any);
         }
         let Some((x, y)) = self
             .brush
             .assist
             .pull((self.pen.x, self.pen.y), (sample.x, sample.y))
         else {
-            return Ok(false);
+            return Ok(any);
         };
         self.pen = BrushSample { x, y, ..sample };
-        self.add_pen_point(surface, self.pen, changed)
+        Ok(self.add_pen_point(surface, self.pen, changed)? | any)
     }
 
     /// 筆の点（手ぶれ補正の後）: そのまま道へ、または曲線の向きが分かるまで待たせる（C# の AddPenPoint）。
@@ -909,14 +924,16 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 線の長さ arc の所のダブ: すぐ置くか、終わりから抜きの長さの内なら待たせる（C# の Emit）。
+    /// 線の長さ arc の所のダブ: すぐ置くか、終わりから抜きの長さの内なら待たせる（C# の Emit）。入りのあるブラシは、ストロークの形が
+    /// 決まるまでも待たせる（[`TaperStart`]）。
     fn emit(
         &mut self,
         surface: &mut Surface,
         dab: PendingDab,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        if self.brush.assist.taper_out > 0.0 {
+        self.dabs += 1;
+        if self.brush.assist.taper_out > 0.0 || self.taper_start.holds(&self.brush.assist) {
             self.pending.push_back(dab);
             return Ok(false);
         }
@@ -924,7 +941,8 @@ impl StrokeState {
         self.stamp(surface, dab, factor, changed)
     }
 
-    /// 待たせたダブを線の長さ limit まで置く。end（確定の時の線の長さ）があれば、そこへ向けて細る（C# の FlushPending）。
+    /// 待たせたダブを線の長さ limit まで置く。end（確定の時の線の長さ）があれば、そこへ向けて細る（C# の FlushPending）。ストロークの
+    /// 形が決まるまでは置かない（[`TaperStart::holds`]）。
     fn flush_pending(
         &mut self,
         surface: &mut Surface,
@@ -932,6 +950,9 @@ impl StrokeState {
         end: Option<f64>,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
+        if self.taper_start.holds(&self.brush.assist) {
+            return Ok(false);
+        }
         let mut any = false;
         while let Some(&dab) = self.pending.front() {
             if dab.arc > limit {
@@ -944,9 +965,10 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数（[`StrokeAssist::taper`]）。
+    /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数（[`StrokeAssist::taper`] を、ストロークの形に合わせて。
+    /// [`TaperStart::factor`]）。
     fn taper(&self, arc: f64, end: f64) -> f64 {
-        self.brush.assist.taper(arc, end)
+        self.taper_start.factor(&self.brush.assist, arc, end)
     }
 
     /// 手ぶれ補正の筆を、最後の入力の点まで描く（遅れを詰める。ストロークは続き、次の入力からまた糸の長さだけ遅れて付いていく）。補正が無い・もう
@@ -974,6 +996,10 @@ impl StrokeState {
     ) -> Result<bool, CoreError> {
         let mut any = self.catch_up(surface, changed)?;
         any |= self.close_curve_segment(surface, changed)?;
+        // 入り抜き: まだ形が分からなければ、押した点からの離れが境の内ならクリック（入り抜きの無い点）、ほかは手で描いた線
+        if self.brush.assist.tapers() {
+            self.taper_start.finish();
+        }
         any |= self.flush_pending(surface, f64::INFINITY, Some(self.stroke_length), changed)?;
         Ok(any)
     }
@@ -1004,9 +1030,24 @@ impl StrokeState {
         surface: &mut Surface,
         changed: &mut Vec<TileCoord>,
     ) -> Result<bool, CoreError> {
-        let mut any = self.catch_up(surface, changed)?;
+        // 入り抜き: 最初の 2 つの入力の直線なら Shift の直線（線全体に入りを掛けず、この線で離せば抜きも掛けない）。待たせていたダブを先に置く
+        let straight = self.brush.assist.tapers() && self.taper_start.end_line();
+        let mut any = false;
+        if straight {
+            any |= self.flush_pending(
+                surface,
+                self.stroke_length - self.brush.assist.taper_out,
+                None,
+                changed,
+            )?;
+        }
+        any |= self.catch_up(surface, changed)?;
         any |= self.close_curve_segment(surface, changed)?;
         self.has_curve_before = false;
+        if straight {
+            self.taper_start
+                .line_closed((self.last_input.x, self.last_input.y));
+        }
         Ok(any)
     }
 

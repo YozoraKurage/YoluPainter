@@ -455,8 +455,18 @@ impl StrokeAssist {
     /// 長さ end のストロークの、線の長さ arc の所のダブの大きさの係数: 入りで 0 から育ち、抜きで 0 へ細る（C# の Taper）。end が
     /// 有限でない（まだ終わりが分からない）間は抜きを掛けない。長さの単位は呼び手のもの（2D は文書の画素、3D は画面の点）。
     pub(crate) fn taper(&self, arc: f64, end: f64) -> f64 {
+        self.taper_ends(arc, end, true)
+    }
+
+    /// 入り・抜きのどちらかがあるか（無ければ、ストロークの始まりの見極め [`TaperStart`] も、ダブを待たせることもしない）。
+    pub(crate) fn tapers(&self) -> bool {
+        self.taper_in > 0.0 || self.taper_out > 0.0
+    }
+
+    /// [`StrokeAssist::taper`] の、入りを掛けるかを選べる形（with_in が偽なら抜きだけ）。
+    fn taper_ends(&self, arc: f64, end: f64, with_in: bool) -> f64 {
         let mut f = 1.0;
-        if self.taper_in > 0.0 {
+        if with_in && self.taper_in > 0.0 {
             f = f64_min(f, arc / self.taper_in);
         }
         if self.taper_out > 0.0 && end.is_finite() {
@@ -484,6 +494,140 @@ impl StrokeAssist {
         }
         let k = (d - self.stabilizer) / d;
         Some((pen.0 + dx * k, pen.1 + dy * k))
+    }
+}
+
+/// 入り抜きから見たストロークの形。入り抜きは道に沿って細らせるもので、沿って細らせる道の無い入力には掛けない: クリック（押した点から
+/// ほとんど離れずに離したストローク。ペンのタップの揺れを含む）は入り抜きの無いときと同じ点、Shift の直線（最初の 2 つの入力の直後に
+/// [`TaperStart::end_line`] で閉じた線）は、線全体に入りを掛けず、その線の終わりのそばで離せば抜きも掛けない。手で描いた線だけが、入りで
+/// 0 から育ち抜きで 0 へ細る。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum TaperShape {
+    /// まだ分からない（入りのあるブラシは、ここでダブを待たせる）。
+    #[default]
+    Undecided,
+    /// 手で描いた線。
+    Drawn,
+    /// Shift の直線で始まった線。
+    Straight,
+    /// クリックの点。
+    Dot,
+}
+
+/// 入り抜きのあるブラシのストロークの始まりの見極め（2D の [`super::StrokeState`] と 3D の `geometry::SurfaceStroke` で共通）。
+/// 入りのあるブラシは、形が決まるまでダブを置かずに待たせる（[`TaperStart::holds`]）。決まったら、待たせたダブを並んだ順に置く
+/// （置く順と数は変えないので、手で描いた線のダブは待たせない時と同じ）。形の決め方: 3 つ目からの入力で、ダブが 2 つ以上あり、押した点からの
+/// 最大の離れが境（[`TaperStart::new`]）を超えていれば手で描いた線。2 つの入力の後で直線を閉じれば Shift の直線。離したときに離れが境の内
+/// なら、ダブの数によらずクリック。入力の位置と境の単位は呼び手のもの（2D は文書の画素、3D は画面の点）。
+/// 入り抜きの無いブラシでは形を決める関数（`input`・`end_line`・`finish`）を呼ばず、形は Undecided のままで、[`TaperStart::factor`] は
+/// [`StrokeAssist::taper`] と同じ（入り抜きが無いので 1）。
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct TaperStart {
+    shape: TaperShape,
+    /// ここまでの入力の数。
+    inputs: u32,
+    /// クリックとみなす、押した点からの最大の離れ（半径と、入り（無ければ抜き）の長さの小さい方）。
+    reach: f64,
+    /// 押した点と、そこからの最大の離れ。
+    origin: Option<(f64, f64)>,
+    spread: f64,
+    /// Shift の直線の終点と、直線を閉じた後の、そこからの最大の離れ。
+    line_end: Option<(f64, f64)>,
+    after_line: f64,
+    /// 離したとき、直線の終点のそばだった（直線の終わりに抜きを掛けない）。
+    line_kept: bool,
+}
+
+/// 2 点の距離。
+fn distance(a: (f64, f64), b: (f64, f64)) -> f64 {
+    ((a.0 - b.0) * (a.0 - b.0) + (a.1 - b.1) * (a.1 - b.1)).sqrt()
+}
+
+impl TaperStart {
+    /// radius はブラシの半径（筆圧の前。入力の位置と同じ単位）。クリックの境は min(半径, 入りの長さ)（入りが無ければ抜きの長さ）。
+    pub(crate) fn new(assist: &StrokeAssist, radius: f64) -> TaperStart {
+        let length = if assist.taper_in > 0.0 {
+            assist.taper_in
+        } else {
+            assist.taper_out
+        };
+        TaperStart {
+            reach: f64_max(0.0, f64_min(radius, length)),
+            ..TaperStart::default()
+        }
+    }
+
+    /// 今ダブを置かずに待たせるか（入りがあって、形がまだ分からない）。
+    pub(crate) fn holds(&self, assist: &StrokeAssist) -> bool {
+        assist.taper_in > 0.0 && self.shape == TaperShape::Undecided
+    }
+
+    /// 入力の点 at を 1 つ受ける前に呼ぶ（dabs はここまでに並べたダブの数）。3 つ目からの入力で、ダブが 2 つ以上あり、押した点からの離れが
+    /// 境を超えていれば、手で描いた線に決める。今決まったら true（呼び手は待たせたダブを置く）。
+    pub(crate) fn input(&mut self, at: (f64, f64), dabs: u64) -> bool {
+        self.inputs = self.inputs.saturating_add(1);
+        match self.origin {
+            None => self.origin = Some(at),
+            Some(o) => self.spread = f64_max(self.spread, distance(o, at)),
+        }
+        if let Some(e) = self.line_end {
+            self.after_line = f64_max(self.after_line, distance(e, at));
+        }
+        if self.shape == TaperShape::Undecided
+            && self.inputs >= 3
+            && dabs > 1
+            && self.spread > self.reach
+        {
+            self.shape = TaperShape::Drawn;
+            return true;
+        }
+        false
+    }
+
+    /// 直線を閉じる前に呼ぶ（Shift の直線）。最初の 2 つの入力のままなら、Shift の直線に決める。今決まったら true（呼び手は待たせたダブを
+    /// 置き、直線を描き切った後で [`TaperStart::line_closed`] を呼ぶ）。
+    pub(crate) fn end_line(&mut self) -> bool {
+        if self.shape == TaperShape::Undecided && self.inputs == 2 {
+            self.shape = TaperShape::Straight;
+            return true;
+        }
+        false
+    }
+
+    /// Shift の直線を描き切ったときの、直線の終点。
+    pub(crate) fn line_closed(&mut self, at: (f64, f64)) {
+        self.line_end = Some(at);
+        self.after_line = 0.0;
+    }
+
+    /// 離したとき（最後の区間を並べた後）。まだ形が分からなければ、押した点からの離れが境の内ならクリック、超えていれば手で描いた線に決める。
+    /// Shift の直線は、閉じた後の終点からの離れが境の内なら、直線の終わりに抜きを掛けない。
+    pub(crate) fn finish(&mut self) {
+        match self.shape {
+            TaperShape::Undecided => {
+                self.shape = if self.spread <= self.reach {
+                    TaperShape::Dot
+                } else {
+                    TaperShape::Drawn
+                };
+            }
+            TaperShape::Straight => {
+                self.line_kept = self.line_end.is_some() && self.after_line <= self.reach;
+            }
+            _ => {}
+        }
+    }
+
+    /// 長さ end のストロークの、線の長さ arc の所の入り抜きの係数（[`StrokeAssist::taper`] を、形に合わせて）。
+    pub(crate) fn factor(&self, assist: &StrokeAssist, arc: f64, end: f64) -> f64 {
+        match self.shape {
+            TaperShape::Dot => 1.0,
+            TaperShape::Straight => {
+                let end = if self.line_kept { f64::INFINITY } else { end };
+                assist.taper_ends(arc, end, false)
+            }
+            TaperShape::Undecided | TaperShape::Drawn => assist.taper(arc, end),
+        }
     }
 }
 
