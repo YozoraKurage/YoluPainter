@@ -1249,6 +1249,29 @@ fn tool_button(app: &AppState) -> PointerButton {
         .map_or(PointerButton::Primary, |p| p.button)
 }
 
+/// Esc: 離したあと残りを塗っている間は確定し、パスの点のドラッグ・ストローク・グラデーション／図形／定規のドラッグ・選びの途中・ギズモのドラッグを
+/// 捨てる（ギズモは始まりの位置へ戻す。それまでの位置は当てない）。
+fn escape(app: &mut AppState, ctx: &egui::Context) {
+    // 離したあと残りを塗っている間（確定待ち）の Esc は、線を捨てない: 確定してから、Esc の普段の意味へ進む
+    settle(app);
+    // パスの点のドラッグを捨てる（無ければ選んだ点を外す）
+    let path_esc = app.path_cancel(ctx.cumulative_pass_nr());
+    if app.view3d.view.input.stroke.is_some() && !path_esc {
+        finish(app, true);
+        // この Esc はストロークを捨てるのに使った（先に描く 3D ビューのあとで、キャンバスが同じ Esc で、前からある選択範囲まで解除しない）
+        crate::ui::window::note_escape_taken(ctx);
+    }
+    // グラデーション・図形・定規のドラッグは何も描かずに捨てる。選択の形と多角形の点も、何も選ばずに捨てる
+    super::draft::cancel(app);
+    super::select::cancel(app, ctx);
+    super::hide::input::cancel(app);
+    // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）。形のギズモもドラッグの前へ戻す
+    gizmo::release(app, false);
+    crate::fillfx::gizmo::release(app, false);
+    crate::fillfx::points::release(app, false);
+    nav_cancel(app);
+}
+
 /// 入力を当てる（rect はタブの中身の表示域。`foreign` はこの押しが egui でほかの部品のものか）。
 pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], foreign: bool) {
     let ctx = ui.ctx().clone();
@@ -1300,13 +1323,15 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
     super::navigation::fly(ui, app);
     let (events, now, frame_dt) = ui.input(|i| (i.events.clone(), i.time, i.unstable_dt as f64));
     super::select::frame(app, now);
-    // ポーズのモードでは描かない（左ボタンはギズモと骨を選ぶ。ペンの点は描くのに使わない）
+    // ポーズのモードでは描かない（左ボタンはギズモとボーンを選ぶ。ペンの点は描くのに使わない）。ハイドのモードも描かない（左ボタンは
+    // ボーンの丸と UV アイランドを選ぶ。ペンは egui のポインタとして同じ道を通る）
     let pose_mode = app.mode == crate::mode::EditorMode::Pose;
-    // ポーズのモードの間はペンの点を見ないので、押している印も持ち越さない（離したのを見落とした印が次の押しを止めない）
-    if pose_mode {
+    let hide_mode = app.mode == crate::mode::EditorMode::Hide;
+    // ポーズ・ハイドのモードの間はペンの点を見ないので、押している印も持ち越さない（離したのを見落とした印が次の押しを止めない）
+    if pose_mode || hide_mode {
         app.view3d.view.input.pen_press = None;
     }
-    let pen: &[PenSample] = if pose_mode { &[] } else { pen };
+    let pen: &[PenSample] = if pose_mode || hide_mode { &[] } else { pen };
     let (snap, shift, modifiers) =
         ui.input(|i| (i.modifiers.command, i.modifiers.shift, i.modifiers.into()));
     // 図形のドラッグの Shift・Alt は、動かさなくても形に効く
@@ -1465,7 +1490,10 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                             });
                             // 選択の行の組み合わせ方は、押したボタンで引く（2D と同じ）
                             app.sel.press_button = *button;
-                            if pose_mode {
+                            if hide_mode {
+                                // ハイドのモード: ボーンの丸・UV アイランドを選ぶ（四角で選ぶツールは離すまで引く）
+                                super::hide::input::press(app, rect, pos, m);
+                            } else if pose_mode {
                                 if app.view3d.pose.drag.is_none() {
                                     gizmo::press(app, rect, pos);
                                     // 移動・回転・拡縮のツール: 輪の外で、選んだボーンの面から左ドラッグを始めたら、その種類の G/R/S
@@ -1541,6 +1569,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         if *button == tool_button(app) {
                             // ギズモのドラッグは、1 フレームの最後の位置を当ててから終える
                             flush(app, &mut drag_at);
+                            // ハイドのモードの四角の選びを終える
+                            super::hide::input::release(app, rect, pos);
                             for held in Held::ALL {
                                 if held.held(app, StrokeSource::Mouse) {
                                     held.release(app, rect, pos, StrokeSource::Mouse, m, &ctx);
@@ -1558,6 +1588,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                         add(app, rect, pos, s.pressure, PenState::of(&s));
                     }
                     if !pen_frame {
+                        super::hide::input::moved(app, pos);
                         crate::pathtool::surface::moved(app, rect, pos, StrokeSource::Mouse);
                         super::draft::moved(app, rect, pos, StrokeSource::Mouse, &s.modifiers);
                         super::select::moved(app, rect, pos, StrokeSource::Mouse, &s.modifiers);
@@ -1632,24 +1663,9 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 pressed: true,
                 ..
             } if !blocked => {
-                // 離したあと残りを塗っている間（確定待ち）の Esc は、線を捨てない: 確定してから、Esc の普段の意味へ進む
-                settle(app);
-                // パスの点のドラッグを捨てる（無ければ選んだ点を外す）
-                let path_esc = app.path_cancel(ctx.cumulative_pass_nr());
-                if app.view3d.view.input.stroke.is_some() && !path_esc {
-                    finish(app, true);
-                    // この Esc はストロークを捨てるのに使った（先に描く 3D ビューのあとで、キャンバスが同じ Esc で、前からある選択範囲まで解除しない）
-                    crate::ui::window::note_escape_taken(&ctx);
-                }
-                // グラデーション・図形・定規のドラッグは何も描かずに捨てる。選択の形と多角形の点も、何も選ばずに捨てる
-                super::draft::cancel(app);
-                super::select::cancel(app, &ctx);
-                // ギズモのドラッグは始まりのポーズへ戻す（それまでの位置は当てない）。形のギズモもドラッグの前へ戻す
+                // 形のギズモ・点のドラッグ用に溜めた位置は当てずに捨てる
                 drag_at = None;
-                gizmo::release(app, false);
-                crate::fillfx::gizmo::release(app, false);
-                crate::fillfx::points::release(app, false);
-                nav_cancel(app);
+                escape(app, &ctx);
             }
             // 多角形選択の Enter（閉じる）・Backspace（最後の点を消す）。文字を打っているときは使わない
             Event::Key {
@@ -1666,6 +1682,7 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
                 // グラデーション・図形・定規のドラッグは、離したのを受け取れないので何も描かずに捨てる。選択の形と多角形の点も同じ
                 app.view3d.view.input.draft = None;
                 super::select::focus_lost(app);
+                super::hide::input::cancel(app);
                 app.path_finish_drag();
                 // 点を矩形で選ぶドラッグは、離したのを受け取れないので捨てる（古い始点が次の離しで効かないように）
                 if app.path.rect.is_some_and(|r| r.surface) {
@@ -1707,6 +1724,8 @@ pub fn handle(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], fo
         }
         // ツールの押しのボタンを離したのを取りこぼしたら、押しの控えも捨てる（次の押しのボタンを引き違えない）
         app.view3d.view.input.mouse_press = None;
+        // 離したのを取りこぼした四角の選びは、何も選ばずに捨てる
+        super::hide::input::cancel(app);
     }
     // 取りこぼしたストロークも、このフレームのうちに塗り始める
     paint_queued(app, &ctx);

@@ -508,6 +508,12 @@ pub struct View3dRenderer {
     _dummy_bloom_texture: wgpu::Texture,
     bloom_sampler: wgpu::Sampler,
     mesh: Option<GpuMesh>,
+    /// ほかの見せる形の頂点（ビューごとに見せる形が違うとき。今描いている形のものは `mesh`。フレームの初めに、どのビューも見せていない
+    /// 形のものを捨てる: `keep_meshes`）。
+    spare_meshes: Vec<GpuMesh>,
+    /// テクスチャの塗り広げの UV と、ほかのセットを持つマテリアルを読む形（全部のビューで同じ形。ビューごとに違う形を読むと、ビューを描くたびに
+    /// 塗り広げとほかのセットを作り直すので。None なら描く形）。
+    shape_source: Option<Arc<ViewModel>>,
     bind: Option<(wgpu::BindGroup, (u64, u64, u64))>,
     last_key: Option<SceneKey>,
     /// 接線を作っているモデルのスレッドと、最後に出来た接線（ポーズで同じ形のモデルが続くとき、出来るまでこれを使う）。
@@ -966,6 +972,37 @@ fn set_layouts(device: &wgpu::Device) -> (wgpu::BindGroupLayout, wgpu::BindGroup
     (set_layout, map_layout)
 }
 
+/// 面のシェーダーの group 0 の束ねの形（一様バッファ・サンプラー・キューブ・影の深度）。
+fn scene_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
+    let mut entries = vec![wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }];
+    // 塗ったテクスチャのサンプラーは、lilToon の輪郭線の頂点（太さのマスク）も読む
+    let mut paint_sampler_entry = sampler_entry(7);
+    paint_sampler_entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
+    entries.push(paint_sampler_entry);
+    entries.push(texture_entry(8, wgpu::TextureViewDimension::Cube));
+    entries.push(sampler_entry(9));
+    entries.push(depth_entry(11));
+    entries.push(wgpu::BindGroupLayoutEntry {
+        binding: 12,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
+        count: None,
+    });
+    device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("yolu-3d-scene"),
+        entries: &entries,
+    })
+}
+
 /// カメラの値のビット（描き直しの鍵）。
 fn camera_bits(camera: &OrbitCamera) -> [u32; 8] {
     [
@@ -1008,33 +1045,7 @@ impl View3dRenderer {
             source: wgpu::ShaderSource::Wgsl(include_str!("shaders/tonemap.wgsl").into()),
         });
         let d2 = wgpu::TextureViewDimension::D2;
-        let mut entries = vec![wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }];
-        // 塗った絵のサンプラーは、lilToon の輪郭線の頂点（太さのマスク）も読む
-        let mut paint_sampler_entry = sampler_entry(7);
-        paint_sampler_entry.visibility = wgpu::ShaderStages::VERTEX_FRAGMENT;
-        entries.push(paint_sampler_entry);
-        entries.push(texture_entry(8, wgpu::TextureViewDimension::Cube));
-        entries.push(sampler_entry(9));
-        entries.push(depth_entry(11));
-        entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 12,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-            count: None,
-        });
-        let scene_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("yolu-3d-scene"),
-            entries: &entries,
-        });
+        let scene_layout = scene_layout(device);
         let (set_layout, map_layout) = set_layouts(device);
         let scene_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1387,6 +1398,8 @@ impl View3dRenderer {
             _dummy_bloom_texture: dummy_bloom_texture,
             bloom_sampler,
             mesh: None,
+            spare_meshes: Vec::new(),
+            shape_source: None,
             bind: None,
             last_key: None,
             inflight: None,
@@ -1617,6 +1630,35 @@ impl View3dRenderer {
         }
     }
 
+    /// このフレームにどれかのビューが見せる形の世代（それ以外の形の頂点は捨てる。GPU のメモリを返す）。
+    pub fn keep_meshes(&mut self, revisions: &[u32]) {
+        self.spare_meshes.retain(|m| revisions.contains(&m.model));
+    }
+
+    /// テクスチャの塗り広げとほかのセットの持ち方が読む形（`View3dState::frame_models` の 2 つ目。None なら描く形）。
+    pub fn set_shape_source(&mut self, model: Option<Arc<ViewModel>>) {
+        self.shape_source = model;
+    }
+
+    /// 仕上げ・ブルームを通さないあいだは、その描き先（HDR の 1 サンプル・ブルームの段）を持たない（メモリ）。
+    fn ensure_post_targets(&mut self, size: [u32; 2], hdr: bool, bloom: bool) {
+        if hdr {
+            self.ensure_hdr_target(size);
+        } else {
+            self.hdr_target = None;
+        }
+        if bloom {
+            self.ensure_bloom(size);
+        } else {
+            self.bloom_chain = None;
+        }
+    }
+
+    /// 塗り広げとほかのセットの持ち方が読む形（`set_shape_source` の形。無ければ描く形）。
+    fn shape_of(&self, model: &Arc<ViewModel>) -> Arc<ViewModel> {
+        self.shape_source.clone().unwrap_or_else(|| model.clone())
+    }
+
     /// これから描くビュー（描き先をビューごとに持つ。モデル・絵・環境・影は全部のビューで共通）。今のビューの描き先は置いておく。
     pub fn select_view(&mut self, view: u32) {
         if self.view == view {
@@ -1706,7 +1748,8 @@ impl View3dRenderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("yolu-3d"),
             });
-        self.sync_sets(doc, model, material, others, started, &mut encoder);
+        let shape = self.shape_of(model);
+        self.sync_sets(doc, &shape, material, others, started, &mut encoder);
         self.sync_looks(doc, others, &mut encoder);
         let sync_us = started.elapsed().as_micros() as u64;
         self.sync_environment(display);
@@ -1722,17 +1765,7 @@ impl View3dRenderer {
         self.set_samples(samples);
         let mut resized = self.ensure_target(size);
         resized |= self.ensure_scene(size, samples, hdr);
-        // 仕上げ・ブルームを通さないあいだは、その描き先（HDR の 1 サンプル・ブルームの段）を持たない（メモリ）
-        if hdr {
-            self.ensure_hdr_target(size);
-        } else {
-            self.hdr_target = None;
-        }
-        if bloom {
-            self.ensure_bloom(size);
-        } else {
-            self.bloom_chain = None;
-        }
+        self.ensure_post_targets(size, hdr, bloom);
         self.ensure_shadow(display);
         self.ensure_bind();
         self.ensure_set_binds();
@@ -2803,6 +2836,22 @@ impl View3dRenderer {
             self.stats.tangents_exact = exact;
             return;
         }
+        // ほかのビューの形として持っていれば入れ替える（ビューごとに見せる形が違うとき、描くたびに上げ直さない）
+        if let Some(i) = self
+            .spare_meshes
+            .iter()
+            .position(|m| m.model == key && m.tangent_stamp == stamp)
+        {
+            let found = self.spare_meshes.swap_remove(i);
+            if let Some(old) = self.mesh.replace(found) {
+                self.spare_meshes.push(old);
+            }
+            self.stats.mesh_revision = key;
+            self.stats.tangents_exact = exact;
+            return;
+        }
+        // 同じ形の古い接線のものは捨てる（作り直す）
+        self.spare_meshes.retain(|m| m.model != key);
         // サブメッシュをマテリアル順に（安定。角の番号 = 接線の番号は、モデルの並びで数える）
         let normals: Vec<Vec<yolu_core::glam::Vec3>> =
             model.meshes.iter().map(|m| m.vertex_normals()).collect();
@@ -2856,13 +2905,20 @@ impl View3dRenderer {
                 contents: &data,
                 usage: wgpu::BufferUsages::VERTEX,
             });
-        self.mesh = Some(GpuMesh {
+        let fresh = GpuMesh {
             buffer,
             vertices: (data.len() / (VERTEX_FLOATS * 4)) as u32,
             model: key,
             tangent_stamp: stamp,
             ranges,
-        });
+        };
+        if let Some(old) = self.mesh.replace(fresh).filter(|m| m.model != key) {
+            self.spare_meshes.push(old);
+        }
+        // 持つ形の数はビューの数まで（上限を超えたら古いものから捨てる）
+        while self.spare_meshes.len() >= super::views::MAX_VIEWS {
+            self.spare_meshes.remove(0);
+        }
         self.stats.mesh_revision = key;
         self.stats.mesh_uploads += 1;
         self.stats.tangents_exact = exact;

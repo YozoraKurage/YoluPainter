@@ -1338,11 +1338,11 @@ fn the_studio_environment_reflects_off_metal_and_rotates() {
     op(&mut h, Op::LightIntensity(0.0));
     let area = h.state().view3d_rect().unwrap();
     let c = area.center();
-    // 右上の隅のアイコンの列（白いアイコン）と、その下の軸の印は、映り込みの測定に入れない
+    // 右上の隅のアイコンの列（白いアイコン）と、その下の軸の印と、左下の隅のシェルフは、映り込みの測定に入れない
     let axes = view3d_axes_rect(&h).expect("軸の印");
     let scene = egui::Rect::from_min_max(
         egui::pos2(area.left(), area.top() + 44.0),
-        egui::pos2(axes.left(), area.bottom()),
+        egui::pos2(axes.left(), area.bottom() - 48.0),
     );
     let (before, peak) = highlight(&h.render().unwrap(), scene);
     assert!(peak > 120.0, "つるつるの金属は面光源を映す: {peak}");

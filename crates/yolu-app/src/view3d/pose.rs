@@ -97,8 +97,6 @@ pub struct PoseSession {
     pub warnings: Vec<String>,
     /// インスペクターが見せるオイラー角（数値で入れた値を、同じ回転の別の表し方へ読み替えて見せない）。
     pub euler_hint: Option<edit::EulerHint>,
-    /// ボーンの影響で隠す面の組み立て（手で足した項目と、入れているプリセット）。
-    pub hide: hide::HideState,
     /// 最後にポーズのプリセットを当てたとき（開いたときにファイルのポーズを戻したときも）、このモデルの骨へ対応させられず飛ばした項目。
     pub preset_notes: Vec<presets::Skipped>,
     /// ポーズを変えた回数（取り消し・やり直し・戻すも数える。欄で選ぶテイクとフレームを変えたのも数える。このセッションが始まってから）。
@@ -284,15 +282,14 @@ fn install(view3d: &mut View3dState, loaded: Loaded) {
         timings: PoseTimings::default(),
         warnings: loaded.warnings,
         euler_hint: None,
-        hide: hide::HideState::default(),
         preset_notes: Vec::new(),
         edits: 0,
         takes: takes::TakeState::new(loaded.takes),
     });
     view3d.pose.seen_edits = 0;
     view3d.pose.drag = None;
-    // 前のモデルの隠す面は引き継がない（三角形の番号が別のモデルのもの）
-    view3d.set_face_mask(None);
+    // 前のモデルの隠し方とビューのポーズは引き継がない（三角形とボーンの番号が別のモデルのもの）
+    super::hide::reset_views(view3d);
     view3d.set_model(model);
 }
 
@@ -679,7 +676,7 @@ pub fn poll_in(view3d: &mut View3dState, lang: Lang) -> (Option<(Kind, String)>,
         if latest != Some(s.model_revision) {
             view3d.pose.session = None;
             view3d.pose.drag = None;
-            view3d.set_face_mask(None);
+            super::hide::reset_views(view3d);
         }
     }
     (message, installed)
@@ -713,6 +710,23 @@ fn apply(view3d: &mut View3dState, pose: Pose) -> Result<(), ViewError> {
     };
     view3d.set_model(model);
     Ok(())
+}
+
+/// このポーズの形（スキニング → 三角形の写し → 休みの形の refit。セッションのポーズは変えない。ビューごとのポーズのプリセットの形）。
+pub fn posed_model(view3d: &mut View3dState, pose: &Pose) -> Result<ViewModel, ViewError> {
+    let revision = view3d.next_revision();
+    let s = view3d.pose.session.as_ref().ok_or(ViewError::NoPoseModel)?;
+    s.rig.check_pose(pose)?;
+    let meshes = s.rig.deform(pose)?;
+    let triangles = model_triangles(&meshes).ok_or(ViewError::BadMeshIndex)?;
+    let geometry = s.rest.reposition(triangles, revision, BvhUpdate::Refit)?;
+    Ok(ViewModel::with_geometry(
+        s.rig.name(),
+        meshes,
+        s.rig.materials().iter().cloned().map(Some).collect(),
+        Arc::new(geometry),
+    )
+    .with_rest(s.rest.clone()))
 }
 
 fn push_undo(s: &mut PoseSession, before: Pose) {

@@ -17,6 +17,7 @@ pub mod effect_props;
 pub mod effect_rows;
 pub mod fill_props;
 pub mod grunge_picker;
+pub mod hide_drawer;
 pub mod history;
 pub mod layer_props;
 pub mod layers;

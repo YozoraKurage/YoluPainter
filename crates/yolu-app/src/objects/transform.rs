@@ -825,7 +825,7 @@ fn target(app: &AppState, kind: Kind) -> Result<What, String> {
         return Err(refuse(lang.t("objects-the-3d-view-is-not")));
     }
     match app.mode {
-        EditorMode::Paint => Err(refuse(lang.t("objects-used-in-edit-or-pose"))),
+        EditorMode::Paint | EditorMode::Hide => Err(refuse(lang.t("objects-used-in-edit-or-pose"))),
         EditorMode::Edit => {
             let o = super::selected(app).ok_or_else(|| refuse(super::nothing_selected(lang)))?;
             if matches!(o, Object::Point { .. }) && kind != Kind::Grab {
@@ -1297,7 +1297,7 @@ pub fn reset(app: &mut AppState, kind: Kind) {
         return;
     }
     match app.mode {
-        EditorMode::Paint => {}
+        EditorMode::Paint | EditorMode::Hide => {}
         EditorMode::Pose => {
             let Some(bone) = app.view3d.pose.session.as_ref().and_then(|s| s.selected) else {
                 let text = lang.with_reason(what, lang.t("objects-no-bone-is-selected"));

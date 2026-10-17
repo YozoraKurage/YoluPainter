@@ -185,13 +185,14 @@ fn assert_close(a: [u8; 3], b: [u8; 3], tol: u8, what: &str) {
 /// 数える範囲（右上のアイコンの帯の下、表示域の内側）。
 fn region(h: &Harness<'_, YoluApp>) -> Rect {
     let rect = view_rect(h);
-    Rect::from_min_max(rect.min + vec2(20.0, 50.0), rect.max - vec2(20.0, 20.0))
+    // 下は左下の隅のシェルフ（目と ▽）にかからない所まで
+    Rect::from_min_max(rect.min + vec2(20.0, 50.0), rect.max - vec2(20.0, 48.0))
 }
 
-/// 板に覆われない背景の点（表示域の左下の隅の近く）。
+/// 板に覆われない背景の点（表示域の右下の隅の近く。左下の隅にはシェルフがある）。
 fn background_point(h: &Harness<'_, YoluApp>) -> egui::Pos2 {
     let rect = view_rect(h);
-    pos2(rect.left() + 30.0, rect.bottom() - 30.0)
+    pos2(rect.right() - 30.0, rect.bottom() - 30.0)
 }
 
 /// 範囲の中の、どの色にも tol 以内で当たらない画素の数（縁の中間の値）。軸の印 skip の中は数えない。

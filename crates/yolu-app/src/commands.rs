@@ -26,6 +26,7 @@ use crate::prefs::PrefsAction;
 use crate::selection::{SelAction, SelEdit, SelUiOp};
 use crate::state::key::Key;
 use crate::state::{Action, AppState, Tool};
+use crate::view3d::hide::HideAction;
 use crate::view3d::navigation::NavOp;
 
 /// 操作の種類。
@@ -286,6 +287,10 @@ const fn no_repeat(c: Command) -> Command {
 
 fn object(a: ObjectAction) -> Action {
     Action::Object(a)
+}
+
+fn hide(a: HideAction) -> Action {
+    Action::Hide(a)
 }
 
 fn pie(id: &str) -> Action {
@@ -653,6 +658,12 @@ pub static COMMANDS: &[Command] = &[
         |l| l.t("commands-pose"),
         || mode(EditorMode::Pose),
     ),
+    press_short(
+        "mode.hide",
+        |l| l.t("commands-hide-mode"),
+        |l| l.t("commands-hide"),
+        || mode(EditorMode::Hide),
+    ),
     Command {
         repeats: false,
         ..press_named(
@@ -760,6 +771,26 @@ pub static COMMANDS: &[Command] = &[
         "object.reveal",
         |l| l.t("commands-reveal-hidden-markers"),
         || object(ObjectAction::Reveal),
+    )),
+    no_repeat(press_named(
+        "hide.hide_selected",
+        |l| l.t("hide-hide-selected-faces"),
+        || hide(HideAction::HideSelected),
+    )),
+    no_repeat(press_named(
+        "hide.show_all",
+        |l| l.t("hide-show-all"),
+        || hide(HideAction::ShowAll),
+    )),
+    no_repeat(press_named(
+        "hide.select_all",
+        |l| l.t("hide-select-all"),
+        || hide(HideAction::SelectAll),
+    )),
+    no_repeat(press_named(
+        "hide.deselect",
+        |l| l.t("hide-deselect"),
+        || hide(HideAction::Deselect),
     )),
     no_repeat(press_named(
         "object.delete",
@@ -1057,7 +1088,7 @@ mod tests {
         // 既定のキーが無い Press: 液化（ツールの帯から）・モードを 1 つずつ選ぶ操作（ドロップダウン・パイ・メニューから）・視点のパイと
         // その中身（設定で割り当てる）・メッシュマップをベイクするウィンドウ（帯のボタンとセットの右クリックから。設定で割り当てる）・
         // 書き出しのウィンドウ（Ctrl+Shift+E は表示レイヤーの結合が使っているので、設定で割り当てる）
-        const NO_DEFAULT_KEY: [&str; 16] = [
+        const NO_DEFAULT_KEY: [&str; 17] = [
             "bake.open",
             "brush.erase_mode",
             "file.export",
@@ -1066,6 +1097,7 @@ mod tests {
             "mode.paint",
             "mode.edit",
             "mode.pose",
+            "mode.hide",
             "view3d.pie",
             "view3d.view_front",
             "view3d.view_back",
@@ -1124,11 +1156,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 90);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 95);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 128);
+        assert_eq!(COMMANDS.len(), 133);
     }
 }

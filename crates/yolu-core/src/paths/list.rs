@@ -124,6 +124,8 @@ pub fn render_list(
     options.check()?;
     let mut painter = Painter::new(options)?;
     painter.ensure_channels(&list_channels(entries))?;
+    // 除く面を除いた形は、3D のパスがあるときに 1 回だけ作る（一覧のパスは全部同じ形に描く）
+    let mut target: Option<super::surface::Target<'_>> = None;
     let (mut samples, mut dabs, mut gaps) = (0, 0, 0);
     for e in entries {
         if !e.visible {
@@ -136,7 +138,11 @@ pub fn render_list(
             LayerPath::Surface(p) => {
                 let g = geometry.ok_or(Error::Invalid(Reason::PathGeometryMissing))?;
                 super::surface::check_model(p, g)?;
-                let (s, d, k) = super::surface::draw_surface(&mut painter, p, g, options)?;
+                if target.is_none() {
+                    target = Some(super::surface::Target::new(g, options)?);
+                }
+                let t = target.as_ref().expect("作った");
+                let (s, d, k) = super::surface::draw_surface(&mut painter, p, t, options)?;
                 samples += s;
                 dabs += d;
                 gaps += k;

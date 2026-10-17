@@ -3,6 +3,7 @@
 mode-paint = ペイント
 mode-edit = 編集
 mode-pose = ポーズ
+mode-hide = ハイド
 mode-select = 選択
 mode-move = 移動
 mode-rotate = 回転

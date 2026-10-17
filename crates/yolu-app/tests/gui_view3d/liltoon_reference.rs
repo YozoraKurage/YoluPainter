@@ -2042,7 +2042,7 @@ fn unity_image(name: &str) -> image::RgbaImage {
         .to_rgba8()
 }
 
-/// 3D の絵の上に重ねた印（軸の印と、左上の表示の種類のドロップダウン）の、3D の表示域の絵（`render` の切り抜き）の中の矩形。
+/// 3D の画像の上に重ねた印（軸の印と、左上の表示の種類のドロップダウンと、左下のシェルフ）の、3D の表示域の画像（`render` の切り抜き）の中の矩形。
 fn overlays_in_view(h: &Harness<'_, YoluApp>) -> Vec<egui::Rect> {
     let Some(rect) = h.state().view3d_rect() else {
         return Vec::new();
@@ -2051,6 +2051,7 @@ fn overlays_in_view(h: &Harness<'_, YoluApp>) -> Vec<egui::Rect> {
     view3d_axes_rect(h)
         .into_iter()
         .chain(crate::view3d_shading_rect(h))
+        .chain(crate::view3d_shelf_rect(h))
         .map(|r| r.translate(-min.to_vec2()))
         .collect()
 }

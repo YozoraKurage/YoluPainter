@@ -629,7 +629,7 @@ fn hiding_a_bones_surfaces_removes_them_from_the_view_and_from_painting() {
     h.run();
     assert!(shown(&h) < total, "腕の面が消えた");
     assert_eq!(full(&h), total);
-    let entries = &session(&h).hide.entries;
+    let entries = &h.view3d().view.hide.bones.entries;
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].threshold, DEFAULT_THRESHOLD);
     assert!(entries[0].children);
@@ -785,24 +785,28 @@ fn children_and_the_threshold_are_taken_from_the_fields_for_the_next_entry() {
     h.get_by_role_and_label(Role::CheckBox, "子を含める")
         .click();
     h.run();
-    assert!(!session(&h).hide.children);
+    assert!(!h.view3d().view.hide.bones.children);
     h.get_by_label("選んだボーンの面を隠す").click();
     h.run();
     let alone = total - shown(&h);
-    assert!(!session(&h).hide.entries[0].children);
+    assert!(!h.view3d().view.hide.bones.entries[0].children);
     // 子を含める（同じボーンへ足し直すと入れ替わる）
     h.get_by_role_and_label(Role::CheckBox, "子を含める")
         .click();
     h.run();
     h.get_by_label("選んだボーンの面を隠す").click();
     h.run();
-    assert_eq!(session(&h).hide.entries.len(), 1, "同じボーンは 1 項目");
+    assert_eq!(
+        h.view3d().view.hide.bones.entries.len(),
+        1,
+        "同じボーンは 1 項目"
+    );
     assert!(total - shown(&h) > alone);
     // しきい値の欄（スライダー）の値は次の項目に使われる
     hide::set_next(h.app_mut(), 0.9, true);
     h.run();
     assert!(h.query_by_label("しきい値").is_some());
-    assert!((session(&h).hide.threshold - 0.9).abs() < 1e-6);
+    assert!((h.view3d().view.hide.bones.threshold - 0.9).abs() < 1e-6);
     // 全部が隠れる隠し方は断る（根・子を含める・しきい値 0）
     select(&mut h, "腰");
     hide::set_next(h.app_mut(), 0.0, true);
@@ -811,12 +815,12 @@ fn children_and_the_threshold_are_taken_from_the_fields_for_the_next_entry() {
     h.run();
     assert_eq!(shown(&h), before, "全部は隠さない");
     assert!(h.message().contains("すべての面"), "{}", h.message());
-    assert_eq!(session(&h).hide.entries.len(), 1);
+    assert_eq!(h.view3d().view.hide.bones.entries.len(), 1);
     // 見出しの「すべて表示する」
     h.get_by_label("すべて表示する").click();
     h.run();
     assert_eq!(shown(&h), total);
-    assert!(session(&h).hide.is_clear());
+    assert!(h.view3d().view.hide.bones.is_clear());
 }
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -903,7 +907,7 @@ fn presets_save_apply_combine_and_delete_from_the_tab_and_survive_a_restart() {
         .center();
     click(&mut h, second);
     assert!(total - shown(&h) > head_hidden, "全部の和");
-    assert_eq!(session(&h).hide.presets.len(), 2);
+    assert_eq!(h.view3d().view.hide.bones.presets.len(), 2);
     // 外す
     click(&mut h, second);
     assert_eq!(total - shown(&h), head_hidden);
@@ -976,7 +980,7 @@ fn a_preset_whose_bones_do_not_fit_is_skipped_with_a_reason_shown_as_a_notice() 
         .center();
     click(&mut h, at);
     assert!(shown(&h) < total, "合う項目は効く");
-    let skipped = &session(&h).hide.skipped;
+    let skipped = &h.view3d().view.hide.bones.skipped;
     assert_eq!(skipped.len(), 1);
     assert_eq!(skipped[0].path, "別の根/頭");
     assert!(skipped[0].describe(Lang::Ja).contains("ボーンがありません"));

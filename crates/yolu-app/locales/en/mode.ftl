@@ -3,6 +3,7 @@
 mode-paint = Paint
 mode-edit = Edit
 mode-pose = Pose
+mode-hide = Hide
 mode-select = Select
 mode-move = Move
 mode-rotate = Rotate

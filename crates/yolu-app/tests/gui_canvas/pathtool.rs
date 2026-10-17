@@ -1306,6 +1306,101 @@ fn headless_3d_hidden_materials_do_not_shift_the_triangle_numbers_of_the_path() 
     assert_eq!(surface_path(&s), p);
 }
 
+/// 肌と服の 2 枚の板（同じマテリアル。面は -z を向く）: 肌（z = 0、三角形 0・1）は UV の左半分、服（z = -0.05、面の向きの側 = カメラ側、
+/// 三角形 2・3）は UV の右半分。
+fn skin_and_cloth() -> ViewModel {
+    let v = |x: f32, y: f32, z: f32| Vec3::new(x, y, z);
+    let uv = |x: f32, y: f32| Vec2::new(x, y);
+    let mesh = ModelMesh {
+        name: "肌と服".into(),
+        positions: vec![
+            v(-1.0, -1.0, 0.0),
+            v(1.0, -1.0, 0.0),
+            v(-1.0, 1.0, 0.0),
+            v(1.0, 1.0, 0.0),
+            v(-1.0, -1.0, -0.05),
+            v(1.0, -1.0, -0.05),
+            v(-1.0, 1.0, -0.05),
+            v(1.0, 1.0, -0.05),
+        ],
+        normals: Vec::new(),
+        uvs: vec![
+            uv(0.0, 0.0),
+            uv(0.45, 0.0),
+            uv(0.0, 1.0),
+            uv(0.45, 1.0),
+            uv(0.55, 0.0),
+            uv(1.0, 0.0),
+            uv(0.55, 1.0),
+            uv(1.0, 1.0),
+        ],
+        submeshes: vec![Submesh {
+            material: 0,
+            indices: vec![0, 2, 1, 2, 3, 1, 4, 6, 5, 6, 7, 5],
+        }],
+    };
+    ViewModel::new("肌と服", vec![mesh], vec![Some("体".into())], 1).expect("モデル")
+}
+
+/// 今の文書の Color の画素で、UV の u が [u0, u1) の所の描いた画素の数。
+fn painted_in(s: &AppState, u0: f32, u1: f32) -> usize {
+    let (w, h) = (s.doc().width(), s.doc().height());
+    let (x0, x1) = ((u0 * w as f32) as u32, (u1 * w as f32) as u32);
+    (0..h)
+        .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+        .filter(|(x, y)| pixel(s, *x, *y)[3] > 0)
+        .count()
+}
+
+#[test]
+fn headless_a_redraw_leaves_out_the_faces_hidden_in_the_current_view() {
+    use yolu_app::view3d::pose::hide::FaceMask;
+    let (mut s, rect) = state3d(skin_and_cloth());
+    // 服を隠して、下の肌にパスを引く（点は見えている肌に置く）
+    let cloth = std::sync::Arc::new(FaceMask::new(vec![false, false, true, true]));
+    s.view3d_mut().set_face_mask(Some(cloth.clone()));
+    click3d(&mut s, rect, Vec3::new(-0.6, 0.0, 0.0));
+    click3d(&mut s, rect, Vec3::new(0.6, 0.1, 0.0));
+    let p = surface_path(&s);
+    assert_eq!(p.points.len(), 2, "{}", s.message());
+    assert!(p.points.iter().all(|pt| pt.triangle < 2), "点は肌の面");
+    assert!(painted_in(&s, 0.0, 0.5) > 0, "肌に描いた");
+    assert_eq!(painted_in(&s, 0.5, 1.0), 0, "隠した服には描かない");
+    // 服を見せて描き直すと、今までどおり手前の服に当たる（何も隠さない描き直しは、除く面を渡さない描き方と同じバイト）
+    s.view3d_mut().set_face_mask(None);
+    s.act(Action::Path(PathAction::Redraw));
+    assert!(painted_in(&s, 0.5, 1.0) > 0, "{}", s.message());
+    assert_eq!(painted_in(&s, 0.0, 0.5), 0);
+    let layer = s.selected_layer().unwrap();
+    let entries = s.doc().layer(layer).unwrap().paths().to_vec();
+    let rest = s.view3d().full_model().unwrap().rest_geometry().clone();
+    let options = core_paths::Options {
+        width: s.doc().width(),
+        height: s.doc().height(),
+        tile_size: s.doc().tile_size(),
+        source_budget_bytes: s.doc().source_budget_bytes(),
+        stroke_budget_bytes: s.doc().stroke_budget_bytes(),
+        ..core_paths::Options::default()
+    };
+    let plain = core_paths::render_list(&entries, Some(&rest), &options).unwrap();
+    let drawn = s
+        .doc()
+        .layer(layer)
+        .unwrap()
+        .surface(Channel::Color)
+        .unwrap();
+    assert_eq!(
+        drawn.to_canvas_bytes(),
+        plain.channels[0].1.to_canvas_bytes(),
+        "何も隠していなければ前と同じバイト"
+    );
+    // また服を隠して描き直すと、肌だけに描く
+    s.view3d_mut().set_face_mask(Some(cloth));
+    s.act(Action::Path(PathAction::Redraw));
+    assert!(painted_in(&s, 0.0, 0.5) > 0);
+    assert_eq!(painted_in(&s, 0.5, 1.0), 0);
+}
+
 #[test]
 fn headless_a_path_on_another_model_is_not_edited_and_follows_a_replaced_model() {
     let (mut s, rect) = state3d(two_material_plate());
@@ -1430,7 +1525,8 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
     let g = &old.geometry;
     let p = surface_path(&s);
     let far = rebind_far_model();
-    let report = pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, Lang::Ja);
+    let report =
+        pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, None, Lang::Ja);
     assert_eq!(report.len(), 1);
     assert_eq!(
         report[0].outcome,
@@ -1449,11 +1545,13 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
     s.doc_mut()
         .set_layer_locks(layer, LayerLocks::PIXELS)
         .unwrap();
-    let report = pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, Lang::En);
+    let report =
+        pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, None, Lang::En);
     assert_eq!(report[0].outcome, pathtool::rebind::Outcome::Rasterized);
     s.act(Action::Undo);
     s.doc_mut().set_layer_locks(layer, LayerLocks::ALL).unwrap();
-    let report = pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, Lang::En);
+    let report =
+        pathtool::rebind::rebind_document(s.doc_mut(), g, &far.geometry, 0, None, Lang::En);
     assert_eq!(report[0].outcome, pathtool::rebind::Outcome::KeptLocked);
     assert_eq!(report[0].reason.as_deref(), Some("The layer is locked"));
     assert_eq!(
@@ -1462,7 +1560,7 @@ fn headless_a_path_that_cannot_follow_the_new_model_becomes_pixels_and_a_locked_
         "そのまま残る"
     );
     // 指紋が同じ（ポーズだけ）なら何もしない
-    assert!(pathtool::rebind::rebind_document(s.doc_mut(), g, g, 0, Lang::Ja).is_empty());
+    assert!(pathtool::rebind::rebind_document(s.doc_mut(), g, g, 0, None, Lang::Ja).is_empty());
 }
 
 /// 板から遠く離れた別のメッシュ（付け直せない）。

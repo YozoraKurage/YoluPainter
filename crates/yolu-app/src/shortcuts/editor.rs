@@ -40,16 +40,18 @@ pub enum Section {
     Paint,
     Edit,
     Pose,
+    Hide,
     During,
     Pies,
 }
 
 impl Section {
-    pub const ALL: [Section; 6] = [
+    pub const ALL: [Section; 7] = [
         Section::Everywhere,
         Section::Paint,
         Section::Edit,
         Section::Pose,
+        Section::Hide,
         Section::During,
         Section::Pies,
     ];
@@ -60,6 +62,7 @@ impl Section {
             Section::Paint => lang.t("shortcuts-paint"),
             Section::Edit => lang.t("shortcuts-edit"),
             Section::Pose => lang.t("shortcuts-pose"),
+            Section::Hide => lang.t("shortcuts-hide"),
             Section::During => lang.t("shortcuts-during-an-operation"),
             Section::Pies => lang.t("shortcuts-pie-menus"),
         }
@@ -72,6 +75,7 @@ impl Section {
             Scope::Paint => Section::Paint,
             Scope::Edit => Section::Edit,
             Scope::Pose => Section::Pose,
+            Scope::Hide => Section::Hide,
             Scope::During => Section::During,
         }
     }

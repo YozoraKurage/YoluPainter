@@ -2190,6 +2190,9 @@ impl YoluApp {
         if let Some(r) = &mut self.renderer3d {
             let (maps, users) = crate::view3d::views::frame_shows(&self.state);
             r.begin_frame(&maps, &users);
+            let (models, _) = self.state.view3d.frame_models();
+            let revisions: Vec<u32> = models.iter().map(|m| m.revision()).collect();
+            r.keep_meshes(&revisions);
         }
     }
 
@@ -2341,15 +2344,16 @@ impl YoluApp {
         }
     }
 
-    /// メニューの帯のほかの、オプションバー・状態の帯・ツールの列（UI を隠している間（Tab）は状態の帯だけを出す）。
-    fn show_chrome(&mut self, ui: &mut Ui, hide_ui: bool) {
+    /// 上のオプションバー・下の状態の帯・左のツールの帯（UI を隠している間（Tab）は状態の帯だけを出す）。描いている間かは、ここで 1 回だけ求める。
+    fn show_bars(&mut self, ui: &mut Ui, hide_ui: bool) {
+        let free = !self.state.is_stroking();
         if !hide_ui {
             egui::Panel::top("yolu.options")
                 .exact_size(t::OPTIONS_BAR_HEIGHT)
                 .frame(Frame::NONE)
                 .show(ui, |ui| {
                     let r = ui.max_rect();
-                    w::enabled_scope(ui, "yolu.options.scope", !self.state.is_stroking(), |ui| {
+                    w::enabled_scope(ui, "yolu.options.scope", free, |ui| {
                         shell::options_bar(ui, &mut self.state, r)
                     });
                 });
@@ -2370,7 +2374,7 @@ impl YoluApp {
             .resizable(false)
             .show(ui, |ui| {
                 let r = ui.max_rect();
-                shell::tool_strip(ui, &mut self.state, r);
+                shell::tool_strip(ui, &mut self.state, r, free);
             });
     }
 
@@ -2593,7 +2597,7 @@ impl YoluApp {
             None => {}
         }
         let hide_ui = self.state.ui.hide_ui;
-        self.show_chrome(ui, hide_ui);
+        self.show_bars(ui, hide_ui);
         // 3D ビューの並び（ドックのタブ）とビューの状態・描き先を突き合わせ、このフレームに見せるメッシュマップとユーザーチャンネルを描き手へ
         self.sync_view3d_tabs();
         self.view3d.begin_frame();

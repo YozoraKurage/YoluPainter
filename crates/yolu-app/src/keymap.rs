@@ -69,6 +69,8 @@ pub enum Scope {
     Edit,
     /// ポーズのモードだけ。
     Pose,
+    /// ハイドのモードだけ。
+    Hide,
     /// 途中の操作（3D で右を押している間の視点の移動など）の間だけ。その操作が読み（`take_fly_keys`）、`dispatch` は当てない。
     During,
 }
@@ -87,20 +89,22 @@ impl Scope {
             Scope::Paint => mode == EditorMode::Paint,
             Scope::Edit => mode == EditorMode::Edit,
             Scope::Pose => mode == EditorMode::Pose,
+            Scope::Hide => mode == EditorMode::Hide,
             Scope::During => false,
         }
     }
 
-    /// モードの段の範囲か（ペイント・編集・ポーズ）。
+    /// モードの段の範囲か（ペイント・編集・ポーズ・ハイド）。
     pub fn is_mode(self) -> bool {
-        matches!(self, Scope::Paint | Scope::Edit | Scope::Pose)
+        matches!(self, Scope::Paint | Scope::Edit | Scope::Pose | Scope::Hide)
     }
 
-    pub const ALL: [Scope; 5] = [
+    pub const ALL: [Scope; 6] = [
         Scope::Everywhere,
         Scope::Paint,
         Scope::Edit,
         Scope::Pose,
+        Scope::Hide,
         Scope::During,
     ];
 
@@ -111,6 +115,7 @@ impl Scope {
             Scope::Paint => "paint",
             Scope::Edit => "edit",
             Scope::Pose => "pose",
+            Scope::Hide => "hide",
             Scope::During => "during",
         }
     }
@@ -353,6 +358,22 @@ const fn fly(command: &'static str, key: Key, direction: [f32; 3]) -> FlyKey {
     }
 }
 
+/// 1 つのモードだけの段の行: 編集のモード（H・Alt+H で選んだ物の印を隠す・全部出す、Delete で選んだ物を削除、Q で選んだ形の取っ手を隠す・出す）と、
+/// ハイドのモード（H・Alt+H で選んだ面を隠す・すべて表示、Ctrl+A・Ctrl+D で UV アイランドをすべて選ぶ・選びを外す）。
+fn single_mode_bindings() -> Vec<KeyBinding> {
+    let (cmd, alt, none) = (Modifiers::COMMAND, Modifiers::ALT, Modifiers::NONE);
+    vec![
+        kb(none, Key::H, "object.hide").scope(Scope::Edit),
+        kb(alt, Key::H, "object.reveal").scope(Scope::Edit),
+        kb(none, Key::Delete, "object.delete").scope(Scope::Edit),
+        kb(none, Key::Q, "fill.toggle_handles").scope(Scope::Edit),
+        kb(none, Key::H, "hide.hide_selected").scope(Scope::Hide),
+        kb(alt, Key::H, "hide.show_all").scope(Scope::Hide),
+        kb(cmd, Key::A, "hide.select_all").scope(Scope::Hide),
+        kb(cmd, Key::D, "hide.deselect").scope(Scope::Hide),
+    ]
+}
+
 /// 一覧に出す順の、キーボードの割り当て（クリップボードのキー・押している間のキー・ビューが読むキーも含む）。
 /// 1 つの操作に行が 2 つ以上あるとき、最初の行が「主の行」（メニューのキーの文字になる）。
 pub fn bindings() -> Vec<KeyBinding> {
@@ -489,13 +510,7 @@ pub fn bindings() -> Vec<KeyBinding> {
             kb(shift, Key::Tab, "object.snap_toggle").scope(scope),
         ]);
     }
-    // 編集のモードだけ: H・Alt+H（選んだ物の印を隠す・全部出す）・Delete（選んだ物を削除）・Q（選んだ形の取っ手を隠す・出す）
-    v.extend([
-        kb(none, Key::H, "object.hide").scope(Scope::Edit),
-        kb(alt, Key::H, "object.reveal").scope(Scope::Edit),
-        kb(none, Key::Delete, "object.delete").scope(Scope::Edit),
-        kb(none, Key::Q, "fill.toggle_handles").scope(Scope::Edit),
-    ]);
+    v.extend(single_mode_bindings());
     // 移動・変形のツールの矢印キー（移動・変形のツールを選んでいるとき。ビューが読む）
     for n in NUDGES {
         let modifiers = if n.shift { shift } else { none };
@@ -2071,6 +2086,11 @@ mod tests {
                         | "layer.merge_visible"
                 );
             let during = b.command.starts_with("view3d.fly_");
+            // ハイドの段の行（H・Alt+H・Ctrl+A・Ctrl+D）
+            if b.command.starts_with("hide.") {
+                assert_eq!(b.scope, Scope::Hide, "{}", b.command);
+                continue;
+            }
             // 編集・ポーズの段の行（同じ操作をそれぞれの段に置く）。Q は、ペイントと編集の両方の段
             if b.command.starts_with("object.")
                 || (b.command == "fill.toggle_handles" && b.scope == Scope::Edit)
@@ -2153,7 +2173,11 @@ mod tests {
                 key: Key::Tab
             }
         );
-        // 範囲はモードで決まる。途中の操作の行は `dispatch` では効かない（その操作が読む）
+    }
+
+    /// 範囲はモードで決まる。途中の操作の行は `dispatch` では効かない（その操作が読む）。
+    #[test]
+    fn scopes_hold_by_the_mode() {
         use crate::mode::EditorMode;
         let mut app = AppState::new(32, 32);
         for mode in EditorMode::ALL {
@@ -2162,6 +2186,7 @@ mod tests {
             assert_eq!(Scope::Paint.holds(&app), mode == EditorMode::Paint);
             assert_eq!(Scope::Edit.holds(&app), mode == EditorMode::Edit);
             assert_eq!(Scope::Pose.holds(&app), mode == EditorMode::Pose);
+            assert_eq!(Scope::Hide.holds(&app), mode == EditorMode::Hide);
             assert!(!Scope::During.holds(&app));
         }
     }
@@ -2173,7 +2198,10 @@ mod tests {
                 Layer::During
             } else if b.when != When::Always {
                 Layer::Context
-            } else if matches!(b.scope, Scope::Paint | Scope::Edit | Scope::Pose) {
+            } else if matches!(
+                b.scope,
+                Scope::Paint | Scope::Edit | Scope::Pose | Scope::Hide
+            ) {
                 Layer::Mode
             } else {
                 Layer::Everywhere
@@ -2360,6 +2388,10 @@ mod tests {
                 "object.snap_toggle",
                 "object.hide",
                 "object.reveal",
+                "hide.hide_selected",
+                "hide.show_all",
+                "hide.select_all",
+                "hide.deselect",
                 "object.delete",
                 "view3d.ortho",
             ]

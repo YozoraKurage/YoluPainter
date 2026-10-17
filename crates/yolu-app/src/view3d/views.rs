@@ -6,8 +6,8 @@
 //! 途中で別のビューへ出ても替えないので、ストロークは始めたビューのカメラで最後まで描く。今のビューでないビューは、描くときだけ一時的に
 //! 今のビューの場所へ入れ替えて描き（`with_view`）、入力は渡さない。
 //!
-//! ビューごとに持たせたい物（ポーズのプリセット・面を隠すプリセット・ビューごとのモデルの形など）は `ViewState` へ足す。今は全部の
-//! ビューが同じモデル（`View3dState::model`）を見る。
+//! ビューごとに持たせたい物は `ViewState` へ足す。見せる形（隠した面・ポーズのプリセット）はビューごと（`ViewState::shape`。今のビューの
+//! ものは `View3dState::model`）で、同じ元・同じ隠し方のビューは 1 つの形を共有する。
 
 use yolu_core::mesh_maps::MeshMapKind;
 
@@ -97,6 +97,10 @@ impl View3dState {
             display,
             ..ViewState::default()
         });
+        // 足したビューは何も隠さず、ポーズのプリセットも無い（同じ形のビューがあれば、その形を共有する）
+        if self.view.input.stroke.is_none() && !self.has_pending_model() {
+            self.rebuild_shown();
+        }
         true
     }
 
@@ -120,7 +124,10 @@ impl View3dState {
         let Some(i) = self.parked.iter().position(|v| v.id == id) else {
             return false;
         };
+        // 今のビューの見せる形をビューの欄へ戻し、新しい今のビューの見せる形を出す
+        self.view.shape.model = self.model.take();
         std::mem::swap(&mut self.view, &mut self.parked[i]);
+        self.model = self.view.shape.model.take();
         true
     }
 

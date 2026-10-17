@@ -14,7 +14,7 @@ use glam::{DVec2, Vec2};
 
 use super::render::{canvas_curve, Painter};
 use super::*;
-use crate::geometry::{region, uv_barycentric, SurfaceGeometry, SurfaceRegionKind};
+use crate::geometry::{region, uv_barycentric, SurfaceRegionKind};
 
 /// 副標本の 1 辺の数。
 const SUB: i64 = 4;
@@ -182,9 +182,10 @@ pub(super) fn draw_canvas(
 pub(super) fn draw_surface(
     painter: &mut Painter<'_, '_>,
     path: &SurfacePath,
-    g: &SurfaceGeometry,
+    target: &super::surface::Target<'_>,
     o: &Options<'_>,
 ) -> Result<(usize, usize, usize), Error> {
+    let g = target.full;
     painter.begin(
         paints(path.channel, path.brush, &path.material)?,
         &fill_brush(BrushSettings {
@@ -214,11 +215,11 @@ pub(super) fn draw_surface(
     let mut gaps = 0;
     for q in &curve {
         o.check()?;
-        let Some(hit) = super::surface::project(g, q) else {
+        let Some(hit) = super::surface::project(target, q) else {
             gaps += 1;
             continue;
         };
-        if island.binary_search(&hit.triangle).is_err() {
+        if island.binary_search(&target.to_full(hit.triangle)).is_err() {
             return Err(Error::FillIslands);
         }
         memory.add(POINT_BYTES)?;
@@ -227,7 +228,8 @@ pub(super) fn draw_surface(
     // アイランドの三角形を UV の升（16 画素）に分けて、副標本がアイランドの UV に入るかを引く
     const CELL: f64 = 16.0;
     let mut grid: HashMap<(i64, i64), Vec<u32>> = HashMap::new();
-    for &t in &island {
+    // 除いた面の UV には塗らない
+    for &t in island.iter().filter(|t| target.shown_of(**t).is_some()) {
         let tri = &g.triangles()[t as usize];
         let uv = [tri.uv_a, tri.uv_b, tri.uv_c];
         let (mut lo, mut hi) = (uv[0], uv[0]);

@@ -80,7 +80,7 @@ pub fn target(app: &AppState) -> Option<Target> {
     // 編集のモードは、点の印で選んだ物（G/R/S の途中・Q で隠したときは出さない）。ポーズのモードは出さない
     match app.mode {
         crate::mode::EditorMode::Edit => return crate::objects::gizmo_target(app),
-        crate::mode::EditorMode::Pose => return None,
+        crate::mode::EditorMode::Pose | crate::mode::EditorMode::Hide => return None,
         crate::mode::EditorMode::Paint => {}
     }
     app.view3d.model.as_ref()?;

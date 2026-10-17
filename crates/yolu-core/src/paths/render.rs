@@ -16,6 +16,9 @@ pub struct Options<'a> {
     pub cancel: Option<&'a AtomicBool>,
     /// リボンの画像（アセットの画像。画素は共有）。リボンのパスが無ければ空でよい。
     pub images: std::collections::HashMap<crate::ImageId, crate::effects::ImageInput>,
+    /// 3D のパスで描かない面（描く形の三角形の番号ごと。true の面にはレイを当てず、ダブも広げない）。None か true が 1 つも無ければ、
+    /// 全部の面に描く（除く面を持たない描き方と同じバイト）。数が描く形の三角形の数と違えば `Error::ModelMismatch`。
+    pub hidden: Option<&'a [bool]>,
 }
 impl Default for Options<'_> {
     fn default() -> Self {
@@ -28,6 +31,7 @@ impl Default for Options<'_> {
             surface_budget: Default::default(),
             cancel: None,
             images: Default::default(),
+            hidden: None,
         }
     }
 }

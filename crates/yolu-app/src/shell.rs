@@ -294,6 +294,8 @@ fn help_entries(app: &AppState) -> Vec<Entry<Action>> {
 
 /// ポップアップの中身（メニューバー・合成モード・レイヤーの右クリック）。
 pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
+    // 描いている間の判断は項目ごとに求めず、ここで 1 回だけ
+    let free = !app.is_stroking();
     match kind {
         PopupKind::MenuBar(i) => menu_entries(app, i),
         PopupKind::BlendMode(id) => {
@@ -343,7 +345,7 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
             let l = app.lang;
             vec![
                 Entry::item(l.t("shell-rename"), Action::StartRenameSet(uid))
-                    .enabled(!app.is_stroking() && writable),
+                    .enabled(free && writable),
                 Entry::item(
                     if visible {
                         l.t("shell-hide")
@@ -364,13 +366,15 @@ pub fn popup_entries(app: &AppState, kind: PopupKind) -> Vec<Entry<Action>> {
                     l.t("shell-remove"),
                     Action::Project(crate::newproject::NpAction::RemoveSets(vec![uid])),
                 )
-                .enabled(!app.is_stroking() && app.session.sets.len() > 1),
+                .enabled(free && app.session.sets.len() > 1),
             ]
         }
         PopupKind::LayerContext(id) => layer_context(app, id),
         PopupKind::RulerLayer(id) => crate::rulers::layer_icon::menu_entries(app, id),
         PopupKind::Shelf => crate::panels::assets::menu_entries(app),
         PopupKind::View3dShading => crate::view3d::display::entries(app),
+        PopupKind::HidePreset(id) => crate::view3d::hide::shelf::hide_entries(app, id, free),
+        PopupKind::PosePreset(id) => crate::view3d::hide::shelf::pose_entries(app, id, free),
         PopupKind::LiveLink => link_entries(app),
         PopupKind::BakeIsland {
             set, island, map, ..
@@ -759,6 +763,11 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     let mut x = crate::mode::dropdown(ui, app, r, r.left() + 8.0) + 8.0;
     w::vline(&p, x - 4.0, r.top() + 6.0, r.bottom() - 6.0, t::SEPARATOR);
     x += 4.0;
+    if app.mode == crate::mode::EditorMode::Hide {
+        // ハイド: 今の選ぶツールのアイコン
+        crate::view3d::hide::strip::options(ui, app, r, x);
+        return;
+    }
     if !app.mode.paints() {
         // 編集・ポーズ: 今のツールのアイコン（ツールの設定は無い）
         w::icon(
@@ -787,8 +796,8 @@ pub fn options_bar(ui: &mut Ui, app: &mut AppState, r: Rect) {
     (app.tool.def().options)(ui, app, r, x);
 }
 
-/// ツールの帯（左）。
-pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
+/// ツールの帯（左）。`free` は描いていない間（ハイドのモードの帯の、押せるかを決める）。
+pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect, free: bool) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::PANEL_BG);
     w::vline(&p, r.right() - 1.0, r.top(), r.bottom(), t::BORDER);
@@ -798,8 +807,12 @@ pub fn tool_strip(ui: &mut Ui, app: &mut AppState, r: Rect) {
         crate::toolset::ui::strip(ui, app, r, bottom);
         crate::panels::color_swatch::draw(ui, app, crate::panels::color_swatch::area(r));
     } else {
-        // 編集・ポーズ: 選択・移動・回転・拡縮。色の 2 枚は暗くして押せない
-        crate::mode::edit_strip(ui, app, r, bottom);
+        // 編集・ポーズ: 選択・移動・回転・拡縮。ハイド: UV アイランドの選び・隠す。色の 2 枚は暗くして押せない
+        if app.mode == crate::mode::EditorMode::Hide {
+            crate::view3d::hide::strip::show(ui, app, r, bottom, free);
+        } else {
+            crate::mode::edit_strip(ui, app, r, bottom);
+        }
         let area = crate::panels::color_swatch::area(r);
         w::enabled_scope(ui, "mode.swatch", false, |ui| {
             crate::panels::color_swatch::draw(ui, app, area)

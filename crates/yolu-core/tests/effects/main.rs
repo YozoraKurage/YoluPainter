@@ -23,6 +23,7 @@ mod image_stage;
 mod island_variation;
 mod outputs;
 mod path_fill_layers;
+mod path_hidden;
 mod path_kinds;
 mod path_lists;
 mod path_tangents;

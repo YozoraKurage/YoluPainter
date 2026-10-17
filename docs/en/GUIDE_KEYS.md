@@ -221,6 +221,15 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Reset Scale of Selected | `Alt+S` |
 | Toggle Snapping | `Shift+Tab` |
 
+### Hide
+
+| Action | Key |
+|---|---|
+| Hide Selected Faces | `H` |
+| Show All | `Alt+H` |
+| Select All | `Ctrl+A` |
+| Deselect | `Ctrl+D` |
+
 ### During an Operation
 
 | Action | Key |

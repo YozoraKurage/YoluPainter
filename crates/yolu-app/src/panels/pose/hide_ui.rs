@@ -1,6 +1,7 @@
 //! 「面を隠す」の節: 次に足す項目の欄（子を含める・しきい値）と「選んだボーンの面を隠す」ボタン、隠している項目の一覧（外せる）、
 //! 隠し方のプリセット（今の隠し方を名前を付けて保存・入れる/外す・消す。入れたプリセットは全部の和）。
-//! 中身の計算と保存は `view3d::pose::hide`。ここは並べて、押されたことを渡すだけ。
+//! 中身の計算と保存は `view3d::pose::hide`。ここは並べて、押されたことを渡すだけ。見せるのは今の 3D ビューの隠し方（ハイドのモードの
+//! 引き出しと同じ状態。片方で変えればもう片方に出る）。
 
 use egui::{pos2, vec2, Rect, Ui};
 
@@ -18,7 +19,7 @@ pub(super) fn show(ui: &mut Ui, app: &mut AppState, rows: &mut Rows) {
     let Some(s) = app.view3d.pose.session.as_ref() else {
         return;
     };
-    let state = s.hide.clone();
+    let state = app.view3d.view.hide.bones.clone();
     let selected = s.selected;
     let entry_names: Vec<String> = state
         .entries

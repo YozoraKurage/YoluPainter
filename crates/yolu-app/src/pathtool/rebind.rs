@@ -36,13 +36,14 @@ pub struct PathReport {
 }
 
 /// 文書の中の、`old` に結び付いた 3D のパスを `new` へ付け直す（レイヤーごとに 1 回の Undo）。`material` は新しいモデルでの、この文書の
-/// テクスチャセットのマテリアルの組（モデルに無ければ負）。指紋が同じなら何もしない。描き直せないレイヤー（画素・透明度のロックを含む）は
+/// テクスチャセットのマテリアルの組（モデルに無ければ負）。`hidden` は描き直すときに描かない `new` の面（今のビューで隠している面）。指紋が同じなら何もしない。描き直せないレイヤー（画素・透明度のロックを含む）は
 /// 画素にし、すべてのロックのレイヤーだけ残す。
 pub fn rebind_document(
     doc: &mut Document,
     old: &SurfaceGeometry,
     new: &SurfaceGeometry,
     material: i32,
+    hidden: Option<&[bool]>,
     lang: Lang,
 ) -> Vec<PathReport> {
     let (old_print, new_print) = (fingerprint(old), fingerprint(new));
@@ -68,7 +69,7 @@ pub fn rebind_document(
             && !locks.contains(LayerLocks::TRANSPARENCY);
         let can_rasterize = !locks.contains(LayerLocks::ALL);
         let redraw = if can_redraw {
-            redraw_one(doc, layer, &path, old, new, material, lang)
+            redraw_one(doc, layer, &path, old, new, material, hidden, lang)
         } else {
             Err(lang.t("pathtool-the-layer-is-locked").into())
         };
@@ -102,6 +103,7 @@ pub fn rebind_document(
 
 /// レイヤーのパスの一覧を新しいモデルへ置き直して描き直す（1 本でも置けなければ、どれも置き直さない）。描き直したら、面に投影できなかった
 /// 標本の知らせ（あれば）。できなければ理由。
+#[allow(clippy::too_many_arguments)]
 fn redraw_one(
     doc: &mut Document,
     layer: LayerId,
@@ -109,6 +111,7 @@ fn redraw_one(
     old: &SurfaceGeometry,
     new: &SurfaceGeometry,
     material: i32,
+    hidden: Option<&[bool]>,
     lang: Lang,
 ) -> Result<Option<String>, String> {
     let mut rebound = Vec::with_capacity(entries.len());
@@ -130,6 +133,7 @@ fn redraw_one(
         source_budget_bytes: doc.source_budget_bytes(),
         stroke_budget_bytes: doc.stroke_budget_bytes(),
         images: doc.effect_inputs().images().clone(),
+        hidden,
         ..Options::default()
     };
     let rendered = render_list(&rebound, Some(new), &options)

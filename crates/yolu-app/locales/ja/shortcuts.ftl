@@ -6,6 +6,7 @@ shortcuts-everywhere-view = どこでも・視点
 shortcuts-paint = ペイント
 shortcuts-edit = 編集
 shortcuts-pose = ポーズ
+shortcuts-hide = ハイド
 shortcuts-during-an-operation = 途中の操作
 shortcuts-pie-menus = パイメニュー
 shortcuts-command = 操作

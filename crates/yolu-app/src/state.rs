@@ -461,6 +461,9 @@ pub enum PopupKind {
     Shelf,
     /// 3D ビューの表示のドロップダウン（マテリアル・中立・チャンネルだけ）。
     View3dShading,
+    /// 3D ビューの左下のシェルフの、ハイドのプリセットとポーズのプリセットのドロップダウン（そのビュー）。
+    HidePreset(crate::view3d::ViewId),
+    PosePreset(crate::view3d::ViewId),
     /// メニューバーの右端の Live Link の入口（状態・Unity・モデルの名前と、待つ／切る）。
     LiveLink,
     /// 重なった UV のベイクのアイランドのメニュー（セット・アイランドの代表の三角形・ベイクのウィンドウの見取り図からか・3D ビューの右クリックからか）。
@@ -626,6 +629,8 @@ pub enum Action {
     View3dNav(crate::view3d::navigation::NavOp),
     /// 編集・ポーズのモードの物（選ぶ・G/R/S・戻す・隠す・消す）。
     Object(crate::objects::ObjectAction),
+    /// ハイドのモード（UV アイランドを選ぶ・隠す・すべて表示・ビューごとの隠し方とポーズ。画面だけ: 保存も取り消しもしない）。
+    Hide(crate::view3d::hide::HideAction),
     /// ツールのキーの動き方を替える（ショートカットの設定。操作の ID と動き方。キーの設定を保存する）。
     ToolKeyMode(&'static str, crate::toolkeys::ToolKeyMode),
     /// ヒストリーの行へ移る（文書の履歴の位置。保持された一番古い段の前が 0）。取り消し・やり直しを続けて当てる（ポーズの取り消しと
@@ -732,6 +737,7 @@ impl Action {
             Self::Pie(..) => "Pie",
             Self::View3dNav(..) => "View3dNav",
             Self::Object(..) => "Object",
+            Self::Hide(..) => "Hide",
             Self::ToolKeyMode(..) => "ToolKeyMode",
             Self::HistoryGoTo(..) => "HistoryGoTo",
             Self::Keys(..) => "Keys",
@@ -1365,20 +1371,29 @@ impl AppState {
         self.message_end(prior);
     }
 
+    /// 読むだけのセットで文書を変える操作を断った（断りを知らせた）か。ポーズのモードの取り消し・やり直しは文書を変えない
+    /// （ポーズの並びを戻す）ので、読むだけのセットでも断らない。描いている最中は、その操作の側で断る。
+    fn refused_as_read_only(&mut self, action: &Action, stroking: bool) -> bool {
+        let pose_undo =
+            matches!(action, Action::Undo | Action::Redo) && crate::view3d::pose::owns_undo(self);
+        if !action.edits_document() || stroking || pose_undo {
+            return false;
+        }
+        let Some(reason) = self.read_only_reason() else {
+            return false;
+        };
+        let text = crate::lang::refusals::read_only_set(self.lang, reason);
+        self.refuse(Source::Edit, text);
+        true
+    }
+
     fn apply_action(&mut self, action: Action) {
         crate::crash::action(action.kind_name());
         let stroking = self.is_stroking();
         let refuse =
             |s: &mut AppState| s.refuse(Source::Edit, crate::lang::refusals::during_stroke(s.lang));
-        // ポーズのモードの取り消し・やり直しは文書を変えない（ポーズの並びを戻す）ので、読むだけのセットでも断らない
-        let pose_undo =
-            matches!(action, Action::Undo | Action::Redo) && crate::view3d::pose::owns_undo(self);
-        if action.edits_document() && !stroking && !pose_undo {
-            if let Some(reason) = self.read_only_reason() {
-                let text = crate::lang::refusals::read_only_set(self.lang, reason);
-                self.refuse(Source::Edit, text);
-                return;
-            }
+        if self.refused_as_read_only(&action, stroking) {
+            return;
         }
         match action {
             Action::OpenLogFolder => {
@@ -1723,6 +1738,7 @@ impl AppState {
             Action::Pie(op) => self.pie_apply(op),
             Action::View3dNav(op) => crate::view3d::navigation::apply(self, op),
             Action::Object(op) => self.objects_apply(op),
+            Action::Hide(op) => crate::view3d::hide::apply(self, op),
             Action::ToolKeyMode(command, mode) => self.keys_tool_mode(command, mode),
             Action::HistoryGoTo(target) => self.history_go_to(target, stroking),
             Action::Keys(edit) => self.keys_apply(edit),

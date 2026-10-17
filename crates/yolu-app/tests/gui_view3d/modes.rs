@@ -343,10 +343,11 @@ fn holding_ctrl_tab_and_releasing_toward_an_item_runs_it_and_a_long_hold_in_the_
 fn digits_choose_and_escape_a_right_click_or_a_click_in_the_middle_close_the_pie() {
     let (mut h, rect) = figure_view();
     let at = rect.center();
-    // 数字は上から時計回り: 1 = 上（編集）、3 = 右（ポーズ）、7 = 左（ペイント）
+    // 数字は上から時計回り: 1 = 上（編集）、3 = 右（ポーズ）、5 = 下（ハイド）、7 = 左（ペイント）
     for (digit, wanted) in [
         (Key::Num1, EditorMode::Edit),
         (Key::Num3, EditorMode::Pose),
+        (Key::Num5, EditorMode::Hide),
         (Key::Num7, EditorMode::Paint),
     ] {
         tap_mode_pie(&mut h, at);
@@ -357,7 +358,7 @@ fn digits_choose_and_escape_a_right_click_or_a_click_in_the_middle_close_the_pie
     }
     // 空いている向きの数字は何もしない（開いたまま）
     tap_mode_pie(&mut h, at);
-    key(&h, Key::Num5, Modifiers::NONE);
+    key(&h, Key::Num2, Modifiers::NONE);
     h.run();
     assert_eq!(pie_open(&h).as_deref(), Some("mode"));
     // Esc

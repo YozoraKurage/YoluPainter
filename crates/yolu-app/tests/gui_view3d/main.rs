@@ -36,7 +36,17 @@ pub fn view3d_shading_rect(h: &Harness<'_, YoluApp>) -> Option<Rect> {
         .map(|r| r.expand(2.0))
 }
 
+/// 3D ビューの左下のシェルフ（目と ▽。開いていれば上の欄も）の矩形（描いていなければ None）。画像の画素を比べるテストは、この中を使わない。
+pub fn view3d_shelf_rect(h: &Harness<'_, YoluApp>) -> Option<Rect> {
+    use common::drive::{Drive, DriveApp};
+    let view = h.view3d_rect_of(yolu_app::view3d::ViewId::FIRST)?;
+    let open = h.view3d().view.hide.shelf_open;
+    let (pill, body) = yolu_app::view3d::hide::shelf::rects(view, open);
+    Some(body.map_or(pill, |b| b.union(pill)).expand(2.0))
+}
+
 mod gpu_memory;
+mod hide;
 mod liltoon;
 mod liltoon_ortho;
 mod liltoon_panel;

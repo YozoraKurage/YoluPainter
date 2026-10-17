@@ -128,13 +128,13 @@ pub fn builtin() -> Vec<PieMenu> {
             id: "mode".into(),
             name: PieName::Builtin(BuiltinPie::Mode),
             command: Some("mode.pie"),
-            // 上: 編集、右: ポーズ、左: ペイント
+            // 上: 編集、右: ポーズ、下: ハイド、左: ペイント
             slots: [
                 command("mode.edit"),
                 None,
                 command("mode.pose"),
                 None,
-                None,
+                command("mode.hide"),
                 None,
                 command("mode.paint"),
                 None,
@@ -236,6 +236,9 @@ pub fn slot_of(app: &AppState, item: &PieItem) -> Slot {
                 (None, _) => Some(unknown_command(lang, id)),
                 (Some(_), Some(EditorMode::Pose)) if app.view3d.pose.session.is_none() => {
                     Some(crate::mode::no_rig(lang).to_owned())
+                }
+                (Some(_), Some(EditorMode::Hide)) if app.view3d.full_model().is_none() => {
+                    Some(crate::mode::no_model(lang).to_owned())
                 }
                 (Some(c), _) => c.unavailable(lang).map(str::to_owned),
             };
@@ -570,7 +573,7 @@ mod tests {
                 None,
                 some("ポーズ"),
                 None,
-                None,
+                some("ハイド"),
                 None,
                 some("ペイント"),
                 None
@@ -588,7 +591,7 @@ mod tests {
                 None,
                 some("Pose"),
                 None,
-                None,
+                some("Hide"),
                 None,
                 some("Paint"),
                 None

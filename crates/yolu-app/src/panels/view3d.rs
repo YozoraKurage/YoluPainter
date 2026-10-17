@@ -132,6 +132,7 @@ fn draw_image(
             };
             let others = crate::view3d::other_sets::collect(app);
             renderer.select_view(view.0);
+            renderer.set_shape_source(app.view3d.frame_models().1);
             let id = renderer.prepare_sets(
                 &app.session.doc,
                 &model,
@@ -215,7 +216,26 @@ fn tool_overlays(ui: &mut Ui, app: &mut AppState, area: &Area) -> Option<CursorI
     }
     // 塗りつぶしレイヤーの置き場・形のギズモと、ライブラリの画像のデカールの落とし先（3D の画像の上）
     let mut gizmo_cursor = None;
-    if drawn && live && mode != EditorMode::Pose {
+    if drawn && mode == EditorMode::Hide && live {
+        // ハイドのモード: ポインタの下の UV アイランド（引き出し・シェルフの上は外す）と、選んだ・指したアイランド・隠した面の輪郭
+        let pointer = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| response.contains_pointer() && content.contains(*p))
+            .filter(|p| crate::input::on_top(ui, content, *p));
+        crate::view3d::hide::input::hover(app, content, pointer);
+        crate::view3d::hide::overlay::draw(&ui.painter_at(content), app, content);
+    }
+    if drawn && mode == EditorMode::Hide {
+        crate::view3d::hide::overlay::frame(&ui.painter_at(content), content);
+    }
+    if drawn {
+        // ハイドとポーズのモード: ボーンの丸（どのビューにも出す）
+        let pointer = ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|p| live && response.contains_pointer() && content.contains(*p));
+        crate::view3d::bone_marks::draw(ui, app, content, pointer);
+    }
+    if drawn && live && mode != EditorMode::Pose && mode != EditorMode::Hide {
         let pointer = ui
             .input(|i| i.pointer.hover_pos())
             .filter(|p| response.contains_pointer() && content.contains(*p));
@@ -414,6 +434,8 @@ impl View3dSlot {
         };
         let gizmo_cursor = tool_overlays(ui, app, &area);
         self.show_cursor(ui, app, &area, gizmo_cursor);
+        // 描いている間かは、角のアイコンと引き出しで 1 回だけ求める（このフレームの入力を当てた後）
+        let free = !app.is_stroking();
         let corner = self.corner(
             ui,
             app,
@@ -421,13 +443,25 @@ impl View3dSlot {
             reduced.filter(|_| drawn),
             overlay_skip.filter(|_| drawn),
             live,
+            free,
         );
-        if app.ui.hide_ui {
+        // ハイドのモードの右の引き出しと、左下のシェルフ（どのビューにも。押せるのは今のビューのもの）。設定のパネルが開いている間は、
+        // 同じ右側に重なるので、引き出し（つまみも）を描かない。UI を隠している間（Tab）は、設定のパネル・軸の印・引き出し・シェルフを出さない
+        let hide_ui = app.ui.hide_ui;
+        let settings = !hide_ui && app.view3d.view.display.settings_open && live;
+        let drawer_open = drawn && app.mode == EditorMode::Hide && app.view3d.view.hide.drawer_open;
+        if drawn && !hide_ui {
+            if !settings {
+                crate::panels::hide_drawer::show(ui, app, content, corner.bottom + 4.0, live, free);
+            }
+            crate::view3d::hide::shelf::show(ui, app, content, live);
+        }
+        if hide_ui {
             // UI を隠している間は、設定のパネルも軸の印も出さない
-        } else if app.view3d.view.display.settings_open && live {
+        } else if settings {
             settings_panel(ui, app, content, corner.settings);
-        } else if drawn {
-            // 軸の印（アイコンの下。設定のパネルと重なるので、パネルが開いている間は出さない）
+        } else if drawn && !drawer_open {
+            // 軸の印（アイコンの下。設定のパネル・ハイドの引き出しと重なるので、開いている間は出さない）
             crate::view3d::axis_gizmo::show(ui, app, content, corner.bottom, live);
         }
         // ビューが 2 つ以上あるとき、今のビュー（キーの視点の操作が効くビュー）の縁に細い線
@@ -529,8 +563,8 @@ impl View3dSlot {
         } else if let Some(icon) = gizmo_cursor {
             // 形のギズモのハンドルの上（ブラシの円は出さない）
             ui.ctx().set_cursor_icon(icon);
-        } else if mode == EditorMode::Edit {
-            // 編集のモード: 描かないので、ブラシの円もツールの印も出さない
+        } else if matches!(mode, EditorMode::Edit | EditorMode::Hide) {
+            // 編集・ハイドのモード: 描かないので、ブラシの円もツールの印も出さない（ハイドでは形のギズモも出ない）
             if ui
                 .input(|i| i.pointer.hover_pos())
                 .is_some_and(|p| response.contains_pointer() && content.contains(p))
@@ -614,6 +648,7 @@ impl View3dSlot {
     /// 表示域の右上の隅に重ねる小さなアイコン（見出しの帯は置かない。文字なし、名前と理由はツールチップ）: 3D の絵が元より縮んでいる印
     /// （押せない。`reduced` は縮めた段と、メモリの予算で決まったか）、光と環境の設定、モデル全体が見える位置へ戻す。左上の隅には表示の種類の
     /// ドロップダウン（押すと、その下に表示の種類のメニュー）。返すのは設定のアイコンの矩形（設定のパネルを下に置く）。
+    #[allow(clippy::too_many_arguments)]
     fn corner(
         &self,
         ui: &mut Ui,
@@ -622,6 +657,7 @@ impl View3dSlot {
         reduced: Option<(u32, Option<bool>)>,
         overlay_skip: Option<Skip>,
         live: bool,
+        free: bool,
     ) -> Corner {
         if app.view3d.model.is_none() || app.ui.hide_ui {
             return Corner::default();
@@ -665,7 +701,7 @@ impl View3dSlot {
                 "target",
                 lang.t("panels-fit-the-whole-model-in-tip"),
             )
-            .enabled(!app.is_stroking()),
+            .enabled(free),
         );
         let out = w::corner_icons(ui, ("view3d", id.0), view, &items);
         // 今のビューでないビューの押しは受けない（ポインタが乗れば今のビューになる。替えられない間 = 描いている途中などは、そのまま）

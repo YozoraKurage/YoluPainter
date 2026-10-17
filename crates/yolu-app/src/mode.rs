@@ -1,4 +1,5 @@
-//! モード（ペイント・編集・ポーズ）。描くのはペイントだけで、編集とポーズは置いた物（ポーズはボーン）を選んで動かす。
+//! モード（ペイント・編集・ポーズ・ハイド）。描くのはペイントだけで、編集とポーズは置いた物（ポーズはボーン）を選んで動かし、ハイドは
+//! 3D ビューごとに面を隠す（`view3d::hide`）。
 //!
 //! - 状態は `AppState::mode` の 1 つ。替えるのは `AppState::set_mode` だけ（描いている間は断る。ギズモ・点のドラッグの途中なら、そこまでを
 //!   確定してから替える。ポーズはボーンのあるモデルが要る）。
@@ -27,16 +28,19 @@ pub enum EditorMode {
     Edit,
     /// ボーンを選んで動かす。描かない。
     Pose,
+    /// 3D ビューごとに面を隠す（UV アイランド・ボーン・プリセット）。描かない。
+    Hide,
 }
 
 impl EditorMode {
-    pub const ALL: [EditorMode; 3] = [Self::Paint, Self::Edit, Self::Pose];
+    pub const ALL: [EditorMode; 4] = [Self::Paint, Self::Edit, Self::Pose, Self::Hide];
 
     pub fn name(self, lang: Lang) -> &'static str {
         match self {
             Self::Paint => lang.t("mode-paint"),
             Self::Edit => lang.t("mode-edit"),
             Self::Pose => lang.t("mode-pose"),
+            Self::Hide => lang.t("mode-hide"),
         }
     }
 
@@ -46,6 +50,7 @@ impl EditorMode {
             Self::Paint => "paint_brush",
             Self::Edit => "arrow_move",
             Self::Pose => "accessibility",
+            Self::Hide => "visibility_off",
         }
     }
 
@@ -55,6 +60,7 @@ impl EditorMode {
             Self::Paint => "mode.paint",
             Self::Edit => "mode.edit",
             Self::Pose => "mode.pose",
+            Self::Hide => "mode.hide",
         }
     }
 
@@ -141,6 +147,11 @@ pub fn no_rig(lang: Lang) -> &'static str {
     lang.t("mode-no-model-with-bones")
 }
 
+/// ハイドにできない理由（モデルが無い）。
+pub fn no_model(lang: Lang) -> &'static str {
+    lang.t("region-no-model")
+}
+
 /// ブラシ・色の欄を編集・ポーズのモードで押せない理由。
 pub fn paint_only(lang: Lang) -> &'static str {
     lang.t("mode-used-in-paint-mode")
@@ -171,6 +182,14 @@ impl AppState {
             self.refuse(Source::Pose, text);
             return false;
         }
+        if mode == EditorMode::Hide && self.view3d.full_model().is_none() {
+            let text = self.lang.with_reason(
+                self.lang.t("hide-cannot-enter-hide-mode"),
+                no_model(self.lang),
+            );
+            self.refuse(Source::View3d, text);
+            return false;
+        }
         // キーを押している間だけのツールは、離したものとして、押す前のツールへ戻してから替える（ペイントへ戻ったとき、一時のツールのまま残さない）
         if self.mode == EditorMode::Paint {
             crate::toolkeys::leave_paint(self);
@@ -182,6 +201,9 @@ impl AppState {
         crate::fillfx::points::release(self, true);
         if self.mode == EditorMode::Paint {
             crate::features::paint_left(self);
+        }
+        if self.mode == EditorMode::Hide {
+            crate::view3d::hide::leave(self);
         }
         self.mode = mode;
         true
@@ -203,14 +225,19 @@ impl AppState {
     }
 }
 
-/// ポーズのセッションが無くなったら（ほかのモデルに替わった）、ポーズのモードを出る（フレームの初め）。
+/// ポーズのセッションが無くなったら（ほかのモデルに替わった）、ポーズのモードを出る。モデルが無くなったら、ハイドのモードを出る（フレームの初め）。
 pub fn leave_pose_without_rig(app: &mut AppState) {
     if app.mode == EditorMode::Pose && app.view3d.pose.session.is_none() {
         app.mode = EditorMode::Paint;
     }
+    if app.mode == EditorMode::Hide && app.view3d.full_model().is_none() {
+        crate::view3d::hide::leave(app);
+        app.mode = EditorMode::Paint;
+    }
 }
 
-/// モードを選ぶ項目（ドロップダウン・表示のメニュー。アイコンつきの 3 行。今のモードに印）。ポーズはボーンのあるモデルが無ければ押せず、理由を出す。
+/// モードを選ぶ項目（ドロップダウン・表示のメニュー。アイコンつきの 4 行。今のモードに印）。ポーズはボーンのあるモデルが無ければ、ハイドは
+/// モデルが無ければ押せず、理由を出す。
 pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
     let lang = app.lang;
     let free = !app.is_stroking();
@@ -223,6 +250,9 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
                 EditorMode::Pose if app.view3d.pose.session.is_none() => {
                     entry.enabled(false).tooltip(no_rig(lang))
                 }
+                EditorMode::Hide if app.view3d.full_model().is_none() => {
+                    entry.enabled(false).tooltip(no_model(lang))
+                }
                 _ if !free && app.mode != mode => entry
                     .enabled(false)
                     .tooltip(crate::lang::refusals::during_stroke(lang)),
@@ -232,7 +262,7 @@ pub fn entries(app: &AppState) -> Vec<Entry<Action>> {
         .collect()
 }
 
-/// 表示のメニューの「モード」（入れ子の 3 行）。
+/// 表示のメニューの「モード」（入れ子の 4 行）。
 pub fn view_menu_entry(app: &AppState) -> Entry<Action> {
     Entry::submenu(app.lang.t("mode-mode"), entries(app))
 }
@@ -240,7 +270,7 @@ pub fn view_menu_entry(app: &AppState) -> Entry<Action> {
 /// オプションバーの左端のドロップダウンの幅。
 pub const DROPDOWN_WIDTH: f32 = 132.0;
 
-/// オプションバーの左端のドロップダウン（今のモードのアイコンと名前と ▼。押すとアイコンつきの 3 行が開く）。右の端の x を返す。
+/// オプションバーの左端のドロップダウン（今のモードのアイコンと名前と ▼。押すとアイコンつきの 4 行が開く）。右の端の x を返す。
 pub fn dropdown(ui: &mut Ui, app: &mut AppState, bar: Rect, x: f32) -> f32 {
     let lang = app.lang;
     let r = Rect::from_min_size(
@@ -616,7 +646,7 @@ mod tests {
         for lang in Lang::ALL {
             app.lang = lang;
             let entries = entries(&app);
-            assert_eq!(entries.len(), 3);
+            assert_eq!(entries.len(), 4);
             for (entry, mode) in entries.iter().zip(EditorMode::ALL) {
                 let Entry::Item {
                     label,
@@ -636,11 +666,14 @@ mod tests {
                         on: mode == EditorMode::Paint
                     }
                 );
-                assert_eq!(*enabled, mode != EditorMode::Pose);
-                assert_eq!(
-                    tooltip.as_deref(),
-                    (mode == EditorMode::Pose).then(|| no_rig(lang))
-                );
+                // ポーズはボーンのあるモデル、ハイドはモデルが要る
+                let missing = match mode {
+                    EditorMode::Pose => Some(no_rig(lang)),
+                    EditorMode::Hide => Some(no_model(lang)),
+                    _ => None,
+                };
+                assert_eq!(*enabled, missing.is_none());
+                assert_eq!(tooltip.as_deref(), missing);
             }
         }
     }

@@ -6,6 +6,7 @@ shortcuts-everywhere-view = Everywhere & View
 shortcuts-paint = Paint
 shortcuts-edit = Edit
 shortcuts-pose = Pose
+shortcuts-hide = Hide
 shortcuts-during-an-operation = During an Operation
 shortcuts-pie-menus = Pie Menus
 shortcuts-command = Command

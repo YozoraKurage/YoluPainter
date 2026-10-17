@@ -473,6 +473,29 @@ impl AppState {
         }
     }
 
+    /// 3D のパスを描き直すときに描かない面（`g` の三角形ごと）: 今のビューで隠している面（UV アイランド・ボーン・シェルフの目を開けて
+    /// いるとき）と、目を閉じたテクスチャセットのマテリアルの面。何も隠していなければ None（隠す面を持たない描き方と同じバイト）。
+    /// どのビューの隠し方を使うかは、描き直すときの今のビュー（描いて確かめているビュー）。
+    pub fn path_hidden(&self, g: &yolu_core::geometry::SurfaceGeometry) -> Option<Vec<bool>> {
+        let same = self
+            .view3d
+            .full_model()
+            .is_some_and(|m| m.triangle_count() == g.triangle_count());
+        let mut any = false;
+        let hidden: Vec<bool> = g
+            .triangles()
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                let h = self.view3d.is_material_hidden(t.material)
+                    || (same && self.view3d.is_face_hidden(i as u32));
+                any |= h;
+                h
+            })
+            .collect();
+        any.then_some(hidden)
+    }
+
     /// 3D のモデルの指紋（形が替わるまで作り直さない）。
     pub fn path_fingerprint(
         &self,
@@ -725,6 +748,11 @@ impl AppState {
             }
             LayerPath::Surface(s) => {
                 let ctx = self.path_surface_ctx_for(s)?;
+                let hidden = self.path_hidden(&ctx.render);
+                let options = Options {
+                    hidden: hidden.as_deref(),
+                    ..options
+                };
                 let r = render_surface(s, &ctx.render, &options)
                     .map_err(|e| crate::lang::path_error(lang, &e))?;
                 let gaps = r.gaps;
@@ -794,7 +822,12 @@ impl AppState {
             return Ok(0);
         };
         let ctx = self.path_surface_ctx_for(&first)?;
-        let rendered = render_list(&entries, Some(&ctx.render), &self.path_options())
+        let hidden = self.path_hidden(&ctx.render);
+        let options = Options {
+            hidden: hidden.as_deref(),
+            ..self.path_options()
+        };
+        let rendered = render_list(&entries, Some(&ctx.render), &options)
             .map_err(|e| crate::lang::path_error(lang, &e))?;
         let gaps = rendered.gaps;
         if swaps_side {
@@ -1505,11 +1538,14 @@ impl AppState {
                 continue;
             }
             // 位置は両方のモデルの休みの形で比べる（前のモデルにポーズが付いていても、その形へ置き直さない）
+            let hidden = self.path_hidden(new.rest_geometry());
+            let doc = self.set_doc_mut(i);
             all.extend(rebind::rebind_document(
                 doc,
                 old.rest_geometry(),
                 new.rest_geometry(),
                 material,
+                hidden.as_deref(),
                 lang,
             ));
         }

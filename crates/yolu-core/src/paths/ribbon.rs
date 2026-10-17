@@ -19,7 +19,6 @@ use super::surface::{project, surface_curve, CurvePoint};
 use super::*;
 use crate::effects::ImageInput;
 use crate::geometry::unity::{cross, dot, magnitude, normalized};
-use crate::geometry::SurfaceGeometry;
 use crate::Rgba8;
 
 /// 伸ばすときの 1 つのダブの長さ（幅に対する割合）。
@@ -294,10 +293,11 @@ pub(super) fn draw_canvas(
 pub(super) fn draw_surface(
     painter: &mut Painter<'_, '_>,
     path: &SurfacePath,
-    g: &SurfaceGeometry,
+    target: &super::surface::Target<'_>,
     o: &Options<'_>,
     r: Ribbon,
 ) -> Result<(usize, usize, usize), Error> {
+    let g = target.full;
     let paints = paints(path.channel, path.brush, &path.material)?;
     let img = image(o, r)?;
     let sampler = Sampler::new(img);
@@ -354,10 +354,11 @@ pub(super) fn draw_surface(
         for (center, length, u0, u1) in layout(total, width, img, r)? {
             o.check()?;
             let q = at(center);
-            let Some(hit) = project(g, &q) else {
+            let Some(hit) = project(target, &q) else {
                 gaps += 1;
                 continue;
             };
+            let hg = target.hit().expect("当たった形");
             let n = hit.normal;
             let chord = at(center + length * 0.5).position - at(center - length * 0.5).position;
             let along_plane = chord - n * dot(chord, n);
@@ -374,7 +375,7 @@ pub(super) fn draw_surface(
             };
             let (hl, hw) = ((length * 0.5) as f32, (width * scale * 0.5) as f32);
             let radius = (hl * hl + hw * hw).sqrt();
-            let result = g.build_surface_dabs(
+            let result = hg.build_surface_dabs(
                 &hit,
                 radius,
                 o.width as i32,

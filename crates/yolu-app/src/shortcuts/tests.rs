@@ -184,6 +184,10 @@ fn state_for(binding: &Binding) -> AppState {
             app.apply(Action::Pose(crate::view3d::pose::PoseAction::LoadFigure));
             app.set_mode(crate::mode::EditorMode::Pose);
         }
+        keymap::Scope::Hide => {
+            app.view3d.load_demo();
+            app.set_mode(crate::mode::EditorMode::Hide);
+        }
         _ => {}
     }
     app.tool = match (binding.when, binding.action()) {
@@ -1005,7 +1009,7 @@ fn naming_states(lang: Lang) -> Vec<(&'static str, AppState)> {
 }
 
 /// メニューとキーの一覧で名前が違う操作（最初から別々の名前）。
-const MODE_COMMANDS: [&str; 3] = ["mode.paint", "mode.edit", "mode.pose"];
+const MODE_COMMANDS: [&str; 4] = ["mode.paint", "mode.edit", "mode.pose", "mode.hide"];
 
 /// メニューの項目のうち `Action` が操作の表にあるものは、メニューの名前と表の名前が同じ（どの言語・状態でも。グループ解除は押したレイヤーの
 /// ID を持つ別の `Action` なので、同じ操作の名前と比べる）。メニューがキーの一覧の名前を作る前に、別々に書いていた名前を食い違わせない。
@@ -1041,7 +1045,7 @@ fn the_menu_names_are_the_names_in_the_command_table() {
                 if matches!(command.name, commands::Name::ByLayer(_)) {
                     continue;
                 }
-                // モードの 3 つは、メニューでは短い名前（「ペイント」）、キーの一覧では「〜のモード」と、最初から別々の名前を持つ
+                // モードの 4 つは、メニューでは短い名前（「ペイント」）、キーの一覧では「〜のモード」と、最初から別々の名前を持つ
                 if MODE_COMMANDS.contains(&command.id) {
                     continue;
                 }
