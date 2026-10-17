@@ -111,13 +111,55 @@ impl Document {
         &self,
         above: Option<LayerId>,
     ) -> Result<(usize, Option<LayerId>, LayerSetId), CoreError> {
+        self.placement_in(above, None)
+    }
+
+    /// `placement_above` の、above が無いときの入れ先のレイヤーセットを選べる形（None は最初のレイヤーセット）。above があるときは
+    /// above のレイヤーセットで、`set` を渡していれば同じでなければ断る。
+    pub(super) fn placement_in(
+        &self,
+        above: Option<LayerId>,
+        set: Option<LayerSetId>,
+    ) -> Result<(usize, Option<LayerId>, LayerSetId), CoreError> {
+        if let Some(s) = set {
+            self.require_layer_set(s)?;
+        }
         Ok(match above {
             Some(a) => {
                 let i = self.index_of(a)?;
+                if set.is_some_and(|s| s != self.layers[i].set) {
+                    return Err(CoreError::InvalidArgument(Reason::AboveInOtherLayerSet));
+                }
                 (i + 1, self.layers[i].parent, self.layers[i].set)
             }
-            None => (self.layers.len(), None, self.layer_sets[0].id),
+            None => (
+                self.layers.len(),
+                None,
+                set.unwrap_or(self.layer_sets[0].id),
+            ),
         })
+    }
+
+    /// レイヤーセットの、グループ parent の直下の子（下から上。parent が None なら、そのレイヤーセットの一番上の段）。
+    /// `children_of(None)` は全部のレイヤーセットの一番上の段を返すので、レイヤーセットごとに並べ替えの位置を数えるときはこちらを使う。
+    /// グループの子はグループと同じレイヤーセットなので、parent が別のレイヤーセットのグループなら空になる。
+    pub fn children_in_set(
+        &self,
+        set: LayerSetId,
+        parent: Option<LayerId>,
+    ) -> Result<Vec<LayerId>, CoreError> {
+        self.require_layer_set(set)?;
+        if let Some(p) = parent {
+            if !self.layer(p).ok_or(CoreError::LayerNotFound)?.is_group() {
+                return Err(CoreError::InvalidArgument(Reason::NotGroup));
+            }
+        }
+        Ok(self
+            .layers
+            .iter()
+            .filter(|l| l.set == set && l.parent == parent)
+            .map(|l| l.id)
+            .collect())
     }
 
     /// 新しいレイヤーセットの ID（文書の中で重ならない）。
@@ -147,7 +189,7 @@ impl Document {
                 .map(|s| 32 + s.name.len() as u64)
                 .sum::<u64>();
         Entry {
-            kind: HistoryKind::Other,
+            kind: HistoryKind::LayerSets,
             command: Command::LayerSets(SetCommand::Table {
                 old: Box::new(self.table()),
                 new: Box::new(new),
@@ -178,6 +220,28 @@ impl Document {
         });
         self.execute_table(table)?;
         Ok(id)
+    }
+
+    /// 空のレイヤーを `set` に足す（Color のチャンネルを持つ。1 回の Undo）。`above` があればそのすぐ上（`above` と同じグループの中。
+    /// `above` は `set` のレイヤー）、無ければ `set` の一番上の段の一番上。空のレイヤーセットへレイヤーを足す口は、これだけ
+    /// （`add_layer_above` の `above` を省くと、最初のレイヤーセットへ入る）。
+    pub fn add_layer_in_set(
+        &mut self,
+        name: &str,
+        set: LayerSetId,
+        above: Option<LayerId>,
+    ) -> Result<LayerId, CoreError> {
+        self.ensure_no_stroke()?;
+        // 足し先を先に確かめる（レイヤーの ID を無駄に振らない）
+        self.placement_in(above, Some(set))?;
+        let id = self.new_layer_id();
+        let mut layer = Layer::new(id, name, crate::types::LayerKind::Raster);
+        layer.put_surface(
+            Channel::Color,
+            Some(crate::Surface::new(self.width, self.height, self.tile_size)),
+        );
+        layer.set_enabled(Channel::Color, true);
+        self.insert_new_in(layer, above, Some(set), 128)
     }
 
     /// レイヤーセットを画素ごと写し、元のすぐ後に置く（レイヤー・効果・Anchor・定規の ID は新しく振る。写しの中の Anchor を読む段は写しの
@@ -229,7 +293,7 @@ impl Document {
                 cost: 128 + bytes,
             });
         }
-        self.execute_group(steps)?;
+        self.execute_group_as(HistoryKind::LayerSets, steps)?;
         Ok(id)
     }
 
@@ -303,7 +367,7 @@ impl Document {
             });
         }
         steps.push(self.table_entry(table));
-        self.execute_group(steps)
+        self.execute_group_as(HistoryKind::LayerSets, steps)
     }
 
     /// チャンネルの出力の割り当てを変える（None はそのチャンネルの既定値）。最終の結果がそのチャンネルのキャンバス全体で変わる。
@@ -501,6 +565,32 @@ impl Document {
         Ok(())
     }
 
+    // ───────── 変化の記録 ─────────
+
+    /// チャンネルの出力の割り当てが `from` から `to` へ変わったときの、最終の結果の変化の印。どちらかが無し（既定値で塗る）なら、そのチャンネルの
+    /// キャンバス全体（既定値とレイヤーセットの合成は、レイヤーの無い所でも違い得る）。どちらもレイヤーセットなら、その 2 つのレイヤーセットの
+    /// レイヤーが持つタイルだけ（レイヤーの表示を切り替えたときと同じ印。レイヤーの無い所は、どちらの合成も透明なので変わらない）。
+    fn mark_route_change(
+        &mut self,
+        channel: Channel,
+        from: Option<LayerSetId>,
+        to: Option<LayerSetId>,
+    ) {
+        let (Some(a), Some(b)) = (from, to) else {
+            let tiles: Vec<_> = self.canvas_tiles().collect();
+            for coord in tiles {
+                self.journal.mark(channel, coord);
+            }
+            return;
+        };
+        for i in 0..self.layers.len() {
+            let l = &self.layers[i];
+            if l.parent.is_none() && (l.set == a || l.set == b) {
+                self.mark_layer(i, Some(channel));
+            }
+        }
+    }
+
     // ───────── 段を当てる ─────────
 
     pub(super) fn switch_layer_sets(
@@ -511,18 +601,15 @@ impl Document {
         match command {
             SetCommand::Table { old, new } => {
                 let to = if backwards { old } else { new };
-                let changed: Vec<Channel> = (0..Channel::MAX)
+                let changed: Vec<(Channel, Option<LayerSetId>, Option<LayerSetId>)> = (0
+                    ..Channel::MAX)
                     .filter(|&i| self.route[i] != to.route[i])
-                    .filter_map(Channel::from_index)
+                    .filter_map(|i| Some((Channel::from_index(i)?, self.route[i], to.route[i])))
                     .collect();
                 self.layer_sets = to.sets.clone();
                 self.route = to.route;
-                // 割り当てが変わったチャンネルは、最終の結果がキャンバス全体で変わる
-                let tiles: Vec<_> = self.canvas_tiles().collect();
-                for c in changed {
-                    for coord in &tiles {
-                        self.journal.mark(c, *coord);
-                    }
+                for (c, from, to) in changed {
+                    self.mark_route_change(c, from, to);
                 }
                 Ok(())
             }

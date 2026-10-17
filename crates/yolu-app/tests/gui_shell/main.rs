@@ -19,6 +19,7 @@ mod disabled_reasons;
 mod fonts;
 mod gpu_lost;
 mod i18n;
+mod layer_sets;
 mod layout;
 mod library;
 mod limits;

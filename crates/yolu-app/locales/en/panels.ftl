@@ -509,6 +509,7 @@ panels-edit-look = Edit look
 panels-edit-remembered-selections = Edit remembered selections
 panels-edit-text = Edit Text
 panels-edit-ruler = Edit Ruler
+panels-edit-layer-sets = Edit Layer Sets
 panels-starting-point = Starting point
 panels-pass-through = Pass through
 panels-on-the-contents-blend-with-tip = On: the contents blend with the layers below as if not grouped. Off: they are composited together first (isolated)

@@ -193,6 +193,7 @@ reason-layer-set-name = The layer set name
 reason-layer-set-does-not-exist = The layer set does not exist
 reason-too-many-layer-sets = Too many layer sets
 reason-layer-set-position = The layer set position
+reason-above-in-other-layer-set = The layer to place it above is in another layer set
 reason-last-layer-set-cannot-be-removed = The last layer set cannot be removed
 reason-layer-set-names-and-visibility-mismatch = The layer set names and visibility do not match the sets
 reason-layer-set-count = The number of layer sets

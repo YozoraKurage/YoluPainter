@@ -3,7 +3,7 @@
 //! 文書の入れ替え（`install`）・世代（`doc_epoch`・`project_epoch`）・保存していない変更の印（`modified`）は外から直に書けず、
 //! ここのメソッドだけが変える。ほかの欄は `pub`。
 
-use crate::engine::{Document, LayerId, Stroke};
+use crate::engine::{Document, LayerId, LayerSetId, Stroke};
 use crate::model::SceneModel;
 use crate::project::ProjectFile;
 use crate::sets::TextureSets;
@@ -18,6 +18,9 @@ pub struct Session {
     /// 描いているストローク（core の `Stroke`。文書を借りないのでフレームをまたいで持つ）。
     pub stroke: Option<Stroke>,
     pub selected_layer: Option<LayerId>,
+    /// 今のレイヤーセット（選んでいるレイヤーが無いときに効く。選んでいるレイヤーがあれば、そのレイヤーのレイヤーセットが今のレイヤーセット。
+    /// 読むのは `AppState::layer_set`。保存しない。None と文書に無い ID は最初のレイヤーセット）。
+    pub layer_set: Option<LayerSetId>,
     /// テクスチャセット（今のセットの文書は `doc`）。
     pub sets: TextureSets,
     /// 読み込んだモデル（Live Link で受けたもの。3D ビューが読む）。
@@ -57,6 +60,7 @@ impl Session {
             doc_epoch: 0,
             stroke: None,
             selected_layer,
+            layer_set: None,
             sets,
             model: None,
             project: None,

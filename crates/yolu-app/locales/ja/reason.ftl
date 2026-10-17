@@ -193,6 +193,7 @@ reason-layer-set-name = レイヤーセットの名前
 reason-layer-set-does-not-exist = レイヤーセットが無い
 reason-too-many-layer-sets = レイヤーセットの数の上限
 reason-layer-set-position = レイヤーセットの位置
+reason-above-in-other-layer-set = 上に置くレイヤーが別のレイヤーセットにある
 reason-last-layer-set-cannot-be-removed = 最後のレイヤーセットは消せない
 reason-layer-set-names-and-visibility-mismatch = レイヤーセットの名前・表示の数
 reason-layer-set-count = レイヤーセットの数

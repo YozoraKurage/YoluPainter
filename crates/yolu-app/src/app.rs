@@ -883,6 +883,10 @@ impl YoluApp {
         if self.state.ui.pressure.dragging {
             now.pressure = saved.pressure.clone();
         }
+        // キャンバスの右上の UV の欄の色・不透明度も、ドラッグ中は書かない
+        if self.state.ui.canvas_bar.dragging {
+            now.uv_wireframe_color = saved.uv_wireframe_color;
+        }
         // 3D の仕上げのスライダー（ブルーム）と 3D の塗りの切り替えのスライダーも、ドラッグ中は書かず、離したときの値を書く
         if self.state.view3d.display.post_dragging {
             now.view3d_post = saved.view3d_post;

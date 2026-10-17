@@ -786,6 +786,7 @@ impl AppState {
                     selected_layer: None,
                     view: None,
                     layer_scroll: Some(0.0),
+                    layer_set: None,
                 },
             );
         } else {

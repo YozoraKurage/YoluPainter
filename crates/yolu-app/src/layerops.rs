@@ -286,8 +286,10 @@ impl AppState {
             MergeOp::Layers(ids) => self.session.doc.merge_layers(ids, tolerance),
             MergeOp::Group(id) => self.session.doc.merge_group(*id, tolerance),
             MergeOp::Visible => {
+                // 今のレイヤーセットの、見えているレイヤー（ほかのレイヤーセットは変えない）
                 let name = self.lang.t("layerops-merged");
-                self.session.doc.merge_visible(name, tolerance)
+                let set = self.layer_set();
+                self.session.doc.merge_visible_in(set, name, tolerance)
             }
         };
         match result {

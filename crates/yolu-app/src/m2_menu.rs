@@ -2,10 +2,11 @@
 //! 開いている種類は `PopupKind::M2(Popup)`、選ばれた項目は `Action` で返る（閉じてから当てるのは `YoluApp`）。
 
 use crate::engine::{
-    AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, NormalYDirection,
-    TextureMode,
+    AntiAlias, Channel, ChannelInfo, ChannelKind, DualBrushMode, HeightEdgeMode, LayerId,
+    LayerSetId, NormalYDirection, TextureMode,
 };
 use crate::lang::Lang;
+use crate::m2::layersets::{self, LayerSetEdit};
 use crate::m2::{
     self, anti_alias_label, channel_format, dual_mode_label, kind_name, new_channel_info,
     texture_mode_label, tip_label, BrushOp, Edit, EffectKind, UiOp,
@@ -100,6 +101,12 @@ pub enum Popup {
     AntiAlias,
     /// パスのブラシの縁のアンチエイリアス。
     PathAntiAlias,
+    /// レイヤーのパネルの頭のドロップダウン（今のレイヤーセットを選ぶ）。
+    LayerSet,
+    /// チャンネルの行のドロップダウン（そのチャンネルの出力元のレイヤーセット）。
+    LayerSetOutput(Channel),
+    /// テクスチャセットのパネルのレイヤーセットの行の右クリック。
+    LayerSetContext(crate::engine::LayerSetId),
 }
 
 fn tips(
@@ -403,34 +410,152 @@ pub fn entries(app: &AppState, popup: Popup) -> Vec<Entry<Action>> {
         Popup::PathTip => crate::panels::path_props::tip_entries(app),
         Popup::PathPresets => crate::panels::path_props::preset_entries(app),
         Popup::PathAntiAlias => crate::panels::path_props::anti_alias_entries(app),
-        Popup::ChannelContext(channel) => {
-            let user = !channel.is_standard();
-            vec![
-                Entry::item(
-                    lang.t("m2_menu-paint-this-channel"),
-                    Action::M2Ui(UiOp::PaintChannel(channel)),
-                )
-                .radio(app.m2.paint_channel == channel)
-                .enabled(free),
-                Entry::item(
-                    lang.t("m2_menu-show-in-canvas"),
-                    Action::M2Ui(UiOp::DisplayChannel(channel)),
-                )
-                .radio(app.m2.display_channel == channel),
-                Entry::Separator,
-                Entry::item(
-                    lang.t("m2_menu-rename"),
-                    Action::M2Ui(UiOp::RenameChannel(channel)),
-                )
-                .enabled(free && user),
-                Entry::item(
-                    lang.t("m2_menu-delete-channel"),
-                    Action::M2(Edit::RemoveChannel(channel)),
-                )
-                .enabled(free && user),
-            ]
-        }
+        Popup::LayerSet => layer_set_pick_entries(app, free),
+        Popup::LayerSetOutput(channel) => layer_set_output_entries(app, channel),
+        Popup::LayerSetContext(set) => layer_set_context_entries(app, set),
+        Popup::ChannelContext(channel) => channel_context_entries(app, channel, free),
     }
+}
+
+/// チャンネルの行の右クリック: 描く・キャンバスに見せる・名前の変更・削除（標準のチャンネルは名前の変更と削除ができない）。
+fn channel_context_entries(app: &AppState, channel: Channel, free: bool) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let user = !channel.is_standard();
+    vec![
+        Entry::item(
+            lang.t("m2_menu-paint-this-channel"),
+            Action::M2Ui(UiOp::PaintChannel(channel)),
+        )
+        .radio(app.m2.paint_channel == channel)
+        .enabled(free),
+        Entry::item(
+            lang.t("m2_menu-show-in-canvas"),
+            Action::M2Ui(UiOp::DisplayChannel(channel)),
+        )
+        .radio(app.m2.display_channel == channel),
+        Entry::Separator,
+        Entry::item(
+            lang.t("m2_menu-rename"),
+            Action::M2Ui(UiOp::RenameChannel(channel)),
+        )
+        .enabled(free && user),
+        Entry::item(
+            lang.t("m2_menu-delete-channel"),
+            Action::M2(Edit::RemoveChannel(channel)),
+        )
+        .enabled(free && user),
+    ]
+}
+
+// ───────── レイヤーセットのメニュー ─────────
+
+fn layer_set_edit(e: LayerSetEdit) -> Action {
+    Action::M2(Edit::LayerSets(e))
+}
+
+/// レイヤーのパネルの頭のドロップダウン: レイヤーセットを選ぶ（今のレイヤーセットに印）。
+fn layer_set_pick_entries(app: &AppState, free: bool) -> Vec<Entry<Action>> {
+    let doc = &app.session.doc;
+    let current = app.layer_set();
+    (0..doc.layer_sets().len())
+        .map(|i| {
+            let id = doc.layer_sets()[i].id;
+            Entry::item(
+                layersets::display_name(app.lang, doc, i),
+                Action::M2Ui(UiOp::SelectLayerSet(id)),
+            )
+            .radio(id == current)
+            .enabled(free)
+        })
+        .collect()
+}
+
+/// チャンネルの行のドロップダウン: そのチャンネルの出力元のレイヤーセット（区切りの後に「なし」）。
+fn layer_set_output_entries(app: &AppState, channel: Channel) -> Vec<Entry<Action>> {
+    let doc = &app.session.doc;
+    let current = doc.channel_output(channel).ok().flatten();
+    let free = app.can_edit();
+    let mut entries: Vec<Entry<Action>> = (0..doc.layer_sets().len())
+        .map(|i| {
+            let id = doc.layer_sets()[i].id;
+            Entry::item(
+                layersets::display_name(app.lang, doc, i),
+                layer_set_edit(LayerSetEdit::Output {
+                    channel,
+                    set: Some(id),
+                }),
+            )
+            .radio(current == Some(id))
+            .enabled(free)
+        })
+        .collect();
+    entries.push(Entry::Separator);
+    entries.push(
+        Entry::item(
+            app.lang.t("m2_menu-none"),
+            layer_set_edit(LayerSetEdit::Output { channel, set: None }),
+        )
+        .radio(current.is_none())
+        .enabled(free),
+    );
+    entries
+}
+
+/// テクスチャセットのパネルのレイヤーセットの行の右クリック: 新しいレイヤーセット・複製・名前の変更・削除（最後の 1 つは消せない）。
+fn layer_set_context_entries(app: &AppState, set: LayerSetId) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let free = app.can_edit();
+    let several = app.session.doc.layer_sets().len() > 1;
+    vec![
+        Entry::item(
+            lang.t("layersets-new-layer-set"),
+            layer_set_edit(LayerSetEdit::New),
+        )
+        .enabled(free && app.session.doc.layer_sets().len() < yolu_core::MAX_LAYER_SETS),
+        Entry::item(
+            lang.t("m2_menu-duplicate"),
+            layer_set_edit(LayerSetEdit::Duplicate(set)),
+        )
+        .enabled(free && app.session.doc.layer_sets().len() < yolu_core::MAX_LAYER_SETS),
+        Entry::item(
+            lang.t("m2_menu-rename"),
+            Action::M2Ui(UiOp::RenameLayerSet(set)),
+        )
+        .enabled(free),
+        Entry::Separator,
+        Entry::item(
+            lang.t("m2_menu-delete"),
+            layer_set_edit(LayerSetEdit::Remove(set)),
+        )
+        .enabled(free && several),
+    ]
+}
+
+/// レイヤーの右クリックの「レイヤーセットへ移す ▸」（レイヤーセットが 2 つ以上あるときだけ。移し先は、今のレイヤーのレイヤーセット以外）。
+pub fn layer_set_move_submenu(app: &AppState, ids: Vec<LayerId>) -> Option<Entry<Action>> {
+    let doc = &app.session.doc;
+    if doc.layer_sets().len() < 2 {
+        return None;
+    }
+    let from = ids
+        .first()
+        .and_then(|id| doc.layer(*id))
+        .map(|l| l.layer_set());
+    let free = app.can_edit();
+    let entries: Vec<Entry<Action>> = (0..doc.layer_sets().len())
+        .filter(|&i| Some(doc.layer_sets()[i].id) != from)
+        .map(|i| {
+            Entry::item(
+                layersets::display_name(app.lang, doc, i),
+                layer_set_edit(LayerSetEdit::MoveLayers {
+                    ids: ids.clone(),
+                    set: doc.layer_sets()[i].id,
+                }),
+            )
+            .enabled(free)
+        })
+        .collect();
+    Some(Entry::submenu(app.lang.t("layersets-move-to-layer-set"), entries).enabled(free))
 }
 
 #[cfg(test)]

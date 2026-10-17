@@ -85,6 +85,7 @@ pub fn request(app: &AppState, layer: LayerId, points: Vec<(f64, f64)>) -> Reque
             .doc
             .source_budget_bytes()
             .min(yolu_core::selection::DEFAULT_WORKING_BUDGET_BYTES),
+        set: Some(app.layer_set()),
     }
 }
 

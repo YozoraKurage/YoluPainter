@@ -1,4 +1,5 @@
 //! 文書とは独立した UV の辺と表示座標のキャッシュ。重なった UV の図は `overlap`。
+pub mod bar;
 pub mod color;
 pub mod overlap;
 #[cfg(test)]
@@ -181,7 +182,7 @@ fn tip(app: &AppState) -> String {
     }
 }
 
-/// キャンバスの上と、右上の入口。入力の受け皿は既存の隅の部品と同じ。
+/// キャンバスの上の UV の線と、重なった UV の図（右上の入口は `bar`。置き場は `canvas::bar`）。
 /// 重ねるのは、3D が描いている面（`region_model`＝`view3d.material`）と同じマテリアルの辺。
 pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView) {
     let target = app.region_model();
@@ -206,20 +207,6 @@ pub fn show(ui: &mut Ui, app: &mut AppState, view: &CanvasView) {
     if target.is_some() {
         let painter = ui.painter_at(ui.max_rect());
         overlap::paint(&painter, app, view);
-    }
-    let has = app.view3d.model.is_some();
-    let tip = tip(app);
-    // 状態アイコンの列の下。独立した Area でキャンバスへの押下の伝播を止める。
-    let mut corner = ui.max_rect();
-    corner.min.y += 34.0;
-    let item = w::CornerIcon::new("uv-wireframe", "uv_wireframe", tip)
-        .selected(app.prefs.settings.uv_wireframe && has)
-        .enabled(has);
-    if w::corner_icons(ui, "uv-wireframe", corner, &[item])
-        .clicked
-        .is_some()
-    {
-        app.apply(Action::ToggleUvWireframe);
     }
 }
 

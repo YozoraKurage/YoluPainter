@@ -17,6 +17,7 @@ use crate::shelf::{ShelfOp, ShelfState};
 use crate::ui::menu::PopupState;
 use crate::view3d::View3dState;
 
+pub mod canvas_bar;
 pub mod key;
 mod outbox;
 mod services;
@@ -1251,7 +1252,52 @@ impl AppState {
         *self.ui.sections.get(key).unwrap_or(&default)
     }
 
-    /// 選んでいるレイヤー（消えていれば一番上を選び直す）。
+    /// 選んでいるレイヤー 1 つ（グループは中身ごと）を消し、同じレイヤーセットの、消したまとまりのすぐ下のレイヤー（無ければ一番下）を選ぶ。
+    /// レイヤーセットのレイヤーが無くなったら選ばない。何も残らなくなる削除は断る。
+    fn delete_single_layer(&mut self, id: LayerId) {
+        // グループは中身ごと消える。何も残らなくなる削除は断る
+        let size = crate::m2::subtree_len(&self.session.doc, id);
+        if self.session.doc.layers().len() <= size {
+            self.refuse(
+                Source::Layer,
+                self.lang.t("state-cannot-delete-the-last-layer"),
+            );
+            return;
+        }
+        // 消したあとに選ぶのは、同じレイヤーセットの、消したまとまりのすぐ下のレイヤー（無ければ一番下）。レイヤーセットのレイヤーが
+        // 無くなったら選ばない
+        let set = self.layer_set();
+        let in_set = |doc: &Document| -> Vec<LayerId> {
+            doc.layers()
+                .iter()
+                .filter(|l| l.layer_set() == set)
+                .map(|l| l.id())
+                .collect()
+        };
+        let start = self.session.doc.layer_index(id).and_then(|i| {
+            let first = self.session.doc.layers()[(i + 1).saturating_sub(size)].id();
+            in_set(&self.session.doc).iter().position(|l| *l == first)
+        });
+        match self.session.doc.remove_layer(id) {
+            Ok(()) => {
+                let left = in_set(&self.session.doc);
+                self.session.selected_layer = start.and_then(|i| {
+                    left.get(i.saturating_sub(1).min(left.len().saturating_sub(1)))
+                        .copied()
+                });
+                self.session.layer_set = Some(set);
+                self.set_edit_mask(false);
+                self.session.mark_content_modified();
+            }
+            Err(e) => self.notify(
+                crate::notice::Kind::of_core(&e),
+                Source::Layer,
+                self.lang.core_error(&e),
+            ),
+        }
+    }
+
+    /// 選んでいるレイヤー（消えていれば、今のレイヤーセットの一番上を選び直す。空のレイヤーセットなら選ばない）。
     pub fn ensure_selection(&mut self) {
         self.ensure_m2_selection();
         let alive = self
@@ -1259,8 +1305,11 @@ impl AppState {
             .selected_layer
             .is_some_and(|id| self.session.doc.layer(id).is_some());
         if !alive {
-            self.session.selected_layer = self.session.doc.layers().last().map(|l| l.id());
+            let set = self.layer_set();
+            self.session.selected_layer =
+                crate::m2::layersets::top_layer_of(&self.session.doc, set);
         }
+        self.remember_layer_set();
     }
 
     pub fn layer_name_for_new(&self) -> String {
@@ -1396,10 +1445,8 @@ impl AppState {
                     return refuse(self);
                 }
                 let name = self.layer_name_for_new();
-                if let Ok(id) = self
-                    .session
-                    .doc
-                    .add_layer_above(&name, self.session.selected_layer)
+                // 今のレイヤーセットに足す（選んでいるレイヤーのすぐ上。空のレイヤーセットなら、その一番上）
+                if let Ok(id) = self.add_in_current_set(|d, above| d.add_layer_above(&name, above))
                 {
                     self.session.selected_layer = Some(id);
                     self.session.mark_content_modified();
@@ -1423,34 +1470,7 @@ impl AppState {
                     return;
                 }
                 if let Some(id) = self.session.selected_layer {
-                    // グループは中身ごと消える。何も残らなくなる削除は断る
-                    let size = crate::m2::subtree_len(&self.session.doc, id);
-                    if self.session.doc.layers().len() <= size {
-                        self.refuse(
-                            Source::Layer,
-                            self.lang.t("state-cannot-delete-the-last-layer"),
-                        );
-                        return;
-                    }
-                    let start = self
-                        .session
-                        .doc
-                        .layer_index(id)
-                        .map(|i| (i + 1).saturating_sub(size));
-                    match self.session.doc.remove_layer(id) {
-                        Ok(()) => {
-                            let layers = self.session.doc.layers();
-                            self.session.selected_layer = start
-                                .map(|i| layers[i.saturating_sub(1).min(layers.len() - 1)].id());
-                            self.set_edit_mask(false);
-                            self.session.mark_content_modified();
-                        }
-                        Err(e) => self.notify(
-                            crate::notice::Kind::of_core(&e),
-                            Source::Layer,
-                            self.lang.core_error(&e),
-                        ),
-                    }
+                    self.delete_single_layer(id);
                 }
             }
             Action::LayerUp | Action::LayerDown => {
@@ -1471,8 +1491,12 @@ impl AppState {
                 }
                 if let Some(id) = self.session.selected_layer {
                     // 同じグループの兄弟の中で動かす（グループの外へは出さない）
-                    let parent = self.session.doc.layer(id).and_then(|l| l.parent());
-                    let siblings = self.session.doc.children_of(parent).unwrap_or_default();
+                    let layer = self.session.doc.layer(id);
+                    let parent = layer.and_then(|l| l.parent());
+                    // 位置はレイヤーセットの中で数える（`move_layer` と同じ数え方）
+                    let siblings = layer
+                        .and_then(|l| self.session.doc.children_in_set(l.layer_set(), parent).ok())
+                        .unwrap_or_default();
                     if let Some(i) = siblings.iter().position(|v| *v == id) {
                         let up = action == Action::LayerUp;
                         let to = if up { i + 1 } else { i.wrapping_sub(1) };

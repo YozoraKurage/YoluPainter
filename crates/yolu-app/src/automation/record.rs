@@ -619,8 +619,12 @@ fn plan(app: &AppState, rec: &Recorder, action: &Action) -> Plan {
             let Some(id) = selected(app) else {
                 return Plan::Ui;
             };
-            let parent = doc.layer(id).and_then(|l| l.parent());
-            let siblings = doc.children_of(parent).unwrap_or_default();
+            let layer = doc.layer(id);
+            let parent = layer.and_then(|l| l.parent());
+            // 位置はレイヤーセットの中で数える（core の `move_layer_to` と同じ数え方）
+            let siblings = layer
+                .and_then(|l| doc.children_in_set(l.layer_set(), parent).ok())
+                .unwrap_or_default();
             let Some(i) = siblings.iter().position(|v| *v == id) else {
                 return Plan::Skip;
             };

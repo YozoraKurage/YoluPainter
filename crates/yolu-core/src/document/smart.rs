@@ -192,16 +192,25 @@ impl Document {
                 Reason::SmartMaskCannotBePlacedOnLayer,
             ));
         }
-        // 置き先のレイヤーセット: 配置先のグループのもの、一番上の段なら最初のレイヤーセット
+        // 置き先のレイヤーセット: 配置先のグループのもの、一番上の段なら渡されたもの（無ければ最初のレイヤーセット）
         let set = match placement.parent {
             Some(p) => {
                 let l = &self.layers[self.index_of(p)?];
                 if !l.is_group() {
                     return Err(CoreError::InvalidArgument(Reason::TargetNotGroup));
                 }
+                if placement.set.is_some_and(|s| s != l.set) {
+                    return Err(CoreError::InvalidArgument(Reason::IntoGroupOfOtherLayerSet));
+                }
                 l.set
             }
-            None => self.layer_sets[0].id,
+            None => match placement.set {
+                Some(s) => {
+                    self.require_layer_set(s)?;
+                    s
+                }
+                None => self.layer_sets[0].id,
+            },
         };
         self.check_user_channels(material)?;
         let wrap = material

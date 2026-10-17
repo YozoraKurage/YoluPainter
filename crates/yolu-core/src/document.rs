@@ -1543,8 +1543,18 @@ impl Document {
     }
 
     /// 段を当てて履歴へ積む（C# の Execute）。
-    fn execute(&mut self, mut command: Command, cost: u64) -> Result<(), CoreError> {
+    fn execute(&mut self, command: Command, cost: u64) -> Result<(), CoreError> {
         let kind = command.history_kind();
+        self.execute_as(kind, command, cost)
+    }
+
+    /// `execute` の、履歴の種類を呼び手が決める形（まとまった段の名前を、中身の種類に合わせるとき）。
+    fn execute_as(
+        &mut self,
+        kind: HistoryKind,
+        mut command: Command,
+        cost: u64,
+    ) -> Result<(), CoreError> {
         self.apply(&mut command)?;
         self.history_bump();
         self.push(Entry {

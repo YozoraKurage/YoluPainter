@@ -14,9 +14,12 @@ use std::sync::atomic::Ordering;
 use yolu_protocol::{channel, MaterialInfo, MaterialKey as LinkKey};
 
 use crate::canvas::view::ViewState;
-use crate::engine::{Document, LayerId};
+use crate::engine::{CoreError, Document, HistoryKind, LayerId, LayerSetId};
+use crate::m2::layersets::{display_name, outputs, top_layer_of, LayerSetEdit};
+use crate::m2::{self, Edit, UiOp};
 use crate::notice::Source;
-use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
+use crate::state::canvas_bar::{Add, Chip, Column, Eye, Row};
+use crate::state::{blank_document_in, Action, AppState, DEFAULT_DOCUMENT_SIZE};
 
 pub use yolu_io::{MaterialAsset, MaterialRef};
 
@@ -128,6 +131,8 @@ pub struct Keep {
     pub view: Option<ViewState>,
     /// レイヤーの欄のスクロール（None は今のまま）。
     pub layer_scroll: Option<f32>,
+    /// 今のレイヤーセット（None は最初のレイヤーセット。選ぶレイヤーがあれば、そのレイヤーのレイヤーセットが先）。
+    pub layer_set: Option<LayerSetId>,
 }
 
 impl Keep {
@@ -137,6 +142,7 @@ impl Keep {
             selected_layer: None,
             view: Some(ViewState::default()),
             layer_scroll: Some(0.0),
+            layer_set: None,
         }
     }
 }
@@ -147,6 +153,8 @@ pub struct Stash {
     pub selected_layer: Option<LayerId>,
     pub view: ViewState,
     pub layer_scroll: f32,
+    /// 今のレイヤーセット（None は最初のレイヤーセット）。
+    pub layer_set: Option<LayerSetId>,
 }
 
 impl std::fmt::Debug for Stash {
@@ -163,12 +171,13 @@ impl std::fmt::Debug for Stash {
 
 impl Stash {
     pub fn new(doc: Document) -> Stash {
-        let selected_layer = doc.layers().last().map(|l| l.id());
+        let selected_layer = crate::m2::layersets::default_selection(&doc);
         Stash {
             doc,
             selected_layer,
             view: ViewState::default(),
             layer_scroll: 0.0,
+            layer_set: None,
         }
     }
 }
@@ -317,7 +326,8 @@ impl TextureSets {
     /// 今でないセットの文書を入れ替える（選んでいるレイヤーは新しい文書の一番上にする）。
     pub fn replace_stashed_doc(&mut self, index: usize, doc: Document) {
         if let Some(stash) = self.list.get_mut(index).and_then(|s| s.stash.as_mut()) {
-            stash.selected_layer = doc.layers().last().map(|l| l.id());
+            stash.selected_layer = crate::m2::layersets::default_selection(&doc);
+            stash.layer_set = None;
             stash.doc = doc;
         }
     }
@@ -618,11 +628,14 @@ impl AppState {
             .take()
             .expect("今でないセットは文書をしまっている");
         // 今の文書をしまってから入れる（予算の同期が、ほかのセットのしまった文書を読む）
+        // 出ていく文書の今のレイヤーセットは、文書を替える前に読む
+        let layer_set = Some(self.layer_set());
         let outgoing = Stash {
             doc: self.session.install(incoming.doc),
             selected_layer: self.session.selected_layer,
             view: std::mem::take(&mut self.view),
             layer_scroll: self.ui.layer_scroll,
+            layer_set,
         };
         let previous = self.session.sets.current;
         self.session.sets.list[previous].stash = Some(outgoing);
@@ -631,6 +644,7 @@ impl AppState {
             selected_layer: incoming.selected_layer,
             view: Some(incoming.view),
             layer_scroll: Some(incoming.layer_scroll),
+            layer_set: incoming.layer_set,
         });
         Ok(())
     }
@@ -648,6 +662,7 @@ impl AppState {
     fn settle_installed_document(&mut self, keep: Keep) {
         crate::features::document_replaced(self);
         self.session.selected_layer = keep.selected_layer;
+        self.session.layer_set = keep.layer_set;
         if let Some(view) = keep.view {
             self.view = view;
         }
@@ -1052,6 +1067,269 @@ impl AppState {
             set.visible = !set.visible;
         }
         self.sync_view3d();
+    }
+
+    // ───────── レイヤーセット ─────────
+    //
+    // 今のレイヤーセット（[`AppState::layer_set`]）は、レイヤーのパネルの一覧と、2D のキャンバスの表示・描く先のレイヤーセット。選んでいる
+    // レイヤーがあれば、そのレイヤーのレイヤーセットが今のレイヤーセット（レイヤーを選ぶ操作がほかのレイヤーセットのレイヤーを選ぶと、
+    // 自然にそのレイヤーセットへ切り替わる）。選んでいるレイヤーが無い（空のレイヤーセットを選んだ）ときだけ、`Session::layer_set` に覚えた
+    // レイヤーセットが今のレイヤーセット。どちらも無い・文書に無いときは最初のレイヤーセット。保存しない: 選んでいるレイヤー・描くチャンネル・
+    // 拡大の位置と同じく .ylp に入れず、開いたときは最初のレイヤーセット（形式を変えない）。
+    // 3D ビュー・書き出し・ベイクの読み・lilToon・Live Link は、これによらず最終の結果（`Document::composite_channel`）を読む。
+    // 操作（[`LayerSetEdit`]）は文書の操作で、どれも 1 回の Undo（履歴の名前は `HistoryKind::LayerSets`）。
+
+    /// 今のレイヤーセット（いつも文書にある）。
+    pub fn layer_set(&self) -> LayerSetId {
+        let doc = &self.session.doc;
+        if let Some(layer) = self.session.selected_layer.and_then(|id| doc.layer(id)) {
+            return layer.layer_set();
+        }
+        self.session
+            .layer_set
+            .filter(|s| doc.layer_sets().iter().any(|i| i.id == *s))
+            .unwrap_or_else(|| doc.layer_sets()[0].id)
+    }
+
+    /// 今のレイヤーセットの一覧の番号。
+    pub fn layer_set_index(&self) -> usize {
+        let set = self.layer_set();
+        self.session
+            .doc
+            .layer_sets()
+            .iter()
+            .position(|s| s.id == set)
+            .unwrap_or(0)
+    }
+
+    /// 選ぶレイヤーが無いとき（`ensure_selection`）に覚えるレイヤーセットを、今の値に合わせる。
+    pub(crate) fn remember_layer_set(&mut self) {
+        self.session.layer_set = Some(self.layer_set());
+    }
+
+    /// 今のレイヤーセットを替える（描いている間の断りは `UiOp::SelectLayerSet`）。選ぶレイヤーはそのレイヤーセットの一番上（空なら選ばない）、描くチャンネルは
+    /// そのレイヤーセットが出力している最初のチャンネル（どのチャンネルも出力していなければ今のまま）。今のレイヤーセットをもう一度選んだときも、
+    /// 描くチャンネルは出力の最初のチャンネルに揃える（選ぶレイヤーは変えない）。
+    pub fn select_layer_set(&mut self, set: LayerSetId) {
+        if !self.session.doc.layer_sets().iter().any(|s| s.id == set) {
+            return;
+        }
+        if self.layer_set() != set {
+            self.session.layer_set = Some(set);
+            self.session.selected_layer = top_layer_of(&self.session.doc, set);
+            self.layer_ops.selection = Default::default();
+            self.ui.layer_scroll = 0.0;
+            self.set_edit_mask(false);
+        } else {
+            self.session.layer_set = Some(set);
+        }
+        if let Some(channel) = outputs(&self.session.doc, set).first() {
+            self.m2_ui(UiOp::PaintChannel(*channel));
+        }
+    }
+
+    /// キャンバスの右上の、描くチャンネルのボタンの中身（今の描くチャンネルのアイコンと名前）。
+    pub fn canvas_bar_chip(&self) -> Chip {
+        let channel = self.m2.paint_channel;
+        Chip {
+            icon: m2::channel_icon(channel),
+            name: m2::channel_name(self.lang, &self.session.doc, channel),
+        }
+    }
+
+    /// キャンバスの右上の欄の 3 つの列（テクスチャセット・今のテクスチャセットのレイヤーセット・チャンネル）の中身。`free` は描いていないこと
+    /// （追加のボタンを押せるか）。
+    pub fn canvas_bar_columns(&self, free: bool) -> [Column<Action>; 3] {
+        let lang = self.lang;
+        let doc = &self.session.doc;
+        let current_texture = self.session.sets.current().uid;
+        let textures = self.session.sets.iter().map(|s| Row {
+            key: ("canvasbar.set", s.uid as u128, 0),
+            icon: None,
+            label: s.name.clone(),
+            selected: s.uid == current_texture,
+            action: Action::SelectSet(s.uid),
+            eye: None,
+        });
+        let current_layer_set = self.layer_set();
+        let layer_sets = (0..doc.layer_sets().len()).map(|i| {
+            let id = doc.layer_sets()[i].id;
+            Row {
+                key: ("canvasbar.ls", id.0, 0),
+                icon: None,
+                label: display_name(lang, doc, i),
+                selected: id == current_layer_set,
+                action: Action::M2Ui(UiOp::SelectLayerSet(id)),
+                eye: None,
+            }
+        });
+        let channels = doc.channels().into_iter().map(|channel| {
+            let name = m2::channel_name(lang, doc, channel);
+            Row {
+                key: ("canvasbar.ch", channel.index() as u128, 0),
+                icon: Some(m2::channel_icon(channel)),
+                selected: channel == self.m2.paint_channel,
+                action: Action::M2Ui(UiOp::PaintChannel(channel)),
+                eye: Some(Eye {
+                    showing: channel == self.m2.display_channel,
+                    key: channel.index(),
+                    tip: lang.f("panels-show-in-the-canvas-tip", &[("name", &name)]),
+                    action: Action::M2Ui(UiOp::DisplayChannel(channel)),
+                }),
+                label: name,
+            }
+        });
+        let can_add_texture = free && self.session.sets.len() < crate::newproject::MAX_SETS;
+        let can_add_layer_set =
+            free && doc.layer_sets().len() < yolu_core::MAX_LAYER_SETS && self.can_edit();
+        [
+            Column {
+                icon: None,
+                head: lang.t("canvasbar-texture-set-tip"),
+                add: Some(Add {
+                    tip: lang.t("canvasbar-add-texture-set-tip"),
+                    enabled: can_add_texture,
+                    action: Action::Project(crate::newproject::NpAction::AddSet),
+                }),
+                rows: textures.collect(),
+            },
+            Column {
+                icon: Some("layers"),
+                head: lang.t("layersets-layer-set"),
+                add: Some(Add {
+                    tip: lang.t("canvasbar-add-layer-set-tip"),
+                    enabled: can_add_layer_set,
+                    action: Action::M2(Edit::LayerSets(LayerSetEdit::New)),
+                }),
+                rows: layer_sets.collect(),
+            },
+            Column {
+                icon: Some("paint_brush"),
+                head: lang.t("canvasbar-paint-channel-tip"),
+                add: None,
+                rows: channels.collect(),
+            },
+        ]
+    }
+
+    /// 選ぶレイヤーを、レイヤーセットの一番上のレイヤーにする（空なら選ばない）。消したレイヤーの選び直しに使う。
+    pub(crate) fn select_top_of_layer_set(&mut self, set: LayerSetId) {
+        self.session.selected_layer = top_layer_of(&self.session.doc, set);
+    }
+
+    /// レイヤーセットの操作（`Edit::LayerSets`）。
+    pub(crate) fn layer_set_edit(&mut self, edit: LayerSetEdit) -> Result<(), CoreError> {
+        let lang = self.lang;
+        match edit {
+            LayerSetEdit::New => {
+                let name = self.unique_layer_set_name(&format!(
+                    "{} {}",
+                    lang.t("layersets-layer-set"),
+                    self.session.doc.layer_sets().len() + 1
+                ));
+                let layer = format!("{} 1", lang.t("state-layer"));
+                let set = self.session.doc.batch_as(HistoryKind::LayerSets, |d| {
+                    let set = d.add_layer_set(&name)?;
+                    d.add_layer_in_set(&layer, set, None)?;
+                    Ok(set)
+                })?;
+                self.select_layer_set(set);
+            }
+            LayerSetEdit::Duplicate(set) => {
+                let index = self.layer_set_index_of(set)?;
+                let name = self.unique_layer_set_name(&format!(
+                    "{} 2",
+                    display_name(lang, &self.session.doc, index)
+                ));
+                let copy = self.session.doc.duplicate_layer_set(set, Some(&name))?;
+                self.select_layer_set(copy);
+            }
+            LayerSetEdit::Rename(set, name) => {
+                let index = self.layer_set_index_of(set)?;
+                let name = name.trim();
+                if name.is_empty() || name.chars().any(char::is_control) {
+                    self.refuse(Source::Layer, lang.t("layersets-invalid-layer-set-name"));
+                    return Ok(());
+                }
+                let upper = name.to_uppercase();
+                let taken = (0..self.session.doc.layer_sets().len()).any(|i| {
+                    i != index && display_name(lang, &self.session.doc, i).to_uppercase() == upper
+                });
+                if taken {
+                    let text = lang.f("layersets-another-layer-set-is-already", &[("name", &name)]);
+                    self.refuse(Source::Layer, text);
+                    return Ok(());
+                }
+                self.session.doc.rename_layer_set(set, name)?;
+            }
+            LayerSetEdit::Move(set, index) => self.session.doc.move_layer_set(set, index)?,
+            LayerSetEdit::Remove(set) => {
+                let index = self.layer_set_index_of(set)?;
+                let sets = self.session.doc.layer_sets();
+                // 今のレイヤーセットを消すなら、一覧の次（無ければ前）のレイヤーセットが今のレイヤーセット
+                let next = sets
+                    .get(index + 1)
+                    .or_else(|| index.checked_sub(1).and_then(|i| sets.get(i)))
+                    .map(|s| s.id);
+                if sets.len() <= 1 {
+                    self.refuse(
+                        Source::Layer,
+                        lang.t("layersets-the-last-layer-set-cannot-be-removed"),
+                    );
+                    return Ok(());
+                }
+                let was_current = self.layer_set() == set;
+                self.session.doc.remove_layer_set(set)?;
+                if was_current {
+                    if let Some(next) = next {
+                        self.session.layer_set = Some(next);
+                        self.session.selected_layer = top_layer_of(&self.session.doc, next);
+                        self.set_edit_mask(false);
+                    }
+                }
+            }
+            LayerSetEdit::Output { channel, set } => {
+                self.session.doc.set_channel_output(channel, set)?
+            }
+            LayerSetEdit::MoveLayers { ids, set } => {
+                let current = self.layer_set();
+                self.session.doc.move_layers_to_set(&ids, set)?;
+                // 選んでいたレイヤーが別のレイヤーセットへ移ったら、今のレイヤーセットに残ったレイヤーの一番上を選び直す
+                // （移した先へ画面が飛ばない）
+                let moved_away = self
+                    .session
+                    .selected_layer
+                    .and_then(|id| self.session.doc.layer(id))
+                    .is_some_and(|l| l.layer_set() != current);
+                if moved_away {
+                    self.session.layer_set = Some(current);
+                    self.session.selected_layer = top_layer_of(&self.session.doc, current);
+                    self.set_edit_mask(false);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// レイヤーセットの一覧の番号（無ければ断る）。
+    fn layer_set_index_of(&self, set: LayerSetId) -> Result<usize, CoreError> {
+        self.session
+            .doc
+            .layer_sets()
+            .iter()
+            .position(|s| s.id == set)
+            .ok_or(CoreError::InvalidArgument(
+                yolu_core::Reason::LayerSetDoesNotExist,
+            ))
+    }
+
+    /// 文書の中のほかのレイヤーセットと名前が重ならない（大文字小文字を区別しない）ように、要れば「 2」「 3」… を付けた名前。
+    pub(crate) fn unique_layer_set_name(&self, base: &str) -> String {
+        let doc = &self.session.doc;
+        let names: Vec<String> = (0..doc.layer_sets().len())
+            .map(|i| display_name(self.lang, doc, i))
+            .collect();
+        unique_name(base, names.iter().map(String::as_str))
     }
 }
 

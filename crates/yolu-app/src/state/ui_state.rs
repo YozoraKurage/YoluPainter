@@ -112,4 +112,6 @@ pub struct UiState {
     pub toolset_slot_rects: Vec<(crate::toolset::SlotId, egui::Rect)>,
     /// ブラシの見本の画像とテクスチャ（`brushes::sample`。ツールのプロパティ・詳細のウィンドウ・一覧の行・アセットの欄が出す）。
     pub samples: crate::brushes::sample::SampleCache,
+    /// キャンバスの右上の部品の、開いている欄とスクロール（`canvas::bar`）。
+    pub canvas_bar: crate::canvas::bar::BarState,
 }

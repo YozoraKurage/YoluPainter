@@ -328,7 +328,9 @@ fn baking_from_the_window_fills_the_set_and_the_canvas_shows_the_overlay() {
         MeshMapView::Kind(MeshMapKind::AmbientOcclusion)
     );
     h.get_by_label("メッシュマップ: アンビエントオクルージョン");
-    // 隅のアイコンを押すとやめる
+    // 隅のアイコン（右上の部品の下）を押すとやめる。ウィンドウが上に重なっていると押せないので、先にウィンドウを閉じる
+    h.bake_mut().window = None;
+    h.run();
     h.get_by_label("メッシュマップ: アンビエントオクルージョン")
         .click();
     h.run();

@@ -12,7 +12,7 @@ use egui::{pos2, vec2, Color32, Pos2, Rect, Sense, Stroke, TextureHandle, Textur
 
 #[derive(Clone, Default)]
 struct Navigator {
-    key: Option<(u128, u64, u64, Channel)>,
+    key: Option<(u128, u64, u64, Channel, crate::engine::LayerSetId)>,
     texture: Option<TextureHandle>,
     drag_offset: Option<(f64, f64)>,
 }
@@ -24,15 +24,21 @@ impl Navigator {
             app.session.doc_epoch(),
             app.session.doc.revision(),
             app.m2.display_channel,
+            app.layer_set(),
         );
         if self.key == Some(key) {
             return;
         }
         self.key = Some(key);
         self.drag_offset = None;
-        self.texture = CanvasDisplay::thumbnail(&app.session.doc, app.m2.display_channel)
-            .ok()
-            .map(|image| ctx.load_texture("navigator-image", image, TextureOptions::LINEAR));
+        // 2D のキャンバスと同じ、今のレイヤーセットの合成
+        self.texture = CanvasDisplay::thumbnail_in(
+            &app.session.doc,
+            app.m2.display_channel,
+            Some(app.layer_set()),
+        )
+        .ok()
+        .map(|image| ctx.load_texture("navigator-image", image, TextureOptions::LINEAR));
     }
 }
 

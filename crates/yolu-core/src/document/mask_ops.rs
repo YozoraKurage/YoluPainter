@@ -245,27 +245,4 @@ impl Document {
             changed,
         })
     }
-
-    /// 段を当てて、指定の種類で積む（`execute` は段から種類を決める）。
-    fn execute_as(
-        &mut self,
-        kind: HistoryKind,
-        mut command: Command,
-        cost: u64,
-    ) -> Result<(), CoreError> {
-        self.apply(&mut command)?;
-        self.revision += 1;
-        self.push(Entry {
-            command,
-            cost,
-            kind,
-        });
-        Ok(())
-    }
-
-    /// 複数の段を 1 回の Undo にして、指定の種類で積む（費用は段の合計に 32。途中で断ったら済んだ分を戻して何も積まない）。
-    fn execute_group_as(&mut self, kind: HistoryKind, steps: Vec<Entry>) -> Result<(), CoreError> {
-        let cost = 32 + steps.iter().map(|e| e.cost).sum::<u64>();
-        self.execute_as(kind, Command::Compound(steps), cost)
-    }
 }

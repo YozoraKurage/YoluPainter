@@ -716,12 +716,8 @@ impl AppState {
             .map_or(ChannelKind::Color, |c| c.kind);
         let placed = placement::decal_at(&hit, &view, gui, size);
         let projection = placement::new_projection(ProjectionMode::Decal, Some(placed));
-        let above = self
-            .session
-            .selected_layer
-            .filter(|id| self.session.doc.layer(*id).is_some());
         self.session.doc.end_coalescing();
-        let result = self.session.doc.batch(|d| {
+        let result = self.add_in_current_set_as(yolu_core::HistoryKind::Batch, |d, above| {
             let id = d.add_fill_layer(&name, &[(channel, default_fallback(kind))], above)?;
             d.set_fill_image(id, channel, Some(image))?;
             d.set_fill_projection(id, projection, false)?;

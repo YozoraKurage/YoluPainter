@@ -509,6 +509,7 @@ panels-edit-look = 見た目を変える
 panels-edit-remembered-selections = 覚えた選択範囲を変える
 panels-edit-text = テキストを変える
 panels-edit-ruler = 定規を変える
+panels-edit-layer-sets = レイヤーセットを変える
 panels-starting-point = 開始位置
 panels-pass-through = 通過
 panels-on-the-contents-blend-with-tip = 入: 中身をグループでないかのように下へ重ねる。切: 中身を先にまとめてから重ねる（分離）

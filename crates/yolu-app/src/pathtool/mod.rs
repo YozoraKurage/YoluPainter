@@ -579,17 +579,11 @@ impl AppState {
             .filter(|l| l.has_paths())
             .count()
             + 1;
-        let above = self
-            .session
-            .selected_layer
-            .filter(|id| self.session.doc.layer(*id).is_some());
         let id = path.id;
-        match self.session.doc.add_path_layer(
-            &layer_name(lang, n),
-            LayerPath::Canvas(path),
-            rendered.channels,
-            above,
-        ) {
+        let name = layer_name(lang, n);
+        match self.add_in_current_set(|d, above| {
+            d.add_path_layer(&name, LayerPath::Canvas(path), rendered.channels, above)
+        }) {
             Ok(layer) => {
                 self.session.mark_modified();
                 self.select_new(layer);
@@ -745,14 +739,9 @@ impl AppState {
             .filter(|l| l.has_paths())
             .count()
             + 1;
-        let above = self
-            .session
-            .selected_layer
-            .filter(|id| self.session.doc.layer(*id).is_some());
+        let name = layer_name(lang, n);
         let id = self
-            .session
-            .doc
-            .add_path_layer(&layer_name(lang, n), path.clone(), channels, above)
+            .add_in_current_set(|d, above| d.add_path_layer(&name, path.clone(), channels, above))
             .map_err(core)?;
         Ok((id, gaps))
     }

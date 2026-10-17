@@ -37,6 +37,8 @@ pub enum HistoryKind {
     MoveMask,
     /// コピーしたマスクを貼った・画像をマスクへ貼った（`Document::set_masks`・`paste_into_mask`）。
     PasteMask,
+    /// レイヤーセットを足す・複製・名前・並べ替え・削除・出力の割り当て・レイヤーの移動（`Document::add_layer_set` など）。
+    LayerSets,
 }
 
 impl Document {
@@ -80,6 +82,7 @@ impl Command {
             Self::SavedSelections { .. } => HistoryKind::SavedSelections,
             Self::Text(_) => HistoryKind::Text,
             Self::Rulers { .. } => HistoryKind::Rulers,
+            Self::LayerSets(_) => HistoryKind::LayerSets,
             _ => HistoryKind::Other,
         }
     }

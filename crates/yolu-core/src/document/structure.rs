@@ -218,12 +218,23 @@ impl Document {
     /// `insert_new` の、履歴の費用を指定する形（レイヤーが画素やパスを持って入るとき、その分も費用に数える）。
     pub(super) fn insert_new_costed(
         &mut self,
-        mut layer: Layer,
+        layer: Layer,
         above: Option<LayerId>,
         cost: u64,
     ) -> Result<LayerId, CoreError> {
+        self.insert_new_in(layer, above, None, cost)
+    }
+
+    /// `insert_new_costed` の、above が無いときの入れ先のレイヤーセットを選べる形（None は最初のレイヤーセット）。
+    pub(super) fn insert_new_in(
+        &mut self,
+        mut layer: Layer,
+        above: Option<LayerId>,
+        in_set: Option<LayerSetId>,
+        cost: u64,
+    ) -> Result<LayerId, CoreError> {
         self.ensure_no_stroke()?;
-        let (index, parent, set) = self.placement_above(above)?;
+        let (index, parent, set) = self.placement_in(above, in_set)?;
         layer.parent = parent;
         layer.set = set;
         let id = layer.id;

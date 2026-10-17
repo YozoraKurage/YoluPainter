@@ -642,28 +642,18 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
     }
     v.push(Entry::Separator);
     v.push(Entry::item(lang.t("shell-rename"), Action::StartRename(id)).enabled(free));
-    if multi {
-        v.push(
-            Entry::item(
-                lang.t("shell-toggle-visibility"),
-                Action::M2(Edit::ToggleSelectedVisible),
-            )
-            .enabled(free),
-        );
-    } else {
-        v.push(
-            Entry::item(
-                if visible {
-                    lang.t("shell-hide-2")
-                } else {
-                    lang.t("shell-show-2")
-                },
-                Action::ToggleVisible(id),
-            )
-            .enabled(free),
-        );
-    }
+    let (visibility, toggle) = match (multi, visible) {
+        (true, _) => (
+            lang.t("shell-toggle-visibility"),
+            Action::M2(Edit::ToggleSelectedVisible),
+        ),
+        (false, true) => (lang.t("shell-hide-2"), Action::ToggleVisible(id)),
+        (false, false) => (lang.t("shell-show-2"), Action::ToggleVisible(id)),
+    };
+    v.push(Entry::item(visibility, toggle).enabled(free));
     v.push(Entry::Separator);
+    // レイヤーセットが 2 つ以上あるとき: 選んでいるレイヤー（グループは中身ごと）を別のレイヤーセットへ
+    v.extend(crate::m2_menu::layer_set_move_submenu(app, targets.clone()));
     v.push(Entry::item(lang.t("shell-move-layer-up"), Action::LayerUp).enabled(free));
     v.push(Entry::item(lang.t("shell-move-layer-down"), Action::LayerDown).enabled(free));
     let removed: usize = members

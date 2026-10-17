@@ -206,11 +206,107 @@ fn own_legend(ui: &mut Ui, blend: Rect, name: &str, tip: &str) {
     response.on_hover_text(tip);
 }
 
+/// レイヤーセットのドロップダウンの高さ。
+const SET_HEAD_HEIGHT: f32 = 22.0;
+/// 出力なしの印の幅（ドロップダウンの右）。
+const SET_MARK_WIDTH: f32 = 22.0;
+
+/// 頭のレイヤーセットのドロップダウン（レイヤーセットが 1 つだけなら出さず、0 を返す）。返すのは、頭が下へ押す高さ（ドロップダウンと次の帯の間を含む）。
+fn layer_set_head(
+    ui: &mut Ui,
+    app: &mut AppState,
+    ctx: &egui::Context,
+    r: Rect,
+    enabled: bool,
+) -> f32 {
+    let doc = &app.session.doc;
+    if doc.layer_sets().len() < 2 {
+        return 0.0;
+    }
+    let lang = app.lang;
+    let set = app.layer_set();
+    let missing = crate::m2::layersets::is_off_output(doc, set, app.m2.paint_channel);
+    let mark = if missing { SET_MARK_WIDTH + 4.0 } else { 0.0 };
+    let name = crate::m2::layersets::set_label(lang, doc, set);
+    let at = Rect::from_min_size(
+        pos2(r.left() + t::PADDING, r.top() + TOP_MARGIN),
+        vec2(r.width() - 2.0 * t::PADDING - mark, SET_HEAD_HEIGHT),
+    );
+    let (response, b) = w::dropdown(
+        ui,
+        at,
+        "layers.layerset",
+        None,
+        &name,
+        Some(lang.t("layersets-layer-set")),
+        enabled,
+        0.0,
+    );
+    if response.clicked() {
+        open_popup(
+            app,
+            ctx,
+            PopupKind::M2(crate::m2_menu::Popup::LayerSet),
+            b,
+            b.width(),
+        );
+    }
+    if missing {
+        let icon = Rect::from_min_size(
+            pos2(at.right() + 4.0, at.top()),
+            vec2(SET_MARK_WIDTH, SET_HEAD_HEIGHT),
+        );
+        w::icon(ui.painter(), icon, "link_off", t::WARNING, 17.0);
+        let tip = lang.t("layersets-no-output-tip");
+        let hit = ui.interact(
+            icon,
+            ui.make_persistent_id("layers.layerset.off"),
+            Sense::hover(),
+        );
+        hit.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, tip));
+        hit.on_hover_text(tip);
+    }
+    SET_HEAD_HEIGHT + TOP_GAP
+}
+
 fn open_popup(app: &mut AppState, ctx: &egui::Context, kind: PopupKind, anchor: Rect, min: f32) {
     app.ui.popup = Some(OpenPopup {
         kind,
         state: PopupState::new(ctx, anchor).with_min_width(min),
     });
+}
+
+/// 一覧の空白（行の下）の右クリックで、レイヤーのメニューを開く。
+fn blank_menu(
+    ui: &mut Ui,
+    app: &mut AppState,
+    ctx: &egui::Context,
+    list: Rect,
+    content: f32,
+    enabled: bool,
+) {
+    let blank = Rect::from_min_max(
+        pos2(
+            list.left(),
+            (list.top() + content - app.ui.layer_scroll).max(list.top()),
+        ),
+        list.max,
+    );
+    if blank.height() <= 0.0 {
+        return;
+    }
+    let response = ui.interact(blank, ui.make_persistent_id("layers.blank"), Sense::click());
+    if response.secondary_clicked() && enabled {
+        if let Some(at) = response.interact_pointer_pos() {
+            open_popup(
+                app,
+                ctx,
+                PopupKind::M2(Popup::LayerBlank),
+                context_anchor(at),
+                0.0,
+            );
+        }
+    }
 }
 
 pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
@@ -231,9 +327,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         })
     });
 
+    // 頭: レイヤーセットのドロップダウン（2 つ以上あるときだけ）。今の描くチャンネルが、このレイヤーセットから最終の結果に出ていないときは、
+    // 右に印だけ（理由はツールチップ）
+    let head = layer_set_head(ui, app, &ctx, r, enabled);
+
     // 上: 描くチャンネルの合成モードと不透明度（Photoshop の配置）。そのチャンネルだけの値にするのは、合成モードのメニューの頭の項目
     let rest = Rect::from_min_size(
-        pos2(r.left() + t::PADDING, r.top() + TOP_MARGIN),
+        pos2(r.left() + t::PADDING, r.top() + TOP_MARGIN + head),
         vec2(r.width() - 2.0 * t::PADDING, TOP_HEIGHT),
     );
     let left_w = ((rest.width() - 6.0) * 0.42).floor();
@@ -252,7 +352,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         blend_rect = Rect::from_min_size(rest.min, rest.size());
         opacity_rect = blend_rect.translate(vec2(0.0, TOP_HEIGHT + TOP_GAP));
     }
-    let list_top = if stacked { STACKED_LIST_TOP } else { LIST_TOP };
+    let list_top = head + if stacked { STACKED_LIST_TOP } else { LIST_TOP };
     if let Some((id, blend, opacity, own)) = selected {
         let name = m2::channel_name(lang, &app.session.doc, channel);
         let (blend_tip, opacity_tip) = if own {
@@ -311,7 +411,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         r.max.max(pos2(r.right(), r.top() + list_top)),
     );
     w::fill(ui.painter(), list, t::CONTROL_BG);
-    let rows = m2::visible_rows(&app.session.doc, &app.m2.collapsed);
+    let rows = m2::visible_rows_in(&app.session.doc, &app.m2.collapsed, app.layer_set());
     // レイヤーの行の下に効果の行（高さが違う。マスクが対象のレイヤーはマスクの効果、それ以外はレイヤーの効果）が続くので、行の位置は配置を数えて決める。
     // ドラッグの落とす先の数え方も、このフレームで描いた配置と同じ物を使う（途中で対象が替わっても、見えている行とずれない）
     let layout = effect_rows::layout(
@@ -324,28 +424,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     let bar = Scroll::begin(ui, list, content, &mut app.ui.layer_scroll);
     let row_width = list.width() - bar.reserved();
 
-    // 空白の右クリック（行の下）
-    let blank = Rect::from_min_max(
-        pos2(
-            list.left(),
-            (list.top() + content - app.ui.layer_scroll).max(list.top()),
-        ),
-        list.max,
-    );
-    if blank.height() > 0.0 {
-        let response = ui.interact(blank, ui.make_persistent_id("layers.blank"), Sense::click());
-        if response.secondary_clicked() && enabled {
-            if let Some(at) = response.interact_pointer_pos() {
-                open_popup(
-                    app,
-                    &ctx,
-                    PopupKind::M2(Popup::LayerBlank),
-                    context_anchor(at),
-                    0.0,
-                );
-            }
-        }
-    }
+    blank_menu(ui, app, &ctx, list, content, enabled);
 
     let chosen = app.selected_layers();
     // 送って一覧の上へはみ出た行の部品（目・開閉・サムネイル・印）が、一覧の外（上の帯など）で当たりを持たないよう、
@@ -430,9 +509,10 @@ pub fn clipping_state(app: &AppState) -> (bool, Option<&'static str>) {
         return (false, None);
     };
     let parent = layer.parent();
+    let set = layer.layer_set();
     if app.session.doc.layers()[..index]
         .iter()
-        .any(|l| l.parent() == parent)
+        .any(|l| l.parent() == parent && l.layer_set() == set)
     {
         (false, None)
     } else if parent.is_some() {

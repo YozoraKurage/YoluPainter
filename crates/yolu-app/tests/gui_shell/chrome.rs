@@ -456,10 +456,13 @@ fn the_2d_corner_icons_appear_only_when_the_state_needs_them() {
     let canvas = canvas_rect(&h);
     let label = "表示を回しています（-15°）。押すと回転を戻します（Shift+R）";
     let icon = h.get_by_label(label).rect();
+    // 右上の隅。右端にそろい、右上の部品（UV と描くチャンネルのボタン）の下に並ぶ
+    let bar = yolu_app::canvas::bar::BOTTOM;
     assert!(
         canvas.expand(1.0).contains_rect(icon)
             && canvas.right() - icon.right() < 24.0
-            && icon.top() - canvas.top() < 24.0,
+            && icon.top() - canvas.top() >= bar - 1.0
+            && icon.top() - canvas.top() < bar + 24.0,
         "{icon:?} は {canvas:?} の右上の隅"
     );
     // 押しても描き始めず、回転が戻る

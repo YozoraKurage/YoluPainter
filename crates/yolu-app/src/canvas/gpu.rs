@@ -85,6 +85,8 @@ pub enum Fallback {
     Unsupported(Unsupported),
     /// 描いたタイルを全部常駐させると GPU のメモリの予算を超える（文書が小さくなれば戻る）。
     OverBudget,
+    /// 見せているレイヤーセットが、そのチャンネルの最終の結果に出ていない（GPU の合成は最終の結果の計画だけを作る）。
+    LayerSet,
     /// GPU の初期化・実行の失敗（デバイスの上限の超過を含む）。
     Failed(Failure),
 }
@@ -139,6 +141,7 @@ impl Fallback {
                 Unsupported::GroupDepth => lang.t("canvas-groups-are-nested-too-deeply").into(),
             },
             Fallback::OverBudget => lang.t("canvas-over-the-gpu-memory-budget").into(),
+            Fallback::LayerSet => lang.t("canvas-layer-set-not-in-the-output").into(),
             Fallback::Failed(failure) => failure.describe(lang),
         }
     }

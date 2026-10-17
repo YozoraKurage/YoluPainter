@@ -3,6 +3,7 @@
 //! 点が来ていれば、そのフレームのストロークはペンの点だけで描き、同じペンから egui が作るマウスの代わりの入力は使わない。
 //! ストロークを取り残さない: ボタンを離す・Esc（捨てる）・ウィンドウのフォーカスを失う（そこまでを確定）で必ず終える。
 
+pub mod bar;
 pub mod cpu;
 pub mod display;
 pub mod gpu;
@@ -57,7 +58,13 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             .unwrap_or(crate::engine::Rect::new(0, 0, 0, 0)),
         pixel_size: view.pixel_size(),
     }));
-    display.sync_channel(ui.ctx(), &app.session.doc, app.m2.display_channel);
+    // 見せるのは、今のレイヤーセットの合成（3D ビュー・書き出しが読む最終の結果とは別。出力の割り当てのレイヤーセットなら同じ）
+    display.sync_view(
+        ui.ctx(),
+        &app.session.doc,
+        app.m2.display_channel,
+        Some(app.layer_set()),
+    );
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, t::CANVAS_BG);
     display.paint(&painter, &view);
@@ -75,6 +82,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
     // 焼いたメッシュマップを見ているとき（読むだけの重ね表示）
     crate::bake::overlay::paint(&painter, app, &view);
     crate::uv_wireframe::show(ui, app, &view);
+    // 右上: UV の線と描くチャンネルのボタン・開いた欄（描く物の上。ブラシのカーソルより前に重ねる）。右上の隅のアイコンと同じ「描いていない」を渡す
+    let free = !app.is_stroking();
+    bar::show(ui, app, rect, free);
     // ステンシル（画面に貼り付いた半透明の画像。Y を押しているあいだは枠も）
     if app.mode.paints() {
         crate::stencil::draw_overlay(&painter, &mut app.stencil, rect);
@@ -162,7 +172,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, display: &mut CanvasDisplay, pen: &
             });
         }
     }
-    draw_corner(ui, app, rect);
+    draw_corner(ui, app, rect, free);
 }
 
 /// クローンの元の印（十字）。描いていないあいだは、決めた元の点（クローンのブラシのときだけ）。描いている間は、今写している元の点
@@ -191,9 +201,8 @@ fn paint_eyedrop_mark(app: &mut AppState, painter: &egui::Painter, view: &Canvas
 
 /// 表示域の右上の隅に重ねる小さなアイコン（見出しの帯は置かない）。読むだけのセットの鍵・表示の回転・左右反転・重ねて見ている
 /// メッシュマップだけが、今の状態のとき出る。文字は無く、名前と理由はツールチップ。
-fn draw_corner(ui: &mut Ui, app: &mut AppState, view: Rect) {
+fn draw_corner(ui: &mut Ui, app: &mut AppState, view: Rect, enabled: bool) {
     let lang = app.lang;
-    let enabled = !app.is_stroking();
     let mut items = Vec::new();
     // 押したとき当てる操作（状態を見せるだけの印は None）
     let mut actions: Vec<Option<crate::state::Action>> = Vec::new();
@@ -246,6 +255,9 @@ fn draw_corner(ui: &mut Ui, app: &mut AppState, view: Rect) {
             crate::bake::BakeAction::View(crate::bake::MeshMapView::None),
         )));
     }
+    // 右上の部品（`bar`）の下に並べる
+    let mut view = view;
+    view.min.y += bar::BOTTOM - w::CORNER_MARGIN;
     if let Some(action) = w::corner_icons(ui, "canvas", view, &items)
         .clicked
         .and_then(|i| actions.swap_remove(i))
@@ -975,7 +987,8 @@ fn handle_input(ui: &mut Ui, app: &mut AppState, rect: Rect, pen: &[PenSample], 
     ctx.data_mut(|d| d.insert_temp(typing_id(), typing));
     let (now, frame_dt) = ctx.input(|i| (i.time, i.unstable_dt as f64));
     // 保存していない変更の問いが開いている間も止める（別ウィンドウのキャンバスは問いの覆いの外で、入力を直に読むため）
-    let blocked = crate::windows::pointer_blocked(app);
+    // 右上の部品の欄が開いている間も、キャンバスへ押しを渡さない（欄の外の押しは欄を閉じるだけ）
+    let blocked = crate::windows::pointer_blocked(app) || app.ui.canvas_bar.is_open();
     let (events, modifiers, r_down, space_down) = ui.input(|i| {
         (
             i.events.clone(),

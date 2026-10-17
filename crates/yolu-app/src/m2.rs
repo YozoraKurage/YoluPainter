@@ -2,6 +2,8 @@
 //! 全部入りのブラシ（`Brush`）の設定。計算・検証・履歴は core に任せ、ここは「どの操作をどの順で当てるか」と画面の覚えだけを持つ。
 //! 文書を変える操作は `Action::M2(Edit)`（1 つが 1 回の Undo。スライダーのドラッグは core がまとめる）、画面だけの操作は `Action::M2Ui(UiOp)`。
 
+pub mod layersets;
+
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use yolu_core::Reason;
@@ -12,8 +14,8 @@ use crate::engine::unit_f32_to_byte;
 use crate::engine::{
     AdjustmentSettings, AntiAlias, BlendMode, Brush, BrushEffect, BrushPreset, Channel,
     ChannelBlend, ChannelInfo, ChannelKind, ColorSpace, CoreError, Document, DualBrush,
-    DualBrushMode, LayerId, LayerKind, NormalSettings, NormalYDirection, PaperTexture, Rgba8,
-    Stroke, TextureMode,
+    DualBrushMode, LayerId, LayerKind, LayerSetId, NormalSettings, NormalYDirection, PaperTexture,
+    Rgba8, Stroke, TextureMode,
 };
 use crate::lang::Lang;
 use crate::layerops::Xform;
@@ -233,6 +235,8 @@ pub enum Edit {
         from: LayerId,
         to: LayerId,
     },
+    /// レイヤーセットの操作（足す・複製・名前・並べ替え・削除・出力の割り当て・レイヤーの移動）。
+    LayerSets(layersets::LayerSetEdit),
 }
 
 /// ブラシの選択肢（ポップアップから選んだもの）。スライダーとスイッチは画面が `AppState::m2.brush` を直に変える。
@@ -325,6 +329,10 @@ pub enum UiOp {
     Language(Lang),
     /// 移動・変形の補間（バイリニア・ニアレストネイバー）。
     Resampling(yolu_core::Resampling),
+    /// 今のレイヤーセット（選ぶレイヤー・描くチャンネルも一緒に替わる）。
+    SelectLayerSet(crate::engine::LayerSetId),
+    /// レイヤーセットの名前を変え始める（テクスチャセットのパネルの行の入力欄）。
+    RenameLayerSet(crate::engine::LayerSetId),
 }
 
 /// レイヤーの行の 1 つ（一覧の上から。閉じたグループの中身は含まない）。
@@ -395,6 +403,9 @@ pub struct M2State {
     /// 名前を変えているユーザーチャンネルと、入力欄がフォーカスを取った後か。
     pub renaming_channel: Option<Channel>,
     pub rename_channel_started: bool,
+    /// 名前を変えているレイヤーセットと、入力欄がフォーカスを取った後か。
+    pub renaming_layer_set: Option<crate::engine::LayerSetId>,
+    pub rename_layer_set_started: bool,
     pub channel_scroll: f32,
     /// チャンネルのパネルの中身（一覧と Normal の設定）の高さ。前のフレームのもの（スクロールの上限に使う）。
     pub channels_content: f32,
@@ -421,6 +432,8 @@ impl Default for M2State {
             random_seed: true,
             renaming_channel: None,
             rename_channel_started: false,
+            renaming_layer_set: None,
+            rename_layer_set_started: false,
             channel_scroll: 0.0,
             channels_content: 0.0,
             props_scroll: 0.0,
@@ -701,8 +714,25 @@ pub fn layer_kind_icon(kind: LayerKind) -> &'static str {
 
 // ───────── 一覧の行とドラッグ ─────────
 
-/// 一覧の行（上から。閉じたグループの中身は出さない）。
+/// 一覧の行（上から。閉じたグループの中身は出さない）。全部のレイヤーセットのレイヤー（レイヤーのパネルは `visible_rows_in`）。
 pub fn visible_rows(doc: &Document, collapsed: &HashSet<LayerId>) -> Vec<Row> {
+    rows_where(doc, collapsed, |_| true)
+}
+
+/// `visible_rows` の、レイヤーセット `set` のレイヤーだけ（レイヤーのパネルの一覧）。
+pub fn visible_rows_in(
+    doc: &Document,
+    collapsed: &HashSet<LayerId>,
+    set: crate::engine::LayerSetId,
+) -> Vec<Row> {
+    rows_where(doc, collapsed, |l| l.layer_set() == set)
+}
+
+fn rows_where(
+    doc: &Document,
+    collapsed: &HashSet<LayerId>,
+    keep: impl Fn(&crate::engine::Layer) -> bool,
+) -> Vec<Row> {
     let parents: HashMap<LayerId, Option<LayerId>> =
         doc.layers().iter().map(|l| (l.id(), l.parent())).collect();
     let depth = |id: LayerId| {
@@ -735,7 +765,7 @@ pub fn visible_rows(doc: &Document, collapsed: &HashSet<LayerId>) -> Vec<Row> {
     doc.layers()
         .iter()
         .rev()
-        .filter(|l| !hidden(l.id()))
+        .filter(|l| keep(l) && !hidden(l.id()))
         .map(|l| Row {
             id: l.id(),
             depth: depth(l.id()),
@@ -777,12 +807,14 @@ pub fn drop_edit(
     dragged: LayerId,
     target: DropTarget,
 ) -> Option<Edit> {
+    // 位置は、動かすレイヤーのレイヤーセットの中で数える（一番上の段は、ほかのレイヤーセットのレイヤーを含めない）
+    let set = doc.layer(dragged)?.layer_set();
     let (parent, position) = match target {
         DropTarget::Into(group) => {
             if group == dragged || is_inside(doc, group, dragged) {
                 return None;
             }
-            let children = doc.children_of(Some(group)).ok()?;
+            let children = doc.children_in_set(set, Some(group)).ok()?;
             (
                 Some(group),
                 children.iter().filter(|c| **c != dragged).count(),
@@ -795,7 +827,7 @@ pub fn drop_edit(
                     return None;
                 }
                 let parent = doc.layer(row.id)?.parent();
-                let siblings = doc.children_of(parent).ok()?;
+                let siblings = doc.children_in_set(set, parent).ok()?;
                 let rest: Vec<LayerId> = siblings.into_iter().filter(|c| *c != dragged).collect();
                 (parent, rest.iter().position(|c| *c == row.id)? + 1)
             }
@@ -823,13 +855,14 @@ pub fn drop_edit_for(
             .first()
             .and_then(|m| drop_edit(doc, rows, *m, target));
     }
+    let set = doc.layer(members[0])?.layer_set();
     let carried = |id: LayerId| members.iter().any(|m| *m == id || is_inside(doc, id, *m));
     match target {
         DropTarget::Into(group) => {
             if carried(group) {
                 return None;
             }
-            let children = doc.children_of(Some(group)).ok()?;
+            let children = doc.children_in_set(set, Some(group)).ok()?;
             let position = children.iter().filter(|c| !carried(**c)).count();
             Some(Edit::MoveLayers {
                 ids: members.clone(),
@@ -844,7 +877,7 @@ pub fn drop_edit_for(
                 }
                 let parent = doc.layer(row.id)?.parent();
                 let rest: Vec<LayerId> = doc
-                    .children_of(parent)
+                    .children_in_set(set, parent)
                     .ok()?
                     .into_iter()
                     .filter(|c| !carried(*c))
@@ -1018,30 +1051,93 @@ impl AppState {
         Ok(())
     }
 
-    fn m2_apply(&mut self, edit: Edit) -> Result<(), CoreError> {
+    /// 今のレイヤーセットに足すときの、上のレイヤーと移す先。選んでいるレイヤーがあればそのすぐ上（同じレイヤーセット）。無ければ今の
+    /// レイヤーセットの一番上だが、core は上のレイヤーが無いと最初のレイヤーセットへ足すので、最初でないレイヤーセット（選ぶレイヤーが
+    /// 無いのは、レイヤーが 1 枚も無いときだけ）は足してから移す（移す先 Some）。
+    fn new_layer_slot(&self) -> (Option<LayerId>, Option<LayerSetId>) {
         let above = self.above_selected();
+        let set = self.layer_set();
+        let first = self.session.doc.layer_sets()[0].id;
+        if above.is_some() || set == first {
+            (above, None)
+        } else {
+            (None, Some(set))
+        }
+    }
+
+    /// 今のレイヤーセットに足す（足し先は `new_layer_slot`）。1 つの編集で足せる物はそのまま、移すときは足してから 1 回の取り消しにまとめる。
+    pub(crate) fn add_in_current_set(
+        &mut self,
+        add: impl FnOnce(&mut Document, Option<LayerId>) -> Result<LayerId, CoreError>,
+    ) -> Result<LayerId, CoreError> {
+        let (above, move_to) = self.new_layer_slot();
+        if move_to.is_none() {
+            return add(&mut self.session.doc, above);
+        }
+        self.add_in_current_set_as(yolu_core::HistoryKind::AddLayer, add)
+    }
+
+    /// `add_in_current_set` の、足すのに複数の編集が要る物（足してから画像・グラデーションを入れる塗りつぶしなど）の形。いつも
+    /// `kind` の 1 回の取り消しにまとめる（`add` の中で `batch` を使わない）。
+    pub(crate) fn add_in_current_set_as(
+        &mut self,
+        kind: yolu_core::HistoryKind,
+        add: impl FnOnce(&mut Document, Option<LayerId>) -> Result<LayerId, CoreError>,
+    ) -> Result<LayerId, CoreError> {
+        let (above, move_to) = self.new_layer_slot();
+        self.session.doc.batch_as(kind, |d| {
+            let id = add(d, above)?;
+            if let Some(set) = move_to {
+                d.move_layers_to_set(&[id], set)?;
+            }
+            Ok(id)
+        })
+    }
+
+    /// 新しいユーザーチャンネルの出力は、そのチャンネルの名前のレイヤーセット（空のレイヤー 1 枚つき）を作ってそこへ
+    /// （チャンネルを足す・レイヤーセットを足す・出力の割り当ては、1 回の取り消し）。描く先はそのレイヤーセットの空のレイヤー
+    /// （描くチャンネルを足したときに、すぐ描ける）。
+    fn add_channel_with_layer_set(&mut self, info: ChannelInfo) -> Result<(), CoreError> {
+        let lang = self.lang;
+        let set_name = self.unique_layer_set_name(&info.name);
+        let layer_name = format!("{} 1", lang.t("state-layer"));
+        let (channel, set) = self
+            .session
+            .doc
+            .batch_as(yolu_core::HistoryKind::Channel, |d| {
+                let channel = d.add_channel(info)?;
+                let set = d.add_layer_set(&set_name)?;
+                d.add_layer_in_set(&layer_name, set, None)?;
+                d.set_channel_output(channel, Some(set))?;
+                Ok((channel, set))
+            })?;
+        self.m2.paint_channel = channel;
+        self.m2.display_channel = channel;
+        self.select_layer_set(set);
+        Ok(())
+    }
+
+    fn m2_apply(&mut self, edit: Edit) -> Result<(), CoreError> {
         match edit {
             Edit::NewGroup => {
                 let name = self.new_layer_name(LayerKind::Group);
-                let id = self.session.doc.add_group(&name, above)?;
+                let id = self.add_in_current_set(|d, above| d.add_group(&name, above))?;
                 self.select_new(id);
             }
             Edit::NewFill => {
                 let name = self.new_layer_name(LayerKind::Fill);
                 let value = fill_from_color(self.color.main);
-                let id = self.session.doc.add_fill_layer(
-                    &name,
-                    &[(self.m2.paint_channel, value)],
-                    above,
-                )?;
+                let channel = self.m2.paint_channel;
+                let id = self.add_in_current_set(|d, above| {
+                    d.add_fill_layer(&name, &[(channel, value)], above)
+                })?;
                 self.select_new(id);
             }
             Edit::NewAdjustment(kind) => {
                 let name = kind.name(self.lang).to_owned();
-                let id =
-                    self.session
-                        .doc
-                        .add_adjustment_layer(&name, kind.settings(), None, above)?;
+                let id = self.add_in_current_set(|d, above| {
+                    d.add_adjustment_layer(&name, kind.settings(), None, above)
+                })?;
                 self.select_new(id);
             }
             Edit::GroupSelected => self.group_selected_layers()?,
@@ -1118,11 +1214,7 @@ impl AppState {
                 self.session.doc.set_fill_value(id, channel, value, true)?
             }
             Edit::Adjust { id, settings } => self.session.doc.set_adjustment(id, settings, true)?,
-            Edit::AddChannel(info) => {
-                let channel = self.session.doc.add_channel(info)?;
-                self.m2.paint_channel = channel;
-                self.m2.display_channel = channel;
-            }
+            Edit::AddChannel(info) => self.add_channel_with_layer_set(info)?,
             Edit::SetChannel { channel, info } => {
                 self.session.doc.set_channel_info(channel, info)?
             }
@@ -1152,6 +1244,7 @@ impl AppState {
             Edit::Transform(x) => {
                 self.apply_xform(x)?;
             }
+            Edit::LayerSets(edit) => self.layer_set_edit(edit)?,
             Edit::NormalSettings { settings, coalesce } => {
                 let old = self.session.doc.normal_settings();
                 self.session.doc.set_normal_settings(settings, coalesce)?;
@@ -1280,6 +1373,18 @@ impl AppState {
             }
             UiOp::Language(lang) => self.set_language(lang),
             UiOp::Resampling(mode) => self.transform.resampling = mode,
+            UiOp::SelectLayerSet(set) => {
+                if stroking {
+                    return refuse(self);
+                }
+                self.select_layer_set(set)
+            }
+            UiOp::RenameLayerSet(set) => {
+                if self.can_edit() && self.session.doc.layer_sets().iter().any(|s| s.id == set) {
+                    self.m2.renaming_layer_set = Some(set);
+                    self.m2.rename_layer_set_started = false;
+                }
+            }
         }
     }
 
@@ -1494,6 +1599,11 @@ impl AppState {
         if let Some(c) = self.m2.renaming_channel {
             if self.session.doc.channel_info(c).is_none() {
                 self.m2.renaming_channel = None;
+            }
+        }
+        if let Some(set) = self.m2.renaming_layer_set {
+            if !self.session.doc.layer_sets().iter().any(|s| s.id == set) {
+                self.m2.renaming_layer_set = None;
             }
         }
     }

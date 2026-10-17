@@ -20,7 +20,9 @@ use yolu_core::geometry::pick;
 use yolu_core::glam::Vec2;
 
 use crate::canvas::view::CanvasView;
-use crate::engine::{Channel, ChannelKind, CoreError, Document, LayerId, LayerKind, Rgba8};
+use crate::engine::{
+    Channel, ChannelKind, CoreError, Document, LayerId, LayerKind, LayerSetId, Rgba8,
+};
 use crate::features::Feature;
 use crate::lang::Lang;
 use crate::m2::channel_name;
@@ -67,6 +69,8 @@ pub struct SampleKey {
     revision: u64,
     layer: Option<LayerId>,
     channel: Channel,
+    /// 合成から取るときのレイヤーセット（2D のキャンバスは今のレイヤーセット。None は最終の結果）。
+    from: Option<LayerSetId>,
 }
 
 /// 右ボタン（ペンのサイドボタン）でスポイトを始めている途中。2D は押した所から動かすと `at` が付いてくる（`sample` は使わず、毎フレーム読む）。
@@ -156,11 +160,15 @@ pub fn pick_canvas(app: &mut AppState, view: &CanvasView, at: Pos2) -> bool {
     if !(0.0..w).contains(&x) || !(0.0..h).contains(&y) {
         return false;
     }
-    pick_texel(
+    // 2D のキャンバスが見せている、今のレイヤーセットの合成から取る
+    let from = Some(app.layer_set());
+    pick_texel_from(
         app,
         app.session.sets.current_index(),
         x.floor() as u32,
         y.floor() as u32,
+        from,
+        &read_pixel,
     )
 }
 
@@ -243,6 +251,17 @@ pub fn current_swatch(app: &AppState) -> Color32 {
 /// セット `set` の画素 (x, y) の、印に出す色（取るのと同じ元・同じチャンネル。マテリアルで塗るときは Color）。透明・読めない・範囲の外は None。
 /// 同じ画素・同じ文書の版・同じ設定なら読み直さない（毎フレーム呼んでよい）。文書は変えず、知らせも出さない。
 pub fn sample_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> Option<Color32> {
+    sample_texel_from(app, set, x, y, None)
+}
+
+/// `sample_texel` の、合成から取るときのレイヤーセットを選べる形（None は最終の結果）。
+fn sample_texel_from(
+    app: &mut AppState,
+    set: usize,
+    x: u32,
+    y: u32,
+    from: Option<LayerSetId>,
+) -> Option<Color32> {
     let layer = source_layer(app, set);
     let channel = if app.paints_material() {
         Channel::Color
@@ -256,6 +275,7 @@ pub fn sample_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> Option<Co
         revision: app.set_doc(set).revision(),
         layer,
         channel,
+        from,
     };
     if let Some((cached, color)) = app.eyedrop.sample_cache {
         if cached == key {
@@ -263,7 +283,11 @@ pub fn sample_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> Option<Co
         }
     }
     let doc = app.set_doc(set);
-    let color = match read_pixel(doc, layer, channel, x, y) {
+    let read = match (layer, from) {
+        (None, Some(from)) => read_pixel_in_set(doc, from, channel, x, y),
+        _ => read_pixel(doc, layer, channel, x, y),
+    };
+    let color = match read {
         Ok(Some(px)) => Some(swatch(doc, channel, px)),
         _ => None,
     };
@@ -282,7 +306,8 @@ pub fn sample_canvas(app: &mut AppState, view: &CanvasView, at: Pos2) -> Option<
         return None;
     }
     let set = app.session.sets.current_index();
-    sample_texel(app, set, x.floor() as u32, y.floor() as u32)
+    let from = Some(app.layer_set());
+    sample_texel_from(app, set, x.floor() as u32, y.floor() as u32, from)
 }
 
 /// 3D ビューの `at`（画面の点）の面の、印に出す色。モデルが無い・面に当たらない・テクスチャセットが無い・UV が外は None。
@@ -324,6 +349,18 @@ pub fn pick_texel(app: &mut AppState, set: usize, x: u32, y: u32) -> bool {
 }
 
 fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reader<'_>) -> bool {
+    pick_texel_from(app, set, x, y, None, reader)
+}
+
+/// `pick_texel_with` の、合成から取るときのレイヤーセットを選べる形（None は最終の結果。`reader` は、レイヤーセットを選ばない読み方だけ）。
+fn pick_texel_from(
+    app: &mut AppState,
+    set: usize,
+    x: u32,
+    y: u32,
+    from: Option<LayerSetId>,
+    reader: Reader<'_>,
+) -> bool {
     let lang = app.lang;
     let layer = source_layer(app, set);
     let material = app.paints_material();
@@ -336,7 +373,11 @@ fn pick_texel_with(app: &mut AppState, set: usize, x: u32, y: u32, reader: Reade
     {
         let doc = app.set_doc(set);
         for channel in wanted {
-            match reader(doc, layer, channel, x, y) {
+            let value = match (layer, from) {
+                (None, Some(from)) => read_pixel_in_set(doc, from, channel, x, y),
+                _ => reader(doc, layer, channel, x, y),
+            };
+            match value {
                 Ok(Some(px)) => read.push((channel, px)),
                 // 透明は読み飛ばす（ほかのチャンネルは取る）
                 Ok(None) => {}
@@ -411,6 +452,21 @@ fn read_pixel(
         Some(id) => doc.layer_output_pixel(id, channel, x, y)?,
         None => doc.composite_pixel(channel, x, y)?,
     };
+    Ok((px.a > 0).then_some(px))
+}
+
+/// `read_pixel` の合成を、レイヤーセット `from` の合成から読む形（2D のキャンバスが見せている表示）。
+fn read_pixel_in_set(
+    doc: &Document,
+    from: LayerSetId,
+    channel: Channel,
+    x: u32,
+    y: u32,
+) -> Result<Option<Rgba8>, CoreError> {
+    if doc.channel_info(channel).is_none() {
+        return Ok(None);
+    }
+    let px = doc.composite_set_pixel(from, channel, x, y)?;
     Ok((px.a > 0).then_some(px))
 }
 

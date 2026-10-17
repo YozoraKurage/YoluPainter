@@ -2161,8 +2161,10 @@ impl AppState {
             PlaceTarget::At { parent, position } => (parent, position),
             _ => self.above_selected_slot(),
         };
+        // 一番上の段に置くときは、今のレイヤーセットへ（一覧に出ているのは今のレイヤーセットのレイヤーだけで、位置もその中で数えている）
         let placement = SmartPlacement {
             parent,
+            set: parent.is_none().then(|| self.layer_set()),
             position,
             ..SmartPlacement::default()
         };
@@ -2198,14 +2200,20 @@ impl AppState {
 
     /// 選んでいるレイヤーのすぐ上の置き場所（親と、その子の中の位置。選んだレイヤーが無ければ一番上）。
     fn above_selected_slot(&self) -> (Option<LayerId>, Option<usize>) {
-        let Some((id, parent)) = self
-            .session
-            .selected_layer
-            .and_then(|id| self.session.doc.layer(id).map(|l| (id, l.parent())))
-        else {
+        let Some((id, parent, set)) = self.session.selected_layer.and_then(|id| {
+            self.session
+                .doc
+                .layer(id)
+                .map(|l| (id, l.parent(), l.layer_set()))
+        }) else {
             return (None, None);
         };
-        let siblings = self.session.doc.children_of(parent).unwrap_or_default();
+        // 位置は、選んだレイヤーのレイヤーセットの中で数える
+        let siblings = self
+            .session
+            .doc
+            .children_in_set(set, parent)
+            .unwrap_or_default();
         (
             parent,
             siblings.iter().position(|c| *c == id).map(|i| i + 1),

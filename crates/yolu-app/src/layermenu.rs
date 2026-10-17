@@ -200,13 +200,9 @@ impl AppState {
             .doc
             .channel_info(channel)
             .map_or(ChannelKind::Color, |c| c.kind);
-        let above = self
-            .session
-            .selected_layer
-            .filter(|id| self.session.doc.layer(*id).is_some());
         // 値は、画像・グラデーションが使えないときに出る既定の値（デカールを置くときと同じ）
         let value = default_fallback(kind);
-        match self.session.doc.batch(|d| {
+        match self.add_in_current_set_as(yolu_core::HistoryKind::Batch, |d, above| {
             let id = d.add_fill_layer(name, &[(channel, value)], above)?;
             fill(d, id, channel)?;
             Ok(id)

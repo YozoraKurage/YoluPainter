@@ -1233,7 +1233,10 @@ pub fn placement_for(doc: &Document, rows: &[Row], target: DropTarget) -> PlaceT
             },
             Some(layer) => {
                 let parent = layer.parent();
-                let siblings = doc.children_of(parent).unwrap_or_default();
+                // 位置は、その行のレイヤーのレイヤーセットの中で数える
+                let siblings = doc
+                    .children_in_set(layer.layer_set(), parent)
+                    .unwrap_or_default();
                 PlaceTarget::At {
                     parent,
                     position: siblings

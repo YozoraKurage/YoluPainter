@@ -86,6 +86,8 @@ pub struct Request {
     pub radius: f64,
     pub budget: u64,
     pub edit_mask: bool,
+    /// 「見えているレイヤー」から読むときの、合成するレイヤーセット（今のレイヤーセット。None は最終の結果）。
+    pub set: Option<yolu_core::LayerSetId>,
 }
 
 /// 参照印のあるグループは子孫を含み、親グループの可視性・マスク・不透明度は保つ。
@@ -122,7 +124,7 @@ fn reference_document(doc: &Document, marked: &HashSet<LayerId>) -> Result<Docum
             for below in doc.layers()[..at]
                 .iter()
                 .rev()
-                .filter(|l| l.parent() == layer.parent())
+                .filter(|l| l.parent() == layer.parent() && l.layer_set() == layer.layer_set())
             {
                 base = Some(below.id());
                 if !below.clipping() {
@@ -167,13 +169,24 @@ fn read(doc: &Document, r: &Request, cancel: &AtomicBool) -> Result<Vec<Rgba8>, 
             check(cancel)?;
             let rows = band_height.min(h - y);
             let bytes = &mut band[..(w * rows * 4) as usize];
-            source.composite_into_cancellable(
-                r.channel,
-                Rect::new(0, y, w, rows),
-                bytes,
-                RowOrder::BottomUp,
-                Some(cancel),
-            )?;
+            let rect = Rect::new(0, y, w, rows);
+            match r.set {
+                Some(set) => source.composite_set_into_cancellable(
+                    set,
+                    r.channel,
+                    rect,
+                    bytes,
+                    RowOrder::BottomUp,
+                    Some(cancel),
+                )?,
+                None => source.composite_into_cancellable(
+                    r.channel,
+                    rect,
+                    bytes,
+                    RowOrder::BottomUp,
+                    Some(cancel),
+                )?,
+            }
             for i in 0..(w * rows) as usize {
                 pixels[y as usize * w as usize + i] = Rgba8::from_slice(&bytes[i * 4..]);
             }
@@ -526,6 +539,7 @@ mod review_tests {
             radius: 100.0,
             budget: 1 << 30,
             edit_mask: false,
+            set: None,
         };
         COMPARISONS.with(|n| n.set(0));
         let result = compute(&doc, &r, &AtomicBool::new(false)).unwrap();

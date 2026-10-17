@@ -708,13 +708,9 @@ impl AppState {
             }
             None => {
                 let name = self.text_layer_name();
-                let above = self
-                    .session
-                    .selected_layer
-                    .filter(|id| self.session.doc.layer(*id).is_some());
-                self.session
-                    .doc
-                    .add_text_layer(&name, value.clone(), &font, above, true)
+                self.add_in_current_set(|d, above| {
+                    d.add_text_layer(&name, value.clone(), &font, above, true)
+                })
             }
         };
         match result {
@@ -757,9 +753,20 @@ impl AppState {
         };
         self.session.doc.end_coalescing();
         if editing.created && editing.buffer.is_empty() {
-            // 作ったレイヤーを追加した段へまとめているので、1 回の取り消しでレイヤーごと消える
-            if self.session.doc.undo().is_ok() && self.session.selected_layer == editing.layer {
-                self.session.selected_layer = self.session.doc.layers().last().map(|l| l.id());
+            // 作ったレイヤーを追加した段へまとめているので、1 回の取り消しでレイヤーごと消える（最初でないレイヤーセットの空のレイヤー
+            // セットへ足したときは、足してから移した段のあとにまとめるので、レイヤーが消えるまで戻す）
+            let set = self.layer_set();
+            let gone = |s: &Self| {
+                editing
+                    .layer
+                    .is_none_or(|id| s.session.doc.layer(id).is_none())
+            };
+            let mut steps = 0;
+            while !gone(self) && steps < 3 && self.session.doc.undo().is_ok() {
+                steps += 1;
+            }
+            if gone(self) && self.session.selected_layer == editing.layer {
+                self.select_top_of_layer_set(set);
             }
         }
     }

@@ -17,3 +17,4 @@ canvas-stroke-cancelled = Stroke cancelled.
 canvas-the-view-is-mirrored-click-tip = The view is mirrored. Click to restore it
 canvas-outside-the-canvas = Outside the canvas.
 canvas-clone-source-set = Clone source set.
+canvas-layer-set-not-in-the-output = The shown layer set is not in the output

@@ -17,3 +17,4 @@ canvas-stroke-cancelled = ストロークを取り消しました。
 canvas-the-view-is-mirrored-click-tip = 表示を左右反転しています。押すと戻します
 canvas-outside-the-canvas = キャンバスの外です。
 canvas-clone-source-set = クローンの元を決めました。
+canvas-layer-set-not-in-the-output = 見せているレイヤーセットは最終の結果に出ていません
