@@ -38,7 +38,7 @@ use crate::state::StrokeSource;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Nav {
     Orbit,
-    /// 軸の向きへ吸い付く回転（Alt + 左）。
+    /// ドラッグした向きの、90° 隣の軸の視点へ切り替える回転（Alt + 右）。
     SnapOrbit,
     Pan,
     /// Ctrl+Space（寄る・引く）。

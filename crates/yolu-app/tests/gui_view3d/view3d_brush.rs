@@ -228,7 +228,7 @@ fn clone_needs_a_source_set_with_an_alt_click_and_copies_the_pattern_across_face
 }
 
 #[test]
-fn alt_drag_still_orbits_with_the_clone_brush() {
+fn alt_left_drag_does_not_orbit_with_the_clone_brush_and_alt_right_drag_snap_orbits() {
     let (mut h, rect) = cube_view();
     set_effect(
         &mut h,
@@ -236,16 +236,41 @@ fn alt_drag_still_orbits_with_the_clone_brush() {
             offset: Default::default(),
         },
     );
-    let yaw = h.view3d().camera.yaw;
+    let before = h.view3d().camera;
     let a = rect.center();
+    // Alt + 左ドラッグ: 視点は変わらず、元は決めず、描かない
     press_with(&h, a, Modifiers::ALT);
     h.step();
-    h.event(Event::PointerMoved(a + egui::vec2(40.0, 0.0)));
+    h.event(Event::PointerMoved(a + egui::vec2(60.0, 0.0)));
     h.step();
-    release_with(&h, a + egui::vec2(40.0, 0.0), Modifiers::ALT);
+    release_with(&h, a + egui::vec2(60.0, 0.0), Modifiers::ALT);
     h.run();
-    assert_ne!(h.view3d().camera.yaw, yaw, "回る");
+    assert_eq!(h.view3d().camera, before, "回らない");
     assert!(h.clone().source.is_none(), "動かしたクリックは元にしない");
+    assert_eq!(h.doc().undo_count(), 0, "描かない");
+    // Alt + 右ドラッグ: スナップ回転（元は決めない）
+    h.event(Event::ModifiersChanged(Modifiers::ALT));
+    h.event(Event::PointerMoved(a));
+    h.event(Event::PointerButton {
+        pos: a,
+        button: PointerButton::Secondary,
+        pressed: true,
+        modifiers: Modifiers::ALT,
+    });
+    h.step();
+    h.event(Event::PointerMoved(a + egui::vec2(60.0, 0.0)));
+    h.step();
+    h.event(Event::PointerButton {
+        pos: a + egui::vec2(60.0, 0.0),
+        button: PointerButton::Secondary,
+        pressed: false,
+        modifiers: Modifiers::ALT,
+    });
+    h.run();
+    h.event(Event::ModifiersChanged(Modifiers::NONE));
+    h.step();
+    assert_ne!(h.view3d().camera.yaw, before.yaw, "回る");
+    assert!(h.clone().source.is_none());
 }
 
 #[test]

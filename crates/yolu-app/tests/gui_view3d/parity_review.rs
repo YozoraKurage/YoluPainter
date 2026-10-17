@@ -88,7 +88,7 @@ fn modified_mouse_gestures_are_listed_in_every_view() {
             (named(lang.pick("パン", "Pan"), d3), middle.to_string()),
             (
                 named(lang.pick("スナップ回転", "Snap Orbit"), d3),
-                format!("Alt+{left}"),
+                format!("Alt+{right}"),
             ),
             (
                 named(lang.pick("クローンの元を決める", "Set Clone Source"), d3),
@@ -115,7 +115,7 @@ fn modified_mouse_gestures_are_listed_in_every_view() {
         ];
         let missing: Vec<_> = expected.iter().filter(|e| !rows.contains(e)).collect();
         assert!(missing.is_empty(), "無い組み合わせ: {missing:?}\n{rows:?}");
-        // 既定から外した組み合わせは、表に出ない（2D の Shift+中ボタンの回転・Alt+左のスポイト、3D の Shift+右・Alt+Shift+左のパンと Alt+左の自由な回転）
+        // 既定から外した組み合わせは、表に出ない（2D の Shift+中ボタンの回転・Alt+左のスポイト、3D の Shift+右・Alt+Shift+左のパンと Alt+左の自由な回転・スナップ回転）
         let gone = [
             (
                 named(lang.pick("回転", "Rotate"), d2),
@@ -134,6 +134,10 @@ fn modified_mouse_gestures_are_listed_in_every_view() {
                 format!("Alt+Shift+{left}"),
             ),
             (named(lang.pick("回転", "Orbit"), d3), format!("Alt+{left}")),
+            (
+                named(lang.pick("スナップ回転", "Snap Orbit"), d3),
+                format!("Alt+{left}"),
+            ),
         ];
         let still: Vec<_> = gone.iter().filter(|g| rows.contains(g)).collect();
         assert!(still.is_empty(), "まだある組み合わせ: {still:?}");

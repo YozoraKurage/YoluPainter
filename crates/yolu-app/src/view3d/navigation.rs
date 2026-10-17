@@ -1,14 +1,16 @@
 //! 3D の回転中心・自動深度・ポインタへの拡縮。押したときのモデルとカメラを離すまで保持する。
 //!
 //! 透視と正投影: 視点のパイ・軸の印の真ん中で切り替える（[`toggle_orthographic`]）。軸の向きで正投影の設定が入なら、軸の視点を選んだとき・
-//! スナップ回転で軸に吸い付いたときに正投影にし（[`enter_axis`]）、回して軸から外れたら元の透視へ戻す（[`after_orbit`]）。手で切り替えた
+//! スナップ回転で軸の視点に切り替えたときに正投影にし（[`enter_axis`]）、回して軸から外れたら元の透視へ戻す（[`after_orbit`]）。手で切り替えた
 //! 投影は、軸から外れても戻さない。
+//!
+//! スナップ回転（Alt + 右ドラッグ）は、ドラッグした向きへ、今の視点から 90° 隣の軸の視点に切り替える（[`Drag::take_flick`]）。
 
 use std::sync::Arc;
 
 use egui::{Modifiers, Pos2, Rect, Ui};
 use yolu_core::geometry::{
-    aligned_axis_view, orbited, pick, snap_orientation, AxisView, Bounds, OrbitCamera,
+    aligned_axis_view, flicked_orientation, pick, AxisView, Bounds, Flick, OrbitCamera,
 };
 use yolu_core::glam::{Vec2, Vec3};
 
@@ -174,14 +176,16 @@ fn zoom_point(model: Option<&ViewModel>, camera: OrbitCamera, rect: Rect, at: Po
     })
 }
 
+/// スナップ回転で、隣の軸の視点へ切り替えるドラッグの長さ（画面の点。押した所、切り替えたあとは切り替えた所から、この長さ以上動かしたら切り替える）。
+pub const FLICK_DISTANCE: f32 = 40.0;
+
 pub struct Drag {
     at: Pos2,
     /// 回すドラッグが、押した所から遊び（クリックとみなす距離）を超えて動いたか（超えるまで回さない。`rotation_delta`）。
     moved: bool,
     camera: OrbitCamera,
-    /// スナップ回転の、吸い付ける前の向き（yaw・pitch）。吸い付いた向きを元に回すと、いちど吸い付いたら離れられないので、
-    /// 回した分はこちらへ溜めて、カメラには吸い付けた結果を当てる。
-    free: Option<(f32, f32)>,
+    /// スナップ回転の、押した所（切り替えた所）からの動き（画面の点）。`FLICK_DISTANCE` 以上になったら隣の軸の視点へ切り替えて 0 に戻す（一度に何倍動いても、切り替えは 1 回）。
+    flick: Vec2,
     model: Option<Arc<ViewModel>>,
     model_center: Option<Vec3>,
     material: i32,
@@ -202,7 +206,7 @@ impl Drag {
             at,
             moved: false,
             camera: state.camera,
-            free: None,
+            flick: Vec2::ZERO,
             model: state.model.clone(),
             model_center: state.full_model().map(|m| m.geometry.bounds().center),
             material: state.material,
@@ -211,8 +215,8 @@ impl Drag {
         }
     }
 
-    /// 回すドラッグ（右ボタン・Alt + 左）で、このポインタの位置を受けて回す量（画面の点）。押した所から `dead_zone` までは回さない（動かさずに離す
-    /// 操作 — スポイト・クローンの元 — が、小さな揺れで視点を動かして別の点を指さないように）。超えた最初の動きでは、押した所からの動きを全部当てる。
+    /// 回すドラッグ（右ボタン・Alt + 右）で、このポインタの位置を受けて回す量（画面の点）。押した所から `dead_zone` までは回さない（動かさずに離す
+    /// 操作 — スポイト — が、小さな揺れで視点を動かして別の点を指さないように）。超えた最初の動きでは、押した所からの動きを全部当てる。
     /// `previous` は前の位置。
     pub fn rotation_delta(
         &mut self,
@@ -228,6 +232,28 @@ impl Drag {
         }
         self.moved = true;
         Some(pos - self.at)
+    }
+
+    /// スナップ回転の動き (dx, dy) を溜め、押した所（前に切り替えた所）から `FLICK_DISTANCE` 以上になったら、動きの大きい軸の向き
+    /// （横なら右・左、縦なら下・上）を返して溜めを 0 に戻す。
+    fn take_flick(&mut self, dx: f32, dy: f32) -> Option<Flick> {
+        self.flick += Vec2::new(dx, dy);
+        let horizontal = self.flick.x.abs() >= self.flick.y.abs();
+        let along = if horizontal {
+            self.flick.x
+        } else {
+            self.flick.y
+        };
+        if along.abs() < FLICK_DISTANCE {
+            return None;
+        }
+        self.flick = Vec2::ZERO;
+        Some(match (horizontal, along > 0.0) {
+            (true, true) => Flick::Right,
+            (true, false) => Flick::Left,
+            (false, true) => Flick::Down,
+            (false, false) => Flick::Up,
+        })
     }
 
     fn anchor(&mut self, rect: Rect) -> Anchor {
@@ -281,20 +307,16 @@ pub fn move_by(app: &mut AppState, rect: Rect, nav: Nav, dx: f32, dy: f32) {
             after_orbit(&mut app.view3d, target);
         }
         Nav::SnapOrbit => {
-            let (yaw, pitch) = drag.free.unwrap_or((camera.yaw, camera.pitch));
-            let free = orbited(yaw, pitch, dx, dy);
-            drag.free = Some(free);
-            let (yaw, pitch) = snap_orientation(free.0, free.1);
+            let Some(flick) = drag.take_flick(dx, dy) else {
+                return;
+            };
+            let (yaw, pitch) = flicked_orientation(camera.yaw, camera.pitch, flick);
             let pivot = match preferences.orbit {
                 OrbitCenter::View => camera.target,
                 _ => anchor.pivot,
             };
             camera.set_orientation_about(pivot, yaw, pitch);
-            if aligned_axis_view(yaw, pitch).is_some() {
-                enter_axis(&mut app.view3d, preferences, pivot);
-            } else {
-                after_orbit(&mut app.view3d, pivot);
-            }
+            enter_axis(&mut app.view3d, preferences, pivot);
         }
         Nav::Pan if preferences.orbit == OrbitCenter::Surface => {
             // ホイールを挟んでも、押した面での画面上の移動量を保つ。
@@ -443,7 +465,7 @@ pub fn toggle_orthographic(app: &mut AppState) {
     app.view3d.auto_orthographic = false;
 }
 
-/// 軸の向きに入った（軸の視点を選んだ・スナップ回転で軸に吸い付いた）: 軸の向きで正投影の設定が入で、今が透視なら正投影にし、
+/// 軸の向きに入った（軸の視点を選んだ・スナップ回転で軸の視点に切り替えた）: 軸の向きで正投影の設定が入で、今が透視なら正投影にし、
 /// 軸から外れたら戻す印を付ける。回す中心 pivot の画面の位置と大きさは変えない。
 pub fn enter_axis(state: &mut View3dState, preferences: Preferences, pivot: Vec3) {
     if preferences.axis_ortho && !state.camera.is_orthographic() {

@@ -242,12 +242,12 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Intersect with Selection (Selection) | Ctrl+Shift+Left Button | Paint |
 | Add to Selection (Selection) | Shift+Left Button | Paint |
 | Subtract from Selection (Selection) | Ctrl+Left Button | Paint |
+| Snap Orbit (3D) | Alt+Right Button | Everywhere & View |
 | Orbit (3D) | Right Button | Everywhere & View |
 | Eyedropper (3D) | Right Button Released without Moving | Everywhere & View |
 | Pan (3D) | Middle Button | Everywhere & View |
 | Zoom (3D) | Space+Ctrl+Left Button | Everywhere & View |
 | Pan (3D) | Space+Left Button | Everywhere & View |
-| Snap Orbit (3D) | Alt+Left Button | Everywhere & View |
 | Set Clone Source (3D) | Alt+Left Button Released without Moving | Paint |
 | Move Stencil (Stencil) | Y+Middle Button | Paint |
 | Move Stencil (Stencil) | Y+Ctrl+Left Button | Paint |

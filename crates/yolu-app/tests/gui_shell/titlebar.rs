@@ -93,17 +93,14 @@ fn button(at: Pos2, pressed: bool) -> Event {
     }
 }
 
-/// Alt を押しながらの左ボタン（3D ビューでは回す操作。モデルに当たらなくても始まるので、押しがビューに渡ったかを確かめられる）。
-fn alt_button(at: Pos2, pressed: bool) -> Event {
-    let modifiers = egui::Modifiers {
-        alt: true,
-        ..egui::Modifiers::NONE
-    };
-    Event::PointerButton {
-        pos: at,
-        button: PointerButton::Primary,
+/// Space を押す・離す（3D ビューでは、押しながらの左ボタンがパンになる。モデルに当たらなくても始まるので、押しがビューに渡ったかを確かめられる）。
+fn space(pressed: bool) -> Event {
+    Event::Key {
+        key: egui::Key::Space,
+        physical_key: None,
         pressed,
-        modifiers,
+        repeat: false,
+        modifiers: egui::Modifiers::NONE,
     }
 }
 
@@ -930,8 +927,8 @@ fn the_top_edge_yields_to_the_link_mark() {
     assert_eq!(resizes(&sent), vec![ResizeDirection::North], "{sent:?}");
 }
 
-/// 3D ビューでも、縁の押しは回す操作の始まりにならない（ビューの入力は別の経路）。縁の 1 点内側では始まる。3D ビューがウィンドウの縁に届くのは
-/// 右だけ（左はツールの列、下は状態の帯）。
+/// 3D ビューでも、縁の押しは視点の操作（Space + 左のパン）の始まりにならない（ビューの入力は別の経路）。縁の 1 点内側では始まる。縁の大きさ変えは
+/// 左ボタンの押しだけで始まる。3D ビューがウィンドウの縁に届くのは右だけ（左はツールの列、下は状態の帯）。
 #[test]
 fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     let mut h = windows_app(WIDTH, HEIGHT);
@@ -940,29 +937,30 @@ fn an_edge_press_over_the_3d_view_does_not_start_a_navigation() {
     h.run();
     let y = HEIGHT / 2.0;
     let edge = pos2(WIDTH - 1.0, y);
-    let sent = play(&mut h, vec![pointer(edge), alt_button(edge, true)]);
+    play(&mut h, vec![space(true)]);
+    let sent = play(&mut h, vec![pointer(edge), button(edge, true)]);
     assert_eq!(resizes(&sent), vec![ResizeDirection::East], "{sent:?}");
     assert!(
         h.view3d().input.nav.is_none(),
-        "縁の押しで回す操作が始まった"
+        "縁の押しで視点の操作が始まった"
     );
-    // 縁の押しを持ったまま動かしても、回さない
+    // 縁の押しを持ったまま動かしても、動かさない
     let moved = edge + vec2(-30.0, 12.0);
     play(&mut h, vec![pointer(moved)]);
     assert!(
         h.view3d().input.nav.is_none(),
-        "縁の押しのまま動かして回した"
+        "縁の押しのまま動かして視点を動かした"
     );
-    play(&mut h, vec![alt_button(moved, false)]);
-    // 縁の 1 点内側（縁の幅の外）では、同じ押しが回す操作を始める（対照）
+    play(&mut h, vec![button(moved, false)]);
+    // 縁の 1 点内側（縁の幅の外）では、同じ押しが視点の操作を始める（対照）
     let inner = pos2(WIDTH - titlebar::EDGE - 1.0, y);
-    let sent = play(&mut h, vec![pointer(inner), alt_button(inner, true)]);
+    let sent = play(&mut h, vec![pointer(inner), button(inner, true)]);
     assert!(resizes(&sent).is_empty(), "{sent:?}");
     assert!(
         h.view3d().input.nav.is_some(),
-        "縁の内側で回す操作が始まらない"
+        "縁の内側で視点の操作が始まらない"
     );
-    play(&mut h, vec![alt_button(inner, false)]);
+    play(&mut h, vec![button(inner, false), space(false)]);
     assert!(h.view3d().input.nav.is_none());
 }
 

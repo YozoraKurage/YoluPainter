@@ -1,4 +1,4 @@
-//! 視点の操作をどこでも同じに: 3D の Alt + 左ドラッグのスナップ回転（正面・上へ吸い付く）・右ボタンを押している間の W/A/S/D/Q/E（視点の移動。
+//! 視点の操作をどこでも同じに: 3D の Alt + 右ドラッグのスナップ回転（ドラッグした向きの隣の軸の視点へ切り替える。Alt + 左は描かない）・右ボタンを押している間の W/A/S/D/Q/E（視点の移動。
 //! ほかのキーの割り当てに渡さない）・2D の Alt + 左ドラッグの回転（15° 刻み、Shift で自由）・押しの始めの Alt は視点で途中の Alt はツールの修飾・
 //! 既定から外した組み合わせ（Shift + 右・Alt + Shift + 左・R + ドラッグ・Shift + 中）・ショートカットの一覧の名前。右ボタンのスポイトは `eyedrop`。
 use crate::common;
@@ -101,98 +101,226 @@ fn strokes(h: &H) -> usize {
     h.doc().undo_count()
 }
 
-// ───────── 3D: Alt + 左ドラッグのスナップ回転 ─────────
+// ───────── 3D: Alt + 右ドラッグのスナップ回転 ─────────
 
-#[test]
-fn alt_drag_in_3d_snaps_to_the_front_and_leaves_it_when_dragged_past_the_angle() {
-    let (mut h, rect) = cube_view();
-    let at = rect.center();
-    {
-        let c = &mut h.view3d_mut().camera;
-        c.yaw = 210.0;
-        c.pitch = 0.0;
+/// 押してから `moves`（押した所からの動き）の順に動かし、1 つずつの後のカメラの (yaw, pitch) を返す。
+fn alt_drag_path(h: &mut H, at: Pos2, moves: &[Vec2]) -> Vec<(f32, f32)> {
+    mods(h, Modifiers::ALT);
+    mouse(h, at, PointerButton::Secondary, true, Modifiers::ALT);
+    h.step();
+    assert_eq!(nav(h), Some((Nav::SnapOrbit, PointerButton::Secondary)));
+    let mut seen = Vec::new();
+    let mut last = at;
+    for m in moves {
+        last = at + vec2(m.x, m.y);
+        move_mouse(h, last);
+        seen.push((camera(h).yaw, camera(h).pitch));
     }
-    let alt = Modifiers::ALT;
-    mods(&mut h, alt);
-    mouse(&h, at, PointerButton::Primary, true, alt);
+    mouse(h, last, PointerButton::Secondary, false, Modifiers::ALT);
     h.step();
-    assert_eq!(nav(&h), Some((Nav::SnapOrbit, PointerButton::Primary)));
-    // yaw 210° → 190°（正面の 180° から 10°）: 正面へ吸い付く
-    move_mouse(&mut h, at + vec2(-20.0 / 0.35, 0.0));
-    assert_eq!((camera(&h).yaw, camera(&h).pitch), (180.0, 0.0));
-    // 175°（5° 手前から越えた先）も正面のまま
-    move_mouse(&mut h, at + vec2(-100.0, 0.0));
-    assert_eq!((camera(&h).yaw, camera(&h).pitch), (180.0, 0.0));
-    // 15° より外へ出すと、回した分の向きに戻る（吸い付いた向きから回し直しているのではない）
-    move_mouse(&mut h, at + vec2(-200.0, 0.0));
-    assert!((camera(&h).yaw - 140.0).abs() < 1e-3, "{}", camera(&h).yaw);
-    assert_eq!(camera(&h).pitch, 0.0);
-    // 戻して 199.5°（正面から 19.5°）: 吸い付かない
-    move_mouse(&mut h, at + vec2(-30.0, 0.0));
-    assert!((camera(&h).yaw - 199.5).abs() < 1e-3, "{}", camera(&h).yaw);
-    mouse(
-        &h,
-        at + vec2(-30.0, 0.0),
-        PointerButton::Primary,
-        false,
-        alt,
-    );
-    h.step();
-    mods(&mut h, Modifiers::NONE);
-    assert!(nav(&h).is_none());
+    mods(h, Modifiers::NONE);
+    assert!(nav(h).is_none());
     assert!(!h.doc().can_undo(), "回すだけで文書は変わらない");
     assert!(!h.app().is_stroking());
+    seen
 }
 
 #[test]
-fn alt_drag_in_3d_snaps_to_the_other_axis_views_too() {
-    // 向きが軸のどれかに 15° 以内で近ければ、その軸の向きになる（背面・右・左）
-    for (yaw, pitch, wanted) in [
-        (12.0f32, 6.0f32, (0.0f32, 0.0f32)),
-        (-78.0, -8.0, (-90.0, 0.0)),
-        (101.0, 9.0, (90.0, 0.0)),
+fn alt_right_drag_in_3d_flicks_to_the_next_axis_view_in_the_dragged_direction() {
+    let d = navigation::FLICK_DISTANCE;
+    for (direction, wanted) in [
+        (Vec2::new(1.0, 0.0), (270.0, 0.0)),
+        (Vec2::new(-1.0, 0.0), (90.0, 0.0)),
+        (Vec2::new(0.0, 1.0), (180.0, 90.0)),
+        (Vec2::new(0.0, -1.0), (180.0, -90.0)),
     ] {
         let (mut h, rect) = cube_view();
         let at = rect.center();
         {
-            // 吸い付く範囲の外から始めて、そこまで回す
+            // 正面
             let c = &mut h.view3d_mut().camera;
-            c.yaw = yaw + 40.0;
-            c.pitch = pitch;
+            c.yaw = 180.0;
+            c.pitch = 0.0;
         }
-        mods(&mut h, Modifiers::ALT);
-        mouse(&h, at, PointerButton::Primary, true, Modifiers::ALT);
-        h.step();
-        move_mouse(&mut h, at + vec2(-40.0 / 0.35, 0.0));
-        let c = camera(&h);
-        assert_eq!((c.yaw, c.pitch), wanted, "{yaw} {pitch}");
-        mouse(&h, at, PointerButton::Primary, false, Modifiers::ALT);
-        h.step();
-        mods(&mut h, Modifiers::NONE);
+        let seen = alt_drag_path(
+            &mut h,
+            at,
+            &[
+                direction * (d - 1.0),
+                direction * (d + 1.0),
+                direction * (d + 10.0),
+            ],
+        );
+        assert_eq!(
+            seen[0],
+            (180.0, 0.0),
+            "閾値より短い動きでは替わらない {direction}"
+        );
+        assert_eq!(seen[1], wanted, "{direction}");
+        assert_eq!(
+            seen[2], wanted,
+            "切り替えたあとの少しの動きでは、もう替わらない {direction}"
+        );
     }
 }
 
 #[test]
-fn snapping_to_the_top_view_keeps_the_view_working_and_the_surface_paintable() {
+fn alt_right_drag_in_3d_keeps_turning_when_the_drag_goes_on_and_the_larger_direction_wins() {
+    let d = navigation::FLICK_DISTANCE;
     let (mut h, rect) = cube_view();
     let at = rect.center();
     {
         let c = &mut h.view3d_mut().camera;
         c.yaw = 180.0;
-        c.pitch = 70.0;
+        c.pitch = 0.0;
     }
+    let seen = alt_drag_path(
+        &mut h,
+        at,
+        &[
+            // 横が大きい斜めは、横に替える（正面 → 右）
+            Vec2::new(d + 5.0, 30.0),
+            // 切り替えた所から、まだ閾値の手前
+            Vec2::new(d + 5.0 + d - 1.0, 30.0),
+            // 切り替えた所から閾値を超えたら、もう 1 回替える（右 → 背面）
+            Vec2::new(d + 5.0 + d + 1.0, 30.0),
+            // 縦の動きの方が大きければ、下へ（背面 → 上。画面の向きは背面のまま）
+            Vec2::new(d + 5.0 + d + 1.0 + 5.0, 30.0 + d + 1.0),
+            // 同じ向きにさらに: 反対側の横の視点へ、画面を起こしたまま回り込む（上 → 正面）
+            Vec2::new(d + 5.0 + d + 1.0 + 5.0, 30.0 + 2.0 * (d + 1.0)),
+            // 戻す向きへ動かせば、上の向きの隣（正面 → 下）
+            Vec2::new(d + 5.0 + d + 1.0 + 5.0, 30.0 + (d + 1.0)),
+        ],
+    );
+    assert_eq!(seen[0], (270.0, 0.0));
+    assert_eq!(seen[1], (270.0, 0.0));
+    assert_eq!(seen[2], (360.0, 0.0));
+    assert_eq!(seen[3], (360.0, 90.0));
+    assert_eq!(seen[4], (540.0, 0.0));
+    assert_eq!(seen[5], (540.0, -90.0));
+}
+
+#[test]
+fn alt_right_drag_in_3d_starts_from_the_nearest_axis_view_when_the_view_is_off_the_axes() {
+    let d = navigation::FLICK_DISTANCE;
+    // (今の向き, 右へ動かしたあと, 左へ動かしたあと)。今の向きに近い軸の視点（正面・背面・右・左・上）から、隣へ
+    for (yaw, pitch, right, left) in [
+        // 既定の斜めの向き（正面に近い）
+        (205.0f32, 10.0f32, (270.0f32, 0.0f32), (90.0f32, 0.0f32)),
+        (12.0, 6.0, (90.0, 0.0), (-90.0, 0.0)),
+        (-78.0, -8.0, (0.0, 0.0), (-180.0, 0.0)),
+        (101.0, 9.0, (180.0, 0.0), (0.0, 0.0)),
+        // 軸から 40° 外れても、近い軸の視点から
+        (180.0 + 40.0, 0.0, (270.0, 0.0), (90.0, 0.0)),
+        // 上に近ければ上の視点（画面の向きは 90° の倍数）から横の視点へ
+        (200.0, 70.0, (270.0, 0.0), (90.0, 0.0)),
+    ] {
+        for (sign, wanted) in [(1.0, right), (-1.0, left)] {
+            let (mut h, rect) = cube_view();
+            {
+                let c = &mut h.view3d_mut().camera;
+                c.yaw = yaw;
+                c.pitch = pitch;
+            }
+            let seen = alt_drag_path(&mut h, rect.center(), &[Vec2::new(sign * (d + 1.0), 0.0)]);
+            assert_eq!(seen[0], wanted, "{yaw} {pitch} {sign}");
+        }
+    }
+}
+
+#[test]
+fn alt_left_drag_in_3d_neither_orbits_nor_paints() {
+    let (mut h, rect) = cube_view();
+    let on_top = screen_of(&h, rect, Vec3::new(0.0, 0.0, 0.5));
+    let before = camera(&h);
     mods(&mut h, Modifiers::ALT);
-    mouse(&h, at, PointerButton::Primary, true, Modifiers::ALT);
+    mouse(&h, on_top, PointerButton::Primary, true, Modifiers::ALT);
     h.step();
-    // pitch 70° → 80°: 真上から 10°。上へ吸い付いて ±90°
-    let moved = at + vec2(0.0, 10.0 / 0.35);
-    move_mouse(&mut h, moved);
-    let c = camera(&h);
-    assert_eq!((c.yaw, c.pitch), (180.0, 90.0));
-    mouse(&h, moved, PointerButton::Primary, false, Modifiers::ALT);
+    assert!(nav(&h).is_none(), "視点の操作を始めない");
+    for x in [20.0, 60.0, 120.0] {
+        move_mouse(&mut h, offset(on_top, x, 0.0));
+    }
+    mouse(
+        &h,
+        offset(on_top, 120.0, 0.0),
+        PointerButton::Primary,
+        false,
+        Modifiers::ALT,
+    );
     h.step();
     mods(&mut h, Modifiers::NONE);
-    assert_eq!(camera(&h).pitch, 90.0, "離しても真上のまま");
+    assert_eq!(camera(&h), before);
+    assert_eq!(strokes(&h), 0, "描き始めない");
+    assert_eq!(painted(&h), 0);
+    assert!(!h.app().is_stroking());
+}
+
+#[test]
+fn pressing_alt_while_orbiting_with_the_right_button_does_not_switch_to_the_snap_orbit() {
+    let (mut h, rect) = cube_view();
+    let at = rect.center();
+    {
+        let c = &mut h.view3d_mut().camera;
+        c.yaw = 190.0;
+        c.pitch = 0.0;
+    }
+    mouse(&h, at, PointerButton::Secondary, true, Modifiers::NONE);
+    h.step();
+    assert_eq!(nav(&h), Some((Nav::Orbit, PointerButton::Secondary)));
+    // 回している途中で Alt を押す: 押しの始めの修飾で決まるので、自由な回転のまま
+    mods(&mut h, Modifiers::ALT);
+    move_mouse(&mut h, at + vec2(2.0 * navigation::FLICK_DISTANCE, 0.0));
+    assert_eq!(nav(&h), Some((Nav::Orbit, PointerButton::Secondary)));
+    let c = camera(&h);
+    assert!(
+        (c.yaw - (190.0 + 2.0 * navigation::FLICK_DISTANCE * 0.35)).abs() < 1e-3,
+        "{}",
+        c.yaw
+    );
+    mouse(
+        &h,
+        at + vec2(2.0 * navigation::FLICK_DISTANCE, 0.0),
+        PointerButton::Secondary,
+        false,
+        Modifiers::ALT,
+    );
+    h.step();
+    mods(&mut h, Modifiers::NONE);
+    // 逆: Alt を押して右で押し、途中で Alt を離しても、スナップ回転のまま
+    {
+        let c = &mut h.view3d_mut().camera;
+        c.yaw = 180.0;
+        c.pitch = 0.0;
+    }
+    mods(&mut h, Modifiers::ALT);
+    mouse(&h, at, PointerButton::Secondary, true, Modifiers::ALT);
+    h.step();
+    assert_eq!(nav(&h), Some((Nav::SnapOrbit, PointerButton::Secondary)));
+    mods(&mut h, Modifiers::NONE);
+    move_mouse(&mut h, at + vec2(navigation::FLICK_DISTANCE + 1.0, 0.0));
+    assert_eq!((camera(&h).yaw, camera(&h).pitch), (270.0, 0.0));
+    mouse(&h, at, PointerButton::Secondary, false, Modifiers::NONE);
+    h.step();
+}
+
+#[test]
+fn flicking_to_the_top_view_keeps_the_view_working_and_the_surface_paintable() {
+    let (mut h, rect) = cube_view();
+    let at = rect.center();
+    {
+        let c = &mut h.view3d_mut().camera;
+        c.yaw = 180.0;
+        c.pitch = 0.0;
+    }
+    // 下へ動かして、上の視点（画面の向きは正面のまま）
+    let seen = alt_drag_path(
+        &mut h,
+        at,
+        &[Vec2::new(0.0, navigation::FLICK_DISTANCE + 1.0)],
+    );
+    assert_eq!(seen[0], (180.0, 90.0));
+    let c = camera(&h);
+    assert_eq!(c.pitch, 90.0, "離しても真上のまま");
     // 真上の見え方で、画面の中心は注視点（レイも写しも壊れていない）
     let view = c.view(rect.width(), rect.height());
     let center = view.to_screen(c.target).expect("カメラの前");
@@ -221,7 +349,7 @@ fn snapping_to_the_top_view_keeps_the_view_working_and_the_surface_paintable() {
 }
 
 #[test]
-fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits_instead() {
+fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_does_nothing_in_3d() {
     let (mut h, rect) = cube_view();
     {
         let s = h.app_mut();
@@ -244,11 +372,12 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits
     mods(&mut h, Modifiers::NONE);
     assert_eq!(camera(&h), before, "クリックで視点は動かない");
     assert!(h.clone().source.is_some(), "元を決めた");
-    // 動かしたらスナップ回転（元は決めない）
+    // 動かしたら何もしない（スナップ回転は Alt + 右。視点は動かず、元は決めず、描かない）
     h.clone_mut().source = None;
     mods(&mut h, alt);
     mouse(&h, at, PointerButton::Primary, true, alt);
     h.step();
+    assert!(nav(&h).is_none(), "Alt + 左は視点の操作を始めない");
     move_mouse(&mut h, at + vec2(-60.0, 0.0));
     mouse(
         &h,
@@ -259,8 +388,9 @@ fn alt_click_without_moving_still_sets_the_clone_source_and_dragging_snap_orbits
     );
     h.step();
     mods(&mut h, Modifiers::NONE);
-    assert!(camera(&h).yaw < before.yaw, "回った");
+    assert_eq!(camera(&h), before, "動かしても視点は変わらない");
     assert!(h.clone().source.is_none(), "動かしたら元は決めない");
+    assert_eq!(strokes(&h), 0, "描かない");
     assert!(!h.doc().can_undo());
 }
 
@@ -659,17 +789,24 @@ fn past_the_wobble_the_whole_motion_from_the_pressed_point_is_applied() {
         Modifiers::NONE,
     );
     h.step();
-    // Alt + 左ドラッグ（スナップ回転）: 同じ。軸から離れた向きまで動かすと、押した所からの動きが全部当たる
+    // Alt + 右ドラッグ（スナップ回転）: 同じ。遊びを超えたら、押した所からの動きが全部当たる（最後の 1 つの動きだけでは閾値に届かない）
     h.view3d_mut().camera.yaw = 190.0;
     let alt = Modifiers::ALT;
     mods(&mut h, alt);
-    mouse(&h, at, PointerButton::Primary, true, alt);
+    mouse(&h, at, PointerButton::Secondary, true, alt);
     h.step();
     move_mouse(&mut h, at + vec2(1.0, 2.0));
     assert_eq!(camera(&h).yaw, 190.0);
-    move_mouse(&mut h, at + vec2(60.0, 0.0));
-    assert!((camera(&h).yaw - 211.0).abs() < 1e-3, "{}", camera(&h).yaw);
-    mouse(&h, at + vec2(60.0, 0.0), PointerButton::Primary, false, alt);
+    let flick = navigation::FLICK_DISTANCE;
+    move_mouse(&mut h, at + vec2(flick, 2.0));
+    assert_eq!((camera(&h).yaw, camera(&h).pitch), (270.0, 0.0));
+    mouse(
+        &h,
+        at + vec2(flick, 2.0),
+        PointerButton::Secondary,
+        false,
+        alt,
+    );
     h.step();
     mods(&mut h, Modifiers::NONE);
     // パン（Space + 左）には遊びを入れない（今までどおり 1 点から動く）
@@ -732,7 +869,7 @@ fn flying_makes_the_right_button_release_no_longer_a_click() {
 // ───────── 3D: 外した組み合わせ ─────────
 
 #[test]
-fn shift_with_the_right_button_and_alt_shift_with_the_left_no_longer_pan_in_3d() {
+fn shift_with_the_right_button_and_alt_shift_with_the_right_button_no_longer_pan_in_3d() {
     let (mut h, rect) = cube_view();
     let at = rect.center();
     let start = camera(&h);
@@ -753,17 +890,17 @@ fn shift_with_the_right_button_and_alt_shift_with_the_left_no_longer_pan_in_3d()
     let after = camera(&h);
     assert_eq!(after.target, start.target, "Shift + 右でパンしない");
     assert_ne!(after.yaw, start.yaw, "回す");
-    // Alt + Shift + 左ドラッグ: パンしない（スナップ回転）
+    // Alt + Shift + 右ドラッグ: パンしない（スナップ回転）
     let start = camera(&h);
     let both = Modifiers::ALT | Modifiers::SHIFT;
     mods(&mut h, both);
-    mouse(&h, at, PointerButton::Primary, true, both);
+    mouse(&h, at, PointerButton::Secondary, true, both);
     h.step();
     move_mouse(&mut h, at + vec2(40.0, 10.0));
     mouse(
         &h,
         at + vec2(40.0, 10.0),
-        PointerButton::Primary,
+        PointerButton::Secondary,
         false,
         both,
     );
@@ -772,7 +909,7 @@ fn shift_with_the_right_button_and_alt_shift_with_the_left_no_longer_pan_in_3d()
     assert_eq!(
         camera(&h).target,
         start.target,
-        "Alt + Shift + 左でパンしない"
+        "Alt + Shift + 右でパンしない"
     );
     assert_ne!(camera(&h).yaw, start.yaw);
     assert!(!h.doc().can_undo());
@@ -1037,11 +1174,12 @@ fn the_default_key_tables_name_the_new_operations_in_both_languages() {
         let tables = yolu_app::shortcuts::guide::tables(lang);
         let has = |line: &str| tables.lines().any(|l| l == line);
         let left = lang.pick("左ボタン", "Left Button");
+        let right = lang.pick("右ボタン", "Right Button");
         let (open, close) = lang.pick(("（", "）"), (" (", ")"));
         let mode = lang.pick("どこでも・視点", "Everywhere & View");
         assert!(
             has(&format!(
-                "| {}{open}3D{close} | Alt+{left} | {mode} |",
+                "| {}{open}3D{close} | Alt+{right} | {mode} |",
                 lang.pick("スナップ回転", "Snap Orbit")
             )),
             "{lang:?}"

@@ -907,60 +907,86 @@ fn the_pen_with_the_side_button_and_shift_orbits_and_no_longer_pans() {
 }
 
 #[test]
-fn the_pen_with_alt_snap_orbits_and_alt_shift_no_longer_pans_like_the_mouse() {
+fn the_pen_side_button_with_alt_snap_orbits_and_the_pen_tip_with_alt_neither_orbits_nor_paints() {
+    use yolu_core::geometry::{flicked_orientation, Flick};
+    let flicked =
+        |c: yolu_core::geometry::OrbitCamera| flicked_orientation(c.yaw, c.pitch, Flick::Right);
     for emulate in [Emulate::No, Emulate::Yes] {
         let (mut h, rect) = cube_view();
         let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
+        let far = yolu_app::view3d::navigation::FLICK_DISTANCE + 10.0;
+        let before = camera(&h);
+        hold(&mut h, Modifiers::ALT);
+        Pen {
+            emulate,
+            ..Pen::barrel()
+        }
+        .drag(&mut h, &[at, offset(at, far, 0.0)]);
+        release_mods(&mut h);
+        let after = camera(&h);
+        assert_eq!(
+            (after.yaw, after.pitch),
+            flicked(before),
+            "Alt + サイドボタンで、右へ動かした向きの隣の軸の視点へ（二重に回らない）"
+        );
+        assert_eq!(strokes(&h), 0, "描かない");
+        // 閾値より短い動きでは替わらない
+        let before = camera(&h);
+        hold(&mut h, Modifiers::ALT);
+        Pen {
+            emulate,
+            ..Pen::barrel()
+        }
+        .drag(&mut h, &[at, offset(at, 30.0, 0.0)]);
+        release_mods(&mut h);
+        assert_eq!(camera(&h), before);
+        // Alt + Shift + サイドボタン: パンしない（スナップ回転）
+        hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
+        Pen {
+            emulate,
+            ..Pen::barrel()
+        }
+        .drag(&mut h, &[at, offset(at, far, 0.0)]);
+        release_mods(&mut h);
+        assert_eq!(camera(&h).target, before.target);
+        assert_eq!((camera(&h).yaw, camera(&h).pitch), flicked(before));
+        assert_eq!(strokes(&h), 0);
+        // Alt + ペン先の接触: 視点を回さず、描き始めない
         let before = camera(&h);
         hold(&mut h, Modifiers::ALT);
         Pen {
             emulate,
             ..Pen::tip()
         }
-        .drag(&mut h, &[at, offset(at, 50.0, 0.0)]);
-        release_mods(&mut h);
-        let after = camera(&h);
-        assert!(
-            (after.yaw - (before.yaw + 50.0 * 0.35)).abs() < 1e-3,
-            "Alt + ペンで回す（二重に回らない。軸から離れていれば吸い付かない）{} {}",
-            before.yaw,
-            after.yaw
+        .drag(
+            &mut h,
+            &[at, offset(at, far, 0.0), offset(at, 2.0 * far, 0.0)],
         );
-        assert_eq!(strokes(&h), 0, "描かない");
-        // Alt + Shift: パンしない（回す）
-        let before = camera(&h);
-        hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
-        Pen {
-            emulate,
-            ..Pen::tip()
-        }
-        .drag(&mut h, &[at, offset(at, 30.0, 0.0)]);
         release_mods(&mut h);
-        assert_eq!(camera(&h).target, before.target);
-        assert_ne!(camera(&h).yaw, before.yaw);
-        assert_eq!(strokes(&h), 0);
-        // マウスの Alt + 左ドラッグも同じ量（ペンとマウスは同じ決まり）
+        assert_eq!(camera(&h), before, "Alt + ペン先では視点が変わらない");
+        assert_eq!(strokes(&h), 0, "Alt + ペン先では描かない");
+        // マウスの Alt + 右ドラッグも同じ（ペンとマウスは同じ決まり）
         let before = camera(&h);
         h.event(Event::ModifiersChanged(Modifiers::ALT));
         h.event(Event::PointerMoved(at));
         h.event(Event::PointerButton {
             pos: at,
-            button: PointerButton::Primary,
+            button: PointerButton::Secondary,
             pressed: true,
             modifiers: Modifiers::ALT,
         });
         h.step();
-        h.event(Event::PointerMoved(offset(at, 50.0, 0.0)));
+        h.event(Event::PointerMoved(offset(at, far, 0.0)));
         h.step();
         h.event(Event::PointerButton {
-            pos: offset(at, 50.0, 0.0),
-            button: PointerButton::Primary,
+            pos: offset(at, far, 0.0),
+            button: PointerButton::Secondary,
             pressed: false,
             modifiers: Modifiers::ALT,
         });
         h.run();
         release_mods(&mut h);
-        assert!((camera(&h).yaw - (before.yaw + 50.0 * 0.35)).abs() < 1e-3);
+        assert_eq!((camera(&h).yaw, camera(&h).pitch), flicked(before));
     }
 }
 
@@ -1260,27 +1286,36 @@ fn a_pen_press_does_not_outlive_a_canvas_that_was_hidden_and_the_next_touch_pain
 
 #[test]
 fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clone_source() {
-    for emulate in [Emulate::No, Emulate::Yes] {
+    for (emulate, side_button) in [
+        (Emulate::No, false),
+        (Emulate::Yes, false),
+        (Emulate::No, true),
+        (Emulate::Yes, true),
+    ] {
         let (mut h, rect) = cube_view_from(common::app(1100.0, 760.0, 256));
         let at = screen_of(&h, rect, Vec3::new(0.0, 0.0, -0.5));
         let pen = Pen {
             emulate,
             ..Pen::tip()
         };
-        // クローンのブラシで、Alt を押してペンで触れる（回す押し。動かさずに離せば元を決める印も付く）
+        // サイドボタンの接触は回す押し（Alt + 右のスナップ回転）、ペン先の接触は元を決める印だけ（Alt + 左は視点を回さない）
+        let touching = Pen {
+            barrel: side_button,
+            emulate,
+            ..Pen::tip()
+        };
+        // クローンのブラシで、Alt を押してペンで触れる
         let normal = h.m2().brush.effect;
         h.m2_mut().brush.effect = yolu_app::engine::BrushEffect::Clone {
             offset: Default::default(),
         };
         hold(&mut h, Modifiers::ALT);
-        pen.down(&mut h, at);
+        touching.down(&mut h, at);
         {
             let input = &h.view3d().input;
-            assert!(
-                input.pen_press.is_some() && input.nav.is_some(),
-                "回している"
-            );
-            assert!(input.clone_press.is_some(), "元を決める印");
+            assert!(input.pen_press.is_some());
+            assert_eq!(input.nav.is_some(), side_button, "回している");
+            assert_eq!(input.clone_press.is_some(), !side_button, "元を決める印");
         }
         // 触れたまま、キャンバスのタブへ切り替える（3D は隠れ、ペンの離れを受け取れない）
         click_tab(&mut h, Tab::Canvas);
@@ -1295,7 +1330,7 @@ fn a_pen_press_does_not_outlive_a_3d_view_that_was_hidden_and_never_picks_a_clon
             );
             assert!(input.clone_press.is_none(), "元を決める印も捨てた");
         }
-        pen.up(&mut h, at);
+        touching.up(&mut h, at);
         release_mods(&mut h);
         // 戻したあと、離れた近くで別の押しを離しても、前の印で元が決まらない
         click_tab(&mut h, Tab::View3d);

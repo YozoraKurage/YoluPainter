@@ -140,19 +140,16 @@ fn surface_orbit_keeps_the_pressed_point_and_mouse_matches_pen() {
             let point = hit(&h, at);
             let mods = if alt { Modifiers::ALT } else { Modifiers::NONE };
             h.event(Event::ModifiersChanged(mods));
-            let button = if alt {
-                PointerButton::Primary
-            } else {
-                PointerButton::Secondary
-            };
+            // スナップ回転は Alt + 右（ペンはサイドボタン）。Alt の有無で、同じ右ボタンの回転か切り替えかが決まる
+            let button = PointerButton::Secondary;
             if use_pen {
-                pen(&mut h, at, true, !alt);
+                pen(&mut h, at, true, true);
             } else {
                 mouse(&mut h, at, button, true, mods);
             }
             for d in [vec2(30.0, 15.0), vec2(90.0, 55.0)] {
                 if use_pen {
-                    pen(&mut h, at + d, true, !alt);
+                    pen(&mut h, at + d, true, true);
                 } else {
                     h.event(Event::PointerMoved(at + d));
                     h.step();
@@ -160,7 +157,7 @@ fn surface_orbit_keeps_the_pressed_point_and_mouse_matches_pen() {
                 near(project(camera(&h), point), Vec2::new(at.x, at.y));
             }
             if use_pen {
-                pen(&mut h, at + vec2(90.0, 55.0), false, !alt);
+                pen(&mut h, at + vec2(90.0, 55.0), false, true);
             } else {
                 mouse(&mut h, at + vec2(90.0, 55.0), button, false, mods);
             }
@@ -169,42 +166,55 @@ fn surface_orbit_keeps_the_pressed_point_and_mouse_matches_pen() {
             results.push(camera(&h));
         }
     }
-    for c in &results[1..] {
+    // results: [マウスの右, マウスの Alt + 右, ペンのサイドボタン, ペンのサイドボタン + Alt]。マウスとペンは同じ。Alt + 右は、右へ動かした向きの隣の軸の視点
+    for (mouse_result, pen_result) in [(results[0], results[2]), (results[1], results[3])] {
         assert_eq!(
-            (c.yaw, c.pitch, c.distance),
-            (results[0].yaw, results[0].pitch, results[0].distance)
+            (pen_result.yaw, pen_result.pitch, pen_result.distance),
+            (mouse_result.yaw, mouse_result.pitch, mouse_result.distance)
         );
-        assert!((c.target - results[0].target).length() < 1e-6);
+        assert!((pen_result.target - mouse_result.target).length() < 1e-6);
     }
+    assert_eq!((results[1].yaw, results[1].pitch), (90.0, 0.0));
+    assert_ne!((results[0].yaw, results[0].pitch), (90.0, 0.0));
 }
 
 #[test]
-fn snap_orbit_keeps_the_pressed_surface_point_in_place_and_snaps_the_view_to_the_axis() {
-    // 面の位置を回転の中心にしていても、Alt + ドラッグのスナップ回転は押した面の点を画面の同じ所に保つ（吸い付いた向きでも）
+fn snap_orbit_keeps_the_pressed_surface_point_in_place_when_it_flicks_to_the_next_axis_view() {
+    // 面の位置を回転の中心にしていても、Alt + ドラッグのスナップ回転は押した面の点を画面の同じ所に保つ（切り替えた向きでも）
     let mut h = harness(prefs(OrbitCenter::Surface, ZoomCenter::View));
     h.view3d_mut().camera.yaw = 25.0;
     let at = pos2(375.0, 215.0);
     let point = hit(&h, at);
     let alt = Modifiers::ALT;
+    let d = navigation::FLICK_DISTANCE;
     h.event(Event::ModifiersChanged(alt));
-    mouse(&mut h, at, PointerButton::Primary, true, alt);
+    mouse(&mut h, at, PointerButton::Secondary, true, alt);
     assert!(h.view3d().input.navigation.is_some());
-    // yaw 25° → 10°: 背面（yaw 0・pitch 0）の 10° 手前。背面へ吸い付く
-    h.event(Event::PointerMoved(at + vec2(-15.0 / 0.35, 0.0)));
+    // 閾値の手前では動かない
+    h.event(Event::PointerMoved(at + vec2(-(d - 1.0), 0.0)));
+    h.step();
+    assert_eq!(camera(&h).yaw, 25.0);
+    // 背面（yaw 25° に近い）から左へ: 右の軸の視点（yaw -90°）
+    h.event(Event::PointerMoved(at + vec2(-(d + 1.0), 0.0)));
     h.step();
     let c = camera(&h);
-    assert_eq!((c.yaw, c.pitch), (0.0, 0.0), "背面へ吸い付いた");
+    assert_eq!((c.yaw, c.pitch), (-90.0, 0.0));
     near(project(c, point), Vec2::new(at.x, at.y));
-    // 吸い付く範囲の外（yaw 25° → -20°）では、回した分の向きのまま。点は動かない
-    h.event(Event::PointerMoved(at + vec2(-45.0 / 0.35, 0.0)));
+    // 続けて左へ: 正面（yaw -180°）。さらに下へ: 上の視点
+    h.event(Event::PointerMoved(at + vec2(-2.0 * d - 2.0, 0.0)));
     h.step();
     let c = camera(&h);
-    assert!((c.yaw + 20.0).abs() < 1e-3, "{}", c.yaw);
+    assert_eq!((c.yaw, c.pitch), (-180.0, 0.0));
+    near(project(c, point), Vec2::new(at.x, at.y));
+    h.event(Event::PointerMoved(at + vec2(-2.0 * d - 2.0, d + 1.0)));
+    h.step();
+    let c = camera(&h);
+    assert_eq!((c.yaw, c.pitch), (-180.0, 90.0));
     near(project(c, point), Vec2::new(at.x, at.y));
     mouse(
         &mut h,
-        at + vec2(-45.0 / 0.35, 0.0),
-        PointerButton::Primary,
+        at + vec2(-2.0 * d - 2.0, d + 1.0),
+        PointerButton::Secondary,
         false,
         alt,
     );
@@ -721,7 +731,7 @@ fn size_at_target(h: &Harness<'_, Fixture>) -> f32 {
 }
 
 #[test]
-fn alt_drag_onto_an_axis_turns_orthographic_and_off_the_axis_back_to_perspective() {
+fn alt_right_drag_flicks_into_axis_views_that_turn_orthographic_with_the_setting() {
     for axis_ortho in [true, false] {
         let mut h = harness(Preferences {
             axis_ortho,
@@ -731,28 +741,32 @@ fn alt_drag_onto_an_axis_turns_orthographic_and_off_the_axis_back_to_perspective
         let size = size_at_target(&h);
         let at = pos2(375.0, 215.0);
         let alt = Modifiers::ALT;
+        let d = navigation::FLICK_DISTANCE;
         h.event(Event::ModifiersChanged(alt));
-        mouse(&mut h, at, PointerButton::Primary, true, alt);
-        // 背面の 10° 手前: 吸い付いて、設定が入なら正投影（大きさは変わらない）
-        h.event(Event::PointerMoved(at + vec2(-15.0 / 0.35, 0.0)));
+        mouse(&mut h, at, PointerButton::Secondary, true, alt);
+        // 閾値の手前では、軸の視点にならず透視のまま
+        h.event(Event::PointerMoved(at + vec2(-(d - 1.0), 0.0)));
+        h.step();
+        assert!(!camera(&h).is_orthographic());
+        // 左へ: 隣の軸の視点に切り替え、設定が入なら正投影（大きさは変わらない）
+        h.event(Event::PointerMoved(at + vec2(-(d + 1.0), 0.0)));
         h.step();
         let c = camera(&h);
-        assert_eq!((c.yaw, c.pitch), (0.0, 0.0));
+        assert_eq!((c.yaw, c.pitch), (-90.0, 0.0));
         assert_eq!(c.is_orthographic(), axis_ortho);
         assert_eq!(h.view3d().auto_orthographic, axis_ortho);
         assert!((size_at_target(&h) - size).abs() < 1e-3);
-        // 吸い付く範囲の外へ: 透視へ戻る
-        h.event(Event::PointerMoved(at + vec2(-45.0 / 0.35, 0.0)));
+        // さらに切り替えても、軸の視点のままで大きさは変わらない
+        h.event(Event::PointerMoved(at + vec2(-(d + 1.0), d + 1.0)));
         h.step();
         let c = camera(&h);
-        assert!((c.yaw + 20.0).abs() < 1e-3);
-        assert!(!c.is_orthographic());
-        assert!(!h.view3d().auto_orthographic);
+        assert_eq!((c.yaw, c.pitch), (-90.0, 90.0));
+        assert_eq!(c.is_orthographic(), axis_ortho);
         assert!((size_at_target(&h) - size).abs() < 1e-3);
         mouse(
             &mut h,
-            at + vec2(-45.0 / 0.35, 0.0),
-            PointerButton::Primary,
+            at + vec2(-(d + 1.0), d + 1.0),
+            PointerButton::Secondary,
             false,
             alt,
         );

@@ -359,22 +359,33 @@ fn camera_orbits_pans_and_zooms_like_the_unity_view() {
     release(&h, c + vec2(-50.0, 0.0), PointerButton::Middle);
     h.run();
     assert_ne!(h.view3d().camera.target, after.target);
-    // Alt + 左ドラッグでも回す（描かない）
-    let yaw = h.view3d().camera.yaw;
+    // Alt + 右ドラッグでも回す（描かない。閾値を超えたら、右へ動かした向きの隣の軸の視点）
+    let before = h.view3d().camera;
     h.event(Event::PointerMoved(c));
     h.event(Event::PointerButton {
         pos: c,
-        button: PointerButton::Primary,
+        button: PointerButton::Secondary,
         pressed: true,
         modifiers: Modifiers::ALT,
     });
     h.step();
-    move_to(&h, c + vec2(40.0, 0.0));
+    move_to(&h, c + vec2(60.0, 0.0));
     h.step();
-    release(&h, c + vec2(40.0, 0.0), PointerButton::Primary);
+    release(&h, c + vec2(60.0, 0.0), PointerButton::Secondary);
     h.run();
-    assert!((h.view3d().camera.yaw - yaw - 14.0).abs() < 1e-3);
+    let after = h.view3d().camera;
+    assert_eq!(
+        (after.yaw, after.pitch),
+        yolu_core::geometry::flicked_orientation(
+            before.yaw,
+            before.pitch,
+            yolu_core::geometry::Flick::Right
+        )
+    );
     assert!(!h.doc().can_undo());
+    // 軸の視点に切り替えて正投影になったので、透視へ戻してから寄る距離を見る
+    h.view3d_mut().camera.set_orthographic(false);
+    h.view3d_mut().auto_orthographic = false;
     // ホイールで寄る（上へ 1 目盛りで約 1/1.2 の距離）
     let distance = h.view3d().camera.distance;
     move_to(&h, c);

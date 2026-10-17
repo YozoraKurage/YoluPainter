@@ -325,14 +325,18 @@ impl KeyConfig {
                 });
             }
         }
-        let gestures: Vec<Gesture> = GESTURES
+        // 利用者が変えた行を、既定のままの行より前に並べる（`Keymap::with_gestures` の並べ替えは安定なので、条件の多さが同じなら、
+        // 利用者の行が先に当たる。既定のままの行が、利用者の割り当てを黙って隠さない）
+        let changed = GESTURES
             .iter()
             .filter_map(|g| match self.mouse.get(&g.index) {
-                None => Some(*g),
                 Some(Some(c)) => Some(c.apply(g)),
-                Some(None) => None,
-            })
-            .collect();
+                _ => None,
+            });
+        let kept = GESTURES
+            .iter()
+            .filter(|g| !self.mouse.contains_key(&g.index));
+        let gestures: Vec<Gesture> = changed.chain(kept.copied()).collect();
         let modes = self.tool_modes.iter().map(|(id, m)| (*id, *m)).collect();
         self.map = Arc::new(Keymap::with_gestures(rows, gestures).with_tool_modes(modes));
         keymap::install(self.map.clone());

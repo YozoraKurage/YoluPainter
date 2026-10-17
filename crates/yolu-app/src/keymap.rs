@@ -1025,9 +1025,9 @@ pub enum Operation {
     Rotate,
     /// 色を取る（2D は右ボタンを押す。3D は右ボタンを動かさずに離す）。
     Pick,
-    /// 3D ビューの視点を回す。軸の向き（正面・背面・右・左・上・下）の 15° 以内に入ったらその向きへ吸い付く。
+    /// 3D ビューの視点を回す（Alt + 右）。ドラッグした向き（右・左・下・上）へ、今の視点から 90° 隣の軸の視点（正面・背面・右・左・上・下）に切り替える。
     SnapOrbit,
-    /// クローンのブラシで、クローンの元を決める（2D・3D とも Alt + 左を動かさずに離す。動かせば、2D は表示を回し、3D はスナップ回転）。
+    /// クローンのブラシで、クローンの元を決める（2D・3D とも Alt + 左を動かさずに離す。動かせば、2D は表示を回し、3D は何もしない）。
     CloneSource,
     SelectionAdd,
     SelectionSubtract,
@@ -1213,8 +1213,17 @@ pub const GESTURES: [Gesture; 20] = numbered([
         (false, false, true),
         Operation::SelectionSubtract,
     )),
-    // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
-    // Alt + 左でスナップ回転（動かさずに離すとクローンの元）
+    // 3D ビュー: 右ボタンで回す（動かさずに離すとスポイト）・Alt + 右でスナップ回転・中ボタンでパン・Space + 左でパン（Ctrl を足すと拡縮）・
+    // Alt + 左を動かさずに離すとクローンの元。表の並びのテスト（`a_gesture_is_never_hidden_by_an_earlier_one`）は、条件の少ない行を
+    // 先に置くことを許さないので、Alt を足した右の行は、修飾なしの右の行の上に置く（実際の照合は、`Keymap::with_gestures` が修飾の多い行を先にする）
+    // （押しの始めに Alt を持っていたときだけ当たる。右で回している途中の Alt は押しの始めの修飾ではないので、替わらない）
+    gesture_of(
+        "view3d",
+        None,
+        Secondary,
+        (true, false, false),
+        Operation::SnapOrbit,
+    ),
     gesture_of(
         "view3d",
         None,
@@ -1243,13 +1252,6 @@ pub const GESTURES: [Gesture; 20] = numbered([
         Primary,
         (false, false, false),
         Operation::Pan,
-    ),
-    gesture_of(
-        "view3d",
-        None,
-        Primary,
-        (true, false, false),
-        Operation::SnapOrbit,
     ),
     in_paint(click_of(
         "view3d",
@@ -1454,7 +1456,7 @@ mod tests {
         let shift = Modifiers::SHIFT;
         let alt_shift = Modifiers::ALT | Modifiers::SHIFT;
         let ctrl = Modifiers::CTRL;
-        // 3D: 右で回す・中でパン・Space + 左でパン（Ctrl を足すと拡縮）・Alt + 左でスナップ回転
+        // 3D: 右で回す・中でパン・Space + 左でパン（Ctrl を足すと拡縮）・Alt + 右でスナップ回転
         assert_eq!(
             gesture("view3d", Secondary, &none, false),
             Some(Operation::Orbit)
@@ -1473,17 +1475,24 @@ mod tests {
             Some(Operation::Zoom)
         );
         assert_eq!(gesture("view3d", Primary, &ctrl, false), None);
+        // スナップ回転は Alt + 右。Alt + 左は何も始めない（動かさずに離すクローンの元の行だけ）
         assert_eq!(
-            gesture("view3d", Primary, &alt, false),
+            gesture("view3d", Secondary, &alt, false),
             Some(Operation::SnapOrbit)
         );
-        // 外した組み合わせ: Shift + 右は、パンではなく回す（Shift は気にしない）。Alt + Shift + 左も、パンではなくスナップ回転
+        assert_eq!(gesture("view3d", Primary, &alt, false), None);
+        assert_eq!(gesture("view3d", Primary, &alt_shift, false), None);
+        // 外した組み合わせ: Shift + 右は、パンではなく回す（Shift は気にしない）。Alt + Shift + 右も、パンではなくスナップ回転
+        assert_eq!(
+            gesture("view3d", Secondary, &none, false),
+            Some(Operation::Orbit)
+        );
         assert_eq!(
             gesture("view3d", Secondary, &shift, false),
             Some(Operation::Orbit)
         );
         assert_eq!(
-            gesture("view3d", Primary, &alt_shift, false),
+            gesture("view3d", Secondary, &alt_shift, false),
             Some(Operation::SnapOrbit)
         );
         // Space を押していても、右・中ボタンは同じ
@@ -1501,6 +1510,7 @@ mod tests {
             Some(Operation::CloneSource)
         );
         assert_eq!(click_gesture("view3d", Secondary, &shift, false), None);
+        assert_eq!(click_gesture("view3d", Secondary, &alt, false), None);
         assert_eq!(click_gesture("view3d", Primary, &alt_shift, false), None);
         assert_eq!(click_gesture("view3d", Secondary, &ctrl, false), None);
         assert_eq!(click_gesture("view3d", Secondary, &none, true), None);
