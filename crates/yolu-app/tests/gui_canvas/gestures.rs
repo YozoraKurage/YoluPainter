@@ -1418,3 +1418,367 @@ fn while_y_moves_the_stencil_the_pen_never_orbits_or_pans_the_3d_view() {
         assert!(input.nav.is_none() && input.pen_press.is_none(), "{name}");
     }
 }
+
+// ───────── 6. Windows Ink の浮いたペンと、ほかのデバイスのマウスのボタン ─────────
+//
+// winit は浮いているペンも Touch の動きにし、egui-winit は同じ位置のポインタの動きも作る（OS のカーソルはペンについて来ない）。ほかのデバイスの本物のマウスの
+// ボタン・動きは、止まったカーソルの位置で届く。`raw_input_hook` と同じく、ペンのサイドボタンの直しと `join_pen_and_mouse` を通してから入れる。
+
+/// Windows のメインウィンドウの 1 フレーム: ペンの点（あれば）を受け口に入れ、egui の入力を `raw_input_hook` と同じに直してから入れる。
+struct Ink {
+    clock: f64,
+}
+
+impl Ink {
+    fn new() -> Ink {
+        Ink { clock: 0.0 }
+    }
+
+    fn frame(&mut self, h: &mut H, pen: Option<PenSample>, mut events: Vec<Event>) {
+        if let Some(s) = pen {
+            h.state().pen().push(s);
+        }
+        h.state_mut().remap_pen_buttons(&mut events);
+        self.clock += 1.0 / 60.0;
+        h.state_mut().join_pen_and_mouse(&mut events, self.clock);
+        h.input_mut().events.extend(events);
+        h.step();
+    }
+
+    /// 浮いているペンの点（受け口の点と、winit の Touch・egui-winit のポインタの動き）。`then` は同じフレームで後に来るイベント。
+    fn hover(&mut self, h: &mut H, at: Pos2, then: Vec<Event>) {
+        let mut events = vec![
+            Event::Touch {
+                device_id: egui::TouchDeviceId(0),
+                id: egui::TouchId(5),
+                phase: egui::TouchPhase::Move,
+                pos: at,
+                force: Some(0.0),
+            },
+            Event::PointerMoved(at),
+        ];
+        events.extend(then);
+        self.frame(h, Some(sample(at, false, false, false)), events);
+    }
+
+    /// 本物のマウスのボタン（止まったカーソルの位置 `at`）。
+    fn button(&mut self, h: &mut H, at: Pos2, button: PointerButton, pressed: bool) {
+        let events = vec![
+            Event::PointerMoved(at),
+            Event::PointerButton {
+                pos: at,
+                button,
+                pressed,
+                modifiers: current_modifiers(h),
+            },
+        ];
+        self.frame(h, None, events);
+    }
+}
+
+/// 止まったカーソルの位置 `b` で本物のマウスの `button` を押し、浮いたペンを `from` から `steps` 回 `step` ずつ動かす（`mixed` なら、ペンの点のたびに、
+/// 同じフレームの後で `b` のマウスの点も来る）。
+struct Held {
+    b: Pos2,
+    button: PointerButton,
+    from: Pos2,
+    step: egui::Vec2,
+    steps: usize,
+    mixed: bool,
+}
+
+impl Held {
+    /// 押して動かし、押したまま返す。毎フレームの後に `each` を呼ぶ。
+    fn run(&self, h: &mut H, ink: &mut Ink, mut each: impl FnMut(&H)) {
+        ink.button(h, self.b, self.button, true);
+        for i in 0..self.steps {
+            let then = if self.mixed {
+                vec![Event::PointerMoved(self.b)]
+            } else {
+                Vec::new()
+            };
+            ink.hover(h, self.from + self.step * i as f32, then);
+            each(h);
+        }
+    }
+}
+
+/// 3D: 右ボタンを押したまま、浮いたペンの点と止まったカーソルの点が交互に来ても、回すのはペンの動いた分だけで、戻らない。ペンを範囲に置いたまま止めて、
+/// マウスを本当に動かせば、その分が今どおり回る。
+#[test]
+fn holding_another_mouse_button_while_the_pen_hovers_orbits_by_the_pen_and_never_snaps_back() {
+    let (mut h, rect) = cube_view();
+    let b = rect.center();
+    let before = camera(&h);
+    let mut ink = Ink::new();
+    let mut yaws = Vec::new();
+    Held {
+        b,
+        button: PointerButton::Secondary,
+        from: offset(b, -120.0, 40.0),
+        step: vec2(8.0, 0.0),
+        steps: 12,
+        mixed: true,
+    }
+    .run(&mut h, &mut ink, |h| yaws.push(camera(h).yaw));
+    assert!(h.view3d().input.nav.is_some(), "右ボタンの回す");
+    // ペンが範囲に入った最初の点は動かさず、そのあとペンの動いた分（11 × 8 点）だけ回す
+    let after = camera(&h);
+    assert!(
+        (after.yaw - (before.yaw + 11.0 * 8.0 * 0.35)).abs() < 1e-3,
+        "{} → {} {yaws:?}",
+        before.yaw,
+        after.yaw
+    );
+    assert!((after.pitch - before.pitch).abs() < 1e-3);
+    assert!(
+        yaws.windows(2).all(|w| w[1] >= w[0] - 1e-4),
+        "戻らない: {yaws:?}"
+    );
+    // ペンを範囲に置いたまま止めて（同じ位置の浮きの点が来続ける）、マウスを本当に動かす（下へ 5 × 6 点）: マウスの分だけ回る
+    let still = offset(b, -120.0 + 11.0 * 8.0, 40.0);
+    for i in 1..=5 {
+        let m = offset(b, 0.0, 6.0 * i as f32);
+        ink.hover(&mut h, still, vec![Event::PointerMoved(m)]);
+    }
+    let moved = camera(&h);
+    assert!((moved.yaw - after.yaw).abs() < 1e-3);
+    assert!(
+        (moved.pitch - (after.pitch + 30.0 * 0.35)).abs() < 1e-3,
+        "{} → {}",
+        after.pitch,
+        moved.pitch
+    );
+    ink.button(
+        &mut h,
+        offset(b, 0.0, 30.0),
+        PointerButton::Secondary,
+        false,
+    );
+    assert!(h.view3d().input.nav.is_none());
+    assert_eq!(strokes(&h), 0, "描かない");
+    // 離したあとの浮いたペンは、そのまま egui のポインタになる（ペンのホバー）
+    let a = offset(b, 50.0, -20.0);
+    ink.hover(&mut h, a, Vec::new());
+    assert_eq!(h.ctx.input(|i| i.pointer.hover_pos()), Some(a));
+    assert_eq!(camera(&h).yaw, moved.yaw);
+}
+
+/// 3D: カーソルがペンについて来る（浮いたペンの点のそばに、マウスの点も来る。1 点遅れても）とき、同じ動きを二重に積まない。
+#[test]
+fn a_cursor_that_follows_the_hovering_pen_does_not_orbit_twice() {
+    let (mut h, rect) = cube_view();
+    let b = rect.center();
+    let before = camera(&h);
+    let mut ink = Ink::new();
+    ink.button(&mut h, b, PointerButton::Secondary, true);
+    let from = offset(b, -60.0, 0.0);
+    let mut lag = b;
+    for i in 0..12 {
+        let at = from + vec2(8.0 * i as f32, 0.0);
+        // WM_MOUSEMOVE は整数の画素で、Touch の位置より少しずれ、1 つ前のペンの点の所に来る
+        ink.hover(&mut h, at, vec![Event::PointerMoved(lag)]);
+        lag = pos2(at.x.round() + 1.0, at.y.round() - 1.0);
+    }
+    let after = camera(&h);
+    ink.button(&mut h, lag, PointerButton::Secondary, false);
+    assert!(
+        (after.yaw - (before.yaw + 11.0 * 8.0 * 0.35)).abs() < 1e-3,
+        "{} → {}",
+        before.yaw,
+        after.yaw
+    );
+    assert!((after.pitch - before.pitch).abs() < 1e-3);
+}
+
+/// 3D: 中ボタンのパンも、止まったカーソルの点が混ざっても、マウスだけで同じだけ動かしたときと同じ所へ動く（ずれない）。
+#[test]
+fn holding_the_middle_button_while_the_pen_hovers_pans_like_the_mouse_moving_the_same_way() {
+    let pan = |mixed: bool| {
+        let (mut h, rect) = cube_view();
+        let b = rect.center();
+        let start = camera(&h).target;
+        let mut ink = Ink::new();
+        if mixed {
+            Held {
+                b,
+                button: PointerButton::Middle,
+                from: offset(b, 150.0, -60.0),
+                step: vec2(-6.0, 3.0),
+                steps: 12,
+                mixed: true,
+            }
+            .run(&mut h, &mut ink, |_| {});
+        } else {
+            ink.button(&mut h, b, PointerButton::Middle, true);
+            for i in 1..12 {
+                let at = b + vec2(-6.0, 3.0) * i as f32;
+                ink.frame(&mut h, None, vec![Event::PointerMoved(at)]);
+            }
+        }
+        let moved = camera(&h).target;
+        ink.button(&mut h, b, PointerButton::Middle, false);
+        assert!(h.view3d().input.nav.is_none());
+        assert_ne!(moved, start, "パンした（mixed {mixed}）");
+        moved
+    };
+    let mouse = pan(false);
+    let mixed = pan(true);
+    assert!((mixed - mouse).length() < 1e-4, "{mixed:?} {mouse:?}");
+}
+
+/// 2D: 中ボタンのパンと Alt + 左ボタンの回す（Shift で自由）も、止まったカーソルの点が混ざっても行き来しない。
+#[test]
+fn holding_another_mouse_button_while_the_pen_hovers_pans_and_rotates_the_canvas_without_going_back(
+) {
+    // パン: ペンの動いた分（11 × (7, 2)）だけ
+    let mut h = app(1280.0, 800.0, 256);
+    let b = canvas_rect(&h).center();
+    let mut ink = Ink::new();
+    let mut pans = Vec::new();
+    Held {
+        b,
+        button: PointerButton::Middle,
+        from: offset(b, -200.0, 100.0),
+        step: vec2(7.0, 2.0),
+        steps: 12,
+        mixed: true,
+    }
+    .run(&mut h, &mut ink, |h| pans.push(view_of(h).pan));
+    assert!(h.canvas().panning);
+    assert_eq!(view_of(&h).pan, vec2(77.0, 22.0), "{pans:?}");
+    assert!(
+        pans.windows(2).all(|w| w[1].x >= w[0].x),
+        "戻らない: {pans:?}"
+    );
+    ink.button(&mut h, b, PointerButton::Middle, false);
+    assert!(!h.canvas().panning);
+    nothing_started(&h);
+    // 回す: マウスだけで同じ道をなぞったときと同じ角度
+    let rotate = |mixed: bool| {
+        let mut h = app(1280.0, 800.0, 256);
+        let c = canvas_rect(&h).center();
+        let b = offset(c, 120.0, 0.0);
+        let step = vec2(-4.0, 9.0);
+        let mut ink = Ink::new();
+        hold(&mut h, Modifiers::ALT | Modifiers::SHIFT);
+        let mut angles = Vec::new();
+        if mixed {
+            Held {
+                b,
+                button: PointerButton::Primary,
+                from: offset(c, -300.0, -150.0),
+                step,
+                steps: 12,
+                mixed: true,
+            }
+            .run(&mut h, &mut ink, |h| angles.push(view_of(h).angle));
+        } else {
+            ink.button(&mut h, b, PointerButton::Primary, true);
+            for i in 1..12 {
+                ink.frame(&mut h, None, vec![Event::PointerMoved(b + step * i as f32)]);
+                angles.push(view_of(&h).angle);
+            }
+        }
+        assert!(h.canvas().rotating.is_some(), "Alt + 左ボタンの回す");
+        let angle = view_of(&h).angle;
+        ink.button(&mut h, b, PointerButton::Primary, false);
+        release_mods(&mut h);
+        nothing_started(&h);
+        assert!(angle.abs() > 1.0, "回った: {angles:?}");
+        (angle, angles)
+    };
+    let (mouse, _) = rotate(false);
+    let (mixed, angles) = rotate(true);
+    assert!((mixed - mouse).abs() < 1e-3, "{mixed} {mouse} {angles:?}");
+    assert!(
+        angles
+            .windows(2)
+            .all(|w| (w[1] - w[0]) * mouse.signum() >= -1e-4),
+        "戻らない: {angles:?}"
+    );
+}
+
+/// マウスのボタンを押していないとき、浮いたペンは今どおり egui のポインタになり（部品のホバー）、ペンで描く・サイドボタンの右クリックも今どおり。
+#[test]
+fn without_a_mouse_button_the_hovering_pen_still_hovers_paints_and_right_clicks_as_before() {
+    let mut h = app(1280.0, 800.0, 256);
+    let mut ink = Ink::new();
+    let row = rect_of(&h, "レイヤー 1", |_| true);
+    let at = pos2(row.left() + 90.0, row.center().y);
+    // 止まったカーソルの点のあとでも、浮いたペンの位置がポインタ
+    let cursor_at = canvas_rect(&h).center();
+    ink.frame(&mut h, None, vec![Event::PointerMoved(cursor_at)]);
+    ink.hover(&mut h, at, Vec::new());
+    assert_eq!(h.ctx.input(|i| i.pointer.hover_pos()), Some(at));
+    assert!(h.ctx.is_pointer_over_egui(), "パネルの上");
+    // サイドボタンで触れて離す: 右クリックのメニュー
+    let touch = |phase, at| Event::Touch {
+        device_id: egui::TouchDeviceId(0),
+        id: egui::TouchId(5),
+        phase,
+        pos: at,
+        force: Some(0.5),
+    };
+    let tip = |h: &H, pressed| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: current_modifiers(h),
+    };
+    let press = vec![
+        touch(egui::TouchPhase::Start, at),
+        Event::PointerMoved(at),
+        tip(&h, true),
+    ];
+    ink.frame(&mut h, Some(sample(at, true, true, false)), press);
+    let lift = vec![
+        touch(egui::TouchPhase::End, at),
+        tip(&h, false),
+        Event::PointerGone,
+    ];
+    ink.frame(&mut h, Some(sample(at, false, false, false)), lift);
+    h.run();
+    assert!(
+        matches!(
+            h.popup().as_ref().map(|p| p.kind),
+            Some(yolu_app::state::PopupKind::LayerContext(_))
+        ),
+        "右クリックのメニューが開く"
+    );
+    // ペン先で触れて描く（winit の入力も同じフレームに）
+    let mut h = app(1280.0, 800.0, 256);
+    let mut ink = Ink::new();
+    let c = canvas_rect(&h).center();
+    ink.hover(&mut h, c, Vec::new());
+    let press = vec![
+        touch(egui::TouchPhase::Start, c),
+        Event::PointerMoved(c),
+        Event::PointerButton {
+            pos: c,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+    ];
+    ink.frame(&mut h, Some(sample(c, true, false, false)), press);
+    for p in [offset(c, 30.0, 0.0), offset(c, 60.0, 10.0)] {
+        let moved = vec![touch(egui::TouchPhase::Move, p), Event::PointerMoved(p)];
+        ink.frame(&mut h, Some(sample(p, true, false, false)), moved);
+    }
+    let end = offset(c, 60.0, 10.0);
+    let lift = vec![
+        touch(egui::TouchPhase::End, end),
+        Event::PointerButton {
+            pos: end,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+        Event::PointerGone,
+    ];
+    ink.frame(&mut h, Some(sample(end, false, false, false)), lift);
+    h.run();
+    assert_eq!(strokes(&h), 1, "描いた");
+    assert!(h.canvas().pen_press.is_none());
+}

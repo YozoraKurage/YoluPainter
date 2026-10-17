@@ -22,6 +22,7 @@ pub mod adjust;
 pub mod capture;
 pub mod drop_point;
 pub mod ink;
+pub mod join;
 pub mod log;
 #[cfg(target_os = "macos")]
 mod mac_tablet;
@@ -38,6 +39,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::engine::Tilt;
 
+pub use join::PointerJoin;
 pub use wintab::Unavailable;
 
 /// ペンの 1 点（位置はウィンドウのクライアント領域の物理の画素、左上が原点）。

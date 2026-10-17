@@ -449,6 +449,8 @@ pub struct YoluApp {
     pacing: crate::pacing::Pacing,
     /// サイドボタンを押したペンの接触を、egui の部品にも右ボタンとして届ける。
     pen_buttons: crate::pen::ButtonMap,
+    /// 本物のマウスのボタンがビューを動かしている間の、ペンの浮きとマウスの動きの混ざりを、出どころごとの差にして積む（Windows のメインウィンドウ）。
+    pointer_join: crate::pen::PointerJoin,
     view3d: View3dSlot,
     /// 3D ビューの wgpu の描画（wgpu の装置が無ければ None）。
     renderer3d: Option<View3dRenderer>,
@@ -1000,6 +1002,7 @@ impl YoluApp {
             pen,
             pacing: crate::pacing::Pacing::default(),
             pen_buttons: crate::pen::ButtonMap::default(),
+            pointer_join: crate::pen::PointerJoin::default(),
             view3d: View3dSlot::default(),
             renderer3d: None,
             gpu_watch: None,
@@ -1879,6 +1882,20 @@ impl YoluApp {
         self.pen_buttons.remap(&self.pen.peek(), events);
     }
 
+    /// egui が受けるポインタの動きのうち、本物のマウスのボタンが 2D・3D のビューを動かしている間（ペンは触れていない）に混ざる、
+    /// ペンの浮き（winit の Touch から作った動き）と止まったカーソルの位置の動きを、出どころごとの差にして 1 本の位置に積む
+    /// （`pen::PointerJoin`。`eframe::App::raw_input_hook` が Windows のメインウィンドウで毎フレーム呼ぶ。`now` はフレームの時刻）。
+    pub fn join_pen_and_mouse(&mut self, events: &mut [egui::Event], now: f64) {
+        let moving_view = self.state.mouse_moves_view();
+        // このフレームのペンの受け口の点の OS の時刻（長いフレームでも、続けて浮いていたペンの差を捨てないため）
+        let samples = self.pen.peek();
+        let pen_ms = samples
+            .first()
+            .zip(samples.last())
+            .map(|(first, last)| (first.time_ms, last.time_ms));
+        self.pointer_join.apply(events, moving_view, now, pen_ms);
+    }
+
     /// フレームの初め（egui のパスの前。`raw_input_hook` が呼ぶ）に、垂直同期を待たない表示のときだけ、前のフレームの始まりからの間が下限より短ければ
     /// 残りを眠る（`pacing`）。入力のあるフレームは 1/240 秒、無いフレーム（描き直しの頼みだけ）はウィンドウのあるモニターのリフレッシュレートの逆数
     /// （60〜240 Hz。読めなければ 1/120 秒。入力の見方は `frame_has_input`、リフレッシュレートの読み方は `read_refresh_rate`）。
@@ -2742,6 +2759,12 @@ impl eframe::App for YoluApp {
             raw_input.viewport_id == egui::ViewportId::ROOT,
             &raw_input.events,
         );
+        // Windows Ink の浮いたペンは OS のカーソルを動かさないので、ほかのデバイスのマウスのボタンでビューを動かす間、egui のポインタが
+        // ペンの位置と止まったカーソルの位置を行き来する（直すのは記録のあと。記録には直す前のイベントを残す）
+        if cfg!(windows) && raw_input.viewport_id == egui::ViewportId::ROOT {
+            let now = raw_input.time.unwrap_or_default();
+            self.join_pen_and_mouse(&mut raw_input.events, now);
+        }
         self.pace_frame(ctx, raw_input);
     }
 
