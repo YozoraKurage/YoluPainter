@@ -25,6 +25,7 @@ mod import_tiles;
 mod influences;
 mod layer_sets;
 mod layers;
+mod mask_copy;
 mod merge_compare;
 mod min_pixel;
 mod nesting;

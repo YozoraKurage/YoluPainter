@@ -101,6 +101,7 @@ pub use document::{
     StrokeStats, TriangleFill, Warp, WarpMesh, WarpPoint, DEFAULT_SOURCE_BUDGET_BYTES,
     MAX_GROUP_DEPTH, MAX_LAYER_SETS, MAX_SAVED_NAME_CHARS, MAX_SAVED_SELECTIONS,
 };
+pub use document::{MaskCopy, MaskPasteResult};
 pub use effects::{
     Anchor, AnchorId, AnchorInfo, AnchorIssue, AnchorIssueKind, AnchorPlacement, EffectInputs,
     EffectSettings, FallbackEffect, FilterEffect, FilterId, FilterSpec, FilterTarget, ImageId,

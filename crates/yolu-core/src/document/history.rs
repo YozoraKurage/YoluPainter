@@ -33,6 +33,10 @@ pub enum HistoryKind {
     Text,
     /// 定規を作る・動かす・消す・移す・設定を変える（`Document::set_rulers`・`move_rulers`・`set_snap_ruler`）。
     Rulers,
+    /// マスクを別のレイヤーへ動かした（`Document::move_mask`）。
+    MoveMask,
+    /// コピーしたマスクを貼った・画像をマスクへ貼った（`Document::set_masks`・`paste_into_mask`）。
+    PasteMask,
 }
 
 impl Document {

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use super::OpenPopup;
 use crate::engine::LayerId;
-use crate::m2::LayerDrag;
+use crate::m2::{LayerDrag, MaskDrag};
 
 /// 画面の一時の状態（前のフレームの結果・開いているポップアップ・入力の途中。保存しない）。状態の側から画面への頼みは `Outbox`。文書を替えると、前の文書を指す物（名前の変更・レイヤーのドラッグ）は
 /// `AppState::install_document` が戻す。
@@ -18,6 +18,8 @@ pub struct UiState {
     pub layer_scroll: f32,
     /// レイヤーのドラッグの並べ替え（ドラッグ中のレイヤーと、落とす先の隙間 0..=n、上から）。
     pub layer_drag: Option<LayerDrag>,
+    /// マスクのサムネイルのドラッグ（別のレイヤーへ動かす・Alt で写す。並べ替えの `layer_drag` とは別）。
+    pub mask_drag: Option<MaskDrag>,
     /// 名前を変えているテクスチャセット（uid）と、入力欄がフォーカスを取った後か。
     pub renaming_set: Option<u32>,
     pub rename_set_started: bool,

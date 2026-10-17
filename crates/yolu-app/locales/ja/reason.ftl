@@ -552,3 +552,4 @@ reason-packed-component-range = 成分は 0〜3
 reason-pen-pressure-range = 筆圧の下限・上限
 reason-no-point-to-fill = 塗る点がない
 reason-path-point-value-range = 点の値が範囲外です
+reason-mask-size-differs-from-canvas = マスクの大きさがキャンバスと違う

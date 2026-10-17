@@ -22,6 +22,7 @@ pub use yolu_core::{AntiAlias, ColorMix, MixGround, MixMode};
 pub use yolu_core::{ColorItem, ColorTarget, StrokeColorChange, TipColorChange};
 pub use yolu_core::{Influence, Influences, InputResponse, InputUse, PressureSwitches};
 pub use yolu_core::{MixBlur, MixSpace};
+pub use yolu_core::{MaskCopy, MaskPasteResult};
 
 /// ペンの傾き（度。Windows の POINTER_PEN_INFO の tiltX・tiltY と同じく −90〜90）。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

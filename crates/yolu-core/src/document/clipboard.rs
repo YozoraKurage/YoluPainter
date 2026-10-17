@@ -554,12 +554,7 @@ impl Document {
         let (index, parent, set) = self.placement_above(above)?;
         let (w, h) = (self.width as i64, self.height as i64);
         let (cw, ch) = (clip.width as i64, clip.height as i64);
-        let centered = (clip.document_width, clip.document_height) != (self.width, self.height);
-        let (ox, oy) = if centered {
-            ((w - cw) / 2, (h - ch) / 2)
-        } else {
-            (clip.x as i64, clip.y as i64)
-        };
+        let (ox, oy, centered) = self.paste_origin(clip);
         let ts = self.tile_size as i64;
         let tile_len = (ts * ts * 4) as usize;
         let src = clip.pixels();
@@ -646,6 +641,20 @@ impl Document {
             centered,
             clipped_pixels: clipped,
         })
+    }
+
+    /// 写しの左下の角が置かれる位置（文書が写したときと同じ大きさなら元の位置、違えば中央）と、中央に置いたか。
+    pub(super) fn paste_origin(&self, clip: &PixelClipboard) -> (i64, i64, bool) {
+        let centered = (clip.document_width, clip.document_height) != (self.width, self.height);
+        if centered {
+            (
+                (self.width as i64 - clip.width as i64) / 2,
+                (self.height as i64 - clip.height as i64) / 2,
+                true,
+            )
+        } else {
+            (clip.x as i64, clip.y as i64, false)
+        }
     }
 
     // ───────── 置き換え ─────────

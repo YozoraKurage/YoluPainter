@@ -165,7 +165,7 @@ impl Document {
         }
     }
 
-    fn new_filter_id(&mut self) -> FilterId {
+    pub(super) fn new_filter_id(&mut self) -> FilterId {
         loop {
             self.id_counter += 1;
             let id = FilterId(super::random_id(self.id_counter));

@@ -62,3 +62,5 @@ m2-height-normal-on = Height → Normal on.
 m2-height-normal-off = Height → Normal off.
 m2-normal-files = Normal files: { $file_direction }
 m2-cancelled = Cancelled.
+m2-copied-the-mask = Copied the mask.
+m2-no-mask-was-copied = No mask has been copied.

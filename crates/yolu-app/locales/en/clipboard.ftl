@@ -18,3 +18,4 @@ clipboard-cannot-convert-the-os-clipboard = Cannot convert the OS clipboard imag
 clipboard-os-clipboard-is-not-responding = OS clipboard is not responding
 clipboard-note-separator = ,{" "}
 clipboard-pasted-with-notes = { $head } ({ $notes })
+clipboard-pasted-to-mask = Pasted to the mask of { $name }

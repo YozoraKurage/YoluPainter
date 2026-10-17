@@ -31,6 +31,8 @@ pub fn title(kind: HistoryKind, lang: Lang) -> &'static str {
         HistoryKind::SavedSelections => lang.t("panels-edit-remembered-selections"),
         HistoryKind::Text => lang.t("panels-edit-text"),
         HistoryKind::Rulers => lang.t("panels-edit-ruler"),
+        HistoryKind::MoveMask => lang.t("panels-move-mask"),
+        HistoryKind::PasteMask => lang.t("panels-paste-mask"),
     }
 }
 

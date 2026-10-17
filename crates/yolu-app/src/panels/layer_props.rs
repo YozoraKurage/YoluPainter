@@ -686,6 +686,47 @@ fn channels_section(
     }
 }
 
+/// マスクが無いレイヤーの「白のマスク」「黒のマスク」の追加ボタン（1 行に 2 つ）。
+fn add_mask_buttons(
+    ui: &mut Ui,
+    app: &mut AppState,
+    rows: &mut Rows,
+    id: LayerId,
+    enabled: bool,
+    lang: Lang,
+) {
+    let r = rows.row(24.0, 4.0);
+    let cols = Rows::split(r, 2, 6.0);
+    if w::button(
+        ui,
+        cols[0],
+        "mask.add",
+        lang.t("panels-white-mask"),
+        false,
+        enabled,
+        Some(lang.t("panels-add-white-layer-mask-tip")),
+        Some("add"),
+    )
+    .clicked()
+    {
+        edit(app, Edit::AddMask(id));
+    }
+    if w::button(
+        ui,
+        cols[1],
+        "mask.add_black",
+        lang.t("panels-black-mask"),
+        false,
+        enabled,
+        Some(lang.t("panels-add-black-layer-mask-tip")),
+        Some("add"),
+    )
+    .clicked()
+    {
+        edit(app, Edit::AddMaskBlack(id));
+    }
+}
+
 /// レイヤーマスク（全チャンネルで共有）。
 fn mask_section(
     ui: &mut Ui,
@@ -714,21 +755,7 @@ fn mask_section(
         .and_then(|l| l.mask())
         .map(|m| (m.enabled(), m.inverted(), m.density()));
     let Some((on, inverted, density)) = mask else {
-        let r = rows.row(24.0, 4.0);
-        if w::button(
-            ui,
-            r,
-            "mask.add",
-            lang.t("panels-add-layer-mask"),
-            false,
-            enabled,
-            Some(lang.t("panels-a-mask-hides-parts-of-tip")),
-            Some("add"),
-        )
-        .clicked()
-        {
-            edit(app, Edit::AddMask(id));
-        }
+        add_mask_buttons(ui, app, rows, id, enabled, lang);
         return;
     };
     let editing = app.m2.edit_mask && app.session.selected_layer == Some(id);

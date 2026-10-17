@@ -18,3 +18,4 @@ clipboard-cannot-convert-the-os-clipboard = OS のクリップボードの画像
 clipboard-os-clipboard-is-not-responding = OS のクリップボードが応答しません
 clipboard-note-separator = 、
 clipboard-pasted-with-notes = { $head }（{ $notes }）
+clipboard-pasted-to-mask = マスクにペーストしました: { $name }

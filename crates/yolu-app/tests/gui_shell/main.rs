@@ -25,6 +25,7 @@ mod limits;
 mod link_entrance;
 mod log_panel;
 mod m2;
+mod mask_copy;
 mod menus;
 mod navigator;
 mod newproject;

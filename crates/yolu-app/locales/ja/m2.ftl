@@ -62,3 +62,5 @@ m2-height-normal-on = ハイト → ノーマルをオンにしました。
 m2-height-normal-off = ハイト → ノーマルをオフにしました。
 m2-normal-files = ノーマルのファイル: { $file_direction }
 m2-cancelled = 取り消しました。
+m2-copied-the-mask = マスクをコピーしました。
+m2-no-mask-was-copied = コピーしたマスクがありません。

@@ -560,6 +560,7 @@ pub enum Reason {
     PaintLoadRange,
     LuminanceCorrectionRange,
     MixBlurRange,
+    MaskSizeDiffersFromCanvas,
 }
 
 impl Reason {
@@ -1118,6 +1119,7 @@ impl Reason {
             Reason::PaintLoadRange => "初めの絵の具の量（0〜1）",
             Reason::LuminanceCorrectionRange => "輝度の補正（0〜4）",
             Reason::MixBlurRange => "にじむ強さ（0〜8 画素）",
+            Reason::MaskSizeDiffersFromCanvas => "マスクの大きさがキャンバスと違う",
         }
     }
 }

@@ -92,7 +92,7 @@ fn layer_toolbar_makes_groups_fills_adjustments_and_masks_one_undo_each() {
     assert_eq!(doc_layers(&h), 1);
     // マスク（帯には無く、行の右クリックのメニューにある）: 足すと描く先がマスクになり、「マスクに描く」でレイヤーへ戻る
     let name = h.doc().layer(first).unwrap().name().to_owned();
-    choose_in_layer_menu(&mut h, &name, "レイヤーマスクを追加");
+    choose_in_layer_menu(&mut h, &name, "白のレイヤーマスクを追加");
     assert!(h.doc().layer(first).unwrap().mask().is_some());
     assert!(h.m2().edit_mask);
     choose_in_layer_menu(&mut h, &name, "マスクに描く");
@@ -1106,7 +1106,7 @@ fn the_mask_hides_inverts_and_switches_off_with_one_undo_each() {
         .unwrap()
         .name()
         .to_owned();
-    choose_in_layer_menu(&mut h, &name, "レイヤーマスクを追加");
+    choose_in_layer_menu(&mut h, &name, "白のレイヤーマスクを追加");
     // マスクに短く描く（塗ると隠す）
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, -10.0, 0.0), offset(c, 10.0, 0.0)]);

@@ -49,6 +49,8 @@ enum Stale {
 pub struct ClipState {
     /// アプリの中のクリップボード。
     pub pixels: Option<PixelClipboard>,
+    /// コピーしたレイヤーマスク（面・設定・マスクのフィルター。OS のクリップボードの画像とは別）。
+    pub mask: Option<crate::engine::MaskCopy>,
     os: Box<dyn OsClipboard>,
     /// 最後に OS へ書いた画像の指紋（今 OS にある画像が自分の書いたものかを見る）。
     written: Option<u64>,
@@ -65,6 +67,7 @@ impl Default for ClipState {
     fn default() -> Self {
         ClipState {
             pixels: None,
+            mask: None,
             os: Box::new(NoClipboard),
             written: None,
             stale: None,
@@ -284,6 +287,18 @@ impl AppState {
     fn clip_paste(&mut self) -> Result<String, String> {
         let lang = self.lang;
         let PasteSource { clip, os_error } = self.clip_source()?;
+        // マスクを描いている間は、画像を今のマスクに貼る（白 = 見える・黒 = 隠す。色のある画像は明るさ）。新しいレイヤーは作らない
+        let mask_layer = self.session.selected_layer.filter(|id| {
+            self.m2.edit_mask
+                && self
+                    .session
+                    .doc
+                    .layer(*id)
+                    .is_some_and(|l| l.mask().is_some())
+        });
+        if let Some(id) = mask_layer {
+            return self.clip_paste_into_mask(id, &clip, os_error);
+        }
         let name = self.layer_name_for_new();
         let above = self
             .session
@@ -312,6 +327,51 @@ impl AppState {
             notes.push(error.text(lang).to_string());
         }
         Ok(pasted_text(lang, &name, &notes))
+    }
+}
+
+impl AppState {
+    /// 画像を、レイヤーのマスクに貼る（`Document::paste_into_mask`。1 回の Undo）。
+    fn clip_paste_into_mask(
+        &mut self,
+        id: crate::engine::LayerId,
+        clip: &PixelClipboard,
+        os_error: Option<OsClipboardError>,
+    ) -> Result<String, String> {
+        let lang = self.lang;
+        let result = self
+            .session
+            .doc
+            .paste_into_mask(id, clip)
+            .map_err(|e| lang.core_error(&e))?;
+        let name = self
+            .session
+            .doc
+            .layer(id)
+            .map(|l| l.name().to_owned())
+            .unwrap_or_default();
+        let mut notes = Vec::new();
+        if result.centered {
+            notes.push(lang.t("clipboard-centred").to_string());
+        }
+        if result.clipped_pixels > 0 {
+            notes.push(lang.f(
+                "clipboard-pixels-cut-off",
+                &[("clipped_pixels", &result.clipped_pixels)],
+            ));
+        }
+        if let Some(error) = os_error {
+            notes.push(error.text(lang).to_string());
+        }
+        let head = lang.f("clipboard-pasted-to-mask", &[("name", &name)]);
+        if notes.is_empty() {
+            return Ok(head);
+        }
+        let notes = notes.join(lang.t("clipboard-note-separator"));
+        Ok(lang.f(
+            "clipboard-pasted-with-notes",
+            &[("head", &head), ("notes", &notes)],
+        ))
     }
 }
 

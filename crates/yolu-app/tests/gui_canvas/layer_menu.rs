@@ -462,9 +462,13 @@ fn the_layer_menu_goes_add_then_effects_then_groups_then_the_rest() {
         let reference = at(lang.pick("参照レイヤー", "Reference Layer"));
         assert!(reference > at(lang.pick("複製", "Duplicate")));
         assert_eq!(reference + 1, at(lang.pick("クリッピング", "Clipping")));
-        assert!(reference < at(lang.pick("レイヤーマスクを追加", "Add Layer Mask")));
+        assert!(reference < at(lang.pick("白のレイヤーマスクを追加", "Add White Layer Mask")));
+        assert_eq!(
+            at(lang.pick("白のレイヤーマスクを追加", "Add White Layer Mask")) + 1,
+            at(lang.pick("黒のレイヤーマスクを追加", "Add Black Layer Mask"))
+        );
         assert!(
-            at(lang.pick("レイヤーマスクを追加", "Add Layer Mask"))
+            at(lang.pick("黒のレイヤーマスクを追加", "Add Black Layer Mask"))
                 < at(lang.pick("透明部分をロック", "Lock Transparent Pixels"))
         );
         // 新規グループは、新規レイヤーの組ではなくグループ化の組
@@ -1702,7 +1706,8 @@ fn the_layers_toolbar_has_no_filter_generator_mask_or_move_buttons() {
         for label in [
             lang.pick("フィルターを追加", "Add Filter"),
             lang.pick("ジェネレーターを追加", "Add Generator"),
-            lang.pick("レイヤーマスクを追加", "Add Layer Mask"),
+            lang.pick("白のレイヤーマスクを追加", "Add White Layer Mask"),
+            lang.pick("黒のレイヤーマスクを追加", "Add Black Layer Mask"),
             lang.pick("レイヤーマスクを編集", "Edit Layer Mask"),
             lang.pick("レイヤーを上へ", "Move Layer Up"),
             lang.pick("レイヤーを下へ", "Move Layer Down"),

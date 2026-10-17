@@ -400,6 +400,47 @@ fn layer_context(app: &AppState, id: crate::engine::LayerId) -> Vec<Entry<Action
     layer_menu(app, Some(id))
 }
 
+/// レイヤーのメニューのマスクの項目（マスクが無ければ白・黒の追加、あれば「マスクをコピー」。貼り付けは、コピーしたマスクがあるときだけ押せる。
+/// `targets` は貼り付ける先（複数選んでいれば選んだ全部。マスクがあれば置き換える）。
+fn mask_menu_entries(
+    app: &AppState,
+    id: crate::engine::LayerId,
+    has_mask: bool,
+    free: bool,
+    targets: &[crate::engine::LayerId],
+) -> Vec<Entry<Action>> {
+    let lang = app.lang;
+    let mut v = Vec::new();
+    if has_mask {
+        v.push(
+            Entry::item(lang.t("shell-copy-mask"), Action::M2(Edit::CopyMask(id))).enabled(free),
+        );
+    } else {
+        v.push(
+            Entry::item(
+                lang.t("shell-add-white-layer-mask"),
+                Action::M2(Edit::AddMask(id)),
+            )
+            .enabled(free),
+        );
+        v.push(
+            Entry::item(
+                lang.t("shell-add-black-layer-mask"),
+                Action::M2(Edit::AddMaskBlack(id)),
+            )
+            .enabled(free),
+        );
+    }
+    v.push(
+        Entry::item(
+            lang.t("shell-paste-to-mask"),
+            Action::M2(Edit::PasteMask(targets.to_vec())),
+        )
+        .enabled(free && app.clip.mask.is_some()),
+    );
+    v
+}
+
 /// 「レイヤー」のメニューの全体（メニューバーの「レイヤー」・レイヤーの右クリック・一覧の空白の右クリックが同じ関数を使う）。
 /// 並びは 足す（新規レイヤー・塗りつぶし ▸・調整 ▸）→ 効果（フィルター ▸・ジェネレーター ▸・アンカー）→ グループ → 複製・結合など →
 /// 属性（参照レイヤー・クリッピング・マスク・ロック）→ 名前・表示 → 順序・削除（左右反転・回転は「編集」のメニュー）。選んだレイヤーが無い（`None`）ときは、レイヤーに要らない
@@ -541,6 +582,7 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
         .checked(layer.is_some_and(|l| l.clipping()))
         .enabled(free),
     );
+    let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
     if has_mask {
         v.push(
@@ -574,17 +616,9 @@ pub fn layer_menu(app: &AppState, id: Option<crate::engine::LayerId>) -> Vec<Ent
             )
             .enabled(free),
         );
-    } else {
-        v.push(
-            Entry::item(
-                lang.t("shell-add-layer-mask"),
-                Action::M2(Edit::AddMask(id)),
-            )
-            .enabled(free),
-        );
     }
+    v.extend(mask_menu_entries(app, id, has_mask, free, &targets));
     // ロック（選んでいるレイヤーの全部に効く。持っているロックにチェック）
-    let targets = if multi { selected.clone() } else { vec![id] };
     v.push(Entry::Separator);
     for flag in LOCK_FLAGS {
         let own = targets.iter().all(|t| {

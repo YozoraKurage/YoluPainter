@@ -56,9 +56,11 @@ Reference Layer in the right-click menu marks the layers the Fill tool's Similar
 
 A mask hides part of a layer. It is shared by all channels.
 
-1. Select a layer and press Add Layer Mask (the button below the list, the right-click menu, or Properties).
+1. Select a layer and choose Add White Layer Mask (a mask that hides nothing) or Add Black Layer Mask (a mask that hides everything) from the right-click menu. White Mask and Black Mask in Properties do the same.
 2. Click the mask thumbnail in the layer's row to paint on the mask, and click the pixel thumbnail to go back to the pixels. Paint on Mask in the right-click menu also switches.
 3. Painting hides, and erasing reveals.
+
+Drag a mask thumbnail onto another layer's row (a group works too) to move the mask there; if that layer already has a mask, it is replaced. Hold `Alt` when you release to copy instead. Copy Mask and Paste to Mask in the right-click menu copy too (with several layers selected, the mask is pasted to all of them). While you paint on a mask, `Ctrl+V` pastes the clipboard image into the mask (white shows, black hides; a color image is read by its brightness).
 
 In Properties you can change the mask's Density (0% is the same as no mask), Enabled (off is the same as no mask, and the mask is kept) and Invert. While you paint on the mask, the same fields (the Layer Mask section) also appear at the end of Tool Properties for the painting tools (brush, eraser, Fill, Polygon Fill, Gradient, Shape, Path and Eyedropper) and the selection tools (Rectangle Select, Ellipse Select, Lasso, Polygon Select, Magic Wand and Selection Pen). To make a mask from a selection, use Make the Selection a Layer Mask ([GUIDE_SELECT.md](GUIDE_SELECT.md)). Delete Layer Mask removes it.
 

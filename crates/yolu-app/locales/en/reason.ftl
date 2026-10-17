@@ -552,3 +552,4 @@ reason-packed-component-range = Unsupported value or operation
 reason-pen-pressure-range = Unsupported value or operation
 reason-no-point-to-fill = Unsupported value or operation
 reason-path-point-value-range = Unsupported value or operation
+reason-mask-size-differs-from-canvas = Mask size differs from the canvas

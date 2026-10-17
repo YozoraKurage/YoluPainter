@@ -217,6 +217,22 @@ pub enum Edit {
         settings: NormalSettings,
         coalesce: bool,
     },
+    /// 黒（全体を隠す）のレイヤーマスクを追加する（`AddMask` は白 = 何も隠さない）。足すのと隠すのは 1 回の Undo。
+    AddMaskBlack(LayerId),
+    /// レイヤーのマスクを丸ごと、アプリのクリップボードに写す（文書は変えない）。
+    CopyMask(LayerId),
+    /// アプリのクリップボードのマスクを、`ids` の全部のレイヤーに貼る（マスクがあれば置き換える。1 回の Undo）。
+    PasteMask(Vec<LayerId>),
+    /// マスクを `from` から `to` へ動かす（`to` にマスクがあれば置き換える。`Anchor` も一緒に動く）。
+    MoveMask {
+        from: LayerId,
+        to: LayerId,
+    },
+    /// `from` のマスクを写して `to` に貼る（クリップボードは使わない）。
+    CopyMaskTo {
+        from: LayerId,
+        to: LayerId,
+    },
 }
 
 /// ブラシの選択肢（ポップアップから選んだもの）。スライダーとスイッチは画面が `AppState::m2.brush` を直に変える。
@@ -333,6 +349,13 @@ pub enum DropTarget {
 pub struct LayerDrag {
     pub id: LayerId,
     pub target: Option<DropTarget>,
+}
+
+/// マスクのサムネイルのドラッグの途中（持っているマスクのレイヤーと、今落とせるレイヤー）。落とす先が無い（自分の行・一覧の外）ときは `None`。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MaskDrag {
+    pub from: LayerId,
+    pub target: Option<LayerId>,
 }
 
 /// 紙の質感を「なし」にしたあとも覚えておく値（また選んだとき同じ値から始める）。
@@ -948,6 +971,53 @@ impl AppState {
         }
     }
 
+    /// マスクの追加（白・黒）・削除・コピー・貼り付け・移動（`m2_apply` から呼ぶ。ほかの `Edit` は何もしない）。
+    fn apply_mask_edit(&mut self, edit: Edit) -> Result<(), CoreError> {
+        match edit {
+            Edit::AddMask(id) => {
+                self.session.doc.add_layer_mask(id)?;
+                self.session.selected_layer = Some(id);
+                self.set_edit_mask(true);
+            }
+            Edit::RemoveMask(id) => {
+                self.session.doc.remove_layer_mask(id)?;
+                if self.session.selected_layer == Some(id) {
+                    self.set_edit_mask(false);
+                }
+            }
+            Edit::AddMaskBlack(id) => {
+                self.session.doc.add_black_layer_mask(id)?;
+                self.session.selected_layer = Some(id);
+                self.set_edit_mask(true);
+            }
+            Edit::CopyMask(id) => {
+                let copy = self.session.doc.copy_mask(id)?;
+                self.clip.mask = Some(copy);
+                self.info(Source::Clipboard, self.lang.t("m2-copied-the-mask"));
+            }
+            Edit::PasteMask(ids) => {
+                let Some(copy) = self.clip.mask.clone() else {
+                    self.refuse(Source::Clipboard, self.lang.t("m2-no-mask-was-copied"));
+                    return Ok(());
+                };
+                self.session.doc.set_masks(&ids, &copy)?;
+            }
+            Edit::MoveMask { from, to } => {
+                self.session.doc.move_mask(from, to)?;
+                // 描く先だったマスクは無くなる
+                if self.session.selected_layer == Some(from) {
+                    self.set_edit_mask(false);
+                }
+            }
+            Edit::CopyMaskTo { from, to } => {
+                let copy = self.session.doc.copy_mask(from)?;
+                self.session.doc.set_masks(&[to], &copy)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     fn m2_apply(&mut self, edit: Edit) -> Result<(), CoreError> {
         let above = self.above_selected();
         match edit {
@@ -1034,17 +1104,13 @@ impl AppState {
                 channel,
                 enabled,
             } => self.session.doc.set_channel_enabled(id, channel, enabled)?,
-            Edit::AddMask(id) => {
-                self.session.doc.add_layer_mask(id)?;
-                self.session.selected_layer = Some(id);
-                self.set_edit_mask(true);
-            }
-            Edit::RemoveMask(id) => {
-                self.session.doc.remove_layer_mask(id)?;
-                if self.session.selected_layer == Some(id) {
-                    self.set_edit_mask(false);
-                }
-            }
+            edit @ (Edit::AddMask(_)
+            | Edit::RemoveMask(_)
+            | Edit::AddMaskBlack(_)
+            | Edit::CopyMask(_)
+            | Edit::PasteMask(_)
+            | Edit::MoveMask { .. }
+            | Edit::CopyMaskTo { .. }) => self.apply_mask_edit(edit)?,
             Edit::MaskEnabled(id, v) => self.session.doc.set_layer_mask_enabled(id, v)?,
             Edit::MaskInverted(id, v) => self.session.doc.set_layer_mask_inverted(id, v)?,
             Edit::MaskDensity(id, v) => self.session.doc.set_layer_mask_density(id, v, true)?,

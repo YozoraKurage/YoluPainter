@@ -657,6 +657,7 @@ impl AppState {
         // 前の文書のレイヤーを指す途中の操作は捨てる
         self.ui.renaming = None;
         self.ui.layer_drag = None;
+        self.ui.mask_drag = None;
         self.ui.popup = None;
         // 打っている文字は前の文書のもの（まとめた段は前の文書の履歴に残る）。開いた文書のテキストレイヤーのフォントは探し直して知らせる
         self.text.editing = None;

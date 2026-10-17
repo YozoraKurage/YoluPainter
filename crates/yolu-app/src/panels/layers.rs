@@ -15,7 +15,7 @@ use yolu_core::FilterTarget;
 
 use crate::engine::{Channel, Document, LayerId, LayerKind};
 use crate::layerops::lock_names;
-use crate::m2::{self, AdjustmentKind, DropTarget, Edit, LayerDrag, Row, UiOp};
+use crate::m2::{self, AdjustmentKind, DropTarget, Edit, LayerDrag, MaskDrag, Row, UiOp};
 use crate::m2_menu::Popup;
 use crate::panels::effect_rows;
 use crate::state::{Action, AppState, OpenPopup, PopupKind};
@@ -380,44 +380,10 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
     }
     ui.set_clip_rect(outer_clip);
     follow_drag(ui, app, list, &rows, &layout);
+    follow_mask_drag(ui, app, list, &rows, &layout);
     crate::rulers::layer_icon::follow(ui, app, list, &rows, &layout, app.ui.layer_scroll);
     crate::panels::assets::layer_list_drop(ui, app, list, &rows, &layout);
-    // ドラッグの落とす先（線か、グループの枠）
-    if let Some(LayerDrag {
-        target: Some(target),
-        ..
-    }) = app.ui.layer_drag
-    {
-        let painter = ui.painter_at(list);
-        match target {
-            DropTarget::Gap(gap) => {
-                let y = list.top() + layout.gap_y(gap) - app.ui.layer_scroll;
-                painter.rect_filled(
-                    Rect::from_min_size(
-                        pos2(list.left() + 4.0, y - 1.0),
-                        vec2(row_width - 8.0, 2.0),
-                    ),
-                    0.0,
-                    t::ACCENT,
-                );
-            }
-            DropTarget::Into(group) => {
-                if let Some(i) = rows.iter().position(|r| r.id == group) {
-                    let y = list.top() + layout.layer_y(i) - app.ui.layer_scroll;
-                    w::outline(
-                        &painter,
-                        Rect::from_min_size(
-                            pos2(list.left() + 1.0, y + 1.0),
-                            vec2(row_width - 2.0, ROW_HEIGHT - 2.0),
-                        ),
-                        t::ACCENT,
-                        2.0,
-                        3.0,
-                    );
-                }
-            }
-        }
-    }
+    draw_drag_marks(ui, app, thumbs, list, row_width, &rows, &layout);
     bar.end(ui, "layers.scroll", &mut app.ui.layer_scroll);
 
     let bar = Rect::from_min_size(
@@ -761,6 +727,199 @@ fn follow_drag(
         update_drag(ui, app, list, rows, layout, id);
     } else {
         drop_drag(app, rows);
+    }
+}
+
+/// ドラッグの印: 並べ替えの落とす先（線か、グループの枠）と、マスクの落とす先・つかんだマスク。
+fn draw_drag_marks(
+    ui: &Ui,
+    app: &AppState,
+    thumbs: &mut Thumbnails,
+    list: Rect,
+    row_width: f32,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+) {
+    if let Some(LayerDrag {
+        target: Some(target),
+        ..
+    }) = app.ui.layer_drag
+    {
+        let painter = ui.painter_at(list);
+        match target {
+            DropTarget::Gap(gap) => {
+                let y = list.top() + layout.gap_y(gap) - app.ui.layer_scroll;
+                painter.rect_filled(
+                    Rect::from_min_size(
+                        pos2(list.left() + 4.0, y - 1.0),
+                        vec2(row_width - 8.0, 2.0),
+                    ),
+                    0.0,
+                    t::ACCENT,
+                );
+            }
+            DropTarget::Into(group) => {
+                if let Some(i) = rows.iter().position(|r| r.id == group) {
+                    let y = list.top() + layout.layer_y(i) - app.ui.layer_scroll;
+                    w::outline(
+                        &painter,
+                        Rect::from_min_size(
+                            pos2(list.left() + 1.0, y + 1.0),
+                            vec2(row_width - 2.0, ROW_HEIGHT - 2.0),
+                        ),
+                        t::ACCENT,
+                        2.0,
+                        3.0,
+                    );
+                }
+            }
+        }
+    }
+    draw_mask_drag(ui, app, thumbs, list, row_width, rows, layout);
+}
+
+/// マスクのサムネイルの当たり（押すとマスクが対象）。つかんだらマスクのドラッグを始める（動かす・落とすのは `follow_mask_drag`。
+/// 並べ替えの `layer_drag` とは別）。
+fn mask_thumb(
+    ui: &Ui,
+    app: &mut AppState,
+    mask_box: Rect,
+    enabled: bool,
+    id: LayerId,
+) -> egui::Response {
+    let maskr = ui.interact(
+        mask_box,
+        ui.make_persistent_id(("layer.mask", id.0)),
+        if enabled {
+            Sense::click_and_drag()
+        } else {
+            Sense::hover()
+        },
+    );
+    if maskr.drag_started_by(egui::PointerButton::Primary) {
+        app.ui.mask_drag = Some(MaskDrag {
+            from: id,
+            target: None,
+        });
+    }
+    maskr
+}
+
+/// マスクのサムネイルのドラッグの落とす先: ポインタの下の行のレイヤー（一覧の外・マスクを持っている行自身は無し）。
+fn update_mask_drag(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+    from: LayerId,
+) {
+    let target = ui
+        .input(|i| i.pointer.hover_pos())
+        .filter(|p| list.contains(*p))
+        .and_then(|p| layout.row_at(p.y - list.top() + app.ui.layer_scroll))
+        .and_then(|i| rows.get(i))
+        .map(|r| r.id)
+        .filter(|id| *id != from);
+    app.ui.mask_drag = Some(MaskDrag { from, target });
+}
+
+/// マスクのドラッグを終える: 落とす先があれば、離したときに Alt を押していればコピー、そうでなければ移動（どちらも 1 回の Undo。
+/// ロックなどの断りは操作の側が理由を言う）。
+fn drop_mask_drag(ui: &Ui, app: &mut AppState) {
+    if let Some(MaskDrag {
+        from,
+        target: Some(to),
+    }) = app.ui.mask_drag.take()
+    {
+        let edit = if click_modifiers(ui).alt {
+            Edit::CopyMaskTo { from, to }
+        } else {
+            Edit::MoveMask { from, to }
+        };
+        app.apply(Action::M2(edit));
+    }
+    app.ui.mask_drag = None;
+}
+
+/// マスクのドラッグ中にホイールで一覧を送って、つかんだ行が見えなくなったときの面倒を見る（`follow_drag` と同じ）。
+fn follow_mask_drag(
+    ui: &Ui,
+    app: &mut AppState,
+    list: Rect,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+) {
+    let Some(MaskDrag { from, .. }) = app.ui.mask_drag else {
+        return;
+    };
+    if ui.input(|i| i.pointer.primary_down()) {
+        update_mask_drag(ui, app, list, rows, layout, from);
+    } else {
+        drop_mask_drag(ui, app);
+    }
+}
+
+/// マスクのドラッグの印: 落とせる行を行全体の薄い塗りと細い枠で光らせ（並べ替えの線・グループの太い枠とは別）、つかんだマスクのサムネイルを
+/// ポインタに添える（Alt を押していればコピーの＋つき）。ロックされた行は光らせない（落としても理由を言って断る）。
+fn draw_mask_drag(
+    ui: &Ui,
+    app: &AppState,
+    thumbs: &mut Thumbnails,
+    list: Rect,
+    row_width: f32,
+    rows: &[Row],
+    layout: &effect_rows::Layout,
+) {
+    let Some(MaskDrag { from, target }) = app.ui.mask_drag else {
+        return;
+    };
+    let ctx = ui.ctx();
+    let copy = ui.input(|i| i.modifiers.alt);
+    ctx.set_cursor_icon(if copy {
+        egui::CursorIcon::Copy
+    } else {
+        egui::CursorIcon::Grabbing
+    });
+    if let Some(i) = target.and_then(|to| rows.iter().position(|r| r.id == to)) {
+        let locked = rows
+            .get(i)
+            .and_then(|r| app.session.doc.effective_locks(r.id).ok())
+            .is_some_and(|l| l.contains(yolu_core::LayerLocks::ALL));
+        if !locked {
+            let y = list.top() + layout.layer_y(i) - app.ui.layer_scroll;
+            let glow = Rect::from_min_size(
+                pos2(list.left() + 1.0, y + 1.0),
+                vec2(row_width - 2.0, ROW_HEIGHT - 2.0),
+            );
+            let painter = ui.painter_at(list);
+            w::fill(&painter, glow, t::ACCENT.gamma_multiply(0.25));
+            w::outline(&painter, glow, t::ACCENT, 1.0, 2.0);
+        }
+    }
+    let Some(at) = ui.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    let size = ROW_HEIGHT - 8.0;
+    let ghost = Rect::from_min_size(at + vec2(10.0, 10.0), vec2(size, size));
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Tooltip,
+        egui::Id::new("layers.mask_drag"),
+    ));
+    let max_px = (size * ctx.pixels_per_point()).round().max(8.0) as u32;
+    if let Some(handle) = thumbs.get(ctx, &app.session.doc, from, max_px, ThumbSource::Mask) {
+        painter.image(
+            handle.id(),
+            ghost,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::from_white_alpha(210),
+        );
+    }
+    w::outline(&painter, ghost, t::ACCENT, 1.0, 0.0);
+    if copy {
+        let badge = Rect::from_center_size(ghost.right_bottom(), vec2(12.0, 12.0));
+        painter.circle_filled(badge.center(), 7.0, t::ACCENT);
+        w::icon(&painter, badge, "add", Color32::WHITE, 10.0);
     }
 }
 
@@ -1167,15 +1326,7 @@ fn layer_row(
     }
     // マスク（押すとマスクが対象。右クリックでマスクのメニュー）
     if has_mask {
-        let maskr = ui.interact(
-            mask_box,
-            ui.make_persistent_id(("layer.mask", id.0)),
-            if enabled {
-                Sense::click()
-            } else {
-                Sense::hover()
-            },
-        );
+        let maskr = mask_thumb(ui, app, mask_box, enabled, id);
         let painter = ui.painter_at(list);
         w::checker(&painter, mask_box, 3.0);
         let max_px = (mask_box.width() * ctx.pixels_per_point()).round().max(8.0) as u32;

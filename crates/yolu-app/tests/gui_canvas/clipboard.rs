@@ -350,9 +350,27 @@ fn headless_mask_editing_copies_and_cuts_the_mask() {
     );
     assert_eq!(px(&s, id, 12, 12).a, 255, "レイヤーの画素はそのまま");
     assert_eq!(s.doc().undo_count(), 1);
-    // 貼ると灰色の画素の新しいレイヤーになり、マスクを描く状態は終わる
+    // マスクを描いている間の貼り付けは、今のマスクに貼る（灰色の明るさが見える量。隠す量 200 が戻る）。新しいレイヤーは作らない
+    let layers = s.doc().layers().len();
     run(&mut s, ClipAction::Paste);
-    assert!(!s.m2().edit_mask);
+    assert!(s.m2().edit_mask, "マスクを描く状態のまま");
+    assert_eq!(s.doc().layers().len(), layers);
+    assert_eq!(
+        s.doc()
+            .layer(id)
+            .unwrap()
+            .mask()
+            .unwrap()
+            .surface()
+            .pixel(12, 12)
+            .unwrap()
+            .a,
+        200
+    );
+    assert_eq!(s.doc().undo_count(), 2, "貼り付けも 1 回の取り消し");
+    // マスクを描いていなければ、灰色の画素の新しいレイヤーになる
+    s.set_edit_mask(false);
+    run(&mut s, ClipAction::Paste);
     assert_eq!(
         px(&s, s.selected_layer().unwrap(), 12, 12),
         Rgba8::new(55, 55, 55, 255)
