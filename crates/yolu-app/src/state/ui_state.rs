@@ -109,6 +109,8 @@ pub struct UiState {
     /// 前のフレームにブラシの一覧を描いた範囲（描かなかったフレームでは消える。ファイルを落とした所が一覧の上かを見る。
     /// `panels::brushes`）。
     pub brushes_list_rect: Option<egui::Rect>,
+    /// 前のフレームにステンシルの画像の箱を描いた範囲（押せるときだけ。落とした PNG が箱の上かを見る。`panels::stencil_props`）。
+    pub stencil_image_rect: Option<egui::Rect>,
     /// 前のフレームのツールの列のボタンの矩形（名前の欄・アイコンの格子を、その右に出す。`toolset::ui`）。ツールの並びを
     /// 初めに戻すと空にする。
     pub toolset_slot_rects: Vec<(crate::toolset::SlotId, egui::Rect)>,

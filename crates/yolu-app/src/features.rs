@@ -83,6 +83,7 @@ pub const FEATURES: &[Feature] = &[
     crate::textlayer::FEATURE,
     crate::model::FEATURE,
     crate::uv_wireframe::overlap::FEATURE,
+    crate::dropin::FEATURE,
 ];
 
 /// どれかの機能が描いている・ドラッグしている最中か。
@@ -216,7 +217,7 @@ mod tests {
     fn poll_order() {
         assert_eq!(
             polled(PollStage::BeforeDroppedPsds),
-            ["bake", "export", "budgets", "tile_cache", "psd"]
+            ["bake", "export", "budgets", "tile_cache", "psd", "dropin"]
         );
         assert_eq!(polled(PollStage::BeforeSaving), ["distribute"]);
         assert_eq!(

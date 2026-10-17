@@ -81,6 +81,8 @@ pub(crate) struct Resolved {
 pub struct DropRects {
     pub brush_list: Option<Rect>,
     pub library_grid: Option<Rect>,
+    /// ステンシルの画像の箱（PNG をステンシルとして読む。ファイルの取り込みのウィンドウへ回さない）。
+    pub stencil_image: Option<Rect>,
 }
 
 /// 別ウィンドウ 1 つ。

@@ -567,6 +567,7 @@ pub enum Reason {
     ReferenceMarginRange,
     ReferenceExpandRange,
     ReferenceOnlyBeforeFirstDab,
+    LayersSizeDiffersFromCanvas,
 }
 
 impl Reason {
@@ -1132,6 +1133,7 @@ impl Reason {
             Reason::ReferenceMarginRange => "色の誤差（0〜100）",
             Reason::ReferenceExpandRange => "領域拡縮の量（−100〜100 画素）",
             Reason::ReferenceOnlyBeforeFirstDab => "参照レイヤーは、ストロークの最初のダブの前に 1 回だけ決められる",
+            Reason::LayersSizeDiffersFromCanvas => "入れるレイヤーの大きさがキャンバスと違う",
         }
     }
 }

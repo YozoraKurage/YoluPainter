@@ -58,7 +58,7 @@ A file that already exists is confirmed before it is replaced (if you cancel, yo
 
 ## Import a PSD
 
-"Import" in the File menu, then "PSD as a New Texture Set…" or "PSD into the Current Texture Set…", imports a PSD (RGB 8 bit). Dropping a .psd onto the window imports it the same way as a new texture set (when you drop several, only the first).
+"Import" in the File menu, then "PSD as a New Texture Set…" or "PSD into the Current Texture Set…", imports a PSD (RGB 8 bit). When you drop a .psd onto the window, you choose where it goes in the "Import Files" window (below).
 
 - A PSD is imported as a copy that is never written back to the original file. Raster layers, groups, solid fills, adjustments (invert, levels, hue/saturation, gradient map, tone curve, color balance, brightness/contrast, threshold, posterize), masks and clipping become layers. Layer locks come back as well.
 - When something would be dropped or look different, such as layer effects, smart objects, text or unsupported adjustments, the "Import PSD Check" window lists it with layer names before importing. Nothing is imported until you press "Import".
@@ -66,6 +66,19 @@ A file that already exists is confirmed before it is replaced (if you cancel, yo
 - The imported document's composite is compared with the PSD's merged image, and a large difference is shown in the window.
 
 How things are sorted, and the limits, are in [PSD.md](../PSD.md) (in Japanese).
+
+## Import PSDs and images dropped onto the window
+
+When you drop PSDs and images (PNG, JPEG, TGA) onto the window, the "Import Files" window lists each dropped file as a row. Choose a "Destination" for each row and press "Import". "Import" stays unavailable until every readable file has a destination. A destination chosen under "All" is applied only to the rows that can go there.
+
+- "Assets Only" (images only): adds the image to the assets (formats other than PNG become the same kind of image).
+- A texture set row: makes a new layer set named after the file in that texture set and puts the file there.
+- A layer set row: puts the file at the top of that layer set.
+- An image is added to the assets and gets one image fill layer (the same as "Image" under "New Fill Layer"), named after the file.
+- Opening a PSD row shows the same list as the "Import PSD Check" window. The layers go in with their groups, masks and blend modes. A PSD whose size differs from a texture set cannot go into that texture set (it is not resized), and cannot go into the assets.
+- Undo works once per destination texture set (several files into the same texture set are undone together).
+- After importing, the last destination texture set and layer set become current.
+- WebP, TIFF, EXR and other formats are listed with the reason and cannot be imported. A PNG dropped onto the brush list, the library or the stencil image is read there as before.
 
 ## Export a PSD
 
@@ -85,6 +98,7 @@ PNG files can be imported in these places:
 - Stencils (the Stencil tab in Properties)
 - Asset images: through "Import from File…" in the image list of a fill layer, or "Use in this project" in the library. Fill layers, Image generators and path ribbons use them ([GUIDE_FILL.md](GUIDE_FILL.md))
 - The library: "Add files to the library…" or dropping onto the grid
+- Dropping onto the window: into the assets or an image fill layer through the "Import Files" window ("Import PSDs and images dropped onto the window" above)
 
 A smart material's `.ylsmart` can be imported into the assets and the library.
 

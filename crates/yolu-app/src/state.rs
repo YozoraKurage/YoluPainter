@@ -639,6 +639,8 @@ pub enum Action {
     Warp(crate::transform::advanced::WarpCommit),
     /// 図形のツール（2D のキャンバスで離したときの図形を描く。1 回の Undo）。
     Draft(crate::drafting::DraftOp),
+    /// ファイルの取り込みのウィンドウ（落とした PSD・画像の入れ先を選んで取り込む）。
+    DropIn(crate::dropin::DropOp),
 }
 
 impl Action {
@@ -734,6 +736,7 @@ impl Action {
             Self::RenameSet(..) => "RenameSet",
             Self::Warp(..) => "Warp",
             Self::Draft(..) => "Draft",
+            Self::DropIn(..) => "DropIn",
         }
     }
 
@@ -891,6 +894,8 @@ pub struct AppState {
     pub temp_tool: crate::toolkeys::TempTool,
     /// ツールを替えた回数（`switch_to` が替えるたびに増える。押している間の切り替えが、別の手段で選ばれたかを見る）。
     pub(crate) tool_epoch: u64,
+    /// ファイルの取り込みのウィンドウ（落とした PSD・画像の行・入れ先・裏の読み込み）。
+    pub dropin: crate::dropin::DropInState,
 }
 
 /// ファイルのウィンドウの頼み。
@@ -1084,6 +1089,7 @@ impl AppState {
             keys: Default::default(),
             temp_tool: Default::default(),
             tool_epoch: 0,
+            dropin: Default::default(),
         }
     }
 
@@ -1708,6 +1714,7 @@ impl AppState {
             Action::RenameSet(uid, name) => self.rename_set_apply(uid, &name),
             Action::Warp(commit) => self.warp_apply(commit),
             Action::Draft(op) => self.draft_apply(op),
+            Action::DropIn(op) => self.dropin_apply(op),
         }
     }
 }

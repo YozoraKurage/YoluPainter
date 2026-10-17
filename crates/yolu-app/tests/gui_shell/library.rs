@@ -2611,6 +2611,9 @@ mod ui {
                 .push(Arc::new(Dropped(f.to_path_buf())));
         }
         h.run();
+        // 格子の外へ落とした PNG はファイルの取り込みのウィンドウの行になる。モーダルなので、後の操作を妨げないよう閉じる
+        h.act(Action::DropIn(yolu_app::dropin::DropOp::Cancel));
+        h.run();
     }
 
     /// ウィンドウに落とす PNG と、PNG でないファイル。

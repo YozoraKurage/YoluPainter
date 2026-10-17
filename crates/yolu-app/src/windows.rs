@@ -258,6 +258,7 @@ pub fn show(ctx: &egui::Context, app: &mut AppState) {
     export_report(ctx, app);
     psd_confirm(ctx, app);
     crate::psd_import::show_check(ctx, app);
+    crate::dropin::window::show(ctx, app);
     crate::psd_export::show_options(ctx, app);
     crate::psd_export::show_confirm(ctx, app);
     crate::distribute::window::show(ctx, app);

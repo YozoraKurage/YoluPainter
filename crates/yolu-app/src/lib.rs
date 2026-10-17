@@ -27,6 +27,7 @@ pub mod dialog;
 pub mod discard;
 pub mod distribute;
 pub mod drafting;
+pub mod dropin;
 pub mod engine;
 pub mod export;
 pub mod eyedrop;

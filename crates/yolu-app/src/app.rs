@@ -632,8 +632,6 @@ pub struct YoluApp {
     /// メインウィンドウの HWND の値（Windows。別ウィンドウの持ち主にする）。
     #[cfg(windows)]
     main_hwnd: Option<isize>,
-    /// 落とした PSD のうち、取り込まなかった数（取り込みの仕事が終わったときの文に、理由として足す。0 なら無い）。
-    psd_drop_more: usize,
 }
 
 mod detached;
@@ -1134,7 +1132,6 @@ impl YoluApp {
             bar_press_rects: Vec::new(),
             settings: None,
             was_focused: None,
-            psd_drop_more: 0,
             compositing_applied: crate::settings::Compositing::Auto,
             gpu_budgets_applied: crate::gpu_memory::Budgets::default(),
             gpu_device: None,
@@ -1657,9 +1654,11 @@ impl YoluApp {
         }
     }
 
-    /// ウィンドウに落としたファイル（.ylp なら開く。.psd なら新しいテクスチャセットとして取り込む。ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら
-    /// 取り込む。PNG はブラシの一覧の上に落としたときだけブラシの筆先として取り込む）。
-    fn open_dropped(&mut self, ctx: &egui::Context) {
+    /// ウィンドウに落としたファイル（.ylp なら開く。PSD と画像（PNG・JPEG・TGA）ならファイルの取り込みのウィンドウに行として並べる。
+    /// ブラシのファイル（ABR・GBR・GIH・VBR・PAT）なら取り込む。PNG はブラシの一覧の上ならブラシの筆先、ライブラリの格子・ステンシルの画像の箱の上なら
+    /// そちらが受け取る（ウィンドウに並べない）。FBX・.ylsmart もそれぞれの受け口が受ける。
+    /// `drops` は、落としたウィンドウで前のフレームに描いた行き先の矩形（メインウィンドウは `root_drops`、別ウィンドウは `win.drops`）。
+    fn open_dropped(&mut self, ctx: &egui::Context, drops: crate::detach::DropRects) {
         let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -1684,67 +1683,41 @@ impl YoluApp {
             }
             return;
         }
-        self.import_dropped_psd(&dropped);
-        let over_list = crate::pen::drop_point::drop_point(ctx)
-            .zip(self.state.ui.brushes_list_rect)
-            .is_some_and(|(p, r)| r.contains(p));
+        let point = crate::pen::drop_point::drop_point(ctx);
+        let over = |r: Option<egui::Rect>| point.zip(r).is_some_and(|(p, r)| r.contains(p));
+        let over_list = over(drops.brush_list);
+        // PNG を受けるほかの所（ライブラリの格子・ステンシルの画像の箱）の上なら、ウィンドウへ回さない
+        let png_taken = over_list
+            || (self.state.library.source == crate::library::Source::Library
+                && over(drops.library_grid))
+            || over(drops.stencil_image);
+        let is_png = crate::brushes::import::is_png;
+        let has_ext = |p: &std::path::Path, exts: &[&str]| {
+            p.extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| exts.iter().any(|x| e.eq_ignore_ascii_case(x)))
+        };
+        // ほかの受け口があるファイル（FBX・.ylsmart・ブラシのファイル・ほかの所が受ける PNG）
+        let elsewhere = |p: &std::path::Path| {
+            has_ext(p, &["fbx", "ylsmart"])
+                || (crate::brushes::import::is_brush_file(p) && !is_png(p))
+                || (is_png(p) && png_taken)
+        };
+        let files: Vec<std::path::PathBuf> =
+            dropped.iter().filter(|p| !elsewhere(p)).cloned().collect();
+        if files.iter().any(|p| crate::dropin::opens_window(p)) {
+            self.state
+                .apply(Action::DropIn(crate::dropin::DropOp::Open(files)));
+        }
         let brushes: Vec<std::path::PathBuf> = dropped
             .into_iter()
             .filter(|p| crate::brushes::import::is_brush_file(p))
-            .filter(|p| over_list || !crate::brushes::import::is_png(p))
+            .filter(|p| over_list || !is_png(p))
             .collect();
         if !brushes.is_empty() {
             self.state
                 .apply(Action::Brush(crate::brushes::BrushAction::Import(brushes)));
         }
-    }
-
-    /// 落とした .psd を、「ファイル → インポート → PSD を新しいテクスチャセットに」と同じ取り込み（読み込み → 取り込みの確認のウィンドウ）へ回す。
-    /// 取り込むのは最初の 1 つだけ（取り込みの確認のウィンドウは 1 つずつ。ほかは取り込まず、数を知らせる）。描いている最中は、取り込み側が断る。
-    /// 行き先は新しいセット: 今のセットの文書を替えると取り消せないので、落としただけでは今の絵に触れない
-    /// （文書を替えるときの、保存していない変更の確認はいらない）。
-    fn import_dropped_psd(&mut self, dropped: &[std::path::PathBuf]) {
-        let mut psds = dropped
-            .iter()
-            .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("psd")));
-        let Some(first) = psds.next() else {
-            return;
-        };
-        let more = psds.count();
-        let busy = self.state.psd.is_busy() || self.state.psd.import_check.is_some();
-        self.state.apply(Action::Psd(crate::psd::PsdAction::Import {
-            path: first.clone(),
-            target: crate::psd::PsdTarget::NewSet,
-        }));
-        // 取り込みが始まったときだけ（始まらなかった理由の文を、取り込まない件数で上書きしない）。理由は、仕事が終わったときの文に足す
-        // （小さな PSD は同じフレームのうちに読み終わるので、読み始めの文に足しても残らない）
-        if more > 0 && !busy && self.state.psd.is_busy() {
-            self.psd_drop_more = more;
-        }
-    }
-
-    /// 取り込まなかった PSD の件数を、取り込みの仕事の終わりの文に理由として足す（文の最初の 1 文はそのまま。断りの文と取り違えない）。
-    fn note_dropped_psds(&mut self) {
-        if self.psd_drop_more == 0 || self.state.psd.is_busy() {
-            return;
-        }
-        let more = std::mem::take(&mut self.psd_drop_more);
-        let lang = self.state.lang;
-        let message = &self.state.message;
-        let ended = lang.pick(message.ends_with('。'), message.ends_with('.'));
-        let joint = if ended {
-            lang.t("app-sentence-already-ended")
-        } else {
-            lang.t("app-sentence-not-ended")
-        };
-        // 取り込みの知らせに添える（取り込まなかった物がある: 気をつけること）
-        let extra = lang.f("app-more-not-imported-one-psd", &[("more", &more)]);
-        self.state.amend(
-            crate::notice::Kind::Warning,
-            crate::notice::Source::Psd,
-            joint,
-            &extra,
-        );
     }
 
     /// 3D ビューを wgpu で描く（eframe・kittest の RenderState。None なら 3D は描けないと出す）。
@@ -2354,8 +2327,9 @@ impl YoluApp {
         // 落としたファイル。ブラシの一覧とライブラリの格子の範囲は、前のフレームにメインウィンドウで描いたときだけ入る（棚・チャンネルのタブを
         // 開いている間や、欄を別ウィンドウへ出した後に、前の位置へ落とした PNG を取り込まない。別ウィンドウへ落とした分は、そのウィンドウのパスが受ける）
         self.state.ui.brushes_list_rect = self.root_drops.brush_list;
-        self.open_dropped(&ctx);
+        self.open_dropped(&ctx, self.root_drops);
         self.state.ui.brushes_list_rect = None;
+        self.state.ui.stencil_image_rect = None;
         self.state.ui.library_grid_rect = self.root_drops.library_grid;
         assets::frame(&ctx, &mut self.state);
         self.handle_requests();
@@ -2367,7 +2341,6 @@ impl YoluApp {
         }
         // 機能の毎フレームの受け取り（別のスレッドの仕事の終わり・予算の同期・効果の入力など。外枠の仕事の間で、機能の表の順に呼ぶ）
         crate::features::poll(&mut self.state, PollStage::BeforeDroppedPsds);
-        self.note_dropped_psds();
         crate::features::poll(&mut self.state, PollStage::BeforeSaving);
         self.poll_saving();
         // 外からの操作: 設定に合わせて待ち受けを始める・やめ、受けた要求を実行する（保存の結果を受けた後に。返事待ちの保存の返事も返す）
@@ -2591,6 +2564,7 @@ impl YoluApp {
         self.root_drops = crate::detach::DropRects {
             brush_list: self.state.ui.brushes_list_rect,
             library_grid: self.state.ui.library_grid_rect,
+            stencil_image: self.state.ui.stencil_image_rect,
         };
         // タブの出し入れ（メインウィンドウの外で離したタブ・右クリック・egui_dock が作った浮いたウィンドウ）と、別ウィンドウ。当てるのは全部のウィンドウを描いた後
         let mut events = Vec::new();

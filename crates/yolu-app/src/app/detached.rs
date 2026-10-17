@@ -198,7 +198,7 @@ impl YoluApp {
             }
             // 落としたファイル（ブラシの一覧・ライブラリの格子は、このウィンドウで描いたときだけ）
             self.state.ui.brushes_list_rect = win.drops.brush_list;
-            self.open_dropped(&ctx);
+            self.open_dropped(&ctx, win.drops);
             crate::panels::assets::import_dropped(&ctx, &mut self.state, win.drops.library_grid);
             if ctx.input(|i| i.key_pressed(egui::Key::Escape) && i.pointer.primary_down()) {
                 self.state.m2_cancel_drag();
@@ -281,6 +281,7 @@ impl YoluApp {
         win.drops = detach::DropRects {
             brush_list: self.state.ui.brushes_list_rect.take(),
             library_grid: self.state.ui.library_grid_rect.take(),
+            stencil_image: self.state.ui.stencil_image_rect.take(),
         };
         // 自分のウィンドウならウィンドウの全体、egui のウィンドウ（試験）ならドックの矩形の外で離したタブ
         let inside = if own { ctx.content_rect() } else { area };

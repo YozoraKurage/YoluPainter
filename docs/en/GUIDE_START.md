@@ -48,7 +48,7 @@ A texture set is the picture that goes on one material of the model. A project h
 
 ### Open and save
 
-File → Open… (`Ctrl+O`) opens a `.ylp`. You can also drop a `.ylp` onto the window. If there are unsaved changes, you are asked whether to discard them. Dropping an FBX loads it into the 3D view, and dropping a PSD imports it as a new texture set.
+File → Open… (`Ctrl+O`) opens a `.ylp`. You can also drop a `.ylp` onto the window. If there are unsaved changes, you are asked whether to discard them. Dropping an FBX loads it into the 3D view; for PSDs and images (PNG, JPEG, TGA) you choose where they go in the "Import Files" window ([GUIDE_FILES.md](GUIDE_FILES.md)).
 
 Save with Save (`Ctrl+S`) or Save As… (`Ctrl+Shift+S`). Exporting, PSD, Save for Distribution and recovery are in [GUIDE_FILES.md](GUIDE_FILES.md). For exchanging `.ylp` files with the Unity version, see [UNITY.md](UNITY.md).
 

@@ -448,6 +448,9 @@ fn a_png_dropped_where_the_list_was_is_not_taken_while_another_tab_is_open() {
         assert!(st(&h).ui().brushes_list_rect.is_none(), "{tab:?}");
         drop_files(&mut h, inside, &[&png]);
         assert!(!st(&h).is_brush_importing(), "{tab:?}");
+        // 一覧の外へ落とした PNG はファイルの取り込みのウィンドウの行になる。モーダルなので、後の操作を妨げないよう閉じる
+        h.act(Action::DropIn(yolu_app::dropin::DropOp::Cancel));
+        h.run();
         assert!(st(&h).message().is_empty() || !st(&h).message().contains("tip.png"));
     }
     // ブラシのタブへ戻れば、一覧の上の PNG は取り込もうとする

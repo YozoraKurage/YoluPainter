@@ -816,19 +816,39 @@ const MAX_IMAGE_SIDE: u32 = 8192;
 /// PNG を straight RGBA8（上の行が先）で読む。寸法はヘッダーで先に見て、画素を読む前に断る（大きすぎる画像で全体を展開しない）。
 /// 読める上限（1 辺と確保）は `Limits` でも守る。
 fn read_png(path: &std::path::Path, lang: Lang) -> Result<(Vec<u8>, u32, u32), String> {
+    read_image(path, image::ImageFormat::Png, lang)
+}
+
+/// 画像（PNG・JPEG・TGA。`image` の機能にある形式）を straight RGBA8（上の行が先）で読む。上限は [`read_png`] と同じ（1 辺 1〜8192・確保 1 GiB）。
+/// 寸法はヘッダーで先に見て、画素を読む前に断る。
+pub(crate) fn read_image(
+    path: &std::path::Path,
+    format: image::ImageFormat,
+    lang: Lang,
+) -> Result<(Vec<u8>, u32, u32), String> {
     use image::ImageDecoder;
-    let unreadable = || lang.t("fillfx-not-a-readable-png").to_owned();
+    let unreadable = || {
+        if format == image::ImageFormat::Png {
+            lang.t("fillfx-not-a-readable-png").to_owned()
+        } else {
+            lang.t("fillfx-not-a-readable-image").to_owned()
+        }
+    };
     let file = std::fs::File::open(path).map_err(|e| lang.file_error(&e))?;
-    let mut decoder = image::codecs::png::PngDecoder::new(std::io::BufReader::new(file))
-        .map_err(|_| unreadable())?;
-    let (w, h) = decoder.dimensions();
-    if !(1..=MAX_IMAGE_SIDE).contains(&w) || !(1..=MAX_IMAGE_SIDE).contains(&h) {
-        return Err(lang.t("fillfx-image-sides-must-be-1").to_owned());
-    }
     let mut limits = image::Limits::default();
     limits.max_image_width = Some(MAX_IMAGE_SIDE);
     limits.max_image_height = Some(MAX_IMAGE_SIDE);
     limits.max_alloc = Some(1 << 30);
+    let mut reader = image::ImageReader::with_format(std::io::BufReader::new(file), format);
+    reader.limits(limits.clone());
+    let mut decoder = reader.into_decoder().map_err(|e| match e {
+        image::ImageError::Limits(_) => lang.t("fillfx-image-sides-must-be-1").to_owned(),
+        _ => unreadable(),
+    })?;
+    let (w, h) = decoder.dimensions();
+    if !(1..=MAX_IMAGE_SIDE).contains(&w) || !(1..=MAX_IMAGE_SIDE).contains(&h) {
+        return Err(lang.t("fillfx-image-sides-must-be-1").to_owned());
+    }
     decoder.set_limits(limits).map_err(|_| unreadable())?;
     let img = image::DynamicImage::from_decoder(decoder)
         .map_err(|_| unreadable())?
@@ -837,7 +857,7 @@ fn read_png(path: &std::path::Path, lang: Lang) -> Result<(Vec<u8>, u32, u32), S
 }
 
 /// 行の並びを上下逆にする（1 行は `stride` バイト）。
-fn flip_rows(raw: &mut [u8], stride: usize) {
+pub(crate) fn flip_rows(raw: &mut [u8], stride: usize) {
     let rows = raw.len() / stride;
     for y in 0..rows / 2 {
         let (head, tail) = raw.split_at_mut((rows - 1 - y) * stride);

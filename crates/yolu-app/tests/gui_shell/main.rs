@@ -16,6 +16,7 @@ mod colorsets_ui;
 mod defaults;
 mod detached;
 mod disabled_reasons;
+mod dropin;
 mod fonts;
 mod gpu_lost;
 mod i18n;

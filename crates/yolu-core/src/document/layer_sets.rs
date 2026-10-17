@@ -437,6 +437,168 @@ impl Document {
         )
     }
 
+    // ───────── ほかの文書のレイヤーを入れる ─────────
+
+    /// ほかの文書（PSD を読んだ文書など）のレイヤーを全部（グループ・マスク・合成の方法・ロック・クリッピングごと）写し、レイヤーセット `set` の
+    /// 一番上の段の一番上へ入れる（1 回の Undo）。入れたレイヤーの ID（下から上）を返す。並びと親子は `source` のまま、レイヤー・効果・Anchor・
+    /// 定規の ID は新しく振る。チャンネルは番号のまま入る（Color は Color。ユーザーチャンネルは、同じ番号に同じ情報のチャンネルが無ければ断る）。
+    /// `source` のレイヤーセットの分けは持たない（全部 `set` に入る）。大きさがキャンバスと違えば断り（大きさを変えて入れない）、レイヤーの数・
+    /// 入れ子・画素の予算を超えるなら何も変えずに断る。`set` に一番上の段のレイヤーがあるときは、入れる一番上の段の一番下のレイヤーの
+    /// クリッピングの印（`source` では下に何も無く、下地として合成される）を外す（入れた先の今のレイヤーへ、黙ってクリッピングしない）。
+    pub fn insert_layers_from(
+        &mut self,
+        source: &Document,
+        set: LayerSetId,
+    ) -> Result<Vec<LayerId>, CoreError> {
+        self.ensure_no_stroke()?;
+        self.require_layer_set(set)?;
+        let occupied = self
+            .layers
+            .iter()
+            .any(|l| l.set == set && l.parent.is_none());
+        let copies = self.layers_from(source, set, occupied)?;
+        let ids: Vec<LayerId> = copies.iter().map(|l| l.id).collect();
+        if copies.is_empty() {
+            return Ok(ids);
+        }
+        let cost = 128 + copies.iter().map(Layer::allocated_bytes).sum::<u64>();
+        self.execute(
+            Command::Insert {
+                index: self.layers.len(),
+                len: copies.len(),
+                block: Some(copies),
+            },
+            cost,
+        )?;
+        Ok(ids)
+    }
+
+    /// [`insert_layers_from`](Self::insert_layers_from) の、入れ先を新しいレイヤーセット（名前 `name`、一覧の最後）にする形。レイヤーセットを
+    /// 足すのとレイヤーを入れるのは 1 回の Undo。出力の割り当ては変えない。新しいレイヤーセットと、入れたレイヤーの ID を返す。
+    pub fn insert_layers_as_layer_set(
+        &mut self,
+        source: &Document,
+        name: &str,
+    ) -> Result<(LayerSetId, Vec<LayerId>), CoreError> {
+        self.ensure_no_stroke()?;
+        check_name(name)?;
+        if self.layer_sets.len() >= MAX_LAYER_SETS {
+            return Err(CoreError::InvalidArgument(Reason::TooManyLayerSets));
+        }
+        let id = self.new_layer_set_id();
+        let copies = self.layers_from(source, id, false)?;
+        let ids: Vec<LayerId> = copies.iter().map(|l| l.id).collect();
+        let mut table = self.table();
+        table.sets.push(LayerSetInfo {
+            id,
+            name: name.to_owned(),
+        });
+        let mut steps = vec![self.table_entry(table)];
+        if !copies.is_empty() {
+            let cost = 128 + copies.iter().map(Layer::allocated_bytes).sum::<u64>();
+            steps.push(Entry {
+                kind: HistoryKind::AddLayer,
+                command: Command::Insert {
+                    index: self.layers.len(),
+                    len: copies.len(),
+                    block: Some(copies),
+                },
+                cost,
+            });
+        }
+        self.execute_group_as(HistoryKind::LayerSets, steps)?;
+        Ok((id, ids))
+    }
+
+    /// `source` のレイヤーの、この文書の `set` へ入れる写し（まだ入れていない）。断る理由はここで全部確かめる。`occupied` は、入れ先の一番上の段に
+    /// もうレイヤーがあること（一番上の段の一番下の、効いていないクリッピングの印を外す）。
+    fn layers_from(
+        &mut self,
+        source: &Document,
+        set: LayerSetId,
+        occupied: bool,
+    ) -> Result<Vec<Layer>, CoreError> {
+        if source.width != self.width || source.height != self.height {
+            return Err(CoreError::InvalidArgument(
+                Reason::LayersSizeDiffersFromCanvas,
+            ));
+        }
+        // ユーザーチャンネルは番号だけで別の意味へ結び付けない（スマートマテリアルを置くときと同じ）
+        for i in Channel::STANDARD_COUNT..Channel::MAX {
+            let channel = Channel::from_index(i).expect("チャンネル番号");
+            if !source.layers.iter().any(|l| l.has_channel_data(channel)) {
+                continue;
+            }
+            let info = source.channel_info(channel);
+            if info.is_none() || self.channel_info(channel) != info {
+                return Err(CoreError::Unsupported(
+                    Reason::UserChannelMappingDoesNotMatch,
+                ));
+            }
+        }
+        if self.layers.len() + source.layers.len() > 2048 {
+            return Err(CoreError::InvalidArgument(Reason::TooManyLayers));
+        }
+        self.ensure_nesting_room(None, super::structure::group_chain_height(&source.layers))?;
+        let mut copies = source.layers.clone();
+        // タイルの大きさが違う文書からは、同じ画素のままタイルを切り直す（大きさは同じなので値は変わらない）
+        if source.tile_size != self.tile_size {
+            let mut remaining = self.source_budget.saturating_sub(self.allocated_bytes());
+            let mut retile =
+                |s: &crate::Surface, normal: bool| -> Result<crate::Surface, CoreError> {
+                    let out = super::smart_resample::surface(
+                        s,
+                        self.width,
+                        self.height,
+                        self.tile_size,
+                        crate::smart::SmartResampling::Nearest,
+                        normal,
+                        remaining,
+                    )?;
+                    remaining = remaining
+                        .checked_sub(out.allocated_bytes())
+                        .ok_or(CoreError::SourceBudgetExceeded)?;
+                    Ok(out)
+                };
+            for layer in &mut copies {
+                for (i, s) in layer.surfaces.iter_mut().enumerate() {
+                    if let Some(surface) = s {
+                        let normal = source
+                            .channels
+                            .get(i)
+                            .and_then(Option::as_ref)
+                            .is_some_and(|c| c.kind == crate::ChannelKind::Normal);
+                        *surface = retile(surface, normal)?;
+                    }
+                }
+                if let Some(mask) = &mut layer.mask {
+                    mask.surface = retile(&mask.surface, false)?;
+                }
+            }
+        }
+        let bytes: u64 = copies.iter().map(Layer::allocated_bytes).sum();
+        self.ensure_source_growth(bytes)?;
+        let mut ids: HashMap<LayerId, LayerId> = HashMap::with_capacity(copies.len());
+        for l in &copies {
+            let new = self.new_layer_id();
+            ids.insert(l.id, new);
+        }
+        for l in &mut copies {
+            l.id = ids[&l.id];
+            l.parent = l.parent.map(|p| ids[&p]);
+            l.set = set;
+        }
+        self.renew_effect_ids(&mut copies);
+        self.check_layer_effects(&copies)?;
+        // 元の一番上の段の一番下は、印があっても下地（何にもクリッピングされず、上の印のレイヤーはそれにクリッピングされる）
+        if occupied {
+            if let Some(l) = copies.iter_mut().find(|l| l.parent.is_none()) {
+                l.clipping = false;
+            }
+        }
+        Ok(copies)
+    }
+
     // ───────── 書き出し ─────────
 
     /// 書き出し用の写し（履歴なし、タイルは共有）: レイヤーセットごとのレイヤーを、一番上の段のグループ 1 つずつに包み、レイヤーセット 1 つにする。

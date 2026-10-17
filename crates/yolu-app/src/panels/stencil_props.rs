@@ -245,6 +245,7 @@ fn image_box(ui: &mut Ui, app: &mut AppState, box_rect: Rect, enabled: bool) -> 
     let clicked = response.clicked();
     let _ = response.on_hover_text(tip);
     if enabled {
+        app.ui.stencil_image_rect = Some(box_rect);
         if let Some(path) = dropped_png(ui, pointer_over) {
             app.apply(Action::Stencil(StencilOp::Load(path)));
         }

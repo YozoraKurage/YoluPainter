@@ -23,6 +23,7 @@ mod export;
 mod history;
 mod import_tiles;
 mod influences;
+mod layer_import;
 mod layer_sets;
 mod layers;
 mod mask_copy;

@@ -530,6 +530,12 @@ pub trait Drive {
     fn discard_ask(&self) -> &Option<yolu_app::discard::Ask> {
         &self.app().ui.discard_ask
     }
+    fn dropin(&self) -> &yolu_app::dropin::DropInState {
+        &self.app().dropin
+    }
+    fn dropin_mut(&mut self) -> &mut yolu_app::dropin::DropInState {
+        &mut self.app_mut().dropin
+    }
 }
 
 impl Drive for Harness<'_, YoluApp> {
@@ -554,6 +560,21 @@ pub trait DriveApp {
     fn view3d_adapter(&self) -> Option<String>;
     fn view3d_wait_gpu(&self);
     fn set_other_cap(&mut self, cap: u32);
+    /// ポインタを `at` に置いて、ファイルを落とす（落とした 1 フレームだけ進める。OS のドロップと同じ `dropped_files`）。
+    fn drop_files_at(&mut self, at: egui::Pos2, files: &[&std::path::Path]);
+}
+
+/// 落としたファイル（パスだけ。中身はファイルから読む）。
+#[derive(Debug)]
+struct DroppedPath(std::path::PathBuf);
+
+impl egui::DroppedFile for DroppedPath {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
 }
 
 impl DriveApp for Harness<'_, YoluApp> {
@@ -586,6 +607,16 @@ impl DriveApp for Harness<'_, YoluApp> {
     }
     fn set_other_cap(&mut self, cap: u32) {
         self.state_mut().view3d_set_other_cap(cap)
+    }
+    fn drop_files_at(&mut self, at: egui::Pos2, files: &[&std::path::Path]) {
+        self.event(egui::Event::PointerMoved(at));
+        self.step();
+        for f in files {
+            self.input_mut()
+                .dropped_files
+                .push(std::sync::Arc::new(DroppedPath(f.to_path_buf())));
+        }
+        self.step();
     }
 }
 

@@ -48,7 +48,7 @@ pub fn sorted(notes: &[ImportNote]) -> Vec<&ImportNote> {
 }
 
 /// 1 行目の状態（扱いごとの件数）。
-fn summary(lang: Lang, notes: &[ImportNote]) -> String {
+pub(crate) fn summary(lang: Lang, notes: &[ImportNote]) -> String {
     let count = |a: ImportAction| notes.iter().filter(|n| n.action == a).count();
     let mut parts = Vec::new();
     for (action, name) in [
@@ -132,7 +132,7 @@ pub fn action_text(lang: Lang, action: ImportAction) -> &'static str {
 }
 
 /// 当たったレイヤーの名前（初めの 3 枚と残りの数）。文書の機能は空。
-fn layers_text(lang: Lang, note: &ImportNote) -> String {
+pub(crate) fn layers_text(lang: Lang, note: &ImportNote) -> String {
     const SHOWN: usize = 3;
     if note.layers.is_empty() {
         return String::new();
