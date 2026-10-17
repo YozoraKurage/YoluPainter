@@ -127,6 +127,16 @@ pub struct WindowState {
     pub(super) exists: super::list::ExistsCache,
     /// 選んだ先とチェックがどのプロジェクトのものか（`Session::project_epoch`）。替わったら忘れる。
     epoch: u64,
+    /// このプロジェクトで最後に「書き出す」を押したときの設定（「前と同じ設定で書き出す」が使う。プロジェクトの間だけ覚える）。
+    last: Option<LastRun>,
+}
+
+/// 「書き出す」を押したときの出力テンプレート・出力先・セット。
+#[derive(Debug, Clone, PartialEq)]
+struct LastRun {
+    form: ExportForm,
+    destination: PathBuf,
+    sets: Vec<u32>,
 }
 
 impl AppState {
@@ -171,6 +181,7 @@ impl AppState {
             window.folder = None;
             window.confirmed = None;
             window.unchecked.clear();
+            window.last = None;
             window.epoch = epoch;
         }
     }
@@ -234,6 +245,7 @@ impl AppState {
             }
             ExportAction::Destination(path) => self.choose_export_destination(path),
             ExportAction::Run => self.run_export_window(),
+            ExportAction::Again => self.export_again(),
             _ => unreachable!("ウィンドウの操作ではない"),
         }
     }
@@ -281,25 +293,50 @@ impl AppState {
             self.refuse(Source::Export, why);
             return;
         }
-        let action = match form.template_id() {
-            Some(id) => ExportAction::TemplateTo {
-                id: id.to_owned(),
-                dir: destination,
-                sets: Some(sets),
-            },
-            None if form.writes_file() => {
-                // 選ぶウィンドウが確かめたファイルはそのまま、ほかは書く前にもうあるか確かめる
-                if confirmed.as_ref() == Some(&destination) {
-                    ExportAction::ChannelTo(destination)
-                } else {
-                    ExportAction::ChannelNamed(destination)
-                }
-            }
-            None => ExportAction::ChannelsTo {
-                dir: destination,
-                sets: Some(sets),
-            },
+        self.sync_export_window();
+        self.export.window.last = Some(LastRun {
+            form,
+            destination: destination.clone(),
+            sets: sets.clone(),
+        });
+        // 選ぶウィンドウが確かめたファイルはそのまま、ほかは書く前にもうあるか確かめる
+        let confirmed = confirmed.as_ref() == Some(&destination);
+        let action = export_action_for(form, destination, sets, confirmed);
+        let was_exporting = self.export.is_exporting();
+        self.export_apply(action);
+        self.close_export_window_if_started(was_exporting);
+    }
+
+    /// 「前と同じ設定で書き出す」: このプロジェクトで最後に「書き出す」を押したときの設定でウィンドウを開かずに書き出す。
+    /// まだ書き出していなければ、書き出しのウィンドウを開く。書く前の確かめ・断りは「書き出す」と同じ道を通る。
+    fn export_again(&mut self) {
+        let lang = self.lang;
+        if self.is_stroking() {
+            self.refuse(Source::Export, crate::lang::refusals::during_stroke(lang));
+            return;
+        }
+        self.sync_export_window();
+        let Some(last) = self.export.window.last.clone() else {
+            self.export_window_apply(ExportAction::OpenWindow);
+            return;
         };
+        // そのあとに消した・読むだけになったセットは外す（PNG は今のセットの 1 枚で、セットを選ばない）
+        let writes_file = last.form.writes_file();
+        let sets: Vec<u32> = last
+            .sets
+            .iter()
+            .copied()
+            .filter(|uid| {
+                (0..self.session.sets.len())
+                    .filter_map(|i| self.session.sets.get(i))
+                    .any(|set| set.uid == *uid && set.read_only.is_none())
+            })
+            .collect();
+        if sets.is_empty() && !writes_file {
+            self.refuse(Source::Export, super::no_sets_message(lang));
+            return;
+        }
+        let action = export_action_for(last.form, last.destination, sets, false);
         let was_exporting = self.export.is_exporting();
         self.export_apply(action);
         self.close_export_window_if_started(was_exporting);
@@ -310,6 +347,33 @@ impl AppState {
         if !was_exporting && self.export.is_exporting() {
             self.export.window.open = false;
         }
+    }
+}
+
+/// 出力テンプレートに合う書き出しの操作。`confirmed` は、選ぶウィンドウがそのファイルの置き換えを確かめているとき。
+fn export_action_for(
+    form: ExportForm,
+    destination: PathBuf,
+    sets: Vec<u32>,
+    confirmed: bool,
+) -> ExportAction {
+    match form.template_id() {
+        Some(id) => ExportAction::TemplateTo {
+            id: id.to_owned(),
+            dir: destination,
+            sets: Some(sets),
+        },
+        None if form.writes_file() => {
+            if confirmed {
+                ExportAction::ChannelTo(destination)
+            } else {
+                ExportAction::ChannelNamed(destination)
+            }
+        }
+        None => ExportAction::ChannelsTo {
+            dir: destination,
+            sets: Some(sets),
+        },
     }
 }
 

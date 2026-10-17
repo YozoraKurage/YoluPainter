@@ -639,6 +639,58 @@ fn the_wrench_opens_the_detail_window_and_it_lists_every_category() {
     assert!(!st(&h).brushes().ui.detail.open);
 }
 
+/// ブラシの詳細のボタンはツールプロパティの下の端（右）に固定の帯で置かれ、スクロールはその帯の上まで。ブラシ・消しゴム以外のツールには帯が無い。
+#[test]
+fn the_detail_button_sits_in_a_footer_at_the_bottom_right_of_the_tool_properties() {
+    let mut h = app(1280.0, 640.0, 128);
+    let props_tab = h.state().tab_rects[&Tab::ToolProperties];
+    let size_tab = h.state().tab_rects[&Tab::BrushSize];
+    let button = h.get_by_label("ブラシの詳細").rect();
+    // 組の下の端の 1 帯（高さ 28）の中、右寄せ
+    assert!(
+        button.bottom() <= size_tab.top() && button.bottom() > size_tab.top() - 30.0,
+        "{button:?} {size_tab:?}"
+    );
+    assert!(button.right() > props_tab.left() + 200.0, "{button:?}");
+    // 見本の右上には無い
+    assert!(button.top() > props_tab.bottom() + 100.0, "{button:?}");
+    // 帯の分だけスクロールが短い: 一番下まで送ったとき、中身の下の端は帯の上に来る
+    let brush = Tool::Brush as usize;
+    let content = st(&h).subtools().ui.props_content[brush];
+    move_to(
+        &h,
+        pos2(props_tab.left() + 100.0, props_tab.bottom() + 100.0),
+    );
+    h.event(Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -100_000.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Modifiers::NONE,
+    });
+    h.run();
+    let max = st(&h).subtools().ui.props_scroll[brush];
+    let footer_top = button.top() - 2.0;
+    let view = footer_top - props_tab.bottom();
+    assert!(
+        (max - (content - view)).abs() < 6.0,
+        "最大のスクロール {max} は 中身 {content} - 帯の上までの高さ {view} に近い"
+    );
+    // 押すと開き、もう一度で閉じる
+    h.get_by_label("ブラシの詳細").click();
+    h.run();
+    assert!(st(&h).brushes().ui.detail.open);
+    h.get_by_label("ブラシの詳細").click();
+    h.run();
+    assert!(!st(&h).brushes().ui.detail.open);
+    // 消しゴムにも帯がある。ブラシでないツールには無い
+    h.act(Action::SelectTool(Tool::Eraser));
+    h.run();
+    assert!(h.query_by_label("ブラシの詳細").is_some());
+    h.act(Action::SelectTool(Tool::Fill));
+    h.run();
+    assert!(h.query_by_label("ブラシの詳細").is_none());
+}
+
 /// 影響元設定のウィンドウの曲線の枠（共通の編集の部品）: 入力ごとの曲線を点で直し、ドラッグは離したとき 1 回で入り（Esc でやめられる）、切っている入力では
 /// 触れない。ほかの項目の応えは変わらず、区分の「既定に戻す」で直線へ戻る。
 #[test]

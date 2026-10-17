@@ -17,8 +17,21 @@ use crate::ui::widgets::Rows;
 
 /// ツールプロパティのパネル。
 pub fn show(ui: &mut Ui, app: &mut AppState) {
-    let r = ui.max_rect();
-    ui.advance_cursor_after_rect(r);
+    let full = ui.max_rect();
+    ui.advance_cursor_after_rect(full);
+    // ブラシ・消しゴムは、下の端にブラシの詳細のボタンの帯を固定し、スクロールはその上まで
+    let footer = brushes::has_detail_footer(app.tool).then(|| {
+        Rect::from_min_max(
+            pos2(
+                full.left(),
+                (full.bottom() - brushes::FOOTER_HEIGHT).max(full.top()),
+            ),
+            full.max,
+        )
+    });
+    let r = footer.map_or(full, |f| {
+        Rect::from_min_max(full.min, pos2(full.right(), f.top()))
+    });
     let ctx = ui.ctx().clone();
     app.ui.samples.begin_frame(ctx.cumulative_pass_nr());
     let tool = app.tool;
@@ -64,6 +77,9 @@ pub fn show(ui: &mut Ui, app: &mut AppState) {
         "subtools.props.scroll",
         &mut app.subtools.ui.props_scroll[index],
     );
+    if let Some(footer) = footer {
+        brushes::detail_footer(ui, app, footer);
+    }
 }
 
 /// ブラシサイズのパネル（大きさを持つツールだけ丸を出す。持たないツールは空）。

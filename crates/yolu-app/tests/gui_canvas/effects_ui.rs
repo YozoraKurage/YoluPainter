@@ -1710,11 +1710,11 @@ fn touch_every_procedural_control(h: &mut Harness<'_, YoluApp>, lang: Lang, kind
         }
     }
     // 範囲・反転・合成・強さ（上限を先に動かすので、下限も動く）
-    for label in [
-        t("上限", "High"),
-        t("下限", "Low"),
-        t("やわらかさ", "Softness"),
-    ] {
+    // 横に動かした量で変わるので、上限は（初期値が右端なので）左へ動かす
+    run(h, t("上限", "High"), &|h| {
+        slide_to(h, t("上限", "High"), -60.0)
+    });
+    for label in [t("下限", "Low"), t("やわらかさ", "Softness")] {
         run(h, label, &|h| slide(h, label));
     }
     run(h, "反転", &|h| {
@@ -1730,7 +1730,8 @@ fn touch_every_procedural_control(h: &mut Harness<'_, YoluApp>, lang: Lang, kind
         )
     });
     let (steps, strength) = (h.doc().undo_count(), selected_strength(h));
-    slide(h, t("強さ", "Strength"));
+    // 強さの初期値は右端なので左へ動かす
+    slide_to(h, t("強さ", "Strength"), -60.0);
     assert_ne!(selected_strength(h), strength);
     assert_eq!(h.doc().undo_count(), steps + 1);
     assert!(h.message().is_empty(), "{}", h.message());

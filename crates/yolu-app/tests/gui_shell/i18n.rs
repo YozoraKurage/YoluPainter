@@ -1324,19 +1324,35 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
         );
     };
 
-    // ドラッグの間は値が動くが、設定のファイルへは書かない
+    // 押しただけでは動かない（押した位置へ飛ばない）。動かした量で値が変わり、ドラッグの間は設定のファイルへは書かない
+    // （溝の幅いっぱいの移動で 0〜1000 いっぱい）
+    let count = |h: &Harness<'_, YoluApp>| match backups(h) {
+        BackupKeep::Count(n) => i64::from(n),
+        other => panic!("{other:?}"),
+    };
+    let near = |h: &Harness<'_, YoluApp>, expect: f32| {
+        assert!(
+            (count(h) as f32 - expect).abs() <= 2.0,
+            "{} ← {expect}",
+            count(h)
+        );
+    };
+    let w = slider.width();
     watch();
     press(&h, at(0.25), primary);
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(250));
+    assert_eq!(backups(&h), BackupKeep::Count(10), "押しただけでは動かない");
+    move_to(&h, at(0.35));
+    h.step();
+    near(&h, 110.0);
     assert!(h.prefs().dragging);
     untouched();
-    move_to(&h, at(0.75));
+    move_to(&h, at(0.85));
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(750));
+    near(&h, 610.0);
     untouched();
     // 上限と 0 の端: 溝の外へ出しても、1000 と 0 で止まる
-    move_to(&h, egui::pos2(slider.right() + 80.0, y));
+    move_to(&h, egui::pos2(slider.right() + w, y));
     h.step();
     assert_eq!(backups(&h), BackupKeep::Count(1000));
     shows(&h, "1000");
@@ -1346,20 +1362,28 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
     assert_eq!(backups(&h), BackupKeep::Count(0));
     shows(&h, "0");
     untouched();
-    move_to(&h, at(0.75));
+    // 端で止めた分は戻さなくてよい（溝の中へ戻した分だけ、右へ進む）
+    move_to(&h, at(0.5));
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(750));
+    near(&h, (0.5 * w + 80.0) / w * 1000.0);
+    untouched();
+    // 動かさずに 750 にしたいときは、いったん離してクリックする。ここでは動かして合わせる
+    let before = count(&h);
+    move_to(&h, at(0.5 + (750.0 - before as f32) / 1000.0));
+    h.step();
+    near(&h, 750.0);
     shows(&h, "750");
     untouched();
     // 離すと、そのときの数を 1 回だけ書く（そのあとのフレームでは書き直さない）
+    let written = count(&h);
     release(&h, at(0.75), primary);
     h.step();
     h.run();
     assert!(!h.prefs().dragging);
-    assert_eq!(backups(&h), BackupKeep::Count(750));
+    near(&h, 750.0);
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
-        "language=en\nbackups=750\n"
+        format!("language=en\nbackups={written}\n")
     );
     watch();
     h.step();
@@ -1380,7 +1404,7 @@ fn dragging_the_backups_slider_writes_the_settings_once_on_release_and_escape_ke
     h.step();
     move_to(&h, at(0.9));
     h.step();
-    assert_eq!(backups(&h), BackupKeep::Count(900));
+    near(&h, 333.0 + 400.0);
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.step();
     assert_eq!(backups(&h), BackupKeep::Count(333), "押す前の数に戻る");

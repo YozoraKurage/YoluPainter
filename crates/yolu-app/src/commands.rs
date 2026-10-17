@@ -325,6 +325,12 @@ pub static COMMANDS: &[Command] = &[
         |l| l.t("commands-export-textures"),
         || Action::Export(crate::export::ExportAction::OpenWindow),
     ),
+    // 前に書き出したときと同じ設定で、ウィンドウを開かずに書き出す。既定のキーは無い
+    press_named(
+        "file.export_again",
+        |l| l.t("commands-export-again"),
+        || Action::Export(crate::export::ExportAction::Again),
+    ),
     press_named("app.quit", |l| l.t("commands-quit"), || Action::Quit),
     press_named(
         "app.settings",
@@ -469,6 +475,12 @@ pub static COMMANDS: &[Command] = &[
         "view.switch_special_ruler",
         |l| l.t("commands-switch-the-snapping-special-ruler"),
         || Action::Ruler(crate::rulers::RulerAction::SwitchSpecial),
+    ),
+    // UI を隠す・戻す（既定のキーは Tab）
+    press_named(
+        "view.toggle_ui",
+        |l| l.t("commands-hide-or-show-the-ui"),
+        || Action::ToggleUi,
     ),
     // 色・ブラシ・塗りつぶし・パス
     press_named(
@@ -1045,10 +1057,11 @@ mod tests {
         // 既定のキーが無い Press: 液化（ツールの帯から）・モードを 1 つずつ選ぶ操作（ドロップダウン・パイ・メニューから）・視点のパイと
         // その中身（設定で割り当てる）・メッシュマップをベイクするウィンドウ（帯のボタンとセットの右クリックから。設定で割り当てる）・
         // 書き出しのウィンドウ（Ctrl+Shift+E は表示レイヤーの結合が使っているので、設定で割り当てる）
-        const NO_DEFAULT_KEY: [&str; 15] = [
+        const NO_DEFAULT_KEY: [&str; 16] = [
             "bake.open",
             "brush.erase_mode",
             "file.export",
+            "file.export_again",
             "tool.liquify",
             "mode.paint",
             "mode.edit",
@@ -1111,11 +1124,11 @@ mod tests {
     #[test]
     fn the_command_kinds_add_up() {
         let count = |f: fn(&Command) -> bool| COMMANDS.iter().filter(|c| f(c)).count();
-        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 88);
+        assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_some()), 90);
         assert_eq!(count(|c| c.kind == Kind::Press && c.action.is_none()), 9);
         assert_eq!(count(|c| c.kind == Kind::Hold), 10);
         assert_eq!(count(|c| c.kind == Kind::Gesture), 14);
         assert_eq!(count(|c| matches!(c.kind, Kind::Fixed(_))), 5);
-        assert_eq!(COMMANDS.len(), 126);
+        assert_eq!(COMMANDS.len(), 128);
     }
 }

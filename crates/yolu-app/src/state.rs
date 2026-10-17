@@ -546,6 +546,8 @@ pub enum Action {
     RotateRight,
     ResetRotation,
     FlipView,
+    /// UI を隠す・戻す（`UiState::hide_ui`）。
+    ToggleUi,
     ResetLayout,
     SelectTool(Tool),
     SwapColors,
@@ -684,6 +686,7 @@ impl Action {
             Self::RotateRight => "RotateRight",
             Self::ResetRotation => "ResetRotation",
             Self::FlipView => "FlipView",
+            Self::ToggleUi => "ToggleUi",
             Self::ResetLayout => "ResetLayout",
             Self::SelectTool(..) => "SelectTool",
             Self::SwapColors => "SwapColors",
@@ -1138,6 +1141,18 @@ impl AppState {
         self.outbox.dialog_request = Some(DialogRequest::OpenPath(path));
     }
 
+    /// UI を隠す・戻す（`UiState::hide_ui`）。描いている間は切り替えない。
+    fn toggle_ui(&mut self) {
+        if self.is_stroking() {
+            self.refuse(
+                Source::Canvas,
+                crate::lang::refusals::during_stroke(self.lang),
+            );
+            return;
+        }
+        self.ui.hide_ui = !self.ui.hide_ui;
+    }
+
     /// 描いている最中か（ストロークと移動・変形のドラッグ。ほかの編集・取り消し・保存を断る）。
     pub fn is_stroking(&self) -> bool {
         self.session.doc.has_active_stroke() || crate::features::stroking(self)
@@ -1571,6 +1586,7 @@ impl AppState {
                     _ => self.view.flip_horizontally(),
                 }
             }
+            Action::ToggleUi => self.toggle_ui(),
             Action::ScreenPick(mode) => crate::screen_pick::request(self, mode),
             Action::ResetLayout => self.outbox.reset_layout = true,
             // 描くツールを選んだら、ペイントのモードへ（`switch_to`）

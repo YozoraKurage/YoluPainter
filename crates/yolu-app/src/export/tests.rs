@@ -2241,3 +2241,98 @@ fn a_direct_export_with_no_set_to_write_is_refused_as_having_no_set() {
     assert_eq!(s.message, message);
     assert!(!s.export.is_exporting() && dir.files().is_empty());
 }
+
+/// 「前と同じ設定で書き出す」: まだ書き出していなければウィンドウを開き、書き出したあとは、ウィンドウを開かずに同じテンプレート・先で書く。
+/// もうあるファイルは今の書き出しと同じく確かめ、描いている間は断る。別のプロジェクトにすると、前の設定は使わない。
+#[test]
+fn export_again_opens_the_window_first_and_then_repeats_the_last_run_without_it() {
+    let dir = Dir::new("again");
+    let out = dir.0.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let mut s = AppState::new(64, 64);
+    s.export.padding = 0;
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    // まだ書き出していない: 断らずにウィンドウを開く（書かない）
+    s.apply(Action::Export(ExportAction::Again));
+    assert!(s.export.window.open);
+    assert!(!s.export.is_exporting() && s.export.confirm.is_none());
+    assert!(dir.files() == ["out"] && std::fs::read_dir(&out).unwrap().count() == 0);
+    // 書き出す。書き始めたらウィンドウは閉じる
+    run_window(&mut s, ExportForm::AllChannels, &out);
+    s.wait_export();
+    assert!(!s.export.window.open);
+    let written = std::fs::read_dir(&out).unwrap().count();
+    assert!(written > 0);
+    // 書いたファイルを消してから「前と同じ設定で」: ウィンドウは開かず、同じ先に同じ物を書く
+    for e in std::fs::read_dir(&out).unwrap() {
+        std::fs::remove_file(e.unwrap().path()).unwrap();
+    }
+    // 出力テンプレートを設定で替えても、前に書き出したときのテンプレートで書く
+    form(&mut s, ExportForm::Hdrp);
+    s.apply(Action::Export(ExportAction::Again));
+    assert!(!s.export.window.open, "ウィンドウは開かない");
+    s.wait_export();
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), written);
+    // もうあるファイルは確かめる（無断で置き換えない）。置き換えを選ぶと書く
+    std::fs::write(
+        out.join(
+            std::fs::read_dir(&out)
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .file_name(),
+        ),
+        b"mine",
+    )
+    .unwrap();
+    s.apply(Action::Export(ExportAction::Again));
+    assert!(!s.export.is_exporting());
+    assert!(s.export.confirm.is_some(), "{}", s.message);
+    s.apply(Action::Export(ExportAction::ConfirmReplace));
+    s.wait_export();
+    assert!(out
+        .read_dir()
+        .unwrap()
+        .all(|e| std::fs::read(e.unwrap().path()).unwrap() != b"mine"));
+    // 描いている間は断る（書かない）
+    for e in std::fs::read_dir(&out).unwrap() {
+        std::fs::remove_file(e.unwrap().path()).unwrap();
+    }
+    let stroke = s.begin_paint_stroke(layer, false).unwrap();
+    s.apply(Action::Export(ExportAction::Again));
+    assert!(!s.export.is_exporting());
+    assert!(s.message.contains("描いている間"), "{}", s.message);
+    s.session.doc.cancel_stroke(stroke);
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+    // 別のプロジェクトにすると、前の設定は使わず、ウィンドウを開く
+    crate::project::new_into(&mut s);
+    s.apply(Action::Export(ExportAction::CloseWindow));
+    s.apply(Action::Export(ExportAction::Again));
+    assert!(s.export.window.open);
+    assert!(!s.export.is_exporting());
+    assert_eq!(std::fs::read_dir(&out).unwrap().count(), 0);
+}
+
+/// 「前と同じ設定で書き出す」は、今のチャンネルの PNG も同じファイルへ書く。
+#[test]
+fn export_again_repeats_a_channel_png_to_the_same_file() {
+    let dir = Dir::new("again-png");
+    let mut s = AppState::new(64, 64);
+    s.export.padding = 0;
+    let layer = s.session.selected_layer.unwrap();
+    paint_left_half(&mut s.session.doc, layer, Channel::Color, [10, 20, 30, 255]);
+    let file = dir.0.join("mine.png");
+    run_window(&mut s, ExportForm::ChannelPng, &file);
+    s.wait_export();
+    let first = std::fs::read(&file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    s.apply(Action::Export(ExportAction::Again));
+    assert!(!s.export.window.open);
+    s.wait_export();
+    assert_eq!(std::fs::read(&file).unwrap(), first);
+    // 2 回目からは、ファイルがあれば確かめる
+    s.apply(Action::Export(ExportAction::Again));
+    assert!(s.export.confirm.is_some() && !s.export.is_exporting());
+}

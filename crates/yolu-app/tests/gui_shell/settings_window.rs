@@ -108,11 +108,16 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
                 .any(|n| n.contains("セットの文書") || n.contains("Set's Document")),
             "{lang:?}: {names:?}"
         );
-        // 並び: 配布用に保存… | インポート ▸・テクスチャを書き出す…・PSD を書き出す… | プロジェクト設定… | Live Link | 終了
+        // 並び: 配布用に保存… | インポート ▸・テクスチャを書き出す…・前と同じ設定で書き出す・PSD を書き出す… | プロジェクト設定… | Live Link | 終了
         let export = at(lang.pick("テクスチャを書き出す…", "Export Textures…"));
         assert_eq!(
-            at(lang.pick("PSD を書き出す…", "Export PSD…")),
+            at(lang.pick("前と同じ設定で書き出す", "Export with Previous Settings")),
             export + 1,
+            "{lang:?}: {names:?}"
+        );
+        assert_eq!(
+            at(lang.pick("PSD を書き出す…", "Export PSD…")),
+            export + 2,
             "{lang:?}: {names:?}"
         );
         // （入れ子の中の PSD の 2 つを挟んで、配布用に保存…の 3 つ先）
@@ -122,7 +127,7 @@ fn headless_the_menus_have_the_items_in_the_new_places_in_both_languages() {
             "{lang:?}: {names:?}"
         );
         let project = at(lang.pick("プロジェクト設定…", "Project Configuration…"));
-        assert_eq!(project, export + 2, "{lang:?}: 書き出しのすぐ後 {names:?}");
+        assert_eq!(project, export + 3, "{lang:?}: 書き出しのすぐ後 {names:?}");
         assert_eq!(
             at("Live Link"),
             project + 1,

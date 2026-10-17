@@ -1686,9 +1686,9 @@ fn while_painting_a_mask_the_tool_properties_show_the_layer_mask_instead_of_the_
     drag(
         &mut h,
         &[
-            pos2(density.left() + 20.0, density.center().y),
-            pos2(density.left() + 40.0, density.center().y),
             pos2(density.left() + 60.0, density.center().y),
+            pos2(density.left() + 40.0, density.center().y),
+            pos2(density.left() + 20.0, density.center().y),
         ],
     );
     assert_eq!(st(&h).doc().undo_count(), steps + 1);
@@ -1811,4 +1811,96 @@ fn snapshots_of_the_tool_properties_in_its_own_window() {
         pos2(window.left() + 360.0, (window.top() + 380.0).min(890.0)),
     );
     shot_rect(&mut h, rect, &format!("tool_panels_detached_{name}"));
+}
+
+/// Tab で UI を隠す・戻す: メニューの帯と状態の帯のほかの、ツールの列・オプションバー・ビューでないパネルと、ビューの中の部品（キャンバスの右上の
+/// ボタン・3D ビューのアイコン）を出さず、ビュー（キャンバスと 3D ビュー）が広がる。隠している間は状態の帯の左端に、隠していることと戻すキーを出す。
+/// もう一度で元の並びと広さに戻り、並びは変わらない。
+#[test]
+fn tab_hides_all_the_ui_but_the_views_and_tab_brings_it_back_without_changing_the_layout() {
+    let mut h = app_default(1280.0, 800.0, 128);
+    h.act(Action::LoadDemoModel);
+    h.run();
+    let tool = "モデル全体が見える位置へ戻す";
+    let canvas = canvas_rect(&h);
+    let dock_before = shape(&h.state().dock);
+    assert!(!h.ui().hide_ui);
+    assert!(h.state().tab_rects.contains_key(&Tab::Layers));
+    assert!(count(&h, tool) > 0, "3D ビューの右上のアイコン");
+    assert!(count(&h, "ブラシ") > 0 || count(&h, "ブラシ（B）") > 0);
+    // Tab で隠す
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(h.ui().hide_ui);
+    let hidden = canvas_rect(&h);
+    assert!(
+        hidden.width() > canvas.width() && hidden.right() > 1270.0,
+        "{hidden:?} ← {canvas:?}"
+    );
+    assert_eq!(hidden.bottom(), canvas.bottom(), "状態の帯は残す");
+    assert_eq!(count(&h, "UI を非表示中です、Tab キーで復帰できます。"), 1);
+    for tab in [Tab::Layers, Tab::ToolProperties, Tab::Color, Tab::History] {
+        assert!(!h.state().tab_rects.contains_key(&tab), "{tab:?}");
+    }
+    assert_eq!(count(&h, tool), 0, "3D ビューのアイコンも隠す");
+    assert_eq!(count(&h, "ブラシ（B）"), 0, "ツールの列も隠す");
+    assert_eq!(shape(&h.state().dock), dock_before, "並びは変えない");
+    // メニューの帯は残る
+    let _ = menu_title(&h, "ファイル");
+    common::shot::window(&mut h, "ui_hidden");
+    // 隠したままツールを替えても、キーは効く（B でブラシ）。もう一度 Tab で戻る
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui);
+    assert_eq!(canvas_rect(&h), canvas);
+    assert_eq!(count(&h, "UI を非表示中です、Tab キーで復帰できます。"), 0);
+    assert!(h.state().tab_rects.contains_key(&Tab::Layers));
+    assert!(count(&h, tool) > 0);
+    assert_eq!(shape(&h.state().dock), dock_before);
+}
+
+/// 文字を打っている間の Tab は UI を隠さない。ショートカットの設定で替えると、替えたキーで隠れ、Tab では隠れない。
+#[test]
+fn tab_does_not_hide_the_ui_while_typing_and_the_key_can_be_reassigned() {
+    use yolu_app::keymap::Scope;
+    let mut h = app_default(1280.0, 800.0, 128);
+    // レイヤーの名前を打っている間
+    let id = st(&h).selected_layer().unwrap();
+    h.act(Action::StartRename(id));
+    h.run();
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui, "文字を打っている間は取らない");
+    key(&h, egui::Key::Escape, egui::Modifiers::NONE);
+    h.run();
+    h.run();
+    assert!(h.ui().renaming.is_none());
+    // 設定で F9 に替える
+    let group: yolu_app::keyconfig::GroupKey = ("view.toggle_ui", Scope::Everywhere);
+    assert!(yolu_app::shortcuts::editor::all_groups(h.app()).contains(&group));
+    let trigger = yolu_app::keyconfig::parse_trigger("F9").unwrap();
+    h.keys_mut().set(group, vec![trigger]);
+    h.app_mut().keys_changed();
+    h.run();
+    key(&h, egui::Key::Tab, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui, "Tab は割り当てから外れた");
+    key(&h, egui::Key::F9, egui::Modifiers::NONE);
+    h.run();
+    assert!(h.ui().hide_ui);
+    assert_eq!(
+        count(&h, "UI を非表示中です、F9 キーで復帰できます。"),
+        1,
+        "戻すキーは割り当てのとおり"
+    );
+    // 描いている間は切り替えない
+    key(&h, egui::Key::F9, egui::Modifiers::NONE);
+    h.run();
+    assert!(!h.ui().hide_ui);
+    let layer = st(&h).selected_layer().unwrap();
+    let stroke = h.app_mut().begin_paint_stroke(layer, false).unwrap();
+    h.act(Action::ToggleUi);
+    assert!(!h.ui().hide_ui);
+    assert!(st(&h).message().contains("描いている間"));
+    h.doc_mut().cancel_stroke(stroke);
 }

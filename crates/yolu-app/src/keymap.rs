@@ -404,6 +404,8 @@ pub fn bindings() -> Vec<KeyBinding> {
         kb(shift, Key::R, "view.reset_rotation"),
         // モードのパイ（どのモードでも。macOS でも Command ではなく Control）
         kb(Modifiers::CTRL, Key::Tab, "mode.pie"),
+        // UI を隠す・戻す（文字を打っている間・ポップアップとダイアログの間は `handle_shortcuts` が渡さない）
+        kb(none, Key::Tab, "view.toggle_ui"),
     ];
     // ツールのキー（ツールの表のとおり。ツールの帯の並び）
     for tool in Tool::ALL {
@@ -2263,7 +2265,12 @@ mod tests {
                 dispatched_with(&map, &app, Key::Tab, Modifiers::CTRL | Modifiers::SHIFT)
                     .is_empty()
             );
-            assert!(dispatched_with(&map, &app, Key::Tab, Modifiers::NONE).is_empty());
+            // 修飾の無い Tab は UI を隠す・戻す
+            assert_eq!(
+                dispatched_with(&map, &app, Key::Tab, Modifiers::NONE),
+                vec![Action::ToggleUi],
+                "{mode:?}"
+            );
         }
     }
 

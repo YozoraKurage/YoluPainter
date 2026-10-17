@@ -808,8 +808,9 @@ fn the_stencil_tab_loads_picks_and_edits_without_touching_the_document() {
             pos2(slider.left() + slider.width() * 0.5, slider.center().y),
         ],
     );
+    // 押した位置へ飛ばず、押し始めの値から横に動かした量だけ大きくなる
     let size = st(&h).size;
-    assert!((1.5..2.5).contains(&size), "{size}");
+    assert!((2.0..3.0).contains(&size), "{size}");
     // 「置き場を戻す」の行は状態の帯に近く、ここまでの知らせ（帯の左の端）と重なる。時間を進めて知らせが消えてから押す
     wait_out_toast(&mut h);
     h.get_by_label("置き場を戻す").click();

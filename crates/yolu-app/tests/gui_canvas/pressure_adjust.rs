@@ -653,15 +653,17 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
             .find_map(|l| l.strip_prefix("pressure_low=").and_then(|v| v.parse().ok()))
     };
 
+    // 押しただけでは動かない。動かした量で値が変わる（溝の幅いっぱいで 100%）
+    let start = low(&h);
     watch();
     press(&h, at(0.2), primary);
     h.step();
-    assert!(h.pressure().dragging);
-    assert!((low(&h) - 0.2).abs() < 0.02, "{}", low(&h));
+    assert!((low(&h) - start).abs() < 1e-6, "{}", low(&h));
     untouched();
     move_to(&h, at(0.4));
     h.step();
-    assert!((low(&h) - 0.4).abs() < 0.02, "{}", low(&h));
+    assert!(h.pressure().dragging);
+    assert!((low(&h) - (start + 0.2)).abs() < 0.02, "{}", low(&h));
     untouched();
     move_to(&h, at(0.3));
     h.step();
@@ -672,7 +674,7 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     h.run();
     assert!(!h.pressure().dragging);
     let value = low(&h);
-    assert!((value - 0.3).abs() < 0.02, "{value}");
+    assert!((value - (start + 0.1)).abs() < 0.02, "{value}");
     assert_eq!(written_low(), Some(value));
     watch();
     h.step();
@@ -684,7 +686,7 @@ fn dragging_a_range_slider_writes_the_settings_once_on_release() {
     h.step();
     move_to(&h, at(0.7));
     h.step();
-    assert!((low(&h) - 0.7).abs() < 0.02);
+    assert!((low(&h) - (value + 0.1)).abs() < 0.02, "{}", low(&h));
     key(&h, egui::Key::Escape, egui::Modifiers::NONE);
     h.step();
     assert_eq!(low(&h), value, "押す前の値に戻る");

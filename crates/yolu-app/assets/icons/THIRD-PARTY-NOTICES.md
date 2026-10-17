@@ -127,6 +127,7 @@ Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT �
 | `visibility` | fluent | `eye` | regular |
 | `visibility_off` | fluent | `eye_off` | regular |
 | `warning` | fluent | `warning` | regular |
+| `warning_circle` | phosphor | `warning-circle` | regular |
 | `window_maximize` | fluent | `maximize` | regular |
 | `window_minimize` | fluent | `subtract` | regular |
 | `window_restore` | fluent | `square_multiple` | regular |

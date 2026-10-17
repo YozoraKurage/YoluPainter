@@ -77,6 +77,7 @@ fn import_export_entries(app: &AppState) -> Vec<Entry<Action>> {
         )
         .enabled(free),
         command_item(l, "file.export", Action::Export(ExportAction::OpenWindow)).enabled(free),
+        command_item(l, "file.export_again", Action::Export(ExportAction::Again)).enabled(free),
         Entry::item(
             l.t("shell-export-psd"),
             Action::Psd(PsdAction::ExportDialog),
@@ -814,6 +815,8 @@ pub fn status_text(app: &AppState) -> &str {
 
 /// 状態の帯の右端の項目の置き場（右から左へ。幅は文字で決まる）。
 pub struct StatusLayout {
+    /// UI を隠している間（Tab）だけ、右の項目の左に出す印のアイコンと文字の矩形と文字。
+    pub hidden_note: Option<(Rect, Rect, String)>,
     /// 外からの操作の印（丸）。
     pub dot: Option<Rect>,
     /// 使っているメモリなどの項目と、その文字の矩形。
@@ -855,20 +858,48 @@ pub fn status_layout(p: &egui::Painter, app: &AppState, r: Rect) -> StatusLayout
         right = at.left() - 16.0;
         items.push((item, at));
     }
+    let hidden_note = app.ui.hide_ui.then(|| {
+        let text = hidden_note_text(app.lang);
+        let width = w::text_width(p, &text, t::LABEL);
+        let at = Rect::from_min_max(pos2(right - width, r.top()), pos2(right, r.bottom()));
+        let icon =
+            Rect::from_center_size(pos2(at.left() - 6.0 - 7.0, r.center().y), vec2(14.0, 14.0));
+        right = icon.left() - 16.0;
+        (icon, at, text)
+    });
     StatusLayout {
+        hidden_note,
         dot,
         items,
         free_right: right,
     }
 }
 
-/// 状態の帯: 左は、直前の操作の知らせ（`toast`。出ているあいだだけ）。右端に、バージョンとビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。
+/// UI を隠している間の、状態の帯の左端の文（戻すキーは割り当ての表から引く。割り当てが無ければキーを書かない）。
+fn hidden_note_text(lang: Lang) -> String {
+    match crate::shortcuts::shortcut_text(&Action::ToggleUi) {
+        Some(key) => lang.f("shell-ui-hidden", &[("key", &key)]),
+        None => lang.t("shell-ui-hidden-no-key").to_string(),
+    }
+}
+
+/// 状態の帯: 左は、直前の操作の知らせ（`toast`。出ているあいだだけ）。右の項目の左に、UI を隠している間（Tab）の印。右端に、バージョンとビルド・使っているメモリ（`usage` が決める項目。ツールチップに内訳。
 /// 実際のウィンドウだけで、測れない値は出さない）。
 pub fn status_bar(ui: &mut Ui, app: &AppState, r: Rect) {
     let p = ui.painter().clone();
     w::fill(&p, r, t::MENU_BG);
     w::hline(&p, r.left(), r.right(), r.top(), t::BORDER);
     let layout = status_layout(&p, app, r);
+    if let Some((icon, at, text)) = &layout.hidden_note {
+        w::icon(&p, *icon, "warning_circle", t::ERROR, 14.0);
+        w::text(&p, *at, text, t::LABEL, Align::Left);
+        let response = ui.interact(
+            at.union(*icon),
+            ui.id().with("status.hidden_ui"),
+            Sense::hover(),
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    }
     // 外からの操作を受けている間だけ、右端に小さな丸（待っている・つながっている・受けられない。色が状態。説明はツールチップ）
     if let (Some(indicator), Some(dot)) = (app.services.ops.indicator(), layout.dot) {
         let tip = app.services.ops.tooltip(app.lang);

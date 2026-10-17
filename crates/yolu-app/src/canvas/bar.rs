@@ -129,8 +129,12 @@ struct Clicks {
 /// 部品の全体（右上の 2 つのボタンと、開いている欄）。`view` はキャンバスの表示域、`free` は描いていないこと。
 pub fn show(ui: &mut Ui, app: &mut AppState, view: Rect, free: bool) {
     let ctx = ui.ctx().clone();
-    if !free {
+    // UI を隠している間は出さない（開いている欄も閉じる）
+    if !free || app.ui.hide_ui {
         app.ui.canvas_bar.close();
+    }
+    if app.ui.hide_ui {
+        return;
     }
     app.ui.canvas_bar.dragging = false;
     let chip = app.canvas_bar_chip();

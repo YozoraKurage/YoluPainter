@@ -758,12 +758,12 @@ fn shared_slider_gpu() {
     let undo = h.doc().undo_count();
     let mut steps = 0;
     for (place, pick) in &places {
-        // 小さい値から始めて、ドラッグで最大・最小（欄の外まで動かして離す）、クリックで大きい値・最小（どれも値が変わる）
-        for (gesture, from, to) in [
-            ("ドラッグ", 0.5, 1.2),
-            ("ドラッグ", 0.5, -0.2),
-            ("クリック", 0.95, 0.95),
-            ("クリック", 0.0, 0.0),
+        // 小さい値から始めて、ドラッグ（横に動かした量で変わる）で最大・最小（欄の外まで動かして離す）、クリック（押した位置の値）で大きい値・最小（どれも値が変わる）
+        for (gesture, from, to, high) in [
+            ("ドラッグ", 0.05, 1.2, true),
+            ("ドラッグ", 0.95, -0.3, false),
+            ("クリック", 0.95, 0.95, true),
+            ("クリック", 0.0, 0.0, false),
         ] {
             let slider = rect_of(&h, "サイズ", pick);
             let at = |f: f32| pos2(slider.left() + slider.width() * f + 1.0, slider.center().y);
@@ -775,7 +775,6 @@ fn shared_slider_gpu() {
             steps += 1;
             let s = h.app();
             let size = text_of(s, id).unwrap().size;
-            let high = from > 0.4 && to > 0.4;
             assert!(
                 if high { size > 300.0 } else { size == 1.0 },
                 "{place}の{gesture}: {size}"

@@ -615,8 +615,9 @@ fn the_budgets_wait_while_the_total_slider_is_held_and_apply_when_it_is_let_go()
     let primary = egui::PointerButton::Primary;
     press(&h, at(0.1), primary);
     h.step();
-    // 押しているあいだは、フレームを重ねても入らない（ウィンドウが開いているので、押している印が保たれる）
-    for fraction in [0.1, 0.2, 0.3, 0.2] {
+    // 押しているあいだは、フレームを重ねても入らない（ウィンドウが開いているので、押している印が保たれる）。値は動かした量で変わるので、
+    // 押した位置（0.1）から動かして初めて指定の量になる
+    for fraction in [0.2, 0.3, 0.25] {
         move_to(&h, at(fraction));
         h.step();
         // 何フレーム回しても入らない（`run` は静まるまで複数フレーム回す）
@@ -632,7 +633,7 @@ fn the_budgets_wait_while_the_total_slider_is_held_and_apply_when_it_is_let_go()
     let GpuMemory::Mib(mib) = h.prefs().settings.gpu_memory else {
         unreachable!()
     };
-    release(&h, at(0.2), primary);
+    release(&h, at(0.25), primary);
     h.step();
     h.run();
     assert!(!h.prefs().dragging);

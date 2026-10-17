@@ -384,6 +384,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, thumbs: &mut Thumbnails) {
         }
         let spec = SliderSpec::new(opacity_label, 0.0, 100.0, NumberFormat::int("%"))
             .enabled(enabled)
+            .absolute()
             .tooltip(&opacity_tip);
         let o = w::slider(
             ui,

@@ -422,7 +422,9 @@ impl View3dSlot {
             overlay_skip.filter(|_| drawn),
             live,
         );
-        if app.view3d.view.display.settings_open && live {
+        if app.ui.hide_ui {
+            // UI を隠している間は、設定のパネルも軸の印も出さない
+        } else if app.view3d.view.display.settings_open && live {
             settings_panel(ui, app, content, corner.settings);
         } else if drawn {
             // 軸の印（アイコンの下。設定のパネルと重なるので、パネルが開いている間は出さない）
@@ -621,7 +623,7 @@ impl View3dSlot {
         overlay_skip: Option<Skip>,
         live: bool,
     ) -> Corner {
-        if app.view3d.model.is_none() {
+        if app.view3d.model.is_none() || app.ui.hide_ui {
             return Corner::default();
         }
         let lang = app.lang;

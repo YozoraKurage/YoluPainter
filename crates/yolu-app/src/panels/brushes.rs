@@ -12,7 +12,7 @@ use crate::brushes::sample::SampleSpec;
 use crate::brushes::{BrushAction, BrushKey, Category, DropAt, Row};
 use crate::engine::Brush;
 use crate::m2_menu::Popup;
-use crate::state::{Action, AppState};
+use crate::state::{Action, AppState, Tool};
 use crate::toolset::ui::{Dragged, Renaming, Target};
 use crate::toolset::{GroupId, SlotId, ToolsetAction};
 use crate::ui::menu::context_anchor;
@@ -39,7 +39,6 @@ const TOOL_SAMPLE_HEIGHT: f32 = 44.0;
 /// ブラシサイズの丸の 1 マスの最小の幅と、1 段の高さ。幅に入るだけ並べ、入りきらなければ段を足す。
 const SIZE_CELL_MIN: f32 = 30.0;
 const SIZE_ROW: f32 = 42.0;
-const PEN_BUTTON: f32 = 24.0;
 /// 大きさの数字（細い丸の幅に収める）。
 const SIZE_LABEL: t::TextStyle = t::TextStyle {
     size: 9.0,
@@ -724,7 +723,6 @@ pub(super) fn footer(ui: &mut Ui, app: &mut AppState, bar: Rect, with_import: bo
 /// ブラシ・消しゴムのツールプロパティ: 今の設定の見本（右上に詳細のウィンドウのボタン）と、目のボタンで出した行（詳細の区分の順。値も影響元のボタンも、
 /// 詳細の欄と同じ行）。
 pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Context) {
-    let lang = app.lang;
     let area = rows.full_row(4.0 + TOOL_SAMPLE_HEIGHT + 6.0, 0.0);
     // 今の設定の見本
     let sample = Rect::from_min_size(
@@ -740,11 +738,29 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Conte
         SampleSpec::tool(is_eraser(app)),
         egui::Id::new("brush.sample.tool"),
     );
-    // 詳細のウィンドウのボタン（見本の右上）
+    for category in Category::ALL {
+        for row in Row::of(category) {
+            if rows::is_shown(&app.m2.brush, row) && super::brush_rows::visible(app, row) {
+                super::brush_rows::show(ui, app, ctx, row, &mut super::brush_rows::At::Tool(rows));
+            }
+        }
+    }
+}
+
+/// ツールプロパティの下の端の帯を出すツール（ブラシの詳細のボタンを置く）。
+pub fn has_detail_footer(tool: Tool) -> bool {
+    matches!(tool, Tool::Brush | Tool::Eraser)
+}
+
+/// ツールプロパティの下の端の帯: ブラシの詳細のウィンドウを開け閉めするボタン（右寄せ）。
+pub fn detail_footer(ui: &mut Ui, app: &mut AppState, bar: Rect) {
+    let lang = app.lang;
+    w::fill(ui.painter(), bar, t::PANEL_HEADER);
+    w::hline(ui.painter(), bar.left(), bar.right(), bar.top(), t::BORDER);
     let open = app.brushes.ui.detail.open;
     let button = Rect::from_min_size(
-        pos2(sample.right() - PEN_BUTTON - 2.0, sample.top() + 2.0),
-        vec2(PEN_BUTTON, PEN_BUTTON),
+        pos2(bar.right() - 4.0 - 26.0, bar.top() + 2.0),
+        vec2(26.0, bar.height() - 4.0),
     );
     if w::icon_button(
         ui,
@@ -759,13 +775,6 @@ pub fn props(ui: &mut Ui, app: &mut AppState, rows: &mut Rows, ctx: &egui::Conte
     .clicked()
     {
         app.brushes.ui.detail.open = !open;
-    }
-    for category in Category::ALL {
-        for row in Row::of(category) {
-            if rows::is_shown(&app.m2.brush, row) && super::brush_rows::visible(app, row) {
-                super::brush_rows::show(ui, app, ctx, row, &mut super::brush_rows::At::Tool(rows));
-            }
-        }
     }
 }
 

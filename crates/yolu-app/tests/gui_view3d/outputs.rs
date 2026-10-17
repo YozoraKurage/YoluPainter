@@ -1540,6 +1540,46 @@ fn the_export_window_is_a_command_without_a_default_key_that_the_user_can_assign
     );
 }
 
+/// 「前と同じ設定で書き出す」はメニューの「テクスチャを書き出す…」の下にあり、既定のキーは無く、設定で割り当てられる。まだ書き出していなければウィンドウが開く。
+#[test]
+fn export_again_is_a_menu_item_under_export_and_a_command_the_user_can_assign() {
+    use yolu_app::keymap::Scope;
+    let mut h = app(1280.0, 800.0, 64);
+    let command = yolu_app::commands::find("file.export_again").expect("操作の一覧にある");
+    assert_eq!(
+        command.runnable(),
+        Some(Action::Export(ExportAction::Again))
+    );
+    assert_eq!(yolu_app::shortcuts::menu_key("file.export_again"), None);
+    let group: yolu_app::keyconfig::GroupKey = ("file.export_again", Scope::Everywhere);
+    assert!(yolu_app::shortcuts::editor::all_groups(h.app()).contains(&group));
+    let at = menu_title(&h, "ファイル").center();
+    click(&mut h, at);
+    let export = popup_item(&h, "テクスチャを書き出す…");
+    let again = popup_item(&h, "前と同じ設定で書き出す");
+    assert!(again.top() > export.top() && again.top() < export.bottom() + 40.0);
+    // まだ書き出していないので、押すと書き出しのウィンドウが開く
+    assert!(!h.export().window.open);
+    click(&mut h, again.center());
+    assert!(h.export().window.open);
+    // 空いているキーを割り当てると、そのキーでも実行できる（描いている最中でなければ）
+    apply(&mut h, Action::Export(ExportAction::CloseWindow));
+    let trigger = yolu_app::keyconfig::parse_trigger("Ctrl+Alt+R").unwrap();
+    h.keys_mut().set(group, vec![trigger]);
+    h.app_mut().keys_changed();
+    h.run();
+    key(
+        &h,
+        Key::R,
+        egui::Modifiers {
+            alt: true,
+            ..egui::Modifiers::COMMAND
+        },
+    );
+    h.run();
+    assert!(h.export().window.open);
+}
+
 /// 置き換えの確認のウィンドウ（モーダル）が前に出ている間、はみ出して見えている下の書き出しのウィンドウは押しを受けない
 /// （書き出しのウィンドウもモーダルにすると、確認のウィンドウの外の押しが下のウィンドウへ通り、閉じてしまう）。
 #[test]

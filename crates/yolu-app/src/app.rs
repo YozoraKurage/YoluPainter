@@ -65,6 +65,11 @@ pub enum Tab {
 }
 
 impl Tab {
+    /// ビュー（キャンバスと 3D ビュー。足した 3D ビューも）か。UI を隠している間も出す。
+    pub fn is_view(self) -> bool {
+        matches!(self, Tab::Canvas | Tab::View3d | Tab::View3dMore(_))
+    }
+
     /// ドックに出るタブ全部（ポーズは、スキンのあるモデルを読むと足される）。
     pub const ALL: [Tab; 18] = [
         Tab::SubTools,
@@ -352,6 +357,62 @@ pub fn dock_area(dock: &mut DockState<Tab>, id: Id, style: egui_dock::Style) -> 
         .show_leaf_collapse_buttons(false)
         .show_leaf_close_all_buttons(false)
         .tab_context_menus(false)
+}
+
+/// ビュー（キャンバスと 3D ビュー）のタブだけを残した、タブの見出しを隠した並びの写し（UI を隠している間の描き先。ビューが入っていた組と分かれ目は残る）。
+fn view_only_dock(dock: &DockState<Tab>) -> DockState<Tab> {
+    // egui_dock の `filter_tabs`・`retain_tabs` は入れ子の分かれ目の整理で並びを崩すので、タブを 1 つずつ外す（`remove_tab` は分かれ目を正しく畳む）
+    let mut views = dock.clone();
+    while let Some(path) = views.find_tab_from(|tab| !tab.is_view()) {
+        if views.remove_tab(path).is_none() {
+            break;
+        }
+    }
+    for (_, node) in views.iter_all_nodes_mut() {
+        if let egui_dock::Node::Leaf(leaf) = node {
+            leaf.tab_bar_hidden = true;
+        }
+    }
+    views
+}
+
+/// ドックを出す。UI を隠している間は、ビュー（キャンバスと 3D ビュー）のタブだけの写しを、タブの見出しなしで出す（本物の並びは変えない。
+/// ビューの「+」は呼び手が出す）。
+fn show_dock(
+    ui: &mut Ui,
+    dock: &mut DockState<Tab>,
+    style: egui_dock::Style,
+    tabs: &mut Tabs<'_>,
+    hide_ui: bool,
+) {
+    if !hide_ui {
+        dock_area(dock, Id::new("yolu.dock"), style).show_inside(ui, tabs);
+        return;
+    }
+    let mut views = view_only_dock(dock);
+    // 隠したタブの見出しを戻す三角のボタンと、見出しの代わりの掴む所も出さない
+    let mut style = style;
+    style.buttons.show_tab_bar_size = 0.0;
+    style.buttons.show_tab_bar_hover_expand = 0.0;
+    style.tab.tab_body.hidden_tab_bar_drag_height = Some(0.0);
+    dock_area(&mut views, Id::new("yolu.dock"), style)
+        .hidable_tab_bars(true)
+        .show_inside(ui, tabs);
+}
+
+/// Tab は egui が「次の部品へ」とも読むので、文字の欄に移らなかった Tab は、フォーカスを外す（残ると、次のフレームからキーの割り当てが
+/// egui の入力として止まり、UI を隠した後に、もう一度 Tab を押しても戻らない）。割り当てが取った Tab は入力から消えているので、
+/// UI を隠す・戻すを切り替えたフレームも同じに扱う。
+fn release_tab_focus(ctx: &egui::Context, hide_ui: bool) {
+    let hide_key = Id::new("yolu.hide_ui_drawn");
+    let was_hidden = ctx.data(|d| d.get_temp::<bool>(hide_key)).unwrap_or(false);
+    ctx.data_mut(|d| d.insert_temp(hide_key, hide_ui));
+    let plain_tab = ctx.input(|i| i.key_pressed(egui::Key::Tab) && !i.modifiers.any());
+    if (plain_tab || was_hidden != hide_ui) && !ctx.text_edit_focused() {
+        if let Some(focused) = ctx.memory(|m| m.focused()) {
+            ctx.memory_mut(|m| m.surrender_focus(focused));
+        }
+    }
 }
 
 /// 「+」の幅（点。タブの行の高さと同じ正方形）。
@@ -2280,6 +2341,39 @@ impl YoluApp {
         }
     }
 
+    /// メニューの帯のほかの、オプションバー・状態の帯・ツールの列（UI を隠している間（Tab）は状態の帯だけを出す）。
+    fn show_chrome(&mut self, ui: &mut Ui, hide_ui: bool) {
+        if !hide_ui {
+            egui::Panel::top("yolu.options")
+                .exact_size(t::OPTIONS_BAR_HEIGHT)
+                .frame(Frame::NONE)
+                .show(ui, |ui| {
+                    let r = ui.max_rect();
+                    w::enabled_scope(ui, "yolu.options.scope", !self.state.is_stroking(), |ui| {
+                        shell::options_bar(ui, &mut self.state, r)
+                    });
+                });
+        }
+        egui::Panel::bottom("yolu.status")
+            .exact_size(t::STATUS_BAR_HEIGHT)
+            .frame(Frame::NONE)
+            .show(ui, |ui| {
+                let r = ui.max_rect();
+                shell::status_bar(ui, &self.state, r);
+            });
+        if hide_ui {
+            return;
+        }
+        egui::Panel::left("yolu.tools")
+            .exact_size(t::TOOL_STRIP_WIDTH)
+            .frame(Frame::NONE)
+            .resizable(false)
+            .show(ui, |ui| {
+                let r = ui.max_rect();
+                shell::tool_strip(ui, &mut self.state, r);
+            });
+    }
+
     fn frame_body(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
         // このアプリのキーの割り当て（ショートカットの設定）を、このスレッドで効かせる
@@ -2498,30 +2592,8 @@ impl YoluApp {
             }
             None => {}
         }
-        egui::Panel::top("yolu.options")
-            .exact_size(t::OPTIONS_BAR_HEIGHT)
-            .frame(Frame::NONE)
-            .show(ui, |ui| {
-                let r = ui.max_rect();
-                w::enabled_scope(ui, "yolu.options.scope", !self.state.is_stroking(), |ui| {
-                    shell::options_bar(ui, &mut self.state, r)
-                });
-            });
-        egui::Panel::bottom("yolu.status")
-            .exact_size(t::STATUS_BAR_HEIGHT)
-            .frame(Frame::NONE)
-            .show(ui, |ui| {
-                let r = ui.max_rect();
-                shell::status_bar(ui, &self.state, r);
-            });
-        egui::Panel::left("yolu.tools")
-            .exact_size(t::TOOL_STRIP_WIDTH)
-            .frame(Frame::NONE)
-            .resizable(false)
-            .show(ui, |ui| {
-                let r = ui.max_rect();
-                shell::tool_strip(ui, &mut self.state, r);
-            });
+        let hide_ui = self.state.ui.hide_ui;
+        self.show_chrome(ui, hide_ui);
         // 3D ビューの並び（ドックのタブ）とビューの状態・描き先を突き合わせ、このフレームに見せるメッシュマップとユーザーチャンネルを描き手へ
         self.sync_view3d_tabs();
         self.view3d.begin_frame();
@@ -2546,7 +2618,7 @@ impl YoluApp {
                     windows_allowed: true,
                 };
                 let bar_height = style.tab_bar.height;
-                dock_area(&mut self.dock, Id::new("yolu.dock"), style).show_inside(ui, &mut tabs);
+                show_dock(ui, &mut self.dock, style, &mut tabs, hide_ui);
                 self.tab_rects = tabs.tab_rects;
                 let pass = detached::DockPass {
                     grabbed: tabs.grabbed,
@@ -2554,7 +2626,10 @@ impl YoluApp {
                     context: tabs.context,
                 };
                 // 3D ビューの組のタブの行の右端の「+」: 3D ビューを足して、その組の前に出す
-                if let Some(path) = add_view_buttons(ui, &self.dock, bar_height, &self.state) {
+                if hide_ui {
+                    // UI を隠している間は、ビューの「+」も出さない
+                } else if let Some(path) = add_view_buttons(ui, &self.dock, bar_height, &self.state)
+                {
                     self.add_view3d(path);
                 }
                 pass
@@ -2591,6 +2666,7 @@ impl YoluApp {
         detached::refuse_foreign_drop(&ctx);
         // ツールの列・グループのタブ・ブラシの行をまたぐドラッグは、全部を描いたあとに落とす先へ当てる
         crate::toolset::ui::end_frame(&ctx, &mut self.state);
+        release_tab_focus(&ctx, self.state.ui.hide_ui);
         // 3D ビューのタブのどれかが見えているか（次のフレームのキー入力・メニューの取り消しの行き先が読む）
         self.state.view3d.visible = self.view3d.any_drawn();
         self.state.ui.canvas_visible = std::mem::take(&mut self.state.ui.canvas_drawn);

@@ -64,6 +64,9 @@ pub enum ExportAction {
     Destination(PathBuf),
     /// ウィンドウの「書き出す」: 今の出力テンプレートと出力先・チェックしたセットで、下の書き出しの操作へ渡す。
     Run,
+    /// ウィンドウを開かずに、このプロジェクトで最後に「書き出す」を押したときの出力テンプレート・出力先・セットで書き出す
+    /// （まだ書き出していなければ、ウィンドウを開く）。
+    Again,
     /// テンプレート（ID）の出力先のフォルダが決まった。`sets` は書き出すセット（uid。None は全部）。もうあるファイルがあれば、確認のウィンドウを出す。
     TemplateTo {
         id: String,
@@ -772,7 +775,8 @@ impl AppState {
             | ExportAction::SetChecked { .. }
             | ExportAction::ChooseDestination
             | ExportAction::Destination(_)
-            | ExportAction::Run => self.export_window_apply(action),
+            | ExportAction::Run
+            | ExportAction::Again => self.export_window_apply(action),
             ExportAction::TemplateTo { id, dir, sets } => {
                 self.start_export(&What::Template { id, sets }, &dir, false)
             }

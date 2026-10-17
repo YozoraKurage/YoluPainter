@@ -131,6 +131,7 @@ The side buttons act as the right button (in 2D they pick a color; in 3D they or
 | Settings… | `Ctrl+,` |
 | Reset Rotation | `Shift+R` |
 | Mode Pie Menu | `Ctrl+Tab` |
+| Hide or Show UI | `Tab` |
 | Flip View | `H` |
 | Rotate View Left | `-` |
 | Rotate View Right | `^` / `=` |
