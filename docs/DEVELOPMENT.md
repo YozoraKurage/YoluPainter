@@ -12,9 +12,9 @@ cargo test --workspace --locked
 
 GPU・画面のテストには動作する描画バックエンドが必要です。GPU テストにはアダプターがないと処理を省くものがあるため、結果の passed だけで描画確認済みとは判断せず、標準エラーの理由も確認してください。環境変数 `YOLUPAINTER_REQUIRE_GPU=1` を付けると、省かずに落とします（CI の画面のテストは付けています）。詳しくは [yolu-gpu](../crates/yolu-gpu/README.md#検証と計測) を参照してください。
 
-レイヤーの合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も Unity 実装（C#）の正解と照らしています。
+レイヤーの合成の式は Rust の f32 の式が正本で、合成を通る正解は Rust で撮り直しています。正解を撮り直すときは `YOLU_GOLDEN_UPDATE=1 cargo test -p yolu-core -p yolu-io` で、違った正解だけを今の出力で書き直し、差分を見て意図した変化だけかを確かめます。Normal のチャンネルの合成とブラシの画素も f32 の式で、Rust で撮り直しています。フィルター・Generator の値など f64 のままの式は、今も 0.4.x までの Unity ブリッジ（C#）の正解と照らしています。
 
-前の Unity 実装（C#）との照合には、リポジトリに収録された人工データを使います。正解（`crates/yolu-core/tests/golden/`・`crates/yolu-io/tests/fixtures/` など）は前の Unity 実装（C#）の出力を引き継いだ物で、C# の出力と照らし直す道は残していません。作り直すときは Rust の出力から作ります（`YOLU_GOLDEN_UPDATE=1` に対応するテストはそれで）。効果とレイヤーのロック・レイヤーの操作のつなぎ目の照合で食い違ったときは、テストを `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出します。I/O と PSD のデータ形式・作り直し方は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。
+0.4.x までの Unity ブリッジ（C#）との照合には、リポジトリに収録された人工データを使います。正解（`crates/yolu-core/tests/golden/`・`crates/yolu-io/tests/fixtures/` など）は0.4.x までの Unity ブリッジ（C#）の出力を引き継いだ物で、C# の出力と照らし直す道は残していません。作り直すときは Rust の出力から作ります（`YOLU_GOLDEN_UPDATE=1` に対応するテストはそれで）。効果とレイヤーのロック・レイヤーの操作のつなぎ目の照合で食い違ったときは、テストを `SEAM_DUMP_DIR=<フォルダ>` で回して Rust の生のバイト列を書き出します。I/O と PSD のデータ形式・作り直し方は [I/O のフィクスチャ](../crates/yolu-io/tests/fixtures/README.md)と [PSD のフィクスチャ](../crates/yolu-io/tests/fixtures/psd/README.md)を参照してください。
 
 ### aarch64（NEON）のテストを x86_64 の Linux で回す
 
@@ -113,7 +113,7 @@ cargo test -p yolu-io --test ylp format_doc::            # 以前の `--test for
 - macOS（`macos-14`、Apple Silicon）: Windows のジョブの前半と同じ手順で、`cargo build -p yolu-app -p yolu-cli --locked`、core・io・brush-sets・protocol・ops・cli のテスト、app の `--lib`。続けて、束の中の `headless_` のテストのうち `--test headless -- recovery::headless_ livelink_files::headless_`（復旧のロックと、Live Link の受け渡しのフォルダとファイルの置換）だけを回します（更新・ブラシの一覧・選択範囲・ポーズの保存の `headless_` は、このジョブでは回しません。Linux の画面のテストが Unix で回しています）。macOS のタブレットの入力（`pen::mac_tablet`）がビルドできることと、値の直し（`pen::tablet`。OS に依らないので Linux でも回る）に加えて NSEvent の定数との一致のテストが通ることを見ます。GPU・画面の統合テストは対象外です。配る物（.app と ad-hoc の署名）はこのジョブでは作らず、`dist` のジョブ（`dist-build.yml`）が macOS の runner で作ります（[配布の手順](RELEASING.md#macos-の試作)）。
 - どの OS でも [Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) を使い、同じブランチの古い CI は後続の実行で取り消します。
 
-前の Unity 実装（C#）を実行する正解の再生成・照合は、その実装のソースと Unity 同梱の .NET・Mono が必要なため、この CI では回しません。収録済みの人工データを使う Rust の照合テストは通常の `cargo test` に含みます。
+0.4.x までの Unity ブリッジ（C#）を実行する正解の再生成・照合は、その実装のソースと Unity 同梱の .NET・Mono が必要なため、この CI では回しません。収録済みの人工データを使う Rust の照合テストは通常の `cargo test` に含みます。
 
 CI の定義は `actionlint .github/workflows/*.yml` で実行せずに検査できます。runner のバージョンを上げたときは、Ubuntu の Mesa のバージョンによる画面の正解との差を確認してください。ソフトウェア描画での結果は、Windows 実機の描画・ペンタブ・Unity 接続の確認を兼ねません。
 

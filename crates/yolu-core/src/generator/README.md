@@ -63,7 +63,7 @@ SSE4.1・NEON は 2）を 1 組にして計算する。N 画素が同じ格子�
 入力は C# との一致テストと同じ合成入力（`rand`。マップの値が画素ごとに飛ぶので格子の覚えが
 当たらない）と、メッシュのマップに近いなめらかな入力（`smooth`）の 2 通り。
 
-正解 `tests/generator-index.txt` は、前の Unity 実装の C# Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`）で合成した入力を評価した出力を引き継いだ物で、作り直すときは Rust の出力から作る。テストは全画素の SHA-256 をこれと比較する。
+正解 `tests/generator-index.txt` は、0.4.x までの Unity ブリッジの C# Core（タグ `0.4.0` の `Runtime/Core`）で合成した入力を評価した出力を引き継いだ物で、作り直すときは Rust の出力から作る。テストは全画素の SHA-256 をこれと比較する。
 `GEN_THREADS=1` と `4` で並列度を指定できる。
 `cargo run --release -p yolu-core --example generator_bench` は4096²、ウォームアップ1回・計測1回。入力画像と設定の作成は時間に含めず、束縛と返却画像の確保は含める。
 

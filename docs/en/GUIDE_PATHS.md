@@ -61,6 +61,7 @@ The same operations work in the 3D view. Points are bound to the model's triangl
 - The depth searched along the normal starts out from the point spacing and the brush size. Turn off "Automatic projection depth" to set "Projection Depth" yourself. With a shallow depth, parts away from the surface are not drawn.
 - A Fill path can be drawn only when all its points are inside one UV island.
 - A path drawn on another model shows "Drawn on another model" and cannot be edited.
+- When a path is redrawn, it skips the faces hidden in the current 3D view (Hide mode, while that view's eye is open) and the faces of texture sets whose eye is closed, and paints the faces under them ("Hide faces (Hide mode)" in [GUIDE_3D.md](GUIDE_3D.md)). The points do not move.
 - When you replace the model, paths are rebound to nearby faces of the same material and redrawn. A path that cannot be rebound keeps its current pixels and loses the path (only paths on layers locked with "All" stay bound to the previous model). The result reports the counts and the first reason.
 
 ## Symmetry and direction
@@ -77,4 +78,4 @@ With a fill layer selected, "Add Path" in the "Paths" section of Properties star
 
 ## Handing files to older versions and Unity
 
-A `.ylp` that uses two or more paths, path types, tips, symmetry, corners or handles, or paths on fill layers cannot be opened by the 0.4.x standalone app or the Unity version up to 0.4.x. See [GUIDE_FILES.md](GUIDE_FILES.md) for what to watch when handing files over.
+A `.ylp` that uses two or more paths, path types, tips, symmetry, corners or handles, or paths on fill layers cannot be opened by the 0.4.x standalone app or the Unity bridge up to 0.4.x. See [GUIDE_FILES.md](GUIDE_FILES.md) for what to watch when handing files over.

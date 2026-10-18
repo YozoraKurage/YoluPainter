@@ -38,7 +38,7 @@ rayonの並列度を変えても画素と由来は同じ。`max_degree_of_parall
 
 ## 再現と計測
 
-- 合成メッシュの正解は、以前の Unity 実装の C#（Unity ブリッジのタグ `0.4.0`）の出力を引き継いだ物。作り直すときは Rust の出力から作る（不規則なメッシュの照合に使うのは `rough.txt` のSHA-256）。
+- 合成メッシュの正解は、0.4.x までの Unity ブリッジの C#（Unity ブリッジのタグ `0.4.0`）の出力を引き継いだ物。作り直すときは Rust の出力から作る（不規則なメッシュの照合に使うのは `rough.txt` のSHA-256）。
 - `cargo test -p yolu-core -p yolu-io`: 既知値、C#の正解、保存、拒否、取消、並列度、予算の照合。
 - `cargo run --release -p yolu-core --example mesh_bench`: Rustの計測。
 

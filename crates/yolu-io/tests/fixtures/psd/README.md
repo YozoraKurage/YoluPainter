@@ -1,10 +1,10 @@
 # PSDの人工フィクスチャ
 
-`csharp.bin.gz` は以前の Unity 実装の純C# `PsdCodec` と `Tests/Editor/Psd` の人工データから生成した正解集。ユーザーのファイルやPhotoshop/CSPで作った実データは含まない。出典コミットとソース指紋は `source.txt`。
+`csharp.bin.gz` は 0.4.x までの Unity ブリッジの純C# `PsdCodec` と `Tests/Editor/Psd` の人工データから生成した正解集。ユーザーのファイルやPhotoshop/CSPで作った実データは含まない。出典コミットとソース指紋は `source.txt`。
 
 ## テスト
 
-`csharp.bin.gz` は以前の Unity 実装の出力を引き継いだ物で、作り直さない。
+`csharp.bin.gz` は 0.4.x までの Unity ブリッジの出力を引き継いだ物で、作り直さない。
 
 ```sh
 cargo test -p yolu-io --test psd_io psd::
@@ -30,7 +30,7 @@ Rust のテストでは互換モード・原本保持、拒否以外の診断コ
 
 ## PSD の写し（core ⇔ PSD）の正解
 
-`../../golden/psd/` は以前の Unity 実装の `PsdBridge.Export`・`Import` と `PsdCodec` に人工データを通した正解（マスク・グループ・塗りつぶし・調整・ロック・チャンネルごとの合成）。`<事例>.psd` は C# の書き出しのバイト列（取り込み事例は C# が作った PSD）、`<事例>.snap` はそれを C# で取り込んだ文書の中身、`<事例>.refused` は C# が書き出しを断る事例の理由。Photoshop/CSP の実データは含まない。台本は `tests/psd_io/psd_golden.rs` が持つ。
+`../../golden/psd/` は 0.4.x までの Unity ブリッジの `PsdBridge.Export`・`Import` と `PsdCodec` に人工データを通した正解（マスク・グループ・塗りつぶし・調整・ロック・チャンネルごとの合成）。`<事例>.psd` は C# の書き出しのバイト列（取り込み事例は C# が作った PSD）、`<事例>.snap` はそれを C# で取り込んだ文書の中身、`<事例>.refused` は C# が書き出しを断る事例の理由。Photoshop/CSP の実データは含まない。台本は `tests/psd_io/psd_golden.rs` が持つ。
 
 ```sh
 cargo test -p yolu-io --test psd_io psd_golden::

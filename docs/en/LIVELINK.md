@@ -29,7 +29,7 @@ Both sides work out the same path on their own.
 While the standalone application accepts requests, it rewrites this file every 2 seconds, and removes it when it stops accepting or exits.
 
 ```json
-{ "format": 1, "app": "YoluPainter", "version": "0.6.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
+{ "format": 1, "app": "YoluPainter", "version": "0.7.0", "pid": 1234, "updated": "2026-10-07T12:00:00Z" }
 ```
 
 Unity treats the standalone application as running if `updated` (UTC) is less than 6 seconds old. Otherwise it starts the standalone application with `--livelink` and then places
@@ -42,7 +42,7 @@ the request (it need not wait; the standalone application picks it up once it is
   "format": 1,
   "kind": "open",
   "id": "8f0c2a4e-0000-4000-8000-000000000001",
-  "bridge": { "version": "0.6.0", "unity": "2022.3.22f1" },
+  "bridge": { "version": "0.7.0", "unity": "2022.3.22f1" },
   "project": { "root": "C:/Work/MyProject", "name": "MyProject" },
   "target": {
     "key": "GlobalObjectId_V1-2-…",
@@ -152,6 +152,8 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
 - One texture set per material `key` (renderers using the same Unity material share a set).
 - Original texture: the file of the Color destination (`_MainTex`) is read (PNG, TGA, JPG, PSD) and added as the bottom layer "Original" of newly created sets
   and of the untouched first set. Materials without a texture, or with a texture that exists only inside Unity, start white; unreadable files start white with a reason.
+  A set that receives an original texture does not get the white solid fill of a new document (when the set still has the starting form, a white solid fill under an empty layer, the white fill is removed and the original goes at the bottom).
+  When a texture set is assigned to several materials, the original texture and the received look are read from the set's first material.
 - When the original texture is a PSD (sRGB), the set gets the PSD's layers instead of a flattened "Original". It is read as the same copy as File → Import of a PSD;
   the PSD's layers come at the bottom and the set's empty layer stays above them. The set keeps the PSD's canvas size (layers are not resized). What the import drops
   or changes is listed in the notice with the same names as the import check window (no window is shown). The original PSD is only read; exporting a PSD to the
@@ -178,7 +180,7 @@ On a resend or when a `.ylp` is reopened, the standalone application binds sets 
 
 ```json
 { "format": 1, "request": "8f0c2a4e-0000-4000-8000-000000000001", "kind": "exported",
-  "app": { "version": "0.6.0" },
+  "app": { "version": "0.7.0" },
   "problems": [ { "path": "Accessory", "reason": "bone_not_found" } ],
   "files": [ { "material": "guid:0123456789abcdef0123456789abcdef/fileid:2100000", "property": "_MainTex",
                "path": "C:/Work/MyProject/Assets/YoluPainter/Avatar/Avatar_Body_Main.png", "srgb": true, "normal_map": false } ] }

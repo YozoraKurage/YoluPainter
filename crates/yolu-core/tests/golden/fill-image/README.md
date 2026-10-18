@@ -1,6 +1,6 @@
 # 塗りつぶし投影の C# 正解
 
-以前の Unity 実装の C# Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`）の出力を引き継いだ物です。作り直すときは Rust の出力から作ります。すべて人工データです。
+0.4.x までの Unity ブリッジの C# Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`）の出力を引き継いだ物です。作り直すときは Rust の出力から作ります。すべて人工データです。
 
 異方性を切った道（`FillInput::anisotropic`・`shape_anisotropic` が false）の正解です。入れた道の正解は Rust が撮った [`../fill-image-anisotropic/`](../fill-image-anisotropic/README.md) にあります。
 

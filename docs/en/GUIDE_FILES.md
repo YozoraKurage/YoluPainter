@@ -43,6 +43,10 @@ In the window you can choose the checkpoint interval (10 seconds to 5 minutes), 
 
 A file that already exists is confirmed before it is replaced (if you cancel, you are back in the window). If you cancel the export, or a failure happens before the last replacement begins, the original files are not changed.
 
+"Export with Previous Settings" in the File menu (right below "Export Textures…") exports without opening the window, with the output template, output path and texture sets of the last time you pressed "Export" in this project (files that already exist are confirmed the same way). If you have not exported yet, it opens the window. The previous settings are forgotten when you switch projects (they are not saved). Sets deleted or made read-only since then are left out, and if none remain, it is refused.
+
+What is exported is the final result of each channel (the composite of the layer set assigned to its output; a channel set to None gives its default value; see "Layer sets" in [GUIDE_LAYERS.md](GUIDE_LAYERS.md)). A new document has a white solid fill at the bottom, so an exported Color PNG is opaque white (to keep transparency, hide or delete the white fill layer). A texture set assigned to several materials still exports one set of files.
+
 ### Export with a template
 
 "Unity Standard / URP Lit", "HDRP Lit" and "lilToon" write the packed PNGs that shader reads, for every checked texture set, into the folder you choose. Names are `<name>[_<set name>]_<image>.png`, and the set name is added only when there are several sets (unchecking a set does not change the names of the others).
@@ -64,6 +68,7 @@ A file that already exists is confirmed before it is replaced (if you cancel, yo
 - When something would be dropped or look different, such as layer effects, smart objects, text or unsupported adjustments, the "Import PSD Check" window lists it with layer names before importing. Nothing is imported until you press "Import".
 - A PSB, anything other than RGB 8 bit, or a PSD over the budget is refused with a reason and nothing changes. The size limits come from the "Layer memory" budget in the settings.
 - The imported document's composite is compared with the PSD's merged image, and a large difference is shown in the window.
+- A layer whose name is too long (over 4096 UTF-16 units) is imported with its name cut short, and this is shown in the check window. A PSD with more than 2048 layers (the most a `.ylp` can save) is not imported. For a large layer that sticks out of the canvas, only the pixels inside the canvas are read.
 
 How things are sorted, and the limits, are in [PSD.md](../PSD.md) (in Japanese).
 
@@ -87,6 +92,8 @@ When you drop PSDs and images (PNG, JPEG, TGA) onto the window, the "Import File
 - The mode is "Bake and write" (keeps the layers, and writes filters, generators, images, paths and other features PSD has no form for as evaluated pixels) or "Flatten to one layer" (writes only the composite, as a single layer).
 - Channels start with Color only. If you choose several, one `name_channel.psd` is written per channel.
 - When something will be baked, rounded or dropped, the "Export PSD Check" window lists it with layer names before writing. Nothing is written until you press "Write".
+- A document with two or more layer sets is written with one top-level group per layer set (named after the layer set), and only the groups of the layer sets that output the exported channel are visible. For a channel whose output is None, all the groups are hidden and a fill layer of the default value (`Default`) is added at the bottom. Both keep the PSD's composite the same as the final result.
+- A fill layer with a point gradient is baked into pixels and shown in the check window (the points' positions and colors are not kept in the PSD).
 - The export is of a copy of the document and the document does not change. Effects stay in the document, but baked layers carry no effect settings, so importing the PSD again does not bring the effects back.
 
 Opening the file in Photoshop or CLIP STUDIO PAINT can re-evaluate the adjustment layers and change how it looks. How it is written, and the limits, are in [PSD.md](../PSD.md) (in Japanese).
@@ -122,13 +129,15 @@ The folder last chosen is kept per kind in `places.conf` in the settings folder 
 
 ## Handing files to older versions and Unity
 
-A `.ylp` that uses any of these is saved under a newer version number that the 0.4.x standalone app and the Unity version up to 0.4.x cannot open (the Unity bridge does not open `.ylp` from 0.5.0):
+A `.ylp` that uses any of these is saved under a newer version number that the 0.4.x standalone app and the Unity bridge up to 0.4.x cannot open (the Unity bridge does not open `.ylp` from 0.5.0):
 
 - Text layers
 - Two or more paths, path types, tips, symmetry, corners or handles, or paths on fill layers ([GUIDE_PATHS.md](GUIDE_PATHS.md))
 - Point gradients, an image with anisotropic filtering turned off, 0.5.0 effects, or "Across UV seams" turned off ([GUIDE_FILL.md](GUIDE_FILL.md))
 - A bake priority changed from the default ([GUIDE_3D.md](GUIDE_3D.md))
 
-A document that uses none of them keeps the earlier version. To go back to the Unity version up to 0.4.x, remove the feature and save again.
+A document that uses none of them keeps the earlier version. To go back to the Unity bridge up to 0.4.x, remove the feature and save again.
 
 A `.ylp` that uses any of these cannot be opened by the standalone app up to 0.5.x either: paths whose brush anti-aliasing is not "None" (a new path takes the anti-aliasing of the current brush, which is Medium by default; see [BRUSH.md](../BRUSH.md), in Japanese), rulers (on layers or groups, symmetry rulers too), or paths with a diagonal line symmetry or a line symmetry of 6 or more lines ([GUIDE_PAINT.md](GUIDE_PAINT.md)). It is refused by the version number alone, without touching the file. Set the anti-aliasing of each path to "None" and save again, and the paths keep the earlier version. Turn the path symmetry off, or set it again from a symmetry ruler with 2 or 4 lines in the vertical or horizontal direction, then delete all rulers and save again, and it opens. Which version reads how much is in [UNITY.md](UNITY.md) and [YLP_FORMAT.md](../YLP_FORMAT.md) (in Japanese).
+
+A document with two or more layer sets or with a channel whose output is None ("Layer sets" in [GUIDE_LAYERS.md](GUIDE_LAYERS.md)), and a project with a texture set assigned to two or more materials (content format 9 of the `.ylp`), cannot be opened by the standalone app up to 0.6.x (it refuses with a reason). With one layer set and one material per set, the file is written in the same form as before.

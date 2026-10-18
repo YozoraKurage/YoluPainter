@@ -6,13 +6,13 @@ This page covers viewing a model in the 3D view, moving around it, and painting 
 
 ## Move around the 3D view
 
-Rotate with a right drag. An `Alt`+left drag also rotates, and when the direction comes within 15° of an axis view (front, back, right, left, top, bottom) it snaps to that view. While the right button is held, `W` / `S` move the view forward and back, `A` / `D` left and right, and `Q` / `E` down and up (`Shift` for faster). Pan with a middle drag or `Space`+left drag. Zoom with the wheel or `Ctrl+Space`+left drag. Releasing the right button without moving it picks the value of that face as the paint color (eyedropper; with Polygon Fill it opens the island menu). `.` over the 3D view fits the faces of the current texture set, and "Fit the whole model in view" in the top right fits the whole model. All the keys are in [GUIDE_KEYS.md](GUIDE_KEYS.md).
+Rotate with a right drag. An `Alt`+right drag is the snap orbit: it switches from the current view to the axis view (front, back, right, left, top, bottom) 90° away in the direction you drag (whichever of horizontal and vertical is larger). One drag switches only once; to keep going, release and press again (when the view is not on an axis, it moves from the nearest axis view). An `Alt`+left drag does nothing in the 3D view. While the right button is held, `W` / `S` move the view forward and back, `A` / `D` left and right, and `Q` / `E` down and up (`Shift` for faster). Pan with a middle drag or `Space`+left drag. Zoom with the wheel or `Ctrl+Space`+left drag. Releasing the right button without moving it picks the value of that face as the paint color (eyedropper; with Polygon Fill it opens the island menu). `.` over the 3D view fits the faces of the current texture set, and "Fit the whole model in view" in the top right fits the whole model. All the keys are in [GUIDE_KEYS.md](GUIDE_KEYS.md).
 
 ### Axis views and orthographic
 
 Below the icons in the top right of the 3D view is the axis widget (red X, green Y and blue Z balls). Pressing a lettered ball looks at the model from that axis's side (X is the Right view, Y the Top view, Z the Front view; the small unlettered balls are the opposite Left, Bottom and Back views). Pressing the ball in the middle switches between perspective and orthographic (it is filled white while the view is orthographic). Dragging on the widget rotates the view. The widget is hidden while the light, environment and tone mapping settings panel is open. The View Pie Menu also has the Front, Back, Right, Left, Top and Bottom views and Toggle Orthographic (the pie has no key at first; see "Change shortcuts" in [GUIDE_KEYS.md](GUIDE_KEYS.md)).
 
-Choosing an axis view, or snapping onto an axis with an `Alt`+left drag, makes the view orthographic. Rotating off the axis brings back perspective. A projection you switched with the middle ball or the pie menu stays when you rotate. Turn off "Orthographic on axis views" under "3D View" in the settings window to keep perspective on axis views as well.
+Choosing an axis view, or switching to an axis view with the snap orbit (`Alt`+right drag), makes the view orthographic. Rotating off the axis brings back perspective. A projection you switched with the middle ball or the pie menu stays when you rotate. Turn off "Orthographic on axis views" under "3D View" in the settings window to keep perspective on axis views as well.
 
 In orthographic, near and far parts look the same size, and the brush circle paints at the same size on the surface at any depth. Painting, picking colors, selecting and placing path points land where you see them in orthographic too. Zooming with the wheel changes how much of the scene is in view, and `W` / `S` while the right button is held zoom in and out instead of moving forward and back. Switching back to perspective keeps the size you zoomed to. The view (its direction and projection) is not saved in the file.
 
@@ -24,9 +24,15 @@ Each material of the model gets a texture set, and you switch between them in th
 
 ## Change how the model looks
 
-There are three icons in the top right of the 3D view.
+The dropdown in the top left of the 3D view ("3D shading") chooses what to show. When you add more 3D views, each view has its own choice ("Add more 3D views" below).
 
-- "3D shading": choose Material (PBR) (the same BRDF as Unity Standard, showing Roughness, Metallic, Normal and Emission), Neutral, Channel Only (Color, Roughness, Metallic, Normal, Emission, Height) or Mesh Map Only (the baked maps).
+- Material (PBR) (the same BRDF as Unity Standard, showing Roughness, Metallic, Normal and Emission)
+- Neutral
+- Channel Only (Color, Roughness, Metallic, Normal, Emission, Height, and the user channels of the current texture set). A user channel is looked up by name, and the faces of a texture set without a channel of that name are shown as a checkerboard
+- Mesh Map Only (the baked maps. The faces of every texture set show the map baked in that set, and the faces of a set without one are a checkerboard)
+
+There are two icons in the top right.
+
 - "Light, environment, tone mapping": opens the settings panel.
 - "Fit the whole model in view".
 
@@ -37,6 +43,16 @@ The settings panel has three pages.
 - "Navigation": the orbit center and the zoom center.
 
 The display textures sent to the 3D view are padded beyond the UVs, so island edges do not bleed when you look from a distance (saving and exports are unchanged). When the 3D picture is shown smaller, for example because of the GPU memory budget, a mark appears in the top right. [PREVIEW.md](../PREVIEW.md) (in Japanese) has the details of the look and its speed.
+
+## Add more 3D views
+
+The "+" ("Add 3D View") to the right of the 3D view tabs adds a 3D view (up to 8 in all). Like other panels, an added view can be split and arranged in the dock, moved to its own window, or closed with × (the first 3D view cannot be closed). Use it to look from different directions at once, or to put a result channel and a mesh map side by side.
+
+- With two or more views, a tab title shows the view's name and what it shows, such as "3D View · Material" or "3D View 2 · Roughness".
+- The camera (the view and orthographic) and what is shown (the dropdown in the top left) belong to each view. The light, environment, tone mapping and quality settings are shared by all views.
+- The model, the texture sets, the paint settings and the pose are shared, and what you paint in any view shows in all of them.
+- The view under the pointer takes the input (with two or more views, a thin line marks its edge). If the pointer leaves for another view during a stroke, the stroke is painted to the end with the camera of the view it started in.
+- Only the arrangement of the views (the panel layout) is saved. The camera and what each view shows are not saved, so after reopening, a view that showed a mesh map or a user channel may be back on Material.
 
 In the Material panel in the right dock, "Look" chooses "Standard (PBR)" or "lilToon" for each texture set. lilToon draws a reproduction of the lilToon look, and its color, normal map, reflection and advanced values can be edited in the fields. "lilToon Template" creates and assigns the user channels for the masks of the features you turned on.
 
@@ -56,15 +72,15 @@ Brush settings work in the 3D view with the same formulas as on the 2D canvas: S
 - If a brush mark does not fit in the memory of one operation, the whole stroke is cancelled, as on the 2D canvas (no part is left unpainted).
 - When you move a large brush quickly, painting (and reflecting what was painted in the 3D display) is limited to between 8 and 40 ms per frame so the window does not freeze. When the work that has piled up is expected to take more than about 0.3 s, the limit widens to catch up; otherwise it stays at 8 ms. The paint lags a little behind the pen and keeps going after you lift it until it is done (aim: within 0.5 s; when painting cannot keep up, for example with a very fast pen and a long line or a large document, the lag grows with the length of the line). If you start the next operation while it is still being painted (undo, save, a new stroke, a tool key, the wheel, closing the window and so on), the rest is painted and committed first, and then the operation goes through. `Esc` works the same way: it does not throw away a line you have already lifted the pen from (an `Esc` before you lift still cancels the whole stroke). When it is done, it becomes one undo step.
 
-While the 3D view is shown, the brush properties gain a "3D" group.
+The fields for painting in 3D are in the Stroke category of the Brush Details window, under the heading "3D" (only while the 3D view is shown and has a model). The values are app-wide settings, not per brush: the same values apply to every brush (they are saved in the settings file).
 
 | Field | What it does |
 |---|---|
 | Alignment | "Camera" (the default) projects the brush shape on the screen onto the surface from the camera. "Tangent \| Wrap" reads the brush shape by distance along the surface, so it wraps over edges and curves at the same size (it also paints the side the camera cannot see and across UV seams; faces that point opposite to the face under the brush center are not painted unless "Paint back faces" is on). While "Tangent \| Wrap" is chosen, "Paint hidden areas" and "Fade by angle" are not used |
 | Paint hidden areas | Also paints surfaces hidden behind nearer ones under the brush |
 | Paint back faces | Also paints faces that point away from the camera |
-| Fade by angle | Paints more lightly where the surface turns away from the view ("Fade start", "Fade end") |
-| Seam bleed | How far to paint outside the edges of UV islands so seams do not show |
+| Fade by angle | Paints more lightly where the surface turns away from the view ("Fade start", "Fade end"; on at first, fading from 80° and not painting from 85°) |
+| Seam bleed | How far to paint outside the edges of UV islands (in texture pixels; 2 px at first, up to 16 px) so seams do not show where you paint in the 3D view. Outside the UVs of exported images, the export "Padding" dilates the colors ("Export PNG files" in [GUIDE_FILES.md](GUIDE_FILES.md)) |
 
 ### Drag on the screen
 
@@ -82,7 +98,7 @@ Gradient and Shape are set by dragging on the screen of the 3D view. When you re
   - **How it looks**: the 3D rulers you can see are drawn over the 3D view (Visible In and the eye work as for 2D rulers). A symmetry ruler shows the mirror plane's square and the axis line for a 2-line symmetry; otherwise the axis line and lines from the center on the plane perpendicular to the axis. A straight ruler is a line through a and b with a circle at each end, Parallel is a few lines in its direction, Concentric is three circles, and Perspective is the vanishing point and lines from it. A ruler that is not in effect (a special ruler without the mark, or a straight ruler while Snap to Ruler is off) is faint, and the selected ruler (one just created on the selected layer, or chosen on a row in Properties; a ruler created with "Create on Edit Layer" off is not selected) is orange. 2D rulers are not shown in the 3D view.
   - **Snapping**: while Snap to Ruler and Snap to Special Ruler are on, the points of brush and eraser strokes in the 3D view are pulled onto lines projected to the screen with the camera at the start of the stroke (the camera does not move during a stroke). A straight ruler pulls onto the straight line through the projected a and b, and only when the stroke starts near the line (within about 26 points on the screen). Parallel pulls onto the line through the pressed point on the face in the direction `a`→`b`, and Perspective onto the line from the pressed point to the vanishing point (with 2 points, the one closer to the direction of the first movement). Concentric pulls onto the circle around the axis through `a` (the ruler's direction), at the height of the pressed point on the face (the circle through the pressed point, so it does not jump to a circle away from it), projected to the screen as 256 segments (the circles drawn are at the height of `a`). When the press is outside the model, only a straight ruler pulls. Symmetry does not pull; it copies.
 
-3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (if you move, it is the snap orbit). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together. These two are the same settings as on the 2D canvas. Because the 3D source is set by a point on a surface, the clone's "Offset X" and "Offset Y" fields are dimmed while only the 3D view is shown. Switching texture sets forgets the source.
+3D Smudge and Clone sample across UV island seams. Set the clone source with an `Alt`-click released without moving (moving with `Alt` and the left button held does nothing in the 3D view). "Aligned" keeps the offset from the previous stroke, and "All layers" reads the visible layers together. These two are the same settings as on the 2D canvas. Because the 3D source is set by a point on a surface, the clone's "Offset X" and "Offset Y" fields are dimmed while only the 3D view is shown. Switching texture sets forgets the source.
 
 `Shift`-click draws a straight line from the end of the previous stroke (the last point that hit a surface) to the clicked point (with the mouse and the pen; when there is no previous point, holding `Shift` and dragging locks the first direction you move in to 45° steps). A contact with `Ctrl` held does not paint with the pen but paints with the mouse. The force of a touch, such as a finger, becomes the pressure. These also work the same as on the 2D canvas ([GUIDE_PAINT.md](GUIDE_PAINT.md)). The Fill tool's "Similar colors" also fills the same extent as in 2D, from the pixel that the UV of the pressed surface points to.
 
@@ -128,9 +144,21 @@ A model whose FBX contains takes (animations) shows a "Takes" section. Pick a ta
 
 "Pose Presets" saves the current pose under a name in `pose_presets/` in the settings folder. A preset holds the differences of the bones that differ from rest, by bone name path, so it applies to a model with the same bone names (BlendShapes are not included, and bones that do not fit are skipped with reasons). You can apply a preset, apply it mirrored, overwrite it with the current pose, rename it or delete it. Mirroring uses the naming `.L`/`.R`, `_L`/`_R`, `Left`/`Right` and 左/右 to move the pose to the paired bone.
 
-"Hide Surfaces" hides the faces that a selected bone influences (faces whose three vertices average at least the "Threshold" weight on the bone; "Include Children" adds the bones under it) from the 3D view. Hidden faces are also ignored by painting, ranges and the eyedropper (the 2D canvas and saving are not affected). A way of hiding can be saved under a name in `hide_presets/`, and several can be active at once.
+"Hide Surfaces" hides the faces that a selected bone influences (faces whose three vertices average at least the "Threshold" weight on the bone; "Include Children" adds the bones under it) from the current 3D view (the hiding belongs to each view; it is the same as "Hide by Bone" in "Hide faces (Hide mode)" below). Hidden faces are also ignored by painting, ranges and the eyedropper (the 2D canvas and saving are not affected). A way of hiding can be saved under a name in `hide_presets/`, and several can be active at once.
 
 The pose of the project's model is saved in the `.ylp` and comes back when the same model is opened (bones and BlendShapes that do not fit are skipped with reasons).
+
+## Hide faces (Hide mode)
+
+To paint or draw paths on faces under clothes, or to compare the body alone, the body with clothes and another pose side by side, you can hide faces in each 3D view. Hide mode is a fourth mode next to Paint, Edit and Pose. Enter it with the mode dropdown at the left end of the options bar, the `Ctrl+Tab` pie menu or View → Mode ("Modes" in [GUIDE_START.md](GUIDE_START.md)).
+
+- **Select**: with "Select UV Island" in the tool strip on the left, click a face, or with "Rectangle Select", drag a box, to select its UV island (`Shift` adds, `Ctrl` removes). `Ctrl+A` selects all and `Ctrl+D` deselects. What is hidden together is the faces connected by edges in both the UVs and 3D positions (on a model whose left and right UVs overlap, the faces on the other side are not hidden with them).
+- **Hide and show**: `H` hides the selected faces and `Alt+H` shows all (the buttons in the strip do the same).
+- **Drawer**: the handle at the right edge of each view opens a drawer with "Hidden", "Hide by Bone", "Presets" and "Hide Settings" ("Show Outline of Hidden Faces" and "Keep Selection After Hiding"). Each view opens and closes its own.
+- **Shelf**: in Paint, Hide and Pose modes, a small widget sits in the bottom left of each view. Its eye turns that view's hiding on and off, and ▽ chooses a "Hide Preset" and a "Pose Preset" ("Current Pose", "Rest Pose" and the saved presets). Both affect only that view. A view showing a pose preset has no rotation gizmo.
+- **Bone rings**: in Hide and Pose modes, a ring is drawn at every bone. In Pose mode, clicking a ring selects that bone before any face.
+
+The hiding belongs to each view. In a view with hidden faces, painting, the range tools, the eyedropper and redrawing paths skip the hidden faces and hit the faces under them. The 2D canvas, saving and exports are not changed. The hidden state, whether the drawer and shelf are open, and the hide settings are not saved and are not part of undo. A way of hiding that would hide every face, and changes while you are painting, are refused. A hide preset keeps only the hide-by-bone items (UV island selections belong to one model, so they are not kept).
 
 ## Bake mesh maps
 

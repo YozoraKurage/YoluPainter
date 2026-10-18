@@ -1,13 +1,13 @@
 # アイコンの第三者表記
 
-白・48 px の PNG。以前の Unity 実装からコピーしたものと、同じ方法で SVG を白くして描画したものを含む。
+白・48 px の PNG。0.4.x までの Unity ブリッジからコピーしたものと、同じ方法で SVG を白くして描画したものを含む。
 Fluent は [Microsoft Fluent UI System Icons](https://github.com/microsoft/fluentui-system-icons)、
 Phosphor は [Phosphor Icons](https://github.com/phosphor-icons/core) の MIT 許諾。原文は後段に保持する。
 元 SVG の取得コミットは記録されていないため、バージョンを推定しない。確認済み PNG の SHA-256 は `tools/licenses-reviewed.json` に固定する。
 
 `tools/` の通常のアイコンは regular、`_selected` は Fluent の filled・Phosphor の fill（長方形と楕円の選択は bold、多角形は通常のアイコンと同じ regular）。
 その他は regular（`lock_filled` のみ filled）。`arrow_maximize`・`arrow_minimize`・`copy_add` はスタンドアロン側の追加。`snap_ruler`・`snap_special` は regular のアイコンに bold の磁石を重ねた物。
-多角形選択の通常・選択中の 2 枚は 以前の Unity 実装の `uv_wireframe.png`（Phosphor polygon regular）とバイト一致する。
+多角形選択の通常・選択中の 2 枚は 0.4.x までの Unity ブリッジの `uv_wireframe.png`（Phosphor polygon regular）とバイト一致する。
 
 | 同梱 PNG（拡張子省略） | セット | 元の名前 | 太さ |
 |---|---|---|---|
