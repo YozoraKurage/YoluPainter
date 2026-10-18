@@ -1,5 +1,6 @@
 //! 「新規レイヤー」の並び（メニューの「レイヤー」・レイヤーの一覧の右クリック）の入り口が、選んでいるレイヤーのすぐ上（グループの中を選んでいれば
-//! そのグループの中）に新しいレイヤーを作る試験。何も選んでいなければ一番上。取り消し 1 回で戻る。
+//! そのグループの中）に新しいレイヤーを作るテスト。単色の塗りつぶしだけはすぐ下（`a_new_fill_goes_right_below…` は `starter_document.rs`）。
+//! 何も選んでいなければ一番上。取り消し 1 回で戻る。
 use crate::common::drive::Drive;
 use yolu_app::engine::LayerId;
 use yolu_app::lang::Lang;
@@ -8,6 +9,9 @@ use yolu_app::m2::{AdjustmentKind, Edit};
 use yolu_app::state::{Action, AppState};
 use yolu_core::fill_image::ProjectionMode;
 use yolu_core::generator::Shape;
+
+/// すぐ下に作る入り口の名前（単色。ほかはすぐ上）。
+const FILL: &str = "単色の塗りつぶし";
 
 /// 下から a・b・c の 3 つ。選んでいるのは a（一番下）。
 fn three() -> (AppState, [LayerId; 3]) {
@@ -93,7 +97,11 @@ fn every_new_layer_entrance_makes_the_layer_right_above_the_selected_one() {
             before,
             "{name}: ほかの並びは変わらない"
         );
-        assert_eq!(index(&s, made), index(&s, a) + 1, "{name}: a のすぐ上");
+        if name == FILL {
+            assert_eq!(index(&s, made) + 1, index(&s, a), "{name}: a のすぐ下");
+        } else {
+            assert_eq!(index(&s, made), index(&s, a) + 1, "{name}: a のすぐ上");
+        }
         assert!(index(&s, made) < index(&s, b) && index(&s, b) < index(&s, c));
         // 取り消し 1 回で戻る
         s.act(Action::Undo);
@@ -129,11 +137,19 @@ fn inside_a_group_every_new_layer_entrance_makes_it_in_the_same_group_above_the_
         let siblings = s.doc().children_of(Some(group)).unwrap();
         // children_of は下から。a のすぐ上 = a の 1 つ後
         let at = siblings.iter().position(|x| *x == a).unwrap();
-        assert_eq!(
-            siblings.get(at + 1),
-            Some(&made),
-            "{name}: a のすぐ上 {siblings:?}"
-        );
+        if name == FILL {
+            assert_eq!(
+                at.checked_sub(1).and_then(|i| siblings.get(i)),
+                Some(&made),
+                "{name}: a のすぐ下 {siblings:?}"
+            );
+        } else {
+            assert_eq!(
+                siblings.get(at + 1),
+                Some(&made),
+                "{name}: a のすぐ上 {siblings:?}"
+            );
+        }
         assert_eq!(s.doc().layer(c).unwrap().parent(), None);
         s.act(Action::Undo);
         assert_eq!(ids(&s), before, "{name}: 取り消し 1 回");

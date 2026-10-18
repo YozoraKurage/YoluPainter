@@ -100,12 +100,21 @@ fn add_bottom_layer(doc: &mut Document, pixels: Vec<u8>, lang: Lang) -> Result<L
     let clip = PixelClipboard::from_image(doc.width(), doc.height(), pixels, Channel::Color)
         .map_err(|e| lang.core_error(&e))?;
     let name = lang.t("livelink-original");
+    let white = crate::state::starter_white_of(doc);
     let pasted = doc
         .paste_as_layer(&clip, Channel::Color, Some(name), None)
         .map_err(|e| lang.core_error(&e))?;
     if let Err(e) = doc.move_layer(pasted.layer, 0) {
         let _ = doc.undo();
         return Err(lang.core_error(&e));
+    }
+    // 初めの形のセット（白の単色の上に空のレイヤー）は、白が元の絵を覆わないよう白の単色を外す
+    if let Some(white) = white {
+        if let Err(e) = doc.remove_layer(white) {
+            let _ = doc.undo();
+            let _ = doc.undo();
+            return Err(lang.core_error(&e));
+        }
     }
     let _ = doc.clear_history();
     Ok(pasted.layer)

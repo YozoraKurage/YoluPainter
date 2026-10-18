@@ -6,7 +6,7 @@
 //! 変えたセットは履歴を消す（元へ戻せない）。
 
 use super::{
-    groups_of, new_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
+    groups_of, new_starter_set_document, size_text, unique, used_channels, DraftOp, NpWindow, Prep,
     SetDraft, MAX_NAME, MAX_SETS, RESOLUTIONS,
 };
 use crate::engine::{CanvasResampling, Document, PreparedResize};
@@ -542,7 +542,7 @@ pub(super) fn apply(
     for d in &win.drafts {
         fresh.push(match d.uid {
             Some(_) => None,
-            None => Some(new_set_document(
+            None => Some(new_starter_set_document(
                 d.size.0, d.size.1, tile, lang, &channels, normal,
             )?),
         });

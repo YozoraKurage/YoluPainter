@@ -20,7 +20,7 @@ use crate::panels::{
 use crate::pen::{PenInput, PenSample};
 use crate::settings::{Problem, Settings};
 use crate::shell;
-use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind, DEFAULT_DOCUMENT_SIZE};
+use crate::state::{Action, AppState, DialogRequest, OpenPopup, PopupKind};
 use crate::titlebar;
 use crate::ui::fonts;
 use crate::ui::menu::{self, PopupOutcome, PopupState};
@@ -840,10 +840,7 @@ impl YoluApp {
             ),
         };
         let lang = loaded.lang;
-        let mut app = YoluApp::with_state(
-            AppState::new_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang),
-            pen,
-        );
+        let mut app = YoluApp::with_state(AppState::starter_in(lang), pen);
         app.state.load_settings(loaded.clone());
         // 垂直同期を待たない表示（設定の既定）では、フレームの間隔に下限をかける。ウィンドウの面の同期は起動のときに決まる
         // （`wgpu_configuration`）ので、起動のとき読んだ設定の値で決める（変えた値は次の起動から）

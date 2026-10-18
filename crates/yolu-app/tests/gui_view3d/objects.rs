@@ -338,8 +338,14 @@ fn a_held_g_does_not_restart_after_confirming_and_g_is_refused_during_a_handle_d
 fn delete_q_and_h_act_on_objects_in_edit_mode_and_delete_does_not_erase_pixels() {
     let (mut h, _, layer) = edit_view();
     let decal = Object::Shape(Target::Gradient(layer, Channel::Color));
-    // 描けるレイヤーの選択範囲: 編集のモードの Delete は画素を消さない
-    let base = h.doc().layers()[0].id();
+    // 描けるレイヤーの選択範囲: 編集のモードの Delete は画素を消さない（単色は選んだレイヤーの下に作るので、下は単色）
+    let base = h
+        .doc()
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id();
     h.app_mut().select_single_layer(base);
     h.doc_mut()
         .set_pixel(base, 10, 10, yolu_app::engine::Rgba8::new(200, 30, 30, 255))

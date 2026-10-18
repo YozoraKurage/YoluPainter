@@ -21,7 +21,7 @@ use crate::m2::layersets::{display_name, outputs, top_layer_of, LayerSetEdit};
 use crate::m2::{self, Edit, UiOp};
 use crate::notice::Source;
 use crate::state::canvas_bar::{Add, Chip, Column, Eye, Row};
-use crate::state::{blank_document_in, Action, AppState, DEFAULT_DOCUMENT_SIZE};
+use crate::state::{starter_document_in, Action, AppState, DEFAULT_DOCUMENT_SIZE};
 
 pub use yolu_io::{MaterialAsset, MaterialRef};
 
@@ -864,7 +864,7 @@ impl AppState {
                 continue;
             }
             let size = size_for(&infos[mi]);
-            let (doc, _) = blank_document_in(size, size, self.lang);
+            let (doc, _) = starter_document_in(size, size, self.lang);
             let name = unique_name(
                 &name_for(&keys[mi]),
                 self.session.sets.list.iter().map(|s| s.name.as_str()),
@@ -959,7 +959,7 @@ impl AppState {
             .find(|g| self.session.sets.iter().all(|s| !s.binds(g.index as u32)));
         let doc = {
             let like = &self.session.doc;
-            crate::newproject::new_set_document(
+            crate::newproject::new_starter_set_document(
                 like.width(),
                 like.height(),
                 like.tile_size(),
@@ -1305,6 +1305,7 @@ impl AppState {
                 let layer = format!("{} 1", lang.t("state-layer"));
                 let set = self.session.doc.batch_as(HistoryKind::LayerSets, |d| {
                     let set = d.add_layer_set(&name)?;
+                    crate::state::add_starter_white(d, lang, Some(set))?;
                     d.add_layer_in_set(&layer, set, None)?;
                     Ok(set)
                 })?;
@@ -1742,8 +1743,15 @@ mod tests {
         assert_eq!(s.session.doc.width(), 512);
         assert_ne!(s.session.doc.id(), a);
         assert_eq!(s.view.zoom, 1.0, "新しいセットは画面に合わせた表示");
-        assert_eq!(s.session.doc.layers().len(), 1);
-        assert!(s.session.selected_layer.is_some());
+        assert!(
+            crate::state::is_starter_shape(&s.session.doc),
+            "モデルのマテリアルから作るセットは初めの形"
+        );
+        assert_eq!(
+            s.session.selected_layer,
+            s.session.doc.layers().last().map(|l| l.id()),
+            "選ぶのは空のレイヤー"
+        );
         assert_eq!(s.set_doc(0).id(), a);
         s.switch_set(0).unwrap();
         assert_eq!(s.session.doc.id(), a);

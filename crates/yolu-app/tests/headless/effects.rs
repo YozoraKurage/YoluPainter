@@ -1086,7 +1086,13 @@ fn picking_id_colors_changes_the_tool_the_same_way_as_choosing_it_and_not_while_
         },
     );
     s.act(Action::SelectTool(Tool::Brush));
-    let base = s.doc().layers()[0].id();
+    let base = s
+        .doc()
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id();
     let brush = s.stroke_settings(false);
     let stroke = s.doc_mut().begin_stroke(base, &brush).unwrap();
     s.message_mut().clear();

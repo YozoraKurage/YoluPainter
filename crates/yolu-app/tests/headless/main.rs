@@ -40,6 +40,7 @@ mod recovery;
 mod reference_lines;
 mod save_background;
 mod saved_selections;
+mod starter_document;
 mod symmetry_seeds;
 mod tmp_cleanup;
 mod tool_layout;

@@ -93,7 +93,12 @@ fn keep_of(mesh: &ModelMesh, size: u32) -> Vec<bool> {
 }
 
 fn first_layer(h: &Harness<'_, YoluApp>) -> LayerId {
-    h.doc().layers()[0].id()
+    h.doc()
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id()
 }
 
 /// レイヤーのチャンネルに、`at` が返す画素を丸ごと読み込む（行は下から。タイルごと）。
@@ -573,7 +578,8 @@ fn two_sets(size: u32, meshes: [ModelMesh; 2]) -> Harness<'static, YoluApp> {
 /// 文書 `set` の最初のレイヤーに、アイランドの中だけを塗った Color と Roughness（`paint_inside` の、今のセット以外の文書向け）。
 fn paint_inside_set(h: &mut Harness<'_, YoluApp>, set: usize, keep: &[bool]) -> LayerId {
     let doc = h.app_mut().set_doc_mut(set);
-    let layer = doc.layers()[0].id();
+    // 白の単色の上の、空のレイヤー
+    let layer = doc.layers().last().unwrap().id();
     let size = doc.width();
     import(doc, layer, Channel::Color, |x, y| {
         if keep[(y * size + x) as usize] {
@@ -1159,7 +1165,7 @@ fn every_mip_level_of_another_set_holds_only_the_uv_colors() {
     let keep = keep_of(&model.meshes[1], size);
     {
         let doc = h.app_mut().set_doc_mut(1);
-        let layer = doc.layers()[0].id();
+        let layer = doc.layers().last().unwrap().id();
         paint_with_outside_fill(doc, layer, &keep);
     }
     h.run();

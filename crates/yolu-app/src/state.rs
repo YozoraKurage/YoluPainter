@@ -7,7 +7,10 @@ use egui::{Pos2, Vec2};
 
 use crate::canvas::view::{ViewState, ROTATE_STEP};
 use crate::engine::unit_f32_to_byte;
-use crate::engine::{AntiAlias, BlendMode, BrushSettings, Document, LayerId, Rgba8};
+use crate::engine::{
+    AntiAlias, BlendMode, BrushSettings, Channel, CoreError, Document, Layer, LayerId, LayerKind,
+    LayerSetId, Rgba8,
+};
 use crate::lang::Lang;
 use crate::livelink::LinkRequest;
 use crate::m2::{Edit, M2State, UiOp};
@@ -974,11 +977,134 @@ pub fn blank_document(width: u32, height: u32) -> (Document, Option<LayerId>) {
 
 /// `blank_document`の、最初のレイヤーの名前を言語に合わせたもの（新しいレイヤーの名前と同じ言い方）。
 pub fn blank_document_in(width: u32, height: u32, lang: Lang) -> (Document, Option<LayerId>) {
+    blank_document_with(width, height, lang, false)
+}
+
+/// 新しい文書の初めの形: 一番下に白の単色、その上に空の「レイヤー 1」（選ぶのはこの空のレイヤー）。履歴は空。文書に Color のチャンネルが
+/// 無ければ白の単色は作らず、空のレイヤーだけ（`blank_document_in` と同じ）。
+pub fn starter_document_in(width: u32, height: u32, lang: Lang) -> (Document, Option<LayerId>) {
+    blank_document_with(width, height, lang, true)
+}
+
+fn blank_document_with(
+    width: u32,
+    height: u32,
+    lang: Lang,
+    white: bool,
+) -> (Document, Option<LayerId>) {
     let mut doc = Document::new(width, height).expect("文書の大きさ");
+    if white {
+        let _ = add_starter_white(&mut doc, lang, None);
+    }
     let first = doc.add_layer(&format!("{} 1", lang.t("state-layer"))).ok();
     let _ = doc.clear_history(); // 最初のレイヤーを足したことは取り消せない（空の文書に戻せても意味が無い）
     crate::look::apply_new_set_look(&mut doc);
     (doc, first)
+}
+
+/// 初めの形の白の単色の値（Color だけに持つ。不透明な白）。
+const STARTER_WHITE: Rgba8 = Rgba8 {
+    r: 255,
+    g: 255,
+    b: 255,
+    a: 255,
+};
+
+/// 白の単色の名前（新しい単色の名前と同じ言い方の「塗りつぶし 1」）。
+fn starter_white_name(lang: Lang) -> String {
+    format!("{} 1", crate::m2::layer_kind_label(lang, LayerKind::Fill))
+}
+
+/// 初めの形の下の半分: 白の単色（Color だけ）を足す。`set` が Some ならそのレイヤーセットの一番上の段へ（空のレイヤーセットへ入れる口が
+/// ラスターにしか無いので、最初のレイヤーセットへ足してから移す。呼ぶ側の 1 つの編集にまとめる）。Color は標準のチャンネルで文書から
+/// 消せないので、分けるのは「文書のレイヤーが使うチャンネル（`newproject::used_channels`。レイヤーが無い文書は Color）」に Color が
+/// あるか。無ければ（Color を使わないレイヤーセットだけの文書）足さず None。履歴には入るので、新しい文書を作る側が `clear_history` する。
+pub(crate) fn add_starter_white(
+    doc: &mut Document,
+    lang: Lang,
+    set: Option<LayerSetId>,
+) -> Result<Option<LayerId>, CoreError> {
+    if !crate::newproject::used_channels(doc).contains(&Channel::Color) {
+        return Ok(None);
+    }
+    let id = doc.add_fill_layer(
+        &starter_white_name(lang),
+        &[(Channel::Color, STARTER_WHITE)],
+        None,
+    )?;
+    if let Some(set) = set {
+        doc.move_layers_to_set(&[id], set)?;
+    }
+    Ok(Some(id))
+}
+
+/// 初めの形のまま（`is_starter_shape`）の文書の、白の単色のレイヤー。
+pub(crate) fn starter_white_of(doc: &Document) -> Option<LayerId> {
+    is_starter_shape(doc).then(|| doc.layers()[0].id())
+}
+
+/// 文書が、初めの形のまま（下から [白の単色（Color だけ）, 画素の無いラスター]、履歴が空で Redo も無い）か。2 枚とも名前が既定の
+/// （どの言語でも）まま、表示・不透明度 1・Normal の合成・マスク無し・効果無し・ロック無し。
+pub fn is_starter_shape(doc: &Document) -> bool {
+    let [fill, layer] = doc.layers() else {
+        return false;
+    };
+    let named = |l: &Layer, names: &dyn Fn(Lang) -> String| {
+        [Lang::Ja, Lang::En]
+            .into_iter()
+            .any(|lang| l.name() == names(lang))
+    };
+    let plain = |l: &Layer| {
+        l.visible()
+            && l.opacity() == 1.0
+            && l.blend_mode() == BlendMode::Normal
+            && l.channel_blends().next().is_none()
+            && l.mask().is_none()
+            && l.filters().is_empty()
+            && l.locks() == Default::default()
+    };
+    !doc.can_undo()
+        && !doc.can_redo()
+        && fill.kind() == LayerKind::Fill
+        && fill.fill_values().eq([(Channel::Color, STARTER_WHITE)])
+        && named(fill, &starter_white_name)
+        && plain(fill)
+        && layer.kind() == LayerKind::Raster
+        && named(layer, &|l| format!("{} 1", l.t("state-layer")))
+        && plain(layer)
+        && !crate::engine::layer_has_pixels(layer)
+}
+
+/// まだ編集していない文書（1 枚の形か初めの形。履歴が空で Redo も無い）の既定の名前のレイヤーを、新しい言語の名前にする。付けた名前・
+/// 描いた文書は変えない。Redo の段がある（描いて Undo した）文書は、名前を替えて履歴を消すと Redo が消えるので、名前を替えない。
+fn retitle_untouched_layers(doc: &mut Document, old: Lang, new: Lang) {
+    let layer = |l: Lang| format!("{} 1", l.t("state-layer"));
+    if doc.can_undo() || doc.can_redo() {
+        return;
+    }
+    let starter = is_starter_shape(doc);
+    if !starter && doc.layers().len() != 1 {
+        return;
+    }
+    let renames: Vec<_> = doc
+        .layers()
+        .iter()
+        .filter_map(|l| {
+            let (from, to) = match l.kind() {
+                LayerKind::Fill if starter => (starter_white_name(old), starter_white_name(new)),
+                _ => (layer(old), layer(new)),
+            };
+            (l.name() == from).then(|| (l.id(), to))
+        })
+        .collect();
+    let mut renamed = false;
+    for (id, name) in renames {
+        renamed |= doc.set_layer_name(id, &name).is_ok();
+    }
+    if renamed {
+        // 最初のレイヤーを足したことと同じく、名前の付け直しも取り消せない履歴にしない
+        let _ = doc.clear_history();
+    }
 }
 
 /// 新しい文書の既定の大きさ。
@@ -986,7 +1112,7 @@ pub const DEFAULT_DOCUMENT_SIZE: u32 = 2048;
 
 impl AppState {
     /// 表示の言語を替える。既定の名前のまま（利用者が付けていない。復旧から開いて、まだ保存していない名前を含む）のプロジェクト名・最初のテクスチャセット・
-    /// まだ編集していない文書の最初のレイヤーは、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
+    /// まだ編集していない文書の最初のレイヤー（初めの形なら白の単色も）は、新しい言語の名前にする（付けた名前・開いたファイルの名前・編集した文書は変えない）。
     pub fn set_language(&mut self, lang: Lang) {
         let old = self.lang;
         if old == lang {
@@ -1004,24 +1130,8 @@ impl AppState {
             self.session.project_name = crate::recovery::recovered_name(lang).into();
         }
         self.session.sets.retitle_defaults(old, lang);
-        let first_layer = |l: Lang| format!("{} 1", l.t("state-layer"));
-        if self.session.project.is_none()
-            && !self.session.doc.can_undo()
-            && self.session.doc.layers().len() == 1
-        {
-            let layer = &self.session.doc.layers()[0];
-            if layer.name() == first_layer(old) {
-                let id = layer.id();
-                // 最初のレイヤーを足したことと同じく、名前の付け直しも取り消せない履歴にしない
-                if self
-                    .session
-                    .doc
-                    .set_layer_name(id, &first_layer(lang))
-                    .is_ok()
-                {
-                    let _ = self.session.doc.clear_history();
-                }
-            }
+        if self.session.project.is_none() {
+            retitle_untouched_layers(&mut self.session.doc, old, lang);
         }
     }
 
@@ -1032,6 +1142,17 @@ impl AppState {
     /// 言語を決めて作る（最初のレイヤー・テクスチャセット・プロジェクトの名前がその言語になる）。
     pub fn new_in(width: u32, height: u32, lang: Lang) -> AppState {
         let (doc, first) = blank_document_in(width, height, lang);
+        Self::from_document(doc, first, lang)
+    }
+
+    /// 起動の文書: 既定の大きさの、初めの形（白の単色の上に空のレイヤー。`starter_document_in`）。`new_in` はテストの土台が使うので
+    /// 1 枚の形のまま残し、アプリの起動はこちらを呼ぶ。
+    pub fn starter_in(lang: Lang) -> AppState {
+        let (doc, first) = starter_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, lang);
+        Self::from_document(doc, first, lang)
+    }
+
+    fn from_document(doc: Document, first: Option<LayerId>, lang: Lang) -> AppState {
         let sets = TextureSets::first_in(&doc, lang);
         AppState {
             lang,

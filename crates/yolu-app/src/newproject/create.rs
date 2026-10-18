@@ -1,7 +1,7 @@
 //! 新規プロジェクトを作る。ウィンドウの行を検めて文書を全部作ってから（ここまでが失敗しうる所）、モデルを 3D ビューに入れ、セットを入れ替える
 //! （失敗しない）。モデルはウィンドウが別のスレッドで読んだものをそのまま入れる。1 つの行は、選んだマテリアルを全部持つ 1 つのセットになる。
 
-use super::{new_set_document, NpWindow, Prep, MAX_NAME, MAX_SETS, RESOLUTIONS};
+use super::{new_starter_set_document, NpWindow, Prep, MAX_NAME, MAX_SETS, RESOLUTIONS};
 use crate::bake::BakeAction;
 use crate::engine::NormalSettings;
 use crate::model::SceneModel;
@@ -102,7 +102,8 @@ pub(super) fn create_from_window(
         crate::engine::Document,
     )> = Vec::new();
     for (name, auto_name, keys, size) in chosen {
-        let doc = new_set_document(size, size, tile, lang, win.template.channels(), normal)?;
+        let doc =
+            new_starter_set_document(size, size, tile, lang, win.template.channels(), normal)?;
         parts.push((guid_string(doc.id()), name, auto_name, keys, doc));
     }
     let bake = win.bake;

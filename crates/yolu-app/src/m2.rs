@@ -1232,6 +1232,34 @@ impl AppState {
         })
     }
 
+    /// 単色は、選んでいるレイヤーのすぐ下（同じグループ・同じレイヤーセット。グループを選んでいればグループの下）に作る。選んでいる
+    /// レイヤーが無いときは `add_in_current_set` と同じ足し先。core の足す口は「すぐ上」だけなので、上に足してから兄弟の中の位置を
+    /// 選んだレイヤーの元の位置へ動かし、1 回の取り消しにまとめる（「すぐ下」の口を core に足さない: 位置の数え方が 2 通りになる）。
+    fn add_fill_below_selected(
+        &mut self,
+        name: &str,
+        values: &[(Channel, Rgba8)],
+    ) -> Result<LayerId, CoreError> {
+        let Some(selected) = self.above_selected() else {
+            return self.add_in_current_set(|d, above| d.add_fill_layer(name, values, above));
+        };
+        self.session
+            .doc
+            .batch_as(yolu_core::HistoryKind::AddLayer, |d| {
+                let id = d.add_fill_layer(name, values, Some(selected))?;
+                let above = d.layer(selected).ok_or(CoreError::LayerNotFound)?;
+                let (parent, set) = (above.parent(), above.layer_set());
+                let position = d
+                    .children_in_set(set, parent)?
+                    .into_iter()
+                    .filter(|&l| l != id)
+                    .position(|l| l == selected)
+                    .ok_or(CoreError::LayerNotFound)?;
+                d.move_layer_to(id, parent, position)?;
+                Ok(id)
+            })
+    }
+
     /// 新しいユーザーチャンネルの出力は、そのチャンネルの名前のレイヤーセット（空のレイヤー 1 枚つき）を作ってそこへ
     /// （チャンネルを足す・レイヤーセットを足す・出力の割り当ては、1 回の取り消し）。描く先はそのレイヤーセットの空のレイヤー
     /// （描くチャンネルを足したときに、すぐ描ける）。
@@ -1266,9 +1294,7 @@ impl AppState {
                 let name = self.new_layer_name(LayerKind::Fill);
                 let value = fill_from_color(self.color.main);
                 let channel = self.m2.paint_channel;
-                let id = self.add_in_current_set(|d, above| {
-                    d.add_fill_layer(&name, &[(channel, value)], above)
-                })?;
+                let id = self.add_fill_below_selected(&name, &[(channel, value)])?;
                 self.select_new(id);
             }
             Edit::NewAdjustment(kind) => {

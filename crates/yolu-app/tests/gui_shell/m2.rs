@@ -828,7 +828,9 @@ fn tree_document(h: &mut Harness<'_, YoluApp>) {
     let layer = h.selected_layer().unwrap();
     apply(h, Action::M2(Edit::AddMask(layer)));
     apply(h, Action::M2Ui(UiOp::EditMask(false)));
+    // 単色は選んだレイヤーのすぐ下に作るので、1 つ上げて、選んだレイヤーの上に置く
     apply(h, Action::M2(Edit::NewFill));
+    apply(h, Action::LayerUp);
     apply(
         h,
         Action::M2(Edit::NewAdjustment(yolu_app::m2::AdjustmentKind::Invert)),

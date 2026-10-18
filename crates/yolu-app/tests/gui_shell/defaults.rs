@@ -258,6 +258,38 @@ fn the_discard_button_closes_and_review_and_cancel_and_escape_do_not() {
 }
 
 #[test]
+fn a_starter_document_asks_nothing_when_closing_or_starting_a_new_project() {
+    use yolu_app::state::Action;
+    // 初めの形のまま: 新しいプロジェクトの前も、閉じる前も、保存を聞かない
+    let mut h = modified_app();
+    h.act(Action::NewProject);
+    assert!(yolu_app::state::is_starter_shape(h.doc()));
+    assert!(!h.app().shows_modified());
+    h.act(Action::NewProjectDialog);
+    h.run();
+    assert!(
+        h.discard_ask().is_none(),
+        "新しいプロジェクトの前に聞かない"
+    );
+    assert!(yolu_app::newproject::is_open(h.app()), "ウィンドウが開く");
+    h.act(Action::Project(yolu_app::newproject::NpAction::Close));
+    h.act(Action::Quit);
+    h.run();
+    assert!(h.discard_ask().is_none() && h.quit(), "聞かずに閉じる");
+    // 対照: 描いたあとは聞く
+    let mut h = modified_app();
+    h.act(Action::NewProject);
+    let layer = h.doc().layers().last().unwrap().id();
+    h.doc_mut()
+        .set_pixel(layer, 1, 1, yolu_app::engine::Rgba8::new(1, 2, 3, 255))
+        .unwrap();
+    h.set_modified(true);
+    h.act(Action::NewProjectDialog);
+    h.run();
+    assert!(h.discard_ask().is_some(), "描いたあとは聞く");
+}
+
+#[test]
 fn while_the_question_is_open_undo_save_and_new_keys_do_not_reach_the_document() {
     use egui::{Key, Modifiers};
     let mut h = modified_app();

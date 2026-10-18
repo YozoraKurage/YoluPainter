@@ -143,7 +143,10 @@ fn one_stroke_paints_both_materials_of_the_set_and_not_a_material_outside_it() {
     );
     let other = h.app().set_doc(1);
     assert!(
-        (0..SIZE).all(|x| (0..SIZE).all(|y| composite_pixel(other, x, y)[3] == 0)),
+        other
+            .layers()
+            .iter()
+            .all(|l| !yolu_app::engine::layer_has_pixels(l)),
         "ほかのセットの文書には描かない"
     );
     assert_eq!(h.doc().undo_count(), 1, "1 本のストロークは 1 回の Undo");

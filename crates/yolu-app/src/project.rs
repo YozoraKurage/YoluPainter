@@ -39,7 +39,7 @@ use crate::lang::{Count, Lang};
 use crate::notice::{Kind as NoticeKind, Source};
 use crate::sets::TextureSets;
 use crate::shelf::ShelfState;
-use crate::state::{blank_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
+use crate::state::{starter_document_in, AppState, DEFAULT_DOCUMENT_SIZE};
 
 /// 開いた・保存した .ylp。
 pub struct ProjectFile {
@@ -618,7 +618,7 @@ pub fn new_into(state: &mut AppState) {
     }
     state.np_project_replaced();
     state.drop_project_model();
-    let (doc, _) = blank_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, state.lang);
+    let (doc, _) = starter_document_in(DEFAULT_DOCUMENT_SIZE, DEFAULT_DOCUMENT_SIZE, state.lang);
     let sets = TextureSets::first_in(&doc, state.lang);
     state.replace_sets(sets, doc);
     let name = state.lang.t("project-untitled").into();

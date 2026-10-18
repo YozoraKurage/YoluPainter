@@ -120,6 +120,11 @@ impl Recorder {
             .map(|i| i + 1)
     }
 
+    /// 記録の中で作った物の数（`$created:<n>` の次の番号は、これ + 1）。
+    fn created_count(&self) -> usize {
+        self.entries.iter().map(|e| e.created.len()).sum()
+    }
+
     /// 記録の外で文書が変わっていたら印を出す（描く操作・外からの操作など）。
     fn sync(&mut self, doc: &Document) {
         if doc.id() == self.doc_id && doc.revision() != self.seen {
@@ -565,6 +570,18 @@ fn above(app: &AppState, rec: &Recorder) -> Result<Option<String>, ()> {
     }
 }
 
+/// `id` のすぐ下の兄弟（同じグループ・同じレイヤーセット）。一番下なら Ok(None)、兄弟を数えられなければ Err。
+fn sibling_below(app: &AppState, id: LayerId) -> Result<Option<LayerId>, ()> {
+    let layer = app.session.doc.layer(id).ok_or(())?;
+    let siblings = app
+        .session
+        .doc
+        .children_in_set(layer.layer_set(), layer.parent())
+        .map_err(|_| ())?;
+    let at = siblings.iter().position(|x| *x == id).ok_or(())?;
+    Ok(at.checked_sub(1).map(|i| siblings[i]))
+}
+
 fn creating(command: Command, made: Made) -> Plan {
     Plan::Record {
         commands: vec![command],
@@ -707,6 +724,54 @@ fn plan_rename(app: &AppState, rec: &Recorder, id: LayerId, name: &str) -> Plan 
     }
 }
 
+/// 単色の追加を命令へ写す。単色は選んだレイヤーのすぐ下に作る（`AppState::add_fill_below_selected`）ので、記録は文書の位置の数字を
+/// 使わず、どの文書でも「選んだレイヤーのすぐ下」になる形にする: すぐ下に兄弟があれば、その兄弟の「すぐ上」へ足す 1 命令。選んだ
+/// レイヤーが兄弟の一番下なら、足してから兄弟の中の一番下（`index: 0`）へ動かす 2 命令。
+fn plan_new_fill(app: &AppState, rec: &Recorder) -> Plan {
+    let name = app.new_layer_name(LayerKind::Fill);
+    let mut move_to_bottom = false;
+    let above = match selected(app) {
+        None => None,
+        Some(id) => match sibling_below(app, id) {
+            // すぐ下の兄弟（指せなければ、その位置は写せない）
+            Ok(Some(below)) => match layer_ref(app, rec, below) {
+                Some(below) => Some(below),
+                None => return Plan::Skip,
+            },
+            // 一番下: 選んだレイヤーのすぐ上へ足してから、一番下へ動かす
+            Ok(None) => match layer_ref(app, rec, id) {
+                Some(this) => {
+                    move_to_bottom = true;
+                    Some(this)
+                }
+                None => return Plan::Skip,
+            },
+            Err(()) => return Plan::Skip,
+        },
+    };
+    let value = crate::m2::fill_from_color(app.color.main);
+    let mut args = layer_add(NewLayerKind::Fill, name, above);
+    args.fill.insert(
+        channel_name(&app.session.doc, app.m2.paint_channel),
+        format_color(value),
+    );
+    let mut commands = vec![Command::LayerAdd(args)];
+    if move_to_bottom {
+        commands.push(Command::LayerMove(LayerMoveArgs {
+            set: None,
+            layer: format!("{CREATED_PREFIX}{}", rec.created_count() + 1),
+            parent: None,
+            to_root: false,
+            index: Some(0),
+        }));
+    }
+    Plan::Record {
+        commands,
+        creates: Some(Made::Layer),
+        merge: None,
+    }
+}
+
 fn plan_edit(app: &AppState, rec: &Recorder, edit: &Edit) -> Plan {
     let lref = |id: LayerId| layer_ref(app, rec, id);
     let doc = &app.session.doc;
@@ -735,20 +800,7 @@ fn plan_edit(app: &AppState, rec: &Recorder, edit: &Edit) -> Plan {
             ),
             Err(()) => Plan::Skip,
         },
-        Edit::NewFill => match above(app, rec) {
-            Ok(above) => {
-                let value = crate::m2::fill_from_color(app.color.main);
-                let mut args = layer_add(
-                    NewLayerKind::Fill,
-                    app.new_layer_name(LayerKind::Fill),
-                    above,
-                );
-                args.fill
-                    .insert(channel_name(doc, app.m2.paint_channel), format_color(value));
-                creating(Command::LayerAdd(args), Made::Layer)
-            }
-            Err(()) => Plan::Skip,
-        },
+        Edit::NewFill => plan_new_fill(app, rec),
         Edit::NewAdjustment(kind) => {
             let (Ok(above), Some(spec)) = (above(app, rec), adjustment_spec(&kind.settings()))
             else {

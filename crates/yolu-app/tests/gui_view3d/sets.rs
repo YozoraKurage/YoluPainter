@@ -102,14 +102,22 @@ fn the_list_switches_the_canvas_and_the_layers_per_material() {
     assert_eq!(s.sets().current_index(), 1);
     assert_eq!((s.doc().width(), s.doc().height()), (512, 512));
     assert!(h.state().display().stats.last_rebuilt || h.state().display().stats.total_tiles > 0);
-    assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 0], "Hair はまだ透明");
+    assert_eq!(
+        canvas_pixel(&h, c),
+        [255, 255, 255, 255],
+        "Hair はまだ何も描いていない（白の単色だけ）"
+    );
     let c = canvas_rect(&h).center();
     drag(&mut h, &[offset(c, 0.0, -20.0), offset(c, 0.0, 20.0)]);
     assert_eq!(canvas_pixel(&h, c), [0, 0, 0, 255]);
     h.get_by_label("新規レイヤー").click();
     h.run();
     let s = h.app();
-    assert_eq!(s.doc().layers().len(), 2);
+    assert_eq!(
+        s.doc().layers().len(),
+        3,
+        "白の単色・空のレイヤー・新しいレイヤー"
+    );
     assert_eq!(s.set_doc(0).layers().len(), 1, "レイヤーは今のセットに足す");
 
     // Skin へ戻ると、その絵と選んでいたレイヤー
@@ -125,7 +133,7 @@ fn the_list_switches_the_canvas_and_the_layers_per_material() {
     let s = h.app();
     assert_eq!(composite_pixel(s.doc(), 128, 128), [0, 0, 0, 0]);
     assert!(
-        layer_has_pixels(&s.set_doc(1).layers()[0]),
+        s.set_doc(1).layers().iter().any(layer_has_pixels),
         "Hair の線は残る"
     );
 }

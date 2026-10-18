@@ -944,7 +944,13 @@ fn headless_a_locked_layer_refuses_the_gizmo_and_a_hidden_handle_cancels_a_runni
     // 描いている最中は始めない
     s.act(Action::Fill(FillOp::Handles(false)));
     let brush = s.stroke_settings(false);
-    let other = s.doc().layers()[0].id();
+    let other = s
+        .doc()
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id();
     let stroke = s.doc_mut().begin_stroke(other, &brush).unwrap();
     assert!(!gizmo::press(&mut s, rect, from, gizmo::Source::Mouse));
     s.doc_mut().end_stroke(stroke).unwrap();
@@ -1021,7 +1027,13 @@ fn headless_the_gizmo_drag_starts_through_the_fill_operation() {
     let from = gizmo::handle_point(&s, rect, Handle::MoveX).unwrap();
     // 押しは apply を通る: 操作の記録は apply の入口（`automation::record::before`）で、記録の外の変更を見て印を付ける。記録を始めて
     // から文書を apply の外で変えておき、押したその場で印が付けば、押しの操作が apply に渡った（押し自体は文書の変更番号を変えない）
-    let other = s.doc().layers()[0].id();
+    let other = s
+        .doc()
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id();
     let recorder = yolu_app::automation::record::Recorder::start(&s);
     s.automation_mut().recorder = Some(recorder);
     s.doc_mut().set_pixel(other, 0, 0, RED).unwrap();
@@ -2637,7 +2649,8 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
         );
     }
     let users = yolu_app::fillfx::image_users(&s, &rid);
-    let names: Vec<String> = [a, b]
+    // b は a のすぐ下に作るので、文書の並び（下から）は b・a
+    let names: Vec<String> = [b, a]
         .iter()
         .map(|id| s.doc().layer(*id).unwrap().name().to_owned())
         .collect();
@@ -2691,7 +2704,8 @@ fn headless_a_shelf_image_a_layer_reads_is_not_removed_and_the_refusal_names_the
     );
     s.act(Action::Shelf(ShelfOp::Remove(rid.clone())));
     assert!(s.shelf().get(&rid).is_some());
-    assert!(s.message().contains(&names[1]), "{}", s.message());
+    // まだ読んでいるのは b（names は下から b・a）
+    assert!(s.message().contains(&names[0]), "{}", s.message());
     // 読むレイヤーがなくなれば、確認のウィンドウを出し、消せる
     fill(
         &mut s,

@@ -1002,7 +1002,14 @@ fn the_other_sets_do_not_keep_their_composition_work_buffers() {
         let s = h.state().view3d_stats().unwrap();
         assert_eq!(s.other_scratch_bytes, 0, "今のセット {to}: {s:?}");
     }
-    let layer = h.app().set_doc(2).layers()[0].id();
+    let layer = h
+        .app()
+        .set_doc(2)
+        .layers()
+        .iter()
+        .find(|l| l.kind() == yolu_app::engine::LayerKind::Raster)
+        .unwrap()
+        .id();
     h.app_mut()
         .set_doc_mut(2)
         .set_channel_pixel(layer, Channel::Height, 9, 9, Rgba8::new(255, 255, 255, 255))

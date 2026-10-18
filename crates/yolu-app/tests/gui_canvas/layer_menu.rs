@@ -1398,7 +1398,7 @@ fn right_click(h: &mut Harness<'_, YoluApp>, at: egui::Pos2) {
 }
 
 #[test]
-fn a_new_fill_layer_from_the_menu_bar_goes_right_above_the_row_chosen_in_the_list() {
+fn a_new_fill_layer_from_the_menu_bar_goes_right_below_the_row_chosen_in_the_list() {
     let (mut h, [a, b, c]) = three_layers();
     // 一番下の行を押して選んでから、メニューバーの「レイヤー」→ 新規塗りつぶしレイヤー → 単色
     let at = row_name(&h, a);
@@ -1415,13 +1415,13 @@ fn a_new_fill_layer_from_the_menu_bar_goes_right_above_the_row_chosen_in_the_lis
     click(&mut h, solid.center());
     let made = h.selected_layer().unwrap();
     assert_eq!(h.doc().layer(made).unwrap().kind(), LayerKind::Fill);
-    assert_eq!(order(&h), vec![a, made, b, c], "一番下の行のすぐ上");
+    assert_eq!(order(&h), vec![made, a, b, c], "一番下の行のすぐ下");
     h.act(Action::Undo);
     assert_eq!(order(&h), vec![a, b, c]);
 }
 
 #[test]
-fn a_new_fill_layer_from_the_right_click_goes_right_above_the_right_clicked_row() {
+fn a_new_fill_layer_from_the_right_click_goes_right_below_the_right_clicked_row() {
     let (mut h, [a, b, c]) = three_layers();
     assert_eq!(h.selected_layer(), Some(c));
     // 選んでいない真ん中の行を右クリック: その行を選んでレイヤーのメニュー → 新規塗りつぶしレイヤー → 単色
@@ -1445,7 +1445,7 @@ fn a_new_fill_layer_from_the_right_click_goes_right_above_the_right_clicked_row(
     assert!(sub.contains(solid.center()), "{sub:?} {solid:?}");
     click(&mut h, solid.center());
     let made = h.selected_layer().unwrap();
-    assert_eq!(order(&h), vec![a, b, made, c], "右クリックした行のすぐ上");
+    assert_eq!(order(&h), vec![a, made, b, c], "右クリックした行のすぐ下");
 }
 
 #[test]

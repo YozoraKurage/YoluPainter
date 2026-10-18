@@ -1103,6 +1103,21 @@ fn alpha_at(s: &AppState, u: f32, v: f32) -> u8 {
     )[3]
 }
 
+/// 文書の UV の点（0〜1）の、レイヤー `layer` 自身の Color の画素のアルファ（下の白の単色に隠れない）。
+fn layer_alpha_at(s: &AppState, layer: yolu_app::engine::LayerId, u: f32, v: f32) -> u8 {
+    s.doc()
+        .layer(layer)
+        .and_then(|l| {
+            l.pixel(
+                Channel::Color,
+                (u * s.doc().width() as f32) as u32,
+                (v * s.doc().height() as f32) as u32,
+            )
+            .ok()
+        })
+        .map_or(0, |p| p.a)
+}
+
 #[test]
 fn headless_3d_clicks_add_points_on_the_face_and_paint_the_surface_one_undo_each() {
     let (mut s, rect) = state3d(two_material_plate());
@@ -1685,7 +1700,10 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     click3d(&mut s, rect, Vec3::new(0.7, 0.4, 0.0));
     let right_layer = s.selected_layer().unwrap();
     let old_print = surface_path(&s).model_fingerprint;
-    assert!(alpha_at(&s, 0.65, 0.35) > 0, "右の板の最初の点（u = 0.65）");
+    assert!(
+        layer_alpha_at(&s, right_layer, 0.65, 0.35) > 0,
+        "右の板の最初の点（u = 0.65）"
+    );
     // UV の左右が入れ替わった新しいモデルを受ける: どちらのセットのパスも描き直す
     let (_, shape) = s.receive_link_model(&link_plate(2, true));
     shape.unwrap();
@@ -1698,8 +1716,18 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     };
     assert_eq!(p.model_fingerprint, new_print);
     assert!(
-        alpha_at(&s, 0.35, 0.35) > 0 && alpha_at(&s, 0.65, 0.35) == 0,
+        layer_alpha_at(&s, right_layer, 0.35, 0.35) > 0
+            && layer_alpha_at(&s, right_layer, 0.65, 0.35) == 0,
         "右のセットの画素が新しい UV の所へ"
+    );
+    assert_ne!(
+        pixel(
+            &s,
+            (0.35 * s.doc().width() as f32) as u32,
+            (0.35 * s.doc().height() as f32) as u32
+        )[..3],
+        [255, 255, 255],
+        "パスの画素が合成に出る（下の白の単色に隠れない）"
     );
     // 今でないセット（左）の文書も付け直す
     s.act(Action::SelectSet(left_uid));
@@ -1709,7 +1737,8 @@ fn headless_replacing_the_live_link_model_redraws_the_paths_of_every_texture_set
     };
     assert_eq!(p.model_fingerprint, new_print);
     assert!(
-        alpha_at(&s, 0.85, 0.35) > 0 && alpha_at(&s, 0.15, 0.35) == 0,
+        layer_alpha_at(&s, left_layer, 0.85, 0.35) > 0
+            && layer_alpha_at(&s, left_layer, 0.15, 0.35) == 0,
         "左のセットの画素も新しい UV の所へ"
     );
     assert!(

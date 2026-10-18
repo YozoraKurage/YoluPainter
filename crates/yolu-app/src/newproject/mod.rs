@@ -840,12 +840,13 @@ impl AppState {
         }
     }
 
-    /// 開いた・保存したファイルが無く、描いていない・変えていない（最初のままの）プロジェクトか。
+    /// 開いた・保存したファイルが無く、描いていない・変えていない（最初のままの）プロジェクトか。Undo した後の Redo の段が残る文書も、触った文書。
     pub fn is_pristine(&self) -> bool {
         self.session.project.is_none()
             && !self.session.is_modified()
             && self.session.sets.len() == 1
             && !self.session.doc.can_undo()
+            && !self.session.doc.can_redo()
             && self.session.sets.current().read_only.is_none()
             && !self
                 .session
@@ -975,7 +976,8 @@ pub fn size_text(size: (u32, u32)) -> String {
     }
 }
 
-/// 新しい空のセットの文書: 大きさ・使うチャンネル・Normal の設定を指定した、空のレイヤー 1 枚（履歴なし）。
+/// 新しい空のセットの文書: 大きさ・使うチャンネル・Normal の設定を指定した、空のレイヤー 1 枚（履歴なし）。Live Link の元の絵を入れる
+/// セットの作り直し（`livelink::originals`）が、白の単色の無い形で使う。
 pub fn new_set_document(
     width: u32,
     height: u32,
@@ -984,8 +986,35 @@ pub fn new_set_document(
     channels: &[Channel],
     normal: NormalSettings,
 ) -> Result<Document, String> {
+    set_document(width, height, tile_size, lang, channels, normal, false)
+}
+
+/// `new_set_document` の、初めの形（一番下に白の単色、その上に空のレイヤー）。使うチャンネルに Color が無いときは白の単色を作らない。
+pub fn new_starter_set_document(
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    lang: Lang,
+    channels: &[Channel],
+    normal: NormalSettings,
+) -> Result<Document, String> {
+    set_document(width, height, tile_size, lang, channels, normal, true)
+}
+
+fn set_document(
+    width: u32,
+    height: u32,
+    tile_size: u32,
+    lang: Lang,
+    channels: &[Channel],
+    normal: NormalSettings,
+    white: bool,
+) -> Result<Document, String> {
     let core = |e: crate::engine::CoreError| lang.core_error(&e);
     let mut doc = Document::with_tile_size(width, height, tile_size).map_err(core)?;
+    if white && channels.contains(&Channel::Color) {
+        crate::state::add_starter_white(&mut doc, lang, None).map_err(core)?;
+    }
     let layer = doc
         .add_layer(&format!("{} 1", lang.t("newproject-layer")))
         .map_err(core)?;
@@ -1168,6 +1197,31 @@ mod tests {
         // 何も使っていない文書は Color
         let empty = Document::new(8, 8).unwrap();
         assert_eq!(used_channels(&empty), [Channel::Color]);
+    }
+
+    #[test]
+    fn a_starter_set_document_puts_a_white_fill_under_the_empty_layer_only_with_color() {
+        let normal = NormalSettings::DEFAULT;
+        let doc =
+            new_starter_set_document(64, 32, 16, Lang::En, Template::LilToon.channels(), normal)
+                .unwrap();
+        assert!(crate::state::is_starter_shape(&doc));
+        assert_eq!(doc.layers()[0].name(), "Fill 1");
+        assert_eq!(doc.layers()[1].name(), "Layer 1");
+        assert_eq!(
+            used_channels(&doc),
+            [Channel::Color, Channel::Normal, Channel::Emission]
+        );
+        // Color を使わないセットは、白の単色を作らず空のレイヤーだけ（1 枚の形と同じ）
+        let normal_only =
+            new_starter_set_document(64, 32, 16, Lang::En, &[Channel::Normal], normal).unwrap();
+        assert_eq!(normal_only.layers().len(), 1);
+        assert_eq!(normal_only.layers()[0].name(), "Layer 1");
+        assert!(!normal_only.can_undo());
+        // 1 枚の形の口は白を作らない
+        let plain =
+            new_set_document(64, 32, 16, Lang::En, Template::LilToon.channels(), normal).unwrap();
+        assert_eq!(plain.layers().len(), 1);
     }
 
     #[test]

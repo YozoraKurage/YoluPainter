@@ -2113,10 +2113,11 @@ mod tests {
         u.apply(Action::Psd(PsdAction::Export(dir.0.join("u.psd"))));
         u.wait_psd();
         let kinds: Vec<String> = lines(&u).into_iter().map(|l| l.1).collect();
-        assert_eq!(kinds, ["半透明の塗りつぶし", "クリッピングされたグループ"]);
+        // 単色は選んでいたグループのすぐ下に作るので、グループが先に並ぶ
+        assert_eq!(kinds, ["クリッピングされたグループ", "半透明の塗りつぶし"]);
         u.lang = Lang::En;
         let kinds: Vec<String> = lines(&u).into_iter().map(|l| l.1).collect();
-        assert_eq!(kinds, ["Translucent fill", "Clipped group"]);
+        assert_eq!(kinds, ["Clipped group", "Translucent fill"]);
         assert!(!dir.0.join("u.psd").exists());
         // 読むだけのセットは書かない
         let mut v = painted();

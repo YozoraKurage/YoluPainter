@@ -26,7 +26,9 @@ fn fx(h: &mut Harness<'_, YoluApp>, op: FxOp) {
 
 /// 効果の行を並べた文書: 下地のレイヤー（ぼかし・階調の反転・アンカー）と、マスクにマップを読む Generator。
 fn effect_document(h: &mut Harness<'_, YoluApp>) {
+    // 単色は選んだレイヤーのすぐ下に作るので、1 つ上げて、選んだレイヤーの上に置く
     apply(h, Action::M2(Edit::NewFill));
+    apply(h, Action::LayerUp);
     let layer = h.selected_layer().unwrap();
     fx(
         h,

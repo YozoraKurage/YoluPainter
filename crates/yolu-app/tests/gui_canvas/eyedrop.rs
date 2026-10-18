@@ -516,7 +516,7 @@ fn headless_3d_reads_the_composite_of_another_texture_set_without_switching() {
     assert_eq!(current, 0);
     let other = 1;
     // 部品 B（マテリアル 1 = 2 つ目のセット。文書の大きさは今のセットと違う）の UV (0.2, 0.2) のテクセル。位置は辺を 1/3 ずつ進んだ所
-    let layer = s.set_doc(other).layers()[0].id();
+    let layer = s.set_doc(other).layers().last().unwrap().id();
     let (w, h) = (s.set_doc(other).width(), s.set_doc(other).height());
     assert_ne!(w, s.doc().width());
     let (x, y) = (

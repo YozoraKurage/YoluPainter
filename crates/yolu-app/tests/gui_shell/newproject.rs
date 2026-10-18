@@ -91,6 +91,20 @@ fn enabled_channels(doc: &Document) -> Vec<Channel> {
     v
 }
 
+/// 文書が初めの形（下から [白の単色（Color だけ）、空のレイヤー]）で、空のレイヤーが `channels` を使う。
+fn assert_starter(doc: &Document, channels: &[Channel], why: &str) {
+    assert!(yolu_app::state::is_starter_shape(doc), "{why}");
+    let [fill, layer] = doc.layers() else {
+        panic!("{why}: レイヤーは 2 つ");
+    };
+    assert_eq!(
+        fill.fill_values().collect::<Vec<_>>(),
+        [(Channel::Color, Rgba8::new(255, 255, 255, 255))],
+        "{why}"
+    );
+    assert_eq!(layer.enabled_channels(), channels, "{why}");
+}
+
 /// ウィンドウを開き、モデルを選んで準備を終える。
 fn open_new_with(s: &mut S, path: &Path) {
     np(s, NpAction::OpenNew);
@@ -135,7 +149,8 @@ fn a_project_without_a_model_follows_the_template_resolution_and_normal_format()
         !s.doc().can_undo(),
         "最初のレイヤーを足したことは取り消せない"
     );
-    assert_eq!(s.doc().layers().len(), 1);
+    assert_starter(s.doc(), Template::ColorOnly.channels(), "モデルなし");
+    assert_eq!(s.selected_layer(), s.doc().layers().last().map(|l| l.id()));
     assert!(s.model().is_none() && s.np().model_file.is_none());
     assert!(s.message().contains("モデルなし"), "{}", s.message());
 }
@@ -1060,7 +1075,8 @@ fn adding_a_set_uses_the_open_sets_size_channels_and_normal_format() {
         s.doc().normal_settings().file_direction(),
         NormalYDirection::DirectX
     );
-    assert!(!s.doc().can_undo() && s.doc().layers().len() == 1);
+    assert_starter(s.doc(), Template::LilToon.channels(), "足したセット");
+    assert_eq!(s.selected_layer(), s.doc().layers().last().map(|l| l.id()));
     assert_eq!(
         s.sets().current().materials[0],
         MaterialRef::PendingSlot(1),
@@ -1136,6 +1152,59 @@ fn adding_a_set_in_the_window_for_a_material_without_one() {
         6,
         "開いているセットと同じチャンネル"
     );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn every_set_the_window_creates_starts_from_the_starter_form() {
+    let dir = temp_dir("starter-create");
+    let path = character(&dir, "c.fbx");
+    let mut s = S::new(64, 64);
+    open_new_with(&mut s, &path);
+    np(&mut s, NpAction::Template(Template::LilToon));
+    np(&mut s, NpAction::Resolution(256));
+    np(&mut s, NpAction::Submit);
+    assert_eq!(set_names(&s), ["Skin", "Hair", "Eye"]);
+    for i in 0..3 {
+        assert_starter(
+            s.set_doc(i),
+            Template::LilToon.channels(),
+            &format!("セット {i}"),
+        );
+    }
+    assert_eq!(s.selected_layer(), s.doc().layers().last().map(|l| l.id()));
+    assert!(!s.modified() && !s.app().shows_modified(), "保存を聞かない");
+    // 切り替えた先のセットも、選ぶのは空のレイヤー
+    s.app_mut().switch_set(2).unwrap();
+    assert_eq!(s.selected_layer(), s.doc().layers().last().map(|l| l.id()));
+    // モデルが無いときも（テンプレートのチャンネル）
+    let mut t = S::new(64, 64);
+    np(&mut t, NpAction::OpenNew);
+    np(&mut t, NpAction::Template(Template::Pbr));
+    np(&mut t, NpAction::Resolution(256));
+    np(&mut t, NpAction::Submit);
+    assert_starter(t.doc(), Template::Pbr.channels(), "PBR");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn the_set_a_configuration_adds_starts_from_the_starter_form() {
+    let dir = temp_dir("starter-configure");
+    let path = character(&dir, "c.fbx");
+    let mut s = S::new(64, 64);
+    open_new_with(&mut s, &path);
+    np(&mut s, NpAction::Material(2, false));
+    np(&mut s, NpAction::Resolution(256));
+    np(&mut s, NpAction::Submit);
+    np(&mut s, NpAction::OpenConfigure);
+    np(&mut s, NpAction::AddDraft);
+    np(&mut s, NpAction::AddDraft);
+    np(&mut s, NpAction::Submit);
+    assert_eq!(s.sets().len(), 4, "{}", s.message());
+    let channels = Template::Pbr.channels();
+    for i in 2..4 {
+        assert_starter(s.set_doc(i), channels, &format!("新しいセット {i}"));
+    }
     let _ = std::fs::remove_dir_all(dir);
 }
 

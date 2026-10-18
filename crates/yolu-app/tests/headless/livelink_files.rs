@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::json;
+use yolu_app::lang::Lang;
 use yolu_app::livelink::{LinkStatus, LiveLink};
 use yolu_app::state::{Action, AppState};
 use yolu_app::view3d::pose;
@@ -33,10 +34,13 @@ impl Drive for Headless {
 
 impl Headless {
     fn new(tag: &str) -> Headless {
+        Headless::with_state(tag, AppState::new(64, 64))
+    }
+
+    fn with_state(tag: &str, mut state: AppState) -> Headless {
         let ex = Exchange::new(tag);
         let mut link = LiveLink::new();
         link.set_folder(ex.root.clone()).unwrap();
-        let mut state = AppState::new(64, 64);
         state.prefs_mut().settings.livelink_on_startup = true;
         let mut h = Headless { state, link, ex };
         h.frame();
@@ -1747,5 +1751,130 @@ fn headless_a_take_moves_only_the_bones_of_the_fbx_that_has_it() {
         if m != second_arm {
             assert_eq!(*w, after.blend_weights[m], "メッシュ {m}");
         }
+    }
+}
+
+/// セットの文書の、レイヤーの名前と種類（下から）。
+fn shape(doc: &yolu_core::Document) -> Vec<(String, yolu_core::LayerKind)> {
+    doc.layers()
+        .iter()
+        .map(|l| (l.name().to_owned(), l.kind()))
+        .collect()
+}
+
+/// 初めの形（白の単色の上に空のレイヤー）の最初のセットと、新しく作ったセットに元の絵を入れると、元の絵が一番下で、白の単色は残らない
+/// （白が元の絵を覆わない）。上の空のレイヤーはそのまま。
+#[test]
+fn headless_originals_replace_the_white_fill_of_a_starter_set() {
+    let mut h = Headless::with_state("starter-originals", AppState::starter_in(Lang::Ja));
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    assert_eq!(h.sets().len(), 2);
+    for i in 0..2 {
+        let doc = h.app().set_doc(i);
+        assert_eq!(
+            shape(doc),
+            [
+                ("元の絵".to_owned(), yolu_core::LayerKind::Raster),
+                ("レイヤー 1".to_owned(), yolu_core::LayerKind::Raster)
+            ],
+            "セット {i}: 元の絵が一番下で白の単色は無い"
+        );
+        assert!(!doc.can_undo());
+    }
+    let skin = h.app().set_doc(set_index(&h, "Skin"));
+    let mut px = [0u8; 4];
+    skin.composite_into(
+        yolu_core::Channel::Color,
+        yolu_core::Rect::new(0, 0, 1, 1),
+        &mut px,
+        yolu_core::RowOrder::BottomUp,
+    )
+    .unwrap();
+    assert_eq!(
+        px,
+        [200, 100, 50, 255],
+        "元の絵の色が見える（白に覆われない）"
+    );
+}
+
+/// 新規プロジェクトのウィンドウで解像度を選んだ初めの形のセットは作り直さず、その文書の白の単色を外して元の絵を入れる。
+#[test]
+fn headless_originals_go_into_a_chosen_resolution_starter_without_the_white() {
+    let mut state = AppState::new(64, 64);
+    state.act(Action::Project(yolu_app::newproject::NpAction::OpenNew));
+    state.act(Action::Project(yolu_app::newproject::NpAction::Resolution(
+        512,
+    )));
+    state.act(Action::Project(yolu_app::newproject::NpAction::Submit));
+    assert!(yolu_app::state::is_starter_shape(state.doc()));
+    let mut h = Headless::with_state("starter-chosen", state);
+    let id = h.doc().id();
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    let doc = h.app().set_doc(set_index(&h, "Skin"));
+    assert_eq!(doc.id(), id, "選んだ解像度の文書は作り直さない");
+    assert_eq!(doc.width(), 512);
+    let names: Vec<&str> = doc.layers().iter().map(|l| l.name()).collect();
+    assert_eq!(names, ["元の絵", "レイヤー 1"]);
+    assert!(doc
+        .layers()
+        .iter()
+        .all(|l| l.kind() != yolu_core::LayerKind::Fill));
+}
+
+/// 初めの形でも、描いたあとは「何も触っていない」と見ない（元の絵を入れてよいセットではない）。描いていない初めの形は、何も触っていない。
+#[test]
+fn headless_a_drawn_starter_is_not_an_untouched_set_for_the_originals() {
+    let mut state = AppState::starter_in(Lang::Ja);
+    assert!(state.is_pristine(), "描いていない初めの形");
+    let layer = state.doc().layers().last().unwrap().id();
+    state
+        .doc_mut()
+        .set_pixel(layer, 3, 3, yolu_core::Rgba8::new(9, 8, 7, 255))
+        .unwrap();
+    assert!(!state.is_pristine(), "描いた初めの形");
+    // 描いたセットに元の絵は入らない: Live Link は描いた文書を引き継がず、新しいプロジェクトで開く
+    let mut h = Headless::with_state("starter-drawn", state);
+    let id = h.doc().id();
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    for i in 0..h.sets().len() {
+        let doc = h.app().set_doc(i);
+        assert_ne!(doc.id(), id, "描いた文書のセットは残らない");
+        assert_eq!(doc.layers()[0].name(), "元の絵");
+        assert!(doc
+            .layers()
+            .iter()
+            .all(|l| l.kind() != yolu_core::LayerKind::Fill));
+    }
+}
+
+/// 初めの形で描いて Undo した（Redo の段が残る）セットも、何も触っていないセットと見ない。元の絵は、Redo を消す形では入れず、
+/// 描いた文書を引き継がない新しいプロジェクトに入る。
+#[test]
+fn headless_a_starter_undone_after_drawing_is_not_an_untouched_set_for_the_originals() {
+    let mut state = AppState::starter_in(Lang::Ja);
+    let layer = state.doc().layers().last().unwrap().id();
+    let mut stroke = state.begin_paint_stroke(layer, false).unwrap();
+    stroke
+        .add_point(state.doc_mut(), 4.0, 4.0, 1.0, yolu_core::glam::DVec2::ZERO)
+        .unwrap();
+    state.doc_mut().end_stroke(stroke).unwrap();
+    state.act(Action::Undo);
+    assert!(state.doc().can_redo());
+    assert!(!state.is_pristine(), "Redo の段がある初めの形");
+    let mut h = Headless::with_state("starter-undone", state);
+    let id = h.doc().id();
+    let request = h.arm("r1", KEY);
+    h.ex.put(&request);
+    assert_eq!(h.reply().kind, ReplyKind::Opened, "{}", h.message());
+    for i in 0..h.sets().len() {
+        let doc = h.app().set_doc(i);
+        assert_ne!(doc.id(), id, "描いて Undo した文書のセットは残らない");
+        assert_eq!(doc.layers()[0].name(), "元の絵");
     }
 }

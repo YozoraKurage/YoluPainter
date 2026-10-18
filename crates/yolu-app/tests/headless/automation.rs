@@ -23,7 +23,7 @@ use crate::common::tmp::test_dir;
 
 // ───────── 台 ─────────
 
-/// 同じ形の文書（ID は毎回違う）: 下から「レイヤー 1」「レイヤー 2」・「グループ 1」（中に「レイヤー 4」）・塗りつぶし・レベル補正。
+/// 同じ形の文書（ID は毎回違う）: 下から「レイヤー 1」「レイヤー 2」・塗りつぶし（グループのすぐ下に作る）・レベル補正（塗りつぶしの上）・「グループ 1」（中に「レイヤー 4」）。
 /// 選んでいるのは「レイヤー 2」。
 fn fixture() -> AppState {
     let mut s = AppState::new_in(32, 32, Lang::Ja);
@@ -214,6 +214,15 @@ fn every_mappable_layer_operation_replays_to_the_same_document() {
         s.color_mut().set_main([0.2, 0.4, 0.8, 1.0]);
         s.act(Action::M2(Edit::NewFill))
     });
+    // 単色は選んだレイヤーのすぐ下。一番下のレイヤーを選んでいるときも、同じ文書では同じ結果
+    check(
+        "塗りつぶしレイヤー（一番下を選んでいる）",
+        |s| {
+            let bottom = layer(s, "レイヤー 1");
+            s.set_selected_layer(Some(bottom));
+        },
+        |s| s.act(Action::M2(Edit::NewFill)),
+    );
     let mut adjustments = 0;
     for kind in AdjustmentKind::ALL {
         if addable(kind.settings().kind_id()) {
@@ -943,4 +952,71 @@ fn selected_in_the_app_is_the_selected_layer_and_created_is_per_run() {
     assert_eq!(s.doc().layer(top).unwrap().opacity(), 0.5);
     let index = |id: LayerId| s.doc().layer_index(id).unwrap();
     assert_eq!(index(top), index(second) + 1, "選んでいたレイヤーのすぐ上");
+}
+
+/// 単色の記録は、記録した時の位置の数字を使わない: 選んだレイヤーの位置が違う文書で再生しても、単色は選んだレイヤーのすぐ下に入る。
+/// 選んだレイヤーが一番下の記録は、どの文書でも一番下へ入る。
+#[test]
+fn a_recorded_new_fill_goes_right_below_the_selected_layer_in_a_document_of_another_shape() {
+    let mut rec = fixture();
+    start(&mut rec);
+    rec.act(Action::M2(Edit::NewFill));
+    rec.doc_mut().end_coalescing();
+    yolu_app::automation::record::sync(&mut rec);
+    let commands = recorded(&rec);
+    assert_eq!(
+        commands.len(),
+        1,
+        "すぐ下の兄弟があれば 1 命令: {commands:?}"
+    );
+
+    // 別の形: 一番下に別のレイヤーがある（「レイヤー 1」の位置が 0 でなくなる）
+    let mut other = fixture();
+    let first = layer(&other, "レイヤー 1");
+    other.set_selected_layer(Some(first));
+    other.act(Action::NewLayer);
+    let extra = other.selected_layer().unwrap();
+    other.act(Action::M2(Edit::Move {
+        id: extra,
+        parent: None,
+        position: 0,
+    }));
+    let selected = layer(&other, "レイヤー 2");
+    other.set_selected_layer(Some(selected));
+    other.doc_mut().clear_history().unwrap();
+    let undo_before = other.doc().undo_count();
+    play(&mut other, &commands).unwrap();
+    let ids: Vec<LayerId> = other.doc().layers().iter().map(|l| l.id()).collect();
+    let at = ids.iter().position(|id| *id == selected).unwrap();
+    assert_eq!(
+        other.doc().layers()[at - 1].kind(),
+        yolu_core::LayerKind::Fill,
+        "単色は選んだレイヤーのすぐ下"
+    );
+    assert_eq!(ids[at - 2], first, "その下は「レイヤー 1」");
+    assert_eq!(other.doc().undo_count(), undo_before + 1, "取り消しの 1 段");
+
+    // 一番下を選んだ記録: 足してから一番下へ。位置が違う文書でも一番下
+    let mut rec = fixture();
+    let bottom = layer(&rec, "レイヤー 1");
+    rec.set_selected_layer(Some(bottom));
+    start(&mut rec);
+    rec.act(Action::M2(Edit::NewFill));
+    rec.doc_mut().end_coalescing();
+    yolu_app::automation::record::sync(&mut rec);
+    let commands = recorded(&rec);
+    assert_eq!(commands.len(), 2, "足して一番下へ動かす: {commands:?}");
+    assert!(
+        matches!(&commands[1], Command::LayerMove(m) if m.index == Some(0)),
+        "{commands:?}"
+    );
+    let mut other = fixture();
+    let first = layer(&other, "レイヤー 1");
+    other.set_selected_layer(Some(first));
+    play(&mut other, &commands).unwrap();
+    assert_eq!(
+        other.doc().layers()[0].kind(),
+        yolu_core::LayerKind::Fill,
+        "一番下"
+    );
 }
