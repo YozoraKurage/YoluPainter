@@ -749,6 +749,167 @@ fn a_set_with_two_materials_saves_as_format_9_and_back_to_format_7_with_one() {
     let _ = std::fs::remove_dir_all(dir);
 }
 
+/// Hair を Skin のセットへ移して適用し、Hair のセットをマテリアルなし（仮のスロットの鍵だけ）にした 3 セット（Skin+Hair・Hair 行・Eye）のプロジェクト。
+fn project_with_a_set_without_a_material(path: &Path) -> S {
+    let mut s = project_from(path, 256);
+    np(&mut s, NpAction::OpenConfigure);
+    np(&mut s, NpAction::Draft(0, DraftOp::Material(1, true)));
+    np(&mut s, NpAction::Submit);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    assert!(
+        matches!(
+            s.sets().get(1).unwrap().materials.as_slice(),
+            [MaterialRef::PendingSlot(_)]
+        ),
+        "{:?}",
+        s.sets().get(1).unwrap().materials
+    );
+    s
+}
+
+fn material_named(name: &str) -> MaterialRef {
+    MaterialRef::Material {
+        name: name.into(),
+        asset: None,
+    }
+}
+
+fn saved_sets(s: &mut S, path: &Path) -> (i32, Vec<Vec<MaterialRef>>) {
+    s.act(Action::SaveProjectAs(path.to_path_buf()));
+    assert!(s.message().contains("保存しました"), "{}", s.message());
+    let saved = read_file(path);
+    let materials = saved.sets().iter().map(|x| x.materials.clone()).collect();
+    (saved.info().format, materials)
+}
+
+#[test]
+fn picking_materials_for_a_set_without_one_drops_its_placeholder_key() {
+    let dir = temp_dir("pick-for-empty");
+    let path = character(&dir, "c.fbx");
+    let mut s = project_with_a_set_without_a_material(&path);
+    // 開き直した構成: マテリアルなしの行は仮の鍵 1 つ
+    np(&mut s, NpAction::OpenConfigure);
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert!(win.drafts[1].materials().is_empty());
+        assert_eq!(win.drafts[1].keys.len(), 1);
+    }
+    // 1 つ選ぶ: 仮の鍵は外れ、本当のマテリアルの鍵 1 つだけ。保存は形式 7
+    np(&mut s, NpAction::Draft(1, DraftOp::Material(1, true)));
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(win.drafts[1].keys.len(), 1);
+        assert_eq!(win.drafts[1].materials(), [1]);
+    }
+    np(&mut s, NpAction::Submit);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    assert_eq!(
+        saved_sets(&mut s, &dir.join("one.ylp")),
+        (
+            7,
+            vec![
+                vec![material_named("Skin")],
+                vec![material_named("Hair")],
+                vec![material_named("Eye")]
+            ]
+        )
+    );
+    // 2 つ選べば形式 9 で 2 つ（Eye は元の行から移り、その行がマテリアルなしになる）
+    np(&mut s, NpAction::OpenConfigure);
+    np(&mut s, NpAction::Draft(1, DraftOp::Material(2, true)));
+    np(&mut s, NpAction::Submit);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    let (format, sets) = saved_sets(&mut s, &dir.join("two.ylp"));
+    assert_eq!(format, yolu_io::MULTI_MATERIAL_FORMAT);
+    assert_eq!(
+        sets[..2],
+        [
+            vec![material_named("Skin")],
+            vec![material_named("Hair"), material_named("Eye")]
+        ]
+    );
+    assert!(matches!(sets[2].as_slice(), [MaterialRef::PendingSlot(_)]));
+    // 選んだ後に外すと、仮の鍵 1 つに戻る
+    np(&mut s, NpAction::OpenConfigure);
+    np(&mut s, NpAction::Draft(1, DraftOp::Material(1, false)));
+    np(&mut s, NpAction::Draft(1, DraftOp::Material(2, false)));
+    np(&mut s, NpAction::Submit);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    assert!(
+        matches!(
+            s.sets().get(1).unwrap().materials.as_slice(),
+            [MaterialRef::PendingSlot(_)]
+        ),
+        "{:?}",
+        s.sets().get(1).unwrap().materials
+    );
+    assert!(s.sets().get(1).unwrap().bound.is_empty());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn a_material_picked_for_a_set_without_one_keeps_its_group_when_the_model_is_changed() {
+    let dir = temp_dir("pick-for-empty-swap");
+    let old = character(&dir, "old.fbx");
+    // 仮のスロットの番号（3・4）が指す 4 つ目・5 つ目のマテリアルのある新しいモデル
+    let text = ascii_fbx(
+        &["Hair", "Cape", "skin", "Extra", "Extra2"],
+        &[
+            mesh("A", &[Some(0)]),
+            mesh("B", &[Some(1)]),
+            mesh("C", &[Some(2)]),
+            mesh("D", &[Some(3)]),
+            mesh("E", &[Some(4)]),
+        ],
+    );
+    let new = write_fbx(&dir, "new.fbx", &text);
+    let mut s = project_with_a_set_without_a_material(&old);
+    np(&mut s, NpAction::OpenConfigure);
+    np(&mut s, NpAction::Draft(1, DraftOp::Material(1, true)));
+    np(&mut s, NpAction::Submit);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    configure_with(&mut s, &new);
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(
+            win.drafts.iter().map(|d| d.materials()).collect::<Vec<_>>(),
+            [vec![2], vec![0], vec![]],
+            "Hair のセットは Hair だけ"
+        );
+    }
+    np(&mut s, NpAction::Submit);
+    np(&mut s, NpAction::ConfirmApply);
+    assert!(s.np().window.is_none(), "{:?}", s.message());
+    assert_eq!(s.sets().get(1).unwrap().bound, [0]);
+    assert_eq!(s.sets().get(1).unwrap().materials, [material_named("Hair")]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// モデルの無いプロジェクトの仮のスロットの鍵は、モデルを付けるとスロットの番号でマテリアルの組へ付く。そこへ別のマテリアルを選んでも、
+/// 付いていたマテリアルの鍵は外れない（組の番号の付いていない仮の鍵だけを外す）。
+#[test]
+fn a_placeholder_key_matched_to_a_material_survives_picking_another_material() {
+    let dir = temp_dir("pick-after-match");
+    let model = cape_model(&dir, "cape.fbx");
+    let mut s = S::new(64, 64);
+    configure_with(&mut s, &model);
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(
+            win.drafts[0].keys,
+            [(MaterialRef::PendingSlot(0), Some(0))],
+            "モデルを付けた後の下書き"
+        );
+    }
+    np(&mut s, NpAction::Draft(0, DraftOp::Material(1, true)));
+    {
+        let win = s.np().window.as_ref().unwrap();
+        assert_eq!(win.drafts[0].materials(), [0, 1], "付いていた Hair は残る");
+        assert_eq!(win.drafts[0].keys.len(), 2);
+    }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 #[test]
 fn resizing_resamples_the_set_clears_its_history_and_asks_first() {
     let dir = temp_dir("configure-resize");

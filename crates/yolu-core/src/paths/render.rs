@@ -19,6 +19,9 @@ pub struct Options<'a> {
     /// 3D のパスで描かない面（描く形の三角形の番号ごと。true の面にはレイを当てず、ダブも広げない）。None か true が 1 つも無ければ、
     /// 全部の面に描く（除く面を持たない描き方と同じバイト）。数が描く形の三角形の数と違えば `Error::ModelMismatch`。
     pub hidden: Option<&'a [bool]>,
+    /// 3D のパスを描く作業面（テクスチャセット）のマテリアルの組。鏡の対称が、映した点を探す面をこの組の全部のマテリアルにする（左右が
+    /// 別のマテリアルでも映せる）。None なら、元の点と同じマテリアルの面だけ。
+    pub material: Option<&'a crate::geometry::MaterialSet>,
 }
 impl Default for Options<'_> {
     fn default() -> Self {
@@ -32,6 +35,7 @@ impl Default for Options<'_> {
             cancel: None,
             images: Default::default(),
             hidden: None,
+            material: None,
         }
     }
 }

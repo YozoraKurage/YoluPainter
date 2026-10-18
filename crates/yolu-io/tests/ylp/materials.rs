@@ -24,25 +24,25 @@ fn format7_all_material_variants_roundtrip_every_entry() {
     let p = Project::read(original).unwrap();
     assert_eq!(p.info().format, 7);
     assert_ne!(p.current_set(), p.sets()[0].id);
-    assert_eq!(p.sets()[0].materials[0], MaterialRef::Unassigned);
+    assert_eq!(p.sets()[0].materials, [MaterialRef::Unassigned]);
     assert_eq!(
-        p.sets()[1].materials[0],
-        MaterialRef::Material {
+        p.sets()[1].materials,
+        [MaterialRef::Material {
             name: "同名".into(),
             asset: None
-        }
+        }]
     );
     assert_eq!(
-        p.sets()[2].materials[0],
-        MaterialRef::Material {
+        p.sets()[2].materials,
+        [MaterialRef::Material {
             name: "同名".into(),
             asset: Some(MaterialAsset {
                 guid: "a".repeat(32),
                 file_id: i64::MIN
             })
-        }
+        }]
     );
-    assert_eq!(p.sets()[3].materials[0], MaterialRef::PendingSlot(65535));
+    assert_eq!(p.sets()[3].materials, [MaterialRef::PendingSlot(65535)]);
     let rewritten = Archive::read(&p.to_bytes().unwrap()).unwrap();
     let original = Archive::read(original).unwrap();
     assert_eq!(original.entries(), rewritten.entries());
@@ -71,10 +71,10 @@ fn format6_and_shared_materials_migrate_slots_preserving_other_entries() {
         assert_eq!(upgraded.info().format, 7);
         for (i, set) in upgraded.sets().iter().enumerate() {
             assert_eq!(
-                set.materials[0],
-                MaterialRef::PendingSlot(
+                set.materials,
+                [MaterialRef::PendingSlot(
                     original["sets"][i]["materialSlot"].as_u64().unwrap() as u16
-                )
+                )]
             );
         }
         for (name, bytes) in p.original_archive().entries() {
@@ -95,7 +95,7 @@ fn legacy_accepts_material_first_but_format7_refuses_slot_only() {
     info["format"] = 6.into();
     files.insert("ylp.json".into(), serde_json::to_vec(&info).unwrap());
     let p = open(files, |p| p["sets"][0]["materialSlot"] = json!(-1)).unwrap();
-    assert_eq!(p.sets()[0].materials[0], MaterialRef::Unassigned);
+    assert_eq!(p.sets()[0].materials, [MaterialRef::Unassigned]);
     assert!(open(fixture(), |p| {
         p["sets"][0].as_object_mut().unwrap().remove("material");
         p["sets"][0]["materialSlot"] = json!(0);

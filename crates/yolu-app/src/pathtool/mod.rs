@@ -751,6 +751,7 @@ impl AppState {
                 let hidden = self.path_hidden(&ctx.render);
                 let options = Options {
                     hidden: hidden.as_deref(),
+                    material: Some(&ctx.material),
                     ..options
                 };
                 let r = render_surface(s, &ctx.render, &options)
@@ -825,6 +826,7 @@ impl AppState {
         let hidden = self.path_hidden(&ctx.render);
         let options = Options {
             hidden: hidden.as_deref(),
+            material: Some(&ctx.material),
             ..self.path_options()
         };
         let rendered = render_list(&entries, Some(&ctx.render), &options)

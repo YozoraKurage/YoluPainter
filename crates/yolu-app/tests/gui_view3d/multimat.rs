@@ -6,14 +6,16 @@ use crate::common::drive::{Drive, DriveApp};
 use common::*;
 use egui::Pos2;
 use egui_kittest::Harness;
-use yolu_app::engine::{composite_pixel, Rgba8};
+use yolu_app::engine::{composite_pixel, Channel, LayerId, Rgba8};
 use yolu_app::newproject::{DraftOp, NpAction};
+use yolu_app::pathtool::PathAction;
 use yolu_app::region::tools::{under, Under, Where};
-use yolu_app::state::Action;
+use yolu_app::state::{Action, Tool};
 use yolu_app::view3d::ViewId;
 use yolu_app::YoluApp;
 use yolu_core::geometry::{MaterialSet, OrbitCamera};
 use yolu_core::glam::Vec3;
+use yolu_core::paths::PathSymmetry;
 use yolu_protocol::{MaterialInfo, MaterialKey, MeshData, Model, Submesh};
 
 const SIZE: u32 = 96;
@@ -150,6 +152,12 @@ fn one_stroke_paints_both_materials_of_the_set_and_not_a_material_outside_it() {
         "ほかのセットの文書には描かない"
     );
     assert_eq!(h.doc().undo_count(), 1, "1 本のストロークは 1 回の Undo");
+    // 1 回の Undo で、両方のマテリアルの面に描いた物がそろって消える
+    h.act(Action::Undo);
+    h.run();
+    let doc = h.doc();
+    assert!(!painted_column(doc, 0), "Undo で M0 の面の線が消える");
+    assert!(!painted_column(doc, 1), "Undo で M1 の面の線も消える");
 }
 
 #[test]
@@ -199,4 +207,63 @@ fn the_eyedropper_and_the_region_tools_take_the_faces_of_the_set_as_the_current_
         .map(|&t| model.geometry.triangles()[t as usize].material)
         .collect();
     assert_eq!(materials.into_iter().collect::<Vec<_>>(), [0, 1]);
+}
+
+/// レイヤー自身の Color の画素に、UV の列 `column`（3 分の 1）の縁から離れた所で描いた画素があるか。
+fn layer_has_column(h: &Harness<'_, YoluApp>, layer: LayerId, column: u32) -> bool {
+    let l = h.doc().layer(layer).expect("パスのレイヤー");
+    let (y, margin) = (SIZE / 2, 6);
+    (column * SIZE / 3 + margin..(column + 1) * SIZE / 3 - margin)
+        .any(|x| l.pixel(Channel::Color, x, y).is_ok_and(|p| p.a > 0))
+}
+
+#[test]
+fn a_mirrored_3d_path_reaches_the_other_material_of_the_set_when_drawn_redrawn_and_rebound() {
+    let mut h = merged();
+    h.act(Action::SelectTool(Tool::Path));
+    h.run();
+    // M1 の板（中心 x = 0）の上の 2 点。x = −0.65 の面で映すと、M0 の板（中心 x = −1.3）の上へ落ちる
+    h.path_mut().next_style.symmetry = PathSymmetry::Mirror {
+        point: Vec3::new(-0.65, 0.0, 0.0),
+        normal: Vec3::X,
+    };
+    let at = screen_of(&h, Vec3::new(0.15, -0.2, 0.0));
+    click(&mut h, at);
+    let layer = h.selected_layer().expect("パスのレイヤー");
+    // 新しいレイヤーに描く道（最初の点）
+    assert!(layer_has_column(&h, layer, 1), "元の点（M1）");
+    assert!(
+        layer_has_column(&h, layer, 0),
+        "映した先（組のもう 1 つのマテリアル M0）: {}",
+        h.message()
+    );
+    let at = screen_of(&h, Vec3::new(0.35, 0.2, 0.0));
+    click(&mut h, at);
+    assert!(layer_has_column(&h, layer, 0) && layer_has_column(&h, layer, 1));
+    // 一覧の描き直しの道
+    h.act(Action::Path(PathAction::Reverse));
+    h.run();
+    assert!(layer_has_column(&h, layer, 1));
+    assert!(
+        layer_has_column(&h, layer, 0),
+        "描き直しても M0 へ映る: {}",
+        h.message()
+    );
+    // モデルの差し替えの描き直しの道（V を反転した新しいモデルで、モデルの指紋が替わる）
+    let mut flipped = three_quads();
+    flipped.generation = 2;
+    for mesh in &mut flipped.meshes {
+        for uv in &mut mesh.uv0 {
+            uv[1] = 1.0 - uv[1];
+        }
+    }
+    let (_, loaded) = h.app_mut().receive_link_model(&flipped);
+    loaded.unwrap();
+    h.run();
+    assert!(layer_has_column(&h, layer, 1));
+    assert!(
+        layer_has_column(&h, layer, 0),
+        "モデルを替えて描き直しても M0 へ映る: {}",
+        h.message()
+    );
 }

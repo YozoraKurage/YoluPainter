@@ -125,6 +125,11 @@ pub(super) fn draft_op(app: &AppState, win: &mut NpWindow, i: usize, op: DraftOp
                     d.keys.retain(|(_, m)| *m != Some(group));
                 }
                 let d = &mut win.drafts[i];
+                // マテリアルなしの行の仮のスロットの鍵は、本当のマテリアルを選んだら外す（残すと、保存が形式 9 になり、モデルを替えたときに
+                // スロットの番号で別のマテリアルへ付く）。全部外したときの仮の鍵は `set_keys` が付け直す。外すのは組の番号の付いていない
+                // 仮の鍵だけ（`rematch_drafts` がスロットの番号で組へ付けた仮の鍵は、画面ではそのマテリアルのチェックとして見えている）
+                d.keys
+                    .retain(|(k, m)| !(m.is_none() && matches!(k, MaterialRef::PendingSlot(_))));
                 d.keys.push((g.key.clone(), Some(group)));
             } else {
                 win.drafts[i].keys.retain(|(_, m)| *m != Some(group));

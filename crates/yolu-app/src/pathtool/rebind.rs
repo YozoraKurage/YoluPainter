@@ -134,6 +134,7 @@ fn redraw_one(
         stroke_budget_bytes: doc.stroke_budget_bytes(),
         images: doc.effect_inputs().images().clone(),
         hidden,
+        material: Some(material),
         ..Options::default()
     };
     let rendered = render_list(&rebound, Some(new), &options)

@@ -271,7 +271,7 @@ pub(super) fn draw_surface(
     let (mut samples, mut dabs, mut gaps) = draw_surface_one(painter, path, t, o)?;
     if let PathSymmetry::Mirror { point, normal } = path.style.symmetry {
         o.check()?;
-        match mirrored_surface(path, t.full, point, normal) {
+        match mirrored_surface(path, t.full, point, normal, o.material) {
             Some(copy) => {
                 let (s, d, k) = draw_surface_one(painter, &copy, t, o)?;
                 samples += s;
@@ -284,12 +284,14 @@ pub(super) fn draw_surface(
     Ok((samples, dabs, gaps))
 }
 
-/// 鏡の面で映したパス（点は映した位置のいちばん近い面へ。同じマテリアル・向きの合う面・許す距離の内側。置けない点があれば None）。
+/// 鏡の面で映したパス（点は映した位置のいちばん近い面へ。`material` の組のマテリアル（無ければ元の点と同じマテリアル）・向きの合う面・許す距離の
+/// 内側。置けない点があれば None）。
 fn mirrored_surface(
     path: &SurfacePath,
     g: &SurfaceGeometry,
     point: Vec3,
     normal: Vec3,
+    material: Option<&crate::geometry::MaterialSet>,
 ) -> Option<SurfacePath> {
     let plane = crate::geometry::MirrorPlane::new(point, normal, Vec3::X, Vec3::Y).ok()?;
     let tolerance = super::rebind_tolerance(g, path);
@@ -297,13 +299,21 @@ fn mirrored_surface(
     for p in &path.points {
         let t = g.triangles().get(p.triangle as usize)?;
         let (position, n) = super::point_position(g, p)?;
+        let own;
+        let allowed = match material {
+            Some(set) => set,
+            None => {
+                own = crate::geometry::MaterialSet::one(t.material);
+                &own
+            }
+        };
         let hit = g
             .find_closest_point(
                 plane.reflect(position),
                 tolerance,
                 plane.reflect_direction(n),
                 super::REBIND_MAX_NODE_VISITS,
-                Some(&crate::geometry::MaterialSet::one(t.material)),
+                Some(allowed),
             )
             .ok()??;
         let tangent = match p.tangent {
