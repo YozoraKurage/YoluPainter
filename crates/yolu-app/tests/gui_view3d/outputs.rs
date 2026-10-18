@@ -289,7 +289,7 @@ fn baking_from_the_window_fills_the_set_and_the_canvas_shows_the_overlay() {
     // 撮る絵は毎回同じに（かかった時間と書き出し先は毎回違う）
     {
         let s = h.app_mut();
-        *s.message_mut() = "試験".into();
+        *s.message_mut() = "テスト".into();
         s.bake_mut().outcome = Some((
             "「テクスチャセット 1」のメッシュマップ 5 枚を焼きました。".into(),
             true,
@@ -582,7 +582,11 @@ fn bake_button(h: &Harness<'_, YoluApp>, label: &str) -> egui::Rect {
 fn the_bake_window_switches_where_to_bake_and_shows_the_adapter_or_why_it_fell_back() {
     let mut h = cube_app(64);
     open_bake_window(&mut h);
-    assert_eq!(h.bake().backend, BakeBackend::Cpu, "試験の台は CPU に固定");
+    assert_eq!(
+        h.bake().backend,
+        BakeBackend::Cpu,
+        "テストの台は CPU に固定"
+    );
     assert!(
         yolu_app::bake::probe_line(Lang::Ja, BakeBackend::Cpu, &h.bake().gpu_probe()).is_none(),
         "CPU を選んでいれば GPU の確認の行は無い"
@@ -743,7 +747,7 @@ fn exporting_asks_before_replacing_then_shows_the_short_list() {
     {
         // 撮る絵は毎回同じに（書き出し先は毎回違う）
         let s = h.app_mut();
-        *s.message_mut() = "試験".into();
+        *s.message_mut() = "テスト".into();
         s.export_mut().report.as_mut().unwrap().dir = PathBuf::from("/out");
     }
     h.run();
@@ -2021,7 +2025,7 @@ fn headless_gpu_baked_mesh_maps_survive_save_and_reopen() {
         std::thread::sleep(Duration::from_millis(2));
     };
     if let Err(why) = probe {
-        eprintln!("GPU を使えない環境なので、GPU で焼いた結果の保存と復元の試験は省く: {why}");
+        eprintln!("GPU を使えない環境なので、GPU で焼いた結果の保存と復元のテストは省く: {why}");
         // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、アダプターを取れないときに通った扱いにしない（common::canvas_device と同じ）
         assert!(
             std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),

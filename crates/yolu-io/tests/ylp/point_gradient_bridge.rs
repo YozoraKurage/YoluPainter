@@ -213,7 +213,7 @@ fn versions_between_the_known_ones_are_refused_instead_of_read_as_version_25() {
     let err = NativeDocument::read(&between).unwrap_err().to_string();
     assert!(
         err.contains(&format!("{gap} は未対応または範囲外")),
-        "版 {gap}: {err}"
+        "バージョン {gap}: {err}"
     );
 }
 
@@ -259,7 +259,7 @@ fn a_smart_material_refuses_point_gradients() {
         .unwrap();
     let material = doc.capture_smart_material(&[fill], "素材").unwrap();
     let writer = yolu_io::WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "1".into(),
         unity: "なし".into(),
     };

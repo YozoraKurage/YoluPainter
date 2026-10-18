@@ -119,14 +119,14 @@ fn the_status_bar_left_is_empty_and_the_message_shows_as_a_small_toast_in_it_tha
         let bar_top = 800.0 - t::STATUS_BAR_HEIGHT;
 
         // message があれば、小さな知らせが状態の帯の左の端に出る
-        *h.message_mut() = "試験の知らせ".into();
+        *h.message_mut() = "テストの知らせ".into();
         h.run();
         assert_eq!(
             shell::status_text(h.app()),
-            "試験の知らせ",
+            "テストの知らせ",
             "message の読み口は今のまま"
         );
-        let toast = text_rect(&h, "試験の知らせ").expect("知らせが出ている");
+        let toast = text_rect(&h, "テストの知らせ").expect("知らせが出ている");
         assert!(
             toast.top() >= bar_top && toast.bottom() <= 800.0,
             "{lang:?}: 知らせ {toast:?} は状態の帯 {bar_top} の中"
@@ -138,10 +138,10 @@ fn the_status_bar_left_is_empty_and_the_message_shows_as_a_small_toast_in_it_tha
             h.step();
         }
         assert!(
-            text_rect(&h, "試験の知らせ").is_none(),
+            text_rect(&h, "テストの知らせ").is_none(),
             "{lang:?}: 普通の知らせは数秒で消える"
         );
-        assert_eq!(h.message(), "試験の知らせ");
+        assert_eq!(h.message(), "テストの知らせ");
 
         // 画面に出さなくなった数は、状態から読める
         let s = h.state();
@@ -156,29 +156,33 @@ fn the_status_bar_left_is_empty_and_the_message_shows_as_a_small_toast_in_it_tha
 fn an_error_toast_stays_longer_and_pressing_it_dismisses_it() {
     use yolu_app::notice::Source;
     let mut h = app(1280.0, 800.0, 256);
-    h.app_mut().fail(Source::Open, "開けません: 試験のファイル");
+    h.app_mut()
+        .fail(Source::Open, "開けません: テストのファイル");
     h.run();
-    assert!(text_rect(&h, "開けません: 試験のファイル").is_some());
+    assert!(text_rect(&h, "開けません: テストのファイル").is_some());
     // 普通の知らせが消える秒数のあとも、エラーは残る
     for _ in 0..(((toast::INFO_SECONDS + 2.0) * 60.0) as usize) {
         h.step();
     }
     assert!(
-        text_rect(&h, "開けません: 試験のファイル").is_some(),
+        text_rect(&h, "開けません: テストのファイル").is_some(),
         "エラーは長く出る"
     );
     // 押すと消える（文は message に残る）
-    let at = h.get_by_label("開けません: 試験のファイル").rect().center();
+    let at = h
+        .get_by_label("開けません: テストのファイル")
+        .rect()
+        .center();
     click(&mut h, at);
     h.run();
     assert!(
-        text_rect(&h, "開けません: 試験のファイル").is_none(),
+        text_rect(&h, "開けません: テストのファイル").is_none(),
         "押したら消える"
     );
-    assert_eq!(h.message(), "開けません: 試験のファイル");
+    assert_eq!(h.message(), "開けません: テストのファイル");
     // 書き直されない（操作が文を書かない）あいだは、出し直さない。別の文になれば出る
     h.run();
-    assert!(text_rect(&h, "開けません: 試験のファイル").is_none());
+    assert!(text_rect(&h, "開けません: テストのファイル").is_none());
     h.app_mut().info(Source::Save, "保存しました。");
     h.run();
     assert!(text_rect(&h, "保存しました。").is_some());
@@ -309,7 +313,7 @@ fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tool
             egui::pos2(0.0, 800.0 - t::STATUS_BAR_HEIGHT),
             egui::pos2(1280.0, 800.0),
         );
-        let build = text_rect(&h, "0.1.0 · abc1234").expect("版とビルド");
+        let build = text_rect(&h, "0.1.0 · abc1234").expect("バージョンとビルド");
         let memory = text_rect(&h, "812 MB").expect("使っているメモリ");
         let gpu = text_rect(&h, "GPU 1.5 GB").expect("GPU のメモリ（分かるとき）");
         for r in [build, memory, gpu] {
@@ -321,11 +325,11 @@ fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tool
         }
         assert!(
             build.right() > 1280.0 - 20.0,
-            "いちばん右が版とビルド: {build:?}"
+            "いちばん右がバージョンとビルド: {build:?}"
         );
         assert!(
             memory.right() < gpu.left() && gpu.right() < build.left(),
-            "並び: メモリ・GPU・版: {memory:?} {gpu:?} {build:?}"
+            "並び: メモリ・GPU・バージョン: {memory:?} {gpu:?} {build:?}"
         );
         // 数は短い（1 項目 16 文字以内）。開発用の言葉（MiB・タイル・三角形…）は無い
         assert!(screen_texts(&h)
@@ -357,7 +361,7 @@ fn the_status_bar_right_end_shows_the_build_and_the_memory_with_a_breakdown_tool
         }
         // 版とビルドのツールチップ
         hover_and_wait(&mut h, build.center());
-        let _ = h.get_by_label(lang.pick("版とビルド", "Version and build"));
+        let _ = h.get_by_label(lang.pick("バージョンとビルド", "Version and build"));
     }
 }
 
@@ -368,7 +372,7 @@ fn the_memory_is_measured_only_at_the_interval_and_the_process_size_is_available
     assert_eq!(
         *s.usage(),
         yolu_app::usage::Usage::default(),
-        "試験のウィンドウは測らない"
+        "テストのウィンドウは測らない"
     );
     assert!(s.refresh_usage(100.0, || Some(5)));
     assert_eq!(s.usage().gpu, Some(5));
@@ -583,7 +587,7 @@ fn the_status_bar_with_the_build_the_memory_and_a_toast_looks_right() {
         // 失敗の知らせ（左の帯が赤）
         h.app_mut().fail(
             yolu_app::notice::Source::Open,
-            lang.pick("開けません: 試験のファイル", "Cannot open: sample file"),
+            lang.pick("開けません: テストのファイル", "Cannot open: sample file"),
         );
         h.run();
         bottom_shot(&mut h, &format!("status_bar_toast_error{suffix}"));

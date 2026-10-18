@@ -1382,7 +1382,7 @@ impl Document {
         }
     }
 
-    /// ラスターレイヤーの面が無ければ作って有効にする（C# の GetChannel。履歴には入らない）。作ったら true。
+    /// ラスターレイヤーの面が無ければ作って有効にする（履歴には入らない。取り消すときは drop_created_surface で外す）。作ったら true。
     fn ensure_surface(&mut self, index: usize, channel: Channel) -> bool {
         let (w, h, ts) = (self.width, self.height, self.tile_size);
         let layer = &mut self.layers[index];
@@ -2089,7 +2089,7 @@ impl Document {
 
     /// クリッピングの印のあるレイヤーの下地（同じグループのすぐ下の、印の無い兄弟）のうち、グループのものの中身に印を付ける。
     /// グループはクリッピングの組を持つと通過でも分離で合成するので、組のレイヤーが出入りする（印・表示・チャンネル・面・並び）と
-    /// 中身の合成が変わり得る（C# はここを記録しない）。
+    /// 中身の合成が変わり得る。
     fn mark_clip_bases(&mut self) {
         let mut bases = Vec::new();
         for i in 0..self.layers.len() {

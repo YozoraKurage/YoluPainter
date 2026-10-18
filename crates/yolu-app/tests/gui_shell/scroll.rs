@@ -22,7 +22,7 @@ struct Pane {
 
 fn draw(ui: &mut egui::Ui, p: &mut Pane) {
     if !p.ready {
-        // 書体は次のフレームから効く
+        // フォントは次のフレームから効く
         YoluApp::setup(ui.ctx());
         p.ready = true;
         ui.ctx().request_repaint();

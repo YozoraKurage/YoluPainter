@@ -602,7 +602,7 @@ fn headless_the_search_matches_item_names_and_category_names_in_the_current_lang
         .iter()
         .any(|(c, items)| *c == Category::Pen && items.contains(&Item::PressureAdjust)));
     // 更新は、公開鍵の無いビルドでは当たらない
-    assert!(groups(&app, "試験版").is_empty());
+    assert!(groups(&app, "ベータ版").is_empty());
     assert!(groups(&app, "更新").is_empty());
     // 行の下の名前（ポート番号・キャッシュの上限と場所・合計・下限と上限）にも当たる
     for (query, want) in [

@@ -835,7 +835,7 @@ mod tests {
             Ok(p) => p,
             Err(e) => {
                 assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-                eprintln!("GPU の試験をスキップ: {e}");
+                eprintln!("GPU のテストをスキップ: {e}");
                 // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、アダプターを取れないときに通った扱いにしない
                 assert!(
                     std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),

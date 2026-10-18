@@ -469,7 +469,7 @@ fn a_set_locked_after_recovery_is_saved_even_after_its_generation_is_discarded()
         };
         let project = Project::create(
             WriterInfo {
-                app: "試験".into(),
+                app: "テスト".into(),
                 version: "0".into(),
                 unity: "standalone".into(),
             },
@@ -567,7 +567,7 @@ fn two_sets(dir: &TempDir, name: &str) -> (PathBuf, Vec<String>) {
         .collect();
     let project = Project::create(
         WriterInfo {
-            app: "試験".into(),
+            app: "テスト".into(),
             version: "0".into(),
             unity: "standalone".into(),
         },
@@ -709,7 +709,7 @@ fn saving_over_the_open_file_waits_for_a_running_checkpoint() {
             .collect();
         let project = Project::create(
             WriterInfo {
-                app: "試験".into(),
+                app: "テスト".into(),
                 version: "0".into(),
                 unity: "standalone".into(),
             },

@@ -1198,11 +1198,11 @@ fn before() { let a = \"本番の前\"; }
 #[cfg(test)]
 #[allow(dead_code)]
 pub(crate) fn wait() -> u32 {
-    let b = \"試験の関数\";
+    let b = \"テストの関数\";
     1
 }
 
-fn middle() { let c = \"試験の関数の後ろ\"; }
+fn middle() { let c = \"テストの関数の後ろ\"; }
 
 #[cfg(test)]
 use std::time::Duration;
@@ -1213,7 +1213,7 @@ fn after_use() { let d = \"use の後ろ\"; }
 mod tests {
     use super::*;
     #[test]
-    fn t() { let e = \"試験のモジュール\"; }
+    fn t() { let e = \"テストのモジュール\"; }
 }
 ";
     let stripped = strip_test_items(sample);
@@ -1222,10 +1222,10 @@ mod tests {
         sample.lines().count(),
         "行番号が合う"
     );
-    for kept in ["本番の前", "試験の関数の後ろ", "use の後ろ"] {
+    for kept in ["本番の前", "テストの関数の後ろ", "use の後ろ"] {
         assert!(stripped.contains(kept), "{kept} が残る");
     }
-    for dropped in ["試験の関数\"", "試験のモジュール", "Duration"] {
+    for dropped in ["テストの関数\"", "テストのモジュール", "Duration"] {
         assert!(!stripped.contains(dropped), "{dropped} が消える");
     }
 
@@ -1250,7 +1250,7 @@ mod tests {
         production_sources()
             .iter()
             .all(|(_, text)| !text.contains("mod tests {")),
-        "試験のモジュールが残っている"
+        "テストのモジュールが残っている"
     );
 }
 

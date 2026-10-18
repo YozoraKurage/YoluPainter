@@ -662,11 +662,11 @@ fn matches_the_csharp_core_byte_for_byte() {
     }
     // 台本が空に近くなって、照合が素通りしていないことの確かめ
     assert!(outputs >= 300 && shoulds >= 100 && refusals >= 4);
-    // C# との全バイト一致が、既定の並列の枝（段の候補が parallel_min 以上）を通る事例を含むこと
+    // C# との全バイト一致が、既定の並列の分岐（段の候補が parallel_min 以上）を通る事例を含むこと
     let widest = cases.iter().map(|c| c.widest_first_ring).max().unwrap_or(0);
     assert!(
         widest >= Tuning::DEFAULT.parallel_min,
-        "段 1 の候補が最大 {widest} 個で、並列の下限 {} に届かない（並列の枝が C# と照らされていない）",
+        "段 1 の候補が最大 {widest} 個で、並列の下限 {} に届かない（並列の分岐が C# と照らされていない）",
         Tuning::DEFAULT.parallel_min
     );
 }

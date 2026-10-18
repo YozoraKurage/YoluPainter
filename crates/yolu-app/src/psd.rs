@@ -1562,7 +1562,7 @@ mod tests {
             .is_some_and(|id| b.session.doc.layer(id).is_some()));
         assert!(b.session.is_modified());
         // 読むだけのセットには入れない
-        b.session.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+        b.session.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
         b.apply(Action::Psd(PsdAction::ImportDialog(PsdTarget::CurrentSet)));
         assert_eq!(b.outbox.dialog_request, None);
         assert!(b.message.contains("読むだけ"), "{}", b.message);
@@ -2121,7 +2121,7 @@ mod tests {
         assert!(!dir.0.join("u.psd").exists());
         // 読むだけのセットは書かない
         let mut v = painted();
-        v.session.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+        v.session.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
         v.apply(Action::Psd(PsdAction::Export(dir.0.join("v.psd"))));
         assert!(!v.psd.is_busy());
         assert!(v.psd.report.as_ref().unwrap().lines[0]

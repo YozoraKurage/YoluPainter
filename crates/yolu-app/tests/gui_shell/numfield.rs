@@ -20,7 +20,7 @@ struct Field {
 
 fn draw(ui: &mut egui::Ui, f: &mut Field) {
     if !f.ready {
-        // 書体は次のフレームから効く
+        // フォントは次のフレームから効く
         YoluApp::setup(ui.ctx());
         f.ready = true;
         ui.ctx().request_repaint();

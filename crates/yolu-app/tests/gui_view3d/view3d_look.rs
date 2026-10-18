@@ -69,7 +69,8 @@ fn set_model_with(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>, warm: bo
     let state = h.app_mut();
     let revision = state.view3d_mut().next_revision();
     state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
     if warm {
         model.tangents();
     }
@@ -1098,7 +1099,8 @@ fn swap_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
     let state = h.app_mut();
     let revision = state.view3d_mut().next_revision();
     state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
     state.view3d_mut().set_model(model);
 }
 
@@ -1230,7 +1232,7 @@ fn a_failed_tangent_worker_neither_keeps_the_window_repainting_nor_runs_again() 
     h.state_mut()
         .view3d_set_tangent_hook(Some(Arc::new(move || {
             counted.fetch_add(1, Ordering::SeqCst);
-            panic!("試験: 接線の作業の失敗");
+            panic!("テスト: 接線の作業の失敗");
         })));
     swap_model(&mut h, vec![quad(1.0)]);
     h.doc_mut()

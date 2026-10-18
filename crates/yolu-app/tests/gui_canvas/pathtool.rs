@@ -711,11 +711,11 @@ fn headless_removing_every_point_of_a_surface_path_lets_the_next_click_choose_th
 #[test]
 fn headless_a_new_path_layer_is_refused_while_stroking_and_in_a_read_only_set() {
     let mut s = AppState::new(64, 64);
-    s.sets_mut().get_mut(0).unwrap().read_only = Some("試験".into());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
     new_path_layer(&mut s);
     assert_eq!(s.doc().layers().len(), 1);
     assert!(
-        s.message().contains("読むだけ") && s.message().contains("試験"),
+        s.message().contains("読むだけ") && s.message().contains("テスト"),
         "{}",
         s.message()
     );
@@ -779,12 +779,12 @@ fn headless_masks_read_only_sets_and_foreign_paths_are_refused_with_a_reason() {
     assert!(s.message().contains("マスク"), "{}", s.message());
     s.act(Action::M2Ui(yolu_app::m2::UiOp::EditMask(false)));
     // 読むだけのセット
-    s.sets_mut().get_mut(0).unwrap().read_only = Some("試験".into());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
     s.message_mut().clear();
     click2d(&mut s, 30.0, 30.0);
     assert_eq!(s.doc().layers().len(), 1);
     assert!(
-        s.message().contains("読むだけ") && s.message().contains("試験"),
+        s.message().contains("読むだけ") && s.message().contains("テスト"),
         "{}",
         s.message()
     );

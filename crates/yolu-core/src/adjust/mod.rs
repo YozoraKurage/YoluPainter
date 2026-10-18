@@ -808,7 +808,7 @@ mod tests {
         let base = AdjustmentSettings::invert().byte_size();
         assert_eq!(
             base, 64,
-            "旧 3 種は固定の欄だけ。前の値と後の値の和は旧来の 128（文書の試験で固定）"
+            "旧 3 種は固定の欄だけ。前の値と後の値の和は旧来の 128（文書のテストで固定）"
         );
         for s in every_new_kind() {
             assert!(s.byte_size() >= 96, "{:?}", s.kind());

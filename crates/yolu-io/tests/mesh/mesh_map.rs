@@ -167,7 +167,7 @@ fn refuses_compressed_overflow_unknown_coverage_and_invalid_utf8() {
 
 fn writer() -> yolu_io::WriterInfo {
     yolu_io::WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -215,7 +215,10 @@ fn real_unity_files_of_formats_3_5_6_keep_their_maps_and_need_upgrade_to_write()
                 let p = map.provenance();
                 assert_eq!(map.kind(), kind);
                 assert_eq!((p.width, p.height), (512, 512));
-                assert_eq!(p.target_slot, slot as i32, "{file}: 版 2 は 1 つのスロット");
+                assert_eq!(
+                    p.target_slot, slot as i32,
+                    "{file}: バージョン 2 は 1 つのスロット"
+                );
                 assert_eq!(p.target_slots, vec![slot as i32]);
                 assert_eq!((p.padding, p.antialiasing, p.engine_version), (16, 1, 2));
                 assert_eq!(

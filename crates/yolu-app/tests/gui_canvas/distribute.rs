@@ -1683,7 +1683,11 @@ fn headless_the_remembered_selections_are_a_kind_and_the_copy_without_them_is_fo
     s.act(Action::Distribute(DistributeAction::Save(dest.clone())));
     s.wait_distribute();
     let copy = Project::read(&std::fs::read(&dest).unwrap()).unwrap();
-    assert_eq!(copy.info().format, 7, "Unity 版が開ける形式");
+    assert_eq!(
+        copy.info().format,
+        7,
+        "0.4.x までの Unity ブリッジが開ける形式"
+    );
     let id = copy.sets()[0].id.clone();
     assert!(copy.saved_selections(&id).unwrap().items.is_empty());
     assert!(copy.sets()[0].selection.is_some());

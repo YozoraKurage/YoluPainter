@@ -269,7 +269,7 @@ fn cfg_that_can_ship_is_still_scanned() {
     assert_eq!(
         marks("#![cfg(test)]\nfn f() { Command::new(\"x\"); }"),
         Vec::<&str>::new(),
-        "ファイル全体が試験"
+        "ファイル全体がテスト"
     );
 }
 
@@ -302,7 +302,7 @@ fn allow(file: &'static str, mark: &'static str, count: Count) -> Allow {
         file,
         mark,
         count,
-        why: "試験の理由",
+        why: "テストの理由",
     }
 }
 

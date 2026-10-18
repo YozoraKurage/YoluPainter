@@ -193,7 +193,7 @@ fn parse(bytes: &[u8], s: &mut State) -> Result<Option<Document>> {
     let mut r = Reader::new(bytes);
     check(r.key()? == *b"8BPS", "PSD シグネチャが不正です")?;
     let version = r.u16()?;
-    check(version == 1 || version == 2, "PSD 版が不正です")?;
+    check(version == 1 || version == 2, "PSD バージョンが不正です")?;
     r.zeros(6)?;
     let channels = r.u16()?;
     let height = r.u32()?;
@@ -1618,7 +1618,7 @@ fn tags(mut r: Reader, mut record: Option<&mut Record>, s: &mut State) -> Result
 fn levels(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<Adjustment>> {
     check(r.remaining() >= 292, "levl が29レコードより短いです")?;
     if r.u16()? != 2 {
-        s.preserve("Levels", "未知のlevl版", start, len);
+        s.preserve("Levels", "未知のlevlバージョン", start, len);
         return Ok(None);
     }
     fn item(r: &mut Reader) -> Result<[u16; 5]> {
@@ -1689,7 +1689,7 @@ pub(super) const HUE_RANGES: [[i16; 4]; 6] = [
 fn hue(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<Adjustment>> {
     check(r.remaining() >= 100, "hue2 が短すぎます")?;
     if r.u16()? != 2 {
-        s.preserve("HueSaturation", "未知のhue2版", start, len);
+        s.preserve("HueSaturation", "未知のhue2バージョン", start, len);
         return Ok(None);
     }
     let colorize = r.u8()?;
@@ -1792,7 +1792,7 @@ fn brit_record(mut r: Reader) -> Parsed<BritRecord> {
 fn cged_record(mut r: Reader) -> Parsed<CgedRecord> {
     use super::descriptor::Scalar;
     if r.remaining() < 4 || r.u32()? != 16 {
-        return unsupported("未知のCgEd版");
+        return unsupported("未知のCgEdバージョン");
     }
     let items = match super::descriptor::flat(&mut r) {
         Ok(Some(items)) => items,
@@ -1930,7 +1930,7 @@ fn curves(mut r: Reader) -> Parsed {
     let version = r.u16()?;
     let channels = r.u32()?;
     if is_map != 0 || version != 1 || channels & !0xf != 0 || channels == 0 {
-        return unsupported("表の形式・版・チャンネルが対応しません");
+        return unsupported("表の形式・バージョン・チャンネルが対応しません");
     }
     let mut curves: [Vec<[u8; 2]>; 4] = Default::default();
     for (i, curve) in curves.iter_mut().enumerate() {
@@ -2034,7 +2034,7 @@ fn gradient_map(mut r: Reader, s: &mut State, start: usize, len: usize) -> Parse
     }
     let name = r.utf16(name_len)?;
     if version != 1 || reverse > 1 || dither != 0 {
-        return unsupported("未知の版・ディザ・逆向きの印");
+        return unsupported("未知のバージョン・ディザ・逆向きの印");
     }
     let count = r.u16()? as usize;
     if !(1..=256).contains(&count) || r.remaining() < count * 20 + 2 {
@@ -2130,7 +2130,7 @@ fn gradient_map(mut r: Reader, s: &mut State, start: usize, len: usize) -> Parse
 }
 fn solid(mut r: Reader, s: &mut State, start: usize, len: usize) -> Result<Option<[u8; 3]>> {
     if r.u32()? != 16 {
-        s.preserve("FillLayer", "未知のSoCo版", start, len);
+        s.preserve("FillLayer", "未知のSoCoバージョン", start, len);
         return Ok(None);
     }
     match super::descriptor::color(&mut r) {

@@ -115,7 +115,7 @@ fn the_selection_goes_into_and_out_of_a_project_without_touching_the_rest() {
         composites: Vec::new(),
     };
     let writer = yolu_io::WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "1".into(),
         unity: "なし".into(),
     };
@@ -206,12 +206,12 @@ fn mask_for(native: &NativeDocument) -> SelectionMask {
     SelectionMask::ellipse(&doc, w * 0.4, h * 0.45, w * 0.25, h * 0.3).unwrap()
 }
 
-/// 旧い形式（Unity 版が書いた形式 1〜6 の実物）の選択範囲の出し入れ。形式 < 3 はルートの `selection.bin` を書く枝で、
+/// 旧い形式（Unity 版が書いた形式 1〜6 の実物）の選択範囲の出し入れ。形式 < 3 はルートの `selection.bin` を書く分岐で、
 /// どの形式でも、選択範囲のエントリのほかは 1 バイトも変わらず、形式も変わらず、ほかのセットの選択範囲も変わらない。
 #[test]
 fn the_selection_goes_into_and_out_of_every_older_format_without_touching_the_rest() {
     let writer = || yolu_io::WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "1".into(),
         unity: "なし".into(),
     };

@@ -414,7 +414,7 @@ impl StrokeState {
         Ok(any)
     }
 
-    /// 対称のデュアルのダブ（C# の DualDabAt の対称の枝）: 写し全部の画素の溜まりへ最大で置く。
+    /// 対称のデュアルのダブ（C# の DualDabAt の対称の分岐）: 写し全部の画素の溜まりへ最大で置く。
     pub(super) fn symmetric_dual_dab(
         &mut self,
         shape: &DualShape<'_>,

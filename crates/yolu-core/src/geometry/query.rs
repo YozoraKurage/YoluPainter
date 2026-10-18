@@ -122,7 +122,7 @@ impl SurfaceGeometry {
         }
     }
 
-    /// point にいちばん近い面の上の点（C# の TryFindClosestPoint）。BVH を近い枝から辿り、今の最短より遠い枝は刈る。
+    /// point にいちばん近い面の上の点（C# の TryFindClosestPoint）。BVH を近い側の子から辿り、今の最短より遠い側は刈る。
     /// facing が 0 でなければ法線が facing と同じ側を向く三角形だけ、material が Some ならその組の三角形だけ。同じ距離なら番号の
     /// 小さい三角形。節点を見る数が max_node_visits を超えたら `Err`（重なり合った幾何で止まらないように）。届く面が無ければ Ok(None)。
     pub fn find_closest_point(

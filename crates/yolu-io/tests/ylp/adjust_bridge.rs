@@ -570,7 +570,10 @@ fn a_version_21_to_23_document_cannot_carry_the_new_kinds() {
     for version in [USER_CHANNELS_VERSION, PROCEDURAL_VERSION] {
         let mut bytes = NativeDocument::from_core(&document()).unwrap().to_bytes();
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
-        assert!(NativeDocument::read(&bytes).is_err(), "版 {version}");
+        assert!(
+            NativeDocument::read(&bytes).is_err(),
+            "バージョン {version}"
+        );
     }
     // 版 24 のまま種類 64 以上を使わない文書は書かない（使う文書だけが 24）
     assert_eq!(

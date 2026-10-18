@@ -270,12 +270,12 @@ mod tests {
         let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-11-25"}});
         assert!(
             mcp_headers(&init, None).is_empty(),
-            "initialize は本文で版を言う"
+            "initialize は本文でバージョンを言う"
         );
         let list = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}});
         assert!(
             mcp_headers(&list, None).is_empty(),
-            "版が分からなければ付けない"
+            "バージョンが分からなければ付けない"
         );
         assert_eq!(
             mcp_headers(&list, Some("2025-11-25")),
@@ -290,7 +290,7 @@ mod tests {
                 (HEADER_METHOD.to_owned(), "tools/call".to_owned()),
                 (HEADER_NAME.to_owned(), "layer_get".to_owned()),
             ],
-            "_meta の版が先"
+            "_meta のバージョンが先"
         );
         let read = json!({"jsonrpc": "2.0", "id": 4, "method": "resources/read", "params": {"uri": "yolupainter://docs/ガイド"}});
         let headers = mcp_headers(&read, Some("2026-07-28"));

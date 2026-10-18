@@ -5,7 +5,7 @@
 //! 足し漏れはコンパイルで出る。`input::handle` の if は増やさない）。
 //!
 //! 今この表を通るのはマウスの押しだけ（`input::handle` の 2 か所とも `StrokeSource::Mouse`）。ペンの離しは `input::pen_sample` が持ち主ごとに終える。
-//! `held` が `source` を取るのは、将来ペンの離しも同じ表で終えるため（ペンの枝は今は通らない）。
+//! `held` が `source` を取るのは、将来ペンの離しも同じ表で終えるため（ペンの分岐は今は通らない）。
 //! `Points` は 3D が始めた物（`in_3d`）だけを見る。`Gizmo`（`fillfx.drag`）は 2D と 3D を分けず、`source` だけを見る。
 
 use egui::{Context, Pos2, Rect};

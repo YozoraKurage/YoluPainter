@@ -379,7 +379,7 @@ fn every_json_key_is_in_the_spec() {
 fn every_entry_the_writer_makes_has_a_form_in_the_spec() {
     const SET: &str = "5f7f1e2e-8d52-4b8e-9a31-0c0c0c0c0c01";
     let writer = WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "1".into(),
         unity: "なし".into(),
     };

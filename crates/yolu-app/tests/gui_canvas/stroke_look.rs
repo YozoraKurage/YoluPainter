@@ -631,7 +631,7 @@ fn after_the_release_the_layer_buttons_follow_the_state_again() {
     // 読むだけの状態から始めたウィンドウの、削除のボタンの絵（押せない見た目の見本）
     let (reference, button) = {
         let mut h = window();
-        h.sets_mut().get_mut(1).unwrap().read_only = Some("試験".into());
+        h.sets_mut().get_mut(1).unwrap().read_only = Some("テスト".into());
         h.run();
         move_to(&h, canvas_rect(&h).center());
         h.run();
@@ -647,7 +647,7 @@ fn after_the_release_the_layer_buttons_follow_the_state_again() {
     let end = mouse_stroke(&mut h, canvas.center());
     assert!(stroking(&h));
     // 描いている間に読むだけになる
-    h.sets_mut().get_mut(1).unwrap().read_only = Some("試験".into());
+    h.sets_mut().get_mut(1).unwrap().read_only = Some("テスト".into());
     h.step();
     let during = shot(&mut h);
     release(&h, end, PointerButton::Primary);
@@ -696,7 +696,7 @@ fn draw_parts(ui: &mut egui::Ui, g: &mut Parts) {
     use yolu_app::ui::numfield::{number_field, NumSpec};
     use yolu_app::ui::widgets as w;
     if !g.ready {
-        // 書体は次のフレームから効く（このフレームで太字の書体を使うと egui が止まる）ので、初めのフレームは準備だけ
+        // フォントは次のフレームから効く（このフレームで太字のフォントを使うと egui が止まる）ので、初めのフレームは準備だけ
         YoluApp::setup(ui.ctx());
         g.ready = true;
         ui.ctx().request_repaint();

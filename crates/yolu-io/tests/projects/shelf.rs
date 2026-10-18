@@ -75,7 +75,7 @@ fn csharp_placement_resampling_matches_twelve_cases() {
             .unwrap();
         }
     }
-    let material = d.capture_smart_material(&[l], "試験素材").unwrap();
+    let material = d.capture_smart_material(&[l], "テスト素材").unwrap();
     for (w, h) in [(3, 2), (7, 5), (2, 1), (2, 5)] {
         for (i, how) in [
             SmartResampling::Nearest,

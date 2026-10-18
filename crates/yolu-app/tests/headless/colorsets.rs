@@ -11,7 +11,7 @@ use yolu_app::{
 
 fn palette() -> Palette {
     Palette {
-        name: "試験 Sample".into(),
+        name: "テスト Sample".into(),
         colors: vec![
             Swatch {
                 name: "透明色".into(),

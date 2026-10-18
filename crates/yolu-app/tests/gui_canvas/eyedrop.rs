@@ -1697,7 +1697,7 @@ fn colored_pixel_outside_the_canvas(h: &mut Harness<'_, YoluApp>) -> Pos2 {
         assert_eq!(
             yolu_app::eyedrop::sample_canvas(s, &view, outside),
             Some(Color32::from_rgb(220, 40, 220)),
-            "試験の前提: 外のこの点は取れる色を持つ"
+            "テストの前提: 外のこの点は取れる色を持つ"
         );
     }
     outside
@@ -1952,7 +1952,11 @@ fn headless_the_mark_sample_cache_is_dropped_when_the_document_or_the_effect_inp
         other.doc_mut(),
         yolu_app::engine::Document::new(64, 64).unwrap(),
     );
-    assert_eq!(doc_b.revision(), s.doc().revision(), "試験の前提: 版が同じ");
+    assert_eq!(
+        doc_b.revision(),
+        s.doc().revision(),
+        "テストの前提: バージョンが同じ"
+    );
     s.install_document(doc_b, Keep::default());
     assert!(s.eyedrop().sample_cache.is_none(), "文書を替えたら捨てる");
     assert_eq!(

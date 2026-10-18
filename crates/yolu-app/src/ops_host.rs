@@ -243,7 +243,7 @@ impl<'a> AppHost<'a> {
 }
 
 impl OpHost for AppHost<'_> {
-    /// 同梱のフォント（画面の書体と同じファイル）。起動中のアプリだけが同梱のフォントの文字を描ける。
+    /// 同梱のフォント（画面のフォントと同じファイル）。起動中のアプリだけが同梱のフォントの文字を描ける。
     fn bundled_font(&self, name: &str) -> Option<std::sync::Arc<[u8]>> {
         crate::textlayer::bundled_font(name)
     }

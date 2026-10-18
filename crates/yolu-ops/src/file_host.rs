@@ -288,7 +288,7 @@ impl Opened {
 pub fn newer_version_note(set_name: &str, version: i32) -> Option<Text> {
     (version > yolu_io::UNITY_NATIVE_VERSION).then(|| {
         Text::new(
-            format!("テクスチャセット「{set_name}」はスタンドアロン版だけの機能を使うため、0.4.x までの Unity 版が開けない版（{version}）で保存しました（その Unity 版は理由を言って開くのを断ります。中身は消えません）"),
+            format!("テクスチャセット「{set_name}」はスタンドアロンだけの機能を使うため、0.4.x までの Unity ブリッジが開けないバージョン（{version}）で保存しました（その Unity ブリッジは理由を言って開くのを断ります。中身は消えません）"),
             format!("Texture set \"{set_name}\" uses features only the standalone application has, so it was saved in document version {version}, which the Unity version up to 0.4.x cannot open (it refuses the file with a reason; nothing is lost)"),
         )
     })
@@ -683,7 +683,7 @@ mod tests {
                 "{text}"
             );
         }
-        assert!(note.ja.contains("Unity 版") && note.en.contains("Unity version"));
+        assert!(note.ja.contains("Unity ブリッジ") && note.en.contains("Unity version"));
     }
 
     /// yolu-io は名前の重なるセットのファイルを開かせないので、名前で引いて重なることは今は無い。それでも、重なったら候補を

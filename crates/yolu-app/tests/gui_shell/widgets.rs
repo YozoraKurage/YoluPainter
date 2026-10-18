@@ -35,7 +35,7 @@ fn row(g: &Gallery, y: f32, h: f32) -> Rect {
 
 fn draw(ui: &mut egui::Ui, g: &mut Gallery) {
     if !g.ready {
-        // 書体は次のフレームから効く（このフレームで太字の書体を使うと egui が止まる）ので、初めのフレームは準備だけ
+        // フォントは次のフレームから効く（このフレームで太字のフォントを使うと egui が止まる）ので、初めのフレームは準備だけ
         YoluApp::setup(ui.ctx());
         g.ready = true;
         ui.ctx().request_repaint();

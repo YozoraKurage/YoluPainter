@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(m.slots, [1, 0, 1, 0]);
         assert_eq!((m.meshes, m.vertices, m.triangles), (2, 8, 4));
         let n = SceneModel::from_link(&model(3));
-        assert!(n.revision > m.revision, "受け直すたびに新しい版");
+        assert!(n.revision > m.revision, "受け直すたびに新しいバージョン");
     }
 
     #[test]

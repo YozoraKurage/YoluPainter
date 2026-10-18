@@ -426,7 +426,7 @@ mod tests {
         let relative = "../yolu-app/assets/fonts/BIZUDPGothic-Regular.ttf";
         assert!(
             Path::new(relative).is_file(),
-            "試験は yolu-io のフォルダーで動く"
+            "テストは yolu-io のフォルダーで動く"
         );
         let nothing = SystemFonts::from_dirs(&[]);
         assert!(matches!(

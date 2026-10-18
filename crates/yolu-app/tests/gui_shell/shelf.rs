@@ -386,7 +386,7 @@ fn headless_what_cannot_be_saved_or_placed_changes_nothing_and_says_why() {
     assert!(s.message().contains("描いている間"), "{}", s.message());
     s.canvas_mut().stroke = None;
     // 読むだけのセットには置けない・そこからは保存しない
-    s.sets_mut().get_mut(0).unwrap().read_only = Some("試験".into());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
     *s.shelf_mut() = ShelfState::default();
     s.act(Action::Shelf(ShelfOp::SaveMaterial(base)));
     assert!(s.shelf().resources().is_empty());
@@ -863,15 +863,16 @@ fn headless_an_unreadable_shelf_is_not_modified_and_the_files_resources_stay() {
     again.act(Action::OpenProject(path.clone()));
     // 読めなかった棚（開くときに `from_project` が作る状態。本物のファイルは `Project::read` が受けたものを `Shelf::read` も
     // 同じ検証で読めるので、読めない棚は結果を差し替えて作る）にする。棚を変える操作は断り、保存は resources を残す
-    *again.shelf_mut() =
-        ShelfState::from_read(Err::<Shelf, _>(yolu_io::Error::InvalidData("試験".into())));
+    *again.shelf_mut() = ShelfState::from_read(Err::<Shelf, _>(yolu_io::Error::InvalidData(
+        "テスト".into(),
+    )));
     assert_eq!(
         again
             .shelf()
             .unavailable
             .as_ref()
             .map(|u| u.reason(Lang::Ja)),
-        Some("試験")
+        Some("テスト")
     );
     let layer = again.selected_layer().unwrap();
     again.act(Action::Shelf(ShelfOp::SaveMaterial(layer)));
@@ -1272,7 +1273,7 @@ fn headless_importing_several_files_keeps_every_refusal_in_the_one_message() {
         s.message()
     );
     // 読めない棚には、まとめてでも足さない
-    *s.shelf_mut() = ShelfState::unreadable("試験");
+    *s.shelf_mut() = ShelfState::unreadable("テスト");
     s.act(Action::Shelf(ShelfOp::ImportFiles(vec![good(
         "raster.ylsmart",
     )])));
@@ -1374,7 +1375,7 @@ fn headless_an_image_placed_at_its_own_size_keeps_every_byte_including_transpare
         synthetic
             .chunks(4)
             .any(|p| p[3] == 0 && p[..3] != [0, 0, 0]),
-        "試験の画像は、透明で RGB を持つ画素を含む"
+        "テストの画像は、透明で RGB を持つ画素を含む"
     );
     // 人工データの PNG（2×1）。PNG を直に読んだ画素と一致する
     let mut fixture = AppState::new(2, 1);
@@ -2307,7 +2308,7 @@ fn measure_environment() {
         })
         .unwrap_or_else(|| "不明".into());
     println!(
-        "環境: {cpu} / スレッド {}（最適化 1 の試験用ビルド。本番の最適化では短くなる）",
+        "環境: {cpu} / スレッド {}（最適化 1 のテスト用ビルド。本番の最適化では短くなる）",
         std::thread::available_parallelism().map_or(0, |n| n.get())
     );
 }
@@ -3089,7 +3090,7 @@ mod ui {
     #[test]
     fn a_read_only_set_cannot_be_placed_into() {
         let mut h = window();
-        h.sets_mut().get_mut(0).unwrap().read_only = Some("試験".into());
+        h.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
         let at = card(&h, "raster").center();
         click(&mut h, at);
         assert!(h.get_by_label("置く").accesskit_node().is_disabled());
@@ -3265,7 +3266,7 @@ mod ui {
     fn an_unreadable_shelf_is_named_and_cannot_be_changed_from_the_panel() {
         let mut h = app(1280.0, 800.0, 64);
         click_tab(&mut h, yolu_app::Tab::Assets);
-        *h.shelf_mut() = ShelfState::unreadable("試験の理由");
+        *h.shelf_mut() = ShelfState::unreadable("テストの理由");
         h.shelf_mut().show_builtin = false;
         h.run();
         assert!(h

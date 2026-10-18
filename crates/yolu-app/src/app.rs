@@ -703,7 +703,7 @@ pub use gpu_lost::FramePoint;
 pub use gpu_lost::EXIT_CODE as GPU_LOST_EXIT_CODE;
 
 impl YoluApp {
-    /// 文脈に配色・書体・アイコンを入れる（ウィンドウを作るときに 1 度）。
+    /// 文脈に配色・フォント・アイコンを入れる（ウィンドウを作るときに 1 度）。
     pub fn setup(ctx: &egui::Context) {
         // egui の既定は、Ctrl+-・Ctrl++・Ctrl+0 で画面全体（文字も部品も）の拡大率を変える。アプリのキーはこの組み合わせを
         // キャンバスの拡大・縮小に使うので、同じキーで画面全体まで縮んで戻せなくなる。画面全体の拡大縮小は切る
@@ -1152,7 +1152,7 @@ impl YoluApp {
         }
     }
 
-    /// 文脈と状態から作る（試験用。配色・書体・アイコンも入れる）。
+    /// 文脈と状態から作る（試験用。配色・フォント・アイコンも入れる）。
     pub fn for_context(ctx: &egui::Context, state: AppState, pen: PenInput) -> YoluApp {
         Self::setup(ctx);
         YoluApp::with_state(state, pen)

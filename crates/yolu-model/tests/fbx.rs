@@ -800,7 +800,7 @@ fn a_panic_in_the_progress_callback_reaches_the_caller_after_the_parse_unwinds()
     let text = big_fbx();
     let note = |f: f32| {
         if f >= 0.2 {
-            panic!("試験の panic");
+            panic!("テストの panic");
         }
     };
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -815,7 +815,7 @@ fn a_panic_in_the_progress_callback_reaches_the_caller_after_the_parse_unwinds()
         )
     }));
     let payload = outcome.expect_err("panic が出る");
-    assert_eq!(payload.downcast_ref::<&str>(), Some(&"試験の panic"));
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"テストの panic"));
 }
 
 // ---- Live Link が使う情報（ファイルの単位・メッシュのノード） ----

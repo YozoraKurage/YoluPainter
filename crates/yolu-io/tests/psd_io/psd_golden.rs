@@ -569,7 +569,7 @@ fn index_lists_exactly_the_cases_this_test_checks() {
         .chain(IMPORT_CASES)
         .chain(refused_cases().iter().map(|c| c.name))
         .collect();
-    assert_eq!(listed, checked, "index.txt の事例と、この試験が回す事例");
+    assert_eq!(listed, checked, "index.txt の事例と、このテストが回す事例");
     assert_eq!(
         index.lines().filter(|l| l.starts_with("case ")).count(),
         checked.len(),

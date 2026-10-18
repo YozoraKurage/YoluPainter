@@ -107,7 +107,10 @@ mod tests {
         let revision = doc.revision();
         doc.set_look(lil(0.3), false).unwrap();
         assert_eq!(doc.look().kind, LookKind::LilToon);
-        assert!(doc.revision() > revision, "版は進む（保存と描き直しの鍵）");
+        assert!(
+            doc.revision() > revision,
+            "バージョンは進む（保存と描き直しの鍵）"
+        );
         assert_eq!(doc.change_serial(), serial, "タイルの変化は無い");
         assert_eq!(doc.history().last(), Some(HistoryKind::Look));
         // 同じ設定は段を積まない
@@ -224,7 +227,7 @@ mod tests {
         assert_eq!(
             doc.revision(),
             revision,
-            "版も進めない（保存の鍵を変えない）"
+            "バージョンも進めない（保存の鍵を変えない）"
         );
         assert!(doc.look_serial() > serial, "描き直しの鍵は進む");
         // 利用者の設定は既定のまま、描く見た目は受けた値（描き方も lilToon）

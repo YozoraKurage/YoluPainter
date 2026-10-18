@@ -10,7 +10,7 @@ const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/selection
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "1".into(),
         unity: "なし".into(),
     }
@@ -576,7 +576,7 @@ fn a_newer_format_than_this_reader_knows_is_refused_with_the_writer_and_format_8
     match Project::from_entries(files) {
         Err(yolu_io::Error::UnsupportedFormat { format, app, .. }) => {
             assert_eq!(format, MAX_FORMAT + 1);
-            assert_eq!(app, "試験");
+            assert_eq!(app, "テスト");
         }
         other => panic!("{:?}", other.map(|_| ())),
     }
@@ -716,7 +716,7 @@ fn a_bad_pose_is_refused_whole_and_the_entry_stays_as_bytes() {
         Project::from_entries(files).unwrap()
     };
     for (what, broken) in [
-        ("版", text.replace("\"format\":1", "\"format\":2")),
+        ("バージョン", text.replace("\"format\":1", "\"format\":2")),
         ("JSON", "{ not json".to_owned()),
         (
             "配列でない",

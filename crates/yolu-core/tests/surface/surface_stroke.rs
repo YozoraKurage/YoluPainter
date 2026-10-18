@@ -1389,7 +1389,7 @@ fn a_long_single_input_keeps_the_stroke_and_paints_the_same_pixels_whenever_the_
         let (at_once, held, dabs) = fast_stroke(effect, |d, s, stroke| {
             s.paint_queued(d, stroke, usize::MAX).unwrap();
         });
-        assert!(dabs > 256, "{effect:?}: 試験の前提: 長い区間 ({dabs})");
+        assert!(dabs > 256, "{effect:?}: テストの前提: 長い区間 ({dabs})");
         assert!(
             held > 256,
             "{effect:?}: 入力は塗らずに、区間のダブを全部持ち越す ({held})"

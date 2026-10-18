@@ -67,7 +67,8 @@ fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
     let state = h.app_mut();
     let revision = state.view3d_mut().next_revision();
     state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
     model.tangents();
     state.view3d_mut().set_model(model);
     h.run();
@@ -490,7 +491,7 @@ fn a_packed_slot_reads_color_and_emission_as_their_painted_values() {
     }
     assert!(
         (0..3).any(|k| user[0][k].abs_diff(user[1][k]) >= 4),
-        "マスク 128 と 55 で見た目が違う（試験が値の違いを見分けられる）: {user:?}"
+        "マスク 128 と 55 で見た目が違う（テストが値の違いを見分けられる）: {user:?}"
     );
     assert_close(
         from_color,
@@ -1346,7 +1347,7 @@ fn a_received_normal_map_reads_x_from_alpha_times_red_and_keeps_green_where_alph
     let lost = draw(&mut h, [0, 0, 255, 255]);
     assert!(
         (0..3).any(|k| lost[k].abs_diff(rgb0[k]) > 10),
-        "Y が違えば絵も違う（試験が Y を見ている）: {lost:?} {rgb0:?}"
+        "Y が違えば絵も違う（テストが Y を見ている）: {lost:?} {rgb0:?}"
     );
     set_received(&mut h, 0, None);
     let flat = px(&h.render().expect("描ける"), middle(&h));

@@ -381,7 +381,7 @@ fn the_color_wheel_fills_the_panel_without_the_marker_leaving_it_and_nothing_is_
             );
             assert!(
                 wheel.width() >= least,
-                "{what}: 円の直径 {} が小さい（前の版以上）",
+                "{what}: 円の直径 {} が小さい（前のバージョン以上）",
                 wheel.width()
             );
             // 選ぶ印の輪（円の真上・真下・真左・真右の外へ出る分）も、欄の中に収まる
@@ -1041,7 +1041,10 @@ fn the_added_material_and_log_follow_properties_and_layers_into_their_windows() 
     let mut main = previous_default();
     let mut older = main.clone();
     for tab in [Tab::Properties, Tab::Layers] {
-        assert!(older.find_tab(&tab).is_some(), "前の版の並びにある {tab:?}");
+        assert!(
+            older.find_tab(&tab).is_some(),
+            "前のバージョンの並びにある {tab:?}"
+        );
     }
     // 前の版には無かったマテリアル・ログを外した並びを作る（無ければそのまま）
     for tab in [Tab::Material, Tab::Log] {

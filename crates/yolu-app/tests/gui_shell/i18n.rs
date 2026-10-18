@@ -164,7 +164,7 @@ fn project_notices_and_conflicts_follow_the_language_without_changing_data() {
         state.act(Action::SaveProjectAs(path.clone()));
         assert!(state
             .message()
-            .contains(lang.pick("前の版", "Previous version")));
+            .contains(lang.pick("前のバージョン", "Previous version")));
         let before = state.doc().id();
         state.act(Action::OpenProject(root.join("missing.ylp")));
         assert!(state.message().contains(lang.pick(
@@ -355,7 +355,7 @@ fn a_budget_refusal_names_the_budget_in_both_languages() {
     let project = small.scoped(|| {
         Project::create(
             WriterInfo {
-                app: "試験".into(),
+                app: "テスト".into(),
                 version: "0".into(),
                 unity: "standalone".into(),
             },

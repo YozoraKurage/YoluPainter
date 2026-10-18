@@ -438,7 +438,7 @@ mod tests {
     fn read(text: &str) -> Read {
         match decode(text, &all_users).unwrap() {
             Decoded::Ok(read) => *read,
-            Decoded::Newer(v) => panic!("新しい版 {v}"),
+            Decoded::Newer(v) => panic!("新しいバージョン {v}"),
         }
     }
 

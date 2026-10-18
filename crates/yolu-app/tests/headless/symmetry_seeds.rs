@@ -298,7 +298,7 @@ fn copies_outside_the_canvas_are_dropped() {
     let inner: Vec<Point> = images.iter().copied().filter(|&p| inside(p)).collect();
     assert!(
         inner.len() == 2,
-        "試験の前提: 内の写しは 2 つ（{}）",
+        "テストの前提: 内の写しは 2 つ（{}）",
         inner.len()
     );
     {

@@ -747,7 +747,7 @@ fn auto_uses_the_gpu_except_on_software_adapters() {
         .adapter_info()
         .expect("装置がある");
     eprintln!(
-        "Auto の試験のアダプター: {} ({:?})",
+        "Auto のテストのアダプター: {} ({:?})",
         info.name, info.device_type
     );
     if info.device_type == wgpu_device_type_cpu() {

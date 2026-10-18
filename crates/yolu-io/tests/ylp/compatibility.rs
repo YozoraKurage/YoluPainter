@@ -191,10 +191,14 @@ fn normal_settings_survive_save_and_restore_and_version_6_reads_with_defaults() 
     assert_eq!(
         restored.normal_settings(),
         NormalSettings::DEFAULT,
-        "版 6 に Normal の設定は無い"
+        "バージョン 6 に Normal の設定は無い"
     );
     assert_eq!(colour(&restored), colour(&d));
-    assert_eq!(save(&restored), plain, "今の版の既定の設定で書き直される");
+    assert_eq!(
+        save(&restored),
+        plain,
+        "今のバージョンの既定の設定で書き直される"
+    );
     let settings =
         NormalSettings::new(true, 12.5, HeightEdgeMode::Wrap, NormalYDirection::DirectX).unwrap();
     d.set_normal_settings(settings, false).unwrap();
@@ -304,7 +308,7 @@ fn adjustments_survive_save_and_restore_and_version_3_reads() {
     plain.clear_history().unwrap();
     let v3 = restore(&as_version(&save(&plain), "F", 3));
     assert_eq!(colour(&v3), colour(&plain));
-    assert_eq!(save(&v3), save(&plain), "今の版で書き直される");
+    assert_eq!(save(&v3), save(&plain), "今のバージョンで書き直される");
 }
 
 /// 版 3〜20 の並びは、今の書き手の出力から作った 1 レイヤーの文書を読め、今の版へ書き直すと元と同じバイト列になる。
@@ -317,20 +321,21 @@ fn a_plain_document_is_read_from_every_older_layout_and_rewritten_as_the_current
     let plain = save(&d);
     for version in 3..=20 {
         let older = as_version(&plain, "p", version);
-        let native = NativeDocument::read(&older).unwrap_or_else(|e| panic!("版 {version}: {e}"));
+        let native =
+            NativeDocument::read(&older).unwrap_or_else(|e| panic!("バージョン {version}: {e}"));
         assert_eq!(native.version(), version);
         assert_eq!(
             native.to_bytes(),
             older,
-            "版 {version}: 読んで書き戻しても同じ"
+            "バージョン {version}: 読んで書き戻しても同じ"
         );
         let restored = native.to_core().unwrap();
-        assert_eq!(colour(&restored), colour(&d), "版 {version}");
-        assert_eq!(restored.layers()[0].opacity(), 0.5, "版 {version}");
+        assert_eq!(colour(&restored), colour(&d), "バージョン {version}");
+        assert_eq!(restored.layers()[0].opacity(), 0.5, "バージョン {version}");
         assert_eq!(
             save(&restored),
             plain,
-            "版 {version}: 今の版へ書き直すと同じ"
+            "バージョン {version}: 今のバージョンへ書き直すと同じ"
         );
     }
 }

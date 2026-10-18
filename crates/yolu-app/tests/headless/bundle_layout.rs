@@ -61,7 +61,7 @@ fn every_file_in_a_bundle_is_declared_in_its_main_rs_and_every_declared_module_h
             }
         }
         for missing in files.difference(&declared) {
-            problems.push(format!("{bundle}/{missing}: ファイルはあるが {bundle}/main.rs に `mod {missing};` が無い（この試験は走らない）"));
+            problems.push(format!("{bundle}/{missing}: ファイルはあるが {bundle}/main.rs に `mod {missing};` が無い（このテストは走らない）"));
         }
         for gone in declared.difference(&files) {
             // `common` など束の外の部品は `#[path]` で指す

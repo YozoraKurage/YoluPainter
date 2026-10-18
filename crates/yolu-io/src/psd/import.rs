@@ -677,7 +677,7 @@ fn verify<R: Read + Seek>(r: &mut R, cancel: Option<&AtomicBool>) -> Step<Verifi
     r.read_exact(&mut head)?;
     let mut h = Reader::new(&head);
     if h.key()? != *b"8BPS" || h.u16()? != 1 {
-        return malformed("PSD シグネチャ・版が不正です");
+        return malformed("PSD シグネチャ・バージョンが不正です");
     }
     h.zeros(6)?;
     let channels = usize::from(h.u16()?);
@@ -854,7 +854,7 @@ fn run<R: Read + Seek>(r: &mut R, o: &CopyOptions) -> Step<CopyOutcome> {
     }
     let version = h.u16()?;
     if version != 1 && version != 2 {
-        return malformed("PSD 版が不正です");
+        return malformed("PSD バージョンが不正です");
     }
     h.zeros(6)?;
     let channels = h.u16()?;

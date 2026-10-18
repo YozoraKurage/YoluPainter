@@ -1084,7 +1084,7 @@ fn a_store_written_by_the_unity_code_is_read_back_listed_and_carried_on() {
     assert_eq!(
         pointer(&dir.0, "previous"),
         listed[1].id,
-        "Unity 版の previous の書き方（File.Replace）も同じ形"
+        "0.4.x までの Unity ブリッジの previous の書き方（File.Replace）も同じ形"
     );
     let older = store.load_generation(&listed[1].id).unwrap();
     assert!(
@@ -1228,7 +1228,7 @@ fn a_project_survives_the_store_and_opens_from_its_entries() {
     use yolu_core::{BrushSettings, Document, Rgba8};
     use yolu_io::{composite_pngs, MaterialRef, NativeDocument, Project, SetSpec, WriterInfo};
     let writer = WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     };

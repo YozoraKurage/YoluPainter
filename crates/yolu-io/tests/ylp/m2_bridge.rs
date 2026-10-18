@@ -445,7 +445,7 @@ fn user_channels_are_written_as_version_22_and_round_trip() {
     );
     let restored = native.to_core().unwrap();
     assert_eq!(restored.undo_count(), 0);
-    assert_same_document(&doc, &restored, "版 22");
+    assert_same_document(&doc, &restored, "バージョン 22");
     assert_eq!(
         NativeDocument::from_core(&restored).unwrap().to_bytes(),
         native.to_bytes(),
@@ -492,7 +492,7 @@ fn only_documents_with_user_channels_leave_version_21() {
     assert_eq!(
         native.version(),
         21,
-        "ユーザーチャンネルが無ければ Unity 0.2.0 が読める版"
+        "ユーザーチャンネルが無ければ Unity 0.2.0 が読めるバージョン"
     );
     // 全部消せば版 21 へ戻る（版 22 の 0 個の一覧は書かない）
     let mut doc = user_channel_document();
@@ -714,7 +714,10 @@ fn version_22_reader_rules() {
     for version in [23i32, 24, 1000, 0, -1] {
         let mut bytes = read("m2-tiny.utpaint");
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
-        assert!(NativeDocument::read(&bytes).is_err(), "版 {version}");
+        assert!(
+            NativeDocument::read(&bytes).is_err(),
+            "バージョン {version}"
+        );
     }
 }
 
@@ -889,7 +892,7 @@ fn unity_0_2_0_reads_and_resaves_the_version_21_this_writer_produces() {
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -934,7 +937,7 @@ fn a_project_keeps_user_channel_sets_in_format_7_and_other_sets_readable_by_unit
     assert_eq!(
         versions,
         [22, 21],
-        "版 22 になるのはユーザーチャンネルのあるセットだけ"
+        "バージョン 22 になるのはユーザーチャンネルのあるセットだけ"
     );
     for set in reopened.sets() {
         assert!(set.document.core_issues().is_empty());

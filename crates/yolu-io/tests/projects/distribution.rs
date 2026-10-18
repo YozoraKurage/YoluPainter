@@ -14,7 +14,7 @@ use yolu_io::{
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -836,7 +836,10 @@ fn the_full_copy_has_no_path_original_or_unity_value_and_opens_again() {
     let again = Project::read(&bytes).unwrap();
     assert!(again.unknown_entries().is_empty());
     assert_eq!(again.info().format, 7);
-    assert_eq!(again.info().saved_by.as_ref().unwrap().app, "試験の書き手");
+    assert_eq!(
+        again.info().saved_by.as_ref().unwrap().app,
+        "テストの書き手"
+    );
     assert_eq!(again.sets().len(), 2);
     assert_eq!(again.current_set(), SET_A);
     // 取り込んだ元のパス・モデルの場所・PSD・古い状態は、どこにも残らない
@@ -1138,7 +1141,11 @@ fn the_remembered_selections_are_their_own_kind_and_removing_them_takes_the_copy
     let copy = project
         .for_distribution(writer(), &[Removal::SavedSelections], &BTreeSet::new())
         .unwrap();
-    assert_eq!(copy.info().format, 7, "Unity 版が開ける形式に戻る");
+    assert_eq!(
+        copy.info().format,
+        7,
+        "0.4.x までの Unity ブリッジが開ける形式に戻る"
+    );
     assert!(copy.saved_selections(SET_A).unwrap().items.is_empty());
     assert!(!entries(&copy)
         .keys()

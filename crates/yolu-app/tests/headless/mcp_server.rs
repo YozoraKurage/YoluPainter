@@ -711,7 +711,7 @@ fn saving_runs_in_the_background_and_the_reply_comes_when_it_is_done() {
     assert!(saved.written);
     assert_eq!(PathBuf::from(&saved.path), file);
     assert_eq!(saved.sets_written.len(), 1);
-    assert!(saved.backup.is_some(), "上書きは前の版を退避に残す");
+    assert!(saved.backup.is_some(), "上書きは前のバージョンを退避に残す");
     assert!(!live.app.ops().save_pending());
     assert!(!live.app.modified(), "保存したので変更ありの印が消える");
     let mut host = FileHost::new(PathPolicy::new(&dir).unwrap());

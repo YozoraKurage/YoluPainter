@@ -570,7 +570,7 @@ fn walk_anchor_world(make: fn() -> (Document, Vec<LayerId>), seeds: u64, steps: 
 #[test]
 fn anchor_readers_follow_what_they_read() {
     let deltas = walk_anchor_world(anchor_world, 16, 100);
-    assert!(deltas > 1000, "試験が動かしていない: {deltas}");
+    assert!(deltas > 1000, "テストが動かしていない: {deltas}");
 }
 
 /// グループの中: Anchor を置いたレイヤーと、それを読むレイヤーが同じグループにいる（読むレイヤーが host より上）。グループのマスクの Anchor も読む。
@@ -662,7 +662,7 @@ fn a_layer_above_its_host_in_the_same_group_reads_the_anchor_without_recursing()
 #[test]
 fn anchors_inside_groups_follow_what_they_read() {
     let deltas = walk_anchor_world(grouped_anchor_world, 16, 100);
-    assert!(deltas > 1000, "試験が動かしていない: {deltas}");
+    assert!(deltas > 1000, "テストが動かしていない: {deltas}");
 }
 
 /// マスクを持つレイヤーが host で、その上のレイヤーがマスクの Anchor を読む。host は画素のタイルを持たない（マスクだけを塗った空のレイヤー）か、持つ。

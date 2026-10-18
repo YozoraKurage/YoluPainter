@@ -10,7 +10,7 @@ fn gpu() -> Option<GpuPainter> {
     gpu_lease::lease();
     match GpuPainter::new(Options::default()) {
         Ok(g) => {
-            eprintln!("GPU 試験: {:?}", g.adapter_info());
+            eprintln!("GPU テスト: {:?}", g.adapter_info());
             Some(g)
         }
         Err(e) => {
@@ -18,7 +18,7 @@ fn gpu() -> Option<GpuPainter> {
                 e.to_string().starts_with("GPU 利用不可:"),
                 "GPU 実装の初期化失敗: {e}"
             );
-            require_gpu::skipped("GPU 試験", &e.to_string());
+            require_gpu::skipped("GPU テスト", &e.to_string());
             None
         }
     }

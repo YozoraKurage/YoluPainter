@@ -213,10 +213,12 @@ pub fn parse(text: &str) -> Loaded {
     };
     let mut out = Loaded::default();
     let Some(format) = root.get("format").and_then(Value::as_u64) else {
-        return problem("画面の並びのファイルに版がありません。既定の並びで始めます。".into());
+        return problem(
+            "画面の並びのファイルにバージョンがありません。既定の並びで始めます。".into(),
+        );
     };
     if format != FORMAT {
-        return problem(format!("画面の並びのファイルの版 {format} は読めません（この版は {FORMAT}）。既定の並びで始めます。"));
+        return problem(format!("画面の並びのファイルのバージョン {format} は読めません（このバージョンは {FORMAT}）。既定の並びで始めます。"));
     }
     // ウィンドウの大きさと位置は、ドックとは別に確かめる（ドックを捨ててもウィンドウは戻す）
     match root.get("window") {

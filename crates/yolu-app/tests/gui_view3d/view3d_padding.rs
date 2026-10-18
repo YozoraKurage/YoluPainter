@@ -60,7 +60,8 @@ fn set_model(h: &mut Harness<'_, YoluApp>, meshes: Vec<ModelMesh>) {
     let state = h.app_mut();
     let revision = state.view3d_mut().next_revision();
     state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
-    let model = ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+    let model =
+        ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
     state.view3d_mut().set_model(model);
     h.run();
 }
@@ -1124,7 +1125,7 @@ fn every_mip_level_holds_only_the_uv_colors_never_the_outside_fill() {
     assert_eq!(color.len(), 9, "256² は 9 段");
     assert!(
         color[0].0.chunks(4).any(|t| t == [255, 255, 255, 255]),
-        "段 0 の遠い外側は塗り広げの外で白のまま（試験の前提）"
+        "段 0 の遠い外側は塗り広げの外で白のまま（テストの前提）"
     );
     let off = texels_with_outside_fill(|slot| color_levels(&h, slot));
     println!("段 1 以降で外側の値を含むテクセル: {off:?}");
@@ -1257,7 +1258,7 @@ fn the_pull_fills_texels_without_uv_pixels_from_the_coarser_level() {
                 if let Some(first) = near.first() {
                     assert!(
                         near.iter().all(|n| n == first),
-                        "試験の前提: となりのアイランドは 1 つ"
+                        "テストの前提: となりのアイランドは 1 つ"
                     );
                     assert_eq!(
                         texel, *first,
@@ -2897,7 +2898,7 @@ fn measure_syncing_another_set_with_and_without_display_padding() {
         .map(|i| (i.wrapping_mul(2654435761) >> 24) as u8)
         .collect();
     println!(
-        "（試験の画素の用意: {:.0} ms）",
+        "（テストの画素の用意: {:.0} ms）",
         started.elapsed().as_secs_f64() * 1000.0
     );
     let started = Instant::now();

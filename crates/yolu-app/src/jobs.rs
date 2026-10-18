@@ -687,7 +687,7 @@ mod tests {
                 s.library.hold_writes(true);
                 let id = s
                     .shelf
-                    .add_image(Lang::Ja, "試験の画像", &[1, 2, 3, 255], 1, 1)
+                    .add_image(Lang::Ja, "テストの画像", &[1, 2, 3, 255], 1, 1)
                     .unwrap();
                 s.apply(Action::Shelf(ShelfOp::ToLibrary(id)));
                 assert!(s.library.writing_name().is_some(), "{}", s.message);

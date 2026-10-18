@@ -90,7 +90,7 @@ fn every_file_in_a_bundle_is_declared_in_its_main_rs_and_every_declared_module_h
             }
         }
         for missing in files.difference(&declared) {
-            problems.push(format!("{bundle}/{missing}: ファイルはあるが {bundle}/main.rs に `mod {missing};` が無い（この試験は走らない）"));
+            problems.push(format!("{bundle}/{missing}: ファイルはあるが {bundle}/main.rs に `mod {missing};` が無い（このテストは走らない）"));
         }
         for gone in declared.difference(&files) {
             problems.push(format!(
@@ -114,7 +114,7 @@ fn only_the_listed_tests_stand_alone_directly_under_tests() {
     assert_eq!(
         found,
         STANDALONE.map(String::from).to_vec(),
-        "直下の 1 ファイル 1 本の試験が一覧と違う。新しい試験は束（{BUNDLES:?}）のフォルダに置き、その main.rs に `mod` を足す。\
+        "直下の 1 ファイル 1 本のテストが一覧と違う。新しいテストは束（{BUNDLES:?}）のフォルダに置き、その main.rs に `mod` を足す。\
          プロセス全体の状態を変えるので束に入れられないときだけ、ファイルの頭に理由を書いて STANDALONE に足す"
     );
 }

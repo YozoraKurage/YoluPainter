@@ -736,7 +736,7 @@ fn a_fast_move_in_the_3d_view_keeps_the_stroke_whichever_frames_the_points_come_
                 }
                 h.step();
                 let left = h.view3d().view.input.surface.as_ref().unwrap().queued();
-                assert!(left > 0, "{how}: 試験の前提: 時間の枠を超えて持ち越した");
+                assert!(left > 0, "{how}: テストの前提: 時間の枠を超えて持ち越した");
                 if how == "focus lost" {
                     h.event(Event::WindowFocused(false));
                 } else {

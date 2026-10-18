@@ -1087,7 +1087,7 @@ fn headless_samples_are_redrawn_only_for_brushes_that_changed() {
     let keys = group_keys(&s, Group::Pen);
     assert!(
         keys.len() <= 2 * RENDERS_PER_FRAME,
-        "試験の前提: 2 フレームで揃う"
+        "テストの前提: 2 フレームで揃う"
     );
     let brush_of =
         |s: &AppState, key: BrushKey| s.brushes().lib.entry(key).unwrap().effective().clone();

@@ -466,7 +466,7 @@ pub fn show(ui: &mut Ui, app: &mut AppState, tex: &mut ColorTextures) {
     }
 
     // 16 進とアルファ
-    // 16 進の欄を広めに取る（同梱の書体の数字は幅広で、「#RRGGBB」が半分の幅に収まらない）
+    // 16 進の欄を広めに取る（同梱のフォントの数字は幅広で、「#RRGGBB」が半分の幅に収まらない）
     let cells = if stacked {
         // 狭い欄: 16 進とアルファを 2 行に（「#RRGGBB」が欠けないように）
         [

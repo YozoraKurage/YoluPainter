@@ -88,11 +88,11 @@ fn splitting_a_native_document_reads_back_the_same_fields() {
                 let mut changed = stored(&entries);
                 changed.header = bytes.into();
                 let Err(e) = changed.to_native() else {
-                    panic!("{name}: 中の版 {bad} を読めた");
+                    panic!("{name}: 中のバージョン {bad} を読めた");
                 };
                 assert!(
-                    e.to_string().contains(&format!("中の版 {bad}")),
-                    "{name}: 中の版 {bad} の断り: {e}"
+                    e.to_string().contains(&format!("中のバージョン {bad}")),
+                    "{name}: 中のバージョン {bad} の断り: {e}"
                 );
             }
             let back = stored(&entries).to_native().unwrap();
@@ -293,7 +293,7 @@ fn wrong_parts_are_refused() {
         h[12..16].copy_from_slice(&inner.to_le_bytes());
         let e = read(&h, &parts).unwrap_err().to_string();
         assert!(
-            e.contains(&format!("中の版 {inner} は未対応")),
+            e.contains(&format!("中のバージョン {inner} は未対応")),
             "{inner}: {e}"
         );
     }
@@ -344,7 +344,7 @@ fn undefined_inner_versions_are_refused_too() {
     let e = read(inner).err().map(|e| e.to_string());
     assert!(
         e.is_some_and(|e| e.contains(&inner.to_string())),
-        "版 {inner} を断らなかった"
+        "バージョン {inner} を断らなかった"
     );
 }
 
@@ -476,7 +476,7 @@ fn the_save_side_check_predicts_what_the_reader_refuses() {
     };
     let id = crate::guid(&crate::core_bridge::native_id(doc.id()));
     let writer = crate::WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "0".into(),
         unity: "standalone".into(),
     };
@@ -547,7 +547,7 @@ fn after_a_save_an_unchanged_document_is_reused_without_reading_it_again() {
     let native = fixture("m2-masks.utpaint");
     let id = native.id().to_owned();
     let writer = crate::WriterInfo {
-        app: "試験".into(),
+        app: "テスト".into(),
         version: "0".into(),
         unity: "standalone".into(),
     };

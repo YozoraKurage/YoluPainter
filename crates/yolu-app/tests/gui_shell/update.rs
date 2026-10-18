@@ -954,7 +954,7 @@ fn the_updates_category_has_the_startup_and_beta_rows_and_the_help_menu_does_not
         h.run();
         let (startup, beta) = (
             lang.pick("起動時に更新を確かめる", "Check for Updates at Startup"),
-            lang.pick("試験版を使う", "Use Beta Versions"),
+            lang.pick("ベータ版を使う", "Use Beta Versions"),
         );
         let role = egui::accesskit::Role::CheckBox;
         let toggled = |h: &egui_kittest::Harness<'static, yolu_app::YoluApp>, label: &str| {
@@ -995,7 +995,7 @@ fn the_updates_category_has_the_startup_and_beta_rows_and_the_help_menu_does_not
         move_to(&h, beta_rect.center() + egui::vec2(0.0, 200.0));
         h.run();
         hover_and_wait(&mut h, beta_rect.center());
-        let tip = lang.pick("正式版より前の試験版", "Also offers beta versions");
+        let tip = lang.pick("正式版より前のベータ版", "Also offers beta versions");
         assert!(
             h.query_by_label_contains(tip).is_some(),
             "{lang:?}: ツールチップが無い"
@@ -1018,7 +1018,7 @@ fn the_updates_category_has_the_startup_and_beta_rows_and_the_help_menu_does_not
 #[test]
 fn the_status_band_marks_a_beta_version_and_only_a_beta_version() {
     use egui_kittest::kittest::Queryable;
-    for (lang, mark) in [(Lang::Ja, "試験版"), (Lang::En, "Beta")] {
+    for (lang, mark) in [(Lang::Ja, "ベータ版"), (Lang::En, "Beta")] {
         let mut h = app(1280.0, 800.0, 64);
         h.set_lang(lang);
         h.usage_mut().build = Some("0.4.0 · a1b2c3d".into());
@@ -1812,7 +1812,7 @@ fn the_help_title_carries_a_mark_while_a_new_version_waits_and_the_item_runs_the
     assert_ne!(
         plain.as_raw(),
         marked.as_raw(),
-        "新しい版があるとき、ヘルプの見出しに印が付く"
+        "新しいバージョンがあるとき、ヘルプの見出しに印が付く"
     );
     // メニューから更新する
     click(&mut h, bar.center());

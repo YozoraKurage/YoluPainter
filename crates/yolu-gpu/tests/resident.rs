@@ -10,11 +10,11 @@ fn gpu(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            require_gpu::skipped("GPU 常駐試験", &e.to_string());
+            require_gpu::skipped("GPU 常駐テスト", &e.to_string());
             return None;
         }
     };
-    eprintln!("GPU 常駐試験: {:?}", g.adapter_info());
+    eprintln!("GPU 常駐テスト: {:?}", g.adapter_info());
     Some(ResidentCompositor::with_gpu(g, options).unwrap())
 }
 fn document(w: u32, h: u32) -> Document {

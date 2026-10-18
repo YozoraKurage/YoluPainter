@@ -143,7 +143,7 @@ fn loading_the_figure_shows_the_pose_panel_and_tree() {
     }
     assert!(
         h.query_by_label("右上腕").is_none(),
-        "閉じた枝の下は出さない"
+        "閉じた分岐の下は出さない"
     );
     // BlendShape のスライダー（メッシュが 2 つなのでメッシュの名前を挟む）
     assert!(h.query_by_label("おなか").is_some());
@@ -525,7 +525,7 @@ fn opening_an_fbx_asks_for_the_file_window_instead_of_opening_one() {
     assert_eq!(
         *h.dialog_request(),
         Some(DialogRequest::OpenModel),
-        "ウィンドウは YoluApp が開く（試験では開かず、頼みが残る）"
+        "ウィンドウは YoluApp が開く（テストでは開かず、頼みが残る）"
     );
     assert!(!h.view3d().pose.is_loading());
     *h.dialog_request_mut() = None;

@@ -15,7 +15,7 @@
 //!
 //! ③ Unity のプロジェクト（Live Link でつないでいる間だけ並ぶ置き場）を足すときの差し込み口:
 //! - 置き場: `Source` に 1 つ足し（`ALL`・`name`・`tooltip`）、`panels::assets` の `cards` / `footer` / `menu_entries` の振り分けに
-//!   同じ形の枝を足す（`library_cards` と同じく、一覧から `Card` を作る）。一覧は Live Link の「アセットの一覧（種類・名前・GUID・大きさ）」の
+//!   同じ形の分岐を足す（`library_cards` と同じく、一覧から `Card` を作る）。一覧は Live Link の「アセットの一覧（種類・名前・GUID・大きさ）」の
 //!   答えを、このモジュールの `LibraryState` と同じ形（項目の並び・選び・見た結果の `HashMap`）の状態に受ける。
 //! - サムネイル: 見えている項目だけ `service::Service` に頼む（札は GUID と内容の札）。仕事の中で Live Link の「サムネイル」を呼び、
 //!   `shelf::Picture` にして返す。同じ内容の札の絵は `cache::Cache`（`Cache::key("unity", 内容の札)`）に覚える。仕事は `Cancel` を見て切り上げる。

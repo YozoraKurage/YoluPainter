@@ -1960,7 +1960,7 @@ fn headless_a_project_with_layer_locks_saves_and_opens_with_the_same_locks() {
         assert_ne!(
             std::fs::read(&path).unwrap(),
             std::fs::read(&plain_path).unwrap(),
-            "ロックを付けた版は書き分けられる"
+            "ロックを付けたバージョンは書き分けられる"
         );
     }
     std::fs::remove_dir_all(root).unwrap();

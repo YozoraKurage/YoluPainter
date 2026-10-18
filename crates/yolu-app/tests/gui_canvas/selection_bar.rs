@@ -1379,7 +1379,7 @@ fn the_remember_button_opens_the_remembered_selections_window_and_a_name_can_be_
     // 描いている間は押せない（帯ごと隠れる）。読むだけのセットでは押せない
     h.sel_mut().saved_window = None;
     let index = st(&h).sets().current_index();
-    h.sets_mut().get_mut(index).unwrap().read_only = Some("試験".into());
+    h.sets_mut().get_mut(index).unwrap().read_only = Some("テスト".into());
     h.run();
     assert!(!bar_shown(&h), "読むだけのセットでは帯を出さない");
 }

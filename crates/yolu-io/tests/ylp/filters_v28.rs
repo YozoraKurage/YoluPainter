@@ -319,11 +319,14 @@ fn versions_without_a_meaning_are_refused_by_the_number() {
         .map(|e| e.to_string());
     assert!(
         e.is_some_and(|e| e.contains(&n.to_string())),
-        "版 {n} を断らなかった"
+        "バージョン {n} を断らなかった"
     );
     // 範囲の外
     for n in [0, -1, yolu_io::SEAMS_VERSION + 1, i32::MAX] {
-        assert!(NativeDocument::read(&numbered(n)).is_err(), "版 {n}");
+        assert!(
+            NativeDocument::read(&numbered(n)).is_err(),
+            "バージョン {n}"
+        );
     }
     // 分けた正本の中の版（ヘッダーの中の版）は `bigdoc_tests` の `wrong_parts_are_refused` が断ることを確かめる
 }

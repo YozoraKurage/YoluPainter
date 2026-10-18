@@ -170,7 +170,9 @@ pub fn parse_action(text: &str) -> Result<ActionFile, OpError> {
         Some(f) => {
             return Err(OpError::new(
                 ErrorCode::UnsupportedVersion,
-                format!("アクションの形式 {f} は読めません（この版が読むのは {ACTION_FORMAT}）"),
+                format!(
+                    "アクションの形式 {f} は読めません（このバージョンが読むのは {ACTION_FORMAT}）"
+                ),
                 format!("Action format {f} is not supported (this version reads {ACTION_FORMAT})"),
             )
             .with_data(json!({"format": f, "supported": ACTION_FORMAT})))

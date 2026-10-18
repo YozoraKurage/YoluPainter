@@ -34,9 +34,9 @@ fn callers_use_the_same_thread() {
 #[test]
 fn a_failure_returns_to_the_caller_and_the_next_test_runs() {
     let _serial = serial();
-    let failure = std::panic::catch_unwind(|| gpu_thread::run(|| panic!("試験の失敗")));
+    let failure = std::panic::catch_unwind(|| gpu_thread::run(|| panic!("テストの失敗")));
     let payload = failure.expect_err("失敗を成功として扱わない");
-    assert_eq!(payload.downcast_ref::<&str>(), Some(&"試験の失敗"));
+    assert_eq!(payload.downcast_ref::<&str>(), Some(&"テストの失敗"));
     gpu_thread::run(|| {});
 }
 
@@ -196,7 +196,7 @@ fn every_window_is_built_through_the_lease() {
     rust_files(&tests, &mut files);
     assert!(
         files.len() > 50,
-        "試験のファイルが見つからない: {}",
+        "テストのファイルが見つからない: {}",
         files.len()
     );
     let forbidden = [
@@ -288,11 +288,11 @@ fn every_gpu_bake_test_takes_the_lease() {
     }
     assert!(
         checked >= 1,
-        "GPU で焼く試験が 1 つも見つからない（見つけ方が古くなった）"
+        "GPU で焼くテストが 1 つも見つからない（見つけ方が古くなった）"
     );
     assert!(
         bad.is_empty(),
-        "GPU を選んで焼く試験が貸し出しを取っていない（先頭で `common::gpu_thread::lease()` を呼ぶ）:\n{}",
+        "GPU を選んで焼くテストが貸し出しを取っていない（先頭で `common::gpu_thread::lease()` を呼ぶ）:\n{}",
         bad.join("\n")
     );
 }

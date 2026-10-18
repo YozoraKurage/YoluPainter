@@ -531,7 +531,7 @@ fn the_baked_ao_fills_the_occlusion_image_and_a_stale_one_is_left_out_with_a_not
 fn a_read_only_set_is_not_exported_and_nothing_to_write_is_said() {
     let dir = Dir::new("readonly");
     let mut s = two_sets();
-    s.session.sets.get_mut(1).unwrap().read_only = Some("試験".into());
+    s.session.sets.get_mut(1).unwrap().read_only = Some("テスト".into());
     let skip = s.session.sets.get(1).unwrap().name.clone();
     export(&mut s, "unity-standard", &dir.0);
     s.wait_export();
@@ -1841,7 +1841,7 @@ fn the_template_and_channels_actions_take_the_sets_to_write_and_none_means_all()
     s.wait_export();
     assert_eq!(dir.files().len(), 2, "None は全部: {:?}", dir.files());
     // 外していても、選びの中に読むだけのセットがあれば、これまでどおり書かず知らせる
-    s.session.sets.get_mut(1).unwrap().read_only = Some("試験".into());
+    s.session.sets.get_mut(1).unwrap().read_only = Some("テスト".into());
     let dir = Dir::new("pick-actions-readonly");
     s.apply(Action::Export(ExportAction::ChannelsTo {
         dir: dir.0.clone(),
@@ -1955,7 +1955,7 @@ fn the_set_list_follows_added_removed_and_renamed_sets_and_a_read_only_set_stays
         vec![uids[0], added]
     );
     // 読むだけのセットは、外れたまま触れない
-    s.session.sets.get_mut(0).unwrap().read_only = Some("試験".into());
+    s.session.sets.get_mut(0).unwrap().read_only = Some("テスト".into());
     let rows = s.export_set_rows();
     assert_eq!(
         (rows[0].checked, rows[0].enabled, rows[0].read_only),
@@ -2089,7 +2089,7 @@ fn a_problem_that_stops_the_export_is_shown_in_place_of_the_list() {
         .sets
         .get_mut(s.session.sets.current_index())
         .unwrap()
-        .read_only = Some("試験".into());
+        .read_only = Some("テスト".into());
     s.apply(Action::Export(ExportAction::OpenWindow));
     let preview = s.export_preview();
     assert!(
@@ -2197,10 +2197,10 @@ fn a_current_channel_png_of_a_read_only_set_refuses_with_the_read_only_reason() 
         .sets
         .get_mut(s.session.sets.current_index())
         .unwrap()
-        .read_only = Some("試験".into());
+        .read_only = Some("テスト".into());
     s.apply(Action::Export(ExportAction::OpenWindow));
     choose(&mut s, &dir.0.join("one.png"));
-    let why = crate::lang::refusals::read_only_set(s.lang, "試験");
+    let why = crate::lang::refusals::read_only_set(s.lang, "テスト");
     assert_eq!(s.export_no_set_reason(), why);
     s.apply(Action::Export(ExportAction::Run));
     assert_eq!(s.message, why);
@@ -2235,7 +2235,7 @@ fn a_direct_export_with_no_set_to_write_is_refused_as_having_no_set() {
     }
     // 全部読むだけのときも同じ
     for i in 0..s.session.sets.len() {
-        s.session.sets.get_mut(i).unwrap().read_only = Some("試験".into());
+        s.session.sets.get_mut(i).unwrap().read_only = Some("テスト".into());
     }
     export(&mut s, "unity-standard", &dir.0);
     assert_eq!(s.message, message);

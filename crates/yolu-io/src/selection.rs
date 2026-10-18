@@ -75,7 +75,7 @@ impl Selection {
             *at += 4;
             Ok(i32::from_le_bytes(s.try_into().unwrap()))
         }
-        check(int(b, &mut at)? == 1, "選択範囲の版が未対応です")?;
+        check(int(b, &mut at)? == 1, "選択範囲のバージョンが未対応です")?;
         let w = int(b, &mut at)?;
         let h = int(b, &mut at)?;
         let ts = int(b, &mut at)?;

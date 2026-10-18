@@ -154,7 +154,7 @@ fn the_version_follows_the_features_used() {
     assert_eq!(
         native.to_core().unwrap().channels().len(),
         7,
-        "ユーザーチャンネルも版 23 で残る"
+        "ユーザーチャンネルもバージョン 23 で残る"
     );
     // 既存の種類の Generator だけの文書は版 21
     let mut old = plain();

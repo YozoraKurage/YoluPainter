@@ -57,7 +57,7 @@ pub const PANEL_HEADER_HEIGHT: f32 = 24.0;
 /// プロパティの欄のタブの帯の高さ。
 pub const PROPERTY_TAB_STRIP_HEIGHT: f32 = 30.0;
 
-/// 太字の書体の名前（`fonts` が入れる。無ければ普通の書体）。
+/// 太字のフォントの名前（`fonts` が入れる。無ければ普通のフォント）。
 pub const BOLD: &str = "bold";
 
 /// 文字の形（Unity 版の `PaintTheme` の GUIStyle に当たる。大きさと色と寄せ）。

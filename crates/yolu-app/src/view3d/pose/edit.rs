@@ -386,7 +386,11 @@ mod tests {
         assert_ne!(local(&app, hand), rest(&app, hand), "子はそのまま");
         reset(&mut app, Reset::Subtree(lower));
         assert_eq!(local(&app, hand), rest(&app, hand), "子まで戻る");
-        assert_ne!(local(&app, spine), rest(&app, spine), "ほかの枝は動かない");
+        assert_ne!(
+            local(&app, spine),
+            rest(&app, spine),
+            "ほかの分岐は動かない"
+        );
         // 戻す余地が無ければ積まない
         let n = undo_len(&app);
         reset(&mut app, Reset::Bone(upper));

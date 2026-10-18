@@ -234,12 +234,13 @@ impl<T: Transport> UpdateClient<T> {
             .map_err(|_| fail("署名が一致しません"))?;
         let manifest: RawManifest =
             serde_json::from_str(&envelope.payload).map_err(|_| fail("本文の形式が不正です"))?;
-        let version = Version::parse(&manifest.version).map_err(|_| fail("版の形式が不正です"))?;
+        let version =
+            Version::parse(&manifest.version).map_err(|_| fail("バージョンの形式が不正です"))?;
         if manifest.schema != UPDATER_SCHEMA
             || manifest.assets.is_empty()
             || manifest.assets.len() > MAX_ASSETS
         {
-            return Err(fail("更新情報の版または配布物の数が不正です"));
+            return Err(fail("更新情報のバージョンまたは配布物の数が不正です"));
         }
         // 署名済みでも、このクライアントが知らない対象の配布物は読み飛ばす。
         // 対象を足した版の更新情報を、すでに配った版が拒否しないため。

@@ -335,13 +335,13 @@ fn headless_a_file_that_cannot_be_used_is_dropped_with_a_reason_for_the_log_only
         ("JSON でない", "not json at all {".into()),
         ("空", String::new()),
         (
-            "版が無い",
+            "バージョンが無い",
             with(&|v| {
                 v.as_object_mut().unwrap().remove("format");
             }),
         ),
-        ("古い版", with(&|v| v["format"] = 0.into())),
-        ("新しい版", with(&|v| v["format"] = 99.into())),
+        ("古いバージョン", with(&|v| v["format"] = 0.into())),
+        ("新しいバージョン", with(&|v| v["format"] = 99.into())),
         (
             "ドックが無い",
             with(&|v| {

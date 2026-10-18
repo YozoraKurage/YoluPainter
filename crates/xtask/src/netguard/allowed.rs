@@ -51,7 +51,7 @@ pub(super) const ALLOWED: &[Allow] = &[
         file: "crates/yolu-app/src/update/http.rs",
         mark: "\"http://\"",
         count: Exactly(1),
-        why: "更新の確認: http は試験だけ、同じ機械（127.0.0.1・localhost）に限って通す口（for_loopback_test）",
+        why: "更新の確認: http はテストだけ、同じ機械（127.0.0.1・localhost）に限って通す口（for_loopback_test）",
     },
     Allow {
         file: "crates/yolu-app/src/update/http.rs",

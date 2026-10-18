@@ -324,7 +324,7 @@ fn a_flat_quad_facing_the_camera_paints_the_same_tip_as_the_2d_canvas() {
             println!("{name}・{shape}: 塗った画素 {painted}・違う画素 {differ}・最大の差 {max}");
             assert!(
                 painted > 300,
-                "{name}・{shape}: 試験の前提: 線を描いた ({painted})"
+                "{name}・{shape}: テストの前提: 線を描いた ({painted})"
             );
             assert!(max <= 4, "{name}・{shape}: 差の最大 {max}");
             assert!(
@@ -360,7 +360,7 @@ fn fade_reaches_the_same_length_as_2d_whatever_the_input_spacing() {
     println!("フェードで消える所: 2D {a}・3D {c}");
     assert!(
         (90..=115).contains(&a),
-        "試験の前提: 90 画素ほどで消える ({a})"
+        "テストの前提: 90 画素ほどで消える ({a})"
     );
     assert!(a.abs_diff(c) <= 1, "2D {a}・3D {c}");
     let (painted, differ, max) = compare(&flat, &surface);
@@ -495,7 +495,7 @@ fn every_dual_brush_mode_matches_2d() {
         let points = line((40.0, 40.0), (0.8, 0.6), 5.5, &[6, 4, 10]);
         let (painted, differ, max) = compare(&draw_2d(&b, &points), &draw_3d(&b, &points));
         println!("{mode:?}: 塗った画素 {painted}・違う画素 {differ}・最大の差 {max}");
-        assert!(painted > 100, "{mode:?}: 試験の前提 ({painted})");
+        assert!(painted > 100, "{mode:?}: テストの前提 ({painted})");
         assert!(
             max <= 4 && differ * 100 <= painted,
             "{mode:?}: {differ}/{painted}・{max}"
@@ -620,7 +620,7 @@ fn paper_texture_follows_document_pixels_whatever_the_camera() {
     let expected = window(&flat);
     assert!(
         expected.iter().max().unwrap() - expected.iter().min().unwrap() > 40,
-        "試験の前提: 質感が見える"
+        "テストの前提: 質感が見える"
     );
     for view in views {
         let (mut d, l) = document();
@@ -1080,7 +1080,7 @@ fn symmetric_copies_flip_and_turn_the_tip() {
         assert!(flip <= 6, "鏡映の写しは左右に反転した筆先 ({flip})");
         assert!(
             shift > 60,
-            "試験の前提: ずらしただけの筆先とは違う ({shift})"
+            "テストの前提: ずらしただけの筆先とは違う ({shift})"
         );
         assert!(turn <= 6, "放射状の写しは回した筆先 ({turn})");
     }
@@ -1178,7 +1178,7 @@ fn blur_smudge_and_clone_use_the_tip_shape() {
         }
         let (w, h) = (x1.saturating_sub(x0) + 1, y1.saturating_sub(y0) + 1);
         println!("{effect}: 変わった所が重なる {both}/{either}・3D の箱 {w}×{h}");
-        assert!(either > 100, "{effect}: 試験の前提 ({either})");
+        assert!(either > 100, "{effect}: テストの前提 ({either})");
         assert!(
             both * 10 >= either * 8,
             "{effect}: 2D と変わる所が重なる ({both}/{either})"

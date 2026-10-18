@@ -972,9 +972,9 @@ fn headless_using_a_file_is_refused_when_the_shelf_is_full_or_unreadable() {
     );
     assert_eq!(s.shelf().resources().len(), MAX_RESOURCES);
     assert!(!s.modified());
-    *s.shelf_mut() = ShelfState::unreadable("試験の理由");
+    *s.shelf_mut() = ShelfState::unreadable("テストの理由");
     use_file(&mut s, "Smart/raster.ylsmart");
-    assert!(s.message().contains("試験の理由"), "{}", s.message());
+    assert!(s.message().contains("テストの理由"), "{}", s.message());
     assert!(s.shelf().resources().is_empty());
 }
 

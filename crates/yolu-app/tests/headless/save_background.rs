@@ -358,7 +358,8 @@ fn a_background_save_writes_the_same_bytes_as_the_inline_save() {
                 &reference_entries(&b, &pr),
             );
             assert!(
-                a.message().contains("前の版は") && b.message().contains("前の版は"),
+                a.message().contains("前のバージョンは")
+                    && b.message().contains("前のバージョンは"),
                 "{label}: 退避は同じく残る: {}",
                 b.message()
             );

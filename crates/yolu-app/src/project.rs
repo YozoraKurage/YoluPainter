@@ -792,7 +792,7 @@ mod tests {
         assert_eq!(backup_text(Lang::En, path, &report(false, 0)), "");
         assert_eq!(
             backup_text(Lang::Ja, path, &report(true, 0)),
-            " 前の版は a.ylp-backups~ に残しました。"
+            " 前のバージョンは a.ylp-backups~ に残しました。"
         );
         assert_eq!(
             backup_text(Lang::En, path, &report(true, 0)),

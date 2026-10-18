@@ -328,7 +328,7 @@ fn legacy_versions_with_effects_read_and_migrate_like_csharp() {
         assert_eq!(
             NativeDocument::from_core(&core).unwrap().to_bytes(),
             read(&format!("{name}.v21")),
-            "{name}: 版 21 へ移した正本が C# の書き直しと同じバイト列"
+            "{name}: バージョン 21 へ移した正本が C# の書き直しと同じバイト列"
         );
         isotropic(&mut core);
         assert_eq!(
@@ -1051,7 +1051,7 @@ fn a_document_edited_with_every_effect_api_survives_save_and_reopen() {
     };
     let project = yolu_io::Project::create(
         yolu_io::WriterInfo {
-            app: "試験の書き手".into(),
+            app: "テストの書き手".into(),
             version: "0.0.1".into(),
             unity: "standalone".into(),
         },

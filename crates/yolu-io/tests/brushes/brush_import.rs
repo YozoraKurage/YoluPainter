@@ -57,7 +57,7 @@ fn gbr_version1_and_colour_brushes_are_read_with_honest_notes() {
     let v1 = one(FileKind::Gbr, &gbr(1, 1, &[200], 1, "old", 25, 1));
     assert_eq!(
         v1.brush.base.spacing, 0.25,
-        "版 1 に間隔の欄は無く、GIMP は 25% にする"
+        "バージョン 1 に間隔の欄は無く、GIMP は 25% にする"
     );
     let rgba = one(
         FileKind::Gbr,

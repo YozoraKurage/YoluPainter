@@ -89,7 +89,7 @@ impl Desktop for Fake {
             return Err(Failure::Overlay);
         }
         if self.failure == Some("panic") {
-            panic!("試験の失敗");
+            panic!("テストの失敗");
         }
         let mut selection = Selection::default();
         selection.input(std::mem::replace(&mut self.event, PickInput::Cancel));

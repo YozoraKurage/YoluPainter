@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(
             DVec3::ZERO.distance(exact),
             MIN_MODEL_SEPARATION,
-            "試験の前提"
+            "テストの前提"
         );
         assert!(
             line(DVec3::ZERO, exact, DVec3::Y).validate().is_ok(),
@@ -598,7 +598,7 @@ mod tests {
         assert_eq!(
             (tiny - DVec3::Y * tiny.dot(DVec3::Y)).length(),
             MIN_MODEL_SEPARATION,
-            "試験の前提"
+            "テストの前提"
         );
         assert!(ruler.validate().is_ok(), "直交する成分がちょうど最小");
     }
@@ -611,7 +611,7 @@ mod tests {
         assert_eq!(
             DVec2::ZERO.distance(exact),
             MIN_CANVAS_SEPARATION,
-            "試験の前提"
+            "テストの前提"
         );
         assert!(line(exact).validate().is_ok(), "ちょうど最小の間隔");
         assert!(line(exact * 0.9).validate().is_err(), "最小より近い");

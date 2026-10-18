@@ -306,7 +306,7 @@ fn escape_focus_loss_and_release_stop_the_held_points_and_the_frame_requests() {
         }
         assert!(
             h.canvas().stroke_points >= 8,
-            "{how}: 試験の前提: 点が足されている"
+            "{how}: テストの前提: 点が足されている"
         );
         match how {
             "escape" => key(&h, egui::Key::Escape, Modifiers::NONE),

@@ -225,7 +225,7 @@ fn parse_index(bytes: &[u8]) -> Result<Value> {
     let format = value.get("format").and_then(Value::as_i64);
     check(
         format == Some(FORMAT),
-        "残した選択範囲の索引の版が未対応です",
+        "残した選択範囲の索引のバージョンが未対応です",
     )?;
     check(
         value.get("selections").is_some_and(Value::is_array),

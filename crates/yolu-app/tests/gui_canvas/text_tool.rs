@@ -294,7 +294,7 @@ fn headless_the_paint_color_leaves_text_alone_when_it_cannot_be_changed() {
     // 描いている間・読むだけのセットでは、黙って変えない
     let mut s = state();
     let id = typed_layer(&mut s, RED);
-    s.sets_mut().get_mut(0).unwrap().read_only = Some("試験".into());
+    s.sets_mut().get_mut(0).unwrap().read_only = Some("テスト".into());
     s.message_mut().clear();
     paint(&mut s, BLUE);
     assert_eq!(color_of(&s, id), byte(RED));

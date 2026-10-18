@@ -1086,7 +1086,7 @@ fn headless_a_project_with_read_only_sets_is_recovered_and_can_be_saved_somewher
     let readonly_id = "00000000-0000-4000-8000-0000000000aa".to_owned();
     let project = Project::create(
         WriterInfo {
-            app: "試験".into(),
+            app: "テスト".into(),
             version: "0".into(),
             unity: "standalone".into(),
         },
@@ -1746,7 +1746,7 @@ fn two_set_file(dir: &TempDir) -> (PathBuf, String, String) {
     };
     let project = Project::create(
         WriterInfo {
-            app: "試験".into(),
+            app: "テスト".into(),
             version: "0".into(),
             unity: "standalone".into(),
         },

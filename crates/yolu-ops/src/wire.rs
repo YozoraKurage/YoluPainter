@@ -15,7 +15,7 @@ pub fn check_version(value: Option<&Value>) -> Result<(), OpError> {
         Some(n) if n == u64::from(COMMAND_VERSION) => Ok(()),
         _ => Err(OpError::new(
             ErrorCode::UnsupportedVersion,
-            format!("命令の版 {v} には対応していません（対応: {COMMAND_VERSION}）"),
+            format!("命令のバージョン {v} には対応していません（対応: {COMMAND_VERSION}）"),
             format!("Command version {v} is not supported (supported: {COMMAND_VERSION})"),
         )
         .with_data(json!({"got": v, "supported": [COMMAND_VERSION]}))),

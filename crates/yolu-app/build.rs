@@ -39,7 +39,7 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
-    let version = env::var("CARGO_PKG_VERSION").expect("cargo が版を渡す");
+    let version = env::var("CARGO_PKG_VERSION").expect("cargo がバージョンを渡す");
     let mut resource = winresource::WindowsResource::new();
     resource
         .set_icon(ICON)
@@ -52,7 +52,7 @@ fn main() {
         .set("ProductVersion", &version)
         .set("FileVersion", &version);
     if let Err(error) = resource.compile() {
-        panic!("Windows のリソース（アイコン・製品名・版）を埋められません: {error}");
+        panic!("Windows のリソース（アイコン・製品名・バージョン）を埋められません: {error}");
     }
 }
 

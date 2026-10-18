@@ -95,7 +95,7 @@ fn headless_saved_selections_survive_save_and_reopen_in_order_and_use_format_8_o
     assert_eq!(
         project.original_archive().manifest_version(),
         3,
-        "外側の版は変わらない"
+        "外側のバージョンは変わらない"
     );
     let id = project.sets()[0].id.clone();
     let stored = project.saved_selections(&id).unwrap();

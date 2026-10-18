@@ -13,7 +13,7 @@ pub(super) fn checkpoint(cancel: Option<&AtomicBool>) {
             schedule.set(Some((calls, trip)));
             if calls == trip {
                 cancel
-                    .expect("試験用の取消旗")
+                    .expect("テスト用の取消旗")
                     .store(true, Ordering::Relaxed);
             }
         }

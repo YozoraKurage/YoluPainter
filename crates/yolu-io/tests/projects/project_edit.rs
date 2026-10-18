@@ -9,7 +9,7 @@ use yolu_io::{
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }

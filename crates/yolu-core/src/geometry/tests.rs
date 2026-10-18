@@ -708,7 +708,7 @@ mod stencil {
         );
         assert!(
             white.is_disjoint(black),
-            "{what}: 試験の線が境をまたいでいる"
+            "{what}: テストの線が境をまたいでいる"
         );
         assert_eq!(
             through.intersection(black).count(),

@@ -197,7 +197,7 @@ fn rust_written_locks_are_what_this_writer_produces_and_unity_reads_and_resaves_
     assert_eq!(
         bytes[8..12],
         21i32.to_le_bytes(),
-        "ユーザーチャンネルが無い文書は版 21（Unity 0.2.0 が読める）"
+        "ユーザーチャンネルが無い文書はバージョン 21（Unity 0.2.0 が読める）"
     );
     // 書いたものを読み戻すと、自分のロックも効くロックも同じ
     let back = NativeDocument::read(&bytes).unwrap().to_core().unwrap();
@@ -341,11 +341,11 @@ fn a_document_with_locks_reads_as_version_12_and_is_refused_as_version_11() {
         assert_eq!(
             core.layer(id_of(&core, "a")).unwrap().locks(),
             bits(1 | 4),
-            "版 {version}"
+            "バージョン {version}"
         );
         assert!(
             core.layer(id_of(&core, "b")).unwrap().clipping(),
-            "版 {version}"
+            "バージョン {version}"
         );
         assert_eq!(
             core.layer(id_of(&core, "b")).unwrap().locks(),
@@ -355,7 +355,7 @@ fn a_document_with_locks_reads_as_version_12_and_is_refused_as_version_11() {
     for version in [5, 6, 11] {
         assert!(
             NativeDocument::read(&relabel(version)).is_err(),
-            "ロックの印を持つ正本を版 {version} と偽ると断る"
+            "ロックの印を持つ正本をバージョン {version} と偽ると断る"
         );
     }
     // ロックの無い同じ文書は、版 11 と偽っても読める（ロックの無い文書は版 11 と同じ並び）
@@ -368,7 +368,7 @@ fn a_document_with_locks_reads_as_version_12_and_is_refused_as_version_11() {
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }

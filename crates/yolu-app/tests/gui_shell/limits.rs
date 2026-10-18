@@ -245,7 +245,7 @@ fn about_names_the_product_and_the_version_and_nothing_else() {
             .is_ok_and(|version| yolu_update::is_beta_version(&version));
         let mark = match (beta, lang) {
             (false, _) => "",
-            (true, Lang::Ja) => "（試験版）",
+            (true, Lang::Ja) => "（ベータ版）",
             (true, Lang::En) => " (beta)",
         };
         assert_eq!(s.message(), format!("YoluPainter {version}{mark}"));
@@ -267,7 +267,7 @@ fn the_save_notice_names_the_file_and_the_writer_is_the_product_name() {
             text,
             "形式・セットの数・書き直した数は出さない"
         );
-        assert_eq!(s.rewritten_sets(), 1, "書き直した数は試験が見る");
+        assert_eq!(s.rewritten_sets(), 1, "書き直した数はテストが見る");
         let _ = std::fs::remove_file(&path);
     }
     let mut s = AppState::new(64, 64);

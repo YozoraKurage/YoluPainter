@@ -1430,7 +1430,7 @@ fn asymmetric_tips_are_reflected_with_their_shape() {
         }
         assert!(
             mirrored_differs,
-            "{mode:?} 筆先が左右非対称でなければ試験にならない"
+            "{mode:?} 筆先が左右非対称でなければテストにならない"
         );
     }
 }

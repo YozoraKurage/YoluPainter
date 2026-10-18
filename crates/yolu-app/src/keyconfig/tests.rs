@@ -796,7 +796,7 @@ fn tool_key_modes_are_written_only_when_changed_and_come_back_from_the_file() {
         v["tool_keys"],
         json!({"tool.eraser": "hold", "tool.fill": "tap_or_hold"})
     );
-    assert_eq!(v["version"], 1, "形式の版は上げない");
+    assert_eq!(v["version"], 1, "形式のバージョンは上げない");
     // 次の起動で読み直す
     let mut again = AppState::new(32, 32);
     let mut pies = again.pie.menus.clone();

@@ -659,7 +659,7 @@ fn in_pool<T: Send>(threads: usize, f: impl FnOnce() -> T + Send) -> T {
 #[test]
 fn dilation_matches_the_plain_loop_for_any_number_of_threads() {
     // 1000 × 700 で覆い 10%: 段 1 の候補が約 36 万で、既定の塊（262144）を超えて 2 つに分かれ、どちらも並列の下限（16384）を超える
-    // （既定の分け方のままで、塊の切れ目と並列の枝を通る。小さい塊・下限での切れ目は every_way_of_splitting が受け持つ）
+    // （既定の分け方のままで、塊の切れ目と並列の分岐を通る。小さい塊・下限での切れ目は every_way_of_splitting が受け持つ）
     let (w, h) = (1000usize, 700usize);
     let image = random_image(w, h, 1);
     let keep = random_keep(w, h, 2, 10.0);
@@ -750,7 +750,7 @@ fn coverage_is_the_same_for_any_number_of_threads_and_batch_boundaries() {
 
 #[test]
 fn every_way_of_splitting_the_work_gives_the_same_result() {
-    // 塊・並列の下限・帯・束を小さくして、境目（塊の切れ目・並列の枝・帯をまたぐ三角形・束の切れ目）を全部通す
+    // 塊・並列の下限・帯・束を小さくして、境目（塊の切れ目・並列の分岐・帯をまたぐ三角形・束の切れ目）を全部通す
     let (w, h) = (97usize, 61usize);
     let image = random_image(w, h, 11);
     let keep = random_keep(w, h, 12, 8.0);
@@ -1026,7 +1026,7 @@ fn redilating_a_region_gives_the_whole_dilation_inside_it() {
 
 #[test]
 fn redilating_a_region_is_the_same_for_any_number_of_threads() {
-    // 段 1 の候補が並列の下限（16384）を超える大きさで、並列の枝を通す
+    // 段 1 の候補が並列の下限（16384）を超える大きさで、並列の分岐を通す
     let (w, h) = (700u32, 500u32);
     let image = random_image(w as usize, h as usize, 51);
     let keep = random_keep(w as usize, h as usize, 52, 5.0);

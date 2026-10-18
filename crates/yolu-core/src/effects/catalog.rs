@@ -562,7 +562,7 @@ pub fn kinds() -> &'static [EffectKind] {
                         default: defaults
                             .get(name)
                             .cloned()
-                            .expect("既定の値は全部の欄にある（表の試験が確かめる）"),
+                            .expect("既定の値は全部の欄にある（表のテストが確かめる）"),
                         ty,
                     })
                     .collect();

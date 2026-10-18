@@ -2535,7 +2535,7 @@ fn a_cancel_during_the_normal_composite_of_a_big_canvas_stops_it_without_a_resul
     assert!(full.is_ok(), "旗が立たなければ書ける");
     assert!(
         whole > Duration::from_millis(40),
-        "重ねに時間がかかるキャンバスでなければ、この試験は意味が無い: {whole:?}"
+        "重ねに時間がかかるキャンバスでなければ、このテストは意味が無い: {whole:?}"
     );
     let (cut, _, since_raised) = run(Some(whole / 5));
     assert!(

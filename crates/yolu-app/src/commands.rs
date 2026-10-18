@@ -889,7 +889,7 @@ impl Operation {
             .iter()
             .find(|c| matches!(c.name, Name::Mouse(operation) if operation == self))
             .map(|c| c.id)
-            .expect("すべての組み合わせに操作がある（試験が見る）")
+            .expect("すべての組み合わせに操作がある（テストが見る）")
     }
 }
 

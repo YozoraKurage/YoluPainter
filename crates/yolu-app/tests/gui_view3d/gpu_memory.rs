@@ -323,7 +323,7 @@ fn headless_raising_the_preview_budget_makes_the_thumbnails_the_icons_could_not_
         .filter(|r| r.kind == "smartMaterial" || r.kind == "smartMask")
         .map(|r| r.id.clone())
         .collect();
-    assert!(!smart.is_empty(), "試験の素材が見つからない");
+    assert!(!smart.is_empty(), "テストの素材が見つからない");
     for id in &smart {
         assert!(
             shelf.texture(&ctx, id).is_none(),
@@ -366,7 +366,7 @@ fn headless_raising_the_preview_budget_reviews_only_what_the_budget_left_out() {
     let smart = ids(&["smartMaterial", "smartMask"]);
     assert!(
         !images.is_empty() && !smart.is_empty(),
-        "試験の素材が見つからない"
+        "テストの素材が見つからない"
     );
     for id in images.iter().chain(&smart) {
         assert!(shelf.info(id).is_some(), "見終えている: {id}");

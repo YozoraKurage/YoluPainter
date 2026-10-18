@@ -678,7 +678,7 @@ fn opening_paints_and_saving_rewrites_only_the_painted_set() {
         );
     }
     let backup = backups(&path);
-    assert_eq!(backup.len(), 1, "前の版を 1 つ残す");
+    assert_eq!(backup.len(), 1, "前のバージョンを 1 つ残す");
     assert_eq!(std::fs::read(&backup[0]).unwrap(), before);
 
     // 開き直すと、描いた所がある
@@ -904,7 +904,7 @@ fn m2_project(path: &std::path::Path) -> Vec<yolu_io::NativeDocument> {
 }
 fn writer() -> yolu_io::WriterInfo {
     yolu_io::WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -1006,12 +1006,15 @@ fn a_new_project_saves_as_and_then_overwrites_with_a_backup() {
     assert_eq!(set.name, "テクスチャセット 1");
     assert_eq!(set.materials[0], MaterialRef::PendingSlot(0));
     assert_eq!(set.id, set.document.id(), "新しいセットの ID は文書の ID");
-    assert!(backups(&path).is_empty(), "新しく作ったので前の版は無い");
+    assert!(
+        backups(&path).is_empty(),
+        "新しく作ったので前のバージョンは無い"
+    );
     // 描き足して上書き
     drag(&mut h, &[offset(c, 0.0, -30.0), offset(c, 0.0, 30.0)]);
     key(&h, Key::S, egui::Modifiers::COMMAND);
     h.run();
-    assert!(h.message().contains("前の版は"), "{}", h.message());
+    assert!(h.message().contains("前のバージョンは"), "{}", h.message());
     assert_eq!(backups(&path).len(), 1);
     // 新規プロジェクトで空に戻る
     h.act(Action::NewProject);
@@ -1193,8 +1196,8 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
     s.act(Action::SaveProjectAs(path.clone()));
     assert!(s.message().starts_with("保存しました"), "{}", s.message());
     assert!(
-        !s.message().contains("前の版は"),
-        "新しく作ったので前の版は無い"
+        !s.message().contains("前のバージョンは"),
+        "新しく作ったので前のバージョンは無い"
     );
     for i in 0..4 {
         paint_a_stroke(&mut s, 8.0 + 8.0 * i as f64);
@@ -1202,7 +1205,7 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
         assert!(s.message().starts_with("保存しました"), "{}", s.message());
         assert!(
             s.message()
-                .contains("前の版は keep.ylp-backups~ に残しました"),
+                .contains("前のバージョンは keep.ylp-backups~ に残しました"),
             "{}",
             s.message()
         );
@@ -1221,7 +1224,7 @@ fn the_backups_to_keep_setting_decides_how_many_previous_versions_stay() {
     paint_a_stroke(&mut s, 50.0);
     s.act(Action::SaveProject);
     assert!(
-        s.message().starts_with("保存しました") && !s.message().contains("前の版は"),
+        s.message().starts_with("保存しました") && !s.message().contains("前のバージョンは"),
         "{}",
         s.message()
     );
@@ -1260,7 +1263,7 @@ fn saving_as_over_another_file_follows_the_setting_too() {
     paint_a_stroke(&mut s, 20.0);
     s.act(Action::SaveProjectAs(a.clone()));
     assert!(
-        s.message().starts_with("保存しました") && !s.message().contains("前の版は"),
+        s.message().starts_with("保存しました") && !s.message().contains("前のバージョンは"),
         "{}",
         s.message()
     );
@@ -1269,7 +1272,7 @@ fn saving_as_over_another_file_follows_the_setting_too() {
     paint_a_stroke(&mut s, 30.0);
     s.act(Action::SaveProjectAs(a.clone()));
     assert!(
-        s.message().contains("前の版は a.ylp-backups~"),
+        s.message().contains("前のバージョンは a.ylp-backups~"),
         "{}",
         s.message()
     );

@@ -243,7 +243,7 @@ fn a_library_write_is_listed_and_cancelled_and_waited_for_when_stopping_jobs() {
         ("ToLibrary", |s| {
             let id = s
                 .shelf_mut()
-                .add_image(Lang::Ja, "試験の画像", &[1, 2, 3, 255], 1, 1)
+                .add_image(Lang::Ja, "テストの画像", &[1, 2, 3, 255], 1, 1)
                 .unwrap();
             s.act(Action::Shelf(ShelfOp::ToLibrary(id)));
         }),

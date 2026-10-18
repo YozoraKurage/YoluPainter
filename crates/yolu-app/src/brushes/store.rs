@@ -3622,7 +3622,11 @@ mod tests {
         )
         .unwrap();
         store.delete_brush(2).unwrap();
-        assert_eq!(count(), 1, "新しい版のファイルが指している画像は残す");
+        assert_eq!(
+            count(),
+            1,
+            "新しいバージョンのファイルが指している画像は残す"
+        );
         store.delete_brush(3).unwrap();
         assert_eq!(count(), 0);
         std::fs::remove_dir_all(dir).unwrap();
@@ -3993,8 +3997,8 @@ mod tests {
             assert!(!text.contains("influence."), "{version}");
             // 読むと、前の形の鍵が影響元へ写る
             let d = decode_user(text, &mut |_| unreachable!()).unwrap();
-            assert_eq!(d.brush, canonical(&brush), "版 {version}");
-            assert_eq!(d.assist, assist, "版 {version}");
+            assert_eq!(d.brush, canonical(&brush), "バージョン {version}");
+            assert_eq!(d.assist, assist, "バージョン {version}");
             // 読んだものを書くと同じバイト。今の形で作ったブラシも、前の形の書き手と同じバイトで書く
             let back = UserBrush {
                 id: 1,
@@ -4004,7 +4008,11 @@ mod tests {
                 import: d.import,
                 assist: d.assist,
             };
-            assert_eq!(super::encode(&back).unwrap().text, text, "版 {version}");
+            assert_eq!(
+                super::encode(&back).unwrap().text,
+                text,
+                "バージョン {version}"
+            );
             let made = UserBrush {
                 id: 1,
                 name: "sample".into(),
@@ -4013,7 +4021,11 @@ mod tests {
                 import: None,
                 assist,
             };
-            assert_eq!(super::encode(&made).unwrap().text, text, "版 {version}");
+            assert_eq!(
+                super::encode(&made).unwrap().text,
+                text,
+                "バージョン {version}"
+            );
         }
     }
 

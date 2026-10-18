@@ -59,7 +59,7 @@ fn one_step(d: &mut Document, op: impl FnOnce(&mut Document)) {
     assert_eq!(d.undo_count(), steps + 1, "取り消しの段は 1 つ");
     assert_eq!(d.history().last(), Some(HistoryKind::Rulers));
     assert_eq!(d.change_serial(), serial, "画素の変化の印は付けない");
-    assert!(d.revision() > revision, "版は進む");
+    assert!(d.revision() > revision, "バージョンは進む");
     assert!(d.undo().unwrap());
     assert_eq!(state(d), before, "戻すと前");
     assert!(d.redo().unwrap());

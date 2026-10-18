@@ -150,10 +150,10 @@ impl fmt::Display for MeshMapStaleReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EngineVersion { baked, current } => {
-                write!(f, "メッシュマップのエンジンの版 {baked}（今は {current}）")
+                write!(f, "メッシュマップのエンジンのバージョン {baked}（今は {current}）")
             }
             Self::SpaceOrPose { space, pose } => {
-                write!(f, "空間「{space}」・姿勢「{pose}」で焼いたもの（この版は作らない）")
+                write!(f, "空間「{space}」・姿勢「{pose}」で焼いたもの（このバージョンは作らない）")
             }
             Self::ReferenceAdded => f.write_str("高ポリ無しで焼いたが、今は高ポリを選んでいる"),
             Self::ReferenceRemoved => f.write_str("高ポリで焼いたが、今は高ポリを選んでいない"),

@@ -19,7 +19,7 @@ pub fn begin(name: &str) -> Option<MutexGuard<'static, ()>> {
         Err(reason) => {
             // libtest の成功時の出力捕捉を通さず、省略を通常の cargo test でも残す。
             let _ = writeln!(std::io::stderr(),
-                "省略: canvas_gpu::{name}: {reason}。未検証: この試験の GPU 合成・表示と CPU との比較、切替・復帰の保証。");
+                "省略: canvas_gpu::{name}: {reason}。未検証: このテストの GPU 合成・表示と CPU との比較、切替・復帰の保証。");
             // CI の画面の試験のジョブは YOLUPAINTER_REQUIRE_GPU を付け、使える描画器が無いときに通った扱いにしない（yolu-gpu の試験と同じ）
             assert!(
                 std::env::var_os("YOLUPAINTER_REQUIRE_GPU").is_none(),

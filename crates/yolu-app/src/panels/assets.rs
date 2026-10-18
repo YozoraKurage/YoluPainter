@@ -1526,7 +1526,7 @@ fn file_stem(name: &str) -> String {
     }
 }
 
-/// 棚のファイルのウィンドウ・確認のウィンドウ（ウィンドウを開かない試験では呼ばれない。頼みは `state.dialog_request` に残る）。
+/// 棚のファイルのウィンドウ・確認のウィンドウ（ウィンドウを開かない試験では呼ばれない。頼みは `state.outbox.dialog_request` に残る）。
 pub fn run_dialog(state: &mut AppState, request: DialogRequest) {
     let lang = state.lang;
     match request {

@@ -2287,7 +2287,7 @@ fn project_with_a_backup(tag: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
     s.act(Action::SaveProject);
     assert!(s.message().starts_with("保存しました"), "{}", s.message());
     let kept = yolu_io::backups(&ylp).unwrap();
-    assert_eq!(kept.len(), 1, "前の版が退避に残る");
+    assert_eq!(kept.len(), 1, "前のバージョンが退避に残る");
     (dir, model, ylp, kept[0].clone())
 }
 
@@ -2779,7 +2779,7 @@ fn a_view_json_written_by_unity_is_left_alone_when_the_model_does_not_change() {
     s.act(Action::OpenProject(fixture));
     assert!(
         s.np().model_file.is_none(),
-        "Unity 版のモデルの GUID はスタンドアロンでは読まない"
+        "0.4.x までの Unity ブリッジのモデルの GUID はスタンドアロンでは読まない"
     );
     let out = dir.join("saved.ylp");
     s.act(Action::SaveProjectAs(out.clone()));

@@ -1736,7 +1736,7 @@ fn headless_overwriting_with_m2_content_keeps_the_previous_version() {
         .unwrap()
         .map(|e| std::fs::read(e.unwrap().path()).unwrap())
         .collect();
-    assert!(kept.contains(&first), "前の版は -backups~ に残る");
+    assert!(kept.contains(&first), "前のバージョンは -backups~ に残る");
     let mut again = AppState::new(64, 64);
     again.act(Action::OpenProject(path));
     assert_eq!(content(&again), content(&s), "{}", again.message());

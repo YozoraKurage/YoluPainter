@@ -29,7 +29,7 @@ fn gpu_with(options: ResidentOptions) -> Option<ResidentCompositor> {
         Ok(g) => g,
         Err(e) => {
             assert!(e.to_string().starts_with("GPU 利用不可:"), "{e}");
-            require_gpu::skipped("キャンバスの GPU 試験", &e.to_string());
+            require_gpu::skipped("キャンバスの GPU テスト", &e.to_string());
             return None;
         }
     };

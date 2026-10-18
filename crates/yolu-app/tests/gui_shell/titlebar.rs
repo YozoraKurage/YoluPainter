@@ -439,7 +439,7 @@ fn close_goes_the_same_way_as_the_quit_menu_item() {
             sent.iter().any(|c| matches!(c, ViewportCommand::Close)),
         );
         assert_eq!(button, menu, "modified={modified}");
-        assert!(button.0 && button.1, "modified={modified}: 終了の頼みになり、ウィンドウを閉じる頼みが出る（試験のウィンドウは確かめを開かない）");
+        assert!(button.0 && button.1, "modified={modified}: 終了の頼みになり、ウィンドウを閉じる頼みが出る（テストのウィンドウは確かめを開かない）");
     }
 }
 

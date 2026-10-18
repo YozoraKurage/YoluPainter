@@ -511,11 +511,11 @@ fn headless_a_newer_tools_json_is_left_alone_and_changes_are_refused() {
     std::fs::write(dir.join("tools.json"), &text).unwrap();
     let mut s = state(&dir);
     let message = s.toolset_problem_message().unwrap();
-    assert!(message.contains("新しい版"), "{message}");
+    assert!(message.contains("新しいバージョン"), "{message}");
     let brush = slot_of(&s, Tool::Brush);
     s.message_mut().clear();
     tools(&mut s, ToolsetAction::AddGroup(brush));
-    assert!(s.message().contains("新しい版"), "{}", s.message());
+    assert!(s.message().contains("新しいバージョン"), "{}", s.message());
     brush_action_refused(&mut s, BrushAction::Delete(b("pencil")));
     brush_action_refused(&mut s, BrushAction::Add);
     tools(&mut s, ToolsetAction::Reset);
@@ -534,7 +534,7 @@ fn brush_action_refused(s: &mut AppState, action: BrushAction) {
     s.message_mut().clear();
     brush_op(s, action.clone());
     assert!(
-        s.message().contains("新しい版"),
+        s.message().contains("新しいバージョン"),
         "{action:?}: {}",
         s.message()
     );

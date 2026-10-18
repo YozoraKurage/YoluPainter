@@ -1558,7 +1558,7 @@ fn headless_a_read_only_set_refuses_to_change_the_saved_selections() {
     save(&mut s, "A");
     let uid = s.sets().current().uid;
     let index = s.sets().index_of(uid).unwrap();
-    s.sets_mut().get_mut(index).unwrap().read_only = Some("試験".into());
+    s.sets_mut().get_mut(index).unwrap().read_only = Some("テスト".into());
     let steps = s.doc().undo_count();
     save(&mut s, "B");
     s.act(Action::Sel(SelAction::Saved(SavedOp::Rename {

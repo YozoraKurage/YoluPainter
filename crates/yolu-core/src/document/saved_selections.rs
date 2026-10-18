@@ -230,7 +230,7 @@ mod tests {
         let revision = d.revision();
         assert_eq!(d.save_selection("  髪  ").unwrap(), 0);
         assert_eq!(d.saved_selections()[0].name, "髪", "前後の空白は除く");
-        assert!(d.revision() > revision, "版が進む（保存の鍵）");
+        assert!(d.revision() > revision, "バージョンが進む（保存の鍵）");
         assert_eq!(d.history().last(), Some(HistoryKind::SavedSelections));
         select(&mut d, 20, 5, 30, 25);
         assert_eq!(d.save_selection("服").unwrap(), 1);
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(
             (d.undo_count(), d.revision()),
             (0, revision),
-            "段も版も増えない"
+            "段もバージョンも増えない"
         );
         assert_eq!(d.saved_selections().len(), 2);
         // 決まりに合わない並びは断り、何も変えない

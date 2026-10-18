@@ -253,7 +253,8 @@ impl UpdateState {
         let (target, mode) = platform_target(installed);
         UpdateState {
             key: yolu_update::embedded_public_key().ok(),
-            current: Version::parse(env!("CARGO_PKG_VERSION")).expect("cargo の版は SemVer"),
+            current: Version::parse(env!("CARGO_PKG_VERSION"))
+                .expect("cargo のバージョンは SemVer"),
             target,
             mode,
             preference: Preference::Unset,
@@ -366,7 +367,7 @@ impl UpdateState {
         mode: Mode,
     ) {
         self.key = key;
-        self.current = Version::parse(current).expect("試験の版");
+        self.current = Version::parse(current).expect("テストのバージョン");
         self.target = target;
         self.mode = mode;
     }

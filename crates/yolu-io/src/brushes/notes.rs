@@ -1036,7 +1036,7 @@ impl SutNote {
             Self::InfluenceUnreadable(target) => {
                 let (tja, ten) = target.texts();
                 (
-                    format!("{tja}の影響元設定を読めなかった（この版の形が分からない）ので、外した"),
+                    format!("{tja}の影響元設定を読めなかった（このバージョンの形が分からない）ので、外した"),
                     format!("The influence settings for {ten} could not be read (unknown layout in this version); they are left off."),
                 )
             }

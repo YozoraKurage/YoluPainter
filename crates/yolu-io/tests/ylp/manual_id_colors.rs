@@ -34,7 +34,7 @@ fn block_after_tag(binding: &str, pairs: &[(i32, i32)]) -> Vec<u8> {
 
 fn writer() -> WriterInfo {
     WriterInfo {
-        app: "試験の書き手".into(),
+        app: "テストの書き手".into(),
         version: "0.0.1".into(),
         unity: "standalone".into(),
     }
@@ -111,7 +111,7 @@ fn an_empty_assignment_writes_no_block_and_only_the_other_features_decide_the_ve
         doc.set_id_colors(assigned(&[(1, 0x102030)]), false)
             .unwrap();
         let with = NativeDocument::from_core(&doc).unwrap();
-        assert_eq!(with.version(), version, "色は版を決めない");
+        assert_eq!(with.version(), version, "色はバージョンを決めない");
         assert!(with.version() >= 19);
         assert!(with.to_bytes().len() > plain_bytes.len());
         // 全部外すと、色を持たなかったときと同じバイト列に戻る（塊も版の変更も残らない）

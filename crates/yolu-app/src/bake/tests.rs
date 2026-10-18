@@ -1132,7 +1132,7 @@ fn has_japanese(s: &str) -> bool {
 
 fn adapter(software: bool, ray_query: bool) -> BakeAdapter {
     BakeAdapter {
-        name: "試験のアダプター".into(),
+        name: "テストのアダプター".into(),
         backend: "Vulkan".into(),
         device_type: "DiscreteGpu".into(),
         software,
@@ -1335,10 +1335,10 @@ fn a_broken_gpu_falls_back_to_the_cpu_with_the_reason_and_still_bakes() {
     let mut s = cube();
     s.apply(bake(BakeAction::Backend(BakeBackend::Gpu)));
     if wait_probe(&s).is_err() {
-        eprintln!("GPU を作れない環境なので、壊れた GPU の試験は省く");
+        eprintln!("GPU を作れない環境なので、壊れた GPU のテストは省く");
         return;
     }
-    s.bake.gpu.fail_for_test("試験の故障");
+    s.bake.gpu.fail_for_test("テストの故障");
     s.apply(bake(BakeAction::Start));
     s.wait_bake();
     let run = s.session.sets.current().mesh_maps.run().cloned().unwrap();
@@ -1348,7 +1348,7 @@ fn a_broken_gpu_falls_back_to_the_cpu_with_the_reason_and_still_bakes() {
         .fallback_reason
         .as_deref()
         .unwrap()
-        .contains("試験の故障"));
+        .contains("テストの故障"));
     assert_eq!(kinds(&s, 0).len(), 3, "CPU で焼き直して、マップは入る");
     assert!(
         s.message.contains("GPU の処理に失敗しました"),
@@ -1423,7 +1423,7 @@ fn cancel_a_gpu_bake_after_a_cpu_bake(park_mid_bake: bool) {
     assert!(!run.used_gpu() && run.requested == BakeBackend::Cpu);
     s.apply(bake(BakeAction::Backend(BakeBackend::Gpu)));
     if wait_probe(&s).is_err() {
-        eprintln!("GPU を作れない環境なので、GPU の取消の試験は省く");
+        eprintln!("GPU を作れない環境なので、GPU の取消のテストは省く");
         return;
     }
     s.bake.settings.maps = vec![MeshMapKind::AmbientOcclusion];

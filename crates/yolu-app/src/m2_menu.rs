@@ -822,7 +822,11 @@ mod tests {
             s.session.clear_modified();
             s.apply(marked);
             assert_eq!(s.session.doc.channel_info(channel), Some(&info), "{tag}");
-            assert_eq!(s.session.doc.revision(), revision, "{tag}: 文書の版");
+            assert_eq!(
+                s.session.doc.revision(),
+                revision,
+                "{tag}: 文書のバージョン"
+            );
             assert_eq!(s.session.doc.undo_count(), steps, "{tag}: Undo の段");
             assert_eq!(s.message, message, "{tag}: 知らせ");
             assert!(!s.session.is_modified(), "{tag}: 変更の印");

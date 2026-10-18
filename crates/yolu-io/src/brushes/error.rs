@@ -345,7 +345,7 @@ impl Fault {
                 )
             }
             GbrHeaderSize { version, size } => (
-                format!("版 {version} の GBR のヘッダーの大きさ {size} が不正です"),
+                format!("バージョン {version} の GBR のヘッダーの大きさ {size} が不正です"),
                 format!("Invalid header size {size} for GBR version {version}."),
             ),
             GbrSignature => (
@@ -369,7 +369,7 @@ impl Fault {
                 format!("Unsupported pixel size {n}."),
             ),
             GbrVersion(n) => (
-                format!("GIMP ブラシの版 {n} は未対応です"),
+                format!("GIMP ブラシのバージョン {n} は未対応です"),
                 format!("Unsupported GIMP brush version {n}."),
             ),
             GihHeader => (
@@ -397,15 +397,15 @@ impl Fault {
                 format!("Unknown shape '{shape}'."),
             ),
             VbrVersion(v) => (
-                format!("パラメトリックブラシの版 '{v}' は未対応です"),
+                format!("パラメトリックブラシのバージョン '{v}' は未対応です"),
                 format!("Unsupported parametric brush version '{v}'."),
             ),
             AbrVersion(v) => (
-                format!("ABR の版 {v} は未対応です"),
+                format!("ABR のバージョン {v} は未対応です"),
                 format!("Unsupported ABR version {v}."),
             ),
             AbrSubversion(v) => (
-                format!("ABR の副版 {v} は未対応です"),
+                format!("ABR の副バージョン {v} は未対応です"),
                 format!("Unsupported ABR subversion {v}."),
             ),
             AbrBrushCount(n) => (
@@ -474,7 +474,7 @@ impl Fault {
                 "Not a Photoshop pattern file (no 8BPT signature).".into(),
             ),
             PatVersion(v) => (
-                format!("パターンファイルの版 {v} は未対応です"),
+                format!("パターンファイルのバージョン {v} は未対応です"),
                 format!("Unsupported pattern file version {v}."),
             ),
             PatCount(n) => (
@@ -482,11 +482,11 @@ impl Fault {
                 format!("Invalid pattern count {n}."),
             ),
             PatternVersion(v) => (
-                format!("模様の版 {v} は未対応です"),
+                format!("模様のバージョン {v} は未対応です"),
                 format!("Unsupported pattern version {v}."),
             ),
             PatternDataVersion(v) => (
-                format!("模様のデータの版 {v} は未対応です"),
+                format!("模様のデータのバージョン {v} は未対応です"),
                 format!("Unsupported pattern data version {v}."),
             ),
             PatternChannelCount(n) => (

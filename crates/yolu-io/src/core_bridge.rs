@@ -660,7 +660,7 @@ pub(crate) fn write_tail(sink: &mut dyn Sink, doc: &Document, version: i32) -> R
     }
     check(
         version >= MANUAL_ID_COLORS_VERSION,
-        "手動の ID の色は正本の版 19 から書けます",
+        "手動の ID の色は正本のバージョン 19 から書けます",
     )?;
     let mut w = Out::for_version(sink, version);
     w.value(b"YLID")?;
@@ -1636,7 +1636,7 @@ fn write_path_extra(w: &mut Out<'_>, path: &LayerPath) -> Result<()> {
             w.byte(1)?;
             check(
                 w.rulers || c.mode != yolu_core::SymmetryMode::Lines,
-                "パスの線対称は版 35 で書く",
+                "パスの線対称はバージョン 35 で書く",
             )?;
             w.int(match c.mode {
                 yolu_core::SymmetryMode::Vertical => 1,
@@ -2408,7 +2408,7 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     // 版の決め（`version_of`）が、点のグラデーション・異方性を切った画像のある文書を版 29 にする。ここに来て古い版なら書けない
     check(
         w.points || points.is_empty() && images.iter().all(|(c, _)| layer.fill_anisotropic(*c)),
-        named("点のグラデーション・画像の読み方は版 29 で書く"),
+        named("点のグラデーション・画像の読み方はバージョン 29 で書く"),
     )?;
     // 属性の印: ビット 0 クリッピング、ビット 1 ロックが続く、ビット 2 チャンネルごとの設定が続く、ビット 3 塗りつぶしの画像、ビット 4 Anchor、
     // ビット 5 塗りつぶしのグラデーション、ビット 6 パスの一覧（版 27）、ビット 7 続きの属性の印が続く（版 29）。ロックの印（int、0 は書かない）は
@@ -2416,11 +2416,11 @@ fn write_layer(w: &mut Out<'_>, layer: &yolu_core::Layer) -> Result<()> {
     // どちらもチャンネルごとの設定より前
     check(
         w.text || layer.text().is_none(),
-        named("テキストレイヤーは版 30 で書く"),
+        named("テキストレイヤーはバージョン 30 で書く"),
     )?;
     check(
         w.rulers || layer.rulers().is_empty(),
-        named("定規は版 35 で書く"),
+        named("定規はバージョン 35 で書く"),
     )?;
     let ext: i32 = if points.is_empty() { 0 } else { 1 }
         | if layer.text().is_some() { 2 } else { 0 }

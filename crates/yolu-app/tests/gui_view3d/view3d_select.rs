@@ -72,7 +72,7 @@ pub(crate) fn model_view(meshes: Vec<ModelMesh>, ortho: bool, distance: f32) -> 
         let revision = state.view3d_mut().next_revision();
         state.view3d_mut().material = yolu_core::geometry::MaterialSet::one(0);
         let model =
-            ViewModel::new("試験", meshes, vec![Some("試験".to_string())], revision).unwrap();
+            ViewModel::new("テスト", meshes, vec![Some("テスト".to_string())], revision).unwrap();
         state.view3d_mut().set_model(model);
         state.view3d_mut().view.camera = OrbitCamera {
             target: Vec3::ZERO,
@@ -104,9 +104,9 @@ pub(crate) fn wide_plate_view(width: u32) -> (H, Rect) {
         *state.doc_mut() = yolu_core::Document::new(width, N).unwrap();
         let revision = state.view3d_mut().next_revision();
         let model = ViewModel::new(
-            "試験",
+            "テスト",
             vec![plate(0.0, 1.0, (0.0, 1.0))],
-            vec![Some("試験".to_string())],
+            vec![Some("テスト".to_string())],
             revision,
         )
         .unwrap();

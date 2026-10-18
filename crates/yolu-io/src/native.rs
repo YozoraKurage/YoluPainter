@@ -501,7 +501,7 @@ impl<'a> Parse<'a> {
             // 中の版は分けていない並びの版（26 は分けた正本の印で、中には入らない）
             check(
                 inner >= UNITY_NATIVE_VERSION && is_known_version(inner) && inner != SPLIT_VERSION,
-                format!("分けた正本の中の版 {inner} は未対応です"),
+                format!("分けた正本の中のバージョン {inner} は未対応です"),
             )?;
             let count = i32::from_le_bytes(r.take(4)?.try_into().unwrap());
             let parts =

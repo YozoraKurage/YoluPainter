@@ -145,12 +145,12 @@ fn only_versions_with_a_meaning_are_read() {
         let mut bytes = bytes.clone();
         bytes[8..12].copy_from_slice(&version.to_le_bytes());
         let Err(e) = NativeDocument::read(&bytes) else {
-            panic!("版 {version} を読めた");
+            panic!("バージョン {version} を読めた");
         };
         assert!(
             e.to_string()
                 .contains(&format!(".version の値 {version} は未対応または範囲外です")),
-            "版 {version} の断り: {e}"
+            "バージョン {version} の断り: {e}"
         );
     }
 }
