@@ -2,7 +2,7 @@
 
 外から文書を操作する命令の型と、画面なしで `.ylp` を操作するホストです。
 
-- 命令（`Command`）・返事（`Reply`）・誤り（`OpError`）は serde の JSON で、命令の版を持ち、JSON Schema を型から作れます。
+- 命令（`Command`）・返事（`Reply`）・誤り（`OpError`）は serde の JSON で、命令のバージョンを持ち、JSON Schema を型から作れます。
 - 文書の命令は `yolu_core::Document` の上の関数（`doc_ops`）1 か所にあり、**1 つの命令が取り消しの 1 段**です。
 - プロジェクトの命令（セットの一覧・文書の読み書き・書き出し・保存・見本）は `OpHost` に向けて書いてあります。ホストは、画面なしの
   `FileHost`（この crate）と、起動中のアプリの中のホストです。
@@ -26,7 +26,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 
 ## 命令の JSON
 
-命令は `{"v": 1, "command": "<名前>", "args": {...}}` です。`v`（命令の版）と `args` は省けます（今の版・空）。引数の知らない欄は断ります。
+命令は `{"v": 1, "command": "<名前>", "args": {...}}` です。`v`（命令のバージョン）と `args` は省けます（今のバージョン・空）。引数の知らない欄は断ります。
 返事は `{"reply": "<種類>", ...}`、誤りは `{"code": "<種類>", "message": {"ja": "...", "en": "..."}, "data": {...}}` です。
 
 対象の指し方:
@@ -76,7 +76,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 ツールの名前は、命令の名前の `.` を `_` にしたもの（`layer.set` → `layer_set`。`CommandSpec::tool_name`）です。
 欄の型・範囲・説明は `yolu_ops::commands()`（命令の一覧。名前・日英の説明・読むだけか壊すか・引数と返事の JSON Schema）と、`command_schema()`・
 `reply_schema()`・`error_schema()` で取れます。壊す印は `Danger`（`Always`・`WhenReplacing`・`PerCommand`）で、確認の欄（`confirm`）を持つ命令
-（`Always`・`WhenReplacing`）と持たない命令が、この印と一致することを試験が確かめます。`PerCommand` は `action.run` で、列の中の壊す命令がそれぞれ `confirm` を持ちます。
+（`Always`・`WhenReplacing`）と持たない命令が、この印と一致することをテストが確かめます。`PerCommand` は `action.run` で、列の中の壊す命令がそれぞれ `confirm` を持ちます。
 
 ## アクション
 
@@ -106,8 +106,8 @@ fn main() -> Result<(), yolu_ops::OpError> {
 - リスト・曲線・参照を持つ種類（`gradient_map`・`tone_curve`・`shape_gradient`・`id_color`・`anchor`・`image`）は、値だけでは追加できません（`addable: false`）。
   すでにある段は `effect.get` で読め、強さ・有効・チャンネルは変えられ、値を渡して変えるのは断ります（その部分を黙って作り直しません）。
 - スタンドアロンだけの種類（`rust_only: true`: ノイズ・グランジ・画像（`image`）、グラデーションマップ・トーンカーブ・カラーバランス・明るさ/コントラスト・2 値化・ポスタリゼーション、
-  0.5.0 のフィルターとジェネレーター（上の一覧の `histogram_scan` から `glow` までと、`pattern`・`light`・`mask_builder`・`uv_island_variation`））を使ったセットは、新しい文書の版で保存され、
-  Unity 版（0.4.x まで）は開けません（理由を言って断り、中身は消えません。0.5.0 以降の Unity ブリッジは .ylp を開きません）。保存の返事の `notes` がそのセットを知らせます。
+  0.5.0 のフィルターとジェネレーター（上の一覧の `histogram_scan` から `glow` までと、`pattern`・`light`・`mask_builder`・`uv_island_variation`））を使ったセットは、新しい文書のバージョンで保存され、
+  以前の Unity 実装（0.4.x まで）は開けません（理由を言って断り、中身は消えません。0.5.0 以降の Unity ブリッジは .ylp を開きません）。保存の返事の `notes` がそのセットを知らせます。
 - 効果の種類を変えるとき、適用中のチャンネルに使えない設定は、どのチャンネルかを言って断ります（`channels` で選び直します）。
 
 **画面なしでは効かない効果**: 焼いたメッシュマップ・モデルを読む Generator（`needs_baked_maps: true`。モデルの UV アイランドを読む `uv_island_variation` も）は、画面なしのホストにマップもモデルも無いので、入力のまま通します。
@@ -133,12 +133,12 @@ fn main() -> Result<(), yolu_ops::OpError> {
 ## 保存
 
 `FileHost` の保存は yolu-io の安全な保存です: 検証した一時ファイルから 1 回の置き換えで確定し、開いたあとに外で書き換えられたファイルは上書きせず（`conflict`）、
-前の版は隣の `<名前>-backups~/` に残します（消しません）。
+前のバージョンは隣の `<名前>-backups~/` に残します（消しません）。
 
 - 編集したセットだけ文書から作り直し（合成の PNG も）、編集していないセット・読むだけのセット・選択範囲・見た目などの別のエントリは、開いたファイルのバイト列のまま写します。
 - 何も編集していなければ書きません（`saved.written: false`）。
 - 古い形式のファイルは形式 7 へ上げて書きます（`saved.upgraded_from`）。
-- `save_as` は、新しいファイルには確認が要らず、もうあるファイルは有効な `.ylp` に限って `confirm: true` で置き換えます（前の版は退避へ）。名前は `.ylp` で終わる必要があります。
+- `save_as` は、新しいファイルには確認が要らず、もうあるファイルは有効な `.ylp` に限って `confirm: true` で置き換えます（前のバージョンは退避へ）。名前は `.ylp` で終わる必要があります。
 - core で扱えない中身があるセットは**読むだけ**です（`read_only`。`set.info` は大きさと理由だけ）。保存しても、そのセットのバイト列は変わりません。
 
 ## ファイルの道
@@ -152,13 +152,13 @@ fn main() -> Result<(), yolu_ops::OpError> {
 |---|---|
 | `invalid_request` | JSON が読めない・引数が足りない・知らない欄・型が違う |
 | `unknown_command` | 知らない命令の名前（`data.commands` に一覧） |
-| `unsupported_version` | 命令の版が合わない（`data.supported`） |
+| `unsupported_version` | 命令のバージョンが合わない（`data.supported`） |
 | `no_document` | 開いている文書が無い |
 | `not_found` | セット・レイヤー・効果・チャンネル・効果の種類・テンプレートが無い |
 | `ambiguous` | 名前が複数に当たる（`data.candidates`。レイヤーは `{id, kind}`・セットは `{id, name}`・チャンネルは `{index, name}` の並び） |
 | `invalid_value` | 値が範囲の外・選択肢に無い・組み合わせが断られた |
 | `read_only` | 読むだけのセット |
-| `unsupported` | そのレイヤー・チャンネル・種類にはできない、この版では扱わない |
+| `unsupported` | そのレイヤー・チャンネル・種類にはできない、このバージョンでは扱わない |
 | `confirm_required` | 壊す操作に `confirm: true` が無い（`data.files` などに対象） |
 | `path_refused` | 道が使えない（作業のフォルダの外・名前の形・通常のファイルでない） |
 | `budget` | 予算・上限を超える |
@@ -172,9 +172,9 @@ fn main() -> Result<(), yolu_ops::OpError> {
 
 どの誤りも日本語と英語の両方の文を持ちます（`message.ja`・`message.en`）。断った命令は何も変えません。
 
-## 版
+## バージョン
 
-命令の版は `COMMAND_VERSION`（今は 1）です。引数の欄を追加するだけなら上げず、古い命令が読めなくなる変え方をするときに上げます。版の違う命令は `unsupported_version` で断ります。
+命令のバージョンは `COMMAND_VERSION`（今は 1）です。引数の欄を追加するだけなら上げず、古い命令が読めなくなる変え方をするときに上げます。バージョンの違う命令は `unsupported_version` で断ります。
 `.ylp` の形式は変えません（保存は今の形式 7 か、名前を付けて残した選択範囲を使うファイルの 8 のまま）。
 
 ## 起動中のアプリへの通信
@@ -189,7 +189,7 @@ fn main() -> Result<(), yolu_ops::OpError> {
 見本（`preview`）は、既定では `read_set` から `export::run`・`preview::render` を通します（起動中のアプリのホストは、アプリの書き出しの設定や合成の道へ向けて置き換えられます）。
 `execute` は、壊す操作の確認 → 振り分けを行います。
 
-## 試験
+## テスト
 
 ```sh
 cargo test -p yolu-ops
@@ -198,4 +198,4 @@ cargo clippy -p yolu-ops --all-targets -- -D warnings
 
 ## 命令にしていないこと
 
-描く（ストローク・塗りつぶし・選択）・ベイク・Live Link・モデルの読み込み・複数の文書を同時に開くこと。画面なしのホストでは、焼いたメッシュマップ・モデルを読む Generator の評価もしません。
+描く（ストローク・塗りつぶし・選択）・ベイク・レイヤーセットの操作（足す・名前・出力の割り当て。複数のレイヤーセットの文書は開いて当てられ、`layer.add` で `above` を省くと最初のレイヤーセットに入る）・Live Link・モデルの読み込み・複数の文書を同時に開くこと。画面なしのホストでは、焼いたメッシュマップ・モデルを読む Generator の評価もしません。

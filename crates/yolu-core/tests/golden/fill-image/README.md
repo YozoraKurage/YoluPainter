@@ -1,6 +1,6 @@
 # 塗りつぶし投影の C# 正解
 
-前の Unity 版の C# Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`）の出力を引き継いだ物です。作り直すときは Rust の出力から作ります。すべて人工データです。
+以前の Unity 実装の C# Core（Unity ブリッジのタグ `0.4.0` の `Runtime/Core`）の出力を引き継いだ物です。作り直すときは Rust の出力から作ります。すべて人工データです。
 
 異方性を切った道（`FillInput::anisotropic`・`shape_anisotropic` が false）の正解です。入れた道の正解は Rust が撮った [`../fill-image-anisotropic/`](../fill-image-anisotropic/README.md) にあります。
 
@@ -10,4 +10,4 @@
 
 `.rgba` は改行を変換してはいけないバイト列なので、リポジトリの `.gitattributes` で `binary`、このフォルダ全体を `-text` にしています。
 
-`source.txt` は参照元コミットと評価式のSHA-256、`contracts.txt` は拒否設定と予算境界の実行結果です。生成器はC#の並列度1と4の全バイト一致を確認してから保存します。
+`source.txt` は参照元コミットと評価式のSHA-256、`contracts.txt` は拒否設定と予算境界の実行結果です。C# の並列度1と4の全バイト一致を確認してから保存した物です（C# で作り直す道は残していません）。

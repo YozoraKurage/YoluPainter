@@ -1,4 +1,4 @@
-//! 形式の仕様（`docs/YLP_FORMAT.md`）が、書き手と読み手に追いついているか。エントリ・版・正本の欄・JSON のキーを足して仕様を直し忘れると落ちる。
+//! 形式の仕様（`docs/YLP_FORMAT.md`）が、書き手と読み手に追いついているか。エントリ・バージョン・正本の欄・JSON のキーを足して仕様を直し忘れると落ちる。
 //! 仕様の中の節への道（`#…`）が、見出しに当たっているかも見る（見出しを変えると黙って切れるため）。
 use yolu_core::{look::MaterialLook, Document, SelectionMask};
 use yolu_io::{
@@ -115,7 +115,7 @@ fn mentions(text: &str, name: &str) -> bool {
     })
 }
 
-/// 読み手のソースの、試験より前の部分の文字列の定数のうち、識別子の形のもの（正本の欄の名前・JSON のキーと値）。
+/// 読み手のソースの、テストより前の部分の文字列の定数のうち、識別子の形のもの（正本の欄の名前・JSON のキーと値）。
 fn identifiers(source: &str, camel: bool) -> Vec<String> {
     let body = source.split("#[cfg(test)]").next().unwrap();
     let mut out: Vec<String> = Vec::new();
@@ -207,12 +207,12 @@ fn every_version_is_in_the_spec() {
             "コードの定数の表の {name} が {value} でない"
         );
     }
-    // 「版の数」の表。行の名前ごとに、範囲の欄と、このアプリが書く値の欄を照らす
-    let summary = section("### 版の数");
+    // 「バージョンの数」の表。行の名前ごとに、範囲の欄と、このアプリが書く値の欄を照らす
+    let summary = section("### バージョンの数");
     let range = |name: &str| cells(row(summary, name))[3];
     let written = |name: &str| cells(row(summary, name))[4];
-    assert_eq!(range("外側の版"), "1〜4", "外側の版の範囲");
-    assert!(written("外側の版").starts_with("3。"), "外側の版の書く値");
+    assert_eq!(range("外側のバージョン"), "1〜4", "外側のバージョンの範囲");
+    assert!(written("外側のバージョン").starts_with("3。"), "外側のバージョンの書く値");
     assert_eq!(
         range("中身の形式"),
         format!("1〜{MAX_FORMAT}"),
@@ -223,33 +223,33 @@ fn every_version_is_in_the_spec() {
         "中身の形式の書く値"
     );
     assert_eq!(
-        range("正本の版"),
+        range("正本のバージョン"),
         format!(
             "1〜{TEXT_VERSION}・{SEAMS_VERSION}〜{MAX_NATIVE_VERSION}（{} は欠番）",
             TEXT_VERSION + 1
         ),
-        "正本の版の範囲（末尾が MAX_NATIVE_VERSION）"
+        "正本のバージョンの範囲（末尾が MAX_NATIVE_VERSION）"
     );
     let native_written = format!(
         "{UNITY_NATIVE_VERSION}〜{MIXING_VERSION}・{PATHS_VERSION}〜{TEXT_VERSION}・{SEAMS_VERSION}〜{MAX_NATIVE_VERSION}"
     );
     assert!(
-        written("正本の版").contains(&native_written),
-        "正本の版の書く値: {native_written}"
+        written("正本のバージョン").contains(&native_written),
+        "正本のバージョンの書く値: {native_written}"
     );
     assert!(
-        range("メッシュマップの版").starts_with(&format!("1〜{}。", mesh_map::FORMAT_VERSION)),
-        "メッシュマップの版の範囲"
+        range("メッシュマップのバージョン").starts_with(&format!("1〜{}。", mesh_map::FORMAT_VERSION)),
+        "メッシュマップのバージョンの範囲"
     );
     assert_eq!(
-        written("メッシュマップの版"),
+        written("メッシュマップのバージョン"),
         mesh_map::FORMAT_VERSION.to_string(),
-        "メッシュマップの版の書く値"
+        "メッシュマップのバージョンの書く値"
     );
     for (name, value) in [
-        ("選択範囲の版", "1"),
+        ("選択範囲のバージョン", "1"),
         ("JSON の `format`", "1"),
-        ("`.ylsmart` の版", "1"),
+        ("`.ylsmart` のバージョン", "1"),
     ] {
         assert_eq!(range(name), value, "{name}の範囲");
         assert_eq!(written(name), value, "{name}の書く値");
@@ -257,7 +257,7 @@ fn every_version_is_in_the_spec() {
     // 読み手ごとの範囲のこのアプリの行
     let readers = section("### 読み手ごとの範囲");
     let app = cells(row(readers, "このアプリ"));
-    assert_eq!(app[1], "`YLP-1`〜`4`", "読み手ごとの範囲: 外側の版");
+    assert_eq!(app[1], "`YLP-1`〜`4`", "読み手ごとの範囲: 外側のバージョン");
     assert_eq!(
         app[2],
         format!("1〜{MAX_FORMAT}"),
@@ -266,17 +266,17 @@ fn every_version_is_in_the_spec() {
     assert_eq!(
         app[3],
         format!("1〜{TEXT_VERSION}・{SEAMS_VERSION}〜{MAX_NATIVE_VERSION}"),
-        "読み手ごとの範囲: 正本の版"
+        "読み手ごとの範囲: 正本のバージョン"
     );
-    // 表の行が版ごとにある
-    let formats = section("### 中身の形式の版");
+    // 表の行がバージョンごとにある
+    let formats = section("### 中身の形式のバージョン");
     for v in 1..=MAX_FORMAT {
         assert!(
             formats.contains(&format!("\n| {v} |")),
             "中身の形式 {v} の行が無い"
         );
     }
-    let natives = section("### 正本の版ごとの追加");
+    let natives = section("### 正本のバージョンごとの追加");
     for v in (1..=TEXT_VERSION).chain([
         SEAMS_VERSION,
         BAKE_PRIORITY_VERSION,
@@ -286,14 +286,14 @@ fn every_version_is_in_the_spec() {
     ]) {
         assert!(
             natives.contains(&format!("\n| {v} |")),
-            "正本の版 {v} の行が無い"
+            "正本のバージョン {v} の行が無い"
         );
     }
-    // 意味の決まっていない版（31）は表に行が無い
+    // 意味の決まっていないバージョン（31）は表に行が無い
     for v in (TEXT_VERSION + 1)..SEAMS_VERSION {
         assert!(
             !natives.contains(&format!("\n| {v} |")),
-            "読めない版 {v} の行がある"
+            "読めないバージョン {v} の行がある"
         );
     }
 }

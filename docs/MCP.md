@@ -5,7 +5,7 @@
 YoluPainter は、設定「外からの操作を受ける」を入れている間、MCP のサーバーとして `http://127.0.0.1:17347/mcp` で待ちます。AI のアシスタント（Claude Code・Codex・
 Claude Desktop など）はここへつなぎ、アプリでいま開いている文書のレイヤー・マスク・効果を読み、値を直し、見本の画像を見て、書き出し・保存ができます。
 ツールはアプリが持つので、アプリを更新すれば新しいツールが使えます。この PC の中だけの通信で、ネットワークには出ません。
-使えるツールは、[コマンドライン](CLI.md)の命令と同じ 26 個（名前の `.` は `_` になります）です。描く操作（ストローク・塗りつぶし・選択）・ベイク・別の文書を開くことはできません。
+使えるツールは、[コマンドライン](CLI.md)の命令と同じ 26 個（名前の `.` は `_` になります）です。描く操作（ストローク・塗りつぶし・選択）・ベイク・レイヤーセットの操作・別の文書を開くことはできません。
 
 ## YoluPainter の設定
 
@@ -27,7 +27,7 @@ YoluPainter のプラグインには、アプリへつなぐ MCP の設定と、
 /plugin install yolupainter@yolupainter
 ```
 
-新しい版のプラグインを自動で受けるには、`/plugin` の Marketplaces で `yolupainter` を選び、自動更新を入れます（ほかの人のマーケットプレイスは、既定では自動更新が切です）。
+新しいバージョンのプラグインを自動で受けるには、`/plugin` の Marketplaces で `yolupainter` を選び、自動更新を入れます（ほかの人のマーケットプレイスは、既定では自動更新が切です）。
 シェルからなら `claude plugin marketplace add YozoraKurage/YoluPainter`・`claude plugin install yolupainter@yolupainter` です。
 
 プラグインを使わずに、MCP のサーバーだけを追加することもできます。
@@ -57,7 +57,7 @@ url = "http://127.0.0.1:17347/mcp"
 ### Claude Desktop（拡張）
 
 Claude Desktop のチャットは、標準入出力の拡張（`.mcpb`）でつなぎます。[Releases](https://github.com/YozoraKurage/YoluPainter/releases) の
-`yolupainter-<版>-x86_64-pc-windows-msvc.mcpb` をダウンロードし、ダブルクリックするか、Claude Desktop の設定の拡張機能の画面へドラッグして、インストールを確かめます。
+`yolupainter-<バージョン>-x86_64-pc-windows-msvc.mcpb` をダウンロードし、ダブルクリックするか、Claude Desktop の設定の拡張機能の画面へドラッグして、インストールを確かめます。
 拡張の中身は、標準入出力をアプリの受け口へつなぐ中継（`yolupainter-cli mcp`）だけで、ツールはアプリが答えます。アプリで番号を変えたときは、拡張の設定の「Port」も同じにします。
 拡張は、Claude Desktop が始めるときにアプリへ問い合わせます。そのときアプリが受けていなければつながりに失敗するので、アプリを起動して設定を入れてから、拡張を切って入れ直します。
 
@@ -73,20 +73,20 @@ Streamable HTTP の MCP を話すクライアントなら、`http://127.0.0.1:17
 失敗は、`isError` の返事で、`code`・日本語と英語の `message`・`data` を持つ JSON です。
 
 - 見本（`preview`）は、PNG を image として返し、同じ PNG への resource_link（`yolupainter://preview/<番号>.png`。直近の 8 枚まで覚えています）も付けます。
-- 資料（resources）: `yolupainter://docs/<名前>` は、入れてある版の文書です（使い方の入り口 `guide` と、その頁 `guide-start`・`guide-paint`・`guide-select`・`guide-layers`・`guide-fill`・`guide-paths`・`guide-3d`・`guide-files`・`guide-settings`・`guide-keys`、`cli`・`mcp`・`install`・`psd`・`brush`・.ylp の形式の仕様 `ylp-format` など。英語があるものは英語が既定で、`<名前>.ja`・`<名前>.en` で言語を選べます）。
+- 資料（resources）: `yolupainter://docs/<名前>` は、入れてあるバージョンの文書です（使い方の入り口 `guide` と、その頁 `guide-start`・`guide-paint`・`guide-select`・`guide-layers`・`guide-fill`・`guide-paths`・`guide-3d`・`guide-files`・`guide-settings`・`guide-keys`、`cli`・`mcp`・`install`・`psd`・`brush`・.ylp の形式の仕様 `ylp-format` など。英語があるものは英語が既定で、`<名前>.ja`・`<名前>.en` で言語を選べます）。
   `yolupainter://ops/commands` は命令の一覧と JSON Schema、`yolupainter://ops/effect-kinds` は効果の種類と値の範囲（`effect_list_kinds` と同じ）です。
 - `doc_open` は、アプリが開いているファイルを指したときだけ、その文書を返します。別のファイルは `unsupported` で断ります（アプリは文書を開き替えません）。
 - レイヤーの欄（`layer`・`above`・`parent`）に `$selected` と書くと、アプリの今のテクスチャセットで選んでいるレイヤーを指します。`$created:<n>` は、まとめて当てる実行
   （コマンドラインの batch・アクション）の中だけで使え、ツールを 1 つ呼ぶときは断ります（[相対の指し方](CLI.md#相対の指し方)）。
 - `action_run` は、レイヤー・マスク・効果を変える命令の列（`{"commands": [{"command": "layer.add", "args": {...}}, ...]}`）を、アプリの取り消しの 1 段で当てます。
   途中の命令が断れば全部を戻し、何番目か（`data.index`、0 から）を返します。列の中では `$created:<n>` も使えます。
-- プロトコルの版は 2025-11-25 と 2026-07-28 の両方に答えます（`initialize` のある流れと、`server/discover` と要求ごとの `_meta` の流れ）。受け口は状態を持たない形で、
+- プロトコルのバージョンは 2025-11-25 と 2026-07-28 の両方に答えます（`initialize` のある流れと、`server/discover` と要求ごとの `_meta` の流れ）。受け口は状態を持たない形で、
   `Mcp-Session-Id` は使いません。
 
 ## 安全
 
 - 壊す操作（レイヤー・マスク・効果の削除、上書き保存、既にあるファイルの置き換え）は、引数 `confirm: true` が無ければ何も変えずに断り、
-  ツールには「壊す」の注釈が付きます（`action_run` は、列の中の壊す命令がそれぞれ `confirm: true` を要り、ツールには「壊す」の注釈が付きます）。AI は、使う人に確かめてから `confirm: true` を付けます。保存は、前の版を隣の `<ファイル名>-backups~` に残します。
+  ツールには「壊す」の注釈が付きます（`action_run` は、列の中の壊す命令がそれぞれ `confirm: true` を要り、ツールには「壊す」の注釈が付きます）。AI は、使う人に確かめてから `confirm: true` を付けます。保存は、前のバージョンを隣の `<ファイル名>-backups~` に残します。
 - 任意のコードを実行するツールはありません。扱うファイルは、書き出し・保存のツールが指した道だけです。相対パスは開いているプロジェクトのフォルダからで、`..` で外へ出ることはできません。
 - 待つのは `127.0.0.1`（この PC の中）だけです。要求の `Host` が `127.0.0.1:<番号>`・`localhost:<番号>` でないもの、`Origin` があってそれが同じ所でないもの
   （ほかの名前で 127.0.0.1 を指すウェブページや、ほかのサイトのページからの要求）は断ります。同時につなげるのは 8 つまでです。

@@ -1,7 +1,7 @@
 name: 試験版の更新情報
 
 # 試験版（GitHub の prerelease）の Release を公開したとき、その署名つきの更新情報（updater-v1.json）を、固定のタグ updater-beta の Release に
-# 原本のまま上書きで置く。設定「試験版を使う」を入れたアプリが、stable（releases/latest）と並べてここを見る。docs/RELEASING.md の「試験版の置き場」。
+# 原本のまま上書きで置く。設定「ベータ版を使う」を入れたアプリが、stable（releases/latest）と並べてここを見る。docs/RELEASING.md の「ベータ版の置き場」。
 #
 # - 動くのは公開（published）のとき。Draft のうちは配布物を誰も取れないので、置き場を先に動かさない（prerelease の Draft を公開した場合も
 #   published が起こる。prereleased は Draft からの公開では起こらないので使わない）。stable の Release では何もしない。

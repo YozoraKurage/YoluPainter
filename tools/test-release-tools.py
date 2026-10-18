@@ -375,7 +375,7 @@ class BundledAuditChecks(unittest.TestCase):
         with patch.object(licenses, 'ROOT', self.root), patch.object(licenses, 'OUT', self.root / 'out'), patch.object(licenses, 'cargo', side_effect=cargo):
             self.assertEqual(licenses.audit_lock({'packages': packages, 'workspace_members': []}, {'targets': ['fixture'], 'crates': reviews}, True), 0)
         r = json.loads((self.root / 'out/lock-inventory.json').read_text(encoding='utf-8'))
-        self.assertEqual({x['crate']: x['scope'] for x in r['records']}, {'runtime': '通常・ビルド', 'test': '試験のみ', 'other': '対象外'})
+        self.assertEqual({x['crate']: x['scope'] for x in r['records']}, {'runtime': '通常・ビルド', 'test': 'テストのみ', 'other': '対象外'})
         reviews['stale@1.0'] = reviews['test@1.0']
         with patch.object(licenses, 'ROOT', self.root), patch.object(licenses, 'OUT', self.root / 'out'), patch.object(licenses, 'cargo', side_effect=cargo):
             self.assertEqual(licenses.audit_lock({'packages': packages, 'workspace_members': []}, {'targets': ['fixture'], 'crates': reviews}, True), 1)

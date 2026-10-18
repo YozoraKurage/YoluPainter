@@ -5,10 +5,10 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
 依存を更新したときや別のターゲット・機能で配るときは、一覧と全文束を更新する。
 各対象の依存を分けて記載する。Linux の LGPL の protocol XML の扱いは「配布対象別の照合」に書く。
 
-`tools/third-party.py` は Cargo の通常依存とビルド依存を製品別にたどり、試験用依存を除く。
+`tools/third-party.py` は Cargo の通常依存とビルド依存を製品別にたどり、テスト用依存を除く。
 手続きマクロとビルド依存も保守的に全文束へ含める。「実行時」は通常依存の到達範囲であり、
 最適化後のバイナリにそのクレートの全コードが残るという意味ではない。
-`tools/licenses-reviewed.json` に、版・宣言された許諾・選択する許諾・原文の場所・SHA-256 を固定してある。
+`tools/licenses-reviewed.json` に、バージョン・宣言された許諾・選択する許諾・原文の場所・SHA-256 を固定してある。
 クレートに原文が無い場合は、そのクレートの発行時コミットにある上流の原文を取得する。
 単に同じ種類の一般的な許諾文で代用せず、著作権表記と NOTICE も保持する。
 クレートにも上流にも許諾の本文が無い場合だけ、上流の記載（`Cargo.toml` の `license` と `authors`）から組み立てた MIT の文を `tools/license-texts/` に置いて固定する。
@@ -44,10 +44,10 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
 - `yolu-io` は OS に入っているフォントの一覧（テキストレイヤーのフォントの選び）のために `fontdb 0.24.0`（MIT）を `std`・`fs`・`memmap` の機能で使う（`default-features` は切）。
   OS のフォントのファイルを読むだけで、OS のフォントは同梱しない。同梱するフォントは下の BIZ UDPGothic と、egui の標準フォント（上の表）。
 - `yolu-app` は Live Link の元の絵（JPG）を読むために `image` の `jpeg` 機能を有効にしている。増えるのは `zune-jpeg 0.5.15` と `zune-core 0.5.3`
-  （どちらも MIT OR Apache-2.0 OR Zlib から MIT。原文はクレートの `LICENSE-MIT`）の 2 件で、どちらも Cargo.lock には前から（試験の依存の `tiff` 経由で）あった。
+  （どちらも MIT OR Apache-2.0 OR Zlib から MIT。原文はクレートの `LICENSE-MIT`）の 2 件で、どちらも Cargo.lock には前から（テストの依存の `tiff` 経由で）あった。
   2 件の全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。TGA の読み（`tga` 機能）は `image` の中だけで、クレートは増えない。
 - 上記の発行時コミットの原文と SHA-256 を照合し、**Windows MSVC・Windows GNU・macOS（universal）は app のクレート分の配布用全文束を生成できる**。
-  未確認の版や原文の変更を自動承認せず、依存を更新したら再確認する。
+  未確認のバージョンや原文の変更を自動承認せず、依存を更新したら再確認する。
 - macOS（universal）の配布物にだけ入る依存 32 件（`objc2` 系・`block2`・`dispatch2`・`dispatch`・`core-foundation` 系・`core-graphics` 系・`foreign-types` 系・`accesskit_macos`・
   `accesskit_consumer 0.38.0`・`raw-window-metal`・`wgpu-core-deps-apple`・`tiff`・`weezl`・`fax`・`quick-error 2.0.1`・`bitflags 1.3.2`）を `tools/licenses-reviewed.json` に登録した。
   許諾は MIT（`OR` の組は MIT を選ぶ）。原文は、クレートに同梱の物（15 件）か、そのクレートの発行時コミットの上流の物（17 件）を SHA-256 で固定している（うち 11 件は、下の組み立てた文を先頭に足している）。
@@ -57,7 +57,7 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
   `tools/license-texts/` に置き、全文束の先頭に載せる。作者名は `objc2`・`block2`・`objc2-encode` が Mads Marquart、`dispatch2` が Mads Marquart と Mary、`dispatch` が Steven Sheldon。
   `objc2-foundation`・`objc2-app-kit`・`objc2-core-foundation`・`objc2-core-graphics`・`objc2-metal`・`objc2-quartz-core` は `Cargo.toml` に `authors` が無いので、同じリポジトリの `objc2` の `authors`（Mads Marquart）を使う。
   上流の `LICENSE.md`（`dispatch` は `Cargo.toml`）は、組み立てた文のあとに並べて固定している。
-  `objc2` の 0.5 系（`objc2`・`block2`・`objc-sys`・`objc2-app-kit`・`objc2-foundation` の古い版）は、上流の `LICENSE.txt`（MIT の本文）を固定している。
+  `objc2` の 0.5 系（`objc2`・`block2`・`objc-sys`・`objc2-app-kit`・`objc2-foundation` の古いバージョン）は、上流の `LICENSE.txt`（MIT の本文）を固定している。
 - `self_cell` の宣言は `Apache-2.0 OR GPL-2.0-only`。選択するのは Apache-2.0 であり、GPL の条件は選択しない。
   `Unlicense OR MIT` も MIT を選択する。AND の条件はすべて残す。
 - `bevy_mikktspace 1.0.0`（3D ビューの法線マップの接線）は **Zlib AND (MIT OR Apache-2.0)**。MikkTSpace の参照実装（Morten S. Mikkelsen）を
@@ -67,13 +67,13 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
   `schemars 1.2.2`（MIT。原文はクレートの `LICENSE`）を使う。増えるクレートは `schemars_derive 1.2.2`（手続きマクロ。MIT）と、`serde_derive_internals 0.30.0`・
   `dyn-clone 1.0.20`・`ref-cast 1.0.27`・`ref-cast-impl 1.0.27`（いずれも MIT OR Apache-2.0 から MIT。原文は `LICENSE-MIT`）の計 6 件で、どれも各クレートに同梱の原文を
   SHA-256 で照合する。アプリは外からの操作を受けるために `yolu-ops` を直接使い、同じ配布物に入る `yolu-cli` も使うので、この 6 件は `yolu-app` の一覧に入る。
-- `yolu-cli`（コマンドライン `yolupainter-cli` と、標準入出力の MCP を起動中のアプリへつなぐ中継。アプリと同じ配布物・同じ版で配り、Claude Desktop 用の `.mcpb` にも入る）と
+- `yolu-cli`（コマンドライン `yolupainter-cli` と、標準入出力の MCP を起動中のアプリへつなぐ中継。アプリと同じ配布物・同じバージョンで配り、Claude Desktop 用の `.mcpb` にも入る）と
   `yolu-mcp` は、MCP のために公式の Rust SDK `rmcp 3.5.1` と `tokio`（MIT。標準入出力・実行基盤・127.0.0.1 の通信の機能だけ）を使う。`rmcp` の宣言は **Apache-2.0** で、クレートの配布物には許諾の全文が無い。MCP の project は MIT から
   Apache-2.0 へ移行する途中で、再許諾の同意を得ていない寄稿は MIT のままなので、上流の `LICENSE`（Apache-2.0 の全文・MIT・文書だけに適用する CC-BY-4.0 の注記）を、
   発行時の commit（`79437f291b2c44053d00dcd5db969fd0cca7c887`）の固定 URL から取り、SHA-256 で照合して Apache-2.0 と MIT の両方を選ぶ（CC-BY-4.0 は文書だけで、コードには適用しない）。
   増えるクレートは `rmcp` と、`rmcp` が引く `pastey 0.2.3`（MIT OR Apache-2.0 から MIT）、`tokio 1.53.2`・`tokio-macros 2.7.2`・`tokio-util 0.7.19`・`bytes 1.12.1`（いずれも MIT）、
   `futures`・`futures-channel`・`futures-executor`・`futures-sink`（0.3.34。MIT OR Apache-2.0 から MIT）、`chrono 0.4.45`（MIT OR Apache-2.0 から MIT。原文は `LICENSE.txt`）の 11 件。
-  `getrandom 0.4.3`（MIT OR Apache-2.0 から MIT）は、試験専用から通常の依存に移る（`rmcp` が引く `uuid` が使う。登録済み）。いずれも各クレートに同梱の原文を SHA-256 で照合し、
+  `getrandom 0.4.3`（MIT OR Apache-2.0 から MIT）は、テスト専用から通常の依存に移る（`rmcp` が引く `uuid` が使う。登録済み）。いずれも各クレートに同梱の原文を SHA-256 で照合し、
   クレートの全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。`rmcp` の `macros`・`client`・OAuth の機能は使わないので、`reqwest` などの通信の部品は入らない。
 - `yolu-mcp`（MCP の中身と、127.0.0.1 の HTTP の受け口・客。アプリが受け口を動かし、`yolu-cli` が中継と起動中のアプリへの命令に使う）は、`rmcp` の
   Streamable HTTP の受け口の機能（`transport-streamable-http-server`）と、それを載せる `hyper 1.12.0`（`server`・`client`・`http1` の機能だけ。HTTP/2 は入れない）・
@@ -83,7 +83,7 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
   から MIT。原文は `LICENSE-MIT`、`rand`・`rand_core` は `COPYRIGHT` も）の 19 件。`rand` 以下の 4 件と `sse-stream`・`base64 0.23.1` は `rmcp` の HTTP の受け口の機能が、
   `mio`・`socket2` は `tokio` の `net` の機能が引く。いずれも各クレートに同梱の原文を SHA-256 で照合し、クレートの全ソースから GPL・LGPL・AGPL の表記を検索して、該当は無かった。
   TLS の部品は入らない（待つのも客も 127.0.0.1 の平文の HTTP だけ）。
-- exe のバージョン情報（アイコン・製品名・版）を埋めるビルド用の `winresource`（MIT）は、実行ファイルには入らず、ビルド依存として全文束に含める。
+- exe のバージョン情報（アイコン・製品名・バージョン）を埋めるビルド用の `winresource`（MIT）は、実行ファイルには入らず、ビルド依存として全文束に含める。
 - 更新の通信は OS の部品を呼ぶだけで、通信の部品は同梱しない。Windows は OS 付属の WinHTTP、Linux は利用者の環境の `curl` を呼ぶ。
 - Windows のインストーラーは NSIS 3（zlib/libpng 許諾）で作る。作ったインストーラーには NSIS の実行時の部品（stub）が入り、
   圧縮方式ごとの部品（LZMA・bzip2・zlib）にはそれぞれの許諾と NSIS の例外が付く。上流の表記は
@@ -96,7 +96,7 @@ Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（univer
   [mach-dxcompiler のリリース `2026.09.16+48d5a66.1`](https://github.com/DouglasDwyer/mach-dxcompiler/releases/tag/2026.09.16%2B48d5a66.1)（改変できないリリースとして公開されている物）の
   静的ライブラリを取り、SHA-256 を照合してリンクする。その元のソースは `hexops/DirectXShaderCompiler` のコミット `4190bb0c90d374c6b4d0b0f2c7b45b604eda24b6`
   （mach-dxcompiler の `build.zig` の `source_revision`）で、SPIR-V の出力は組み込まない（同じ `build.zig` の `spirv` の選択は既定で偽、リリースを作る `ci.yml` の `zig build` にも指定が無い）。
-  掛かる許諾は、DXC の **University of Illinois/NCSA**（LLVM Release License）と、その `LICENSE.TXT` に並ぶ LLVM 由来の部品（`Files:` の行で見ると、miniz・Henry Spencer の regex・ConvertUTF・MD5・OpenBSD の `regstrlcpy`。ほかに試験用の googletest・YamlParser と、ビルド補助の `autoconf/config.guess`（GPL の全文と configure の例外）の項も並ぶ。これらがライブラリに入る部品かは、`Files:` の行からは確かめていない）、
+  掛かる許諾は、DXC の **University of Illinois/NCSA**（LLVM Release License）と、その `LICENSE.TXT` に並ぶ LLVM 由来の部品（`Files:` の行で見ると、miniz・Henry Spencer の regex・ConvertUTF・MD5・OpenBSD の `regstrlcpy`。ほかにテスト用の googletest・YamlParser と、ビルド補助の `autoconf/config.guess`（GPL の全文と configure の例外）の項も並ぶ。これらがライブラリに入る部品かは、`Files:` の行からは確かめていない）、
   Mach の署名部分（Apache-2.0 または MIT。MIT を選び、クレートの `LICENSE` を同梱する）。DXC の `LICENSE.TXT` と `ThirdPartyNotices.txt`（どちらもそのコミットの原文）を
   クレートの許諾と一緒に全文束へ入れる（`NCSA` は `tools/third-party.py` と `deny.toml` の許す一覧に足した）。NCSA の条件は、著作権表記・条件・免責を付属の資料に載せることと、
   LLVM Team・イリノイ大学・寄稿者の名前を宣伝に使わないこと。このビルドは `dxil.dll` を使わない。ビルドの時に GitHub への通信、`curl`・`tar`、Visual Studio 2022 17.11 以上の
@@ -169,7 +169,7 @@ OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilTo
 （<https://bottosson.github.io/posts/oklab/>。著者は式と参照コードを **MIT**（Copyright (c) 2020 Björn Ottosson）で公開している）の係数を使う。
 変換の行列の係数だけを使い、参照コードは移していない。クレートではないので、上の件数には含めない。輝度の補正の式（彩度の落ちた量に比例して明るさを持ち上げる）はこのアプリのもの。
 
-## 生成・試験に使うツール
+## 生成・テストに使うツール
 
 許諾全文の生成ツールは Python 3.10 以降の標準ライブラリだけを使い、cargo-about / cargo-deny / pip の追加パッケージは不要。
 以下は開発環境で使うツールの許諾であり、ツール本体を製品へ同梱しない。
@@ -191,11 +191,11 @@ OpenLit Library 1.0.2（**CC0 1.0**）から移した。ラメの乱数は lilTo
 Krita のプリセット（`.kpp`）・SVG の筆先・パターンは入れていない。このアプリでの設定（半径・間隔など）は独自のもの。
 [筆先の第三者表記](https://github.com/YozoraKurage/YoluPainter/blob/main/crates/yolu-app/assets/brushes/THIRD-PARTY-NOTICES.md) に出典・作者・元の許諾宣言と CC0 の全文をまとめ、app の全文束にも含める。
 `tools/licenses-reviewed.json` で筆先 76 個・元の宣言・取り込み記録・表記のハッシュを照合する。
-ロゴを除くアプリの同梱画像はこの筆先と前述のアイコンであり、試験の fixtures・snapshots は配布へ含めない。
+ロゴを除くアプリの同梱画像はこの筆先と前述のアイコンであり、テストの fixtures・snapshots は配布へ含めない。
 
 ブラシ形式の読み手は公開された形式の説明から書いた。他のプロジェクトのコードは使っていない:
-GIMP の `gbr.txt`・`gih.txt`・`vbr.txt`（devel-docs）、Photoshop File Formats Specification（版 1・2 のブラシ、記述子、パターン）、
-版 6 以降の `samp`・`desc` の並びの公開された解説。
+GIMP の `gbr.txt`・`gih.txt`・`vbr.txt`（devel-docs）、Photoshop File Formats Specification（バージョン 1・2 のブラシ、記述子、パターン）、
+バージョン 6 以降の `samp`・`desc` の並びの公開された解説。
 
 CLIP STUDIO PAINT の `.sut`（SQLite）の読み手も、公開された解析から表・列・BLOB の形という事実だけを取って書いた（コードは移していない）:
 Kenneth Evans の VS-CSPBrushInfo（MIT。`Node`・`Variant`・影響元と素材の参照の BLOB）、Leon Schoenbrunn の CSP2PC（MIT。列の名前）、
@@ -245,7 +245,7 @@ Rust と C の著作権表記（2020 Samuli Raivio）を全文束に含め、C �
 `yolu-cli`（`yolupainter-cli`）は app と同じ配布物（zip・tar.gz・インストーラー）に入るので、その依存も app の一覧と全文束に含め、
 `.mcpb` には `yolu-cli` の一覧と全文束（`--package yolu-cli --built-with yolu-app`）を入れる。実行ファイルは `-p yolu-app -p yolu-cli` の 1 回のビルドで作り、2 つのクレートの機能が合わさって、`yolu-cli` 単独の木に無い依存（`libm`・`foldhash`）が入るので、数えるのはそのビルドでの `yolu-cli` の部分木。
 開発用 `xtask` の依存は後段に分ける。
-同名でも別版のクレートは別件として数える。製品間・対象間の件数は重複する。
+同名でも別バージョンのクレートは別件として数える。製品間・対象間の件数は重複する。
 
 ```sh
 python3 tools/third-party.py --target x86_64-pc-windows-msvc --package yolu-app --include-update --include-cli --bundle
@@ -289,25 +289,25 @@ Linux の配布物の `THIRD_PARTY_LICENSES.txt` に、LGPL-2.1 の全文（plas
 LGPL の部分の元は crates.io の両クレートと上流（[plasma-wayland-protocols](https://invent.kde.org/libraries/plasma-wayland-protocols)）にあり、
 YoluPainter のソースはこのリポジトリで公開しているので、利用者は該当の部品を差し替えて作り直せる。
 
-## Cargo.lock 全体と試験専用の依存
+## Cargo.lock 全体とテスト専用の依存
 
 `python3 tools/third-party.py --audit-lock --offline` は Windows MSVC・Windows GNU・Linux GNU・Linux ARM（aarch64）・macOS（Apple Silicon と Intel）の workspace 全体を調べる。
-通常・ビルド依存に加えて試験依存の原文も照合し、他 OS・無効な機能の依存を含む lock 全件を
-`target/third-party/lock-inventory.json` に分類する。古い登録・未確認の版・未承認条件があれば終了 1。
+通常・ビルド依存に加えてテスト依存の原文も照合し、他 OS・無効な機能の依存を含む lock 全件を
+`target/third-party/lock-inventory.json` に分類する。古い登録・未確認のバージョン・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
 照合した Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。外部クレート 508 件の内訳は次のとおり。
 
-| 範囲（6 ターゲットの和集合、同名の別版は別件） | 件数 | 結果 |
+| 範囲（6 ターゲットの和集合、同名の別バージョンは別件） | 件数 | 結果 |
 |---|---:|---|
 | 通常・ビルド依存 | 397 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
-| 試験専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
+| テスト専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
 | 対象外（他 OS・現在無効な機能） | 99 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
 | Cargo.lock に無い古い登録 | 0 | 削除なし |
 
-試験専用の一覧（配布用全文束には含めない）:
+テスト専用の一覧（配布用全文束には含めない）:
 
-| クレート | 版 | 宣言 | 選択・状態 |
+| クレート | バージョン | 宣言 | 選択・状態 |
 |---|---|---|---|
 | anyhow | 1.0.104 | MIT OR Apache-2.0 | MIT |
 | colored | 2.2.0 | MPL-2.0 | 未承認 |
@@ -331,7 +331,7 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 `self_cell` の GPL は Apache-2.0 と選択できる条件、対象外の `r-efi 5.3.0`・`6.0.0` の LGPL は MIT・Apache-2.0 と選択できる条件。
 `colored` 原文の GPL の言及は MPL の Secondary License の定義であり、GPL を選択した記録ではない。
 `x11rb 0.13.2` の `examples/record.rs` は GPLv3 のサンプルを元にした旨の表記があるが、製品で使うライブラリにこの examples は含めない。
-ほかのヒットは LLVM 例外の GPLv2 への言及、`slotmap` の互換性の説明、`vcpkg` の試験用ファイル名一覧、
+ほかのヒットは LLVM 例外の GPLv2 への言及、`slotmap` の互換性の説明、`vcpkg` のテスト用ファイル名一覧、
 前述の `tree_magic_mini` の無効な `with-gpl-data` 機能と変更履歴である。
 AGPL の表記は検出しなかった。文字列検索だけで許諾の不存在を保証するものではない。
 
@@ -341,9 +341,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
 
-外部クレート 262 件（同名の別版は別件）。実行時 216 件。
+外部クレート 262 件（同名の別バージョンは別件）。実行時 216 件。
 
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
@@ -362,7 +362,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 状態: クレートの許諾照合は成功。
 
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | accesskit_consumer | 0.35.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -631,9 +631,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
 
-外部クレート 132 件（同名の別版は別件）。実行時 109 件。
+外部クレート 132 件（同名の別バージョンは別件）。実行時 109 件。
 
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。
 
 `yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
@@ -647,7 +647,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 状態: クレートの許諾照合は成功。
 
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
 | arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -788,9 +788,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
 
-外部クレート 260 件（同名の別版は別件）。実行時 215 件。
+外部クレート 260 件（同名の別バージョンは別件）。実行時 215 件。
 
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
@@ -808,7 +808,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 状態: クレートの許諾照合は成功。
 
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | accesskit_consumer | 0.35.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1075,9 +1075,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
 
-外部クレート 132 件（同名の別版は別件）。実行時 109 件。
+外部クレート 132 件（同名の別バージョンは別件）。実行時 109 件。
 
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。
 
 `yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
@@ -1091,7 +1091,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 状態: クレートの許諾照合は成功。
 
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
 | arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1232,9 +1232,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
 
-外部クレート 328 件（同名の別版は別件）。実行時 279 件。
+外部クレート 328 件（同名の別バージョンは別件）。実行時 279 件。
 
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
@@ -1252,7 +1252,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 状態: クレートの許諾照合は成功。
 
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | accesskit_atspi_common | 0.18.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1587,9 +1587,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
 
-外部クレート 131 件（同名の別版は別件）。実行時 108 件。
+外部クレート 131 件（同名の別バージョンは別件）。実行時 108 件。
 
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。
 
 `yolu-app` と同じ cargo のビルド（`-p yolu-app -p yolu-cli`）で機能が合わさった、`yolu-cli` の部分木。
 
@@ -1603,7 +1603,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 状態: クレートの許諾照合は成功。
 
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | adler2 | 2.0.1 | 実行時 | 0BSD OR MIT OR Apache-2.0 | MIT | 確認済み |
 | arrayvec | 0.7.8 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -1743,9 +1743,9 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
 
-外部クレート 255 件（同名の別版は別件）。実行時 214 件。
+外部クレート 255 件（同名の別バージョンは別件）。実行時 214 件。
 
-ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。試験用の依存は除く。
+ビルド用・手続きマクロ用も取りこぼしを避けて全文束に含める。テスト用の依存は除く。
 
 | 選択した許諾（追加条件を含む） | 件数 |
 |---|---:|
@@ -1762,7 +1762,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 状態: クレートの許諾照合は成功。
 
-| クレート | 版 | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
+| クレート | バージョン | 用途 | 宣言された許諾 | 選択・追加条件 | 確認 |
 |---|---|---|---|---|---|
 | accesskit | 0.24.1 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
 | accesskit_consumer | 0.38.0 | 実行時 | MIT OR Apache-2.0 | MIT | 確認済み |
@@ -2022,12 +2022,12 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ## 開発用 xtask の依存一覧
 
-`cargo xtask` 自体は製品に同梱しない。通常依存とビルド依存を含み、試験用依存を除いた集合。
+`cargo xtask` 自体は製品に同梱しない。通常依存とビルド依存を含み、テスト用依存を除いた集合。
 各対象で `python3 tools/third-party.py --target <target> --package xtask` を実行して照合した。
 `yolu-update` 単独も同じ指定の `--package yolu-update` で各 31 件を照合済み（その全件は上の app の集合に含まれる）。
 「○」は対象に含まれ原文の照合が成功したもの、「—」は対象外。
 
-| クレート | 版 | 選択する許諾 | Windows MSVC | Windows GNU | Linux GNU |
+| クレート | バージョン | 選択する許諾 | Windows MSVC | Windows GNU | Linux GNU |
 |---|---|---|---|---|---|
 | adler2 | 2.0.1 | MIT | ○ | ○ | ○ |
 | bitflags | 2.13.2 | MIT | — | — | ○ |
