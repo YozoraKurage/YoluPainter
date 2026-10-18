@@ -296,13 +296,13 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 `target/third-party/lock-inventory.json` に分類する。古い登録・未確認のバージョン・未承認条件があれば終了 1。
 配布用の照合とは別であり、対象外のクレートを承認済みとは扱わない。
 
-照合した Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。外部クレート 508 件の内訳は次のとおり。
+照合した Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。外部クレート 508 件の内訳は次のとおり。
 
 | 範囲（6 ターゲットの和集合、同名の別バージョンは別件） | 件数 | 結果 |
 |---|---:|---|
-| 通常・ビルド依存 | 397 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
+| 通常・ビルド依存 | 400 | 原文を照合。Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱 |
 | テスト専用 | 12 | MIT 11 件は原文を照合。MPL-2.0 1 件は未承認 |
-| 対象外（他 OS・現在無効な機能） | 99 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
+| 対象外（他 OS・現在無効な機能） | 96 | 宣言と対象外であることを記録。配布用の原文照合・承認は行わない |
 | Cargo.lock に無い古い登録 | 0 | 削除なし |
 
 テスト専用の一覧（配布用全文束には含めない）:
@@ -323,14 +323,17 @@ YoluPainter のソースはこのリポジトリで公開しているので、�
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 | MIT |
 
 `egui_kittest → dify → colored 2.2.0` は MPL-2.0。許容一覧へ自動追加せず、原文と未承認理由だけを記録する。
-現在の製品の依存には含まれない。上記の lock 監査はこの 1 件で終了 1 となる（Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱して承認済み）。
+現在の製品の依存には含まれない。テスト専用の 12 件は、配らない開発用のクレート `yolu-mock`（画面の部品を撮る）が通常の依存として引くので、`--audit-lock` の出力では
+「通常・ビルド」（412 件）に数える。表の 400 件は `yolu-mock` を除いた数で、配る製品（`yolu-app`・`yolu-cli`）の木には 12 件とも入らない。上記の lock 監査はこの 1 件で終了 1 となる（Linux の protocol XML 2 件は LGPL-2.1-or-later の全文と表記を同梱して承認済み）。
 
-全件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した（今の Cargo.lock の 496 件で、`gpl` の部分一致と `General Public License` を大文字小文字を区別せずに検索し、語としてのヒットは下に挙げた物だけだった。部分一致だけのヒットは `eggplant`・`SIGPLAN94`・`Placement`・`WindowsFilteringPlatform` など、別の語や識別子の一部）（`rusqlite` 系の 4 件と `schemars` 系の 6 件にはなく、`libsqlite3-sys` の `sqlite3.c` のヒットは単語 Eggplant）。Linux の既知の 2 件に加え、
+全件のクレート同梱ファイルから GPL・LGPL・AGPL の表記も検索した（0.6.1 の Cargo.lock の 496 件と、その後に増えた 15 件で、`gpl` の部分一致と `General Public License` を大文字小文字を区別せずに検索し、語としてのヒットは下に挙げた物だけだった。部分一致だけのヒットは `eggplant`・`SIGPLAN94`・`Placement`・`WindowsFilteringPlatform` など、別の語や識別子の一部）（`rusqlite` 系の 4 件と `schemars` 系の 6 件にはなく、`libsqlite3-sys` の `sqlite3.c` のヒットは単語 Eggplant）。Linux の既知の 2 件に加え、
 対象外の `orbclient 0.3.55` の `res/unifont-license.txt` に GPL-2.0-or-later とフォント埋め込み例外がある。
 現在の Windows・Linux の依存には含まれないが、このクレートを使う対象・機能を追加するときは判断が必要。
 `self_cell` の GPL は Apache-2.0 と選択できる条件、対象外の `r-efi 5.3.0`・`6.0.0` の LGPL は MIT・Apache-2.0 と選択できる条件。
 `colored` 原文の GPL の言及は MPL の Secondary License の定義であり、GPL を選択した記録ではない。
 `x11rb 0.13.2` の `examples/record.rs` は GPLv3 のサンプルを元にした旨の表記があるが、製品で使うライブラリにこの examples は含めない。
+`nix 0.31.3`（開発用の `xtask` の `zip` が macOS でだけ引く）の `test/test_kmod/hello_mod/hello.c` はテスト用のカーネルモジュールで、`GPL-2.0+ or MIT` の二重の表記がある。
+ライブラリのビルドには入らず、配る製品の依存でもない。
 ほかのヒットは LLVM 例外の GPLv2 への言及、`slotmap` の互換性の説明、`vcpkg` のテスト用ファイル名一覧、
 前述の `tree_magic_mini` の無効な `with-gpl-data` 機能と変更履歴である。
 AGPL の表記は検出しなかった。文字列検索だけで許諾の不存在を保証するものではない。
@@ -339,7 +342,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。
 
 外部クレート 262 件（同名の別バージョンは別件）。実行時 216 件。
 
@@ -629,7 +632,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
+対象: `x86_64-pc-windows-msvc`、通常の機能。Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。
 
 外部クレート 132 件（同名の別バージョンは別件）。実行時 109 件。
 
@@ -786,7 +789,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。
 
 外部クレート 260 件（同名の別バージョンは別件）。実行時 215 件。
 
@@ -1073,7 +1076,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
+対象: `x86_64-pc-windows-gnu`、通常の機能。Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。
 
 外部クレート 132 件（同名の別バージョンは別件）。実行時 109 件。
 
@@ -1230,7 +1233,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。
 
 外部クレート 328 件（同名の別バージョンは別件）。実行時 279 件。
 
@@ -1585,7 +1588,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-cli の依存一覧
 
-対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
+対象: `x86_64-unknown-linux-gnu`、通常の機能。Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。
 
 外部クレート 131 件（同名の別バージョンは別件）。実行時 108 件。
 
@@ -1741,7 +1744,7 @@ AGPL の表記は検出しなかった。文字列検索だけで許諾の不存
 
 ### yolu-app（yolu-update と yolu-cli の依存を含む） の依存一覧
 
-対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `dc3fb0b8a38d473dc49de94702a371f47dc0805c764fa24d713d002140ad19f1`。
+対象: `universal-apple-darwin`、通常の機能。Cargo.lock SHA-256: `0daa72a781beb6e19705f5836f8aa24b3ff16b15c6ea6d6899968a0ff3398990`。
 
 外部クレート 255 件（同名の別バージョンは別件）。実行時 214 件。
 
